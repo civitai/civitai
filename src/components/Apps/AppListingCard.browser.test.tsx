@@ -77,7 +77,10 @@ describe('AppListingCard', () => {
     await expect.element(visit).toHaveAttribute('rel', 'noopener noreferrer');
   });
 
-  test('off-site connect → Connect badge + inert (disabled) CTA', async () => {
+  test('off-site connect → Connect badge + View details → unified detail (P2c)', async () => {
+    // P2c: cards route to the unified detail; the Connect action itself lives on
+    // the detail page (the connect flow needs a P2a authorize-URL DTO addition),
+    // so the card's CTA is "View details", not an inert Connect button.
     renderWithProviders(
       <AppListingCard
         card={base({
@@ -88,13 +91,13 @@ describe('AppListingCard', () => {
       />
     );
     await expect.element(page.getByText('Connect app')).toBeInTheDocument();
-    const connect = page.getByRole('button', { name: 'Connect' });
-    await expect.element(connect).toBeDisabled();
+    const details = page.getByRole('link', { name: 'View details' });
+    await expect.element(details).toHaveAttribute('href', '/apps/store-preview/my-app');
   });
 
-  test('on-site page app WITHOUT canOpenPage → View details (no dead run link)', async () => {
+  test('on-site page app WITHOUT canOpenPage → View details → unified detail (P2c)', async () => {
     renderWithProviders(<AppListingCard card={base({})} canOpenPage={false} />);
     const details = page.getByRole('link', { name: 'View details' });
-    await expect.element(details).toHaveAttribute('href', '/apps/blk-1');
+    await expect.element(details).toHaveAttribute('href', '/apps/store-preview/my-app');
   });
 });

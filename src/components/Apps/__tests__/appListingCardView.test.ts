@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   getListingBadge,
   getListingCta,
+  getListingDetailHref,
   getRecommendLabel,
   safeExternalHref,
 } from '~/components/Apps/appListingCardView';
@@ -111,79 +112,86 @@ describe('safeExternalHref', () => {
   });
 });
 
-describe('getListingCta — on-site', () => {
-  it('hasPage + canOpenPage → Open → /apps/run/<slug>', () => {
+describe('getListingDetailHref', () => {
+  it('routes to the unified store-preview detail by slug', () => {
+    expect(getListingDetailHref('my-app')).toBe('/apps/store-preview/my-app');
+  });
+  it('encodes an odd slug (defense in depth)', () => {
+    expect(getListingDetailHref('a b/c')).toBe('/apps/store-preview/a%20b%2Fc');
+  });
+});
+
+describe('getListingCta — on-site (P2c: View details → unified detail)', () => {
+  it('hasPage + canOpenPage → Open → /apps/run/<slug> (direct primary)', () => {
     expect(getListingCta(onsiteCard({ hasPage: true, slug: 'gen-matrix' }), { canOpenPage: true })).toEqual({
       label: 'Open',
       action: 'open',
       href: '/apps/run/gen-matrix',
       external: false,
-      disabled: false,
     });
   });
-  it('hasPage but NOT canOpenPage → View details → /apps/<appBlockId> (no dead run link)', () => {
-    expect(getListingCta(onsiteCard({ hasPage: true, appBlockId: 'blk-9' }), { canOpenPage: false })).toEqual({
+  it('hasPage but NOT canOpenPage → View details → unified detail (no dead run link)', () => {
+    expect(getListingCta(onsiteCard({ hasPage: true, slug: 'my-app' }), { canOpenPage: false })).toEqual({
       label: 'View details',
       action: 'detail',
-      href: '/apps/blk-9',
+      href: '/apps/store-preview/my-app',
       external: false,
-      disabled: false,
     });
   });
-  it('!hasPage → View details → /apps/<appBlockId>', () => {
-    expect(getListingCta(onsiteCard({ hasPage: false, appBlockId: 'blk-3' }), { canOpenPage: true })).toEqual({
+  it('!hasPage → View details → unified detail', () => {
+    expect(getListingCta(onsiteCard({ hasPage: false, slug: 'my-app' }), { canOpenPage: true })).toEqual({
       label: 'View details',
       action: 'detail',
-      href: '/apps/blk-3',
+      href: '/apps/store-preview/my-app',
       external: false,
-      disabled: false,
     });
   });
-  it('!hasPage + no appBlockId → disabled View details (no target)', () => {
-    expect(getListingCta(onsiteCard({ hasPage: false, appBlockId: null }), { canOpenPage: true })).toEqual({
+  it('!hasPage + no appBlockId → still reaches the unified detail (never actionless)', () => {
+    expect(getListingCta(onsiteCard({ hasPage: false, appBlockId: null, slug: 'my-app' }), { canOpenPage: true })).toEqual({
       label: 'View details',
       action: 'detail',
-      href: undefined,
+      href: '/apps/store-preview/my-app',
       external: false,
-      disabled: true,
     });
   });
-  it('encodes an odd slug', () => {
+  it('encodes an odd slug on the Open run link', () => {
     expect(
       getListingCta(onsiteCard({ hasPage: true, slug: 'a b/c' }), { canOpenPage: true }).href
     ).toBe('/apps/run/a%20b%2Fc');
   });
 });
 
-describe('getListingCta — off-site', () => {
-  it('external-link https → Visit ↗ (external)', () => {
+describe('getListingCta — off-site (P2c: View details → unified detail)', () => {
+  it('external-link https → Visit ↗ (direct external primary)', () => {
     expect(getListingCta(offsiteCard('external-link', 'https://foo.app'), { canOpenPage: true })).toEqual({
       label: 'Visit',
       action: 'visit',
       href: 'https://foo.app',
       external: true,
-      disabled: false,
     });
   });
-  it('external-link non-https → disabled View details (guard drops it)', () => {
+  it('external-link non-https → View details → unified detail (guard drops the href)', () => {
     expect(getListingCta(offsiteCard('external-link', 'http://foo.app'), { canOpenPage: true })).toEqual({
       label: 'View details',
       action: 'detail',
-      href: undefined,
+      href: '/apps/store-preview/ext-app',
       external: false,
-      disabled: true,
     });
   });
-  it('external-link null url → disabled View details', () => {
-    expect(getListingCta(offsiteCard('external-link', null), { canOpenPage: true }).disabled).toBe(true);
-  });
-  it('connect → disabled Connect (P2c flow)', () => {
-    expect(getListingCta(offsiteCard('connect', null), { canOpenPage: true })).toEqual({
-      label: 'Connect',
-      action: 'connect',
-      href: undefined,
+  it('external-link null url → View details → unified detail', () => {
+    expect(getListingCta(offsiteCard('external-link', null), { canOpenPage: true })).toEqual({
+      label: 'View details',
+      action: 'detail',
+      href: '/apps/store-preview/ext-app',
       external: false,
-      disabled: true,
+    });
+  });
+  it('connect → View details → unified detail (Connect affordance lives on the detail page)', () => {
+    expect(getListingCta(offsiteCard('connect', null), { canOpenPage: true })).toEqual({
+      label: 'View details',
+      action: 'detail',
+      href: '/apps/store-preview/ext-app',
+      external: false,
     });
   });
 });

@@ -1,4 +1,4 @@
-import { Anchor, Avatar, Badge, Box, Button, Card, Group, Image, Stack, Text, Title, Tooltip } from '@mantine/core';
+import { Anchor, Avatar, Badge, Box, Button, Card, Group, Image, Stack, Text, Title } from '@mantine/core';
 import {
   IconApps,
   IconExternalLink,
@@ -7,7 +7,7 @@ import {
 } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
-import { useState } from 'react';
+import { type MouseEvent, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import {
   CATEGORY_ICONS,
@@ -16,6 +16,7 @@ import {
 import {
   getListingBadge,
   getListingCta,
+  getListingDetailHref,
   getRecommendLabel,
   type ListingBadgeKind,
 } from '~/components/Apps/appListingCardView';
@@ -135,7 +136,7 @@ function CreatorChip({ creator }: { creator: ListingCard['creator'] }) {
       href={`/user/${encodeURIComponent(creator.username)}`}
       underline="never"
       c="dimmed"
-      onClick={(e: React.MouseEvent) => e.stopPropagation()}
+      onClick={(e: MouseEvent) => e.stopPropagation()}
     >
       <Group gap={6} wrap="nowrap">
         <Avatar src={avatarSrc} alt="" radius="xl" size={20}>
@@ -162,6 +163,7 @@ export interface AppListingCardProps {
 export function AppListingCard({ card, canOpenPage = false }: AppListingCardProps) {
   const badge = getListingBadge(card);
   const cta = getListingCta(card, { canOpenPage });
+  const detailHref = getListingDetailHref(card.slug);
   const recommendLabel = getRecommendLabel(card.recommend, card.reviewCount);
   const BadgeIcon = KIND_BADGE_ICON[badge.kind];
 
@@ -178,9 +180,20 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
               {card.name.charAt(0).toUpperCase()}
             </Avatar>
             <Stack gap={2} style={{ minWidth: 0 }}>
-              <Title order={4} className="line-clamp-2">
-                {card.name}
-              </Title>
+              {/* Title links to the unified detail so the detail is reachable
+                  from every card even when the primary CTA is a direct Open /
+                  Visit. underline:hover keeps it visibly a link. */}
+              <Anchor
+                component={Link}
+                href={detailHref}
+                underline="hover"
+                c="inherit"
+                style={{ minWidth: 0 }}
+              >
+                <Title order={4} className="line-clamp-2">
+                  {card.name}
+                </Title>
+              </Anchor>
               <CreatorChip creator={card.creator} />
             </Stack>
           </Group>
@@ -228,18 +241,10 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
             </Text>
           </Group>
 
-          {/* Kind-aware CTA. A disabled CTA (no working target in the dark phase)
-              renders inert with a tooltip so the card is never actionless. */}
-          {cta.disabled ? (
-            <Tooltip label="Available at launch" withArrow>
-              {/* Tooltip needs a non-disabled wrapper to receive hover events. */}
-              <span>
-                <Button size="xs" variant="light" disabled>
-                  {cta.label}
-                </Button>
-              </span>
-            </Tooltip>
-          ) : cta.external && cta.href ? (
+          {/* Kind-aware CTA — always has a working target (a direct Open / Visit,
+              or the unified detail). External Visit → new-tab anchor; everything
+              else → an internal Link. */}
+          {cta.external ? (
             <Button
               component="a"
               href={cta.href}
@@ -254,7 +259,7 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
           ) : (
             <Button
               component={Link}
-              href={cta.href ?? '#'}
+              href={cta.href}
               size="xs"
               variant={cta.action === 'open' ? 'filled' : 'light'}
             >

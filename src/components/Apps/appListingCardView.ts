@@ -10,21 +10,24 @@
  * preview surface. The default `/apps` render (MarketplaceBody → AppBlockCard)
  * is untouched; the cutover is a later PR (P2d).
  *
- * CTA target policy (dark phase — no listing detail page exists yet, that's P2c):
+ * CTA target policy (P2c — the unified dark listing detail now exists at
+ * `/apps/store-preview/<slug>`, so every card can reach a real detail surface and
+ * NO CTA is ever inert/disabled):
  *   - on-site + hasPage + canOpenPage → **Open** → `/apps/run/<slug>` (the LIVE
  *     W10 page route; itself flag-gated on `appBlocksPages`, so we only route
- *     there when the viewer can actually open it).
+ *     there when the viewer can actually open it) — the direct primary action.
  *   - on-site otherwise (no page, or page but no `appBlocksPages`) → **View
- *     details** → the EXISTING per-AppBlock detail page `/apps/<appBlockId>`
- *     (a real, working page — the honest dark-phase stub; P2c adds the unified
- *     `/apps/<slug>` listing detail).
- *   - off-site external-link (https) → **Visit ↗** → external anchor.
- *   - off-site external-link (missing / non-https url) → disabled "View details"
- *     (no target yet; the DTO already null-guards non-https — we re-guard).
- *   - off-site connect → disabled **Connect** (the connect flow / listing detail
- *     is P2c; rendered but inert in the preview).
- * A CTA with `disabled: true` renders as a non-actionable button (component wraps
- * it in a tooltip). Every card always has a CTA (never actionless).
+ *     details** → `/apps/store-preview/<slug>` (the unified P2c detail).
+ *   - off-site external-link (https) → **Visit ↗** → external anchor (direct
+ *     primary action).
+ *   - off-site external-link (missing / non-https url) → **View details** →
+ *     the unified detail (the DTO already null-guards non-https — we re-guard;
+ *     the detail page shows the informational state).
+ *   - off-site connect → **View details** → the unified detail (the Connect
+ *     affordance lives on the detail page).
+ * Every CTA now has a working `href` (never actionless). The card ALSO links its
+ * title to the detail (via `getListingDetailHref`) so the detail is reachable
+ * even when the primary CTA is a direct Open / Visit.
  */
 
 import type {
@@ -79,60 +82,58 @@ export type ListingCta = {
   label: string;
   /** Semantic action (drives icon choice + analytics later). */
   action: ListingCtaAction;
-  /** Navigation target, or `undefined` when there is no working target yet. */
-  href?: string;
+  /** Navigation target — always present (the unified detail is always reachable). */
+  href: string;
   /** True → open in a new tab as an external anchor (rel=noopener noreferrer). */
   external: boolean;
-  /** True → render a non-actionable (inert) button; there's no target in the dark phase. */
-  disabled: boolean;
 };
 
-/** The per-AppBlock detail page that on-site listings stub to during the dark phase. */
-function onsiteDetailHref(appBlockId: string | null): string | undefined {
-  return appBlockId ? `/apps/${encodeURIComponent(appBlockId)}` : undefined;
+/**
+ * The unified P2c listing detail (`/apps/store-preview/<slug>`). Every card can
+ * reach it by slug — the honest, working detail surface that replaces the P2b
+ * per-AppBlock / disabled stubs. `deIndex`-ed + mod-gated (dark), parallel to
+ * the live `/apps` path; the default-`/apps` cutover is P2d.
+ */
+export function getListingDetailHref(slug: string): string {
+  return `/apps/store-preview/${encodeURIComponent(slug)}`;
 }
 
 /**
  * Kind-aware primary CTA. `canOpenPage` mirrors the `appBlocksPages` feature
  * flag: when false the live page route 404s, so an on-site page app falls back
- * to "View details" instead of a dead "Open" link.
+ * to "View details" (the unified detail) instead of a dead "Open" link. Every
+ * non-direct case routes to the unified detail — no CTA is ever inert.
  */
 export function getListingCta(
   card: Pick<ListingCard, 'slug' | 'kind' | 'kindData'>,
   opts: { canOpenPage: boolean }
 ): ListingCta {
+  const detailHref = getListingDetailHref(card.slug);
+
   if (card.kindData.kind === 'onsite') {
-    const { appBlockId, hasPage } = card.kindData;
+    const { hasPage } = card.kindData;
     if (hasPage && opts.canOpenPage) {
       return {
         label: 'Open',
         action: 'open',
         href: `/apps/run/${encodeURIComponent(card.slug)}`,
         external: false,
-        disabled: false,
       };
     }
-    // No page, or page but the viewer can't open it → the detail stub.
-    const href = onsiteDetailHref(appBlockId);
-    return {
-      label: 'View details',
-      action: 'detail',
-      href,
-      external: false,
-      disabled: !href,
-    };
+    // No page, or page but the viewer can't open it → the unified detail.
+    return { label: 'View details', action: 'detail', href: detailHref, external: false };
   }
 
   // Off-site.
   if (card.kindData.subKind === 'external-link') {
     const href = safeExternalHref(card.kindData.externalUrl);
     if (href) {
-      return { label: 'Visit', action: 'visit', href, external: true, disabled: false };
+      return { label: 'Visit', action: 'visit', href, external: true };
     }
-    // No usable external target (missing / non-https) — no detail page yet (P2c).
-    return { label: 'View details', action: 'detail', href: undefined, external: false, disabled: true };
+    // No usable external target (missing / non-https) → the unified detail.
+    return { label: 'View details', action: 'detail', href: detailHref, external: false };
   }
 
-  // Off-site connect (OAuth). The connect flow / listing detail is P2c — inert here.
-  return { label: 'Connect', action: 'connect', href: undefined, external: false, disabled: true };
+  // Off-site connect (OAuth) — the Connect affordance lives on the detail page.
+  return { label: 'View details', action: 'detail', href: detailHref, external: false };
 }
