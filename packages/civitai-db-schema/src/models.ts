@@ -1360,8 +1360,6 @@ export interface Image {
   tags?: TagsOnImageDetails[];
   tagVotes?: TagsOnImageVote[];
   tagComposites?: ImageTag[];
-  metrics?: ImageMetric[];
-  stats?: ImageStat | null;
   modHelper?: ImageModHelper | null;
   resources?: ImageResource[];
   resourceHelper?: ImageResourceHelper[];
@@ -1474,24 +1472,6 @@ export interface ResourceOverride {
   modelVersionId: number;
   type: ModelHashType;
   createdAt: Date;
-}
-
-export interface ImageMetric {
-  image?: Image;
-  imageId: number;
-  timeframe: MetricTimeframe;
-  likeCount: number;
-  dislikeCount: number;
-  laughCount: number;
-  cryCount: number;
-  heartCount: number;
-  commentCount: number;
-  collectedCount: number;
-  tippedCount: number;
-  tippedAmountCount: number;
-  viewCount: number;
-  reactionCount: number;
-  updatedAt: Date;
 }
 
 export interface ImageRatingRequest {
@@ -4017,66 +3997,6 @@ export interface TagRank {
   articleCountMonthRank: number;
   articleCountYearRank: number;
   articleCountAllTimeRank: number;
-}
-
-export interface ImageStat {
-  imageId: number;
-  image?: Image;
-  cryCountDay: number;
-  cryCountWeek: number;
-  cryCountMonth: number;
-  cryCountYear: number;
-  cryCountAllTime: number;
-  dislikeCountDay: number;
-  dislikeCountWeek: number;
-  dislikeCountMonth: number;
-  dislikeCountYear: number;
-  dislikeCountAllTime: number;
-  heartCountDay: number;
-  heartCountWeek: number;
-  heartCountMonth: number;
-  heartCountYear: number;
-  heartCountAllTime: number;
-  laughCountDay: number;
-  laughCountWeek: number;
-  laughCountMonth: number;
-  laughCountYear: number;
-  laughCountAllTime: number;
-  likeCountDay: number;
-  likeCountWeek: number;
-  likeCountMonth: number;
-  likeCountYear: number;
-  likeCountAllTime: number;
-  commentCountDay: number;
-  commentCountWeek: number;
-  commentCountMonth: number;
-  commentCountYear: number;
-  commentCountAllTime: number;
-  reactionCountDay: number;
-  reactionCountWeek: number;
-  reactionCountMonth: number;
-  reactionCountYear: number;
-  reactionCountAllTime: number;
-  collectedCountDay: number;
-  collectedCountWeek: number;
-  collectedCountMonth: number;
-  collectedCountYear: number;
-  collectedCountAllTime: number;
-  tippedCountDay: number;
-  tippedCountWeek: number;
-  tippedCountMonth: number;
-  tippedCountYear: number;
-  tippedCountAllTime: number;
-  tippedAmountCountDay: number;
-  tippedAmountCountWeek: number;
-  tippedAmountCountMonth: number;
-  tippedAmountCountYear: number;
-  tippedAmountCountAllTime: number;
-  viewCountDay: number;
-  viewCountWeek: number;
-  viewCountMonth: number;
-  viewCountYear: number;
-  viewCountAllTime: number;
 }
 
 export interface ImageModHelper {

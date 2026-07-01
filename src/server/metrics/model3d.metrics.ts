@@ -5,6 +5,7 @@ import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { executeRefresh, getAffected } from '~/server/metrics/metric-helpers';
 import type { Task } from '~/server/utils/concurrency-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { getImageMetricsObject } from '~/server/services/image.service';
 import { createLogger } from '~/utils/logging';
 
 const log = createLogger('metrics:model3d');
@@ -269,38 +270,56 @@ async function getBuzzTasks(ctx: MetricContext) {
 }
 
 // ---------------------------------------------------------------------------
-// Reactions — denormalized from the thumbnail Image's ImageMetric
-// (see plan §2.10 / §6.15: reactions ride on the thumbnail Image, no
-// dedicated Model3DReaction table. We copy the rolled-up reactionCount
-// from the AllTime ImageMetric so feed sorts can read it locally.)
+// Reactions — the thumbnail Image's rolled-up reaction total.
+// Reactions ride on the thumbnail Image (no dedicated Model3DReaction table).
+// The legacy PG `ImageMetric` table this used to read was retired; we now read
+// the count from ClickHouse (the image feed's source of truth) and copy it onto
+// Model3DMetric so feed sorts can read it locally.
 // ---------------------------------------------------------------------------
 async function getReactionTasks(ctx: MetricContext) {
   const affected = await getAffected(ctx)`
-    -- Model3Ds whose thumbnail Image's metrics changed recently.
-    SELECT m3d.id
+    -- Model3Ds whose thumbnail Image was reacted to recently.
+    SELECT DISTINCT m3d.id
     FROM "Model3D" m3d
-    JOIN "ImageMetric" im
-      ON im."imageId" = m3d."thumbnailImageId"
-      AND im.timeframe = 'AllTime'::"MetricTimeframe"
+    JOIN "ImageReaction" ir ON ir."imageId" = m3d."thumbnailImageId"
     WHERE m3d."thumbnailImageId" IS NOT NULL
-      AND im."updatedAt" > ${ctx.lastUpdate}
+      AND ir."createdAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getReactionTasks', i + 1, 'of', tasks.length);
-    await getMetrics(ctx)`
-      -- pull AllTime reactionCount from the thumbnail's ImageMetric
-      SELECT
-        m3d.id AS "model3dId",
-        COALESCE(im."reactionCount", 0)::int AS "reactionCount"
-      FROM "Model3D" m3d
-      LEFT JOIN "ImageMetric" im
-        ON im."imageId" = m3d."thumbnailImageId"
-        AND im.timeframe = 'AllTime'::"MetricTimeframe"
-      WHERE m3d.id IN (${ids})
-        AND m3d.id BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
-    `;
+
+    // Map each Model3D to its thumbnail image id (PG)...
+    const thumbQuery = await ctx.pg.cancellableQuery<{
+      model3dId: number;
+      thumbnailImageId: number | null;
+    }>(
+      `SELECT id AS "model3dId", "thumbnailImageId"
+       FROM "Model3D"
+       WHERE id = ANY($1::int[]) AND "thumbnailImageId" IS NOT NULL`,
+      [ids]
+    );
+    ctx.jobContext.on('cancel', thumbQuery.cancel);
+    const thumbs = await thumbQuery.result();
+    if (!thumbs.length) return;
+
+    // ...then read the thumbnails' reaction totals from ClickHouse.
+    const imageIds = thumbs
+      .map((t) => t.thumbnailImageId)
+      .filter((id): id is number => id != null);
+    const metrics = await getImageMetricsObject(imageIds.map((id) => ({ id })));
+
+    for (const { model3dId, thumbnailImageId } of thumbs) {
+      const m = thumbnailImageId != null ? metrics[thumbnailImageId] : undefined;
+      const reactionCount =
+        (m?.reactionLike ?? 0) +
+        (m?.reactionHeart ?? 0) +
+        (m?.reactionLaugh ?? 0) +
+        (m?.reactionCry ?? 0);
+      ctx.updates[model3dId] ??= { [ctx.idKey]: model3dId };
+      ctx.updates[model3dId].reactionCount = reactionCount;
+    }
     log('getReactionTasks', i + 1, 'of', tasks.length, 'done');
   });
 

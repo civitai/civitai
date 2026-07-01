@@ -7,7 +7,6 @@ import {
   articleMetrics,
   bountyEntryMetrics,
   clubPostMetrics,
-  imageMetrics,
   postMetrics,
   questionMetrics,
 } from '~/server/metrics';
@@ -148,7 +147,6 @@ const deleteReaction = async ({
         return;
       }
       await dbWrite.imageReaction.deleteMany({ where: { id } });
-      await imageMetrics.queueUpdate(entityId);
       return;
     case 'post':
       if (!id) {
