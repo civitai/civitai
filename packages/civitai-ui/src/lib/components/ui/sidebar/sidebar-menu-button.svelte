@@ -61,7 +61,9 @@
 		"data-slot": "sidebar-menu-button",
 		"data-sidebar": "menu-button",
 		"data-size": size,
-		"data-active": isActive,
+		// Only present when active — the compiled `[data-active]` variant matches on attribute PRESENCE, so a
+		// `data-active="false"` (Svelte stringifies boolean data-attrs) would wrongly highlight every item.
+		"data-active": isActive || undefined,
 		...restProps,
 	});
 </script>
