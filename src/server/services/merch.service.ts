@@ -29,6 +29,7 @@ export const shopifyOrderPaidSchema = z.object({
     .nullish(),
   discount_codes: z.array(z.object({ code: z.string() })).nullish(),
   test: z.boolean().nullish(),
+  currency: z.string().nullish(),
 });
 export type ShopifyOrderPaid = z.infer<typeof shopifyOrderPaidSchema>;
 
@@ -174,6 +175,19 @@ export async function processShopifyOrderPaid(order: ShopifyOrderPaid) {
   // Shopify test-mode orders never involve real money — don't grant Buzz for them.
   if (order.test)
     return { shopifyOrderId, buzzAmount: 0, userId: null, status: 'Skipped' as const };
+
+  // The top-level order money fields are in the shop's base currency, and we treat
+  // that number as USD dollars × the per-dollar rate. That's only correct while the
+  // store's base currency is USD (verified USD as of 2026-07-01). If the base
+  // currency ever changes, skip rather than silently mis-grant on an unconverted amount.
+  if (order.currency && order.currency.toUpperCase() !== 'USD') {
+    log({
+      message: 'Non-USD order currency — skipping Buzz grant',
+      shopifyOrderId,
+      currency: order.currency,
+    });
+    return { shopifyOrderId, buzzAmount: 0, userId: null, status: 'Skipped' as const };
+  }
 
   const email = (order.customer?.email ?? order.email ?? '').toLowerCase();
   const shopifyCustomerId = order.customer?.id ?? null;
