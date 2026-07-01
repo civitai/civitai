@@ -3,7 +3,7 @@ import type { QueryResult, QueryResultRow } from 'pg';
 import { Pool, types } from 'pg';
 import { performance } from 'node:perf_hooks';
 import client from 'prom-client';
-import { loadDbEnv, type DbConfig, type DbLogFn } from './env';
+import { type DbLogFn } from './env';
 import { limitConcurrency } from './concurrency-helpers';
 
 // Fix Dates: TIMESTAMP comes back as a UTC Date (was set per-pool-module in the app).
@@ -67,106 +67,82 @@ export type AugmentedPool = Pool & {
   ) => Promise<CancellableResult<R>>;
 };
 
-type ClientInstanceType =
-  | 'primary'
-  | 'primaryRead'
-  | 'primaryReadLong'
-  | 'notification'
-  | 'notificationRead'
-  | 'datapacketRead'
-  | 'apps';
-export type GetClientOptions = Partial<DbConfig> & {
-  instance?: ClientInstanceType;
-  /** Debug logger (app-defined). Defaults to a no-op. */
+export type CreatePoolOptions = {
+  /** Postgres connection string. `sslmode=no-verify` is appended unless `ssl: false`. */
+  connectionString: string;
+  /** Prometheus `pool` label for acquire-latency metrics + the "Creating <label> client" log line. */
+  label?: string;
+  /** Postgres `application_name` (shows in pg_stat_activity). */
+  applicationName?: string;
+  max?: number;
+  min?: number;
+  idleTimeoutMillis?: number;
+  connectionTimeoutMillis?: number;
+  /** Startup `statement_timeout` (ms). Omit for PgBouncer-fronted pools, which reject it as a startup
+   * param — use `perConnectionStatementTimeout` there instead. */
+  statementTimeout?: number;
+  /** If set, `SET statement_timeout` per-connection on `connect` — for PgBouncer, which ignores the
+   * startup param. */
+  perConnectionStatementTimeout?: number;
+  /** Default true → append `sslmode=no-verify`. */
+  ssl?: boolean;
   log?: DbLogFn;
 };
 
-export function getClient(options: GetClientOptions = {}) {
-  const { instance = 'primary', log: logOption, ...envOverrides } = options;
-  const config = { ...loadDbEnv(), ...envOverrides };
+/**
+ * Build one augmented pg pool from an explicit connection string + pool tuning. This is the shared
+ * core: it owns the `cancellableQuery` augmentation, the connect-latency metric wrap, and the SSL/param
+ * wiring. `getClient` (env/instance-driven, monolith-facing) and `createClients` (connection-string,
+ * app-facing) both delegate here so there is exactly one pool implementation.
+ */
+export function createPool(options: CreatePoolOptions): AugmentedPool {
+  const {
+    connectionString: rawUrl,
+    label = 'node-pg',
+    applicationName,
+    max = 20,
+    min = 0,
+    idleTimeoutMillis = 30_000,
+    connectionTimeoutMillis = 0,
+    statementTimeout,
+    perConnectionStatementTimeout,
+    ssl = true,
+    log: logOption,
+  } = options;
   const log: DbLogFn = logOption ?? (() => {});
 
-  const instanceUrlMap: Record<ClientInstanceType, string> = {
-    notification: config.notificationUrl,
-    notificationRead: config.notificationReplicaUrl ?? config.notificationUrl,
-    primary: config.databaseUrl,
-    primaryRead: config.replicaUrl ?? config.databaseUrl,
-    primaryReadLong: config.replicaLongUrl ?? config.databaseUrl,
-    datapacketRead: config.datapacketReadUrl ?? config.databaseUrl,
-    // App Blocks KV datastore — empty-string sentinel when unset; appsDb never calls getClient
-    // unless APPS_DATABASE_URL is configured (see src/server/db/appsDb.ts).
-    apps: config.appsUrl ?? '',
-  };
+  log(`Creating ${label} client`);
 
-  log(`Creating ${instance} client`);
-
-  const envUrl = instanceUrlMap[instance];
-  const connectionStringUrl = new URL(envUrl);
-  if (config.ssl !== false) connectionStringUrl.searchParams.set('sslmode', 'no-verify');
+  const connectionStringUrl = new URL(rawUrl);
+  if (ssl !== false) connectionStringUrl.searchParams.set('sslmode', 'no-verify');
   const connectionString = connectionStringUrl.toString();
-
-  const isNotification = instance === 'notification' || instance === 'notificationRead';
-  const appBaseName = isNotification
-    ? 'notif-pg'
-    : instance === 'datapacketRead'
-    ? 'dp-read-pg'
-    : instance === 'apps'
-    ? 'apps-pg'
-    : 'node-pg';
-
-  // DO managed Postgres PgBouncer rejects statement_timeout as a startup parameter.
-  // For notification instances, we set it per-connection via SET instead.
-  const notifStatementTimeout =
-    instance === 'notificationRead'
-      ? (config.isDatapacket ? config.readTimeout ?? 10000 : undefined)
-      : instance === 'notification'
-      ? config.writeTimeout
-      : undefined;
 
   const pool = new Pool({
     connectionString,
-    connectionTimeoutMillis: config.isDatapacket
-      ? config.connectionTimeout || 5000
-      : config.connectionTimeout,
-    min: 0,
-    max: isNotification ? (config.notificationPoolMax ?? config.poolMax) : config.poolMax,
-    // trying this for leaderboard job
-    idleTimeoutMillis: instance === 'primaryReadLong' ? 300_000 : config.poolIdleTimeout,
-    statement_timeout:
-      (isNotification || instance === 'datapacketRead') && config.isDatapacket
-        ? undefined // DP: set per-connection below (PgBouncer ignores startup params)
-        : instance === 'notificationRead'
-        ? undefined // DOKS: standby doesn't support this
-        : instance === 'primaryRead'
-        ? config.readTimeout
-        : config.writeTimeout,
-    application_name: `${appBaseName}${config.podName ? '-' + config.podName : ''}`,
+    connectionTimeoutMillis,
+    min,
+    max,
+    idleTimeoutMillis,
+    statement_timeout: statementTimeout,
+    application_name: applicationName,
   }) as AugmentedPool;
 
-  // Set statement_timeout per-connection on DP instances that go through PgBouncer
-  // (PgBouncer ignores statement_timeout as a startup parameter)
-  if (config.isDatapacket && isNotification && notifStatementTimeout) {
+  // Per-connection statement_timeout for PgBouncer-fronted pools (which ignore the startup param).
+  if (perConnectionStatementTimeout) {
     pool.on('connect', (client) => {
-      client.query(`SET statement_timeout = ${Number(notifStatementTimeout)}`).catch(() => {});
-    });
-  }
-  if (config.isDatapacket && instance === 'datapacketRead') {
-    const readTimeout = config.readTimeout ?? 120000; // 2 minutes default
-    pool.on('connect', (client) => {
-      client.query(`SET statement_timeout = ${Number(readTimeout)}`).catch(() => {});
+      client.query(`SET statement_timeout = ${Number(perConnectionStatementTimeout)}`).catch(() => {});
     });
   }
 
-  // Wrap pool.connect() to record acquire latency. The pg.Pool `acquire` event fires
-  // when a client is handed out — it does NOT tell you how long the caller awaited.
-  // Timing around the await is the only way to see queue-wait time, which is the
-  // signal we want during pool-saturation incidents.
+  // Wrap pool.connect() to record acquire latency. The pg.Pool `acquire` event fires when a client is
+  // handed out — it does NOT tell you how long the caller awaited. Timing around the await is the only
+  // way to see queue-wait time, which is the signal we want during pool-saturation incidents.
   //
-  // pool.connect has two forms: Promise (no args) and callback ((err, client, done) => ...).
-  // Pool.prototype.query uses the CALLBACK form internally, so any pool.query(...) caller
-  // (including the /api/health probe) routes through here via that path. The async wrap
-  // resolves immediately for the callback form (pg-pool returns undefined synchronously),
-  // so we must wrap the callback itself to time when the client is actually delivered.
+  // pool.connect has two forms: Promise (no args) and callback ((err, client, done) => ...). Pool.query
+  // uses the CALLBACK form internally, so any pool.query(...) caller (incl. the /api/health probe)
+  // routes through here via that path. The async wrap resolves immediately for the callback form
+  // (pg-pool returns undefined synchronously), so we must wrap the callback itself to time when the
+  // client is actually delivered.
   const originalConnect = pool.connect.bind(pool) as typeof pool.connect;
   pool.connect = ((...args: Parameters<typeof pool.connect>) => {
     const start = performance.now();
@@ -178,10 +154,7 @@ export function getClient(options: GetClientOptions = {}) {
       const cb = args[0] as (err: Error | undefined, client: any, done: any) => void;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return (originalConnect as any)((err: Error | undefined, client: any, done: any) => {
-        pgPoolAcquireHistogram.observe(
-          { pool: instance, result: err ? 'err' : 'ok' },
-          elapsedSeconds()
-        );
+        pgPoolAcquireHistogram.observe({ pool: label, result: err ? 'err' : 'ok' }, elapsedSeconds());
         cb(err, client, done);
       });
     }
@@ -191,11 +164,11 @@ export function getClient(options: GetClientOptions = {}) {
     return (originalConnect as any)(...args).then(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (conn: any) => {
-        pgPoolAcquireHistogram.observe({ pool: instance, result: 'ok' }, elapsedSeconds());
+        pgPoolAcquireHistogram.observe({ pool: label, result: 'ok' }, elapsedSeconds());
         return conn;
       },
       (e: unknown) => {
-        pgPoolAcquireHistogram.observe({ pool: instance, result: 'err' }, elapsedSeconds());
+        pgPoolAcquireHistogram.observe({ pool: label, result: 'err' }, elapsedSeconds());
         throw e;
       }
     );
@@ -229,7 +202,7 @@ export function getClient(options: GetClientOptions = {}) {
     }
 
     // Logging
-    log(instance, combineSqlWithParams(sql));
+    log(`${label}`, combineSqlWithParams(sql));
 
     let done = false;
     const query =
@@ -257,6 +230,45 @@ export function getClient(options: GetClientOptions = {}) {
   };
 
   return pool;
+}
+
+export type CreateClientsOptions = Omit<CreatePoolOptions, 'connectionString'> & {
+  /** Write (primary) connection string. */
+  writeUrl: string;
+  /** Read (replica) connection string. Omit — or pass the same value as `writeUrl` — for a single-DB
+   * setup, in which case `read` aliases `write` (one pool, no second connection). */
+  readUrl?: string;
+};
+
+export type ReadWriteClients = {
+  /** The write pool. Built + memoized on first access. */
+  write: () => AugmentedPool;
+  /** The read pool — aliases `write` when `readUrl` is omitted or equals `writeUrl`. */
+  read: () => AugmentedPool;
+};
+
+/**
+ * Build a read/write pool pair from explicit connection strings — the app-facing seam for
+ * "give me DB access" without knowing about the monolith's env-driven `ClientInstanceType` map. Any app
+ * passes its own connection strings (typically straight from env) plus optional pool tuning; single-DB
+ * setups omit `readUrl` and get one shared pool.
+ *
+ * Both accessors are LAZY + memoized — nothing builds a pool (or parses a URL) until first called, so
+ * importing a shim that calls this never connects (build / typecheck / no-DB tests stay safe).
+ */
+export function createClients(options: CreateClientsOptions): ReadWriteClients {
+  const { writeUrl, readUrl, ...poolOptions } = options;
+  let write: AugmentedPool | undefined;
+  let read: AugmentedPool | undefined;
+
+  const getWrite = () => (write ??= createPool({ ...poolOptions, connectionString: writeUrl }));
+  const getRead = () =>
+    (read ??=
+      !readUrl || readUrl === writeUrl
+        ? getWrite()
+        : createPool({ ...poolOptions, connectionString: readUrl }));
+
+  return { write: getWrite, read: getRead };
 }
 
 /**

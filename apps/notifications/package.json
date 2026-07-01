@@ -1,0 +1,37 @@
+{
+  "name": "@civitai/notifications-app",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@civitai/axiom": "workspace:*",
+    "@civitai/db": "workspace:*",
+    "@civitai/db-schema": "workspace:*",
+    "@civitai/notifications": "workspace:*",
+    "@civitai/redis": "workspace:*",
+    "dayjs": "^1.11.13",
+    "fastify": "^5.2.1",
+    "lodash-es": "^4.17.21",
+    "pg-format": "^1.0.4",
+    "prom-client": "^14.2.0",
+    "zod": "^4.0.17"
+  },
+  "devDependencies": {
+    "@types/lodash-es": "^4.17.7",
+    "@types/node": "^20.19.9",
+    "@types/pg": "^8.11.10",
+    "@types/pg-format": "^1.0.5",
+    "tsup": "^8.5.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.2",
+    "vitest": "^4.0.18"
+  }
+}

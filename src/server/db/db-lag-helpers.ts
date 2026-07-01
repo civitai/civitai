@@ -1,8 +1,15 @@
+import { createLagTracker } from '@civitai/db';
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { notifDbRead, notifDbWrite } from '~/server/db/notifDb';
 import { FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { redis, REDIS_KEYS, type RedisKeyTemplateCache } from '~/server/redis/client';
+
+// Shared recent-write tracker (@civitai/db). Redis is injected as the flag store — the package stays
+// redis-agnostic. The Flipt global kill-switch + per-entity key scheme below stay app-side (domain).
+const lagTracker = createLagTracker<RedisKeyTemplateCache>({
+  store: redis,
+  delaySeconds: env.REPLICATION_LAG_DELAY,
+});
 
 type LaggingType =
   | 'model'
@@ -21,7 +28,7 @@ type LaggingType =
   | 'userCollections';
 
 function lagKey(type: LaggingType, id: number | string) {
-  return `${REDIS_KEYS.LAG_HELPER}:${type}:${id}` as const;
+  return `${REDIS_KEYS.LAG_HELPER}:${type}:${id}` as RedisKeyTemplateCache;
 }
 
 function isHighReplicationLagMode() {
@@ -41,14 +48,12 @@ export async function getDbWithoutLag(type?: LaggingType, id?: number | string) 
   if (type === undefined || id === undefined || id === null) {
     return isHighReplicationLagMode() ? dbWrite : dbRead;
   }
-  const value = await redis.get(lagKey(type, id));
-  if (value) return dbWrite;
-  return dbRead;
+  return (await lagTracker.isStale(lagKey(type, id))) ? dbWrite : dbRead;
 }
 
 export async function preventReplicationLag(type: LaggingType, id?: number | string) {
-  if (env.REPLICATION_LAG_DELAY <= 0 || id === undefined || id === null) return;
-  await redis.set(lagKey(type, id), 'true', { EX: env.REPLICATION_LAG_DELAY });
+  if (id === undefined || id === null) return;
+  await lagTracker.markFresh(lagKey(type, id));
 }
 
 // Batch variant: routes the whole batch to dbWrite when ANY id has the lag flag.
@@ -57,15 +62,13 @@ export async function preventReplicationLag(type: LaggingType, id?: number | str
 // not override the batch path — callers with ids are precise.
 export async function getDbWithoutLagBatch(type: LaggingType, ids: (number | string)[]) {
   if (env.REPLICATION_LAG_DELAY <= 0 || ids.length === 0) return dbRead;
-  const values = await Promise.all(ids.map((id) => redis.get(lagKey(type, id))));
-  return values.some(Boolean) ? dbWrite : dbRead;
+  const stale = await Promise.all(ids.map((id) => lagTracker.isStale(lagKey(type, id))));
+  return stale.some(Boolean) ? dbWrite : dbRead;
 }
 
 export async function preventReplicationLagBatch(type: LaggingType, ids: (number | string)[]) {
   if (env.REPLICATION_LAG_DELAY <= 0 || ids.length === 0) return;
-  await Promise.all(
-    ids.map((id) => redis.set(lagKey(type, id), 'true', { EX: env.REPLICATION_LAG_DELAY }))
-  );
+  await Promise.all(ids.map((id) => lagTracker.markFresh(lagKey(type, id))));
 }
 
 // Readers route via getDbWithoutLag('model', modelId) for model-page queries AND
@@ -86,14 +89,3 @@ export async function preventModelVersionLagBatch(
 
 export const preventModelVersionLag = (modelId: number, versionId: number) =>
   preventModelVersionLagBatch(modelId, versionId);
-
-// Same as getDbWithoutLag / getDbWithoutLagBatch but for the notifDb pool.
-export async function getNotifDbWithoutLag(type?: LaggingType, id?: number | string) {
-  if (env.REPLICATION_LAG_DELAY <= 0) return notifDbRead;
-  if (type === undefined || id === undefined || id === null) {
-    return isHighReplicationLagMode() ? notifDbWrite : notifDbRead;
-  }
-  const value = await redis.get(lagKey(type, id));
-  if (value) return notifDbWrite;
-  return notifDbRead;
-}
