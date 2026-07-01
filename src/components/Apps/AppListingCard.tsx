@@ -7,7 +7,7 @@ import {
 } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
-import { useState } from 'react';
+import { type MouseEvent, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import {
   CATEGORY_ICONS,
@@ -136,7 +136,7 @@ function CreatorChip({ creator }: { creator: ListingCard['creator'] }) {
       href={`/user/${encodeURIComponent(creator.username)}`}
       underline="never"
       c="dimmed"
-      onClick={(e) => e.stopPropagation()}
+      onClick={(e: MouseEvent) => e.stopPropagation()}
     >
       <Group gap={6} wrap="nowrap">
         <Avatar src={avatarSrc} alt="" radius="xl" size={20}>
