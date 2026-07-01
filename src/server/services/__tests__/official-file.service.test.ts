@@ -19,8 +19,19 @@ const officialVaeRow = {
   id: 900,
   name: 'boogu.vae.safetensors',
   sizeKB: 300_000,
+  type: 'Model',
   modelVersionId: 42,
-  modelVersion: { name: 'v1', modelId: 7, model: { name: 'Boogu VAE' } },
+  modelVersion: { name: 'v1', modelId: 7, model: { name: 'Boogu VAE', type: 'VAE' } },
+};
+
+// A text encoder bundled inside a checkpoint: the file's own type carries the role.
+const officialBundledEncoderRow = {
+  id: 901,
+  name: 'qwen3.encoder.safetensors',
+  sizeKB: 3_400_000,
+  type: 'Text Encoder',
+  modelVersionId: 43,
+  modelVersion: { name: 'v1', modelId: 8, model: { name: 'Z Image Base', type: 'Checkpoint' } },
 };
 
 beforeEach(() => vi.clearAllMocks());
@@ -37,7 +48,7 @@ describe('findOfficialFilesBySize', () => {
 });
 
 describe('findOfficialFileByHash', () => {
-  it('matches a canonical file that is itself type="Model" and derives componentType from the host', async () => {
+  it('matches a canonical type="Model" file and derives componentType from the official model type', async () => {
     mockDbRead.modelFile.findFirst.mockResolvedValue(officialVaeRow);
     // Pass lowercase input (as computeBlobSha256 produces); query must uppercase it to match stored UPPERCASE hex
     const match = await findOfficialFileByHash({ sha256: 'abcdef', hostType: 'VAE' });
@@ -58,10 +69,40 @@ describe('findOfficialFileByHash', () => {
     expect(arg.where.modelVersion.model.userId).toBe(OFFICIAL);
   });
 
+  it('matches on hash regardless of the host label, using the official identity for componentType', async () => {
+    // The uploaded file is a VAE but the user labeled it 'Other' (or wrongly 'Text Encoder').
+    // The match is SHA256-only and componentType comes from the official VAE model, not the label.
+    mockDbRead.modelFile.findFirst.mockResolvedValue(officialVaeRow);
+    for (const hostType of ['Other', 'Text Encoder']) {
+      const match = await findOfficialFileByHash({ sha256: 'abcdef', hostType });
+      expect(match?.componentType).toBe('VAE');
+      expect(match?.fileId).toBe(900);
+    }
+  });
+
+  it('derives componentType from the official file type for a bundled component', async () => {
+    // Official text encoder bundled in a checkpoint (file type carries the role), host labeled 'Other'.
+    mockDbRead.modelFile.findFirst.mockResolvedValue(officialBundledEncoderRow);
+    const match = await findOfficialFileByHash({ sha256: 'abcdef', hostType: 'Other' });
+    expect(match?.componentType).toBe('TextEncoder');
+  });
+
   it('returns null for a primary-weights host without querying', async () => {
     expect(await findOfficialFileByHash({ sha256: 'abc', hostType: 'Model' })).toBeNull();
     expect(await findOfficialFileByHash({ sha256: 'abc', hostType: 'Pruned Model' })).toBeNull();
     expect(mockDbRead.modelFile.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('returns null when the official match is a checkpoint (not a linkable accessory)', async () => {
+    mockDbRead.modelFile.findFirst.mockResolvedValue({
+      id: 902,
+      name: 'flux.safetensors',
+      sizeKB: 10_000_000,
+      type: 'Model',
+      modelVersionId: 44,
+      modelVersion: { name: 'v1', modelId: 9, model: { name: 'Flux', type: 'Checkpoint' } },
+    });
+    expect(await findOfficialFileByHash({ sha256: 'abcdef', hostType: 'Other' })).toBeNull();
   });
 
   it('returns null when no official file has the hash', async () => {
