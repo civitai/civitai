@@ -3,6 +3,7 @@ import { createSessionClient, createSessionTokenClient, sessionCookieName } from
 import { setSessionCookie, clearLegacyCookies, type CookieWritable } from './civ-cookie';
 import { isRevoked } from './session-verifier';
 import { decodeTokenClaim } from './token-claims';
+import { observeSessionLeg } from './session-metrics';
 
 // The main app's handle to the centralized auth hub (thin-session model — docs/main-app-auth-cutover.md).
 // Validation routes through this client (getHubSession) instead of next-auth's jwt()/session(); refresh +
@@ -10,7 +11,19 @@ import { decodeTokenClaim } from './token-claims';
 
 // Inject the shared revocation check so the read path rejects a logged-out/banned token even on a cache hit
 // (otherwise a revoked civ-token resolves until the session:data2 entry is re-warmed). See session-verifier.ts.
-export const sessionClient = createSessionClient({ isRevoked });
+// Also inject the leg-instrumentation callbacks so the identity fetch + JWKS verify are timed on the CALLING
+// app (the hub can't see this hairpin) — see session-metrics.ts. The package emits the raw timings; we record
+// them to prom-client here.
+export const sessionClient = createSessionClient({
+  isRevoked,
+  onIdentityLeg: (outcome, durationSeconds) => observeSessionLeg('identity', outcome, durationSeconds),
+  onJwksLeg: (outcome, durationSeconds) => observeSessionLeg('jwks', outcome, durationSeconds),
+  // The API-key/OAuth by-id read + the hub write paths hairpin too (bearer-token.ts, App Blocks, ban/logout) —
+  // now internally routed + bounded by hubFetch; instrument them under their own leg labels.
+  onIdentityByIdLeg: (outcome, durationSeconds) =>
+    observeSessionLeg('identity-by-id', outcome, durationSeconds),
+  onHubWriteLeg: (outcome, durationSeconds) => observeSessionLeg('hub-write', outcome, durationSeconds),
+});
 // Session-token lifecycle (rolling refresh / revoke) — the hub contract lives in the package, not inline here.
 const sessionTokenClient = createSessionTokenClient();
 

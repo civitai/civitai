@@ -50,6 +50,7 @@ vi.mock('~/server/redis/client', () => ({
       ALL: 'sys:session:all',
     },
   },
+  withSysReadDeadline: <T>(p: Promise<T>) => p, // transparent in tests (matches rate-limiting.test.ts)
 }));
 
 vi.mock('~/server/utils/cache-helpers', () => ({

@@ -37,7 +37,11 @@ const h = vi.hoisted(() => {
   return { hashes, strings, KEYS, sysRedis };
 });
 
-vi.mock('~/server/redis/client', () => ({ sysRedis: h.sysRedis, ...h.KEYS }));
+vi.mock('~/server/redis/client', () => ({
+  sysRedis: h.sysRedis,
+  ...h.KEYS,
+  withSysReadDeadline: <T>(p: Promise<T>) => p, // transparent in tests (matches rate-limiting.test.ts)
+}));
 // session-invalidation marks TOKEN_STATE via the atomic eval helper (hSetMultiWithTTL); the
 // fake sysRedis above has no `eval`, so stub the helper to write straight to the in-memory hash.
 vi.mock('~/server/redis/atomic', () => ({
