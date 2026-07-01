@@ -8,10 +8,10 @@
 - Env: `SHOPIFY_SHOP_DOMAIN` / `SHOPIFY_WEBHOOK_SECRET` / `SHOPIFY_CLIENT_ID` / `SHOPIFY_CLIENT_SECRET` (+ optional static `SHOPIFY_ADMIN_TOKEN`) in `server-schema.ts` + `.env-example`.
 - Migration: `prisma/migrations/20260629000000_shopify_merch_blue_buzz/` — `ShopifyCustomerLink` +
   `ShopifyMerchOrder` + `ShopifyMerchOrderStatus` enum. Models added to `schema.full.prisma` (the tracked
-  source; root `prisma/schema.prisma` is gitignored/generated). **NOT applied** — apply SQL manually per repo rule.
-- `src/server/utils/merch-buzz.ts` — pure buzz math: 250 Blue Buzz/$1 × coupon multiplier (`MERCH_BUZZ_COUPON_MULTIPLIERS`).
+  source; root `prisma/schema.prisma` is gitignored/generated). Applied to prod + dev 2026-06-30.
+- `src/server/utils/merch-buzz.ts` — pure buzz math: 250 Blue Buzz/$1 × coupon multiplier (`MERCH_BUZZ_COUPON_MULTIPLIERS`), capped at `MERCH_BUZZ_MAX_PER_ORDER`.
 - `src/server/services/merch.service.ts` — `processShopifyOrderPaid` (record + auto-grant if linked) and
-  `claimMerchOrder` (verify email, persist customer→user link, back-pay pending orders). Grants via
+  `claimMerchOrderByKey` (verify signed key, persist customer→user link, back-pay pending orders). Grants via
   `createBuzzTransaction` (Reward, `blue`, idempotent `externalTransactionId: merchPurchase:<orderId>`).
 - `src/pages/api/webhooks/shopify.ts` — HMAC-verified (`X-Shopify-Hmac-Sha256`, raw body), handles `orders/paid`.
 

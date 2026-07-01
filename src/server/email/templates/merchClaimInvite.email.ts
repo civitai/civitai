@@ -33,6 +33,6 @@ export const merchClaimInviteEmail = createEmail({
   testData: async () => ({
     to: 'test@tester.com',
     buzzAmount: 5000,
-    claimUrl: 'https://civitai.com/merch/claim?order=example',
+    claimUrl: 'https://civitai.com/merch/claim?key=example',
   }),
 });
