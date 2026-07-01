@@ -626,6 +626,10 @@ export interface User {
   appUserScopeGrants?: AppUserScopeGrant[];
   appBlockReviews?: AppBlockReview[];
   appDevForgejoIdentity?: AppDevForgejoIdentity | null;
+  appListings?: AppListing[];
+  appListingReviews?: AppListingReview[];
+  appListingPublishRequestsSubmitted?: AppListingPublishRequest[];
+  appListingPublishRequestsReviewed?: AppListingPublishRequest[];
 }
 
 export interface CustomerSubscription {
@@ -1387,6 +1391,9 @@ export interface Image {
   challengeWins?: ChallengeWinner[];
   model3dThumbnails?: Model3D[];
   model3dSources?: Model3D[];
+  appListingIcons?: AppListing[];
+  appListingCovers?: AppListing[];
+  appListingScreenshots?: AppListingScreenshot[];
 }
 
 export interface ImageTagForReview {
@@ -1760,6 +1767,7 @@ export interface OauthClient {
   buzzAttributions?: BlockBuzzAttribution[];
   spendAttributions?: BlockSpendAttribution[];
   subscriptionAttributions?: BlockSubscriptionAttribution[];
+  connectListings?: AppListing[];
 }
 
 export interface UserRole {
@@ -1817,6 +1825,7 @@ export interface AppBlock {
   scopeInvocations?: BlockScopeInvocation[];
   userScopeGrants?: AppUserScopeGrant[];
   reviews?: AppBlockReview[];
+  appListing?: AppListing | null;
 }
 
 export interface AppBlockReview {
@@ -1859,6 +1868,98 @@ export interface AppBlockPublishRequest {
   deployState: string | null;
   deployDetail: string | null;
   deployUpdatedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface AppListing {
+  id: string;
+  kind: string;
+  slug: string;
+  name: string;
+  tagline: string | null;
+  description: string | null;
+  iconId: number | null;
+  icon?: Image | null;
+  coverId: number | null;
+  cover?: Image | null;
+  category: string | null;
+  status: string;
+  contentRating: string | null;
+  externalUrl: string | null;
+  connectClientId: string | null;
+  connectClient?: OauthClient | null;
+  appBlockId: string | null;
+  appBlock?: AppBlock | null;
+  featured: boolean;
+  featuredOrder: number | null;
+  userId: number;
+  user?: User;
+  createdAt: Date;
+  updatedAt: Date;
+  screenshots?: AppListingScreenshot[];
+  reviews?: AppListingReview[];
+  metric?: AppListingMetric | null;
+  publishRequests?: AppListingPublishRequest[];
+}
+
+export interface AppListingScreenshot {
+  id: string;
+  appListingId: string;
+  appListing?: AppListing;
+  imageId: number | null;
+  image?: Image | null;
+  order: number;
+  caption: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface AppListingReview {
+  id: number;
+  appListingId: string;
+  appListing?: AppListing;
+  userId: number;
+  user?: User;
+  recommended: boolean;
+  details: string | null;
+  exclude: boolean;
+  tosViolation: boolean;
+  metadata: JsonValue | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface AppListingMetric {
+  appListingId: string;
+  appListing?: AppListing;
+  thumbsUpCount: number;
+  thumbsDownCount: number;
+  installCount: number;
+  openCount: number;
+  connectCount: number;
+  visitCount: number;
+  tippedCount: number;
+  tippedAmountCount: number;
+  updatedAt: Date;
+}
+
+export interface AppListingPublishRequest {
+  id: string;
+  appListingId: string | null;
+  appListing?: AppListing | null;
+  kind: string;
+  slug: string;
+  submittedByUserId: number;
+  submittedBy?: User;
+  submittedAt: Date;
+  status: string;
+  reviewedByUserId: number | null;
+  reviewedBy?: User | null;
+  reviewedAt: Date | null;
+  rejectionReason: string | null;
+  approvalNotes: string | null;
+  changelog: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
