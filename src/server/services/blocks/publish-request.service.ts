@@ -2564,16 +2564,31 @@ export function parseReviewDetail(raw: string | null | undefined): ReviewPreview
  * Stamp the review-preview lifecycle state onto the PENDING request. Keyed on
  * `{ id, status:'pending' }` so it can never write a non-pending row. Best-effort
  * (a status write must not break the preview/approve flow) but logged on miss.
+ *
+ * Pass `requireActivePreview` for the transitions driven by the async build
+ * callback / apply watcher (deploying → live / failed): it additionally requires
+ * the row's `deployState` to still be a `preview-*` value, so a preview a mod
+ * TORE DOWN mid-build (teardownPreview clears deployState to null but leaves
+ * status='pending') is NOT resurrected by a late callback write. The initial
+ * `preview-building` mark from previewRequest must NOT set this (it transitions
+ * from null / preview-failed → preview-building).
  */
 export async function markReviewPreviewState(
   publishRequestId: string,
   state: ReviewPreviewState,
-  detail: ReviewPreviewDetail
+  detail: ReviewPreviewDetail,
+  opts?: { requireActivePreview?: boolean }
 ): Promise<void> {
   try {
     const { dbWrite } = await import('~/server/db/client');
     const res = await dbWrite.appBlockPublishRequest.updateMany({
-      where: { id: publishRequestId, status: 'pending' },
+      where: {
+        id: publishRequestId,
+        status: 'pending',
+        // Only advance a row that is STILL an active preview (torn-down rows have
+        // deployState=null → excluded → no resurrection).
+        ...(opts?.requireActivePreview ? { deployState: { startsWith: 'preview-' } } : {}),
+      },
       data: {
         deployState: state,
         deployDetail: packReviewDetail(detail),

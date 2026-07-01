@@ -228,23 +228,46 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // it) so the failure/deploy updates don't drop the URL the UI shows. Read it
   // best-effort; on any error fall back to a minimal detail.
   let baseDetail = { sha: body.sha } as ReturnType<typeof parseReviewDetail>;
+  // If the preview is no longer active by the time the build finishes, do NOT
+  // resurrect it. A mod can TEAR DOWN a preview mid-build (teardownPreview clears
+  // deployState→null but leaves status='pending'), or the request may have been
+  // approved/rejected. Without this guard the success callback would re-write
+  // preview-live AND re-create the review Deployment/Service/IngressRoute in k8s
+  // (silently refilling a cap slot with a detail-less zombie). Abort only on a
+  // POSITIVE read; an unreadable row falls through to existing behavior (the
+  // markReviewPreviewState requireActivePreview guard below is the backstop).
+  let previewNoLongerActive = false;
   try {
     const { dbRead } = await import('~/server/db/client');
     const row = await dbRead.appBlockPublishRequest.findUnique({
       where: { id: body.publishRequestId },
-      select: { deployDetail: true },
+      select: { deployDetail: true, status: true, deployState: true },
     });
     baseDetail = { ...parseReviewDetail(row?.deployDetail), sha: body.sha };
+    if (row && !(row.status === 'pending' && (row.deployState ?? '').startsWith('preview-'))) {
+      previewNoLongerActive = true;
+    }
   } catch {
     /* fall back to the minimal detail */
   }
 
+  if (previewNoLongerActive) {
+    res.status(200).json({
+      ok: true,
+      applied: false,
+      reason: 'preview no longer active (torn down or decided)',
+    });
+    return;
+  }
+
   const succeeded = (body.status ?? '').toLowerCase() === 'succeeded';
   if (!succeeded) {
-    await markReviewPreviewState(body.publishRequestId, 'preview-failed', {
-      ...baseDetail,
-      error: `review build ${String(body.status ?? 'failed').slice(0, 60)}`,
-    });
+    await markReviewPreviewState(
+      body.publishRequestId,
+      'preview-failed',
+      { ...baseDetail, error: `review build ${String(body.status ?? 'failed').slice(0, 60)}` },
+      { requireActivePreview: true }
+    );
     res.status(200).json({ ok: true, applied: false, reason: 'review build failed' });
     return;
   }
@@ -260,7 +283,9 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
-  await markReviewPreviewState(body.publishRequestId, 'preview-deploying', baseDetail);
+  await markReviewPreviewState(body.publishRequestId, 'preview-deploying', baseDetail, {
+    requireActivePreview: true,
+  });
 
   let applyJob: { name: string };
   try {
@@ -275,10 +300,12 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     // it here or a transient k8s hiccup would wedge same-sha retries for the full
     // TTL (symmetrical with the watcher's clear-on-failed below).
     await clearReviewApplyMark(body.publishRequestId, body.sha);
-    await markReviewPreviewState(body.publishRequestId, 'preview-failed', {
-      ...baseDetail,
-      error: `review apply trigger failed: ${String(e).slice(0, 80)}`,
-    });
+    await markReviewPreviewState(
+      body.publishRequestId,
+      'preview-failed',
+      { ...baseDetail, error: `review apply trigger failed: ${String(e).slice(0, 80)}` },
+      { requireActivePreview: true }
+    );
     res.status(500).json({ error: 'Review apply trigger failed', detail: String(e).slice(0, 240) });
     return;
   }
@@ -305,7 +332,9 @@ async function watchReviewApplyJob(args: {
   try {
     const outcome = await waitForApplyJob(args.jobName);
     if (outcome === 'succeeded') {
-      await markReviewPreviewState(args.publishRequestId, 'preview-live', args.baseDetail);
+      await markReviewPreviewState(args.publishRequestId, 'preview-live', args.baseDetail, {
+        requireActivePreview: true,
+      });
     } else {
       // On a DEFINITIVE failure free the replay-dedup slot so a same-sha retry
       // isn't suppressed within the TTL window; on a 'timeout' leave it (the Job
@@ -314,10 +343,15 @@ async function watchReviewApplyJob(args: {
       if (outcome === 'failed') {
         await clearReviewApplyMark(args.publishRequestId, args.sha);
       }
-      await markReviewPreviewState(args.publishRequestId, 'preview-failed', {
-        ...args.baseDetail,
-        error: outcome === 'timeout' ? 'review deploy timed out' : 'review deploy failed',
-      });
+      await markReviewPreviewState(
+        args.publishRequestId,
+        'preview-failed',
+        {
+          ...args.baseDetail,
+          error: outcome === 'timeout' ? 'review deploy timed out' : 'review deploy failed',
+        },
+        { requireActivePreview: true }
+      );
     }
   } catch (err) {
     // eslint-disable-next-line no-console

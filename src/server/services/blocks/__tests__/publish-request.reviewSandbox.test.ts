@@ -55,6 +55,7 @@ import {
   teardownPreview,
   countActiveReviewPreviews,
   listActiveReviewPreviews,
+  markReviewPreviewState,
   withdrawRequest,
   parseReviewDetail,
   MAX_CONCURRENT_REVIEW_PREVIEWS,
@@ -578,5 +579,32 @@ describe('listActiveReviewPreviews', () => {
     mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([]);
     const res = await listActiveReviewPreviews();
     expect(res).toEqual({ cap: MAX_CONCURRENT_REVIEW_PREVIEWS, active: [] });
+  });
+});
+
+describe('markReviewPreviewState requireActivePreview guard', () => {
+  beforeEach(() => {
+    mockDbWrite.appBlockPublishRequest.updateMany.mockReset();
+    mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it('requireActivePreview=true adds a deployState preview-* filter (no resurrection of a torn-down row)', async () => {
+    await markReviewPreviewState(PUBREQ, 'preview-live', { sha: SHA }, { requireActivePreview: true });
+    const arg = mockDbWrite.appBlockPublishRequest.updateMany.mock.calls[0][0];
+    expect(arg.where.id).toBe(PUBREQ);
+    expect(arg.where.status).toBe('pending');
+    // The load-bearing guard: a torn-down row (deployState=null) won't match
+    // startsWith 'preview-', so a late build callback can't resurrect it.
+    expect(arg.where.deployState).toEqual({ startsWith: 'preview-' });
+  });
+
+  it('without the opt (initial preview-building mark) does NOT constrain deployState', async () => {
+    await markReviewPreviewState(PUBREQ, 'preview-building', { sha: SHA });
+    const arg = mockDbWrite.appBlockPublishRequest.updateMany.mock.calls[0][0];
+    expect(arg.where.id).toBe(PUBREQ);
+    expect(arg.where.status).toBe('pending');
+    // Initial mark transitions from null / preview-failed → preview-building, so
+    // it must NOT require an existing preview-* state.
+    expect(arg.where.deployState).toBeUndefined();
   });
 });
