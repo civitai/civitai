@@ -36,6 +36,21 @@ type SchemaError = {
   quantType?: ZodErrorSchema;
 };
 
+// Both the Meili "link" mutation and the B.1a linkOfficialFileByHash mutation
+// return the same server shape; map it to a client LinkedComponent in one place.
+function toLinkedComponent(
+  result: Omit<LinkedComponent, 'componentType' | 'fileMetadata'> & {
+    componentType: string;
+    fileMetadata: LinkedComponent['fileMetadata'] | null;
+  }
+): LinkedComponent {
+  return {
+    ...result,
+    componentType: result.componentType as ModelFileComponentType,
+    fileMetadata: result.fileMetadata ?? undefined,
+  };
+}
+
 export type FileFromContextProps = {
   id?: number;
   name: string;
@@ -229,24 +244,9 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       isRequired: component.isRequired ?? true,
     });
 
-    const enriched: LinkedComponent = {
-      recommendedResourceId: result.recommendedResourceId,
-      componentType: result.componentType as ModelFileComponentType,
-      modelId: result.modelId,
-      modelName: result.modelName,
-      versionId: result.versionId,
-      versionName: result.versionName,
-      fileId: result.fileId,
-      fileName: result.fileName,
-      sizeKB: result.sizeKB,
-      fileType: result.fileType,
-      fileMetadata: result.fileMetadata ?? undefined,
-      isRequired: result.isRequired,
-    };
-
     setLinkedComponents((prev) => [
       ...prev.filter((c) => c.versionId !== component.versionId),
-      enriched,
+      toLinkedComponent(result),
     ]);
   };
 
@@ -594,21 +594,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
           hostType: type,
         });
         if (result) {
-          const enriched: LinkedComponent = {
-            recommendedResourceId: result.recommendedResourceId,
-            componentType: result.componentType as ModelFileComponentType,
-            modelId: result.modelId,
-            modelName: result.modelName,
-            versionId: result.versionId,
-            versionName: result.versionName,
-            fileId: result.fileId,
-            fileName: result.fileName,
-            sizeKB: result.sizeKB,
-            fileType: result.fileType,
-            fileMetadata: result.fileMetadata ?? undefined,
-            isRequired: result.isRequired,
-          };
-          setLinkedComponents((prev) => [...prev, enriched]);
+          setLinkedComponents((prev) => [...prev, toLinkedComponent(result)]);
           setFiles((state) => state.filter((x) => x.uuid !== uuid));
           showSuccessNotification({
             title: 'Linked to official file',
@@ -616,7 +602,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
           });
           return;
         }
-        // result null → server found no official match → fall through to normal upload
+        // no match → fall through to normal upload
       } catch (e) {
         showErrorNotification({
           title: 'Failed to link official file',
@@ -750,7 +736,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         onDrop,
         startUpload,
         errors: errors,
-        hasPending: files.some((x) => x.isPending),
+        hasPending: files.some((x) => x.isPending || x.isCheckingOfficial),
         retry,
         updateFile: handleUpdateFile,
         removeFile,

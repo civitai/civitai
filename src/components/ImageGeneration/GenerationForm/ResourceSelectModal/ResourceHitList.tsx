@@ -15,7 +15,7 @@ import { constants } from '~/server/common/constants';
 import type { GetFeaturedModels } from '~/server/services/model.service';
 import type { ResourceSelectOptions } from '../resource-select.types';
 import { ResourceSelectCard } from './ResourceSelectCard';
-import type { Tabs } from './useResourceSelectFilters';
+import { skipBaseModelForOwnTabs, type Tabs } from './useResourceSelectFilters';
 import { isDefined } from '~/utils/type-guards';
 import { NoContent } from '~/components/NoContent/NoContent';
 
@@ -48,11 +48,9 @@ export function ResourceHitList({
 
   const filterVersions = useCallback(
     (model: SearchIndexDataMap['models'][number]) => {
-      // The Official/Mine tabs relax the base-model constraint in the Meili
-      // query; mirror that here so we don't strip every version client-side
-      // (e.g. linking a Flux VAE into a Boogu checkpoint).
-      const skipBaseModel =
-        (selectedTab === 'mine' || selectedTab === 'official') && selectSource === 'modelVersion';
+      // Mirror the Meili query's base-model relaxation so we don't strip every
+      // version client-side (e.g. linking a Flux VAE into a Boogu checkpoint).
+      const skipBaseModel = skipBaseModelForOwnTabs(selectedTab, selectSource);
       const modelBaseModels = resources
         .filter((x) => x.type === model.type)
         .flatMap((x) => x.baseModels);

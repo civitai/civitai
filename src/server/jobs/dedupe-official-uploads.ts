@@ -1,9 +1,11 @@
+import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
 import { constants } from '~/server/common/constants';
 import { addLinkedComponent } from '~/server/services/model-version.service';
 import { inferComponentType } from '~/server/utils/model-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { logToAxiom } from '~/server/logging/client';
+import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { createJob, getJobDate } from './job';
 
 const OFFICIAL_USER_ID = constants.system.officialUserId;
@@ -57,7 +59,7 @@ export async function findOfficialDedupePairs(since: Date, limit: number): Promi
     JOIN "Model" hm ON hm.id = hv."modelId"
     WHERE hm."userId" <> ${OFFICIAL_USER_ID}
       AND hm.status = 'Published'
-      AND h.type NOT IN ('Model', 'Pruned Model', 'Diffusion Model', 'UNet') -- primaryModelFileTypes: never dedup/delete primary weights (incl. Flux/Wan/ZImage)
+      AND h.type NOT IN (${Prisma.join([...primaryModelFileTypes])}) -- never dedup/delete primary weights
       AND h."modelVersionId" <> c.canonical_version_id
       AND NOT EXISTS (
         SELECT 1 FROM "RecommendedResource" rr

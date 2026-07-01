@@ -1288,6 +1288,8 @@ describe('model-file-scan.service', () => {
       await expect(
         applyScanOutcome({ fileId: 502, hashes: { SHA256: 'abc' }, virusScan: { result: ScanResultCode.Success, message: null } })
       ).resolves.toBeUndefined();
+      // prove the error path was actually entered (not skipped) before it was swallowed
+      expect(findOfficialFileByHash).toHaveBeenCalled();
     });
   });
 });

@@ -153,8 +153,10 @@ describe('addLinkedComponent with targetFileId', () => {
     const where = mockDbWrite.recommendedResource.findFirst.mock.calls[0][0].where;
     // the dedupe lookup must constrain on the specific fileId, not just
     // (sourceId, resourceId) — otherwise a second file overwrites the first
-    expect(JSON.stringify(where)).toContain('fileId');
-    expect(JSON.stringify(where)).toContain('555');
+    expect(where).toMatchObject({
+      sourceId: baseInput.id,
+      AND: expect.arrayContaining([{ settings: { path: ['fileId'], equals: 555 } }]),
+    });
   });
 
   it('updates the existing row instead of creating when the same file is already linked', async () => {

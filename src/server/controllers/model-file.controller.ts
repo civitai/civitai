@@ -21,6 +21,8 @@ import { handleLogError, throwDbError, throwNotFoundError } from '~/server/utils
 import { isB2Url, parseB2Url, parseKey } from '~/utils/s3-utils';
 import { registerFileLocation } from '~/utils/storage-resolver';
 import { preventModelVersionLag } from '~/server/db/db-lag-helpers';
+import { findOfficialFilesBySize } from '~/server/services/official-file.service';
+import { bytesToKB } from '~/utils/number-helpers';
 
 type ResolverBackend = 'backblaze' | 'cloudflare';
 
@@ -320,3 +322,9 @@ export const deleteFileHandler = async ({
     else throw throwDbError(error);
   }
 };
+
+// Client sends bytes (file.size); convert with the same bytesToKB createFile uses so
+// the stored sizeKB and this size gate agree exactly.
+export function findOfficialFilesBySizeHandler(input: { size: number }) {
+  return findOfficialFilesBySize(bytesToKB(input.size));
+}

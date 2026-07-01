@@ -2,7 +2,6 @@ import { useCallback } from 'react';
 import { OFFICIAL_MATCH_HASH_MAX_BYTES } from '~/utils/file-hash';
 import type { FileHashRequest, FileHashResponse } from '~/workers/file-hash.worker';
 
-// Runs the full-file SHA256 in a dedicated Web Worker (off the main thread).
 // Returns null when the file is over the cap (defer to server B.1b) or the
 // worker errors — callers treat null as "no client match, upload normally".
 export function useFileHash() {

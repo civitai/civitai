@@ -1,14 +1,13 @@
 // Returns the file's SHA256 if it's a dedup candidate worth a server link attempt, else null.
-// Staged cheap→definitive check: size gate → worker hash. The host's declared type
-// does NOT gate this — a file dropped in the main file section is checked too, so it
-// can't be used to bypass dedup. The server decides what (if anything) it links; a
-// genuine checkpoint match links nothing. Every early exit means "upload normally".
+// The host's declared type does NOT gate this — a file dropped in the main file section is
+// checked too, so it can't be used to bypass dedup (the server links nothing for a genuine
+// checkpoint match).
 export async function resolveOfficialFileHash(args: {
   file: File;
   findBySize: (size: number) => Promise<{ id: number }[]>;
   hashFile: (file: File) => Promise<string | null>;
-  // Fired once, only when a size collision means we're about to hash the file
-  // (the slow step) — lets the UI show a "checking" indicator only when needed.
+  // Only fired when a size collision requires hashing — skipped on immediate size-miss,
+  // so the UI shows the "checking" indicator only when there's real work.
   onHashStart?: () => void;
 }): Promise<string | null> {
   const { file, findBySize, hashFile, onHashStart } = args;

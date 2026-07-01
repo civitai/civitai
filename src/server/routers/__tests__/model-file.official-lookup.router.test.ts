@@ -7,7 +7,7 @@ vi.mock('~/server/services/official-file.service', () => ({
   findOfficialFilesBySize: mockFindBySize,
 }));
 
-import { findOfficialFilesBySizeHandler } from '~/server/routers/model-file.router';
+import { findOfficialFilesBySizeHandler } from '~/server/controllers/model-file.controller';
 
 beforeEach(() => vi.clearAllMocks());
 

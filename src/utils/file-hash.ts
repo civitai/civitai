@@ -30,7 +30,7 @@ export async function sha256Streaming(blob: Blob, chunkSize: number = STREAM_CHU
 }
 
 // Full-file SHA256 (lowercase hex) = byte identity, matching the stored
-// ModelFileHash.SHA256. Dispatches native vs streaming on size.
+// ModelFileHash.SHA256.
 export async function computeBlobSha256(blob: Blob): Promise<string> {
   return blob.size <= WEBCRYPTO_MAX_BYTES ? sha256WebCrypto(blob) : sha256Streaming(blob);
 }

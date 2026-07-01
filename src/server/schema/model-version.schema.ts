@@ -336,9 +336,9 @@ export const addLinkedComponentSchema = z.object({
   targetFileId: z.number().optional(), // explicit file to link; falls back to auto-picking the primary
   replaceFileId: z.number().optional(), // redundant file on the source version to delete after linking
   componentType: z.enum(constants.modelFileComponentTypes),
-  modelId: z.number(), // target model ID
-  modelName: z.string(), // target model name
-  versionName: z.string(), // target version name
+  modelId: z.number(),
+  modelName: z.string(),
+  versionName: z.string(),
   isRequired: z.boolean().optional().default(true),
 });
 export type AddLinkedComponentInput = z.infer<typeof addLinkedComponentSchema>;

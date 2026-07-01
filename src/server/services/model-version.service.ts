@@ -71,6 +71,7 @@ import {
 } from '~/server/search-index';
 import { deleteBidsForModelVersion } from '~/server/services/auction.service';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { findOfficialFileByHash } from '~/server/services/official-file.service';
 import {
   createMultiAccountBuzzTransaction,
   refundMultiAccountTransaction,
@@ -2129,7 +2130,7 @@ export const addLinkedComponent = async (
     linkedFile = file;
     resourceId = file.modelVersionId;
   } else {
-    // Public/Meili path: auto-pick the primary file by modelFileOrder priority.
+    // No explicit file requested — auto-pick the primary by modelFileOrder priority.
     const files = await dbRead.modelFile.findMany({
       where: { modelVersionId: input.targetVersionId },
       select: { id: true, name: true, sizeKB: true, type: true, metadata: true },
@@ -2642,8 +2643,7 @@ export const linkOfficialFileByHash = async (
   input: LinkOfficialFileByHashInput & { userId: number; isModerator?: boolean }
 ) => {
   // Host-version ownership is enforced by the router middleware (isOwnerOrModerator on input.id).
-  // Re-verify the byte match server-side — never trust a client-claimed match (I1).
-  const { findOfficialFileByHash } = await import('~/server/services/official-file.service');
+  // Re-verify the byte match server-side — never trust a client-claimed match.
   const match = await findOfficialFileByHash({ sha256: input.sha256, hostType: input.hostType });
   if (!match) return null;
 

@@ -15,6 +15,14 @@ const take = 20;
 
 export type Tabs = 'all' | 'official' | 'featured' | 'recent' | 'liked' | 'mine';
 
+// The Official/Mine tabs let a creator link any of their own / the official
+// component models regardless of base-model match (e.g. a VAE shared across SDXL
+// variants). Used to relax the constraint in BOTH the Meili query and the
+// client-side version filter — keep them in sync via this one predicate.
+export function skipBaseModelForOwnTabs(tab: Tabs | undefined, selectSource?: string): boolean {
+  return (tab === 'mine' || tab === 'official') && selectSource === 'modelVersion';
+}
+
 export function useResourceSelectQueries(selectedTab: Tabs) {
   const currentUser = useCurrentUser();
   const { selectSource } = useResourceSelectContext();
@@ -129,15 +137,10 @@ export function useResourceSelectMeiliFilters({
       }
     }
 
-    // Skip the auto baseModel compatibility constraint when:
-    //  - featured tab (the featured-IDs AND clause restricts instead), or
-    //  - linking a component from the 'mine' or 'official' tab (+ modelVersion):
-    //    a creator should be able to reuse any of their own / the official
-    //    component models regardless of base-model match (e.g. a VAE shared across
-    //    SDXL variants).
+    // Featured tab restricts via the featured-IDs AND clause instead; the own/official
+    // tabs relax base-model matching (see skipBaseModelForOwnTabs).
     const skipBaseModel =
-      featuredByType.size > 0 ||
-      ((selectedTab === 'mine' || selectedTab === 'official') && selectSource === 'modelVersion');
+      featuredByType.size > 0 || skipBaseModelForOwnTabs(selectedTab, selectSource);
 
     for (const { type, baseModels = [] } of resources) {
       const _type = filters.types.length > 0 ? filters.types.find((x) => x === type) : type;
