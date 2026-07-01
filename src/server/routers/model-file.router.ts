@@ -1,12 +1,14 @@
 import {
   createFileHandler,
   deleteFileHandler,
+  findOfficialFilesBySizeHandler,
   getFilesByVersionIdHandler,
   updateFileHandler,
   upsertFileHandler,
 } from '~/server/controllers/model-file.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
+  findOfficialFilesBySizeSchema,
   modelFileCreateSchema,
   modelFileUpdateSchema,
   modelFileUpsertSchema,
@@ -52,4 +54,8 @@ export const modelFileRouter = router({
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(recentTrainingDataSchema)
     .query(({ input, ctx }) => getRecentTrainingData({ ...input, userId: ctx.user.id })),
+  findOfficialFilesBySize: protectedProcedure
+    .meta({ requiredScope: TokenScope.ModelsRead })
+    .input(findOfficialFilesBySizeSchema)
+    .query(findOfficialFilesBySizeHandler),
 });

@@ -280,7 +280,7 @@ export function groupFilesByVariant<T extends FileFormatType>(
 /**
  * Infers component type from file type if not explicitly set in metadata.
  */
-function inferComponentType(fileType: string): ModelFileComponentType | null {
+export function inferComponentType(fileType: string): ModelFileComponentType | null {
   switch (fileType) {
     case 'Model':
     case 'Pruned Model':

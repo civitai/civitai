@@ -33,6 +33,7 @@ import {
   modelVersionUpsertSchema2,
   publishVersionSchema,
   addLinkedComponentSchema,
+  linkOfficialFileByHashSchema,
   setLinkedComponentsSchema,
   upsertExplorationPromptSchema,
   getModelVersionsByIdsInput,
@@ -48,6 +49,7 @@ import {
   getVersionById,
   getVersionsByIds,
   addLinkedComponent,
+  linkOfficialFileByHash,
   setLinkedComponents,
   upsertExplorationPrompt,
   bustMvCache,
@@ -141,7 +143,16 @@ export const modelVersionRouter = router({
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(addLinkedComponentSchema)
     .use(isOwnerOrModerator)
-    .mutation(async ({ input }) => addLinkedComponent(input)),
+    .mutation(async ({ input, ctx }) =>
+      addLinkedComponent({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
+  linkOfficialFileByHash: guardedProcedure
+    .meta({ requiredScope: TokenScope.ModelsWrite })
+    .input(linkOfficialFileByHashSchema)
+    .use(isOwnerOrModerator)
+    .mutation(async ({ input, ctx }) =>
+      linkOfficialFileByHash({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
   upsert: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(modelVersionUpsertSchema2)

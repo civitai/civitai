@@ -17,10 +17,15 @@ import {
 } from '~/server/services/orchestrator/orchestrator.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { constants } from '~/server/common/constants';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
+import { findOfficialFileByHash } from '~/server/services/official-file.service';
+import { primaryModelFileTypes } from '~/utils/file-display-helpers';
+import type { ModelFileType } from '~/server/common/constants';
+import { addLinkedComponent } from '~/server/services/model-version.service';
 
 // -----------------------------------------------------------------------------
 // Shared scan outcome — the normalized shape that both webhook adapters produce
@@ -122,8 +127,9 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     where: { id: fileId },
     select: {
       id: true,
+      type: true,
       modelVersionId: true,
-      modelVersion: { select: { modelId: true } },
+      modelVersion: { select: { modelId: true, model: { select: { userId: true } } } },
     },
   });
   if (!file) {
@@ -212,6 +218,42 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     // if (newSha256 && hashChanged && (await isModelHashBlocked(newSha256))) {
     //   await unpublishBlockedModel(file.modelVersionId);
     // }
+  }
+
+  // Safety net for uploads that slipped past the client-side check: a non-official
+  // upload whose bytes match an official file is rehomed onto that file (pointer)
+  // and its row deleted to reclaim storage. Skip primary-typed files —
+  // addLinkedComponent refuses to delete primary weights (replaceFileId guard), so
+  // we can't reclaim them here; the client prevents that case before upload.
+  const sha256 = outcome.hashes?.SHA256;
+  if (
+    sha256 &&
+    file.modelVersion?.model?.userId !== constants.system.officialUserId &&
+    !primaryModelFileTypes.includes(file.type as ModelFileType)
+  ) {
+    try {
+      const match = await findOfficialFileByHash({ sha256 });
+      if (match) {
+        await addLinkedComponent({
+          id: file.modelVersionId,
+          targetVersionId: match.versionId,
+          targetFileId: match.fileId,
+          replaceFileId: file.id,
+          componentType: match.componentType,
+          modelId: match.modelId,
+          modelName: match.modelName,
+          versionName: match.versionName,
+          isRequired: true,
+          userId: constants.system.officialUserId,
+          isModerator: true,
+        });
+      }
+    } catch (e) {
+      logToAxiom(
+        { type: 'warning', name: 'post-scan-official-dedup', message: (e as Error).message, fileId },
+        'webhooks'
+      ).catch(() => null);
+    }
   }
 
   // D3: model-hash-fix notification. Legacy fired this when the scanner reported

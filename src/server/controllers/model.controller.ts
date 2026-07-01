@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { selectLiveLinkedComponents } from '~/server/utils/linked-component-helpers';
 import { TRPCError } from '@trpc/server';
 import type { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import type { BaseModelType, ModelFileType } from '~/server/common/constants';
@@ -364,28 +365,31 @@ export const getModelHandler = async ({
             return { ...match, ...removeNulls(item.settings as RecommendedSettingsSchema) };
           })
           .filter(isDefined),
-        linkedComponents: version.recommendedResources
-          .filter((r) => isLinkedComponent(r.settings))
-          .map((r) => {
-            const s = r.settings as LinkedComponentSettings;
-            const fileData = linkedFileDataMap.get(s.fileId);
-            return {
-              recommendedResourceId: r.id,
-              componentType: s.componentType as ModelFileComponentType,
-              modelId: s.modelId,
-              modelName: s.modelName,
-              versionId: r.resource?.id ?? 0,
-              versionName: s.versionName,
-              fileId: s.fileId,
-              fileName: fileData?.name ?? s.fileName,
-              sizeKB: fileData?.sizeKB,
-              fileType: fileData?.type,
-              fileMetadata: fileData?.metadata as
-                | { format?: string | null; size?: string | null; fp?: string | null }
-                | undefined,
-              isRequired: s.isRequired,
-            };
-          }),
+        linkedComponents: selectLiveLinkedComponents(
+          version.recommendedResources
+            .filter((r) => isLinkedComponent(r.settings))
+            .map((r) => {
+              const s = r.settings as LinkedComponentSettings;
+              const fileData = linkedFileDataMap.get(s.fileId);
+              return {
+                recommendedResourceId: r.id,
+                componentType: s.componentType as ModelFileComponentType,
+                modelId: s.modelId,
+                modelName: s.modelName,
+                versionId: r.resource?.id ?? 0,
+                versionName: s.versionName,
+                fileId: s.fileId,
+                fileName: fileData?.name ?? s.fileName,
+                sizeKB: fileData?.sizeKB,
+                fileType: fileData?.type,
+                fileMetadata: fileData?.metadata as
+                  | { format?: string | null; size?: string | null; fp?: string | null }
+                  | undefined,
+                isRequired: s.isRequired,
+              };
+            }),
+          new Set(linkedFileDataMap.keys())
+        ),
       };
     });
 

@@ -4,6 +4,7 @@ import {
   Divider,
   getPrimaryShade,
   Group,
+  Loader,
   Progress,
   Select,
   Stack,
@@ -656,7 +657,15 @@ function FileCard({
           <Text size="xs" c="dimmed">
             {[fileSizeStr, formatLabel].filter(Boolean).join(' \u2022 ')}
           </Text>
-          {showRequiredToggle && !versionFile.isUploading && (
+          {versionFile.isCheckingOfficial && (
+            <Group gap={6} wrap="nowrap" mt={4}>
+              <Loader size="xs" />
+              <Text size="xs" c="dimmed">
+                Checking for an existing copy on Civitai&hellip;
+              </Text>
+            </Group>
+          )}
+          {showRequiredToggle && !versionFile.isUploading && !versionFile.isCheckingOfficial && (
             <Switch
               size="xs"
               label="Required"
