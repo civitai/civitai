@@ -135,7 +135,7 @@ function CreatorChip({ creator }: { creator: ListingCard['creator'] }) {
       href={`/user/${encodeURIComponent(creator.username)}`}
       underline="never"
       c="dimmed"
-      onClick={(e) => e.stopPropagation()}
+      onClick={(e: React.MouseEvent) => e.stopPropagation()}
     >
       <Group gap={6} wrap="nowrap">
         <Avatar src={avatarSrc} alt="" radius="xl" size={20}>

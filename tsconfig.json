@@ -65,6 +65,7 @@
     "./node_modules/*",
     "src/pages/api/dev-local/*.ts",
     "scripts/local-dev/*.ts",
-    "src/**/__tests__/**"
+    "src/**/__tests__/**",
+    "packages/civitai-ui"
   ]
 }
