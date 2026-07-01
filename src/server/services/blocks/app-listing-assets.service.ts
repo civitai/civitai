@@ -988,6 +988,15 @@ export const defaultBackfillDeps: ListingAssetBackfillDeps = {
   },
 
   async autogenScreenshot({ ownerId, slug, nsfwLevel }) {
+    // DORMANT + kill-switch-gated. Standalone-URL capture only ever yields a
+    // waiting-for-host loading skeleton (blocks render only when embedded), so
+    // the whole autogen path is disabled. Gate here too — single source of truth
+    // — so a future `'autogen'` plan mode can't silently re-arm standalone
+    // capture without flipping BLOCK_SCREENSHOT_AUTOGEN_ENABLED.
+    const { BLOCK_SCREENSHOT_AUTOGEN_ENABLED } = await import(
+      '~/server/services/blocks/autogenerate-screenshot.service'
+    );
+    if (!BLOCK_SCREENSHOT_AUTOGEN_ENABLED) return null;
     // Reuse the verify-runner fetch from the App Blocks autogen path, but store
     // the PNG as an Image row (not the bundle-MinIO screenshots path).
     const { env } = await import('~/env/server');
