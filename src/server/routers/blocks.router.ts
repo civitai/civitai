@@ -1228,6 +1228,31 @@ export const blocksRouter = router({
     }),
 
   /**
+   * App Store Listings (W13 P0) — moderator-only backfill. Creates one
+   * store-facing AppListing per existing approved AppBlock (on-site + the #2821
+   * external-link off-site rows). Idempotent on appBlockId; DARK (writes only
+   * app_listings, read by nothing in the running image). `dryRun` previews the
+   * counts without writing. Gated like the other mod-management procs.
+   */
+  backfillAppListings: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        limit: z.number().int().min(1).max(1000).optional(),
+        dryRun: z.boolean().optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Listing backfill is restricted to civitai team');
+      }
+      const { backfillAppListings } = await import(
+        '~/server/services/blocks/app-listing-backfill.service'
+      );
+      return backfillAppListings({ limit: input.limit, dryRun: input.dryRun });
+    }),
+
+  /**
    * Reject a pending publish request. Reason is required (≥10 chars) and
    * shown to the dev inline on /apps/my-submissions.
    */
