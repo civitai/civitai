@@ -9,12 +9,16 @@ export async function resolveOfficialFileHash(args: {
   hostType: string;
   findBySize: (size: number) => Promise<{ id: number }[]>;
   hashFile: (file: File) => Promise<string | null>;
+  // Fired once, only when a size collision means we're about to hash the file
+  // (the slow step) — lets the UI show a "checking" indicator only when needed.
+  onHashStart?: () => void;
 }): Promise<string | null> {
-  const { file, hostType, findBySize, hashFile } = args;
+  const { file, hostType, findBySize, hashFile, onHashStart } = args;
   if (primaryModelFileTypes.includes(hostType as ModelFileType)) return null;
 
   const sized = await findBySize(file.size);
   if (sized.length === 0) return null;
 
+  onHashStart?.();
   return hashFile(file); // null if over cap or worker error → fall through to normal upload
 }

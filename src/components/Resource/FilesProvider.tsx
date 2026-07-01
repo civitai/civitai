@@ -52,6 +52,9 @@ export type FileFromContextProps = {
   uuid: string;
   isPending?: boolean;
   isUploading?: boolean;
+  // True while B.1a is hashing the file + checking it against official copies,
+  // before any upload starts. Cleared when the check resolves (link or upload).
+  isCheckingOfficial?: boolean;
   status: 'pending' | 'uploading' | 'error' | 'aborted' | 'success';
 };
 
@@ -573,6 +576,10 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         hostType: type,
         findBySize: (size) => queryUtils.modelFile.findOfficialFilesBySize.fetch({ size }),
         hashFile,
+        onHashStart: () =>
+          setFiles((state) =>
+            state.map((x) => (x.uuid === uuid ? { ...x, isCheckingOfficial: true } : x))
+          ),
       });
     } catch {
       // network/server error — fall through to normal upload
@@ -622,7 +629,11 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     }
 
     setFiles((state) =>
-      state.map((x) => (x.uuid === uuid ? { ...x, isPending: false, isUploading: true } : x))
+      state.map((x) =>
+        x.uuid === uuid
+          ? { ...x, isPending: false, isUploading: true, isCheckingOfficial: false }
+          : x
+      )
     );
 
     try {
