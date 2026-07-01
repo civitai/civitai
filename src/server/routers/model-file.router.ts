@@ -7,11 +7,17 @@ import {
 } from '~/server/controllers/model-file.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
+  findOfficialFileByHashSchema,
+  findOfficialFilesBySizeSchema,
   modelFileCreateSchema,
   modelFileUpdateSchema,
   modelFileUpsertSchema,
   recentTrainingDataSchema,
 } from '~/server/schema/model-file.schema';
+import {
+  findOfficialFileByHash,
+  findOfficialFilesBySize,
+} from '~/server/services/official-file.service';
 import {
   getModelFileOptions,
   getRecentTrainingData,
@@ -21,6 +27,11 @@ import { CacheTTL } from '~/server/common/constants';
 import { edgeCacheIt } from '~/server/middleware.trpc';
 import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { bytesToKB } from '~/utils/number-helpers';
+
+export function findOfficialFilesBySizeHandler(input: { size: number }) {
+  return findOfficialFilesBySize(bytesToKB(input.size));
+}
 
 export const modelFileRouter = router({
   getByVersionId: publicProcedure
@@ -52,4 +63,12 @@ export const modelFileRouter = router({
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(recentTrainingDataSchema)
     .query(({ input, ctx }) => getRecentTrainingData({ ...input, userId: ctx.user.id })),
+  findOfficialFilesBySize: protectedProcedure
+    .meta({ requiredScope: TokenScope.ModelsRead })
+    .input(findOfficialFilesBySizeSchema)
+    .query(({ input }) => findOfficialFilesBySizeHandler(input)),
+  findOfficialFileByHash: protectedProcedure
+    .meta({ requiredScope: TokenScope.ModelsRead })
+    .input(findOfficialFileByHashSchema)
+    .query(({ input }) => findOfficialFileByHash(input)),
 });
