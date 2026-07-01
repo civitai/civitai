@@ -111,7 +111,9 @@ export function AspectRatioImageCard<T extends DialogKey>({
                 onClick={onClick}
                 routedDialog={routedDialog}
                 className={styles.linkOrClick}
-                aria-label={alt ?? 'View image'}
+                // No-image branch already contains visible "No Image" text; only
+                // override the name when the caller supplied a semantic title.
+                aria-label={alt || undefined}
               >
                 <div className="flex h-full items-center justify-center">
                   <Text c="dimmed">No Image</Text>
@@ -153,7 +155,8 @@ export function AspectRatioImageCard<T extends DialogKey>({
                   target={target}
                   // Prefer the caller-supplied `alt` (a semantic title, e.g. the
                   // model name) over the raw image name (often an upload filename).
-                  aria-label={alt ?? image.name ?? 'View image'}
+                  // `||` (not `??`) so an empty-string name can't yield an empty label.
+                  aria-label={alt || image.name || 'View media'}
                 >
                   {!safe ? (
                     image.hash ? (

@@ -22,6 +22,7 @@ export function PostCard({ data }: Props) {
   return (
     <AspectRatioImageCard
       href={`/posts/${data.id}`}
+      alt={data.title || 'View post'}
       aspectRatio="square"
       cosmetic={data.cosmetic?.data}
       image={image}

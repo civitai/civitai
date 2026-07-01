@@ -75,6 +75,9 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
       href: asPath,
       onClick: handleClick,
       rel,
+      // Forward the accessible name in the passHref branch too (latent-safety:
+      // no current caller passes both, but don't silently drop it).
+      ...(ariaLabel ? { 'aria-label': ariaLabel } : {}),
       // className,
       // style,
     });
