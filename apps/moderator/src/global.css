@@ -1,12 +1,17 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import '@civitai/ui/theme.css';
 
-/* Moderator app — dark mode only. Colors come from the Tailwind theme (tailwind.config.js),
-   which mirrors the main civitai app's Mantine dark + blue palette. */
+/* Tailwind v4 skips node_modules — point it at the shared component package so its classes aren't purged. */
+@source '../../../packages/civitai-ui/src/lib';
+
 @layer base {
   :root {
     color-scheme: dark;
+  }
+
+  * {
+    @apply border-border outline-ring/50;
   }
 
   html,
@@ -16,7 +21,7 @@
   }
 
   body {
-    @apply bg-dark-7 font-sans text-dark-0 antialiased;
+    @apply bg-background font-sans text-foreground antialiased;
   }
 
   a {
@@ -24,7 +29,6 @@
   }
 }
 
-/* Small shared content patterns reused across every page in the shell. */
 @layer components {
   .page-header {
     @apply mb-7;
