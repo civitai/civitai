@@ -2549,6 +2549,10 @@ model AppListing {
   @@index([featured, featuredOrder], map: "app_listings_featured_order_idx")
   @@index([category], map: "app_listings_category_idx")
   @@index([userId], map: "app_listings_user_idx")
+  // FK indexes so an Image DELETE (hot path) doesn't seq-scan this table once
+  // P1 populates icon/cover (Postgres does NOT auto-index a FK). Free now (empty).
+  @@index([iconId], map: "app_listings_icon_idx")
+  @@index([coverId], map: "app_listings_cover_idx")
   @@map("app_listings")
 }
 
@@ -2567,6 +2571,9 @@ model AppListingScreenshot {
   updatedAt    DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@index([appListingId, order], map: "app_listing_screenshots_order_idx")
+  // FK index so an Image DELETE (hot path) doesn't seq-scan this table once P1
+  // populates screenshots (Postgres does NOT auto-index a FK). Free now (empty).
+  @@index([imageId], map: "app_listing_screenshots_image_idx")
   @@map("app_listing_screenshots")
 }
 

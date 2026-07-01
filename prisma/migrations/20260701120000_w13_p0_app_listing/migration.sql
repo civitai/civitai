@@ -87,6 +87,13 @@ CREATE INDEX IF NOT EXISTS "app_listings_category_idx"
   ON "app_listings" ("category");
 CREATE INDEX IF NOT EXISTS "app_listings_user_idx"
   ON "app_listings" ("user_id");
+-- FK indexes: Postgres does NOT auto-index a FK, so an Image DELETE (hot path)
+-- would seq-scan this table for referencing icon/cover rows once P1 populates
+-- assets. Free to add now (empty table).
+CREATE INDEX IF NOT EXISTS "app_listings_icon_idx"
+  ON "app_listings" ("icon_id");
+CREATE INDEX IF NOT EXISTS "app_listings_cover_idx"
+  ON "app_listings" ("cover_id");
 
 -- ------------------------------------------------------------
 -- app_listing_screenshots — ordered + captioned rows (NOT a Json blob)
@@ -104,6 +111,9 @@ CREATE TABLE IF NOT EXISTS "app_listing_screenshots" (
 
 CREATE INDEX IF NOT EXISTS "app_listing_screenshots_order_idx"
   ON "app_listing_screenshots" ("app_listing_id", "order");
+-- FK index (same Image-DELETE-hot-path rationale as app_listings above).
+CREATE INDEX IF NOT EXISTS "app_listing_screenshots_image_idx"
+  ON "app_listing_screenshots" ("image_id");
 
 -- ------------------------------------------------------------
 -- app_listing_reviews — Steam-style "recommend", listing-keyed

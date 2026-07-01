@@ -45,7 +45,8 @@ export type BackfillAppListingsParams = {
 export type BackfillAppListingsResult = {
   scanned: number;
   created: number;
-  skipped: number; // already had a listing (idempotent re-run)
+  skipped: number; // already had a listing (idempotent re-run) or P2002 concurrent create
+  skippedNoOwner: number; // ANOMALY: approved AppBlock with no resolvable owner (surfaced, not hidden)
   dryRun: boolean;
   createdIds: string[];
   byKind: { onsite: number; offsite: number };
@@ -72,13 +73,15 @@ type SourceAppBlock = {
  */
 export function resolveListingName(manifest: unknown, blockId: string): string {
   const m = (manifest ?? {}) as { name?: unknown };
-  return typeof m.name === 'string' && m.name.trim().length > 0 ? m.name : blockId;
+  const name = typeof m.name === 'string' ? m.name.trim() : '';
+  return name.length > 0 ? name : blockId;
 }
 
-/** Extract an optional description from the manifest (null when absent). */
+/** Extract an optional description from the manifest (null when absent/blank). */
 export function resolveListingDescription(manifest: unknown): string | null {
   const m = (manifest ?? {}) as { description?: unknown };
-  return typeof m.description === 'string' && m.description.length > 0 ? m.description : null;
+  const desc = typeof m.description === 'string' ? m.description.trim() : '';
+  return desc.length > 0 ? desc : null;
 }
 
 /**
@@ -142,6 +145,7 @@ export async function backfillAppListings(
     scanned: appBlocks.length,
     created: 0,
     skipped: 0,
+    skippedNoOwner: 0,
     dryRun,
     createdIds: [],
     byKind: { onsite: 0, offsite: 0 },
@@ -153,7 +157,7 @@ export async function backfillAppListings(
     // (Every approved AppBlock has an OauthClient owner; this is a defensive
     // guard, not an expected path.)
     if (!ab.app || typeof ab.app.userId !== 'number') {
-      result.skipped += 1;
+      result.skippedNoOwner += 1;
       continue;
     }
 

@@ -197,13 +197,14 @@ describe('backfillAppListings — invariants', () => {
     expect(mockDb.appListing.create).not.toHaveBeenCalled();
   });
 
-  it('skips an AppBlock with no resolvable owner (no listing created)', async () => {
+  it('surfaces an AppBlock with no resolvable owner as skippedNoOwner (not the benign skipped bucket)', async () => {
     const noOwner: Ab = { ...onsite, id: 'ab_noowner', app: null };
     mockDb.appBlock.findMany.mockResolvedValue([noOwner]);
     const { backfillAppListings } = await import('../app-listing-backfill.service');
     const res = await backfillAppListings();
     expect(res.created).toBe(0);
-    expect(res.skipped).toBe(1);
+    expect(res.skippedNoOwner).toBe(1);
+    expect(res.skipped).toBe(0); // anomaly is NOT hidden in the idempotent-skip count
     expect(mockDb.appListing.create).not.toHaveBeenCalled();
   });
 
@@ -267,18 +268,21 @@ describe('backfillAppListings — invariants', () => {
 });
 
 describe('pure mappers', () => {
-  it('resolveListingName prefers manifest.name, falls back to blockId', async () => {
+  it('resolveListingName prefers manifest.name (trimmed), falls back to blockId', async () => {
     const { resolveListingName } = await import('../app-listing-backfill.service');
     expect(resolveListingName({ name: 'Foo' }, 'slug')).toBe('Foo');
+    expect(resolveListingName({ name: '  Cool App  ' }, 'slug')).toBe('Cool App'); // trimmed
     expect(resolveListingName({ name: '  ' }, 'slug')).toBe('slug');
     expect(resolveListingName({}, 'slug')).toBe('slug');
     expect(resolveListingName(null, 'slug')).toBe('slug');
     expect(resolveListingName({ name: 123 }, 'slug')).toBe('slug');
   });
 
-  it('resolveListingDescription returns the string or null', async () => {
+  it('resolveListingDescription returns the trimmed string or null (blank => null)', async () => {
     const { resolveListingDescription } = await import('../app-listing-backfill.service');
     expect(resolveListingDescription({ description: 'hi' })).toBe('hi');
+    expect(resolveListingDescription({ description: '  hi  ' })).toBe('hi'); // trimmed
+    expect(resolveListingDescription({ description: '   ' })).toBeNull(); // whitespace-only => null
     expect(resolveListingDescription({ description: '' })).toBeNull();
     expect(resolveListingDescription({})).toBeNull();
     expect(resolveListingDescription(null)).toBeNull();
