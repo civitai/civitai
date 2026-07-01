@@ -112,6 +112,7 @@ export const ChallengeCard = memo(function ChallengeCard({ data }: Props) {
   return (
     <AspectRatioImageCard
       href={`/challenges/${id}/${slugit(title)}`}
+      alt={title}
       aspectRatio="square"
       image={image}
       header={
