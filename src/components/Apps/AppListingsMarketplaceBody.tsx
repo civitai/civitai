@@ -92,6 +92,8 @@ export function AppListingsMarketplaceBody() {
   const {
     data,
     isLoading,
+    isError,
+    refetch,
     isFetchingNextPage,
     fetchNextPage,
     hasNextPage,
@@ -166,6 +168,20 @@ export function AppListingsMarketplaceBody() {
       {isLoading ? (
         <Center py="xl">
           <Loader />
+        </Center>
+      ) : isError ? (
+        <Center py="xl">
+          <Stack align="center" gap={8}>
+            <Text size="lg" fw={500}>
+              Couldn&apos;t load apps
+            </Text>
+            <Text size="sm" c="dimmed" ta="center" maw={420}>
+              Something went wrong loading the app store. Please try again.
+            </Text>
+            <Button variant="light" size="xs" onClick={() => refetch()}>
+              Retry
+            </Button>
+          </Stack>
         </Center>
       ) : showingEmpty ? (
         <Center py="xl">

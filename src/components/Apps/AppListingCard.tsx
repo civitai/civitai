@@ -7,6 +7,7 @@ import {
 } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
+import { useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import {
   CATEGORY_ICONS,
@@ -83,10 +84,20 @@ function ListingCover({
   category: string | null;
   name: string;
 }) {
-  if (coverUrl) {
+  // A non-null coverUrl can still 404 (the server derives it from a first-
+  // screenshot fallback, whose Image can dangle) — fall back to the category
+  // glyph placeholder on load error instead of a broken <img>.
+  const [broken, setBroken] = useState(false);
+  if (coverUrl && !broken) {
     return (
       <Card.Section>
-        <Image src={coverUrl} alt={`${name} cover image`} h={140} fit="cover" />
+        <Image
+          src={coverUrl}
+          alt={`${name} cover image`}
+          h={140}
+          fit="cover"
+          onError={() => setBroken(true)}
+        />
       </Card.Section>
     );
   }
