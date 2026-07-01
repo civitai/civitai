@@ -46,6 +46,7 @@ import {
   listRejectedRequestsSchema,
   previewRequestSchema,
   rejectRequestSchema,
+  teardownPreviewSchema,
   withdrawRequestSchema,
 } from '~/server/schema/blocks/publish-request.schema';
 import { registerExternalAppSchema } from '~/server/schema/blocks/external-app.schema';
@@ -1101,6 +1102,61 @@ export const blocksRouter = router({
           publishRequestId: input.publishRequestId,
           modUserId: ctx.user.id,
         });
+      } catch (err) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+      }
+    }),
+
+  /**
+   * MOD REVIEW SANDBOX — MANUAL teardown of a single review preview (also the way
+   * to free a slot when the global concurrent-preview cap is hit). Deletes the
+   * per-request review k8s resources (label-scoped) AND clears the DB preview
+   * state so the request reverts to "no preview". Same mod-only flag gate as
+   * previewRequest.
+   */
+  teardownPreview: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(teardownPreviewSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Review previews are restricted to civitai team');
+      }
+      const { isAppBlocksReviewSandboxEnabled } = await import(
+        '~/server/services/app-blocks-flag'
+      );
+      if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
+        throw throwAuthorizationError('The review sandbox is not enabled');
+      }
+      const { teardownPreview } = await import('~/server/services/blocks/publish-request.service');
+      try {
+        return await teardownPreview({ publishRequestId: input.publishRequestId });
+      } catch (err) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+      }
+    }),
+
+  /**
+   * MOD REVIEW SANDBOX — list the currently-active review previews (global across
+   * all mods) + the cap, for the "Active previews (N / cap)" panel. Same mod-only
+   * flag gate as previewRequest; no input.
+   */
+  listActivePreviews: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .query(async ({ ctx }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Review previews are restricted to civitai team');
+      }
+      const { isAppBlocksReviewSandboxEnabled } = await import(
+        '~/server/services/app-blocks-flag'
+      );
+      if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
+        throw throwAuthorizationError('The review sandbox is not enabled');
+      }
+      const { listActiveReviewPreviews } = await import(
+        '~/server/services/blocks/publish-request.service'
+      );
+      try {
+        return await listActiveReviewPreviews();
       } catch (err) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
       }

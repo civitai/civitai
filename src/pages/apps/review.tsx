@@ -163,6 +163,22 @@ function formatDate(d: string | Date | null | undefined): string {
   return date.toLocaleString();
 }
 
+// Compact relative age ("just now" / "5m" / "2h" / "3d") for the active-preview
+// panel — the exact timestamp isn't useful there, freshness is.
+function formatAge(d: string | Date | null | undefined): string {
+  if (!d) return '—';
+  const date = typeof d === 'string' ? new Date(d) : d;
+  const ms = Date.now() - date.getTime();
+  if (!Number.isFinite(ms) || ms < 0) return '—';
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+
 export default function ReviewQueuePage() {
   const features = useFeatureFlags();
   const router = useRouter();
@@ -198,6 +214,8 @@ export default function ReviewQueuePage() {
         title="App publish-request queue"
         subtitle="Moderator review for Apps. Pending queue is oldest-first; history tabs are newest-first."
       >
+        <ActivePreviewsPanel />
+
         <Tabs
           value={tab}
           onChange={(v) => {
@@ -238,6 +256,118 @@ export default function ReviewQueuePage() {
         onClose={() => setSelected(null)}
       />
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// MOD REVIEW SANDBOX — global "Active previews (N / cap)" panel. Review previews
+// are capped globally across all mods (each holds a review Deployment + Service
+// + IngressRoute), so this surfaces every active preview + a per-row Tear down
+// so a mod can free a slot. Polls every 30s so the count stays fresh. Dark
+// behind the same mod-only review-sandbox flag as the per-request panel: when
+// off, listActivePreviews throws UNAUTHORIZED and this renders nothing.
+// ---------------------------------------------------------------------------
+
+function ActivePreviewsPanel() {
+  const features = useFeatureFlags();
+  const utils = trpc.useUtils();
+
+  const query = trpc.blocks.listActivePreviews.useQuery(undefined, {
+    enabled: !!features?.appBlocks,
+    retry: false,
+    refetchInterval: 30000, // keep the count fresh while the queue is open
+  });
+
+  const teardownMut = trpc.blocks.teardownPreview.useMutation({
+    onSuccess: async (_res, vars) => {
+      showSuccessNotification({ message: 'Review preview torn down.' });
+      await Promise.all([
+        utils.blocks.listActivePreviews.invalidate(),
+        utils.blocks.getReviewStatus.invalidate({ publishRequestId: vars.publishRequestId }),
+      ]);
+    },
+    onError: (e) => {
+      showErrorNotification({ title: 'Could not tear down preview', error: new Error(e.message) });
+    },
+  });
+
+  // Flag off / not enabled (query errors) or nothing active → render nothing so
+  // the panel stays unobtrusive when the sandbox isn't in use.
+  const cap = query.data?.cap ?? 0;
+  const active = query.data?.active ?? [];
+  if (query.error || active.length === 0) return null;
+
+  const atCap = cap > 0 && active.length >= cap;
+
+  return (
+    <Card withBorder p="md" mb="md">
+      <Group gap={6} mb="xs">
+        <IconWindow size={16} />
+        <Text size="sm" fw={600}>
+          Active previews
+        </Text>
+        <Badge size="sm" variant="light" color={atCap ? 'red' : 'blue'}>
+          {active.length} / {cap}
+        </Badge>
+        {atCap && (
+          <Text size="xs" c="red">
+            Cap reached — tear one down to start another.
+          </Text>
+        )}
+      </Group>
+      <Table verticalSpacing="xs" horizontalSpacing="md">
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>App</Table.Th>
+            <Table.Th>Version</Table.Th>
+            <Table.Th>State</Table.Th>
+            <Table.Th>Age</Table.Th>
+            <Table.Th />
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {active.map((p) => (
+            <Table.Tr key={p.publishRequestId}>
+              <Table.Td>
+                <Code>{p.slug}</Code>
+              </Table.Td>
+              <Table.Td>
+                <Code>{p.version}</Code>
+              </Table.Td>
+              <Table.Td>
+                <Badge
+                  size="sm"
+                  variant="light"
+                  color={p.state === 'preview-live' ? 'green' : 'blue'}
+                >
+                  {p.state.replace('preview-', '')}
+                </Badge>
+              </Table.Td>
+              <Table.Td>
+                <Text size="xs" c="dimmed">
+                  {formatAge(p.updatedAt)}
+                </Text>
+              </Table.Td>
+              <Table.Td>
+                <Button
+                  size="xs"
+                  variant="light"
+                  color="red"
+                  leftSection={<IconX size={12} />}
+                  loading={
+                    teardownMut.isPending &&
+                    teardownMut.variables?.publishRequestId === p.publishRequestId
+                  }
+                  onClick={() => teardownMut.mutate({ publishRequestId: p.publishRequestId })}
+                >
+                  Tear down
+                </Button>
+              </Table.Td>
+            </Table.Tr>
+          ))}
+        </Table.Tbody>
+      </Table>
+    </Card>
   );
 }
 
@@ -985,6 +1115,21 @@ function ReviewPreviewPanel({
     },
   });
 
+  const teardownMut = trpc.blocks.teardownPreview.useMutation({
+    onSuccess: async () => {
+      showSuccessNotification({ message: `Review preview torn down for ${slug}.` });
+      // Clears the DB preview state → getReviewStatus returns state:null and the
+      // panel reverts to "Start preview". Also refresh the global panel's count.
+      await Promise.all([
+        utils.blocks.getReviewStatus.invalidate({ publishRequestId }),
+        utils.blocks.listActivePreviews.invalidate(),
+      ]);
+    },
+    onError: (e) => {
+      showErrorNotification({ title: 'Could not tear down preview', error: new Error(e.message) });
+    },
+  });
+
   const state = statusQuery.data?.state ?? null;
   const detail = statusQuery.data?.detail;
   // Prefer the FRESH, mod-bound, short-TTL tokened URL (`?mr=<token>`) the server
@@ -1057,6 +1202,19 @@ function ReviewPreviewPanel({
             rightSection={<IconExternalLink size={12} />}
           >
             Open review host
+          </Button>
+        )}
+        {state && !isFailed && (
+          <Button
+            size="xs"
+            variant="light"
+            color="red"
+            leftSection={<IconX size={12} />}
+            loading={teardownMut.isPending}
+            disabled={teardownMut.isPending}
+            onClick={() => teardownMut.mutate({ publishRequestId })}
+          >
+            Tear down preview
           </Button>
         )}
       </Group>
