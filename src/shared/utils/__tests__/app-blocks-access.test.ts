@@ -25,6 +25,25 @@ describe('isAppDeveloper', () => {
   it('returns false for undefined user', () => {
     expect(isAppDeveloper(undefined)).toBe(false);
   });
+
+  // Developer soft-launch (Phase B): the optional `appBlocksAuthor` capability
+  // widens the predicate to a curated non-mod cohort without touching mods.
+  it('returns true for a non-mod when the appBlocksAuthor capability is granted', () => {
+    expect(isAppDeveloper({ isModerator: false }, { appBlocksAuthor: true })).toBe(true);
+  });
+
+  it('stays false for a non-mod when the capability is not granted', () => {
+    expect(isAppDeveloper({ isModerator: false }, { appBlocksAuthor: false })).toBe(false);
+    expect(isAppDeveloper({ isModerator: false }, {})).toBe(false);
+  });
+
+  it('keeps moderators in as a floor even when the capability flag is false', () => {
+    expect(isAppDeveloper({ isModerator: true }, { appBlocksAuthor: false })).toBe(true);
+  });
+
+  it('preserves the mod-only meaning when called with no opts (no silent widening)', () => {
+    expect(isAppDeveloper({ isModerator: false })).toBe(false);
+  });
 });
 
 describe('isAppReviewer', () => {

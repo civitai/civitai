@@ -59,6 +59,7 @@ function createMocks({
 const {
   mockGetSession,
   mockIsAppBlocksEnabled,
+  mockIsAppBlocksAuthorEnabled,
   mockSign,
   mockAppBlockFindUnique,
   mockPublishRequestFindFirst,
@@ -83,6 +84,7 @@ const {
   return {
     mockGetSession: vi.fn(),
     mockIsAppBlocksEnabled: vi.fn(),
+    mockIsAppBlocksAuthorEnabled: vi.fn(),
     mockSign: vi.fn(),
     mockAppBlockFindUnique: vi.fn(),
     mockPublishRequestFindFirst: vi.fn(),
@@ -97,7 +99,10 @@ const {
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 vi.mock('~/server/auth/bearer-token', () => ({ getSessionFromBearerToken: mockGetSession }));
-vi.mock('~/server/services/app-blocks-flag', () => ({ isAppBlocksEnabled: mockIsAppBlocksEnabled }));
+vi.mock('~/server/services/app-blocks-flag', () => ({
+  isAppBlocksEnabled: mockIsAppBlocksEnabled,
+  isAppBlocksAuthorEnabled: mockIsAppBlocksAuthorEnabled,
+}));
 vi.mock('~/server/services/block-token.service', () => ({
   BlockTokenService: { sign: mockSign },
 }));
@@ -211,6 +216,9 @@ beforeEach(() => {
   mockSysRedis.ttl.mockResolvedValue(60);
   mockSysRedis.expire.mockResolvedValue(1);
   mockIsAppBlocksEnabled.mockResolvedValue(true);
+  mockIsAppBlocksAuthorEnabled.mockImplementation(
+    async (opts) => !!opts?.user?.isModerator
+  );
   mockAppBlockFindUnique.mockResolvedValue(pageApp());
   // Default: no pending request. The local-manifest path tests set this per-case.
   mockPublishRequestFindFirst.mockResolvedValue(null);
@@ -299,12 +307,25 @@ describe('POST /api/v1/blocks/dev-token', () => {
     expect(out.buzzBudget).toBeUndefined();
   });
 
-  it('403 when the resolved user is NOT a moderator', async () => {
+  it('403 when the resolved user is NOT an app author (non-mod, no cohort grant)', async () => {
     mockGetSession.mockResolvedValueOnce(NONMOD_SESSION);
     const { req, res } = authPost({ appBlockId: 'apb_abc' });
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(403);
     expect(mockSign).not.toHaveBeenCalled();
+    // Denied on the authz line — never reached the enabled-flag check.
+    expect(mockIsAppBlocksEnabled).not.toHaveBeenCalled();
+  });
+
+  it('author-capable NON-MOD (cohort widening): passes the authz line into the flag check', async () => {
+    mockGetSession.mockResolvedValueOnce(NONMOD_SESSION);
+    mockIsAppBlocksAuthorEnabled.mockResolvedValueOnce(true);
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    // Got PAST the authz gate — not a 403 on the author line, and the enabled
+    // kill-switch flag was consulted next.
+    expect(res._getStatusCode()).not.toBe(403);
+    expect(mockIsAppBlocksEnabled).toHaveBeenCalled();
   });
 
   it('403 when the mod is banned', async () => {

@@ -446,32 +446,38 @@ describe('blocks.deleteSubscription (guarded)', () => {
  * upsertSubscription/deleteSubscription/installOnModel were previously asserted
  * as FORBIDDEN-for-non-mod here (the old Phase-2 mod gate). That belt is gone by
  * design for these own-data procs; the coverage now lives in the
- * 'Layer 1 — install procs widened to protectedProcedure' describe below. The
- * procedures kept in THIS block (mod-review queue + revenue/apps developer reads)
- * remain mod-gated.
+ * 'Layer 1 — install procs widened to protectedProcedure' describe below.
+ *
+ * Developer soft-launch (Phase B): the own-data DEVELOPER reads getMyRevenue /
+ * getMyApps moved `moderatorProcedure → appDeveloperProcedure` (the
+ * `appBlocksAuthor` capability). A plain non-mod with no cohort grant still
+ * resolves the capability OFF (static mod-only fallback) → FORBIDDEN, so the
+ * assertions below are unchanged. The mod-REVIEW queue procs
+ * (listPendingRequests / approveRequest) STAY `moderatorProcedure` — the guard
+ * that a non-mod can never review/curate others' apps.
  */
-describe('Phase 2 — mod-only procedures reject non-mod verified users (FORBIDDEN)', () => {
+describe('soft-launch — developer + mod-review procs reject a plain non-mod (FORBIDDEN)', () => {
   function nonMod() {
     return blocksRouter.createCaller(authedCtx(42, false) as never);
   }
 
-  it('listPendingRequests (mod queue) → FORBIDDEN', async () => {
+  it('listPendingRequests (mod queue, stays mod-only) → FORBIDDEN', async () => {
     await expect(nonMod().listPendingRequests({ limit: 20 })).rejects.toMatchObject({
       code: 'FORBIDDEN',
     });
   });
 
-  it('approveRequest → FORBIDDEN', async () => {
+  it('approveRequest (mod-only review/curation, unchanged) → FORBIDDEN', async () => {
     await expect(
       nonMod().approveRequest({ publishRequestId: 'pubreq_x' })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
-  it('getMyRevenue → FORBIDDEN', async () => {
+  it('getMyRevenue (author-gated) → FORBIDDEN for a non-cohort non-mod', async () => {
     await expect(nonMod().getMyRevenue({})).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
-  it('getMyApps → FORBIDDEN', async () => {
+  it('getMyApps (author-gated) → FORBIDDEN for a non-cohort non-mod', async () => {
     await expect(nonMod().getMyApps()).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 });

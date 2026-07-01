@@ -27,6 +27,7 @@ const {
   mockDbRead,
   mockRedis,
   mockIsAppBlocksEnabled,
+  mockIsAppBlocksAuthorEnabled,
   mockDailyBoostApply,
   mockDailyBoostGetDetails,
   mockGetUserBuzzAccounts,
@@ -71,6 +72,12 @@ const {
     ttl: vi.fn(async () => -1),
   },
   mockIsAppBlocksEnabled: vi.fn(async () => true),
+  // Developer soft-launch (Phase B): the runtime AUTHZ gate now checks the
+  // `appBlocksAuthor` capability against the token subject (was: isModerator).
+  // Default mirrors the mod floor so existing mod-subject happy paths pass.
+  mockIsAppBlocksAuthorEnabled: vi.fn(
+    async (opts?: { user?: { isModerator?: boolean } }) => !!opts?.user?.isModerator
+  ),
   mockDailyBoostApply: vi.fn(async () => undefined),
   mockDailyBoostGetDetails: vi.fn(async () => ({
     awarded: 0,
@@ -158,6 +165,7 @@ vi.mock('~/server/redis/client', () => ({
 }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
+  isAppBlocksAuthorEnabled: mockIsAppBlocksAuthorEnabled,
 }));
 vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
   dailyBoostReward: {
@@ -332,6 +340,7 @@ beforeEach(() => {
     mockSysRedis.ttl,
     mockResolveCanGenerateForVersions,
     mockRecordSpendAttribution,
+    mockIsAppBlocksAuthorEnabled,
   ]) {
     fn.mockReset();
   }
@@ -363,9 +372,15 @@ beforeEach(() => {
   // gate they're exercising. NB: mockReset wipes the implementation, so the
   // default has to be re-set every beforeEach (not just at hoisted-init time).
   mockIsAppBlocksEnabled.mockImplementation(async () => true);
-  // Phase 2: default the resolved viewer to a moderator so every happy-path
-  // test passes the new assertViewerIsModerator gate. FORBIDDEN tests override
-  // this to a non-mod (or vanished) user.
+  // Developer soft-launch (Phase B): default the AUTHOR gate to the mod floor —
+  // the default subject is a mod, so every happy-path test passes
+  // assertViewerIsAppDeveloper. FORBIDDEN tests drive a non-author subject.
+  mockIsAppBlocksAuthorEnabled.mockImplementation(
+    async (opts?: { user?: { isModerator?: boolean } }) => !!opts?.user?.isModerator
+  );
+  // Phase 2 → soft-launch: default the resolved viewer to a moderator so every
+  // happy-path test passes the runtime AUTHZ gate. FORBIDDEN tests override this
+  // to a non-author (or vanished) subject.
   mockGetUserById.mockResolvedValue({
     id: 42,
     isModerator: true,
@@ -373,10 +388,10 @@ beforeEach(() => {
     email: 'u@example.com',
     username: 'u',
   });
-  // assertAppBlocksEnabledForTokenUser resolves the full SessionUser for the flag
-  // gate; default to a moderator so the (mocked) flag gate passes. The vanished
-  // -viewer test sets getUserById→null to make the SECOND gate
-  // (assertViewerIsModerator) reject; this default keeps the first gate green.
+  // BOTH runtime gates (assertAppBlocksEnabledForTokenUser for the enabled
+  // kill-switch AND assertViewerIsAppDeveloper for authz) resolve the subject via
+  // sessionClient.getSessionUserById — default to a moderator so both pass. The
+  // FORBIDDEN / vanished-viewer tests override THIS resolver (not getUserById).
   mockGetSessionUser.mockResolvedValue({ id: 42, isModerator: true, tier: 'free' });
   mockParseSubjectUserId.mockImplementation((sub: string) => (sub === 'anon' ? null : 42));
   mockGetOrchestratorToken.mockResolvedValue('orch_token');
@@ -1994,25 +2009,33 @@ describe('blocks.submitWorkflow — LoRA install precedence', () => {
 });
 
 /**
- * Phase 2 — App Blocks is moderator-only until GA. Every block-token-authed
- * runtime procedure re-asserts that the RESOLVED viewer (from the token
- * subject, NOT ctx.user) is a moderator. A token whose subject resolves to a
- * non-mod verified user must be rejected with FORBIDDEN even though the token
- * itself is otherwise valid (valid signature, correct scopes, matching ctx).
+ * Developer soft-launch (Phase B) — the block-token-authed runtime procedures
+ * re-assert the AUTHOR capability against the RESOLVED viewer (from the token
+ * subject, NOT ctx.user). A token whose subject resolves to a NON-author
+ * (non-mod, not in the `app-blocks-author` cohort) must be rejected with
+ * FORBIDDEN even though the token is otherwise valid (valid signature, correct
+ * scopes, matching ctx).
  *
- * This is the defense-in-depth layer beneath the mod-gated token minting
- * endpoint: even if a token were somehow minted for a non-mod, the runtime
- * refuses it.
+ * This is the defense-in-depth layer beneath the gated token-minting endpoint:
+ * even if a token were somehow minted for a non-author, the runtime refuses it.
+ *
+ * NB: the AUTHZ gate resolves the subject via sessionClient.getSessionUserById
+ * (mockGetSessionUser) and evaluates isAppBlocksAuthorEnabled against it — a
+ * non-mod with no cohort grant → the default mock returns false → FORBIDDEN.
  */
-describe('Phase 2 — block-token runtime procedures reject non-mod viewers', () => {
+describe('soft-launch — block-token runtime procedures reject non-author viewers', () => {
   function nonModViewer() {
-    mockGetUserById.mockResolvedValue({
+    const nonMod = {
       id: 42,
       isModerator: false,
       tier: 'free',
       email: 'u@example.com',
       username: 'u',
-    });
+    };
+    // Both runtime gates resolve the subject via getSessionUserById; a non-author
+    // subject (default author mock = mod-floor only) fails assertViewerIsAppDeveloper.
+    mockGetUserById.mockResolvedValue(nonMod);
+    mockGetSessionUser.mockResolvedValue(nonMod);
   }
 
   it('pollWorkflow → FORBIDDEN for a non-mod resolved viewer', async () => {
@@ -2059,13 +2082,34 @@ describe('Phase 2 — block-token runtime procedures reject non-mod viewers', ()
     expect(mockSubmitWorkflow).not.toHaveBeenCalled();
   });
 
-  it('FORBIDDEN when the resolved viewer has vanished (getUserById → null)', async () => {
+  it('FORBIDDEN when the resolved viewer has vanished (getSessionUserById → null)', async () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims());
+    // The enabled kill-switch is mocked ON (default), so the FORBIDDEN comes from
+    // the authz gate: a vanished subject → undefined user → no mod floor + the
+    // author mock's `!!undefined?.isModerator` → false → FORBIDDEN.
     mockGetUserById.mockResolvedValue(null);
+    mockGetSessionUser.mockResolvedValue(null);
     const caller = blocksRouter.createCaller(fakeCtx() as never);
     await expect(
       caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('author-capable NON-MOD subject passes the authz gate (cohort widening)', async () => {
+    // A curated non-mod author: the enabled kill-switch is ON and the
+    // `appBlocksAuthor` capability resolves true for this subject → the runtime
+    // proc gets PAST the authz gate (reaches the orchestrator read).
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    const cohortAuthor = { id: 42, isModerator: false, tier: 'free', username: 'u' };
+    mockGetSessionUser.mockResolvedValue(cohortAuthor);
+    mockIsAppBlocksAuthorEnabled.mockResolvedValue(true);
+    mockGetWorkflow.mockResolvedValue({ id: 'wf_1', status: 'succeeded', cost: { total: 0 }, steps: [] });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const ok = await caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' });
+    expect(ok.snapshot.workflowId).toBe('wf_1');
+    expect(mockIsAppBlocksAuthorEnabled).toHaveBeenCalledWith({
+      user: expect.objectContaining({ id: 42, isModerator: false }),
+    });
   });
 });
 

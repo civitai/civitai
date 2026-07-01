@@ -56,7 +56,7 @@ import {
   domainBrowsingCeiling,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
+import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { rateLimit } from '~/server/middleware.trpc';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import {
@@ -105,6 +105,7 @@ import {
 import { getUserById } from '~/server/services/user.service';
 import { sessionClient } from '~/server/auth/session-client';
 import {
+  appDeveloperProcedure,
   guardedProcedure,
   moderatorProcedure,
   protectedProcedure,
@@ -141,26 +142,37 @@ const enforceAppBlocksFlag = middleware(async ({ ctx, next, type }) => {
 });
 
 /**
- * Phase 2 (internal-only graduation gate): App Blocks is moderator-only until
- * GA. The management procedures use `moderatorProcedure` so the tRPC session
- * user is checked at the procedure layer. But the runtime/read procedures are
- * `publicProcedure` — they authenticate a block JWT that resolves to a viewer
- * userId rather than `ctx.user`. For those, we re-assert that the RESOLVED
- * viewer is a moderator (don't trust "only mods get block tokens" — block-token
- * minting is also gated, but defense-in-depth means each call re-checks).
+ * AUTHZ gate for the BLOCK-TOKEN-authed runtime procs (estimate/submit/poll/
+ * cancelWorkflow, updateUserSettings). These are `publicProcedure` authenticated
+ * by a block JWT that resolves to a viewer userId rather than `ctx.user`, so the
+ * `appDeveloperProcedure` middleware can't gate them — we re-assert the AUTHOR
+ * capability against the RESOLVED subject here (defense-in-depth: don't trust
+ * "only authors get block tokens" — the mint is gated too, but each call
+ * re-checks).
  *
- * Factored into one helper so the check can't drift across the ~14 call sites.
- * Throws FORBIDDEN for a non-mod (or vanished) user.
+ * Developer soft-launch (Phase B): this replaced the old
+ * `assertViewerIsModerator` — the subject must hold the `appBlocksAuthor`
+ * capability (Flipt `app-blocks-author`, static fallback mod-only), so a curated
+ * non-mod cohort can generate + spend Buzz from their OWN block while a random
+ * non-author subject is still FORBIDDEN.
  *
- * (Internal-only graduation gate — remove/relax at GA alongside the feature
- * flag's `availability` widening.)
+ * Hydrates the subject IDENTICALLY to `assertAppBlocksEnabledForTokenUser` (the
+ * enabled kill-switch that runs right before this) — `sessionClient
+ * .getSessionUserById`, the authoritative hub-backed resolver, never a
+ * client-supplied value — so `buildFliptContext` sees the subject's real
+ * isModerator/tier and the mod floor / segment match can't be spoofed. A
+ * vanished user → undefined → no mod floor + global eval (never matches a
+ * segment) → FORBIDDEN (fail-closed).
+ *
+ * This is the AUTHZ half only; the `isAppBlocksEnabled` kill-switch
+ * (`assertAppBlocksEnabledForTokenUser`) still runs first and is unchanged.
  */
-async function assertViewerIsModerator(userId: number): Promise<void> {
-  const row = await getUserById({ id: userId, select: { id: true, isModerator: true } });
-  if (!row?.isModerator) {
+async function assertViewerIsAppDeveloper(userId: number): Promise<void> {
+  const user = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
+  if (!(await isAppBlocksAuthorEnabled({ user: user ?? undefined }))) {
     throw new TRPCError({
       code: 'FORBIDDEN',
-      message: 'App Blocks is restricted to the civitai team',
+      message: 'App Blocks authoring is not enabled for this account',
     });
   }
 }
@@ -185,7 +197,7 @@ async function assertViewerIsModerator(userId: number): Promise<void> {
  * mod-segmented flag resolves `true` only for a moderator subject; a non-mod or
  * anon (`sub:'anon'` → no resolvable user) subject still resolves `false` →
  * blocked. `verifyBlockToken` (caller) already rejected invalid/expired/revoked
- * tokens before this runs, and `assertViewerIsModerator` + every other belt
+ * tokens before this runs, and `assertViewerIsAppDeveloper` + every other belt
  * (budget cap, daily Buzz cap, reserveBlockBuzzSpend, getOrchestratorToken,
  * forced-SFW) are unchanged — this only swaps which identity the FLAG sees.
  *
@@ -212,7 +224,7 @@ async function assertAppBlocksEnabledForTokenUser(userId: number): Promise<void>
   // Full, authoritative SessionUser (cached; tier derived from active
   // subscriptions) so buildFliptContext sees the user's REAL tier/isMember,
   // not type-defaults. A vanished user → undefined → global eval → flag false
-  // → blocked (fail-closed; the subsequent assertViewerIsModerator would also
+  // → blocked (fail-closed; the subsequent assertViewerIsAppDeveloper would also
   // reject).
   // getSessionUserById returns the package SessionUser (loosely typed at this boundary — cast as bearer-token.ts
   // does) or null for a vanished user. null → undefined → isAppBlocksEnabled's global eval → flag false → blocked.
@@ -295,9 +307,9 @@ function resolveBlockMaturity(claims: { maxBrowsingLevel?: number }): {
 //
 // Pass the REAL viewer context (their id + real isModerator + the request's
 // sfwOnly/wildcards flags) — never an elevated context. Today the viewer is
-// always a mod (assertViewerIsModerator), so they see mod-level access, which
-// is correct platform behaviour; when GA opens to non-mods the same gate bounds
-// them properly. Fail-closed: a version missing from the result Map → FORBIDDEN.
+// always an author (assertViewerIsAppDeveloper), so they see the appropriate
+// access; when GA opens further the same gate bounds them properly. Fail-closed:
+// a version missing from the result Map → FORBIDDEN.
 //
 // Page-LoRA (Increment 1): generalized from 1→N versions. The checkpoint AND
 // every picked LoRA are gated in ONE `resolveCanGenerateForVersions` call (it
@@ -894,7 +906,7 @@ export const blocksRouter = router({
    * Idempotent. Allows resubmitting against the same slug without
    * accumulating dead pending rows.
    */
-  withdrawPublishRequest: moderatorProcedure
+  withdrawPublishRequest: appDeveloperProcedure
     .use(enforceAppBlocksFlag)
     .input(withdrawRequestSchema)
     .mutation(async ({ ctx, input }) => {
@@ -923,7 +935,7 @@ export const blocksRouter = router({
    * instead of letting the user hit the same-slug error on submit.
    * Scoped to the caller's own rows by design.
    */
-  getMyPendingForSlug: moderatorProcedure
+  getMyPendingForSlug: appDeveloperProcedure
     .use(enforceAppBlocksFlag)
     .input(getMyPendingForSlugSchema)
     .query(async ({ ctx, input }) => {
@@ -1343,7 +1355,7 @@ export const blocksRouter = router({
    * Returns the rejection reason inline so the dev sees mod feedback
    * without a second round-trip.
    */
-  listMyPublishRequests: moderatorProcedure
+  listMyPublishRequests: appDeveloperProcedure
     .use(enforceAppBlocksFlag)
     .query(async ({ ctx }) => {
       if (!ctx.user) return [];
@@ -2194,7 +2206,7 @@ export const blocksRouter = router({
       }
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
-      await assertViewerIsModerator(userId);
+      await assertViewerIsAppDeveloper(userId);
       const token = await getOrchestratorToken(userId, ctx);
       const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
       return { snapshot: snapshotFromWorkflow(workflow) };
@@ -2237,7 +2249,7 @@ export const blocksRouter = router({
       }
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
-      await assertViewerIsModerator(userId);
+      await assertViewerIsAppDeveloper(userId);
       const token = await getOrchestratorToken(userId, ctx);
       await cancelWorkflow({ workflowId: input.workflowId, token });
       const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
@@ -2299,7 +2311,7 @@ export const blocksRouter = router({
       }
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
-      await assertViewerIsModerator(userId);
+      await assertViewerIsAppDeveloper(userId);
       const ctxSlotId = (claims.ctx as { slotId?: unknown } | undefined)?.slotId;
       if (typeof ctxSlotId !== 'string' || ctxSlotId.length === 0) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'block token lacks slotId context' });
@@ -2450,7 +2462,7 @@ export const blocksRouter = router({
       }
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
-      await assertViewerIsModerator(userId);
+      await assertViewerIsAppDeveloper(userId);
       const ctxSlotId = (claims.ctx as { slotId?: unknown } | undefined)?.slotId;
       if (typeof ctxSlotId !== 'string' || ctxSlotId.length === 0) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'block token lacks slotId context' });
@@ -2963,7 +2975,7 @@ export const blocksRouter = router({
       }
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
-      await assertViewerIsModerator(userId);
+      await assertViewerIsAppDeveloper(userId);
       const ctxModelId = Number((claims.ctx as { modelId?: unknown } | undefined)?.modelId ?? NaN);
       if (!Number.isInteger(ctxModelId)) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'block token lacks modelId context' });
@@ -3051,10 +3063,11 @@ export const blocksRouter = router({
    * Publisher revenue summary. Caller must be the app owner — the
    * service filters by `app_owner_user_id` so even if the request
    * carries a different appBlockId, the rows are scoped to the caller.
-   * Auth check is enforced by moderatorProcedure; no need to also assert
-   * ownership of the requested appBlockId (the join filter does it).
+   * Auth is enforced by appDeveloperProcedure (the `appBlocksAuthor`
+   * capability); no need to also assert ownership of the requested appBlockId
+   * (the join filter does it).
    */
-  getMyRevenue: moderatorProcedure
+  getMyRevenue: appDeveloperProcedure
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -3089,13 +3102,13 @@ export const blocksRouter = router({
    * and engagement for the caller's OWN app(s), derived entirely from
    * existing App Blocks tables (no new instrumentation). Read-only.
    *
-   * Same audience gate as getMyRevenue (moderatorProcedure +
+   * Same audience gate as getMyRevenue (appDeveloperProcedure +
    * enforceAppBlocksFlag — dark behind the appBlocks flag). Ownership is
    * enforced inside the service: it resolves the caller's owned app_block
    * ids via AppBlock.app.userId and returns zeroed/empty analytics for a
    * non-owned id, so an author can never read another author's metrics.
    */
-  getMyAppAnalytics: moderatorProcedure
+  getMyAppAnalytics: appDeveloperProcedure
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -3127,7 +3140,7 @@ export const blocksRouter = router({
    * the per-app dropdown on /apps/revenue. OauthClient.userId is the
    * single source of truth for app ownership in v1.
    */
-  getMyApps: moderatorProcedure
+  getMyApps: appDeveloperProcedure
     .use(enforceAppBlocksFlag)
     .query(async ({ ctx }) => {
       const user = ctx.user as SessionUser;

@@ -5,7 +5,7 @@ import type { SessionUser } from '~/types/session';
 import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
 import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { submitVersionSchema } from '~/server/schema/blocks/publish-request.schema';
-import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
+import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { Flags } from '~/shared/utils/flags';
 
@@ -141,10 +141,17 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     }
   }
 
-  // 2. Moderator gate — App Blocks is mod-only pre-GA (parity with the session
-  // route's ModEndpoint). Resolve before touching the heavy body so a non-mod
-  // key never costs a decode.
-  if (!user.isModerator || user.bannedAt) {
+  // 2. Author gate — App Blocks authoring is capability-gated on the dedicated
+  // `app-blocks-author` flag (static fallback mod-only), so a curated non-mod
+  // cohort can submit. A BANNED account is always rejected regardless of the
+  // capability. Resolve before touching the heavy body so a non-author key never
+  // costs a decode. (This is AUTHZ; the `isAppBlocksEnabled` kill-switch below
+  // is a separate gate.)
+  if (user.bannedAt) {
+    res.status(403).json({ message: 'App Blocks is restricted to the civitai team' });
+    return;
+  }
+  if (!(await isAppBlocksAuthorEnabled({ user }))) {
     res.status(403).json({ message: 'App Blocks is restricted to the civitai team' });
     return;
   }
