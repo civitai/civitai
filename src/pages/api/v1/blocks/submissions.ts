@@ -6,7 +6,7 @@ import * as z from 'zod';
 import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
 import { dbRead } from '~/server/db/client';
 import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
-import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
+import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { Flags } from '~/shared/utils/flags';
 
@@ -202,9 +202,14 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     }
   }
 
-  // 2. Moderator gate — App Blocks is mod-only pre-GA (parity with
-  // submit-version + dev-token).
-  if (!user.isModerator || user.bannedAt) {
+  // 2. Author gate — App Blocks AUTHORING is mod OR the app-dev-testers cohort
+  // (parity with submit-version + withdraw + dev-token). AUTHZ; the
+  // isAppBlocksEnabled kill-switch below is separate.
+  if (user.bannedAt) {
+    res.status(403).json({ message: 'App Blocks is restricted to the civitai team' });
+    return;
+  }
+  if (!(await isAppBlocksAuthorEnabled({ user }))) {
     res.status(403).json({ message: 'App Blocks is restricted to the civitai team' });
     return;
   }
