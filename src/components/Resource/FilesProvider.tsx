@@ -612,10 +612,11 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
           message: `${officialMatch.modelName} already hosts this file — upload skipped.`,
         });
         return;
-      } catch {
+      } catch (e) {
         showErrorNotification({
           title: 'Failed to link official file',
-          message: 'Failed to link official file — uploading normally.',
+          reason: 'Uploading normally instead.',
+          error: e as Error,
         });
         // fall through to normal upload
       }
