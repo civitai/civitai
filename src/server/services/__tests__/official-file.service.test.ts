@@ -109,6 +109,22 @@ describe('findOfficialFileByHash', () => {
     expect(await findOfficialFileByHash({ sha256: 'abcdef', hostType: 'Other' })).toBeNull();
   });
 
+  it('returns null for primary-weights file types (Diffusion Model / UNet), not just checkpoints', async () => {
+    // Flux/Wan/ZImage main files are type 'Diffusion Model' / 'UNet' — primary weights,
+    // never linkable accessories even though inferComponentType maps them to non-null.
+    for (const type of ['Diffusion Model', 'UNet']) {
+      mockDbRead.modelFile.findFirst.mockResolvedValue({
+        id: 903,
+        name: 'flux.safetensors',
+        sizeKB: 12_000_000,
+        type,
+        modelVersionId: 45,
+        modelVersion: { name: 'v1', modelId: 10, model: { name: 'Flux', type: 'Checkpoint' } },
+      });
+      expect(await findOfficialFileByHash({ sha256: 'abcdef', hostType: type })).toBeNull();
+    }
+  });
+
   it('returns null when no official file has the hash', async () => {
     mockDbRead.modelFile.findFirst.mockResolvedValue(null);
     expect(await findOfficialFileByHash({ sha256: 'abc', hostType: 'VAE' })).toBeNull();

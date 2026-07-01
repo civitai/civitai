@@ -209,6 +209,26 @@ describe('addLinkedComponent with replaceFileId (dedup / byte reclaim)', () => {
     expect(mockDeleteFile).not.toHaveBeenCalled();
   });
 
+  it('rejects replacing primary-weights file types beyond Model (Diffusion Model, UNet) + Training Data', async () => {
+    for (const type of ['Diffusion Model', 'UNet', 'Training Data']) {
+      mockDeleteFile.mockClear();
+      findUniqueByFile({ 555: ownFile, 888: { ...replaceFile, type } });
+      await expect(
+        addLinkedComponent({ ...baseInput, targetFileId: 555, replaceFileId: 888 })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockDeleteFile).not.toHaveBeenCalled();
+    }
+  });
+
+  it('rejects a targetVersionId that does not match the targetFileId parent version', async () => {
+    // ownFile lives on version 777; a caller-provided targetVersionId of 999 would
+    // produce inconsistent denormalized data, so it is rejected.
+    mockDbRead.modelFile.findUnique.mockResolvedValue(ownFile);
+    await expect(
+      addLinkedComponent({ ...baseInput, targetFileId: 555, targetVersionId: 999 })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
   it('does not delete anything when replaceFileId is absent', async () => {
     mockDbRead.modelFile.findUnique.mockResolvedValue(ownFile);
 

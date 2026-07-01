@@ -17,7 +17,9 @@ lands here rather than in a follow-up.
 **Civitai's stored `ModelFileHash.SHA256` covers the full file byte range** (confirmed by team
 2026-07-01). SHA256 == byte identity → it is the object-sharing / dedup key. **BLAKE3 is dropped
 entirely** (it was only the fallback for a header-skipped SHA256). CRC32 is optional cheap-reject,
-not required. Hashes are stored/compared **lowercased**.
+not required. **Stored `ModelFileHash.hash` is UPPERCASE hex** (the orchestrator emits uppercase and
+the scanner stores it verbatim; verified 5000/5000 recent SHA256 rows). The client's `computeBlobSha256`
+produces lowercase hex, so `findOfficialFileByHash` **uppercases the input** before the exact match.
 
 ---
 
@@ -85,7 +87,7 @@ Add to `src/server/services/model-file.service.ts`, scoped to `constants.system.
   — backs B.1a confirm, B.1b, and B.2.
   - **Host guard first:** if `hostType ∈ {'Model','Pruned Model'}` → return `null` (never dedup primary
     weights). Compute `componentType = inferComponentType(hostType)`; if `null` → return `null`.
-  - **Match the canonical** by lowercase-join `ModelFileHash` on `type = 'SHA256'`, scoped to
+  - **Match the canonical** by exact `ModelFileHash` `type = 'SHA256'` (uppercase the input first — stored hex is UPPERCASE), scoped to
     official-owned (`Model.userId = officialUserId`), **any canonical file type**, prefer lowest version
     id on ties.
   - Returns `OfficialFileMatch = { versionId, fileId, modelId, modelName, versionName, fileName,
@@ -263,7 +265,7 @@ B ships on the same branch as A, this fix also retro-covers A's already-created 
 
 ## 8. Testing (Vitest)
 
-- **Helpers:** `findOfficialFileByHash` — official scoping, lowercase match, **host-type guard**
+- **Helpers:** `findOfficialFileByHash` — official scoping, **uppercase match** (stored hex is uppercase), **host-type guard**
   (`hostType='Model'` → `null`), **canonical `type='Model'` still matches** (standalone VAE case),
   `componentType` derived from `hostType`, lowest-version tie-break; `findOfficialFilesBySize` — size +
   official scoping (no canonical type filter).

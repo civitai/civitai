@@ -57,7 +57,7 @@ export async function findOfficialDedupePairs(since: Date, limit: number): Promi
     JOIN "Model" hm ON hm.id = hv."modelId"
     WHERE hm."userId" <> ${OFFICIAL_USER_ID}
       AND hm.status = 'Published'
-      AND h.type NOT IN ('Model', 'Pruned Model')
+      AND h.type NOT IN ('Model', 'Pruned Model', 'Diffusion Model', 'UNet') -- primaryModelFileTypes: never dedup/delete primary weights (incl. Flux/Wan/ZImage)
       AND h."modelVersionId" <> c.canonical_version_id
       AND NOT EXISTS (
         SELECT 1 FROM "RecommendedResource" rr

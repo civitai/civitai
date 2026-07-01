@@ -2,7 +2,9 @@
 import { dbRead } from '~/server/db/client';
 import { constants } from '~/server/common/constants';
 import { inferComponentType } from '~/server/utils/model-helpers';
+import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { ModelHashType } from '~/shared/utils/prisma/enums';
+import type { ModelFileType } from '~/server/common/constants';
 
 const OFFICIAL_USER_ID = constants.system.officialUserId;
 
@@ -22,10 +24,14 @@ function componentTypeFromModelType(modelType: string): ModelFileComponentType |
   }
 }
 
-// 'Checkpoint' is a valid ModelFileComponentType but never a linkable accessory
-// here — treat it as "unknown" so the fallback chain keeps looking.
-const asAccessory = (ct: ModelFileComponentType | null | undefined) =>
-  ct && ct !== 'Checkpoint' ? ct : null;
+// A file/host type maps to a linkable accessory componentType — or null if it is
+// PRIMARY WEIGHTS (Model / Pruned Model / Diffusion Model / UNet), which must never
+// be deduped. inferComponentType alone is not enough: it maps 'Diffusion Model' →
+// 'DiffusionModel' and 'UNet' → 'UNet', which would wrongly look like accessories.
+function accessoryComponentType(fileType: string): ModelFileComponentType | null {
+  if (primaryModelFileTypes.includes(fileType as ModelFileType)) return null;
+  return inferComponentType(fileType);
+}
 
 export type OfficialFileMatch = {
   versionId: number;
@@ -87,9 +93,9 @@ export async function findOfficialFileByHash({
   // Never trust the host label over the official file's real identity.
   const componentType =
     componentTypeFromModelType(file.modelVersion.model.type) ??
-    asAccessory(inferComponentType(file.type)) ??
-    asAccessory(inferComponentType(hostType));
-  if (!componentType) return null; // official match isn't a linkable accessory (e.g. a checkpoint)
+    accessoryComponentType(file.type) ??
+    accessoryComponentType(hostType);
+  if (!componentType) return null; // official match isn't a linkable accessory (a checkpoint or primary weights)
 
   return {
     versionId: file.modelVersionId,

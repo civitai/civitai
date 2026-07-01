@@ -131,9 +131,10 @@ export function useResourceSelectMeiliFilters({
 
     // Skip the auto baseModel compatibility constraint when:
     //  - featured tab (the featured-IDs AND clause restricts instead), or
-    //  - linking a component from your own models ('mine' + modelVersion): a
-    //    creator should be able to reuse any of their own component models
-    //    regardless of base-model match (e.g. a VAE shared across SDXL variants).
+    //  - linking a component from the 'mine' or 'official' tab (+ modelVersion):
+    //    a creator should be able to reuse any of their own / the official
+    //    component models regardless of base-model match (e.g. a VAE shared across
+    //    SDXL variants).
     const skipBaseModel =
       featuredByType.size > 0 ||
       ((selectedTab === 'mine' || selectedTab === 'official') && selectSource === 'modelVersion');

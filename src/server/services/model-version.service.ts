@@ -11,6 +11,7 @@ import {
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
 import type { ModelFileType } from '~/server/common/constants';
+import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import {
   EntityAccessPermission,
   NotificationCategory,
@@ -2116,6 +2117,15 @@ export const addLinkedComponent = async (
         message: 'You do not own the file you are trying to link',
       });
 
+    // resourceId + returned version data come from the file's parent version, so a
+    // targetVersionId that disagrees would produce inconsistent denormalized data
+    // (versionName/modelName). Reject the mismatch instead of silently ignoring it.
+    if (input.targetVersionId !== file.modelVersionId)
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'targetVersionId must match the parent version of targetFileId',
+      });
+
     linkedFile = file;
     resourceId = file.modelVersionId;
   } else {
@@ -2151,8 +2161,14 @@ export const addLinkedComponent = async (
         code: 'BAD_REQUEST',
         message: 'replaceFileId must be a file on the version being edited',
       });
-    if (replaceFile.type === 'Model' || replaceFile.type === 'Pruned Model')
-      throw new TRPCError({ code: 'BAD_REQUEST', message: 'Cannot replace a primary model file' });
+    if (
+      primaryModelFileTypes.includes(replaceFile.type as ModelFileType) ||
+      replaceFile.type === 'Training Data'
+    )
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'Cannot replace a primary model or training-data file',
+      });
   }
 
   const settings = {
