@@ -143,7 +143,13 @@ function ResourceItem({
         disabled={disabled}
         options={options}
         actions={
-          <ActionIcon size="sm" variant="subtle" onClick={onRemove} disabled={disabled}>
+          <ActionIcon
+            aria-label="Remove resource"
+            size="sm"
+            variant="subtle"
+            onClick={onRemove}
+            disabled={disabled}
+          >
             <IconX size={16} />
           </ActionIcon>
         }
@@ -356,6 +362,7 @@ export function ResourceSelectMultipleInput({
               )}
 
               <ActionIcon
+                aria-label={opened ? 'Collapse resources' : 'Expand resources'}
                 variant="subtle"
                 size="sm"
                 onClick={toggle}
