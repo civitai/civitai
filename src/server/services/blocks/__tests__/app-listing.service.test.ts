@@ -45,6 +45,7 @@ import {
   recommendRollup,
   resolveOffsiteSubKind,
 } from '../app-listing.service';
+import { listAppListingsSchema } from '~/server/schema/blocks/app-listing-read.schema';
 
 const SEP = String.fromCharCode(31);
 
@@ -161,6 +162,24 @@ describe('cursor encode/decode', () => {
       cursorId: null,
       cursorMean: null,
     });
+  });
+
+  it('drops an out-of-[0,1] mean (crafted overflow guard) but keeps the keyset', () => {
+    // A mean like 1e300 would flow into `round(score * SCALE)::bigint` and
+    // overflow int8 (→ Postgres "bigint out of range" → 500). It is dropped to
+    // null so the caller falls back to the freshly-computed global mean.
+    const huge = encodeListingCursor('000000900', 'apl_2', 1e300);
+    expect(decodeListingCursor(huge)).toEqual({
+      cursorSortKey: '000000900',
+      cursorId: 'apl_2',
+      cursorMean: null,
+    });
+    // Large-negative mean, encoded raw (also out of range → dropped).
+    const neg = Buffer.from(`000000900${SEP}apl_2${SEP}-1e300`, 'utf8').toString('base64url');
+    expect(decodeListingCursor(neg).cursorMean).toBeNull();
+    // A boundary in-range mean (0 and 1) is KEPT.
+    expect(decodeListingCursor(encodeListingCursor('k', 'id', 0)).cursorMean).toBe(0);
+    expect(decodeListingCursor(encodeListingCursor('k', 'id', 1)).cursorMean).toBe(1);
   });
 });
 
@@ -526,6 +545,68 @@ describe('listAvailableListings — query building + pagination', () => {
     expect(capturedValues()).toContain(0.25);
   });
 
+  it('sort=top-rated with a crafted out-of-range mean cursor does NOT 500', async () => {
+    // The mean is dropped by decode (clamp), so the service re-reads the global
+    // mean (call 1) then runs the id page (call 2) — nothing overflows the bigint
+    // sort key. Assert the call resolves rather than throws.
+    const crafted = encodeListingCursor('000000900', 'apl_2', 1e300);
+    mockDbRead.$queryRaw.mockResolvedValueOnce([{ mean: 0.8 }]); // global mean re-read
+    mockDbRead.$queryRaw.mockResolvedValueOnce([]); // empty id page
+    await expect(
+      listAvailableListings({ kind: 'all', sort: 'top-rated', cursor: crafted, limit: 20 })
+    ).resolves.toEqual({ items: [], nextCursor: undefined });
+    // The huge mean never reached the SQL params (it was dropped); the safe 0.8
+    // fallback is what got bound into the Bayesian key.
+    expect(capturedValues()).not.toContain(1e300);
+    expect(capturedValues()).toContain(0.8);
+
+    // Also large-negative, via a raw-built cursor.
+    const neg = Buffer.from(`000000900${SEP}apl_2${SEP}-1e300`, 'utf8').toString('base64url');
+    mockDbRead.$queryRaw.mockResolvedValueOnce([{ mean: 0.5 }]);
+    mockDbRead.$queryRaw.mockResolvedValueOnce([]);
+    await expect(
+      listAvailableListings({ kind: 'all', sort: 'top-rated', cursor: neg, limit: 20 })
+    ).resolves.toEqual({ items: [], nextCursor: undefined });
+    expect(capturedValues()).not.toContain(-1e300);
+  });
+
+  it('sort=name bounds the sort key so a long-name nextCursor stays paginable (≤128)', async () => {
+    // The name sort key is `left(LOWER(al.name), 64)` — proven in the SQL — so the
+    // key encoded into the cursor is ≤64 chars and the cursor stays under the
+    // `cursor: z.string().max(128)` cap even for very long names.
+    await listAvailableListings({ kind: 'all', sort: 'name', limit: 20 });
+    expect(capturedSql()).toMatch(/left\(LOWER\(al\.name\),\s*64\)/i);
+
+    // A page whose last row carries the MAX (64-char) truncated key + a realistic
+    // id: the emitted nextCursor must be ≤128 and round-trip, and a follow-up call
+    // with it must succeed (pagination survives a >65-char name).
+    const key64 = 'z'.repeat(64); // what left(lower(name),64) yields for a long name
+    const longId = 'apl_' + 'c'.repeat(24); // cuid-length id
+    mockDbRead.$queryRaw.mockResolvedValueOnce([
+      { id: 'apl_prev', sort_key: 'a'.repeat(64) },
+      { id: longId, sort_key: key64 },
+      { id: 'apl_plus1', sort_key: 'z'.repeat(64) }, // the +1 (dropped → nextCursor)
+    ]);
+    mockDbRead.appListing.findMany.mockResolvedValueOnce([
+      hydratedRow({ id: 'apl_prev', slug: 's-prev' }),
+      hydratedRow({ id: longId, slug: 's-long' }),
+    ]);
+    const { nextCursor } = await listAvailableListings({ kind: 'all', sort: 'name', limit: 2 });
+    expect(nextCursor).toBeDefined();
+    expect((nextCursor as string).length).toBeLessThanOrEqual(128);
+    // The schema cap must accept it (proves pagination doesn't halt).
+    expect(listAppListingsSchema.shape.cursor.parse(nextCursor)).toBe(nextCursor);
+    const decoded = decodeListingCursor(nextCursor);
+    expect(decoded.cursorSortKey).toBe(key64);
+    expect(decoded.cursorId).toBe(longId);
+
+    // Follow-up page 2 with that cursor resolves (keyset accepted).
+    mockDbRead.$queryRaw.mockResolvedValueOnce([]);
+    await expect(
+      listAvailableListings({ kind: 'all', sort: 'name', cursor: nextCursor, limit: 2 })
+    ).resolves.toEqual({ items: [], nextCursor: undefined });
+  });
+
   it('returns an empty page (no hydration) when the keyset query is empty', async () => {
     mockDbRead.$queryRaw.mockResolvedValueOnce([]);
     const { items, nextCursor } = await listAvailableListings({
@@ -575,6 +656,18 @@ describe('getListingDetail — approved-only + maturity gate', () => {
   it('returns null for a missing listing', async () => {
     mockDbRead.appListing.findFirst.mockResolvedValueOnce(null);
     expect(await getListingDetail({ slug: 'nope' })).toBeNull();
+  });
+
+  it('returns null (no query) when NEITHER slug nor id is provided (enumeration guard)', async () => {
+    // The zod .refine guards the tRPC boundary, but the service is exported —
+    // `findFirst({ slug: undefined })` would return an arbitrary approved row.
+    expect(await getListingDetail({} as never)).toBeNull();
+    expect(mockDbRead.appListing.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('returns null (no query) when BOTH slug and id are provided (ambiguous)', async () => {
+    expect(await getListingDetail({ slug: 'cool-app', id: 'apl_1' } as never)).toBeNull();
+    expect(mockDbRead.appListing.findFirst).not.toHaveBeenCalled();
   });
 
   it.each(['draft', 'pending', 'rejected'])('returns null for a %s listing', async (status) => {

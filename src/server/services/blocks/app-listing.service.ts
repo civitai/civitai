@@ -111,10 +111,17 @@ export function decodeListingCursor(cursor: string | undefined): {
   const cursorId = sep2 < 0 ? decoded.slice(sep1 + 1) : decoded.slice(sep1 + 1, sep2);
   const meanField = sep2 < 0 ? '' : decoded.slice(sep2 + 1);
   const meanNum = meanField === '' ? NaN : Number(meanField);
+  // The mean is a recommend PROPORTION in [0,1]; a crafted cursor could encode a
+  // huge/negative value that flows unclamped into `round(score * SCALE)::bigint`
+  // (int8 overflow → Postgres "bigint out of range" → 500). Only accept an
+  // in-range proportion; anything else is treated as an invalid mean component
+  // (dropped → the caller falls back to the freshly-computed global mean /
+  // first-page behavior, matching the malformed-cursor fail-open).
+  const cursorMean = Number.isFinite(meanNum) && meanNum >= 0 && meanNum <= 1 ? meanNum : null;
   return {
     cursorSortKey: decoded.slice(0, sep1),
     cursorId,
-    cursorMean: Number.isFinite(meanNum) ? meanNum : null,
+    cursorMean,
   };
 }
 
@@ -142,6 +149,16 @@ export function recommendRollup(
 /** Off-site sub-kind: OAuth-connect when a connect client is set, else external-link. */
 export function resolveOffsiteSubKind(connectClientId: string | null | undefined): OffsiteSubKind {
   return connectClientId ? 'connect' : 'external-link';
+}
+
+/**
+ * Re-assert (defense-in-depth) that an off-site `externalUrl` is an https URL
+ * before it reaches the wire — so a bad row can never surface a `javascript:` /
+ * `http:` Visit target to the P2b UI, even if a write-path validation regresses.
+ * NB: the P2b UI must STILL render this link with `rel="noopener noreferrer"`.
+ */
+function safeExternalUrl(url: string | null | undefined): string | null {
+  return url && /^https:\/\//i.test(url) ? url : null;
 }
 
 /** Build a CDN icon URL from an icon Image row (or null). */
@@ -194,7 +211,9 @@ export const listingHydrateSelect = {
   appBlock: { select: { manifest: true } },
   screenshots: {
     where: { imageId: { not: null } },
-    orderBy: { order: 'asc' },
+    // Stable order: `id` tiebreaks rows with a tied `order` (default 0), which
+    // would otherwise sort nondeterministically across requests.
+    orderBy: [{ order: 'asc' }, { id: 'asc' }],
     select: { caption: true, image: { select: { url: true } } },
   },
 } satisfies Prisma.AppListingSelect;
@@ -214,7 +233,7 @@ function cardKindData(row: HydratedListing): ListingCardKindData {
     return {
       kind: 'offsite',
       subKind: resolveOffsiteSubKind(row.connectClientId),
-      externalUrl: row.externalUrl ?? null,
+      externalUrl: safeExternalUrl(row.externalUrl),
     };
   }
   return {
@@ -250,7 +269,7 @@ function detailKindData(row: HydratedListing): ListingDetailKindData {
     return {
       kind: 'offsite',
       subKind,
-      externalUrl: row.externalUrl ?? null,
+      externalUrl: safeExternalUrl(row.externalUrl),
       // The OAuth client_id is public (it's sent in the connect URL); the secret
       // is never selected here. Null for an external-link listing.
       connectClientId: subKind === 'connect' ? row.connectClientId ?? null : null,
@@ -350,7 +369,13 @@ export function listingSortKeyExpr(
       };
     case 'name':
     default:
-      return { expr: Prisma.sql`LOWER(al.name)`, descending: false };
+      // `name` is unbounded `text`; the RAW sort key is encoded into the base64
+      // cursor, so a long name would overflow `cursor: z.string().max(128)` and
+      // halt pagination (BAD_REQUEST). Bound the key to 64 chars — IDENTICAL in
+      // SELECT + the keyset WHERE (same `expr`), so paging stays exact; `al.id`
+      // remains the total-order tiebreak, so a 64-char-truncation collision
+      // still paginates correctly.
+      return { expr: Prisma.sql`left(LOWER(al.name), 64)`, descending: false };
   }
 }
 
@@ -477,6 +502,11 @@ export async function getListingDetail(
   opts: { redCapable?: boolean } = {}
 ): Promise<ListingDetail | null> {
   const redCapable = opts.redCapable ?? false;
+  // Assert exactly-one selector in the SERVICE (the zod `.refine` only guards the
+  // tRPC boundary, but this fn is exported). Neither → `findFirst({ slug:
+  // undefined })` would return an ARBITRARY approved row (enumeration footgun);
+  // both → ambiguous. Fail closed to null in either case.
+  if (!input.id === !input.slug) return null;
   const where: Prisma.AppListingWhereInput = input.id
     ? { id: input.id }
     : { slug: input.slug };
