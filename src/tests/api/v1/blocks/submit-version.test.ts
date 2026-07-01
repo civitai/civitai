@@ -45,6 +45,7 @@ function createMocks({
 const {
   mockGetSession,
   mockIsAppBlocksEnabled,
+  mockIsAppBlocksAuthorEnabled,
   mockSubmitVersion,
   mockRedis,
   mockMultiIncr,
@@ -64,6 +65,7 @@ const {
   return {
     mockGetSession: vi.fn(),
     mockIsAppBlocksEnabled: vi.fn(),
+    mockIsAppBlocksAuthorEnabled: vi.fn(),
     mockSubmitVersion: vi.fn(),
     mockRedis: { multi: vi.fn(multiFactory), ttl: vi.fn().mockResolvedValue(60) },
     mockMultiIncr,
@@ -76,6 +78,7 @@ vi.mock('~/server/auth/bearer-token', () => ({
 }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
+  isAppBlocksAuthorEnabled: mockIsAppBlocksAuthorEnabled,
 }));
 vi.mock('~/server/redis/client', () => ({
   sysRedis: mockRedis,
@@ -144,6 +147,10 @@ beforeEach(() => {
   mockMultiIncr.malformedExec = false;
   mockRedis.ttl.mockResolvedValue(60);
   mockIsAppBlocksEnabled.mockResolvedValue(true);
+  // Author gate mirrors the mod floor by default; the widening test overrides it.
+  mockIsAppBlocksAuthorEnabled.mockImplementation(
+    async (opts) => !!opts?.user?.isModerator
+  );
   mockSubmitVersion.mockResolvedValue({
     publishRequestId: 'pubreq_abc',
     slug: 'my-block',
@@ -179,7 +186,9 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     expect(mockSubmitVersion).not.toHaveBeenCalled();
   });
 
-  it('403 when the resolved user is NOT a moderator', async () => {
+  it('403 when the resolved user is NOT an app author (non-mod, no cohort grant)', async () => {
+    // Default author mock = mod floor only → a random non-mod is denied on the
+    // authz line (developer soft-launch: authoring stays gated).
     mockGetSession.mockResolvedValueOnce(NONMOD_SESSION);
     const { req, res } = createMocks({
       headers: { authorization: 'Bearer key' },
@@ -188,6 +197,21 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(403);
     expect(mockSubmitVersion).not.toHaveBeenCalled();
+  });
+
+  it('accepts an author-capable NON-MOD (cohort widening): passes the authz line', async () => {
+    // A curated non-mod author granted the `app-blocks-author` capability is NOT
+    // rejected on the authz line — the submit proceeds through the flag +
+    // rate-limit gates to the real service.
+    mockGetSession.mockResolvedValueOnce(NONMOD_SESSION);
+    mockIsAppBlocksAuthorEnabled.mockResolvedValueOnce(true);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSubmitVersion).toHaveBeenCalledTimes(1);
   });
 
   it('403 when the resolved user is banned even if isModerator', async () => {

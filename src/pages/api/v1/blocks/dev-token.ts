@@ -7,7 +7,7 @@ import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
 import { dbWrite } from '~/server/db/client';
 import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
-import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
+import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { BlockTokenService } from '~/server/services/block-token.service';
 import {
   isKnownBlockScope,
@@ -380,9 +380,16 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     }
   }
 
-  // 2. MOD gate — App Blocks is mod-only pre-GA. The runtime spend belt already
-  // asserts moderator, but we keep the MINT mod-gated too (scope doc §4 / §6 R2).
-  if (!user.isModerator || user.bannedAt) {
+  // 2. Author gate — App Blocks authoring is capability-gated on the dedicated
+  // `app-blocks-author` flag (static fallback mod-only), so a curated non-mod
+  // cohort can mint a dev token for `dev:live`. A BANNED account is always
+  // rejected. The runtime spend belt re-checks the author capability against the
+  // token SUBJECT; we keep the MINT author-gated too (scope doc §4 / §6 R2).
+  if (user.bannedAt) {
+    res.status(403).json({ message: 'App Blocks is restricted to the civitai team' });
+    return;
+  }
+  if (!(await isAppBlocksAuthorEnabled({ user }))) {
     res.status(403).json({ message: 'App Blocks is restricted to the civitai team' });
     return;
   }

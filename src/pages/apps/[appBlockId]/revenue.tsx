@@ -26,7 +26,10 @@ import { trpc } from '~/utils/trpc';
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ features, session, ctx }) => {
-    if (!features?.appBlocks) return { notFound: true };
+    // Author-capability gate (Phase B): the dedicated `appBlocksAuthor` flag
+    // (Flipt `app-blocks-author`, static fallback mod-only), INDEPENDENT of the
+    // marketplace-visibility `appBlocks` flag (which widens to public at GA).
+    if (!features?.appBlocksAuthor) return { notFound: true };
     if (!session?.user) {
       return {
         redirect: {
@@ -35,7 +38,7 @@ export const getServerSideProps = createServerSideProps({
         },
       };
     }
-    if (!isAppDeveloper(session.user)) {
+    if (!isAppDeveloper(session.user, { appBlocksAuthor: features?.appBlocksAuthor })) {
       return { notFound: true };
     }
     return { props: {} };
