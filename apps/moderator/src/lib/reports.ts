@@ -72,9 +72,9 @@ export const reportStatusBadgeClass: Record<ReportStatus, string> = {
   Unactioned: 'bg-green-500/15 text-green-300',
 };
 
-// Absolute (reported items live on the main site). Only id-URL-clean types are linkable; the rest
-// (comment threads, chat, user, bounty entries) return null until their richer URL shapes are ported.
-const CIVITAI_URL = 'https://civitai.com';
+// Absolute (reported items live on the main site; `base` comes from CIVITAI_APP_URL via layout data).
+// Only id-URL-clean types are linkable; the rest (comment threads, chat, user, bounty entries) return
+// null until their richer URL shapes are ported.
 const entityPath: Partial<Record<ReportEntity, (id: number) => string>> = {
   model: (id) => `/models/${id}`,
   image: (id) => `/images/${id}`,
@@ -87,8 +87,12 @@ const entityPath: Partial<Record<ReportEntity, (id: number) => string>> = {
   model3d: (id) => `/3d-models/${id}`,
 };
 
-export function getReportItemUrl(type: ReportEntity, entityId: number | null): string | null {
+export function getReportItemUrl(
+  base: string,
+  type: ReportEntity,
+  entityId: number | null
+): string | null {
   if (entityId == null) return null;
   const path = entityPath[type]?.(entityId);
-  return path ? `${CIVITAI_URL}${path}` : null;
+  return path ? `${base}${path}` : null;
 }

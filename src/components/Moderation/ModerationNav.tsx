@@ -30,7 +30,6 @@ export function ModerationNav() {
           href: '/moderator/review/training-data',
           hidden: !features.reviewTrainingData,
         },
-        { label: 'Articles', href: '/moderator/articles' },
         // { label: 'Tags', href: '/moderator/tags' },
         { label: 'Generation', href: '/moderator/generation' },
         {

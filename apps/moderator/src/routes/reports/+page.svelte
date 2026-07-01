@@ -153,7 +153,7 @@
     </TableHeader>
     <TableBody>
       {#each data.items as report (report.id)}
-        {@const itemUrl = getReportItemUrl(data.type, report.entityId)}
+        {@const itemUrl = getReportItemUrl(data.civitaiUrl, data.type, report.entityId)}
         <TableRow>
           <TableCell>{report.reason}</TableCell>
           <TableCell>
@@ -165,7 +165,7 @@
           <TableCell>
             {#if report.reportedByUsername}
               <a
-                href={`https://civitai.com/user/${report.reportedByUsername}`}
+                href={`${data.civitaiUrl}/user/${report.reportedByUsername}`}
                 target="_blank"
                 rel="noreferrer"
               >
@@ -237,7 +237,7 @@
 <Sheet bind:open={detailsOpen}>
   <SheetContent side="right" class="w-full overflow-y-auto sm:max-w-lg">
     {#if selected}
-      {@const itemUrl = getReportItemUrl(data.type, selected.entityId)}
+      {@const itemUrl = getReportItemUrl(data.civitaiUrl, data.type, selected.entityId)}
       <SheetHeader>
         <SheetTitle>{reportEntityLabels[data.type]} report #{selected.id}</SheetTitle>
       </SheetHeader>

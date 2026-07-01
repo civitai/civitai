@@ -9,7 +9,13 @@ export type NavLink = { path: string; label: string };
 // their highest role (admin ⊇ senior ⊇ staff ⊇ volunteer). Pages under the admin tier are admin-only.
 export const ROLE_HIERARCHY: { role: string; navigation: NavLink[] }[] = [
   { role: 'moderator:volunteer', navigation: [{ path: '/reports', label: 'Reports' }] },
-  { role: 'moderator:staff', navigation: [{ path: '/images', label: 'Images' }] },
+  {
+    role: 'moderator:staff',
+    navigation: [
+      { path: '/images', label: 'Images' },
+      { path: '/articles', label: 'Articles' },
+    ],
+  },
   { role: 'moderator:senior', navigation: [{ path: '/users', label: 'Users' }] },
   {
     role: 'moderator:admin',

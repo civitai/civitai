@@ -6,7 +6,6 @@ import {
   handleDenyTrainingData,
 } from '~/server/controllers/training.controller';
 import { getByIdSchema, getByIdsSchema } from '~/server/schema/base.schema';
-import { getModeratorArticlesSchema } from '~/server/schema/article.schema';
 import {
   modCashAdjustmentSchema,
   updateCashWithdrawalSchema,
@@ -18,7 +17,6 @@ import {
   getTrainingModerationFeedSchema,
   transferModelOwnershipSchema,
 } from '~/server/schema/model.schema';
-import { getModeratorArticles } from '~/server/services/article.service';
 import {
   getCash,
   getWithdrawalHistory,
@@ -62,11 +60,6 @@ export const modRouter = router({
     query: moderatorProcedure
       .input(queryModelVersionsSchema)
       .query(queryModelVersionsForModeratorHandler),
-  }),
-  articles: router({
-    query: moderatorProcedure
-      .input(getModeratorArticlesSchema)
-      .query(({ input }) => getModeratorArticles({ ...input, limit: input.limit ?? 50 })),
   }),
   trainingData: router({
     approve: moderatorProcedure.input(getByIdSchema).mutation(handleApproveTrainingData),

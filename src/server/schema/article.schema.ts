@@ -141,13 +141,6 @@ export const restoreArticleSchema = z.object({
 
 export type RestoreArticleSchema = z.infer<typeof restoreArticleSchema>;
 
-export const getModeratorArticlesSchema = infiniteQuerySchema.extend({
-  username: z.string().optional(),
-  status: z.nativeEnum(ArticleStatus).optional(),
-});
-
-export type GetModeratorArticlesSchema = z.infer<typeof getModeratorArticlesSchema>;
-
 // --- Article rating review / dispute ---
 
 export type CreateArticleRatingReviewInput = z.infer<typeof createArticleRatingReviewSchema>;

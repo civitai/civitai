@@ -36,5 +36,8 @@ export const load: LayoutServerLoad = ({ locals, url, route }) => {
       : null,
     logoutUrl: env.AUTH_JWT_ISSUER ? hubLogoutUrl(env.AUTH_JWT_ISSUER, url.origin) : null,
     navGroups: navGroupsForUser(user),
+    // Base for links to the main site (report/article/user pages). Env-driven so it can point at
+    // civitai.red etc.; exposed via layout data since these links render client-side.
+    civitaiUrl: env.CIVITAI_APP_URL || 'https://civitai.com',
   };
 };

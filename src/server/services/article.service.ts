@@ -18,7 +18,6 @@ import type {
   CreateArticleRatingReviewInput,
   GetArticleRatingReviewsInput,
   GetInfiniteArticlesSchema,
-  GetModeratorArticlesSchema,
   ResolveArticleRatingReviewInput,
   UpsertArticleInput,
 } from '~/server/schema/article.schema';
@@ -1515,53 +1514,6 @@ export async function restoreArticleById({ id, userId }: { id: number; userId: n
   await preventReplicationLag('userArticles', article.userId);
 
   return updated;
-}
-
-export async function getModeratorArticles({
-  limit,
-  cursor,
-  username,
-  status,
-}: GetModeratorArticlesSchema & { limit: number }) {
-  const AND: Prisma.ArticleWhereInput[] = [
-    {
-      status: {
-        in: status ? [status] : [ArticleStatus.Unpublished, ArticleStatus.UnpublishedViolation],
-      },
-    },
-  ];
-
-  if (username) {
-    AND.push({
-      user: {
-        username: { contains: username, mode: 'insensitive' },
-      },
-    });
-  }
-
-  const items = await dbRead.article.findMany({
-    take: limit + 1,
-    cursor: cursor ? { id: cursor } : undefined,
-    where: { AND },
-    // Mod-only list — safe to surface the moderator override value alongside
-    // the regular detail fields. See note on `articleDetailSelect`.
-    select: { ...articleDetailSelect, moderatorNsfwLevel: true },
-    orderBy: { createdAt: 'desc' },
-  });
-
-  let nextCursor: number | undefined;
-  if (items.length > limit) {
-    const nextItem = items.pop();
-    nextCursor = nextItem?.id;
-  }
-
-  return {
-    nextCursor,
-    items: items.map((article) => ({
-      ...article,
-      metadata: article.metadata as ArticleMetadata | null,
-    })),
-  };
 }
 
 // --- Article Image Scanning Functions ---
