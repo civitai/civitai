@@ -15,63 +15,38 @@
   `createBuzzTransaction` (Reward, `blue`, idempotent `externalTransactionId: merchPurchase:<orderId>`).
 - `src/pages/api/webhooks/shopify.ts` — HMAC-verified (`X-Shopify-Hmac-Sha256`, raw body), handles `orders/paid`.
 
-**Claim flow (#2) — BUILT 2026-06-29:**
-- `src/server/services/merch.service.ts` — `getClaimableMerchOrder`, `claimMerchOrder` (instant if order
-  email == verified Civitai email), `requestMerchClaimConfirmation` (mismatch: user asserts order email →
-  only if it matches the email on file do we send a signed confirmation link to that address),
-  `confirmMerchClaim` (HMAC token via `NEXTAUTH_SECRET`, 24h exp, bound to order+userId). Per-user Redis
-  rate-limit (20 / 10 min, fail-open). Shopify never grants — it only hands off the order id.
-- `src/pages/merch/claim.tsx` — handles `?order=<id>` (claim / mismatch-email entry) and `?token=` (confirm).
-- `src/server/routers/merch.router.ts` (registered as `merch`) + `src/server/schema/merch.schema.ts`.
-- Emails (all sent to the order's email, on first-seen orders only — retry-safe):
-  `merchClaimInvite.email.ts` (unlinked → signed claim link), `merchBuzzCredited.email.ts` (already linked →
-  receipt naming the credited Civitai account, no link), `merchClaimConfirmation.email.ts` (the
-  email-mismatch confirmation link for the unsigned `?order=` path).
-
-### Primary delivery: webhook-driven claim email (no Shopify-side UI needed)
+### Delivery + claim — webhook-driven email, signed-key claim (no Shopify-side UI)
 shop.civitai.com is on **checkout extensibility**, so the Thank-you/Order-status page is not
-merchant-editable Liquid (and isn't part of the theme). Instead, **`processShopifyOrderPaid` emails the
-buyer a claim link** (`merchClaimInviteEmail`) the first time it sees an **unlinked** order. Once they
-claim, the customer is linked and future orders auto-grant with no email. Retry-safe: the invite only sends
-on first insert of an order (guarded by an existence check), and not when `buzzAmount` is 0 or the order has
-no email. This removes all Shopify-side UI work.
+merchant-editable Liquid (and isn't part of the theme). So there is **no Shopify-side UI** — claiming is
+driven entirely by email:
 
-**Gapless claim — signed key.** The invite link is `/merch/claim?key=<signed>` where the key is an
-HMAC-signed order id (`signOrderKey`, `NEXTAUTH_SECRET`, 90-day exp). Because the link was delivered to the
-order's email, possessing a valid key *is* the mailbox-ownership proof — so `claimMerchOrderByKey` links
-whatever Civitai account the clicker is signed into and grants immediately, with **no email-match and no
-confirmation step**. The unsigned `?order=<id>` path (manual entry / optional classic-checkout snippet)
-still uses the email-match-or-confirm flow since it carries no proof.
+- On `orders/paid`, `processShopifyOrderPaid` records the order and:
+  - **already linked** → auto-grant + a **receipt** email (`merchBuzzCreditedEmail`, no link) naming the
+    credited Civitai account.
+  - **not linked** → an **invite** email (`merchClaimInviteEmail`) with the claim link.
+  - Both emails send only on the **first** time we see an order (existence check → retry-safe), and never for
+    `buzzAmount == 0`, no-email, or Shopify **test** orders.
+- **Gapless claim — signed key.** The invite links to `/merch/claim?key=<signed>` where the key is an
+  HMAC-signed order id (`signOrderKey`, `NEXTAUTH_SECRET`, 90-day exp). Because the link was delivered to the
+  order's email, holding a valid key *is* the mailbox-ownership proof — so `claimMerchOrderByKey` links
+  whatever Civitai account the clicker is signed into and grants immediately. No email-match, no confirmation.
+- After first claim the Shopify customer is linked (`ShopifyCustomerLink`) + stamped with a `civitai.user_id`
+  metafield, and pending orders are back-paid.
+- Files: `src/pages/api/webhooks/shopify.ts`, `src/server/services/merch.service.ts`,
+  `src/server/http/shopify/shopify.caller.ts`, `src/server/utils/merch-buzz.ts`, `merch` router + schema
+  (single `claimByKey` procedure), `src/pages/merch/claim.tsx` (`?key=` only), the two email templates.
+- Grants are idempotent (`externalTransactionId: merchPurchase:<id>`); claim endpoint is per-user rate-limited
+  (fail-open). Per-order Buzz is capped (`MERCH_BUZZ_MAX_PER_ORDER`).
 
-### Optional: order-status page snippet (classic-checkout stores only)
-On a **classic-checkout** store you could *additionally* surface the button on the order-status page via
-Settings → Checkout → Additional scripts:
-```liquid
-{% comment %} Civitai Blue Buzz claim — only shown until the customer is linked {% endcomment %}
-{% unless customer.metafields.civitai.user_id %}
-<div style="margin-top:1rem;padding:1rem;border:1px solid #e3e3e3;border-radius:8px;text-align:center;">
-  <p style="margin:0 0 .5rem;font-weight:600;">⚡ Claim your Civitai Blue Buzz</p>
-  <p style="margin:0 0 .75rem;color:#555;">This merch order earns Blue Buzz on Civitai.</p>
-  <a href="https://civitai.com/merch/claim?order={{ order.id }}"
-     style="display:inline-block;background:#1971c2;color:#fff;padding:.5rem 1rem;border-radius:6px;text-decoration:none;">
-    Claim my Buzz
-  </a>
-</div>
-{% endunless %}
-```
-**`{{ order.id }}` must equal the webhook payload `id`** (it does — both are the numeric order id we store as
-`shopifyOrderId`). The `{% unless %}` hides the prompt for already-linked customers: on first claim we write a
-`civitai.user_id` metafield onto the Shopify customer (`setCustomerCivitaiUserId`, via the Shopify Admin API), and
-their orders auto-grant from then on. **Caveat:** on Shopify Plus / checkout-extensibility stores the Liquid
-"Additional scripts" order-status page is deprecated — there you'd add this as a Thank-you/Order-status **UI
-extension** (app block) reading the same metafield + linking to the same URL.
+> The earlier unsigned `?order=` claim path + email-match/confirmation flow was removed 2026-06-30 (the
+> signed-key email made it redundant; it was also a security finding — an order-existence oracle).
 
 **Remaining:**
 - Merge PR #2824 + deploy. (Secrets live in prod+preview; `orders/paid` webhook registered; migration
   applied to prod + dev — all done 2026-06-30.)
-- Decide refund handling (currently: ignore + monitor).
-- Optional later: the order-status UI extension (app block) for a Thank-you-page button, and #3
-  cart-attribute identity to skip claiming for shop-from-Civitai traffic. Neither is needed — the
+- Refund handling: currently **ignore + monitor** (Blue Buzz is non-withdrawable, so a refund-then-keep is
+  bounded abuse, not cash loss). A `refunds/create` reversal handler is a possible fast-follow.
+- Optional later: #3 cart-attribute identity to skip claiming for shop-from-Civitai traffic. Not needed — the
   webhook-driven email covers claiming.
 
 ---

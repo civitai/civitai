@@ -1,17 +1,6 @@
 import { TRPCError } from '@trpc/server';
-import {
-  claimMerchByKeySchema,
-  confirmMerchClaimSchema,
-  merchOrderIdSchema,
-  requestMerchClaimConfirmationSchema,
-} from '~/server/schema/merch.schema';
-import {
-  claimMerchOrder,
-  claimMerchOrderByKey,
-  confirmMerchClaim,
-  getClaimableMerchOrder,
-  requestMerchClaimConfirmation,
-} from '~/server/services/merch.service';
+import { claimMerchByKeySchema } from '~/server/schema/merch.schema';
+import { claimMerchOrderByKey } from '~/server/services/merch.service';
 import { protectedProcedure, router } from '~/server/trpc';
 
 const toTRPCError = (error: unknown) =>
@@ -21,41 +10,6 @@ const toTRPCError = (error: unknown) =>
   });
 
 export const merchRouter = router({
-  getClaimableOrder: protectedProcedure
-    .input(merchOrderIdSchema)
-    .query(({ input, ctx }) =>
-      getClaimableMerchOrder({ shopifyOrderId: input.shopifyOrderId, userId: ctx.user.id })
-    ),
-  claim: protectedProcedure.input(merchOrderIdSchema).mutation(async ({ input, ctx }) => {
-    try {
-      return await claimMerchOrder({ userId: ctx.user.id, shopifyOrderId: input.shopifyOrderId });
-    } catch (error) {
-      throw toTRPCError(error);
-    }
-  }),
-  requestEmailConfirmation: protectedProcedure
-    .input(requestMerchClaimConfirmationSchema)
-    .mutation(async ({ input, ctx }) => {
-      try {
-        return await requestMerchClaimConfirmation({
-          userId: ctx.user.id,
-          username: ctx.user.username ?? 'there',
-          shopifyOrderId: input.shopifyOrderId,
-          providedEmail: input.email,
-        });
-      } catch (error) {
-        throw toTRPCError(error);
-      }
-    }),
-  confirmClaim: protectedProcedure
-    .input(confirmMerchClaimSchema)
-    .mutation(async ({ input, ctx }) => {
-      try {
-        return await confirmMerchClaim({ userId: ctx.user.id, token: input.token });
-      } catch (error) {
-        throw toTRPCError(error);
-      }
-    }),
   claimByKey: protectedProcedure.input(claimMerchByKeySchema).mutation(async ({ input, ctx }) => {
     try {
       return await claimMerchOrderByKey({ userId: ctx.user.id, key: input.key });

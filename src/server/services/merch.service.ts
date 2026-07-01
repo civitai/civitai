@@ -2,11 +2,7 @@ import crypto from 'crypto';
 import { z } from 'zod';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
-import {
-  merchBuzzCreditedEmail,
-  merchClaimConfirmationEmail,
-  merchClaimInviteEmail,
-} from '~/server/email/templates';
+import { merchBuzzCreditedEmail, merchClaimInviteEmail } from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
 import { redis } from '~/server/redis/client';
 import { setCustomerCivitaiUserId } from '~/server/http/shopify/shopify.caller';
@@ -32,42 +28,12 @@ export const shopifyOrderPaidSchema = z.object({
     })
     .nullish(),
   discount_codes: z.array(z.object({ code: z.string() })).nullish(),
+  test: z.boolean().nullish(),
 });
 export type ShopifyOrderPaid = z.infer<typeof shopifyOrderPaidSchema>;
 
-// --- claim confirmation token (signed server-side; emailed to the order's address) ---
-
-const CLAIM_TOKEN_TTL_MS = 1000 * 60 * 60 * 24; // 24h
-
 function b64url(buf: Buffer) {
   return buf.toString('base64url');
-}
-
-function signClaimToken(shopifyOrderId: string, userId: number) {
-  const exp = Date.now() + CLAIM_TOKEN_TTL_MS;
-  const payload = b64url(Buffer.from(JSON.stringify({ o: shopifyOrderId, u: userId, exp })));
-  const sig = b64url(crypto.createHmac('sha256', env.NEXTAUTH_SECRET).update(payload).digest());
-  return `${payload}.${sig}`;
-}
-
-function verifyClaimToken(token: string): { shopifyOrderId: string; userId: number } | null {
-  const [payload, sig] = token.split('.');
-  if (!payload || !sig) return null;
-  const expected = b64url(
-    crypto.createHmac('sha256', env.NEXTAUTH_SECRET).update(payload).digest()
-  );
-  if (
-    sig.length !== expected.length ||
-    !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))
-  )
-    return null;
-  try {
-    const data = JSON.parse(Buffer.from(payload, 'base64url').toString());
-    if (typeof data.exp !== 'number' || data.exp < Date.now()) return null;
-    return { shopifyOrderId: String(data.o), userId: Number(data.u) };
-  } catch {
-    return null;
-  }
 }
 
 // Signed order key for the webhook-driven invite link. Unlike the confirmation
@@ -104,14 +70,7 @@ function verifyOrderKey(key: string): string | null {
   }
 }
 
-function maskEmail(email: string) {
-  const [name, domain] = email.split('@');
-  if (!domain) return '***';
-  const visible = name.slice(0, 1);
-  return `${visible}${'*'.repeat(Math.max(name.length - 1, 2))}@${domain}`;
-}
-
-// Per-user attempt cap to defeat order-id enumeration / confirmation-email grinding.
+// Per-user attempt cap on key claims (a valid key is unforgeable, but bound the endpoint anyway).
 const CLAIM_RATE_WINDOW_SECONDS = 600; // 10 min
 const CLAIM_RATE_MAX = 20;
 async function withinClaimRateLimit(userId: number) {
@@ -123,14 +82,6 @@ async function withinClaimRateLimit(userId: number) {
   } catch {
     return true; // fail open — never block legit claims on a Redis incident
   }
-}
-
-async function getVerifiedUserEmail(userId: number) {
-  const user = await dbWrite.user.findUnique({
-    where: { id: userId },
-    select: { email: true, emailVerified: true },
-  });
-  return { email: user?.email?.toLowerCase() ?? null, verified: !!user?.emailVerified };
 }
 
 async function grantMerchBuzz({
@@ -162,8 +113,7 @@ async function grantMerchBuzz({
 
 /**
  * Persist the Shopify customer → Civitai user link, then back-pay every pending
- * order for that customer (or email, if the order has no customer id). Used by
- * both the email-match and email-confirmation claim paths.
+ * order for that customer (or email, if the order has no customer id).
  */
 async function linkAndGrantPending(
   userId: number,
@@ -221,6 +171,10 @@ async function linkAndGrantPending(
  */
 export async function processShopifyOrderPaid(order: ShopifyOrderPaid) {
   const shopifyOrderId = order.id;
+  // Shopify test-mode orders never involve real money — don't grant Buzz for them.
+  if (order.test)
+    return { shopifyOrderId, buzzAmount: 0, userId: null, status: 'Skipped' as const };
+
   const email = (order.customer?.email ?? order.email ?? '').toLowerCase();
   const shopifyCustomerId = order.customer?.id ?? null;
   const subtotal = order.current_subtotal_price ?? order.subtotal_price ?? 0;
@@ -300,57 +254,6 @@ export async function processShopifyOrderPaid(order: ShopifyOrderPaid) {
   return { shopifyOrderId, buzzAmount, userId, status: userId ? 'Granted' : 'Pending' };
 }
 
-/** Order summary for the claim page: amount, whether the logged-in user's email already matches. */
-export async function getClaimableMerchOrder({
-  shopifyOrderId,
-  userId,
-}: {
-  shopifyOrderId: string;
-  userId: number;
-}) {
-  const order = await dbWrite.shopifyMerchOrder.findUnique({ where: { shopifyOrderId } });
-  if (!order) return { found: false as const };
-  if (order.status === 'Granted')
-    return { found: true as const, alreadyClaimed: true, buzzAmount: order.buzzAmount };
-
-  const { email, verified } = await getVerifiedUserEmail(userId);
-  const emailMatches = verified && !!email && email === order.email.toLowerCase();
-  return {
-    found: true as const,
-    alreadyClaimed: false,
-    buzzAmount: order.buzzAmount,
-    emailMatches,
-    maskedEmail: maskEmail(order.email),
-  };
-}
-
-/**
- * Claim by order id. If the logged-in user's verified email matches the order,
- * grant immediately. Otherwise tell the caller a confirmation email is required.
- */
-export async function claimMerchOrder({
-  userId,
-  shopifyOrderId,
-}: {
-  userId: number;
-  shopifyOrderId: string;
-}) {
-  if (!(await withinClaimRateLimit(userId)))
-    throw new Error('Too many claim attempts. Please try again later.');
-
-  const order = await dbWrite.shopifyMerchOrder.findUnique({ where: { shopifyOrderId } });
-  if (!order) throw new Error('Order not found. It may not have been paid yet.');
-  if (order.status === 'Granted') return { status: 'already_claimed' as const, grantedBuzz: 0 };
-
-  const { email, verified } = await getVerifiedUserEmail(userId);
-  if (verified && email && email === order.email.toLowerCase()) {
-    const { grantedBuzz } = await linkAndGrantPending(userId, order);
-    return { status: 'granted' as const, grantedBuzz };
-  }
-
-  return { status: 'needs_confirmation' as const, maskedEmail: maskEmail(order.email) };
-}
-
 /**
  * Claim via a signed invite key (from the webhook claim email). A valid key proves
  * the invite — delivered to the order's email — was received, so we link whatever
@@ -365,62 +268,6 @@ export async function claimMerchOrderByKey({ userId, key }: { userId: number; ke
   if (!shopifyOrderId) throw new Error('This claim link is invalid or has expired.');
 
   const order = await dbWrite.shopifyMerchOrder.findUnique({ where: { shopifyOrderId } });
-  if (!order) throw new Error('Order not found.');
-  if (order.status === 'Granted') return { status: 'already_claimed' as const, grantedBuzz: 0 };
-
-  const { grantedBuzz } = await linkAndGrantPending(userId, order);
-  return { status: 'granted' as const, grantedBuzz };
-}
-
-/**
- * Email-mismatch path: the user asserts the order's email. We only send a
- * confirmation link if it matches the email on file (so we never email a
- * stranger), and the link can only be acted on by whoever controls that mailbox.
- */
-export async function requestMerchClaimConfirmation({
-  userId,
-  username,
-  shopifyOrderId,
-  providedEmail,
-}: {
-  userId: number;
-  username: string;
-  shopifyOrderId: string;
-  providedEmail: string;
-}) {
-  if (!(await withinClaimRateLimit(userId)))
-    throw new Error('Too many claim attempts. Please try again later.');
-
-  const order = await dbWrite.shopifyMerchOrder.findUnique({ where: { shopifyOrderId } });
-  if (!order) throw new Error('Order not found. It may not have been paid yet.');
-  if (order.status === 'Granted') return { status: 'already_claimed' as const };
-
-  // Generic failure — never reveal the email on file.
-  if (providedEmail.trim().toLowerCase() !== order.email.toLowerCase())
-    throw new Error("We couldn't verify that email against this order.");
-
-  const token = signClaimToken(shopifyOrderId, userId);
-  const confirmUrl = `${getBaseUrl()}/merch/claim?token=${encodeURIComponent(token)}`;
-  await merchClaimConfirmationEmail.send({
-    to: order.email,
-    username,
-    buzzAmount: order.buzzAmount,
-    confirmUrl,
-  });
-
-  return { status: 'confirmation_sent' as const, maskedEmail: maskEmail(order.email) };
-}
-
-/** Act on a confirmation link. Token binds the order + the user who requested it. */
-export async function confirmMerchClaim({ userId, token }: { userId: number; token: string }) {
-  const decoded = verifyClaimToken(token);
-  if (!decoded) throw new Error('This confirmation link is invalid or has expired.');
-  if (decoded.userId !== userId)
-    throw new Error('Please sign in to the Civitai account that started this claim.');
-
-  const order = await dbWrite.shopifyMerchOrder.findUnique({
-    where: { shopifyOrderId: decoded.shopifyOrderId },
-  });
   if (!order) throw new Error('Order not found.');
   if (order.status === 'Granted') return { status: 'already_claimed' as const, grantedBuzz: 0 };
 

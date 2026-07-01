@@ -5,6 +5,11 @@
 // since Buzz roughly maps 1000 Buzz = $1). Boostable per-coupon below.
 export const MERCH_BLUE_BUZZ_PER_DOLLAR = 250;
 
+// Sanity cap on Buzz granted for a single order — guards against a malformed or
+// absurd subtotal ever minting a runaway amount. 1M Blue Buzz ~= a $4,000 order
+// at the base rate, well above any real merch order.
+export const MERCH_BUZZ_MAX_PER_ORDER = 1_000_000;
+
 // Coupon-code → reward multiplier. A code not listed here multiplies by 1.
 // Promos that should pay out extra Blue Buzz go here (e.g. a launch 2x code).
 // Codes are matched case-insensitively. Keep as a constant for now; promote to
@@ -29,5 +34,6 @@ export function getCouponMultiplier(couponCodes: string[]): number {
 export function computeMerchBuzz(subtotal: number, couponCodes: string[] = []): number {
   if (!Number.isFinite(subtotal) || subtotal <= 0) return 0;
   const multiplier = getCouponMultiplier(couponCodes);
-  return Math.floor(subtotal * MERCH_BLUE_BUZZ_PER_DOLLAR * multiplier);
+  const raw = Math.floor(subtotal * MERCH_BLUE_BUZZ_PER_DOLLAR * multiplier);
+  return Math.min(raw, MERCH_BUZZ_MAX_PER_ORDER);
 }

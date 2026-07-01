@@ -1,17 +1,7 @@
-import {
-  Alert,
-  Button,
-  Center,
-  Container,
-  Loader,
-  Stack,
-  Text,
-  TextInput,
-  Title,
-} from '@mantine/core';
-import { IconBolt, IconCheck, IconMail } from '@tabler/icons-react';
+import { Alert, Button, Center, Container, Loader, Stack, Text, Title } from '@mantine/core';
+import { IconCheck } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -82,138 +72,9 @@ function KeyFlow({ orderKey }: { orderKey: string }) {
   return <GrantedMessage buzz={claimByKey.data?.grantedBuzz ?? 0} />;
 }
 
-function ConfirmFlow({ token }: { token: string }) {
-  const ran = useRef(false);
-  const confirm = trpc.merch.confirmClaim.useMutation();
-
-  useEffect(() => {
-    if (ran.current) return;
-    ran.current = true;
-    confirm.mutate({ token });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
-
-  if (!confirm.data && !confirm.error)
-    return (
-      <Center>
-        <Loader />
-      </Center>
-    );
-  if (confirm.error)
-    return (
-      <Alert color="red" title="Couldn't confirm">
-        {confirm.error.message}
-      </Alert>
-    );
-  return <GrantedMessage buzz={confirm.data?.grantedBuzz ?? 0} />;
-}
-
-function ClaimFlow({ shopifyOrderId }: { shopifyOrderId: string }) {
-  const [email, setEmail] = useState('');
-  const utils = trpc.useUtils();
-  const orderQuery = trpc.merch.getClaimableOrder.useQuery({ shopifyOrderId });
-  const claim = trpc.merch.claim.useMutation({
-    onSuccess: () => utils.merch.getClaimableOrder.invalidate({ shopifyOrderId }),
-  });
-  const requestConfirm = trpc.merch.requestEmailConfirmation.useMutation();
-
-  if (orderQuery.isLoading)
-    return (
-      <Center>
-        <Loader />
-      </Center>
-    );
-
-  const order = orderQuery.data;
-  if (!order || !order.found)
-    return (
-      <Alert color="yellow" title="Order not found">
-        We couldn&apos;t find that order yet. If you just checked out, give it a minute and refresh
-        — orders appear here once payment is confirmed.
-      </Alert>
-    );
-
-  if (order.alreadyClaimed || claim.data?.status === 'already_claimed')
-    return (
-      <Alert color="blue" title="Already claimed">
-        This order&apos;s Buzz has already been claimed.
-      </Alert>
-    );
-
-  if (claim.data?.status === 'granted') return <GrantedMessage buzz={claim.data.grantedBuzz} />;
-
-  if (requestConfirm.data?.status === 'confirmation_sent')
-    return (
-      <Alert color="green" icon={<IconMail size={18} />} title="Check your email">
-        We sent a confirmation link to <strong>{requestConfirm.data.maskedEmail}</strong>. Click it
-        (while signed in here) to add your Buzz and link your store orders.
-      </Alert>
-    );
-
-  const buzz = order.buzzAmount;
-
-  // Email on the order matches your verified Civitai email → one-click claim.
-  if (order.emailMatches)
-    return (
-      <Stack gap="md">
-        <Text>
-          You&apos;ve got <strong>⚡{buzz.toLocaleString()} Blue Buzz</strong> waiting from this
-          merch order.
-        </Text>
-        <Button
-          leftSection={<IconBolt size={18} fill="currentColor" />}
-          loading={claim.isPending}
-          onClick={() => claim.mutate({ shopifyOrderId })}
-          w="fit-content"
-        >
-          Claim {buzz.toLocaleString()} Buzz
-        </Button>
-        {claim.error && (
-          <Text c="red" size="sm">
-            {claim.error.message}
-          </Text>
-        )}
-      </Stack>
-    );
-
-  // Mismatch: the order used a different email than your account. Confirm via email.
-  return (
-    <Stack gap="md">
-      <Text>
-        This order has <strong>⚡{buzz.toLocaleString()} Blue Buzz</strong>, but it was placed with
-        a different email than your Civitai account. Enter the email you used at checkout and
-        we&apos;ll send a confirmation link to verify it&apos;s you.
-      </Text>
-      <TextInput
-        label="Email used on the order"
-        placeholder="you@example.com"
-        value={email}
-        onChange={(e) => setEmail(e.currentTarget.value)}
-        type="email"
-      />
-      <Button
-        leftSection={<IconMail size={18} />}
-        loading={requestConfirm.isPending}
-        disabled={!email}
-        onClick={() => requestConfirm.mutate({ shopifyOrderId, email })}
-        w="fit-content"
-      >
-        Send confirmation
-      </Button>
-      {requestConfirm.error && (
-        <Text c="red" size="sm">
-          {requestConfirm.error.message}
-        </Text>
-      )}
-    </Stack>
-  );
-}
-
 export default function MerchClaimPage() {
   const router = useRouter();
   const orderKey = typeof router.query.key === 'string' ? router.query.key : undefined;
-  const token = typeof router.query.token === 'string' ? router.query.token : undefined;
-  const order = typeof router.query.order === 'string' ? router.query.order : undefined;
 
   if (orderKey)
     return (
@@ -221,23 +82,11 @@ export default function MerchClaimPage() {
         <KeyFlow orderKey={orderKey} />
       </Wrapper>
     );
-  if (token)
-    return (
-      <Wrapper>
-        <ConfirmFlow token={token} />
-      </Wrapper>
-    );
-  if (order)
-    return (
-      <Wrapper>
-        <ClaimFlow shopifyOrderId={order} />
-      </Wrapper>
-    );
 
   return (
     <Wrapper>
-      <Alert color="yellow" title="No order specified">
-        Open this page from the link on your order confirmation to claim your Buzz.
+      <Alert color="yellow" title="No claim link">
+        Open the claim link from your Civitai merch reward email to add your Buzz.
       </Alert>
     </Wrapper>
   );
