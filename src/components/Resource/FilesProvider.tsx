@@ -591,7 +591,6 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         const result = await linkOfficialMutation.mutateAsync({
           id: versionId,
           sha256: officialSha256,
-          hostType: type,
         });
         if (result) {
           setLinkedComponents((prev) => [...prev, toLinkedComponent(result)]);

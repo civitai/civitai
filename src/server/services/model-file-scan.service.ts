@@ -232,7 +232,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     !primaryModelFileTypes.includes(file.type as ModelFileType)
   ) {
     try {
-      const match = await findOfficialFileByHash({ sha256, hostType: file.type });
+      const match = await findOfficialFileByHash({ sha256 });
       if (match) {
         await addLinkedComponent({
           id: file.modelVersionId,

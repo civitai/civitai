@@ -52,21 +52,16 @@ export async function findOfficialFilesBySize(sizeKB: number): Promise<{ id: num
 
 export async function findOfficialFileByHash({
   sha256,
-  hostType,
 }: {
   sha256: string;
-  hostType: string;
 }): Promise<OfficialFileMatch | null> {
-  // The match is byte-identity (SHA256) only — the host's declared type does NOT
-  // gate it. A vague 'Other' label matches, and a file dropped in the main file
-  // section (type='Model') is checked too, so it can't be used to bypass dedup.
-  // Genuine primary weights are safe: an official *checkpoint* match yields no
-  // componentType below, so it is never linked (only accessories are). Callers
-  // that delete the host row (via replaceFileId) must still skip primary types
-  // themselves — addLinkedComponent refuses to delete primary weights.
-  //
-  // Matched purely on bytes + official ownership — the canonical file's own type
-  // is not constrained (a standalone VAE's file is type='Model').
+  // Matched on byte identity (SHA256) + official ownership only — no reliance on
+  // the caller's declared file type, so a mislabelled file (or one dropped in the
+  // main file section) is checked too and can't be used to bypass dedup. Genuine
+  // primary weights are safe: an official checkpoint / primary-weights match
+  // yields no componentType below, so it is never linked (only accessories are).
+  // Callers that delete the host row (via replaceFileId) must still skip primary
+  // types themselves — addLinkedComponent refuses to delete primary weights.
   const file = await dbRead.modelFile.findFirst({
     where: {
       hashes: { some: { type: ModelHashType.SHA256, hash: sha256.toUpperCase() } }, // stored ModelFileHash.hash is UPPERCASE hex
@@ -86,15 +81,13 @@ export async function findOfficialFileByHash({
   });
   if (!file) return null;
 
-  // Component role, most-authoritative first: the official standalone model's
-  // type (VAE/encoder/controlnet), then the official file's own type (for a
-  // component bundled in a checkpoint), then the caller's declared host type.
-  // Never trust the host label over the official file's real identity.
+  // Component role from the official file's own identity: the standalone model's
+  // type (VAE/encoder/controlnet), else the file's own type (a component bundled
+  // in a checkpoint). Null → not a linkable accessory (a checkpoint / primary
+  // weights), so it is never linked.
   const componentType =
-    componentTypeFromModelType(file.modelVersion.model.type) ??
-    accessoryComponentType(file.type) ??
-    accessoryComponentType(hostType);
-  if (!componentType) return null; // official match isn't a linkable accessory (a checkpoint or primary weights)
+    componentTypeFromModelType(file.modelVersion.model.type) ?? accessoryComponentType(file.type);
+  if (!componentType) return null;
 
   return {
     versionId: file.modelVersionId,

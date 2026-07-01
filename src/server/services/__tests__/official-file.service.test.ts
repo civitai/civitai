@@ -50,7 +50,7 @@ describe('findOfficialFileByHash', () => {
   it('matches a canonical type="Model" file and derives componentType from the official model type', async () => {
     mockDbRead.modelFile.findFirst.mockResolvedValue(officialVaeRow);
     // Pass lowercase input (as computeBlobSha256 produces); query must uppercase it to match stored UPPERCASE hex
-    const match = await findOfficialFileByHash({ sha256: 'abcdef', hostType: 'VAE' });
+    const match = await findOfficialFileByHash({ sha256: 'abcdef' });
     expect(match).toEqual({
       versionId: 42,
       fileId: 900,
@@ -68,32 +68,11 @@ describe('findOfficialFileByHash', () => {
     expect(arg.where.modelVersion.model.userId).toBe(OFFICIAL);
   });
 
-  it('matches on hash regardless of the host label, using the official identity for componentType', async () => {
-    // The uploaded file is a VAE but the user labeled it 'Other' (or wrongly 'Text Encoder').
-    // The match is SHA256-only and componentType comes from the official VAE model, not the label.
-    mockDbRead.modelFile.findFirst.mockResolvedValue(officialVaeRow);
-    for (const hostType of ['Other', 'Text Encoder']) {
-      const match = await findOfficialFileByHash({ sha256: 'abcdef', hostType });
-      expect(match?.componentType).toBe('VAE');
-      expect(match?.fileId).toBe(900);
-    }
-  });
-
   it('derives componentType from the official file type for a bundled component', async () => {
-    // Official text encoder bundled in a checkpoint (file type carries the role), host labeled 'Other'.
+    // Official text encoder bundled in a checkpoint — the file's own type carries the role.
     mockDbRead.modelFile.findFirst.mockResolvedValue(officialBundledEncoderRow);
-    const match = await findOfficialFileByHash({ sha256: 'abcdef', hostType: 'Other' });
+    const match = await findOfficialFileByHash({ sha256: 'abcdef' });
     expect(match?.componentType).toBe('TextEncoder');
-  });
-
-  it('checks a main-section file (host "Model") and links it when it matches an official accessory', async () => {
-    // Bypass guard: a VAE dropped in the main file section (labeled 'Model') that
-    // byte-matches an official VAE is still checked (no host-type short-circuit)
-    // and linked as a VAE — its bytes decide, not its label.
-    mockDbRead.modelFile.findFirst.mockResolvedValue(officialVaeRow);
-    const match = await findOfficialFileByHash({ sha256: 'abcdef', hostType: 'Model' });
-    expect(mockDbRead.modelFile.findFirst).toHaveBeenCalled();
-    expect(match?.componentType).toBe('VAE');
   });
 
   it('returns null when the official match is a checkpoint (not a linkable accessory)', async () => {
@@ -105,7 +84,7 @@ describe('findOfficialFileByHash', () => {
       modelVersionId: 44,
       modelVersion: { name: 'v1', modelId: 9, model: { name: 'Flux', type: 'Checkpoint' } },
     });
-    expect(await findOfficialFileByHash({ sha256: 'abcdef', hostType: 'Other' })).toBeNull();
+    expect(await findOfficialFileByHash({ sha256: 'abcdef' })).toBeNull();
   });
 
   it('returns null for primary-weights file types (Diffusion Model / UNet), not just checkpoints', async () => {
@@ -120,12 +99,12 @@ describe('findOfficialFileByHash', () => {
         modelVersionId: 45,
         modelVersion: { name: 'v1', modelId: 10, model: { name: 'Flux', type: 'Checkpoint' } },
       });
-      expect(await findOfficialFileByHash({ sha256: 'abcdef', hostType: type })).toBeNull();
+      expect(await findOfficialFileByHash({ sha256: 'abcdef' })).toBeNull();
     }
   });
 
   it('returns null when no official file has the hash', async () => {
     mockDbRead.modelFile.findFirst.mockResolvedValue(null);
-    expect(await findOfficialFileByHash({ sha256: 'abc', hostType: 'VAE' })).toBeNull();
+    expect(await findOfficialFileByHash({ sha256: 'abc' })).toBeNull();
   });
 });

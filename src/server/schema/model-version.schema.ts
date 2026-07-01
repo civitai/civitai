@@ -346,7 +346,6 @@ export type AddLinkedComponentInput = z.infer<typeof addLinkedComponentSchema>;
 export const linkOfficialFileByHashSchema = z.object({
   id: z.number(), // host version being edited; caller must own it
   sha256: z.string().min(1),
-  hostType: z.string().min(1),
 });
 export type LinkOfficialFileByHashInput = z.infer<typeof linkOfficialFileByHashSchema>;
 

@@ -2644,7 +2644,7 @@ export const linkOfficialFileByHash = async (
 ) => {
   // Host-version ownership is enforced by the router middleware (isOwnerOrModerator on input.id).
   // Re-verify the byte match server-side — never trust a client-claimed match.
-  const match = await findOfficialFileByHash({ sha256: input.sha256, hostType: input.hostType });
+  const match = await findOfficialFileByHash({ sha256: input.sha256 });
   if (!match) return null;
 
   // Link with OFFICIAL credentials so addLinkedComponent's target-ownership guard passes.
