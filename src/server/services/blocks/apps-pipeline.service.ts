@@ -817,7 +817,12 @@ export function buildApplyReviewScript(ns: string): string {
   return `#!/usr/bin/env bash
 set -euo pipefail
 
-REVIEW_NAME="review-\${SLUG}-\${REVIEW_HOST_SHA}"
+# MUST be exported: envsubst (below) only substitutes EXPORTED env vars. SLUG /
+# SHA / IMAGE / REVIEW_HOST_SHA come from the container env (exported), but
+# REVIEW_NAME is computed here — without \`export\` it renders EMPTY in the
+# manifest, producing invalid names (Deployment/Service "" + Middleware
+# "-mod-gate") and the apply Job fails.
+export REVIEW_NAME="review-\${SLUG}-\${REVIEW_HOST_SHA}"
 
 # ---- Render the review manifest from /templates/review.yaml.tmpl ------------
 if command -v envsubst >/dev/null 2>&1; then

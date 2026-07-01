@@ -96,6 +96,10 @@ describe('triggerApplyReview / deleteReviewResources', () => {
     const script = job.spec.template.spec.containers[0].args[0] as string;
     expect(script).toContain('/templates/review.yaml.tmpl');
     expect(script).toContain('REVIEW_HOST_SHA');
+    // REVIEW_NAME must be EXPORTED — envsubst only substitutes exported vars, so
+    // without `export` the manifest renders empty resource names and the apply
+    // Job fails ("Middleware -mod-gate is invalid"). Regression guard.
+    expect(script).toContain('export REVIEW_NAME=');
     // Image is passed through env.
     const envVars = job.spec.template.spec.containers[0].env as Array<{ name: string; value: string }>;
     expect(envVars.find((e) => e.name === 'IMAGE')!.value).toContain('app-block-review-my-app');
