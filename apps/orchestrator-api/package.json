@@ -1,0 +1,33 @@
+{
+  "name": "@civitai/orchestrator-api",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@civitai/auth": "workspace:*",
+    "@civitai/client": "0.2.0-beta.78",
+    "@civitai/db": "workspace:*",
+    "@civitai/db-schema": "workspace:*",
+    "@civitai/redis": "workspace:*",
+    "@fastify/cookie": "^11.0.2",
+    "@trpc/server": "^11.17.0",
+    "fastify": "^5.2.1",
+    "prom-client": "^14.2.0",
+    "zod": "^4.0.17"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.9",
+    "tsup": "^8.5.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.2",
+    "vitest": "^4.0.18"
+  }
+}
