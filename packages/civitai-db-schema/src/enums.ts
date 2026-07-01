@@ -1092,3 +1092,10 @@ export const Model3DEngagementType = {
 } as const;
 
 export type Model3DEngagementType = (typeof Model3DEngagementType)[keyof typeof Model3DEngagementType];
+
+export const ShopifyMerchOrderStatus = {
+  Pending: 'Pending',
+  Granted: 'Granted',
+} as const;
+
+export type ShopifyMerchOrderStatus = (typeof ShopifyMerchOrderStatus)[keyof typeof ShopifyMerchOrderStatus];
