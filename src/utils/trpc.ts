@@ -110,6 +110,12 @@ function withGatewaySplit({
   const monolithLink = httpLinkWithLargeQuerySupport({ url: monolithUrl, headers });
   // No gateway URL configured → skip the split entirely (pure monolith link).
   if (!gatewayUrl) return monolithLink;
+  // CLIENT-ONLY: the cohort flag lives in a module-scope global (`gatewayRoutingEnabled`),
+  // which is per-tab in the browser but SHARED across all concurrent requests on the
+  // server. Reading it during SSR would leak one user's cohort to another. So on the
+  // server we never route to the gateway — SSR orchestrator calls stay on the monolith.
+  // (Same hazard class as the per-request QueryClient note below.)
+  if (typeof window === 'undefined') return monolithLink;
   return splitLink({
     condition: (op) =>
       shouldRouteToGateway(op.path, { enabled: gatewayRoutingEnabled, url: gatewayUrl }),
