@@ -14,7 +14,10 @@ beforeEach(() => vi.clearAllMocks());
 describe('findOfficialFilesBySize handler', () => {
   it('converts bytes to KB before querying', async () => {
     mockFindBySize.mockResolvedValue([{ id: 1 }]);
-    const res = await findOfficialFilesBySizeHandler({ size: 300_000 * 1024 });
+    const res = await findOfficialFilesBySizeHandler({
+      input: { size: 300_000 * 1024 },
+      ctx: {} as never,
+    });
     expect(mockFindBySize).toHaveBeenCalledWith(300_000);
     expect(res).toEqual([{ id: 1 }]);
   });

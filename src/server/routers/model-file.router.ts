@@ -57,5 +57,5 @@ export const modelFileRouter = router({
   findOfficialFilesBySize: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(findOfficialFilesBySizeSchema)
-    .query(({ input }) => findOfficialFilesBySizeHandler(input)),
+    .query(findOfficialFilesBySizeHandler),
 });

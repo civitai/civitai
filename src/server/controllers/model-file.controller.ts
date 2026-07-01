@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import type { ProtectedContext } from '~/server/createContext';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
+  FindOfficialFilesBySizeInput,
   ModelFileCreateInput,
   ModelFileUpdateInput,
   ModelFileUpsertInput,
@@ -325,6 +326,15 @@ export const deleteFileHandler = async ({
 
 // Client sends bytes (file.size); convert with the same bytesToKB createFile uses so
 // the stored sizeKB and this size gate agree exactly.
-export function findOfficialFilesBySizeHandler(input: { size: number }) {
-  return findOfficialFilesBySize(bytesToKB(input.size));
-}
+export const findOfficialFilesBySizeHandler = async ({
+  input,
+}: {
+  input: FindOfficialFilesBySizeInput;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    return await findOfficialFilesBySize(bytesToKB(input.size));
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
