@@ -111,6 +111,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                 onClick={onClick}
                 routedDialog={routedDialog}
                 className={styles.linkOrClick}
+                aria-label={alt ?? 'View image'}
               >
                 <div className="flex h-full items-center justify-center">
                   <Text c="dimmed">No Image</Text>
@@ -150,6 +151,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                   routedDialog={routedDialog}
                   className={styles.linkOrClick}
                   target={target}
+                  aria-label={image.name ?? alt ?? 'View image'}
                 >
                   {!safe ? (
                     image.hash ? (
@@ -236,6 +238,7 @@ export function LinkOrClick<T extends DialogKey>({
   routedDialog,
   className,
   target,
+  'aria-label': ariaLabel,
 }: {
   href?: string;
   onClick?: React.MouseEventHandler;
@@ -243,17 +246,18 @@ export function LinkOrClick<T extends DialogKey>({
   routedDialog?: RoutedDialogProps<T>;
   className?: string;
   target?: string;
+  'aria-label'?: string;
 }) {
   return href ? (
-    <NextLink href={href} className={className} target={target}>
+    <NextLink href={href} className={className} target={target} aria-label={ariaLabel}>
       {children}
     </NextLink>
   ) : routedDialog ? (
-    <RoutedDialogLink {...routedDialog} className={className}>
+    <RoutedDialogLink {...routedDialog} className={className} aria-label={ariaLabel}>
       {children}
     </RoutedDialogLink>
   ) : onClick ? (
-    <button onClick={onClick} className={className}>
+    <button onClick={onClick} className={className} aria-label={ariaLabel}>
       {children}
     </button>
   ) : (
