@@ -2,6 +2,12 @@ import { TRPCError } from '@trpc/server';
 import { randomUUID } from 'crypto';
 
 import { dbRead, dbWrite } from '~/server/db/client';
+import { NsfwLevel } from '~/server/common/enums';
+import {
+  getHighestBrowsingLevelBit,
+  orchestratorNsfwLevelMap,
+} from '~/shared/constants/browsingLevel.constants';
+import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { newAppListingScreenshotId } from '~/server/utils/app-block-ids';
 import {
   MAX_LISTING_SCREENSHOTS,
@@ -214,10 +220,22 @@ type OwnedListing = {
   slug: string;
   name: string;
   category: string | null;
+  contentRating: string | null;
   userId: number;
   iconId: number | null;
   coverId: number | null;
 };
+
+/**
+ * Map an `AppListing.contentRating` (`g|pg|pg13|r|x` — nullable) to the MAXIMUM
+ * `NsfwLevel` bit its published assets may carry. Reuses the canonical
+ * `orchestratorNsfwLevelMap` (which lacks the SFW `g` rating → PG). A
+ * null/unknown rating FAILS CLOSED to PG (SFW) — never widen on ambiguity.
+ */
+export function nsfwLevelFromContentRating(rating: string | null | undefined): NsfwLevel {
+  if (!rating || rating === 'g') return NsfwLevel.PG;
+  return orchestratorNsfwLevelMap[rating] ?? NsfwLevel.PG;
+}
 
 /**
  * Load a listing and assert the caller owns it (or is a moderator). Throws
@@ -232,6 +250,7 @@ async function loadOwnedListing(listingId: string, user: SessionUser): Promise<O
       slug: true,
       name: true,
       category: true,
+      contentRating: true,
       userId: true,
       iconId: true,
       coverId: true,
@@ -251,11 +270,22 @@ async function loadOwnedListing(listingId: string, user: SessionUser): Promise<O
 async function loadValidatedImage(
   imageId: number,
   kind: ListingAssetKind,
-  user: SessionUser
+  user: SessionUser,
+  contentRating: string | null
 ): Promise<number> {
   const image = await dbRead.image.findUnique({
     where: { id: imageId },
-    select: { id: true, userId: true, type: true, width: true, height: true, mimeType: true, metadata: true },
+    select: {
+      id: true,
+      userId: true,
+      type: true,
+      width: true,
+      height: true,
+      mimeType: true,
+      metadata: true,
+      ingestion: true,
+      nsfwLevel: true,
+    },
   });
   if (!image) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
   if (image.userId !== user.id && !user.isModerator) {
@@ -273,6 +303,27 @@ async function loadValidatedImage(
     kind
   );
   if (!result.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: result.reason });
+
+  // Content-status gate: a listing asset is publicly rendered (P2), so the Image
+  // must be scan-complete AND within the listing's maturity ceiling. This mirrors
+  // the site-wide "don't publish un-scanned / over-rated media" invariant.
+  if (image.ingestion !== ImageIngestionStatus.Scanned) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'image is not approved for publishing (scan is not complete)',
+    });
+  }
+  // Fail closed: a null contentRating clamps to SFW (PG). NsfwLevel bits are
+  // severity-ordered (PG=1 < PG13=2 < R=4 < X=8 < XXX=16 < Blocked=32), so a
+  // numeric compare of the image's highest bit vs the ceiling is exact.
+  const maxLevel = nsfwLevelFromContentRating(contentRating);
+  const imageLevel = getHighestBrowsingLevelBit(image.nsfwLevel ?? 0);
+  if (imageLevel > maxLevel) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: "image exceeds the listing's content rating",
+    });
+  }
   return image.id;
 }
 
@@ -284,8 +335,8 @@ export async function setListingIcon(
   args: { listingId: string; imageId: number },
   user: SessionUser
 ): Promise<{ iconId: number }> {
-  await loadOwnedListing(args.listingId, user);
-  const iconId = await loadValidatedImage(args.imageId, 'icon', user);
+  const listing = await loadOwnedListing(args.listingId, user);
+  const iconId = await loadValidatedImage(args.imageId, 'icon', user, listing.contentRating);
   await dbWrite.appListing.update({ where: { id: args.listingId }, data: { iconId } });
   return { iconId };
 }
@@ -294,8 +345,8 @@ export async function setListingCover(
   args: { listingId: string; imageId: number },
   user: SessionUser
 ): Promise<{ coverId: number }> {
-  await loadOwnedListing(args.listingId, user);
-  const coverId = await loadValidatedImage(args.imageId, 'cover', user);
+  const listing = await loadOwnedListing(args.listingId, user);
+  const coverId = await loadValidatedImage(args.imageId, 'cover', user, listing.contentRating);
   await dbWrite.appListing.update({ where: { id: args.listingId }, data: { coverId } });
   return { coverId };
 }
@@ -304,17 +355,20 @@ export async function addListingScreenshot(
   args: { listingId: string; imageId: number; caption?: string | null },
   user: SessionUser
 ): Promise<{ id: string; order: number }> {
-  await loadOwnedListing(args.listingId, user);
-  const imageId = await loadValidatedImage(args.imageId, 'screenshot', user);
+  const listing = await loadOwnedListing(args.listingId, user);
+  const imageId = await loadValidatedImage(args.imageId, 'screenshot', user, listing.contentRating);
 
   // COUNT cap — reject the (N+1)th (mirrors E5 MAX_SCREENSHOTS "reject, not truncate").
-  const existing = await dbRead.appListingScreenshot.findMany({
+  // Read the count + max order from dbWrite (primary), NOT the replica: under
+  // replica lag two concurrent adds could both pass `count < 8` (a 9th row) or
+  // compute the same `order`.
+  const existing = await dbWrite.appListingScreenshot.findMany({
     where: { appListingId: args.listingId },
     select: { order: true },
     orderBy: { order: 'desc' },
     take: 1,
   });
-  const count = await dbRead.appListingScreenshot.count({
+  const count = await dbWrite.appListingScreenshot.count({
     where: { appListingId: args.listingId },
   });
   if (count >= MAX_LISTING_SCREENSHOTS) {
@@ -347,7 +401,10 @@ export async function reorderListingScreenshots(
   user: SessionUser
 ): Promise<{ reordered: number }> {
   await loadOwnedListing(args.listingId, user);
-  const current = await dbRead.appListingScreenshot.findMany({
+  // Read the current set from dbWrite (primary): under replica lag the reorder
+  // could target a just-deleted id (P2025 → 500 after the delete committed) or
+  // miss a just-added row.
+  const current = await dbWrite.appListingScreenshot.findMany({
     where: { appListingId: args.listingId },
     select: { id: true },
   });
@@ -409,7 +466,10 @@ export async function removeListingScreenshot(
   await dbWrite.appListingScreenshot.delete({ where: { id: args.screenshotId } });
 
   // Re-pack: contiguous orders over the survivors (ordered by their old order).
-  const remaining = await dbRead.appListingScreenshot.findMany({
+  // Read the survivor set from dbWrite (primary): under replica lag the replica
+  // may still return the just-deleted row → an `update` on it would P2025/500
+  // after the delete already committed.
+  const remaining = await dbWrite.appListingScreenshot.findMany({
     where: { appListingId: shot.appListingId },
     select: { id: true },
     orderBy: { order: 'asc' },
@@ -451,7 +511,10 @@ export async function getListingAssets(
     completeness: checkListingAssetsComplete({
       iconId: listing.iconId,
       coverId: listing.coverId,
-      screenshotCount: screenshots.length,
+      // A row whose Image was deleted (imageId → null via onDelete: SetNull) must
+      // NOT count as a present screenshot, else the gate passes but the card
+      // renders blank.
+      screenshotCount: screenshots.filter((s) => s.imageId != null).length,
     }),
   };
 }
@@ -487,6 +550,7 @@ export type BackfillCandidate = {
   slug: string;
   name: string;
   category: string | null;
+  contentRating: string | null;
   userId: number;
   iconId: number | null;
   coverId: number | null;
@@ -538,9 +602,16 @@ export interface ListingAssetBackfillDeps {
     ownerId: number;
     appBlockId: string;
     blockScreenshots: { key?: unknown }[];
+    /** Maturity level to stamp on the created Image rows (from contentRating). */
+    nsfwLevel: NsfwLevel;
   }): Promise<number[]>;
   /** Autogenerate ONE screenshot via verify-runner, stored as an Image. Null on failure. */
-  autogenScreenshot(args: { ownerId: number; slug: string }): Promise<number | null>;
+  autogenScreenshot(args: {
+    ownerId: number;
+    slug: string;
+    /** Maturity level to stamp on the created Image row (from contentRating). */
+    nsfwLevel: NsfwLevel;
+  }): Promise<number | null>;
   /** Render an SVG placeholder screenshot → PNG → Image row. */
   generatePlaceholderScreenshot(args: {
     ownerId: number;
@@ -578,6 +649,7 @@ export async function backfillListingAssets(
       slug: true,
       name: true,
       category: true,
+      contentRating: true,
       userId: true,
       iconId: true,
       coverId: true,
@@ -612,6 +684,7 @@ export async function backfillListingAssets(
       slug: row.slug,
       name: row.name,
       category: row.category,
+      contentRating: row.contentRating,
       userId: row.userId,
       iconId: row.iconId,
       coverId: row.coverId,
@@ -620,7 +693,9 @@ export async function backfillListingAssets(
       screenshots: row.screenshots,
     };
 
-    const hasScreenshots = candidate.screenshots.length > 0;
+    // A screenshot row whose Image was deleted (imageId → null) does NOT count
+    // as a present screenshot — it must be re-filled, not treated as complete.
+    const hasScreenshots = candidate.screenshots.some((s) => s.imageId != null);
     const complete =
       candidate.iconId != null && candidate.coverId != null && hasScreenshots;
     if (complete) {
@@ -650,9 +725,14 @@ export async function backfillListingAssets(
     try {
       let changed = false;
 
+      // Maturity ceiling for creator-derived (migrated/autogen) screenshots,
+      // derived from the listing's contentRating (fail-closed to PG). Synthetic
+      // SVG placeholders + the icon stay PG regardless.
+      const derivedNsfwLevel = nsfwLevelFromContentRating(candidate.contentRating);
+
       // 1) Ensure at least one screenshot exists.
       let firstScreenshotImageId: number | null = hasScreenshots
-        ? candidate.screenshots[0].imageId
+        ? candidate.screenshots.find((s) => s.imageId != null)?.imageId ?? null
         : null;
       if (!hasScreenshots) {
         const plan = chooseScreenshotSource(candidate);
@@ -662,12 +742,14 @@ export async function backfillListingAssets(
             ownerId: candidate.userId,
             appBlockId: candidate.appBlockId,
             blockScreenshots: (candidate.appBlockScreenshots as { key?: unknown }[]) ?? [],
+            nsfwLevel: derivedNsfwLevel,
           });
           result.bySource.migrated += imageIds.length;
         } else if (plan.mode === 'autogen') {
           const shot = await deps.autogenScreenshot({
             ownerId: candidate.userId,
             slug: candidate.slug,
+            nsfwLevel: derivedNsfwLevel,
           });
           if (shot != null) {
             imageIds = [shot];
@@ -760,15 +842,21 @@ async function createStoredImage(args: {
   width: number;
   height: number;
   assetKind: ListingAssetKind;
+  /** Maturity level to stamp (synthetic assets = PG; creator-derived = from rating). */
+  nsfwLevel: NsfwLevel;
+  /**
+   * Whether to mark the row `appListingAutogenerated` in metadata. TRUE only for
+   * MACHINE-generated assets (SVG icon/placeholder, verify-runner autogen screen-
+   * shot). FALSE for MIGRATED bundle screenshots — those are creator-authored.
+   */
   autogenerated: boolean;
 }): Promise<number> {
-  const [{ PutObjectCommand }, s3utils, storageResolver, { ImageIngestionStatus, MediaType }, { NsfwLevel }] =
+  const [{ PutObjectCommand, DeleteObjectCommand }, s3utils, storageResolver, { MediaType }] =
     await Promise.all([
       import('@aws-sdk/client-s3'),
       import('~/utils/s3-utils'),
       import('~/server/services/storage-resolver'),
       import('~/shared/utils/prisma/enums'),
-      import('~/server/common/enums'),
     ]);
   const key = randomUUID();
   const { s3, bucket, backend } = await s3utils.getImageUploadBackend();
@@ -780,32 +868,48 @@ async function createStoredImage(args: {
       ContentType: args.contentType,
     })
   );
-  await storageResolver.registerMediaLocation(key, backend, args.buffer.length);
 
-  const created = await dbWrite.image.create({
-    data: {
-      url: key,
-      userId: args.ownerId,
-      type: MediaType.image,
-      width: args.width,
-      height: args.height,
-      mimeType: args.contentType,
-      nsfwLevel: NsfwLevel.PG,
-      ingestion: ImageIngestionStatus.Scanned,
-      metadata: {
-        size: args.buffer.length,
+  try {
+    await storageResolver.registerMediaLocation(key, backend, args.buffer.length);
+
+    // TODO(W13 P2): migrated/autogen (creator-derived) screenshots are stored
+    // `Scanned` here (they bypass the user-content ingestion pipeline). P2 should
+    // route them through the real per-image scan instead of trusting the rating.
+    const created = await dbWrite.image.create({
+      data: {
+        url: key,
+        userId: args.ownerId,
+        type: MediaType.image,
         width: args.width,
         height: args.height,
-        // Marker so a later creator upload can be preferred / these can be
-        // identified as generated placeholders (task §3). Stored on the EXISTING
-        // Image.metadata Json — no schema migration needed.
-        appListingAutogenerated: true,
-        appListingAssetKind: args.assetKind,
+        mimeType: args.contentType,
+        nsfwLevel: args.nsfwLevel,
+        ingestion: ImageIngestionStatus.Scanned,
+        metadata: {
+          size: args.buffer.length,
+          width: args.width,
+          height: args.height,
+          // Provenance kind is always recorded; the `appListingAutogenerated`
+          // marker is set ONLY for truly machine-generated assets so it reflects
+          // reality (a migrated creator screenshot is NOT autogenerated).
+          ...(args.autogenerated ? { appListingAutogenerated: true } : {}),
+          appListingAssetKind: args.assetKind,
+        },
       },
-    },
-    select: { id: true },
-  });
-  return created.id;
+      select: { id: true },
+    });
+    return created.id;
+  } catch (err) {
+    // Best-effort orphan cleanup: the bytes are already in S3 but registering /
+    // the DB row failed. Delete the object so we don't leak; never mask the
+    // original error with a cleanup failure.
+    try {
+      await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+    } catch {
+      // ignore — cleanup is best-effort
+    }
+    throw err;
+  }
 }
 
 /** Rasterize an SVG string to a PNG buffer via sharp. */
@@ -815,7 +919,7 @@ async function rasterizeSvg(svg: string, width: number, height: number): Promise
 }
 
 export const defaultBackfillDeps: ListingAssetBackfillDeps = {
-  async migrateBlockScreenshots({ ownerId, blockScreenshots }) {
+  async migrateBlockScreenshots({ ownerId, blockScreenshots, nsfwLevel }) {
     const { getBundleBucket, getBundleS3Client } = await import('~/utils/bundle-s3');
     const { GetObjectCommand } = await import('@aws-sdk/client-s3');
     const client = getBundleS3Client();
@@ -841,14 +945,16 @@ export const defaultBackfillDeps: ListingAssetBackfillDeps = {
         width: meta.width ?? 1280,
         height: meta.height ?? 720,
         assetKind: 'screenshot',
-        autogenerated: true,
+        nsfwLevel,
+        // Migrated bundle screenshots are CREATOR-authored, not autogenerated.
+        autogenerated: false,
       });
       imageIds.push(id);
     }
     return imageIds;
   },
 
-  async autogenScreenshot({ ownerId, slug }) {
+  async autogenScreenshot({ ownerId, slug, nsfwLevel }) {
     // Reuse the verify-runner fetch from the App Blocks autogen path, but store
     // the PNG as an Image row (not the bundle-MinIO screenshots path).
     const { env } = await import('~/env/server');
@@ -876,6 +982,8 @@ export const defaultBackfillDeps: ListingAssetBackfillDeps = {
         width: 1280,
         height: 720,
         assetKind: 'screenshot',
+        nsfwLevel,
+        // A verify-runner capture of the live app IS machine-generated.
         autogenerated: true,
       });
     } catch {
@@ -895,6 +1003,8 @@ export const defaultBackfillDeps: ListingAssetBackfillDeps = {
       width: 1280,
       height: 720,
       assetKind: 'screenshot',
+      // Fully machine-generated SVG placeholder → always SFW/PG + autogenerated.
+      nsfwLevel: NsfwLevel.PG,
       autogenerated: true,
     });
   },
@@ -909,6 +1019,8 @@ export const defaultBackfillDeps: ListingAssetBackfillDeps = {
       width: 512,
       height: 512,
       assetKind: 'icon',
+      // Deterministic machine-generated glyph icon → always SFW/PG + autogenerated.
+      nsfwLevel: NsfwLevel.PG,
       autogenerated: true,
     });
   },
