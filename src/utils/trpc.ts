@@ -11,6 +11,7 @@ import { isDev } from '~/env/other';
 import { env } from '~/env/client';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
+import { resolveGatewayBase, shouldRouteToGateway } from '~/utils/orchestrator-gateway-routing';
 
 type RequestHeaders = {
   'x-client-date': string;
@@ -19,6 +20,29 @@ type RequestHeaders = {
 };
 
 const url = '/api/trpc';
+
+/**
+ * Base URL of the dedicated orchestrator-gateway service (generation-API
+ * spin-out). Empty by default → the split falls back to the monolith. When set
+ * (an absolute origin) the client MAY route allowlisted `orchestrator.*` calls
+ * here. Trailing `/api/trpc` mirrors the monolith URL shape so the gateway's
+ * tRPC-over-HTTP handler mounts at the same relative path.
+ */
+const gatewayBase = resolveGatewayBase(env.NEXT_PUBLIC_ORCHESTRATOR_GATEWAY_URL);
+const gatewayUrl = gatewayBase ? `${gatewayBase}${url}` : '';
+
+/**
+ * Module-scope cache of the `orchestratorGatewayRouting` cohort flag. The tRPC
+ * link chain runs OUTSIDE React, so it can't read `useFeatureFlags()`; instead
+ * `FeatureFlagsProvider` (seeded synchronously from the SSR `flags`) writes the
+ * boolean here on mount via `setGatewayRouting`. Safe default `false` → monolith
+ * until populated / for anon / on error. Because the procedure allowlist ships
+ * EMPTY, this being true is still a provable no-op.
+ */
+let gatewayRoutingEnabled = false;
+export function setGatewayRouting(enabled: boolean) {
+  gatewayRoutingEnabled = enabled;
+}
 
 /**
  * Approximate input-size threshold (serialized chars) above which a query is
@@ -63,6 +87,47 @@ function httpLinkWithLargeQuerySupport({
     false: httpLink({ transformer: superjson, url, headers }),
   });
 }
+/**
+ * Wrap a monolith terminating link with the DARK orchestrator-gateway split.
+ *
+ * `condition` true  → route the op to the gateway (reusing
+ *   `httpLinkWithLargeQuerySupport` so the large-query POST behavior is
+ *   preserved on BOTH branches).
+ * `condition` false → the CURRENT monolith link, unchanged.
+ *
+ * The condition ANDs: `orchestrator.*` path + cohort flag on + gateway URL set +
+ * procedure in the (EMPTY-today) allowlist. Any miss → monolith. Because the
+ * allowlist is empty, `condition` is ALWAYS false right now → the gateway branch
+ * is never taken → zero behavior change.
+ */
+function withGatewaySplit({
+  monolithUrl,
+  headers,
+}: {
+  monolithUrl: string;
+  headers: ReturnType<typeof getHeaders>;
+}): TRPCLink<AppRouter> {
+  const monolithLink = httpLinkWithLargeQuerySupport({ url: monolithUrl, headers });
+  // No gateway URL configured → skip the split entirely (pure monolith link).
+  if (!gatewayUrl) return monolithLink;
+  // CLIENT-ONLY: the cohort flag lives in a module-scope global (`gatewayRoutingEnabled`),
+  // which is per-tab in the browser but SHARED across all concurrent requests on the
+  // server. Reading it during SSR would leak one user's cohort to another. So on the
+  // server we never route to the gateway — SSR orchestrator calls stay on the monolith.
+  // (Same hazard class as the per-request QueryClient note below.)
+  if (typeof window === 'undefined') return monolithLink;
+  // NO MONOLITH FALLBACK: `splitLink` is a static route — a matched (allowlisted +
+  // flagged) op goes ONLY to the gateway; if it's down/5xx/TLS-fails the op fails,
+  // there is no client retry-on-monolith. Kill-switch = Flipt-off the cohort OR
+  // empty `ORCHESTRATOR_GATEWAY_PROCEDURES`.
+  return splitLink({
+    condition: (op) =>
+      shouldRouteToGateway(op.path, { enabled: gatewayRoutingEnabled, url: gatewayUrl }),
+    true: httpLinkWithLargeQuerySupport({ url: gatewayUrl, headers }),
+    false: monolithLink,
+  });
+}
+
 const headers: RequestHeaders = {
   'x-client-version': process.env.version,
   'x-client-date': Date.now().toString(),
@@ -155,7 +220,7 @@ export const trpcVanilla: CreateTRPCClient<AppRouter> = createTRPCClient<AppRout
         (isDev && env.NEXT_PUBLIC_LOG_TRPC) ||
         (opts.direction === 'down' && opts.result instanceof Error),
     }),
-    httpLinkWithLargeQuerySupport({ url, headers: getHeaders() }),
+    withGatewaySplit({ monolithUrl: url, headers: getHeaders() }),
   ],
 });
 
@@ -182,8 +247,8 @@ export const trpc: CreateTRPCNext<AppRouter, NextPageContext> = createTRPCNext<A
             (isDev && env.NEXT_PUBLIC_LOG_TRPC) ||
             (opts.direction === 'down' && opts.result instanceof Error),
         }),
-        httpLinkWithLargeQuerySupport({
-          url: isClient ? url : `${env.NEXT_PUBLIC_BASE_URL as string}${url}`,
+        withGatewaySplit({
+          monolithUrl: isClient ? url : `${env.NEXT_PUBLIC_BASE_URL as string}${url}`,
           headers: getHeaders(ctx),
         }),
         // splitLink({

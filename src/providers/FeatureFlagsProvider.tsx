@@ -1,7 +1,7 @@
 import { useSession } from '~/providers/SessionProvider';
-import { createContext, useContext, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { type FeatureAccess } from '~/server/services/feature-flags.service';
-import { trpc } from '~/utils/trpc';
+import { setGatewayRouting, trpc } from '~/utils/trpc';
 
 const FeatureFlagsCtx = createContext<FeatureAccess | null>(null);
 // Whether the per-user `getFeatureFlags` overlay has resolved. SSR seeds
@@ -71,6 +71,15 @@ export const FeatureFlagsProvider = ({
     }),
     [flags, userFeatures]
   );
+
+  // The tRPC link chain (`src/utils/trpc.ts`) lives OUTSIDE React, so it can't
+  // read this context directly. Mirror the resolved `orchestratorGatewayRouting`
+  // cohort flag into the module-scope cache the orchestrator-gateway splitLink
+  // reads. Default there is `false` (monolith); this keeps it in sync as the
+  // per-user overlay resolves. No-op today (the procedure allowlist is empty).
+  useEffect(() => {
+    setGatewayRouting(featureFlags.orchestratorGatewayRouting === true);
+  }, [featureFlags.orchestratorGatewayRouting]);
 
   return (
     <FeatureFlagsCtx.Provider value={featureFlags}>

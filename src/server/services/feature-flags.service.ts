@@ -253,6 +253,21 @@ const featureFlags = createFeatureFlags({
   // land. The Flipt key stays the kill-switch / future-widen lever (flip it off
   // to drop the page + nav entry without a deploy).
   appBlocksGetStarted: { availability: ['mod'], fliptKey: 'app-blocks-get-started' },
+  // Orchestrator-gateway client routing — the DARK cohort gate for the
+  // generation-API spin-out (see claudedocs/plan-orchestrator-api-spinout-2026-06-30.md
+  // §4c). When true for a user, the client's `orchestrator.*` tRPC calls MAY be
+  // routed to the dedicated `civitai-orchestrator-gateway` service instead of the
+  // monolith — but ONLY for procedures the gateway actually backs yet (a SEPARATE
+  // `ORCHESTRATOR_GATEWAY_PROCEDURES` allowlist in `src/utils/orchestrator-gateway-routing.ts`,
+  // which is EMPTY today → this flag being true is a provable no-op). Staged
+  // mod-only so it deploys dark; phased rollout is a pure Flipt/availability
+  // change (dark `[]`/off → `['mod']` → `['public']` on explicit confirm) as the
+  // allowlist grows (whatIf first, then generate/status). The empty allowlist is
+  // the hard dark guarantee; the Flipt key is the kill-switch / widen lever.
+  orchestratorGatewayRouting: {
+    availability: ['mod'],
+    fliptKey: 'orchestrator-gateway-routing',
+  },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
