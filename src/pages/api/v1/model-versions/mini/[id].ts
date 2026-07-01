@@ -267,32 +267,49 @@ export default MixedAuthEndpoint(async function handler(
     .map((fm) => fm.modelId)
     .includes(modelVersion.modelId);
 
-  // Base-model rule wins over the version's own fee: derivatives inherit the
-  // base model's licensing, and the base version itself resolves to its own row.
-  // TODO: support coexisting base-model + per-version fees (split payouts,
-  // additive amounts, derivative opt-out, etc.). Today the upsert path blocks
-  // children from setting their own fee when a rule covers them, so this branch
-  // only sees one or the other in practice.
+  // A base-model rule and the version's own fee now stack: a derivative on a
+  // base model that charges a licensing fee can add its own fee on top, and each
+  // fee settles to its own recipient. `fees` carries the full breakdown; the
+  // orchestrator charges the sum and pays out each entry separately.
   const hasBaseRule =
     modelVersion.baseLicensingFeeRecipientId != null &&
     modelVersion.baseLicensingFee != null &&
     modelVersion.baseLicensingFee > 0;
-  const hasOwnFee = modelVersion.licensingFee != null && modelVersion.licensingFee > 0;
-  const fee = hasBaseRule
-    ? {
-        amount: modelVersion.baseLicensingFee!,
-        type: lowerFirst(modelVersion.baseLicensingFeeType ?? 'PerImageBuzz'),
-        settlementCurrency: lowerFirst(modelVersion.baseLicensingFeeSettlementCurrency ?? 'Buzz'),
-        recipientModelVersionId: modelVersion.baseLicensingFeeRecipientId!,
-      }
-    : hasOwnFee
-    ? {
-        amount: modelVersion.licensingFee!,
-        type: lowerFirst(modelVersion.licensingFeeType ?? 'PerImageBuzz'),
-        settlementCurrency: lowerFirst(modelVersion.licensingFeeSettlementCurrency ?? 'Buzz'),
-        recipientModelVersionId: modelVersion.id,
-      }
-    : undefined;
+  // A base version resolves to its own row via the rule, so don't double-count
+  // its fee as both the base rule and an own fee.
+  const isBaseRecipientItself = modelVersion.baseLicensingFeeRecipientId === modelVersion.id;
+  const hasOwnFee =
+    modelVersion.licensingFee != null && modelVersion.licensingFee > 0 && !isBaseRecipientItself;
+
+  const fees: Array<{
+    role: 'baseModel' | 'version';
+    amount: number;
+    type: string;
+    settlementCurrency: string;
+    recipientModelVersionId: number;
+  }> = [];
+  if (hasBaseRule) {
+    fees.push({
+      role: 'baseModel',
+      amount: modelVersion.baseLicensingFee!,
+      type: lowerFirst(modelVersion.baseLicensingFeeType ?? 'PerImageBuzz'),
+      settlementCurrency: lowerFirst(modelVersion.baseLicensingFeeSettlementCurrency ?? 'Buzz'),
+      recipientModelVersionId: modelVersion.baseLicensingFeeRecipientId!,
+    });
+  }
+  if (hasOwnFee) {
+    fees.push({
+      role: 'version',
+      amount: modelVersion.licensingFee!,
+      type: lowerFirst(modelVersion.licensingFeeType ?? 'PerImageBuzz'),
+      settlementCurrency: lowerFirst(modelVersion.licensingFeeSettlementCurrency ?? 'Buzz'),
+      recipientModelVersionId: modelVersion.id,
+    });
+  }
+
+  // Legacy single-fee field. Kept until the orchestrator reads `fees`; mirrors
+  // the old base-rule-wins behavior so existing consumers don't double-charge.
+  const fee = fees.find((f) => f.role === 'baseModel') ?? fees[0];
 
   const payoutEnabled =
     !Flags.hasFlag(modelVersion.userFlags, UserFlag.DisablePayout) &&
@@ -322,6 +339,7 @@ export default MixedAuthEndpoint(async function handler(
     minor: modelVersion.minor,
     sfwOnly: modelVersion.sfwOnly,
     fee,
+    fees,
     payoutEnabled,
   };
   res.status(200).json(data);
