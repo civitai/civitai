@@ -151,7 +151,9 @@ export function AspectRatioImageCard<T extends DialogKey>({
                   routedDialog={routedDialog}
                   className={styles.linkOrClick}
                   target={target}
-                  aria-label={image.name ?? alt ?? 'View image'}
+                  // Prefer the caller-supplied `alt` (a semantic title, e.g. the
+                  // model name) over the raw image name (often an upload filename).
+                  aria-label={alt ?? image.name ?? 'View image'}
                 >
                   {!safe ? (
                     image.hash ? (
