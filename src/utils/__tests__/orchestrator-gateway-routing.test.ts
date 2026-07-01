@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   ORCHESTRATOR_GATEWAY_PROCEDURES,
+  resolveGatewayBase,
   shouldRouteToGateway,
 } from '~/utils/orchestrator-gateway-routing';
 
@@ -102,5 +103,34 @@ describe('shouldRouteToGateway — the gateway branch IS reachable once a proced
         allowlist: ['orchestrator.whatIfFromGraph'], // wrong shape → no match
       })
     ).toBe(false);
+  });
+});
+
+describe('resolveGatewayBase — URL normalization / disabled-default', () => {
+  it('returns "" for empty / whitespace / null / undefined (→ monolith fallback)', () => {
+    for (const raw of ['', '   ', '\t\n', undefined, null]) {
+      expect(resolveGatewayBase(raw)).toBe('');
+    }
+  });
+
+  it('trims surrounding whitespace', () => {
+    expect(resolveGatewayBase('  https://orchestrator-gateway.civitai.com  ')).toBe(
+      'https://orchestrator-gateway.civitai.com'
+    );
+  });
+
+  it('strips trailing slash(es) so the caller can append /api/trpc cleanly', () => {
+    expect(resolveGatewayBase('https://orchestrator-gateway.civitai.com/')).toBe(
+      'https://orchestrator-gateway.civitai.com'
+    );
+    expect(resolveGatewayBase('https://orchestrator-gateway.civitai.com//')).toBe(
+      'https://orchestrator-gateway.civitai.com'
+    );
+  });
+
+  it('leaves a clean origin untouched', () => {
+    expect(resolveGatewayBase('https://orchestrator-gateway.civitai.com')).toBe(
+      'https://orchestrator-gateway.civitai.com'
+    );
   });
 });

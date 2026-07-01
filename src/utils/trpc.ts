@@ -11,7 +11,7 @@ import { isDev } from '~/env/other';
 import { env } from '~/env/client';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
-import { shouldRouteToGateway } from '~/utils/orchestrator-gateway-routing';
+import { resolveGatewayBase, shouldRouteToGateway } from '~/utils/orchestrator-gateway-routing';
 
 type RequestHeaders = {
   'x-client-date': string;
@@ -28,8 +28,8 @@ const url = '/api/trpc';
  * here. Trailing `/api/trpc` mirrors the monolith URL shape so the gateway's
  * tRPC-over-HTTP handler mounts at the same relative path.
  */
-const gatewayBase = env.NEXT_PUBLIC_ORCHESTRATOR_GATEWAY_URL || '';
-const gatewayUrl = gatewayBase ? `${gatewayBase.replace(/\/$/, '')}${url}` : '';
+const gatewayBase = resolveGatewayBase(env.NEXT_PUBLIC_ORCHESTRATOR_GATEWAY_URL);
+const gatewayUrl = gatewayBase ? `${gatewayBase}${url}` : '';
 
 /**
  * Module-scope cache of the `orchestratorGatewayRouting` cohort flag. The tRPC
@@ -116,6 +116,10 @@ function withGatewaySplit({
   // server we never route to the gateway — SSR orchestrator calls stay on the monolith.
   // (Same hazard class as the per-request QueryClient note below.)
   if (typeof window === 'undefined') return monolithLink;
+  // NO MONOLITH FALLBACK: `splitLink` is a static route — a matched (allowlisted +
+  // flagged) op goes ONLY to the gateway; if it's down/5xx/TLS-fails the op fails,
+  // there is no client retry-on-monolith. Kill-switch = Flipt-off the cohort OR
+  // empty `ORCHESTRATOR_GATEWAY_PROCEDURES`.
   return splitLink({
     condition: (op) =>
       shouldRouteToGateway(op.path, { enabled: gatewayRoutingEnabled, url: gatewayUrl }),

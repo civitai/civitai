@@ -32,6 +32,24 @@
  *   - P2 adds the generate/status procedures (submitWorkflow/generate, getWorkflow,
  *     queryWorkflows, cancelWorkflow, getWorkflowStatusUpdate, ...).
  *   - later phases add the remaining migrated procedures.
+ *
+ * ⚠️ GO-LIVE PRECONDITIONS — do NOT append a procedure here until, in order:
+ *   1. CROSS-ORIGIN AUTH is wired. The gateway branch uses the same tRPC
+ *      `httpLink`, whose `fetch` defaults to `credentials:'same-origin'`. Once
+ *      the gateway is a different origin, allowlisted calls send NO cookies →
+ *      they arrive UNAUTHENTICATED (and every call becomes a CORS preflight from
+ *      the `x-client-*` headers). The enablement PR must add `credentials:'include'`
+ *      on the gateway branch + gateway CORS (`Access-Control-Allow-Credentials`,
+ *      echoed origin, allow `x-client-*`) + cookie `SameSite=None; Secure`.
+ *   2. The gateway is DEPLOYED and actually backs the procedure, and
+ *      `NEXT_PUBLIC_ORCHESTRATOR_GATEWAY_URL` is set, and the Flipt cohort is
+ *      NARROW (start `[]`/off or `['mod']`) BEFORE the append — because adding one
+ *      string here immediately routes that procedure for the ENTIRE cohort with
+ *      no per-procedure percentage ramp (the only ramp is the Flipt cohort).
+ *
+ * NO MONOLITH FALLBACK: `splitLink` is a static route — an allowlisted op goes
+ * ONLY to the gateway. If the gateway is down/5xx/TLS-fails the op FAILS (no
+ * client retry-on-monolith). The kill-switch is Flipt-off OR emptying this array.
  */
 export const ORCHESTRATOR_GATEWAY_PROCEDURES: string[] = [];
 
@@ -74,4 +92,19 @@ export function shouldRouteToGateway(path: string, config: GatewayRoutingConfig)
 
   const procedure = path.slice(ORCHESTRATOR_PREFIX.length);
   return allowlist.includes(procedure);
+}
+
+/**
+ * Normalize the raw `NEXT_PUBLIC_ORCHESTRATOR_GATEWAY_URL` into a clean gateway
+ * base ORIGIN (no trailing slash). Returns `''` for empty/whitespace/absent —
+ * `''` means "no gateway configured" → the split falls back to the monolith.
+ *
+ * Expects an origin only (e.g. `https://orchestrator-gateway.civitai.com`); a
+ * value that already contains a path will be used verbatim (minus a trailing
+ * slash) and is a config foot-gun — the caller appends the `/api/trpc` mount.
+ */
+export function resolveGatewayBase(raw: string | undefined | null): string {
+  const trimmed = (raw ?? '').trim();
+  if (!trimmed) return '';
+  return trimmed.replace(/\/+$/, '');
 }
