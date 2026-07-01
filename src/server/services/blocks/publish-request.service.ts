@@ -2418,6 +2418,118 @@ export type ReviewPreviewState =
   | 'preview-live'
   | 'preview-failed';
 
+/**
+ * Global cap on concurrently-active review previews across ALL moderators. Each
+ * active preview holds a review Deployment + Service + IngressRoute in the apps
+ * namespace, so this bounds the review sandbox's cluster footprint.
+ */
+export const MAX_CONCURRENT_REVIEW_PREVIEWS = 5;
+
+/**
+ * Active-preview TTL window (ms). Mirrors the `review-sandbox-janitor` CronJob's
+ * 6h reap TTL: a preview the janitor has already deleted in k8s — but whose DB
+ * row still reads `preview-live`, because the janitor can't write the civitai DB
+ * — naturally ages OUT of the active count once its `deployUpdatedAt` is older
+ * than this. No k8s call and no janitor coupling needed.
+ */
+export const REVIEW_PREVIEW_TTL_MS = 6 * 60 * 60 * 1000;
+
+/** deploy_state values that count as an ACTIVE review preview. Excludes
+ *  `preview-failed` (dead) and `null` (never started). */
+const ACTIVE_REVIEW_PREVIEW_STATES: ReviewPreviewState[] = [
+  'preview-building',
+  'preview-deploying',
+  'preview-live',
+];
+
+type ActiveReviewPreviewRow = {
+  id: string;
+  slug: string;
+  version: string;
+  deployState: string | null;
+  deployDetail: string | null;
+  deployUpdatedAt: Date | null;
+};
+
+/**
+ * Fetch the currently-active review-preview rows, oldest-first. The predicate —
+ * `status='pending'` AND `deployState IN (building|deploying|live)` AND
+ * `deployUpdatedAt > now() - REVIEW_PREVIEW_TTL_MS` — is the SINGLE source of
+ * truth shared by the concurrency-cap count and the listActivePreviews query.
+ * The `status='pending'` + `preview-` prefix filter is load-bearing: deploy_state
+ * is SHARED with the production build lifecycle, so an approved row's `building`/
+ * `live` value must never be counted here.
+ */
+async function findActiveReviewPreviewRows(opts?: {
+  excludePublishRequestId?: string;
+}): Promise<ActiveReviewPreviewRow[]> {
+  const { dbRead } = await import('~/server/db/client');
+  const cutoff = new Date(Date.now() - REVIEW_PREVIEW_TTL_MS);
+  return dbRead.appBlockPublishRequest.findMany({
+    where: {
+      status: 'pending',
+      deployState: { in: ACTIVE_REVIEW_PREVIEW_STATES },
+      deployUpdatedAt: { gt: cutoff },
+      ...(opts?.excludePublishRequestId ? { id: { not: opts.excludePublishRequestId } } : {}),
+    },
+    orderBy: { deployUpdatedAt: 'asc' }, // oldest first — the natural teardown-candidate order
+    select: {
+      id: true,
+      slug: true,
+      version: true,
+      deployState: true,
+      deployDetail: true,
+      deployUpdatedAt: true,
+    },
+  });
+}
+
+/**
+ * Count active review previews (see {@link findActiveReviewPreviewRows} for the
+ * predicate). Global across all mods; drives the concurrency cap. Pass
+ * `excludePublishRequestId` to omit a specific request (so a REBUILD of an
+ * already-active preview never counts itself against the cap).
+ */
+export async function countActiveReviewPreviews(opts?: {
+  excludePublishRequestId?: string;
+}): Promise<number> {
+  const rows = await findActiveReviewPreviewRows(opts);
+  return rows.length;
+}
+
+export type ActiveReviewPreview = {
+  publishRequestId: string;
+  slug: string;
+  version: string;
+  state: ReviewPreviewState;
+  host: string | null;
+  updatedAt: Date | null;
+};
+
+/**
+ * List the currently-active review previews (same predicate as the cap count),
+ * oldest-first, for the global "Active previews (N / cap)" mod panel. Does NOT
+ * mint mr access tokens — per-row token minting on a list poll is wasteful;
+ * opening a live preview stays in the per-request panel via getReviewStatus.
+ */
+export async function listActiveReviewPreviews(): Promise<{
+  cap: number;
+  active: ActiveReviewPreview[];
+}> {
+  const rows = await findActiveReviewPreviewRows();
+  return {
+    cap: MAX_CONCURRENT_REVIEW_PREVIEWS,
+    active: rows.map((r) => ({
+      publishRequestId: r.id,
+      slug: r.slug,
+      version: r.version,
+      state: r.deployState as ReviewPreviewState,
+      host: parseReviewDetail(r.deployDetail).host ?? null,
+      updatedAt: r.deployUpdatedAt ?? null,
+    })),
+  };
+}
+
 export type ReviewPreviewDetail = {
   /** Full review build sha (in-review repo HEAD). */
   sha?: string;
@@ -2452,16 +2564,31 @@ export function parseReviewDetail(raw: string | null | undefined): ReviewPreview
  * Stamp the review-preview lifecycle state onto the PENDING request. Keyed on
  * `{ id, status:'pending' }` so it can never write a non-pending row. Best-effort
  * (a status write must not break the preview/approve flow) but logged on miss.
+ *
+ * Pass `requireActivePreview` for the transitions driven by the async build
+ * callback / apply watcher (deploying → live / failed): it additionally requires
+ * the row's `deployState` to still be a `preview-*` value, so a preview a mod
+ * TORE DOWN mid-build (teardownPreview clears deployState to null but leaves
+ * status='pending') is NOT resurrected by a late callback write. The initial
+ * `preview-building` mark from previewRequest must NOT set this (it transitions
+ * from null / preview-failed → preview-building).
  */
 export async function markReviewPreviewState(
   publishRequestId: string,
   state: ReviewPreviewState,
-  detail: ReviewPreviewDetail
+  detail: ReviewPreviewDetail,
+  opts?: { requireActivePreview?: boolean }
 ): Promise<void> {
   try {
     const { dbWrite } = await import('~/server/db/client');
     const res = await dbWrite.appBlockPublishRequest.updateMany({
-      where: { id: publishRequestId, status: 'pending' },
+      where: {
+        id: publishRequestId,
+        status: 'pending',
+        // Only advance a row that is STILL an active preview (torn-down rows have
+        // deployState=null → excluded → no resurrection).
+        ...(opts?.requireActivePreview ? { deployState: { startsWith: 'preview-' } } : {}),
+      },
       data: {
         deployState: state,
         deployDetail: packReviewDetail(detail),
@@ -2527,6 +2654,26 @@ export async function previewRequest(
   if (!request) throw new Error(`publish request ${params.publishRequestId} not found`);
   if (request.status !== 'pending') {
     throw new Error(`can only preview a pending request (status is ${request.status})`);
+  }
+
+  // Global concurrent-preview cap. Count OTHER active previews (exclude THIS
+  // request) so a REBUILD of an already-active preview is never blocked, and a
+  // fresh request is blocked only when MAX others are already active. SOFT cap:
+  // two simultaneous clicks can both pass the count and land at cap+1 — accepted
+  // (no DB lock), same fail-open posture as the block-catalog checkpoint cache
+  // rate limit (checkpoint.service). One extra review env is harmless.
+  const activeOthers = await findActiveReviewPreviewRows({
+    excludePublishRequestId: request.id,
+  });
+  if (activeOthers.length >= MAX_CONCURRENT_REVIEW_PREVIEWS) {
+    const slugs = activeOthers.slice(0, 8).map((r) => r.slug);
+    const more =
+      activeOthers.length > slugs.length ? `, +${activeOthers.length - slugs.length} more` : '';
+    throw new Error(
+      `Review preview cap reached (${activeOthers.length}/${MAX_CONCURRENT_REVIEW_PREVIEWS} active): ${slugs.join(
+        ', '
+      )}${more}. Tear down a preview to free a slot.`
+    );
   }
 
   // The in-review repo HEAD is the pending bundle's source (submitVersion pushed
@@ -2683,6 +2830,67 @@ export async function teardownReviewForRequest(publishRequestId: string): Promis
       }`
     );
   }
+}
+
+/**
+ * MANUAL teardown of a single review preview (the mod-facing "Tear down"
+ * action + the way to free a slot when the concurrency cap is hit). Distinct
+ * from teardownReviewForRequest (fired from approve/reject) in that it ALSO
+ * clears the DB preview state so the request returns to the "no preview" state
+ * (getReviewStatus → state:null, the active count drops, the UI reverts to
+ * "Start preview").
+ *
+ * Idempotent + label-scoped-per-request (never a broad delete). Only acts on an
+ * actual preview (a pending row whose deploy_state is a `preview-*` value); a
+ * non-preview / already-cleared / non-pending row is a no-op, NOT an error. The
+ * k8s delete is best-effort (errors swallowed) but the DB is cleared regardless,
+ * so a stuck row can always be cleared.
+ */
+export async function teardownPreview(opts: {
+  publishRequestId: string;
+}): Promise<{ publishRequestId: string; tornDown: boolean }> {
+  const { dbRead, dbWrite } = await import('~/server/db/client');
+  const row = await dbRead.appBlockPublishRequest.findUnique({
+    where: { id: opts.publishRequestId },
+    select: { id: true, status: true, deployState: true, deployDetail: true, slug: true },
+  });
+  if (!row) throw new Error(`publish request ${opts.publishRequestId} not found`);
+
+  const isPreview =
+    row.status === 'pending' &&
+    typeof row.deployState === 'string' &&
+    row.deployState.startsWith('preview-');
+  if (!isPreview) return { publishRequestId: row.id, tornDown: false };
+
+  // Best-effort k8s delete, scoped to THIS request by label selector (the
+  // per-request selector is the safety boundary — never a broad delete). Swallow
+  // k8s errors so a stuck row can always be cleared by the DB write below.
+  try {
+    const detail = parseReviewDetail(row.deployDetail);
+    const { deleteReviewResources } = await import('./apps-pipeline.service');
+    await deleteReviewResources({
+      slug: row.slug,
+      sha: detail.sha ?? '',
+      publishRequestId: opts.publishRequestId,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[teardownPreview] best-effort k8s delete failed (id=${opts.publishRequestId}): ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+
+  // Clear the DB regardless of the k8s outcome. Only ever runs when the row was
+  // a preview-* state (guarded above), so it can't clobber a production
+  // building/live deploy_state.
+  await dbWrite.appBlockPublishRequest.update({
+    where: { id: opts.publishRequestId },
+    data: { deployState: null, deployDetail: null, deployUpdatedAt: new Date() },
+  });
+
+  return { publishRequestId: row.id, tornDown: true };
 }
 
 export type BackfillPublishRequestParams = {

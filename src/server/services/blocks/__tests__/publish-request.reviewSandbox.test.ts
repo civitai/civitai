@@ -22,10 +22,13 @@ const {
   mockDeleteReviewResources,
 } = vi.hoisted(() => ({
   mockDbRead: {
-    appBlockPublishRequest: { findUnique: vi.fn() },
+    appBlockPublishRequest: { findUnique: vi.fn(), findMany: vi.fn(async () => []) },
   },
   mockDbWrite: {
-    appBlockPublishRequest: { updateMany: vi.fn(async () => ({ count: 1 })) },
+    appBlockPublishRequest: {
+      updateMany: vi.fn(async () => ({ count: 1 })),
+      update: vi.fn(async () => ({})),
+    },
   },
   mockGetReviewHead: vi.fn(async () => 'a'.repeat(40)),
   mockTriggerReviewBuild: vi.fn(async () => ({ name: 'review-pr-1' })),
@@ -49,8 +52,14 @@ import {
   previewRequest,
   getReviewStatus,
   teardownReviewForRequest,
+  teardownPreview,
+  countActiveReviewPreviews,
+  listActiveReviewPreviews,
+  markReviewPreviewState,
   withdrawRequest,
   parseReviewDetail,
+  MAX_CONCURRENT_REVIEW_PREVIEWS,
+  REVIEW_PREVIEW_TTL_MS,
 } from '~/server/services/blocks/publish-request.service';
 
 const PUBREQ = 'pubreq_0123456789ABCDEFGHJKMNPQRS';
@@ -322,5 +331,280 @@ describe('parseReviewDetail', () => {
   it('tolerates null / non-JSON', () => {
     expect(parseReviewDetail(null)).toEqual({});
     expect(parseReviewDetail('not json')).toEqual({});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Concurrency cap — countActiveReviewPreviews builds the ACTIVE predicate
+// (pending + preview-building/deploying/live + within the TTL window). The DB
+// filtering is mocked away, so we assert the WHERE clause carries the exact
+// predicate (that's what excludes failed/null/expired/non-pending in prod) and
+// that the count is the returned row count.
+// ---------------------------------------------------------------------------
+describe('countActiveReviewPreviews', () => {
+  beforeEach(() => {
+    mockDbRead.appBlockPublishRequest.findMany.mockReset();
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([]);
+  });
+
+  it('queries pending + active preview-* states within the TTL window, oldest-first', async () => {
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      { id: 'a', slug: 's1', version: '1.0.0', deployState: 'preview-live', deployDetail: null, deployUpdatedAt: new Date() },
+      { id: 'b', slug: 's2', version: '1.0.0', deployState: 'preview-building', deployDetail: null, deployUpdatedAt: new Date() },
+    ]);
+    const before = Date.now();
+    const count = await countActiveReviewPreviews();
+    expect(count).toBe(2);
+
+    const arg = mockDbRead.appBlockPublishRequest.findMany.mock.calls[0][0];
+    expect(arg.where.status).toBe('pending');
+    expect(arg.where.deployState).toEqual({
+      in: ['preview-building', 'preview-deploying', 'preview-live'],
+    });
+    // TTL cutoff ≈ now - REVIEW_PREVIEW_TTL_MS (excludes rows older than 6h).
+    const cutoff: Date = arg.where.deployUpdatedAt.gt;
+    expect(cutoff).toBeInstanceOf(Date);
+    expect(cutoff.getTime()).toBeLessThanOrEqual(before - REVIEW_PREVIEW_TTL_MS + 5000);
+    expect(cutoff.getTime()).toBeGreaterThanOrEqual(before - REVIEW_PREVIEW_TTL_MS - 5000);
+    // oldest-first — the natural teardown order.
+    expect(arg.orderBy).toEqual({ deployUpdatedAt: 'asc' });
+    // no exclusion by default.
+    expect(arg.where.id).toBeUndefined();
+  });
+
+  it('respects excludePublishRequestId (so a rebuild never counts itself)', async () => {
+    await countActiveReviewPreviews({ excludePublishRequestId: PUBREQ });
+    const arg = mockDbRead.appBlockPublishRequest.findMany.mock.calls[0][0];
+    expect(arg.where.id).toEqual({ not: PUBREQ });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// previewRequest cap enforcement — blocks a fresh request when MAX others are
+// active; allows a rebuild of an already-active request (self excluded).
+// ---------------------------------------------------------------------------
+describe('previewRequest concurrency cap', () => {
+  beforeEach(() => {
+    process.env.NEXTAUTH_URL = 'https://civitai.com';
+    mockDbRead.appBlockPublishRequest.findUnique.mockReset();
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      slug: 'my-app',
+    });
+    mockDbRead.appBlockPublishRequest.findMany.mockReset();
+    mockDbWrite.appBlockPublishRequest.updateMany.mockClear();
+    mockGetReviewHead.mockClear();
+    mockTriggerReviewBuild.mockReset();
+    mockTriggerReviewBuild.mockResolvedValue({ name: 'review-pr-1' });
+  });
+  afterEach(() => vi.clearAllMocks());
+
+  it('throws (naming the cap + active slugs) when MAX others are active', async () => {
+    const others = Array.from({ length: MAX_CONCURRENT_REVIEW_PREVIEWS }, (_, i) => ({
+      id: `other-${i}`,
+      slug: `other-app-${i}`,
+      version: '1.0.0',
+      deployState: 'preview-live',
+      deployDetail: null,
+      deployUpdatedAt: new Date(),
+    }));
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue(others);
+
+    await expect(previewRequest({ publishRequestId: PUBREQ, modUserId: 1 })).rejects.toThrow(
+      new RegExp(`cap reached \\(${MAX_CONCURRENT_REVIEW_PREVIEWS}/${MAX_CONCURRENT_REVIEW_PREVIEWS} active\\)`)
+    );
+    await expect(previewRequest({ publishRequestId: PUBREQ, modUserId: 1 })).rejects.toThrow(
+      /other-app-0/
+    );
+    // The cap query excluded THIS request.
+    const arg = mockDbRead.appBlockPublishRequest.findMany.mock.calls[0][0];
+    expect(arg.where.id).toEqual({ not: PUBREQ });
+    expect(mockTriggerReviewBuild).not.toHaveBeenCalled();
+  });
+
+  it('allows a rebuild of an already-active request when MAX total active (self excluded → 4 others)', async () => {
+    // Self is one of the 5 active, so the exclude-self query returns 4 others.
+    const others = Array.from({ length: MAX_CONCURRENT_REVIEW_PREVIEWS - 1 }, (_, i) => ({
+      id: `other-${i}`,
+      slug: `other-app-${i}`,
+      version: '1.0.0',
+      deployState: 'preview-live',
+      deployDetail: null,
+      deployUpdatedAt: new Date(),
+    }));
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue(others);
+
+    await expect(previewRequest({ publishRequestId: PUBREQ, modUserId: 1 })).resolves.toBeDefined();
+    expect(mockTriggerReviewBuild).toHaveBeenCalled();
+  });
+
+  it('proceeds under the cap', async () => {
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      { id: 'x', slug: 'x', version: '1.0.0', deployState: 'preview-live', deployDetail: null, deployUpdatedAt: new Date() },
+    ]);
+    await expect(previewRequest({ publishRequestId: PUBREQ, modUserId: 1 })).resolves.toBeDefined();
+    expect(mockTriggerReviewBuild).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// teardownPreview — manual, per-request, label-scoped delete + DB clear.
+// ---------------------------------------------------------------------------
+describe('teardownPreview', () => {
+  beforeEach(() => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockReset();
+    mockDbWrite.appBlockPublishRequest.update.mockReset();
+    mockDbWrite.appBlockPublishRequest.update.mockResolvedValue({});
+    mockDeleteReviewResources.mockReset();
+    mockDeleteReviewResources.mockResolvedValue(undefined);
+  });
+
+  it('preview-live pending: deletes review resources by request + clears DB, tornDown:true', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      deployState: 'preview-live',
+      deployDetail: JSON.stringify({ sha: SHA, host: 'h' }),
+      slug: 'my-app',
+    });
+    const res = await teardownPreview({ publishRequestId: PUBREQ });
+    expect(res).toEqual({ publishRequestId: PUBREQ, tornDown: true });
+    expect(mockDeleteReviewResources).toHaveBeenCalledWith({
+      slug: 'my-app',
+      sha: SHA,
+      publishRequestId: PUBREQ,
+    });
+    const updateArg = mockDbWrite.appBlockPublishRequest.update.mock.calls[0][0];
+    expect(updateArg.where).toEqual({ id: PUBREQ });
+    expect(updateArg.data.deployState).toBeNull();
+    expect(updateArg.data.deployDetail).toBeNull();
+    expect(updateArg.data.deployUpdatedAt).toBeInstanceOf(Date);
+  });
+
+  it('non-pending / non-preview state: no-op, tornDown:false (no delete, no DB clear)', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'approved',
+      deployState: 'building', // production value, not a preview-*
+      deployDetail: null,
+      slug: 'my-app',
+    });
+    const res = await teardownPreview({ publishRequestId: PUBREQ });
+    expect(res).toEqual({ publishRequestId: PUBREQ, tornDown: false });
+    expect(mockDeleteReviewResources).not.toHaveBeenCalled();
+    expect(mockDbWrite.appBlockPublishRequest.update).not.toHaveBeenCalled();
+  });
+
+  it('best-effort: k8s delete throwing still clears the DB + returns tornDown:true', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      deployState: 'preview-building',
+      deployDetail: JSON.stringify({ sha: SHA }),
+      slug: 'my-app',
+    });
+    mockDeleteReviewResources.mockRejectedValue(new Error('k8s down'));
+    const res = await teardownPreview({ publishRequestId: PUBREQ });
+    expect(res.tornDown).toBe(true);
+    expect(mockDbWrite.appBlockPublishRequest.update).toHaveBeenCalled();
+  });
+
+  it('throws when the request is not found', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(null);
+    await expect(teardownPreview({ publishRequestId: PUBREQ })).rejects.toThrow(/not found/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listActiveReviewPreviews — the global panel's feed (cap + active rows).
+// ---------------------------------------------------------------------------
+describe('listActiveReviewPreviews', () => {
+  beforeEach(() => {
+    mockDbRead.appBlockPublishRequest.findMany.mockReset();
+  });
+
+  it('returns cap + mapped active rows (host from detail), querying oldest-first', async () => {
+    const older = new Date(Date.now() - 60_000);
+    const newer = new Date();
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      {
+        id: 'a',
+        slug: 's1',
+        version: '1.0.0',
+        deployState: 'preview-live',
+        deployDetail: JSON.stringify({ host: 'review-a.civit.ai', sha: SHA }),
+        deployUpdatedAt: older,
+      },
+      {
+        id: 'b',
+        slug: 's2',
+        version: '2.0.0',
+        deployState: 'preview-building',
+        deployDetail: null,
+        deployUpdatedAt: newer,
+      },
+    ]);
+
+    const res = await listActiveReviewPreviews();
+    expect(res.cap).toBe(MAX_CONCURRENT_REVIEW_PREVIEWS);
+    expect(res.active).toEqual([
+      {
+        publishRequestId: 'a',
+        slug: 's1',
+        version: '1.0.0',
+        state: 'preview-live',
+        host: 'review-a.civit.ai',
+        updatedAt: older,
+      },
+      {
+        publishRequestId: 'b',
+        slug: 's2',
+        version: '2.0.0',
+        state: 'preview-building',
+        host: null,
+        updatedAt: newer,
+      },
+    ]);
+
+    const arg = mockDbRead.appBlockPublishRequest.findMany.mock.calls[0][0];
+    expect(arg.where.status).toBe('pending');
+    expect(arg.where.deployState).toEqual({
+      in: ['preview-building', 'preview-deploying', 'preview-live'],
+    });
+    expect(arg.orderBy).toEqual({ deployUpdatedAt: 'asc' });
+  });
+
+  it('returns an empty active list + the cap when nothing is active', async () => {
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([]);
+    const res = await listActiveReviewPreviews();
+    expect(res).toEqual({ cap: MAX_CONCURRENT_REVIEW_PREVIEWS, active: [] });
+  });
+});
+
+describe('markReviewPreviewState requireActivePreview guard', () => {
+  beforeEach(() => {
+    mockDbWrite.appBlockPublishRequest.updateMany.mockReset();
+    mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it('requireActivePreview=true adds a deployState preview-* filter (no resurrection of a torn-down row)', async () => {
+    await markReviewPreviewState(PUBREQ, 'preview-live', { sha: SHA }, { requireActivePreview: true });
+    const arg = mockDbWrite.appBlockPublishRequest.updateMany.mock.calls[0][0];
+    expect(arg.where.id).toBe(PUBREQ);
+    expect(arg.where.status).toBe('pending');
+    // The load-bearing guard: a torn-down row (deployState=null) won't match
+    // startsWith 'preview-', so a late build callback can't resurrect it.
+    expect(arg.where.deployState).toEqual({ startsWith: 'preview-' });
+  });
+
+  it('without the opt (initial preview-building mark) does NOT constrain deployState', async () => {
+    await markReviewPreviewState(PUBREQ, 'preview-building', { sha: SHA });
+    const arg = mockDbWrite.appBlockPublishRequest.updateMany.mock.calls[0][0];
+    expect(arg.where.id).toBe(PUBREQ);
+    expect(arg.where.status).toBe('pending');
+    // Initial mark transitions from null / preview-failed → preview-building, so
+    // it must NOT require an existing preview-* state.
+    expect(arg.where.deployState).toBeUndefined();
   });
 });
