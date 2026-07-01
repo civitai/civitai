@@ -12,7 +12,7 @@ import { router, publicProcedure, protectedProcedure } from './trpc';
 export const appRouter = router({
   orchestrator: router({
     /** Public liveness echo. No auth. */
-    health: publicProcedure.query(() => ({ status: 'ok' as const, service: 'orchestrator-api' })),
+    health: publicProcedure.query(() => ({ status: 'ok' as const, service: 'orchestrator-gateway' })),
 
     /** Protected identity echo — returns the verified userId. Proves the auth verifier is wired. */
     ping: protectedProcedure.query(({ ctx }) => ({ userId: ctx.userId })),

@@ -8,11 +8,11 @@ const HOST = process.env.HOST ?? '0.0.0.0';
 async function main() {
   const app = await buildServer();
   await app.listen({ port: PORT, host: HOST });
-  app.log.info(`orchestrator-api listening on ${HOST}:${PORT}`);
+  app.log.info(`orchestrator-gateway listening on ${HOST}:${PORT}`);
 }
 
 main().catch((err) => {
   // eslint-disable-next-line no-console
-  console.error('[orchestrator-api] fatal startup error', err);
+  console.error('[orchestrator-gateway] fatal startup error', err);
   process.exit(1);
 });

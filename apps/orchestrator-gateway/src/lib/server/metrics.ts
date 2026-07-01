@@ -1,4 +1,4 @@
-// Prometheus metrics for the orchestrator-api service (mirrors apps/auth/src/lib/server/metrics.ts).
+// Prometheus metrics for the orchestrator-gateway service (mirrors apps/auth/src/lib/server/metrics.ts).
 //
 // Cardinality discipline: labels are bounded, low-cardinality enums ONLY. NEVER put userId / IP (or any
 // unbounded value) in a label — that would blow up the time-series count and the scrape payload.
@@ -21,7 +21,7 @@ collectDefaultMetrics({ register });
 
 /** tRPC procedure calls, by procedure path + outcome (ok / error). Bounded: path is a finite router surface. */
 export const trpcCallsTotal = new Counter({
-  name: 'orchestrator_api_trpc_calls_total',
+  name: 'orchestrator_gateway_trpc_calls_total',
   help: 'tRPC procedure calls handled, labeled by procedure path and outcome.',
   labelNames: ['procedure', 'outcome'] as const,
   registers: [register],
@@ -29,7 +29,7 @@ export const trpcCallsTotal = new Counter({
 
 /** tRPC procedure latency, by procedure path. Bounded label set. */
 export const trpcDurationSeconds = new Histogram({
-  name: 'orchestrator_api_trpc_duration_seconds',
+  name: 'orchestrator_gateway_trpc_duration_seconds',
   help: 'tRPC procedure handler duration in seconds, labeled by procedure path.',
   labelNames: ['procedure'] as const,
   buckets: [0.005, 0.025, 0.1, 0.5, 1, 2, 5, 10, 30],
@@ -38,7 +38,7 @@ export const trpcDurationSeconds = new Histogram({
 
 /** Auth verification outcomes on the protected tRPC path (verified / unauthenticated / error). */
 export const authOutcomesTotal = new Counter({
-  name: 'orchestrator_api_auth_outcomes_total',
+  name: 'orchestrator_gateway_auth_outcomes_total',
   help: 'Token verification outcomes on protected procedures, labeled by result.',
   labelNames: ['result'] as const,
   registers: [register],

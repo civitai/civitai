@@ -42,7 +42,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   });
 
   // --- liveness/readiness: zero external dependencies, so a transient DB/redis blip can't flap the pod ---
-  app.get('/health', async () => ({ status: 'ok', service: 'orchestrator-api' }));
+  app.get('/health', async () => ({ status: 'ok', service: 'orchestrator-gateway' }));
 
   // --- Prometheus scrape. EXPOSURE GUARD: any request carrying x-forwarded-for came through the public
   // ingress (Traefik always sets it); the in-cluster ServiceMonitor scrapes the Pod IP directly with NO

@@ -1,9 +1,9 @@
-# @civitai/orchestrator-api
+# @civitai/orchestrator-gateway
 
 **Status: P0 skeleton.** A standalone Fastify + tRPC-over-HTTP Node service — the target for the
 generation slice of the orchestrator subdomain, spun out of the Next.js monolith (strangler-fig).
 
-See the full plan: `datapacket-talos:claudedocs/plan-orchestrator-api-spinout-2026-06-30.md`.
+See the full plan: `datapacket-talos:claudedocs/plan-orchestrator-gateway-spinout-2026-06-30.md`.
 
 ## Why this exists
 
@@ -61,15 +61,15 @@ src/
 
 ```bash
 cp .env.example .env   # fill secrets for a real run
-pnpm --filter @civitai/orchestrator-api dev        # tsx watch
-pnpm --filter @civitai/orchestrator-api typecheck  # tsc --noEmit
-pnpm --filter @civitai/orchestrator-api test       # vitest
-pnpm --filter @civitai/orchestrator-api build      # tsup → dist/server.js
+pnpm --filter @civitai/orchestrator-gateway dev        # tsx watch
+pnpm --filter @civitai/orchestrator-gateway typecheck  # tsc --noEmit
+pnpm --filter @civitai/orchestrator-gateway test       # vitest
+pnpm --filter @civitai/orchestrator-gateway build      # tsup → dist/server.js
 ```
 
 ## Build / release
 
 Built by the shared Tekton `tag-webhook` → `build-and-push` pipeline (auth is its first user). Push a
-git tag `orchestrator-api-vX.Y.Z` on `civitai/civitai` → the webhook matches the prefix in `APP_CONFIG`
+git tag `orchestrator-gateway-vX.Y.Z` on `civitai/civitai` → the webhook matches the prefix in `APP_CONFIG`
 (`datapacket-talos:clusters/production/apps/tekton-builds/tag-webhook.py`) → buildkit builds this
-`Dockerfile` → pushes `ghcr.io/civitai/civitai-orchestrator-api:X.Y.Z` → Flux ImagePolicy picks it up.
+`Dockerfile` → pushes `ghcr.io/civitai/civitai-orchestrator-gateway:X.Y.Z` → Flux ImagePolicy picks it up.

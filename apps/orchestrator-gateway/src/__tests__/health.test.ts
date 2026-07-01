@@ -19,7 +19,7 @@ describe('GET /health', () => {
   it('returns 200 with an ok status body', async () => {
     const res = await app.inject({ method: 'GET', url: '/health' });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ status: 'ok', service: 'orchestrator-api' });
+    expect(res.json()).toEqual({ status: 'ok', service: 'orchestrator-gateway' });
   });
 });
 
@@ -39,8 +39,8 @@ describe('GET /metrics', () => {
     const res = await app.inject({ method: 'GET', url: '/metrics' });
     expect(res.statusCode).toBe(200);
     // The pre-declared counters export their baseline before any event.
-    expect(res.body).toContain('orchestrator_api_trpc_calls_total');
-    expect(res.body).toContain('orchestrator_api_auth_outcomes_total');
+    expect(res.body).toContain('orchestrator_gateway_trpc_calls_total');
+    expect(res.body).toContain('orchestrator_gateway_auth_outcomes_total');
   });
 
   it('404s a public request (one carrying x-forwarded-for from the ingress)', async () => {

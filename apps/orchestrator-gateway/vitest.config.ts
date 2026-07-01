@@ -1,6 +1,6 @@
 import { defineConfig } from 'vitest/config';
 
-// Server-unit tests for the orchestrator-api service (mirrors packages/civitai-auth/vitest.config.ts).
+// Server-unit tests for the orchestrator-gateway service (mirrors packages/civitai-auth/vitest.config.ts).
 export default defineConfig({
   test: {
     environment: 'node',

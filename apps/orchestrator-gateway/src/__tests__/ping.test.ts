@@ -71,6 +71,6 @@ describe('tRPC orchestrator.health (public)', () => {
   it('is reachable without auth', async () => {
     const res = await callTrpc(app, 'orchestrator.health');
     expect(res.statusCode).toBe(200);
-    expect(res.json().result.data).toEqual({ status: 'ok', service: 'orchestrator-api' });
+    expect(res.json().result.data).toEqual({ status: 'ok', service: 'orchestrator-gateway' });
   });
 });
