@@ -2894,6 +2894,8 @@ export async function getImagesFromFeedSearch(
     // should NOT consume a Meili semaphore slot.
     const feedResult = await feed.populatedQuery(feedInput as FeedQueryInput<ImageQueryInput>);
 
+    const imageMetrics = await getImageMetricsObject(feedResult.items);
+
     // Transform PopulatedImage to match getAllImagesIndex return type
     // Remove extra fields that PopulatedImage has but getAllImagesIndex doesn't
     const transformedItems: ImagesInfiniteModel[] = feedResult.items.map((img) => {
@@ -2947,6 +2949,7 @@ export async function getImagesFromFeedSearch(
       }));
 
       // Return structure matching getAllImagesIndex
+      const match = imageMetrics[img.id];
       return {
         ...rest,
         nsfwLevel: img.nsfwLevel as NsfwLevel,
@@ -2954,6 +2957,19 @@ export async function getImagesFromFeedSearch(
         availability: img.availability ?? Availability.Public,
         reactions: transformedReactions,
         tags: transformedTags,
+        stats: {
+          likeCountAllTime: match?.reactionLike ?? 0,
+          laughCountAllTime: match?.reactionLaugh ?? 0,
+          heartCountAllTime: match?.reactionHeart ?? 0,
+          cryCountAllTime: match?.reactionCry ?? 0,
+
+          commentCountAllTime: match?.comment ?? 0,
+          collectedCountAllTime: match?.collection ?? 0,
+          tippedAmountCountAllTime: match?.buzz ?? 0,
+
+          dislikeCountAllTime: 0,
+          viewCountAllTime: 0,
+        },
       };
     });
 
