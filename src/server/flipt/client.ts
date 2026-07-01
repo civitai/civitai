@@ -53,6 +53,12 @@ export enum FLIPT_FEATURE_FLAGS {
   HIGH_REPLICATION_LAG_MODE = 'high-replication-lag-mode',
   LICENSING_FEE = 'licensing-fee',
   WILDCARDS = 'wildcards',
+  // When ON, getImageMetricsObject serves cold cache-misses from the cheap
+  // point-lookup table `entityMetricCurrentTotals_v2` (a plain SELECT, no
+  // GROUP BY/argMax/UNION) instead of the heavy aggregating view
+  // `entityMetricDailyAgg_v2` via MetricService. Default OFF/absent = the
+  // existing MetricService path, unchanged. See image.service getImageMetricsObject.
+  IMAGE_METRICS_USE_CURRENT_TOTALS = 'image-metrics-use-current-totals',
 }
 
 const FLIPT_INIT_TIMEOUT_MS = 5000;
