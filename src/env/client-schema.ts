@@ -42,6 +42,14 @@ export const clientSchema = z.object({
   // (NEXT_PUBLIC_AUTH_HUB_URL removed: every client-initiated hub flow — login full-page + popup, account
   // connect, discord-link — now routes through a same-origin main-app endpoint that builds the hub URL from
   // the SERVER's AUTH_JWT_ISSUER, so the client no longer needs a build-time hub origin.)
+  // Base URL of the dedicated orchestrator-gateway service (the generation-API
+  // spin-out). When set, the client's tRPC link MAY route allowlisted
+  // `orchestrator.*` procedures here (gated by the `orchestratorGatewayRouting`
+  // flag AND the empty-today procedure allowlist). Empty/absent → the split
+  // falls back to the monolith `/api/trpc` origin (the safe default). Should be
+  // an absolute origin, e.g. "https://orchestrator-gateway.civitai.com". Defaults
+  // to empty so nothing routes off the monolith until it's explicitly configured.
+  NEXT_PUBLIC_ORCHESTRATOR_GATEWAY_URL: z.string().default(''),
 });
 
 /**
@@ -83,4 +91,5 @@ export const clientEnv = {
     process.env.NEXT_PUBLIC_CF_INVISIBLE_TURNSTILE_SITEKEY,
   NEXT_PUBLIC_CF_MANAGED_TURNSTILE_SITEKEY: process.env.NEXT_PUBLIC_CF_MANAGED_TURNSTILE_SITEKEY,
   NEXT_PUBLIC_AUTH_PROXY_URL: process.env.NEXT_PUBLIC_AUTH_PROXY_URL,
+  NEXT_PUBLIC_ORCHESTRATOR_GATEWAY_URL: process.env.NEXT_PUBLIC_ORCHESTRATOR_GATEWAY_URL,
 };
