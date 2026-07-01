@@ -169,7 +169,9 @@ export const removeListingScreenshotSchema = z.object({ screenshotId: z.string()
 export type RemoveListingScreenshotInput = z.infer<typeof removeListingScreenshotSchema>;
 
 export const backfillListingAssetsSchema = z.object({
-  limit: z.number().int().min(1).max(1000).optional(),
+  // Cap at 50: a single mod tRPC mutation must not run for hours (autogen is
+  // sequential with 45s verify-runner timeouts). Re-run the mutation to page.
+  limit: z.number().int().min(1).max(50).optional(),
   dryRun: z.boolean().optional(),
 });
 export type BackfillListingAssetsInput = z.infer<typeof backfillListingAssetsSchema>;
