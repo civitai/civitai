@@ -14,9 +14,16 @@ import { newAppListingId } from '~/server/utils/app-block-ids';
  *
  * Two source shapes, one listing model (plan §5/§6):
  *   - on-site  — an `AppBlock` we host (external_url IS NULL) → kind='onsite',
- *                `appBlockId` set, slug = AppBlock.blockId.
+ *                slug = AppBlock.blockId.
  *   - off-site — the #2821 external-link rows (external_url IS NOT NULL) →
  *                kind='offsite', `externalUrl` copied, NO connectClientId.
+ *
+ * NOTE: BOTH shapes set `appBlockId` — every backfilled row (on-site AND the
+ * #2821 off-site rows) originates from an `app_blocks` row, and `appBlockId` is
+ * the 1:1 idempotency key. So `appBlockId` is NOT a kind discriminator here:
+ * downstream (P2/P3) readers MUST discriminate on the explicit `kind` column,
+ * never on `appBlockId IS NULL`. (A future natively-created off-site listing —
+ * no backing AppBlock — is what leaves `appBlockId` NULL.)
  *
  * INVARIANTS:
  *   - Idempotent on `appBlockId` (the 1:1 unique). A re-run creates no dupes and
@@ -42,6 +49,8 @@ export type BackfillAppListingsResult = {
   dryRun: boolean;
   createdIds: string[];
   byKind: { onsite: number; offsite: number };
+  /** Rows that threw a non-P2002 error (per-row isolation — batch continues). */
+  failed: { appBlockId: string; error: string }[];
 };
 
 type SourceAppBlock = {
@@ -72,8 +81,16 @@ export function resolveListingDescription(manifest: unknown): string | null {
   return typeof m.description === 'string' && m.description.length > 0 ? m.description : null;
 }
 
-/** Pure mapping from an approved AppBlock to the AppListing create payload. */
+/**
+ * Pure mapping from an approved AppBlock to the AppListing create payload.
+ * Requires a resolved owner (`app.userId`) — the caller (`backfillAppListings`)
+ * guards the null-owner case; a missing owner here is misuse, so throw loudly
+ * rather than silently minting an invalid `userId` that would fail the FK.
+ */
 export function mapAppBlockToListing(ab: SourceAppBlock): Prisma.AppListingUncheckedCreateInput {
+  if (!ab.app || typeof ab.app.userId !== 'number') {
+    throw new Error(`mapAppBlockToListing: AppBlock ${ab.id} has no resolvable owner`);
+  }
   const isOffsite = typeof ab.externalUrl === 'string' && ab.externalUrl.length > 0;
   return {
     id: newAppListingId(),
@@ -95,7 +112,7 @@ export function mapAppBlockToListing(ab: SourceAppBlock): Prisma.AppListingUnche
     appBlockId: ab.id,
     featured: ab.featured,
     featuredOrder: ab.featuredOrder,
-    userId: ab.app?.userId ?? 0,
+    userId: ab.app.userId,
   };
 }
 
@@ -128,6 +145,7 @@ export async function backfillAppListings(
     dryRun,
     createdIds: [],
     byKind: { onsite: 0, offsite: 0 },
+    failed: [],
   };
 
   for (const ab of appBlocks) {
@@ -171,7 +189,14 @@ export async function backfillAppListings(
         result.skipped += 1;
         continue;
       }
-      throw err;
+      // Per-row isolation: a poison row (an out-of-domain contentRating hitting
+      // the CHECK, a dangling FK, etc.) must NOT abort the whole batch — collect
+      // it and continue so one bad recent block can't wedge every older block on
+      // every re-run. The moderator gets a per-row diagnostic instead of a 500.
+      result.failed.push({
+        appBlockId: ab.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 

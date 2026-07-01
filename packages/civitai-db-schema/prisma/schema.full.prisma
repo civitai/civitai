@@ -2524,7 +2524,10 @@ model AppListing {
   // Off-site OAuth-connect client (Connect CTA). NULL for on-site/external-link.
   connectClientId String?      @map("connect_client_id")
   connectClient   OauthClient? @relation(fields: [connectClientId], references: [id], onDelete: SetNull)
-  // On-site runtime binding — 1:1 with an AppBlock (UNIQUE). NULL for off-site.
+  // 1:1 backing AppBlock (UNIQUE) + idempotency key. Set for EVERY backfilled
+  // row — on-site AND the #2821 off-site rows (both come from an AppBlock). It is
+  // NOT a kind discriminator: discriminate on `kind`, never on appBlockId nullness.
+  // Only a natively-created off-site listing (no backing AppBlock) leaves it NULL.
   appBlockId      String?      @unique @map("app_block_id")
   appBlock        AppBlock?    @relation(fields: [appBlockId], references: [id], onDelete: SetNull)
   // Curation rail (mirrors AppBlock.featured / featured_order).

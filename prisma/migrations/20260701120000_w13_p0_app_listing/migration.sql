@@ -13,7 +13,7 @@
 -- screenshots) are NULLABLE here; the mandatory-asset approve-gate is P1.
 --
 -- ⚠️ MANUAL APPLY — per datapacket-talos CLAUDE.md DB rule #8 the main civitai
--- CNPG nvme0 DB does NOT auto-apply migrations (no `prisma migrate deploy`).
+-- CNPG nvme0 DB does NOT auto-apply migrations (no prisma migrate deploy).
 -- This file is committed for HISTORY ONLY; a HUMAN applies the SQL below per
 -- environment (psql/retool). CI / deploy do NOT run it. Apply to BOTH:
 --   1. prod nvme0   (the live civitai DB)
@@ -52,7 +52,10 @@ CREATE TABLE IF NOT EXISTS "app_listings" (
   -- Off-site OAuth-connect client (Connect CTA). SET NULL keeps the listing if
   -- the client row is deleted.
   "connect_client_id" TEXT REFERENCES "OauthClient"("id") ON DELETE SET NULL,
-  -- On-site runtime binding — 1:1 with an app_blocks row (UNIQUE below).
+  -- 1:1 backing app_blocks row (UNIQUE below). Set for EVERY backfilled row —
+  -- on-site AND the #2821 off-site rows (both originate from app_blocks); it is
+  -- the idempotency key, NOT a kind discriminator. Readers MUST use "kind", never
+  -- app_block_id nullness. Only a natively-created off-site listing leaves it NULL.
   "app_block_id"      TEXT REFERENCES "app_blocks"("id") ON DELETE SET NULL,
   "featured"          BOOLEAN NOT NULL DEFAULT false,
   "featured_order"    INTEGER,
@@ -106,7 +109,7 @@ CREATE INDEX IF NOT EXISTS "app_listing_screenshots_order_idx"
 -- app_listing_reviews — Steam-style "recommend", listing-keyed
 -- ------------------------------------------------------------
 -- Shaped like ResourceReview core columns. P4 migrates AppBlockReview rows here
--- via the already-present `recommended` column. The reactions/reports CHILD
+-- via the already-present "recommended" column. The reactions/reports CHILD
 -- tables ResourceReview has are P4 — NOT created here.
 CREATE TABLE IF NOT EXISTS "app_listing_reviews" (
   "id"              SERIAL PRIMARY KEY,

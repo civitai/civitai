@@ -232,11 +232,28 @@ describe('backfillAppListings — invariants', () => {
     expect(res.skipped).toBe(1);
   });
 
-  it('rethrows a non-P2002 DB error', async () => {
-    mockDb.appBlock.findMany.mockResolvedValue([onsite]);
-    mockDb.appListing.create.mockRejectedValueOnce(new Error('connection reset'));
+  it('isolates a non-P2002 row error — collects it in failed[] and continues the batch', async () => {
+    // Two rows: ab_1 throws a non-P2002 (e.g. a content_rating CHECK / FK
+    // violation on a legacy block); ab_2 must still be created. One poison row
+    // must NOT abort the whole batch (per-row isolation).
+    mockDb.appBlock.findMany.mockResolvedValue([onsite, offsite]);
+    mockDb.appListing.create
+      .mockRejectedValueOnce(new Error('content_rating check violation'))
+      .mockImplementation(async (args: { data: { id: string } }) => ({ id: args.data.id }));
     const { backfillAppListings } = await import('../app-listing-backfill.service');
-    await expect(backfillAppListings()).rejects.toThrow(/connection reset/);
+    const res = await backfillAppListings();
+
+    expect(res.created).toBe(1);
+    expect(res.skipped).toBe(0);
+    expect(res.failed).toEqual([{ appBlockId: 'ab_1', error: 'content_rating check violation' }]);
+    // The second row was still created despite the first failing.
+    expect(createArg(1).appBlockId).toBe('ab_2');
+  });
+
+  it('mapAppBlockToListing throws on a null owner (misuse outside the guarded path)', async () => {
+    const { mapAppBlockToListing } = await import('../app-listing-backfill.service');
+    const noOwner: Ab = { ...onsite, id: 'ab_noowner', app: null };
+    expect(() => mapAppBlockToListing(noOwner)).toThrow(/no resolvable owner/);
   });
 
   it('forwards the limit to findMany (take)', async () => {
