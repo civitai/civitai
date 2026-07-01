@@ -943,15 +943,18 @@ function ReviewPreviewPanel({
 }) {
   const features = useFeatureFlags();
   const utils = trpc.useUtils();
-  const [started, setStarted] = useState(false);
 
-  // Poll the review status. Only enabled once a preview has been started (or a
-  // prior preview state exists on the row); building/deploying poll fast, live/
-  // failed stop.
+  // Poll the review status. Enabled on mount (not gated on a client "started"
+  // flag) so a preview already live on the row is picked up after a page reload
+  // / modal re-open — getReviewStatus returns the PERSISTED deploy_state, so we
+  // derive the button + live iframe from the server, not from ephemeral React
+  // state (which reset to "Start preview" on reload). building/deploying poll
+  // fast, live polls slow, none/failed do a single fetch then stop (see
+  // refetchInterval).
   const statusQuery = trpc.blocks.getReviewStatus.useQuery(
     { publishRequestId },
     {
-      enabled: !!features?.appBlocks && started,
+      enabled: !!features?.appBlocks,
       retry: false,
       refetchInterval: (query) => {
         // react-query v5: the callback receives the Query; the data is at
@@ -974,7 +977,6 @@ function ReviewPreviewPanel({
 
   const previewMut = trpc.blocks.previewRequest.useMutation({
     onSuccess: async () => {
-      setStarted(true);
       showSuccessNotification({ message: `Review build started for ${slug}.` });
       await utils.blocks.getReviewStatus.invalidate({ publishRequestId });
     },
