@@ -1,32 +1,18 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
-  import { IconPlus, IconTrash, IconCheck, IconAlertTriangle, IconSearch } from '@tabler/icons-svelte';
+  import { IconCheck, IconAlertTriangle, IconSearch } from '@tabler/icons-svelte';
   import type { PageData, ActionData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
   type FormResult = {
-    action?: 'setMode' | 'addTester' | 'removeTester';
+    action?: 'setMode';
     success?: boolean;
     error?: string;
     id?: string;
-    userId?: number;
-    username?: string;
     accessMode?: string;
   };
   const f = $derived((form ?? null) as unknown as FormResult | null);
-
-  const fmtDate = (d: unknown) => {
-    try {
-      return new Date(d as string | Date).toLocaleDateString(undefined, {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-      });
-    } catch {
-      return '';
-    }
-  };
 
   const MODE_LABEL: Record<string, string> = {
     open: 'Open — anyone',
@@ -34,7 +20,6 @@
     disabled: 'Disabled — no one',
   };
 
-  const addError = $derived(f?.action === 'addTester' ? (f.error ?? null) : null);
   const modeError = (id: string) => (f?.action === 'setMode' && f.id === id ? (f.error ?? null) : null);
 </script>
 
@@ -116,69 +101,13 @@
   {/if}
 </section>
 
-<!-- Testers -->
+<!-- Tester membership moved to the generic roles admin. -->
 <section class="panel">
-  <h2>Testers <span class="count">{data.testers.length}</span></h2>
+  <h2>Testers</h2>
   <p class="sub">
-    The global tester allowlist. Any application set to <strong>Testers only</strong> lets these users in.
+    Who holds the <code>tester</code> role (what <strong>Testers only</strong> mode allows) is managed on the
+    <a href="/admin/roles">Roles</a> page, alongside all other roles.
   </p>
-
-  <form method="POST" action="?/addTester" use:enhance class="add-form">
-    <div class="field grow">
-      <label for="new-user">User</label>
-      <input id="new-user" name="user" placeholder="username or user id" autocomplete="off" spellcheck="false" required />
-    </div>
-    <div class="field grow">
-      <label for="new-note">Note <span class="muted">(optional)</span></label>
-      <input id="new-note" name="note" placeholder="e.g. comfy cloud beta" autocomplete="off" />
-    </div>
-    <button type="submit" class="btn primary"><IconPlus size={16} /> Add</button>
-  </form>
-  {#if addError}
-    <p class="msg error"><IconAlertTriangle size={15} /> {addError}</p>
-  {:else if f?.action === 'addTester' && f?.success}
-    <p class="msg ok"><IconCheck size={15} /> Added {f.username}.</p>
-  {/if}
-
-  {#if data.testers.length > 0}
-    <div class="table testers">
-      <div class="row header">
-        <span>User</span>
-        <span>Note</span>
-        <span>Added</span>
-        <span></span>
-      </div>
-      {#each data.testers as t (t.userId)}
-        <div class="row">
-          <span class="name">{t.username ?? `user #${t.userId}`} <span class="cid">#{t.userId}</span></span>
-          <span class="note">{t.note ?? '—'}</span>
-          <span class="date">{fmtDate(t.createdAt)}</span>
-          <form
-            method="POST"
-            action="?/removeTester"
-            class="delete-form"
-            use:enhance={() => async ({ update }) => {
-              await update();
-            }}
-          >
-            <input type="hidden" name="userId" value={t.userId} />
-            <button
-              type="submit"
-              class="btn icon danger"
-              title="Remove tester"
-              onclick={(e) => {
-                if (!confirm(`Remove ${t.username ?? `user #${t.userId}`} from testers?`)) e.preventDefault();
-              }}
-            >
-              <IconTrash size={16} />
-            </button>
-          </form>
-        </div>
-      {/each}
-    </div>
-  {:else}
-    <p class="empty">No testers yet — add one above.</p>
-  {/if}
 </section>
 
 <style>
@@ -248,37 +177,6 @@
     border-radius: 999px;
   }
 
-  /* Add form */
-  .add-form {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: flex-end;
-    gap: 0.75rem;
-  }
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
-  }
-  .field.grow {
-    flex: 1 1 200px;
-  }
-  .field label {
-    font-size: 0.78rem;
-    color: #9aa0a6;
-  }
-  .muted {
-    color: #6b7177;
-  }
-  .field input {
-    background: #0f1115;
-    border: 1px solid #2a2d34;
-    border-radius: 8px;
-    color: #e8eaed;
-    padding: 0.5rem 0.6rem;
-    font-size: 0.9rem;
-    width: 100%;
-  }
   input:focus,
   select:focus {
     outline: none;
@@ -306,9 +204,6 @@
     gap: 0.75rem;
     padding: 0.45rem 0;
     border-top: 1px solid #2a2d34;
-  }
-  .table.testers .row {
-    grid-template-columns: 1.6fr 1.6fr 0.8fr auto;
   }
   .row.header {
     border-top: 0;
@@ -339,23 +234,11 @@
     padding: 0.05rem 0.35rem;
     border-radius: 4px;
   }
-  .note {
-    color: #c8ccd0;
-    font-size: 0.88rem;
-  }
-  .date {
-    font-size: 0.8rem;
-    color: #9aa0a6;
-  }
   .mode-form {
     margin: 0;
   }
   .status {
     min-width: 80px;
-  }
-  .delete-form {
-    display: flex;
-    justify-content: flex-end;
   }
 
   /* Buttons */
@@ -377,17 +260,6 @@
   }
   .btn.primary:hover {
     background: color-mix(in srgb, #4285f4, white 8%);
-  }
-  .btn.icon {
-    background: #1b1e24;
-    color: #c8ccd0;
-    border: 1px solid #2a2d34;
-    padding: 0.4rem;
-  }
-  .btn.icon.danger:hover {
-    background: #3a1d1f;
-    border-color: #f03e3e;
-    color: #ff8787;
   }
 
   /* Messages */

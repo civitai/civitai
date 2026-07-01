@@ -3067,6 +3067,13 @@ export type RewardsBonusEvent = {
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
+export type Role = {
+  id: string;
+  description: string | null;
+  createdById: number | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
+};
 export type RunStrategy = {
   modelVersionId: number;
   partnerId: number;
@@ -3902,6 +3909,7 @@ export type DB = {
   ResourceReviewReport: ResourceReviewReport;
   RestrictedBaseModels: RestrictedBaseModels;
   RewardsBonusEvent: RewardsBonusEvent;
+  Role: Role;
   RunStrategy: RunStrategy;
   SavedModel: SavedModel;
   ScannerContentSnapshot: ScannerContentSnapshot;

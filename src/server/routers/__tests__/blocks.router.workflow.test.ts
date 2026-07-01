@@ -1312,6 +1312,180 @@ describe('blocks.submitWorkflow', () => {
     expect(arg.buzzAmount).toBe(100);
   });
 
+  // #2833 — block payout EARN parity. The submit snapshot surfaces the REAL
+  // per-account debit on `transactions.list` (the same signal on-site earns
+  // off). The PAID portion (green/yellow) must accrue the author bounty; the
+  // FREE portion (blue) must never. These drive the real-debit branch.
+  function submitWithTransactions(
+    realizedCost: number | undefined,
+    transactions:
+      | Array<{ type: 'debit' | 'credit'; amount: number; accountType: string }>
+      | undefined,
+    workflowId = 'wf_real'
+  ) {
+    mockSubmitWorkflow
+      // whatif estimate — deliberately large so a regression that reads the
+      // estimate instead of the realized paid debit is caught.
+      .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 999 }, steps: [] })
+      .mockResolvedValueOnce({
+        id: workflowId,
+        status: 'unassigned',
+        ...(realizedCost === undefined ? {} : { cost: { total: realizedCost } }),
+        ...(transactions === undefined ? {} : { transactions: { list: transactions } }),
+        steps: [],
+      });
+  }
+
+  it('#2833: a PAID green debit earns — stamps green + the summed PAID amount (not the blue free floor)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    // Drained 90 FREE blue + 10 PAID green. Only the 10 green earns.
+    submitWithTransactions(100, [
+      { type: 'debit', amount: 90, accountType: 'blue' },
+      { type: 'debit', amount: 10, accountType: 'green' },
+    ]);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+
+    expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+    const arg = mockRecordSpendAttribution.mock.calls[0][0];
+    expect(arg.buzzType).toBe('green'); // payout-eligible → bounty accrues
+    expect(arg.buzzAmount).toBe(10); // ONLY the paid portion, not 100
+  });
+
+  it('#2833: a PAID yellow debit (mature) earns — stamps yellow + the paid amount', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    submitWithTransactions(5, [{ type: 'debit', amount: 5, accountType: 'yellow' }]);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+
+    const arg = mockRecordSpendAttribution.mock.calls[0][0];
+    expect(arg.buzzType).toBe('yellow');
+    expect(arg.buzzAmount).toBe(5);
+  });
+
+  it('#2833: multiple PAID debits are SUMMED', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    submitWithTransactions(60, [
+      { type: 'debit', amount: 40, accountType: 'green' },
+      { type: 'debit', amount: 20, accountType: 'green' },
+    ]);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+
+    const arg = mockRecordSpendAttribution.mock.calls[0][0];
+    expect(arg.buzzType).toBe('green');
+    expect(arg.buzzAmount).toBe(60);
+  });
+
+  it('#2833: TWO distinct PAID currencies (green + yellow) → defensive fall to blue floor, never sum across types', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    // The current contract offers ['blue', green|yellow] so at most ONE paid
+    // account drains. This guards a FUTURE change that offers BOTH: if two
+    // distinct paid accountTypes appear we must NOT sum them under one type —
+    // fall back to the conservative blue floor (blue + realized cost).
+    // Realized cost (55) is deliberately != the 40+30=70 cross-type sum so a
+    // regression that summed across types would assert 70, not the 55 floor.
+    submitWithTransactions(55, [
+      { type: 'debit', amount: 40, accountType: 'green' },
+      { type: 'debit', amount: 30, accountType: 'yellow' },
+    ]);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+
+    const arg = mockRecordSpendAttribution.mock.calls[0][0];
+    expect(arg.buzzType).toBe('blue'); // conservative floor, not green/yellow
+    expect(arg.buzzAmount).toBe(55); // realized-cost floor, NOT the 70 cross-type sum
+  });
+
+  it('#2833: CREDIT entries (refunds) NET against debits on the paid account (10 debit − 3 credit → 7)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    // A same-submit partial refund: the author bounty must accrue off what the
+    // user NET paid (7), not the gross debit (10).
+    submitWithTransactions(10, [
+      { type: 'debit', amount: 10, accountType: 'green' },
+      { type: 'credit', amount: 3, accountType: 'green' },
+    ]);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+
+    const arg = mockRecordSpendAttribution.mock.calls[0][0];
+    expect(arg.buzzType).toBe('green');
+    expect(arg.buzzAmount).toBe(7);
+  });
+
+  it('#2833: a fully-refunded paid spend (debit == credit → net 0) falls to the blue free floor', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    // Net 0 paid → nothing was net-paid → conservative blue floor + realized cost.
+    submitWithTransactions(12, [
+      { type: 'debit', amount: 8, accountType: 'green' },
+      { type: 'credit', amount: 8, accountType: 'green' },
+    ]);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+
+    const arg = mockRecordSpendAttribution.mock.calls[0][0];
+    expect(arg.buzzType).toBe('blue');
+    expect(arg.buzzAmount).toBe(12);
+  });
+
+  it('#2833: a BLUE-ONLY debit stays on the free floor — blue + realized cost, ZERO-bounty', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    // Whole cost drained from FREE blue → must NOT earn. Falls to the floor:
+    // blue (payout-excluded) + the realized cost.
+    submitWithTransactions(25, [{ type: 'debit', amount: 25, accountType: 'blue' }]);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+
+    const arg = mockRecordSpendAttribution.mock.calls[0][0];
+    expect(arg.buzzType).toBe('blue');
+    expect(arg.buzzAmount).toBe(25);
+  });
+
+  it('#2833: NO transactions on the snapshot → conservative blue free floor (anti-farming, unchanged)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    // Orchestrator omitted transactions (e.g. cache path). We CANNOT see a
+    // paid debit → fall back to blue + cost, so nothing farms a bounty.
+    submitWithTransactions(40, undefined);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+
+    const arg = mockRecordSpendAttribution.mock.calls[0][0];
+    expect(arg.buzzType).toBe('blue');
+    expect(arg.buzzAmount).toBe(40);
+  });
+
   it('A-flow: forge-safe — a forged appId/appBlockId in the BODY is ignored', async () => {
     mockVerifyBlockToken.mockResolvedValue(
       validClaims({ buzzBudget: 1000, appId: 'app_real', appBlockId: 'apb_real' })

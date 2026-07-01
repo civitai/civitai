@@ -74,6 +74,9 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
             ).as('product'),
           ])
       ).as('subscriptionRows'),
+      jsonArrayFrom(
+        eb.selectFrom('UserRole').select(['UserRole.role']).whereRef('UserRole.userId', '=', 'User.id')
+      ).as('roleRows'),
     ])
     .executeTakeFirst();
 
@@ -106,6 +109,7 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
     row,
     subscriptionRows: row.subscriptionRows,
     permissions,
+    roles: row.roleRows.map((r) => r.role),
     tierKey: env.TIER_METADATA_KEY,
   });
 

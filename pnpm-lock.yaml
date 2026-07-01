@@ -38,8 +38,8 @@ importers:
         specifier: ^0.4.0
         version: 0.4.2(@civitai/app-sdk@0.6.0)(react@18.3.1)
       '@civitai/client':
-        specifier: 0.2.0-beta.77
-        version: 0.2.0-beta.77
+        specifier: 0.2.0-beta.78
+        version: 0.2.0-beta.78
       '@civitai/cybertipline-tools':
         specifier: ^0.1.0
         version: 0.1.0
@@ -915,31 +915,52 @@ importers:
       '@civitai/auth':
         specifier: workspace:*
         version: link:../../packages/civitai-auth
+      '@civitai/brand':
+        specifier: workspace:*
+        version: link:../../packages/civitai-brand
       '@civitai/db':
         specifier: workspace:*
         version: link:../../packages/civitai-db
       '@civitai/db-schema':
         specifier: workspace:*
         version: link:../../packages/civitai-db-schema
-      next:
-        specifier: ^16.2.7
-        version: 16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0)
-      react:
-        specifier: ^18.3.1
-        version: 18.3.1
-      react-dom:
-        specifier: ^18.3.1
-        version: 18.3.1(react@18.3.1)
+      '@tabler/icons-svelte':
+        specifier: ^3.28.1
+        version: 3.44.0(svelte@5.56.3(@typescript-eslint/types@8.60.1))
     devDependencies:
+      '@sveltejs/adapter-node':
+        specifier: ^5.3.2
+        version: 5.5.4(@sveltejs/kit@2.66.0(@opentelemetry/api@1.9.0)(@sveltejs/vite-plugin-svelte@6.2.4(svelte@5.56.3(@typescript-eslint/types@8.60.1))(vite@6.4.1(@types/node@20.19.9)(jiti@2.5.1)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1)))(svelte@5.56.3(@typescript-eslint/types@8.60.1))(typescript@5.9.2)(vite@6.4.1(@types/node@20.19.9)(jiti@2.5.1)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1)))
+      '@sveltejs/kit':
+        specifier: ^2.43.2
+        version: 2.66.0(@opentelemetry/api@1.9.0)(@sveltejs/vite-plugin-svelte@6.2.4(svelte@5.56.3(@typescript-eslint/types@8.60.1))(vite@6.4.1(@types/node@20.19.9)(jiti@2.5.1)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1)))(svelte@5.56.3(@typescript-eslint/types@8.60.1))(typescript@5.9.2)(vite@6.4.1(@types/node@20.19.9)(jiti@2.5.1)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))
+      '@sveltejs/vite-plugin-svelte':
+        specifier: ^6.0.0
+        version: 6.2.4(svelte@5.56.3(@typescript-eslint/types@8.60.1))(vite@6.4.1(@types/node@20.19.9)(jiti@2.5.1)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))
       '@types/node':
-        specifier: 20.19.9
+        specifier: ^20.19.9
         version: 20.19.9
-      '@types/react':
-        specifier: 18.0.14
-        version: 18.0.14
+      autoprefixer:
+        specifier: ^10.4.19
+        version: 10.4.21(postcss@8.5.6)
+      postcss:
+        specifier: ^8.5.3
+        version: 8.5.6
+      svelte:
+        specifier: ^5.0.0
+        version: 5.56.3(@typescript-eslint/types@8.60.1)
+      svelte-check:
+        specifier: ^4.0.0
+        version: 4.6.0(picomatch@4.0.3)(svelte@5.56.3(@typescript-eslint/types@8.60.1))(typescript@5.9.2)
+      tailwindcss:
+        specifier: ^3.4.3
+        version: 3.4.17(ts-node@10.9.2(@swc/core@1.15.11(@swc/helpers@0.5.17))(@types/node@20.19.9)(typescript@5.9.2))
       typescript:
         specifier: ^5.9.2
         version: 5.9.2
+      vite:
+        specifier: 6.4.1
+        version: 6.4.1(@types/node@20.19.9)(jiti@2.5.1)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1)
 
   packages/civitai-auth:
     dependencies:
@@ -1458,8 +1479,8 @@ packages:
       '@civitai/app-sdk': ^0.6.0
       react: ^18.0.0 || ^19.0.0
 
-  '@civitai/client@0.2.0-beta.77':
-    resolution: {integrity: sha512-uamvTEMVMtwvp+FJ92GEzVjxeLjke/ifqJ45T7O3pcIVfYZc62+k+4lNr6UBu4kRVX5/D4FlHhJWBli3/3A62Q==}
+  '@civitai/client@0.2.0-beta.78':
+    resolution: {integrity: sha512-dSXkI8hVoozzlPS9DymzoyncWz8eapH3wkSDzDVGWjjqamXn8Dbcq1hWu5xUZkZmqCaR76F7BS9BQNqvOJ++Sw==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
   '@civitai/cybertipline-tools@0.1.0':
@@ -11803,7 +11824,7 @@ snapshots:
       '@civitai/app-sdk': 0.6.0
       react: 18.3.1
 
-  '@civitai/client@0.2.0-beta.77':
+  '@civitai/client@0.2.0-beta.78':
     dependencies:
       '@hey-api/client-fetch': 0.1.14
       rfc6902: 5.2.0
