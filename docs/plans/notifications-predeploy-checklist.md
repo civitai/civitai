@@ -13,11 +13,10 @@ Work top-to-bottom. Do not skip the ordering — each phase gates the next.
 
 ## 0. Gaps to close BEFORE any deploy (code changes not yet done)
 
-- [ ] **Add a `WORKER_ENABLED` env gate** to `apps/notifications/src/server.ts`. Today `startWorker()`
-      runs unconditionally, so deploying the app = its poll-loop runs. During the soak the **external
-      notification-server is still the fan-out worker**, and two workers on the same `PendingNotification`
-      queue → double fan-out + duplicate signals to every user. The app must be deployable **API-only**.
-      (Default the gate OFF; flip it ON only at the worker-cutover step.)
+- [x] **`WORKER_ENABLED` env gate** — DONE. `apps/notifications/src/server.ts` starts the fan-out worker
+      only when `WORKER_ENABLED=true` (default off); the API always runs. Lets the app deploy **API-only**
+      during the soak while the external notification-server stays the sole fan-out worker. Flip it ON
+      only at the worker-cutover step (§4), and never while the external worker is also running.
 - [ ] **(Decide) monolith fallback.** As written there is no direct-DB fallback — the monolith depends
       entirely on the app. If you want the monolith to be able to deploy/rollback *independently*, add a
       flag so `createNotification`/reads fall back to a direct notif-DB path when the app is unreachable

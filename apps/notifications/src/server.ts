@@ -1,22 +1,27 @@
 import { buildServer } from './app';
 import { startWorker } from './worker/poll-loop';
-import { host, port } from './env';
+import { host, port, workerEnabled } from './env';
 
 // Entry point. `buildServer` (app.ts) is the testable factory (no listen); this file wires the listen
-// call AND starts the fan-out worker, so the one process owns both the producer API (A) and the poll
-// worker (B). vitest imports app.ts directly, so neither the port bind nor the worker runs under test.
+// call and — only when WORKER_ENABLED=true — starts the fan-out worker (B). The producer/read API (A)
+// always runs; the worker is gated so the app can deploy API-only during the migration soak while the
+// external notification-server is still the sole fan-out consumer (see WORKER_ENABLED in env.ts / the
+// pre-deploy checklist). vitest imports app.ts directly, so neither the port bind nor the worker runs
+// under test.
 
 async function main() {
   const app = await buildServer();
   await app.listen({ port, host });
   app.log.info(`notifications listening on ${host}:${port}`);
 
-  const worker = startWorker();
-  app.log.info('notifications fan-out worker started');
+  const worker = workerEnabled ? startWorker() : null;
+  app.log.info(
+    worker ? 'notifications fan-out worker started' : 'fan-out worker DISABLED (WORKER_ENABLED!=true)'
+  );
 
   const shutdown = (signal: string) => {
     app.log.info(`received ${signal}, shutting down`);
-    worker.stop();
+    worker?.stop();
     app
       .close()
       .catch(() => {})

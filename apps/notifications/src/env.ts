@@ -11,3 +11,11 @@ export const port = Number(process.env.PORT ?? 3000);
 export const host = process.env.HOST ?? '0.0.0.0';
 export const logLevel = process.env.LOG_LEVEL ?? 'info';
 export const isProd = process.env.NODE_ENV === 'production';
+
+/**
+ * Whether THIS process runs the fan-out worker (the poll loop that drains PendingNotification → delivers
+ * notifications + signals). Defaults OFF: the worker is the site's sole fan-out consumer, so it must be a
+ * deliberate switch — never two workers on the queue at once (the external notification-server vs. this
+ * app during the migration soak). The API always runs regardless of this flag.
+ */
+export const workerEnabled = process.env.WORKER_ENABLED === 'true';
