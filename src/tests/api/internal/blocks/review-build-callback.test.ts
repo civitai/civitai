@@ -35,12 +35,18 @@ const {
     mockMarkPreview: vi.fn(async () => undefined),
     // Default row = an ACTIVE preview (pending + a preview-* deployState) so the
     // callback's "preview no longer active" guard does NOT abort. Torn-down /
-    // decided cases override this per-test.
-    mockFindUnique: vi.fn(async () => ({
-      deployDetail: JSON.stringify({ url: 'https://x/y' }),
-      status: 'pending',
-      deployState: 'preview-building',
-    })),
+    // decided cases override this per-test (deployDetail/deployState nullable).
+    mockFindUnique: vi.fn(
+      async (): Promise<{
+        deployDetail: string | null;
+        status: string;
+        deployState: string | null;
+      }> => ({
+        deployDetail: JSON.stringify({ url: 'https://x/y' }),
+        status: 'pending',
+        deployState: 'preview-building',
+      })
+    ),
     // replay-guard primitive — true = newly set (first callback → run apply).
     mockSetNx: vi.fn(async () => true),
     mockRedisDel: vi.fn(async () => undefined),
