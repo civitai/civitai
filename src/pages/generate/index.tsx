@@ -71,23 +71,29 @@ function GeneratePage() {
           classNames={{
             root: 'flex flex-1 flex-col overflow-hidden',
             panel: 'size-full',
-            list: 'w-full border-b border-b-gray-2 dark:border-b-dark-5',
           }}
           keepMounted={false}
         >
-          <Tabs.List px="md" py="xs">
-            <Group justify="space-between" w="100%">
-              <Group align="flex-start" gap="xs">
-                <Tabs.Tab value="queue" leftSection={<IconClockHour9 size={16} />}>
-                  Queue
-                </Tabs.Tab>
-                <Tabs.Tab value="feed" leftSection={<IconGridDots size={16} />}>
-                  Feed
-                </Tabs.Tab>
-              </Group>
-              <GeneratedImageActions />
-            </Group>
-          </Tabs.List>
+          {/* Keep the actions row OUTSIDE Tabs.List: a role="tablist" must have
+              only role="tab" children (a11y: aria-required-children). The list
+              holds just the tabs; the surrounding Group carries the layout. */}
+          <Group
+            justify="space-between"
+            wrap="nowrap"
+            px="md"
+            py="xs"
+            className="w-full border-b border-b-gray-2 dark:border-b-dark-5"
+          >
+            <Tabs.List className="gap-2">
+              <Tabs.Tab value="queue" leftSection={<IconClockHour9 size={16} />}>
+                Queue
+              </Tabs.Tab>
+              <Tabs.Tab value="feed" leftSection={<IconGridDots size={16} />}>
+                Feed
+              </Tabs.Tab>
+            </Tabs.List>
+            <GeneratedImageActions />
+          </Group>
           <ScrollArea scrollRestore={{ key: tabView }}>
             <Tabs.Panel value="queue">
               <Queue />
