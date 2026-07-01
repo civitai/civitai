@@ -10,8 +10,6 @@ import type {
   GetRecentAppealsInput,
   GetReportsInput,
   ResolveAppealInput,
-  SetReportStatusInput,
-  UpdateReportSchema,
 } from '~/server/schema/report.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getImageById } from '~/server/services/image.service';
@@ -23,7 +21,6 @@ import {
   getAppealCount,
   getReports,
   resolveEntityAppeal,
-  updateReportById,
 } from '~/server/services/report.service';
 import {
   throwAuthorizationError,
@@ -64,22 +61,6 @@ export async function createReportHandler({
   }
 }
 
-export async function setReportStatusHandler({
-  input,
-  ctx,
-}: {
-  input: SetReportStatusInput;
-  ctx: ProtectedContext;
-}) {
-  try {
-    const { id, status } = input;
-    await bulkSetReportStatus({ ids: [id], status, userId: ctx.user.id, ip: ctx.ip });
-  } catch (e) {
-    if (e instanceof TRPCError) throw e;
-    else throw throwDbError(e);
-  }
-}
-
 export async function bulkUpdateReportStatusHandler({
   input,
   ctx,
@@ -95,8 +76,6 @@ export async function bulkUpdateReportStatusHandler({
     else throw throwDbError(e);
   }
 }
-
-export type GetReportsProps = AsyncReturnType<typeof getReportsHandler>;
 
 export async function getReportsHandler({ input }: { input: GetReportsInput }) {
   try {
@@ -299,19 +278,6 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
     throw throwDbError(e);
   }
 }
-
-export const updateReportHandler = async ({ input }: { input: UpdateReportSchema }) => {
-  try {
-    const { id, ...data } = input;
-    const report = await updateReportById({ id, data });
-    if (!report) throw throwNotFoundError(`No report with id ${id}`);
-
-    return report;
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
-  }
-};
 
 export async function createEntityAppealHandler({
   input,

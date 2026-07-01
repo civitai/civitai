@@ -374,13 +374,6 @@ export const getReportByIds = <TSelect extends Prisma.ReportSelect>({
   return dbRead.report.findMany({ where: { id: { in: ids } }, select });
 };
 
-export const updateReportById = ({
-  id,
-  data,
-}: GetByIdInput & { data: Prisma.ReportUpdateArgs['data'] }) => {
-  return dbWrite.report.update({ where: { id }, data });
-};
-
 export async function bulkSetReportStatus({
   ids,
   status,

@@ -20,6 +20,10 @@ features still depend on.
 **Pages → delete.** Remove the main-app page (`src/pages/moderator/<page>.tsx`) **and** its entry in
 `src/components/Moderation/ModerationNav.tsx` as part of the port.
 
+**Hunt orphaned code.** Deleting the page isn't enough — remove everything it leaves dead: the page's
+tRPC procedure(s), their controller handler(s), and any page-only schemas / constants / types. `grep -rn`
+each candidate and remove only those with zero remaining callers.
+
 **Moderator-only backend → delete when orphaned.** A tRPC procedure / router / service method used
 *exclusively* by removed moderator pages can go too — but **grep for other callers first**
 (`grep -rn "<name>" src/`). A live caller means leave it.

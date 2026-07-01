@@ -1,4 +1,3 @@
-import type { MantineColor } from '@mantine/core';
 import * as z from 'zod';
 import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
 import { ExternalModerationType } from '~/server/common/enums';
@@ -112,12 +111,6 @@ export const createReportInputSchema = z.discriminatedUnion('reason', [
   reportSpamSchema,
 ]);
 
-export type SetReportStatusInput = z.infer<typeof setReportStatusSchema>;
-export const setReportStatusSchema = z.object({
-  id: z.number(),
-  status: z.enum(ReportStatus),
-});
-
 export type BulkUpdateReportStatusInput = z.infer<typeof bulkUpdateReportStatusSchema>;
 export const bulkUpdateReportStatusSchema = z.object({
   ids: z.number().array(),
@@ -147,20 +140,6 @@ export type GetReportCountInput = z.infer<typeof getReportCount>;
 export const getReportCount = z.object({
   type: z.enum(ReportEntity),
   statuses: z.enum(ReportStatus).array(),
-});
-
-export const reportStatusColorScheme: Record<ReportStatus, MantineColor> = {
-  [ReportStatus.Unactioned]: 'green',
-  [ReportStatus.Actioned]: 'red',
-  [ReportStatus.Processing]: 'orange',
-  [ReportStatus.Pending]: 'yellow',
-};
-
-export type UpdateReportSchema = z.infer<typeof updateReportSchema>;
-export const updateReportSchema = z.object({
-  id: z.number(),
-  status: z.enum(ReportStatus),
-  internalNotes: z.string().nullish(),
 });
 
 export type CreateEntityAppealInput = z.output<typeof createEntityAppealSchema>;

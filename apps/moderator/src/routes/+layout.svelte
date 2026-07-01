@@ -1,6 +1,6 @@
 <script lang="ts">
   import '../global.css';
-  import { page } from '$app/state';
+  import { page, navigating } from '$app/state';
   import { buildWordmarkSvg } from '@civitai/brand';
   import {
     IconLayoutDashboard,
@@ -56,6 +56,15 @@
 </script>
 
 <SidebarProvider>
+  {#if navigating.to}
+    <div
+      class="pointer-events-none fixed inset-x-0 top-0 z-100 h-0.5 overflow-hidden"
+      role="status"
+      aria-label="Loading"
+    >
+      <div class="nav-progress-bar h-full w-2/5 rounded-full bg-primary"></div>
+    </div>
+  {/if}
   <Sidebar>
     <SidebarHeader>
       <a
@@ -131,3 +140,17 @@
     </div>
   </SidebarInset>
 </SidebarProvider>
+
+<style>
+  .nav-progress-bar {
+    animation: nav-progress 1.1s ease-in-out infinite;
+  }
+  @keyframes nav-progress {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(350%);
+    }
+  }
+</style>

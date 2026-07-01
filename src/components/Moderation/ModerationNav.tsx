@@ -11,7 +11,6 @@ export function ModerationNav() {
   const menuItems = useMemo(
     () =>
       [
-        { label: 'Reports', href: '/moderator/reports' },
         { label: 'Strikes', href: '/moderator/strikes', hidden: !features.strikes },
         { label: 'Images', href: '/moderator/images' },
         { label: 'Image Tags', href: '/moderator/image-tags' },
