@@ -1,40 +1,32 @@
-import { NotFound } from '~/components/AppLayout/NotFound';
-import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
-import { AppListingsMarketplaceBody } from '~/components/Apps/AppListingsMarketplaceBody';
 import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
-import { Meta } from '~/components/Meta/Meta';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 /**
- * App Store Listings (W13) — P2b DARK preview mount.
+ * App Store Listings (W13) — P2d: `/apps/store-preview` REDIRECTS to `/apps`.
  *
- * A dedicated preview route that renders the NEW unified `AppListing`-backed
- * store (`AppListingsMarketplaceBody`) ALONGSIDE the live `/apps` surface. The
- * default `/apps` render (MarketplaceBody → AppBlockCard, off the AppBlock path)
- * is byte-unchanged — `pages/apps/index.tsx` is not touched. The default-swap /
- * cutover is a later PR (P2d).
+ * This was the DARK preview mount of the unified `AppListing`-backed store
+ * (`AppListingsMarketplaceBody`) that parallel-ran alongside the live `/apps`
+ * during P2b/P2c. As of the P2d cutover, `/apps` renders that same unified grid
+ * directly, so this standalone grid route is redundant — it 302-redirects to
+ * `/apps` (behind the SAME `resolveAppsPageAccess` mod gate: a non-mod still
+ * gets notFound, never a redirect that leaks the surface exists).
  *
- * Gating: reuses `resolveAppsPageAccess` — the SAME mod-segmented `appBlocks`
- * flag gate as `/apps` (the flag's Flipt segment is mod-only today, so this is
- * mod-only dark). `deIndex` stays on so the preview is never crawlable.
+ * NOTE: the listing DETAIL route `/apps/store-preview/[slug]` (P2c) is KEPT —
+ * the `AppListingCard` CTAs still link there. Reconciling the canonical detail
+ * URL (`/apps/[slug]`) vs the live `/apps/[appBlockId]` collision is a separate
+ * pre-GA follow-up, not this PR.
  */
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ features }) => resolveAppsPageAccess({ features }),
+  resolver: async ({ features }) => {
+    const access = resolveAppsPageAccess({ features });
+    if ('notFound' in access) return access;
+    return { redirect: { destination: '/apps', permanent: false } };
+  },
 });
 
-export default function AppsStorePreviewPage() {
-  const features = useFeatureFlags();
-
-  if (!features.appBlocks) return <NotFound />;
-
-  return (
-    <>
-      <Meta title="App store preview — Civitai" description="Unified app store preview" deIndex />
-      <AppsPageLayout size="xl">
-        <AppListingsMarketplaceBody />
-      </AppsPageLayout>
-    </>
-  );
+// getServerSideProps always redirects (access) or notFounds (no access), so this
+// body never renders; a default export is still required for a pages/ route.
+export default function AppsStorePreviewRedirect() {
+  return null;
 }
