@@ -4,8 +4,8 @@
  *
  * Hidden admin route. Guarded by WEBHOOK_TOKEN via `?token=` query param.
  *
- * Purpose (Subtask A.2 of the "Dedupe Model Resources" epic): the official
- * account uploaded the same accessory file (a VAE / Text Encoder / etc.) both
+ * Purpose: reclaim storage when the official account uploaded the same accessory
+ * file (a VAE / Text Encoder / etc.) both
  * as a standalone model AND bundled as an additional-component file inside a
  * checkpoint. This collapses the bundled copy into a linked-component pointer to
  * the standalone, then deletes the bundled ModelFile so its S3 bytes are

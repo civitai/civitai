@@ -62,8 +62,8 @@ export async function findOfficialFileByHash({
   // section (type='Model') is checked too, so it can't be used to bypass dedup.
   // Genuine primary weights are safe: an official *checkpoint* match yields no
   // componentType below, so it is never linked (only accessories are). Callers
-  // that would delete the host row (B.1b's replaceFileId) must still skip primary
-  // types themselves — addLinkedComponent refuses to delete primary weights.
+  // that delete the host row (via replaceFileId) must still skip primary types
+  // themselves — addLinkedComponent refuses to delete primary weights.
   //
   // Matched purely on bytes + official ownership — the canonical file's own type
   // is not constrained (a standalone VAE's file is type='Model').

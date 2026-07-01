@@ -220,11 +220,11 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     // }
   }
 
-  // B.1b safety net: a non-official upload whose bytes match an official file
-  // is rehomed onto that file (pointer) and its row deleted to reclaim storage.
-  // Skip primary-typed files: addLinkedComponent refuses to delete primary
-  // weights (replaceFileId guard), so we can't reclaim them here — B.1a prevents
-  // main-section dedup client-side instead.
+  // Safety net for uploads that slipped past the client-side check: a non-official
+  // upload whose bytes match an official file is rehomed onto that file (pointer)
+  // and its row deleted to reclaim storage. Skip primary-typed files —
+  // addLinkedComponent refuses to delete primary weights (replaceFileId guard), so
+  // we can't reclaim them here; the client prevents that case before upload.
   const sha256 = outcome.hashes?.SHA256;
   if (
     sha256 &&
@@ -250,7 +250,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
       }
     } catch (e) {
       logToAxiom(
-        { type: 'warning', name: 'b1b-official-dedup', message: (e as Error).message, fileId },
+        { type: 'warning', name: 'post-scan-official-dedup', message: (e as Error).message, fileId },
         'webhooks'
       ).catch(() => null);
     }

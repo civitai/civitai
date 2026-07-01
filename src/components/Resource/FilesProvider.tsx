@@ -36,8 +36,8 @@ type SchemaError = {
   quantType?: ZodErrorSchema;
 };
 
-// Both the Meili "link" mutation and the B.1a linkOfficialFileByHash mutation
-// return the same server shape; map it to a client LinkedComponent in one place.
+// Both link mutations (the Meili picker and linkOfficialFileByHash) return the
+// same server shape; map it to a client LinkedComponent in one place.
 function toLinkedComponent(
   result: Omit<LinkedComponent, 'componentType' | 'fileMetadata'> & {
     componentType: string;
@@ -67,8 +67,8 @@ export type FileFromContextProps = {
   uuid: string;
   isPending?: boolean;
   isUploading?: boolean;
-  // True while B.1a is hashing the file + checking it against official copies,
-  // before any upload starts. Cleared when the check resolves (link or upload).
+  // True while the file is being hashed + checked against official copies before
+  // any upload starts. Cleared when the check resolves (link or upload).
   isCheckingOfficial?: boolean;
   status: 'pending' | 'uploading' | 'error' | 'aborted' | 'success';
 };

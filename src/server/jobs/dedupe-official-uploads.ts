@@ -106,7 +106,7 @@ export async function processDedupePairs(pairs: DedupePair[], concurrency: numbe
         logToAxiom(
           {
             type: 'warning',
-            name: 'b2-official-dedup',
+            name: 'dedupe-official-uploads',
             message: (e as Error).message,
             hostFileId: pair.hostFileId,
           },
@@ -141,7 +141,7 @@ export const dedupeOfficialUploadsJob = createJob(
       // backlog (persistently-failing pairs) will be retried on the next hourly run.
       if (i === MAX_ITERATIONS - 1) {
         logToAxiom(
-          { type: 'warning', name: 'b2-official-dedup', message: 'hit MAX_ITERATIONS safety guard; backlog may be incomplete' },
+          { type: 'warning', name: 'dedupe-official-uploads', message: 'hit MAX_ITERATIONS safety guard; backlog may be incomplete' },
           'webhooks'
         ).catch(() => null);
       }

@@ -1,6 +1,6 @@
 import jsSHA from 'jssha';
 
-export const OFFICIAL_MATCH_HASH_MAX_BYTES = 5 * 1024 ** 3; // 5 GB — above this, defer to server B.1b
+export const OFFICIAL_MATCH_HASH_MAX_BYTES = 5 * 1024 ** 3; // 5 GB — above this, defer to the server-side post-scan dedup
 const WEBCRYPTO_MAX_BYTES = 1024 ** 3; // ≤1 GB: native one-shot; larger: streamed jsSHA
 const STREAM_CHUNK = 100 * 1024 * 1024; // 100 MB
 

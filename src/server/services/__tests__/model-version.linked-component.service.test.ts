@@ -1,10 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TRPCError } from '@trpc/server';
 
-// Tests for the file-granular `addLinkedComponent` (Subtask A of the Dedupe
-// Model Resources epic): link a specific already-uploaded file into a version,
-// authorize the referenced file's owner, dedupe per file, and optionally remove
-// the redundant local file to reclaim its bytes.
+// Tests for the file-granular `addLinkedComponent`: link a specific already-uploaded
+// file into a version, authorize the referenced file's owner, dedupe per file, and
+// optionally remove the redundant local file to reclaim its bytes.
 
 const { mockDbRead, mockDbWrite, mockDeleteFile, mockPreventLag } = vi.hoisted(() => {
   const mk = () => ({

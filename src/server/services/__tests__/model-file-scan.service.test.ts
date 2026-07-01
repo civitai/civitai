@@ -1232,9 +1232,9 @@ describe('model-file-scan.service', () => {
   });
 
   // ==========================================================================
-  // applyScanOutcome — B.1b official dedup safety net
+  // applyScanOutcome — post-scan official-match dedup safety net
   // ==========================================================================
-  describe('applyScanOutcome — B.1b official dedup', () => {
+  describe('applyScanOutcome — official-match dedup', () => {
     const OFFICIAL = constants.system.officialUserId;
 
     it('converts a matching non-official upload to a pointer and deletes the row', async () => {
@@ -1270,8 +1270,8 @@ describe('model-file-scan.service', () => {
     });
 
     it('skips a primary-typed (main-section) file — cannot delete primary weights', async () => {
-      // addLinkedComponent refuses to delete a Model-typed file, so B.1b never
-      // attempts it; B.1a prevents main-section dedup client-side instead.
+      // addLinkedComponent refuses to delete a Model-typed file, so the post-scan
+      // dedup never attempts it; the client prevents that case before upload.
       mockDbWrite.modelFile.findUnique.mockResolvedValue({
         id: 503, type: 'Model', modelVersionId: 13, modelVersion: { modelId: 4, model: { userId: 999 } },
       });
