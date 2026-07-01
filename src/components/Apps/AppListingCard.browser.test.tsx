@@ -35,7 +35,9 @@ describe('AppListingCard', () => {
   test('on-site page app + canOpenPage → Open link to the run route', async () => {
     renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
     await expect.element(page.getByText('My App')).toBeInTheDocument();
-    await expect.element(page.getByText('App')).toBeInTheDocument();
+    // exact: the "App" kind badge, else the substring also matches the title
+    // ("My App") and description ("A handy app") — strict-mode violation.
+    await expect.element(page.getByText('App', { exact: true })).toBeInTheDocument();
     await expect.element(page.getByText('by alice')).toBeInTheDocument();
     const open = page.getByRole('link', { name: 'Open' });
     await expect.element(open).toBeInTheDocument();
@@ -90,7 +92,9 @@ describe('AppListingCard', () => {
         })}
       />
     );
-    await expect.element(page.getByText('Connect app')).toBeInTheDocument();
+    // exact: the "Connect app" badge, else the substring also matches the title
+    // ("Connect App", case-insensitive) — strict-mode violation.
+    await expect.element(page.getByText('Connect app', { exact: true })).toBeInTheDocument();
     const details = page.getByRole('link', { name: 'View details' });
     await expect.element(details).toHaveAttribute('href', '/apps/store-preview/my-app');
   });
