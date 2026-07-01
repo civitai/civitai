@@ -275,7 +275,12 @@ function ActivePreviewsPanel() {
   const query = trpc.blocks.listActivePreviews.useQuery(undefined, {
     enabled: !!features?.appBlocks,
     retry: false,
-    refetchInterval: 30000, // keep the count fresh while the queue is open
+    // Poll every 30s to keep the count fresh WHILE it's working, but stop once the
+    // query errors — when the review-sandbox flag is off (appBlocks on, sandbox
+    // flag off) the server throws UNAUTHORIZED, and a fixed interval would re-fire
+    // that guaranteed-dead request forever. (react-query v5: the callback gets the
+    // Query; teardown mutations still invalidate → refetch, so a resume path exists.)
+    refetchInterval: (q) => (q.state.error ? false : 30000),
   });
 
   const teardownMut = trpc.blocks.teardownPreview.useMutation({
@@ -1204,7 +1209,12 @@ function ReviewPreviewPanel({
             Open review host
           </Button>
         )}
-        {state && !isFailed && (
+        {state && (
+          // Shown for every non-null preview state INCLUDING preview-failed:
+          // teardownPreview clears any deploy_state that starts with `preview-`
+          // back to null, so a FAILED preview can be dismissed to "Start preview"
+          // (not just rebuilt). Label reflects that a failed row has nothing live
+          // to tear down — it's a dismiss.
           <Button
             size="xs"
             variant="light"
@@ -1214,7 +1224,7 @@ function ReviewPreviewPanel({
             disabled={teardownMut.isPending}
             onClick={() => teardownMut.mutate({ publishRequestId })}
           >
-            Tear down preview
+            {isFailed ? 'Dismiss failed preview' : 'Tear down preview'}
           </Button>
         )}
       </Group>
