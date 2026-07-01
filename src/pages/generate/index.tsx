@@ -79,12 +79,11 @@ function GeneratePage() {
               holds just the tabs; the surrounding Group carries the layout. */}
           <Group
             justify="space-between"
-            wrap="nowrap"
             px="md"
             py="xs"
             className="w-full border-b border-b-gray-2 dark:border-b-dark-5"
           >
-            <Tabs.List className="gap-2">
+            <Tabs.List className="gap-2.5">
               <Tabs.Tab value="queue" leftSection={<IconClockHour9 size={16} />}>
                 Queue
               </Tabs.Tab>
