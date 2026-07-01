@@ -23,7 +23,7 @@ import {
   type Tabs,
 } from './useResourceSelectFilters';
 
-const tabs: Tabs[] = ['all', 'official', 'featured', 'recent', 'liked', 'mine'];
+const tabs: Tabs[] = ['all', 'featured', 'recent', 'liked', 'official', 'mine'];
 const defaultTab: Tabs = 'all';
 const hitsPerPage = 20;
 
