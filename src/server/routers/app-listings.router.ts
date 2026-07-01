@@ -14,6 +14,7 @@ import {
   getAppListingDetailSchema,
   listAppListingsSchema,
 } from '~/server/schema/blocks/app-listing-read.schema';
+import { rateLimit } from '~/server/middleware.trpc';
 import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import {
   middleware,
@@ -169,6 +170,13 @@ export const appListingsRouter = router({
   /** Unified store listing over BOTH kinds — approved rows, keyset-paginated. */
   listAvailable: publicProcedure
     .use(enforceAppListingsReadFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many marketplace requests — slow down.',
+      })
+    )
     .input(listAppListingsSchema)
     .query(async ({ ctx, input }) => {
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
@@ -183,6 +191,13 @@ export const appListingsRouter = router({
   /** Per-listing public detail, by EXACTLY ONE of slug or id (approved only). */
   getAppDetail: publicProcedure
     .use(enforceAppListingsReadFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many marketplace requests — slow down.',
+      })
+    )
     .input(getAppListingDetailSchema)
     .query(async ({ ctx, input }) => {
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
