@@ -19,7 +19,9 @@ import {
   inferGgufQuantType,
   inferSafetensorsPrecision,
 } from '~/utils/file-helpers';
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { useFileHash } from '~/hooks/useFileHash';
+import { resolveOfficialMatch } from '~/components/Resource/official-match';
 import { bytesToKB } from '~/utils/number-helpers';
 import { getFileExtension, getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -92,6 +94,7 @@ export const useFilesContext = () => {
 
 export function FilesProvider({ model, version, children }: FilesProviderProps) {
   const queryUtils = trpc.useUtils();
+  const { hashFile } = useFileHash();
   const upload = useS3UploadStore((state) => state.upload);
   const setItems = useS3UploadStore((state) => state.setItems);
 
@@ -560,6 +563,50 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     uuid,
   }: FileFromContextProps) => {
     if (!file || !type) return;
+
+    const officialMatch = await resolveOfficialMatch({
+      file,
+      hostType: type,
+      findBySize: (size) => queryUtils.modelFile.findOfficialFilesBySize.fetch({ size }),
+      hashFile,
+      findByHash: (a) => queryUtils.modelFile.findOfficialFileByHash.fetch(a),
+    });
+
+    if (officialMatch && versionId) {
+      // Bytes already exist on the official account — skip the upload and the
+      // createFile row entirely; create a linked-component pointer instead.
+      const result = await addLinkedComponentMutation.mutateAsync({
+        id: versionId,
+        targetVersionId: officialMatch.versionId,
+        targetFileId: officialMatch.fileId,
+        componentType: officialMatch.componentType,
+        modelId: officialMatch.modelId,
+        modelName: officialMatch.modelName,
+        versionName: officialMatch.versionName,
+        isRequired: isRequired ?? true,
+      });
+      const enriched: LinkedComponent = {
+        recommendedResourceId: result.recommendedResourceId,
+        componentType: result.componentType as ModelFileComponentType,
+        modelId: result.modelId,
+        modelName: result.modelName,
+        versionId: result.versionId,
+        versionName: result.versionName,
+        fileId: result.fileId,
+        fileName: result.fileName,
+        sizeKB: result.sizeKB,
+        fileType: result.fileType,
+        fileMetadata: result.fileMetadata ?? undefined,
+        isRequired: result.isRequired,
+      };
+      setLinkedComponents((prev) => [...prev, enriched]);
+      setFiles((state) => state.filter((x) => x.uuid !== uuid));
+      showSuccessNotification({
+        title: 'Linked to official file',
+        message: `${officialMatch.modelName} already hosts this file — upload skipped.`,
+      });
+      return;
+    }
 
     setFiles((state) =>
       state.map((x) => (x.uuid === uuid ? { ...x, isPending: false, isUploading: true } : x))
