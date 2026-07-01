@@ -23,7 +23,7 @@ import {
   type Tabs,
 } from './useResourceSelectFilters';
 
-const tabs: Tabs[] = ['all', 'featured', 'recent', 'liked', 'mine'];
+const tabs: Tabs[] = ['all', 'official', 'featured', 'recent', 'liked', 'mine'];
 const defaultTab: Tabs = 'all';
 const hitsPerPage = 20;
 
@@ -76,6 +76,11 @@ export function ResourceSelectModalContent() {
   });
   if (!features.auctions) {
     allowedTabs = allowedTabs.filter((t) => t !== 'featured');
+  }
+  // The "Official" tab is the dedup nudge for component linking — surface the
+  // CivitaiOfficial canonical resources only in that context, not in generation.
+  if (selectSource !== 'modelVersion') {
+    allowedTabs = allowedTabs.filter((t) => t !== 'official');
   }
 
   function handleClose() {

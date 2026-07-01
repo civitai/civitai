@@ -48,6 +48,11 @@ export function ResourceHitList({
 
   const filterVersions = useCallback(
     (model: SearchIndexDataMap['models'][number]) => {
+      // The Official/Mine tabs relax the base-model constraint in the Meili
+      // query; mirror that here so we don't strip every version client-side
+      // (e.g. linking a Flux VAE into a Boogu checkpoint).
+      const skipBaseModel =
+        (selectedTab === 'mine' || selectedTab === 'official') && selectSource === 'modelVersion';
       const modelBaseModels = resources
         .filter((x) => x.type === model.type)
         .flatMap((x) => x.baseModels);
@@ -55,12 +60,14 @@ export function ResourceHitList({
       return model.versions.filter((version) => {
         return (
           (canGenerate ? canGenerate === version.canGenerate : true) &&
-          (modelBaseModels.length > 0 ? modelBaseModels.includes(version.baseModel) : true) &&
+          (skipBaseModel ||
+            modelBaseModels.length === 0 ||
+            modelBaseModels.includes(version.baseModel)) &&
           !excludedIds.includes(version.id)
         );
       });
     },
-    [canGenerate, resources, excludedIds]
+    [canGenerate, resources, excludedIds, selectedTab, selectSource]
   );
 
   // Build podium items from raw items (bypassing hidden preferences) so

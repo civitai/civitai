@@ -93,7 +93,7 @@ import type {
 import { Availability, CommercialUse, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
-import { filesForModelVersionCache } from './model-file.service';
+import { deleteFile, filesForModelVersionCache } from './model-file.service';
 import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
 import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
@@ -2072,43 +2072,109 @@ export const setLinkedComponents = async ({ id, components }: SetLinkedComponent
   if (source) await preventModelVersionLag(source.modelId, id);
 };
 
-export const addLinkedComponent = async (input: AddLinkedComponentInput) => {
-  // Find all files and pick the primary one using modelFileOrder priority
-  const files = await dbRead.modelFile.findMany({
-    where: { modelVersionId: input.targetVersionId },
-    select: { id: true, name: true, sizeKB: true, type: true, metadata: true },
-  });
+export const addLinkedComponent = async (
+  input: AddLinkedComponentInput & { userId: number; isModerator?: boolean }
+) => {
+  const { userId, isModerator } = input;
 
-  if (files.length === 0) {
-    throw new TRPCError({
-      code: 'NOT_FOUND',
-      message: 'No files found for the target model version',
+  type LinkedFile = {
+    id: number;
+    name: string;
+    sizeKB: number;
+    type: string;
+    metadata: unknown;
+  };
+
+  let linkedFile: LinkedFile;
+  // `resourceId` is the linked/canonical version stored on the row. When an
+  // explicit file is given we take it from the file itself (authoritative);
+  // otherwise it's the version the caller passed.
+  let resourceId = input.targetVersionId;
+
+  if (input.targetFileId != null) {
+    const file = await dbRead.modelFile.findUnique({
+      where: { id: input.targetFileId },
+      select: {
+        id: true,
+        name: true,
+        sizeKB: true,
+        type: true,
+        metadata: true,
+        modelVersionId: true,
+        modelVersion: { select: { model: { select: { userId: true } } } },
+      },
     });
+
+    if (!file) throw new TRPCError({ code: 'NOT_FOUND', message: 'Linked file not found' });
+
+    // The version being edited (`input.id`) already passed isOwnerOrModerator;
+    // this guards the *referenced* file's owner.
+    if (!isModerator && file.modelVersion.model.userId !== userId)
+      throw new TRPCError({
+        code: 'FORBIDDEN',
+        message: 'You do not own the file you are trying to link',
+      });
+
+    linkedFile = file;
+    resourceId = file.modelVersionId;
+  } else {
+    // Public/Meili path: auto-pick the primary file by modelFileOrder priority.
+    const files = await dbRead.modelFile.findMany({
+      where: { modelVersionId: input.targetVersionId },
+      select: { id: true, name: true, sizeKB: true, type: true, metadata: true },
+    });
+
+    if (files.length === 0)
+      throw new TRPCError({
+        code: 'NOT_FOUND',
+        message: 'No files found for the target model version',
+      });
+
+    linkedFile = files.sort(
+      (a, b) =>
+        (constants.modelFileOrder[a.type as ModelFileType] ?? 99) -
+        (constants.modelFileOrder[b.type as ModelFileType] ?? 99)
+    )[0];
   }
 
-  const primaryFile = files.sort(
-    (a, b) =>
-      (constants.modelFileOrder[a.type as ModelFileType] ?? 99) -
-      (constants.modelFileOrder[b.type as ModelFileType] ?? 99)
-  )[0];
+  // Validate the redundant file up front (before any write) so a bad
+  // replaceFileId can't leave a dangling pointer: it must live on the version
+  // being edited and must not be a primary model file (never delete weights).
+  if (input.replaceFileId != null) {
+    const replaceFile = await dbRead.modelFile.findUnique({
+      where: { id: input.replaceFileId },
+      select: { modelVersionId: true, type: true },
+    });
+    if (!replaceFile || replaceFile.modelVersionId !== input.id)
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'replaceFileId must be a file on the version being edited',
+      });
+    if (replaceFile.type === 'Model' || replaceFile.type === 'Pruned Model')
+      throw new TRPCError({ code: 'BAD_REQUEST', message: 'Cannot replace a primary model file' });
+  }
 
   const settings = {
     isLinkedComponent: true as const,
     componentType: input.componentType,
-    fileId: primaryFile.id,
+    fileId: linkedFile.id,
     modelId: input.modelId,
     modelName: input.modelName,
     versionName: input.versionName,
-    fileName: primaryFile.name,
+    fileName: linkedFile.name,
     isRequired: input.isRequired ?? true,
   };
 
-  // Check for existing linked component with same source + target
+  // Dedupe on (sourceId, resourceId, fileId) so two distinct files from the
+  // same target version coexist instead of overwriting each other.
   const existing = await dbWrite.recommendedResource.findFirst({
     where: {
       sourceId: input.id,
-      resourceId: input.targetVersionId,
-      settings: { path: ['isLinkedComponent'], equals: true },
+      resourceId,
+      AND: [
+        { settings: { path: ['isLinkedComponent'], equals: true } },
+        { settings: { path: ['fileId'], equals: linkedFile.id } },
+      ],
     },
     select: { id: true },
   });
@@ -2119,12 +2185,14 @@ export const addLinkedComponent = async (input: AddLinkedComponentInput) => {
         data: { settings },
       })
     : await dbWrite.recommendedResource.create({
-        data: {
-          sourceId: input.id,
-          resourceId: input.targetVersionId,
-          settings,
-        },
+        data: { sourceId: input.id, resourceId, settings },
       });
+
+  // Optionally remove the now-redundant local file; its bytes are reclaimed by
+  // the url-refcount GC inside deleteFile.
+  if (input.replaceFileId != null) {
+    await deleteFile({ id: input.replaceFileId, userId, isModerator });
+  }
 
   const source = await dbWrite.modelVersion.findUnique({
     where: { id: input.id },
@@ -2132,19 +2200,19 @@ export const addLinkedComponent = async (input: AddLinkedComponentInput) => {
   });
   if (source) await preventModelVersionLag(source.modelId, input.id);
 
-  const meta = primaryFile.metadata as Record<string, unknown> | null;
+  const meta = linkedFile.metadata as Record<string, unknown> | null;
 
   return {
     recommendedResourceId: result.id,
     componentType: input.componentType,
     modelId: input.modelId,
     modelName: input.modelName,
-    versionId: input.targetVersionId,
+    versionId: resourceId,
     versionName: input.versionName,
-    fileId: primaryFile.id,
-    fileName: primaryFile.name,
-    sizeKB: primaryFile.sizeKB,
-    fileType: primaryFile.type,
+    fileId: linkedFile.id,
+    fileName: linkedFile.name,
+    sizeKB: linkedFile.sizeKB,
+    fileType: linkedFile.type,
     fileMetadata: meta
       ? {
           format: meta.format as string | null,

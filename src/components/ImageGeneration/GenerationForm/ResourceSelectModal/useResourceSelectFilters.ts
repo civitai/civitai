@@ -3,6 +3,7 @@ import { useMemo } from 'react';
 import { useResourceSelectContext } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
 import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { constants } from '~/server/common/constants';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import type { GetFeaturedModels } from '~/server/services/model.service';
 import { Availability } from '~/shared/utils/prisma/enums';
@@ -12,7 +13,7 @@ import { isDefined } from '~/utils/type-guards';
 
 const take = 20;
 
-export type Tabs = 'all' | 'featured' | 'recent' | 'liked' | 'mine';
+export type Tabs = 'all' | 'official' | 'featured' | 'recent' | 'liked' | 'mine';
 
 export function useResourceSelectQueries(selectedTab: Tabs) {
   const currentUser = useCurrentUser();
@@ -128,17 +129,23 @@ export function useResourceSelectMeiliFilters({
       }
     }
 
+    // Skip the auto baseModel compatibility constraint when:
+    //  - featured tab (the featured-IDs AND clause restricts instead), or
+    //  - linking a component from your own models ('mine' + modelVersion): a
+    //    creator should be able to reuse any of their own component models
+    //    regardless of base-model match (e.g. a VAE shared across SDXL variants).
+    const skipBaseModel =
+      featuredByType.size > 0 ||
+      ((selectedTab === 'mine' || selectedTab === 'official') && selectSource === 'modelVersion');
+
     for (const { type, baseModels = [] } of resources) {
       const _type = filters.types.length > 0 ? filters.types.find((x) => x === type) : type;
 
-      // On the featured tab, skip baseModel for all types —
-      // the AND filter with featured IDs restricts results instead
-      const _baseModels =
-        featuredByType.size > 0
-          ? []
-          : filters.baseModels.length > 0
-          ? filters.baseModels.filter((baseModel) => baseModels.includes(baseModel))
-          : baseModels;
+      const _baseModels = skipBaseModel
+        ? []
+        : filters.baseModels.length > 0
+        ? filters.baseModels.filter((baseModel) => baseModels.includes(baseModel))
+        : baseModels;
 
       if (_type) {
         if (!_baseModels.length) or.push(`type = ${_type}`);
@@ -224,6 +231,8 @@ export function useResourceSelectMeiliFilters({
       if (currentUser) {
         meiliFilters.push(`user.id = ${currentUser.id}`);
       }
+    } else if (selectedTab === 'official') {
+      meiliFilters.push(`user.id = ${constants.system.officialUserId}`);
     }
 
     return [...meiliFilters, ...exclude].join(' AND ');
