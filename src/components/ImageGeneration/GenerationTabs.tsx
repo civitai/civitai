@@ -146,11 +146,21 @@ function GenerationTabsContent({ fullScreen }: { fullScreen?: boolean }) {
               data-tour="gen:results"
               data={tabEntries.map(([key, { Icon, label }]) => ({
                 label: (
-                  <Tooltip label={label} position="bottom" color="dark" openDelay={200} offset={10}>
-                    <div data-tour={`gen:${key}`} className="flex items-center justify-center">
-                      <Icon size={16} />
-                    </div>
-                  </Tooltip>
+                  <>
+                    <Tooltip
+                      label={label}
+                      position="bottom"
+                      color="dark"
+                      openDelay={200}
+                      offset={10}
+                    >
+                      <div data-tour={`gen:${key}`} className="flex items-center justify-center">
+                        <Icon size={16} />
+                      </div>
+                    </Tooltip>
+                    {/* Accessible name for the icon-only radio (visually hidden) */}
+                    <span className="sr-only">{label}</span>
+                  </>
                 ),
                 value: key,
               }))}
@@ -184,6 +194,7 @@ function GenerationTabsContent({ fullScreen }: { fullScreen?: boolean }) {
               </Tooltip>
             )}
             <CloseButton
+              aria-label={isGeneratePage ? 'Go back' : 'Close generation panel'}
               onClick={isGeneratePage ? () => history.go(-1) : generationGraphPanel.close}
               size="lg"
               variant="transparent"
