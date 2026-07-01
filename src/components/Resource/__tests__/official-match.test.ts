@@ -22,6 +22,7 @@ describe('resolveOfficialMatch', () => {
     expect(await resolveOfficialMatch(d)).toBeNull();
     expect(d.findBySize).not.toHaveBeenCalled();
     expect(d.hashFile).not.toHaveBeenCalled();
+    expect(d.findByHash).not.toHaveBeenCalled();
   });
 
   it('returns null (no hashing) when no official file shares the size', async () => {
