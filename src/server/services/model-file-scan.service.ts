@@ -23,6 +23,8 @@ import type { ModelMeta } from '~/server/schema/model.schema';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
 import { findOfficialFileByHash } from '~/server/services/official-file.service';
+import { primaryModelFileTypes } from '~/utils/file-display-helpers';
+import type { ModelFileType } from '~/server/common/constants';
 import { addLinkedComponent } from '~/server/services/model-version.service';
 
 // -----------------------------------------------------------------------------
@@ -220,8 +222,15 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
 
   // B.1b safety net: a non-official upload whose bytes match an official file
   // is rehomed onto that file (pointer) and its row deleted to reclaim storage.
+  // Skip primary-typed files: addLinkedComponent refuses to delete primary
+  // weights (replaceFileId guard), so we can't reclaim them here — B.1a prevents
+  // main-section dedup client-side instead.
   const sha256 = outcome.hashes?.SHA256;
-  if (sha256 && file.modelVersion?.model?.userId !== constants.system.officialUserId) {
+  if (
+    sha256 &&
+    file.modelVersion?.model?.userId !== constants.system.officialUserId &&
+    !primaryModelFileTypes.includes(file.type as ModelFileType)
+  ) {
     try {
       const match = await findOfficialFileByHash({ sha256, hostType: file.type });
       if (match) {

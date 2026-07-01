@@ -4,7 +4,7 @@ import { resolveOfficialFileHash } from '~/components/Resource/official-match';
 const file = { size: 1000 } as File;
 
 const deps = (over = {}) => ({
-  file, hostType: 'VAE',
+  file,
   findBySize: vi.fn().mockResolvedValue([{ id: 900 }]),
   hashFile: vi.fn().mockResolvedValue('abc123'),
   onHashStart: vi.fn(),
@@ -22,12 +22,13 @@ describe('resolveOfficialFileHash', () => {
     expect(d.onHashStart).toHaveBeenCalledTimes(1);
   });
 
-  it('returns null (no hashing) for a primary-weights host', async () => {
-    const d = deps({ hostType: 'Model' });
-    expect(await resolveOfficialFileHash(d)).toBeNull();
-    expect(d.findBySize).not.toHaveBeenCalled();
-    expect(d.hashFile).not.toHaveBeenCalled();
-    expect(d.onHashStart).not.toHaveBeenCalled();
+  it('does not gate on host type — a main-section file is still checked and hashed', async () => {
+    // No host-type short-circuit: the size gate + hash run regardless of the file's
+    // declared type, so a file dropped in the main file section can't bypass dedup.
+    const d = deps();
+    expect(await resolveOfficialFileHash(d)).toBe('abc123');
+    expect(d.findBySize).toHaveBeenCalled();
+    expect(d.hashFile).toHaveBeenCalled();
   });
 
   it('returns null (no hashing) when no official file shares the size', async () => {

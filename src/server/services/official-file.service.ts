@@ -2,9 +2,7 @@
 import { dbRead } from '~/server/db/client';
 import { constants } from '~/server/common/constants';
 import { inferComponentType } from '~/server/utils/model-helpers';
-import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { ModelHashType } from '~/shared/utils/prisma/enums';
-import type { ModelFileType } from '~/server/common/constants';
 
 const OFFICIAL_USER_ID = constants.system.officialUserId;
 
@@ -54,11 +52,14 @@ export async function findOfficialFileByHash({
   sha256: string;
   hostType: string;
 }): Promise<OfficialFileMatch | null> {
-  // Host-side weights guard — never dedup the user's primary weights. The match
-  // itself is byte-identity (SHA256) only; the host's declared type does NOT gate
-  // WHICH official file matches (a vague 'Other' label must still match).
-  if (primaryModelFileTypes.includes(hostType as ModelFileType)) return null;
-
+  // The match is byte-identity (SHA256) only — the host's declared type does NOT
+  // gate it. A vague 'Other' label matches, and a file dropped in the main file
+  // section (type='Model') is checked too, so it can't be used to bypass dedup.
+  // Genuine primary weights are safe: an official *checkpoint* match yields no
+  // componentType below, so it is never linked (only accessories are). Callers
+  // that would delete the host row (B.1b's replaceFileId) must still skip primary
+  // types themselves — addLinkedComponent refuses to delete primary weights.
+  //
   // Matched purely on bytes + official ownership — the canonical file's own type
   // is not constrained (a standalone VAE's file is type='Model').
   const file = await dbRead.modelFile.findFirst({

@@ -573,7 +573,6 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     try {
       officialSha256 = await resolveOfficialFileHash({
         file,
-        hostType: type,
         findBySize: (size) => queryUtils.modelFile.findOfficialFilesBySize.fetch({ size }),
         hashFile,
         onHashStart: () =>

@@ -87,10 +87,14 @@ describe('findOfficialFileByHash', () => {
     expect(match?.componentType).toBe('TextEncoder');
   });
 
-  it('returns null for a primary-weights host without querying', async () => {
-    expect(await findOfficialFileByHash({ sha256: 'abc', hostType: 'Model' })).toBeNull();
-    expect(await findOfficialFileByHash({ sha256: 'abc', hostType: 'Pruned Model' })).toBeNull();
-    expect(mockDbRead.modelFile.findFirst).not.toHaveBeenCalled();
+  it('checks a main-section file (host "Model") and links it when it matches an official accessory', async () => {
+    // Bypass guard: a VAE dropped in the main file section (labeled 'Model') that
+    // byte-matches an official VAE is still checked (no host-type short-circuit)
+    // and linked as a VAE — its bytes decide, not its label.
+    mockDbRead.modelFile.findFirst.mockResolvedValue(officialVaeRow);
+    const match = await findOfficialFileByHash({ sha256: 'abcdef', hostType: 'Model' });
+    expect(mockDbRead.modelFile.findFirst).toHaveBeenCalled();
+    expect(match?.componentType).toBe('VAE');
   });
 
   it('returns null when the official match is a checkpoint (not a linkable accessory)', async () => {

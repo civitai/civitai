@@ -1269,6 +1269,17 @@ describe('model-file-scan.service', () => {
       expect(addLinkedComponent).not.toHaveBeenCalled();
     });
 
+    it('skips a primary-typed (main-section) file — cannot delete primary weights', async () => {
+      // addLinkedComponent refuses to delete a Model-typed file, so B.1b never
+      // attempts it; B.1a prevents main-section dedup client-side instead.
+      mockDbWrite.modelFile.findUnique.mockResolvedValue({
+        id: 503, type: 'Model', modelVersionId: 13, modelVersion: { modelId: 4, model: { userId: 999 } },
+      });
+      await applyScanOutcome({ fileId: 503, hashes: { SHA256: 'abc' }, virusScan: { result: ScanResultCode.Success, message: null } });
+      expect(findOfficialFileByHash).not.toHaveBeenCalled();
+      expect(addLinkedComponent).not.toHaveBeenCalled();
+    });
+
     it('never throws out of scan finalization when dedup fails', async () => {
       mockDbWrite.modelFile.findUnique.mockResolvedValue({
         id: 502, type: 'VAE', modelVersionId: 12, modelVersion: { modelId: 3, model: { userId: 999 } },
