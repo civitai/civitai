@@ -404,11 +404,14 @@ async function watchApplyJobAndRecord(args: {
         context: 'civitai/deploy',
         description: 'Deployed to civitai-apps',
       });
-      // F-E E5 autogen — now that the new version is actually serving at
-      // https://<slug>.<APPS_DOMAIN>, capture a marketplace screenshot IFF the
-      // app shipped no publisher screenshots. Best-effort + fire-and-forget:
-      // a screenshot failure must never affect the deploy outcome (the user
-      // response already shipped; this watcher only records side-effects).
+      // F-E E5 autogen — DISABLED (no-op). It captured the standalone
+      // `https://<slug>.<APPS_DOMAIN>` URL, but App Blocks only render when
+      // EMBEDDED in the host (they wait for a `BLOCK_INIT` postMessage that never
+      // comes standalone), so every capture was a useless "waiting for host"
+      // loading skeleton. `autogenerateScreenshotIfMissing` short-circuits while
+      // `BLOCK_SCREENSHOT_AUTOGEN_ENABLED` is false; the wiring is kept so a
+      // future in-host `/apps/run/<slug>` capture can re-enable it. Real
+      // screenshots come from creator/dev upload. Best-effort + fire-and-forget.
       void safe(autogenerateScreenshotIfMissing, args.appBlockId, args.slug);
     } else {
       // Failure or timeout — leave the existing currentVersionDeployedAt
