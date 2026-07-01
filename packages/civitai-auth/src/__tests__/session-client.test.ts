@@ -75,11 +75,12 @@ describe('createSessionClient — getSessionUser (read)', () => {
     expect(h.store.has(key(7))).toBe(false); // consumer does NOT write — the producer does
   });
 
-  it('fetches the verified token iss + /api/auth/identity with a Bearer', async () => {
+  it('fetches the verified token iss + /api/auth/identity with a Bearer (bounded by an AbortSignal)', async () => {
     const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
     await createSessionClient().getSessionUser('7');
     expect(fetch).toHaveBeenCalledWith('https://auth.test/api/auth/identity', {
       headers: { authorization: 'Bearer 7' },
+      signal: expect.any(AbortSignal), // the new identity-fetch timeout — armed on every read
     });
   });
 
@@ -150,6 +151,80 @@ describe('createSessionClient — getSessionUser (read)', () => {
     const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => null }));
     expect(await createSessionClient().getSessionUser('7')).toBeNull();
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+// SPOF FIX — the identity read routes IN-CLUSTER via AUTH_HUB_INTERNAL_URL, but the anti-spoof
+// trustedHubBase(iss) guard is UNCHANGED: validate against the public trusted issuer, fetch from the internal
+// address. These tests pin both halves.
+describe('createSessionClient — internal identity routing (AUTH_HUB_INTERNAL_URL)', () => {
+  it('routes the identity fetch to AUTH_HUB_INTERNAL_URL when set + iss is trusted', async () => {
+    h.loadAuthEnv.mockReturnValue({
+      AUTH_JWT_ISSUER: 'https://auth.test',
+      AUTH_INTERNAL_TOKEN: 'secret-123',
+      AUTH_HUB_INTERNAL_URL: 'http://civitai-auth.civitai-auth.svc.cluster.local:3000',
+    });
+    const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
+    expect(await createSessionClient().getSessionUser('7')).toMatchObject({ id: 7 });
+    // FETCH target is the internal svc; the bearer is still the user's token.
+    expect(fetch).toHaveBeenCalledWith(
+      'http://civitai-auth.civitai-auth.svc.cluster.local:3000/api/auth/identity',
+      { headers: { authorization: 'Bearer 7' }, signal: expect.any(AbortSignal) }
+    );
+  });
+
+  it('falls back to the public iss base when AUTH_HUB_INTERNAL_URL is unset (backward-compatible)', async () => {
+    // beforeEach env has NO AUTH_HUB_INTERNAL_URL.
+    const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
+    await createSessionClient().getSessionUser('7');
+    expect(fetch).toHaveBeenCalledWith(
+      'https://auth.test/api/auth/identity',
+      expect.objectContaining({ headers: { authorization: 'Bearer 7' } })
+    );
+  });
+
+  it('STILL rejects a spoofed/untrusted iss even with AUTH_HUB_INTERNAL_URL set (no bypass, no fetch)', async () => {
+    // The internal override must NEVER let an untrusted issuer through — trustedHubBase(iss) runs first.
+    h.loadAuthEnv.mockReturnValue({
+      AUTH_JWT_ISSUER: 'https://auth.test',
+      AUTH_INTERNAL_TOKEN: 'secret-123',
+      AUTH_HUB_INTERNAL_URL: 'http://civitai-auth.civitai-auth.svc.cluster.local:3000',
+    });
+    h.verifyToken.mockImplementation(async (t: string) => ({ sub: t, iss: 'https://evil.example' }));
+    const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
+    expect(await createSessionClient().getSessionUser('7')).toBeNull(); // fail closed
+    expect(fetch).not.toHaveBeenCalled(); // bearer never left for the untrusted issuer
+  });
+});
+
+describe('createSessionClient — identity-fetch timeout (fail-open + instrumentation)', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('aborts a hung identity fetch at the timeout, resolves to the miss behavior (null), and reports timeout', async () => {
+    vi.useFakeTimers();
+    const onIdentityLeg =
+      vi.fn<(outcome: 'hit' | 'miss' | 'timeout' | 'error', s: number) => void>();
+    // A fetch that never settles on its own — it only rejects when its AbortSignal fires (like real fetch).
+    stubFetch(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          const signal = (init as { signal: AbortSignal }).signal;
+          if (signal.aborted) return reject(signal.reason);
+          signal.addEventListener('abort', () => reject(signal.reason));
+        }) as Promise<Res>
+    );
+    const p = createSessionClient({ onIdentityLeg }).getSessionUser('7');
+    await vi.advanceTimersByTimeAsync(1500); // trip AbortSignal.timeout(1500)
+    expect(await p).toBeNull(); // unchanged miss behavior — does NOT stall
+    expect(onIdentityLeg).toHaveBeenCalledWith('timeout', expect.any(Number));
+  });
+
+  it('reports outcome "hit" on a successful identity fetch', async () => {
+    const onIdentityLeg =
+      vi.fn<(outcome: 'hit' | 'miss' | 'timeout' | 'error', s: number) => void>();
+    stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
+    await createSessionClient({ onIdentityLeg }).getSessionUser('7');
+    expect(onIdentityLeg).toHaveBeenCalledWith('hit', expect.any(Number));
   });
 });
 

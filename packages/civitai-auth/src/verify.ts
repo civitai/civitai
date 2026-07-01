@@ -11,9 +11,11 @@ import { createRemoteJWKSet, decodeProtectedHeader, importSPKI, jwtVerify } from
 import { sessionCookieName } from './cookies';
 import { decodeLegacySessionCookie } from './legacy-cookie';
 import { loadAuthEnv } from './env';
+import { now, elapsed, isTimeoutError } from './timing';
 import type { SessionClaims } from './types';
 
 const ALG = 'ES256'; // matches the signer (sign.ts) — EC P-256 keys, smaller signatures than RS256
+const JWKS_TIMEOUT_MS = 2500; // bound the on-rotation JWKS refetch (jose default is 5000ms) — see below
 // Accept a multiline PEM or a single-line value with literal `\n` escapes (matches sign.ts).
 const normalizePem = (pem: string) => pem.replace(/\\n/g, '\n');
 
@@ -43,6 +45,16 @@ export interface AuthVerifierConfig {
   legacyEnabled?: boolean;
   /** Injected revocation check (e.g. the sysRedis TOKEN_STATE marker). Fail-open inside. */
   isRevoked?: (claims: SessionClaims) => Promise<boolean> | boolean;
+  /**
+   * Optional instrumentation for the JWKS verify leg — fires once per ES256-via-JWKS verify with its
+   * wall-clock duration. Injected (not imported) so the package stays infra-dep-free; the CALLING app wires
+   * it to prom-client. `hit` = verify succeeded (keys were cached → sub-ms crypto, OR a refetch on an unknown
+   * kid succeeded → the network cost shows up here); `timeout` = the bounded JWKS refetch (timeoutDuration)
+   * aborted. Ordinary bad-token failures (bad signature / expiry / issuer) are NOT emitted — they aren't a
+   * JWKS-leg event. Must be cheap + never throw (authed hot path). Only fires on the JWKS path, never the
+   * local-public-key (hub) path.
+   */
+  onJwksLeg?: (outcome: 'hit' | 'timeout', durationSeconds: number) => void;
 }
 
 export interface AuthVerifier {
@@ -75,6 +87,7 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
     // (preserves migration-window behavior); pass `legacyEnabled: false` to force it off at cutover.
     legacyEnabled: config.legacyEnabled ?? true,
     isRevoked: config.isRevoked,
+    onJwksLeg: config.onJwksLeg,
   };
 
   // Verification key. Prefer a LOCAL public key (no network) when configured — the hub verifying its
@@ -82,7 +95,14 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
   // rotation) — the spoke path. At least one must be present to verify ES256.
   let _localKey: ReturnType<typeof importSPKI> | undefined;
   const localKey = () => (_localKey ??= importSPKI(normalizePem(cfg.publicKeyPem!), ALG));
-  const jwks = !cfg.publicKeyPem && cfg.jwksUri ? createRemoteJWKSet(new URL(cfg.jwksUri)) : undefined;
+  // Bound the JWKS refetch (triggered only on an unknown `kid`, i.e. key rotation) so it can't hang the verify
+  // path. jose defaults timeoutDuration to 5000ms; we tighten it to 2500ms as defense-in-depth (on the authed
+  // hot path a hung JWKS fetch would otherwise stall every request whose kid isn't cached). The internal
+  // AUTH_JWKS_URI (see env change) also removes the CF-edge hairpin for this fetch.
+  const jwks =
+    !cfg.publicKeyPem && cfg.jwksUri
+      ? createRemoteJWKSet(new URL(cfg.jwksUri), { timeoutDuration: JWKS_TIMEOUT_MS })
+      : undefined;
   const canVerify = () => !!cfg.publicKeyPem || !!jwks;
 
   // Branch so each jwtVerify call matches a single jose overload (KeyLike vs JWKS-getter).
@@ -91,7 +111,19 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
     // must NOT be inferred from the verification key (alg-confusion guard) — jose only ever accepts
     // an ES256 signature here, never anything the header asks for.
     const opts = { issuer: cfg.issuer, audience: cfg.audience, algorithms: [ALG] };
-    return cfg.publicKeyPem ? jwtVerify(token, await localKey(), opts) : jwtVerify(token, jwks!, opts);
+    if (cfg.publicKeyPem) return jwtVerify(token, await localKey(), opts);
+    // JWKS path (spoke): time it so a stalled key-refetch is VISIBLE to the calling app. Emit `timeout` on the
+    // bounded JWKS-refetch abort, `hit` on success; a plain bad-token failure re-throws WITHOUT emitting (not a
+    // JWKS-leg event). Instrumentation must never mask the verify result → we always re-throw on failure.
+    const start = now();
+    try {
+      const res = await jwtVerify(token, jwks!, opts);
+      cfg.onJwksLeg?.('hit', elapsed(start));
+      return res;
+    } catch (err) {
+      if (isTimeoutError(err)) cfg.onJwksLeg?.('timeout', elapsed(start));
+      throw err;
+    }
   }
 
   async function verifyToken(token: string): Promise<SessionClaims | null> {
