@@ -12,7 +12,10 @@
 // module owns the prom-client wiring.
 import { registerHistogram, registerCounterWithLabels } from '~/server/prom/client';
 
-export type SessionLeg = 'identity' | 'jwks' | 'revocation';
+// `identity` = token cookie path (getSessionUser); `identity-by-id` = API-key/OAuth/legacy by-userId read
+// (getSessionUserById); `hub-write` = the invalidate/refresh/invalidateAll hub writes; `jwks` = ES256 verify
+// key fetch; `revocation` = sysRedis TOKEN_STATE/ALL read.
+export type SessionLeg = 'identity' | 'identity-by-id' | 'hub-write' | 'jwks' | 'revocation';
 export type SessionLegOutcome = 'hit' | 'miss' | 'timeout' | 'error';
 
 // Sub-ms (cache/crypto) → ~30s (a fully-stalled hairpin, the incident tail). Covers the whole span so a
@@ -23,8 +26,9 @@ const durationHistogram = registerHistogram({
   name: 'session_resolution_duration_seconds',
   help:
     'Duration (seconds) of each session-resolution leg as seen by the CALLING app — the app→hub identity ' +
-    'fetch, the JWKS verify/refetch, and the sysRedis revocation read. The hub cannot observe these hops. ' +
-    'Labeled by leg (identity|jwks|revocation) + outcome (hit|miss|timeout|error).',
+    'fetch (cookie + by-userId API-key/OAuth), the hub invalidate/refresh writes, the JWKS verify/refetch, ' +
+    'and the sysRedis revocation read. The hub cannot observe these hops. Labeled by leg ' +
+    '(identity|identity-by-id|hub-write|jwks|revocation) + outcome (hit|miss|timeout|error).',
   labelNames: ['leg', 'outcome'] as const,
   buckets: [...SESSION_RESOLUTION_BUCKETS],
 });

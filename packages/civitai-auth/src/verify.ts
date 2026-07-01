@@ -11,7 +11,7 @@ import { createRemoteJWKSet, decodeProtectedHeader, importSPKI, jwtVerify } from
 import { sessionCookieName } from './cookies';
 import { decodeLegacySessionCookie } from './legacy-cookie';
 import { loadAuthEnv } from './env';
-import { now, elapsed, isTimeoutError } from './timing';
+import { now, elapsed, isTimeoutError, safeInvoke } from './timing';
 import type { SessionClaims } from './types';
 
 const ALG = 'ES256'; // matches the signer (sign.ts) — EC P-256 keys, smaller signatures than RS256
@@ -118,10 +118,11 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
     const start = now();
     try {
       const res = await jwtVerify(token, jwks!, opts);
-      cfg.onJwksLeg?.('hit', elapsed(start));
+      // safeInvoke: a throwing metric callback must NOT turn a valid verify into a re-thrown fail-closed logout.
+      safeInvoke(cfg.onJwksLeg, 'hit', elapsed(start));
       return res;
     } catch (err) {
-      if (isTimeoutError(err)) cfg.onJwksLeg?.('timeout', elapsed(start));
+      if (isTimeoutError(err)) safeInvoke(cfg.onJwksLeg, 'timeout', elapsed(start));
       throw err;
     }
   }

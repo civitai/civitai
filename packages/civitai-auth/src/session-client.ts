@@ -2,7 +2,7 @@ import { createAuthVerifier, type AuthVerifier } from './verify';
 import { loadAuthEnv } from './env';
 import { hubFetch } from './hub';
 import { getCacheRedis, sessionCacheKey } from './redis';
-import { now, elapsed, isTimeoutError } from './timing';
+import { now, elapsed, isTimeoutError, safeInvoke } from './timing';
 import type { SessionUser, SessionClaims } from './types';
 
 // SESSION CLIENT — the consumer-side interface to the auth hub's session-user data (thin-session model;
@@ -66,6 +66,18 @@ export interface SessionClientConfig {
    * verifies inline). Forwarded straight to the internal `createAuthVerifier` — see AuthVerifierConfig.onJwksLeg.
    */
   onJwksLeg?: (outcome: 'hit' | 'timeout', durationSeconds: number) => void;
+  /**
+   * Optional instrumentation for the BY-USERID read-through hub hop (getSessionUserById) — the hot read for
+   * API-key / OAuth / legacy-cookie auth. Same shape as onIdentityLeg. `miss` = the hub reported no user
+   * (401/404/5xx). Now routed in-cluster + bounded like the token identity leg.
+   */
+  onIdentityByIdLeg?: (outcome: 'hit' | 'miss' | 'timeout' | 'error', durationSeconds: number) => void;
+  /**
+   * Optional instrumentation for the hub WRITE hops (invalidate / refresh / invalidateAll). `hit` = the write
+   * completed (2xx); `timeout` = the bounded hub fetch aborted; `error` = a non-ok status or network error
+   * (the write still throws, per its contract — the callback is fire-and-forget observability only).
+   */
+  onHubWriteLeg?: (outcome: 'hit' | 'timeout' | 'error', durationSeconds: number) => void;
 }
 
 export function createSessionClient(config: SessionClientConfig = {}): SessionClient {
@@ -127,12 +139,13 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
       const start = now();
       try {
         const user = await fetchIdentity(fetchBase, token);
-        config.onIdentityLeg?.(user ? 'hit' : 'miss', elapsed(start));
+        // safeInvoke: a throwing metric callback here must NOT flip a valid session to null via the catch.
+        safeInvoke(config.onIdentityLeg, user ? 'hit' : 'miss', elapsed(start));
         return user;
       } catch (err) {
         // hub unreachable / aborted — appear unauthenticated (the warm cache covers the normal path). A
         // fetch aborted by the AbortSignal.timeout throws a TimeoutError (name === 'TimeoutError').
-        config.onIdentityLeg?.(isTimeoutError(err) ? 'timeout' : 'error', elapsed(start));
+        safeInvoke(config.onIdentityLeg, isTimeoutError(err) ? 'timeout' : 'error', elapsed(start));
         return null;
       }
     })().finally(() => inflight.delete(userId));
@@ -142,7 +155,8 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
 
   // READ-THROUGH by userId — for consumer paths with no session token (API-key/bearer auth, legacy cookie).
   // Shared-cache read → single-flight the miss to the INTERNAL-authed GET identity?userId= (read-through, NOT
-  // a bust — refresh() is the bust path). The hub URL is AUTH_JWT_ISSUER (no token whose `iss` to read).
+  // a bust — refresh() is the bust path). Routed in-cluster + bounded by hubFetch (AUTH_HUB_INTERNAL_URL) —
+  // this is the hot read for EVERY API-key / OAuth request, so it's the same hairpin SPOF as the token path.
   async function getSessionUserById(userId: number): Promise<SessionUser | null> {
     if (!Number.isFinite(userId)) return null;
     const cached = await readCachedUser(userId);
@@ -153,14 +167,23 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
     const p = (async () => {
       const internal = loadAuthEnv().AUTH_INTERNAL_TOKEN; // by-userId read is service-authed (no user token)
       if (!internal) return null;
+      const start = now();
       try {
         const res = await hubFetch(`/api/auth/identity?userId=${userId}`, {
           headers: { authorization: `Bearer ${internal}` },
         });
-        if (!res.ok) return null; // 401 (bad secret) / 404 (no such user) / 5xx → treat as unauthenticated
-        return (await res.json()) as SessionUser;
-      } catch {
-        return null; // hub unreachable / not configured
+        if (!res.ok) {
+          // 401 (bad secret) / 404 (no such user) / 5xx → treat as unauthenticated
+          safeInvoke(config.onIdentityByIdLeg, 'miss', elapsed(start));
+          return null;
+        }
+        const user = (await res.json()) as SessionUser;
+        safeInvoke(config.onIdentityByIdLeg, 'hit', elapsed(start));
+        return user;
+      } catch (err) {
+        // hub unreachable / aborted (bounded by hubFetch's AbortSignal.timeout) / not configured
+        safeInvoke(config.onIdentityByIdLeg, isTimeoutError(err) ? 'timeout' : 'error', elapsed(start));
+        return null;
       }
     })().finally(() => inflightById.delete(userId));
     inflightById.set(userId, p);
@@ -174,12 +197,23 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
     if (!token)
       throw new Error('[@civitai/auth] createSessionClient: AUTH_INTERNAL_TOKEN is not set');
 
-    const res = await hubFetch('/api/auth/identity', {
-      method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ userId, refresh: reproduce }), // `refresh` is the hub's wire field
-    });
-    if (!res.ok) throw new Error(`[@civitai/auth] session invalidate failed: ${res.status}`);
+    const start = now();
+    let res: Response;
+    try {
+      res = await hubFetch('/api/auth/identity', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ userId, refresh: reproduce }), // `refresh` is the hub's wire field
+      });
+    } catch (err) {
+      safeInvoke(config.onHubWriteLeg, isTimeoutError(err) ? 'timeout' : 'error', elapsed(start));
+      throw err; // write contract unchanged — the caller sees the (now-bounded) failure
+    }
+    if (!res.ok) {
+      safeInvoke(config.onHubWriteLeg, 'error', elapsed(start));
+      throw new Error(`[@civitai/auth] session invalidate failed: ${res.status}`);
+    }
+    safeInvoke(config.onHubWriteLeg, 'hit', elapsed(start));
     if (!reproduce) return null;
     return ((await res.json()) ?? null) as SessionUser | null;
   }
@@ -190,12 +224,23 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
     const token = loadAuthEnv().AUTH_INTERNAL_TOKEN;
     if (!token)
       throw new Error('[@civitai/auth] createSessionClient: AUTH_INTERNAL_TOKEN is not set');
-    const res = await hubFetch('/api/auth/identity', {
-      method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ scope: 'all' }),
-    });
-    if (!res.ok) throw new Error(`[@civitai/auth] session invalidateAll failed: ${res.status}`);
+    const start = now();
+    let res: Response;
+    try {
+      res = await hubFetch('/api/auth/identity', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ scope: 'all' }),
+      });
+    } catch (err) {
+      safeInvoke(config.onHubWriteLeg, isTimeoutError(err) ? 'timeout' : 'error', elapsed(start));
+      throw err;
+    }
+    if (!res.ok) {
+      safeInvoke(config.onHubWriteLeg, 'error', elapsed(start));
+      throw new Error(`[@civitai/auth] session invalidateAll failed: ${res.status}`);
+    }
+    safeInvoke(config.onHubWriteLeg, 'hit', elapsed(start));
   }
 
   return {

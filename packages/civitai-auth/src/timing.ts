@@ -24,3 +24,22 @@ export const isTimeoutError = (err: unknown): boolean => {
   const { name, code } = err as { name?: string; code?: string };
   return name === 'TimeoutError' || name === 'JWKSTimeout' || code === 'ERR_JWKS_TIMEOUT';
 };
+
+/**
+ * Invoke an optional instrumentation callback WITHOUT letting it affect the auth result. A throwing metric
+ * callback on the hot path would otherwise corrupt auth: a throw right after a successful identity fetch would
+ * bubble to the surrounding catch → return null → a valid session appears unauthenticated; in verify it would
+ * re-throw → fail-closed logout. `observeSessionLeg` never throws today, but this makes the guarantee
+ * STRUCTURAL — instrumentation is strictly best-effort.
+ */
+export function safeInvoke<A extends unknown[]>(
+  fn: ((...args: A) => void) | undefined,
+  ...args: A
+): void {
+  if (!fn) return;
+  try {
+    fn(...args);
+  } catch {
+    /* instrumentation must never affect the auth result */
+  }
+}

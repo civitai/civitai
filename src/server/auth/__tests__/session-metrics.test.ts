@@ -37,12 +37,16 @@ describe('observeSessionLeg — civitai_app_session_resolution_* wiring', () => 
     expect(h.counter.inc).toHaveBeenCalledTimes(1);
   });
 
-  it('increments the timeouts counter per leg (identity / jwks / revocation)', () => {
+  it('increments the timeouts counter per leg (all five legs)', () => {
     observeSessionLeg('jwks', 'timeout', 2.5);
     observeSessionLeg('revocation', 'timeout', 2.0);
+    observeSessionLeg('identity-by-id', 'timeout', 1.5);
+    observeSessionLeg('hub-write', 'timeout', 1.5);
     expect(h.counter.inc).toHaveBeenCalledWith({ leg: 'jwks' });
     expect(h.counter.inc).toHaveBeenCalledWith({ leg: 'revocation' });
-    expect(h.counter.inc).toHaveBeenCalledTimes(2);
+    expect(h.counter.inc).toHaveBeenCalledWith({ leg: 'identity-by-id' });
+    expect(h.counter.inc).toHaveBeenCalledWith({ leg: 'hub-write' });
+    expect(h.counter.inc).toHaveBeenCalledTimes(4);
   });
 
   it('does NOT increment the counter on error / miss outcomes (only real timeouts)', () => {

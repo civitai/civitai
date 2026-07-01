@@ -18,6 +18,11 @@ export const sessionClient = createSessionClient({
   isRevoked,
   onIdentityLeg: (outcome, durationSeconds) => observeSessionLeg('identity', outcome, durationSeconds),
   onJwksLeg: (outcome, durationSeconds) => observeSessionLeg('jwks', outcome, durationSeconds),
+  // The API-key/OAuth by-id read + the hub write paths hairpin too (bearer-token.ts, App Blocks, ban/logout) —
+  // now internally routed + bounded by hubFetch; instrument them under their own leg labels.
+  onIdentityByIdLeg: (outcome, durationSeconds) =>
+    observeSessionLeg('identity-by-id', outcome, durationSeconds),
+  onHubWriteLeg: (outcome, durationSeconds) => observeSessionLeg('hub-write', outcome, durationSeconds),
 });
 // Session-token lifecycle (rolling refresh / revoke) — the hub contract lives in the package, not inline here.
 const sessionTokenClient = createSessionTokenClient();

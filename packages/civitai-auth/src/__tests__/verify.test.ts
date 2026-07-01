@@ -60,6 +60,18 @@ describe('createAuthVerifier', () => {
     expect(onJwksLeg).toHaveBeenCalledWith('hit', expect.any(Number));
   });
 
+  it('still verifies when a throwing onJwksLeg callback fires (instrumentation is best-effort)', async () => {
+    stubJwks();
+    const token = await signer.mintSessionToken({ user: { id: 7 }, signedAt: 1 }, { jti: 't7' });
+    const onJwksLeg = vi.fn(() => {
+      throw new Error('metrics exploded');
+    });
+    // Without safeInvoke this would re-throw → verifyToken returns null → a valid token becomes a logout.
+    const claims = await createAuthVerifier({ ...cfg, onJwksLeg }).verifyToken(token);
+    expect(claims?.user).toMatchObject({ id: 7 }); // verify SUCCEEDS despite the throwing callback
+    expect(onJwksLeg).toHaveBeenCalled();
+  });
+
   it('does NOT fire the JWKS leg on the LOCAL public-key (hub) path — no network to instrument', async () => {
     const onJwksLeg = vi.fn<(o: 'hit' | 'timeout', s: number) => void>();
     const token = await signer.mintSessionToken({ user: { id: 7 }, signedAt: 1 }, { jti: 't7' });
