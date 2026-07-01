@@ -661,7 +661,7 @@ function FileCard({
             <Group gap={6} wrap="nowrap" mt={4}>
               <Loader size="xs" />
               <Text size="xs" c="dimmed">
-                Checking for an existing copy on Civitai\u2026
+                Checking for an existing copy on Civitai&hellip;
               </Text>
             </Group>
           )}
