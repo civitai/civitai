@@ -1289,6 +1289,13 @@ export const blocksRouter = router({
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Screenshot backfill is restricted to civitai team');
       }
+      // DISABLED (no-op) — `backfillMissingScreenshots` short-circuits while
+      // `BLOCK_SCREENSHOT_AUTOGEN_ENABLED` is false. It captured the standalone
+      // `<slug>.<APPS_DOMAIN>` URL, which only renders a waiting-for-host
+      // skeleton (blocks need the host `BLOCK_INIT` postMessage), so it only ever
+      // produced useless skeleton screenshots. Real screenshots come from
+      // creator/dev upload (or a future in-host `/apps/run/<slug>` capture). Proc
+      // retained so re-enabling is a one-line flip of the const.
       const { backfillMissingScreenshots } = await import(
         '~/server/services/blocks/autogenerate-screenshot.service'
       );
