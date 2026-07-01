@@ -19,7 +19,7 @@ import {
   inferGgufQuantType,
   inferSafetensorsPrecision,
 } from '~/utils/file-helpers';
-import { resolveOfficialMatch } from '~/components/Resource/official-match';
+import { resolveOfficialFileHash } from '~/components/Resource/official-match';
 import { useFileHash } from '~/hooks/useFileHash';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { bytesToKB } from '~/utils/number-helpers';
@@ -167,6 +167,8 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       });
     },
   });
+
+  const linkOfficialMutation = trpc.modelVersion.linkOfficialFileByHash.useMutation();
 
   const addLinkedComponentMutation = trpc.modelVersion.addLinkedComponent.useMutation({
     onError(error) {
@@ -564,54 +566,51 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
   }: FileFromContextProps) => {
     if (!file || !type) return;
 
-    let officialMatch = null;
+    let officialSha256: string | null = null;
     try {
-      officialMatch = await resolveOfficialMatch({
+      officialSha256 = await resolveOfficialFileHash({
         file,
         hostType: type,
         findBySize: (size) => queryUtils.modelFile.findOfficialFilesBySize.fetch({ size }),
         hashFile,
-        findByHash: (a) => queryUtils.modelFile.findOfficialFileByHash.fetch(a),
       });
     } catch {
       // network/server error — fall through to normal upload
     }
 
-    if (officialMatch && versionId) {
-      // Bytes already exist on the official account — skip the upload and the
-      // createFile row entirely; create a linked-component pointer instead.
+    if (officialSha256 && versionId) {
+      // Bytes already exist on the official account — re-verify server-side, skip upload,
+      // and create a linked-component pointer instead.
       try {
-        const result = await addLinkedComponentMutation.mutateAsync({
+        const result = await linkOfficialMutation.mutateAsync({
           id: versionId,
-          targetVersionId: officialMatch.versionId,
-          targetFileId: officialMatch.fileId,
-          componentType: officialMatch.componentType,
-          modelId: officialMatch.modelId,
-          modelName: officialMatch.modelName,
-          versionName: officialMatch.versionName,
-          isRequired: isRequired ?? true,
+          sha256: officialSha256,
+          hostType: type,
         });
-        const enriched: LinkedComponent = {
-          recommendedResourceId: result.recommendedResourceId,
-          componentType: result.componentType as ModelFileComponentType,
-          modelId: result.modelId,
-          modelName: result.modelName,
-          versionId: result.versionId,
-          versionName: result.versionName,
-          fileId: result.fileId,
-          fileName: result.fileName,
-          sizeKB: result.sizeKB,
-          fileType: result.fileType,
-          fileMetadata: result.fileMetadata ?? undefined,
-          isRequired: result.isRequired,
-        };
-        setLinkedComponents((prev) => [...prev, enriched]);
-        setFiles((state) => state.filter((x) => x.uuid !== uuid));
-        showSuccessNotification({
-          title: 'Linked to official file',
-          message: `${officialMatch.modelName} already hosts this file — upload skipped.`,
-        });
-        return;
+        if (result) {
+          const enriched: LinkedComponent = {
+            recommendedResourceId: result.recommendedResourceId,
+            componentType: result.componentType as ModelFileComponentType,
+            modelId: result.modelId,
+            modelName: result.modelName,
+            versionId: result.versionId,
+            versionName: result.versionName,
+            fileId: result.fileId,
+            fileName: result.fileName,
+            sizeKB: result.sizeKB,
+            fileType: result.fileType,
+            fileMetadata: result.fileMetadata ?? undefined,
+            isRequired: result.isRequired,
+          };
+          setLinkedComponents((prev) => [...prev, enriched]);
+          setFiles((state) => state.filter((x) => x.uuid !== uuid));
+          showSuccessNotification({
+            title: 'Linked to official file',
+            message: `${result.modelName} already hosts this file — upload skipped.`,
+          });
+          return;
+        }
+        // result null → server found no official match → fall through to normal upload
       } catch (e) {
         showErrorNotification({
           title: 'Failed to link official file',

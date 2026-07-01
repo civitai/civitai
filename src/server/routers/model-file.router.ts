@@ -7,17 +7,13 @@ import {
 } from '~/server/controllers/model-file.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
-  findOfficialFileByHashSchema,
   findOfficialFilesBySizeSchema,
   modelFileCreateSchema,
   modelFileUpdateSchema,
   modelFileUpsertSchema,
   recentTrainingDataSchema,
 } from '~/server/schema/model-file.schema';
-import {
-  findOfficialFileByHash,
-  findOfficialFilesBySize,
-} from '~/server/services/official-file.service';
+import { findOfficialFilesBySize } from '~/server/services/official-file.service';
 import {
   getModelFileOptions,
   getRecentTrainingData,
@@ -67,8 +63,4 @@ export const modelFileRouter = router({
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(findOfficialFilesBySizeSchema)
     .query(({ input }) => findOfficialFilesBySizeHandler(input)),
-  findOfficialFileByHash: protectedProcedure
-    .meta({ requiredScope: TokenScope.ModelsRead })
-    .input(findOfficialFileByHashSchema)
-    .query(({ input }) => findOfficialFileByHash(input)),
 });

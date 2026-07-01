@@ -1,12 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockFindBySize, mockFindByHash } = vi.hoisted(() => ({
+const { mockFindBySize } = vi.hoisted(() => ({
   mockFindBySize: vi.fn(),
-  mockFindByHash: vi.fn(),
 }));
 vi.mock('~/server/services/official-file.service', () => ({
   findOfficialFilesBySize: mockFindBySize,
-  findOfficialFileByHash: mockFindByHash,
 }));
 
 import { findOfficialFilesBySizeHandler } from '~/server/routers/model-file.router';

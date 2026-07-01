@@ -58,6 +58,7 @@ import type {
   RecommendedSettingsSchema,
   AddLinkedComponentInput,
   LinkedComponentSettings,
+  LinkOfficialFileByHashInput,
   SetLinkedComponentsInput,
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
@@ -2619,4 +2620,28 @@ export const mergeVersions = async ({
       });
     }
   }
+};
+
+export const linkOfficialFileByHash = async (
+  input: LinkOfficialFileByHashInput & { userId: number; isModerator?: boolean }
+) => {
+  // Host-version ownership is enforced by the router middleware (isOwnerOrModerator on input.id).
+  // Re-verify the byte match server-side — never trust a client-claimed match (I1).
+  const { findOfficialFileByHash } = await import('~/server/services/official-file.service');
+  const match = await findOfficialFileByHash({ sha256: input.sha256, hostType: input.hostType });
+  if (!match) return null;
+
+  // Link with OFFICIAL credentials so addLinkedComponent's target-ownership guard passes.
+  return addLinkedComponent({
+    id: input.id,
+    targetVersionId: match.versionId,
+    targetFileId: match.fileId,
+    componentType: match.componentType,
+    modelId: match.modelId,
+    modelName: match.modelName,
+    versionName: match.versionName,
+    isRequired: true,
+    userId: constants.system.officialUserId,
+    isModerator: true,
+  });
 };
