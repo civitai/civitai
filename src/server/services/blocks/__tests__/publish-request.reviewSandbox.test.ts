@@ -510,6 +510,24 @@ describe('teardownPreview', () => {
     expect(mockDbWrite.appBlockPublishRequest.update).toHaveBeenCalled();
   });
 
+  it('preview-failed pending: dismissable — clears the DB back to null, tornDown:true', async () => {
+    // The "Dismiss failed preview" UI path: a preview-failed row is still a
+    // preview-* state, so teardownPreview clears it → getReviewStatus returns
+    // state:null → the panel reverts to "Start preview" (not stuck on failed).
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      deployState: 'preview-failed',
+      deployDetail: JSON.stringify({ sha: SHA, error: 'review build failed' }),
+      slug: 'my-app',
+    });
+    const res = await teardownPreview({ publishRequestId: PUBREQ });
+    expect(res).toEqual({ publishRequestId: PUBREQ, tornDown: true });
+    const updateArg = mockDbWrite.appBlockPublishRequest.update.mock.calls[0][0];
+    expect(updateArg.data.deployState).toBeNull();
+    expect(updateArg.data.deployDetail).toBeNull();
+  });
+
   it('throws when the request is not found', async () => {
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(null);
     await expect(teardownPreview({ publishRequestId: PUBREQ })).rejects.toThrow(/not found/);
