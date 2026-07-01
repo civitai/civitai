@@ -335,6 +335,9 @@ function BlurToggle({
   return (
     <Badge
       component="button"
+      // Name the icon-only toggle (button-name a11y). When `alwaysVisible` the
+      // browsing-level label text is the accessible name, so don't override it.
+      aria-label={alwaysVisible ? undefined : show ? 'Hide content' : 'Show content'}
       classNames={{ ...classNames, root: getBrowsingLevelClass(classes.root, browsingLevel) }}
       className={clsx(badgeClass, 'pointer-events-auto cursor-pointer')}
       rightSection={imageFlagRight}

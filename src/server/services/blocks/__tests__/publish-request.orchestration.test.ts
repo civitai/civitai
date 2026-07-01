@@ -45,7 +45,9 @@ const {
         findUnique: vi.fn(),
         findMany: vi.fn(),
       },
-      appBlock: { findFirst: vi.fn() },
+      // `findUnique` added: recordPendingFromPush resolves the app owner's
+      // userId via dbRead.appBlock.findUnique({ app: { userId } }).
+      appBlock: { findFirst: vi.fn(), findUnique: vi.fn() },
       user: { findUnique: vi.fn() },
       // Added 2026-05-28 for C-2 fix: approveRequest now reads the
       // OauthClient row after a P2002 collision to recover the existing
@@ -59,11 +61,15 @@ const {
       // `findUnique` added (S1 TOCTOU fix): withdrawRequest re-reads the row from
       // the PRIMARY when its status-guarded updateMany matches 0 rows, to resolve
       // a lost race without being fooled by replica lag.
+      // `findFirst` added: recordPendingFromPush reads the existing pending row
+      // for (slug,sha) off the PRIMARY (existingForSha refresh + the P2002
+      // race re-read of the winner) via dbWrite.
       appBlockPublishRequest: {
         create: vi.fn(),
         update: vi.fn(),
         updateMany: vi.fn(),
         findUnique: vi.fn(),
+        findFirst: vi.fn(),
       },
       appBlock: { create: vi.fn(), update: vi.fn() },
       // `update` added 2026-06-02 (audit A1 fix): approveRequest now re-caps
@@ -2077,5 +2083,171 @@ describe('reconstructBundleFromForgejo', () => {
     const b = await reconstructBundleFromForgejo('hello', 'pushsha123');
 
     expect(a.equals(b)).toBe(true);
+  });
+});
+
+// ---- recordPendingFromPush -------------------------------------------------
+//
+// The no-trust-on-push recorder: a direct git push OR the web manifest editor
+// parks a `pending` review row for an UNREVIEWED (slug, sha) commit. The
+// riskiest branch is the P2002 same-commit race catch (the fix this PR adds):
+// the loser of a concurrent create re-reads the winner's pending row and
+// returns its id instead of throwing. The router tests mock this function at
+// the module boundary, so these are its only direct tests.
+//
+// P2002 is faked with the file-local idiom (`Object.assign(new Error(), { code:
+// 'P2002' })`) — the service only inspects `err.code === 'P2002'`, matching the
+// spend-attribution.service.test.ts FakePrismaKnownError pattern.
+describe('recordPendingFromPush', () => {
+  const pushArgs = {
+    slug: 'hello',
+    sha: 'pushsha-abc',
+    appBlockId: 'apb_hello',
+    manifest: manifest(),
+    version: '0.1.0',
+  };
+
+  // The supersede→create happy path fires `enrichPushRequestRow` fire-and-forget
+  // (void + .catch). Point its Forgejo tree at an empty Map so the async enrich
+  // resolves harmlessly off the response path and never leaks an unhandled
+  // rejection into the assertions (it has its own try/catch + is .catch()'d).
+  function stubEnrichForgejoNoop() {
+    mockForgejo.listRepoTreeAtRef.mockResolvedValue(new Map());
+    mockForgejo.getBlobContent.mockResolvedValue(Buffer.from(''));
+    mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 0 });
+  }
+
+  it('(a) existingForSha refresh path — updates the existing (slug,sha) pending row, no create', async () => {
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    // A pending row for THIS exact (slug, sha) already exists → refresh + done.
+    mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce({ id: 'pubreq_existing_sha' });
+    mockDbWrite.appBlockPublishRequest.update.mockResolvedValue(undefined);
+
+    const res = await recordPendingFromPush(pushArgs);
+
+    expect(res.publishRequestId).toBe('pubreq_existing_sha');
+    // Refreshed the existing row's manifest/version/appBlockId, no new create.
+    expect(mockDbWrite.appBlockPublishRequest.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'pubreq_existing_sha' },
+        data: expect.objectContaining({
+          manifest: pushArgs.manifest,
+          version: pushArgs.version,
+          appBlockId: pushArgs.appBlockId,
+        }),
+      })
+    );
+    expect(mockDbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+    // No supersede, no owner lookup — the early-return short-circuits them.
+    expect(mockDbWrite.appBlockPublishRequest.updateMany).not.toHaveBeenCalled();
+    expect(mockDbRead.appBlock.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('(b) supersede-then-create happy path — no existing row → supersedes other pending, then creates', async () => {
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    stubEnrichForgejoNoop();
+    // No existing (slug,sha) pending row.
+    mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce(null);
+    mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValueOnce({ count: 1 }); // supersede
+    mockDbRead.appBlock.findUnique.mockResolvedValue({ app: { userId: 777 } });
+    mockDbWrite.appBlockPublishRequest.create.mockResolvedValue(undefined);
+
+    const res = await recordPendingFromPush(pushArgs);
+
+    // newUlid() runs once in beforeEach reset → first id is ...001.
+    expect(res.publishRequestId).toBe('pubreq_00000000000000000000000001');
+
+    // Superseded any OTHER still-pending request for the slug, THEN created.
+    expect(mockDbWrite.appBlockPublishRequest.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { slug: pushArgs.slug, status: 'pending' },
+        data: { status: 'withdrawn' },
+      })
+    );
+    expect(mockDbWrite.appBlockPublishRequest.create).toHaveBeenCalledOnce();
+    const createArg = mockDbWrite.appBlockPublishRequest.create.mock.calls[0][0];
+    expect(createArg.data.status).toBe('pending');
+    expect(createArg.data.slug).toBe(pushArgs.slug);
+    expect(createArg.data.forgejoCommitSha).toBe(pushArgs.sha);
+    expect(createArg.data.submittedByUserId).toBe(777); // resolved owner userId
+    // Push-originated marker: empty bundle pointers.
+    expect(createArg.data.bundleKey).toBe('');
+    expect(createArg.data.bundleSha256).toBe('');
+  });
+
+  it('(c) create throws P2002 → re-reads the EXACT-sha winner and returns its id', async () => {
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    stubEnrichForgejoNoop();
+    const p2002 = Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+    // findFirst calls in order: (1) existingForSha (null) → falls through to
+    // create; create P2002s; (2) re-read exact-sha winner → found.
+    mockDbWrite.appBlockPublishRequest.findFirst
+      .mockResolvedValueOnce(null) // existingForSha miss
+      .mockResolvedValueOnce({ id: 'pubreq_winner_sha' }); // exact-sha winner on re-read
+    mockDbRead.appBlock.findUnique.mockResolvedValue({ app: { userId: 777 } });
+    mockDbWrite.appBlockPublishRequest.create.mockRejectedValueOnce(p2002);
+
+    const res = await recordPendingFromPush(pushArgs);
+
+    expect(res.publishRequestId).toBe('pubreq_winner_sha');
+    // Re-read was keyed on the exact (slug, sha).
+    expect(mockDbWrite.appBlockPublishRequest.findFirst).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: { slug: pushArgs.slug, status: 'pending', forgejoCommitSha: pushArgs.sha },
+      })
+    );
+  });
+
+  it('(d) P2002 + only a DIFFERENT-sha pending row exists → returns that fallback row id', async () => {
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    stubEnrichForgejoNoop();
+    const p2002 = Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+    // findFirst: (1) existingForSha miss; (2) exact-sha winner miss (null);
+    // (3) any-pending-for-slug fallback → the winner parked a NEWER sha.
+    mockDbWrite.appBlockPublishRequest.findFirst
+      .mockResolvedValueOnce(null) // existingForSha miss
+      .mockResolvedValueOnce(null) // exact-sha re-read miss
+      .mockResolvedValueOnce({ id: 'pubreq_newer_sha' }); // any-pending fallback
+    mockDbRead.appBlock.findUnique.mockResolvedValue({ app: { userId: 777 } });
+    mockDbWrite.appBlockPublishRequest.create.mockRejectedValueOnce(p2002);
+
+    const res = await recordPendingFromPush(pushArgs);
+
+    expect(res.publishRequestId).toBe('pubreq_newer_sha');
+    // Third findFirst is the slug-only fallback (no forgejoCommitSha filter).
+    expect(mockDbWrite.appBlockPublishRequest.findFirst).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ where: { slug: pushArgs.slug, status: 'pending' } })
+    );
+  });
+
+  it('(e) P2002 but NO pending row visible on re-read → re-throws', async () => {
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    stubEnrichForgejoNoop();
+    const p2002 = Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+    // Both re-reads miss → the index fired but no pending row is visible.
+    mockDbWrite.appBlockPublishRequest.findFirst
+      .mockResolvedValueOnce(null) // existingForSha miss
+      .mockResolvedValueOnce(null) // exact-sha re-read miss
+      .mockResolvedValueOnce(null); // any-pending fallback miss
+    mockDbRead.appBlock.findUnique.mockResolvedValue({ app: { userId: 777 } });
+    mockDbWrite.appBlockPublishRequest.create.mockRejectedValueOnce(p2002);
+
+    await expect(recordPendingFromPush(pushArgs)).rejects.toMatchObject({ code: 'P2002' });
+  });
+
+  it('a non-P2002 create error is re-thrown unchanged (real failures are not swallowed)', async () => {
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    stubEnrichForgejoNoop();
+    const dbErr = Object.assign(new Error('connection lost'), { code: 'P1001' });
+    mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce(null); // existingForSha miss
+    mockDbRead.appBlock.findUnique.mockResolvedValue({ app: { userId: 777 } });
+    mockDbWrite.appBlockPublishRequest.create.mockRejectedValueOnce(dbErr);
+
+    await expect(recordPendingFromPush(pushArgs)).rejects.toMatchObject({ code: 'P1001' });
+    // Did NOT fall through to the P2002 winner re-read (only the existingForSha
+    // findFirst ran).
+    expect(mockDbWrite.appBlockPublishRequest.findFirst).toHaveBeenCalledOnce();
   });
 });

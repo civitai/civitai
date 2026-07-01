@@ -158,6 +158,17 @@ function isCrossMediaWorkflow(image: BlobData, workflowId: string): boolean {
 }
 
 /**
+ * Whether the workflow feeds its image into PolyGen's single `sourceImage`
+ * node rather than the standard `images` array (i.e. img2model3d). Detected by
+ * config — `workflowHasNode` can't see `sourceImage` since it's nested behind
+ * the ecosystem + process discriminators.
+ */
+function usesSourceImageInput(workflowId: string): boolean {
+  const config = workflowConfigByKey.get(workflowId);
+  return config?.category === 'model3d' && getInputTypeForWorkflow(workflowId) === 'image';
+}
+
+/**
  * Get the target ecosystem for a workflow, respecting stored preferences.
  * - Cross-media with alias constraint: force an ecosystem from the alias's ecosystemIds
  * - Cross-media with single-ecosystem workflow: force that ecosystem (e.g., ref2vid → Vidu)
@@ -248,15 +259,24 @@ async function applyWorkflowToForm({
 
   const inputType = getInputTypeForWorkflow(workflowId);
 
+  // PolyGen img2model3d takes its image on a single `sourceImage` node rather
+  // than the standard `images` array; feed it there instead.
+  const usesSourceImage = usesSourceImageInput(workflowId);
+
   // Build images in graph format { url, width, height }[]
   // Pass image for workflows that require it (inputType: 'image') OR
   // for text-input workflows whose graph has an 'images' node.
   const isImageType = image.mediaType === 'image';
   const acceptsImages =
-    inputType === 'image' || (isImageType && workflowHasNode(workflowId, 'images'));
+    !usesSourceImage &&
+    (inputType === 'image' || (isImageType && workflowHasNode(workflowId, 'images')));
 
   let images: { url: string; width: number; height: number }[] | undefined;
-  if (acceptsImages) {
+  let sourceImage: { url: string; width: number; height: number } | undefined;
+  if (usesSourceImage && isImageType) {
+    const { width, height } = await resolveImageDimensions(image);
+    sourceImage = { url: image.url, width, height };
+  } else if (acceptsImages) {
     const { width, height } = await resolveImageDimensions(image);
     images = [{ url: image.url, width, height }];
   }
@@ -276,6 +296,7 @@ async function applyWorkflowToForm({
       prompt: image.params?.prompt,
       negativePrompt: image.params?.negativePrompt,
       ...(images ? { images } : {}),
+      ...(sourceImage ? { sourceImage } : {}),
       ...(inputType === 'video' ? { video: image.url } : {}),
       ...(ecosystem ? { ecosystem } : {}),
     },
@@ -325,6 +346,21 @@ export async function applyWorkflowWithCheck({
       image,
       ecosystem: getTargetEcosystemKey(workflowId, ecosystemKey, isCrossMedia, aliasEcosystemIds),
       clearResources: isStandalone || isCrossMedia,
+    });
+    return;
+  }
+
+  // PolyGen image-to-3D: force the workflow's ecosystem and feed the image
+  // into the `sourceImage` node, dropping the source's SD params/resources.
+  // Must run before the `compatible` replay branch below, which would
+  // otherwise carry the source image's params and set `images` (neither of
+  // which the PolyGen graph reads).
+  if (usesSourceImageInput(workflowId)) {
+    await applyWorkflowToForm({
+      workflowId,
+      image,
+      ecosystem: getTargetEcosystemKey(workflowId, ecosystemKey, isCrossMedia, aliasEcosystemIds),
+      clearResources: true,
     });
     return;
   }

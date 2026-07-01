@@ -72,6 +72,7 @@ export function UserMenu() {
     <Popover width={isMobile ? '100%' : 260} position="bottom-end" opened={open} onChange={setOpen}>
       <Popover.Target>
         <UnstyledButton
+          aria-label={currentUser ? 'Account menu' : 'Menu'}
           className={clsx(
             'flex items-center hover:bg-gray-1 @md:rounded-[32px] dark:hover:bg-dark-5',
             { ['bg-gray-1 dark:bg-dark-5']: open }

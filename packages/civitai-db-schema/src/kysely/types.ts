@@ -328,6 +328,76 @@ export type Appeal = {
   internalNotes: string | null;
   buzzTransactionId: string | null;
 };
+export type AppListing = {
+  id: string;
+  kind: string;
+  slug: string;
+  name: string;
+  tagline: string | null;
+  description: string | null;
+  icon_id: number | null;
+  cover_id: number | null;
+  category: string | null;
+  status: Generated<string>;
+  content_rating: string | null;
+  external_url: string | null;
+  connect_client_id: string | null;
+  app_block_id: string | null;
+  featured: Generated<boolean>;
+  featured_order: number | null;
+  user_id: number;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+};
+export type AppListingMetric = {
+  app_listing_id: string;
+  thumbs_up_count: Generated<number>;
+  thumbs_down_count: Generated<number>;
+  install_count: Generated<number>;
+  open_count: Generated<number>;
+  connect_count: Generated<number>;
+  visit_count: Generated<number>;
+  tipped_count: Generated<number>;
+  tipped_amount_count: Generated<number>;
+  updated_at: Generated<Timestamp>;
+};
+export type AppListingPublishRequest = {
+  id: string;
+  app_listing_id: string | null;
+  kind: string;
+  slug: string;
+  submitted_by_user_id: number;
+  submitted_at: Generated<Timestamp>;
+  status: string;
+  reviewed_by_user_id: number | null;
+  reviewed_at: Timestamp | null;
+  rejection_reason: string | null;
+  approval_notes: string | null;
+  changelog: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+};
+export type AppListingReview = {
+  id: Generated<number>;
+  app_listing_id: string;
+  user_id: number;
+  recommended: boolean;
+  details: string | null;
+  exclude: Generated<boolean>;
+  tos_violation: Generated<boolean>;
+  metadata: unknown | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+};
+export type AppListingScreenshot = {
+  id: string;
+  app_listing_id: string;
+  image_id: number | null;
+  order: Generated<number>;
+  caption: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+};
 export type AppUserScopeGrant = {
   id: string;
   user_id: number;
@@ -3698,6 +3768,11 @@ export type DB = {
   app_block_reviews: AppBlockReview;
   app_blocks: AppBlock;
   app_dev_forgejo_identity: AppDevForgejoIdentity;
+  app_listing_metrics: AppListingMetric;
+  app_listing_publish_requests: AppListingPublishRequest;
+  app_listing_reviews: AppListingReview;
+  app_listing_screenshots: AppListingScreenshot;
+  app_listings: AppListing;
   app_user_scope_grants: AppUserScopeGrant;
   Appeal: Appeal;
   Article: Article;

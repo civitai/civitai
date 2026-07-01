@@ -119,6 +119,26 @@ export const getPublishRequestDiffSchema = z.object({
 
 export type GetPublishRequestDiffInput = z.infer<typeof getPublishRequestDiffSchema>;
 
+/** Input for the MOD-ONLY review-sandbox `blocks.previewRequest` /
+ *  `blocks.getReviewStatus` (#2831). */
+export const previewRequestSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
+});
+
+export type PreviewRequestInput = z.infer<typeof previewRequestSchema>;
+
+export const getReviewStatusSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
+});
+
+export type GetReviewStatusInput = z.infer<typeof getReviewStatusSchema>;
+
+export const teardownPreviewSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
+});
+
+export type TeardownPreviewInput = z.infer<typeof teardownPreviewSchema>;
+
 export const backfillPublishRequestSchema = z.object({
   slug: z.string().min(3).max(40).regex(SLUG_REGEX),
   approvalNotes: z.string().max(2000).optional(),

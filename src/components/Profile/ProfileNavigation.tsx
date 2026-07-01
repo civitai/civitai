@@ -15,6 +15,7 @@ import { trpc } from '~/utils/trpc';
 import type { DataItem } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
 import { HomeStyleSegmentedControl } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { getDisplayName } from '~/utils/string-helpers';
 
 type ProfileNavigationProps = {
   username: string;
@@ -69,6 +70,7 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
     '3d-models': {
       url: `${baseUrl}/3d-models`,
       icon: (props) => <IconCube {...props} />,
+      label: getDisplayName('3d-models'),
       count: userOverview?.model3dCount ?? 0,
       disabled: !features.model3dFeed || !!user?.bannedAt,
     },
