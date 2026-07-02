@@ -454,7 +454,13 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     // mint just past the limiter. The deadline reject folds into the existing -1
     // fallback (treat as "no TTL" → best-effort re-arm), never a hang.
     const ttl = await withSysReadDeadline(sysRedis.ttl(rateKey)).catch(() => -1);
-    if (ttl < 0) await sysRedis.expire(rateKey, RATE_LIMIT.windowSeconds).catch(() => {});
+    // Fire-and-forget the self-heal re-arm (#28 audit 🟡): this is a best-effort
+    // sysRedis WRITE and withSysReadDeadline deliberately does NOT race sys writes
+    // (the #2556/#2586 wedge). Awaiting it would re-open the exact park this PR
+    // closes — on a client that half-opens AFTER exec() resolved, the awaited
+    // expire on the dead socket parks the mint ~11min. `void` lets the response
+    // proceed; the .catch keeps the orphaned promise from surfacing as unhandled.
+    if (ttl < 0) void sysRedis.expire(rateKey, RATE_LIMIT.windowSeconds).catch(() => {});
   }
   if (count > RATE_LIMIT.max) {
     // Bound the 429-path TTL read (#28) so a hung sysRedis.ttl can't park the
