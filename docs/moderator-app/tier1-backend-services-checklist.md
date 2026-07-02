@@ -9,6 +9,28 @@ migration. Each item is a function to port **Prisma → Kysely** into `apps/mode
 > clients (Redis, Meilisearch, S3, orchestrator, email) must be wired per the cherry-pick model as the
 > services that need them are ported — see [Cross-cutting infra](#cross-cutting-infra-clients).
 
+## Hard rules — spoke autonomy (non-negotiable)
+
+The moderator app is a **standalone** app. These are constraints, not preferences:
+
+1. **The spoke owns its mutations.** Restore, delete, resolve, nsfwLevel writes — every write runs as a
+   direct Kysely mutation *in the spoke*. Port the logic (raw SQL via the `sql` tag when needed); do not
+   POST to the main app to run a main-app service.
+2. **Exactly one sanctioned main-app call: the Meilisearch enqueue** (`syncSearchIndex` →
+   `/api/internal/search-index-update`). The main app owns the search-index client, so the spoke pings
+   that one callback after mutating Postgres. Do not add any other main-app API calls. (Browser-facing
+   redirects/links to the public site via `CIVITAI_APP_URL` are not API calls and are fine.)
+3. **No shims, no backwards-compat scaffolding.** No fallback env chains, no re-exports "to be safe", no
+   renamed-but-kept dead code. Delete what's replaced.
+4. **Infra not yet wired → defer, don't reach back.** When a main-app write also does notifications
+   (Wave 2 / separate notif DB), image+S3 cleanup (Wave 5), or Redis cache refresh (Wave 3), port the
+   core DB write now and leave a `TODO(moderator-migration)` for the side effect. Never route it through
+   the main app to "cover" it.
+
+> Bit us 2026-07-01: article restore/delete/resolve were built as main-app callback endpoints. With
+> `CIVITAI_APP_URL=civitai.red` the callbacks posted to the *public* site and 404'd. Reversed to internal
+> Kysely; only the Meilisearch enqueue remains.
+
 ## Migration cleanup (convention)
 
 When a page's replacement is live in `apps/moderator`, **remove the legacy main-app version in the same
@@ -17,8 +39,12 @@ branch ships — and removing the old page is what actually forces moderators on
 legacy page just keeps getting used). The trap to avoid: deleting *shared* backend that non-moderator
 features still depend on.
 
-**Pages → delete.** Remove the main-app page (`src/pages/moderator/<page>.tsx`) **and** its entry in
-`src/components/Moderation/ModerationNav.tsx` as part of the port.
+**Pages → redirect (keep nav during transition).** Delete the main-app page implementation
+(`src/pages/moderator/<page>.tsx`), but add its slug to the moderator **catchall**
+(`src/pages/moderator/[...slug].tsx` → `MIGRATED_ROUTES`) so the `/moderator/<page>` route 307s to the
+spoke (`MODERATOR_APP_URL`). **Keep** the `ModerationNav.tsx` entry until the whole transition is done —
+a moderator clicking it lands on the new app. (Dedicated `/moderator/*` pages still in the main app take
+routing precedence over the catchall, so only migrated/deleted routes redirect.)
 
 **Hunt orphaned code.** Deleting the page isn't enough — remove everything it leaves dead: the page's
 tRPC procedure(s), their controller handler(s), and any page-only schemas / constants / types. `grep -rn`

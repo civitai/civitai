@@ -14,6 +14,7 @@ export const ROLE_HIERARCHY: { role: string; navigation: NavLink[] }[] = [
     navigation: [
       { path: '/images', label: 'Images' },
       { path: '/articles', label: 'Articles' },
+      { path: '/article-rating-review', label: 'Article Ratings' },
     ],
   },
   { role: 'moderator:senior', navigation: [{ path: '/users', label: 'Users' }] },

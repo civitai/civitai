@@ -4,6 +4,11 @@ import { env } from '$env/dynamic/private';
 // app owns the search-index client + per-entity logic (src/pages/api/internal/search-index-update.ts);
 // this spoke just pings its callback. Fire-and-forget — call it WITHOUT `await` so a slow/down main app
 // can't stall the moderator action; it self-bounds with a timeout and never throws.
+//
+// HARD RULE: this Meilisearch enqueue is the ONLY sanctioned call from the spoke into the main app.
+// Everything else — restore/delete/resolve, nsfwLevel writes, etc. — is a direct Kysely mutation in this
+// app. Do NOT add other main-app callbacks or shims to run main-app services; port the logic here, and
+// defer infra-bound side effects (notifications/S3/Redis) to their wave with a TODO(moderator-migration).
 export async function syncSearchIndex(entity: {
   entityType: string;
   entityId: number;

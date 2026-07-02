@@ -4,14 +4,9 @@ import type { ProtectedContext } from '~/server/createContext';
 import type {
   UpsertArticleInput,
   UnpublishArticleSchema,
-  RestoreArticleSchema,
   ArticleMetadata,
 } from '~/server/schema/article.schema';
-import {
-  unpublishArticleById,
-  upsertArticle,
-  restoreArticleById,
-} from '~/server/services/article.service';
+import { unpublishArticleById, upsertArticle } from '~/server/services/article.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import {
   throwAuthorizationError,
@@ -116,25 +111,5 @@ export async function unpublishArticleHandler({
   }
 }
 
-export async function restoreArticleHandler({
-  input,
-  ctx,
-}: {
-  input: RestoreArticleSchema;
-  ctx: ProtectedContext;
-}) {
-  try {
-    const { id } = input;
-    const restoredArticle = await restoreArticleById({
-      id,
-      userId: ctx.user.id,
-    });
-    return {
-      ...restoredArticle,
-      metadata: restoredArticle.metadata as ArticleMetadata | null,
-    };
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    throw throwDbError(error);
-  }
-}
+// NOTE(moderator-migration): restoreArticleHandler removed — article restore is now a moderator-app
+// action (apps/moderator, Kysely). See docs/moderator-app/context-menu-mod-actions.md.
