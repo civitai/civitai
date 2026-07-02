@@ -32,6 +32,7 @@ import {
 } from '@tabler/icons-react';
 import { useMediaQuery } from '@mantine/hooks';
 import dynamic from 'next/dynamic';
+import { useRouter } from 'next/router';
 import type { InferGetServerSidePropsType } from 'next';
 import React, { useEffect, useMemo, useState } from 'react';
 import * as z from 'zod';
@@ -69,6 +70,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { EntityType, Model3DStatus } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { getModel3DUrl } from '~/utils/string-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -151,6 +153,20 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const { data: model3d, isLoading, isRefetching } = trpc.model3d.getById.useQuery({ id });
   const { data: filesData } = trpc.model3d.getFiles.useQuery({ id }, { enabled: !!model3d });
   const { data: reviewSummary } = trpc.model3d.reviews.getSummary.useQuery({ model3dId: id });
+
+  // Canonicalize the URL to include the name slug once the model loads, so a
+  // bare /3d-models/:id (direct hit, old link) upgrades to the pretty form
+  // without a reload. Shallow → no getServerSideProps re-run. Query params
+  // (e.g. ?highlight= from comment notifications) are preserved.
+  const router = useRouter();
+  useEffect(() => {
+    if (!model3d?.name) return;
+    const [path, qs] = router.asPath.split('?');
+    const desired = getModel3DUrl({ id, name: model3d.name });
+    if (path !== desired) {
+      router.replace(qs ? `${desired}?${qs}` : desired, undefined, { shallow: true });
+    }
+  }, [id, model3d?.name, router]);
   const trackDownload = trpc.model3d.trackDownload.useMutation();
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model3D', entityId: id });
 
@@ -331,7 +347,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
       meta={{
         title: `${model3d.name} | 3D Models | Civitai`,
         description: model3d.description?.slice(0, 200) ?? '3D model on Civitai',
-        canonical: `/3d-models/${model3d.id}`,
+        canonical: getModel3DUrl({ id: model3d.id, name: model3d.name }),
         images: model3d.thumbnailImage ?? undefined,
         deIndex: isDraft || isUnpublished,
       }}
@@ -421,7 +437,10 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               </Group>
 
               <Group gap={4} align="center" wrap="nowrap">
-                <ShareButton url={`/3d-models/${model3d.id}`} title={model3d.name}>
+                <ShareButton
+                  url={getModel3DUrl({ id: model3d.id, name: model3d.name })}
+                  title={model3d.name}
+                >
                   <LegacyActionIcon variant="light" size="lg" aria-label="Share">
                     <IconShare3 size={20} />
                   </LegacyActionIcon>

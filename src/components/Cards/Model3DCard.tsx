@@ -25,6 +25,7 @@ import type { inferRouterOutputs } from '@trpc/server';
 import type { AppRouter } from '~/server/routers';
 import { trpc } from '~/utils/trpc';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { getModel3DUrl } from '~/utils/string-helpers';
 
 /**
  * Card item in the /3d-models feed.
@@ -97,7 +98,7 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
   return (
     <Box pos="relative">
       <AspectRatioImageCard
-        href={`/3d-models/${id}`}
+        href={getModel3DUrl({ id, name })}
         alt={name}
         contentType="model3d"
         contentId={id}
@@ -315,7 +316,7 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
             <Tooltip label="Open model page" withinPortal position="left">
               <ActionIcon
                 component={Link}
-                href={`/3d-models/${id}`}
+                href={getModel3DUrl({ id, name })}
                 variant="filled"
                 color="dark"
                 radius="xl"

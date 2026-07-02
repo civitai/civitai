@@ -1,6 +1,7 @@
 import { Anchor, Group, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconArrowRight, IconCube } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { getModel3DUrl } from '~/utils/string-helpers';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { trpc } from '~/utils/trpc';
 
@@ -73,7 +74,7 @@ export function PostingToModel3DCard({
   if (!data) return null;
 
   return (
-    <Link legacyBehavior href={`/3d-models/${data.id}`} passHref>
+    <Link legacyBehavior href={getModel3DUrl({ id: data.id, name: data.name })} passHref>
       <Anchor
         underline="never"
         className={`group block rounded-md border border-blue-6/30 bg-blue-6/10 p-3 transition-colors hover:bg-blue-6/15 ${
