@@ -66,17 +66,17 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
   - Procedures: **none** — purely client-side (`useCheckProfanity` + `~/utils/metadata/audit`)
   - Infra: none. Port the audit utilities client-side; no backend slice. Trivial / low-value but in active nav.
 
-- [ ] **`/moderator/scanner-audit`** (index) — `src/pages/moderator/scanner-audit/index.tsx` — flag: none
-  - Procedures: none — server redirect to `/moderator/scanner-audit/text`. Trivial.
+- [x] **`/moderator/scanner-audit`** (index) — `src/pages/moderator/scanner-audit/index.tsx` — flag: none
+  - Procedures: none — server redirect to `/moderator/scanner-audit/text`. Trivial. **Migrated.**
 
-- [ ] **`/moderator/scanner-audit/[mode]`** — `src/pages/moderator/scanner-audit/[mode]/index.tsx` — flag: none
+- [x] **`/moderator/scanner-audit/[mode]`** — `src/pages/moderator/scanner-audit/[mode]/index.tsx` — flag: none — **Migrated.**
   - Procedures: `scannerReview.list`, `scannerReview.reviewStats`, `scannerReview.exportRows` (queries)
   - Services (`src/server/services/scanner-review.service.ts`): `listScans`, `getLabelReviewStats`
   - Schemas: `scanner-review.schema.ts` (`listScansSchema`, `labelReviewStatsSchema`, `queueViewSchema`)
   - Infra: **ClickHouse** (`scanner_label_results` AggregatingMergeTree, partition pruning, GROUP BY dedup) + **Postgres** (`ScannerLabelReview` verdicts)
   - Notes: 3 scanners (xguard_text/xguard_prompt/image_ingestion), 2 queue views (triggered/near-miss), CSV export up to 50k rows
 
-- [ ] **`/moderator/scanner-audit/[mode]/[label]`** — `src/pages/moderator/scanner-audit/[mode]/[label].tsx` — flag: none
+- [x] **`/moderator/scanner-audit/[mode]/[label]`** — `src/pages/moderator/scanner-audit/[mode]/[label].tsx` — flag: none — **Migrated** (policy sidebar + highlight terms now in `@civitai/mod-utils`).
   - Procedures: `scannerReview.focusedRun`, `scannerReview.focusedItemContent`, `scannerReview.getWorkflowRaw` (queries); `scannerReview.upsertVerdict` (mutation)
   - Services: `scanner-review.service.ts` (`focusedRun`, `focusedItemContent`, `upsertLabelVerdict`, `deleteLabelVerdict`); `scanner-content.service.ts` (`getWorkflowRaw`, `getScanContents`, `snapshotScanContent`)
   - Schemas: `scanner-review.schema.ts` (`focusedRunSchema`, `focusedItemContentSchema`, `upsertLabelVerdictSchema`) + `ReviewVerdict` enum
