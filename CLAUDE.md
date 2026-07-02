@@ -15,6 +15,9 @@ Occasionally, we comment back and forth as we make plans. Comments from us, are 
 @dev:* This is a new comment that needs attention
 ```
 
+## Shell env (agent shells)
+Non-interactive `zsh -c` doesn't persist state between calls, so don't re-`cd`/`export` each time — devrc's `.zshenv` pre-exports absolute, existence-guarded handles. Use them directly: `$CIVITAI` (this repo), `$DATAPACKET` (the k8s/deploy manifests repo), `$KC_DPPROD` (the dp-prod kubeconfig) — e.g. `git -C $DATAPACKET …`, `KUBECONFIG=$KC_DPPROD kubectl …`. There is no default `KUBECONFIG` — pick a cluster per command so a bare `kubectl` can't hit prod.
+
 ## Tech Stack Overview
 
 ### Core Technologies
