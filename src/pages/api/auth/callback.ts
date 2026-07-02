@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import requestIp from 'request-ip';
 import {
   setSessionCookie,
   postLoginMarkerCookie,
@@ -18,20 +19,6 @@ import {
 // first-party /session endpoint (server-to-server with the PKCE verifier), then set THIS domain's civ-token
 // cookie via setSessionCookie() and continue to returnUrl. The CSRF/exchange logic lives in @civitai/auth
 // (first-party-bridge). Cookie format is unchanged → existing sessions unaffected.
-
-/**
- * The real END-USER IP for the request, forwarded to the hub on the server-to-server session exchange (same
- * convention as dev-token.ts / the OAuth proxy). First XFF entry (client-most), then cf-connecting-ip, then the
- * socket peer. Returns undefined when nothing resolves so the bridge simply omits the header.
- */
-function endUserIp(req: NextApiRequest): string | undefined {
-  const xff = req.headers['x-forwarded-for'];
-  const first = Array.isArray(xff) ? xff[0] : xff?.split(',')[0];
-  const cf = req.headers['cf-connecting-ip'];
-  const cfFirst = Array.isArray(cf) ? cf[0] : cf;
-  const ip = first ?? cfFirst ?? req.socket?.remoteAddress;
-  return ip?.trim() || undefined;
-}
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   // Don't leak the code/state in the inbound URL onward via Referer.
@@ -58,7 +45,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       error: typeof req.query.error === 'string' ? req.query.error : null,
     },
     bridgeCookieValue: req.cookies[OAUTH_BRIDGE_COOKIE],
-    clientIp: endUserIp(req),
+    // The real end-user IP (canonical cf-first request-ip resolver, same as createContext/tracker), forwarded to
+    // the hub as a single-value x-forwarded-for on the server-to-server exchange so the hub's flood-guard keys on
+    // the client — and, under internal routing (no proxy sets XFF), so the hub has a header to resolve. Coerce
+    // the resolver's null to undefined so the bridge omits the header when nothing resolves.
+    clientIp: requestIp.getClientIp(req) ?? undefined,
   });
 
   if ('error' in result) {

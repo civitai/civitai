@@ -4,7 +4,7 @@ import { TokenScope, ALL_SCOPES } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import { getRedis } from '$lib/server/redis';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
-import { safeClientAddress } from '$lib/server/oauth/client-address';
+import { getClientIp } from '$lib/server/auth/request';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { createOAuthTokenPair } from '$lib/server/oauth/token-helpers';
 import { ACCESS_TOKEN_TTL } from '$lib/server/oauth/constants';
@@ -20,7 +20,7 @@ export const OPTIONS: RequestHandler = () => {
   return new Response(null, { status: 204, headers });
 };
 
-export const POST: RequestHandler = async ({ request, getClientAddress }) => {
+export const POST: RequestHandler = async ({ request }) => {
   const headers = new Headers();
   setWildcardCors(headers);
 
@@ -124,9 +124,9 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
     userId: data.userId,
     clientId: client_id,
     scope,
-    // Same getClientAddress() footgun as the session route (throws on a missing XFF header) — device-flow isn't
-    // internal-routed today so it can't currently throw, but guard it so it stays a non-crashing audit field.
-    ip: safeClientAddress(getClientAddress) ?? 'unknown',
+    // Canonical cf-first resolver (shared with token/revoke/session) — never throws on a missing XFF header the
+    // way getClientAddress() does, and gives the real client not the ingress-pod IP.
+    ip: getClientIp(request) ?? 'unknown',
     metadata: { grant_type: 'device_code' },
   });
 

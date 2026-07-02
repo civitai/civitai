@@ -7,7 +7,7 @@ import { touchAccount } from '$lib/server/auth/device';
 import { consumeOidcContext } from '$lib/server/oauth/oidc-nonce';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
-import { safeClientAddress } from '$lib/server/oauth/client-address';
+import { getClientIp } from '$lib/server/auth/request';
 import { parseBody } from '$lib/server/oauth/http';
 
 // POST /api/auth/oauth/session — FIRST-PARTY session exchange (BFF, Phase 3).
@@ -28,15 +28,20 @@ import { parseBody } from '$lib/server/oauth/http';
 const bad = (error: string, description?: string, status = 400) =>
   json({ error, ...(description ? { error_description: description } : {}) }, { status });
 
-export const POST: RequestHandler = async ({ request, getClientAddress }) => {
+export const POST: RequestHandler = async ({ request }) => {
   const body = await parseBody(request);
   const code = typeof body.code === 'string' ? body.code : '';
   const verifier = typeof body.code_verifier === 'string' ? body.code_verifier : '';
   const clientId = typeof body.client_id === 'string' ? body.client_id : '';
-  // getClientAddress() THROWS (not empty) when ADDRESS_HEADER=x-forwarded-for is configured but the header is
-  // absent — e.g. an internal-routed spoke call that bypasses Traefik. safeClientAddress degrades to undefined
-  // instead of 500ing the whole exchange (which is what broke ~45% of first-party logins). See client-address.ts.
-  const ip = safeClientAddress(getClientAddress);
+  // Canonical cf-first resolver (shared with token/revoke). Reads the trustworthy `cf-connecting-ip` (CF
+  // overwrites any client-supplied value) then the leftmost XFF hop — NOT getClientAddress(), which returns the
+  // shared ingress-pod IP AND throws outright when ADDRESS_HEADER=x-forwarded-for is set but the header is
+  // absent (the internal-routed spoke call → the 500 that broke ~45% of first-party logins). Returns null when
+  // no proxy header is present. Deliberately cf-FIRST for anti-spoof (a forwarded XFF is client-settable): on
+  // the PUBLIC path CF sets cf-connecting-ip to the spoke's egress IP, so we key per-spoke-pod (not the real end
+  // user, but no longer one global ingress bucket); on the INTERNAL path there's no cf header, so the end-user
+  // IP the spoke forwards as x-forwarded-for is used. Either way this never 500s and never trusts a raw XFF.
+  const ip = getClientIp(request);
 
   if (!code || !verifier) {
     return bad('invalid_request', 'Missing code or code_verifier');
@@ -44,9 +49,10 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
 
   // Generous flood-guard (the caller is the spoke server, not the user — see rate-limit.ts). Keeps this
   // unauthenticated endpoint from being hammered before it does any redis/crypto/DB work. Normally keyed on the
-  // real client IP (the spoke forwards the end-user's XFF). When the IP is unavailable, DO NOT collapse to a
-  // single global 'unknown' key — that pools EVERY first-party exchange into one 300/min bucket and would 429
-  // under load — degrade to the request's client_id so the guard stays per-tenant (firstparty-civitai_com/_red).
+  // real client IP (the spoke forwards the end-user's IP as x-forwarded-for). When no IP is resolvable, degrade
+  // to the request's client_id — this is just BUCKET-SPREADING so a header-less flood can't collapse every
+  // exchange into one global 300/min bucket; client_id is unvalidated at this point (the real gates are below),
+  // so it is NOT an abuse-proof per-tenant guarantee, only a coarse fan-out of the pre-auth flood-guard.
   const rateLimitKey = ip ?? (clientId ? `client:${clientId}` : 'unknown');
   if (!(await checkOAuthRateLimit('session', rateLimitKey))) {
     return bad('rate_limited', 'Too many session requests', 429);
