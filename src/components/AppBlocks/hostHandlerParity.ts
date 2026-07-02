@@ -193,11 +193,38 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // Per-account (blue/green/yellow) balance read backing the SDK
+  // `useBuzzBalance()` hook + the account-picker (Phase 3 host wiring). Host-
+  // mediated via the block-token-authed `blocks.getMyBuzzBalance` MUTATION.
+  // Unhandled ⇒ the block hangs; both real hosts register a handler.
+  GET_BUZZ_BALANCE: {
+    request: true,
+    reply: 'BUZZ_BALANCE_RESULT',
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   OPEN_CHECKPOINT_PICKER: {
     request: true,
     reply: 'CHECKPOINT_PICKER_RESULT',
     IframeHost: 'required',
     PageBlockHost: 'required', // ported in #2799
+    InlineHost: INLINE_STUB,
+  },
+  // The page-surface resource picker (Checkpoint + LoRA allowlist) — the wider
+  // generalization of OPEN_CHECKPOINT_PICKER, opened as host chrome so the iframe
+  // only ever learns the ONE resource the user picked. Now PUBLISHED in the SDK
+  // dist union (was ahead-of-published under app-sdk 0.6), so the compile-time
+  // gate requires it here. IframeHost (model slot) intentionally handles only the
+  // narrower OPEN_CHECKPOINT_PICKER — the wider resource picker is a page-only
+  // affordance (see the PageBlockHost handler's Design-1 rationale), so it's N/A
+  // for the model host.
+  OPEN_RESOURCE_PICKER: {
+    request: true,
+    reply: 'RESOURCE_PICKER_RESULT',
+    IframeHost:
+      'model slot uses the narrower OPEN_CHECKPOINT_PICKER; the wider resource picker is a page-only affordance',
+    PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
   SET_USER_CHECKPOINT: {

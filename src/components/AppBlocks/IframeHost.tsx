@@ -770,6 +770,7 @@ export function IframeHost({
   const estimateWorkflowMutation = trpc.blocks.estimateWorkflow.useMutation();
   const pollWorkflowMutation = trpc.blocks.pollWorkflow.useMutation();
   const cancelWorkflowMutation = trpc.blocks.cancelWorkflow.useMutation();
+  const getMyBuzzBalanceMutation = trpc.blocks.getMyBuzzBalance.useMutation();
 
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; body?: unknown } | undefined>(
@@ -1073,6 +1074,35 @@ export function IframeHost({
     );
     return off;
   }, [onMessage, send, token, cancelWorkflowMutation]);
+
+  // GET_BUZZ_BALANCE → blocks.getMyBuzzBalance → BUZZ_BALANCE_RESULT. Backs the
+  // SDK `useBuzzBalance()` hook + the account-picker so a money block can show
+  // which wallet (blue/green/yellow) a generation draws from. Host-MEDIATED: the
+  // balance is derived from the token's SELF-BOUND `sub` server-side, never
+  // client input. MUTATION (not query) so the block JWT rides in the POST body,
+  // not a replayable ?input=… URL. REQUEST-style ⇒ every path MUST reply or the
+  // block hangs; errors come back as `error: <string>` (mirrors the storage
+  // handlers) rather than thrown upward.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown } | undefined>(
+      'GET_BUZZ_BALANCE',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string') return;
+        const requestId = raw.requestId;
+        // NB: unlike PageBlockHost's `token: string | null`, IframeHost's `token` is non-null, so there is deliberately no explicit null-token guard here — an empty token just falls through to the router's `z.string().min(1)` reject → the `catch` → error reply (still no hang).
+        try {
+          const balance = await getMyBuzzBalanceMutation.mutateAsync({ blockToken: token });
+          send('BUZZ_BALANCE_RESULT', { requestId, balance });
+        } catch (err) {
+          send('BUZZ_BALANCE_RESULT', {
+            requestId,
+            error: err instanceof Error ? err.message : 'unknown',
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, getMyBuzzBalanceMutation]);
 
   // App Blocks KV datastore (W4-v0). Five host-mediated handlers; the
   // iframe never sees the apps DB credentials. Every reply MUST come

@@ -416,28 +416,6 @@ export const upsertModelVersionHandler = async ({
       if (!input.licensingFeeType) input.licensingFeeType = LicensingFeeType.PerImageBuzz;
       if (!input.licensingFeeSettlementCurrency)
         input.licensingFeeSettlementCurrency = LicensingFeeSettlementCurrency.Buzz;
-
-      // TODO: handle the case where both a base-model rule and a per-version fee
-      // exist (split payouts, additive fees, derivative opt-out, etc.). For now,
-      // a base-model rule fully owns the fee for its (baseModel, modelType) and
-      // child versions can't set their own.
-      const model = await dbRead.model.findUnique({
-        where: { id: input.modelId },
-        select: { type: true },
-      });
-      if (model) {
-        const baseRule = await dbRead.baseModelLicensingFee.findUnique({
-          where: {
-            baseModel_modelType: { baseModel: input.baseModel, modelType: model.type },
-          },
-          select: { modelVersionId: true },
-        });
-        if (baseRule && baseRule.modelVersionId !== input.id) {
-          throw throwBadRequestError(
-            'This base model already has a licensing fee. You cannot set a per-version fee on a derivative.'
-          );
-        }
-      }
     }
 
     const version = await upsertModelVersion({
