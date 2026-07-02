@@ -86,8 +86,6 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
   // Optimistic tip overlay — matches ModelCard so a user's own tap updates the
   // displayed number immediately even though we don't invalidate the feed query.
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model3D', entityId: id });
-  const hasStats =
-    downloadCount > 0 || commentCount > 0 || reactionCount > 0 || tippedAmountCount > 0;
 
   // The browsing-level shield + Blur-Mature-Content blur both key off the
   // image's `nsfwLevel`. `nullish-coalesce` with `?? ` would pin the value
@@ -203,59 +201,53 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
               {name}
             </Text>
             <Group gap={4} justify="space-between" wrap="nowrap">
-              {hasStats && (
-                <Badge
-                  className={clsx(cardClasses.statChip, cardClasses.chip)}
-                  classNames={{ label: 'flex flex-nowrap gap-2' }}
-                  variant="light"
-                  radius="xl"
+              <Badge
+                className={clsx(cardClasses.statChip, cardClasses.chip)}
+                classNames={{ label: 'flex flex-nowrap gap-2' }}
+                variant="light"
+                radius="xl"
+              >
+                {/* Stat chip mirrors ModelCardStats — icon size 14,
+                    strokeWidth 2.5, bold lh-1 text — so the 3D feed reads
+                    visually identical to the regular Model feed. Core metrics
+                    render unconditionally (even at 0) so every card shows a
+                    consistent stats row, matching the Model / Image feeds. */}
+                <div className="flex items-center gap-0.5">
+                  <IconDownload size={14} strokeWidth={2.5} />
+                  <Text size="xs" lh={1} fw="bold">
+                    {abbreviateNumber(downloadCount)}
+                  </Text>
+                </div>
+                <div className="flex items-center gap-0.5">
+                  <IconMessageCircle2 size={14} strokeWidth={2.5} />
+                  <Text size="xs" lh={1} fw="bold">
+                    {abbreviateNumber(commentCount)}
+                  </Text>
+                </div>
+                <div className="flex items-center gap-0.5">
+                  <IconHeart size={14} strokeWidth={2.5} fill="currentColor" color="#f87171" />
+                  <Text size="xs" lh={1} fw="bold">
+                    {abbreviateNumber(reactionCount)}
+                  </Text>
+                </div>
+                {/* Buzz tip — surface the same Model-style interactive tip
+                    button on the card. Server-side, `entityType: 'Model3D'`
+                    is already on the allow-list in buzz.schema.ts and is
+                    picked up by the Model3D metrics job, so a tap from here
+                    flows all the way through to tippedAmountCount. */}
+                <InteractiveTipBuzzButton
+                  toUserId={user.id}
+                  entityType="Model3D"
+                  entityId={id}
                 >
-                  {/* Stat chip mirrors ModelCardStats — icon size 14,
-                      strokeWidth 2.5, bold lh-1 text — so the 3D feed reads
-                      visually identical to the regular Model feed. */}
-                  {downloadCount > 0 && (
-                    <div className="flex items-center gap-0.5">
-                      <IconDownload size={14} strokeWidth={2.5} />
-                      <Text size="xs" lh={1} fw="bold">
-                        {abbreviateNumber(downloadCount)}
-                      </Text>
-                    </div>
-                  )}
-                  {commentCount > 0 && (
-                    <div className="flex items-center gap-0.5">
-                      <IconMessageCircle2 size={14} strokeWidth={2.5} />
-                      <Text size="xs" lh={1} fw="bold">
-                        {abbreviateNumber(commentCount)}
-                      </Text>
-                    </div>
-                  )}
-                  {reactionCount > 0 && (
-                    <div className="flex items-center gap-0.5">
-                      <IconHeart size={14} strokeWidth={2.5} fill="currentColor" color="#f87171" />
-                      <Text size="xs" lh={1} fw="bold">
-                        {abbreviateNumber(reactionCount)}
-                      </Text>
-                    </div>
-                  )}
-                  {/* Buzz tip — surface the same Model-style interactive tip
-                      button on the card. Server-side, `entityType: 'Model3D'`
-                      is already on the allow-list in buzz.schema.ts and is
-                      picked up by the Model3D metrics job, so a tap from here
-                      flows all the way through to tippedAmountCount. */}
-                  <InteractiveTipBuzzButton
-                    toUserId={user.id}
-                    entityType="Model3D"
-                    entityId={id}
-                  >
-                    <div className="flex items-center gap-0.5">
-                      <IconBolt size={14} strokeWidth={2.5} />
-                      <Text size="xs" lh={1} fw="bold">
-                        {abbreviateNumber(tippedAmountCount + tippedAmount)}
-                      </Text>
-                    </div>
-                  </InteractiveTipBuzzButton>
-                </Badge>
-              )}
+                  <div className="flex items-center gap-0.5">
+                    <IconBolt size={14} strokeWidth={2.5} />
+                    <Text size="xs" lh={1} fw="bold">
+                      {abbreviateNumber(tippedAmountCount + tippedAmount)}
+                    </Text>
+                  </div>
+                </InteractiveTipBuzzButton>
+              </Badge>
               {ratingCount > 0 && (
                 <Badge
                   className={clsx(cardClasses.statChip, cardClasses.chip)}
