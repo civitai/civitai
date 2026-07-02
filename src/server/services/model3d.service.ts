@@ -493,18 +493,11 @@ export const getModel3DsInfinite = async ({
       switch (sort) {
         case Model3DSort.MostDownloaded:
           return [{ metric: { downloadCount: 'desc' } }, { id: 'desc' }];
-        case Model3DSort.HighestRated:
-          // "Highest rated" = highest thumbs-up share. We don't have a stored
-          // ratio column, so order by recommendedCount as a proxy (rows with
-          // more recommends rise) — matches the spirit of the regular models
-          // feed (which also uses an aggregate metric, not a normalized rate).
-          return [
-            { metric: { recommendedCount: 'desc' } },
-            { metric: { ratingCount: 'desc' } },
-            { id: 'desc' },
-          ];
         case Model3DSort.MostLiked:
-          return [{ metric: { reactionCount: 'desc' } }, { id: 'desc' }];
+          // "Most Liked" = thumbs-up (recommend) count. `reactionCount` used to
+          // back this but it was copied from the thumbnail image's reactions —
+          // a metric nothing feeds — so it was effectively always 0.
+          return [{ metric: { recommendedCount: 'desc' } }, { id: 'desc' }];
         case Model3DSort.Newest:
         default:
           return [{ publishedAt: { sort: 'desc', nulls: 'last' } }, { id: 'desc' }];

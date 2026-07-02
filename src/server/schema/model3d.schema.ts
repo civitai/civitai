@@ -14,7 +14,8 @@ import {
 export const Model3DSort = {
   Newest: 'Newest',
   MostDownloaded: 'Most Downloaded',
-  HighestRated: 'Highest Rated',
+  // "Most Liked" = thumbs-up (recommend) count. There is no separate
+  // "Highest Rated" — with only a thumbs-up signal it duplicated Most Liked.
   MostLiked: 'Most Liked',
 } as const;
 export type Model3DSort = (typeof Model3DSort)[keyof typeof Model3DSort];
@@ -140,6 +141,11 @@ export const restoreModel3DSchema = z.object({
 
 export type GetModel3DFilesInput = z.infer<typeof getModel3DFilesSchema>;
 export const getModel3DFilesSchema = z.object({
+  id: z.number().int().positive(),
+});
+
+export type TrackModel3DDownloadInput = z.infer<typeof trackModel3DDownloadSchema>;
+export const trackModel3DDownloadSchema = z.object({
   id: z.number().int().positive(),
 });
 

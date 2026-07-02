@@ -19,6 +19,7 @@ import {
   unpublishModel3DSchema,
   deleteModel3DSchema,
   getModel3DFilesSchema,
+  trackModel3DDownloadSchema,
   getModel3DRelatedPostsSchema,
   getModel3DReviewSummarySchema,
   upsertModel3DReviewSchema,
@@ -182,6 +183,16 @@ export const model3dRouter = router({
     .use(isFlagProtected('model3dFeed'))
     .input(getModel3DFilesSchema)
     .query(({ input, ctx }) => getModel3DFiles({ input, user: ctx.user })),
+  // Fire-and-forget download tracking. Writes a ClickHouse `files` Download
+  // event (entityType 'Model3D') the same way the AI-model download path does,
+  // so the metrics job can roll it up into Model3DMetric.downloadCount and the
+  // "Most Downloaded" sort works. Public — anon downloads count too.
+  trackDownload: publicProcedure
+    .use(isFlagProtected('model3dFeed'))
+    .input(trackModel3DDownloadSchema)
+    .mutation(({ input, ctx }) =>
+      ctx.track.file({ type: 'Download', entityType: 'Model3D', entityId: input.id })
+    ),
   getRelatedPosts: publicProcedure
     .use(isFlagProtected('model3dFeed'))
     .input(getModel3DRelatedPostsSchema)

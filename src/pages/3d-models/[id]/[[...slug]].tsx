@@ -151,6 +151,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const { data: model3d, isLoading, isRefetching } = trpc.model3d.getById.useQuery({ id });
   const { data: filesData } = trpc.model3d.getFiles.useQuery({ id }, { enabled: !!model3d });
   const { data: reviewSummary } = trpc.model3d.reviews.getSummary.useQuery({ model3dId: id });
+  const trackDownload = trpc.model3d.trackDownload.useMutation();
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model3D', entityId: id });
 
   const files = filesData?.files ?? [];
@@ -180,6 +181,11 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
       });
       return;
     }
+    // Fire-and-forget ClickHouse download tracking (feeds Model3DMetric
+    // .downloadCount → the "Most Downloaded" sort). Tracked per model, not
+    // per file/format, so re-picking a format doesn't multiply the count.
+    trackDownload.mutate({ id });
+
     // Trigger download via anchor — `download` hint preserves the filename when
     // the browser respects it; signed URL handles auth.
     const a = document.createElement('a');
