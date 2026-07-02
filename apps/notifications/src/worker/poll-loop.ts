@@ -15,6 +15,7 @@ import { notificationCache } from '../lib/server/cache';
 import { signalsEndpoint } from '../env';
 import {
   notificationsFannedOutTotal,
+  signalsDeliveryTotal,
   workerPendingProcessedTotal,
   workerTickSeconds,
   writePoolActive,
@@ -232,11 +233,21 @@ const run = async () => {
     for (let i = 0; i < affectBatches.length; i++) {
       for (const { userId, id, createdAt } of affectBatches[i]!) {
         await notificationCache.incrementUser(userId, row.category);
+        // Fire-and-forget (resilience unchanged): a signals failure must NOT break fan-out. We only add
+        // outcome counting — non-2xx AND network/throw both count as `failure` (the old server silently
+        // POSTed to a non-existent endpoint; that drop is now scrapeable).
         fetch(`${signalsEndpoint}/users/${userId}/signals/${newNotificationSignal}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ...signalData, id, createdAt, read: false }),
-        }).catch((e) => logAxiomError(e as Error));
+        })
+          .then((res) => {
+            signalsDeliveryTotal.inc({ outcome: res.ok ? 'success' : 'failure' });
+          })
+          .catch((e) => {
+            signalsDeliveryTotal.inc({ outcome: 'failure' });
+            logAxiomError(e as Error);
+          });
       }
       if (i < affectBatches.length - 1) await sleep(signalDelay);
     }
