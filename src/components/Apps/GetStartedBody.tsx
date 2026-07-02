@@ -88,13 +88,13 @@ function CopyableCommand({ command }: { command: string }) {
 export function GetStartedBody() {
   return (
     <Stack gap="xl">
-      {/* Banner — 16:9 hero image (public asset, no layout shift) */}
+      {/* Banner — 3:2 hero image (public asset, no layout shift) */}
       <Image
         src="/images/apps/civitai-apps-banner.webp"
         alt="Build apps on Civitai"
         radius="md"
         w="100%"
-        style={{ aspectRatio: '16 / 9' }}
+        style={{ aspectRatio: '3 / 2' }}
       />
 
       {/* Hero — one line, no wall of text */}
