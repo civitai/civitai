@@ -99,6 +99,7 @@ vi.mock('~/server/search-index', () => ({
 
 vi.mock('~/server/services/model-file.service', () => ({
   deleteFilesForModelVersionCache: mockDeleteFilesForModelVersionCache,
+  findOfficialFileByHash: vi.fn(),
 }));
 
 vi.mock('~/server/services/notification.service', () => ({
@@ -128,7 +129,6 @@ vi.mock('~/server/redis/client', () => ({
   },
 }));
 
-vi.mock('~/server/services/official-file.service', () => ({ findOfficialFileByHash: vi.fn() }));
 vi.mock('~/server/services/model-version.service', () => ({ addLinkedComponent: vi.fn() }));
 
 import {
@@ -139,7 +139,7 @@ import {
   unpublishBlockedModel,
 } from '~/server/services/model-file-scan.service';
 import { ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
-import { findOfficialFileByHash } from '~/server/services/official-file.service';
+import { findOfficialFileByHash } from '~/server/services/model-file.service';
 import { addLinkedComponent } from '~/server/services/model-version.service';
 import { constants } from '~/server/common/constants';
 

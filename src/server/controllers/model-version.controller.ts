@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import { selectLiveLinkedComponents } from '~/server/utils/linked-component-helpers';
+import { selectLiveLinkedComponents } from '~/server/utils/model-helpers';
 import type { BaseModelType } from '~/server/common/constants';
 import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
 import { baseModelLicenses, constants } from '~/server/common/constants';

@@ -4,7 +4,7 @@
 // checkpoint match).
 export async function resolveOfficialFileHash(args: {
   file: File;
-  findBySize: (size: number) => Promise<{ id: number }[]>;
+  findBySize: (size: number) => Promise<boolean>;
   hashFile: (file: File) => Promise<string | null>;
   // Only fired when a size collision requires hashing — skipped on immediate size-miss,
   // so the UI shows the "checking" indicator only when there's real work.
@@ -12,8 +12,8 @@ export async function resolveOfficialFileHash(args: {
 }): Promise<string | null> {
   const { file, findBySize, hashFile, onHashStart } = args;
 
-  const sized = await findBySize(file.size);
-  if (sized.length === 0) return null;
+  const hasSizeMatch = await findBySize(file.size);
+  if (!hasSizeMatch) return null;
 
   onHashStart?.();
   return hashFile(file); // null if over cap or worker error → fall through to normal upload

@@ -1,14 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const { mockDbRead } = vi.hoisted(() => ({
-  mockDbRead: { modelFile: { findMany: vi.fn(), findFirst: vi.fn() } },
+  mockDbRead: { modelFile: { count: vi.fn(), findFirst: vi.fn() } },
 }));
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead }));
+vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
+
+// model-file.service builds a cached object at import (filesForModelVersionCache);
+// stub the cache/redis/cloudflare surface so importing it here doesn't require a
+// live redis connection — these official-file helpers only touch dbRead.
+vi.mock('~/server/utils/cache-helpers', () => ({ createCachedObject: () => ({}) }));
+vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn() }));
+vi.mock('~/server/redis/client', () => ({
+  REDIS_KEYS: { CACHES: { FILES_FOR_MODEL_VERSION: 'files-for-model-version' } },
+}));
 
 import {
-  findOfficialFilesBySize,
+  hasOfficialFileOfSize,
   findOfficialFileByHash,
-} from '~/server/services/official-file.service';
+} from '~/server/services/model-file.service';
 import { constants } from '~/server/common/constants';
 
 const OFFICIAL = constants.system.officialUserId;
@@ -35,14 +44,18 @@ const officialBundledEncoderRow = {
 
 beforeEach(() => vi.clearAllMocks());
 
-describe('findOfficialFilesBySize', () => {
+describe('hasOfficialFileOfSize', () => {
   it('scopes to the official account and the exact sizeKB', async () => {
-    mockDbRead.modelFile.findMany.mockResolvedValue([{ id: 900 }]);
-    const rows = await findOfficialFilesBySize(300_000);
-    expect(rows).toEqual([{ id: 900 }]);
-    const arg = mockDbRead.modelFile.findMany.mock.calls[0][0];
+    mockDbRead.modelFile.count.mockResolvedValue(1);
+    expect(await hasOfficialFileOfSize(300_000)).toBe(true);
+    const arg = mockDbRead.modelFile.count.mock.calls[0][0];
     expect(arg.where.sizeKB).toBe(300_000);
     expect(arg.where.modelVersion.model.userId).toBe(OFFICIAL);
+  });
+
+  it('returns false when the official account has no file of that size', async () => {
+    mockDbRead.modelFile.count.mockResolvedValue(0);
+    expect(await hasOfficialFileOfSize(300_000)).toBe(false);
   });
 });
 

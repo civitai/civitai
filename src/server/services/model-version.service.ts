@@ -71,7 +71,7 @@ import {
 } from '~/server/search-index';
 import { deleteBidsForModelVersion } from '~/server/services/auction.service';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
-import { findOfficialFileByHash } from '~/server/services/official-file.service';
+import { findOfficialFileByHash } from '~/server/services/model-file.service';
 import {
   createMultiAccountBuzzTransaction,
   refundMultiAccountTransaction,

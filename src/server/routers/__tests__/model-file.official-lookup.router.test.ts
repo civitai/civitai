@@ -3,22 +3,22 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const { mockFindBySize } = vi.hoisted(() => ({
   mockFindBySize: vi.fn(),
 }));
-vi.mock('~/server/services/official-file.service', () => ({
-  findOfficialFilesBySize: mockFindBySize,
+vi.mock('~/server/services/model-file.service', () => ({
+  hasOfficialFileOfSize: mockFindBySize,
 }));
 
-import { findOfficialFilesBySizeHandler } from '~/server/controllers/model-file.controller';
+import { hasOfficialFileOfSizeHandler } from '~/server/controllers/model-file.controller';
 
 beforeEach(() => vi.clearAllMocks());
 
-describe('findOfficialFilesBySize handler', () => {
+describe('hasOfficialFileOfSize handler', () => {
   it('converts bytes to KB before querying', async () => {
-    mockFindBySize.mockResolvedValue([{ id: 1 }]);
-    const res = await findOfficialFilesBySizeHandler({
+    mockFindBySize.mockResolvedValue(true);
+    const res = await hasOfficialFileOfSizeHandler({
       input: { size: 300_000 * 1024 },
       ctx: {} as never,
     });
     expect(mockFindBySize).toHaveBeenCalledWith(300_000);
-    expect(res).toEqual([{ id: 1 }]);
+    expect(res).toBe(true);
   });
 });

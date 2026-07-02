@@ -1,5 +1,4 @@
 import { Prisma } from '@prisma/client';
-import { selectLiveLinkedComponents } from '~/server/utils/linked-component-helpers';
 import { TRPCError } from '@trpc/server';
 import type { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import type { BaseModelType, ModelFileType } from '~/server/common/constants';
@@ -111,7 +110,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { getPrimaryFile, selectLiveLinkedComponents } from '~/server/utils/model-helpers';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
 import {

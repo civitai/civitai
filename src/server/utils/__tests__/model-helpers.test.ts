@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { selectLiveLinkedComponents } from '~/server/utils/linked-component-helpers';
+import { selectLiveLinkedComponents } from '~/server/utils/model-helpers';
 
 describe('selectLiveLinkedComponents', () => {
   const comps = [

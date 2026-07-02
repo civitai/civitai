@@ -8,7 +8,10 @@ import { logToAxiom } from '~/server/logging/client';
 import { dataForModelsCache } from '~/server/redis/caches';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { modelsSearchIndex } from '~/server/search-index';
-import { deleteFilesForModelVersionCache } from '~/server/services/model-file.service';
+import {
+  deleteFilesForModelVersionCache,
+  findOfficialFileByHash,
+} from '~/server/services/model-file.service';
 import { unpublishModelById } from '~/server/services/model.service';
 import { createNotification } from '~/server/services/notification.service';
 import {
@@ -22,7 +25,6 @@ import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
-import { findOfficialFileByHash } from '~/server/services/official-file.service';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import type { ModelFileType } from '~/server/common/constants';
 import { addLinkedComponent } from '~/server/services/model-version.service';
@@ -221,10 +223,11 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
   }
 
   // Safety net for uploads that slipped past the client-side check: a non-official
-  // upload whose bytes match an official file is rehomed onto that file (pointer)
-  // and its row deleted to reclaim storage. Skip primary-typed files —
-  // addLinkedComponent refuses to delete primary weights (replaceFileId guard), so
-  // we can't reclaim them here; the client prevents that case before upload.
+  // upload whose bytes match an official file is replaced by a pointer to that file,
+  // and the upload's row + S3 object are deleted (replaceFileId → deleteFile, which
+  // GCs the bytes) to reclaim storage. Skip primary-typed files — addLinkedComponent
+  // refuses to delete primary weights (replaceFileId guard), so we can't reclaim them
+  // here; the client prevents that case before upload.
   const sha256 = outcome.hashes?.SHA256;
   if (
     sha256 &&

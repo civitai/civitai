@@ -5,7 +5,7 @@ const file = { size: 1000 } as File;
 
 const deps = (over = {}) => ({
   file,
-  findBySize: vi.fn().mockResolvedValue([{ id: 900 }]),
+  findBySize: vi.fn().mockResolvedValue(true),
   hashFile: vi.fn().mockResolvedValue('abc123'),
   onHashStart: vi.fn(),
   ...over,
@@ -23,7 +23,7 @@ describe('resolveOfficialFileHash', () => {
   });
 
   it('returns null (no hashing) when no official file shares the size', async () => {
-    const d = deps({ findBySize: vi.fn().mockResolvedValue([]) });
+    const d = deps({ findBySize: vi.fn().mockResolvedValue(false) });
     expect(await resolveOfficialFileHash(d)).toBeNull();
     expect(d.hashFile).not.toHaveBeenCalled();
     expect(d.onHashStart).not.toHaveBeenCalled();
