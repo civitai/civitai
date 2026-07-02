@@ -4,6 +4,7 @@ import {
   countNotifications,
   createNotification as createNotificationRequest,
   markNotificationsRead as markNotificationsReadRequest,
+  NotificationsClientError,
   queryNotifications,
 } from '@civitai/notifications';
 import type { NotificationCategory } from '~/server/common/enums';
@@ -37,6 +38,10 @@ export const createNotification = async (data: CreateNotificationPendingRow) => 
   try {
     await createNotificationRequest(data);
   } catch (e) {
+    // Send failures are logged centrally by the client (notifications-request-failed) — swallow them
+    // here (best-effort). Only surface a non-request error, e.g. a producer whose payload fails schema
+    // validation before it ever leaves the monolith.
+    if (e instanceof NotificationsClientError) return;
     const error = e as Error;
     logToAxiom(
       {
@@ -91,8 +96,9 @@ export const markNotificationsRead = async ({
   category,
 }: MarkReadNotificationInput & { userId: number }) => {
   // Best-effort, like the original: the UI already optimistically marked read, so a transient app
-  // failure (after the client's backoff retries) must NOT surface as a tRPC error — swallow + log.
-  // The input id is a bigint (UserNotification.id is int4-sized) — narrow to a JSON-safe number.
+  // failure (after the client's backoff retries) must NOT surface as a tRPC error — swallow it. Send
+  // failures are logged centrally by the client (notifications-request-failed); only log a non-request
+  // error here. The input id is a bigint (UserNotification.id is int4-sized) — narrow to a JSON number.
   try {
     await markNotificationsReadRequest({
       userId,
@@ -101,6 +107,7 @@ export const markNotificationsRead = async ({
       category,
     });
   } catch (e) {
+    if (e instanceof NotificationsClientError) return;
     const error = e as Error;
     logToAxiom(
       {

@@ -1,10 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   countNotifications,
   createNotification,
   createNotificationsBulk,
   NotificationsClientError,
   queryNotifications,
+  setNotificationsFailureLogger,
 } from './client';
 import { createNotificationPendingRow } from './schema';
 
@@ -131,6 +132,55 @@ describe('read wrappers', () => {
       { endpoint: 'http://notif.internal', fetch: fetchMock }
     );
     expect(counts).toEqual([{ category: 'Comment', count: 3 }]);
+  });
+});
+
+describe('setNotificationsFailureLogger', () => {
+  afterEach(() => setNotificationsFailureLogger(undefined));
+
+  it('reports ONCE on the final failure (after retries), with path/status/attempts', async () => {
+    const failures: any[] = [];
+    setNotificationsFailureLogger((f) => failures.push(f));
+    const fetchMock = vi.fn().mockResolvedValue(new Response('busy', { status: 503 }));
+
+    await expect(
+      createNotification(validRow, {
+        endpoint: 'http://notif.internal',
+        fetch: fetchMock,
+        retries: 2,
+        retryBaseMs: 0,
+      })
+    ).rejects.toBeInstanceOf(NotificationsClientError);
+
+    expect(failures).toHaveLength(1); // one event, not one-per-attempt
+    expect(failures[0]).toMatchObject({
+      path: '/notifications',
+      status: 503,
+      retryable: true,
+      attempts: 3,
+    });
+  });
+
+  it('reports a 4xx immediately (attempts=1, retryable=false)', async () => {
+    const failures: any[] = [];
+    setNotificationsFailureLogger((f) => failures.push(f));
+    const fetchMock = vi.fn().mockResolvedValue(new Response('bad', { status: 400 }));
+
+    await expect(
+      createNotification(validRow, { endpoint: 'http://notif.internal', fetch: fetchMock, retryBaseMs: 0 })
+    ).rejects.toBeInstanceOf(NotificationsClientError);
+
+    expect(failures).toEqual([
+      expect.objectContaining({ path: '/notifications', status: 400, retryable: false, attempts: 1 }),
+    ]);
+  });
+
+  it('does NOT report on success', async () => {
+    const failures: any[] = [];
+    setNotificationsFailureLogger((f) => failures.push(f));
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 202 }));
+    await createNotification(validRow, { endpoint: 'http://notif.internal', fetch: fetchMock });
+    expect(failures).toHaveLength(0);
   });
 });
 

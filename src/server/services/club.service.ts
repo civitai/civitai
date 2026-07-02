@@ -272,15 +272,21 @@ export const updateClub = async ({
 
     if (reqData) {
       const reqUsers = reqList.map((r) => r.userId);
-      await createNotificationsBulk([
-        {
-          key: reqData.key,
-          type: reqData.type,
-          category: NotificationCategory.Update,
-          users: reqUsers,
-          details: reqData.details,
-        },
-      ]);
+      // Best-effort: a notification-server failure (logged centrally as notifications-request-failed)
+      // must not fail the club update.
+      try {
+        await createNotificationsBulk([
+          {
+            key: reqData.key,
+            type: reqData.type,
+            category: NotificationCategory.Update,
+            users: reqUsers,
+            details: reqData.details,
+          },
+        ]);
+      } catch {
+        // swallowed — see above
+      }
     }
   }
 

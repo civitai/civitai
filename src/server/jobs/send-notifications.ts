@@ -1,7 +1,7 @@
 import { isEmpty } from 'lodash-es';
 import { isPromise } from 'util/types';
 import { clickhouse } from '~/server/clickhouse/client';
-import { createNotificationsBulk } from '@civitai/notifications';
+import { createNotificationsBulk, NotificationsClientError } from '@civitai/notifications';
 import { pgDbRead } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
 import { notificationBatches } from '~/server/notifications/utils.notifications';
@@ -107,6 +107,10 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
             log('sent', key, 'notifications in', (Date.now() - start) / 1000, 's');
           }
         } catch (e) {
+          // A bulk send failure is logged centrally by the client (notifications-request-failed) — skip
+          // it here to avoid a double log; still log genuine query/build failures (the try also wraps the
+          // main-DB query + pendingData build). The failed key isn't marked sent, so it retries next run.
+          if (e instanceof NotificationsClientError) return;
           const error = e as Error;
           logToAxiom(
             {
