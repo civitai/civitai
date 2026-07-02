@@ -5,7 +5,7 @@ import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
 import { dbWrite } from '~/server/db/client';
-import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
+import { sysRedis, REDIS_SYS_KEYS, withSysReadDeadline } from '~/server/redis/client';
 import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
 import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { BlockTokenService } from '~/server/services/block-token.service';
@@ -416,14 +416,23 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   const rateKey = `${REDIS_SYS_KEYS.BLOCKS.DEV_TOKEN_RATE_LIMIT}:${rateSubject}` as const;
   let count: number;
   try {
-    const multiResult = await sysRedis
-      .multi()
-      .set(rateKey, '0', { NX: true, EX: RATE_LIMIT.windowSeconds })
-      .incr(rateKey)
-      .exec();
+    // withSysReadDeadline (#28): the raw sysRedis MULTI runs on the request's
+    // critical path. On a SILENT half-open the written command parks in node-redis's
+    // reply queue until OS TCP keepalive (~11min) — a HANG, not a throw, so the
+    // try/catch alone can't unpark it. Racing the `.exec()` against the sys read
+    // deadline (default REDIS_SYS_READ_TIMEOUT_MS=2000) turns that open-ended hang
+    // into a clean rejection caught here → fail closed (503) instead of parking.
+    const multiResult = await withSysReadDeadline(
+      sysRedis
+        .multi()
+        .set(rateKey, '0', { NX: true, EX: RATE_LIMIT.windowSeconds })
+        .incr(rateKey)
+        .exec()
+    );
     count = Number(multiResult?.[1]);
   } catch (err) {
-    // A Redis incident must NEVER silently bypass the mint — fail closed.
+    // A Redis incident (a throw OR a deadline-bounded hang) must NEVER silently
+    // bypass the mint — fail closed.
     req.log?.warn('blocks/dev-token: rate limiter threw; failing closed', { rateSubject });
     res.status(503).json({ message: 'Rate limiter unavailable; please retry' });
     return;
@@ -441,11 +450,24 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // footgun). Re-arm only when the TTL is actually missing, so we never extend an
   // active window. Best-effort — mirrors block-token.service.ts:274-275.
   if (count > 1) {
-    const ttl = await sysRedis.ttl(rateKey).catch(() => -1);
-    if (ttl < 0) await sysRedis.expire(rateKey, RATE_LIMIT.windowSeconds).catch(() => {});
+    // Bound the self-heal TTL read too (#28): a hung sysRedis.ttl would park the
+    // mint just past the limiter. The deadline reject folds into the existing -1
+    // fallback (treat as "no TTL" → best-effort re-arm), never a hang.
+    const ttl = await withSysReadDeadline(sysRedis.ttl(rateKey)).catch(() => -1);
+    // Fire-and-forget the self-heal re-arm (#28 audit 🟡): this is a best-effort
+    // sysRedis WRITE and withSysReadDeadline deliberately does NOT race sys writes
+    // (the #2556/#2586 wedge). Awaiting it would re-open the exact park this PR
+    // closes — on a client that half-opens AFTER exec() resolved, the awaited
+    // expire on the dead socket parks the mint ~11min. `void` lets the response
+    // proceed; the .catch keeps the orphaned promise from surfacing as unhandled.
+    if (ttl < 0) void sysRedis.expire(rateKey, RATE_LIMIT.windowSeconds).catch(() => {});
   }
   if (count > RATE_LIMIT.max) {
-    const retryAfter = await sysRedis.ttl(rateKey);
+    // Bound the 429-path TTL read (#28) so a hung sysRedis.ttl can't park the
+    // over-limit response. On a deadline/throw fall back to the full window.
+    const retryAfter = await withSysReadDeadline(sysRedis.ttl(rateKey)).catch(
+      () => RATE_LIMIT.windowSeconds
+    );
     res.setHeader('Retry-After', String(Math.max(retryAfter, 1)));
     res.status(429).json({
       message: 'Rate limit exceeded',
