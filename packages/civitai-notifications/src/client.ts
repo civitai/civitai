@@ -42,6 +42,41 @@ export class NotificationsClientError extends Error {
   }
 }
 
+/** A single notification-server request failure (after any retries), for the injected failure sink. */
+export type NotificationsRequestFailure = {
+  /** The request path, e.g. `/notifications`, `/notifications/query`. */
+  path: string;
+  /** HTTP status when the app responded; absent for transport/timeout/config failures. */
+  status?: number;
+  /** True when the failure was transient (5xx/429/transport) and retries were exhausted. */
+  retryable: boolean;
+  /** Attempts made (0 = failed before the first request, e.g. no endpoint configured). */
+  attempts: number;
+  message: string;
+};
+
+let failureLogger: ((failure: NotificationsRequestFailure) => void) | undefined;
+
+/**
+ * Register a SINGLE sink for EVERY notification-server request failure (create/bulk/read/count/mark/
+ * exists/cleanup), fired once per failed call after retries are exhausted. The consumer wires this once
+ * at startup so all failures surface as one queryable event — this package stays dependency-free and
+ * doesn't know about Axiom/logging. Pass `undefined` to clear.
+ */
+export function setNotificationsFailureLogger(
+  fn: ((failure: NotificationsRequestFailure) => void) | undefined
+) {
+  failureLogger = fn;
+}
+
+function reportFailure(failure: NotificationsRequestFailure) {
+  try {
+    failureLogger?.(failure);
+  } catch {
+    // A logger error must never affect the caller or mask the original request failure.
+  }
+}
+
 function resolveConfig(config: NotificationsClientConfig) {
   const endpoint = config.endpoint ?? process.env.NOTIFICATIONS_ENDPOINT;
   if (!endpoint) {
@@ -103,16 +138,35 @@ async function postAttempt(
   }
 }
 
-/** POST with bounded exponential backoff on transient failures. Returns the parsed JSON response. */
+/** POST with bounded exponential backoff on transient failures. Returns the parsed JSON response. On the
+ * FINAL failure (retries exhausted / non-retryable / config error) it reports once to the injected sink
+ * before throwing — the single choke point every request flows through, so every failure logs uniformly. */
 async function post(path: string, body: unknown, config: NotificationsClientConfig): Promise<unknown> {
-  const { endpoint, token, fetch: fetchImpl, timeoutMs, retries, retryBaseMs } = resolveConfig(config);
+  let resolved: ReturnType<typeof resolveConfig>;
+  try {
+    resolved = resolveConfig(config);
+  } catch (err) {
+    const e = err as NotificationsClientError;
+    reportFailure({ path, status: e.status, retryable: false, attempts: 0, message: e.message });
+    throw e;
+  }
+  const { endpoint, token, fetch: fetchImpl, timeoutMs, retries, retryBaseMs } = resolved;
   const url = `${endpoint}${path}`;
   for (let attempt = 0; ; attempt++) {
     try {
       return await postAttempt(url, body, token, fetchImpl, timeoutMs);
     } catch (err) {
       const e = err as NotificationsClientError;
-      if (!e.retryable || attempt >= retries) throw e;
+      if (!e.retryable || attempt >= retries) {
+        reportFailure({
+          path,
+          status: e.status,
+          retryable: e.retryable,
+          attempts: attempt + 1,
+          message: e.message,
+        });
+        throw e;
+      }
       const backoff = Math.min(retryBaseMs * 2 ** attempt, 2000) + Math.random() * retryBaseMs;
       await new Promise((resolve) => setTimeout(resolve, backoff));
     }
