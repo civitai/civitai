@@ -16,6 +16,7 @@ import {
 } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { decodeRedisString } from '~/server/redis/buffer-decode';
 
 const WAIT_FOR_TASKS_MAX_RETRIES = 5;
 
@@ -209,7 +210,7 @@ export const processUserContentRemovalQueue = async () => {
   console.log(`processUserContentRemovalQueue :: Processing ${entries.length} users`);
 
   const userIds = entries.map(([id]) => parseInt(id));
-  const usernames = entries.map(([, username]) => username);
+  const usernames = entries.map(([, username]) => decodeRedisString(username));
 
   // Remove entries from queue before processing to avoid blocking new additions
   await sysRedis.hDel(

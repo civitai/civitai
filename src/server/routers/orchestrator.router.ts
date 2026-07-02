@@ -71,6 +71,7 @@ import type { SessionUser } from '~/types/session';
 import { reviewConsumerStrikes } from '../http/orchestrator/flagged-consumers';
 import semver from 'semver';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { getAllowedAccountTypes } from '../utils/buzz-helpers';
 import { getVideoMetadata } from '~/server/services/orchestrator/videoEnhancement';
@@ -139,9 +140,11 @@ const enforceGenerationVersion = middleware(async ({ ctx, next }) => {
     return result;
   }
 
-  if (genClient.version && semver.lt(version, genClient.version)) {
-    ctx.res?.setHeader('x-generation-update-required', genClient.version);
-    if (genClient.notes) ctx.res?.setHeader('x-generation-update-notes', genClient.notes);
+  const genVersion = decodeRedisString(genClient.version);
+  if (genVersion && semver.lt(version, genVersion)) {
+    ctx.res?.setHeader('x-generation-update-required', genVersion);
+    if (genClient.notes)
+      ctx.res?.setHeader('x-generation-update-notes', decodeRedisString(genClient.notes));
   }
 
   return result;

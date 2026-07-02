@@ -4,6 +4,7 @@ import { CacheTTL } from '~/server/common/constants';
 import { NewOrderImageRatingStatus } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { hSetWithTTL, zAddWithTTL } from '~/server/redis/atomic';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { logToAxiom } from '~/server/logging/client';
@@ -721,7 +722,7 @@ export async function getActiveSlot(
   if (!sysRedis) return 'a'; // Default fallback
 
   const key = `${REDIS_SYS_KEYS.NEW_ORDER.ACTIVE_SLOT}:${rank}:${purpose}` as const;
-  const slot = await sysRedis.get(key);
+  const slot = decodeRedisString(await sysRedis.get(key));
   return (slot as NewOrderSlot) || 'a'; // Default to 'a' if not set
 }
 
