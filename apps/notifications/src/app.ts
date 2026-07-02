@@ -9,7 +9,7 @@ import {
   notificationExistsInput,
   queryNotificationsInput,
 } from '@civitai/notifications';
-import { register, producerRequestsTotal } from './lib/server/metrics';
+import { register, producerRequestsTotal, httpRequestDurationSeconds } from './lib/server/metrics';
 import { isAuthorized } from './lib/server/auth';
 import { createNotification } from './lib/server/create';
 import {
@@ -45,6 +45,27 @@ export async function buildServer(): Promise<FastifyInstance> {
     // Raised from Fastify's 1MB default: a bulk-create batch (bounded to 1000 rows client-side) can still
     // carry large `users[]` arrays per row. The client chunks by row count; this bounds the worst case.
     bodyLimit: 25 * 1024 * 1024,
+  });
+
+  // RED for the authed API. One onResponse hook records duration+count+outcome for every /notifications*
+  // route uniformly (query/count/mark-read/bulk/exists/cleanup previously had NO metric). Scoped to the
+  // authed API paths so the ops routes (/health, /metrics, /pool-stats) don't pollute the RED view.
+  // `routeOptions.url` is the static route template (bounded label); skip when undefined (404s).
+  app.addHook('onResponse', async (req, reply) => {
+    const route = req.routeOptions.url;
+    if (!route || !route.startsWith('/notifications')) return;
+    const status = reply.statusCode;
+    const outcome =
+      status < 400
+        ? 'success'
+        : status === 401
+          ? 'unauthorized'
+          : status === 400
+            ? 'rejected'
+            : status >= 500
+              ? 'error'
+              : 'client_error';
+    httpRequestDurationSeconds.observe({ route, outcome }, reply.elapsedTime / 1000);
   });
 
   app.get('/health', async () => ({ status: 'ok', service: 'notifications' }));

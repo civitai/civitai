@@ -46,3 +46,48 @@ export const writePoolActive = new Gauge({
   help: 'Active (non-idle) connections in the notif write pool, sampled per worker tick.',
   registers: [register],
 });
+
+/**
+ * Read/mutation API RED — request duration (and, via `_count`, rate) for the authed POST routes, labeled
+ * by `route` (the static route template, low cardinality) and `outcome` (derived from the status class:
+ * success / rejected / unauthorized / error / client_error). Covers ALL authed routes uniformly — the
+ * create path's finer-grained outcome breakdown stays on `notifications_producer_requests_total`; this
+ * metric is the RED-across-routes view (query/count/mark-read/bulk/exists/cleanup had NO metric before).
+ */
+export const httpRequestDurationSeconds = new Histogram({
+  name: 'notifications_http_request_duration_seconds',
+  help: 'Authed API request duration in seconds, labeled by route and outcome.',
+  labelNames: ['route', 'outcome'] as const,
+  buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
+  registers: [register],
+});
+
+/**
+ * Realtime-signal delivery outcome per affected user (the fan-out worker's per-user POST to
+ * `${SIGNALS_ENDPOINT}/users/{id}/signals/...`). `failure` counts a non-2xx response OR a thrown/rejected
+ * fetch — the exact silent-drop mode the OLD external notification-server had (POSTing to a non-existent
+ * endpoint), previously visible only in Axiom. Delivery stays fire-and-forget; this only observes it.
+ */
+export const signalsDeliveryTotal = new Counter({
+  name: 'notifications_signals_delivery_total',
+  help: 'Realtime signal POSTs to the signals service, labeled by outcome (success/failure).',
+  labelNames: ['outcome'] as const,
+  registers: [register],
+});
+
+/**
+ * Redis cache operation errors (the per-user unread-counter cache). The cache is best-effort — an error
+ * on a counter op is logged/propagated as before; this counter just makes otherwise-silent redis failures
+ * scrapeable/alertable. Labeled by `operation` (bounded enum of the cache ops).
+ */
+export const redisErrorsTotal = new Counter({
+  name: 'notifications_redis_errors_total',
+  help: 'Redis cache operation errors, labeled by operation.',
+  labelNames: ['operation'] as const,
+  registers: [register],
+});
+
+// Baseline series at load so they export a 0 before the first event (see the cardinality note above).
+for (const outcome of ['success', 'failure'] as const) signalsDeliveryTotal.inc({ outcome }, 0);
+for (const operation of ['get', 'set', 'increment', 'has', 'clearCategory', 'bustUser'] as const)
+  redisErrorsTotal.inc({ operation }, 0);

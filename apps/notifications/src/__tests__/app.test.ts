@@ -39,6 +39,15 @@ describe('GET /metrics', () => {
     });
     expect(res.statusCode).toBe(404);
   });
+
+  it('exposes the signals-delivery + redis-error baseline series (zero before any event)', async () => {
+    const res = await app.inject({ method: 'GET', url: '/metrics' });
+    expect(res.body).toContain('notifications_signals_delivery_total');
+    expect(res.body).toContain('notifications_redis_errors_total');
+    // Pre-initialized outcome/operation series export a 0 baseline.
+    expect(res.body).toContain('notifications_signals_delivery_total{outcome="failure"} 0');
+    expect(res.body).toContain('notifications_redis_errors_total{operation="get"} 0');
+  });
 });
 
 describe('POST /notifications validation', () => {
@@ -49,5 +58,28 @@ describe('POST /notifications validation', () => {
       payload: { type: 'new-comment' }, // missing key/category/details
     });
     expect(res.statusCode).toBe(400);
+  });
+});
+
+describe('HTTP RED histogram', () => {
+  it('records a request against the http_request_duration_seconds histogram, labeled by route+outcome', async () => {
+    // An invalid POST is rejected at the zod gate (no DB touched) → outcome="rejected".
+    await app.inject({
+      method: 'POST',
+      url: '/notifications',
+      payload: { type: 'new-comment' }, // missing key/category/details
+    });
+    const res = await app.inject({ method: 'GET', url: '/metrics' });
+    expect(res.body).toContain('notifications_http_request_duration_seconds');
+    expect(res.body).toContain('route="/notifications"');
+    expect(res.body).toContain('outcome="rejected"');
+  });
+
+  it('does NOT record the ops routes (/health, /metrics) in the RED histogram', async () => {
+    await app.inject({ method: 'GET', url: '/health' });
+    const res = await app.inject({ method: 'GET', url: '/metrics' });
+    // The histogram label set must never carry an ops route.
+    expect(res.body).not.toContain('route="/health"');
+    expect(res.body).not.toContain('route="/metrics"');
   });
 });
