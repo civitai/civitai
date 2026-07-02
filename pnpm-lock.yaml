@@ -34,9 +34,6 @@ importers:
       '@civitai/auth':
         specifier: workspace:*
         version: link:packages/civitai-auth
-      '@civitai/blocks-react':
-        specifier: ^0.16.0
-        version: 0.16.0(@civitai/app-sdk@0.14.0)(react@18.3.1)
       '@civitai/buzz':
         specifier: workspace:*
         version: link:packages/civitai-buzz
@@ -1639,13 +1636,6 @@ packages:
   '@civitai/app-sdk@0.14.0':
     resolution: {integrity: sha512-YdXRZzBQe48+eJJSQXmKTP9SLKC6a97UBbcUDOPxzuH3UbWbyVL3Hh/jMK5Q4TrmDtYkkSs/RZbuF4ykIVtNBA==}
     engines: {node: '>=20'}
-
-  '@civitai/blocks-react@0.16.0':
-    resolution: {integrity: sha512-Y3UqrqyEf2piyPyNWTvBJuL3PVDDtAwMLNxojbODhmSqQBN2mj1xAL69+zXTORtftNFUrjyg5ko5IT+3E4edmA==}
-    engines: {node: '>=20'}
-    peerDependencies:
-      '@civitai/app-sdk': '>=0.13.0'
-      react: ^18.0.0 || ^19.0.0
 
   '@civitai/client@0.2.0-beta.78':
     resolution: {integrity: sha512-dSXkI8hVoozzlPS9DymzoyncWz8eapH3wkSDzDVGWjjqamXn8Dbcq1hWu5xUZkZmqCaR76F7BS9BQNqvOJ++Sw==}
@@ -12595,11 +12585,6 @@ snapshots:
   '@chevrotain/utils@10.5.0': {}
 
   '@civitai/app-sdk@0.14.0': {}
-
-  '@civitai/blocks-react@0.16.0(@civitai/app-sdk@0.14.0)(react@18.3.1)':
-    dependencies:
-      '@civitai/app-sdk': 0.14.0
-      react: 18.3.1
 
   '@civitai/client@0.2.0-beta.78':
     dependencies:
