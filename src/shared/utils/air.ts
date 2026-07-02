@@ -59,6 +59,8 @@ const typeUrnMap: Partial<Record<ModelType, string>> = {
   [ModelType.TextEncoder]: 'textencoder',
   [ModelType.UNet]: 'unet',
   [ModelType.CLIPVision]: 'clipvision',
+  [ModelType.CLIP]: 'clip',
+  [ModelType.VisionLanguage]: 'visionlanguage',
 };
 
 /**

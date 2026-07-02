@@ -144,6 +144,7 @@ export const ModelType = {
   Detection: 'Detection',
   VisionLanguage: 'VisionLanguage',
   CLIP: 'CLIP',
+  LLM: 'LLM',
   Other: 'Other',
 } as const;
 

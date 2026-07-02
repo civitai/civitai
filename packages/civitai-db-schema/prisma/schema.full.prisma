@@ -737,6 +737,7 @@ enum ModelType {
   Detection
   VisionLanguage
   CLIP
+  LLM
   Other
 }
 
