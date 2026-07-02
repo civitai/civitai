@@ -768,6 +768,7 @@ export const publishModel3D = async ({
       id: true,
       userId: true,
       status: true,
+      name: true,
       thumbnailImageId: true,
       deletedAt: true,
     },
@@ -775,6 +776,12 @@ export const publishModel3D = async ({
   if (!existing) throw throwNotFoundError(`No 3D model with id ${input.id}`);
   if (!isModerator && existing.userId !== user.id) throw throwAuthorizationError();
   if (existing.deletedAt) throw throwBadRequestError('Cannot publish a deleted 3D model');
+  // Drafts are materialized with a blank name (forces the user to name them);
+  // publish is a separate mutation from the name-enforcing upsert, so guard the
+  // name here too — otherwise a nameless draft could be published directly.
+  if (!existing.name?.trim()) {
+    throw throwBadRequestError('A name is required before publishing.');
+  }
   if (!existing.thumbnailImageId) {
     throw throwBadRequestError('A thumbnail image is required before publishing.');
   }
