@@ -53,7 +53,6 @@ import { registerExternalAppSchema } from '~/server/schema/blocks/external-app.s
 import { blockWorkflowBodySchema } from '~/server/schema/blocks/workflow.schema';
 import {
   allowMatureContentForCeiling,
-  domainBrowsingCeiling,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
@@ -93,7 +92,11 @@ import { getResourceGenerationSupport } from '~/shared/constants/basemodel.const
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { BuzzTypes } from '~/shared/constants/buzz.constants';
-import { getBlockAllowedAccountTypes, isPayoutEligibleBuzz } from '~/server/utils/buzz-helpers';
+import {
+  getBlockAllowedAccountTypes,
+  isPayoutEligibleBuzz,
+  orderBlockCurrencyTypes,
+} from '~/server/utils/buzz-helpers';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { getBaseModelSetType, WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
@@ -2518,7 +2521,12 @@ export const blocksRouter = router({
       // output clamp. SFW → blue/green; mature → blue/yellow. Used by BOTH the
       // whatIf cost-check and the real submit below so the estimate matches what
       // the real submit will actually drain.
-      const currencies = resolveBlockCurrencies(isGreen);
+      //
+      // Money page blocks may pick a preferred `accountType` — honor it
+      // PREFERRED-FIRST while keeping the maturity policy clamp: an in-set pick
+      // is moved to the front (with the rest as fallback); an out-of-set pick is
+      // rejected; absent → Auto (unchanged). See resolveBlockCurrenciesForAccount.
+      const currencies = resolveBlockCurrenciesForAccount(isGreen, input.body.accountType);
 
       if (isPage) {
         const loraGates = await resolvePageLoraGates({
@@ -2842,6 +2850,63 @@ export const blocksRouter = router({
       }
 
       return { snapshot: autoClaim ? { ...snapshot, autoClaim } : snapshot };
+    }),
+
+  /**
+   * HOST-MEDIATED balance read for the token-bound viewer (money page blocks).
+   * Returns the viewer's OWN spendable buzz balances so a page can render an
+   * account picker + "you have N buzz" without the page ever holding the
+   * `buzz:read:self` scope.
+   *
+   * POLICY REVERSAL (intentional, scoped): App Blocks pages are deliberately
+   * FORBIDDEN the `buzz:read:self` scope — a page has no business reading the
+   * viewer's balance directly. This procedure is the FIRST-PARTY host exposing
+   * the viewer's OWN balance to their OWN page session, mediated by the
+   * proof-of-session block token: userId is derived from the token `sub`
+   * (self-bound), NEVER from client input, so a page can only ever read the
+   * balance of the exact user whose session minted the token. This does NOT
+   * lift the scope forbid; `buzz:read:self` stays denied for pages.
+   *
+   * Auth model is IDENTICAL to submitWorkflow's block-token gate: verify the
+   * token, require an authenticated (non-anon) subject, then the App-Blocks
+   * enabled kill-switch + author gate evaluated against the TOKEN subject. Only
+   * the three spendable types the UI needs are returned (blue/green/yellow) —
+   * internal types (red / creatorProgram / cash) are omitted.
+   */
+  getMyBuzzBalance: publicProcedure
+    // Block-JWT-authed (no session for dev:live) — flag evaluated against the
+    // TOKEN subject below, not the `enforceAppBlocksFlag` middleware's ctx.user.
+    //
+    // MUTATION (not query) DELIBERATELY: the block JWT is a bearer credential
+    // that ALSO authorizes submitWorkflow (spend). A tRPC .query sends small
+    // inputs as HTTP GET with the input in the URL (?input=...), leaking the
+    // token into CF/nginx/Traefik logs, browser history, and Referer where it
+    // is replayable within its TTL. Every block-token-authed proc in this router
+    // is a mutation for exactly this reason (token in the POST body). Keep it so.
+    .input(z.object({ blockToken: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      const claims = await verifyBlockToken(input.blockToken);
+      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      // Derive the user from the SELF-BOUND token subject, never client input.
+      const userId = parseSubjectUserId(claims.sub);
+      if (userId == null) {
+        throw new TRPCError({
+          code: 'UNAUTHORIZED',
+          message: 'buzz balance requires an authenticated viewer',
+        });
+      }
+      // Same gates as the other block-token procs, evaluated against the TOKEN
+      // subject: the enabled kill-switch AND the author capability.
+      await assertAppBlocksEnabledForTokenUser(userId);
+      await assertViewerIsAppDeveloper(userId);
+      // getUserBuzzAccounts returns every spend type; project to just the three
+      // spendable types the UI needs (omit red / creator-program / cash).
+      const accounts = await getUserBuzzAccounts({ userId });
+      return {
+        blue: accounts.blue ?? 0,
+        green: accounts.green ?? 0,
+        yellow: accounts.yellow ?? 0,
+      };
     }),
 
   /**
@@ -3741,6 +3806,36 @@ function compareSemver(a: string, b: string): number {
 // See buzz-helpers.ts.
 function resolveBlockCurrencies(isGreen: boolean) {
   return BuzzTypes.toOrchestratorType(getBlockAllowedAccountTypes(isGreen));
+}
+
+// PREFERRED-FIRST + DOMAIN-CLAMPED currency selection for a viewer-picked
+// account (money page blocks). The domain-allowed set is derived from the
+// token's AUTHORITATIVE maturity ceiling (`getBlockAllowedAccountTypes`) — the
+// maturity policy gate — and is NEVER widened here.
+//
+//   - accountType absent          → return the allowed set unchanged (Auto).
+//     Byte-identical to `resolveBlockCurrencies(isGreen)`, so the no-pick path
+//     preserves today's behavior exactly.
+//   - accountType NOT in the set  → REJECT (BAD_REQUEST). A SFW block can't
+//     spend yellow, a mature block can't spend green. We never silently spend a
+//     different account than requested, and never add a disallowed account.
+//   - accountType in the set      → move it to the FRONT, keeping the remaining
+//     allowed currencies as FALLBACK. The orchestrator drains in array order,
+//     so the picked account pays first but a generation still succeeds when the
+//     preferred account alone can't cover it (total across the allowed accounts
+//     is enough) — preferred-first, then fall back.
+function resolveBlockCurrenciesForAccount(
+  isGreen: boolean,
+  accountType: BuzzSpendType | undefined
+): ReturnType<typeof resolveBlockCurrencies> {
+  const { ordered, disallowed } = orderBlockCurrencyTypes(isGreen, accountType);
+  if (disallowed) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `buzz account '${accountType}' is not spendable for this app's content rating`,
+    });
+  }
+  return BuzzTypes.toOrchestratorType(ordered);
 }
 
 /**

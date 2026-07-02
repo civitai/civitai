@@ -99,6 +99,40 @@ export function getBlockAllowedAccountTypes(isGreen: boolean): BuzzSpendType[] {
 }
 
 /**
+ * PREFERRED-FIRST + DOMAIN-CLAMPED currency ordering for a viewer-picked buzz
+ * account (App Blocks money page blocks). The domain-allowed set
+ * (`getBlockAllowedAccountTypes`) is the maturity policy gate and is NEVER
+ * widened here — a pick can only REORDER within that set:
+ *
+ *   - no pick               → the allowed set unchanged (`disallowed: false`).
+ *     Byte-identical to `getBlockAllowedAccountTypes(isGreen)`, so the Auto path
+ *     preserves today's blue-first drain order exactly.
+ *   - pick NOT in the set   → `disallowed: true`, allowed set returned unchanged.
+ *     The caller REJECTS (never silently spend a different account than asked).
+ *   - pick in the set       → the pick moved to the FRONT, the remaining allowed
+ *     currencies kept as FALLBACK. The orchestrator drains in array order, so
+ *     the picked account pays first but the generation still succeeds when the
+ *     total across the allowed accounts covers the cost (preferred-first, then
+ *     fall back — a single-account clamp would fail an otherwise-affordable gen).
+ *
+ * Pure (no throw / no orchestrator-type mapping) so it's unit-testable on the
+ * plain `BuzzSpendType` strings; the router wraps it (throws BAD_REQUEST on
+ * `disallowed`, then maps to orchestrator currency types).
+ */
+export function orderBlockCurrencyTypes(
+  isGreen: boolean,
+  accountType?: BuzzSpendType
+): { ordered: BuzzSpendType[]; disallowed: boolean } {
+  const allowed = getBlockAllowedAccountTypes(isGreen);
+  if (!accountType) return { ordered: allowed, disallowed: false };
+  if (!allowed.includes(accountType)) return { ordered: allowed, disallowed: true };
+  return {
+    ordered: [accountType, ...allowed.filter((type) => type !== accountType)],
+    disallowed: false,
+  };
+}
+
+/**
  * PAYOUT-SAFETY GATE (App Blocks Sybil / payout review).
  *
  * Which Buzz account types are eligible to accrue an app-author payout

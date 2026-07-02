@@ -3357,4 +3357,156 @@ describe('blocks workflow — buzz-type parity + spend-attribution currency', ()
       });
     });
   });
+
+  // ---- viewer-picked accountType (money page blocks) ----------------------
+  // The exact reordered orchestrator currency VALUES can't be asserted here
+  // (the global @civitai/client mock nulls out BuzzClientAccount, so
+  // toOrchestratorType yields non-comparable values — the ORDERING is asserted
+  // on the pure BuzzSpendType strings in buzz-helpers.test.ts). Here we pin the
+  // ROUTER-level behavior: an ALLOWED / ABSENT pick submits normally, and a
+  // DISALLOWED pick is REJECTED before any orchestrator spend.
+  describe('honors body.accountType (preferred-first, domain-clamped)', () => {
+    it('absent accountType → submits normally (Auto, both submit sites fire)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 1000, maxBrowsingLevel: SFW_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      happySubmit();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(2);
+      // Auto still derives the 2-element parity currency set at both sites.
+      expect((bodyOf(0).currencies as unknown[]).length).toBe(2);
+      expect((bodyOf(1).currencies as unknown[]).length).toBe(2);
+    });
+
+    it('ALLOWED accountType (green on a SFW block) → submits normally', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 1000, maxBrowsingLevel: SFW_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      happySubmit();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({
+        blockToken: 'tok',
+        body: validBody({ accountType: 'green' }),
+      });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(2);
+      // whatIf + real still carry the same currency set (estimate matches drain).
+      expect((bodyOf(1).currencies as unknown[]).length).toBe(2);
+    });
+
+    it('DISALLOWED accountType (yellow on a SFW block) → BAD_REQUEST, no spend', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 1000, maxBrowsingLevel: SFW_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody({ accountType: 'yellow' }) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      // The domain clamp must fire BEFORE any orchestrator interaction.
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('DISALLOWED accountType (green on a mature .red block) → BAD_REQUEST, no spend', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 1000, maxBrowsingLevel: ALL_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody({ accountType: 'green' }) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('rejects an out-of-enum accountType at the schema boundary (zod)', async () => {
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({
+          blockToken: 'tok',
+          // `red` is disabled and not in the spendable enum → zod rejects.
+          body: validBody({ accountType: 'red' }) as never,
+        })
+      ).rejects.toThrow();
+    });
+  });
+});
+
+// ---- getMyBuzzBalance (host-mediated, token-bound balance read) ------------
+// Money page blocks read the VIEWER's OWN spendable balances via the block
+// token WITHOUT holding buzz:read:self. userId is derived from the self-bound
+// token sub, never client input — a page can only read its own session's user.
+describe('blocks.getMyBuzzBalance', () => {
+  it('returns the three spendable balances for a valid token (from getUserBuzzAccounts)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    happyUser();
+    // getUserBuzzAccounts returns every spend type; the proc projects to three.
+    mockGetUserBuzzAccounts.mockResolvedValue({ blue: 100, green: 20, yellow: 5, red: 999 });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.getMyBuzzBalance({ blockToken: 'tok' });
+    expect(result).toEqual({ blue: 100, green: 20, yellow: 5 });
+    // Never returns internal types (red / creatorProgram / cash).
+    expect(result).not.toHaveProperty('red');
+    // The balance is read for the TOKEN subject (42), not any client input.
+    expect(mockGetUserBuzzAccounts).toHaveBeenCalledWith({ userId: 42 });
+  });
+
+  it('defaults missing account values to 0', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    happyUser();
+    mockGetUserBuzzAccounts.mockResolvedValue({ blue: 50 } as never);
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.getMyBuzzBalance({ blockToken: 'tok' });
+    expect(result).toEqual({ blue: 50, green: 0, yellow: 0 });
+  });
+
+  it('rejects an invalid block token with UNAUTHORIZED (never reads a balance)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(null);
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyBuzzBalance({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(mockGetUserBuzzAccounts).not.toHaveBeenCalled();
+  });
+
+  it('rejects an anon subject with UNAUTHORIZED (no balance to read)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ sub: 'anon' }));
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyBuzzBalance({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(mockGetUserBuzzAccounts).not.toHaveBeenCalled();
+  });
+
+  it('rejects when the App Blocks flag is disabled (kill-switch)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    happyUser();
+    mockIsAppBlocksEnabled.mockResolvedValue(false);
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyBuzzBalance({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+      message: 'App Blocks not enabled',
+    });
+    expect(mockGetUserBuzzAccounts).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-author subject with FORBIDDEN (author gate, no balance read)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    // Enabled kill-switch passes, but the subject is not an app author.
+    mockGetSessionUser.mockResolvedValue({ id: 42, isModerator: false, tier: 'free' });
+    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyBuzzBalance({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(mockGetUserBuzzAccounts).not.toHaveBeenCalled();
+  });
 });
