@@ -277,7 +277,8 @@ export default MixedAuthEndpoint(async function handler(
     modelVersion.baseLicensingFee > 0;
   // A base version resolves to its own row via the rule, so don't double-count
   // its fee as both the base rule and an own fee.
-  const isBaseRecipientItself = modelVersion.baseLicensingFeeRecipientId === modelVersion.id;
+  const isBaseRecipientItself =
+    hasBaseRule && modelVersion.baseLicensingFeeRecipientId === modelVersion.id;
   const hasOwnFee =
     modelVersion.licensingFee != null && modelVersion.licensingFee > 0 && !isBaseRecipientItself;
 
