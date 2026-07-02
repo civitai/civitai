@@ -12,6 +12,14 @@ const OFFICIAL_USER_ID = constants.system.officialUserId;
 const CONCURRENCY = 10;
 const BATCH_LIMIT = 1000;
 
+// Host file types this job can rehome: exactly those inferComponentType maps to a
+// component, minus primary weights (never deleted). Derived from the processor's
+// switch so the SQL filter can't drift from what processDedupePairs accepts — an
+// unmapped type would produce a pointer-less row that requeries every run.
+const LINKABLE_HOST_FILE_TYPES = constants.modelFileTypes.filter(
+  (t) => inferComponentType(t) != null && !primaryModelFileTypes.includes(t)
+);
+
 export type DedupePair = {
   hostFileId: number;
   hostType: string;
@@ -59,7 +67,8 @@ export async function findOfficialDedupePairs(since: Date, limit: number): Promi
     JOIN "Model" hm ON hm.id = hv."modelId"
     WHERE hm."userId" <> ${OFFICIAL_USER_ID}
       AND hm.status = 'Published'
-      AND h.type NOT IN (${Prisma.join([...primaryModelFileTypes])}) -- never dedup/delete primary weights
+      AND hv.status = 'Published'
+      AND h.type IN (${Prisma.join([...LINKABLE_HOST_FILE_TYPES])}) -- only types processDedupePairs can rehome; excludes primary weights
       AND h."modelVersionId" <> c.canonical_version_id
       AND NOT EXISTS (
         SELECT 1 FROM "RecommendedResource" rr
