@@ -217,8 +217,8 @@ export default WebhookEndpoint(async (req, res) => {
   if (!job) return res.status(404).json({ ok: false, error: 'Job not found' });
   const { name, run, options } = job;
 
-  const acquired = await acquireLock(name, options.lockExpiration, noCheck);
-  if (!acquired)
+  const lock = await acquireLock(name, options.lockExpiration, noCheck);
+  if (!lock)
     return res.status(200).json({ ok: true, error: 'Job already running' });
 
   const jobStart = Date.now();
@@ -230,10 +230,10 @@ export default WebhookEndpoint(async (req, res) => {
 
     const jobRunner = run({ req });
 
-    async function cancelHandler() {
+    const cancelHandler = async () => {
       await jobRunner.cancel();
-      await unlock(name, noCheck);
-    }
+      await lock.release();
+    };
 
     res.on('close', cancelHandler);
     result = await jobRunner.result;
@@ -246,15 +246,12 @@ export default WebhookEndpoint(async (req, res) => {
     axiom.error(`failed`, { duration: Date.now() - jobStart, error });
     res.status(500).json({ ok: false, pod, error, stack: (error as Error)?.stack });
   } finally {
-    await unlock(name, noCheck);
+    await lock.release();
   }
 });
 
 const LOCK_REFRESH_INTERVAL = 8; // Every 8 seconds
 const LOCK_BUFFER = 2; // 2 second buffer on redis expiry
-const lockIntervals: Record<string, ReturnType<typeof setInterval>> = {};
-// Per-run fencing token so a run only ever refreshes/releases its OWN lock.
-const lockTokens: Record<string, string> = {};
 
 // Release only if we still hold the token. The old blind DEL let a fast run
 // free a concurrent slow run's lock.
@@ -275,36 +272,66 @@ const LOCK_REFRESH_SCRIPT = `
   end
 `;
 
-// Atomically acquire the job lock. Returns false if another run already holds
-// it. Uses SET NX (atomic check-and-set) instead of the old GET-then-SET, which
-// let two concurrent triggers both pass the check and run the same job in
-// parallel (e.g. the duplicate ingest-images cron triggers).
+// A held job lock. `release()` is idempotent and closes over THIS run's token +
+// interval only — it can never free or clear a different (newer) run's lock,
+// which is why token/interval must be per-invocation, not keyed by job name.
+type JobLock = { release: () => Promise<void> };
+const NOOP_LOCK: JobLock = { release: async () => undefined };
+
+// Atomically acquire the job lock. Returns null if another run already holds it.
+// Uses SET NX (atomic check-and-set) instead of the old GET-then-SET, which let
+// two concurrent triggers both pass the check and run the same job in parallel
+// (e.g. the duplicate ingest-images cron triggers).
 async function acquireLock(
   name: string,
   lockExpiration: number,
   noCheck?: boolean
-): Promise<boolean> {
-  if (!isProd || name === 'prepare-leaderboard' || noCheck) return true;
+): Promise<JobLock | null> {
+  if (!isProd || name === 'prepare-leaderboard' || noCheck) return NOOP_LOCK;
   // Redis unavailable — fail open (run without a lock), matching prior behavior.
-  if (!sysRedis) return true;
+  if (!sysRedis) return NOOP_LOCK;
 
   const token = `${pod ?? 'unknown'}:${Date.now()}-${Math.random()}`;
-  const acquired = await sysRedis.set(`${REDIS_SYS_KEYS.JOB}:${name}`, token, {
-    NX: true,
-    EX: LOCK_REFRESH_INTERVAL + LOCK_BUFFER,
-  });
-  if (acquired !== 'OK') return false;
+  let acquired: string | null;
+  try {
+    acquired = await sysRedis.set(`${REDIS_SYS_KEYS.JOB}:${name}`, token, {
+      NX: true,
+      EX: LOCK_REFRESH_INTERVAL + LOCK_BUFFER,
+    });
+  } catch (e) {
+    // Redis errored on acquire — fail open (run unlocked) rather than skip.
+    logToAxiom(
+      { type: 'job-lock', message: 'acquire-error', job: name, error: (e as Error)?.message },
+      'webhooks'
+    ).catch();
+    return NOOP_LOCK;
+  }
+  if (acquired !== 'OK') return null;
 
-  lockTokens[name] = token;
   logToAxiom({ type: 'job-lock', message: 'lock', job: name }, 'webhooks').catch();
+
+  let released = false;
+  let interval: ReturnType<typeof setInterval> | undefined;
+  const release = async () => {
+    if (released) return;
+    released = true;
+    if (interval) clearInterval(interval);
+    logToAxiom({ type: 'job-lock', message: 'unlock', job: name }, 'webhooks').catch();
+    await sysRedis
+      ?.eval(LOCK_RELEASE_SCRIPT, {
+        keys: [`${REDIS_SYS_KEYS.JOB}:${name}`],
+        arguments: [token],
+      })
+      .catch(() => undefined);
+  };
 
   // Refresh while we still own the lock so long jobs keep it and dead pods
   // release it (the short TTL lapses). Hard-cap total hold at lockExpiration.
   let ttl = lockExpiration;
-  lockIntervals[name] = setInterval(async () => {
+  interval = setInterval(async () => {
     ttl -= LOCK_REFRESH_INTERVAL;
     if (ttl <= 0) {
-      unlock(name, noCheck).catch();
+      release().catch(() => undefined);
       return;
     }
     await sysRedis
@@ -315,23 +342,5 @@ async function acquireLock(
       .catch(() => undefined);
   }, LOCK_REFRESH_INTERVAL * 1000);
 
-  return true;
-}
-
-async function unlock(name: string, noCheck?: boolean) {
-  if (!isProd || name === 'prepare-leaderboard' || noCheck) return;
-  logToAxiom({ type: 'job-lock', message: 'unlock', job: name }, 'webhooks').catch();
-  if (lockIntervals[name]) {
-    clearInterval(lockIntervals[name]); // Clear lock refresh interval
-    delete lockIntervals[name];
-  }
-  const token = lockTokens[name];
-  if (!token || !sysRedis) return;
-  await sysRedis
-    .eval(LOCK_RELEASE_SCRIPT, {
-      keys: [`${REDIS_SYS_KEYS.JOB}:${name}`],
-      arguments: [token],
-    })
-    .catch(() => undefined);
-  delete lockTokens[name];
+  return { release };
 }
