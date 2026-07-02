@@ -263,4 +263,37 @@ describe('read metric wiring (observeOrchestratorRead) — additive instrumentat
     expect(mockObserveRead.mock.calls[0][0]).toBe('queryWorkflows');
     expect(mockObserveRead.mock.calls[0][1]).toBe('timeout');
   });
+
+  it('records outcome=error (NOT timeout) on a non-timeout network REJECT for getWorkflow', async () => {
+    // The reject `.catch` path with a NETWORK error that is not a timeout: a fetch-failed
+    // TypeError whose cause is an ECONNREFUSED — this maps to a retry-able 503 downstream,
+    // but the metric outcome must be classified `error`, NOT `timeout` (no TimeoutError/
+    // AbortError anywhere in the cause chain) and NOT `ok`. This closes the reject-path
+    // non-timeout `error` gap the depth-0 resolve-path 5xx test above doesn't cover.
+    mockGetWorkflow.mockRejectedValue(
+      Object.assign(new TypeError('fetch failed'), {
+        cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }),
+      })
+    );
+    await getWorkflow({ token: 'tok', path: { workflowId: 'wf-1' } }).catch(() => {});
+    expect(mockObserveRead).toHaveBeenCalledTimes(1);
+    expect(mockObserveRead.mock.calls[0][0]).toBe('getWorkflow');
+    expect(mockObserveRead.mock.calls[0][1]).toBe('error');
+  });
+
+  it('classifies as timeout via the .cause chain at depth>0 (outer error is generic) for getWorkflow', async () => {
+    // isOrchestratorReadTimeout walks the `.cause` chain (depth ≤ 4), not just the top-level
+    // `.name`. Prove the walk works past depth 0: the OUTER error is a generic Error, but a
+    // nested cause carries `name: 'TimeoutError'` — this must still classify `timeout`, not
+    // `error`. The existing timeout tests only exercise depth-0 (`name` on the thrown error).
+    mockGetWorkflow.mockRejectedValue(
+      Object.assign(new Error('wrapped'), {
+        cause: Object.assign(new Error('inner'), { name: 'TimeoutError' }),
+      })
+    );
+    await getWorkflow({ token: 'tok', path: { workflowId: 'wf-1' } }).catch(() => {});
+    expect(mockObserveRead).toHaveBeenCalledTimes(1);
+    expect(mockObserveRead.mock.calls[0][0]).toBe('getWorkflow');
+    expect(mockObserveRead.mock.calls[0][1]).toBe('timeout');
+  });
 });
