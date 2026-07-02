@@ -25,6 +25,7 @@ import type {
   workflowUpdateSchema,
 } from '~/server/schema/orchestrator/workflows.schema';
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
+import { observeOrchestratorRead } from '~/server/services/orchestrator/orchestrator-read-metrics';
 import {
   isUpstreamNetworkError,
   isUpstreamServerOrNetworkError,
@@ -87,6 +88,23 @@ const ORCHESTRATOR_GET_TIMEOUT_MS = 20_000;
 // orchestrator-side root fix (stamp source dims / bound the download) is orch #261.
 const WHATIF_SUBMIT_ATTEMPT_TIMEOUT_MS = 8_000;
 
+// Classify an orchestrator READ failure as the fired read-backstop deadline (#2883,
+// ORCHESTRATOR_GET_TIMEOUT_MS / ORCHESTRATOR_QUERY_TIMEOUT_MS) vs any other error — for the additive read
+// metric ONLY (does NOT touch control flow / error mapping). A fired `AbortSignal.timeout()` surfaces as an
+// Error/DOMException named `TimeoutError` (or `AbortError` for a composed/manual abort). Because
+// `createOrchestratorClient` does NOT set `throwOnError`, this shape appears on BOTH the `.catch` reject path
+// (a mid-body abort rejects) AND the `if (!data)` resolve path (a pre-response abort RESOLVES with
+// `{ error: TimeoutError, response: undefined }`) — so both call sites classify with this. Walks the `.cause`
+// chain briefly since tRPC/undici nest the original.
+function isOrchestratorReadTimeout(e: unknown): boolean {
+  let cur = e as { name?: string; cause?: unknown } | undefined;
+  for (let depth = 0; depth < 4 && cur && typeof cur === 'object'; depth++) {
+    if (cur.name === 'TimeoutError' || cur.name === 'AbortError') return true;
+    cur = cur.cause as typeof cur;
+  }
+  return false;
+}
+
 export async function queryWorkflows({
   token,
   fromDate,
@@ -95,6 +113,10 @@ export async function queryWorkflows({
 }: z.output<typeof workflowQuerySchema> & { token: string; hideMatureContent: boolean }) {
   const client = createOrchestratorClient(token);
 
+  // Additive read instrumentation: time ONLY the orchestrator client network call (not the whole handler) and
+  // record exactly one observation — in the `.catch` on a reject, else on the resolve path below. See
+  // orchestrator-read-metrics.ts for why. Purely observational; does NOT change any control flow / mapping.
+  const readStart = performance.now();
   const { data, error } = await clientQueryWorkflows({
     client,
     // Read backstop: abort a runaway orchestrator query (see constant above). The
@@ -111,10 +133,23 @@ export async function queryWorkflows({
     // (fetch failed / ECONNREFUSED / timeout) is a transient upstream outage →
     // retry-able 503, not an app 500. An unrecognized throw (a real bug in our
     // code) is left to bubble as a 500.
+    observeOrchestratorRead(
+      'queryWorkflows',
+      isOrchestratorReadTimeout(thrown) ? 'timeout' : 'error',
+      (performance.now() - readStart) / 1000
+    );
     if (isUpstreamNetworkError(thrown))
       throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, thrown);
     throw thrown;
   });
+  // Resolve path (the `.catch` did NOT run). A `!data` result is either the pre-response backstop abort
+  // (`{ error: TimeoutError, response: undefined }` → timeout) or an upstream error; a `data` result is a
+  // success. Exactly one observation per call is recorded (here XOR in the catch above).
+  observeOrchestratorRead(
+    'queryWorkflows',
+    data ? 'ok' : isOrchestratorReadTimeout(error) ? 'timeout' : 'error',
+    (performance.now() - readStart) / 1000
+  );
   if (!data) {
     switch (error.status) {
       case 400:
@@ -158,6 +193,10 @@ export async function getWorkflow({
   query,
 }: Options<GetWorkflowData> & { token: string }) {
   const client = createOrchestratorClient(token);
+  // Additive read instrumentation: time ONLY the orchestrator client network call and record exactly one
+  // observation (in the `.catch` on a reject, else on the resolve path below). This is the statusUpdate poll
+  // hot path — the read the #2883 backstop targets. Purely observational; does NOT change control flow.
+  const readStart = performance.now();
   const { data, error } = await clientGetWorkflow({
     client,
     path,
@@ -173,10 +212,23 @@ export async function getWorkflow({
     // continuously, so a brief blip here otherwise becomes a wave of raw 500s
     // (TypeError: fetch failed). A recognized network failure → retry-able 503;
     // an unrecognized throw (a real bug) bubbles as a 500.
+    observeOrchestratorRead(
+      'getWorkflow',
+      isOrchestratorReadTimeout(thrown) ? 'timeout' : 'error',
+      (performance.now() - readStart) / 1000
+    );
     if (isUpstreamNetworkError(thrown))
       throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, thrown);
     throw thrown;
   });
+  // Resolve path (the `.catch` did NOT run). A `!data` result is either the pre-response backstop abort
+  // (`{ error: TimeoutError, response: undefined }` → timeout, the LOAD-BEARING resolve shape) or an upstream
+  // error; a `data` result is a success. Exactly one observation per call (here XOR in the catch above).
+  observeOrchestratorRead(
+    'getWorkflow',
+    data ? 'ok' : isOrchestratorReadTimeout(error) ? 'timeout' : 'error',
+    (performance.now() - readStart) / 1000
+  );
   if (!data) {
     switch (error.status) {
       case 400:

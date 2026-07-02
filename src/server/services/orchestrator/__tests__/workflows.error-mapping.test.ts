@@ -4,9 +4,10 @@ import { TRPCError } from '@trpc/server';
 // Mock ONLY the generated client + the orchestrator client factory + env so we can
 // drive `getWorkflow` / `queryWorkflows` through their error branches. The real
 // `~/server/utils/errorHandling` loads so the actual TRPCError mapping is exercised.
-const { mockGetWorkflow, mockQueryWorkflows } = vi.hoisted(() => ({
+const { mockGetWorkflow, mockQueryWorkflows, mockObserveRead } = vi.hoisted(() => ({
   mockGetWorkflow: vi.fn(),
   mockQueryWorkflows: vi.fn(),
+  mockObserveRead: vi.fn(),
 }));
 
 vi.mock('@civitai/client', () => ({
@@ -28,6 +29,12 @@ vi.mock('~/server/services/orchestrator/client', () => ({
 }));
 
 vi.mock('~/env/other', () => ({ isDev: false, isProd: true }));
+
+// Spy the additive read metric so we can assert the outcome classification wired into workflows.ts without
+// touching the real prom registry (the metric's own value-recording is covered in orchestrator-read-metrics.test.ts).
+vi.mock('~/server/services/orchestrator/orchestrator-read-metrics', () => ({
+  observeOrchestratorRead: mockObserveRead,
+}));
 
 import { getWorkflow, queryWorkflows } from '~/server/services/orchestrator/workflows';
 
@@ -203,5 +210,57 @@ describe('queryWorkflows error mapping (queryGeneratedImages path)', () => {
     mockQueryWorkflows.mockRejectedValue(bug);
     const err = await queryWorkflows(baseQueryArgs).catch((e) => e);
     expect(err).toBe(bug);
+  });
+});
+
+describe('read metric wiring (observeOrchestratorRead) — additive instrumentation', () => {
+  it('records op=getWorkflow outcome=ok exactly once on the success path', async () => {
+    mockGetWorkflow.mockResolvedValue({ data: { id: 'wf-1', status: 'succeeded' } });
+    await getWorkflow({ token: 'tok', path: { workflowId: 'wf-1' } });
+    expect(mockObserveRead).toHaveBeenCalledTimes(1);
+    const [op, outcome, seconds] = mockObserveRead.mock.calls[0];
+    expect(op).toBe('getWorkflow');
+    expect(outcome).toBe('ok');
+    expect(typeof seconds).toBe('number');
+  });
+
+  it('records outcome=timeout on the REJECT path (mid-body abort) for getWorkflow', async () => {
+    mockGetWorkflow.mockRejectedValue(
+      Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' })
+    );
+    await getWorkflow({ token: 'tok', path: { workflowId: 'wf-1' } }).catch(() => {});
+    expect(mockObserveRead).toHaveBeenCalledTimes(1);
+    expect(mockObserveRead.mock.calls[0][0]).toBe('getWorkflow');
+    expect(mockObserveRead.mock.calls[0][1]).toBe('timeout');
+  });
+
+  it('records outcome=timeout on the RESOLVE path (pre-response abort, { error: TimeoutError }) for getWorkflow', async () => {
+    mockGetWorkflow.mockResolvedValue({
+      data: undefined,
+      error: Object.assign(new Error('The operation was aborted due to timeout'), {
+        name: 'TimeoutError',
+      }),
+      response: undefined,
+    });
+    await getWorkflow({ token: 'tok', path: { workflowId: 'wf-1' } }).catch(() => {});
+    expect(mockObserveRead).toHaveBeenCalledTimes(1);
+    expect(mockObserveRead.mock.calls[0][1]).toBe('timeout');
+  });
+
+  it('records outcome=error on a non-timeout upstream 5xx for getWorkflow', async () => {
+    mockGetWorkflow.mockResolvedValue({ data: undefined, error: { status: 500, detail: 'boom' } });
+    await getWorkflow({ token: 'tok', path: { workflowId: 'wf-1' } }).catch(() => {});
+    expect(mockObserveRead).toHaveBeenCalledTimes(1);
+    expect(mockObserveRead.mock.calls[0][1]).toBe('error');
+  });
+
+  it('records op=queryWorkflows outcome=timeout on the reject path', async () => {
+    mockQueryWorkflows.mockRejectedValue(
+      Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' })
+    );
+    await queryWorkflows(baseQueryArgs).catch(() => {});
+    expect(mockObserveRead).toHaveBeenCalledTimes(1);
+    expect(mockObserveRead.mock.calls[0][0]).toBe('queryWorkflows');
+    expect(mockObserveRead.mock.calls[0][1]).toBe('timeout');
   });
 });
