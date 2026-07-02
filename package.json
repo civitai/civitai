@@ -94,6 +94,7 @@
     "@civitai/app-sdk": "^0.14.0",
     "@civitai/auth": "workspace:*",
     "@civitai/blocks-react": "^0.16.0",
+    "@civitai/buzz": "workspace:*",
     "@civitai/client": "0.2.0-beta.78",
     "@civitai/cybertipline-tools": "^0.1.0",
     "@civitai/next-axiom": "^0.17.0",

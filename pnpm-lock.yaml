@@ -37,6 +37,9 @@ importers:
       '@civitai/blocks-react':
         specifier: ^0.16.0
         version: 0.16.0(@civitai/app-sdk@0.14.0)(react@18.3.1)
+      '@civitai/buzz':
+        specifier: workspace:*
+        version: link:packages/civitai-buzz
       '@civitai/client':
         specifier: 0.2.0-beta.78
         version: 0.2.0-beta.78
@@ -1043,6 +1046,12 @@ importers:
         version: 4.0.17
 
   packages/civitai-brand: {}
+
+  packages/civitai-buzz:
+    dependencies:
+      zod:
+        specifier: ^4.0.17
+        version: 4.4.3
 
   packages/civitai-clickhouse:
     dependencies:
