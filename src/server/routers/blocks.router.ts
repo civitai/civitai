@@ -53,7 +53,6 @@ import { registerExternalAppSchema } from '~/server/schema/blocks/external-app.s
 import { blockWorkflowBodySchema } from '~/server/schema/blocks/workflow.schema';
 import {
   allowMatureContentForCeiling,
-  domainBrowsingCeiling,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
