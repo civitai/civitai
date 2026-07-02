@@ -151,3 +151,4 @@ lighthouserc.runtime.json
 apps/auth/e2e/playwright-report/
 apps/auth/e2e/test-results/
 apps/auth/e2e/.auth/
+mockups/

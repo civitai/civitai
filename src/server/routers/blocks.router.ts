@@ -40,20 +40,22 @@ import {
   getMyPendingForSlugSchema,
   getPublishRequestDiffSchema,
   getPublishRequestScreenshotsSchema,
+  getReviewStatusSchema,
   listApprovedRequestsSchema,
   listPendingRequestsSchema,
   listRejectedRequestsSchema,
+  previewRequestSchema,
   rejectRequestSchema,
+  teardownPreviewSchema,
   withdrawRequestSchema,
 } from '~/server/schema/blocks/publish-request.schema';
 import { registerExternalAppSchema } from '~/server/schema/blocks/external-app.schema';
 import { blockWorkflowBodySchema } from '~/server/schema/blocks/workflow.schema';
 import {
   allowMatureContentForCeiling,
-  domainBrowsingCeiling,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
+import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { rateLimit } from '~/server/middleware.trpc';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import {
@@ -90,7 +92,12 @@ import { getResourceGenerationSupport } from '~/shared/constants/basemodel.const
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { BuzzTypes } from '~/shared/constants/buzz.constants';
-import { getBlockAllowedAccountTypes } from '~/server/utils/buzz-helpers';
+import {
+  getBlockAllowedAccountTypes,
+  isPayoutEligibleBuzz,
+  orderBlockCurrencyTypes,
+} from '~/server/utils/buzz-helpers';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { getBaseModelSetType, WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { cancelWorkflow, getWorkflow, submitWorkflow } from '~/server/services/orchestrator/workflows';
@@ -101,6 +108,7 @@ import {
 import { getUserById } from '~/server/services/user.service';
 import { sessionClient } from '~/server/auth/session-client';
 import {
+  appDeveloperProcedure,
   guardedProcedure,
   moderatorProcedure,
   protectedProcedure,
@@ -137,26 +145,37 @@ const enforceAppBlocksFlag = middleware(async ({ ctx, next, type }) => {
 });
 
 /**
- * Phase 2 (internal-only graduation gate): App Blocks is moderator-only until
- * GA. The management procedures use `moderatorProcedure` so the tRPC session
- * user is checked at the procedure layer. But the runtime/read procedures are
- * `publicProcedure` — they authenticate a block JWT that resolves to a viewer
- * userId rather than `ctx.user`. For those, we re-assert that the RESOLVED
- * viewer is a moderator (don't trust "only mods get block tokens" — block-token
- * minting is also gated, but defense-in-depth means each call re-checks).
+ * AUTHZ gate for the BLOCK-TOKEN-authed runtime procs (estimate/submit/poll/
+ * cancelWorkflow, updateUserSettings). These are `publicProcedure` authenticated
+ * by a block JWT that resolves to a viewer userId rather than `ctx.user`, so the
+ * `appDeveloperProcedure` middleware can't gate them — we re-assert the AUTHOR
+ * capability against the RESOLVED subject here (defense-in-depth: don't trust
+ * "only authors get block tokens" — the mint is gated too, but each call
+ * re-checks).
  *
- * Factored into one helper so the check can't drift across the ~14 call sites.
- * Throws FORBIDDEN for a non-mod (or vanished) user.
+ * Developer soft-launch (Phase B): this replaced the old
+ * `assertViewerIsModerator` — the subject must hold the `appBlocksAuthor`
+ * capability (Flipt `app-blocks-author`, static fallback mod-only), so a curated
+ * non-mod cohort can generate + spend Buzz from their OWN block while a random
+ * non-author subject is still FORBIDDEN.
  *
- * (Internal-only graduation gate — remove/relax at GA alongside the feature
- * flag's `availability` widening.)
+ * Hydrates the subject IDENTICALLY to `assertAppBlocksEnabledForTokenUser` (the
+ * enabled kill-switch that runs right before this) — `sessionClient
+ * .getSessionUserById`, the authoritative hub-backed resolver, never a
+ * client-supplied value — so `buildFliptContext` sees the subject's real
+ * isModerator/tier and the mod floor / segment match can't be spoofed. A
+ * vanished user → undefined → no mod floor + global eval (never matches a
+ * segment) → FORBIDDEN (fail-closed).
+ *
+ * This is the AUTHZ half only; the `isAppBlocksEnabled` kill-switch
+ * (`assertAppBlocksEnabledForTokenUser`) still runs first and is unchanged.
  */
-async function assertViewerIsModerator(userId: number): Promise<void> {
-  const row = await getUserById({ id: userId, select: { id: true, isModerator: true } });
-  if (!row?.isModerator) {
+async function assertViewerIsAppDeveloper(userId: number): Promise<void> {
+  const user = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
+  if (!(await isAppBlocksAuthorEnabled({ user: user ?? undefined }))) {
     throw new TRPCError({
       code: 'FORBIDDEN',
-      message: 'App Blocks is restricted to the civitai team',
+      message: 'App Blocks authoring is not enabled for this account',
     });
   }
 }
@@ -181,7 +200,7 @@ async function assertViewerIsModerator(userId: number): Promise<void> {
  * mod-segmented flag resolves `true` only for a moderator subject; a non-mod or
  * anon (`sub:'anon'` → no resolvable user) subject still resolves `false` →
  * blocked. `verifyBlockToken` (caller) already rejected invalid/expired/revoked
- * tokens before this runs, and `assertViewerIsModerator` + every other belt
+ * tokens before this runs, and `assertViewerIsAppDeveloper` + every other belt
  * (budget cap, daily Buzz cap, reserveBlockBuzzSpend, getOrchestratorToken,
  * forced-SFW) are unchanged — this only swaps which identity the FLAG sees.
  *
@@ -208,7 +227,7 @@ async function assertAppBlocksEnabledForTokenUser(userId: number): Promise<void>
   // Full, authoritative SessionUser (cached; tier derived from active
   // subscriptions) so buildFliptContext sees the user's REAL tier/isMember,
   // not type-defaults. A vanished user → undefined → global eval → flag false
-  // → blocked (fail-closed; the subsequent assertViewerIsModerator would also
+  // → blocked (fail-closed; the subsequent assertViewerIsAppDeveloper would also
   // reject).
   // getSessionUserById returns the package SessionUser (loosely typed at this boundary — cast as bearer-token.ts
   // does) or null for a vanished user. null → undefined → isAppBlocksEnabled's global eval → flag false → blocked.
@@ -291,9 +310,9 @@ function resolveBlockMaturity(claims: { maxBrowsingLevel?: number }): {
 //
 // Pass the REAL viewer context (their id + real isModerator + the request's
 // sfwOnly/wildcards flags) — never an elevated context. Today the viewer is
-// always a mod (assertViewerIsModerator), so they see mod-level access, which
-// is correct platform behaviour; when GA opens to non-mods the same gate bounds
-// them properly. Fail-closed: a version missing from the result Map → FORBIDDEN.
+// always an author (assertViewerIsAppDeveloper), so they see the appropriate
+// access; when GA opens further the same gate bounds them properly. Fail-closed:
+// a version missing from the result Map → FORBIDDEN.
 //
 // Page-LoRA (Increment 1): generalized from 1→N versions. The checkpoint AND
 // every picked LoRA are gated in ONE `resolveCanGenerateForVersions` call (it
@@ -890,7 +909,7 @@ export const blocksRouter = router({
    * Idempotent. Allows resubmitting against the same slug without
    * accumulating dead pending rows.
    */
-  withdrawPublishRequest: moderatorProcedure
+  withdrawPublishRequest: appDeveloperProcedure
     .use(enforceAppBlocksFlag)
     .input(withdrawRequestSchema)
     .mutation(async ({ ctx, input }) => {
@@ -919,7 +938,7 @@ export const blocksRouter = router({
    * instead of letting the user hit the same-slug error on submit.
    * Scoped to the caller's own rows by design.
    */
-  getMyPendingForSlug: moderatorProcedure
+  getMyPendingForSlug: appDeveloperProcedure
     .use(enforceAppBlocksFlag)
     .input(getMyPendingForSlugSchema)
     .query(async ({ ctx, input }) => {
@@ -1037,6 +1056,128 @@ export const blocksRouter = router({
     }),
 
   /**
+   * MOD REVIEW SANDBOX (#2831) — start a temporary, mod-gated preview of a
+   * PENDING version so the mod can run the actual block before approving.
+   * Triggers a SEPARATE review build (distinct image + host from production)
+   * and returns the review URL the UI polls toward. Torn down on the
+   * approve/reject decision.
+   *
+   * DORMANT until the mod-only `app-blocks-review-sandbox` flag is enabled: the
+   * extra flag check (on top of moderatorProcedure + the isModerator belt +
+   * enforceAppBlocksFlag) makes the whole feature ship dark.
+   */
+  previewRequest: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(previewRequestSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Review previews are restricted to civitai team');
+      }
+      const { isAppBlocksReviewSandboxEnabled } = await import(
+        '~/server/services/app-blocks-flag'
+      );
+      if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
+        throw throwAuthorizationError('The review sandbox is not enabled');
+      }
+      const { previewRequest } = await import('~/server/services/blocks/publish-request.service');
+      try {
+        return await previewRequest({
+          publishRequestId: input.publishRequestId,
+          modUserId: ctx.user.id,
+        });
+      } catch (err) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+      }
+    }),
+
+  /**
+   * MOD REVIEW SANDBOX (#2831) — poll target for the preview lifecycle state
+   * (preview-building → deploying → live | failed) + the review URL. Same
+   * mod-only flag gate as previewRequest.
+   */
+  getReviewStatus: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(getReviewStatusSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Review previews are restricted to civitai team');
+      }
+      const { isAppBlocksReviewSandboxEnabled } = await import(
+        '~/server/services/app-blocks-flag'
+      );
+      if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
+        throw throwAuthorizationError('The review sandbox is not enabled');
+      }
+      const { getReviewStatus } = await import('~/server/services/blocks/publish-request.service');
+      try {
+        // Pass the calling mod's id so getReviewStatus mints a FRESH, mod-bound,
+        // short-TTL tokened previewUrl when the preview is live — the cross-origin
+        // access bridge the `*.civit.ai` mod-gate forwardAuth verifies.
+        return await getReviewStatus({
+          publishRequestId: input.publishRequestId,
+          modUserId: ctx.user.id,
+        });
+      } catch (err) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+      }
+    }),
+
+  /**
+   * MOD REVIEW SANDBOX — MANUAL teardown of a single review preview (also the way
+   * to free a slot when the global concurrent-preview cap is hit). Deletes the
+   * per-request review k8s resources (label-scoped) AND clears the DB preview
+   * state so the request reverts to "no preview". Same mod-only flag gate as
+   * previewRequest.
+   */
+  teardownPreview: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(teardownPreviewSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Review previews are restricted to civitai team');
+      }
+      const { isAppBlocksReviewSandboxEnabled } = await import(
+        '~/server/services/app-blocks-flag'
+      );
+      if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
+        throw throwAuthorizationError('The review sandbox is not enabled');
+      }
+      const { teardownPreview } = await import('~/server/services/blocks/publish-request.service');
+      try {
+        return await teardownPreview({ publishRequestId: input.publishRequestId });
+      } catch (err) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+      }
+    }),
+
+  /**
+   * MOD REVIEW SANDBOX — list the currently-active review previews (global across
+   * all mods) + the cap, for the "Active previews (N / cap)" panel. Same mod-only
+   * flag gate as previewRequest; no input.
+   */
+  listActivePreviews: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .query(async ({ ctx }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Review previews are restricted to civitai team');
+      }
+      const { isAppBlocksReviewSandboxEnabled } = await import(
+        '~/server/services/app-blocks-flag'
+      );
+      if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
+        throw throwAuthorizationError('The review sandbox is not enabled');
+      }
+      const { listActiveReviewPreviews } = await import(
+        '~/server/services/blocks/publish-request.service'
+      );
+      try {
+        return await listActiveReviewPreviews();
+      } catch (err) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+      }
+    }),
+
+  /**
    * Approve a pending publish request: pre-creates the OauthClient +
    * app_blocks row (first version), commits the bundle to Forgejo in a
    * single atomic commit, and lets the existing git-push webhook fire
@@ -1151,10 +1292,42 @@ export const blocksRouter = router({
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Screenshot backfill is restricted to civitai team');
       }
+      // DISABLED (no-op) — `backfillMissingScreenshots` short-circuits while
+      // `BLOCK_SCREENSHOT_AUTOGEN_ENABLED` is false. It captured the standalone
+      // `<slug>.<APPS_DOMAIN>` URL, which only renders a waiting-for-host
+      // skeleton (blocks need the host `BLOCK_INIT` postMessage), so it only ever
+      // produced useless skeleton screenshots. Real screenshots come from
+      // creator/dev upload (or a future in-host `/apps/run/<slug>` capture). Proc
+      // retained so re-enabling is a one-line flip of the const.
       const { backfillMissingScreenshots } = await import(
         '~/server/services/blocks/autogenerate-screenshot.service'
       );
       return backfillMissingScreenshots({ limit: input.limit });
+    }),
+
+  /**
+   * App Store Listings (W13 P0) — moderator-only backfill. Creates one
+   * store-facing AppListing per existing approved AppBlock (on-site + the #2821
+   * external-link off-site rows). Idempotent on appBlockId; DARK (writes only
+   * app_listings, read by nothing in the running image). `dryRun` previews the
+   * counts without writing. Gated like the other mod-management procs.
+   */
+  backfillAppListings: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        limit: z.number().int().min(1).max(1000).optional(),
+        dryRun: z.boolean().optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Listing backfill is restricted to civitai team');
+      }
+      const { backfillAppListings } = await import(
+        '~/server/services/blocks/app-listing-backfill.service'
+      );
+      return backfillAppListings({ limit: input.limit, dryRun: input.dryRun });
     }),
 
   /**
@@ -1192,7 +1365,7 @@ export const blocksRouter = router({
    * Returns the rejection reason inline so the dev sees mod feedback
    * without a second round-trip.
    */
-  listMyPublishRequests: moderatorProcedure
+  listMyPublishRequests: appDeveloperProcedure
     .use(enforceAppBlocksFlag)
     .query(async ({ ctx }) => {
       if (!ctx.user) return [];
@@ -2043,7 +2216,7 @@ export const blocksRouter = router({
       }
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
-      await assertViewerIsModerator(userId);
+      await assertViewerIsAppDeveloper(userId);
       const token = await getOrchestratorToken(userId, ctx);
       const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
       return { snapshot: snapshotFromWorkflow(workflow) };
@@ -2086,7 +2259,7 @@ export const blocksRouter = router({
       }
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
-      await assertViewerIsModerator(userId);
+      await assertViewerIsAppDeveloper(userId);
       const token = await getOrchestratorToken(userId, ctx);
       await cancelWorkflow({ workflowId: input.workflowId, token });
       const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
@@ -2148,7 +2321,7 @@ export const blocksRouter = router({
       }
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
-      await assertViewerIsModerator(userId);
+      await assertViewerIsAppDeveloper(userId);
       const ctxSlotId = (claims.ctx as { slotId?: unknown } | undefined)?.slotId;
       if (typeof ctxSlotId !== 'string' || ctxSlotId.length === 0) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'block token lacks slotId context' });
@@ -2299,7 +2472,7 @@ export const blocksRouter = router({
       }
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
-      await assertViewerIsModerator(userId);
+      await assertViewerIsAppDeveloper(userId);
       const ctxSlotId = (claims.ctx as { slotId?: unknown } | undefined)?.slotId;
       if (typeof ctxSlotId !== 'string' || ctxSlotId.length === 0) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'block token lacks slotId context' });
@@ -2348,7 +2521,12 @@ export const blocksRouter = router({
       // output clamp. SFW → blue/green; mature → blue/yellow. Used by BOTH the
       // whatIf cost-check and the real submit below so the estimate matches what
       // the real submit will actually drain.
-      const currencies = resolveBlockCurrencies(isGreen);
+      //
+      // Money page blocks may pick a preferred `accountType` — honor it
+      // PREFERRED-FIRST while keeping the maturity policy clamp: an in-set pick
+      // is moved to the front (with the rest as fallback); an out-of-set pick is
+      // rejected; absent → Auto (unchanged). See resolveBlockCurrenciesForAccount.
+      const currencies = resolveBlockCurrenciesForAccount(isGreen, input.body.accountType);
 
       if (isPage) {
         const loraGates = await resolvePageLoraGates({
@@ -2462,6 +2640,10 @@ export const blocksRouter = router({
       // snapshot) — so we do NOT refund on a non-throwing failed snapshot.
       let snapshot: ReturnType<typeof snapshotFromWorkflow>;
       let autoClaim: Awaited<ReturnType<typeof maybeAutoClaimDailyBoost>>;
+      // Hoisted out of the try so the post-submit spend-attribution closure
+      // (which runs AFTER the try/catch) can read the REALIZED per-account
+      // debit — `submitted` is a try-block `const` and is out of scope there.
+      let realizedTransactions: Awaited<ReturnType<typeof submitWorkflow>>['transactions'];
       try {
         // Daily-boost autoclaim. Cost cleared the install's budget cap; check
         // whether the user's actual spendable Buzz can pay for it. If they're
@@ -2504,6 +2686,7 @@ export const blocksRouter = router({
           },
         });
         snapshot = snapshotFromWorkflow(submitted);
+        realizedTransactions = submitted.transactions;
       } catch (e) {
         // No resolved submit → undo the reservation (net-equivalent to the old
         // "only record after a resolved submit" behavior) and propagate. Refund
@@ -2587,26 +2770,73 @@ export const blocksRouter = router({
           // but a per-app earnings cap / velocity check is a HARD
           // prerequisite before the spend flow opens to non-mods (track
           // alongside the Slice-4 payout gate + the rate sign-off).
-          // Record a PAYOUT-SAFE currency basis for this spend. The orchestrator
-          // drains the offered currencies in spend order (blue-FIRST — blue is
-          // the free generation Buzz) and does NOT surface a per-account debit
-          // to this path, so we cannot know how the cost split across FREE (blue)
-          // vs PAID (green/yellow) Buzz. Since green is PAID and payout-eligible
-          // (product 2026-06-30: "green buzz is paid, only blue is free"),
-          // stamping the paid domain currency would let a spend actually drained
-          // from FREE blue accrue a bounty → the farming vector. So we
-          // conservatively stamp the FREE first-drained currency (blue), which
-          // `isPayoutEligibleBuzz` (computeSpendShare) EXCLUDES → ZERO bounty.
-          // Net: spending parity ships now; block payout stays 0 until a
-          // follow-up records the REAL per-account debit (then the paid
-          // green/yellow portions can earn). DO NOT switch this to the domain
-          // currency without that real-debit signal — it reopens free-Buzz farming.
-          const spendBuzzTypes = getBlockAllowedAccountTypes(isGreen);
-          // [0] === 'blue' in both branches — the conservative free floor.
-          const spentBuzzType = spendBuzzTypes[0];
+          // Record a PAYOUT-SAFE currency basis for this spend off the REAL
+          // per-account debit. The orchestrator drains the offered currencies
+          // in spend order (blue-FIRST — blue is the free generation Buzz) and
+          // surfaces the REALIZED per-account debit on the SAME `submitted`
+          // workflow this handler already holds: `transactions.list` carries
+          // one entry per charge with `type` (debit/credit), `amount`, and
+          // `accountType` (blue | green | yellow). On-site generation earns at
+          // parity off this exact signal, so block payout must too.
+          //
+          // Rule: a generation can split across FREE (blue) and PAID
+          // (green/yellow) Buzz. ONLY the PAID portion earns — stamp the paid
+          // account and the SUMMED paid debit amount, so the author bounty
+          // accrues off what the user actually paid, never the free blue
+          // portion. The offered currencies are ['blue', green|yellow] (never
+          // both green and yellow), so at most ONE paid account is ever
+          // drained; we NET that paid account's debits against any same-submit
+          // credits (a partial refund / charge correction the orchestrator may
+          // emit in the SAME transactions.list) so the bounty accrues off what
+          // the user NET paid, not a gross debit that was partly refunded.
+          //
+          // When NO paid debit is present — a blue-only spend, OR a cache-hit /
+          // 0-cost gen, OR a snapshot the orchestrator returned WITHOUT
+          // transactions — we fall back to the conservative FREE floor (blue +
+          // the realized/estimated cost), which `isPayoutEligibleBuzz`
+          // (computeSpendShare) EXCLUDES → ZERO bounty. This preserves the
+          // anti-farming guarantee: free-Buzz spend can never accrue a bounty,
+          // and an absent/unknown debit signal never pays. Forge-safe:
+          // `submitted` is the orchestrator's authoritative response, not
+          // client input.
+          // ALL paid-account (green/yellow) entries — debits AND credits — so we
+          // can net them. Blue/fakeRed are excluded by isPayoutEligibleBuzz.
+          const paidEntries = (realizedTransactions?.list ?? []).filter((t) =>
+            isPayoutEligibleBuzz(t.accountType)
+          );
+          // Defensive guard against a FUTURE change that offers BOTH green and
+          // yellow (today the contract is ['blue', green|yellow], so at most one
+          // paid account is touched). If more than one distinct paid accountType
+          // shows up we can't attribute a single paid currency, so refuse to
+          // conflate them and fall back to the conservative blue floor below.
+          const distinctPaidTypes = new Set(paidEntries.map((t) => t.accountType));
+          // NET the paid account: debits add, credits (refunds/corrections in the
+          // same workflow) subtract. A net <= 0 means nothing was net-paid → floor.
+          const netPaidAmount =
+            distinctPaidTypes.size > 1
+              ? 0
+              : paidEntries.reduce(
+                  (sum, t) =>
+                    sum + (t.type === 'debit' ? Math.abs(t.amount ?? 0) : -Math.abs(t.amount ?? 0)),
+                  0
+                );
+          const hasPaidDebit = distinctPaidTypes.size === 1 && netPaidAmount > 0;
+          // `isPayoutEligibleBuzz` already narrowed accountType to green|yellow,
+          // both valid `BuzzSpendType`s; size===1 ⇒ every paid entry shares it.
+          const paidType = hasPaidDebit
+            ? (paidEntries[0].accountType as BuzzSpendType)
+            : undefined;
+
+          // paidType is set iff hasPaidDebit; otherwise fall to the conservative
+          // free floor (getBlockAllowedAccountTypes[0] === 'blue' in both branches).
+          const spentBuzzType: BuzzSpendType = paidType ?? getBlockAllowedAccountTypes(isGreen)[0];
+          const spentBuzzAmount = hasPaidDebit
+            ? netPaidAmount
+            : Math.ceil(snapshot.cost?.total ?? cost);
+
           await recordSpendAttribution({
             userId,
-            buzzAmount: Math.ceil(snapshot.cost?.total ?? cost),
+            buzzAmount: spentBuzzAmount,
             buzzType: spentBuzzType,
             workflowId: spendWorkflowId,
             appId: claims.appId,
@@ -2620,6 +2850,63 @@ export const blocksRouter = router({
       }
 
       return { snapshot: autoClaim ? { ...snapshot, autoClaim } : snapshot };
+    }),
+
+  /**
+   * HOST-MEDIATED balance read for the token-bound viewer (money page blocks).
+   * Returns the viewer's OWN spendable buzz balances so a page can render an
+   * account picker + "you have N buzz" without the page ever holding the
+   * `buzz:read:self` scope.
+   *
+   * POLICY REVERSAL (intentional, scoped): App Blocks pages are deliberately
+   * FORBIDDEN the `buzz:read:self` scope — a page has no business reading the
+   * viewer's balance directly. This procedure is the FIRST-PARTY host exposing
+   * the viewer's OWN balance to their OWN page session, mediated by the
+   * proof-of-session block token: userId is derived from the token `sub`
+   * (self-bound), NEVER from client input, so a page can only ever read the
+   * balance of the exact user whose session minted the token. This does NOT
+   * lift the scope forbid; `buzz:read:self` stays denied for pages.
+   *
+   * Auth model is IDENTICAL to submitWorkflow's block-token gate: verify the
+   * token, require an authenticated (non-anon) subject, then the App-Blocks
+   * enabled kill-switch + author gate evaluated against the TOKEN subject. Only
+   * the three spendable types the UI needs are returned (blue/green/yellow) —
+   * internal types (red / creatorProgram / cash) are omitted.
+   */
+  getMyBuzzBalance: publicProcedure
+    // Block-JWT-authed (no session for dev:live) — flag evaluated against the
+    // TOKEN subject below, not the `enforceAppBlocksFlag` middleware's ctx.user.
+    //
+    // MUTATION (not query) DELIBERATELY: the block JWT is a bearer credential
+    // that ALSO authorizes submitWorkflow (spend). A tRPC .query sends small
+    // inputs as HTTP GET with the input in the URL (?input=...), leaking the
+    // token into CF/nginx/Traefik logs, browser history, and Referer where it
+    // is replayable within its TTL. Every block-token-authed proc in this router
+    // is a mutation for exactly this reason (token in the POST body). Keep it so.
+    .input(z.object({ blockToken: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      const claims = await verifyBlockToken(input.blockToken);
+      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      // Derive the user from the SELF-BOUND token subject, never client input.
+      const userId = parseSubjectUserId(claims.sub);
+      if (userId == null) {
+        throw new TRPCError({
+          code: 'UNAUTHORIZED',
+          message: 'buzz balance requires an authenticated viewer',
+        });
+      }
+      // Same gates as the other block-token procs, evaluated against the TOKEN
+      // subject: the enabled kill-switch AND the author capability.
+      await assertAppBlocksEnabledForTokenUser(userId);
+      await assertViewerIsAppDeveloper(userId);
+      // getUserBuzzAccounts returns every spend type; project to just the three
+      // spendable types the UI needs (omit red / creator-program / cash).
+      const accounts = await getUserBuzzAccounts({ userId });
+      return {
+        blue: accounts.blue ?? 0,
+        green: accounts.green ?? 0,
+        yellow: accounts.yellow ?? 0,
+      };
     }),
 
   /**
@@ -2760,7 +3047,7 @@ export const blocksRouter = router({
       }
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
-      await assertViewerIsModerator(userId);
+      await assertViewerIsAppDeveloper(userId);
       const ctxModelId = Number((claims.ctx as { modelId?: unknown } | undefined)?.modelId ?? NaN);
       if (!Number.isInteger(ctxModelId)) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'block token lacks modelId context' });
@@ -2848,10 +3135,11 @@ export const blocksRouter = router({
    * Publisher revenue summary. Caller must be the app owner — the
    * service filters by `app_owner_user_id` so even if the request
    * carries a different appBlockId, the rows are scoped to the caller.
-   * Auth check is enforced by moderatorProcedure; no need to also assert
-   * ownership of the requested appBlockId (the join filter does it).
+   * Auth is enforced by appDeveloperProcedure (the `appBlocksAuthor`
+   * capability); no need to also assert ownership of the requested appBlockId
+   * (the join filter does it).
    */
-  getMyRevenue: moderatorProcedure
+  getMyRevenue: appDeveloperProcedure
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -2886,13 +3174,13 @@ export const blocksRouter = router({
    * and engagement for the caller's OWN app(s), derived entirely from
    * existing App Blocks tables (no new instrumentation). Read-only.
    *
-   * Same audience gate as getMyRevenue (moderatorProcedure +
+   * Same audience gate as getMyRevenue (appDeveloperProcedure +
    * enforceAppBlocksFlag — dark behind the appBlocks flag). Ownership is
    * enforced inside the service: it resolves the caller's owned app_block
    * ids via AppBlock.app.userId and returns zeroed/empty analytics for a
    * non-owned id, so an author can never read another author's metrics.
    */
-  getMyAppAnalytics: moderatorProcedure
+  getMyAppAnalytics: appDeveloperProcedure
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -2924,7 +3212,7 @@ export const blocksRouter = router({
    * the per-app dropdown on /apps/revenue. OauthClient.userId is the
    * single source of truth for app ownership in v1.
    */
-  getMyApps: moderatorProcedure
+  getMyApps: appDeveloperProcedure
     .use(enforceAppBlocksFlag)
     .query(async ({ ctx }) => {
       const user = ctx.user as SessionUser;
@@ -3098,7 +3386,405 @@ export const blocksRouter = router({
         firstVersionIsZip: false as const,
       };
     }),
+
+  /**
+   * App management (Phase 1) — return the FULL stored manifest for one of the
+   * caller's OWN apps so the web editor can pre-fill the edit form. Owner-gated
+   * exactly like getMyAppRepo (OauthClient.userId is the v1 ownership source of
+   * truth). Distinct from the public getAppDetail (which returns only the
+   * PublicAppDetail allowlist, no scopes/full manifest) — this is the owner's
+   * own private read.
+   */
+  getMyAppManifest: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(z.object({ appBlockId: z.string().min(1).max(64) }))
+    .query(async ({ ctx, input }) => {
+      if (!ctx.features.appBlocks) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'App Blocks is not available to this account',
+        });
+      }
+      const block = await dbRead.appBlock.findUnique({
+        where: { id: input.appBlockId },
+        select: {
+          id: true,
+          blockId: true,
+          status: true,
+          version: true,
+          manifest: true,
+          app: {
+            select: { userId: true, allowedScopes: true, allowedOrigins: true },
+          },
+        },
+      });
+      if (!block) throw throwNotFoundError('App block not found');
+      if (block.app?.userId !== ctx.user!.id) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Not the app owner' });
+      }
+      return {
+        appBlockId: block.id,
+        slug: block.blockId,
+        status: block.status,
+        version: block.version,
+        manifest: block.manifest as Record<string, unknown>,
+        // Surfaced so the client can preview which scopes/origins the edit is
+        // bounded by (the SERVER re-derives + enforces these on save — the
+        // client copy is advisory only).
+        allowedScopes: block.app?.allowedScopes ?? 0,
+        allowedOrigins: block.app?.allowedOrigins ?? [],
+      };
+    }),
+
+  /**
+   * App management (Phase 1) — edit an app's manifest from the web UI. On save
+   * this does a BACKGROUND commit of the new block.manifest.json to the app's
+   * canonical Forgejo repo (civitai-apps/<slug>), which RE-ENTERS the existing
+   * no-trust review flow: the commit is recorded as a `pending` publish request
+   * and NEVER auto-approves or deploys. A moderator must approve it through the
+   * existing /apps/review → approveRequest → build → deploy path.
+   *
+   * HARD RULES enforced here:
+   *   - OWNER-only (OauthClient.userId), authenticated, app must be `approved`
+   *     (the canonical repo only exists after the first ZIP approval).
+   *   - blockId is IMMUTABLE — the caller cannot rename the slug; we force the
+   *     merged manifest's blockId back to the stored slug.
+   *   - iframe.src is platform-owned — re-stamped to the canonical subdomain.
+   *   - the merged manifest is RE-VALIDATED server-side with
+   *     BlockManifestValidator against the app's OauthClient context (scope
+   *     subset + allowedOrigins SSRF binding) — the client manifest is NEVER
+   *     trusted.
+   *   - version must strictly increase (semver) so each edit is a new version.
+   *
+   * The commit itself fires the git-push webhook too, but we ALSO call
+   * recordPendingFromPush explicitly (idempotent at (slug, sha)) so the editor
+   * gets a stable publishRequestId back without depending on webhook delivery.
+   */
+  updateManifest: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        appBlockId: z.string().min(1).max(64),
+        // Editable manifest fields. blockId / iframe.src are intentionally
+        // ABSENT — blockId is immutable (forced server-side) and iframe.src is
+        // platform-owned (stamped server-side). Everything is optional so the
+        // client can send a sparse patch; we deep-merge onto the stored manifest.
+        patch: z
+          .object({
+            name: z.string().min(1).max(200).optional(),
+            // New version — REQUIRED so every manifest edit is a distinct
+            // version (mirrors a ZIP submitVersion). Must strictly exceed the
+            // stored version (checked below).
+            version: z.string().min(1).max(64),
+            contentRating: z.string().min(1).max(8).optional(),
+            renderMode: z.string().min(1).max(16).optional(),
+            trustTier: z.string().min(1).max(16).optional(),
+            description: z.string().max(5000).optional(),
+            scopes: z.array(z.string().min(1).max(128)).max(64).optional(),
+            publicSettingsKeys: z.array(z.string().min(1).max(64)).max(32).optional(),
+            targets: z
+              .array(z.object({ slotId: z.string().min(1).max(64) }).passthrough())
+              .max(16)
+              .optional(),
+            page: z
+              .object({
+                path: z.string().min(1).max(256),
+                title: z.string().min(1).max(128),
+                icon: z.string().max(128).optional(),
+                buzzBudgetPerGen: z.number().int().positive().optional(),
+              })
+              .passthrough()
+              .nullable()
+              .optional(),
+            // Editable iframe sub-fields (NOT src — that's platform-owned).
+            iframe: z
+              .object({
+                minHeight: z.number().optional(),
+                maxHeight: z.number().nullable().optional(),
+                resizable: z.boolean().optional(),
+                sandbox: z.string().max(256).optional(),
+              })
+              .partial()
+              .optional(),
+          })
+          .strict(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.features.appBlocks) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'App Blocks is not available to this account',
+        });
+      }
+
+      const block = await dbRead.appBlock.findUnique({
+        where: { id: input.appBlockId },
+        select: {
+          id: true,
+          blockId: true,
+          status: true,
+          version: true,
+          // trustTier is SERVER-OWNED (moderator-controlled, NOT
+          // publisher-declared) — loaded so we can re-stamp it onto the merged
+          // manifest before validation (see below), mirroring
+          // submitVersion/approveRequest.
+          trustTier: true,
+          manifest: true,
+          app: { select: { userId: true, allowedScopes: true, allowedOrigins: true } },
+        },
+      });
+      if (!block) throw throwNotFoundError('App block not found');
+      // Owner gate — OauthClient.userId is the v1 ownership source of truth.
+      if (block.app?.userId !== ctx.user!.id) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Not the app owner' });
+      }
+      // A banned/suspended account must not be able to mutate a live app.
+      if (ctx.user!.bannedAt) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Account is not eligible to edit apps',
+        });
+      }
+      // The canonical Forgejo repo only exists once the first version is
+      // ZIP-approved (approveRequest pre-creates civitai-apps/<slug>); until
+      // then there's nothing to commit to.
+      if (block.status !== 'approved') {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message:
+            'Your first version must be submitted as a ZIP and approved before you can edit the manifest from the web.',
+        });
+      }
+
+      const slug = block.blockId;
+      const { patch } = input;
+
+      // Merge the patch onto the STORED manifest (the source of truth) — never
+      // trust a client-supplied full manifest. Deep-merge `iframe` so the
+      // editable sub-fields override but the platform-owned `src` survives the
+      // merge (it's then re-stamped below regardless).
+      const stored = (block.manifest ?? {}) as Record<string, unknown>;
+      const storedIframe =
+        stored.iframe && typeof stored.iframe === 'object' && !Array.isArray(stored.iframe)
+          ? (stored.iframe as Record<string, unknown>)
+          : {};
+      const merged: Record<string, unknown> = {
+        ...stored,
+        ...patch,
+        // blockId is IMMUTABLE — force back to the stored slug regardless of
+        // anything the client sent (the input schema doesn't even accept it, but
+        // belt-and-suspenders against a future schema widening).
+        blockId: slug,
+        iframe: { ...storedIframe, ...(patch.iframe ?? {}) },
+      };
+
+      // version must STRICTLY increase so each edit is a new, ordered version
+      // (mirrors a ZIP submitVersion). Reject equal/lower to keep the version
+      // monotonic and avoid a no-op review churn.
+      const { SEMVER_REGEX } = await import('~/server/schema/blocks/publish-request.schema');
+      const newVersion = patch.version;
+      if (!SEMVER_REGEX.test(newVersion)) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `version "${newVersion}" must be semver (e.g. 1.2.3)`,
+        });
+      }
+      if (compareSemver(newVersion, block.version) <= 0) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `version must be greater than the current version (${block.version})`,
+        });
+      }
+      merged.version = newVersion;
+
+      // iframe.src is PLATFORM-OWNED — stamp the canonical per-app subdomain
+      // root so the validator's origin-binding + the webhook's exact-match gate
+      // both pass, exactly as submit/approve/git-push do.
+      const { stampCanonicalIframeSrc } = await import(
+        '~/server/services/blocks/manifest-normalize'
+      );
+      stampCanonicalIframeSrc(merged, slug, env.APPS_DOMAIN);
+
+      // trustTier is SERVER-OWNED (moderator-controlled, NOT publisher-declared)
+      // — force it back to the tier already on the app's row regardless of what
+      // the client patched. Raising the tier is a deliberate out-of-band
+      // moderator/DB action, never a manifest field. This makes the validator
+      // below (which reads `manifest.trustTier` to gate the iframe sandbox
+      // allowlist) run against the tier we'll actually persist, exactly as
+      // submitVersion/approveRequest do — closing the gap where a client could
+      // self-declare `internal` to pass a sandbox/scope combo their real tier
+      // forbids.
+      merged.trustTier = block.trustTier ?? 'unverified';
+
+      // RE-VALIDATE server-side against the app's OauthClient context. This is
+      // the security boundary: scope-subset + allowedOrigins SSRF binding are
+      // enforced here, never trusting the client. (The git-push webhook will
+      // also re-validate the committed manifest — defense in depth.)
+      const { BlockManifestValidator } = await import(
+        '~/server/services/block-manifest-validator.service'
+      );
+      const appContext = {
+        allowedScopes: block.app?.allowedScopes ?? 0,
+        allowedOrigins: (block.app?.allowedOrigins ?? []).map((o: string) => o.toLowerCase()),
+      };
+      const validation = BlockManifestValidator.validate(merged, appContext);
+      if (!validation.valid) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `Invalid manifest: ${validation.errors.join('; ')}`,
+        });
+      }
+
+      // Background commit of the new manifest to the CANONICAL repo. We use the
+      // admin-token commitFiles (same call approveRequest uses) — Forgejo fires
+      // the push webhook regardless of which token committed, so this naturally
+      // re-enters the no-trust review path. replaceAllFiles is FALSE: we only
+      // touch block.manifest.json, leaving the app's source untouched.
+      const { commitFiles } = await import('~/server/services/blocks/forgejo.service');
+      const manifestJson = Buffer.from(JSON.stringify(merged, null, 2) + '\n', 'utf8');
+      const { sha } = await commitFiles({
+        org: FORGEJO_ORG,
+        slug,
+        files: [{ path: 'block.manifest.json', content: manifestJson }],
+        message: `Manifest update: ${slug} v${newVersion}`,
+      });
+
+      // Deterministically record the pending review (idempotent at (slug, sha)
+      // with the webhook the commit also fires). This is what makes the edit
+      // enter the SAME no-trust pending-review gate a direct git push does.
+      const { recordPendingFromPush } = await import(
+        '~/server/services/blocks/publish-request.service'
+      );
+      const { publishRequestId } = await recordPendingFromPush({
+        slug,
+        sha,
+        appBlockId: block.id,
+        manifest: merged,
+        version: newVersion,
+      });
+
+      return {
+        publishRequestId,
+        slug,
+        version: newVersion,
+        sha,
+        status: 'pending' as const,
+      };
+    }),
+
+  /**
+   * App management (Phase 2) — return the caller's per-user Forgejo clone info
+   * for one of THEIR apps, for the read-only `civitai app pull` CLI command.
+   * Owner-gated identically to getMyAppRepo; lazily provisions the scoped,
+   * restricted per-user Forgejo identity (ensureForgejoIdentity) and grants it
+   * read on the app's own civitai-apps/<slug> repo.
+   *
+   * Distinct from getMyAppRepo only in intent (pull/sync vs push instructions);
+   * it returns the raw { forgejoUsername, token, cloneUrl } the CLI assembles
+   * its git command from. The token is embedded in the returned cloneUrl exactly
+   * as getMyAppRepo does (the CLI documents the token-in-URL leakage caveat).
+   */
+  getMyForgejoCloneInfo: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    // Accept EITHER the appBlockId (ab_…) OR the slug (blockId / repo name) — the
+    // CLI `civitai app pull --app <slug|appBlockId>` lets a developer pass the
+    // human-friendly slug, which is the repo name they think in.
+    .input(
+      z
+        .object({
+          appBlockId: z.string().min(1).max(64).optional(),
+          slug: z.string().min(1).max(64).optional(),
+        })
+        .refine((v) => !!v.appBlockId || !!v.slug, {
+          message: 'one of appBlockId or slug is required',
+        })
+    )
+    .query(async ({ ctx, input }) => {
+      if (!ctx.features.appBlocks) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'App Blocks is not available to this account',
+        });
+      }
+      const block = input.appBlockId
+        ? await dbRead.appBlock.findUnique({
+            where: { id: input.appBlockId },
+            select: { blockId: true, status: true, app: { select: { userId: true } } },
+          })
+        : await dbRead.appBlock.findFirst({
+            where: { blockId: input.slug },
+            select: { blockId: true, status: true, app: { select: { userId: true } } },
+          });
+      if (!block) throw throwNotFoundError('App block not found');
+      if (block.app?.userId !== ctx.user!.id) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Not the app owner' });
+      }
+      if (ctx.user!.bannedAt) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Account is not eligible for git access',
+        });
+      }
+      const slug = block.blockId;
+      if (block.status !== 'approved') {
+        return {
+          notYetAvailable: true as const,
+          slug,
+          message:
+            'Your first version must be submitted as a ZIP and approved before git access is available.',
+        };
+      }
+
+      const { ensureForgejoIdentity } = await import(
+        '~/server/services/blocks/dev-git-access.service'
+      );
+      const { addCollaborator } = await import('~/server/services/blocks/forgejo.service');
+      const { forgejoUsername, token } = await ensureForgejoIdentity(ctx.user!.id);
+      // Read is enough to pull/sync; grant `read` (idempotent). getMyAppRepo
+      // grants `write` for the push flow — the CLI `pull` only needs read.
+      await addCollaborator({ slug, username: forgejoUsername, permission: 'read' });
+
+      const publicHost = env.FORGEJO_PUBLIC_URL.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      const httpUrl = `https://${publicHost}/${FORGEJO_ORG}/${slug}.git`;
+      const cloneUrl = `https://${encodeURIComponent(forgejoUsername)}:${token}@${publicHost}/${FORGEJO_ORG}/${slug}.git`;
+
+      return {
+        notYetAvailable: false as const,
+        slug,
+        forgejoUsername,
+        token,
+        httpUrl,
+        cloneUrl,
+      };
+    }),
 });
+
+/**
+ * Compare two semver strings (x.y.z[-pre]). Returns -1 / 0 / 1 for a<b / a==b /
+ * a>b. Pre-release handling is intentionally simple: any prerelease is ordered
+ * BELOW its release (1.2.3-rc < 1.2.3) and two prereleases compare lexically —
+ * enough to enforce "the new version must strictly increase" for the manifest
+ * editor (the canonical SEMVER_REGEX already validated the shape).
+ */
+function compareSemver(a: string, b: string): number {
+  const split = (v: string): { nums: number[]; pre: string | null } => {
+    const [core, pre = null] = v.split('-', 2);
+    const nums = core.split('.').map((n) => parseInt(n, 10) || 0);
+    while (nums.length < 3) nums.push(0);
+    return { nums, pre };
+  };
+  const A = split(a);
+  const B = split(b);
+  for (let i = 0; i < 3; i++) {
+    if (A.nums[i] !== B.nums[i]) return A.nums[i] < B.nums[i] ? -1 : 1;
+  }
+  // Cores equal — a release outranks any prerelease of the same core.
+  if (A.pre === null && B.pre === null) return 0;
+  if (A.pre === null) return 1; // a is the release, b is a prerelease
+  if (B.pre === null) return -1;
+  return A.pre < B.pre ? -1 : A.pre > B.pre ? 1 : 0;
+}
 
 // Block-initiated workflows spend at PARITY with the on-site generator
 // (`getAllowedAccountTypes` / `resolveGenerationCurrencies`): the currencies
@@ -3113,12 +3799,43 @@ export const blocksRouter = router({
 // regardless of which account type pays.
 //
 // PAYOUT-SAFETY: widening the SPENDABLE currencies here is decoupled from
-// payout eligibility. The author-bounty rail (#2605) excludes free/granted
-// Buzz (blue, green) via `isPayoutEligibleBuzz` at the payout boundary
-// (`computeSpendShare`), so this widening can NEVER become platform-funded
-// farming. See buzz-helpers.ts.
+// payout eligibility. The author-bounty rail (#2605) excludes only free
+// (blue) Buzz via `isPayoutEligibleBuzz` at the payout boundary
+// (`computeSpendShare`); green and yellow are PAID and payout-eligible. So
+// this widening can NEVER make free Buzz become platform-funded farming.
+// See buzz-helpers.ts.
 function resolveBlockCurrencies(isGreen: boolean) {
   return BuzzTypes.toOrchestratorType(getBlockAllowedAccountTypes(isGreen));
+}
+
+// PREFERRED-FIRST + DOMAIN-CLAMPED currency selection for a viewer-picked
+// account (money page blocks). The domain-allowed set is derived from the
+// token's AUTHORITATIVE maturity ceiling (`getBlockAllowedAccountTypes`) — the
+// maturity policy gate — and is NEVER widened here.
+//
+//   - accountType absent          → return the allowed set unchanged (Auto).
+//     Byte-identical to `resolveBlockCurrencies(isGreen)`, so the no-pick path
+//     preserves today's behavior exactly.
+//   - accountType NOT in the set  → REJECT (BAD_REQUEST). A SFW block can't
+//     spend yellow, a mature block can't spend green. We never silently spend a
+//     different account than requested, and never add a disallowed account.
+//   - accountType in the set      → move it to the FRONT, keeping the remaining
+//     allowed currencies as FALLBACK. The orchestrator drains in array order,
+//     so the picked account pays first but a generation still succeeds when the
+//     preferred account alone can't cover it (total across the allowed accounts
+//     is enough) — preferred-first, then fall back.
+function resolveBlockCurrenciesForAccount(
+  isGreen: boolean,
+  accountType: BuzzSpendType | undefined
+): ReturnType<typeof resolveBlockCurrencies> {
+  const { ordered, disallowed } = orderBlockCurrencyTypes(isGreen, accountType);
+  if (disallowed) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `buzz account '${accountType}' is not spendable for this app's content rating`,
+    });
+  }
+  return BuzzTypes.toOrchestratorType(ordered);
 }
 
 /**

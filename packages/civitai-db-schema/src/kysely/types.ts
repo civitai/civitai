@@ -119,6 +119,7 @@ import type {
   ReviewVerdict,
   Model3DStatus,
   Model3DEngagementType,
+  ShopifyMerchOrderStatus,
 } from './enums';
 
 export type Account = {
@@ -327,6 +328,76 @@ export type Appeal = {
   resolvedMessage: string | null;
   internalNotes: string | null;
   buzzTransactionId: string | null;
+};
+export type AppListing = {
+  id: string;
+  kind: string;
+  slug: string;
+  name: string;
+  tagline: string | null;
+  description: string | null;
+  icon_id: number | null;
+  cover_id: number | null;
+  category: string | null;
+  status: Generated<string>;
+  content_rating: string | null;
+  external_url: string | null;
+  connect_client_id: string | null;
+  app_block_id: string | null;
+  featured: Generated<boolean>;
+  featured_order: number | null;
+  user_id: number;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+};
+export type AppListingMetric = {
+  app_listing_id: string;
+  thumbs_up_count: Generated<number>;
+  thumbs_down_count: Generated<number>;
+  install_count: Generated<number>;
+  open_count: Generated<number>;
+  connect_count: Generated<number>;
+  visit_count: Generated<number>;
+  tipped_count: Generated<number>;
+  tipped_amount_count: Generated<number>;
+  updated_at: Generated<Timestamp>;
+};
+export type AppListingPublishRequest = {
+  id: string;
+  app_listing_id: string | null;
+  kind: string;
+  slug: string;
+  submitted_by_user_id: number;
+  submitted_at: Generated<Timestamp>;
+  status: string;
+  reviewed_by_user_id: number | null;
+  reviewed_at: Timestamp | null;
+  rejection_reason: string | null;
+  approval_notes: string | null;
+  changelog: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+};
+export type AppListingReview = {
+  id: Generated<number>;
+  app_listing_id: string;
+  user_id: number;
+  recommended: boolean;
+  details: string | null;
+  exclude: Generated<boolean>;
+  tos_violation: Generated<boolean>;
+  metadata: unknown | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+};
+export type AppListingScreenshot = {
+  id: string;
+  app_listing_id: string;
+  image_id: number | null;
+  order: Generated<number>;
+  caption: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
 };
 export type AppUserScopeGrant = {
   id: string;
@@ -1984,22 +2055,6 @@ export type ImageFlag = {
   promptNsfw: Generated<boolean>;
   resourcesNsfw: Generated<boolean>;
 };
-export type ImageMetric = {
-  imageId: number;
-  timeframe: MetricTimeframe;
-  likeCount: Generated<number>;
-  dislikeCount: Generated<number>;
-  laughCount: Generated<number>;
-  cryCount: Generated<number>;
-  heartCount: Generated<number>;
-  commentCount: Generated<number>;
-  collectedCount: Generated<number>;
-  tippedCount: Generated<number>;
-  tippedAmountCount: Generated<number>;
-  viewCount: Generated<number>;
-  reactionCount: number;
-  updatedAt: Generated<Timestamp>;
-};
 export type ImageModHelper = {
   imageId: number;
   assessedNSFW: Generated<boolean | null>;
@@ -2059,64 +2114,6 @@ export type ImageResourceNew = {
   modelVersionId: number;
   strength: number | null;
   detected: Generated<boolean>;
-};
-export type ImageStat = {
-  imageId: number;
-  cryCountDay: Generated<number>;
-  cryCountWeek: Generated<number>;
-  cryCountMonth: Generated<number>;
-  cryCountYear: Generated<number>;
-  cryCountAllTime: Generated<number>;
-  dislikeCountDay: Generated<number>;
-  dislikeCountWeek: Generated<number>;
-  dislikeCountMonth: Generated<number>;
-  dislikeCountYear: Generated<number>;
-  dislikeCountAllTime: Generated<number>;
-  heartCountDay: Generated<number>;
-  heartCountWeek: Generated<number>;
-  heartCountMonth: Generated<number>;
-  heartCountYear: Generated<number>;
-  heartCountAllTime: Generated<number>;
-  laughCountDay: Generated<number>;
-  laughCountWeek: Generated<number>;
-  laughCountMonth: Generated<number>;
-  laughCountYear: Generated<number>;
-  laughCountAllTime: Generated<number>;
-  likeCountDay: Generated<number>;
-  likeCountWeek: Generated<number>;
-  likeCountMonth: Generated<number>;
-  likeCountYear: Generated<number>;
-  likeCountAllTime: Generated<number>;
-  commentCountDay: Generated<number>;
-  commentCountWeek: Generated<number>;
-  commentCountMonth: Generated<number>;
-  commentCountYear: Generated<number>;
-  commentCountAllTime: Generated<number>;
-  reactionCountDay: Generated<number>;
-  reactionCountWeek: Generated<number>;
-  reactionCountMonth: Generated<number>;
-  reactionCountYear: Generated<number>;
-  reactionCountAllTime: Generated<number>;
-  collectedCountDay: Generated<number>;
-  collectedCountWeek: Generated<number>;
-  collectedCountMonth: Generated<number>;
-  collectedCountYear: Generated<number>;
-  collectedCountAllTime: Generated<number>;
-  tippedCountDay: Generated<number>;
-  tippedCountWeek: Generated<number>;
-  tippedCountMonth: Generated<number>;
-  tippedCountYear: Generated<number>;
-  tippedCountAllTime: Generated<number>;
-  tippedAmountCountDay: Generated<number>;
-  tippedAmountCountWeek: Generated<number>;
-  tippedAmountCountMonth: Generated<number>;
-  tippedAmountCountYear: Generated<number>;
-  tippedAmountCountAllTime: Generated<number>;
-  viewCountDay: Generated<number>;
-  viewCountWeek: Generated<number>;
-  viewCountMonth: Generated<number>;
-  viewCountYear: Generated<number>;
-  viewCountAllTime: Generated<number>;
 };
 export type ImageTag = {
   imageId: number;
@@ -3067,6 +3064,13 @@ export type RewardsBonusEvent = {
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
+export type Role = {
+  id: string;
+  description: string | null;
+  createdById: number | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
+};
 export type RunStrategy = {
   modelVersionId: number;
   partnerId: number;
@@ -3109,6 +3113,26 @@ export type ShadowTagsOnImage = {
   imageId: number;
   tagId: number;
   confidence: number;
+};
+export type ShopifyCustomerLink = {
+  id: Generated<number>;
+  shopifyCustomerId: string;
+  email: string;
+  userId: number;
+  createdAt: Generated<Timestamp>;
+};
+export type ShopifyMerchOrder = {
+  id: Generated<number>;
+  shopifyOrderId: string;
+  email: string;
+  shopifyCustomerId: string | null;
+  subtotal: string;
+  couponCodes: string[];
+  buzzAmount: number;
+  status: Generated<ShopifyMerchOrderStatus>;
+  userId: number | null;
+  grantedAt: Timestamp | null;
+  createdAt: Generated<Timestamp>;
 };
 export type Tag = {
   id: Generated<number>;
@@ -3691,6 +3715,11 @@ export type DB = {
   app_block_reviews: AppBlockReview;
   app_blocks: AppBlock;
   app_dev_forgejo_identity: AppDevForgejoIdentity;
+  app_listing_metrics: AppListingMetric;
+  app_listing_publish_requests: AppListingPublishRequest;
+  app_listing_reviews: AppListingReview;
+  app_listing_screenshots: AppListingScreenshot;
+  app_listings: AppListing;
   app_user_scope_grants: AppUserScopeGrant;
   Appeal: Appeal;
   Article: Article;
@@ -3811,7 +3840,6 @@ export type DB = {
   ImageConnection: ImageConnection;
   ImageEngagement: ImageEngagement;
   ImageFlag: ImageFlag;
-  ImageMetric: ImageMetric;
   ImageModHelper: ImageModHelper;
   ImageRatingRequest: ImageRatingRequest;
   ImageReaction: ImageReaction;
@@ -3819,7 +3847,6 @@ export type DB = {
   ImageResource: ImageResource;
   ImageResourceHelper: ImageResourceHelper;
   ImageResourceNew: ImageResourceNew;
-  ImageStat: ImageStat;
   ImageTag: ImageTag;
   ImageTagForReview: ImageTagForReview;
   ImageTechnique: ImageTechnique;
@@ -3902,6 +3929,7 @@ export type DB = {
   ResourceReviewReport: ResourceReviewReport;
   RestrictedBaseModels: RestrictedBaseModels;
   RewardsBonusEvent: RewardsBonusEvent;
+  Role: Role;
   RunStrategy: RunStrategy;
   SavedModel: SavedModel;
   ScannerContentSnapshot: ScannerContentSnapshot;
@@ -3909,6 +3937,8 @@ export type DB = {
   Session: Session;
   SessionInvalidation: SessionInvalidation;
   ShadowTagsOnImage: ShadowTagsOnImage;
+  ShopifyCustomerLink: ShopifyCustomerLink;
+  ShopifyMerchOrder: ShopifyMerchOrder;
   Tag: Tag;
   TagEngagement: TagEngagement;
   TagMetric: TagMetric;

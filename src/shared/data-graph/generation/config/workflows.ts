@@ -248,7 +248,7 @@ export const workflowConfigs: WorkflowConfigs = {
     showBackButton: true,
     // ControlNets are disabled for now, so the preprocessor — which only produces
     // input for a ControlNet — is hidden from the picker too.
-    hidden: true,
+    // hidden: true,
     ecosystemIds: [],
     isNew: true,
   },

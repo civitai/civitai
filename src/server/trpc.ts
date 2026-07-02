@@ -392,6 +392,28 @@ export const protectedProcedure = publicProcedure.use(isAuthed);
 export const moderatorProcedure = protectedProcedure.use(isMod);
 
 /**
+ * App developer procedure — authenticated + the `appBlocksAuthor` capability
+ * (Flipt `app-blocks-author`, static fallback mod-only). Gates the App Blocks
+ * AUTHOR surfaces (own submissions / revenue / analytics, withdraw, dev:live)
+ * for a curated non-mod cohort WITHOUT granting the mod REVIEW/curation powers
+ * (those stay on `moderatorProcedure`).
+ *
+ * Fail-CLOSED: `getFeatureFlags` resolves `appBlocksAuthor` from Flipt when the
+ * flag exists, else falls back to the static `availability: ['mod']` — so an
+ * absent flag / Flipt-down yields mods only, never open-to-all.
+ */
+const hasAppBlocksAuthor = t.middleware(({ ctx, next }) => {
+  const features = getFeatureFlags(ctx);
+  if (!features.appBlocksAuthor)
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'You do not have access to App Blocks authoring',
+    });
+  return next();
+});
+export const appDeveloperProcedure = protectedProcedure.use(hasAppBlocksAuthor);
+
+/**
  * Verified procedure to prevent users from making actions
  * if they haven't completed the onboarding process
  */

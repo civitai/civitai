@@ -43,6 +43,7 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
   onClick,
   variant = 'text',
   rel,
+  'aria-label': ariaLabel,
 }: {
   name: T;
   state: ComponentProps<(typeof dialogs)[T]['component']>;
@@ -54,6 +55,7 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
   onClick?: (e: React.MouseEvent<HTMLAnchorElement, MouseEvent>) => void;
   variant?: AnchorProps['variant'];
   rel?: string;
+  'aria-label'?: string;
 }) {
   const router = useRouter();
   const { query = QS.parse(QS.stringify(router.query)) } = getBrowserRouter();
@@ -73,6 +75,9 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
       href: asPath,
       onClick: handleClick,
       rel,
+      // Forward the accessible name in the passHref branch too (latent-safety:
+      // no current caller passes both, but don't silently drop it).
+      ...(ariaLabel ? { 'aria-label': ariaLabel } : {}),
       // className,
       // style,
     });
@@ -86,6 +91,7 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
       style={style}
       variant={variant}
       rel={rel}
+      aria-label={ariaLabel}
     >
       {children}
     </Anchor>

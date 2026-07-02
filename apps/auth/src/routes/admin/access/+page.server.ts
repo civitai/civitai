@@ -1,12 +1,9 @@
 import { fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { db } from '$lib/server/db/db';
-import { invalidateRoleCache, TESTER_ROLE, type AccessMode } from '$lib/server/oauth/access';
+import type { AccessMode } from '$lib/server/oauth/access';
 
-// Admin editor for OAuth login gating (gated to admins by /admin/+layout.server.ts):
-//  - per-client accessMode (open / testers / disabled) on OauthClient — read live by the /authorize gate
-//    (no cache, so no invalidation needed on write)
-//  - the "tester" UserRole allowlist — cached ~60s per role in access.ts, so every write invalidateRoleCache()s.
+// Per-client OAuth accessMode (open / testers / disabled). Who holds the `tester` role is on /admin/roles.
 
 const ACCESS_MODES: AccessMode[] = ['open', 'testers', 'disabled'];
 const isAccessMode = (v: string): v is AccessMode => (ACCESS_MODES as string[]).includes(v);
@@ -35,15 +32,7 @@ export const load: PageServerLoad = async ({ url }) => {
         .execute()
     : [];
 
-  const testers = await db
-    .selectFrom('UserRole')
-    .leftJoin('User', 'User.id', 'UserRole.userId')
-    .select(['UserRole.userId', 'User.username', 'UserRole.note', 'UserRole.createdAt'])
-    .where('UserRole.role', '=', TESTER_ROLE)
-    .orderBy('UserRole.createdAt', 'desc')
-    .execute();
-
-  return { gated, searchResults, q, testers };
+  return { gated, searchResults, q };
 };
 
 export const actions: Actions = {
@@ -66,58 +55,5 @@ export const actions: Actions = {
     if (!updated) return fail(404, { action: 'setMode', id, error: 'That client no longer exists.' });
 
     return { action: 'setMode', success: true, id, accessMode };
-  },
-
-  // Add a tester to the global allowlist — by numeric user id or username.
-  addTester: async ({ request, locals }) => {
-    const data = await request.formData();
-    const raw = String(data.get('user') ?? '').trim();
-    const note = String(data.get('note') ?? '').trim() || null;
-    if (!raw) return fail(400, { action: 'addTester', error: 'Enter a user id or username.' });
-
-    // All-digits → treat as a user id; otherwise resolve the username (case-insensitive).
-    const user = /^\d+$/.test(raw)
-      ? await db.selectFrom('User').select(['id', 'username']).where('id', '=', Number(raw)).executeTakeFirst()
-      : await db
-          .selectFrom('User')
-          .select(['id', 'username'])
-          .where('username', 'ilike', raw)
-          .executeTakeFirst();
-
-    if (!user) {
-      return fail(404, { action: 'addTester', error: `No user found for "${raw}".`, values: { note } });
-    }
-
-    const inserted = await db
-      .insertInto('UserRole')
-      .values({ userId: user.id, role: TESTER_ROLE, note, addedById: locals.user?.id ?? null })
-      .onConflict((oc) => oc.columns(['userId', 'role']).doNothing())
-      .returning('userId')
-      .executeTakeFirst();
-
-    if (!inserted) {
-      return fail(409, {
-        action: 'addTester',
-        error: `${user.username ?? `user #${user.id}`} is already a tester.`,
-      });
-    }
-
-    invalidateRoleCache(TESTER_ROLE);
-    return { action: 'addTester', success: true, username: user.username ?? `user #${user.id}` };
-  },
-
-  // Remove a tester (the "tester" role) from a user.
-  removeTester: async ({ request }) => {
-    const data = await request.formData();
-    const userId = Number(data.get('userId'));
-    if (!Number.isInteger(userId)) return fail(400, { action: 'removeTester', error: 'Missing user id.' });
-
-    await db
-      .deleteFrom('UserRole')
-      .where('userId', '=', userId)
-      .where('role', '=', TESTER_ROLE)
-      .execute();
-    invalidateRoleCache(TESTER_ROLE);
-    return { action: 'removeTester', success: true, userId };
   },
 };

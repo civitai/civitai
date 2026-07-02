@@ -109,6 +109,8 @@ export const constants = {
     'UNet',
     'DiffusionModel',
     'CLIPVision',
+    'CLIP',
+    'VisionLanguage',
     'ControlNet',
     'Upscaler',
     'Workflow',

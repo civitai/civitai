@@ -1,0 +1,181 @@
+import { createHmac, timingSafeEqual } from 'crypto';
+
+/**
+ * MOD REVIEW SANDBOX (#2831) — parent-minted, short-TTL, mod-bound access token.
+ *
+ * The review preview is a CROSS-ORIGIN iframe: `review-<sha16>.civit.ai`
+ * embedded inside the civitai.com `/apps/review` page. The civitai session
+ * cookie is scoped to civitai.com and is therefore NOT sent to the `*.civit.ai`
+ * forwardAuth target — so the old cookie-resolving mod-gate 401s everyone (the
+ * documented PRE-FLAG-FLIP blocker).
+ *
+ * The fix: the civitai.com parent page is ALREADY authenticated and sets the
+ * iframe `src`, so it can inject a signed token directly into the URL
+ * (`?mr=<token>`). No cross-domain cookie, no redirect bounce. The mod-gate
+ * forwardAuth verifies the token on the ENTRY document request.
+ *
+ * Token design:
+ *   - payload `{ m: modUserId, h: host, exp: nowSec + 120 }`
+ *   - signed with HMAC-SHA256 over the DOMAIN-SEPARATED string
+ *     `review-mr:v1:${m}:${h}:${exp}` (the `review-mr:v1:` prefix prevents this
+ *     signature from ever being confused with any other HMAC the app produces
+ *     over the same secret).
+ *   - secret = `env.NEXTAUTH_SECRET` (present in every civitai-web deployment;
+ *     no new secret to provision).
+ *   - compact wire form `base64url(json(payload)).base64url(sig)`.
+ *   - 120s TTL: the token only needs to survive from mint (the parent's
+ *     getReviewStatus poll) → the iframe document load. A fresh URL is minted on
+ *     every poll, so the live iframe never goes stale.
+ *
+ * This module is PURE (crypto + the injected secret) so it is unit-testable
+ * without a DB / k8s / session.
+ */
+
+/** ENTRY-token TTL in seconds. Intentionally short: mint → iframe document load. */
+export const REVIEW_ACCESS_TOKEN_TTL_SECONDS = 120;
+
+/** Domain-separation prefix for the short-TTL ENTRY token (carried as `?mr=`).
+ *  So this HMAC can never collide with another the app signs over the same
+ *  NEXTAUTH_SECRET. Bump `v1` if the payload shape changes. */
+const DOMAIN_PREFIX = 'review-mr:v1';
+
+type ReviewAccessPayload = {
+  /** Moderator user id the token is bound to (audit + X-Mod-Id). */
+  m: number;
+  /** review host the token authorizes (`review-<sha16>.<APPS_DOMAIN>`). */
+  h: string;
+  /** Absolute expiry, unix seconds. */
+  exp: number;
+};
+
+function base64url(input: Buffer | string): string {
+  const buf = typeof input === 'string' ? Buffer.from(input, 'utf8') : input;
+  return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function base64urlToBuffer(input: string): Buffer {
+  const pad = input.length % 4 === 0 ? '' : '='.repeat(4 - (input.length % 4));
+  return Buffer.from(input.replace(/-/g, '+').replace(/_/g, '/') + pad, 'base64');
+}
+
+/** The domain-separated string for the short-TTL ENTRY (`mr`) token that is
+ *  HMAC'd. The `DOMAIN_PREFIX` ensures this HMAC can never collide with another
+ *  the app signs over the same NEXTAUTH_SECRET. */
+function signingString(p: ReviewAccessPayload): string {
+  return `${DOMAIN_PREFIX}:${p.m}:${p.h}:${p.exp}`;
+}
+
+function hmac(secret: string, signingStr: string): Buffer {
+  return createHmac('sha256', secret).update(signingStr).digest();
+}
+
+function nowSec(): number {
+  return Math.floor(Date.now() / 1000);
+}
+
+export type SignReviewAccessTokenParams = {
+  modUserId: number;
+  host: string;
+  /** Injected for testability; defaults to env.NEXTAUTH_SECRET. */
+  secret?: string;
+  /** Injected for testability; defaults to REVIEW_ACCESS_TOKEN_TTL_SECONDS. */
+  ttlSeconds?: number;
+};
+
+/**
+ * Mint a compact `base64url(payload).base64url(sig)` review access token bound
+ * to (modUserId, host), valid for `ttlSeconds` (default 120s).
+ */
+export function signReviewAccessToken(params: SignReviewAccessTokenParams): string {
+  const secret = params.secret ?? resolveSecret();
+  const ttl = params.ttlSeconds ?? REVIEW_ACCESS_TOKEN_TTL_SECONDS;
+  const payload: ReviewAccessPayload = {
+    m: params.modUserId,
+    h: params.host,
+    exp: nowSec() + ttl,
+  };
+  const payloadB64 = base64url(JSON.stringify(payload));
+  const sigB64 = base64url(hmac(secret, signingString(payload)));
+  return `${payloadB64}.${sigB64}`;
+}
+
+export type VerifyReviewAccessTokenResult = {
+  ok: boolean;
+  modUserId?: number;
+};
+
+/**
+ * Verify a review access token against the expected host. NEVER throws on
+ * malformed input — returns `{ ok:false }`. Checks:
+ *   - structurally parseable payload + signature
+ *   - constant-time (timingSafeEqual) HMAC match
+ *   - not expired (`exp > nowSec`)
+ *   - bound host equals `expectedHost`
+ */
+export function verifyReviewAccessToken(
+  token: string | null | undefined,
+  expectedHost: string,
+  opts?: { secret?: string }
+): VerifyReviewAccessTokenResult {
+  const fail: VerifyReviewAccessTokenResult = { ok: false };
+  if (!token || typeof token !== 'string') return fail;
+
+  const dot = token.indexOf('.');
+  if (dot <= 0 || dot === token.length - 1) return fail;
+  const payloadB64 = token.slice(0, dot);
+  const sigB64 = token.slice(dot + 1);
+
+  let payload: ReviewAccessPayload;
+  try {
+    const parsed = JSON.parse(base64urlToBuffer(payloadB64).toString('utf8'));
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      typeof parsed.m !== 'number' ||
+      typeof parsed.h !== 'string' ||
+      typeof parsed.exp !== 'number'
+    ) {
+      return fail;
+    }
+    payload = parsed as ReviewAccessPayload;
+  } catch {
+    return fail;
+  }
+
+  let secret: string;
+  try {
+    secret = opts?.secret ?? resolveSecret();
+  } catch {
+    return fail;
+  }
+
+  // Recompute over the SAME domain-separated string from the parsed payload, so a
+  // tampered payload (different m/h/exp) yields a different signing string → the
+  // constant-time compare below fails.
+  const expectedSig = hmac(secret, signingString(payload));
+  let providedSig: Buffer;
+  try {
+    providedSig = base64urlToBuffer(sigB64);
+  } catch {
+    return fail;
+  }
+  // timingSafeEqual requires equal-length buffers; a length mismatch is a
+  // definitive non-match (and would throw), so guard it explicitly.
+  if (providedSig.length !== expectedSig.length) return fail;
+  if (!timingSafeEqual(providedSig, expectedSig)) return fail;
+
+  if (payload.exp <= nowSec()) return fail;
+  if (payload.h !== expectedHost) return fail;
+
+  return { ok: true, modUserId: payload.m };
+}
+
+/** Resolve NEXTAUTH_SECRET lazily so the module stays import-cheap + testable
+ *  (callers can inject `secret` directly to avoid env resolution). */
+function resolveSecret(): string {
+  // Lazy require to avoid pulling the env validator into every importer.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const secret = process.env.NEXTAUTH_SECRET;
+  if (!secret) throw new Error('NEXTAUTH_SECRET is not set');
+  return secret;
+}

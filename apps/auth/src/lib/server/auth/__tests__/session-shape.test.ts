@@ -46,8 +46,9 @@ const shape = (
   row: Partial<ProducerUserRow> = {},
   subscriptionRows: ProducerSubscriptionRow[] = [],
   permissions: string[] = [],
-  tierKey: string | undefined = 'tier'
-) => shapeSessionUser({ row: baseRow(row), subscriptionRows, permissions, tierKey });
+  tierKey: string | undefined = 'tier',
+  roles: string[] = []
+) => shapeSessionUser({ row: baseRow(row), subscriptionRows, permissions, roles, tierKey });
 
 describe('shapeSessionUser — field mapping', () => {
   it('maps the base identity fields', () => {
@@ -139,6 +140,7 @@ describe('shapeSessionUser — tier / subscriptions', () => {
       row: baseRow(),
       subscriptionRows: [sub({ product: { metadata: { tier: 'gold' } } })],
       permissions: [],
+      roles: [],
       tierKey: undefined,
     });
     expect(u.tier).toBeUndefined();

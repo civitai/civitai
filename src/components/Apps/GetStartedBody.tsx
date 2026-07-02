@@ -88,25 +88,25 @@ function CopyableCommand({ command }: { command: string }) {
 export function GetStartedBody() {
   return (
     <Stack gap="xl">
-      {/* Banner — 16:9 hero image (public asset, no layout shift) */}
+      {/* Banner — 3:2 hero image (public asset, no layout shift) */}
       <Image
         src="/images/apps/civitai-apps-banner.webp"
         alt="Build apps on Civitai"
         radius="md"
         w="100%"
-        style={{ aspectRatio: '16 / 9' }}
+        style={{ aspectRatio: '3 / 2' }}
       />
 
       {/* Hero — one line, no wall of text */}
       <Stack gap="xs">
         <Group gap="xs">
           <Badge color="blue" variant="light" radius="sm">
-            For app builders
+            Beta
           </Badge>
         </Group>
-        <Title order={1}>Build apps on Civitai</Title>
+        <Title order={1}>Build on Civitai</Title>
         <Text size="lg" c="dimmed">
-          Build on Civitai&apos;s web + AI infrastructure — tap a catalog of hundreds of thousands of
+          Build on Civitai&apos;s web + AI infrastructure. Tap a catalog of hundreds of thousands of
           models and generate with Buzz. You focus on creating; we handle the rest.
         </Text>
       </Stack>
@@ -139,7 +139,7 @@ export function GetStartedBody() {
               <IconPhoto size={16} />
             </ThemeIcon>
             <Text size="sm">
-              <b>A huge model catalog</b> — search hundreds of thousands of models &amp; images from
+              <b>A huge model catalog</b>: search hundreds of thousands of models &amp; images from
               your app.
             </Text>
           </Group>
@@ -148,7 +148,7 @@ export function GetStartedBody() {
               <IconSparkles size={16} />
             </ThemeIcon>
             <Text size="sm">
-              <b>AI generation, no GPUs</b> — run generations on Civitai&apos;s infrastructure, paid
+              <b>AI generation, no GPUs</b>: run generations on Civitai&apos;s infrastructure, paid
               in Buzz.
             </Text>
           </Group>
@@ -157,7 +157,7 @@ export function GetStartedBody() {
               <IconServer size={16} />
             </ThemeIcon>
             <Text size="sm">
-              <b>Hosting handled</b> — we build and host your app; no Docker, no servers.
+              <b>Hosting handled</b>: we build and host your app; no Docker, no servers.
             </Text>
           </Group>
           <Group gap="xs" align="flex-start" wrap="nowrap">
@@ -165,7 +165,7 @@ export function GetStartedBody() {
               <IconUser size={16} />
             </ThemeIcon>
             <Text size="sm">
-              <b>Built-in identity</b> — your app knows who&apos;s viewing; no auth to wire up.
+              <b>Built-in identity</b>: your app knows who&apos;s viewing; no auth to wire up.
             </Text>
           </Group>
           <Group gap="xs" align="flex-start" wrap="nowrap">
@@ -173,7 +173,7 @@ export function GetStartedBody() {
               <IconDatabase size={16} />
             </ThemeIcon>
             <Text size="sm">
-              <b>Private storage</b> — a per-app key-value store for your data.
+              <b>Private storage</b>: a per-app key-value store for your data.
             </Text>
           </Group>
           <Group gap="xs" align="flex-start" wrap="nowrap">
@@ -181,7 +181,7 @@ export function GetStartedBody() {
               <IconPalette size={16} />
             </ThemeIcon>
             <Text size="sm">
-              <b>Themed UI kit</b> — drop-in components that match Civitai automatically.
+              <b>Themed UI kit</b>: drop-in components that match Civitai automatically.
             </Text>
           </Group>
         </SimpleGrid>

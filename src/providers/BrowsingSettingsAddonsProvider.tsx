@@ -2,8 +2,10 @@ import { createContext, useContext, useMemo } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { BrowsingSettingsAddon } from '~/shared/constants/browsing-settings-addons';
-import { DEFAULT_BROWSING_SETTINGS_ADDONS } from '~/shared/constants/browsing-settings-addons';
-import { Flags } from '~/shared/utils/flags';
+import {
+  DEFAULT_BROWSING_SETTINGS_ADDONS,
+  resolveBrowsingSettingsAddons,
+} from '~/shared/constants/browsing-settings-addons';
 import { trpc } from '~/utils/trpc';
 
 const BrowsingSettingsAddonsCtx = createContext<{
@@ -44,71 +46,13 @@ export const BrowsingSettingsAddonsProvider = ({
   const currentUser = useCurrentUser();
   const browsingLevel = useBrowsingLevelDebounced();
 
-  const settings = useMemo(() => {
-    if (currentUser?.isModerator) {
-      // Mods will always see the default values
-      return {
-        disableMinor: false,
-        disablePoi: false,
-        excludedTagIds: [],
-        excludedFooterLinks: [],
-        generationDefaultValues: {},
-        generationMinValues: {},
-      };
-    }
-
-    return data.reduce(
-      (acc, elem) => {
-        try {
-          let apply = false;
-          if (elem.type === 'some') {
-            apply = Flags.intersection(browsingLevel, Flags.arrayToInstance(elem.nsfwLevels)) !== 0;
-          }
-
-          if (elem.type === 'all') {
-            apply =
-              Flags.intersection(browsingLevel, Flags.arrayToInstance(elem.nsfwLevels)) ===
-              Flags.arrayToInstance(elem.nsfwLevels);
-          }
-
-          if (elem.type === 'none') {
-            apply = Flags.intersection(browsingLevel, Flags.arrayToInstance(elem.nsfwLevels)) === 0;
-          }
-
-          if (apply) {
-            // booleans: last-explicit-wins. arrays: accumulate. A later rule
-            // setting disablePoi/disableMinor=false cannot undo excludedTagIds
-            // pushed by an earlier rule — scope rules narrowly instead.
-            if (elem.disablePoi !== undefined) acc.disablePoi = elem.disablePoi;
-            if (elem.disableMinor !== undefined) acc.disableMinor = elem.disableMinor;
-            acc.excludedTagIds.push(...(elem.excludedTagIds ?? []));
-            acc.excludedFooterLinks.push(...(elem.excludedFooterLinks ?? []));
-            acc.generationDefaultValues = {
-              ...acc.generationDefaultValues,
-              ...(elem.generationDefaultValues ?? {}),
-            };
-            acc.generationMinValues = {
-              ...acc.generationMinValues,
-              ...(elem.generationMinValues ?? {}),
-            };
-          }
-
-          return acc;
-        } catch (error) {
-          console.error('Error evaluating shouldApply function:', error);
-          return acc;
-        }
-      },
-      {
-        disableMinor: false,
-        disablePoi: false,
-        excludedTagIds: [] as number[],
-        excludedFooterLinks: [] as string[],
-        generationDefaultValues: {} as Record<string, number>,
-        generationMinValues: {} as Record<string, number>,
-      }
-    );
-  }, [browsingLevel, data]);
+  const settings = useMemo(
+    () =>
+      resolveBrowsingSettingsAddons(data, browsingLevel, {
+        isModerator: currentUser?.isModerator,
+      }),
+    [browsingLevel, data, currentUser?.isModerator]
+  );
 
   return (
     <BrowsingSettingsAddonsCtx.Provider

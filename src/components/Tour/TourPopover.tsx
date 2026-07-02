@@ -23,6 +23,8 @@ export function TourPopover(props: TooltipRenderProps) {
   return (
     <Paper
       {...tooltipProps}
+      // Give the react-joyride dialog (role="alertdialog") an accessible name.
+      aria-label={typeof step.title === 'string' && step.title ? step.title : 'Product tour'}
       className={clsx('flex flex-col gap-4 bg-white dark:bg-dark-6', centered && 'mx-auto')}
       p="sm"
       radius="md"
@@ -35,7 +37,7 @@ export function TourPopover(props: TooltipRenderProps) {
         <Text className={clsx(!step.showProgress && 'hidden')} size="sm" c="dimmed">
           {index + 1} of {size}
         </Text>
-        {!step.hideCloseButton && <CloseButton ml="auto" />}
+        {!step.hideCloseButton && <CloseButton aria-label="Close" ml="auto" />}
       </Group>
       <div className="flex flex-col gap-1">
         {step.title && step.showProgress && (

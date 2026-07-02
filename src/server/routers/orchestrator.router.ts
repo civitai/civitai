@@ -114,14 +114,10 @@ const experimentalMiddleware = middleware(async ({ ctx, next }) => {
   const user = ctx.user;
   if (!user) throw throwAuthorizationError();
 
-  const flags = await getExperimentalFlags({
-    userId: user.id,
-    isModerator: user.isModerator,
-    isMember: user.tier != null && user.tier !== 'free',
-  });
+  const flags = await getExperimentalFlags(user);
 
   // `enhancedCompatibilitySdcpp` forces experimental on — it requires the
-  // experimental path in the orchestrator regardless of the Redis config.
+  // experimental path in the orchestrator regardless of the Flipt flag.
   if (ctx.features?.enhancedCompatibilitySdcpp) flags.experimental = true;
 
   return next({ ctx: { ...ctx, user, ...flags } });

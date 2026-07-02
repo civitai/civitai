@@ -6,23 +6,22 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * the de-dupe + reaction-sort pass.
  */
 
-const { mockDbRead } = vi.hoisted(() => ({
+const { mockDbRead, mockGetImageMetricsObject } = vi.hoisted(() => ({
   mockDbRead: {
     imageResourceNew: { findMany: vi.fn() },
-    // Reaction counts now come from a raw query (the reactionCount-is-NULL P2032
-    // fix), not the typed metrics relation. The default implementation in
-    // beforeEach derives the AllTime ImageMetric rows from whatever findMany
-    // returned, reading the per-image count off the test's `metrics` fixture —
-    // so the existing imageRow(...) call sites keep working unchanged.
-    $queryRaw: vi.fn(),
   },
+  mockGetImageMetricsObject: vi.fn(),
 }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead }));
-// Prisma.join is used to build the raw reactionCount query's IN-list. The test
-// env's generated client doesn't expose it, and the $queryRaw mock ignores the
-// SQL anyway, so a passthrough is all we need.
-vi.mock('@prisma/client', () => ({ Prisma: { join: (ids: unknown[]) => ids } }));
+// Reaction counts now come from ClickHouse via getImageMetricsObject. The default
+// implementation in beforeEach derives per-image totals from whatever findMany
+// returned, reading the count off the test's `metrics` fixture — so the existing
+// imageRow(...) call sites keep working unchanged. Mocking the module also avoids
+// importing the heavy real image.service into the test.
+vi.mock('~/server/services/image.service', () => ({
+  getImageMetricsObject: mockGetImageMetricsObject,
+}));
 // Mock getEdgeUrl as identity so tests assert against the input urls.
 vi.mock('~/client-utils/cf-images-utils', () => ({
   getEdgeUrl: (src: string) => src,
@@ -32,22 +31,46 @@ import { getModelShowcaseImages } from '../showcase.service';
 
 beforeEach(() => {
   mockDbRead.imageResourceNew.findMany.mockReset();
-  mockDbRead.$queryRaw.mockReset();
-  // Derive the AllTime ImageMetric rows from the last findMany result. An image
-  // whose fixture has `metrics: []` (or no count) is omitted → the service
-  // treats it as 0 reactions, exercising the null-tolerant fallback.
-  mockDbRead.$queryRaw.mockImplementation(async () => {
+  mockGetImageMetricsObject.mockReset();
+  // Derive reaction totals from the last findMany result. Each image's fixture
+  // `metrics: [{ reactionCount }]` becomes reactionLike (the service sums the
+  // four reaction kinds, so a single kind reproduces the fixture count); an image
+  // whose fixture has `metrics: []` (or no count) yields null → treated as 0.
+  mockGetImageMetricsObject.mockImplementation(async (data: { id: number }[]) => {
     const last = mockDbRead.imageResourceNew.findMany.mock.results.at(-1);
     const rows: Array<{ image?: { id: number; metrics?: Array<{ reactionCount?: number }> } }> =
       last && last.type === 'return' ? await last.value : [];
-    const seen = new Set<number>();
-    const out: Array<{ imageId: number; reactionCount: number }> = [];
+    const byId = new Map<number, number>();
     for (const r of rows) {
       const img = r?.image;
-      if (!img || seen.has(img.id)) continue;
-      seen.add(img.id);
+      if (!img || byId.has(img.id)) continue;
       const rc = img.metrics?.[0]?.reactionCount;
-      if (rc != null) out.push({ imageId: img.id, reactionCount: rc });
+      if (rc != null) byId.set(img.id, rc);
+    }
+    const out: Record<
+      number,
+      {
+        imageId: number;
+        reactionLike: number | null;
+        reactionHeart: number | null;
+        reactionLaugh: number | null;
+        reactionCry: number | null;
+        comment: number | null;
+        collection: number | null;
+        buzz: number | null;
+      }
+    > = {};
+    for (const { id } of data) {
+      out[id] = {
+        imageId: id,
+        reactionLike: byId.get(id) ?? null,
+        reactionHeart: null,
+        reactionLaugh: null,
+        reactionCry: null,
+        comment: null,
+        collection: null,
+        buzz: null,
+      };
     }
     return out;
   });

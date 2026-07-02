@@ -500,6 +500,7 @@ export const miscModelTypes: ModelType[] = [
   'Detection',
   'VisionLanguage',
   'CLIP',
+  'LLM',
   'Other',
 ] as const;
 

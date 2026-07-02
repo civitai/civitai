@@ -598,6 +598,17 @@ export const serverSchema = z
     EMERCHANTPAY_PASSWORD: z.string().optional(),
     EMERCHANTPAY_WEBHOOK_SECRET: z.string().optional(),
 
+    // Shopify merch store — Blue Buzz reward loop. SHOPIFY_SHOP_DOMAIN is the
+    // *.myshopify.com admin domain (e.g. ff1592-5.myshopify.com). Webhook secret
+    // verifies orders/* HMAC. Admin auth: the custom app uses the client_credentials
+    // grant (CLIENT_ID + CLIENT_SECRET → short-lived token); set SHOPIFY_ADMIN_TOKEN
+    // instead only if using a static store custom-app token.
+    SHOPIFY_SHOP_DOMAIN: z.string().optional(),
+    SHOPIFY_WEBHOOK_SECRET: z.string().optional(),
+    SHOPIFY_CLIENT_ID: z.string().optional(),
+    SHOPIFY_CLIENT_SECRET: z.string().optional(),
+    SHOPIFY_ADMIN_TOKEN: z.string().optional(),
+
     FLIPT_URL: z.string(),
     FLIPT_FETCHER_SECRET: z.string(),
     FLIPT_DEPLOYMENT_ID: z.string().optional(),
@@ -706,6 +717,15 @@ export const serverSchema = z
     BLOCK_BUILD_CALLBACK_SECRET_NEXT: z.string().optional(),
     APPS_TEKTON_TRIGGER_URL: z.string().url().optional(),
     APPS_TEKTON_TRIGGER_SECRET: z.string().optional(),
+    // MOD REVIEW SANDBOX (#2831) — endpoint on the SAME app-blocks-trigger
+    // receiver that creates a review-mode PipelineRun (clones the in-review repo,
+    // builds ghcr.io/civitai/app-block-review-<slug>:<sha>, posts to
+    // review-build-callback). HMAC-signed with the SAME APPS_TEKTON_TRIGGER_SECRET
+    // (no new secret). OPTIONAL — when unset, triggerReviewBuild derives it from
+    // APPS_TEKTON_TRIGGER_URL by swapping the trailing `/trigger-build` segment
+    // for `/trigger-review-build`, so a typical deploy needs no extra env. Example:
+    // http://wireguard-proxy-service.civitai-submodel-proxy.svc.cluster.local:8088/trigger-review-build
+    APPS_TEKTON_REVIEW_TRIGGER_URL: z.string().url().optional(),
     APPS_KUBE_NAMESPACE: z.string().default('civitai-apps'),
     APPS_DOMAIN: z.string().default('civit.ai'),
     // Base URL of the verify-runner screenshot service (warm Playwright Chromium)

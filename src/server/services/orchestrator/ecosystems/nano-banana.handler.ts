@@ -12,6 +12,7 @@ import type {
   Gemini25FlashCreateImageGenInput,
   Gemini25FlashEditImageGenInput,
   NanoBanana2ImageGenInput,
+  NanoBanana2LiteImageGenInput,
   NanoBananaProImageGenInput,
   ImageGenStepTemplate,
 } from '@civitai/client';
@@ -32,6 +33,7 @@ type NanoBananaInput =
   | Gemini25FlashCreateImageGenInput
   | Gemini25FlashEditImageGenInput
   | NanoBanana2ImageGenInput
+  | NanoBanana2LiteImageGenInput
   | NanoBananaProImageGenInput;
 
 // Create reverse map from version ID to mode
@@ -106,6 +108,22 @@ export const createNanoBananaInput = defineHandler<NanoBananaCtx, [ImageGenStepT
             seed: data.seed,
             enableWebSearch: 'enableWebSearch' in data ? data.enableWebSearch : undefined,
           }) as NanoBanana2ImageGenInput,
+        },
+      ];
+    } else if (model === 'v2lite') {
+      // V2 Lite model (nano-banana-2-lite) — no resolution or web search
+      return [
+        {
+          $type: 'imageGen',
+          input: removeEmpty({
+            engine: 'google',
+            model: 'nano-banana-2-lite',
+            prompt: data.prompt,
+            aspectRatio: aspectRatio?.value,
+            images: data.images?.map((x) => x.url),
+            numImages: quantity,
+            seed: data.seed,
+          }) as NanoBanana2LiteImageGenInput,
         },
       ];
     } else {

@@ -24,7 +24,7 @@ export type UserEngagementType = "Follow" | "Hide" | "Block";
 
 export type LinkType = "Sponsorship" | "Social" | "Other";
 
-export type ModelType = "Checkpoint" | "TextualInversion" | "Hypernetwork" | "AestheticGradient" | "LORA" | "LoCon" | "DoRA" | "Controlnet" | "Upscaler" | "MotionModule" | "VAE" | "TextEncoder" | "UNet" | "CLIPVision" | "Poses" | "Wildcards" | "Workflows" | "Detection" | "VisionLanguage" | "CLIP" | "Other";
+export type ModelType = "Checkpoint" | "TextualInversion" | "Hypernetwork" | "AestheticGradient" | "LORA" | "LoCon" | "DoRA" | "Controlnet" | "Upscaler" | "MotionModule" | "VAE" | "TextEncoder" | "UNet" | "CLIPVision" | "Poses" | "Wildcards" | "Workflows" | "Detection" | "VisionLanguage" | "CLIP" | "LLM" | "Other";
 
 export type ImportStatus = "Pending" | "Processing" | "Failed" | "Completed";
 
@@ -227,6 +227,8 @@ export type ReviewVerdict = "TruePositive" | "FalsePositive" | "TrueNegative" | 
 export type Model3DStatus = "Draft" | "Published" | "Unpublished" | "Deleted";
 
 export type Model3DEngagementType = "Favorite" | "Hide" | "Notify";
+
+export type ShopifyMerchOrderStatus = "Pending" | "Granted";
 
 export interface Account {
   id: number;
@@ -626,6 +628,10 @@ export interface User {
   appUserScopeGrants?: AppUserScopeGrant[];
   appBlockReviews?: AppBlockReview[];
   appDevForgejoIdentity?: AppDevForgejoIdentity | null;
+  appListings?: AppListing[];
+  appListingReviews?: AppListingReview[];
+  appListingPublishRequestsSubmitted?: AppListingPublishRequest[];
+  appListingPublishRequestsReviewed?: AppListingPublishRequest[];
 }
 
 export interface CustomerSubscription {
@@ -1354,8 +1360,6 @@ export interface Image {
   tags?: TagsOnImageDetails[];
   tagVotes?: TagsOnImageVote[];
   tagComposites?: ImageTag[];
-  metrics?: ImageMetric[];
-  stats?: ImageStat | null;
   modHelper?: ImageModHelper | null;
   resources?: ImageResource[];
   resourceHelper?: ImageResourceHelper[];
@@ -1387,6 +1391,9 @@ export interface Image {
   challengeWins?: ChallengeWinner[];
   model3dThumbnails?: Model3D[];
   model3dSources?: Model3D[];
+  appListingIcons?: AppListing[];
+  appListingCovers?: AppListing[];
+  appListingScreenshots?: AppListingScreenshot[];
 }
 
 export interface ImageTagForReview {
@@ -1465,24 +1472,6 @@ export interface ResourceOverride {
   modelVersionId: number;
   type: ModelHashType;
   createdAt: Date;
-}
-
-export interface ImageMetric {
-  image?: Image;
-  imageId: number;
-  timeframe: MetricTimeframe;
-  likeCount: number;
-  dislikeCount: number;
-  laughCount: number;
-  cryCount: number;
-  heartCount: number;
-  commentCount: number;
-  collectedCount: number;
-  tippedCount: number;
-  tippedAmountCount: number;
-  viewCount: number;
-  reactionCount: number;
-  updatedAt: Date;
 }
 
 export interface ImageRatingRequest {
@@ -1760,15 +1749,26 @@ export interface OauthClient {
   buzzAttributions?: BlockBuzzAttribution[];
   spendAttributions?: BlockSpendAttribution[];
   subscriptionAttributions?: BlockSubscriptionAttribution[];
+  connectListings?: AppListing[];
 }
 
 export interface UserRole {
   userId: number;
   role: string;
   user?: User;
+  roleRef?: Role;
   note: string | null;
   addedById: number | null;
   createdAt: Date;
+}
+
+export interface Role {
+  id: string;
+  description: string | null;
+  createdById: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+  members?: UserRole[];
 }
 
 export interface AppBlock {
@@ -1807,6 +1807,7 @@ export interface AppBlock {
   scopeInvocations?: BlockScopeInvocation[];
   userScopeGrants?: AppUserScopeGrant[];
   reviews?: AppBlockReview[];
+  appListing?: AppListing | null;
 }
 
 export interface AppBlockReview {
@@ -1849,6 +1850,98 @@ export interface AppBlockPublishRequest {
   deployState: string | null;
   deployDetail: string | null;
   deployUpdatedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface AppListing {
+  id: string;
+  kind: string;
+  slug: string;
+  name: string;
+  tagline: string | null;
+  description: string | null;
+  iconId: number | null;
+  icon?: Image | null;
+  coverId: number | null;
+  cover?: Image | null;
+  category: string | null;
+  status: string;
+  contentRating: string | null;
+  externalUrl: string | null;
+  connectClientId: string | null;
+  connectClient?: OauthClient | null;
+  appBlockId: string | null;
+  appBlock?: AppBlock | null;
+  featured: boolean;
+  featuredOrder: number | null;
+  userId: number;
+  user?: User;
+  createdAt: Date;
+  updatedAt: Date;
+  screenshots?: AppListingScreenshot[];
+  reviews?: AppListingReview[];
+  metric?: AppListingMetric | null;
+  publishRequests?: AppListingPublishRequest[];
+}
+
+export interface AppListingScreenshot {
+  id: string;
+  appListingId: string;
+  appListing?: AppListing;
+  imageId: number | null;
+  image?: Image | null;
+  order: number;
+  caption: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface AppListingReview {
+  id: number;
+  appListingId: string;
+  appListing?: AppListing;
+  userId: number;
+  user?: User;
+  recommended: boolean;
+  details: string | null;
+  exclude: boolean;
+  tosViolation: boolean;
+  metadata: JsonValue | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface AppListingMetric {
+  appListingId: string;
+  appListing?: AppListing;
+  thumbsUpCount: number;
+  thumbsDownCount: number;
+  installCount: number;
+  openCount: number;
+  connectCount: number;
+  visitCount: number;
+  tippedCount: number;
+  tippedAmountCount: number;
+  updatedAt: Date;
+}
+
+export interface AppListingPublishRequest {
+  id: string;
+  appListingId: string | null;
+  appListing?: AppListing | null;
+  kind: string;
+  slug: string;
+  submittedByUserId: number;
+  submittedBy?: User;
+  submittedAt: Date;
+  status: string;
+  reviewedByUserId: number | null;
+  reviewedBy?: User | null;
+  reviewedAt: Date | null;
+  rejectionReason: string | null;
+  approvalNotes: string | null;
+  changelog: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -3906,66 +3999,6 @@ export interface TagRank {
   articleCountAllTimeRank: number;
 }
 
-export interface ImageStat {
-  imageId: number;
-  image?: Image;
-  cryCountDay: number;
-  cryCountWeek: number;
-  cryCountMonth: number;
-  cryCountYear: number;
-  cryCountAllTime: number;
-  dislikeCountDay: number;
-  dislikeCountWeek: number;
-  dislikeCountMonth: number;
-  dislikeCountYear: number;
-  dislikeCountAllTime: number;
-  heartCountDay: number;
-  heartCountWeek: number;
-  heartCountMonth: number;
-  heartCountYear: number;
-  heartCountAllTime: number;
-  laughCountDay: number;
-  laughCountWeek: number;
-  laughCountMonth: number;
-  laughCountYear: number;
-  laughCountAllTime: number;
-  likeCountDay: number;
-  likeCountWeek: number;
-  likeCountMonth: number;
-  likeCountYear: number;
-  likeCountAllTime: number;
-  commentCountDay: number;
-  commentCountWeek: number;
-  commentCountMonth: number;
-  commentCountYear: number;
-  commentCountAllTime: number;
-  reactionCountDay: number;
-  reactionCountWeek: number;
-  reactionCountMonth: number;
-  reactionCountYear: number;
-  reactionCountAllTime: number;
-  collectedCountDay: number;
-  collectedCountWeek: number;
-  collectedCountMonth: number;
-  collectedCountYear: number;
-  collectedCountAllTime: number;
-  tippedCountDay: number;
-  tippedCountWeek: number;
-  tippedCountMonth: number;
-  tippedCountYear: number;
-  tippedCountAllTime: number;
-  tippedAmountCountDay: number;
-  tippedAmountCountWeek: number;
-  tippedAmountCountMonth: number;
-  tippedAmountCountYear: number;
-  tippedAmountCountAllTime: number;
-  viewCountDay: number;
-  viewCountWeek: number;
-  viewCountMonth: number;
-  viewCountYear: number;
-  viewCountAllTime: number;
-}
-
 export interface ImageModHelper {
   imageId: number;
   image?: Image;
@@ -4845,4 +4878,28 @@ export interface Model3DMetric {
   minor: boolean;
 }
 
+export interface ShopifyCustomerLink {
+  id: number;
+  shopifyCustomerId: string;
+  email: string;
+  userId: number;
+  createdAt: Date;
+}
+
+export interface ShopifyMerchOrder {
+  id: number;
+  shopifyOrderId: string;
+  email: string;
+  shopifyCustomerId: string | null;
+  subtotal: Decimal;
+  couponCodes: string[];
+  buzzAmount: number;
+  status: ShopifyMerchOrderStatus;
+  userId: number | null;
+  grantedAt: Date | null;
+  createdAt: Date;
+}
+
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;
+
+type Decimal = { valueOf(): string };

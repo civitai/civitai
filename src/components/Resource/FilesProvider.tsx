@@ -1126,6 +1126,18 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
       maxFiles: 2,
     },
   },
+  LLM: {
+    primary: {
+      extensions: ggufExts,
+      fileTypes: [...primaryFileTypesByModelType.LLM],
+      maxFiles: mainModelMaxFiles,
+    },
+    additional: {
+      extensions: [...configExts, ...archiveExts],
+      fileTypes: ['Config', 'Archive', 'Other'],
+      maxFiles: 2,
+    },
+  },
   Poses: {
     primary: {
       extensions: [...archiveExts, ...configExts],

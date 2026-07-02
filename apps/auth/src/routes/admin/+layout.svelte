@@ -11,6 +11,7 @@
     { href: '/admin', label: 'Overview' },
     { href: '/admin/spoke-domains', label: 'Spoke Domains' },
     { href: '/admin/access', label: 'OAuth Access' },
+    { href: '/admin/roles', label: 'Roles' },
   ];
 
   // Active when the path matches exactly, or (for sub-sections) starts with the nav href + '/'.

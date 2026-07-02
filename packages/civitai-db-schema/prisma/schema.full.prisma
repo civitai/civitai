@@ -578,6 +578,10 @@ model User {
   appUserScopeGrants         AppUserScopeGrant[]
   appBlockReviews            AppBlockReview[]
   appDevForgejoIdentity      AppDevForgejoIdentity?
+  appListings                        AppListing[]
+  appListingReviews                  AppListingReview[]
+  appListingPublishRequestsSubmitted AppListingPublishRequest[] @relation("AppListingPublishRequestSubmitter")
+  appListingPublishRequestsReviewed  AppListingPublishRequest[] @relation("AppListingPublishRequestReviewer")
 
   @@index([deletedAt])
 }
@@ -733,6 +737,7 @@ enum ModelType {
   Detection
   VisionLanguage
   CLIP
+  LLM
   Other
 }
 
@@ -1684,8 +1689,6 @@ model Image {
   tags                TagsOnImageDetails[]
   tagVotes            TagsOnImageVote[]
   tagComposites       ImageTag[]
-  metrics             ImageMetric[]
-  stats               ImageStat?
   modHelper           ImageModHelper?
   resources           ImageResource[]
   resourceHelper      ImageResourceHelper[]
@@ -1717,6 +1720,9 @@ model Image {
   challengeWins       ChallengeWinner[]
   model3dThumbnails   Model3D[]             @relation("model3dThumbnail")
   model3dSources      Model3D[]             @relation("model3dSource")
+  appListingIcons        AppListing[]           @relation("AppListingIcon")
+  appListingCovers       AppListing[]           @relation("AppListingCover")
+  appListingScreenshots  AppListingScreenshot[] @relation("AppListingScreenshot")
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -1848,25 +1854,6 @@ model ResourceOverride {
   @@id([hash])
 }
 
-model ImageMetric {
-  image             Image           @relation(fields: [imageId], references: [id], onDelete: Cascade)
-  imageId           Int
-  timeframe         MetricTimeframe
-  likeCount         Int             @default(0)
-  dislikeCount      Int             @default(0)
-  laughCount        Int             @default(0)
-  cryCount          Int             @default(0)
-  heartCount        Int             @default(0)
-  commentCount      Int             @default(0)
-  collectedCount    Int             @default(0)
-  tippedCount       Int             @default(0)
-  tippedAmountCount Int             @default(0)
-  viewCount         Int             @default(0)
-  reactionCount     Int
-  updatedAt         DateTime        @default(now())
-
-  @@id([imageId, timeframe])
-}
 
 model ImageRatingRequest {
   userId    Int
@@ -2257,6 +2244,7 @@ model OauthClient {
   buzzAttributions BlockBuzzAttribution[]
   spendAttributions BlockSpendAttribution[] @relation("BlockSpendAttributionApp")
   subscriptionAttributions BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionApp")
+  connectListings          AppListing[]
 
   @@index([userId])
 }
@@ -2268,12 +2256,25 @@ model UserRole {
   userId    Int
   role      String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roleRef   Role     @relation(fields: [role], references: [id], onDelete: Cascade)
   note      String?
   addedById Int?
   createdAt DateTime @default(now())
 
   @@id([userId, role])
   @@index([role])
+}
+
+/// Role definitions, managed from the auth hub. `id` is the app-namespaced role string (e.g.
+/// "moderator:volunteer") that `UserRole.role` references. Exists so a role can be created before any
+/// members; what a role unlocks is decided per-app in code, not stored here.
+model Role {
+  id          String     @id
+  description String?
+  createdById Int?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @default(now()) @updatedAt
+  members     UserRole[]
 }
 
 /// App Blocks — v1 substrate. Registry of all blocks across all apps (OauthClients).
@@ -2356,6 +2357,7 @@ model AppBlock {
   scopeInvocations   BlockScopeInvocation[]
   userScopeGrants    AppUserScopeGrant[]
   reviews            AppBlockReview[]
+  appListing         AppListing?
 
   @@unique([appId, blockId], map: "app_blocks_app_block_uniq")
   // W1 audit C-3 fix: enforce one app per slug at the DB layer. The
@@ -2448,7 +2450,192 @@ model AppBlockPublishRequest {
   @@index([appBlockId, submittedAt(sort: Desc)], map: "app_block_publish_requests_app_history_idx")
   @@index([submittedByUserId, status], map: "app_block_publish_requests_my_submissions_idx")
   @@index([slug, status], map: "app_block_publish_requests_slug_idx")
+  // RAW partial unique index (NOT expressible in Prisma @@unique — it carries a
+  // WHERE clause): "app_block_publish_requests_one_pending_per_slug" UNIQUE
+  // (slug) WHERE status='pending'. Enforces at-most-one PENDING request per slug
+  // at the DB; submitVersion + recordPendingFromPush rely on its P2002 to close
+  // the read-then-write race. Created/re-asserted in
+  // 20260528210000_w1_uniqueness_constraints and
+  // 20260630130000_app_block_one_pending_per_slug_idempotent (manual-apply).
   @@map("app_block_publish_requests")
+}
+
+/// App Store Listings (W13) — the store-facing record, decoupled from runtime.
+/// Fronts BOTH on-site App Blocks (an AppBlock, iframe/page apps we host) and
+/// off-site apps (external-link or OAuth-connect) in one /apps store.
+/// Application-generated TEXT primary key (prefixed ULID: apl_<ulid>).
+///
+/// P0 (this migration) = data model + backfill ONLY, fully dark: NO UI, NO
+/// read-path change. Assets (icon/cover/screenshots) are NULLABLE here; the
+/// mandatory icon+cover+screenshot approve-gate lands in P1. See
+/// claudedocs/app-blocks-app-store-listings-plan-2026-07-01.md.
+///
+/// MANUAL-APPLY (rule #8 / gotcha #14): the main civitai DB (CNPG nvme0) does
+/// NOT run prisma migrate deploy; the committed SQL is hand-applied per env.
+model AppListing {
+  id              String       @id // apl_<ULID>
+  // Store kind discriminator: 'onsite' (an AppBlock we host) or 'offsite'
+  // (external-link or OAuth-connect). Validated in the service + a DB CHECK.
+  kind            String
+  // Globally-unique store slug across BOTH kinds. For on-site listings this is
+  // the AppBlock.block_id (matches <slug>.civit.ai); off-site slugs are chosen.
+  slug            String       @unique
+  name            String
+  tagline         String?
+  description     String?
+  // Assets via the standard Image path. NULLABLE in P0 (the mandatory-asset
+  // gate is P1). Named relations because Image is referenced 3x (icon/cover/
+  // screenshot) so Prisma can disambiguate the back-references.
+  iconId          Int?         @map("icon_id")
+  icon            Image?       @relation("AppListingIcon", fields: [iconId], references: [id], onDelete: SetNull)
+  coverId         Int?         @map("cover_id")
+  cover           Image?       @relation("AppListingCover", fields: [coverId], references: [id], onDelete: SetNull)
+  // Free-text marketplace category (taxonomy = MARKETPLACE_CATEGORIES const, so
+  // adding a category needs no migration — mirrors AppBlock.category).
+  category        String?
+  // Store lifecycle. Validated in the service + a DB CHECK.
+  status          String       @default("draft")
+  // Maturity rating. For on-site listings this MIRRORS AppBlock.content_rating
+  // (single source — the listing must NOT override the runtime .red/.com serving
+  // gate). Off-site listings carry their own. Same domain as AppBlock (g..x).
+  contentRating   String?      @map("content_rating")
+  // Off-site external-link target (Visit CTA). NULL for on-site / OAuth-connect.
+  externalUrl     String?      @map("external_url")
+  // Off-site OAuth-connect client (Connect CTA). NULL for on-site/external-link.
+  connectClientId String?      @map("connect_client_id")
+  connectClient   OauthClient? @relation(fields: [connectClientId], references: [id], onDelete: SetNull)
+  // 1:1 backing AppBlock (UNIQUE) + idempotency key. Set for EVERY backfilled
+  // row — on-site AND the #2821 off-site rows (both come from an AppBlock). It is
+  // NOT a kind discriminator: discriminate on `kind`, never on appBlockId nullness.
+  // Only a natively-created off-site listing (no backing AppBlock) leaves it NULL.
+  appBlockId      String?      @unique @map("app_block_id")
+  appBlock        AppBlock?    @relation(fields: [appBlockId], references: [id], onDelete: SetNull)
+  // Curation rail (mirrors AppBlock.featured / featured_order).
+  featured        Boolean      @default(false)
+  featuredOrder   Int?         @map("featured_order")
+  // Listing owner (the developer). For on-site = the OauthClient owner.
+  userId          Int          @map("user_id")
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  screenshots     AppListingScreenshot[]
+  reviews         AppListingReview[]
+  metric          AppListingMetric?
+  publishRequests AppListingPublishRequest[]
+
+  // Marketplace read-path indexes (future P2 read path).
+  @@index([status, kind], map: "app_listings_status_kind_idx")
+  @@index([featured, featuredOrder], map: "app_listings_featured_order_idx")
+  @@index([category], map: "app_listings_category_idx")
+  @@index([userId], map: "app_listings_user_idx")
+  // FK indexes so an Image DELETE (hot path) doesn't seq-scan this table once
+  // P1 populates icon/cover (Postgres does NOT auto-index a FK). Free now (empty).
+  @@index([iconId], map: "app_listings_icon_idx")
+  @@index([coverId], map: "app_listings_cover_idx")
+  @@map("app_listings")
+}
+
+/// Ordered + captioned screenshot rows for a listing (NOT a Json blob) so the
+/// creator can reorder/caption for both kinds. Table CREATED in P0; POPULATED
+/// in P1 (the asset pipeline). imageId is NULLABLE in P0.
+model AppListingScreenshot {
+  id           String     @id // apls_<ULID>
+  appListingId String     @map("app_listing_id")
+  appListing   AppListing @relation(fields: [appListingId], references: [id], onDelete: Cascade)
+  imageId      Int?       @map("image_id")
+  image        Image?     @relation("AppListingScreenshot", fields: [imageId], references: [id], onDelete: SetNull)
+  order        Int        @default(0)
+  caption      String?
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([appListingId, order], map: "app_listing_screenshots_order_idx")
+  // FK index so an Image DELETE (hot path) doesn't seq-scan this table once P1
+  // populates screenshots (Postgres does NOT auto-index a FK). Free now (empty).
+  @@index([imageId], map: "app_listing_screenshots_image_idx")
+  @@map("app_listing_screenshots")
+}
+
+/// Steam-style "recommend" review, keyed to AppListing (NOT AppBlock). Shaped
+/// like ResourceReview (schema ResourceReview) core columns. P4 will migrate
+/// existing AppBlockReview rows here using their already-present `recommended`
+/// column and move the write/list UI over.
+///
+/// P4 NOTE: the `reactions` (helpful votes) and `reports` CHILD tables that
+/// ResourceReview has are NOT built here — they arrive in P4 alongside the
+/// review-system swap.
+model AppListingReview {
+  id           Int        @id @default(autoincrement())
+  appListingId String     @map("app_listing_id")
+  appListing   AppListing @relation(fields: [appListingId], references: [id], onDelete: Cascade)
+  userId       Int        @map("user_id")
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recommended  Boolean
+  details      String?
+  // Moderator controls: keep abusive reviews out of the recommend-% aggregate.
+  exclude      Boolean    @default(false)
+  tosViolation Boolean    @default(false) @map("tos_violation")
+  metadata     Json?
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // One review per (user, listing).
+  @@unique([appListingId, userId], map: "app_listing_reviews_listing_user_uniq")
+  // Aggregate read path (COUNT recommended WHERE NOT exclude).
+  @@index([appListingId, exclude], map: "app_listing_reviews_listing_agg_idx")
+  @@map("app_listing_reviews")
+}
+
+/// Job-populated rollup (mirror ModelMetric shape) so recommend-% + card counts
+/// are a READ, not a live aggregate. Table only in P0; the population job is P5.
+/// Per-kind counter mapping (P5): on-site = install/open/tip; off-site =
+/// connect (OAuth grant) / visit (click-through) / tip.
+model AppListingMetric {
+  appListingId      String     @id @map("app_listing_id")
+  appListing        AppListing @relation(fields: [appListingId], references: [id], onDelete: Cascade)
+  thumbsUpCount     Int        @default(0) @map("thumbs_up_count")
+  thumbsDownCount   Int        @default(0) @map("thumbs_down_count")
+  installCount      Int        @default(0) @map("install_count")
+  openCount         Int        @default(0) @map("open_count")
+  connectCount      Int        @default(0) @map("connect_count")
+  visitCount        Int        @default(0) @map("visit_count")
+  tippedCount       Int        @default(0) @map("tipped_count")
+  tippedAmountCount Int        @default(0) @map("tipped_amount_count")
+  updatedAt         DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("app_listing_metrics")
+}
+
+/// Sibling to AppBlockPublishRequest, for the OFF-SITE submission + unified
+/// moderation queue (P3). Off-site has no bundle/build/manifest/deploy, so this
+/// is deliberately lighter (no bundle/forgejo/deploy columns) and keeps the
+/// on-site Tekton build queue clean. STRUCTURE ONLY in P0; wired in P3.
+model AppListingPublishRequest {
+  id                String      @id // alpr_<ULID>
+  appListingId      String?     @map("app_listing_id") // NULL while first request pending; FK on approve
+  appListing        AppListing? @relation(fields: [appListingId], references: [id], onDelete: SetNull)
+  kind              String // 'onsite' | 'offsite'
+  slug              String
+  submittedByUserId Int         @map("submitted_by_user_id")
+  submittedBy       User        @relation("AppListingPublishRequestSubmitter", fields: [submittedByUserId], references: [id], onDelete: Cascade)
+  submittedAt       DateTime    @default(now()) @map("submitted_at") @db.Timestamptz(6)
+  status            String // 'pending' | 'approved' | 'rejected' | 'withdrawn'
+  reviewedByUserId  Int?        @map("reviewed_by_user_id")
+  reviewedBy        User?       @relation("AppListingPublishRequestReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+  reviewedAt        DateTime?   @map("reviewed_at") @db.Timestamptz(6)
+  rejectionReason   String?     @map("rejection_reason")
+  approvalNotes     String?     @map("approval_notes")
+  // Off-site apps get a lightweight manual changelog field (P3).
+  changelog         String?
+  createdAt         DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([status, submittedAt(sort: Desc)], map: "app_listing_publish_requests_queue_idx")
+  @@index([appListingId, submittedAt(sort: Desc)], map: "app_listing_publish_requests_listing_history_idx")
+  @@index([submittedByUserId, status], map: "app_listing_publish_requests_my_submissions_idx")
+  @@index([slug, status], map: "app_listing_publish_requests_slug_idx")
+  @@map("app_listing_publish_requests")
 }
 
 /// Per-block-instance, per-user settings (viewer preferences).
@@ -5386,65 +5573,6 @@ model TagRank {
 
 /// @view
 
-model ImageStat {
-  imageId                  Int   @id
-  image                    Image @relation(fields: [imageId], references: [id], onDelete: NoAction)
-  cryCountDay              Int   @default(0)
-  cryCountWeek             Int   @default(0)
-  cryCountMonth            Int   @default(0)
-  cryCountYear             Int   @default(0)
-  cryCountAllTime          Int   @default(0)
-  dislikeCountDay          Int   @default(0)
-  dislikeCountWeek         Int   @default(0)
-  dislikeCountMonth        Int   @default(0)
-  dislikeCountYear         Int   @default(0)
-  dislikeCountAllTime      Int   @default(0)
-  heartCountDay            Int   @default(0)
-  heartCountWeek           Int   @default(0)
-  heartCountMonth          Int   @default(0)
-  heartCountYear           Int   @default(0)
-  heartCountAllTime        Int   @default(0)
-  laughCountDay            Int   @default(0)
-  laughCountWeek           Int   @default(0)
-  laughCountMonth          Int   @default(0)
-  laughCountYear           Int   @default(0)
-  laughCountAllTime        Int   @default(0)
-  likeCountDay             Int   @default(0)
-  likeCountWeek            Int   @default(0)
-  likeCountMonth           Int   @default(0)
-  likeCountYear            Int   @default(0)
-  likeCountAllTime         Int   @default(0)
-  commentCountDay          Int   @default(0)
-  commentCountWeek         Int   @default(0)
-  commentCountMonth        Int   @default(0)
-  commentCountYear         Int   @default(0)
-  commentCountAllTime      Int   @default(0)
-  reactionCountDay         Int   @default(0)
-  reactionCountWeek        Int   @default(0)
-  reactionCountMonth       Int   @default(0)
-  reactionCountYear        Int   @default(0)
-  reactionCountAllTime     Int   @default(0)
-  collectedCountDay        Int   @default(0)
-  collectedCountWeek       Int   @default(0)
-  collectedCountMonth      Int   @default(0)
-  collectedCountYear       Int   @default(0)
-  collectedCountAllTime    Int   @default(0)
-  tippedCountDay           Int   @default(0)
-  tippedCountWeek          Int   @default(0)
-  tippedCountMonth         Int   @default(0)
-  tippedCountYear          Int   @default(0)
-  tippedCountAllTime       Int   @default(0)
-  tippedAmountCountDay     Int   @default(0)
-  tippedAmountCountWeek    Int   @default(0)
-  tippedAmountCountMonth   Int   @default(0)
-  tippedAmountCountYear    Int   @default(0)
-  tippedAmountCountAllTime Int   @default(0)
-  viewCountDay             Int   @default(0)
-  viewCountWeek            Int   @default(0)
-  viewCountMonth           Int   @default(0)
-  viewCountYear            Int   @default(0)
-  viewCountAllTime         Int   @default(0)
-}
 
 /// @view
 
@@ -6716,4 +6844,37 @@ model Model3DMetric {
   availability      Availability     @default(Public)
   poi               Boolean          @default(false)
   minor             Boolean          @default(false)
+}
+
+enum ShopifyMerchOrderStatus {
+  Pending
+  Granted
+}
+
+model ShopifyCustomerLink {
+  id                Int      @id @default(autoincrement())
+  shopifyCustomerId String   @unique
+  email             String
+  userId            Int
+  createdAt         DateTime @default(now())
+
+  @@index([email])
+  @@index([userId])
+}
+
+model ShopifyMerchOrder {
+  id                Int                     @id @default(autoincrement())
+  shopifyOrderId    String                  @unique
+  email             String
+  shopifyCustomerId String?
+  subtotal          Decimal                 @db.Decimal(10, 2)
+  couponCodes       String[]
+  buzzAmount        Int
+  status            ShopifyMerchOrderStatus @default(Pending)
+  userId            Int?
+  grantedAt         DateTime?
+  createdAt         DateTime                @default(now())
+
+  @@index([email])
+  @@index([userId])
 }

@@ -75,7 +75,6 @@ import { refreshAuctionCache } from '~/server/jobs/refresh-auction-cache';
 import { refreshFeaturedCollectionsEligibility } from '~/server/jobs/refresh-featured-collections-eligibility';
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { reindexRecentScheduledImages } from '~/server/jobs/reindex-recent-scheduled-images';
-import { resetImageViewCounts } from '~/server/jobs/reset-image-view-counts';
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
 import { resourceGenerationAvailability } from '~/server/jobs/resource-generation-availability';
 import { retroactiveHashBlocking } from '~/server/jobs/retroactive-hash-blocking';
@@ -114,7 +113,6 @@ export const jobs: Job[] = [
   deliverPurchasedCosmetics,
   deliverLeaderboardCosmetics,
   reindexRecentScheduledImages,
-  resetImageViewCounts,
   pushDiscordMetadata,
   applyVotedTags,
   removeOldDrafts,

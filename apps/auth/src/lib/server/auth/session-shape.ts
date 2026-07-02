@@ -65,6 +65,7 @@ export interface ShapeSessionUserInput {
   row: ProducerUserRow;
   subscriptionRows: ProducerSubscriptionRow[];
   permissions: string[];
+  roles: string[];
   /** `env.TIER_METADATA_KEY` — the `product.metadata` key holding the tier. Undefined → no tier resolved. */
   tierKey?: string;
 }
@@ -73,6 +74,7 @@ export function shapeSessionUser({
   row,
   subscriptionRows,
   permissions,
+  roles,
   tierKey,
 }: ShapeSessionUserInput): SessionUser {
   // tier / subscriptionsByBuzzType (mirrors the main app's loop).
@@ -140,6 +142,7 @@ export function shapeSessionUser({
     redBrowsingLevel,
     onboarding: row.onboarding,
     permissions,
+    roles,
     customerId: row.customerId ?? undefined,
     paddleCustomerId: row.paddleCustomerId ?? undefined,
     subscriptionId: primarySubscriptionId,

@@ -535,6 +535,10 @@ export function PageBlockHost({
   const estimateWorkflowMutation = trpc.blocks.estimateWorkflow.useMutation();
   const pollWorkflowMutation = trpc.blocks.pollWorkflow.useMutation();
   const cancelWorkflowMutation = trpc.blocks.cancelWorkflow.useMutation();
+  // getMyBuzzBalance is a MUTATION (not a query) DELIBERATELY: the block JWT is a
+  // bearer credential a .query would leak into the ?input=… URL / logs / Referer
+  // where it's replayable within its TTL. See blocks.router getMyBuzzBalance.
+  const getMyBuzzBalanceMutation = trpc.blocks.getMyBuzzBalance.useMutation();
 
   // SUBMIT_WORKFLOW → blocks.submitWorkflow → WORKFLOW_SUBMITTED.
   useEffect(() => {
@@ -637,6 +641,44 @@ export function PageBlockHost({
     );
     return off;
   }, [onMessage, send, token, cancelWorkflowMutation]);
+
+  // GET_BUZZ_BALANCE → blocks.getMyBuzzBalance → BUZZ_BALANCE_RESULT. The block's
+  // per-account (blue/green/yellow) balance read that backs the SDK
+  // `useBuzzBalance()` hook + the account-picker UI, so a money page block can
+  // show the viewer which wallet a generation will draw from. Host-MEDIATED: the
+  // iframe never sees a session; the balance is derived from the token's SELF-
+  // BOUND `sub` server-side (never client input). REQUEST-style ⇒ every path MUST
+  // post a reply or the block hangs to its SDK timeout.
+  //
+  // DEVIATION from the workflow handlers (which DROP a `!token` request silently):
+  // a balance read is a pure UI affordance, not a spend — dropping it strands the
+  // hook with no data and no error. So on a null token we reply with the ERROR
+  // variant (`error: <message>`) instead of dropping, mirroring the storage
+  // handlers' error-carrying result shape. A missing requestId is still dropped
+  // without replying (mirrors every other handler — there's nothing to reply to).
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown } | undefined>(
+      'GET_BUZZ_BALANCE',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string') return;
+        const requestId = raw.requestId;
+        if (!token) {
+          send('BUZZ_BALANCE_RESULT', { requestId, error: 'no block token' });
+          return;
+        }
+        try {
+          const balance = await getMyBuzzBalanceMutation.mutateAsync({ blockToken: token });
+          send('BUZZ_BALANCE_RESULT', { requestId, balance });
+        } catch (err) {
+          send('BUZZ_BALANCE_RESULT', {
+            requestId,
+            error: err instanceof Error ? err.message : 'unknown',
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, getMyBuzzBalanceMutation]);
 
   // OPEN_BUZZ_PURCHASE → BUZZ_PURCHASE_RESULT. The generator's insufficient-Buzz
   // top-up CTA. Gate on BLOCK_READY (+ payload validity) via the shared
