@@ -2876,8 +2876,15 @@ export const blocksRouter = router({
   getMyBuzzBalance: publicProcedure
     // Block-JWT-authed (no session for dev:live) — flag evaluated against the
     // TOKEN subject below, not the `enforceAppBlocksFlag` middleware's ctx.user.
+    //
+    // MUTATION (not query) DELIBERATELY: the block JWT is a bearer credential
+    // that ALSO authorizes submitWorkflow (spend). A tRPC .query sends small
+    // inputs as HTTP GET with the input in the URL (?input=...), leaking the
+    // token into CF/nginx/Traefik logs, browser history, and Referer where it
+    // is replayable within its TTL. Every block-token-authed proc in this router
+    // is a mutation for exactly this reason (token in the POST body). Keep it so.
     .input(z.object({ blockToken: z.string().min(1) }))
-    .query(async ({ input }) => {
+    .mutation(async ({ input }) => {
       const claims = await verifyBlockToken(input.blockToken);
       if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
       // Derive the user from the SELF-BOUND token subject, never client input.
