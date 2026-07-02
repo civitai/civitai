@@ -128,21 +128,10 @@ export const appRouter = router({
   emerchantpay: lazy(() => import('./emerchantpay.router').then((m) => m.emerchantpayRouter)),
   comics: lazy(() => import('./comics.router').then((m) => m.comicsRouter)),
   strike: lazy(() => import('~/server/routers/strike.router').then((m) => m.strikeRouter)),
-  rewardsBonusEvent: lazy(() =>
-    import('./rewards-bonus-event.router').then((m) => m.rewardsBonusEventRouter)
-  ),
-  oauthClient: lazy(() =>
-    import('~/server/routers/oauth-client.router').then((m) => m.oauthClientRouter)
-  ),
-  oauthConsent: lazy(() =>
-    import('~/server/routers/oauth-consent.router').then((m) => m.oauthConsentRouter)
-  ),
-  scannerReview: lazy(() =>
-    import('~/server/routers/scanner-review.router').then((m) => m.scannerReviewRouter)
-  ),
-  scannerPolicies: lazy(() =>
-    import('~/server/routers/scanner-policies.router').then((m) => m.scannerPoliciesRouter)
-  ),
+  rewardsBonusEvent: lazy(() => import('./rewards-bonus-event.router').then((m) => m.rewardsBonusEventRouter)),
+  oauthClient: lazy(() => import('~/server/routers/oauth-client.router').then((m) => m.oauthClientRouter)),
+  oauthConsent: lazy(() => import('~/server/routers/oauth-consent.router').then((m) => m.oauthConsentRouter)),
+  scannerPolicies: lazy(() => import('~/server/routers/scanner-policies.router').then((m) => m.scannerPoliciesRouter)),
 });
 
 // export type definition of API

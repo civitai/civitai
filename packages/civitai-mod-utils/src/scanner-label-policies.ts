@@ -1,29 +1,15 @@
-/**
- * Moderator-facing policy summaries for each scanner label.
- *
- * Plain-English version of the XGuard prompt-mode policies. Used by the
- * focused-review sidebar so moderators see what each label is supposed to
- * catch while they're verdicting items.
- *
- * Keep in sync with docs/features/scanner-moderator-guide.md.
- */
+// Moderator-facing plain-English policy summaries per scanner label, shown in the focused-review
+// sidebar so mods see what a label should catch while verdicting. Keyed by the lowercase label slug.
+// Keep in sync with docs/features/scanner-moderator-guide.md.
+
 export type ScannerLabelPolicy = {
-  /** Display name shown at the top of the sidebar. */
   title: string;
-  /** One-sentence "what should this catch" summary. */
   catch: string;
-  /** Bullets describing what should fire the label. */
   shouldFire: string[];
-  /** Bullets describing what should NOT fire the label. */
   shouldNotFire: string[];
-  /** Optional gotchas / common confusion points. */
   gotchas?: string[];
 };
 
-/**
- * Keyed by the lowercase label slug used in the audit URL
- * (e.g. /moderator/scanner-audit/prompt/young → key `young`).
- */
 export const SCANNER_LABEL_POLICIES: Record<string, ScannerLabelPolicy> = {
   young: {
     title: 'Young',
@@ -262,11 +248,6 @@ export const SCANNER_LABEL_POLICIES: Record<string, ScannerLabelPolicy> = {
   },
 };
 
-/**
- * Look up a policy by URL label slug. Returns undefined for unknown labels
- * (e.g. legacy labels, mode-specific labels like `nsfw` that don't have a
- * moderator-facing policy yet).
- */
 export function getScannerLabelPolicy(label: string): ScannerLabelPolicy | undefined {
   return SCANNER_LABEL_POLICIES[label.toLowerCase()];
 }

@@ -1,23 +1,8 @@
-/**
- * Client-safe term lists for moderator-facing highlight rendering on the
- * focused-review page. These exist purely to draw the moderator's eye to
- * known signal terms in long prompt text — they do NOT drive policy
- * decisions. The actual policy lives in the XGuard registry and (for the
- * regex atomic labels) in src/server/services/scanner-label-regex.ts.
- *
- * Three categories per label:
- *   - trigger    — terms the policy explicitly fires on (e.g. 'loli', 'child').
- *                  Rendered red.
- *   - soft       — terms with carve-outs that the policy CAN fire on when
- *                  combined with emphasis/stacking (e.g. 'young', 'petite',
- *                  'cute face'). Rendered yellow.
- *   - carveOut   — terms that argue AGAINST firing (e.g. 'adult', 'mature',
- *                  '21+'). Rendered green, so a mod scanning a prompt
- *                  immediately sees both pulls.
- *
- * Add more labels here as the moderator team requests them. Keep entries
- * focused — adding every possible word fragments the visual signal.
- */
+// Client-safe term lists for highlighting scanner-audit content. They aid the moderator's eye only —
+// they do NOT drive policy (that's the XGuard registry + scanner-label-regex). Per label:
+//   trigger  — terms the policy fires on (red)
+//   soft     — carve-out terms that fire when stacked (amber)
+//   carveOut — terms arguing against firing (green)
 
 export type HighlightCategory = 'trigger' | 'soft' | 'carveOut';
 
@@ -74,14 +59,10 @@ export const SCANNER_LABEL_HIGHLIGHT_TERMS: Record<string, LabelHighlightTerms> 
       'early twenties', 'late teens', '20-something', 'thirtysomething',
     ],
   },
-  // Other labels can be added here. The renderer falls back to plain
+  // Add more labels here as the moderator team requests them. The renderer falls back to plain
   // model-reason highlighting when a label isn't keyed.
 };
 
-/**
- * Build a list of all terms for a given label across all categories, in a
- * shape suitable for renderHighlighted's per-term category lookup.
- */
 export function getLabelHighlightTerms(
   label: string
 ): Array<{ term: string; category: HighlightCategory }> {

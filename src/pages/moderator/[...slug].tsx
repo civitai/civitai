@@ -16,11 +16,18 @@ const MIGRATED_ROUTES: Record<string, string> = {
   'ingestion-error-review': 'ingestion-error-review',
 };
 
+// Whole subtrees that migrated (dynamic sub-routes). Any `/moderator/<prefix>/...` path redirects to the
+// same path on the spoke — used where the migrated area has dynamic segments (e.g. scanner-audit/[mode]
+// and scanner-audit/[mode]/[label]). The spoke mirrors the sub-path exactly.
+const MIGRATED_PREFIXES = ['scanner-audit'];
+
 export const getServerSideProps: GetServerSideProps = async (ctx) => {
   const slug = ctx.params?.slug;
   const path = Array.isArray(slug) ? slug.join('/') : slug ?? '';
 
-  const target = MIGRATED_ROUTES[path];
+  const target =
+    MIGRATED_ROUTES[path] ??
+    (MIGRATED_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`)) ? path : undefined);
   if (!target) return { notFound: true };
 
   const base = env.MODERATOR_APP_URL.replace(/\/$/, '');

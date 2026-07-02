@@ -137,7 +137,7 @@
     <header class="flex h-12 shrink-0 items-center gap-2 px-4">
       <SidebarTrigger />
     </header>
-    <div class="mx-auto w-full max-w-6xl px-6 pb-10">
+    <div class={page.data.fullBleed ? 'min-h-0 flex-1' : 'mx-auto w-full max-w-6xl px-6 pb-10'}>
       {@render children()}
     </div>
   </SidebarInset>

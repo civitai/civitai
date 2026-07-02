@@ -172,9 +172,10 @@ Establish the service-porting rhythm on the cheapest pages (Postgres, plus alrea
 - [ ] `getBlockedEmailDomains` (util)
 
 ### `scanner-review.service.ts`  ·  used by: scanner-audit/[mode], scanner-audit/[mode]/[label]  ·  *ClickHouse + Postgres + Orchestrator*
-- [ ] `listScans`
-- [ ] `getLabelReviewStats`
-- [ ] `focusedRun`
+- [x] `listScans` — ported to the spoke (`scanner-review.service.ts`; CH aggregation + Kysely verdict enrichment); main-app copy removed (orphaned)
+- [x] `getLabelReviewStats` (+ `getActiveLabels`) — ported to the spoke; main-app copy removed
+- [ ] `focusedRun` — *Wave 6 (orchestrator); the `/scanner-audit/[mode]/[label]` focused page stays in the main app for now*
+- [ ] `focusedItemContent`
 - [ ] `focusedItemContent`
 - [ ] `upsertLabelVerdict`
 - [ ] `deleteLabelVerdict`

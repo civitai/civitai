@@ -936,12 +936,18 @@ importers:
       '@civitai/clickhouse':
         specifier: workspace:*
         version: link:../../packages/civitai-clickhouse
+      '@civitai/client':
+        specifier: 0.2.0-beta.78
+        version: 0.2.0-beta.78
       '@civitai/db':
         specifier: workspace:*
         version: link:../../packages/civitai-db
       '@civitai/db-schema':
         specifier: workspace:*
         version: link:../../packages/civitai-db-schema
+      '@civitai/mod-utils':
+        specifier: workspace:*
+        version: link:../../packages/civitai-mod-utils
       '@civitai/ui':
         specifier: workspace:*
         version: link:../../packages/civitai-ui
@@ -1184,6 +1190,8 @@ importers:
       '@types/nodemailer':
         specifier: ^6.4.7
         version: 6.4.17
+
+  packages/civitai-mod-utils: {}
 
   packages/civitai-notifications:
     dependencies:
