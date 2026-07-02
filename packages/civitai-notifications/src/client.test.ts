@@ -1,11 +1,8 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
-  countNotifications,
-  createNotification,
-  createNotificationsBulk,
+  createNotificationsClient,
   NotificationsClientError,
-  queryNotifications,
-  setNotificationsFailureLogger,
+  type NotificationsClientConfig,
 } from './client';
 import { createNotificationPendingRow } from './schema';
 
@@ -16,6 +13,11 @@ const validRow = {
   details: { modelId: 123 },
   userIds: [1, 2],
 };
+
+// A client bound to a mock fetch + a default endpoint, with retry backoff zeroed so tests don't sleep.
+function client(config: NotificationsClientConfig) {
+  return createNotificationsClient({ endpoint: 'http://notif.internal', retryBaseMs: 0, ...config });
+}
 
 describe('createNotificationPendingRow', () => {
   it('accepts a userIds row', () => {
@@ -30,11 +32,11 @@ describe('createNotificationPendingRow', () => {
 describe('createNotification', () => {
   it('POSTs the validated body to `${endpoint}/notifications` with the bearer token', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 202 }));
-    await createNotification(validRow, {
+    await createNotificationsClient({
       endpoint: 'http://notif.internal/',
       token: 'secret',
       fetch: fetchMock,
-    });
+    }).createNotification(validRow);
 
     expect(fetchMock).toHaveBeenCalledOnce();
     const [url, init] = fetchMock.mock.calls[0];
@@ -44,18 +46,11 @@ describe('createNotification', () => {
     expect(JSON.parse(init.body)).toMatchObject({ key: validRow.key, category: 'Comment' });
   });
 
-  it('throws NotificationsClientError on a non-2xx response', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response('nope', { status: 401 }));
-    await expect(
-      createNotification(validRow, { endpoint: 'http://notif.internal', fetch: fetchMock })
-    ).rejects.toBeInstanceOf(NotificationsClientError);
-  });
-
   it('does NOT retry a 4xx (bad payload / auth) — one attempt, then throws', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('nope', { status: 401 }));
-    await expect(
-      createNotification(validRow, { endpoint: 'http://notif.internal', fetch: fetchMock, retryBaseMs: 0 })
-    ).rejects.toBeInstanceOf(NotificationsClientError);
+    await expect(client({ fetch: fetchMock }).createNotification(validRow)).rejects.toBeInstanceOf(
+      NotificationsClientError
+    );
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -64,23 +59,14 @@ describe('createNotification', () => {
       .fn()
       .mockResolvedValueOnce(new Response('busy', { status: 503 }))
       .mockResolvedValueOnce(new Response(null, { status: 202 }));
-    await createNotification(validRow, {
-      endpoint: 'http://notif.internal',
-      fetch: fetchMock,
-      retryBaseMs: 0,
-    });
+    await client({ fetch: fetchMock }).createNotification(validRow);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('retries transport errors up to the limit, then throws', async () => {
     const fetchMock = vi.fn().mockRejectedValue(new Error('ECONNREFUSED'));
     await expect(
-      createNotification(validRow, {
-        endpoint: 'http://notif.internal',
-        fetch: fetchMock,
-        retries: 2,
-        retryBaseMs: 0,
-      })
+      client({ fetch: fetchMock, retries: 2 }).createNotification(validRow)
     ).rejects.toBeInstanceOf(NotificationsClientError);
     expect(fetchMock).toHaveBeenCalledTimes(3); // 1 initial + 2 retries
   });
@@ -88,9 +74,9 @@ describe('createNotification', () => {
   it('throws when no endpoint is configured', async () => {
     const prev = process.env.NOTIFICATIONS_ENDPOINT;
     delete process.env.NOTIFICATIONS_ENDPOINT;
-    await expect(createNotification(validRow, { fetch: vi.fn() })).rejects.toBeInstanceOf(
-      NotificationsClientError
-    );
+    await expect(
+      createNotificationsClient({ fetch: vi.fn() }).createNotification(validRow)
+    ).rejects.toBeInstanceOf(NotificationsClientError);
     if (prev !== undefined) process.env.NOTIFICATIONS_ENDPOINT = prev;
   });
 });
@@ -112,10 +98,7 @@ describe('read wrappers', () => {
         { status: 200, headers: { 'content-type': 'application/json' } }
       )
     );
-    const rows = await queryNotifications(
-      { userId: 1, limit: 10 },
-      { endpoint: 'http://notif.internal', fetch: fetchMock }
-    );
+    const rows = await client({ fetch: fetchMock }).queryNotifications({ userId: 1, limit: 10 });
     expect(fetchMock.mock.calls[0][0]).toBe('http://notif.internal/notifications/query');
     expect(rows[0].createdAt).toBeInstanceOf(Date);
   });
@@ -127,29 +110,20 @@ describe('read wrappers', () => {
         headers: { 'content-type': 'application/json' },
       })
     );
-    const counts = await countNotifications(
-      { userId: 1, unread: true },
-      { endpoint: 'http://notif.internal', fetch: fetchMock }
-    );
+    const counts = await client({ fetch: fetchMock }).countNotifications({ userId: 1, unread: true });
     expect(counts).toEqual([{ category: 'Comment', count: 3 }]);
   });
 });
 
-describe('setNotificationsFailureLogger', () => {
-  afterEach(() => setNotificationsFailureLogger(undefined));
-
+describe('onFailure sink', () => {
   it('reports ONCE on the final failure (after retries), with path/status/attempts', async () => {
     const failures: any[] = [];
-    setNotificationsFailureLogger((f) => failures.push(f));
     const fetchMock = vi.fn().mockResolvedValue(new Response('busy', { status: 503 }));
 
     await expect(
-      createNotification(validRow, {
-        endpoint: 'http://notif.internal',
-        fetch: fetchMock,
-        retries: 2,
-        retryBaseMs: 0,
-      })
+      client({ fetch: fetchMock, retries: 2, onFailure: (f) => failures.push(f) }).createNotification(
+        validRow
+      )
     ).rejects.toBeInstanceOf(NotificationsClientError);
 
     expect(failures).toHaveLength(1); // one event, not one-per-attempt
@@ -163,11 +137,10 @@ describe('setNotificationsFailureLogger', () => {
 
   it('reports a 4xx immediately (attempts=1, retryable=false)', async () => {
     const failures: any[] = [];
-    setNotificationsFailureLogger((f) => failures.push(f));
     const fetchMock = vi.fn().mockResolvedValue(new Response('bad', { status: 400 }));
 
     await expect(
-      createNotification(validRow, { endpoint: 'http://notif.internal', fetch: fetchMock, retryBaseMs: 0 })
+      client({ fetch: fetchMock, onFailure: (f) => failures.push(f) }).createNotification(validRow)
     ).rejects.toBeInstanceOf(NotificationsClientError);
 
     expect(failures).toEqual([
@@ -177,10 +150,21 @@ describe('setNotificationsFailureLogger', () => {
 
   it('does NOT report on success', async () => {
     const failures: any[] = [];
-    setNotificationsFailureLogger((f) => failures.push(f));
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 202 }));
-    await createNotification(validRow, { endpoint: 'http://notif.internal', fetch: fetchMock });
+    await client({ fetch: fetchMock, onFailure: (f) => failures.push(f) }).createNotification(validRow);
     expect(failures).toHaveLength(0);
+  });
+
+  it('a throwing onFailure never masks the request error', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('bad', { status: 400 }));
+    await expect(
+      client({
+        fetch: fetchMock,
+        onFailure: () => {
+          throw new Error('logger boom');
+        },
+      }).createNotification(validRow)
+    ).rejects.toBeInstanceOf(NotificationsClientError);
   });
 });
 
@@ -197,7 +181,7 @@ describe('createNotificationsBulk', () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 202 }));
     const rows = Array.from({ length: 2500 }, (_, i) => row(i));
 
-    await createNotificationsBulk(rows, { endpoint: 'http://notif.internal', fetch: fetchMock });
+    await client({ fetch: fetchMock }).createNotificationsBulk(rows);
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
     const sizes = fetchMock.mock.calls.map(([, init]) => JSON.parse(init.body).length);
@@ -207,7 +191,7 @@ describe('createNotificationsBulk', () => {
 
   it('sends nothing for an empty array', async () => {
     const fetchMock = vi.fn();
-    await createNotificationsBulk([], { endpoint: 'http://notif.internal', fetch: fetchMock });
+    await client({ fetch: fetchMock }).createNotificationsBulk([]);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import type { EntityMetric_MetricType_Type, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { NotificationCategory } from '~/server/common/enums';
 import type { ProtectedContext } from '~/server/createContext';
-import { notificationExists } from '@civitai/notifications';
+import { notifications } from '~/server/notifications/client';
 import { logToAxiom } from '~/server/logging/client';
 import { imageReactionMilestones } from '~/server/notifications/reaction.notifications';
 import { encouragementReward, goodContentReward } from '~/server/rewards';
@@ -306,7 +306,7 @@ const createReactionNotification = async ({ entityType, entityId }: ToggleReacti
     const type = 'image-reaction-milestone';
     const key = `${type}:${entityId}:${match}`;
 
-    if (await notificationExists({ key })) return;
+    if (await notifications.notificationExists({ key })) return;
 
     const resource = await dbRead.image.findFirst({
       where: { id: entityId },

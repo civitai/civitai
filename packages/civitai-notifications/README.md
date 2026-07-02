@@ -13,34 +13,40 @@ single caller (see [`docs/plans/notifications-monorepo-migration.md`](../../docs
   truth, moved out of the monolith's `notification.schema.ts`.
 - **Category + signal constants** (`./constants`) — `NotificationCategory` / `notificationCategories`
   and `newNotificationSignal` (`'notification:new'`), shared with the fan-out worker.
-- **`createNotification(data, config)`** (`./client`) — the client seam. Today it validates then POSTs
-  to the app's authed, internal-only producer API. Swapping it for a direct write is a change *behind*
-  this function.
+- **`createNotificationsClient(config)`** (`./client`) — the client seam. Build one client bound to your
+  endpoint/token/retry + failure sink; it validates then POSTs to the app's authed, internal-only API
+  (create / bulk / query / count / mark / exists / cleanup). Swapping it for a direct write is a change
+  *behind* the client.
 
 ## Usage
 
-```ts
-import { createNotification } from '@civitai/notifications';
+Build one configured client (in the monolith this lives in `~/server/notifications/client.ts`), then
+call its methods:
 
-await createNotification(
-  {
-    key: `new-comment:model:${modelId}`,
-    type: 'new-comment',
-    category: 'Comment',
-    details: { modelId },
-    userIds: recipientIds,
-    // debounceSeconds: 60, // optional settle window
-  },
-  {
-    endpoint: process.env.NOTIFICATIONS_ENDPOINT, // e.g. http://notifications.civitai-app.svc
-    token: process.env.NOTIFICATIONS_TOKEN, // shared secret for the internal ingress
-  }
-);
+```ts
+import { createNotificationsClient } from '@civitai/notifications';
+
+const notifications = createNotificationsClient({
+  endpoint: process.env.NOTIFICATIONS_ENDPOINT, // e.g. http://notifications.civitai-app.svc
+  token: process.env.NOTIFICATIONS_TOKEN, // shared secret for the internal ingress
+  // Called once per FINAL request failure (after retries) — wire it to your logger for a single event.
+  onFailure: (f) => logToAxiom({ name: 'notifications-request-failed', ...f }),
+});
+
+await notifications.createNotification({
+  key: `new-comment:model:${modelId}`,
+  type: 'new-comment',
+  category: 'Comment',
+  details: { modelId },
+  userIds: recipientIds,
+  // debounceSeconds: 60, // optional settle window
+});
 ```
 
 `endpoint` / `token` fall back to `NOTIFICATIONS_ENDPOINT` / `NOTIFICATIONS_TOKEN` when omitted. On a
-hot path treat creation as best-effort: `createNotification` throws `CreateNotificationError` on a
-non-2xx or transport failure, so wrap-and-log rather than letting it break the request.
+hot path treat delivery as best-effort: the methods throw `NotificationsClientError` on a non-2xx or
+transport failure (transient failures are retried with backoff first), so wrap-and-log rather than
+letting it break the request.
 
 ## Consuming (transpile requirement)
 

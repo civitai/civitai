@@ -1,7 +1,8 @@
 import { isEmpty } from 'lodash-es';
 import { isPromise } from 'util/types';
 import { clickhouse } from '~/server/clickhouse/client';
-import { createNotificationsBulk, NotificationsClientError } from '@civitai/notifications';
+import { NotificationsClientError } from '@civitai/notifications';
+import { notifications } from '~/server/notifications/client';
 import { pgDbRead } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
 import { notificationBatches } from '~/server/notifications/utils.notifications';
@@ -100,16 +101,15 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
             if (!isEmpty(pendingData)) {
               // The UPDATE-first / INSERT-on-miss batching (to avoid burning sequence ids) now lives in
               // the notifications app behind createNotificationsBulk.
-              await createNotificationsBulk(Object.values(pendingData));
+              await notifications.createNotificationsBulk(Object.values(pendingData));
             }
 
             await setLastSent();
             log('sent', key, 'notifications in', (Date.now() - start) / 1000, 's');
           }
         } catch (e) {
-          // A bulk send failure is logged centrally by the client (notifications-request-failed) — skip
-          // it here to avoid a double log; still log genuine query/build failures (the try also wraps the
-          // main-DB query + pendingData build). The failed key isn't marked sent, so it retries next run.
+          // Client errors log centrally; skip to avoid a double log. The try also wraps the main-DB
+          // query, so genuine query/build failures still log below; the key isn't marked sent → retries.
           if (e instanceof NotificationsClientError) return;
           const error = e as Error;
           logToAxiom(

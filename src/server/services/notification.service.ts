@@ -1,15 +1,10 @@
 import { Prisma } from '@prisma/client';
 import * as z from 'zod';
-import {
-  countNotifications,
-  createNotification as createNotificationRequest,
-  markNotificationsRead as markNotificationsReadRequest,
-  NotificationsClientError,
-  queryNotifications,
-} from '@civitai/notifications';
+import { NotificationsClientError } from '@civitai/notifications';
 import type { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { notifications } from '~/server/notifications/client';
 import { populateNotificationDetails } from '~/server/notifications/detail-fetchers';
 import {
   notificationSingleRowFull,
@@ -36,11 +31,10 @@ export type CreateNotificationPendingRow = z.infer<typeof createNotificationPend
 
 export const createNotification = async (data: CreateNotificationPendingRow) => {
   try {
-    await createNotificationRequest(data);
+    await notifications.createNotification(data);
   } catch (e) {
-    // Send failures are logged centrally by the client (notifications-request-failed) — swallow them
-    // here (best-effort). Only surface a non-request error, e.g. a producer whose payload fails schema
-    // validation before it ever leaves the monolith.
+    // Client errors are logged centrally (notifications-request-failed); best-effort, so swallow them and
+    // only surface a non-request error (e.g. schema validation).
     if (e instanceof NotificationsClientError) return;
     const error = e as Error;
     logToAxiom(
@@ -69,7 +63,7 @@ export async function getUserNotifications({
   count?: boolean;
 }) {
   // Base rows come from the app (notif DB); enrichment reads the MAIN db, so it stays here.
-  const items = await queryNotifications({ userId, limit, cursor, category, unread });
+  const items = await notifications.queryNotifications({ userId, limit, cursor, category, unread });
   await populateNotificationDetails(items);
 
   if (count) return { items, count: await getUserNotificationCount({ userId, unread }) };
@@ -86,7 +80,7 @@ export async function getUserNotificationCount({
   unread: boolean;
   category?: NotificationCategory;
 }) {
-  return countNotifications({ userId, unread, category });
+  return notifications.countNotifications({ userId, unread, category });
 }
 
 export const markNotificationsRead = async ({
@@ -95,12 +89,11 @@ export const markNotificationsRead = async ({
   all = false,
   category,
 }: MarkReadNotificationInput & { userId: number }) => {
-  // Best-effort, like the original: the UI already optimistically marked read, so a transient app
-  // failure (after the client's backoff retries) must NOT surface as a tRPC error — swallow it. Send
-  // failures are logged centrally by the client (notifications-request-failed); only log a non-request
-  // error here. The input id is a bigint (UserNotification.id is int4-sized) — narrow to a JSON number.
+  // Best-effort: the UI already marked read optimistically, so a transient failure must not surface as a
+  // tRPC error. Client errors log centrally; only a non-request error logs here. `id` is a bigint
+  // (UserNotification.id is int4) — narrow to a JSON-safe number.
   try {
-    await markNotificationsReadRequest({
+    await notifications.markNotificationsRead({
       userId,
       id: id != null ? Number(id) : undefined,
       all,

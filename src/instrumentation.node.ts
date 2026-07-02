@@ -17,7 +17,6 @@ import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { registerCpuProfiler, registerEventLoopStallProfiler } from '~/server/cpu-profiler';
 import { registerEventLoopLongTaskDetector } from '~/server/eventloop-longtask';
 import { registerLivenessHeartbeat } from '~/server/liveness-heartbeat';
-import { registerNotificationsFailureLogging } from '~/server/notifications/register-failure-logging';
 
 // Arm the on-demand, signal-triggered V8 CPU profiler. Zero steady-state
 // overhead; only does work when signalled. Independent of OTEL so it is
@@ -51,11 +50,6 @@ registerEventLoopLongTaskDetector();
 // because it's served by the same saturated loop. See liveness-heartbeat.ts and
 // the liveness history in datapacket-talos deployment-api.yaml.
 registerLivenessHeartbeat();
-
-// Route ALL notification-server request failures to one Axiom event
-// (name 'notifications-request-failed', datastream 'notifications'), so a
-// failed create/read/mark/bulk anywhere is a single thing to alert on.
-registerNotificationsFailureLogging();
 
 // Kick the in-process route warmer (fire-and-forget). Next standalone
 // lazy-require()s each route on first hit; the dependency-only readiness probe

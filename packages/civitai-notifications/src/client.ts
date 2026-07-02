@@ -12,15 +12,12 @@ import {
   type QueryNotificationsInput,
 } from './schema';
 
-// The client seam. Producers/readers depend ONLY on these functions + the shared schema; whether they
-// hit the notifications app over HTTP (this impl) or something else is a swap behind the package that
-// never touches a caller. Every call authenticates with the shared-secret bearer token on the app's
-// internal-only ingress.
-
 export type NotificationsClientConfig = {
-  /** Base URL of the notifications app, e.g. `http://notifications.civitai-app.svc`. */
+  /** Base URL of the notifications app, e.g. `http://notifications.civitai-app.svc`. Falls back to
+   * `process.env.NOTIFICATIONS_ENDPOINT`. */
   endpoint?: string;
-  /** Shared secret for the internal-only ingress (WEBHOOK_TOKEN-style). */
+  /** Shared secret for the internal-only ingress (WEBHOOK_TOKEN-style). Falls back to
+   * `process.env.NOTIFICATIONS_TOKEN`. */
   token?: string;
   /** Override fetch (tests / non-global-fetch runtimes). */
   fetch?: typeof fetch;
@@ -33,6 +30,10 @@ export type NotificationsClientConfig = {
   retries?: number;
   /** Base backoff in ms; grows exponentially (`base * 2^attempt`) with jitter, capped at 2s. Default 200. */
   retryBaseMs?: number;
+  /** Called once per FINAL request failure (after retries), from the single `post()` choke point — so
+   * every failed create/bulk/read/count/mark/exists/cleanup surfaces one event. Wire this to your logger
+   * (e.g. Axiom) at client creation; the package stays dependency-free. Never throws to the caller. */
+  onFailure?: (failure: NotificationsRequestFailure) => void;
 };
 
 export class NotificationsClientError extends Error {
@@ -42,7 +43,7 @@ export class NotificationsClientError extends Error {
   }
 }
 
-/** A single notification-server request failure (after any retries), for the injected failure sink. */
+/** A single notification-server request failure (after any retries), passed to `onFailure`. */
 export type NotificationsRequestFailure = {
   /** The request path, e.g. `/notifications`, `/notifications/query`. */
   path: string;
@@ -55,23 +56,13 @@ export type NotificationsRequestFailure = {
   message: string;
 };
 
-let failureLogger: ((failure: NotificationsRequestFailure) => void) | undefined;
-
-/**
- * Register a SINGLE sink for EVERY notification-server request failure (create/bulk/read/count/mark/
- * exists/cleanup), fired once per failed call after retries are exhausted. The consumer wires this once
- * at startup so all failures surface as one queryable event — this package stays dependency-free and
- * doesn't know about Axiom/logging. Pass `undefined` to clear.
- */
-export function setNotificationsFailureLogger(
-  fn: ((failure: NotificationsRequestFailure) => void) | undefined
+function safeReport(
+  onFailure: NotificationsClientConfig['onFailure'],
+  failure: NotificationsRequestFailure
 ) {
-  failureLogger = fn;
-}
-
-function reportFailure(failure: NotificationsRequestFailure) {
+  if (!onFailure) return;
   try {
-    failureLogger?.(failure);
+    onFailure(failure);
   } catch {
     // A logger error must never affect the caller or mask the original request failure.
   }
@@ -93,12 +84,10 @@ function resolveConfig(config: NotificationsClientConfig) {
     timeoutMs: config.timeoutMs ?? 10_000,
     retries: config.retries ?? 2,
     retryBaseMs: config.retryBaseMs ?? 200,
+    onFailure: config.onFailure,
   };
 }
 
-/** One POST attempt. Throws a `NotificationsClientError` with `retryable` set: true for transport/timeout
- * errors and 5xx/429 responses (the app is restarting/overloaded), false for 4xx (bad payload / auth —
- * retrying won't help). */
 async function postAttempt(
   url: string,
   body: unknown,
@@ -138,19 +127,18 @@ async function postAttempt(
   }
 }
 
-/** POST with bounded exponential backoff on transient failures. Returns the parsed JSON response. On the
- * FINAL failure (retries exhausted / non-retryable / config error) it reports once to the injected sink
- * before throwing — the single choke point every request flows through, so every failure logs uniformly. */
+// Reports to `onFailure` exactly once per FINAL failure (config error / non-retryable / retries
+// exhausted) — the single choke point every request flows through.
 async function post(path: string, body: unknown, config: NotificationsClientConfig): Promise<unknown> {
   let resolved: ReturnType<typeof resolveConfig>;
   try {
     resolved = resolveConfig(config);
   } catch (err) {
     const e = err as NotificationsClientError;
-    reportFailure({ path, status: e.status, retryable: false, attempts: 0, message: e.message });
+    safeReport(config.onFailure, { path, status: e.status, retryable: false, attempts: 0, message: e.message });
     throw e;
   }
-  const { endpoint, token, fetch: fetchImpl, timeoutMs, retries, retryBaseMs } = resolved;
+  const { endpoint, token, fetch: fetchImpl, timeoutMs, retries, retryBaseMs, onFailure } = resolved;
   const url = `${endpoint}${path}`;
   for (let attempt = 0; ; attempt++) {
     try {
@@ -158,7 +146,7 @@ async function post(path: string, body: unknown, config: NotificationsClientConf
     } catch (err) {
       const e = err as NotificationsClientError;
       if (!e.retryable || attempt >= retries) {
-        reportFailure({
+        safeReport(onFailure, {
           path,
           status: e.status,
           retryable: e.retryable,
@@ -173,83 +161,58 @@ async function post(path: string, body: unknown, config: NotificationsClientConf
   }
 }
 
-/**
- * Create a notification (settings-filtered). Validates against the shared schema before it leaves the
- * producer, then POSTs to the app. On a hot path treat creation as best-effort: this throws
- * `NotificationsClientError` on a non-2xx/transport failure, so wrap-and-log rather than letting it break
- * the request.
- */
-export async function createNotification(
-  data: CreateNotificationPendingRow,
-  config: NotificationsClientConfig = {}
-): Promise<void> {
-  await post('/notifications', createNotificationPendingRow.parse(data), config);
-}
-
-/** Rows per bulk POST. Bounds each HTTP payload so a large producer run (the notification-generator job
- * can emit tens of thousands of rows, each with a potentially large `users[]`) can't exceed the app's
- * body limit — the DB-write batching within the app is separate. */
+// Bounds each bulk POST so a large producer run (tens of thousands of rows, each with a potentially large
+// `users[]`) can't exceed the app's body limit. The app's DB-write batching is separate.
 const BULK_HTTP_BATCH_SIZE = 1000;
 
-/** Bulk producer path: pre-resolved rows (recipients already computed, NO opt-out filter). Chunked into
- * bounded POSTs; sequential so a big run doesn't fan out an unbounded number of concurrent requests. */
-export async function createNotificationsBulk(
-  rows: CreateNotificationRow[],
-  config: NotificationsClientConfig = {}
-): Promise<void> {
-  const validated = createNotificationsBulkInput.parse(rows);
-  for (let i = 0; i < validated.length; i += BULK_HTTP_BATCH_SIZE) {
-    await post('/notifications/bulk', validated.slice(i, i + BULK_HTTP_BATCH_SIZE), config);
-  }
+/**
+ * Build a notifications client bound to `config`. Methods throw `NotificationsClientError` on a
+ * non-2xx/transport failure (after retries) — treat delivery as best-effort on hot paths (wrap-and-log).
+ */
+export function createNotificationsClient(config: NotificationsClientConfig = {}) {
+  return {
+    createNotification: async (data: CreateNotificationPendingRow): Promise<void> => {
+      await post('/notifications', createNotificationPendingRow.parse(data), config);
+    },
+
+    // Bulk producer path: recipients already resolved, NO opt-out filter (unlike createNotification).
+    createNotificationsBulk: async (rows: CreateNotificationRow[]): Promise<void> => {
+      const validated = createNotificationsBulkInput.parse(rows);
+      for (let i = 0; i < validated.length; i += BULK_HTTP_BATCH_SIZE) {
+        await post('/notifications/bulk', validated.slice(i, i + BULK_HTTP_BATCH_SIZE), config);
+      }
+    },
+
+    // `createdAt` arrives as an ISO string but callers need a Date (the tRPC cursor is `z.date()`).
+    queryNotifications: async (input: QueryNotificationsInput): Promise<NotificationRow[]> => {
+      const res = (await post('/notifications/query', input, config)) as Array<
+        Omit<NotificationRow, 'createdAt'> & { createdAt: string }
+      >;
+      return res.map((r) => ({ ...r, createdAt: new Date(r.createdAt) }));
+    },
+
+    // pg returns COUNT(*) as a string; coerce.
+    countNotifications: async (input: CountNotificationsInput): Promise<NotificationCategoryCount[]> => {
+      const res = (await post('/notifications/count', input, config)) as Array<
+        Omit<NotificationCategoryCount, 'count'> & { count: number | string }
+      >;
+      return res.map((c) => ({ category: c.category, count: Number(c.count) }));
+    },
+
+    markNotificationsRead: async (input: MarkReadInput): Promise<void> => {
+      await post('/notifications/mark-read', input, config);
+    },
+
+    notificationExists: async (input: NotificationExistsInput): Promise<boolean> => {
+      const res = (await post('/notifications/exists', input, config)) as { exists?: boolean } | undefined;
+      return res?.exists === true;
+    },
+
+    cleanupNotifications: async (input: CleanupNotificationsInput): Promise<{ deleted: number }> => {
+      const res = (await post('/notifications/cleanup', input, config)) as { deleted?: number } | undefined;
+      return { deleted: res?.deleted ?? 0 };
+    },
+  };
 }
 
-/** Base notification rows for a user (unenriched — the caller enriches `details` from the main DB). The
- * app's response is trusted (internal, shared-secret), so we don't re-validate it — just cast to the
- * static type and hydrate `createdAt`, which JSON carries as an ISO string but callers need as a Date
- * (the tRPC cursor is `z.date()`). */
-export async function queryNotifications(
-  input: QueryNotificationsInput,
-  config: NotificationsClientConfig = {}
-): Promise<NotificationRow[]> {
-  const res = (await post('/notifications/query', input, config)) as Array<
-    Omit<NotificationRow, 'createdAt'> & { createdAt: string }
-  >;
-  return res.map((r) => ({ ...r, createdAt: new Date(r.createdAt) }));
-}
-
-/** Per-category unread (or total) counts for a user. pg returns COUNT(*) as a string; coerce to number. */
-export async function countNotifications(
-  input: CountNotificationsInput,
-  config: NotificationsClientConfig = {}
-): Promise<NotificationCategoryCount[]> {
-  const res = (await post('/notifications/count', input, config)) as Array<
-    Omit<NotificationCategoryCount, 'count'> & { count: number | string }
-  >;
-  return res.map((c) => ({ category: c.category, count: Number(c.count) }));
-}
-
-/** Mark one / all / a category of a user's notifications read. Fire-and-forget by contract. */
-export async function markNotificationsRead(
-  input: MarkReadInput,
-  config: NotificationsClientConfig = {}
-): Promise<void> {
-  await post('/notifications/mark-read', input, config);
-}
-
-/** Whether a Notification with this `key` already exists (producer-side dedup). */
-export async function notificationExists(
-  input: NotificationExistsInput,
-  config: NotificationsClientConfig = {}
-): Promise<boolean> {
-  const res = (await post('/notifications/exists', input, config)) as { exists?: boolean } | undefined;
-  return res?.exists === true;
-}
-
-/** Delete UserNotification rows older than `before`. Returns the deleted count. */
-export async function cleanupNotifications(
-  input: CleanupNotificationsInput,
-  config: NotificationsClientConfig = {}
-): Promise<{ deleted: number }> {
-  const res = (await post('/notifications/cleanup', input, config)) as { deleted?: number } | undefined;
-  return { deleted: res?.deleted ?? 0 };
-}
+export type NotificationsClient = ReturnType<typeof createNotificationsClient>;

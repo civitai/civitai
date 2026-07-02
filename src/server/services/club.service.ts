@@ -4,7 +4,7 @@ import { isEqual } from 'lodash-es';
 import { v4 as uuid } from 'uuid';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
-import { createNotificationsBulk } from '@civitai/notifications';
+import { notifications } from '~/server/notifications/client';
 import { NotificationCategory } from '~/server/common/enums';
 import { pgDbRead } from '~/server/db/pgDb';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -272,10 +272,9 @@ export const updateClub = async ({
 
     if (reqData) {
       const reqUsers = reqList.map((r) => r.userId);
-      // Best-effort: a notification-server failure (logged centrally as notifications-request-failed)
-      // must not fail the club update.
+      // Best-effort (failures log centrally): a notification blip must not fail the club update.
       try {
-        await createNotificationsBulk([
+        await notifications.createNotificationsBulk([
           {
             key: reqData.key,
             type: reqData.type,

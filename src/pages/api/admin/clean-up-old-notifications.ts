@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
-import { cleanupNotifications } from '@civitai/notifications';
+import { notifications } from '~/server/notifications/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({
@@ -13,7 +13,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   const { before } = schema.parse(req.query);
 
   const start = Date.now();
-  const { deleted } = await cleanupNotifications({ before });
+  const { deleted } = await notifications.cleanupNotifications({ before });
 
   return res.status(200).json({
     ok: true,
