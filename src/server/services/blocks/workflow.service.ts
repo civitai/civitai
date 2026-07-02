@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import type { Workflow, WorkflowStatus } from '@civitai/client';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { dbRead } from '~/server/db/client';
 import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { getEcosystem } from '~/shared/constants/basemodel.constants';
@@ -48,6 +49,7 @@ export function snapshotFromWorkflow(workflow: Workflow): BlockWorkflowSnapshot 
     }
   }
   const total = workflow.cost?.total;
+  const spentAccountType = primaryDebitedAccountType(workflow.transactions);
   return {
     // A whatif/estimate workflow has no orchestrator id. The block SDK's
     // inbound validator (isValidWorkflowSnapshot) DROPS any snapshot whose
@@ -61,7 +63,42 @@ export function snapshotFromWorkflow(workflow: Workflow): BlockWorkflowSnapshot 
     status,
     ...(typeof total === 'number' ? { cost: { total } } : {}),
     ...(imageUrls.length > 0 ? { imageUrls } : {}),
+    // Surface the realized spent account (money page blocks). Additive +
+    // optional — omitted when there's no debit to report so every existing
+    // snapshot stays byte-identical to before.
+    ...(spentAccountType ? { spentAccountType } : {}),
   };
+}
+
+// The three spendable buzz accounts a snapshot surfaces. `fakeRed` is
+// disabled/internal and never a real spend; credits and any other account type
+// are not reported.
+const SNAPSHOT_SPENDABLE_ACCOUNTS: ReadonlySet<string> = new Set<BuzzSpendType>([
+  'blue',
+  'green',
+  'yellow',
+]);
+
+/**
+ * The buzz account that PRIMARILY funded a generation — the accountType of the
+ * largest realized `debit` on the orchestrator's `transactions.list`. A single
+ * generation can split across free (blue) and paid (green/yellow) buzz; we
+ * report the account with the biggest debit as the primary funder. Returns
+ * `undefined` when there are no debits (estimate / cache-hit / no-transactions
+ * snapshot) or the largest debit is an internal-only account (fakeRed), so the
+ * field is simply omitted rather than leaking a non-spendable type.
+ */
+function primaryDebitedAccountType(
+  transactions: Workflow['transactions']
+): BuzzSpendType | undefined {
+  const debits = (transactions?.list ?? []).filter((t) => t.type === 'debit');
+  if (debits.length === 0) return undefined;
+  const largest = debits.reduce((a, b) =>
+    Math.abs(b.amount ?? 0) > Math.abs(a.amount ?? 0) ? b : a
+  );
+  return SNAPSHOT_SPENDABLE_ACCOUNTS.has(largest.accountType)
+    ? (largest.accountType as BuzzSpendType)
+    : undefined;
 }
 
 /**

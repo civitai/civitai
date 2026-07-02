@@ -141,6 +141,75 @@ describe('snapshotFromWorkflow', () => {
     const snap = snapshotFromWorkflow(wf as never);
     expect(snap.imageUrls).toBeUndefined();
   });
+
+  // ---- spentAccountType (money page blocks) --------------------------------
+  // The snapshot surfaces the account that PRIMARILY funded the generation:
+  // the accountType of the LARGEST realized debit on transactions.list.
+  describe('spentAccountType (realized spent account)', () => {
+    it('omits spentAccountType when there are no transactions (backward compatible)', () => {
+      const snap = snapshotFromWorkflow(fakeWorkflow() as never);
+      expect(snap.spentAccountType).toBeUndefined();
+    });
+
+    it('omits spentAccountType when the transactions list is empty', () => {
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({ transactions: { list: [] } }) as never
+      );
+      expect(snap.spentAccountType).toBeUndefined();
+    });
+
+    it('surfaces the accountType of the largest debit (split blue+green → green when green is larger)', () => {
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({
+          transactions: {
+            list: [
+              { type: 'debit', amount: 10, accountType: 'blue' },
+              { type: 'debit', amount: 90, accountType: 'green' },
+            ],
+          },
+        }) as never
+      );
+      expect(snap.spentAccountType).toBe('green');
+    });
+
+    it('reports blue when blue is the largest debit (free-funded generation)', () => {
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({
+          transactions: {
+            list: [
+              { type: 'debit', amount: 80, accountType: 'blue' },
+              { type: 'debit', amount: 5, accountType: 'yellow' },
+            ],
+          },
+        }) as never
+      );
+      expect(snap.spentAccountType).toBe('blue');
+    });
+
+    it('ignores credits when picking the largest debit', () => {
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({
+          transactions: {
+            list: [
+              { type: 'debit', amount: 20, accountType: 'yellow' },
+              // A larger CREDIT (refund/correction) must not be treated as a spend.
+              { type: 'credit', amount: 100, accountType: 'green' },
+            ],
+          },
+        }) as never
+      );
+      expect(snap.spentAccountType).toBe('yellow');
+    });
+
+    it('omits spentAccountType when the largest debit is an internal-only account (fakeRed)', () => {
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({
+          transactions: { list: [{ type: 'debit', amount: 50, accountType: 'fakeRed' }] },
+        }) as never
+      );
+      expect(snap.spentAccountType).toBeUndefined();
+    });
+  });
 });
 
 describe('resolveBlockVersionContext', () => {
