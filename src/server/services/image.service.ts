@@ -56,10 +56,17 @@ import {
   isFailfastStatus,
   isTransientMeiliError,
   meiliFetchFailfastTotal,
+  meiliStaleServedTotal,
   metricsSearchClient,
   withMeili,
   wrapMeilisearchClientWithLimiter,
 } from '~/server/meilisearch/client';
+import {
+  buildImageSearchStaleKey,
+  readImageSearchStale,
+  staleServeOnError,
+  writeImageSearchStale,
+} from '~/server/meilisearch/image-search-stale-cache';
 import { postMetrics } from '~/server/metrics';
 import {
   clickhouseFailSoftCounter,
@@ -3387,229 +3394,268 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   const endTimer = requestDurationSeconds.startTimer({ route });
   requestTotal.inc({ route }); // count every request up front
 
+  // Graceful stale-serve key: a strong hash of the FULLY-COMPOSED Meili request.
+  // The `filter` string is the exact visibility query (browsingLevel + own/mod
+  // carve-outs + hidden/followed id-lists + excluded tags/users + all other
+  // clauses), so an entry is only ever served back to a byte-identical-visibility
+  // request — no cross-browsing-level / cross-user leak. See image-search-stale-cache.ts.
+  const staleKey = buildImageSearchStaleKey({
+    index: METRICS_SEARCH_INDEX,
+    // request.filter is Meili's `Filter` type (string | (string|string[])[]); our
+    // code always sets it to filters.join(' AND ') (a string), but coerce for the
+    // type — the key builder hashes it verbatim either way.
+    filter: typeof request.filter === 'string' ? request.filter : JSON.stringify(request.filter ?? ''),
+    sort: (request.sort as string[] | undefined) ?? [],
+    limit: request.limit ?? 0,
+    offset: request.offset ?? 0,
+  });
+
   try {
-    const actor = input.actor;
+    // On a recognized TRANSIENT Meili failure (MeiliCallTimeoutError / circuit-open
+    // / transient SDK error), serve the last-good result for THIS EXACT request if
+    // it's within the stale bound — "stale-but-fast" instead of a hard 503. The
+    // happy path is unchanged: run()'s live value is returned byte-identically and
+    // the last-good cache is refreshed fire-and-forget. A genuine 0-result returns
+    // via run() and is honored (stale-serve only triggers inside the catch); a
+    // non-transient error rethrows without consulting the cache.
+    const result = await staleServeOnError({
+      read: () => readImageSearchStale(redis, staleKey),
+      write: (value) => writeImageSearchStale(redis, staleKey, value),
+      isRecoverable: isTransientMeiliError,
+      onStaleServed: () => {
+        // Stale-serve short-circuits run() before it reaches its own endTimer(),
+        // so close the request-duration timer here (the success returns close it
+        // inline; the catch closes it on the fall-through throw).
+        endTimer();
+        meiliStaleServedTotal.inc({ backend: 'metricsSearch', route });
+      },
+      run: async () => {
+        const actor = input.actor;
 
-    // Always use the abortable raw fetch path. Two reasons:
-    //   1. Client disconnect: a caller-supplied `input.signal` still cancels
-    //      the underlying request as before.
-    //   2. Hard local deadline: fetchDocumentsAbortable() now races against a
-    //      5s default timer (FETCH_DOCUMENTS_DEFAULT_TIMEOUT_MS). Before this,
-    //      the non-signal branch fell through to the SDK getDocuments, which
-    //      meilisearch-js 0.33/0.34 does NOT cancel — the only protection was
-    //      withMeili()'s 2.5s wrapper timer, with the orphan SDK promise still
-    //      running. Routing everything through fetchDocumentsAbortable gives
-    //      us one code path with a real abort, regardless of whether the
-    //      caller passed a signal.
-    //
-    // This is the hot tRPC path
-    // (image.getInfinite → getInfiniteImagesHandler → getAllImagesIndex →
-    //  this prefilter). Verification on 2026-05-29 showed this is where the
-    // 374-error/15min Meili bleed lives, NOT in getImagesFromFeedSearch.
-    const mainResult = await withSpan('image:meili:getDocuments', () =>
-      fetchDocumentsAbortable<ImageMetricsSearchIndexRecord>(METRICS_SEARCH_INDEX, request, {
-        host: env.METRICS_SEARCH_HOST as string,
-        apiKey: env.METRICS_SEARCH_API_KEY,
-        signal: input.signal,
-        actor,
-      })
-    );
-    let results = mainResult.results;
+        // Always use the abortable raw fetch path. Two reasons:
+        //   1. Client disconnect: a caller-supplied `input.signal` still cancels
+        //      the underlying request as before.
+        //   2. Hard local deadline: fetchDocumentsAbortable() now races against a
+        //      5s default timer (FETCH_DOCUMENTS_DEFAULT_TIMEOUT_MS). Before this,
+        //      the non-signal branch fell through to the SDK getDocuments, which
+        //      meilisearch-js 0.33/0.34 does NOT cancel — the only protection was
+        //      withMeili()'s 2.5s wrapper timer, with the orphan SDK promise still
+        //      running. Routing everything through fetchDocumentsAbortable gives
+        //      us one code path with a real abort, regardless of whether the
+        //      caller passed a signal.
+        //
+        // This is the hot tRPC path
+        // (image.getInfinite → getInfiniteImagesHandler → getAllImagesIndex →
+        //  this prefilter). Verification on 2026-05-29 showed this is where the
+        // 374-error/15min Meili bleed lives, NOT in getImagesFromFeedSearch.
+        const mainResult = await withSpan('image:meili:getDocuments', () =>
+          fetchDocumentsAbortable<ImageMetricsSearchIndexRecord>(METRICS_SEARCH_INDEX, request, {
+            host: env.METRICS_SEARCH_HOST as string,
+            apiKey: env.METRICS_SEARCH_API_KEY,
+            signal: input.signal,
+            actor,
+          })
+        );
+        let results = mainResult.results;
 
-    let nextCursor: number | undefined;
-    if (results.length > limit) {
-      results.pop();
-      // - if we have no entrypoint, it's the first request, and set one for the future
-      //   else keep it the same
-      nextCursor = !entry ? results[0]?.sortAtUnix : entry;
-    }
+        let nextCursor: number | undefined;
+        if (results.length > limit) {
+          results.pop();
+          // - if we have no entrypoint, it's the first request, and set one for the future
+          //   else keep it the same
+          nextCursor = !entry ? results[0]?.sortAtUnix : entry;
+        }
 
-    const filteredHits = results.filter((hit) => {
-      if (!hit.url)
-        // check for good data
-        return false;
-      // filter out items flagged with minor unless it's the owner or moderator
-      if (hit.acceptableMinor) return hit.userId === currentUserId || isModerator;
-      // filter out non-scanned unless it's the owner or moderator
-      if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel) && !hit.needsReview) return true;
+        const filteredHits = results.filter((hit) => {
+          if (!hit.url)
+            // check for good data
+            return false;
+          // filter out items flagged with minor unless it's the owner or moderator
+          if (hit.acceptableMinor) return hit.userId === currentUserId || isModerator;
+          // filter out non-scanned unless it's the owner or moderator
+          if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel) && !hit.needsReview) return true;
 
-      return hit.userId === currentUserId || (isModerator && includesNsfwContent);
-    });
+          return hit.userId === currentUserId || (isModerator && includesNsfwContent);
+        });
 
-    // Get all image IDs from search results
-    const searchImageIds = filteredHits.map((hit) => hit.id);
-    const filteredHitIds = [...new Set(searchImageIds)];
+        // Get all image IDs from search results
+        const searchImageIds = filteredHits.map((hit) => hit.id);
+        const filteredHitIds = [...new Set(searchImageIds)];
 
-    // Routed through getFliptBoolean (memoized once PR #2394's eval cache lands)
-    // instead of a direct per-request wasm eval; returns false on a missing/
-    // uninitialized client (existence check off), matching the prior default.
-    const cacheExistenceEnabled = await getFliptBoolean(
-      FLIPT_FEATURE_FLAGS.FEED_IMAGE_EXISTENCE,
-      currentUserId?.toString() || 'anonymous'
-    );
-    ffRequestsTotal.inc({ route, enabled: String(cacheExistenceEnabled) });
+        // Routed through getFliptBoolean (memoized once PR #2394's eval cache lands)
+        // instead of a direct per-request wasm eval; returns false on a missing/
+        // uninitialized client (existence check off), matching the prior default.
+        const cacheExistenceEnabled = await getFliptBoolean(
+          FLIPT_FEATURE_FLAGS.FEED_IMAGE_EXISTENCE,
+          currentUserId?.toString() || 'anonymous'
+        );
+        ffRequestsTotal.inc({ route, enabled: String(cacheExistenceEnabled) });
 
-    if (!cacheExistenceEnabled) {
-      cacheHitRequestsTotal.inc({ route, hit_type: 'miss' });
+        if (!cacheExistenceEnabled) {
+          cacheHitRequestsTotal.inc({ route, hit_type: 'miss' });
 
-      // BASIC DB CHECK (default)
-      const dbIdResp = await dbRead.image.findMany({
-        where: { id: { in: filteredHitIds } },
-        select: { id: true },
-      });
+          // BASIC DB CHECK (default)
+          const dbIdResp = await dbRead.image.findMany({
+            where: { id: { in: filteredHitIds } },
+            select: { id: true },
+          });
 
-      const idSet = new Set(dbIdResp.map((r) => r.id));
-      const filtered = results.filter((h) => idSet.has(h.id));
+          const idSet = new Set(dbIdResp.map((r) => r.id));
+          const filtered = results.filter((h) => idSet.has(h.id));
 
-      const droppedCount = results.length - filtered.length;
-      droppedIdsTotal.inc({ route, hit_type: 'miss' }, droppedCount);
+          const droppedCount = results.length - filtered.length;
+          droppedIdsTotal.inc({ route, hit_type: 'miss' }, droppedCount);
 
-      const imageMetrics = await getImageMetricsObject(filtered);
-      const fullData = filtered.map((h) => {
-        const match = imageMetrics[h.id];
-        return {
-          ...h,
-          stats: {
-            likeCountAllTime: match?.reactionLike ?? 0,
-            laughCountAllTime: match?.reactionLaugh ?? 0,
-            heartCountAllTime: match?.reactionHeart ?? 0,
-            cryCountAllTime: match?.reactionCry ?? 0,
-            commentCountAllTime: match?.comment ?? 0,
-            collectedCountAllTime: match?.collection ?? 0,
-            tippedAmountCountAllTime: match?.buzz ?? 0,
-            dislikeCountAllTime: 0,
-            viewCountAllTime: 0,
-          },
+          const imageMetrics = await getImageMetricsObject(filtered);
+          const fullData = filtered.map((h) => {
+            const match = imageMetrics[h.id];
+            return {
+              ...h,
+              stats: {
+                likeCountAllTime: match?.reactionLike ?? 0,
+                laughCountAllTime: match?.reactionLaugh ?? 0,
+                heartCountAllTime: match?.reactionHeart ?? 0,
+                cryCountAllTime: match?.reactionCry ?? 0,
+                commentCountAllTime: match?.comment ?? 0,
+                collectedCountAllTime: match?.collection ?? 0,
+                tippedAmountCountAllTime: match?.buzz ?? 0,
+                dislikeCountAllTime: 0,
+                viewCountAllTime: 0,
+              },
+            };
+          });
+
+          endTimer();
+
+          return { data: fullData, nextCursor };
+        }
+
+        // ===== SMART CACHE EXISTENCE CHECK (feature-flagged) =====
+        const checkImageExistence = async (imageIds: number[]) => {
+          // Preserve original order and remove duplicates
+          const uniqueIds = [...new Set(imageIds)];
+          const cachePrefix = `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:`;
+          const cacheKeys = uniqueIds.map((id) => `${cachePrefix}${id}` as RedisKeyTemplateSys);
+
+          // Check cached results first (10 minute TTL — see EX: 600 below). Fail open: image feed
+          // is the highest-traffic endpoint, a sysRedis outage shouldn't 500
+          // it. Treat a throw as full cache miss (everything falls through
+          // to DB — slower but correct).
+          let cachedResults: (string | null)[];
+          try {
+            cachedResults = await sysRedis.packed.mGet(cacheKeys);
+          } catch (err) {
+            logSysRedisFailOpen('read-degraded', 'checkImageExistence mGet', err);
+            cachedResults = new Array(uniqueIds.length).fill(null);
+          }
+
+          // Separate cached and uncached IDs
+          const uncachedIds: number[] = [];
+          const cachedMap = new Map<number, boolean>();
+          let cacheMiss = 0;
+
+          for (let i = 0; i < uniqueIds.length; i++) {
+            const id = uniqueIds[i];
+            const cachedResult = cachedResults[i];
+
+            if (cachedResult === 'true') {
+              cachedMap.set(id, true);
+            } else if (cachedResult === 'false') {
+              cachedMap.set(id, false);
+            } else {
+              uncachedIds.push(id);
+              cacheMiss++;
+            }
+          }
+
+          let hitType: 'full' | 'partial' | 'miss';
+          if (cacheMiss === 0) {
+            hitType = 'full';
+          } else if (cacheMiss === uniqueIds.length) {
+            hitType = 'miss';
+          } else {
+            hitType = 'partial';
+          }
+
+          cacheHitRequestsTotal.inc({ route, hit_type: hitType });
+
+          // Query DB for uncached IDs
+          if (uncachedIds.length > 0) {
+            const dbResults = await dbRead.image.findMany({
+              where: { id: { in: uncachedIds } },
+              select: { id: true },
+            });
+
+            const dbIdSet = new Set(dbResults.map((r) => r.id));
+
+            // Update cache with DB results (10-minute TTL, EX: 600)
+            const cacheUpdates: Record<string, string> = {};
+            for (const id of uncachedIds) {
+              const exists = dbIdSet.has(id);
+              cacheUpdates[`${cachePrefix}${id}`] = exists ? 'true' : 'false';
+              cachedMap.set(id, exists);
+            }
+
+            // Best-effort cache populate. Without this catch, the read-side
+            // fail-open above is defeated: every partial-cache-miss request
+            // during a sysRedis outage would still 500 here.
+            await Promise.all(
+              Object.entries(cacheUpdates).map(([key, value]) =>
+                sysRedis.packed.set(key as RedisKeyTemplateSys, value, { EX: 600 })
+              )
+            ).catch((err) => {
+              logSysRedisFailOpen('write-degraded', 'checkImageExistence cache populate', err);
+            });
+          }
+
+          // Filter hits based on existence check while preserving order
+          let dropped = 0;
+          const filteredHits = results.filter((hit) => {
+            const exists = cachedMap.get(hit.id);
+            const keep = exists !== false; // treat undefined as exists=true
+            if (!keep) dropped++;
+
+            return keep;
+          });
+
+          droppedIdsTotal.inc({ route, hit_type: hitType }, dropped);
+
+          return filteredHits.filter((x) => imageIds.includes(x.id));
         };
-      });
 
-      endTimer();
+        // Apply the (flagged) existence check
+        const filtered = await checkImageExistence(filteredHitIds);
 
-      return { data: fullData, nextCursor };
-    }
+        const imageMetrics = await getImageMetricsObject(filtered);
 
-    // ===== SMART CACHE EXISTENCE CHECK (feature-flagged) =====
-    const checkImageExistence = async (imageIds: number[]) => {
-      // Preserve original order and remove duplicates
-      const uniqueIds = [...new Set(imageIds)];
-      const cachePrefix = `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:`;
-      const cacheKeys = uniqueIds.map((id) => `${cachePrefix}${id}` as RedisKeyTemplateSys);
-
-      // Check cached results first (10 minute TTL — see EX: 600 below). Fail open: image feed
-      // is the highest-traffic endpoint, a sysRedis outage shouldn't 500
-      // it. Treat a throw as full cache miss (everything falls through
-      // to DB — slower but correct).
-      let cachedResults: (string | null)[];
-      try {
-        cachedResults = await sysRedis.packed.mGet(cacheKeys);
-      } catch (err) {
-        logSysRedisFailOpen('read-degraded', 'checkImageExistence mGet', err);
-        cachedResults = new Array(uniqueIds.length).fill(null);
-      }
-
-      // Separate cached and uncached IDs
-      const uncachedIds: number[] = [];
-      const cachedMap = new Map<number, boolean>();
-      let cacheMiss = 0;
-
-      for (let i = 0; i < uniqueIds.length; i++) {
-        const id = uniqueIds[i];
-        const cachedResult = cachedResults[i];
-
-        if (cachedResult === 'true') {
-          cachedMap.set(id, true);
-        } else if (cachedResult === 'false') {
-          cachedMap.set(id, false);
-        } else {
-          uncachedIds.push(id);
-          cacheMiss++;
-        }
-      }
-
-      let hitType: 'full' | 'partial' | 'miss';
-      if (cacheMiss === 0) {
-        hitType = 'full';
-      } else if (cacheMiss === uniqueIds.length) {
-        hitType = 'miss';
-      } else {
-        hitType = 'partial';
-      }
-
-      cacheHitRequestsTotal.inc({ route, hit_type: hitType });
-
-      // Query DB for uncached IDs
-      if (uncachedIds.length > 0) {
-        const dbResults = await dbRead.image.findMany({
-          where: { id: { in: uncachedIds } },
-          select: { id: true },
+        const fullData = filtered.map((h) => {
+          const match = imageMetrics[h.id];
+          return {
+            ...h,
+            stats: {
+              likeCountAllTime: match?.reactionLike ?? 0,
+              laughCountAllTime: match?.reactionLaugh ?? 0,
+              heartCountAllTime: match?.reactionHeart ?? 0,
+              cryCountAllTime: match?.reactionCry ?? 0,
+              commentCountAllTime: match?.comment ?? 0,
+              collectedCountAllTime: match?.collection ?? 0,
+              tippedAmountCountAllTime: match?.buzz ?? 0,
+              dislikeCountAllTime: 0,
+              viewCountAllTime: 0,
+            },
+          };
         });
 
-        const dbIdSet = new Set(dbResults.map((r) => r.id));
+        endTimer();
 
-        // Update cache with DB results (10-minute TTL, EX: 600)
-        const cacheUpdates: Record<string, string> = {};
-        for (const id of uncachedIds) {
-          const exists = dbIdSet.has(id);
-          cacheUpdates[`${cachePrefix}${id}`] = exists ? 'true' : 'false';
-          cachedMap.set(id, exists);
-        }
-
-        // Best-effort cache populate. Without this catch, the read-side
-        // fail-open above is defeated: every partial-cache-miss request
-        // during a sysRedis outage would still 500 here.
-        await Promise.all(
-          Object.entries(cacheUpdates).map(([key, value]) =>
-            sysRedis.packed.set(key as RedisKeyTemplateSys, value, { EX: 600 })
-          )
-        ).catch((err) => {
-          logSysRedisFailOpen('write-degraded', 'checkImageExistence cache populate', err);
-        });
-      }
-
-      // Filter hits based on existence check while preserving order
-      let dropped = 0;
-      const filteredHits = results.filter((hit) => {
-        const exists = cachedMap.get(hit.id);
-        const keep = exists !== false; // treat undefined as exists=true
-        if (!keep) dropped++;
-
-        return keep;
-      });
-
-      droppedIdsTotal.inc({ route, hit_type: hitType }, dropped);
-
-      return filteredHits.filter((x) => imageIds.includes(x.id));
-    };
-
-    // Apply the (flagged) existence check
-    const filtered = await checkImageExistence(filteredHitIds);
-
-    const imageMetrics = await getImageMetricsObject(filtered);
-
-    const fullData = filtered.map((h) => {
-      const match = imageMetrics[h.id];
-      return {
-        ...h,
-        stats: {
-          likeCountAllTime: match?.reactionLike ?? 0,
-          laughCountAllTime: match?.reactionLaugh ?? 0,
-          heartCountAllTime: match?.reactionHeart ?? 0,
-          cryCountAllTime: match?.reactionCry ?? 0,
-          commentCountAllTime: match?.comment ?? 0,
-          collectedCountAllTime: match?.collection ?? 0,
-          tippedAmountCountAllTime: match?.buzz ?? 0,
-          dislikeCountAllTime: 0,
-          viewCountAllTime: 0,
-        },
-      };
+        return {
+          data: fullData,
+          nextCursor,
+        };
+      },
     });
 
-    endTimer();
-
-    return {
-      data: fullData,
-      nextCursor,
-    };
+    return result;
   } catch (error) {
     const err = error as Error;
     logToAxiom(

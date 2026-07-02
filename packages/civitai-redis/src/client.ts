@@ -1686,6 +1686,15 @@ export const REDIS_KEYS = {
     ANNOUNCEMENTS: 'packed:caches:announcement',
     THUMBNAILS: 'packed:caches:thumbnails',
     IMAGE_METRICS: 'packed:caches:image-metrics',
+    // Last-good (stale) image-feed search results, keyed on a strong hash of the
+    // FULLY-COMPOSED Meili request (filter string + sort + limit + offset). The
+    // filter string encodes every visibility dimension (browsingLevel, own/mod
+    // carve-outs, hidden/followed id-lists, excluded tags/users, period, …), so a
+    // stale entry is only ever served back to a request whose visibility semantics
+    // are byte-identical. Written on every successful search (short TTL) and read
+    // ONLY on a recognized transient Meili failure to degrade "stale-but-fast"
+    // instead of erroring. See src/server/meilisearch/image-search-stale-cache.ts.
+    IMAGE_SEARCH_STALE: 'packed:caches:image-search-stale',
     ARTICLE_STATS: 'packed:caches:article-stats',
     POST_STATS: 'packed:caches:post-stats',
     USER_FOLLOWS: 'packed:caches:user-follows',

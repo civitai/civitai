@@ -413,6 +413,29 @@ export function failfastReasonForTransientError(error: unknown): MeiliFetchFailf
  * Naming follows the prom-client wrapper's PROM_PREFIX convention — exposed
  * to Prometheus as `civitai_app_meili_fetch_failfast_total`.
  */
+/**
+ * Counter incremented every time a Meili-backed read serves a LAST-GOOD (stale)
+ * cached result because the live call failed with a recognized transient error
+ * (MeiliCallTimeoutError / circuit-open / transient SDK error). This is the
+ * "graceful stale-serve" degradation: instead of throwing a 503 on the image
+ * feed when Meili browns out, we serve the most recent successful result for the
+ * SAME visibility query (see image-search-stale-cache.ts) as long as it's within
+ * the bounded stale age.
+ *
+ * A rising rate here means the feed is being kept usable by masking a real
+ * Meili degradation — alert-worthy as a leading indicator even though users see
+ * no error. Exposed to Prometheus as `civitai_app_meili_stale_served_total`.
+ * `backend` mirrors the other meili counters; `route` identifies the caller.
+ */
+export const meiliStaleServedTotal = registerCounterWithLabels({
+  name: 'meili_stale_served_total',
+  help:
+    'Meili-backed reads served from the last-good (stale) cache because the live ' +
+    'call hit a transient failure — the graceful "stale-but-fast" degradation. ' +
+    'A nonzero rate masks a real Meili brownout; alert on it as a leading signal.',
+  labelNames: ['backend', 'route'] as const,
+});
+
 export const meiliFetchFailfastTotal = registerCounterWithLabels({
   name: 'meili_fetch_failfast_total',
   help:
