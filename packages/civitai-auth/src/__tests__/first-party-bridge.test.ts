@@ -98,6 +98,47 @@ describe('completeFirstPartyCallback', () => {
     });
   });
 
+  it('forwards x-forwarded-for: <clientIp> on the session exchange when clientIp is provided', async () => {
+    // So the hub rate-limits on the real end user AND, under internal routing (no proxy → no XFF), so the hub's
+    // getClientAddress() has a header to resolve instead of 500ing the exchange.
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => ({
+      ok: true,
+      json: async () => ({ token: 'civ.jwt', deviceId: 'dev-123' }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await completeFirstPartyCallback({
+      selfOrigin: SELF,
+      query: { code: 'abc', state: 'st8' },
+      bridgeCookieValue: stashCookie('verif', 'st8', '/dash'),
+      clientIp: '198.51.100.7',
+    });
+
+    const [, init] = fetchMock.mock.calls[0];
+    const headers = init.headers as Record<string, string>;
+    expect(headers['x-forwarded-for']).toBe('198.51.100.7');
+    expect(headers['content-type']).toBe('application/json'); // preserved alongside the forwarded IP
+  });
+
+  it('OMITS x-forwarded-for when no clientIp is provided (public-routing behavior unchanged)', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => ({
+      ok: true,
+      json: async () => ({ token: 'civ.jwt' }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await completeFirstPartyCallback({
+      selfOrigin: SELF,
+      query: { code: 'abc', state: 'st8' },
+      bridgeCookieValue: stashCookie('verif', 'st8', '/dash'),
+    });
+
+    const [, init] = fetchMock.mock.calls[0];
+    const headers = init.headers as Record<string, string>;
+    expect('x-forwarded-for' in headers).toBe(false);
+    expect(headers['content-type']).toBe('application/json');
+  });
+
   it('rejects a state mismatch (CSRF) without calling the hub', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);

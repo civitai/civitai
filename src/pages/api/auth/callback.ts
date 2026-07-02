@@ -18,6 +18,21 @@ import {
 // first-party /session endpoint (server-to-server with the PKCE verifier), then set THIS domain's civ-token
 // cookie via setSessionCookie() and continue to returnUrl. The CSRF/exchange logic lives in @civitai/auth
 // (first-party-bridge). Cookie format is unchanged → existing sessions unaffected.
+
+/**
+ * The real END-USER IP for the request, forwarded to the hub on the server-to-server session exchange (same
+ * convention as dev-token.ts / the OAuth proxy). First XFF entry (client-most), then cf-connecting-ip, then the
+ * socket peer. Returns undefined when nothing resolves so the bridge simply omits the header.
+ */
+function endUserIp(req: NextApiRequest): string | undefined {
+  const xff = req.headers['x-forwarded-for'];
+  const first = Array.isArray(xff) ? xff[0] : xff?.split(',')[0];
+  const cf = req.headers['cf-connecting-ip'];
+  const cfFirst = Array.isArray(cf) ? cf[0] : cf;
+  const ip = first ?? cfFirst ?? req.socket?.remoteAddress;
+  return ip?.trim() || undefined;
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   // Don't leak the code/state in the inbound URL onward via Referer.
   res.setHeader('Referrer-Policy', 'no-referrer');
@@ -43,6 +58,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       error: typeof req.query.error === 'string' ? req.query.error : null,
     },
     bridgeCookieValue: req.cookies[OAUTH_BRIDGE_COOKIE],
+    clientIp: endUserIp(req),
   });
 
   if ('error' in result) {

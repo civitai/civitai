@@ -121,6 +121,14 @@ export async function completeFirstPartyCallback(opts: {
   query: { code?: string | null; state?: string | null; error?: string | null };
   /** The decoded `oauth_bridge` cookie value from the request (Next `req.cookies[...]` / SvelteKit `cookies.get`). */
   bridgeCookieValue: string | undefined;
+  /**
+   * The real END-USER IP, forwarded to the hub as `x-forwarded-for` on the server-to-server session exchange
+   * (same convention as the OAuth proxy + dev-token) so the hub's rate limiter keys on the real client, not the
+   * spoke's egress IP. CRITICAL under internal routing (`AUTH_HUB_INTERNAL_URL`): those requests bypass Traefik
+   * and arrive with NO XFF, which used to 500 the hub (`getClientAddress()` throws when `ADDRESS_HEADER` is
+   * configured but the header is absent). Omit it and behavior is unchanged (public routing supplies XFF).
+   */
+  clientIp?: string;
 }): Promise<FirstPartyCallbackResult> {
   let stash: { v?: string; s?: string; r?: string } | undefined;
   if (opts.bridgeCookieValue) {
@@ -143,10 +151,14 @@ export async function completeFirstPartyCallback(opts: {
   }
 
   const origin = opts.selfOrigin.replace(/\/+$/, '');
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  // Forward the real end-user IP so the hub's rate limiter keys on the client, not the spoke egress IP — and,
+  // under internal routing (no proxy → no XFF), so the hub's getClientAddress() has a header to resolve.
+  if (opts.clientIp) headers['x-forwarded-for'] = opts.clientIp;
   try {
     const res = await hubFetch('/api/auth/oauth/session', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers,
       body: JSON.stringify({ code, code_verifier: stash.v, client_id: firstPartyClientId(origin) }),
     });
     if (res.ok) {

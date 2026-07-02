@@ -7,6 +7,7 @@ import { touchAccount } from '$lib/server/auth/device';
 import { consumeOidcContext } from '$lib/server/oauth/oidc-nonce';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
+import { safeClientAddress } from '$lib/server/oauth/client-address';
 import { parseBody } from '$lib/server/oauth/http';
 
 // POST /api/auth/oauth/session — FIRST-PARTY session exchange (BFF, Phase 3).
@@ -32,15 +33,22 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
   const code = typeof body.code === 'string' ? body.code : '';
   const verifier = typeof body.code_verifier === 'string' ? body.code_verifier : '';
   const clientId = typeof body.client_id === 'string' ? body.client_id : '';
-  const ip = getClientAddress() || 'unknown';
+  // getClientAddress() THROWS (not empty) when ADDRESS_HEADER=x-forwarded-for is configured but the header is
+  // absent — e.g. an internal-routed spoke call that bypasses Traefik. safeClientAddress degrades to undefined
+  // instead of 500ing the whole exchange (which is what broke ~45% of first-party logins). See client-address.ts.
+  const ip = safeClientAddress(getClientAddress);
 
   if (!code || !verifier) {
     return bad('invalid_request', 'Missing code or code_verifier');
   }
 
-  // Generous per-IP flood-guard (the caller is the spoke server, not the user — see rate-limit.ts). Keeps
-  // this unauthenticated endpoint from being hammered before it does any redis/crypto/DB work.
-  if (!(await checkOAuthRateLimit('session', ip))) {
+  // Generous flood-guard (the caller is the spoke server, not the user — see rate-limit.ts). Keeps this
+  // unauthenticated endpoint from being hammered before it does any redis/crypto/DB work. Normally keyed on the
+  // real client IP (the spoke forwards the end-user's XFF). When the IP is unavailable, DO NOT collapse to a
+  // single global 'unknown' key — that pools EVERY first-party exchange into one 300/min bucket and would 429
+  // under load — degrade to the request's client_id so the guard stays per-tenant (firstparty-civitai_com/_red).
+  const rateLimitKey = ip ?? (clientId ? `client:${clientId}` : 'unknown');
+  if (!(await checkOAuthRateLimit('session', rateLimitKey))) {
     return bad('rate_limited', 'Too many session requests', 429);
   }
 
@@ -104,7 +112,7 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
     type: 'token.issued',
     userId,
     clientId,
-    ip,
+    ip: ip ?? 'unknown',
     metadata: { grant_type: 'first_party_session' },
   });
 
