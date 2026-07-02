@@ -49,19 +49,42 @@ const {
   mockSubmitVersion,
   mockRedis,
   mockMultiIncr,
+  mockWithSysReadDeadline,
+  sysDeadline,
 } = vi.hoisted(() => {
   // `exec()` normally returns ['OK', <count>]. `malformedExec` simulates a Redis
   // hiccup / aborted MULTI where the result is null or short (F3 fail-closed).
-  const mockMultiIncr = { value: 1, malformedExec: null as unknown[] | null | false };
+  // `hangExec` (#28) simulates a SILENT half-open where `.exec()` never settles —
+  // withSysReadDeadline must reject it within the deadline → fail closed (503).
+  const mockMultiIncr = {
+    value: 1,
+    malformedExec: null as unknown[] | null | false,
+    hangExec: false,
+  };
   const multiFactory = () => ({
     set: vi.fn().mockReturnThis(),
     incr: vi.fn().mockReturnThis(),
-    exec: vi.fn().mockImplementation(async () =>
-      mockMultiIncr.malformedExec !== false
+    exec: vi.fn().mockImplementation(async () => {
+      if (mockMultiIncr.hangExec) return new Promise(() => {}); // never settles
+      return mockMultiIncr.malformedExec !== false
         ? mockMultiIncr.malformedExec
-        : ['OK', mockMultiIncr.value]
-    ),
+        : ['OK', mockMultiIncr.value];
+    }),
   });
+  // Faithful stand-in for the real withSysReadDeadline (sys-read-deadline.ts): race
+  // the wrapped promise against a rejecting timer; `<= 0` disables (no-op). A tiny
+  // default ms keeps the never-settles tests fast without fake timers.
+  const sysDeadline = { ms: 50 };
+  const mockWithSysReadDeadline = <T>(p: Promise<T>, ms = sysDeadline.ms): Promise<T> => {
+    if (!ms || ms <= 0) return p;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`sysRedis read timed out after ${ms}ms`)), ms);
+    });
+    return Promise.race([p, deadline]).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
+  };
   return {
     mockGetSession: vi.fn(),
     mockIsAppBlocksEnabled: vi.fn(),
@@ -69,6 +92,8 @@ const {
     mockSubmitVersion: vi.fn(),
     mockRedis: { multi: vi.fn(multiFactory), ttl: vi.fn().mockResolvedValue(60) },
     mockMultiIncr,
+    mockWithSysReadDeadline,
+    sysDeadline,
   };
 });
 
@@ -83,6 +108,7 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
 vi.mock('~/server/redis/client', () => ({
   sysRedis: mockRedis,
   REDIS_SYS_KEYS: { BLOCKS: { SUBMIT_RATE_LIMIT: 'blocks:submit-rate-limit' } },
+  withSysReadDeadline: mockWithSysReadDeadline,
 }));
 // The route dynamically imports env + the service; mock both so the heavy
 // dependency tree never loads in the unit test.
@@ -145,6 +171,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockMultiIncr.value = 1;
   mockMultiIncr.malformedExec = false;
+  mockMultiIncr.hangExec = false;
+  sysDeadline.ms = 50;
   mockRedis.ttl.mockResolvedValue(60);
   mockIsAppBlocksEnabled.mockResolvedValue(true);
   // Author gate mirrors the mod floor by default; the widening test overrides it.
@@ -329,6 +357,38 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     });
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(503);
+    expect(mockSubmitVersion).not.toHaveBeenCalled();
+  });
+
+  it('#28: 503 (fail closed) when the rate-limit exec() HANGS (silent half-open never settles) — deadline-bounded, no park', async () => {
+    // The #28 root cause: this route's raw sysRedis MULTI runs on the critical path
+    // with NO try/catch. On a silent half-open the written command parks the handler
+    // (no throw). withSysReadDeadline races the never-settling exec() → rejects → the
+    // new try/catch fails closed (503) instead of hanging ~11min to TCP keepalive.
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockMultiIncr.hangExec = true;
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never); // must RESOLVE (not hang)
+    expect(res._getStatusCode()).toBe(503);
+    // A hung limiter must never silently bypass the heavy publish path.
+    expect(mockSubmitVersion).not.toHaveBeenCalled();
+  });
+
+  it('#28: 429 path does not park when the retry-after sysRedis.ttl HANGS — falls back to the window', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockMultiIncr.value = 11; // > RATE_LIMIT.max (10)
+    mockRedis.ttl.mockReturnValueOnce(new Promise(() => {})); // never settles
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never); // must RESOLVE
+    expect(res._getStatusCode()).toBe(429);
+    // Fallback Retry-After = RATE_LIMIT.windowSeconds (60).
+    expect(res._getHeaders()['Retry-After']).toBe('60');
     expect(mockSubmitVersion).not.toHaveBeenCalled();
   });
 
