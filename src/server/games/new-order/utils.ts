@@ -95,7 +95,18 @@ function createCounter<TId extends number | string = number | string>({
         LIMIT: limit ? { offset, count: limit } : undefined,
       });
 
-      return withCount ? data : data.map((x) => x.value);
+      // The HA/Sentinel sysRedis client hands back BLOB_STRING replies (zset
+      // members) as Buffers, which have no string methods. `checkWeightedConsensus`
+      // does `vote.value.split('-')` on these → `value.split is not a function`,
+      // which was swallowed and returned undefined for EVERY image that reached
+      // consensus → mass Inconclusive purges + earnings collapse. Decode members to
+      // utf8 so callers get the string they're typed to receive (same coercion as
+      // redis/queues.ts getBucketNames).
+      const rows = data.map((x) => ({
+        value: Buffer.isBuffer(x.value) ? x.value.toString('utf8') : x.value,
+        score: x.score,
+      }));
+      return withCount ? rows : rows.map((x) => x.value);
     }
 
     const data = await sysRedis.hGetAll(key);
