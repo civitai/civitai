@@ -1,7 +1,11 @@
 import { dbRead } from './db';
 import { ArticleStatus, type ArticleMetadata } from '$lib/articles';
+import type { MediaType } from '$lib/media/edge-url';
 
-const UNPUBLISHED: ArticleStatus[] = [ArticleStatus.Unpublished, ArticleStatus.UnpublishedViolation];
+const UNPUBLISHED: ArticleStatus[] = [
+  ArticleStatus.Unpublished,
+  ArticleStatus.UnpublishedViolation,
+];
 
 export type ModeratorArticleRow = {
   id: number;
@@ -11,6 +15,7 @@ export type ModeratorArticleRow = {
   publishedAt: Date | null;
   metadata: ArticleMetadata;
   coverUrl: string | null;
+  coverType: MediaType | null;
   username: string | null;
   userImage: string | null;
 };
@@ -48,6 +53,7 @@ export async function getModeratorArticles({
       'Article.publishedAt',
       'Article.metadata',
       'Image.url as coverUrl',
+      'Image.type as coverType',
       'User.username',
       'User.image as userImage',
     ])

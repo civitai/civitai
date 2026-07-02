@@ -1,25 +1,30 @@
 import { fail } from '@sveltejs/kit';
+import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { getPaginatedCosmetics, grantCosmeticsToUsers } from '$lib/server/cosmetics.service';
 import { CosmeticType } from '$lib/cosmetics';
+import { parseQuery } from '$lib/server/query';
 
 const LIMIT = 60;
-const COSMETIC_TYPES = new Set<string>(Object.values(CosmeticType));
-const isType = (v: string): v is CosmeticType => COSMETIC_TYPES.has(v);
+
+const querySchema = z.object({
+  page: z.coerce.number().int().min(1).catch(1),
+  name: z.string().trim().catch(''),
+  // Repeated `?type=` filter; absent/invalid → [] → all types.
+  type: z.array(z.enum(CosmeticType)).catch([]),
+});
 
 export const load: PageServerLoad = async ({ url }) => {
-  const page = Math.max(1, Number(url.searchParams.get('page')) || 1);
-  const name = url.searchParams.get('name')?.trim() || '';
-  const types = url.searchParams.getAll('type').filter(isType);
+  const { page, name, type } = parseQuery(url, querySchema, ['type']);
 
   const data = await getPaginatedCosmetics({
     page,
     limit: LIMIT,
     name: name || undefined,
-    types: types.length ? types : undefined,
+    types: type.length ? type : undefined,
   });
 
-  return { name, types, ...data };
+  return { name, types: type, ...data };
 };
 
 // Access is enforced globally (hooks.server.ts). Grant runs internally via Kysely.

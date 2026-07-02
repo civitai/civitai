@@ -108,7 +108,6 @@ import type {
   ImageModerationUnblockSchema,
   ImageRatingReviewOutput,
   ImageReviewQueueInput,
-  IngestionErrorReviewInput,
   ImageSchema,
   ImageUploadProps,
   IngestImageInput,
@@ -1855,7 +1854,9 @@ export const getAllImages = async (
       i.poi,
       i."acceptableMinor",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
-      ${Prisma.raw(collectionId ? ', ct.note as "collectionItemNote", ct.status as "collectionItemStatus"' : '')}
+      ${Prisma.raw(
+        collectionId ? ', ct.note as "collectionItemNote", ct.status as "collectionItemStatus"' : ''
+      )}
       ${queryFrom}
       ORDER BY ${Prisma.raw(orderBy)}
       ${Prisma.raw(skip ? `OFFSET ${skip}` : '')}
@@ -4734,24 +4735,19 @@ export const getImageMetricsObject = async (
     // is typed identically (no widening to the full metric union).
     const fetchPromise = getImageMetricService().fetch('Image', ids);
     type ImageMetricMap = Awaited<typeof fetchPromise>;
-    const metrics = await withTimeoutFallback(
-      fetchPromise,
-      timeoutMs,
-      {} as ImageMetricMap,
-      () => {
-        imageMetricsClickhouseTimeoutCounter.inc();
-        logToAxiom(
-          {
-            type: 'warning',
-            name: 'getImageMetrics timeout',
-            message: `ClickHouse image metrics read exceeded ${timeoutMs}ms`,
-            idCount: ids.length,
-            timeoutMs,
-          },
-          'clickhouse'
-        ).catch();
-      }
-    );
+    const metrics = await withTimeoutFallback(fetchPromise, timeoutMs, {} as ImageMetricMap, () => {
+      imageMetricsClickhouseTimeoutCounter.inc();
+      logToAxiom(
+        {
+          type: 'warning',
+          name: 'getImageMetrics timeout',
+          message: `ClickHouse image metrics read exceeded ${timeoutMs}ms`,
+          idCount: ids.length,
+          timeoutMs,
+        },
+        'clickhouse'
+      ).catch();
+    });
     const result: ImageMetricsObject = {};
     for (const id of ids) {
       const m = metrics[id];
@@ -6998,108 +6994,8 @@ export async function getImageRatingRequests({
   };
 }
 
-export async function getIngestionErrorImages({ cursor, limit }: IngestionErrorReviewInput) {
-  const query = Prisma.sql`
-    SELECT
-      i.id,
-      i.url,
-      i.name,
-      i."nsfwLevel",
-      i."aiNsfwLevel",
-      i."needsReview",
-      i.width,
-      i.height,
-      i.type,
-      i."createdAt",
-      i.poi
-    FROM "Image" i
-    WHERE i."createdAt" > now() - INTERVAL '2 days'
-      AND i."createdAt" < now() - INTERVAL '1 hour'
-      AND i.ingestion = 'Error'::"ImageIngestionStatus"
-      AND i."nsfwLevel" = 0
-      ${cursor ? Prisma.sql`AND i.id < ${cursor}` : Prisma.empty}
-    ORDER BY i."createdAt" DESC
-    LIMIT ${limit + 1}
-  `;
-
-  const results = await dbRead.$queryRaw<
-    {
-      id: number;
-      url: string;
-      name: string | null;
-      nsfwLevel: number;
-      aiNsfwLevel: number | null;
-      needsReview: string | null;
-      width: number | null;
-      height: number | null;
-      type: string;
-      createdAt: Date;
-      poi: boolean;
-    }[]
-  >`${query}`;
-
-  let nextCursor: number | undefined;
-  if (results.length > limit) {
-    const nextItem = results.pop();
-    nextCursor = nextItem?.id;
-  }
-
-  return {
-    nextCursor,
-    items: results,
-  };
-}
-
-export async function resolveIngestionError({
-  id,
-  nsfwLevel,
-  userId,
-}: {
-  id: number;
-  nsfwLevel: NsfwLevel;
-  userId: number;
-}) {
-  const image = await dbRead.image.findUnique({
-    where: { id },
-    select: {
-      ingestion: true,
-      postId: true,
-      userId: true,
-      metadata: true,
-    },
-  });
-  if (!image) throw new Error('Image not found');
-
-  const metadata = (image.metadata as ImageMetadata) ?? {};
-
-  await dbWrite.image.update({
-    where: { id },
-    data: {
-      nsfwLevel,
-      nsfwLevelLocked: true,
-      ingestion: ImageIngestionStatus.Scanned,
-      scannedAt: new Date(),
-      metadata: { ...metadata, nsfwLevelReason: 'Moderator ingestion error review' },
-    },
-  });
-  await imageMetadataCache.refresh(id);
-
-  // Post-scan actions matching what image-scan-result does on successful scan
-  await tagIdsForImagesCache.refresh(id);
-
-  if (image.postId) await updatePostNsfwLevel(image.postId);
-
-  await queueImageSearchIndexUpdate({
-    ids: [id],
-    action: SearchIndexUpdateQueueAction.Update,
-  });
-
-  await trackModActivity(userId, {
-    entityType: 'image',
-    entityId: id,
-    activity: 'setNsfwLevel',
-  });
-}
+// NOTE(moderator-migration): getIngestionErrorImages + resolveIngestionError (the ingestion-error-review
+// queue + its nsfwLevel setter) now live in the spoke app (apps/moderator, Kysely).
 
 type DownleveledImageRecord = {
   imageId: number;
@@ -7679,21 +7575,8 @@ export async function bulkRemoveBlockedImages(hashes: Array<bigint | number>) {
 //   return dbWrite.blockedImage.deleteMany({ where: { hash: { in: hashes } } });
 // }
 
-export async function getImagesPendingIngestion() {
-  const date = new Date();
-  date.setDate(date.getDate() - 5);
-  return await dbRead.image.findMany({
-    where: { ingestion: 'Pending', createdAt: { gt: date } },
-    select: {
-      id: true,
-      name: true,
-      url: true,
-      createdAt: true,
-      metadata: true,
-    },
-    orderBy: { id: 'desc' },
-  });
-}
+// NOTE(moderator-migration): getImagesPendingIngestion (the images/to-ingest queue) now lives in the
+// spoke app (apps/moderator, Kysely).
 
 export async function queueImageSearchIndexUpdate({
   ids,

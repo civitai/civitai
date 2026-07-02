@@ -208,12 +208,12 @@ Establish the service-porting rhythm on the cheapest pages (Postgres, plus alrea
 - [ ] `getImageModerationCounts`
 - [ ] `moderateImages` (+ `handleBlockImages`, `handleUnblockImages`) — *Meilisearch + Redis + S3 pHash + Cloudflare purge + email + comic re-queue*
 - [ ] `getModeratorPOITags`
-- [ ] `getImagesPendingIngestion`
+- [x] `getImagesPendingIngestion` — ported to the spoke (`ingestion.service.ts`); main-app copy removed (orphaned)
 - [ ] `getImageRatingRequests` — *Knights of New Order*
 - [ ] `updateImageNsfwLevel` (+ `updatePendingImageRatings`) — *raw SQL `update_nsfw_levels_new`; Redis thumbnail cache; KoNO* (rating-review + downleveled)
 - [ ] `getDownleveledImages`
-- [ ] `getIngestionErrorImages`
-- [ ] `resolveIngestionError`
+- [x] `getIngestionErrorImages` — ported to the spoke (`ingestion.service.ts`); main-app copy removed (orphaned)
+- [x] `resolveIngestionError` — ported to the spoke (internal Kysely nsfwLevel setter + `update_post_nsfw_levels` + Meili callback, Redis cache refresh deferred to Wave 3); main-app copy removed (orphaned)
 - [ ] `createEntityImages` + `enqueueImageIngestion` — *(only if a Tier 1 page needs image upload; primarily Tier 2 cosmetics — verify)*
 
 ### `tag.service.ts`  ·  used by: image-tags, tags

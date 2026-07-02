@@ -49,3 +49,8 @@ export function getBrowsingLevelLabel(value: number | null | undefined): string 
 // Single-bit levels a moderator can pin an article to (excludes Blocked; that's a TOS action, not a
 // rating). The resolve callback re-validates server-side.
 export const validNsfwLevels = new Set<number>(browsingLevels);
+
+// Ingestion-error review lets a moderator set any browsing level OR Blocked (a mis-ingested image may be
+// TOS-violating), so this set is broader than validNsfwLevels.
+export const ingestionErrorLevels = [...browsingLevels, NsfwLevel.Blocked] as const;
+export const ingestionErrorLevelSet = new Set<number>(ingestionErrorLevels);

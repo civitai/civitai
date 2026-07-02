@@ -18,7 +18,7 @@
     PaginationNext,
     PaginationPrevious,
   } from '@civitai/ui/components/ui/pagination/index.js';
-  import EdgeImage from '$lib/components/EdgeImage.svelte';
+  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import { articleUrl, userUrl } from '$lib/articles';
   import {
     ratingReviewStatusFilters,
@@ -109,8 +109,9 @@
       <div class="flex gap-4 rounded-xl border p-3">
         <div class="size-28 shrink-0 overflow-hidden rounded-lg bg-muted">
           {#if article.coverUrl}
-            <EdgeImage
+            <EdgeMedia
               src={article.coverUrl}
+              type={article.coverType ?? undefined}
               width={112}
               alt={article.title}
               class="size-full object-cover"

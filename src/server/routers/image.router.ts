@@ -19,10 +19,7 @@ import {
   getImageGenerationData,
   getImageRatingRequests,
   getImagesByUserIdForModeration,
-  getIngestionErrorImages,
-  resolveIngestionError,
   getImagesForModelVersionCache,
-  getImagesPendingIngestion,
   getModeratorPOITags,
   getMyImages,
   ingestArticleCoverImages,
@@ -69,8 +66,6 @@ import {
   imageModerationSchema,
   imageRatingReviewInput,
   imageReviewQueueInputSchema,
-  ingestionErrorReviewInput,
-  resolveIngestionErrorInput,
   removeImageResourceSchema,
   reportCsamImagesSchema,
   setTosViolationSchema,
@@ -176,12 +171,6 @@ export const imageRouter = router({
   getImageRatingRequests: moderatorProcedure
     .input(imageRatingReviewInput)
     .query(({ input, ctx }) => getImageRatingRequests({ ...input, user: ctx.user })),
-  getIngestionErrorImages: moderatorProcedure
-    .input(ingestionErrorReviewInput)
-    .query(({ input }) => getIngestionErrorImages(input)),
-  resolveIngestionError: moderatorProcedure
-    .input(resolveIngestionErrorInput)
-    .mutation(({ input, ctx }) => resolveIngestionError({ ...input, userId: ctx.user.id })),
   getDownleveledImages: moderatorProcedure
     .input(downleveledReviewInput)
     .query(({ input, ctx }) => getDownleveledImages({ ...input, user: ctx.user })),
@@ -239,7 +228,6 @@ export const imageRouter = router({
     .input(z.object({ userId: z.number() }))
     .query(({ input, ctx }) => getImagesByUserIdForModeration(input.userId)),
 
-  getAllImagesPendingIngestion: moderatorProcedure.query(getImagesPendingIngestion),
   // #endregion
 
   // #region [thumbnail]

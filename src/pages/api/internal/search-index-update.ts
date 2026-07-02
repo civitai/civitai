@@ -6,6 +6,7 @@ import {
   collectionsSearchIndex,
   comicsSearchIndex,
   imagesSearchIndex,
+  imagesMetricsSearchIndex,
   modelsSearchIndex,
   toolsSearchIndex,
   usersSearchIndex,
@@ -45,18 +46,20 @@ export default WebhookEndpoint(async (req, res) => {
   const index = searchIndexes[entityType as keyof typeof searchIndexes];
   if (!index)
     return res.status(400).json({
-      error: `Unknown entityType "${entityType}". Supported: ${Object.keys(searchIndexes).join(', ')}`,
+      error: `Unknown entityType "${entityType}". Supported: ${Object.keys(searchIndexes).join(
+        ', '
+      )}`,
     });
 
-  await index.queueUpdate([
-    {
-      id: entityId,
-      action:
-        action === 'delete'
-          ? SearchIndexUpdateQueueAction.Delete
-          : SearchIndexUpdateQueueAction.Update,
-    },
-  ]);
+  const queueAction =
+    action === 'delete' ? SearchIndexUpdateQueueAction.Delete : SearchIndexUpdateQueueAction.Update;
+
+  await index.queueUpdate([{ id: entityId, action: queueAction }]);
+
+  // Images live in two indexes (main + metrics) — keep both in sync, matching the main app's
+  // queueImageSearchIndexUpdate.
+  if (entityType === 'image')
+    await imagesMetricsSearchIndex.queueUpdate([{ id: entityId, action: queueAction }]);
 
   return res.status(200).json({ ok: true, entityType, entityId });
 });

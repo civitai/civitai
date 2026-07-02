@@ -1,22 +1,24 @@
 import { fail } from '@sveltejs/kit';
+import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import {
   getArticleRatingReviews,
   getArticleRatingReviewCounts,
 } from '$lib/server/article-rating-reviews.service';
 import { resolveRatingReview } from '$lib/server/article-rating-review-actions';
-import type { RatingReviewStatusFilter } from '$lib/article-rating-review';
 import { validNsfwLevels } from '$lib/browsing-levels';
+import { parseQuery } from '$lib/server/query';
 
 const LIMIT = 20;
 
-const isStatus = (v: string | null): v is RatingReviewStatusFilter =>
-  v === 'Pending' || v === 'Actioned' || v === 'Unactioned';
+const querySchema = z.object({
+  page: z.coerce.number().int().min(1).catch(1),
+  // Absent / invalid → the default Pending bucket.
+  status: z.enum(['Pending', 'Actioned', 'Unactioned']).catch('Pending'),
+});
 
 export const load: PageServerLoad = async ({ url }) => {
-  const page = Math.max(1, Number(url.searchParams.get('page')) || 1);
-  const statusParam = url.searchParams.get('status');
-  const status = isStatus(statusParam) ? statusParam : 'Pending';
+  const { page, status } = parseQuery(url, querySchema);
 
   const [data, counts] = await Promise.all([
     getArticleRatingReviews({ status, page, limit: LIMIT }),

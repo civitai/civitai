@@ -12,6 +12,8 @@ const MIGRATED_ROUTES: Record<string, string> = {
   articles: 'articles',
   'article-rating-review': 'article-rating-review',
   'cosmetics/grant': 'cosmetics/grant',
+  'images/to-ingest': 'images/to-ingest',
+  'ingestion-error-review': 'ingestion-error-review',
 };
 
 export const getServerSideProps: GetServerSideProps = async (ctx) => {

@@ -13,6 +13,8 @@ export const ROLE_HIERARCHY: { role: string; navigation: NavLink[] }[] = [
     role: 'moderator:staff',
     navigation: [
       { path: '/images', label: 'Images' },
+      { path: '/images/to-ingest', label: 'Images to Ingest' },
+      { path: '/ingestion-error-review', label: 'Ingestion Errors' },
       { path: '/articles', label: 'Articles' },
       { path: '/article-rating-review', label: 'Article Ratings' },
       { path: '/cosmetics/grant', label: 'Grant Cosmetics' },

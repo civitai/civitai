@@ -1,18 +1,23 @@
 import { fail } from '@sveltejs/kit';
+import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { getModeratorArticles } from '$lib/server/articles.service';
 import { moderateArticle } from '$lib/server/article-moderation';
 import { ArticleStatus } from '$lib/articles';
+import { parseQuery } from '$lib/server/query';
 
-const isFilterStatus = (v: string | null): v is ArticleStatus =>
-  v === ArticleStatus.Unpublished || v === ArticleStatus.UnpublishedViolation;
+const querySchema = z.object({
+  page: z.coerce.number().int().min(1).catch(1),
+  username: z.string().trim().catch(''),
+  // Absent / 'all' / invalid → undefined → the default "all unpublished" view (both statuses).
+  status: z
+    .enum([ArticleStatus.Unpublished, ArticleStatus.UnpublishedViolation])
+    .optional()
+    .catch(undefined),
+});
 
 export const load: PageServerLoad = async ({ url }) => {
-  const page = Math.max(1, Number(url.searchParams.get('page')) || 1);
-  const username = url.searchParams.get('username')?.trim() || '';
-  const statusParam = url.searchParams.get('status');
-  // Absent/invalid → the default "all unpublished" view (both statuses).
-  const status = isFilterStatus(statusParam) ? statusParam : undefined;
+  const { page, username, status } = parseQuery(url, querySchema);
 
   const data = await getModeratorArticles({ page, username: username || undefined, status });
 

@@ -18,6 +18,32 @@ Established in the **reports** page and meant to be reused on the other filter-h
 > (`canAccess(user, event.route.id)`), which runs for every load, action, and endpoint. Don't call
 > `requireAccess` per-page; just register the page's path + tier in `ROLE_HIERARCHY` (access.ts).
 
+## Parsing params (zod + `parseQuery`)
+
+`load` parses `url.searchParams` through a per-page zod schema via the shared
+[`parseQuery`](../../apps/moderator/src/lib/server/query.ts) helper:
+
+```ts
+const querySchema = z.object({
+  page: z.coerce.number().int().min(1).catch(1),
+  status: z.enum(['Pending', 'Actioned', 'Unactioned']).catch('Pending'),
+  type: z.array(z.enum(CosmeticType)).catch([]), // multi-value
+});
+const { page, status, type } = parseQuery(url, querySchema, ['type']); // 3rd arg = repeated keys
+```
+
+- **Every field gets `.catch(default)`** (or `.optional().catch(undefined)`). Query params are
+  user-controllable, so `?page=abc` must degrade to the default, not throw a 500 — with a catch on each
+  field `parseQuery` never rejects.
+- `z.coerce.number()` for numbers, `z.enum(...)` for single/multi enums, `z.string().trim()` for text.
+- **Multi-value keys** must be passed in `parseQuery`'s 3rd arg so they're read via `getAll` — a plain
+  `Object.fromEntries(searchParams)` would drop all but the last value.
+
+**Exception — the present-but-empty sentinel.** zod can't tell an *absent* param from a
+*present-but-empty* one (`getAll` → `[]` vs `['']`), and reports needs that distinction (see below). So
+**reports keeps manual `has()` parsing** + its canonical-defaults redirect. Pages whose default *is* "no
+filter" (articles, cosmetics, …) don't need the sentinel and use the zod schema directly.
+
 ## The three filter kinds
 
 | Kind | Control | Applies via |

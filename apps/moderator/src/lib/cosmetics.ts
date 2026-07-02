@@ -1,4 +1,5 @@
 import { CosmeticType } from '@civitai/db-schema/enums';
+import type { MediaType } from '$lib/media/edge-url';
 
 export { CosmeticType };
 
@@ -12,4 +13,5 @@ export const cosmeticTypeFilters = Object.values(CosmeticType).map((value) => ({
 
 // Only url-based cosmetics (badges, profile decorations/backgrounds) render a visual sample in the
 // moderator grant tool; nameplates + content-decoration frames identify by name + type badge for v1.
-export type CosmeticData = { url?: string | null } | null;
+// `type` is the MEDIA type (profile backgrounds can be video) — distinct from the CosmeticType.
+export type CosmeticData = { url?: string | null; type?: MediaType | null } | null;

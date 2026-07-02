@@ -1,5 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead, dbWrite } from './db';
+import { recordModActivity } from './mod-activity';
 import { ReportEntity, ReportStatus, type ReportReason } from '$lib/reports';
 
 // Each report points at its entity through a per-type join table (`<Entity>Report`: `{ reportId, <x>Id }`).
@@ -122,19 +123,16 @@ export async function setReportStatus({
       statusSetBy: userId,
       // On Actioned, stamp how many reporters this resolved.
       ...(status === ReportStatus.Actioned
-        ? { previouslyReviewedCount: sql<number>`coalesce(array_length("alsoReportedBy", 1), 0) + 1` }
+        ? {
+            previouslyReviewedCount: sql<number>`coalesce(array_length("alsoReportedBy", 1), 0) + 1`,
+          }
         : {}),
     })
     .where('id', '=', id)
     .where('status', '!=', status)
     .execute();
 
-  // `ModActivity` isn't in the slim Kysely schema → raw upsert.
-  await sql`
-    INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId")
-    VALUES (${userId}, 'report', 'review', ${id})
-    ON CONFLICT ("entityType", activity, "entityId") DO UPDATE SET "createdAt" = NOW(), "userId" = ${userId}
-  `.execute(dbWrite);
+  await recordModActivity({ userId, entityType: 'report', entityId: id, activity: 'review' });
 
   // TODO(moderator-migration): on Actioned the main app rewards reporters via `reportAcceptedReward`
   // (buzz, Wave 6) — deferred; reporters aren't rewarded from the moderator app until that's wired.

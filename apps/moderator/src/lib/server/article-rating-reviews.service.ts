@@ -1,6 +1,8 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead, dbWrite } from './db';
+import { recordModActivity } from './mod-activity';
 import { ReportStatus, type RatingReviewStatusFilter } from '$lib/article-rating-review';
+import type { MediaType } from '$lib/media/edge-url';
 
 export type RatingReviewUser = {
   id: number;
@@ -28,6 +30,7 @@ export type RatingReviewRow = {
     userNsfwLevel: number;
     moderatorNsfwLevel: number | null;
     coverUrl: string | null;
+    coverType: MediaType | null;
   };
 };
 
@@ -108,9 +111,13 @@ export async function getArticleRatingReviews({
     ...new Set(rows.map((r) => r.articleCoverId).filter((v): v is number => v != null)),
   ];
   const covers = coverIds.length
-    ? await dbRead.selectFrom('Image').select(['id', 'url']).where('id', 'in', coverIds).execute()
+    ? await dbRead
+        .selectFrom('Image')
+        .select(['id', 'url', 'type'])
+        .where('id', 'in', coverIds)
+        .execute()
     : [];
-  const coverUrlById = new Map(covers.map((c) => [c.id, c.url]));
+  const coverById = new Map(covers.map((c) => [c.id, c]));
 
   const items: RatingReviewRow[] = rows.map((r) => ({
     id: r.id,
@@ -134,7 +141,8 @@ export async function getArticleRatingReviews({
       userNsfwLevel: r.articleUserNsfwLevel,
       moderatorNsfwLevel: r.articleModeratorNsfwLevel,
       coverUrl:
-        (r.articleCoverId != null ? coverUrlById.get(r.articleCoverId) : null) ?? r.articleCover,
+        (r.articleCoverId != null ? coverById.get(r.articleCoverId)?.url : null) ?? r.articleCover,
+      coverType: (r.articleCoverId != null ? coverById.get(r.articleCoverId)?.type : null) ?? null,
     },
   }));
 
@@ -299,14 +307,12 @@ export async function resolveArticleRatingReview(input: {
     };
   });
 
-  // Mod-activity audit (Postgres `ModActivity`, mirroring reports.service). Best-effort.
-  await sql`
-    INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId")
-    VALUES (${moderatorId}, 'article', 'ratingReview', ${result.articleId})
-    ON CONFLICT ("entityType", activity, "entityId") DO UPDATE SET "createdAt" = NOW(), "userId" = ${moderatorId}
-  `
-    .execute(dbWrite)
-    .catch((e) => console.error('[article-rating-review] mod-activity write failed', e));
+  await recordModActivity({
+    userId: moderatorId,
+    entityType: 'article',
+    entityId: result.articleId,
+    activity: 'ratingReview',
+  });
 
   return result;
 }
