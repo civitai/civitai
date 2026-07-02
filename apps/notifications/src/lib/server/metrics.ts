@@ -1,8 +1,12 @@
 // Prometheus metrics for the notifications app (mirrors apps/orchestrator-gateway/src/lib/server/metrics.ts).
 //
 // Cardinality discipline: labels are bounded, low-cardinality enums ONLY. NEVER put userId (or any
-// unbounded value) in a label. All series are registered at module load with their full label sets so
-// they export a baseline before the first event.
+// unbounded value) in a label. Counters/gauges are registered at module load with their full label sets
+// so they export a baseline before the first event. The one exception is
+// `notifications_http_request_duration_seconds`: its route×outcome cross-product is verbose and every
+// series is bounded to a known route template anyway, so it uses standard first-observation series
+// creation (a route×outcome series appears the first time that combination is served) rather than a
+// pre-seeded baseline.
 
 import { Registry, collectDefaultMetrics, Counter, Histogram, Gauge } from 'prom-client';
 

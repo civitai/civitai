@@ -75,11 +75,23 @@ describe('HTTP RED histogram', () => {
     expect(res.body).toContain('outcome="rejected"');
   });
 
-  it('does NOT record the ops routes (/health, /metrics) in the RED histogram', async () => {
+  it('does NOT record the ops routes (/health, /metrics, /pool-stats) in the RED histogram', async () => {
+    // Exercise EVERY ops route, including /pool-stats (which the old assertion skipped). All three have
+    // real route templates, so if the hook's `startsWith('/notifications')` scope guard were loosened or
+    // dropped they WOULD produce a histogram sample — these assertions fail in that case.
     await app.inject({ method: 'GET', url: '/health' });
+    await app.inject({ method: 'GET', url: '/pool-stats' });
     const res = await app.inject({ method: 'GET', url: '/metrics' });
     // The histogram label set must never carry an ops route.
     expect(res.body).not.toContain('route="/health"');
     expect(res.body).not.toContain('route="/metrics"');
+    expect(res.body).not.toContain('route="/pool-stats"');
+    // Belt-and-suspenders: no RED histogram sample may reference any non-/notifications route template.
+    // (Regex over the emitted series — every recorded series' `route=` label must start with /notifications.)
+    const redRouteLabels = [...res.body.matchAll(/notifications_http_request_duration_seconds\S*?route="([^"]*)"/g)];
+    expect(redRouteLabels.length).toBeGreaterThan(0); // sanity: the histogram is actually populated
+    for (const [, routeLabel] of redRouteLabels) {
+      expect(routeLabel.startsWith('/notifications')).toBe(true);
+    }
   });
 });

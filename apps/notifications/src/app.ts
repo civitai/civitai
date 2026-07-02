@@ -55,6 +55,9 @@ export async function buildServer(): Promise<FastifyInstance> {
     const route = req.routeOptions.url;
     if (!route || !route.startsWith('/notifications')) return;
     const status = reply.statusCode;
+    // outcome is derived purely from the HTTP status class, so a 2xx ⇒ "success" means the request was
+    // ACCEPTED, not that any downstream work completed. For fire-and-forget routes (e.g. mark-read's 202)
+    // "success" is the ACK; a later async write failure is invisible here (see the mark-read route note).
     const outcome =
       status < 400
         ? 'success'
@@ -153,6 +156,9 @@ export async function buildServer(): Promise<FastifyInstance> {
     const body = authedBody(markReadInput, req, reply);
     if (!body) return reply;
     // Fire-and-forget: enqueue the write and ack immediately (the caller's UI is already optimistic).
+    // NOTE: the 202 ACK means "accepted", not "written". The RED histogram therefore records this as
+    // outcome="success" for the ACK regardless of whether the async DB write later fails — a failed
+    // write does NOT surface here. This metric is request-acceptance RED, not delivery confirmation.
     markNotificationsRead(body);
     return reply.code(202).send({ status: 'accepted' });
   });
