@@ -1346,7 +1346,9 @@ export const upsertModel3DFromWorkflow = async ({
 
     const created = await tx.model3D.create({
       data: {
-        name: `Generated 3D Model`,
+        // Intentionally blank so the edit page forces the user to name the
+        // model rather than skipping past a pre-filled placeholder.
+        name: '',
         userId,
         workflowId,
         thumbnailImageId,
