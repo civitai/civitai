@@ -1089,6 +1089,7 @@ export function IframeHost({
       async (raw) => {
         if (!raw || typeof raw.requestId !== 'string') return;
         const requestId = raw.requestId;
+        // NB: unlike PageBlockHost's `token: string | null`, IframeHost's `token` is non-null, so there is deliberately no explicit null-token guard here — an empty token just falls through to the router's `z.string().min(1)` reject → the `catch` → error reply (still no hang).
         try {
           const balance = await getMyBuzzBalanceMutation.mutateAsync({ blockToken: token });
           send('BUZZ_BALANCE_RESULT', { requestId, balance });
