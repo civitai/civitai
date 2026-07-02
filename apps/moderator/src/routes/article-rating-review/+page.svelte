@@ -1,7 +1,9 @@
 <script lang="ts">
-  import { enhance } from '$app/forms';
+  import { untrack } from 'svelte';
+  import { applyAction, enhance } from '$app/forms';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
+  import type { SubmitFunction } from '@sveltejs/kit';
   import { IconExternalLink } from '@tabler/icons-svelte';
   import { Tabs, TabsList, TabsTrigger } from '@civitai/ui/components/ui/tabs/index.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
@@ -27,9 +29,39 @@
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
-  const total = $derived(data.counts[data.status] ?? 0);
+  // Local copies so resolving a review prunes it (and adjusts the counts) client-side WITHOUT re-running
+  // the load — moderators blast through this queue and a refetch per resolve would stall that. A real
+  // navigation (filter/page change) gives a new data.* and resyncs these.
+  let items = $state(untrack(() => data.items));
+  let counts = $state(untrack(() => data.counts));
+  $effect(() => {
+    items = data.items;
+    counts = data.counts;
+  });
+
+  const total = $derived(counts[data.status] ?? 0);
   const totalPages = $derived(Math.max(1, Math.ceil(total / data.limit)));
   const fmtDate = (d: Date | null) => (d ? new Date(d).toLocaleString() : '—');
+
+  // On success: prune the resolved review + adjust counts locally, no invalidate/refetch. On failure:
+  // surface the error via the form prop. The applied level determines Approved (matched suggestion) vs
+  // Rejected (overrode) — the action returns which.
+  const resolveReview =
+    (reviewId: number): SubmitFunction =>
+    () =>
+    async ({ result }) => {
+      if (result.type === 'success') {
+        items = items.filter((r) => r.id !== reviewId);
+        const status = (result.data as { status?: 'Actioned' | 'Unactioned' } | undefined)?.status;
+        counts = {
+          Pending: Math.max(0, counts.Pending - 1),
+          Actioned: counts.Actioned + (status === 'Actioned' ? 1 : 0),
+          Unactioned: counts.Unactioned + (status === 'Unactioned' ? 1 : 0),
+        };
+      } else {
+        await applyAction(result);
+      }
+    };
 
   function urlWith(params: Record<string, string | number | null>) {
     const url = new URL(page.url);
@@ -44,9 +76,9 @@
 <header class="page-header">
   <h1>Article Rating Review</h1>
   <div class="mt-1 flex flex-wrap gap-2">
-    <Badge class={ratingReviewStatusBadge.Pending.class}>{data.counts.Pending} pending</Badge>
-    <Badge class={ratingReviewStatusBadge.Actioned.class}>{data.counts.Actioned} approved</Badge>
-    <Badge class={ratingReviewStatusBadge.Unactioned.class}>{data.counts.Unactioned} rejected</Badge>
+    <Badge class={ratingReviewStatusBadge.Pending.class}>{counts.Pending} pending</Badge>
+    <Badge class={ratingReviewStatusBadge.Actioned.class}>{counts.Actioned} approved</Badge>
+    <Badge class={ratingReviewStatusBadge.Unactioned.class}>{counts.Unactioned} rejected</Badge>
   </div>
 </header>
 
@@ -68,11 +100,11 @@
   </TabsList>
 </Tabs>
 
-{#if data.items.length === 0}
+{#if items.length === 0}
   <div class="placeholder">No reviews in this bucket.</div>
 {:else}
   <div class="flex flex-col gap-3">
-    {#each data.items as review (review.id)}
+    {#each items as review (review.id)}
       {@const article = review.article}
       <div class="flex gap-4 rounded-xl border p-3">
         <div class="size-28 shrink-0 overflow-hidden rounded-lg bg-muted">
@@ -146,7 +178,12 @@
           {/if}
 
           {#if review.status === 'Pending'}
-            <form method="POST" action="?/resolve" use:enhance class="flex flex-col gap-2">
+            <form
+              method="POST"
+              action="?/resolve"
+              use:enhance={resolveReview(review.id)}
+              class="flex flex-col gap-2"
+            >
               <input type="hidden" name="reviewId" value={review.id} />
               <Textarea
                 name="modComment"
