@@ -29,14 +29,14 @@ importers:
         specifier: ^0.12.0
         version: 0.12.0
       '@civitai/app-sdk':
-        specifier: ^0.6.0
-        version: 0.6.0
+        specifier: ^0.14.0
+        version: 0.14.0
       '@civitai/auth':
         specifier: workspace:*
         version: link:packages/civitai-auth
       '@civitai/blocks-react':
-        specifier: ^0.4.0
-        version: 0.4.2(@civitai/app-sdk@0.6.0)(react@18.3.1)
+        specifier: ^0.16.0
+        version: 0.16.0(@civitai/app-sdk@0.14.0)(react@18.3.1)
       '@civitai/client':
         specifier: 0.2.0-beta.78
         version: 0.2.0-beta.78
@@ -1553,15 +1553,15 @@ packages:
   '@chevrotain/utils@10.5.0':
     resolution: {integrity: sha512-hBzuU5+JjB2cqNZyszkDHZgOSrUUT8V3dhgRl8Q9Gp6dAj/H5+KILGjbhDpc3Iy9qmqlm/akuOI2ut9VUtzJxQ==}
 
-  '@civitai/app-sdk@0.6.0':
-    resolution: {integrity: sha512-+qTWLzI0oYmeZuvlaZmy1EqjmrfkADZVNeqsfU0cF58B5MLvopufU6yKlpGdnMfVzjVX9YzlvW3QTOzSgug9IQ==}
+  '@civitai/app-sdk@0.14.0':
+    resolution: {integrity: sha512-YdXRZzBQe48+eJJSQXmKTP9SLKC6a97UBbcUDOPxzuH3UbWbyVL3Hh/jMK5Q4TrmDtYkkSs/RZbuF4ykIVtNBA==}
     engines: {node: '>=20'}
 
-  '@civitai/blocks-react@0.4.2':
-    resolution: {integrity: sha512-vv0WTxmGewy1hZH75xcFd+YreMPxO/5csBA1zjAHsDY/+Bu/FDGMgWwyBNcdoFS3WW8EKoi/jS69PBW2kEK+Pg==}
+  '@civitai/blocks-react@0.16.0':
+    resolution: {integrity: sha512-Y3UqrqyEf2piyPyNWTvBJuL3PVDDtAwMLNxojbODhmSqQBN2mj1xAL69+zXTORtftNFUrjyg5ko5IT+3E4edmA==}
     engines: {node: '>=20'}
     peerDependencies:
-      '@civitai/app-sdk': ^0.6.0
+      '@civitai/app-sdk': '>=0.13.0'
       react: ^18.0.0 || ^19.0.0
 
   '@civitai/client@0.2.0-beta.78':
@@ -12511,11 +12511,11 @@ snapshots:
 
   '@chevrotain/utils@10.5.0': {}
 
-  '@civitai/app-sdk@0.6.0': {}
+  '@civitai/app-sdk@0.14.0': {}
 
-  '@civitai/blocks-react@0.4.2(@civitai/app-sdk@0.6.0)(react@18.3.1)':
+  '@civitai/blocks-react@0.16.0(@civitai/app-sdk@0.14.0)(react@18.3.1)':
     dependencies:
-      '@civitai/app-sdk': 0.6.0
+      '@civitai/app-sdk': 0.14.0
       react: 18.3.1
 
   '@civitai/client@0.2.0-beta.78':
