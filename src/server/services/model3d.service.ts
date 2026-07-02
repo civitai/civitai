@@ -215,9 +215,19 @@ export const getModel3DById = async ({
       if (model3d.deletedAt) throw throwNotFoundError(`No 3D model with id ${id}`);
     }
 
+    // The signed-in user's own recommend (thumbs-up), so the detail page can
+    // render the gold thumbs-up toggle in its correct state.
+    const userReview = user
+      ? await dbRead.model3DReview.findUnique({
+          where: { model3dId_userId: { model3dId: id, userId: user.id } },
+          select: { id: true, recommended: true },
+        })
+      : null;
+
     return {
       ...model3d,
       tags: model3d.tags.map((t) => t.tag),
+      userReview,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -516,13 +526,30 @@ export const getModel3DsInfinite = async ({
       nextCursor = nextItem?.id;
     }
 
+    // The signed-in user's own recommend (thumbs-up) per row, so the card can
+    // render the gold thumbs-up in its toggled state. One indexed lookup keyed
+    // on (userId, model3dId) rather than a per-row correlated sub-select.
+    const rowIds = rows.map((r) => r.id);
+    const userReviews =
+      user && rowIds.length
+        ? await dbRead.model3DReview.findMany({
+            where: { userId: user.id, model3dId: { in: rowIds } },
+            select: { id: true, model3dId: true, recommended: true },
+          })
+        : [];
+    const reviewByModel = new Map(userReviews.map((r) => [r.model3dId, r]));
+
     // Flatten `tags: [{ tagId }]` → `tags: number[]` so the client-side
     // `useApplyHiddenPreferences` hook can apply tag-based filtering with
     // the same shape it uses for the `'models'` branch.
-    const items = rows.map(({ tags, ...rest }) => ({
-      ...rest,
-      tags: tags.map((t) => t.tagId),
-    }));
+    const items = rows.map(({ tags, ...rest }) => {
+      const review = reviewByModel.get(rest.id);
+      return {
+        ...rest,
+        tags: tags.map((t) => t.tagId),
+        userReview: review ? { id: review.id, recommended: review.recommended } : null,
+      };
+    });
 
     return { items, nextCursor };
   } catch (error) {

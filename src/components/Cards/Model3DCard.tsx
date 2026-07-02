@@ -4,9 +4,8 @@ import {
   IconBolt,
   IconDownload,
   IconEye,
-  IconHeart,
   IconMessageCircle2,
-  IconThumbUp,
+  IconPhoto,
   IconX,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -19,6 +18,7 @@ import {
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { Model3DActionsMenu } from '~/components/Model3D/Actions/Model3DActionsMenu';
+import { Model3DThumbsUpButton } from '~/components/Model3D/ThumbsUp/Model3DThumbsUpButton';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import type { inferRouterOutputs } from '@trpc/server';
@@ -32,8 +32,8 @@ import { abbreviateNumber } from '~/utils/number-helpers';
  * - NSFW handling via `AspectRatioImageCard` → `ImageGuard2` (blur by browsing
  *   level, canonical NSFW-level badge in header). Requires 'model3d' on the
  *   `ConnectType` union — added alongside this card.
- * - Reactions ride on the thumbnail Image (no `Model3DReaction` table per plan
- *   §6.15); `Model3DMetric.reactionCount` is the denormalized rollup, read here.
+ * - The gold thumbs-up is the "recommend" toggle (Model3DReview), mirroring the
+ *   AI-model thumbs-up; the count comes from `Model3DMetric.recommendedCount`.
  * - "Preview" button overlays an inline GLB viewer (lazy-loaded three.js) over
  *   the thumbnail without leaving the feed. Resolves the primary file URL on
  *   demand via `trpc.model3d.getFiles`.
@@ -64,6 +64,7 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
     unlisted,
     lockedProperties,
     thumbnailImageId,
+    userReview,
   } = data;
 
   const [previewing, setPreviewing] = useState(false);
@@ -77,12 +78,9 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
 
   const downloadCount = metric?.downloadCount ?? 0;
   const commentCount = metric?.commentCount ?? 0;
-  const reactionCount = metric?.reactionCount ?? 0;
+  const imageCount = metric?.imageCount ?? 0;
   const tippedAmountCount = metric?.tippedAmountCount ?? 0;
-  const ratingCount = metric?.ratingCount ?? 0;
   const recommendedCount = metric?.recommendedCount ?? 0;
-  const recommendedPct =
-    ratingCount > 0 ? Math.round((recommendedCount / ratingCount) * 100) : 0;
   // Optimistic tip overlay — matches ModelCard so a user's own tap updates the
   // displayed number immediately even though we don't invalidate the feed query.
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model3D', entityId: id });
@@ -224,10 +222,12 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
                     {abbreviateNumber(commentCount)}
                   </Text>
                 </div>
+                {/* Images created with this 3D model (community Makes/Uses +
+                    the creator's auto-post), sourced from Model3DMetric.imageCount. */}
                 <div className="flex items-center gap-0.5">
-                  <IconHeart size={14} strokeWidth={2.5} fill="currentColor" color="#f87171" />
+                  <IconPhoto size={14} strokeWidth={2.5} />
                   <Text size="xs" lh={1} fw="bold">
-                    {abbreviateNumber(reactionCount)}
+                    {abbreviateNumber(imageCount)}
                   </Text>
                 </div>
                 {/* Buzz tip — surface the same Model-style interactive tip
@@ -248,23 +248,11 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
                   </div>
                 </InteractiveTipBuzzButton>
               </Badge>
-              {ratingCount > 0 && (
-                <Badge
-                  className={clsx(cardClasses.statChip, cardClasses.chip)}
-                  variant="light"
-                  radius="xl"
-                >
-                  <Group gap={2} wrap="nowrap">
-                    <IconThumbUp size={12} stroke={2.5} />
-                    <Text size="xs">
-                      {recommendedPct}%
-                      <Text component="span" c="dimmed" ml={2}>
-                        ({abbreviateNumber(ratingCount)})
-                      </Text>
-                    </Text>
-                  </Group>
-                </Badge>
-              )}
+              <Model3DThumbsUpButton
+                model3dId={id}
+                recommendedCount={recommendedCount}
+                userReview={userReview ?? null}
+              />
             </Group>
           </Stack>
         }

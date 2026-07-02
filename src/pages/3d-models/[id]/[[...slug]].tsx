@@ -24,6 +24,7 @@ import {
   IconDownload,
   IconLicense,
   IconMessageCircle2,
+  IconPhoto,
   IconShare3,
   IconThumbDown,
   IconThumbUp,
@@ -53,6 +54,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { AppealDialog } from '~/components/Dialog/Common/AppealDialog';
 import { Model3DComments } from '~/components/Model3D/Comments/Model3DComments';
 import { Model3DActionsMenu } from '~/components/Model3D/Actions/Model3DActionsMenu';
+import { Model3DThumbsUpButton } from '~/components/Model3D/ThumbsUp/Model3DThumbsUpButton';
 import { Model3DGallery } from '~/components/Model3D/Gallery/Model3DGallery';
 import type { Model3DReviewModalProps } from '~/components/Model3D/Reviews/Model3DReviewModal';
 import type { Model3DViewableVariant } from '~/components/Model3D/Viewer/Model3DVariantViewer';
@@ -375,19 +377,20 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                     · Buzz. The thumbs-up badge surfaces positive-review count
                     (`recommendedCount`); the % chip is folded into the Details
                     card so we don't double-surface the same signal. */}
-                <IconBadge
-                  radius="sm"
-                  size="lg"
-                  color="green"
-                  icon={<IconThumbUp size={18} />}
-                >
-                  <Text size="sm">{abbreviateNumber(recommendedCount)}</Text>
-                </IconBadge>
+                <Model3DThumbsUpButton
+                  model3dId={id}
+                  recommendedCount={recommendedCount}
+                  userReview={model3d.userReview ?? null}
+                  variant="detail"
+                />
                 <IconBadge radius="sm" size="lg" icon={<IconDownload size={18} />}>
                   <Text size="sm">{abbreviateNumber(model3d.metric?.downloadCount ?? 0)}</Text>
                 </IconBadge>
                 <IconBadge radius="sm" size="lg" icon={<IconMessageCircle2 size={18} />}>
                   <Text size="sm">{abbreviateNumber(model3d.metric?.commentCount ?? 0)}</Text>
+                </IconBadge>
+                <IconBadge radius="sm" size="lg" icon={<IconPhoto size={18} />}>
+                  <Text size="sm">{abbreviateNumber(model3d.metric?.imageCount ?? 0)}</Text>
                 </IconBadge>
                 {/* Single buzz surface: the metrics-row badge IS the tip CTA. */}
                 <InteractiveTipBuzzButton
