@@ -723,7 +723,7 @@ export async function getActiveSlot(
 
   const key = `${REDIS_SYS_KEYS.NEW_ORDER.ACTIVE_SLOT}:${rank}:${purpose}` as const;
   const slot = decodeRedisString(await sysRedis.get(key));
-  return (slot as NewOrderSlot) || 'a'; // Default to 'a' if not set
+  return (slot || 'a') as NewOrderSlot; // Default to 'a' if not set
 }
 
 /**
