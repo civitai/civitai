@@ -283,16 +283,16 @@ Establish the service-porting rhythm on the cheapest pages (Postgres, plus alrea
 
 ## Cosmetics (grant only)
 
-### `cosmetic.service.ts`  ·  used by: cosmetics/grant  ·  *Postgres*
-- [ ] `getPaginatedCosmetics`
-- [ ] `grantCosmeticsToUsers` (+ `grantCosmetics` helper) — raw SQL INSERT … ON CONFLICT DO NOTHING
+### `cosmetic.service.ts`  ·  used by: cosmetics/grant  ·  *Postgres*  ·  ✅ migrated (spoke Kysely)
+- [x] `getPaginatedCosmetics` — ported to `apps/moderator/src/lib/server/cosmetics.service.ts` (main-app copy kept: shared with the cosmetic shop / cosmetic-store pages)
+- [x] `grantCosmeticsToUsers` — ported (raw `ON CONFLICT DO NOTHING`); main-app `grantCosmeticsToUsers` + `cosmetic.grantToUsers` removed as orphaned. `grantCosmetics` helper kept (payments/referrals use it).
 
 ---
 
 ## Shared / cross-cutting services
 
 ### `user.service.ts` (subset)  ·  used by: cosmetics/grant, generation-restrictions, csam  *(SHARED)*
-- [ ] `getUsers` / user search (the `user.getAll` path, in `user.controller.ts`) — grant page
+- [x] `getUsers` / user search — ported as reusable `searchUsers` in `apps/moderator/src/lib/server/users.service.ts` (prefix username match); main-app `user.getAll` kept (shared, user-facing).
 - [ ] `getUserById` — csam/[userId]
 - [ ] `updateUserById` — generation-restrictions resolve
 

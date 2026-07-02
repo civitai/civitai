@@ -11,6 +11,7 @@ import { env } from '~/env/server';
 const MIGRATED_ROUTES: Record<string, string> = {
   articles: 'articles',
   'article-rating-review': 'article-rating-review',
+  'cosmetics/grant': 'cosmetics/grant',
 };
 
 export const getServerSideProps: GetServerSideProps = async (ctx) => {

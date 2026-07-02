@@ -1,14 +1,9 @@
 import { getByIdSchema } from '~/server/schema/base.schema';
-import {
-  equipCosmeticSchema,
-  getPaginatedCosmeticsSchema,
-  grantCosmeticsToUsersSchema,
-} from '~/server/schema/cosmetic.schema';
+import { equipCosmeticSchema, getPaginatedCosmeticsSchema } from '~/server/schema/cosmetic.schema';
 import {
   getCosmeticDetail,
   getPaginatedCosmetics,
   equipCosmeticToEntity,
-  grantCosmeticsToUsers,
   unequipCosmetic,
 } from '~/server/services/cosmetic.service';
 import { moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
@@ -24,9 +19,6 @@ export const cosmeticRouter = router({
   getPaged: moderatorProcedure.input(getPaginatedCosmeticsSchema).query(({ input }) => {
     return getPaginatedCosmetics(input);
   }),
-  grantToUsers: moderatorProcedure
-    .input(grantCosmeticsToUsersSchema)
-    .mutation(({ input }) => grantCosmeticsToUsers(input)),
   equipContentDecoration: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(equipCosmeticSchema)
