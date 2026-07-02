@@ -1,6 +1,6 @@
 import { buildServer } from './app';
 import { startWorker } from './worker/poll-loop';
-import { host, port, workerEnabled } from './env';
+import { assertRequiredEnv, host, port, workerEnabled } from './env';
 
 // Entry point. `buildServer` (app.ts) is the testable factory (no listen); this file wires the listen
 // call and — only when WORKER_ENABLED=true — starts the fan-out worker (B). The producer/read API (A)
@@ -10,6 +10,7 @@ import { host, port, workerEnabled } from './env';
 // under test.
 
 async function main() {
+  assertRequiredEnv(); // fail-fast before we bind / go Ready
   const app = await buildServer();
   await app.listen({ port, host });
   app.log.info(`notifications listening on ${host}:${port}`);

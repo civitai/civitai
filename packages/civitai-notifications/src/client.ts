@@ -24,12 +24,19 @@ export type NotificationsClientConfig = {
   token?: string;
   /** Override fetch (tests / non-global-fetch runtimes). */
   fetch?: typeof fetch;
-  /** Per-call timeout in ms. Defaults to 10s. */
+  /** Per-ATTEMPT timeout in ms. Defaults to 10s. Note: with retries the worst-case total is
+   * `(retries + 1) * timeoutMs` plus backoffs — connection-refused fails fast, a true hang does not. */
   timeoutMs?: number;
+  /** Max RETRIES on transient failures (transport/timeout/5xx/429). Default 2 → up to 3 attempts. 0
+   * disables retry. Only transient failures retry; a 4xx (bad payload / auth) throws immediately. All
+   * operations are idempotent (upsert-by-key / mark / reads), so retrying is safe. */
+  retries?: number;
+  /** Base backoff in ms; grows exponentially (`base * 2^attempt`) with jitter, capped at 2s. Default 200. */
+  retryBaseMs?: number;
 };
 
 export class NotificationsClientError extends Error {
-  constructor(message: string, readonly status?: number) {
+  constructor(message: string, readonly status?: number, readonly retryable = false) {
     super(message);
     this.name = 'NotificationsClientError';
   }
@@ -49,16 +56,25 @@ function resolveConfig(config: NotificationsClientConfig) {
     token: config.token ?? process.env.NOTIFICATIONS_TOKEN ?? '',
     fetch: fetchImpl,
     timeoutMs: config.timeoutMs ?? 10_000,
+    retries: config.retries ?? 2,
+    retryBaseMs: config.retryBaseMs ?? 200,
   };
 }
 
-/** POST a JSON body to the app and return the parsed JSON response (or undefined for empty bodies). */
-async function post(path: string, body: unknown, config: NotificationsClientConfig): Promise<unknown> {
-  const { endpoint, token, fetch: fetchImpl, timeoutMs } = resolveConfig(config);
+/** One POST attempt. Throws a `NotificationsClientError` with `retryable` set: true for transport/timeout
+ * errors and 5xx/429 responses (the app is restarting/overloaded), false for 4xx (bad payload / auth —
+ * retrying won't help). */
+async function postAttempt(
+  url: string,
+  body: unknown,
+  token: string,
+  fetchImpl: typeof fetch,
+  timeoutMs: number
+): Promise<unknown> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetchImpl(`${endpoint}${path}`, {
+    const res = await fetchImpl(url, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -69,18 +85,37 @@ async function post(path: string, body: unknown, config: NotificationsClientConf
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
+      const retryable = res.status === 429 || res.status >= 500;
       throw new NotificationsClientError(
-        `notifications ${path} failed (${res.status})${text ? `: ${text}` : ''}`,
-        res.status
+        `notifications request failed (${res.status})${text ? `: ${text}` : ''}`,
+        res.status,
+        retryable
       );
     }
     const text = await res.text();
     return text ? JSON.parse(text) : undefined;
   } catch (err) {
     if (err instanceof NotificationsClientError) throw err;
-    throw new NotificationsClientError((err as Error).message);
+    // Transport error, abort/timeout, or JSON parse failure — transient; retryable.
+    throw new NotificationsClientError((err as Error).message, undefined, true);
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/** POST with bounded exponential backoff on transient failures. Returns the parsed JSON response. */
+async function post(path: string, body: unknown, config: NotificationsClientConfig): Promise<unknown> {
+  const { endpoint, token, fetch: fetchImpl, timeoutMs, retries, retryBaseMs } = resolveConfig(config);
+  const url = `${endpoint}${path}`;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await postAttempt(url, body, token, fetchImpl, timeoutMs);
+    } catch (err) {
+      const e = err as NotificationsClientError;
+      if (!e.retryable || attempt >= retries) throw e;
+      const backoff = Math.min(retryBaseMs * 2 ** attempt, 2000) + Math.random() * retryBaseMs;
+      await new Promise((resolve) => setTimeout(resolve, backoff));
+    }
   }
 }
 

@@ -24,9 +24,9 @@ export type LagTracker<K extends string = string> = {
 };
 
 /** The store, a nullable store (degrades to always-fresh when null), or a thunk that lazily resolves one.
- * The thunk is resolved once on first use and memoized — so a caller can pass its lazy client factory
- * directly (e.g. `getRedis`) without wiring its own memoization, and importing this never builds a
- * connection. */
+ * A thunk lets a caller pass its lazy client factory directly (e.g. `getRedis`) without wiring its own
+ * memoization, and keeps importing this from building a connection. A NON-null resolution is memoized;
+ * a `null` is not, so a thunk that returns null before its store is ready is picked up on a later call. */
 export type LagStoreInput<K extends string = string> =
   | LagStore<K>
   | null
@@ -34,22 +34,31 @@ export type LagStoreInput<K extends string = string> =
 
 export function createLagTracker<K extends string = string>(opts: {
   store: LagStoreInput<K>;
-  /** Lag window in seconds. `<= 0` disables routing entirely (isStale always false, markFresh no-ops) —
-   * so a disabled tracker never touches the store. */
+  /** Lag window in seconds. Anything non-positive (incl. NaN/Infinity, e.g. a bad env value) disables
+   * routing entirely — isStale always false, markFresh no-ops — so a disabled tracker never touches the
+   * store and never writes an invalid TTL. */
   delaySeconds: number;
 }): LagTracker<K> {
   const { store, delaySeconds } = opts;
-  let resolved: LagStore<K> | null | undefined;
-  const getStore = () =>
-    resolved !== undefined ? resolved : (resolved = typeof store === 'function' ? store() : store);
+  const enabled = Number.isFinite(delaySeconds) && delaySeconds > 0;
+
+  // Memoize only a non-null resolution (see LagStoreInput): a null result re-resolves next call.
+  let resolved: LagStore<K> | null = null;
+  const getStore = (): LagStore<K> | null => {
+    if (resolved) return resolved;
+    const s = typeof store === 'function' ? store() : store;
+    if (s) resolved = s;
+    return s;
+  };
+
   return {
     isStale: async (key) => {
-      if (delaySeconds <= 0) return false;
+      if (!enabled) return false;
       const s = getStore();
       return s ? Boolean(await s.get(key)) : false;
     },
     markFresh: async (key) => {
-      if (delaySeconds <= 0) return;
+      if (!enabled) return;
       await getStore()?.set(key, 'true', { EX: delaySeconds });
     },
   };

@@ -45,6 +45,34 @@ describe('createLagTracker', () => {
     expect(setCalls).toHaveLength(0);
   });
 
+  it('is disabled (not enabled) when delaySeconds is NaN — never touches the store or writes EX:NaN', async () => {
+    const { store, setCalls } = fakeStore();
+    const getSpy = vi.spyOn(store, 'get');
+    // e.g. a non-numeric REPLICATION_LAG_DELAY → Number('bad') === NaN, and NaN <= 0 is false.
+    const tracker = createLagTracker({ store, delaySeconds: Number('bad') });
+
+    expect(await tracker.isStale('k')).toBe(false);
+    await tracker.markFresh('k');
+    expect(getSpy).not.toHaveBeenCalled();
+    expect(setCalls).toHaveLength(0);
+  });
+
+  it('does NOT cache a null store — a thunk that returns null first picks up the store later', async () => {
+    const { store, map } = fakeStore();
+    let ready = false;
+    const thunk = vi.fn(() => (ready ? store : null));
+    const tracker = createLagTracker({ store: thunk, delaySeconds: 5 });
+
+    // Store not ready yet → degrades to always-fresh, and does not memoize the null.
+    expect(await tracker.isStale('k')).toBe(false);
+
+    // Store becomes available; the tracker must resolve it now (null was not cached).
+    ready = true;
+    map.set('k', 'true');
+    expect(await tracker.isStale('k')).toBe(true);
+    expect(thunk).toHaveBeenCalledTimes(2);
+  });
+
   it('degrades to always-fresh when the store is null', async () => {
     const tracker = createLagTracker({ store: null, delaySeconds: 5 });
     expect(await tracker.isStale('k')).toBe(false);

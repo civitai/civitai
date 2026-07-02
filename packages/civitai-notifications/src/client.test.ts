@@ -50,6 +50,40 @@ describe('createNotification', () => {
     ).rejects.toBeInstanceOf(NotificationsClientError);
   });
 
+  it('does NOT retry a 4xx (bad payload / auth) — one attempt, then throws', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('nope', { status: 401 }));
+    await expect(
+      createNotification(validRow, { endpoint: 'http://notif.internal', fetch: fetchMock, retryBaseMs: 0 })
+    ).rejects.toBeInstanceOf(NotificationsClientError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a transient 503, then succeeds', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('busy', { status: 503 }))
+      .mockResolvedValueOnce(new Response(null, { status: 202 }));
+    await createNotification(validRow, {
+      endpoint: 'http://notif.internal',
+      fetch: fetchMock,
+      retryBaseMs: 0,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries transport errors up to the limit, then throws', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error('ECONNREFUSED'));
+    await expect(
+      createNotification(validRow, {
+        endpoint: 'http://notif.internal',
+        fetch: fetchMock,
+        retries: 2,
+        retryBaseMs: 0,
+      })
+    ).rejects.toBeInstanceOf(NotificationsClientError);
+    expect(fetchMock).toHaveBeenCalledTimes(3); // 1 initial + 2 retries
+  });
+
   it('throws when no endpoint is configured', async () => {
     const prev = process.env.NOTIFICATIONS_ENDPOINT;
     delete process.env.NOTIFICATIONS_ENDPOINT;

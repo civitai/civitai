@@ -20,7 +20,6 @@ type LaggingType =
   | 'postImages'
   | 'article'
   | 'imageResource'
-  | 'notification'
   | 'userTrainingModels'
   | 'userArticles'
   | 'userApiKeys'

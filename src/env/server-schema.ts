@@ -417,7 +417,9 @@ export const serverSchema = z
     // The in-repo notifications app (apps/notifications) — the monolith creates/reads/marks notifications
     // through it via @civitai/notifications rather than touching the notification DB directly.
     NOTIFICATIONS_ENDPOINT: isProd ? z.url() : z.url().optional(),
-    NOTIFICATIONS_TOKEN: z.string().optional(),
+    // Prod-required + non-empty: the app disables its auth gate on an empty token, so a blank value here
+    // would produce an unauthenticated producer API. Fail-fast at monolith boot instead.
+    NOTIFICATIONS_TOKEN: isProd ? z.string().min(1) : z.string().optional(),
     // Per-call signals timeout in ms. Calls wrapped via withSignals() fail
     // fast with SignalsCallTimeoutError once exceeded, instead of hanging
     // until Traefik's 30s router timeout fires. Default tuned for signals

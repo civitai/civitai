@@ -905,8 +905,11 @@ export const publishModelVersionsWithEarlyAccess = async ({
       } catch (e: any) {
         console.log(e.message);
         if (e?.message?.includes('Insufficient funds to pay for early access.')) {
-          // Create a notification for the user that the early access failed.
-          createNotification({
+          // Fire-and-forget ON PURPOSE: this runs inside an interactive $transaction (dbClient = tx,
+          // see the dbWrite.$transaction caller). Awaiting a cross-service HTTP call here would hold the
+          // transaction open for the client's retry window and risk the Prisma tx timeout, rolling back
+          // the publish. Best-effort delivery is the right trade here.
+          void createNotification({
             userId: currentVersion.model.userId,
             type: 'early-access-failed-to-publish',
             category: NotificationCategory.System,

@@ -90,14 +90,28 @@ export const markNotificationsRead = async ({
   all = false,
   category,
 }: MarkReadNotificationInput & { userId: number }) => {
-  // Fire-and-forget by contract: the app enqueues + retries the write; here we just hand it off. The
-  // input id is a bigint (UserNotification.id is int4-sized) — narrow to a JSON-safe number.
-  await markNotificationsReadRequest({
-    userId,
-    id: id != null ? Number(id) : undefined,
-    all,
-    category,
-  });
+  // Best-effort, like the original: the UI already optimistically marked read, so a transient app
+  // failure (after the client's backoff retries) must NOT surface as a tRPC error — swallow + log.
+  // The input id is a bigint (UserNotification.id is int4-sized) — narrow to a JSON-safe number.
+  try {
+    await markNotificationsReadRequest({
+      userId,
+      id: id != null ? Number(id) : undefined,
+      all,
+      category,
+    });
+  } catch (e) {
+    const error = e as Error;
+    logToAxiom(
+      {
+        type: 'warning',
+        name: 'Failed to mark notifications read',
+        details: { userId, all, category },
+        message: error.message,
+      },
+      'notifications'
+    ).catch();
+  }
 };
 
 export const createUserNotificationSetting = async ({

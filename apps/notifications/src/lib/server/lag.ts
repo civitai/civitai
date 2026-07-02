@@ -13,8 +13,11 @@ const tracker = createLagTracker<RedisKeyTemplateCache>({
   delaySeconds: Number(process.env.REPLICATION_LAG_DELAY ?? 0),
 });
 
+// DB-scoped key: the `notif` segment namespaces this to the notification DB so it can never collide with
+// the monolith's main-DB lag flags (`lag-helper:<entity-type>:<id>`) in the shared redis. The app is the
+// sole owner of this flag now (the monolith's mark-read/lag path moved here).
 const lagKey = (userId: number) =>
-  `${REDIS_KEYS.LAG_HELPER}:notification:${userId}` as RedisKeyTemplateCache;
+  `${REDIS_KEYS.LAG_HELPER}:notif:${userId}` as RedisKeyTemplateCache;
 
 /** The write pool when this user has a fresh write flagged (else the replica). */
 export async function getNotifDbWithoutLag(userId: number): Promise<AugmentedPool> {
