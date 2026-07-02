@@ -38,12 +38,21 @@ RUN pnpm --filter @civitai/notifications-app build
 
 ##### prod-deps — pruned, flattened production node_modules for the runtime ######
 # `pnpm deploy` produces a self-contained dir (no workspace symlinks). --legacy for the flat layout.
-# NOT --ignore-scripts: the deploy must carry the generated Prisma client that @civitai/db resolves at
-# runtime (the bundle keeps @prisma/client external).
 FROM deps AS prod-deps
 WORKDIR /app
 RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
     pnpm --filter @civitai/notifications-app deploy --prod --legacy /app/deploy
+# `pnpm deploy` resolves ONLY lockfile packages, so it drops the generated Prisma client: the
+# deps-stage `db:generate` writes it into the pnpm virtual store next to @prisma/client
+# (node_modules/.pnpm/@prisma+client@*/node_modules/.prisma), NOT a lockfile package. At import time
+# `@prisma/client/default.js` does `require('.prisma/client/default')` (pulled in via
+# @civitai/db → @civitai/db-schema), so without it the runtime crashloops with
+# "Cannot find module '.prisma/client/default'". Copy the generated client into the flattened deploy
+# tree so `.prisma/client` resolves next to @prisma/client. (find = robust to the version-hash dir.)
+RUN set -eux; \
+    src="$(find node_modules/.pnpm -maxdepth 3 -type d -path '*@prisma+client@*/node_modules/.prisma' | head -1)"; \
+    test -n "$src"; \
+    cp -R "$src" /app/deploy/node_modules/.prisma
 
 ##### runtime ###################################################################
 FROM node:22-alpine AS runtime
