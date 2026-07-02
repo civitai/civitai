@@ -123,6 +123,7 @@ export const ModelType = {
   Detection: 'Detection',
   VisionLanguage: 'VisionLanguage',
   CLIP: 'CLIP',
+  LLM: 'LLM',
   Other: 'Other',
 } as const;
 export type ModelType = (typeof ModelType)[keyof typeof ModelType];
