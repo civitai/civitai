@@ -147,6 +147,7 @@ export default defineNextConfig(
       '@civitai/axiom',
       '@civitai/telemetry',
       '@civitai/auth',
+      '@civitai/notifications',
     ],
     // Renamed from experimental.serverComponentsExternalPackages → top-level serverExternalPackages in Next 15
     serverExternalPackages: [

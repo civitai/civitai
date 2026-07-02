@@ -4,7 +4,8 @@ import { isEqual } from 'lodash-es';
 import { v4 as uuid } from 'uuid';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
-import { notifDbWrite } from '~/server/db/notifDb';
+import { createNotificationsBulk } from '@civitai/notifications';
+import { NotificationCategory } from '~/server/common/enums';
 import { pgDbRead } from '~/server/db/pgDb';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -271,14 +272,15 @@ export const updateClub = async ({
 
     if (reqData) {
       const reqUsers = reqList.map((r) => r.userId);
-      await notifDbWrite.cancellableQuery(Prisma.sql`
-        INSERT INTO "PendingNotification" (key, type, category, users, details)
-        VALUES
-          (${reqData.key}, ${reqData.type}, 'Update', ${'{' + reqUsers.join(',') + '}'}, ${
-        reqData.details
-      })
-        ON CONFLICT DO NOTHING
-      `);
+      await createNotificationsBulk([
+        {
+          key: reqData.key,
+          type: reqData.type,
+          category: NotificationCategory.Update,
+          users: reqUsers,
+          details: reqData.details,
+        },
+      ]);
     }
   }
 

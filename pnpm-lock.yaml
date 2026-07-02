@@ -971,6 +971,67 @@ importers:
         specifier: 6.4.1
         version: 6.4.1(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1)
 
+  apps/notifications:
+    dependencies:
+      '@civitai/axiom':
+        specifier: workspace:*
+        version: link:../../packages/civitai-axiom
+      '@civitai/db':
+        specifier: workspace:*
+        version: link:../../packages/civitai-db
+      '@civitai/db-schema':
+        specifier: workspace:*
+        version: link:../../packages/civitai-db-schema
+      '@civitai/notifications':
+        specifier: workspace:*
+        version: link:../../packages/civitai-notifications
+      '@civitai/redis':
+        specifier: workspace:*
+        version: link:../../packages/civitai-redis
+      dayjs:
+        specifier: ^1.11.13
+        version: 1.11.13
+      fastify:
+        specifier: ^5.2.1
+        version: 5.9.0
+      lodash-es:
+        specifier: ^4.17.21
+        version: 4.17.21
+      pg-format:
+        specifier: ^1.0.4
+        version: 1.0.4
+      prom-client:
+        specifier: ^14.2.0
+        version: 14.2.0
+      zod:
+        specifier: ^4.0.17
+        version: 4.4.3
+    devDependencies:
+      '@types/lodash-es':
+        specifier: ^4.17.7
+        version: 4.17.12
+      '@types/node':
+        specifier: ^20.19.9
+        version: 20.19.9
+      '@types/pg':
+        specifier: ^8.11.10
+        version: 8.15.5
+      '@types/pg-format':
+        specifier: ^1.0.5
+        version: 1.0.5
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(@swc/core@1.15.11(@swc/helpers@0.5.17))(jiti@2.7.0)(postcss@8.5.6)(tsx@4.20.3)(typescript@5.9.3)(yaml@2.8.1)
+      tsx:
+        specifier: ^4.19.2
+        version: 4.20.3
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^4.0.18
+        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.0.18)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jiti@2.7.0)(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(lightningcss@1.32.0)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1)
+
   apps/orchestrator-gateway:
     dependencies:
       '@civitai/auth':
@@ -1086,6 +1147,9 @@ importers:
       '@types/pg':
         specifier: ^8.11.10
         version: 8.15.5
+      vitest:
+        specifier: ^4.0.18
+        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.0.18)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jiti@2.7.0)(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(lightningcss@1.32.0)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1)
 
   packages/civitai-db-schema:
     dependencies:
@@ -1105,6 +1169,16 @@ importers:
       '@types/nodemailer':
         specifier: ^6.4.7
         version: 6.4.17
+
+  packages/civitai-notifications:
+    dependencies:
+      zod:
+        specifier: ^4.0.17
+        version: 4.4.3
+    devDependencies:
+      vitest:
+        specifier: ^4.0.18
+        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.0.18)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jiti@2.7.0)(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(lightningcss@1.32.0)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1)
 
   packages/civitai-redis:
     dependencies:

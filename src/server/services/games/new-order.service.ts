@@ -234,7 +234,7 @@ export async function smitePlayer({
     })
     .catch((e) => handleLogError(e, 'signals:new-order-smite-player'));
 
-  createNotification({
+  await createNotification({
     category: NotificationCategory.System,
     type: 'new-order-smite-received',
     key: `new-order-smite-received:${playerId}:${smite.id}`,
@@ -266,7 +266,7 @@ export async function cleanseAllSmites({
     })
     .catch((e) => handleLogError(e, 'signals:new-order-smite-cleansed-all'));
 
-  createNotification({
+  await createNotification({
     category: NotificationCategory.System,
     type: 'new-order-smite-cleansed',
     key: `new-order-smite-cleansed:${playerId}:all:${new Date().getTime()}`,
@@ -300,7 +300,7 @@ export async function cleanseSmite({ id, cleansedReason, playerId }: CleanseSmit
     })
     .catch((e) => handleLogError(e, 'signals:new-order-smite-cleansed'));
 
-  createNotification({
+  await createNotification({
     category: NotificationCategory.System,
     type: 'new-order-smite-cleansed',
     key: `new-order-smite-cleansed:${playerId}:${id}`,
@@ -1359,7 +1359,7 @@ export async function resetPlayer({
     .catch((e) => handleLogError(e, 'signals:new-order-reset-player'));
 
   if (withNotification)
-    createNotification({
+    await createNotification({
       category: NotificationCategory.System,
       type: 'new-order-game-over',
       key: `new-order-game-over:${playerId}:${new Date().getTime()}`,

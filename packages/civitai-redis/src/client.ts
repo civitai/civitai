@@ -1,4 +1,4 @@
-import chunk from 'lodash-es/chunk';
+import { chunk } from 'lodash-es';
 import { pack, unpack } from 'msgpackr';
 import type { RedisClientType, SetOptions } from 'redis';
 import { createClient, createCluster, createSentinel } from 'redis';
