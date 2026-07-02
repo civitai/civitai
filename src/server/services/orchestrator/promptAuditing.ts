@@ -4,6 +4,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { createNotification } from '~/server/services/notification.service';
 import { updateUserById } from '~/server/services/user.service';
 import { fetchThroughCache, bustFetchThroughCache } from '~/server/utils/cache-helpers';
@@ -104,7 +105,7 @@ async function getBlockedPromptCount(userId: number): Promise<number> {
     await seedBlockedPromptsFromClickHouse(userId);
   }
 
-  const entries = await sysRedis.lRange(key, 0, -1);
+  const entries = (await sysRedis.lRange(key, 0, -1)).map((e) => decodeRedisString(e));
   return entries.filter((e) => e !== RESET_MARKER).length;
 }
 
@@ -123,7 +124,7 @@ async function addBlockedPrompt(userId: number, entry: BlockedPromptEntry): Prom
 
   // If the seeded list was just a reset marker, drop the marker now that we
   // have a real entry. Using lRem (not del) preserves the TTL set by the seed.
-  const currentEntries = await sysRedis.lRange(key, 0, -1);
+  const currentEntries = (await sysRedis.lRange(key, 0, -1)).map((e) => decodeRedisString(e));
   if (currentEntries.includes(RESET_MARKER)) {
     await sysRedis.lRem(key, 0, RESET_MARKER);
   }
@@ -135,7 +136,7 @@ async function addBlockedPrompt(userId: number, entry: BlockedPromptEntry): Prom
 /** Get all blocked prompts (excludes reset marker) */
 async function getBlockedPrompts(userId: number): Promise<BlockedPromptEntry[]> {
   const key = getBlockedPromptsKey(userId);
-  const entries = await sysRedis.lRange(key, 0, -1);
+  const entries = (await sysRedis.lRange(key, 0, -1)).map((e) => decodeRedisString(e));
   return entries
     .filter((e) => e !== RESET_MARKER)
     .map((entry) => JSON.parse(entry) as BlockedPromptEntry);

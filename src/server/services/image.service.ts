@@ -856,6 +856,17 @@ export const ingestImage = async ({
   tx?: Prisma.TransactionClient;
   userId?: number;
 }): Promise<boolean> => {
+  // TEMP diagnostic: trace who submits to image ingestion and at what priority.
+  // Grouping by `stack` buckets callers even in minified prod builds. Remove
+  // once the low-priority scanner-queue growth is traced.
+  logToAxiom({
+    name: 'ingest-submit',
+    type: 'info',
+    imageId: image.id,
+    message: `ingestImage priority=${lowPriority ? 'low' : 'normal'} userId=${userId ?? ''}`,
+    stack: new Error('ingest-submit').stack,
+  }).catch(() => undefined);
+
   const scanRequestedAt = new Date();
   const dbClient = tx ?? dbWrite;
 
@@ -1001,6 +1012,17 @@ export const ingestImageBulk = async ({
   const dbClient = tx ?? dbWrite;
 
   if (!imageIds.length) return false;
+
+  // TEMP diagnostic: trace who bulk-submits to image ingestion and at what
+  // priority. Grouping by `stack` buckets callers even in minified prod builds.
+  // Remove once the low-priority scanner-queue growth is traced.
+  logToAxiom({
+    name: 'ingest-submit-bulk',
+    type: 'info',
+    imageId: imageIds[0],
+    message: `ingestImageBulk priority=${lowPriority ? 'low' : 'normal'} count=${imageIds.length}`,
+    stack: new Error('ingest-submit-bulk').stack,
+  }).catch(() => undefined);
 
   // TODO.articleImageScan: uncomment when ready to enable image scanning for articles
   // if (!isProd || !callbackUrl) {

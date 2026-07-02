@@ -6390,7 +6390,7 @@ export const comicsRouter = router({
       });
 
       if (project && project.userId !== ctx.user.id) {
-        createNotification({
+        await createNotification({
           type: 'new-comic-comment',
           key: `new-comic-comment:${input.projectId}:${input.chapterPosition}:${comment.id}`,
           category: NotificationCategory.Comment,

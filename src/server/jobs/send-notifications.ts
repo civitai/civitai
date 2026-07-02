@@ -1,8 +1,8 @@
-import { Prisma } from '@prisma/client';
-import { chunk, isEmpty } from 'lodash-es';
+import { isEmpty } from 'lodash-es';
 import { isPromise } from 'util/types';
 import { clickhouse } from '~/server/clickhouse/client';
-import { notifDbWrite } from '~/server/db/notifDb';
+import { NotificationsClientError } from '@civitai/notifications';
+import { notifications } from '~/server/notifications/client';
 import { pgDbRead } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
 import { notificationBatches } from '~/server/notifications/utils.notifications';
@@ -16,7 +16,6 @@ import type {
 
 const log = createLogger('send-notifications', 'blue');
 
-const batchSize = 5000;
 const concurrent = 8;
 
 // Hard ceiling on prepareQuery read duration. Each query has a per-processor SQL floor
@@ -100,65 +99,18 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
             }
 
             if (!isEmpty(pendingData)) {
-              const batches = chunk(Object.values(pendingData), batchSize);
-              for (const batch of batches) {
-                // UPDATE-first to avoid burning sequence ids on existing keys.
-                // For a multi-row INSERT ... ON CONFLICT, Postgres calls nextval() for every
-                // row in the VALUES list before the conflict check, so a 5000-row batch where
-                // every row conflicts burns 5000 ids. Splitting into UPDATE + INSERT-on-miss
-                // burns ids only for keys that don't already exist.
-
-                //language=text
-                const updateQuery = Prisma.sql`
-                UPDATE "PendingNotification" pn
-                SET "users" = u.users::int[],
-                    "lastTriggered" = NOW()
-                FROM (VALUES
-                  ${Prisma.join(
-                    batch.map((d) => Prisma.sql`(${d.key}, ${'{' + d.users.join(',') + '}'})`)
-                  )}
-                ) AS u(key, users)
-                WHERE pn."key" = u.key
-                RETURNING pn."key"
-              `;
-
-                const updateResp = await notifDbWrite.cancellableQuery<{ key: string }>(
-                  updateQuery
-                );
-                const updatedKeys = new Set((await updateResp.result()).map((r) => r.key));
-
-                const toInsert = batch.filter((d) => !updatedKeys.has(d.key));
-                if (toInsert.length) {
-                  // ON CONFLICT (key) DO UPDATE handles two narrow races:
-                  //   1. another writer inserted this key between our UPDATE and INSERT
-                  //   2. consumer deleted a row between our UPDATE matching it and now
-                  // Both are bounded — race-loser burns 1 id, much better than the prior 5000.
-
-                  //language=text
-                  const insertQuery = Prisma.sql`
-                  INSERT INTO "PendingNotification" (key, type, category, users, details)
-                  VALUES
-                  ${Prisma.join(
-                    toInsert.map(
-                      (d) =>
-                        Prisma.sql`(${d.key}, ${d.type}, ${d.category}, ${
-                          '{' + d.users.join(',') + '}'
-                        }, ${JSON.stringify(d.details)}::jsonb)`
-                    )
-                  )}
-                  ON CONFLICT (key) DO UPDATE SET "users" = excluded."users", "lastTriggered" = NOW()
-                `;
-
-                  const insertResp = await notifDbWrite.cancellableQuery(insertQuery);
-                  await insertResp.result();
-                }
-              }
+              // The UPDATE-first / INSERT-on-miss batching (to avoid burning sequence ids) now lives in
+              // the notifications app behind createNotificationsBulk.
+              await notifications.createNotificationsBulk(Object.values(pendingData));
             }
 
             await setLastSent();
             log('sent', key, 'notifications in', (Date.now() - start) / 1000, 's');
           }
         } catch (e) {
+          // Client errors log centrally; skip to avoid a double log. The try also wraps the main-DB
+          // query, so genuine query/build failures still log below; the key isn't marked sent → retries.
+          if (e instanceof NotificationsClientError) return;
           const error = e as Error;
           logToAxiom(
             {

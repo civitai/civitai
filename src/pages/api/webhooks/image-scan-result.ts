@@ -126,6 +126,12 @@ export default WebhookEndpoint(async (req, res) => {
     try {
       await processImageScanResult(req);
     } catch (e: any) {
+      // Image was deleted between scan submit and callback — nothing to update.
+      // ACK with 200 so the orchestrator drops the workflow instead of retrying
+      // a result for a row that no longer exists.
+      if (e instanceof Error && e.message.startsWith('image not found')) {
+        return res.status(200).json({ ok: true, skipped: 'deleted' });
+      }
       if (e instanceof Error) {
         await logToAxiom({
           name: 'image-scan-result',
@@ -191,7 +197,10 @@ export default WebhookEndpoint(async (req, res) => {
 
     return res.status(200).json({ ok: true });
   } catch (e: any) {
-    if (e.message === 'Image not found') return res.status(404).send({ error: e.message });
+    // Image was deleted between scan submit and callback — there's nothing to
+    // update. ACK with 200 so the scanner drops the job instead of re-delivering
+    // the result for a row that no longer exists.
+    if (e.message === 'Image not found') return res.status(200).json({ ok: true, skipped: 'deleted' });
     return res.status(400).send({ error: e.message });
   }
 });

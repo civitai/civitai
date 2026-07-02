@@ -8,6 +8,7 @@
 import { createAuthVerifier } from '@civitai/auth';
 import type { SessionClaims } from '@civitai/auth';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { observeSessionLeg } from './session-metrics';
 
@@ -28,7 +29,7 @@ export async function isRevoked(claims: SessionClaims): Promise<boolean> {
       ])
     );
     observeSessionLeg('revocation', 'hit', (performance.now() - start) / 1000);
-    if (state === 'invalid') return true;
+    if (decodeRedisString(state) === 'invalid') return true;
     if (allStr && claims.signedAt && new Date(allStr).getTime() > claims.signedAt) return true;
     return false;
   } catch (err) {

@@ -19,8 +19,11 @@ export const serverSchema = z
     DATABASE_REPLICA_URL: z.url(),
     DATABASE_REPLICA_LONG_URL: z.url().optional(),
     DATABASE_SSL: zc.booleanString.default(true),
-    NOTIFICATION_DB_URL: z.url(),
-    NOTIFICATION_DB_REPLICA_URL: z.url(),
+    // The monolith no longer connects to the notification DB — that moved to apps/notifications, which
+    // the monolith reaches via @civitai/notifications (NOTIFICATIONS_ENDPOINT). Optional now: nothing in
+    // src/ reads these; kept so existing envs that still set them don't error.
+    NOTIFICATION_DB_URL: z.url().optional(),
+    NOTIFICATION_DB_REPLICA_URL: z.url().optional(),
     DATAPACKET_DATABASE_RO_URL: z.url().optional(),
     // App Blocks W4-KV-v0 — connection to cnpg-cluster-apps (`apps` DB) where
     // each approved app block gets an isolated schema. civitai-web is the only
@@ -411,6 +414,12 @@ export const serverSchema = z
     NEWSLETTER_KEY: z.string().optional(),
     BUZZ_ENDPOINT: isProd ? z.url() : z.url().optional(),
     SIGNALS_ENDPOINT: isProd ? z.url() : z.url().optional(),
+    // The in-repo notifications app (apps/notifications) — the monolith creates/reads/marks notifications
+    // through it via @civitai/notifications rather than touching the notification DB directly.
+    NOTIFICATIONS_ENDPOINT: isProd ? z.url() : z.url().optional(),
+    // Prod-required + non-empty: the app disables its auth gate on an empty token, so a blank value here
+    // would produce an unauthenticated producer API. Fail-fast at monolith boot instead.
+    NOTIFICATIONS_TOKEN: isProd ? z.string().min(1) : z.string().optional(),
     // Per-call signals timeout in ms. Calls wrapped via withSignals() fail
     // fast with SignalsCallTimeoutError once exceeded, instead of hanging
     // until Traefik's 30s router timeout fires. Default tuned for signals

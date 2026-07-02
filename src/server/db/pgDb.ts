@@ -1,7 +1,7 @@
-// App shim: primary pg pools. Calls the package getClient factory (which owns env +
-// the TIMESTAMP type parser), injects the debug logger, and owns the HMR globals +
-// Next build guard. Re-exports the pool instances for existing call sites.
-import { getClient, type AugmentedPool } from '@civitai/db/db-helpers';
+// App shim: primary pg pools. Calls the app-side getClient factory (which owns the monolith's DB
+// topology + env), injects the debug logger, and owns the HMR globals + Next build guard. Re-exports
+// the pool instances for existing call sites.
+import { getClient, type AugmentedPool } from '~/server/db/db-helpers';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { createLogger } from '~/utils/logging';
