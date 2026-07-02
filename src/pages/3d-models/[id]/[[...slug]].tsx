@@ -224,16 +224,31 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
       push('PBR materials', params.enablePbr);
       push('Mode', params.mode);
       push('Seed', params.seed);
-      // `Rigging` row was removed once the form collapsed both flags
-      // into a single Animate toggle (Meshy requires rigging when
-      // animation is on). The legacy `params.enableRigging` may still
-      // be `true` on older records — surfaced via `Animation` instead
-      // for new generations, and on old records the bool is implied.
-      push('Animation', params.enableAnimation);
+      // `enableAnimation` reliably records whether the user *requested*
+      // animation, but Meshy can silently fail to animate a mesh — the
+      // request succeeds and returns only the base model, no animated /
+      // walking / running variants (observed on model 56). So when
+      // animation was requested we confirm against the actual output
+      // files and, if none arrived, say so rather than printing a
+      // misleading "Yes". `enableRigging` is intentionally not surfaced —
+      // it's derived from `enableAnimation` at submit time and never
+      // persisted with a real value in the params snapshot.
+      if (params.enableAnimation === true) {
+        const hasAnimationOutput = files.some((f) => {
+          const variant = (f.variant ?? 'primary').replace(/-armature$/, '');
+          return variant === 'animated' || variant === 'walking' || variant === 'running';
+        });
+        surfaced.push([
+          'Animation',
+          hasAnimationOutput ? 'Yes' : 'Requested — Unable to animate model',
+        ]);
+      } else {
+        push('Animation', params.enableAnimation);
+      }
       push('Texture prompt', params.texturePrompt);
     }
     return surfaced;
-  }, [model3d?.generationParams]);
+  }, [model3d?.generationParams, files]);
 
   if (isLoading) return <PageLoader />;
   if (!model3d) return <NotFound />;
