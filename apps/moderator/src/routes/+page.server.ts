@@ -1,10 +1,7 @@
 import type { PageServerLoad } from './$types';
 import { appRoles } from '@civitai/auth';
-import { APP, featuresForUser } from '$lib/server/features';
+import { APP } from '$lib/server/access';
 
-export const load: PageServerLoad = ({ locals }) => {
-  return {
-    roles: appRoles(locals.user, APP),
-    features: [...featuresForUser(locals.user)],
-  };
-};
+export const load: PageServerLoad = ({ locals }) => ({
+  roles: appRoles(locals.user, APP),
+});

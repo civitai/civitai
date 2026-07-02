@@ -7,6 +7,9 @@ import { router } from '~/server/trpc';
 export const appRouter = router({
   blocks: lazy(() => import('~/server/routers/blocks.router').then((m) => m.blocksRouter)),
   apps: lazy(() => import('~/server/routers/apps.router').then((m) => m.appsRouter)),
+  appListings: lazy(() =>
+    import('~/server/routers/app-listings.router').then((m) => m.appListingsRouter)
+  ),
   account: lazy(() => import('./account.router').then((m) => m.accountRouter)),
   announcement: lazy(() => import('./announcement.router').then((m) => m.announcementRouter)),
   answer: lazy(() => import('./answer.router').then((m) => m.answerRouter)),
@@ -29,6 +32,7 @@ export const appRouter = router({
   download: lazy(() => import('./download.router').then((m) => m.downloadRouter)),
   homeBlock: lazy(() => import('./home-block.router').then((m) => m.homeBlockRouter)),
   image: lazy(() => import('./image.router').then((m) => m.imageRouter)),
+  merch: lazy(() => import('./merch.router').then((m) => m.merchRouter)),
   model: lazy(() => import('./model.router').then((m) => m.modelRouter)),
   model3d: lazy(() => import('./model3d.router').then((m) => m.model3dRouter)),
   modelFile: lazy(() => import('./model-file.router').then((m) => m.modelFileRouter)),

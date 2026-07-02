@@ -27,6 +27,7 @@ const {
   mockDbRead,
   mockRedis,
   mockIsAppBlocksEnabled,
+  mockIsAppBlocksAuthorEnabled,
   mockDailyBoostApply,
   mockDailyBoostGetDetails,
   mockGetUserBuzzAccounts,
@@ -71,6 +72,12 @@ const {
     ttl: vi.fn(async () => -1),
   },
   mockIsAppBlocksEnabled: vi.fn(async () => true),
+  // Developer soft-launch (Phase B): the runtime AUTHZ gate now checks the
+  // `appBlocksAuthor` capability against the token subject (was: isModerator).
+  // Default mirrors the mod floor so existing mod-subject happy paths pass.
+  mockIsAppBlocksAuthorEnabled: vi.fn(
+    async (opts?: { user?: { isModerator?: boolean } }) => !!opts?.user?.isModerator
+  ),
   mockDailyBoostApply: vi.fn(async () => undefined),
   mockDailyBoostGetDetails: vi.fn(async () => ({
     awarded: 0,
@@ -158,6 +165,7 @@ vi.mock('~/server/redis/client', () => ({
 }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
+  isAppBlocksAuthorEnabled: mockIsAppBlocksAuthorEnabled,
 }));
 vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
   dailyBoostReward: {
@@ -332,6 +340,7 @@ beforeEach(() => {
     mockSysRedis.ttl,
     mockResolveCanGenerateForVersions,
     mockRecordSpendAttribution,
+    mockIsAppBlocksAuthorEnabled,
   ]) {
     fn.mockReset();
   }
@@ -363,9 +372,15 @@ beforeEach(() => {
   // gate they're exercising. NB: mockReset wipes the implementation, so the
   // default has to be re-set every beforeEach (not just at hoisted-init time).
   mockIsAppBlocksEnabled.mockImplementation(async () => true);
-  // Phase 2: default the resolved viewer to a moderator so every happy-path
-  // test passes the new assertViewerIsModerator gate. FORBIDDEN tests override
-  // this to a non-mod (or vanished) user.
+  // Developer soft-launch (Phase B): default the AUTHOR gate to the mod floor —
+  // the default subject is a mod, so every happy-path test passes
+  // assertViewerIsAppDeveloper. FORBIDDEN tests drive a non-author subject.
+  mockIsAppBlocksAuthorEnabled.mockImplementation(
+    async (opts?: { user?: { isModerator?: boolean } }) => !!opts?.user?.isModerator
+  );
+  // Phase 2 → soft-launch: default the resolved viewer to a moderator so every
+  // happy-path test passes the runtime AUTHZ gate. FORBIDDEN tests override this
+  // to a non-author (or vanished) subject.
   mockGetUserById.mockResolvedValue({
     id: 42,
     isModerator: true,
@@ -373,10 +388,10 @@ beforeEach(() => {
     email: 'u@example.com',
     username: 'u',
   });
-  // assertAppBlocksEnabledForTokenUser resolves the full SessionUser for the flag
-  // gate; default to a moderator so the (mocked) flag gate passes. The vanished
-  // -viewer test sets getUserById→null to make the SECOND gate
-  // (assertViewerIsModerator) reject; this default keeps the first gate green.
+  // BOTH runtime gates (assertAppBlocksEnabledForTokenUser for the enabled
+  // kill-switch AND assertViewerIsAppDeveloper for authz) resolve the subject via
+  // sessionClient.getSessionUserById — default to a moderator so both pass. The
+  // FORBIDDEN / vanished-viewer tests override THIS resolver (not getUserById).
   mockGetSessionUser.mockResolvedValue({ id: 42, isModerator: true, tier: 'free' });
   mockParseSubjectUserId.mockImplementation((sub: string) => (sub === 'anon' ? null : 42));
   mockGetOrchestratorToken.mockResolvedValue('orch_token');
@@ -1994,25 +2009,33 @@ describe('blocks.submitWorkflow — LoRA install precedence', () => {
 });
 
 /**
- * Phase 2 — App Blocks is moderator-only until GA. Every block-token-authed
- * runtime procedure re-asserts that the RESOLVED viewer (from the token
- * subject, NOT ctx.user) is a moderator. A token whose subject resolves to a
- * non-mod verified user must be rejected with FORBIDDEN even though the token
- * itself is otherwise valid (valid signature, correct scopes, matching ctx).
+ * Developer soft-launch (Phase B) — the block-token-authed runtime procedures
+ * re-assert the AUTHOR capability against the RESOLVED viewer (from the token
+ * subject, NOT ctx.user). A token whose subject resolves to a NON-author
+ * (non-mod, not in the `app-blocks-author` cohort) must be rejected with
+ * FORBIDDEN even though the token is otherwise valid (valid signature, correct
+ * scopes, matching ctx).
  *
- * This is the defense-in-depth layer beneath the mod-gated token minting
- * endpoint: even if a token were somehow minted for a non-mod, the runtime
- * refuses it.
+ * This is the defense-in-depth layer beneath the gated token-minting endpoint:
+ * even if a token were somehow minted for a non-author, the runtime refuses it.
+ *
+ * NB: the AUTHZ gate resolves the subject via sessionClient.getSessionUserById
+ * (mockGetSessionUser) and evaluates isAppBlocksAuthorEnabled against it — a
+ * non-mod with no cohort grant → the default mock returns false → FORBIDDEN.
  */
-describe('Phase 2 — block-token runtime procedures reject non-mod viewers', () => {
+describe('soft-launch — block-token runtime procedures reject non-author viewers', () => {
   function nonModViewer() {
-    mockGetUserById.mockResolvedValue({
+    const nonMod = {
       id: 42,
       isModerator: false,
       tier: 'free',
       email: 'u@example.com',
       username: 'u',
-    });
+    };
+    // Both runtime gates resolve the subject via getSessionUserById; a non-author
+    // subject (default author mock = mod-floor only) fails assertViewerIsAppDeveloper.
+    mockGetUserById.mockResolvedValue(nonMod);
+    mockGetSessionUser.mockResolvedValue(nonMod);
   }
 
   it('pollWorkflow → FORBIDDEN for a non-mod resolved viewer', async () => {
@@ -2059,13 +2082,34 @@ describe('Phase 2 — block-token runtime procedures reject non-mod viewers', ()
     expect(mockSubmitWorkflow).not.toHaveBeenCalled();
   });
 
-  it('FORBIDDEN when the resolved viewer has vanished (getUserById → null)', async () => {
+  it('FORBIDDEN when the resolved viewer has vanished (getSessionUserById → null)', async () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims());
+    // The enabled kill-switch is mocked ON (default), so the FORBIDDEN comes from
+    // the authz gate: a vanished subject → undefined user → no mod floor + the
+    // author mock's `!!undefined?.isModerator` → false → FORBIDDEN.
     mockGetUserById.mockResolvedValue(null);
+    mockGetSessionUser.mockResolvedValue(null);
     const caller = blocksRouter.createCaller(fakeCtx() as never);
     await expect(
       caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('author-capable NON-MOD subject passes the authz gate (cohort widening)', async () => {
+    // A curated non-mod author: the enabled kill-switch is ON and the
+    // `appBlocksAuthor` capability resolves true for this subject → the runtime
+    // proc gets PAST the authz gate (reaches the orchestrator read).
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    const cohortAuthor = { id: 42, isModerator: false, tier: 'free', username: 'u' };
+    mockGetSessionUser.mockResolvedValue(cohortAuthor);
+    mockIsAppBlocksAuthorEnabled.mockResolvedValue(true);
+    mockGetWorkflow.mockResolvedValue({ id: 'wf_1', status: 'succeeded', cost: { total: 0 }, steps: [] });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const ok = await caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' });
+    expect(ok.snapshot.workflowId).toBe('wf_1');
+    expect(mockIsAppBlocksAuthorEnabled).toHaveBeenCalledWith({
+      user: expect.objectContaining({ id: 42, isModerator: false }),
+    });
   });
 });
 
@@ -3312,5 +3356,157 @@ describe('blocks workflow — buzz-type parity + spend-attribution currency', ()
         workflowId: 'wf_real',
       });
     });
+  });
+
+  // ---- viewer-picked accountType (money page blocks) ----------------------
+  // The exact reordered orchestrator currency VALUES can't be asserted here
+  // (the global @civitai/client mock nulls out BuzzClientAccount, so
+  // toOrchestratorType yields non-comparable values — the ORDERING is asserted
+  // on the pure BuzzSpendType strings in buzz-helpers.test.ts). Here we pin the
+  // ROUTER-level behavior: an ALLOWED / ABSENT pick submits normally, and a
+  // DISALLOWED pick is REJECTED before any orchestrator spend.
+  describe('honors body.accountType (preferred-first, domain-clamped)', () => {
+    it('absent accountType → submits normally (Auto, both submit sites fire)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 1000, maxBrowsingLevel: SFW_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      happySubmit();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(2);
+      // Auto still derives the 2-element parity currency set at both sites.
+      expect((bodyOf(0).currencies as unknown[]).length).toBe(2);
+      expect((bodyOf(1).currencies as unknown[]).length).toBe(2);
+    });
+
+    it('ALLOWED accountType (green on a SFW block) → submits normally', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 1000, maxBrowsingLevel: SFW_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      happySubmit();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({
+        blockToken: 'tok',
+        body: validBody({ accountType: 'green' }),
+      });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(2);
+      // whatIf + real still carry the same currency set (estimate matches drain).
+      expect((bodyOf(1).currencies as unknown[]).length).toBe(2);
+    });
+
+    it('DISALLOWED accountType (yellow on a SFW block) → BAD_REQUEST, no spend', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 1000, maxBrowsingLevel: SFW_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody({ accountType: 'yellow' }) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      // The domain clamp must fire BEFORE any orchestrator interaction.
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('DISALLOWED accountType (green on a mature .red block) → BAD_REQUEST, no spend', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 1000, maxBrowsingLevel: ALL_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody({ accountType: 'green' }) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('rejects an out-of-enum accountType at the schema boundary (zod)', async () => {
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({
+          blockToken: 'tok',
+          // `red` is disabled and not in the spendable enum → zod rejects.
+          body: validBody({ accountType: 'red' }) as never,
+        })
+      ).rejects.toThrow();
+    });
+  });
+});
+
+// ---- getMyBuzzBalance (host-mediated, token-bound balance read) ------------
+// Money page blocks read the VIEWER's OWN spendable balances via the block
+// token WITHOUT holding buzz:read:self. userId is derived from the self-bound
+// token sub, never client input — a page can only read its own session's user.
+describe('blocks.getMyBuzzBalance', () => {
+  it('returns the three spendable balances for a valid token (from getUserBuzzAccounts)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    happyUser();
+    // getUserBuzzAccounts returns every spend type; the proc projects to three.
+    mockGetUserBuzzAccounts.mockResolvedValue({ blue: 100, green: 20, yellow: 5, red: 999 });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.getMyBuzzBalance({ blockToken: 'tok' });
+    expect(result).toEqual({ blue: 100, green: 20, yellow: 5 });
+    // Never returns internal types (red / creatorProgram / cash).
+    expect(result).not.toHaveProperty('red');
+    // The balance is read for the TOKEN subject (42), not any client input.
+    expect(mockGetUserBuzzAccounts).toHaveBeenCalledWith({ userId: 42 });
+  });
+
+  it('defaults missing account values to 0', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    happyUser();
+    mockGetUserBuzzAccounts.mockResolvedValue({ blue: 50 } as never);
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.getMyBuzzBalance({ blockToken: 'tok' });
+    expect(result).toEqual({ blue: 50, green: 0, yellow: 0 });
+  });
+
+  it('rejects an invalid block token with UNAUTHORIZED (never reads a balance)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(null);
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyBuzzBalance({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(mockGetUserBuzzAccounts).not.toHaveBeenCalled();
+  });
+
+  it('rejects an anon subject with UNAUTHORIZED (no balance to read)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ sub: 'anon' }));
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyBuzzBalance({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(mockGetUserBuzzAccounts).not.toHaveBeenCalled();
+  });
+
+  it('rejects when the App Blocks flag is disabled (kill-switch)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    happyUser();
+    mockIsAppBlocksEnabled.mockResolvedValue(false);
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyBuzzBalance({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+      message: 'App Blocks not enabled',
+    });
+    expect(mockGetUserBuzzAccounts).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-author subject with FORBIDDEN (author gate, no balance read)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    // Enabled kill-switch passes, but the subject is not an app author.
+    mockGetSessionUser.mockResolvedValue({ id: 42, isModerator: false, tier: 'free' });
+    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyBuzzBalance({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(mockGetUserBuzzAccounts).not.toHaveBeenCalled();
   });
 });

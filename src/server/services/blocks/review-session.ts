@@ -34,28 +34,10 @@ import { createHmac, timingSafeEqual } from 'crypto';
 /** ENTRY-token TTL in seconds. Intentionally short: mint → iframe document load. */
 export const REVIEW_ACCESS_TOKEN_TTL_SECONDS = 120;
 
-/**
- * SESSION-cookie TTL in seconds (30min). Once the mod has LOADED the preview
- * (proving the short-lived `mr` entry token), the gate hands back a CHIPS
- * `Partitioned` session cookie that authorizes BOTH the entry document AND every
- * subresource for the remainder of the review session. Longer-lived than the
- * entry token because a single review (scrolling, clicking around the previewed
- * block) can run for many minutes.
- */
-export const REVIEW_SESSION_COOKIE_TTL_SECONDS = 1800;
-
 /** Domain-separation prefix for the short-TTL ENTRY token (carried as `?mr=`).
  *  So this HMAC can never collide with another the app signs over the same
  *  NEXTAUTH_SECRET. Bump `v1` if the payload shape changes. */
 const DOMAIN_PREFIX = 'review-mr:v1';
-
-/** DISTINCT domain-separation prefix for the longer-TTL SESSION cookie
- *  (carried as the `__Host-review-sess` cookie). A token minted under one prefix
- *  can NEVER verify under the other (the constant-time compare is over the
- *  prefixed signing string), so an attacker who captures an `mr` entry token can
- *  NOT replay it as a session cookie to gain subresource access, and vice-versa.
- *  This cross-use isolation is the load-bearing reason the two prefixes differ. */
-const SESSION_DOMAIN_PREFIX = 'review-sess:v1';
 
 type ReviewAccessPayload = {
   /** Moderator user id the token is bound to (audit + X-Mod-Id). */
@@ -76,16 +58,11 @@ function base64urlToBuffer(input: string): Buffer {
   return Buffer.from(input.replace(/-/g, '+').replace(/_/g, '/') + pad, 'base64');
 }
 
-/** The domain-separated string that is HMAC'd, parameterised by prefix so the
- *  ENTRY token (`DOMAIN_PREFIX`) and the SESSION cookie (`SESSION_DOMAIN_PREFIX`)
- *  produce non-interchangeable signatures over identical {m,h,exp} payloads. */
-function signingStringFor(prefix: string, p: ReviewAccessPayload): string {
-  return `${prefix}:${p.m}:${p.h}:${p.exp}`;
-}
-
-/** The domain-separated string for the short-TTL ENTRY (`mr`) token. */
+/** The domain-separated string for the short-TTL ENTRY (`mr`) token that is
+ *  HMAC'd. The `DOMAIN_PREFIX` ensures this HMAC can never collide with another
+ *  the app signs over the same NEXTAUTH_SECRET. */
 function signingString(p: ReviewAccessPayload): string {
-  return signingStringFor(DOMAIN_PREFIX, p);
+  return `${DOMAIN_PREFIX}:${p.m}:${p.h}:${p.exp}`;
 }
 
 function hmac(secret: string, signingStr: string): Buffer {
@@ -201,115 +178,4 @@ function resolveSecret(): string {
   const secret = process.env.NEXTAUTH_SECRET;
   if (!secret) throw new Error('NEXTAUTH_SECRET is not set');
   return secret;
-}
-
-// ───────────────────────────────────────────────────────────────────────────
-// REVIEW SESSION COOKIE (CHIPS Partitioned subresource gate, #2847 hardening)
-//
-// The `mr` entry token (above) only proves the ENTRY document load. To gate
-// EVERY subresource (so a raw client can't spoof `Sec-Fetch-Dest: image` and
-// pull the unapproved bundle) the mod-gate hands back this longer-TTL session
-// cookie on the 2xx entry response. It is the SAME HMAC construction as the
-// entry token but under a DISTINCT domain-separation prefix
-// (`SESSION_DOMAIN_PREFIX`) so the two can never be cross-used, and with a 30min
-// TTL covering a full review session. Same fail-closed posture: constant-time
-// verify, length guard, malformed → {ok:false}, secret-unset → {ok:false}.
-// ───────────────────────────────────────────────────────────────────────────
-
-/** The domain-separated string for the longer-TTL SESSION cookie. */
-function sessionSigningString(p: ReviewAccessPayload): string {
-  return signingStringFor(SESSION_DOMAIN_PREFIX, p);
-}
-
-export type SignReviewSessionCookieParams = {
-  modUserId: number;
-  host: string;
-  /** Injected for testability; defaults to env.NEXTAUTH_SECRET. */
-  secret?: string;
-  /** Injected for testability; defaults to REVIEW_SESSION_COOKIE_TTL_SECONDS. */
-  ttlSeconds?: number;
-};
-
-/**
- * Mint the `__Host-review-sess` cookie VALUE — a compact
- * `base64url(payload).base64url(sig)` bound to (modUserId, host), valid for
- * `ttlSeconds` (default 1800s). Signed under `SESSION_DOMAIN_PREFIX` so it can
- * NOT be confused with (or substituted for) the `mr` entry token.
- */
-export function signReviewSessionCookie(params: SignReviewSessionCookieParams): string {
-  const secret = params.secret ?? resolveSecret();
-  const ttl = params.ttlSeconds ?? REVIEW_SESSION_COOKIE_TTL_SECONDS;
-  const payload: ReviewAccessPayload = {
-    m: params.modUserId,
-    h: params.host,
-    exp: nowSec() + ttl,
-  };
-  const payloadB64 = base64url(JSON.stringify(payload));
-  const sigB64 = base64url(hmac(secret, sessionSigningString(payload)));
-  return `${payloadB64}.${sigB64}`;
-}
-
-export type VerifyReviewSessionCookieResult = {
-  ok: boolean;
-  modUserId?: number;
-};
-
-/**
- * Verify a `__Host-review-sess` cookie value against the expected host. NEVER
- * throws on malformed input — returns `{ ok:false }`. Identical check set to the
- * entry token (structurally parseable, constant-time HMAC match, not expired,
- * host binding) BUT over the SESSION domain-separation prefix, so an `mr` entry
- * token presented here will fail the signature compare (cross-use isolation).
- */
-export function verifyReviewSessionCookie(
-  value: string | null | undefined,
-  expectedHost: string,
-  opts?: { secret?: string }
-): VerifyReviewSessionCookieResult {
-  const fail: VerifyReviewSessionCookieResult = { ok: false };
-  if (!value || typeof value !== 'string') return fail;
-
-  const dot = value.indexOf('.');
-  if (dot <= 0 || dot === value.length - 1) return fail;
-  const payloadB64 = value.slice(0, dot);
-  const sigB64 = value.slice(dot + 1);
-
-  let payload: ReviewAccessPayload;
-  try {
-    const parsed = JSON.parse(base64urlToBuffer(payloadB64).toString('utf8'));
-    if (
-      !parsed ||
-      typeof parsed !== 'object' ||
-      typeof parsed.m !== 'number' ||
-      typeof parsed.h !== 'string' ||
-      typeof parsed.exp !== 'number'
-    ) {
-      return fail;
-    }
-    payload = parsed as ReviewAccessPayload;
-  } catch {
-    return fail;
-  }
-
-  let secret: string;
-  try {
-    secret = opts?.secret ?? resolveSecret();
-  } catch {
-    return fail;
-  }
-
-  const expectedSig = hmac(secret, sessionSigningString(payload));
-  let providedSig: Buffer;
-  try {
-    providedSig = base64urlToBuffer(sigB64);
-  } catch {
-    return fail;
-  }
-  if (providedSig.length !== expectedSig.length) return fail;
-  if (!timingSafeEqual(providedSig, expectedSig)) return fail;
-
-  if (payload.exp <= nowSec()) return fail;
-  if (payload.h !== expectedHost) return fail;
-
-  return { ok: true, modUserId: payload.m };
 }

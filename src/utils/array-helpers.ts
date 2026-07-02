@@ -60,7 +60,8 @@ const modelTypeOrder: { [k in ModelType]: number } = {
   [ModelType.Detection]: 17,
   [ModelType.VisionLanguage]: 18,
   [ModelType.CLIP]: 19,
-  [ModelType.Other]: 20,
+  [ModelType.LLM]: 20,
+  [ModelType.Other]: 21,
 };
 
 export function sortByModelTypes<T extends { modelType: ModelType | null }>(data: T[] = []) {

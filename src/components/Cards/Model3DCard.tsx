@@ -98,6 +98,7 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
     <Box pos="relative">
       <AspectRatioImageCard
         href={`/3d-models/${id}`}
+        alt={name}
         contentType="model3d"
         contentId={id}
         aspectRatio="portrait"

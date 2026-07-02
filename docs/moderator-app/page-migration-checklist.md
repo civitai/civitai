@@ -18,65 +18,26 @@ Each page is a checkbox. Sub-bullets list the procedures, services, schemas, and
 
 ---
 
-## Migration order (suggested)
+## Priority tiers
 
-Roughly easiest → hardest, and front-loading the **shared services** that many pages depend on:
+Tiering reflects head-moderator guidance on what's actually used day-to-day.
 
-1. **Postgres-only, read-mostly** pages (blocklists, reports, articles, announcements, rewards, auctions, code-gifts, contests). Low infra, establish the SvelteKit load/action patterns.
-2. **Shared service backbone** — `image.service`, `report.service`, `user.service`, `cosmetic-shop.service`, `challenge.service` (see [Shared backend services](#shared-backend-services)). Porting these unblocks whole clusters.
-3. **Redis / ClickHouse-backed** pages (scanner-policies, generation-config, service-status, strikes, prompt-audit-test).
-4. **Heavy external-integration** pages last (CSAM/NCMEC, buzz-withdrawal/Tipalti/Stripe, cash-management, paddle, training-data/orchestrator, image moderation).
+- **[Tier 1 — Primary](#tier-1--primary):** the pages the head moderator actively uses. Migrate these first.
+- **[Tier 2 — Low priority](#tier-2--low-priority):** pages the head moderator doesn't use or doesn't know about. Real features, but defer until Tier 1 is done.
+- **[Excluded — will not migrate](#excluded--will-not-migrate):** Paddle (per decision: no Paddle pages in the moderator app) + dev/test scaffolds.
 
----
+> **Counts:** Tier 1 ≈ **31** pages · Tier 2 ≈ **30** pages · Excluded **6** (2 Paddle + 4 scaffolds).
 
-## Migrate / Defer / Skip recommendations
+### Suggested order within Tier 1
 
-Cross-referenced against **`src/components/Moderation/ModerationNav.tsx`** (the live moderator menu).
-Five routes are **commented out** in that nav — the team has already hidden them, which is the
-strongest skip signal we have. Confirm with the team before deleting outright (a comment may be
-temporary), but these should not block the migration.
-
-### Skip — already hidden / superseded / deprecated (commented out in the nav)
-
-| Page | Why skip | Confidence |
-|---|---|---|
-| `/moderator/buzz-withdrawal-requests` | Deprecated; replaced by `cash-management`. Commented out in nav. | High |
-| `/moderator/tags` | Commented out in nav; tag moderation now flows through `/moderator/image-tags`. | High |
-| `/moderator/rewards` (index, `create`, `update/[id]`) | All 3 commented out in nav. Purchasable-reward admin is hidden. | Medium — confirm it's not still used via direct URL |
-| `/moderator/research/rater-sanity` | Commented out in nav; research/QA tool. | Medium |
-| `/moderator/paddle/adjustments` | Commented out in nav; read-only Paddle viewer that could simply stay in the main app. | Medium |
-
-### Skip — dev scaffolds (client-only, no backend, no production value)
-
-| Page | Why skip |
-|---|---|
-| `/moderator/test`, `/moderator/test2` | UI/slot-system playgrounds. |
-| `/moderator/link-demo` | Civitai Link demo. |
-| `/moderator/aspect-ratio-explorer` | Client-only AR calculator (in nav, but pure utility — port trivially only if wanted). |
-| `/moderator/testing/model3d-seed` | Not in nav; testing/seed tool. Migrate only if 3D-model seeding is still needed. |
-
-### Defer — niche / testing tools (real, but low priority; migrate after the core)
-
-| Page | Note |
-|---|---|
-| `/moderator/auditor` | In nav, but client-only audit *test* utility (no backend slice). Trivial to port; low value. |
-| `/moderator/prompt-audit-test` | Active (csam flag), but a "test" tool; ClickHouse-heavy. Overlaps the suspicious-matches flow. |
-| `/moderator/suspicious-audit-matches` | Not in nav (deep-linked from audit tools); niche Redis-list viewer. |
-| `/moderator/duplicate-hashes` | Orphaned — not in nav, direct-URL only. Lightweight (single raw SQL) if you do migrate it. |
-
-### Migrate — everything else
-
-All remaining pages are active in the nav (several behind feature flags — `strikes`, `comicCreator`,
-`trainingModelsModeration`, `reviewTrainingData`, `serviceStatus`, `cashManagement`, `announcements`,
-`blocklists`, `auctionsMod`, `csamReports`) or reached via feature-specific entry points not in the
-main moderator menu (the **challenge** cluster via `ChallengeUpsertForm`, **csam/[userId]** via the
-image context menu, **scanner-policies** from the scanner-audit area, **contests/bans** and the
-**cosmetic-store** sub-pages from their section indexes). Feature-flag gating ≠ skip — those are
-shipped features, just toggled.
-
-> **Net:** ~60 pages → migrate **~46**, **skip ~10** (5 hidden + 5 scaffolds), **defer ~4**.
+1. **Postgres-only, read-mostly** pages first (reports, blocklists, articles, article-rating-review) to establish the SvelteKit load/action patterns.
+2. **Shared service backbone** — `image.service`, `report.service`, `user.service` (see [Shared backend services](#shared-backend-services)); porting these unblocks the whole image/CSAM cluster.
+3. **Redis / ClickHouse-backed** pages (scanner-policies, generation-config, strikes, prompt-audit-test).
+4. **Heavy external-integration** pages last (CSAM/NCMEC, training-data/orchestrator, image moderation).
 
 ---
+
+# Tier 1 — Primary
 
 ## 1. Core moderation
 
@@ -103,12 +64,7 @@ shipped features, just toggled.
 
 - [ ] **`/moderator/auditor`** — `src/pages/moderator/auditor.tsx` — flag: none
   - Procedures: **none** — purely client-side (`useCheckProfanity` + `~/utils/metadata/audit`)
-  - Infra: none. Port the audit utilities client-side; no backend slice.
-
-- [ ] **`/moderator/suspicious-audit-matches`** — `src/pages/moderator/suspicious-audit-matches.tsx` — flag: none
-  - Procedures: `userRestriction.getSuspiciousMatches` (query); `userRestriction.clearSuspiciousMatches` (mutation) — **logic inline in `user-restriction.router.ts`**, no service file
-  - Infra: **Redis only** (sysRedis list `SYSTEM.SUSPICIOUS_AUDIT_MATCHES`, latest 1000)
-  - Notes: extract inline router logic into a service during migration; JSON download is client-side blob
+  - Infra: none. Port the audit utilities client-side; no backend slice. Trivial / low-value but in active nav.
 
 - [ ] **`/moderator/scanner-audit`** (index) — `src/pages/moderator/scanner-audit/index.tsx` — flag: none
   - Procedures: none — server redirect to `/moderator/scanner-audit/text`. Trivial.
@@ -133,8 +89,6 @@ shipped features, just toggled.
   - Schemas: `scanner-policies.schema.ts` (full set)
   - Infra: **Redis** (sysRedis candidates + system prompts, fail-open) + **Postgres** (`DatasetExport`, `ScannerPoliciesRun`) + **S3** (workbooks/signed URLs) + **Signals** (test-run progress)
   - Notes: background test-runner scores datasets and writes results to S3; the most complex page in this cluster
-
----
 
 ## 2. Image / content review
 
@@ -177,12 +131,7 @@ shipped features, just toggled.
   - Schemas: `image.schema.ts` (`ingestionErrorReviewInput`, `resolveIngestionErrorInput`)
   - Infra: **Postgres only**
 
-- [ ] **`/moderator/duplicate-hashes`** — `src/pages/moderator/duplicate-hashes.tsx` — flag: none
-  - Procedures: **none** — raw SQL in `getServerSideProps`
-  - Infra: **Postgres only** (raw `dbRead.$queryRaw`)
-  - Notes: SSR-only; port the raw SQL to Kysely in a `load`. Lightweight.
-
-- [ ] **`/moderator/comics-review`** — `src/pages/moderator/comics-review.tsx` — flag: none
+- [ ] **`/moderator/comics-review`** — `src/pages/moderator/comics-review.tsx` — flag: none (nav-gated on `comicCreator`)
   - Procedures: `comics.getModReviewQueue` (**inline query in router**, schema inline); `image.moderate` (mutation, reused)
   - Services: extract inline comics query into a service fn; `moderateImages` (reused from images.tsx)
   - Infra: **Postgres + Meilisearch + Redis + S3 + Cloudflare + email** (via `image.moderate`)
@@ -193,8 +142,7 @@ shipped features, just toggled.
   - Services: `tag.service.ts` (`addTags`, `disableTags`, `deleteTags`) + port the `getManagableTags` raw SQL
   - Schemas: `tag.schema.ts` (`adjustTagsSchema`, `deleteTagsSchema`)
   - Infra: **Postgres only.** Manages `TagsOnTags` relationships (Parent/Replace/Append).
-
----
+  - ⚠️ **Confirm before migrating:** commented out in `ModerationNav.tsx` — tag moderation may already be superseded by `/moderator/image-tags`. Not on the head-mod low-priority list, so kept here pending confirmation.
 
 ## 3. CSAM & content moderation
 
@@ -209,7 +157,7 @@ shipped features, just toggled.
   - Services: `csam.service-new.ts` → `createExternalCsamReport`
   - Schemas: `csam.schema.ts` (`createExternalCsamReportSchema`, `externalCsamFileAnnotationsSchema`, `csamContentsDictionary`, `csamCapabilitiesDictionary`)
   - Infra: **Postgres + S3 (secured CSAM bucket) + NCMEC CyberTipline API (`@civitai/cybertipline-tools`) + ClickHouse (user activity) + Orchestrator (consumer strikes)**
-  - Notes: highest-sensitivity, most-integrated page. Migrate last.
+  - Notes: highest-sensitivity, most-integrated page. Migrate last within Tier 1.
 
 - [ ] **`/moderator/csam/[userId]`** — `src/pages/moderator/csam/[userId].tsx` — flag: `csamReports`
   - Procedures: `user.getById` (query); UI components submit via `csam.createReport`
@@ -242,11 +190,109 @@ shipped features, just toggled.
   - Infra: **Postgres + Meilisearch + Redis (dbKV)**
   - Notes: also downloads training data via `/api/download/training-data/{versionId}` (separate API, not tRPC)
 
+## 4. Generation & training
+
+- [ ] **`/moderator/generation`** — `generation.tsx` — flag: none
+  - Procedures: `generation.getResources` (query)
+  - Services: `generation/generation.service.ts` → `getGenerationResources`
+  - Schemas: `generation.schema.ts` (`getGenerationResourcesSchema`)
+  - Infra: **Postgres** (+ search index). `toggleUnavailableResource` lives in a child component — verify on migration.
+- [ ] **`/moderator/generation-config`** — `generation-config.tsx` — flag: none
+  - Procedures: `getEcosystemConfig`, `getGateRules` (queries); `setEcosystemConfig`, `setGateRules` (mutations)
+  - Services: `generation/generation.service.ts` (`getGenerationEcosystemConfig`, `setGenerationEcosystemConfig`, `getGateRules`, `setGateRules`)
+  - Schemas: `generation.schema.ts` (`generationEcosystemConfigSchema`), `shared/data-graph/generation/gates.ts` (`gateRuleSchema`)
+  - Infra: **Redis (sysRedis `SYSTEM.FEATURES`) + Flipt** (`GENERATION_TESTING`)
+- [ ] **`/moderator/generation-restrictions`** — `generation-restrictions.tsx` — flag: none (nav-gated on `csamReports`)
+  - Procedures: `userRestriction.getAll` (query); `userRestriction.resolve`, `userRestriction.saveSuspiciousMatches` (mutations) — **logic inline in router**
+  - Services: extract inline logic; `user.service.ts` (`updateUserById`), `orchestrator/promptAuditing.ts` (`resetProhibitedRequestCount`, `bustPromptAllowlistCache`), `notification.service.ts` (`createNotification`), `auth/session-invalidation.ts` (`refreshSession`)
+  - Schemas: `user-restriction.schema.ts` (`getGenerationRestrictionsSchema`, `resolveRestrictionSchema`, `saveSuspiciousMatchSchema`)
+  - Infra: **Postgres + Redis (sysRedis) + Axiom + email + notifications + session mgmt**
+- [ ] **`/moderator/review/training-data`** (index) — `review/training-data/index.tsx` — flag: `reviewTrainingData`
+  - Procedures: `moderator.modelVersions.query` (infinite, `trainingStatus: 'Paused'`); `modelVersion.recheckTrainingStatus` (mutation)
+  - Services: `model-version.service.ts` (`queryModelVersions`, `getVersionById`, `getWorkflowIdFromModelVersion`); `orchestrator/workflows.ts` (`getWorkflow`)
+  - Schemas: `model-version.schema.ts` (`queryModelVersionsSchema`), `base.schema.ts` (`getByIdSchema`)
+  - Infra: **Postgres + Orchestrator** (needs `ORCHESTRATOR_ACCESS_TOKEN`)
+- [ ] **`/moderator/review/training-data/[versionId]`** — `review/training-data/[versionId].tsx` — flag: `reviewTrainingData`
+  - Procedures: `modelVersion.getTrainingDetails` (query); `moderator.trainingData.approve`, `moderator.trainingData.deny` (mutations)
+  - Services: `model-version.service.ts` (`getVersionById`); `training.controller.ts` (`getJobIdFromVersion`, `moderateTrainingData`); `orchestrator/workflows.ts` (`getWorkflow`)
+  - Schemas: `base.schema.ts` (`getByIdSchema`)
+  - Infra: **Postgres + Orchestrator (workflow `gateInstructions` mutation) + Axiom + S3** (training-data zip via `/api/download/training-data/{versionId}`)
+- [ ] **`/moderator/prompt-audit-test`** — `prompt-audit-test.tsx` — flag: none (nav-gated on `csamReports`)
+  - Procedures: `userRestriction.getTodaysAuditResults`, `userRestriction.getTodaysUserCounts` (queries); `userRestriction.saveSuspiciousMatches` (mutation) — **logic inline in router**
+  - Services: extract inline logic; `utils/metadata/audit.ts` (`debugAuditPrompt`)
+  - Schemas: `user-restriction.schema.ts` (`saveSuspiciousMatchSchema`)
+  - Infra: **ClickHouse (`prohibitedRequests`) + Redis (suspicious matches)**
+- [ ] **`/moderator/testing/model3d-seed`** — `testing/model3d-seed.tsx` — flag: none
+  - Procedures: **none** — direct HTTP POST to `/api/testing/model3d-seed`
+  - Services: recreate the `/api/testing/model3d-seed` handler → `upsertModel3DFromWorkflow`
+  - Infra: **S3 + Cloudflare Images** (upload hooks) + the testing API endpoint
+  - Notes: testing/seed tool, not in nav. Migrate only if 3D-model seeding is still needed — otherwise treat as excluded.
+
+## 5. Cosmetics (grant only)
+
+> Only **grant** is Tier 1. The cosmetic *store-management* pages are [Tier 2](#cosmetic-store).
+
+- [ ] **`/moderator/cosmetics/grant`** — `cosmetics/grant.tsx` — flag: none
+  - Procedures: `cosmetic.getPaged`, `user.getAll` (queries); `cosmetic.grantToUsers` (mutation)
+  - Services: `cosmetic.service.ts` (`getPaginatedCosmetics`, `grantCosmeticsToUsers`, `grantCosmetics`); `user.controller.ts` user search
+  - Schemas: `cosmetic.schema.ts` (`getPaginatedCosmeticsSchema`, `grantCosmeticsToUsersSchema`), `user.schema.ts` (`getAllUsersInput`)
+  - Infra: **Postgres only** (idempotent INSERT … ON CONFLICT DO NOTHING)
+
 ---
 
-## 4. Cosmetic store
+# Tier 2 — Low priority
 
-> Most of this cluster funnels through **`cosmetic-shop.service.ts`** — port once.
+Real, working features the head moderator doesn't use or doesn't know about. Migrate after Tier 1.
+
+## Challenges & contests
+
+> Cluster funnels through **`challenge.service.ts`**.
+
+- [ ] **`/moderator/challenges`** — `challenges.tsx` — flag: `challengePlatform`
+  - Procedures: queries `getModeratorList`, `getSystemConfig`, `getJudges`; mutations `updateSystemConfig`, `endAndPickWinners`, `voidChallenge`, `delete`
+  - Services: `challenge.service.ts` (`getModeratorChallenges`, `getChallengeSystemConfig`, `updateChallengeSystemConfig`, `getActiveJudges`, `endChallengeAndPickWinners`, `voidChallenge`, `deleteChallenge`)
+  - Schemas: `challenge.schema.ts` (`getModeratorChallengesSchema`, `challengeQuickActionSchema`, `updateChallengeConfigSchema`, `deleteChallengeSchema`)
+  - Infra: **Postgres + Redis (config cache) + notifications + buzz transactions** (winner payout)
+- [ ] **`/moderator/challenges/create`** — `challenges/create.tsx` — flag: `challengePlatform`
+  - Procedures: `getJudges`, `getEvents` (queries); `upsert` (mutation)
+  - Services: `challenge.service.ts` (`getActiveJudges`, `getChallengeEvents`, `upsertChallenge`)
+  - Schemas: `challenge.schema.ts` (`upsertChallengeSchema`, `getChallengeEventsSchema`)
+  - Infra: **Postgres + S3** (cover image; creates a linked Collection in Contest mode)
+- [ ] **`/moderator/challenges/[id]/edit`** — `challenges/[id]/edit.tsx` — flag: `challengePlatform`
+  - Procedures: `getForEdit`, `getJudges`, `getEvents` (queries); `upsert` (mutation)
+  - Services: `challenge.service.ts` (`getChallengeForEdit` + create's services)
+  - Schemas: `base.schema.ts` (`getByIdSchema`) + create's schemas
+  - Infra: **Postgres + S3**
+- [ ] **`/moderator/challenges/events`** — `challenges/events.tsx` — flag: `challengePlatform`
+  - Procedures: `getEvents` (query); `upsertEvent`, `deleteEvent` (mutations)
+  - Services: `challenge.service.ts` (`getChallengeEvents`, `upsertChallengeEvent`, `deleteChallengeEvent`)
+  - Schemas: `challenge.schema.ts` (`getChallengeEventsSchema`, `upsertChallengeEventSchema`, `deleteChallengeSchema`, `challengeEventTitleColors`)
+  - Infra: **Postgres only**
+- [ ] **`/moderator/challenges/playground`** — `challenges/playground.tsx` — flag: `challengePlatform`
+  - Procedures: `getJudges`, `getModeratorList` (queries); `playgroundGenerateContent`, `playgroundReviewImage`, `playgroundPickWinners` (mutations)
+  - Services: `challenge.service.ts` (playground methods) + `games/daily-challenge/generative-content.ts` (`generateArticle`, `generateReview`, `generateWinners`) + `daily-challenge.utils.ts` (judging config) + `template-engine.ts`
+  - Schemas: `challenge.schema.ts` (`playgroundGenerateContentSchema`, `playgroundReviewImageSchema`, `playgroundPickWinnersSchema`)
+  - Infra: **Postgres + AI/LLM (OpenRouter) + Cloudflare Images**
+  - Notes: LLM-heavy; depends on template engine + judging config.
+- [ ] **`/moderator/contests`** (index) — `contests/index.tsx` — flag: `profileCollections`
+  - Procedures: `collection.getInfinite` (query, via `useQueryCollections`)
+  - Services: `collection.service.ts` → `getAllCollectionsInfinite` (filtered `CollectionMode.Contest`)
+  - Schemas: `collection.schema.ts` (`getAllCollectionsInfiniteSchema`), `CollectionSort` enum
+  - Infra: **Postgres only**
+- [ ] **`/moderator/contests/bans`** — `contests/bans.tsx` — flag: none
+  - Procedures: `user.getAll` (query); `user.toggleBan` (mutation)
+  - Services: `user.service.ts` (`getUsers`, `toggleContestBan`, `updateUserById`), `auth/session-invalidation.ts` (`refreshSession`)
+  - Schemas: `user.schema.ts` (`getAllUsersInput`, `toggleBanUserSchema`)
+  - Infra: **Postgres only** (stores `user.meta.contestBanDetails`; session refresh after toggle)
+- [ ] **`/moderator/auctions`** — `auctions.tsx` — flag: `auctionsMod`
+  - Procedures: `auction.modGetAuctionBases` (query); `auction.modUpdateAuctionBase` (mutation)
+  - Services: `auction.service.ts` (`getAuctionBases`, `updateAuctionBase`)
+  - Schemas: `auction.schema.ts` (`getAuctionBasesInput`, `updateAuctionBaseInput`)
+  - Infra: **Postgres only** (edits affect new auctions only, not running ones)
+
+## Cosmetic store
+
+> Cluster funnels through **`cosmetic-shop.service.ts`**. (Grant is Tier 1.)
 
 - [ ] **`/moderator/cosmetic-store`** (index) — `cosmetic-store/index.tsx` — flag: none — **navigation only, no backend**
 - [ ] **`/moderator/cosmetic-store/badges`** — `cosmetic-store/badges/index.tsx` — flag: none
@@ -289,69 +335,14 @@ shipped features, just toggled.
   - Services: `cosmetic-shop.service.ts` (`getSectionById`, `upsertCosmeticShopSection`) + image helpers
   - Schemas: `base.schema.ts` (`getByIdSchema`), `cosmetic-shop.schema.ts` (`upsertCosmeticShopSectionInput`)
   - Infra: **Postgres + Image service.** Section items via delete-all-then-insert on join table.
-- [ ] **`/moderator/cosmetics/grant`** — `cosmetics/grant.tsx` — flag: none
-  - Procedures: `cosmetic.getPaged`, `user.getAll` (queries); `cosmetic.grantToUsers` (mutation)
-  - Services: `cosmetic.service.ts` (`getPaginatedCosmetics`, `grantCosmeticsToUsers`, `grantCosmetics`); `user.controller.ts` user search
-  - Schemas: `cosmetic.schema.ts` (`getPaginatedCosmeticsSchema`, `grantCosmeticsToUsersSchema`), `user.schema.ts` (`getAllUsersInput`)
-  - Infra: **Postgres only** (idempotent INSERT … ON CONFLICT DO NOTHING)
 
----
-
-## 5. Challenges & contests
-
-> Most of this cluster funnels through **`challenge.service.ts`** — port once.
-
-- [ ] **`/moderator/challenges`** — `challenges.tsx` — flag: `challengePlatform`
-  - Procedures: queries `getModeratorList`, `getSystemConfig`, `getJudges`; mutations `updateSystemConfig`, `endAndPickWinners`, `voidChallenge`, `delete`
-  - Services: `challenge.service.ts` (`getModeratorChallenges`, `getChallengeSystemConfig`, `updateChallengeSystemConfig`, `getActiveJudges`, `endChallengeAndPickWinners`, `voidChallenge`, `deleteChallenge`)
-  - Schemas: `challenge.schema.ts` (`getModeratorChallengesSchema`, `challengeQuickActionSchema`, `updateChallengeConfigSchema`, `deleteChallengeSchema`)
-  - Infra: **Postgres + Redis (config cache) + notifications + buzz transactions** (winner payout)
-- [ ] **`/moderator/challenges/create`** — `challenges/create.tsx` — flag: `challengePlatform`
-  - Procedures: `getJudges`, `getEvents` (queries); `upsert` (mutation)
-  - Services: `challenge.service.ts` (`getActiveJudges`, `getChallengeEvents`, `upsertChallenge`)
-  - Schemas: `challenge.schema.ts` (`upsertChallengeSchema`, `getChallengeEventsSchema`)
-  - Infra: **Postgres + S3** (cover image; creates a linked Collection in Contest mode)
-- [ ] **`/moderator/challenges/[id]/edit`** — `challenges/[id]/edit.tsx` — flag: `challengePlatform`
-  - Procedures: `getForEdit`, `getJudges`, `getEvents` (queries); `upsert` (mutation)
-  - Services: `challenge.service.ts` (`getChallengeForEdit` + create's services)
-  - Schemas: `base.schema.ts` (`getByIdSchema`) + create's schemas
-  - Infra: **Postgres + S3**
-- [ ] **`/moderator/challenges/events`** — `challenges/events.tsx` — flag: `challengePlatform`
-  - Procedures: `getEvents` (query); `upsertEvent`, `deleteEvent` (mutations)
-  - Services: `challenge.service.ts` (`getChallengeEvents`, `upsertChallengeEvent`, `deleteChallengeEvent`)
-  - Schemas: `challenge.schema.ts` (`getChallengeEventsSchema`, `upsertChallengeEventSchema`, `deleteChallengeSchema`, `challengeEventTitleColors`)
-  - Infra: **Postgres only**
-- [ ] **`/moderator/challenges/playground`** — `challenges/playground.tsx` — flag: `challengePlatform`
-  - Procedures: `getJudges`, `getModeratorList` (queries); `playgroundGenerateContent`, `playgroundReviewImage`, `playgroundPickWinners` (mutations)
-  - Services: `challenge.service.ts` (playground methods) + `games/daily-challenge/generative-content.ts` (`generateArticle`, `generateReview`, `generateWinners`) + `daily-challenge.utils.ts` (judging config) + `template-engine.ts`
-  - Schemas: `challenge.schema.ts` (`playgroundGenerateContentSchema`, `playgroundReviewImageSchema`, `playgroundPickWinnersSchema`)
-  - Infra: **Postgres + AI/LLM (OpenRouter) + Cloudflare Images**
-  - Notes: LLM-heavy; depends on template engine + judging config. Migrate after the rest of the challenge cluster.
-- [ ] **`/moderator/contests`** (index) — `contests/index.tsx` — flag: `profileCollections`
-  - Procedures: `collection.getInfinite` (query, via `useQueryCollections`)
-  - Services: `collection.service.ts` → `getAllCollectionsInfinite` (filtered `CollectionMode.Contest`)
-  - Schemas: `collection.schema.ts` (`getAllCollectionsInfiniteSchema`), `CollectionSort` enum
-  - Infra: **Postgres only**
-- [ ] **`/moderator/contests/bans`** — `contests/bans.tsx` — flag: none
-  - Procedures: `user.getAll` (query); `user.toggleBan` (mutation)
-  - Services: `user.service.ts` (`getUsers`, `toggleContestBan`, `updateUserById`), `auth/session-invalidation.ts` (`refreshSession`)
-  - Schemas: `user.schema.ts` (`getAllUsersInput`, `toggleBanUserSchema`)
-  - Infra: **Postgres only** (stores `user.meta.contestBanDetails`; session refresh after toggle)
-- [ ] **`/moderator/auctions`** — `auctions.tsx` — flag: `auctionsMod`
-  - Procedures: `auction.modGetAuctionBases` (query); `auction.modUpdateAuctionBase` (mutation)
-  - Services: `auction.service.ts` (`getAuctionBases`, `updateAuctionBase`)
-  - Schemas: `auction.schema.ts` (`getAuctionBasesInput`, `updateAuctionBaseInput`)
-  - Infra: **Postgres only** (edits affect new auctions only, not running ones)
-
----
-
-## 6. Rewards, Buzz & cash
+## Rewards, Buzz & cash
 
 - [ ] **`/moderator/rewards`** (index) — `rewards/index.tsx` — flag: none
   - Procedures: `purchasableReward.getModeratorPaged` (query)
   - Services: `purchasable-reward.service.ts` → `getPaginatedPurchasableRewardsModerator`
   - Schemas: `purchasable-reward.schema.ts` (`getPaginatedPurchasableRewardsModeratorSchema`)
-  - Infra: **Postgres only**
+  - Infra: **Postgres only** — ⚠️ commented out in `ModerationNav.tsx`
 - [ ] **`/moderator/rewards/create`** — `rewards/create.tsx` — flag: none
   - Procedures: `purchasableReward.upsert` (mutation)
   - Services: `purchasable-reward.service.ts` → `purchasableRewardUpsert`
@@ -372,71 +363,20 @@ shipped features, just toggled.
   - Services: `buzz-withdrawal-request.service.ts` (`getPaginatedBuzzWithdrawalRequests`, `updateBuzzWithdrawalRequest`)
   - Schemas: `buzz-withdrawal-request.schema.ts` (`getPaginatedBuzzWithdrawalRequestSchema`, `updateBuzzWithdrawalRequestSchema`, `buzzWithdrawalRequestHistoryMetadataSchema`)
   - Infra: **Postgres + Redis + Stripe (transfer reversal) + Tipalti + Axiom + notifications**
-  - Notes: **deprecated** system (being replaced by cash-management). Confirm whether to migrate at all before investing.
+  - Notes: **deprecated** (replaced by cash-management) and commented out in nav. Likely **don't migrate** — confirm before investing.
 - [ ] **`/moderator/cash-management`** — `cash-management.tsx` — flag: `cashManagement`
   - Procedures: `moderator.cash.getCashForUser`, `moderator.cash.getWithdrawalHistory`, `user.getCreator` (queries); `moderator.cash.adjustBalance`, `moderator.cash.updateWithdrawal` (mutations)
   - Services: `creator-program.service.ts` (`getCash`, `getWithdrawalHistory`, `modAdjustCashBalance`, `updateCashWithdrawal`)
   - Schemas: `creator-program.schema.ts` (`modCashAdjustmentSchema`, `updateCashWithdrawalSchema`)
   - Infra: **Postgres + Buzz service + ClickHouse (subscription tier) + Axiom**
-  - Notes: **new** system replacing buzz-withdrawal-requests; tier caps via ClickHouse; manual Tipalti refund path
+  - Notes: new system replacing buzz-withdrawal-requests; tier caps via ClickHouse; manual Tipalti refund path
 - [ ] **`/moderator/code-gifts`** — `code-gifts.tsx` — flag: none
   - Procedures: `redeemableCode.getAllGiftNotices` (query); `redeemableCode.deleteGiftNotice`, `redeemableCode.upsertGiftNotice` (mutations)
   - Services: `redeemableCode.service.ts` (`getAllGiftNotices`, `deleteGiftNotice`, `upsertGiftNotice`)
   - Schemas: `redeemableCode.schema.ts` (`upsertGiftNoticeSchema`, `deleteGiftNoticeSchema`, `giftNoticeSchema`)
   - Infra: **Postgres only** (notices in `KeyValue` table)
-- [ ] **`/moderator/paddle/adjustments`** — `paddle/adjustments.tsx` — flag: `paddleAdjustments`
-  - Procedures: `paddle.getAdjustmentsInfinite` (infinite query)
-  - Services: `paddle.service.ts` → `getAdjustmentsInfinite`
-  - Schemas: `paddle.schema.ts` (`getPaddleAdjustmentsSchema` + `AdjustmentAction` enum)
-  - Infra: **Paddle API + Postgres** (read-only, cursor pagination)
-- [ ] **`/moderator/paddle/customer/[paddleCustomerId]`** — `paddle/customer/[paddleCustomerId].tsx` — flag: none
-  - Procedures: **none** — SSR redirect only
-  - Services: `user.service.ts` → `getUserByPaddleCustomerId` (in `getServerSideProps`)
-  - Infra: **Postgres only.** Looks up user → redirects to profile or Retool (`NEXT_PUBLIC_USER_LOOKUP_URL`). Trivial.
 
----
-
-## 7. Generation & training
-
-- [ ] **`/moderator/generation`** — `generation.tsx` — flag: none
-  - Procedures: `generation.getResources` (query)
-  - Services: `generation/generation.service.ts` → `getGenerationResources`
-  - Schemas: `generation.schema.ts` (`getGenerationResourcesSchema`)
-  - Infra: **Postgres** (+ search index). `toggleUnavailableResource` lives in a child component — verify on migration.
-- [ ] **`/moderator/generation-config`** — `generation-config.tsx` — flag: none
-  - Procedures: `getEcosystemConfig`, `getGateRules` (queries); `setEcosystemConfig`, `setGateRules` (mutations)
-  - Services: `generation/generation.service.ts` (`getGenerationEcosystemConfig`, `setGenerationEcosystemConfig`, `getGateRules`, `setGateRules`)
-  - Schemas: `generation.schema.ts` (`generationEcosystemConfigSchema`), `shared/data-graph/generation/gates.ts` (`gateRuleSchema`)
-  - Infra: **Redis (sysRedis `SYSTEM.FEATURES`) + Flipt** (`GENERATION_TESTING`)
-- [ ] **`/moderator/generation-restrictions`** — `generation-restrictions.tsx` — flag: none
-  - Procedures: `userRestriction.getAll` (query); `userRestriction.resolve`, `userRestriction.saveSuspiciousMatches` (mutations) — **logic inline in router**
-  - Services: extract inline logic; `user.service.ts` (`updateUserById`), `orchestrator/promptAuditing.ts` (`resetProhibitedRequestCount`, `bustPromptAllowlistCache`), `notification.service.ts` (`createNotification`), `auth/session-invalidation.ts` (`refreshSession`)
-  - Schemas: `user-restriction.schema.ts` (`getGenerationRestrictionsSchema`, `resolveRestrictionSchema`, `saveSuspiciousMatchSchema`)
-  - Infra: **Postgres + Redis (sysRedis) + Axiom + email + notifications + session mgmt**
-- [ ] **`/moderator/review/training-data`** (index) — `review/training-data/index.tsx` — flag: `reviewTrainingData`
-  - Procedures: `moderator.modelVersions.query` (infinite, `trainingStatus: 'Paused'`); `modelVersion.recheckTrainingStatus` (mutation)
-  - Services: `model-version.service.ts` (`queryModelVersions`, `getVersionById`, `getWorkflowIdFromModelVersion`); `orchestrator/workflows.ts` (`getWorkflow`)
-  - Schemas: `model-version.schema.ts` (`queryModelVersionsSchema`), `base.schema.ts` (`getByIdSchema`)
-  - Infra: **Postgres + Orchestrator** (needs `ORCHESTRATOR_ACCESS_TOKEN`)
-- [ ] **`/moderator/review/training-data/[versionId]`** — `review/training-data/[versionId].tsx` — flag: `reviewTrainingData`
-  - Procedures: `modelVersion.getTrainingDetails` (query); `moderator.trainingData.approve`, `moderator.trainingData.deny` (mutations)
-  - Services: `model-version.service.ts` (`getVersionById`); `training.controller.ts` (`getJobIdFromVersion`, `moderateTrainingData`); `orchestrator/workflows.ts` (`getWorkflow`)
-  - Schemas: `base.schema.ts` (`getByIdSchema`)
-  - Infra: **Postgres + Orchestrator (workflow `gateInstructions` mutation) + Axiom + S3** (training-data zip via `/api/download/training-data/{versionId}`)
-- [ ] **`/moderator/testing/model3d-seed`** — `testing/model3d-seed.tsx` — flag: none
-  - Procedures: **none** — direct HTTP POST to `/api/testing/model3d-seed`
-  - Services: recreate the `/api/testing/model3d-seed` handler → `upsertModel3DFromWorkflow`
-  - Infra: **S3 + Cloudflare Images** (upload hooks) + the testing API endpoint
-  - Notes: testing/debug page; migrate only if model3d seeding is still needed
-- [ ] **`/moderator/prompt-audit-test`** — `prompt-audit-test.tsx` — flag: none
-  - Procedures: `userRestriction.getTodaysAuditResults`, `userRestriction.getTodaysUserCounts` (queries); `userRestriction.saveSuspiciousMatches` (mutation) — **logic inline in router**
-  - Services: extract inline logic; `utils/metadata/audit.ts` (`debugAuditPrompt`)
-  - Schemas: `user-restriction.schema.ts` (`saveSuspiciousMatchSchema`)
-  - Infra: **ClickHouse (`prohibitedRequests`) + Redis (suspicious matches)**
-
----
-
-## 8. Misc
+## Other low-priority
 
 - [ ] **`/moderator/announcements`** — `announcements.tsx` — flag: `announcements`
   - Procedures: `announcement.getAnnouncementsPaged` (query); `announcement.deleteAnnouncement` (+ `upsertAnnouncement` via modal) (mutations)
@@ -453,15 +393,36 @@ shipped features, just toggled.
   - Services: `generation/generation.service.ts` (`getGenerationStatus`, `setGenerationStatus`); `training.service.ts` (`getTrainingServiceStatus`, `setTrainingServiceStatus`)
   - Schemas: `generation.schema.ts` (`generationStatusModeSchema`), `training.schema.ts` (`trainingServiceStatusSchema`)
   - Infra: **Redis (sysRedis)** only; edge-cache bust (`generation-status`). Fail-open reads, fail-loud writes.
+- [ ] **`/moderator/duplicate-hashes`** — `duplicate-hashes.tsx` — flag: none
+  - Procedures: **none** — raw SQL in `getServerSideProps`
+  - Infra: **Postgres only** (raw `dbRead.$queryRaw`)
+  - Notes: SSR-only; port the raw SQL to Kysely in a `load`. Lightweight. Orphaned — not in nav.
+- [ ] **`/moderator/suspicious-audit-matches`** — `suspicious-audit-matches.tsx` — flag: none
+  - Procedures: `userRestriction.getSuspiciousMatches` (query); `userRestriction.clearSuspiciousMatches` (mutation) — **logic inline in `user-restriction.router.ts`**, no service file
+  - Infra: **Redis only** (sysRedis list `SYSTEM.SUSPICIOUS_AUDIT_MATCHES`, latest 1000)
+  - Notes: extract inline router logic into a service; JSON download is client-side blob. Not in nav.
 - [ ] **`/moderator/research/rater-sanity`** — `research/rater-sanity.tsx` — flag: none
   - Procedures: `research.raterGetSanityImages` (query); `research.raterUpdateSanityImages` (mutation) — **logic inline in router**
   - Services: extract inline logic (`getSanityIds` helper)
   - Schemas: `research.schema.ts` (`raterUpdateSanityImagesSchema`)
   - Infra: **Postgres (raw SQL on `Image`) + Redis (sysRedis `RATINGS_SANITY_IDS` set)**
+  - Notes: not on the head-mod list; commented out in nav + research-only — parked here pending confirmation (could be excluded).
 
-### Development scaffolds — DO NOT MIGRATE
+---
 
-These are client-only playgrounds/demos with no backend slice and no production value:
+# Excluded — will not migrate
+
+## Payments (Paddle) — dropped
+
+Per decision: **no Paddle pages in the moderator app.** Paddle adjustment/customer tooling stays in the
+main app (or moves to a Retool/admin surface), not here.
+
+- [ ] ~~`/moderator/paddle/adjustments`~~ — read-only Paddle refunds/cashbacks/chargebacks viewer. **Not migrating.**
+- [ ] ~~`/moderator/paddle/customer/[paddleCustomerId]`~~ — Paddle-customer → user redirect utility. **Not migrating.**
+
+## Dev scaffolds
+
+Client-only playgrounds/demos with no backend slice and no production value:
 
 - [ ] ~~`/moderator/aspect-ratio-explorer`~~ — client-only AR calculator (localStorage)
 - [ ] ~~`/moderator/link-demo`~~ — Civitai Link demo (`useCivitaiLink`)
@@ -472,32 +433,34 @@ These are client-only playgrounds/demos with no backend slice and no production 
 
 ## Shared backend services
 
-Several services back **multiple** pages. Port these once, early, to unblock whole clusters:
+Several services back **multiple** pages. Port these once, early, to unblock whole clusters
+(★ = backs Tier 1 pages; the rest back only Tier 2):
 
 | Service | File | Pages it backs |
 |---|---|---|
-| **Image** | `image.service.ts` (~7.9K lines) | images, to-ingest, image-tags, image-rating-review, downleveled-review, ingestion-error-review, comics-review, cosmetic section image ingestion |
-| **Report** | `report.service.ts` | reports, images (appeals + bulk status), comics-review |
-| **Cosmetic shop** | `cosmetic-shop.service.ts` | all 9 cosmetic-store pages + cosmetics/grant |
-| **Challenge** | `challenge.service.ts` | all 6 challenge pages |
-| **User** | `user.service.ts` | contests/bans, cosmetics/grant, generation-restrictions, paddle customer lookup, csam |
-| **Creator program** | `creator-program.service.ts` | cash-management (and the new withdrawal path) |
-| **Generation** | `generation/generation.service.ts` | generation, generation-config, service-status |
-| **Notification / Email / Session-invalidation** | `notification.service.ts`, email templates, `auth/session-invalidation.ts` | strikes, reports, generation-restrictions, contests/bans, buzz-withdrawal |
+| ★ **Image** | `image.service.ts` (~7.9K lines) | images, to-ingest, image-tags, image-rating-review, downleveled-review, ingestion-error-review, comics-review, cosmetic section image ingestion |
+| ★ **Report** | `report.service.ts` | reports, images (appeals + bulk status), comics-review |
+| ★ **User** | `user.service.ts` | cosmetics/grant, generation-restrictions, csam (+ Tier 2 contests/bans) |
+| ★ **Generation** | `generation/generation.service.ts` | generation, generation-config (+ Tier 2 service-status) |
+| ★ **Notification / Email / Session-invalidation** | `notification.service.ts`, email templates, `auth/session-invalidation.ts` | strikes, reports, generation-restrictions (+ Tier 2 contests/bans, buzz-withdrawal) |
+| **Cosmetic shop** | `cosmetic-shop.service.ts` | the 8 cosmetic-store management pages (Tier 2) |
+| **Challenge** | `challenge.service.ts` | all 6 challenge pages (Tier 2) |
+| **Creator program** | `creator-program.service.ts` | cash-management (Tier 2) |
 
 ## Cross-cutting infra to wire (cherry-pick model)
 
 Pull the `@civitai/*` package + env only when a migrated page actually needs it:
 
-- **Redis** (`@civitai/redis`, `REDIS_URL`+`REDIS_SYS_URL`) — blocklists, scanner-policies, generation-config, service-status, suspicious-matches, rater-sanity, prompt-audit-test, announcements, home-blocks, training-models, model caching
-- **ClickHouse** (`@civitai/clickhouse`) — scanner-audit, csam/external, cash-management, prompt-audit-test, strikes (user scores)
+- **Redis** (`@civitai/redis`, `REDIS_URL`+`REDIS_SYS_URL`) — blocklists, scanner-policies, generation-config, strikes, prompt-audit-test, suspicious-matches, rater-sanity, model caching (+ Tier 2 announcements, home-blocks, service-status)
+- **ClickHouse** (`@civitai/clickhouse`) — scanner-audit, csam/external, prompt-audit-test, strikes (user scores) (+ Tier 2 cash-management)
 - **Meilisearch** — models, images (moderate), image-tags, comics
-- **S3** — images (pHash), scanner-policies, csam, cosmetic images, rewards, challenges, training-data, model3d-seed
-- **Orchestrator client** (`ORCHESTRATOR_ACCESS_TOKEN`) — scanner-audit detail, csam/external, training-data review, product badges
-- **External payment/report APIs** — NCMEC CyberTipline (`@civitai/cybertipline-tools`), Paddle, Stripe, Tipalti
-- **LLM (OpenRouter)** — challenges/playground
+- **S3** — images (pHash), scanner-policies, csam, training-data, model3d-seed (+ Tier 2 cosmetic images, rewards, challenges)
+- **Orchestrator client** (`ORCHESTRATOR_ACCESS_TOKEN`) — scanner-audit detail, csam/external, training-data review (+ Tier 2 product badges)
+- **External report APIs** — NCMEC CyberTipline (`@civitai/cybertipline-tools`) — csam/external
+- **LLM (OpenRouter)** — challenges/playground (Tier 2)
+- **Stripe / Tipalti** — buzz-withdrawal, cash-management (Tier 2). *(Paddle dropped entirely.)*
 - **Flipt** — generation-config
-- **Axiom** (`@civitai/axiom`) — generation-restrictions, buzz-withdrawal, cash-management, training-data
+- **Axiom** (`@civitai/axiom`) — generation-restrictions, training-data (+ Tier 2 buzz-withdrawal, cash-management)
 - **Signals** — scanner-policies (test-run progress)
 
 ### Recurring porting gotchas

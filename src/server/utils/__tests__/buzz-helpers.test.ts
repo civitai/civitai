@@ -3,6 +3,7 @@ import {
   getAllowedAccountTypes,
   getBlockAllowedAccountTypes,
   isPayoutEligibleBuzz,
+  orderBlockCurrencyTypes,
   PAYOUT_ELIGIBLE_BUZZ_TYPES,
 } from '~/server/utils/buzz-helpers';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
@@ -84,5 +85,55 @@ describe('isPayoutEligibleBuzz — payout-safety allowlist', () => {
     expect(sfwSpendable.filter(isPayoutEligibleBuzz)).toEqual(['green']);
     // Mature block: the paid domain currency (yellow) is eligible; blue is not.
     expect(matureSpendable.filter(isPayoutEligibleBuzz)).toEqual(['yellow']);
+  });
+});
+
+describe('orderBlockCurrencyTypes — preferred-first + domain clamp', () => {
+  it('no pick → the allowed set UNCHANGED (byte-identical to Auto), both domains', () => {
+    // SFW.
+    expect(orderBlockCurrencyTypes(true, undefined)).toEqual({
+      ordered: getBlockAllowedAccountTypes(true),
+      disallowed: false,
+    });
+    expect(orderBlockCurrencyTypes(true, undefined).ordered).toEqual(['blue', 'green']);
+    // Mature.
+    expect(orderBlockCurrencyTypes(false, undefined)).toEqual({
+      ordered: getBlockAllowedAccountTypes(false),
+      disallowed: false,
+    });
+    expect(orderBlockCurrencyTypes(false, undefined).ordered).toEqual(['blue', 'yellow']);
+  });
+
+  it('allowed pick → moved to the FRONT with the rest as fallback (SFW green)', () => {
+    // allowed ['blue','green'] + pick green → ['green','blue'].
+    expect(orderBlockCurrencyTypes(true, 'green')).toEqual({
+      ordered: ['green', 'blue'],
+      disallowed: false,
+    });
+  });
+
+  it('allowed pick → moved to the FRONT with the rest as fallback (mature yellow)', () => {
+    // allowed ['blue','yellow'] + pick yellow → ['yellow','blue'].
+    expect(orderBlockCurrencyTypes(false, 'yellow')).toEqual({
+      ordered: ['yellow', 'blue'],
+      disallowed: false,
+    });
+  });
+
+  it('picking blue (already first) keeps blue-first + fallback intact', () => {
+    expect(orderBlockCurrencyTypes(true, 'blue')).toEqual({
+      ordered: ['blue', 'green'],
+      disallowed: false,
+    });
+  });
+
+  it('disallowed pick → flagged disallowed, allowed set returned UNCHANGED (no widening)', () => {
+    // yellow is NOT spendable on a SFW block; green is NOT spendable on a mature block.
+    const sfw = orderBlockCurrencyTypes(true, 'yellow');
+    expect(sfw.disallowed).toBe(true);
+    expect(sfw.ordered).toEqual(['blue', 'green']); // set never widened to include yellow
+    const mature = orderBlockCurrencyTypes(false, 'green');
+    expect(mature.disallowed).toBe(true);
+    expect(mature.ordered).toEqual(['blue', 'yellow']); // never widened to include green
   });
 });

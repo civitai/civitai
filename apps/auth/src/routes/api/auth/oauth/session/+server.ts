@@ -7,6 +7,7 @@ import { touchAccount } from '$lib/server/auth/device';
 import { consumeOidcContext } from '$lib/server/oauth/oidc-nonce';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
+import { getClientIp } from '$lib/server/auth/request';
 import { parseBody } from '$lib/server/oauth/http';
 
 // POST /api/auth/oauth/session — FIRST-PARTY session exchange (BFF, Phase 3).
@@ -27,20 +28,33 @@ import { parseBody } from '$lib/server/oauth/http';
 const bad = (error: string, description?: string, status = 400) =>
   json({ error, ...(description ? { error_description: description } : {}) }, { status });
 
-export const POST: RequestHandler = async ({ request, getClientAddress }) => {
+export const POST: RequestHandler = async ({ request }) => {
   const body = await parseBody(request);
   const code = typeof body.code === 'string' ? body.code : '';
   const verifier = typeof body.code_verifier === 'string' ? body.code_verifier : '';
   const clientId = typeof body.client_id === 'string' ? body.client_id : '';
-  const ip = getClientAddress() || 'unknown';
+  // Canonical resolver shared with token/revoke: cf-connecting-ip FIRST (CF overwrites any client-supplied
+  // value, so it's trustworthy) then the leftmost XFF hop. Returns null when neither is present — unlike
+  // getClientAddress(), which THROWS outright when ADDRESS_HEADER=x-forwarded-for is set but the header is
+  // absent (the internal-routed spoke call → the 500 that broke ~45% of first-party logins). Keying is
+  // unchanged from the documented intent: on the PUBLIC path cf-connecting-ip = the spoke's node egress IP, so
+  // the flood-guard keys per-spoke-egress (exactly what rate-limit.ts already documents, well above any spoke
+  // pod's real login throughput); on the INTERNAL path there's no cf header, so it keys on the END-USER IP the
+  // spoke forwards as x-forwarded-for. Either way it never 500s.
+  const ip = getClientIp(request);
 
   if (!code || !verifier) {
     return bad('invalid_request', 'Missing code or code_verifier');
   }
 
-  // Generous per-IP flood-guard (the caller is the spoke server, not the user — see rate-limit.ts). Keeps
-  // this unauthenticated endpoint from being hammered before it does any redis/crypto/DB work.
-  if (!(await checkOAuthRateLimit('session', ip))) {
+  // Generous flood-guard (the caller is the spoke server, not the user — see rate-limit.ts). Keeps this
+  // unauthenticated endpoint from being hammered before it does any redis/crypto/DB work. Keyed on the resolved
+  // IP (per-spoke-egress on the public path, per-forwarded-end-user on the internal path). Only when NO IP
+  // resolves do we fall back to client_id — a bucket-spreading degradation so a header-less flood can't all
+  // collapse onto the single 'unknown' key; client_id is unvalidated here (the real gates are below), so it's
+  // not abuse-proof, just a coarse fan-out.
+  const rateLimitKey = ip ?? (clientId ? `client:${clientId}` : 'unknown');
+  if (!(await checkOAuthRateLimit('session', rateLimitKey))) {
     return bad('rate_limited', 'Too many session requests', 429);
   }
 
@@ -104,7 +118,7 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
     type: 'token.issued',
     userId,
     clientId,
-    ip,
+    ip: ip ?? 'unknown',
     metadata: { grant_type: 'first_party_session' },
   });
 

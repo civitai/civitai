@@ -8,6 +8,27 @@ the moderator app. Per-package reference lives in each `packages/civitai-*/READM
 > Worked example throughout: **[apps/moderator](../../apps/moderator)** (SvelteKit). The auth hub
 > **[apps/auth](../../apps/auth)** is a second SvelteKit example.
 
+## 0. UI components & packages — reach for the ecosystem first
+
+These apps are **Svelte/Tailwind, not React/Mantine** — so do not port the main app's Mantine components
+1:1, and don't hand-build UI primitives. Before writing a component or matching a page from the main Civitai
+app:
+
+1. **Check <https://svelte.dev/packages>** for a well-supported package that already solves it.
+2. **For UI components, reach for [shadcn-svelte](https://shadcn-svelte.com) first.** Use its components
+   (button, dialog, sheet/drawer, data-table, combobox, badge, checkbox, dropdown-menu, tooltip, …) before
+   building any of our own. shadcn-svelte is the first entry on the Svelte packages list and gives us
+   accessible, Tailwind-styled primitives we'd otherwise get wrong by hand.
+
+The shadcn-svelte primitives are already vendored as the shared **[@civitai/ui](../../packages/civitai-ui/README.md)**
+package (24 components + theme, Tailwind v4). New SvelteKit apps consume it rather than re-running the CLI —
+see its README for the 4-line bootstrap (`workspace:*` dep, `ssr.noExternal`, `@import "@civitai/ui/theme.css"`,
+one `@source`). Add new shared components *into* that package, not into an app.
+
+Only **hand-build** what has no ecosystem equivalent — i.e. Civitai-specific composites: `EdgeMedia`/image
+rendering, NSFW `ImageGuard`, masonry grids, moderation toolbars, votable tags. Build those *on top of*
+`@civitai/ui` primitives, not from scratch.
+
 ## 1. The cherry-pick model
 
 An app declares **only the packages it imports**. There's no "base bundle." The dependency graph and env

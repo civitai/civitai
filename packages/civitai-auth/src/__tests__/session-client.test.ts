@@ -75,11 +75,12 @@ describe('createSessionClient — getSessionUser (read)', () => {
     expect(h.store.has(key(7))).toBe(false); // consumer does NOT write — the producer does
   });
 
-  it('fetches the verified token iss + /api/auth/identity with a Bearer', async () => {
+  it('fetches the verified token iss + /api/auth/identity with a Bearer (bounded by an AbortSignal)', async () => {
     const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
     await createSessionClient().getSessionUser('7');
     expect(fetch).toHaveBeenCalledWith('https://auth.test/api/auth/identity', {
       headers: { authorization: 'Bearer 7' },
+      signal: expect.any(AbortSignal), // the new identity-fetch timeout — armed on every read
     });
   });
 
@@ -153,6 +154,146 @@ describe('createSessionClient — getSessionUser (read)', () => {
   });
 });
 
+// SPOF FIX — the identity read routes IN-CLUSTER via AUTH_HUB_INTERNAL_URL, but the anti-spoof
+// trustedHubBase(iss) guard is UNCHANGED: validate against the public trusted issuer, fetch from the internal
+// address. These tests pin both halves.
+describe('createSessionClient — internal identity routing (AUTH_HUB_INTERNAL_URL)', () => {
+  it('routes the identity fetch to AUTH_HUB_INTERNAL_URL when set + iss is trusted', async () => {
+    h.loadAuthEnv.mockReturnValue({
+      AUTH_JWT_ISSUER: 'https://auth.test',
+      AUTH_INTERNAL_TOKEN: 'secret-123',
+      AUTH_HUB_INTERNAL_URL: 'http://civitai-auth.civitai-auth.svc.cluster.local:3000',
+    });
+    const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
+    expect(await createSessionClient().getSessionUser('7')).toMatchObject({ id: 7 });
+    // FETCH target is the internal svc; the bearer is still the user's token.
+    expect(fetch).toHaveBeenCalledWith(
+      'http://civitai-auth.civitai-auth.svc.cluster.local:3000/api/auth/identity',
+      { headers: { authorization: 'Bearer 7' }, signal: expect.any(AbortSignal) }
+    );
+  });
+
+  it('falls back to the public iss base when AUTH_HUB_INTERNAL_URL is unset (backward-compatible)', async () => {
+    // beforeEach env has NO AUTH_HUB_INTERNAL_URL.
+    const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
+    await createSessionClient().getSessionUser('7');
+    expect(fetch).toHaveBeenCalledWith(
+      'https://auth.test/api/auth/identity',
+      expect.objectContaining({ headers: { authorization: 'Bearer 7' } })
+    );
+  });
+
+  it('STILL rejects a spoofed/untrusted iss even with AUTH_HUB_INTERNAL_URL set (no bypass, no fetch)', async () => {
+    // The internal override must NEVER let an untrusted issuer through — trustedHubBase(iss) runs first.
+    h.loadAuthEnv.mockReturnValue({
+      AUTH_JWT_ISSUER: 'https://auth.test',
+      AUTH_INTERNAL_TOKEN: 'secret-123',
+      AUTH_HUB_INTERNAL_URL: 'http://civitai-auth.civitai-auth.svc.cluster.local:3000',
+    });
+    h.verifyToken.mockImplementation(async (t: string) => ({ sub: t, iss: 'https://evil.example' }));
+    const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
+    expect(await createSessionClient().getSessionUser('7')).toBeNull(); // fail closed
+    expect(fetch).not.toHaveBeenCalled(); // bearer never left for the untrusted issuer
+  });
+});
+
+describe('createSessionClient — identity-fetch timeout (fail-open + instrumentation)', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('aborts a hung identity fetch at the timeout, resolves to the miss behavior (null), and reports timeout', async () => {
+    vi.useFakeTimers();
+    const onIdentityLeg =
+      vi.fn<(outcome: 'hit' | 'miss' | 'timeout' | 'error', s: number) => void>();
+    // A fetch that never settles on its own — it only rejects when its AbortSignal fires (like real fetch).
+    stubFetch(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          const signal = (init as { signal: AbortSignal }).signal;
+          if (signal.aborted) return reject(signal.reason);
+          signal.addEventListener('abort', () => reject(signal.reason));
+        }) as Promise<Res>
+    );
+    const p = createSessionClient({ onIdentityLeg }).getSessionUser('7');
+    await vi.advanceTimersByTimeAsync(1500); // trip AbortSignal.timeout(1500)
+    expect(await p).toBeNull(); // unchanged miss behavior — does NOT stall
+    expect(onIdentityLeg).toHaveBeenCalledWith('timeout', expect.any(Number));
+  });
+
+  it('reports outcome "hit" on a successful identity fetch', async () => {
+    const onIdentityLeg =
+      vi.fn<(outcome: 'hit' | 'miss' | 'timeout' | 'error', s: number) => void>();
+    stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
+    await createSessionClient({ onIdentityLeg }).getSessionUser('7');
+    expect(onIdentityLeg).toHaveBeenCalledWith('hit', expect.any(Number));
+  });
+});
+
+// SPOF FIX pt.2 — the API-key/OAuth by-userId read + the hub write paths were the residual hairpin (they go
+// through hubFetch → the public AUTH_JWT_ISSUER with no timeout). hubFetch now prefers AUTH_HUB_INTERNAL_URL
+// and bounds the hop; these are the by-id-read tests. (hubBaseUrl / write-path routing exercised elsewhere.)
+describe('createSessionClient — getSessionUserById internal routing + timeout', () => {
+  it('routes the by-id read to AUTH_HUB_INTERNAL_URL when set', async () => {
+    h.loadAuthEnv.mockReturnValue({
+      AUTH_JWT_ISSUER: 'https://auth.test',
+      AUTH_INTERNAL_TOKEN: 'secret-123',
+      AUTH_HUB_INTERNAL_URL: 'http://civitai-auth.civitai-auth.svc.cluster.local:3000',
+    });
+    const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
+    await createSessionClient().getSessionUserById(7);
+    expect(fetch).toHaveBeenCalledWith(
+      'http://civitai-auth.civitai-auth.svc.cluster.local:3000/api/auth/identity?userId=7',
+      { headers: { authorization: 'Bearer secret-123' }, signal: expect.any(AbortSignal) }
+    );
+  });
+
+  it('fails safe (null) and reports "timeout" when the by-id hop aborts', async () => {
+    const onIdentityByIdLeg =
+      vi.fn<(outcome: 'hit' | 'miss' | 'timeout' | 'error', s: number) => void>();
+    // Simulate hubFetch's AbortSignal.timeout firing: fetch rejects with a TimeoutError-named error.
+    stubFetch(async () => {
+      throw Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' });
+    });
+    const user = await createSessionClient({ onIdentityByIdLeg }).getSessionUserById(7);
+    expect(user).toBeNull(); // unchanged unreachable→null behavior, just bounded
+    expect(onIdentityByIdLeg).toHaveBeenCalledWith('timeout', expect.any(Number));
+  });
+
+  it('reports "miss" on a 404 and "hit" on success', async () => {
+    const onIdentityByIdLeg =
+      vi.fn<(outcome: 'hit' | 'miss' | 'timeout' | 'error', s: number) => void>();
+    stubFetch(async () => ({ ok: false, status: 404, json: async () => null }));
+    await createSessionClient({ onIdentityByIdLeg }).getSessionUserById(7);
+    expect(onIdentityByIdLeg).toHaveBeenLastCalledWith('miss', expect.any(Number));
+    stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(8) }));
+    await createSessionClient({ onIdentityByIdLeg }).getSessionUserById(8);
+    expect(onIdentityByIdLeg).toHaveBeenLastCalledWith('hit', expect.any(Number));
+  });
+});
+
+// Item 2 — a THROWING metric callback must never corrupt the auth result (safeInvoke). Without the guard, a
+// throw right after a successful fetch would bubble to the surrounding catch → return null → a valid session
+// would appear unauthenticated.
+describe('createSessionClient — instrumentation is best-effort (throwing callback is swallowed)', () => {
+  it('still resolves the user when onIdentityLeg throws on "hit"', async () => {
+    stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7, 'fresh') }));
+    const onIdentityLeg = vi.fn(() => {
+      throw new Error('metrics registry exploded');
+    });
+    const user = await createSessionClient({ onIdentityLeg }).getSessionUser('7');
+    expect(user).toMatchObject({ id: 7, username: 'fresh' }); // auth SUCCEEDS despite the throwing callback
+    expect(onIdentityLeg).toHaveBeenCalled();
+  });
+
+  it('still resolves the by-id user when onIdentityByIdLeg throws', async () => {
+    stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7, 'byid') }));
+    const onIdentityByIdLeg = vi.fn(() => {
+      throw new Error('boom');
+    });
+    const user = await createSessionClient({ onIdentityByIdLeg }).getSessionUserById(7);
+    expect(user).toMatchObject({ id: 7, username: 'byid' });
+  });
+});
+
 describe('createSessionClient — getSessionUserById (read by userId)', () => {
   it('returns the cached user without fetching', async () => {
     h.store.set(key(7), richUser(7, 'bob'));
@@ -172,6 +313,7 @@ describe('createSessionClient — getSessionUserById (read by userId)', () => {
     });
     expect(fetch).toHaveBeenCalledWith('https://auth.test/api/auth/identity?userId=7', {
       headers: { authorization: 'Bearer secret-123' },
+      signal: expect.any(AbortSignal), // hubFetch now bounds the hop
     });
     expect(h.store.has(key(7))).toBe(false); // consumer does NOT write — the hub producer does
   });
@@ -254,6 +396,7 @@ describe('createSessionClient — invalidate / refresh (write)', () => {
       method: 'POST',
       headers: { authorization: 'Bearer secret-123', 'content-type': 'application/json' },
       body: JSON.stringify({ userId: 7, refresh: false }),
+      signal: expect.any(AbortSignal), // hubFetch now bounds the write hop too
     });
   });
 
@@ -299,6 +442,7 @@ describe('createSessionClient — invalidateAll (mass cutoff)', () => {
       method: 'POST',
       headers: { authorization: 'Bearer secret-123', 'content-type': 'application/json' },
       body: JSON.stringify({ scope: 'all' }),
+      signal: expect.any(AbortSignal), // hubFetch now bounds the write hop too
     });
   });
 

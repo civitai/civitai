@@ -3,9 +3,9 @@ import { withAxiom } from '@civitai/next-axiom';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { SessionUser } from '~/types/session';
 import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
-import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
+import { sysRedis, REDIS_SYS_KEYS, withSysReadDeadline } from '~/server/redis/client';
 import { submitVersionSchema } from '~/server/schema/blocks/publish-request.schema';
-import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
+import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { Flags } from '~/shared/utils/flags';
 
@@ -141,10 +141,17 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     }
   }
 
-  // 2. Moderator gate — App Blocks is mod-only pre-GA (parity with the session
-  // route's ModEndpoint). Resolve before touching the heavy body so a non-mod
-  // key never costs a decode.
-  if (!user.isModerator || user.bannedAt) {
+  // 2. Author gate — App Blocks authoring is capability-gated on the dedicated
+  // `app-blocks-author` flag (static fallback mod-only), so a curated non-mod
+  // cohort can submit. A BANNED account is always rejected regardless of the
+  // capability. Resolve before touching the heavy body so a non-author key never
+  // costs a decode. (This is AUTHZ; the `isAppBlocksEnabled` kill-switch below
+  // is a separate gate.)
+  if (user.bannedAt) {
+    res.status(403).json({ message: 'App Blocks is restricted to the civitai team' });
+    return;
+  }
+  if (!(await isAppBlocksAuthorEnabled({ user }))) {
     res.status(403).json({ message: 'App Blocks is restricted to the civitai team' });
     return;
   }
@@ -178,18 +185,35 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // left as a deliberate follow-up to keep this PR's auth change focused.
   const rateSubject = session.apiKeyId ? `key:${session.apiKeyId}` : `ip:${clientIp(req)}`;
   const rateKey = `${REDIS_SYS_KEYS.BLOCKS.SUBMIT_RATE_LIMIT}:${rateSubject}` as const;
-  const multiResult = await sysRedis
-    .multi()
-    .set(rateKey, '0', { NX: true, EX: RATE_LIMIT.windowSeconds })
-    .incr(rateKey)
-    .exec();
-  // F3 — fail CLOSED, not open, on a malformed limiter result. If `exec()`
-  // returns null/short (Redis hiccup, MULTI aborted), `Number(undefined)` is
-  // `NaN` and `NaN > max` is `false`, which would let the request slip through
-  // un-limited. Treat a non-finite counter as "limiter unavailable" and reject
-  // (503) rather than silently bypass — this is a heavy, mod-gated bundle upload,
-  // so erring toward refusal is correct.
-  const count = Number(multiResult?.[1]);
+  // F3 — fail CLOSED, not open. If `exec()` returns null/short (Redis hiccup, MULTI
+  // aborted), `Number(undefined)` is `NaN` and `NaN > max` is `false`, which would
+  // let the request slip through un-limited. Treat a non-finite counter as "limiter
+  // unavailable" and reject (503) rather than silently bypass — this is a heavy,
+  // mod-gated bundle upload, so erring toward refusal is correct.
+  //
+  // withSysReadDeadline (#28): the raw sysRedis MULTI runs on the request's critical
+  // path. On a SILENT half-open the written command parks in node-redis's reply queue
+  // until OS TCP keepalive (~11min) — a HANG, not a throw. Racing the `.exec()` against
+  // the sys read deadline (default REDIS_SYS_READ_TIMEOUT_MS=2000) turns that open-ended
+  // hang into a clean rejection; the surrounding try/catch (mirrors dev-token) then fails
+  // closed (503) instead of parking the submit indefinitely.
+  let count: number;
+  try {
+    const multiResult = await withSysReadDeadline(
+      sysRedis
+        .multi()
+        .set(rateKey, '0', { NX: true, EX: RATE_LIMIT.windowSeconds })
+        .incr(rateKey)
+        .exec()
+    );
+    count = Number(multiResult?.[1]);
+  } catch (err) {
+    // A Redis incident (a throw OR a deadline-bounded hang) must NEVER silently
+    // bypass the mint — fail closed.
+    req.log?.warn('blocks/submit-version: rate limiter threw; failing closed', { rateSubject });
+    res.status(503).json({ message: 'Rate limiter unavailable; please retry' });
+    return;
+  }
   if (!Number.isFinite(count)) {
     req.log?.warn('blocks/submit-version: rate-limit counter malformed; failing closed', {
       rateSubject,
@@ -198,7 +222,11 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     return;
   }
   if (count > RATE_LIMIT.max) {
-    const retryAfter = await sysRedis.ttl(rateKey);
+    // Bound the 429-path TTL read (#28) so a hung sysRedis.ttl can't park the
+    // over-limit response. On a deadline/throw fall back to the full window.
+    const retryAfter = await withSysReadDeadline(sysRedis.ttl(rateKey)).catch(
+      () => RATE_LIMIT.windowSeconds
+    );
     res.setHeader('Retry-After', String(Math.max(retryAfter, 1)));
     res.status(429).json({
       message: 'Rate limit exceeded',

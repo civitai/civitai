@@ -6203,7 +6203,10 @@ export const getImageModerationReviewQueue = async ({
   excludedTagIds,
 }: ImageReviewQueueInput) => {
   const AND: Prisma.Sql[] = [];
-  AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
+  // nsfwLevel=0 is unrated: bitmask-AND against 0 is always 0, so a plain
+  // browsing-level match would hide unrated images from the queue no matter
+  // which levels a mod toggles. Keep them reviewable.
+  AND.push(Prisma.sql`(i."nsfwLevel" = 0 OR (i."nsfwLevel" & ${browsingLevel}) != 0)`);
 
   if (needsReview) {
     AND.push(Prisma.sql`i."needsReview" = ${needsReview}`);
@@ -6546,6 +6549,7 @@ export async function getImageModerationCounts() {
       SELECT 'reported' AS "needsReview" FROM (
         SELECT ir."imageId" FROM "Report" r
         JOIN "ImageReport" ir ON ir."reportId" = r.id
+        JOIN "Image" i ON i.id = ir."imageId"
         WHERE r.status = 'Pending'
         GROUP BY ir."imageId"
       )

@@ -106,3 +106,16 @@ export function newBlockSubscriptionAttributionId(): string {
 export function newAppUserScopeGrantId(): string {
   return `augr_${newUlid()}`;
 }
+
+// App Store Listings (W13).
+export function newAppListingId(): string {
+  return `apl_${newUlid()}`;
+}
+
+export function newAppListingScreenshotId(): string {
+  return `apls_${newUlid()}`;
+}
+
+export function newAppListingPublishRequestId(): string {
+  return `alpr_${newUlid()}`;
+}

@@ -1,4 +1,4 @@
-import chunk from 'lodash-es/chunk';
+import { chunk } from 'lodash-es';
 import { pack, unpack } from 'msgpackr';
 import type { RedisClientType, SetOptions } from 'redis';
 import { createClient, createCluster, createSentinel } from 'redis';
@@ -1388,7 +1388,6 @@ export const REDIS_SYS_KEYS = {
     WORKFLOWS: 'generation:workflows',
     ENGINES: 'generation:engines',
     TOKENS: 'generation:tokens',
-    EXPERIMENTAL: 'generation:experimental',
     CUSTOM_CHALLENGE: 'generation:custom-challenge',
     BLOCKED_PROMPTS: 'generation:blocked-prompts',
     REMIX_AUDIT_CHECKED: 'generation:remix-audit-checked',

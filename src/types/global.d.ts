@@ -140,6 +140,8 @@ declare global {
     | 'UNet'
     | 'DiffusionModel'
     | 'CLIPVision'
+    | 'CLIP'
+    | 'VisionLanguage'
     | 'ControlNet'
     | 'Upscaler'
     | 'Workflow'

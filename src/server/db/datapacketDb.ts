@@ -1,5 +1,5 @@
 // App shim: datapacket read pool. See pgDb.ts for the pattern.
-import { getClient, type AugmentedPool } from '@civitai/db/db-helpers';
+import { getClient, type AugmentedPool } from '~/server/db/db-helpers';
 import { isProd } from '~/env/other';
 import { createLogger } from '~/utils/logging';
 

@@ -52,6 +52,49 @@ describe('createAuthVerifier', () => {
     expect(claims?.jti).toBe('t7');
   });
 
+  it('reports the JWKS leg outcome "hit" on a successful JWKS verify (SPOF-fix instrumentation)', async () => {
+    stubJwks();
+    const onJwksLeg = vi.fn<(o: 'hit' | 'timeout', s: number) => void>();
+    const token = await signer.mintSessionToken({ user: { id: 7 }, signedAt: 1 }, { jti: 't7' });
+    await createAuthVerifier({ ...cfg, onJwksLeg }).verifyToken(token);
+    expect(onJwksLeg).toHaveBeenCalledWith('hit', expect.any(Number));
+  });
+
+  it('still verifies when a throwing onJwksLeg callback fires (instrumentation is best-effort)', async () => {
+    stubJwks();
+    const token = await signer.mintSessionToken({ user: { id: 7 }, signedAt: 1 }, { jti: 't7' });
+    const onJwksLeg = vi.fn(() => {
+      throw new Error('metrics exploded');
+    });
+    // Without safeInvoke this would re-throw → verifyToken returns null → a valid token becomes a logout.
+    const claims = await createAuthVerifier({ ...cfg, onJwksLeg }).verifyToken(token);
+    expect(claims?.user).toMatchObject({ id: 7 }); // verify SUCCEEDS despite the throwing callback
+    expect(onJwksLeg).toHaveBeenCalled();
+  });
+
+  it('does NOT fire the JWKS leg on the LOCAL public-key (hub) path — no network to instrument', async () => {
+    const onJwksLeg = vi.fn<(o: 'hit' | 'timeout', s: number) => void>();
+    const token = await signer.mintSessionToken({ user: { id: 7 }, signedAt: 1 }, { jti: 't7' });
+    await createAuthVerifier({ issuer, audience, publicKeyPem, onJwksLeg }).verifyToken(token);
+    expect(onJwksLeg).not.toHaveBeenCalled();
+  });
+
+  it('does NOT report a JWKS timeout on an ordinary bad-token verify failure', async () => {
+    stubJwks();
+    const onJwksLeg = vi.fn<(o: 'hit' | 'timeout', s: number) => void>();
+    // Wrong issuer → jwtVerify throws a claim-validation error (NOT a timeout) → verifyToken returns null,
+    // and the JWKS leg must not be recorded as a timeout.
+    const token = await signer.mintSessionToken({ user: { id: 7 }, signedAt: 1 }, { jti: 't7' });
+    const claims = await createAuthVerifier({
+      jwksUri,
+      issuer: 'https://nope.test',
+      audience,
+      onJwksLeg,
+    }).verifyToken(token);
+    expect(claims).toBeNull();
+    expect(onJwksLeg).not.toHaveBeenCalledWith('timeout', expect.any(Number));
+  });
+
   it('verifies an ES256 token with a LOCAL public key (no JWKS fetch)', async () => {
     // No stubJwks() here: a local public key must verify WITHOUT any network. If it fell through to
     // JWKS, global fetch is unstubbed and this would reject.

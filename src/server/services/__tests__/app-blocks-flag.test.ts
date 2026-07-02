@@ -26,7 +26,7 @@ vi.mock('~/server/flipt/client', () => ({
   isFlipt: mockIsFlipt,
 }));
 
-import { isAppBlocksEnabled } from '../app-blocks-flag';
+import { isAppBlocksEnabled, isAppBlocksAuthorEnabled } from '../app-blocks-flag';
 
 // Faithful stand-in for the live `app-blocks-enabled` rule: base OFF, with a
 // `moderators` segment keyed on `context.isModerator === 'true'`. The no-arg
@@ -139,5 +139,92 @@ describe('isAppBlocksEnabled — no accidental repoint to the pipeline flag (Dec
     expect(mockIsFlipt).toHaveBeenCalledWith('app-blocks-enabled');
     expect(mockIsFlipt).not.toHaveBeenCalledWith('app-blocks-pipeline-enabled');
     expect(mockIsFlipt).not.toHaveBeenCalledWith('app-blocks-runtime-enabled');
+  });
+});
+
+/**
+ * Developer soft-launch (Phase B) — the AUTHOR capability helper.
+ *
+ * `isAppBlocksAuthorEnabled` reads the dedicated `app-blocks-author` Flipt flag
+ * (created AFTER merge as base OFF + `moderators` segment + a curated author
+ * cohort segment), WITH a static moderator floor so mods never lose their
+ * existing author access while the flag is absent / Flipt is down.
+ */
+// Faithful stand-in for the `app-blocks-author` flag once created: base OFF,
+// with a `moderators` segment (isModerator === 'true') AND an author-cohort
+// segment (a userId allowlist — here { '777' }).
+const AUTHOR_COHORT = new Set(['777']);
+function fakeAppBlocksAuthorFlag(
+  flag: string,
+  _entityId = 'global',
+  context: Record<string, string> = {}
+): boolean {
+  if (flag !== 'app-blocks-author') return false;
+  if (context.isModerator === 'true') return true;
+  return typeof context.userId === 'string' && AUTHOR_COHORT.has(context.userId);
+}
+
+describe('isAppBlocksAuthorEnabled — author capability (developer soft-launch)', () => {
+  beforeEach(() => {
+    mockIsFlipt.mockReset();
+    mockIsFlipt.mockImplementation(async (...args: Parameters<typeof fakeAppBlocksAuthorFlag>) =>
+      fakeAppBlocksAuthorFlag(...args)
+    );
+  });
+
+  it('resolves ON for a moderator via the static floor WITHOUT calling Flipt', async () => {
+    const user = makeUser({ isModerator: true });
+    await expect(isAppBlocksAuthorEnabled({ user })).resolves.toBe(true);
+    // Mod floor short-circuits: the flag is never evaluated (so an absent /
+    // mis-segmented flag can't regress mods).
+    expect(mockIsFlipt).not.toHaveBeenCalled();
+  });
+
+  it('resolves ON for a flag-granted cohort user (non-mod)', async () => {
+    const user = makeUser({ id: 777, isModerator: false });
+    await expect(isAppBlocksAuthorEnabled({ user })).resolves.toBe(true);
+    expect(mockIsFlipt).toHaveBeenCalledWith(
+      'app-blocks-author',
+      '777',
+      expect.objectContaining({ userId: '777', isModerator: 'false' })
+    );
+  });
+
+  it('resolves OFF for a random non-mod not in the cohort (fail-closed authz)', async () => {
+    const user = makeUser({ id: 555, isModerator: false });
+    await expect(isAppBlocksAuthorEnabled({ user })).resolves.toBe(false);
+  });
+
+  it('resolves OFF for an anonymous / vanished user (no floor, global eval never matches)', async () => {
+    await expect(isAppBlocksAuthorEnabled({ user: undefined })).resolves.toBe(false);
+    await expect(isAppBlocksAuthorEnabled()).resolves.toBe(false);
+    expect(mockIsFlipt).toHaveBeenCalledWith('app-blocks-author');
+  });
+
+  it('Flipt-down / flag absent → mods only (static fallback), non-mods denied', async () => {
+    // isFlipt returns false for everything (flag absent or Flipt unreachable).
+    mockIsFlipt.mockImplementation(async () => false);
+    await expect(
+      isAppBlocksAuthorEnabled({ user: makeUser({ isModerator: true }) })
+    ).resolves.toBe(true); // mod floor
+    await expect(
+      isAppBlocksAuthorEnabled({ user: makeUser({ id: 777, isModerator: false }) })
+    ).resolves.toBe(false); // cohort denied when flag absent
+    await expect(
+      isAppBlocksAuthorEnabled({ user: makeUser({ id: 555, isModerator: false }) })
+    ).resolves.toBe(false);
+  });
+
+  it('reads ONLY the app-blocks-author key (never the enabled/pipeline/runtime keys)', async () => {
+    await isAppBlocksAuthorEnabled({ user: makeUser({ id: 777, isModerator: false }) });
+    for (const call of mockIsFlipt.mock.calls) {
+      expect(call[0]).toBe('app-blocks-author');
+    }
+    expect(mockIsFlipt).not.toHaveBeenCalledWith('app-blocks-enabled');
+    expect(mockIsFlipt).not.toHaveBeenCalledWith(
+      'app-blocks-enabled',
+      expect.anything(),
+      expect.anything()
+    );
   });
 });

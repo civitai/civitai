@@ -5,6 +5,25 @@ import { buildFliptContext } from '~/server/services/feature-flags.service';
 const APP_BLOCKS_FLAG = 'app-blocks-enabled';
 
 /**
+ * Dedicated flag for the App Blocks AUTHOR capability (developer soft-launch,
+ * Phase B). Grants the right to SUBMIT apps + use `dev:live` (mint a dev token,
+ * generate/spend from your own block) to a curated cohort — INDEPENDENT of the
+ * mod-only marketplace-visibility flag (`app-blocks-enabled`).
+ *
+ * WHY A SEPARATE FLAG: `app-blocks-enabled` gates marketplace VISIBILITY and
+ * widens to `public` at GA. Authoring must stay independently gated (we do NOT
+ * want every user able to author when the marketplace goes public), so the
+ * author authz decision keys off THIS flag, never `app-blocks-enabled`.
+ *
+ * Mirrors the `appBlocksAuthor` entry in feature-flags.service.ts
+ * (`availability: ['mod']`, `fliptKey: 'app-blocks-author'`). Create it in Flipt
+ * as base `enabled: false` with the `moderators` segment PLUS the author cohort
+ * segment (e.g. `app-dev-testers`), exactly like `app-blocks-enabled`, so mods +
+ * the cohort resolve `true` and everyone else `false`.
+ */
+export const APP_BLOCKS_AUTHOR_FLAG = 'app-blocks-author';
+
+/**
  * Dedicated GLOBAL flag for the build/publish/deploy PIPELINE (Decision 1).
  *
  * The user-facing `app-blocks-enabled` flag is base `enabled: false` with a
@@ -157,6 +176,50 @@ export async function isAppBlocksEnabled(opts?: { user?: SessionUser }): Promise
   // server-side `isModerator` that the `moderators` segment keys on.
   const user = opts.user;
   return isFlipt(APP_BLOCKS_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
+ * AUTHZ check for the App Blocks AUTHOR capability (developer soft-launch).
+ *
+ * Governs who may SUBMIT apps + use `dev:live` (mint a dev token, generate +
+ * spend Buzz from their own block). Used by the REST author endpoints
+ * (submit-version, dev-token) and the block-token-authed runtime procs, which
+ * evaluate it against the TOKEN's hydrated subject user (NOT a request session).
+ *
+ * ## Eval shape mirrors `isAppBlocksEnabled`, WITH a moderator floor
+ *
+ * Same per-user Flipt eval as `isAppBlocksEnabled` (entityId = user id, context
+ * from `buildFliptContext`), so the `app-blocks-author` flag's segments match
+ * exactly as the client/`hasFeature` gate sees them.
+ *
+ * The ONE difference: moderators are a STATIC floor (short-circuit `true`). This
+ * is deliberate and load-bearing:
+ *   - The `app-blocks-author` flag does NOT exist in Flipt at merge time (it is
+ *     created AFTER, as the rollout). With a bare `isFlipt` eval, an absent flag
+ *     resolves `false` for EVERYONE — mods included — which would REGRESS mods'
+ *     existing author access the instant this merges. `isAppBlocksEnabled` has
+ *     no such problem only because its flag already exists in prod.
+ *   - The mod floor makes this helper consistent with the `appBlocksAuthor`
+ *     entry's `availability: ['mod']`, which is what `hasFeature` falls back to
+ *     when Flipt returns null (flag absent / Flipt down). So SSR/`ctx.features`
+ *     gates and this helper agree in the fail-closed direction: mods only.
+ *
+ * Fail-CLOSED: a non-mod with no `app-blocks-author` grant (flag absent, Flipt
+ * down, or segment miss) → `isFlipt` false → denied. Only mods (floor) and the
+ * flag-granted cohort pass. A vanished/undefined user → no floor + global eval
+ * (can never match a segment) → denied.
+ */
+export async function isAppBlocksAuthorEnabled(opts?: { user?: SessionUser }): Promise<boolean> {
+  const user = opts?.user;
+  // Moderator floor — the `availability: ['mod']` static fallback. Keeps mods'
+  // existing author access intact while the Flipt flag is absent (dark window)
+  // and regardless of how the flag's segments are later configured.
+  if (user?.isModerator) return true;
+  // No user → preserve a global eval that can never match a segment (fail-closed).
+  if (!user) return isFlipt(APP_BLOCKS_AUTHOR_FLAG);
+  // Per-user eval — same entityId + context shape as isAppBlocksEnabled, so the
+  // author cohort segment resolves identically to the client/hasFeature gate.
+  return isFlipt(APP_BLOCKS_AUTHOR_FLAG, String(user.id), buildFliptContext(user));
 }
 
 /**

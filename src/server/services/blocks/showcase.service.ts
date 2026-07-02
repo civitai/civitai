@@ -1,5 +1,5 @@
-import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
+import { getImageMetricsObject } from '~/server/services/image.service';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Flags } from '~/shared/utils/flags';
 import {
@@ -158,25 +158,23 @@ export async function getModelShowcaseImages(
     take: 50,
   });
 
-  // Reaction counts come from a raw query, NOT the typed Prisma relation:
-  // ImageMetric.reactionCount is declared non-nullable `Int` in schema.prisma
-  // (no @default) but is actually NULL for some rows in prod, so selecting it
-  // through the typed client throws "Error converting field reactionCount of
-  // expected non-nullable type Int, found null" on deserialize (a 500 on this
-  // endpoint). $queryRaw is null-tolerant; coalesce to 0 (the same intent as
-  // the original `?? 0`).
+  // Reaction counts come from ClickHouse (the same source the image feed reads),
+  // summing the four reaction kinds into a single reactionCount for sorting.
   const candidateImageIds = Array.from(
     new Set(rows.map((r) => r.image?.id).filter((id): id is number => id != null))
   );
   const reactionByImage = new Map<number, number>();
   if (candidateImageIds.length > 0) {
-    const metricRows = await dbRead.$queryRaw<Array<{ imageId: number; reactionCount: number | null }>>`
-      SELECT "imageId", "reactionCount"
-      FROM "ImageMetric"
-      WHERE "imageId" IN (${Prisma.join(candidateImageIds)})
-        AND "timeframe" = 'AllTime'
-    `;
-    for (const m of metricRows) reactionByImage.set(m.imageId, m.reactionCount ?? 0);
+    const metrics = await getImageMetricsObject(candidateImageIds.map((id) => ({ id })));
+    for (const id of candidateImageIds) {
+      const m = metrics[id];
+      const reactionCount =
+        (m?.reactionLike ?? 0) +
+        (m?.reactionHeart ?? 0) +
+        (m?.reactionLaugh ?? 0) +
+        (m?.reactionCry ?? 0);
+      reactionByImage.set(id, reactionCount);
+    }
   }
 
   // De-dupe (one Image can have multiple ImageResource rows) + sort by

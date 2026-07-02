@@ -799,7 +799,7 @@ export function ModelVersionUpsertForm({ id, model, version, children, onSubmit 
               <InputNumber
                 name="licensingFee"
                 label="License Fee per Image"
-                description={`Charge a per-image fee for generations using this version. Set to 0 to disable. Max ${MAX_LICENSING_FEE} Buzz per image.`}
+                description={`Charge a per-image fee for generations using this version. If this is a derivative of a base model that already charges a licensing fee, your fee is added on top of it. Set to 0 to disable. Max ${MAX_LICENSING_FEE} Buzz per image.`}
                 min={0}
                 max={MAX_LICENSING_FEE}
                 step={1}

@@ -33,7 +33,20 @@ const {
     mockTriggerApplyReview: vi.fn(async () => ({ name: 'review-apply-1' })),
     mockWaitApply: vi.fn(async () => 'succeeded'),
     mockMarkPreview: vi.fn(async () => undefined),
-    mockFindUnique: vi.fn(async () => ({ deployDetail: JSON.stringify({ url: 'https://x/y' }) })),
+    // Default row = an ACTIVE preview (pending + a preview-* deployState) so the
+    // callback's "preview no longer active" guard does NOT abort. Torn-down /
+    // decided cases override this per-test (deployDetail/deployState nullable).
+    mockFindUnique: vi.fn(
+      async (): Promise<{
+        deployDetail: string | null;
+        status: string;
+        deployState: string | null;
+      }> => ({
+        deployDetail: JSON.stringify({ url: 'https://x/y' }),
+        status: 'pending',
+        deployState: 'preview-building',
+      })
+    ),
     // replay-guard primitive — true = newly set (first callback → run apply).
     mockSetNx: vi.fn(async () => true),
     mockRedisDel: vi.fn(async () => undefined),
@@ -204,7 +217,12 @@ describe('POST /api/internal/blocks/review-build-callback', () => {
     expect(mockTriggerApplyReview).toHaveBeenCalledWith(
       expect.objectContaining({ slug: SLUG, sha: SHA, publishRequestId: PUBREQ })
     );
-    expect(mockMarkPreview).toHaveBeenCalledWith(PUBREQ, 'preview-deploying', expect.anything());
+    expect(mockMarkPreview).toHaveBeenCalledWith(
+      PUBREQ,
+      'preview-deploying',
+      expect.anything(),
+      { requireActivePreview: true }
+    );
   });
 
   it('replay guard: a duplicate success callback short-circuits before the apply', async () => {
@@ -231,6 +249,49 @@ describe('POST /api/internal/blocks/review-build-callback', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body).toMatchObject({ applied: false });
     expect(mockTriggerApplyReview).not.toHaveBeenCalled();
-    expect(mockMarkPreview).toHaveBeenCalledWith(PUBREQ, 'preview-failed', expect.anything());
+    expect(mockMarkPreview).toHaveBeenCalledWith(
+      PUBREQ,
+      'preview-failed',
+      expect.anything(),
+      { requireActivePreview: true }
+    );
+  });
+
+  it('torn-down mid-build → aborts: no apply, no state write, no resurrection', async () => {
+    // A mod tore the preview down while the build was running: teardownPreview
+    // cleared deployState→null but left status='pending'. A SUCCESS callback must
+    // NOT re-create the k8s resources or re-write preview-live (which would
+    // silently refill the cap slot with a detail-less zombie).
+    mockFindUnique.mockResolvedValueOnce({
+      deployDetail: null,
+      status: 'pending',
+      deployState: null,
+    });
+    const { req, res } = makeReqRes(goodBody());
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toMatchObject({
+      applied: false,
+      reason: 'preview no longer active (torn down or decided)',
+    });
+    expect(mockTriggerApplyReview).not.toHaveBeenCalled();
+    expect(mockMarkPreview).not.toHaveBeenCalled();
+  });
+
+  it('request already decided (approved) → aborts: no apply, no state write', async () => {
+    // The request was approved/rejected before the build finished; the approve
+    // path already tore down + flipped deployState to a production value. A late
+    // review success callback must not touch it.
+    mockFindUnique.mockResolvedValueOnce({
+      deployDetail: null,
+      status: 'approved',
+      deployState: 'building', // production build state (no preview- prefix)
+    });
+    const { req, res } = makeReqRes(goodBody());
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toMatchObject({ applied: false });
+    expect(mockTriggerApplyReview).not.toHaveBeenCalled();
+    expect(mockMarkPreview).not.toHaveBeenCalled();
   });
 });
