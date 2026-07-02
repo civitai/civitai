@@ -99,6 +99,32 @@ describe('getWorkflow error mapping', () => {
     expect(err).not.toBeInstanceOf(TRPCError);
   });
 
+  it('maps the read-backstop AbortSignal.timeout TimeoutError to 503 (statusUpdate poll)', async () => {
+    // The ORCHESTRATOR_GET_TIMEOUT_MS backstop aborts a runaway single-workflow read via
+    // AbortSignal.timeout(), which surfaces a DOMException named 'TimeoutError'.
+    // isUpstreamNetworkError matches `.name === 'TimeoutError'` → retry-able 503, so a
+    // parked getWorkflow poll can't pin an api-pool connection unbounded.
+    mockGetWorkflow.mockRejectedValue(
+      Object.assign(new Error('The operation was aborted due to timeout'), {
+        name: 'TimeoutError',
+      })
+    );
+    const err = await getWorkflow({ token: 'tok', path: { workflowId: 'wf-1' } }).catch((e) => e);
+    expect(err).toBeInstanceOf(TRPCError);
+    expect((err as TRPCError).code).toBe('SERVICE_UNAVAILABLE');
+    expect((err as TRPCError).message).toMatch(/temporarily unavailable/i);
+  });
+
+  it('passes an abort signal to the client so the read is bounded', async () => {
+    // Guard the wiring: the backstop only works if getWorkflow actually hands the client
+    // an AbortSignal. Without it a runaway read hangs unbounded (the pre-fix behavior).
+    mockGetWorkflow.mockResolvedValue({ data: { id: 'wf-1', status: 'succeeded' } });
+    await getWorkflow({ token: 'tok', path: { workflowId: 'wf-1' } });
+    expect(mockGetWorkflow).toHaveBeenCalledTimes(1);
+    const arg = mockGetWorkflow.mock.calls[0][0];
+    expect(arg.signal).toBeInstanceOf(AbortSignal);
+  });
+
   it('returns data on the success path untouched', async () => {
     mockGetWorkflow.mockResolvedValue({ data: { id: 'wf-1', status: 'succeeded' } });
     const data = await getWorkflow({ token: 'tok', path: { workflowId: 'wf-1' } });

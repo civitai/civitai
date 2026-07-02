@@ -55,6 +55,21 @@ const ORCHESTRATOR_UNAVAILABLE_MESSAGE =
 // queryWorkflowsByTags, queue-status, admin) — every one a request-scoped read.
 const ORCHESTRATOR_QUERY_TIMEOUT_MS = 20_000;
 
+// Backstop deadline for the single-workflow orchestrator READ (getWorkflow). This is
+// the `orchestrator.statusUpdate` poll path (getWorkflowStatusUpdate → getWorkflow),
+// which the generation UI fires continuously while a workflow runs — so it is the most
+// re-fetchable read we have: a bounded poll simply re-polls on the next tick with no
+// lost state. Left unbounded, a single getWorkflow can park on an orchestrator hang and
+// pin an api-pool connection; because the pool is shared, enough parked polls
+// head-of-line-block every cheap endpoint (a 7ms buzz.getBuzzAccount was seen at 40s edge
+// during parks). Bounding it caps that park blast radius. Sized to match the sibling
+// query backstop (well above the healthy sub-second GET tail; the ~24s GET/status p99 is
+// the park itself), so it 503s essentially nothing today and fires only on the park tail;
+// tighten later once the healthy-tail p99 is confirmed via the latency dashboard. A fired
+// AbortSignal.timeout() surfaces a `TimeoutError`, which the existing getWorkflow catch /
+// default branch classifies via isUpstreamNetworkError → retry-able 503 (no new handling).
+const ORCHESTRATOR_GET_TIMEOUT_MS = 20_000;
+
 // Per-attempt backstop for the whatIf cost-estimate SUBMIT only (not generate). whatIf
 // (orchestrator.whatIfFromGraph) is a side-effect-free estimate that, on img2img inputs,
 // can hang ~30s on an orchestrator source-image-download step; with the default 3
@@ -143,7 +158,16 @@ export async function getWorkflow({
   query,
 }: Options<GetWorkflowData> & { token: string }) {
   const client = createOrchestratorClient(token);
-  const { data, error } = await clientGetWorkflow({ client, path, query }).catch((thrown) => {
+  const { data, error } = await clientGetWorkflow({
+    client,
+    path,
+    query,
+    // Read backstop: abort a runaway single-workflow read (see constant above). Mirrors
+    // queryWorkflows — the statusUpdate poll simply re-fetches, so bounding is safe and
+    // caps an orchestrator park from HOL-blocking the shared api pool. The resulting
+    // TimeoutError is caught below and mapped to a retry-able 503.
+    signal: AbortSignal.timeout(ORCHESTRATOR_GET_TIMEOUT_MS),
+  }).catch((thrown) => {
     // The generated client REJECTS (no `{ data, error }` result) when the fetch
     // itself fails — e.g. orchestrator unreachable. The statusUpdate poll fires
     // continuously, so a brief blip here otherwise becomes a wave of raw 500s
