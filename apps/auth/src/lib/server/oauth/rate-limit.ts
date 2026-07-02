@@ -6,12 +6,14 @@ import { checkRateLimit } from '$lib/server/auth/rate-limit';
 //   - authorize: per-user   (10/min)
 //   - token:     per-client (20/min)
 //   - revoke:    per-client (20/min)
-//   - session:   per-IP     (300/min) — first-party BFF exchange. Called SERVER-TO-SERVER by the spoke, which
-//                forwards the END-USER's IP as x-forwarded-for, so the identifier is the real client (not the
-//                spoke egress IP); it falls back to `client:<client_id>` only when no IP resolves (bucket-
-//                spreading, not per-tenant abuse-proofing — client_id is unvalidated here). The limit is a
-//                generous flood-guard (gross-abuse ceiling), well above any real per-client login throughput so
-//                it never throttles legitimate traffic. Invalid codes already bail cheaply at the redis lookup.
+//   - session:   per-IP     (300/min) — first-party BFF exchange. Called SERVER-TO-SERVER by the spoke, and
+//                keyed via the cf-first getClientIp: on the PUBLIC path that resolves to the spoke's node egress
+//                IP (the original intent — "the spoke's egress IP, not an end user", well above any single spoke
+//                pod's real login throughput), and on the INTERNAL path to the END-USER IP the spoke forwards as
+//                x-forwarded-for. Falls back to `client:<client_id>` only when no IP resolves (bucket-spreading
+//                off the single 'unknown' key, not per-tenant abuse-proofing — client_id is unvalidated here).
+//                The limit is a generous gross-abuse ceiling that never throttles legit traffic. Invalid codes
+//                already bail cheaply at the redis lookup.
 const OAUTH_RATE_LIMITS = {
   token: { limit: 20, windowSeconds: 60 },
   authorize: { limit: 10, windowSeconds: 60 },

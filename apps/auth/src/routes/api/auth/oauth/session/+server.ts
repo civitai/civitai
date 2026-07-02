@@ -33,14 +33,14 @@ export const POST: RequestHandler = async ({ request }) => {
   const code = typeof body.code === 'string' ? body.code : '';
   const verifier = typeof body.code_verifier === 'string' ? body.code_verifier : '';
   const clientId = typeof body.client_id === 'string' ? body.client_id : '';
-  // Canonical cf-first resolver (shared with token/revoke). Reads the trustworthy `cf-connecting-ip` (CF
-  // overwrites any client-supplied value) then the leftmost XFF hop — NOT getClientAddress(), which returns the
-  // shared ingress-pod IP AND throws outright when ADDRESS_HEADER=x-forwarded-for is set but the header is
-  // absent (the internal-routed spoke call → the 500 that broke ~45% of first-party logins). Returns null when
-  // no proxy header is present. Deliberately cf-FIRST for anti-spoof (a forwarded XFF is client-settable): on
-  // the PUBLIC path CF sets cf-connecting-ip to the spoke's egress IP, so we key per-spoke-pod (not the real end
-  // user, but no longer one global ingress bucket); on the INTERNAL path there's no cf header, so the end-user
-  // IP the spoke forwards as x-forwarded-for is used. Either way this never 500s and never trusts a raw XFF.
+  // Canonical resolver shared with token/revoke: cf-connecting-ip FIRST (CF overwrites any client-supplied
+  // value, so it's trustworthy) then the leftmost XFF hop. Returns null when neither is present — unlike
+  // getClientAddress(), which THROWS outright when ADDRESS_HEADER=x-forwarded-for is set but the header is
+  // absent (the internal-routed spoke call → the 500 that broke ~45% of first-party logins). Keying is
+  // unchanged from the documented intent: on the PUBLIC path cf-connecting-ip = the spoke's node egress IP, so
+  // the flood-guard keys per-spoke-egress (exactly what rate-limit.ts already documents, well above any spoke
+  // pod's real login throughput); on the INTERNAL path there's no cf header, so it keys on the END-USER IP the
+  // spoke forwards as x-forwarded-for. Either way it never 500s.
   const ip = getClientIp(request);
 
   if (!code || !verifier) {
@@ -48,11 +48,11 @@ export const POST: RequestHandler = async ({ request }) => {
   }
 
   // Generous flood-guard (the caller is the spoke server, not the user — see rate-limit.ts). Keeps this
-  // unauthenticated endpoint from being hammered before it does any redis/crypto/DB work. Normally keyed on the
-  // real client IP (the spoke forwards the end-user's IP as x-forwarded-for). When no IP is resolvable, degrade
-  // to the request's client_id — this is just BUCKET-SPREADING so a header-less flood can't collapse every
-  // exchange into one global 300/min bucket; client_id is unvalidated at this point (the real gates are below),
-  // so it is NOT an abuse-proof per-tenant guarantee, only a coarse fan-out of the pre-auth flood-guard.
+  // unauthenticated endpoint from being hammered before it does any redis/crypto/DB work. Keyed on the resolved
+  // IP (per-spoke-egress on the public path, per-forwarded-end-user on the internal path). Only when NO IP
+  // resolves do we fall back to client_id — a bucket-spreading degradation so a header-less flood can't all
+  // collapse onto the single 'unknown' key; client_id is unvalidated here (the real gates are below), so it's
+  // not abuse-proof, just a coarse fan-out.
   const rateLimitKey = ip ?? (clientId ? `client:${clientId}` : 'unknown');
   if (!(await checkOAuthRateLimit('session', rateLimitKey))) {
     return bad('rate_limited', 'Too many session requests', 429);

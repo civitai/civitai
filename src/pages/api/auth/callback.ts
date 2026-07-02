@@ -45,9 +45,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       error: typeof req.query.error === 'string' ? req.query.error : null,
     },
     bridgeCookieValue: req.cookies[OAUTH_BRIDGE_COOKIE],
-    // The real end-user IP (canonical cf-first request-ip resolver, same as createContext/tracker), forwarded to
-    // the hub as a single-value x-forwarded-for on the server-to-server exchange so the hub's flood-guard keys on
-    // the client — and, under internal routing (no proxy sets XFF), so the hub has a header to resolve. Coerce
+    // The real end-user IP (request-ip resolver, same as createContext/tracker) — it reads x-forwarded-for
+    // FIRST (leftmost hop) then cf-connecting-ip. Forwarded to the hub as a single-value x-forwarded-for on the
+    // server-to-server exchange. On the INTERNAL path (no CF/proxy in front of the hub) this forwarded value is
+    // authoritative — it's what the hub's flood-guard keys on; on the PUBLIC path the hub's own cf-first
+    // getClientIp takes precedence (cf-connecting-ip = the spoke egress) and this is harmlessly shadowed. Coerce
     // the resolver's null to undefined so the bridge omits the header when nothing resolves.
     clientIp: requestIp.getClientIp(req) ?? undefined,
   });

@@ -14,6 +14,8 @@ const h = vi.hoisted(() => ({
   hGet: vi.fn(),
   hDel: vi.fn(),
   createPair: vi.fn(),
+  getClientIp: vi.fn<() => string | null>(),
+  logOAuthEvent: vi.fn(),
   // controllable Kysely client-row result for the OauthClient lookup
   clientRow: undefined as unknown,
 }));
@@ -41,7 +43,8 @@ vi.mock('$lib/server/redis', () => ({
 vi.mock('$lib/server/oauth/rate-limit', () => ({
   checkOAuthRateLimit: vi.fn().mockResolvedValue(true),
 }));
-vi.mock('$lib/server/oauth/audit-log', () => ({ logOAuthEvent: vi.fn() }));
+vi.mock('$lib/server/oauth/audit-log', () => ({ logOAuthEvent: h.logOAuthEvent }));
+vi.mock('$lib/server/auth/request', () => ({ getClientIp: h.getClientIp }));
 vi.mock('$lib/server/oauth/token-helpers', () => ({ createOAuthTokenPair: h.createPair }));
 
 import { POST } from '../+server';
@@ -55,7 +58,6 @@ function makeEvent(body: Record<string, unknown>) {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     }),
-    getClientAddress: () => '203.0.113.7',
   } as never;
 }
 
@@ -71,6 +73,7 @@ const approvedCode = {
 beforeEach(() => {
   vi.clearAllMocks();
   h.clientRow = undefined;
+  h.getClientIp.mockReturnValue('203.0.113.7'); // resolved client IP for the audit log
   h.hDel.mockResolvedValue(1); // claim succeeds by default (atomic HDEL returns 1)
   h.createPair.mockResolvedValue({
     accessToken: 'civitai_access',
@@ -103,6 +106,9 @@ describe('device-token +server — AppBlocksSubmit scope survives into the minte
     // createOAuthTokenPair received the scope INTACT (bit 25 preserved).
     expect(h.createPair).toHaveBeenCalledTimes(1);
     expect(h.createPair).toHaveBeenCalledWith(7, 'civitai-cli', CLI_SCOPE);
+    // Audit log records the getClientIp-resolved client IP (device-token now uses getClientIp, not
+    // getClientAddress) — degrades to 'unknown' when the resolver returns null.
+    expect(h.logOAuthEvent).toHaveBeenCalledWith(expect.objectContaining({ ip: '203.0.113.7' }));
   });
 
   it('rejects with invalid_scope when the client allowedScopes does NOT include AppBlocksSubmit', async () => {
