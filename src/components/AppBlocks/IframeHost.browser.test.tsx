@@ -27,6 +27,7 @@ vi.mock('~/utils/trpc', () => ({
       pollWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       updateUserSettings: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getMyBuzzBalance: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {
       storage: {
