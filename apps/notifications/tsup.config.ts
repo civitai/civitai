@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'tsup';
 
 // esbuild-backed bundle for the Node runtime. We BUNDLE the workspace @civitai/* packages (which ship
@@ -17,4 +18,14 @@ export default defineConfig({
   clean: true,
   noExternal: [/^@civitai\//],
   external: ['pg', 'pg-format', 'redis', '@prisma/client', '.prisma/client', '@axiomhq/axiom-node'],
+  esbuildOptions(options) {
+    // Redirect @prisma/client to an ESM interop shim (see prisma-client.shim.mjs). The @civitai/db-schema
+    // barrel re-exports { Prisma, PrismaClient } from the CJS @prisma/client; a named ESM import of it
+    // crashes at boot in this strict-ESM bundle. The shim default-requires the real client and re-exports
+    // the values as ESM. App-scoped — the monolith (webpack) still imports @prisma/client directly.
+    options.alias = {
+      ...(options.alias ?? {}),
+      '@prisma/client': fileURLToPath(new URL('./prisma-client.shim.mjs', import.meta.url)),
+    };
+  },
 });
