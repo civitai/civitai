@@ -19,8 +19,8 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { enqueueJobs } from '~/server/services/job-queue.service';
 import {
-  allBrowsingLevelsFlag,
   parseBitwiseBrowsingLevel,
+  publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { canViewModel3d } from '~/server/services/model3d.visibility';
 import { imageSelect } from '~/server/selectors/image.selector';
@@ -453,7 +453,12 @@ export const getModel3DsInfinite = async ({
       AND.push({ nsfwLevel: { not: 0 } });
     }
 
-    const effectiveBrowsingLevel = browsingLevel ?? allBrowsingLevelsFlag;
+    // `browsingLevel` is already clamped per-request by the `applyDomainFeature`
+    // middleware on `publicProcedure` — SFW on the green domain, for everyone
+    // including mods. Trust it (like the models feed does) and default to
+    // SFW-public when it's absent/0, so a missing level can never fall back to
+    // "all levels" and leak mature content into the feed.
+    const effectiveBrowsingLevel = browsingLevel || publicBrowsingLevelsFlag;
     const allowedLevels = parseBitwiseBrowsingLevel(effectiveBrowsingLevel);
     if (allowedLevels.length > 0) {
       if (canSeeUnrated) {
