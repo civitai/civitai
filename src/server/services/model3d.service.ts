@@ -370,19 +370,12 @@ export const getModel3DsInfinite = async ({
   try {
     const isModerator = !!user?.isModerator;
 
-    // Mod-only gating at the service layer (feature-flag-equivalent). Without a
-    // signed-in mod, surface nothing. Workstream H wires the Flipt flag at the
-    // router middleware layer; this is a defense-in-depth check.
-    if (!isModerator) {
-      // Owner-scoped listing is allowed (so users can see their own drafts on
-      // their profile tab once the feature flag opens up). Anonymous + non-mod
-      // viewers get an empty list until the flag flips.
-      if (!user) return { items: [], nextCursor: undefined as number | undefined };
-      // Allow the user to fetch their own; otherwise empty.
-      if (userId && userId !== user.id && !username) {
-        return { items: [], nextCursor: undefined as number | undefined };
-      }
-    }
+    // Access to the feed is gated by the `model3dFeed` flag at the router /
+    // page layer. Content visibility below is self-contained — the status
+    // filter serves Published-only to non-owners, drafts are gated to
+    // owner/mod, and unrated/nsfw rows are filtered for non-owners — so the
+    // feed is safe to serve to anonymous + non-mod viewers (previously they
+    // were short-circuited to an empty list, which hid the public feed).
 
     const AND: Prisma.Model3DWhereInput[] = [{ deletedAt: null }];
 
