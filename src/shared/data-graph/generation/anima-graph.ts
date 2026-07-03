@@ -10,6 +10,8 @@ import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import {
   aspectRatioNode,
+  controlNetsNode,
+  CONTROLNET_LIMIT,
   createCheckpointGraph,
   createResourcesGraph,
   negativePromptGraph,
@@ -22,6 +24,7 @@ import {
   triggerWordsGraph,
 } from './common';
 import { sdxlAspectRatioBuckets } from '~/shared/constants/generation.constants';
+import { animaControlNetPreprocessors } from '~/shared/constants/controlnets.constants';
 
 // =============================================================================
 // Constants
@@ -80,6 +83,15 @@ export const animaGraph = new DataGraph<{ ecosystem: string; workflow: string },
     samplerNode({ options: animaSamplers, defaultValue: 'euler_a', presets: animaSamplerPresets })
   )
   .node('scheduler', schedulerNode({ options: animaSchedules, defaultValue: 'simple' }))
+  // ControlNets — only available for txt2img workflows.
+  .node(
+    'controlNets',
+    (ctx) => ({
+      ...controlNetsNode({ preprocessors: animaControlNetPreprocessors, limit: CONTROLNET_LIMIT }),
+      when: ctx.workflow === 'txt2img',
+    }),
+    ['workflow']
+  )
   .merge(triggerWordsGraph)
   .merge(snippetsGraph)
   .merge(promptGraph)
