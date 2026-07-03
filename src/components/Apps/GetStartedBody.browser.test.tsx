@@ -22,7 +22,7 @@ describe('GetStartedBody (public App builders landing)', () => {
   test('renders the hero heading', async () => {
     renderWithProviders(<GetStartedBody />);
     await expect
-      .element(page.getByRole('heading', { name: 'Build apps on Civitai', level: 1 }))
+      .element(page.getByRole('heading', { name: 'Build on Civitai', level: 1 }))
       .toBeInTheDocument();
   });
 
