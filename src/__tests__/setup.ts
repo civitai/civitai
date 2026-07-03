@@ -87,6 +87,11 @@ const TEST_ENV_DEFAULTS: Record<string, unknown> = {
   // Same module-load pLimit() trap in signals/wrapper.ts (default 30).
   SIGNALS_CALL_CONCURRENCY: 30,
   LOGGING: '',
+  // App-blocks (git-push / forgejo / manifest) surfaces read these at module
+  // load. Live here so blocks-router tests don't each override the whole env
+  // mock (which drops the S3/MEILI defaults and crashes at import).
+  FORGEJO_PUBLIC_URL: 'https://forgejo.civitai.com',
+  APPS_DOMAIN: 'civit.ai',
   BLOCK_TOKEN_PRIVATE_KEY: TEST_BLOCK_TOKEN_PRIVATE_PEM,
   BLOCK_TOKEN_PUBLIC_KEY: TEST_BLOCK_TOKEN_PUBLIC_PEM,
   DATABASE_URL: 'postgres://user:pass@localhost:5432/db',
