@@ -427,6 +427,29 @@ export interface PageBlockSsr {
   contentRating: string | null;
 }
 
+/**
+ * APP DEV TUNNEL — the caller's OWN app resolved for the `/apps/dev/<blockId>`
+ * route, at ANY status (pending/draft/approved/rejected). DISTINCT from
+ * PageBlockSsr in TWO load-bearing ways:
+ *   - it is OWNERSHIP-SCOPED (resolves only the caller's own app; null for
+ *     another author's app — see resolveDevPageBlockForAuthor), and
+ *   - it carries NO iframeSrc: the dev route's iframe points at the ephemeral
+ *     tunnel host (server-derived), NEVER the manifest's stored iframe.src. This
+ *     is why it can never resolve or serve a deployed `<slug>.civit.ai` bundle.
+ */
+export interface DevPageBlockResolution {
+  appBlockId: string;
+  blockId: string;
+  appId: string;
+  status: string;
+  trustTier: 'unverified' | 'verified' | 'internal';
+  name: string;
+  pageTitle: string;
+  sandbox: string;
+  scopes: string[];
+  contentRating: string | null;
+}
+
 interface UninstallOpts {
   modelId: number;
   appBlockId: string;
@@ -1806,6 +1829,66 @@ export class BlockRegistry {
       scopes: declaredScopes,
       // NSFW-APP-RED-ONLY: NULL-safe (column is non-null on approve, but defend
       // against a pre-feature / partial row → treated as SFW by the gate).
+      contentRating: typeof ab.contentRating === 'string' ? ab.contentRating : null,
+    };
+  }
+
+  /**
+   * APP DEV TUNNEL — resolve the caller's OWN app by `blockId` (== AppBlock
+   * `block_id`, GLOBALLY unique via `@@unique([blockId])`) at ANY status, for the
+   * `/apps/dev/<blockId>` SSR route + the startDevTunnel gate. Ownership is
+   * enforced IN the query (`app.userId === userId`), so a `blockId` owned by a
+   * DIFFERENT author — or no such app — returns null (no ownership/existence
+   * oracle). Unlike resolvePageBlockBySlug this does NOT require `status:approved`
+   * NOR `manifestDeclaresPage`: a developer iterating locally may have a
+   * draft/pending app whose manifest has no page block yet. The dev host renders
+   * the LOCAL code via the tunnel, so the manifest iframe/page is irrelevant here.
+   *
+   * NOTE: this returns NO iframeSrc — the route derives the iframe host from the
+   * assigned tunnel host ONLY (T6). It cannot be used to serve a deployed bundle.
+   */
+  static async resolveDevPageBlockForAuthor(
+    blockId: string,
+    userId: number,
+    opts?: { db?: 'read' | 'write' }
+  ): Promise<DevPageBlockResolution | null> {
+    if (!blockId || !userId) return null;
+    const db = opts?.db === 'write' ? dbWrite : dbRead;
+    const ab = await db.appBlock.findFirst({
+      // Ownership-scoped: the app's OauthClient.userId is the v1 ownership source
+      // of truth (same as getMyAppRepo). A foreign-owned or missing app → null.
+      where: { blockId, app: { userId } },
+      select: {
+        id: true,
+        blockId: true,
+        appId: true,
+        status: true,
+        manifest: true,
+        trustTier: true,
+        contentRating: true,
+      },
+    });
+    if (!ab) return null;
+    const manifest = (ab.manifest ?? {}) as Record<string, unknown>;
+    const iframe = (manifest.iframe ?? {}) as { sandbox?: unknown };
+    const page = (manifest.page ?? {}) as { title?: unknown };
+    const name = typeof manifest.name === 'string' ? manifest.name : ab.blockId;
+    const declaredScopes = Array.isArray((manifest as { scopes?: unknown }).scopes)
+      ? (manifest as { scopes: unknown[] }).scopes.filter((s): s is string => typeof s === 'string')
+      : [];
+    return {
+      appBlockId: ab.id,
+      blockId: ab.blockId,
+      appId: ab.appId,
+      status: ab.status,
+      trustTier:
+        ab.trustTier === 'verified' || ab.trustTier === 'internal'
+          ? (ab.trustTier as 'verified' | 'internal')
+          : 'unverified',
+      name,
+      pageTitle: typeof page.title === 'string' ? page.title : name,
+      sandbox: typeof iframe.sandbox === 'string' ? iframe.sandbox : '',
+      scopes: declaredScopes,
       contentRating: typeof ab.contentRating === 'string' ? ab.contentRating : null,
     };
   }

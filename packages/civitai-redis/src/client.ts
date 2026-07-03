@@ -1603,6 +1603,16 @@ export const REDIS_SYS_KEYS = {
      * window than the submissions read since this is a write.
      */
     WITHDRAW_RATE_LIMIT: 'system:blocks:withdraw-rate-limit',
+    /**
+     * APP DEV TUNNEL — root prefix for the short-TTL dev-tunnel control-plane
+     * state (credential index, session record, host/user indexes, per-session
+     * spend counter). Sub-keyed as `${DEV_TUNNEL}:cred:<fp>` /
+     * `${DEV_TUNNEL}:session:<id>` / `${DEV_TUNNEL}:host:<host>` /
+     * `${DEV_TUNNEL}:user:<uid>:<blockId>` / `${DEV_TUNNEL}:spend:<id>`. All
+     * carry a hard-TTL EX so they self-expire (dev-tunnel.service.ts). On
+     * `sysRedis`, like the sibling BLOCKS caps/limiters.
+     */
+    DEV_TUNNEL: 'system:blocks:dev-tunnel',
   },
   DOWNLOAD: {
     LIMITS: 'download:limits',

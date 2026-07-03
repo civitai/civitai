@@ -954,6 +954,114 @@ export const blocksRouter = router({
     }),
 
   /**
+   * APP DEV TUNNEL — start an on-site dev tunnel for one of the caller's OWN
+   * apps. Mints a pubkey-bound tunnel credential + an unguessable
+   * `dev-<16hex>.<APPS_DOMAIN>` host, and renders the ephemeral Traefik route.
+   *
+   * GATES (all server-side, fail-closed): `appDeveloperProcedure` (author cap) +
+   * `enforceAppBlocksFlag` (app-blocks-enabled) — the dual-flag — PLUS the
+   * `app-blocks-dev-tunnel` kill-switch (base off → dark) PLUS the caller must OWN
+   * `blockId` (resolveDevPageBlockForAuthor → null for a foreign/absent app → the
+   * SAME bare NOT_FOUND, no ownership oracle). DARK until the flag is on.
+   */
+  startDevTunnel: appDeveloperProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        blockId: z.string().min(1).max(64),
+        // The CLI's ephemeral SSH public key (raw OpenSSH line). Bounded so a
+        // determined caller can't push parse pressure; a real ed25519/rsa pubkey
+        // is well under 2kb.
+        sshPublicKey: z.string().min(1).max(4096),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { isAppBlocksDevTunnelEnabled } = await import('~/server/services/app-blocks-flag');
+      if (!(await isAppBlocksDevTunnelEnabled({ user: ctx.user }))) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Dev tunnels are not available' });
+      }
+      // Ownership gate — resolve the caller's OWN app at any status. null → the
+      // bare NOT_FOUND (no existence/ownership oracle, mirrors dev-token).
+      const app = await BlockRegistry.resolveDevPageBlockForAuthor(input.blockId, ctx.user.id, {
+        db: 'write',
+      });
+      if (!app) throw throwNotFoundError('App not found');
+      const { startDevTunnel } = await import('~/server/services/blocks/dev-tunnel.service');
+      try {
+        return await startDevTunnel({
+          userId: ctx.user.id,
+          // Belt-and-suspenders: key the tunnel state off the RESOLVED, canonical
+          // block_id (app.blockId), never the raw client input. Safe today only
+          // because the ownership resolve above ran first — using the resolved
+          // value makes that independent of input normalization.
+          blockId: app.blockId,
+          sshPublicKey: input.sshPublicKey,
+        });
+      } catch (err) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+      }
+    }),
+
+  /**
+   * APP DEV TUNNEL — stop the caller's dev tunnel (revokes the credential +
+   * entry-token binding + deletes the Traefik route). Idempotent. By `sessionId`
+   * (from startDevTunnel) OR `blockId`. Ownership-checked server-side: a caller
+   * can never tear down another author's tunnel. Same gates as startDevTunnel.
+   */
+  stopDevTunnel: appDeveloperProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z
+        .object({
+          sessionId: z.string().min(1).max(128).optional(),
+          blockId: z.string().min(1).max(64).optional(),
+        })
+        .refine((v) => !!v.sessionId || !!v.blockId, {
+          message: 'one of sessionId or blockId is required',
+        })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { isAppBlocksDevTunnelEnabled } = await import('~/server/services/app-blocks-flag');
+      if (!(await isAppBlocksDevTunnelEnabled({ user: ctx.user }))) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Dev tunnels are not available' });
+      }
+      const { stopDevTunnel, stopDevTunnelForUserBlock } = await import(
+        '~/server/services/blocks/dev-tunnel.service'
+      );
+      const stopped = input.sessionId
+        ? await stopDevTunnel(ctx.user.id, input.sessionId)
+        : await stopDevTunnelForUserBlock(ctx.user.id, input.blockId!);
+      return { ok: true, stopped };
+    }),
+
+  /**
+   * APP DEV TUNNEL — status of the caller's active tunnel for a block (host,
+   * expiry, spend ceiling), or null when none is active. Same gates.
+   */
+  devTunnelStatus: appDeveloperProcedure
+    .use(enforceAppBlocksFlag)
+    .input(z.object({ blockId: z.string().min(1).max(64) }))
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { isAppBlocksDevTunnelEnabled } = await import('~/server/services/app-blocks-flag');
+      if (!(await isAppBlocksDevTunnelEnabled({ user: ctx.user }))) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Dev tunnels are not available' });
+      }
+      const { getActiveDevTunnel } = await import('~/server/services/blocks/dev-tunnel.service');
+      const session = await getActiveDevTunnel(ctx.user.id, input.blockId);
+      if (!session) return { active: false as const };
+      return {
+        active: true as const,
+        sessionId: session.sessionId,
+        host: session.host,
+        expiresAt: session.hardExpiresAt,
+        spendCapBuzz: session.spendCapBuzz,
+      };
+    }),
+
+  /**
    * Mod queue: paginated list of publish requests waiting for review,
    * oldest first. Powers /apps/review.
    */

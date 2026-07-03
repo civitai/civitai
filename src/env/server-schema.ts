@@ -757,6 +757,26 @@ export const serverSchema = z
     BUNDLE_S3_BUCKET: z.string().optional(),
     BUNDLE_S3_ACCESS_KEY_ID: z.string().optional(),
     BUNDLE_S3_SECRET_ACCESS_KEY: z.string().optional(),
+
+    // APP DEV TUNNEL (on-site dev via hardened sish tunnel — P1 control plane).
+    // ALL optional so envs without the feature still boot; the feature is dark
+    // behind the `app-blocks-dev-tunnel` Flipt flag regardless.
+    //
+    // APPS_DEV_TUNNEL_SISH_SECRET   shared secret the sish server presents on the
+    //   authz callback (`POST /api/apps/dev-tunnel/authz`) so random internet
+    //   cannot POST it. When UNSET the callback fail-closes (503) — the sish
+    //   integration is inert until it is provisioned (P3).
+    APPS_DEV_TUNNEL_SISH_SECRET: z.string().optional(),
+    // APPS_DEV_TUNNEL_FORWARDAUTH_URL   in-cluster address of the dev-tunnel-gate
+    //   forwardAuth endpoint the ephemeral Middleware points Traefik at. When
+    //   unset, derived from the civitai-web Service default.
+    APPS_DEV_TUNNEL_FORWARDAUTH_URL: z.string().url().optional(),
+    // APPS_DEV_TUNNEL_SISH_BACKEND   the sish HTTP backend the reverse tunnel is
+    //   bound behind, as `service.namespace:port` (or a full URL). Default is the
+    //   P0 sish Service.
+    APPS_DEV_TUNNEL_SISH_BACKEND: z
+      .string()
+      .default('http://sish-http.apps-dev-tunnel.svc.cluster.local:8080'),
   })
   .superRefine((env, ctx) => {
     // Sentinel-mode for the system Redis client requires an explicit master group
