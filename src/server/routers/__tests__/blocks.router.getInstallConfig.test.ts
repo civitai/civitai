@@ -53,10 +53,10 @@ vi.mock('~/server/db/client', () => ({
   dbRead: { appBlock: { findUnique: mockDbReadAppBlockFindUnique } },
   dbWrite: { modelBlockInstall: { findUnique: vi.fn() }, model: { findUnique: vi.fn() } },
 }));
-vi.mock('~/server/redis/client', () => ({
-  redis: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
-  REDIS_KEYS: { BLOCKS: {} },
-}));
+vi.mock('~/server/redis/client', async () => {
+  const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
+  return { ...actual, redis: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) } };
+});
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   verifyBlockToken: vi.fn(),
   parseSubjectUserId: vi.fn(),

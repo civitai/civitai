@@ -25,7 +25,14 @@ const { mockIsAppBlocksEnabled, mockEnsureForgejoIdentity, mockAddCollaborator }
 
 vi.mock('~/server/services/app-blocks-flag', () => ({ isAppBlocksEnabled: mockIsAppBlocksEnabled }));
 vi.mock('~/env/server', () => ({
-  env: { FORGEJO_PUBLIC_URL: 'https://forgejo.civitai.com', APPS_DOMAIN: 'civit.ai', LOGGING: '' },
+  // MEILI_CALL_CONCURRENCY is read by meilisearch/client at module-eval
+  // (reached via the router's transitive imports) — pLimit() throws on undefined.
+  env: {
+    FORGEJO_PUBLIC_URL: 'https://forgejo.civitai.com',
+    APPS_DOMAIN: 'civit.ai',
+    LOGGING: '',
+    MEILI_CALL_CONCURRENCY: 50,
+  },
 }));
 vi.mock('~/server/services/blocks/dev-git-access.service', () => ({
   ensureForgejoIdentity: mockEnsureForgejoIdentity,
@@ -68,12 +75,14 @@ vi.mock('~/server/db/client', () => ({
   dbRead: { appBlock: { findUnique: vi.fn(), findFirst: vi.fn() } },
   dbWrite: {},
 }));
-vi.mock('~/server/redis/client', () => ({
-  redis: { get: vi.fn(), set: vi.fn() },
-  sysRedis: { get: vi.fn(), incrBy: vi.fn(), expire: vi.fn(), ttl: vi.fn() },
-  REDIS_KEYS: { BLOCKS: { POPULAR_CHECKPOINT: 'blocks:popular-checkpoint' } },
-  REDIS_SYS_KEYS: { BLOCKS: { BUZZ_CAP: 'system:blocks:buzz-cap' } },
-}));
+vi.mock('~/server/redis/client', async () => {
+  const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
+  return {
+    ...actual,
+    redis: { get: vi.fn(), set: vi.fn() },
+    sysRedis: { get: vi.fn(), incrBy: vi.fn(), expire: vi.fn(), ttl: vi.fn() },
+  };
+});
 vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
   dailyBoostReward: { apply: vi.fn(), getUserRewardDetails: vi.fn() },
 }));
