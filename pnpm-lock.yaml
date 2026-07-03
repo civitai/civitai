@@ -175,9 +175,6 @@ importers:
       '@opentelemetry/sdk-trace-node':
         specifier: ^2.5.0
         version: 2.5.0(@opentelemetry/api@1.9.0)
-      '@opentelemetry/sdk-trace-web':
-        specifier: 2.9.0
-        version: 2.9.0(@opentelemetry/api@1.9.0)
       '@opentelemetry/semantic-conventions':
         specifier: ^1.39.0
         version: 1.39.0

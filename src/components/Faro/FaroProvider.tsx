@@ -8,7 +8,6 @@ import { TracingInstrumentation } from '@grafana/faro-web-tracing';
 import { env } from '~/env/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { deepRedact, redactUrl } from '~/utils/faro/redact';
-import { createRatioSampledSpanProcessor } from '~/components/Faro/faroTracing';
 
 /**
  * Faro Real-User-Monitoring bootstrap (Phase 1 — SHIPPED DARK).
@@ -84,8 +83,12 @@ function initFaro() {
   faroInitStarted = true;
   (window as unknown as Record<string, unknown>)[WINDOW_GUARD_KEY] = true;
 
-  const tracesSampleRate = parseRate(env.NEXT_PUBLIC_FARO_TRACES_SAMPLE_RATE, 0.1);
   const sessionSampleRate = parseRate(env.NEXT_PUBLIC_FARO_SESSION_SAMPLE_RATE, 1.0);
+  // RESERVED: NEXT_PUBLIC_FARO_TRACES_SAMPLE_RATE is not wired in Phase 1 — browser
+  // traces follow session sampling. Genuine per-trace sampling MUST be wired before
+  // widening past the mod cohort (Faro couples per-trace sampling to session sampling,
+  // and a non-sampled session drops ALL signals, so session sampling can't sub-sample
+  // traces without also dropping errors/web-vitals). See PR #2929.
 
   const gitHash = env.NEXT_PUBLIC_GIT_HASH ? env.NEXT_PUBLIC_GIT_HASH.slice(0, 7) : undefined;
   const version = process.env.version ?? gitHash ?? 'unknown';
@@ -100,8 +103,8 @@ function initFaro() {
       ...(gitHash ? { environment: gitHash } : {}),
     },
     // Session sampling gates ALL signals in Faro; keep at 1.0 so errors + web-vitals
-    // stay at 100%. Browser-trace volume is controlled separately by the per-trace
-    // ratio sampler below (see faroTracing.ts).
+    // stay at 100%. In Phase 1 browser traces follow this session sampling (no separate
+    // per-trace sampler — see the RESERVED note above).
     sessionTracking: { samplingRate: sessionSampleRate },
     // Error-storm guard: drop known browser noise so a broken deploy can't turn every
     // session into a flood.
@@ -116,6 +119,7 @@ function initFaro() {
       // errors + web-vitals + session (needed for sampling) + view. Console capture
       // OFF: it serialises arbitrary logged objects (PII risk) into logs.
       ...getWebInstrumentations({ captureConsole: false }),
+      // Default TracingInstrumentation — traces follow session sampling in Phase 1.
       new TracingInstrumentation({
         instrumentationOptions: {
           // Attach `traceparent` ONLY to same-origin /api calls — never to third-party
@@ -123,11 +127,6 @@ function initFaro() {
           // preflights / breakage.
           propagateTraceHeaderCorsUrls: [sameOriginApiMatcher()],
         },
-        // Genuine per-trace ratio sampling on top of session sampling. Only installed
-        // when < 1 so the default Faro pipeline is used at full sampling.
-        ...(tracesSampleRate < 1
-          ? { spanProcessor: createRatioSampledSpanProcessor(tracesSampleRate) }
-          : {}),
       }),
     ],
     beforeSend: scrubBeacon,

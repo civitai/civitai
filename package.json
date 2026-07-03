@@ -144,7 +144,6 @@
     "@opentelemetry/sdk-logs": "^0.211.0",
     "@opentelemetry/sdk-node": "^0.211.0",
     "@opentelemetry/sdk-trace-node": "^2.5.0",
-    "@opentelemetry/sdk-trace-web": "2.9.0",
     "@opentelemetry/semantic-conventions": "^1.39.0",
     "@paddle/paddle-js": "^1.2.1",
     "@paddle/paddle-node-sdk": "^1.4.1",
