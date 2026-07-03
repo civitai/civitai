@@ -63,7 +63,6 @@ import { create, handleDebounce, handleNormal, run } from './poll-loop';
 import { notificationCache } from '../lib/server/cache';
 import {
   notificationsFannedOutTotal,
-  signalsDeliveryTotal,
   workerPendingProcessedTotal,
 } from '../lib/server/metrics';
 
