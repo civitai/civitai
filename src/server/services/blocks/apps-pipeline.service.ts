@@ -36,12 +36,15 @@ import { env } from '~/env/server';
 
 // ---------- shared HTTP helpers --------------------------------------------
 
-type K8sTarget = {
+export type K8sTarget = {
   server: string;
   token: string;
 };
 
-async function k8sFetch(target: K8sTarget, path: string, init?: RequestInit): Promise<Response> {
+// Exported for reuse by the sibling dev-tunnel service (renders/deletes the
+// ephemeral dev-tunnel Traefik route via the SAME in-pod SA k8s API surface as
+// the review render). Kept thin + dependency-free on purpose.
+export async function k8sFetch(target: K8sTarget, path: string, init?: RequestInit): Promise<Response> {
   const url = `${target.server.replace(/\/$/, '')}${path}`;
   const headers: HeadersInit = {
     Authorization: `Bearer ${target.token}`,
@@ -56,7 +59,7 @@ async function k8sFetch(target: K8sTarget, path: string, init?: RequestInit): Pr
   });
 }
 
-async function unwrap<T>(res: Response, allowStatuses: number[] = []): Promise<T> {
+export async function unwrap<T>(res: Response, allowStatuses: number[] = []): Promise<T> {
   if (res.ok || allowStatuses.includes(res.status)) {
     const text = await res.text();
     return text ? (JSON.parse(text) as T) : (null as unknown as T);
@@ -68,7 +71,7 @@ async function unwrap<T>(res: Response, allowStatuses: number[] = []): Promise<T
 // ---------- in-cluster (dp-1) target ---------------------------------------
 
 let dp1Target: K8sTarget | null = null;
-async function getDp1Target(): Promise<K8sTarget> {
+export async function getDp1Target(): Promise<K8sTarget> {
   if (dp1Target) return dp1Target;
   // Standard in-pod paths.
   const token = await readFile('/var/run/secrets/kubernetes.io/serviceaccount/token', 'utf8');
