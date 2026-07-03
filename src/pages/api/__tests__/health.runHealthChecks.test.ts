@@ -158,4 +158,48 @@ describe('runHealthChecks — sysRedis soft dependency', () => {
     expect(results.write).toBe(false);
     expect(results.sysRedis).toBe(false);
   });
+
+  // THE load-bearing case this PR exists for: a sysRedis ping that PARKS (never
+  // settles — the slow half-open Sentinel-cutover failure, not a fast throw).
+  // The per-check `runCheckWithTimeout` race bounds the parked ping at
+  // HEALTHCHECK_TIMEOUT (1000ms) — well under the overall deadline (2000ms) —
+  // resolving it as a `timeout` → false. Because sysRedis is STATICALLY
+  // non-critical, the overall `healthy` must still resolve TRUE within the
+  // deadline: readiness is NOT shed while sysRedis is parked. All critical
+  // checks stay fast/healthy so the ONLY slow thing is the sysRedis ping,
+  // proving the parked ping alone doesn't shed the fleet.
+  //
+  // Fake timers drive the per-check setTimeout race deterministically (the
+  // ping promise never settles, so only the timer can end the race).
+  // Guard property: if the static-non-critical gate were removed, this parked
+  // ping resolves sysRedis=false as a CRITICAL check → healthy=false → the
+  // `expect(healthy).toBe(true)` below fails. So this is a real regression
+  // guard, not just an exercise of the timeout path.
+  it('sysRedis ping PARKS (never settles) → still healthy within deadline, sysRedis recorded falsy', async () => {
+    vi.useFakeTimers();
+    try {
+      // Never-resolving promise: the ONLY way this check ends is the per-check
+      // wall-clock timeout inside runCheckWithTimeout.
+      mocks.sysRedis.ping.mockImplementation(() => new Promise<string>(() => {}));
+
+      const runPromise = runHealthChecks(liveSignal());
+
+      // Advance past the per-check timeout (1000ms) and the overall deadline
+      // (2000ms). advanceTimersByTimeAsync also flushes the microtasks between
+      // timers, so the fast critical checks settle and the check phase resolves.
+      await vi.advanceTimersByTimeAsync(2500);
+
+      const { healthy, results } = await runPromise;
+
+      // Parked sysRedis did NOT shed readiness.
+      expect(healthy).toBe(true);
+      // Observability preserved: the timed-out ping is recorded as a failure.
+      expect(results.sysRedis).toBeFalsy();
+      // A genuinely-critical dep resolved fine (only sysRedis was slow).
+      expect(results.write).toBe(true);
+      expect(results.read).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
