@@ -291,37 +291,55 @@ A submitted ZIP needs only **`block.manifest.json`** at the root plus your app
 platform-owned recipe and ignores (and drops) any tenant-supplied build files
 (audit A8/BUILD-1 Phase 2). Shipping them is harmless but inert.
 
-## Known gaps before Phase 2 admin tool ships
+## Known gaps before a moderator suspend/deprecate tool ships
 
-> This section predates the shipped moderator review workflow (see "Publish /
-> review / deploy lifecycle" above — `/apps/review`, `approveRequest`). Some of
-> the "Phase 2 admin tool" premises here are now partly satisfied; the cache-
-> invalidation-on-`status`-transition gap below should be re-verified against
-> current `BlockRegistry` behavior before relying on it. Needs a maintainer pass.
+The moderator review workflow itself has shipped (see "Publish / review /
+deploy lifecycle" above — `/apps/review`, `approveRequest`). What has NOT
+shipped is a moderator surface that transitions an already-approved block to
+`suspended` / `deprecated`, plus the cache-invalidation work that transition
+would need. The gap below is therefore latent — a constraint to satisfy WHEN
+that takedown tool is built, not a live bug today.
 
 ### Cache invalidation on `app_blocks.status` transitions (audit-10 H3)
 
-`BlockRegistry.listForModel` caches results for 60 seconds and the SQL
-only filters on `ab.status = 'approved'` at query time, not at
-cache-read time. `invalidateModelCache` fires from install / uninstall
-/ toggle / updateSettings paths — but NOT when a moderator transitions
-`app_blocks.status` (`approved` → `suspended` / `deprecated`).
+`BlockRegistry.listForModel` caches its per-`(model, slot)` result for 60s
+(`CACHE_TTL_SECONDS`, `block-registry.service.ts:39`) and the SQL only filters
+on `ab.status = 'approved'` at query time, not at cache-read time.
+`invalidateModelCache(modelId)` (`block-registry.service.ts:461`) is called only
+from the four per-model mutation paths — install, uninstall, toggleEnabled,
+updateSettings (lines 1950 / 2019 / 2055 / 2108). It is NOT called on any
+`app_blocks.status` transition, because a status change on a block doesn't know
+which models the block is installed on.
 
-Result: a freshly-suspended block continues rendering on every model
-where it was previously cached for up to 60s. The emergency kill list
-is the v1 escape hatch for "stop this block right now"; suspension is
-the slower-cadence path that needs proper invalidation before the
-admin approval workflow lands.
+Two facts bound the actual risk today:
 
-Phase 2 admin tool must do one of:
+- **No suspend/deprecate path exists yet.** Nothing in `src/server` ever writes
+  `status='suspended'` or `'deprecated'` — the `app_blocks` CHECK constraint
+  permits those values (migration `20260524120000_app_blocks_initial`) but the
+  moderator takedown/tier tool that would set them hasn't been built. The one
+  transition that DOES exist, `pending`→`approved` in `approveRequest`
+  (`publish-request.service.ts`), also doesn't invalidate the registry cache —
+  but it's the harmless direction: a newly-approved block appears at most 60s
+  late; it never keeps rendering after it should have stopped.
+- **The emergency kill list is applied fresh on every cache hit**, so it is NOT
+  subject to the 60s cache. `getKillList()` has its own 5s in-process TTL
+  (`KILL_LIST_CACHE_TTL_MS`, `block-registry.service.ts:480`) and `listForModel`
+  filters the cached rows against it on every read (lines 657–664). "Stop this
+  block right now" (`sysRedis SET system:blocks:emergency-kill-list`) therefore
+  takes effect within ~5s regardless of the registry cache.
 
-- Issue a global cache flush across `REDIS_KEYS.BLOCKS.REGISTRY:*` on
-  status change (Lua `SCAN`-then-`DEL`), or
-- Include `status_revision` in the cache key so suspension forces a
-  miss without an explicit flush.
+So the real work item is: before shipping a moderator `suspend`/`deprecate`
+transition, give it proper invalidation, since `invalidateModelCache(modelId)`
+can't be reused (a status change spans an unknown set of models). Neither
+candidate fix has been implemented:
 
-Until then, ops uses the emergency kill list (`sysRedis SET
-system:blocks:emergency-kill-list`) to take a runaway block down.
+- Issue a global flush across `REDIS_KEYS.BLOCKS.REGISTRY:*` on status change
+  (`SCAN`-then-`DEL`, as `invalidateModelCache` already does per-model), or
+- Include a `status_revision` in the cache key so a status change forces a miss
+  without an explicit flush.
+
+Until that transition exists, the emergency kill list is the takedown path and
+its ~5s latency already covers the "take a runaway block down" case.
 
 ### Feature-flag launch posture (audit-10 M2)
 
@@ -336,20 +354,34 @@ launching generally.
 
 ## Phase 2 / 3 follow-ups
 
-> Partly stale — several items below have since shipped (the moderator approval
-> workflow and per-app KV / App Storage among them). Treat this as a historical
-> backlog; confirm each item's live status before acting on it. Needs a
-> maintainer pass to prune the completed rows.
+Still-open backlog. The moderator review workflow, App Storage (per-app KV),
+per-account Buzz, and the review sandbox have all since shipped and are
+documented above, so they're dropped from this list.
 
-- Publisher install UX (model-edit tab).
-- Moderator approval workflow + admin-only tier-change tool.
-- ClickHouse telemetry: `block_renders`, `block_interactions`,
-  `block_workflows`.
-- Health-check job + auto-suspend on consecutive failures.
-- Per-jti denylist if v2 volumes change the cost trade.
-- Audit log table for install/uninstall/settings-change/manifest-upsert.
-- CSP `frame-src` on model pages (defense-in-depth).
-- Per-app OAuth replacing `JOB_TOKEN` for manifest registration.
-- DNS-rebinding gate at `assetBundleUrl` fetch time.
-- Per-block-instance install-cap race hardening (transaction with row
-  lock vs. accept the rare race).
+- **Admin-only trust-tier override tool.** `trustTier` is derived and stamped at
+  approve time (`resolvedTrustTier` in `approveRequest`); there is no dedicated
+  moderator surface to change it on an existing block afterward.
+- **ClickHouse block telemetry.** Render tracking is wired
+  (`Tracker.blockRender()` → the block-render insert, `sendBlockRender.ts`,
+  `/api/track/block-render`) and workflow attribution flows through
+  `/api/internal/blocks/workflow-completed`, but the analytics tables are still
+  being stood up (the hosts note "until the … ClickHouse table exists") and a
+  block-interactions stream is not yet emitted.
+- **Health-check job + auto-suspend on consecutive failures.** The
+  `health_status` column exists (default `'unknown'`) but nothing populates it
+  and there's no auto-suspend job (and no suspend transition — see the
+  known-gap section above).
+- **Per-jti denylist** if v2 volumes change the cost trade (deferred;
+  per-instance revocation covers v1).
+- **Audit log table** for install/uninstall/settings-change/manifest-upsert.
+- **CSP `frame-src`** on model pages (defense-in-depth).
+- **Per-app OAuth replacing `JOB_TOKEN`** for the developer
+  manifest-registration endpoint. The primary publish path is now the mod-review
+  workflow, but `/api/v1/developer/block-manifests` still authenticates with
+  `JOB_TOKEN`.
+- **DNS-rebinding gate at `assetBundleUrl` fetch time** (still lexical-only at
+  submit — see the SSRF note in the threat model).
+- **Per-slot install-cap race hardening.** The cap is enforced at install time
+  (`MAX_BLOCKS_PER_SLOT`, `block-registry.service.ts:1849`) via a
+  count-then-insert, not a row-locked transaction, so a rare concurrent double
+  install can still exceed the cap; accepted for now.
