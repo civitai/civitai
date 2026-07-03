@@ -11,11 +11,28 @@ import {
 } from '~/server/services/blocks/dev-tunnel.service';
 
 /**
- * POST /api/apps/dev-tunnel/authz  (APP DEV TUNNEL — sish authz callback)
+ * POST /api/apps/dev-tunnel/authz/<secret>  (APP DEV TUNNEL — sish authz callback)
  *
  * The sish tunnel server's `authentication-key-request-url` target. sish POSTs
  * `{ auth_key, user, remote_addr }` for each `ssh -R` bind and authorizes the bind
  * iff we return 200.
+ *
+ * ── WHY THE SHARED SECRET IS IN THE PATH, NOT A HEADER (F5) ──
+ * sish v2.23.0's `authentication-key-request-url` does a BARE POST with a
+ * hardcoded `{ auth_key, user, remote_addr }` body — it CANNOT attach a custom
+ * request header. An `X-Dev-Tunnel-Secret` header self-auth would therefore 401
+ * every real bind. So the shared secret is carried as the LAST PATH SEGMENT of the
+ * callback URL sish is configured with:
+ *
+ *   authentication-key-request-url: https://civitai.com/api/apps/dev-tunnel/authz/<APPS_DEV_TUNNEL_SISH_SECRET>
+ *
+ * Path (not query) keeps the secret out of most access-log query-string capture,
+ * mirroring the review-sandbox mr-token-in-path choice. Because that URL contains
+ * the secret it is SOPS-managed on the infra side and only wired at P3.
+ *
+ * ⚠️ `APPS_DEV_TUNNEL_SISH_SECRET` MUST be a URL-PATH-SAFE token (no `/`, no
+ * whitespace, no reserved chars) — it is compared against the decoded path
+ * segment. Generate it as a hex/base64url string.
  *
  * ── THREAT POSTURE ──
  * `user` and `remote_addr` are ATTACKER-CONTROLLED (they come off the SSH client)
@@ -23,11 +40,13 @@ import {
  * entirely on the presented `auth_key` (the SSH PUBLIC key) matching a live,
  * userId-bound tunnel credential minted by `startDevTunnel`:
  *
- *   1. SELF-AUTH (shared secret) — this endpoint is NOT session-authed (sish, a
- *      machine, calls it), so it self-authenticates via a shared secret only sish
- *      knows (`X-Dev-Tunnel-Secret` == APPS_DEV_TUNNEL_SISH_SECRET, constant-time).
- *      Unset secret → 503 (the sish integration is inert until provisioned, P3).
- *      Wrong/absent secret → 401 (random internet cannot POST this).
+ *   1. SELF-AUTH (shared secret in the path) — this endpoint is NOT session-authed
+ *      (sish, a machine, calls it), so it self-authenticates via a shared secret
+ *      only sish knows (the trailing path segment == APPS_DEV_TUNNEL_SISH_SECRET,
+ *      constant-time). Unset secret → 503 (the sish integration is inert until
+ *      provisioned, P3). Wrong/absent path secret → 401 (random internet cannot
+ *      POST this). This compare runs BEFORE any Redis work — a DoS-safe ordering
+ *      so an unauthenticated flood never touches the credential store.
  *   2. FINGERPRINT LOOKUP — index the credential by sha256(normalized pubkey).
  *   3. CONSTANT-TIME PUBKEY COMPARE — the authoritative check: the full stored
  *      pubkey must timing-safe-equal the presented `auth_key`. A fingerprint
@@ -49,7 +68,9 @@ export const config = {
   },
 };
 
-function firstHeader(v: string | string[] | undefined): string | undefined {
+function pathSecret(v: string | string[] | undefined): string | undefined {
+  // Next decodes the [secret] path param; a catch-all would be an array, a single
+  // dynamic segment is a string. Take the first if somehow an array.
   return Array.isArray(v) ? v[0] : v;
 }
 
@@ -60,15 +81,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return;
   }
 
-  // 1. Self-auth via the shared secret. Unset → the sish integration isn't
-  // provisioned yet (P3) → 503 (inert, fail-closed). Present but mismatched →
-  // 401 (random internet cannot POST this).
+  // 1. Self-auth via the shared secret carried in the URL PATH. Ordering is
+  // deliberate + DoS-safe: env-unset → 503, then a constant-time path-secret
+  // compare → 401, BOTH before any fingerprint/Redis work.
+  //
+  // Unset → the sish integration isn't provisioned yet (P3) → 503 (inert,
+  // fail-closed). Present but mismatched/absent → 401 (random internet cannot
+  // POST this).
   const configured = env.APPS_DEV_TUNNEL_SISH_SECRET;
   if (!configured) {
     res.status(503).json({ auth: false, error: 'dev tunnel not configured' });
     return;
   }
-  const presented = firstHeader(req.headers['x-dev-tunnel-secret']);
+  const presented = pathSecret(req.query.secret);
   if (!sharedSecretMatch(presented, configured)) {
     res.status(401).json({ auth: false, error: 'unauthorized' });
     return;

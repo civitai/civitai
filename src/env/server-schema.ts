@@ -763,9 +763,13 @@ export const serverSchema = z
     // behind the `app-blocks-dev-tunnel` Flipt flag regardless.
     //
     // APPS_DEV_TUNNEL_SISH_SECRET   shared secret the sish server presents on the
-    //   authz callback (`POST /api/apps/dev-tunnel/authz`) so random internet
-    //   cannot POST it. When UNSET the callback fail-closes (503) — the sish
-    //   integration is inert until it is provisioned (P3).
+    //   authz callback so random internet cannot POST it. Carried as the trailing
+    //   PATH segment of the callback URL
+    //   (`POST /api/apps/dev-tunnel/authz/<secret>`) because sish v2.23.0's
+    //   `authentication-key-request-url` does a bare POST and CANNOT attach a
+    //   custom header (F5). MUST be a URL-PATH-SAFE token (no `/`, no whitespace,
+    //   no reserved chars) — generate as hex/base64url. When UNSET the callback
+    //   fail-closes (503) — the sish integration is inert until provisioned (P3).
     APPS_DEV_TUNNEL_SISH_SECRET: z.string().optional(),
     // APPS_DEV_TUNNEL_FORWARDAUTH_URL   in-cluster address of the dev-tunnel-gate
     //   forwardAuth endpoint the ephemeral Middleware points Traefik at. When
