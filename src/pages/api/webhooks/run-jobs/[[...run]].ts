@@ -32,6 +32,7 @@ import { challengeCompletionJob } from '~/server/jobs/challenge-completion';
 import { dailyChallengeJobs } from '~/server/jobs/daily-challenge-processing';
 import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
 import { deliverAnnualSubscriptionBuzz } from '~/server/jobs/deliver-annual-sub-buzz';
+import { purgeReplacedFilesJob } from '~/server/jobs/purge-replaced-files';
 import {
   advanceReferralSubs,
   expireReferralTokens,
@@ -128,6 +129,7 @@ export const jobs: Job[] = [
   // refreshImageGenerationCoverage,
   cleanImageResources,
   deleteOldTrainingData,
+  purgeReplacedFilesJob,
   updateCollectionItemRandomId,
   refreshFeaturedCollectionsEligibility,
   ...metricJobs,
