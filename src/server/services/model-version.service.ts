@@ -96,7 +96,7 @@ import type {
 import { Availability, CommercialUse, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
-import { deleteFile, filesForModelVersionCache } from './model-file.service';
+import { markFileReplaced, filesForModelVersionCache } from './model-file.service';
 import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
 import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
@@ -2209,10 +2209,11 @@ export const addLinkedComponent = async (
         data: { sourceId: input.id, resourceId, settings },
       });
 
-  // Optionally remove the now-redundant local file; its bytes are reclaimed by
-  // the url-refcount GC inside deleteFile.
+  // Quarantine the now-redundant local file instead of hard-deleting it: bytes
+  // are retained for 30 days (restorable) and freed later by the
+  // purge-replaced-files job. Requires the created pointer's id.
   if (input.replaceFileId != null) {
-    await deleteFile({ id: input.replaceFileId, userId, isModerator });
+    await markFileReplaced({ fileId: input.replaceFileId, recommendedResourceId: result.id });
   }
 
   const source = await dbWrite.modelVersion.findUnique({

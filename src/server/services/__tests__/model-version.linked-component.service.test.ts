@@ -5,7 +5,7 @@ import { TRPCError } from '@trpc/server';
 // file into a version, authorize the referenced file's owner, dedupe per file, and
 // optionally remove the redundant local file to reclaim its bytes.
 
-const { mockDbRead, mockDbWrite, mockDeleteFile, mockPreventLag } = vi.hoisted(() => {
+const { mockDbRead, mockDbWrite, mockMarkReplaced, mockPreventLag } = vi.hoisted(() => {
   const mk = () => ({
     findFirst: vi.fn(),
     findUnique: vi.fn(),
@@ -16,7 +16,7 @@ const { mockDbRead, mockDbWrite, mockDeleteFile, mockPreventLag } = vi.hoisted((
   return {
     mockDbRead: { modelFile: mk() },
     mockDbWrite: { recommendedResource: mk(), modelVersion: mk() },
-    mockDeleteFile: vi.fn(),
+    mockMarkReplaced: vi.fn(),
     mockPreventLag: vi.fn(),
   };
 });
@@ -54,7 +54,7 @@ vi.mock('~/server/services/model.service', () => ({
 }));
 vi.mock('~/server/services/model-file.service', () => ({
   filesForModelVersionCache: {},
-  deleteFile: mockDeleteFile,
+  markFileReplaced: mockMarkReplaced,
 }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 
@@ -185,10 +185,10 @@ describe('addLinkedComponent with replaceFileId (dedup / byte reclaim)', () => {
 
     await addLinkedComponent({ ...baseInput, targetFileId: 555, replaceFileId: 888 });
 
-    expect(mockDeleteFile).toHaveBeenCalledWith({ id: 888, userId: CALLER, isModerator: false });
+    expect(mockMarkReplaced).toHaveBeenCalledWith({ fileId: 888, recommendedResourceId: 1 });
     // link must be created before the redundant file is removed
     const createOrder = mockDbWrite.recommendedResource.create.mock.invocationCallOrder[0];
-    const deleteOrder = mockDeleteFile.mock.invocationCallOrder[0];
+    const deleteOrder = mockMarkReplaced.mock.invocationCallOrder[0];
     expect(createOrder).toBeLessThan(deleteOrder);
   });
 
@@ -198,7 +198,7 @@ describe('addLinkedComponent with replaceFileId (dedup / byte reclaim)', () => {
     await expect(
       addLinkedComponent({ ...baseInput, targetFileId: 555, replaceFileId: 888 })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-    expect(mockDeleteFile).not.toHaveBeenCalled();
+    expect(mockMarkReplaced).not.toHaveBeenCalled();
   });
 
   it('rejects replacing a primary Model file (never delete the version weights)', async () => {
@@ -207,17 +207,17 @@ describe('addLinkedComponent with replaceFileId (dedup / byte reclaim)', () => {
     await expect(
       addLinkedComponent({ ...baseInput, targetFileId: 555, replaceFileId: 888 })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-    expect(mockDeleteFile).not.toHaveBeenCalled();
+    expect(mockMarkReplaced).not.toHaveBeenCalled();
   });
 
   it('rejects replacing primary-weights file types beyond Model (Diffusion Model, UNet) + Training Data', async () => {
     for (const type of ['Diffusion Model', 'UNet', 'Training Data']) {
-      mockDeleteFile.mockClear();
+      mockMarkReplaced.mockClear();
       findUniqueByFile({ 555: ownFile, 888: { ...replaceFile, type } });
       await expect(
         addLinkedComponent({ ...baseInput, targetFileId: 555, replaceFileId: 888 })
       ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-      expect(mockDeleteFile).not.toHaveBeenCalled();
+      expect(mockMarkReplaced).not.toHaveBeenCalled();
     }
   });
 
@@ -235,7 +235,7 @@ describe('addLinkedComponent with replaceFileId (dedup / byte reclaim)', () => {
 
     await addLinkedComponent({ ...baseInput, targetFileId: 555 });
 
-    expect(mockDeleteFile).not.toHaveBeenCalled();
+    expect(mockMarkReplaced).not.toHaveBeenCalled();
   });
 });
 

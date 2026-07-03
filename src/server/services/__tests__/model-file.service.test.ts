@@ -1,14 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const { mockDbRead } = vi.hoisted(() => ({
-  mockDbRead: { modelFile: { count: vi.fn(), findFirst: vi.fn() } },
+  mockDbRead: {
+    modelFile: {
+      count: vi.fn(),
+      findFirst: vi.fn(),
+      findUnique: vi.fn(),
+      update: vi.fn(),
+    },
+  },
 }));
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
 
 // model-file.service builds a cached object at import (filesForModelVersionCache);
 // stub the cache/redis/cloudflare surface so importing it here doesn't require a
 // live redis connection — these official-file helpers only touch dbRead.
-vi.mock('~/server/utils/cache-helpers', () => ({ createCachedObject: () => ({}) }));
+vi.mock('~/server/utils/cache-helpers', () => ({
+  createCachedObject: () => ({ bust: vi.fn(), fetch: vi.fn() }),
+}));
 vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn() }));
 vi.mock('~/server/redis/client', () => ({
   REDIS_KEYS: { CACHES: { FILES_FOR_MODEL_VERSION: 'files-for-model-version' } },
@@ -17,8 +26,10 @@ vi.mock('~/server/redis/client', () => ({
 import {
   hasOfficialFileOfSize,
   findOfficialFileByHash,
+  markFileReplaced,
 } from '~/server/services/model-file.service';
 import { constants } from '~/server/common/constants';
+import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
 
 const OFFICIAL = constants.system.officialUserId;
 
@@ -119,5 +130,33 @@ describe('findOfficialFileByHash', () => {
   it('returns null when no official file has the hash', async () => {
     mockDbRead.modelFile.findFirst.mockResolvedValue(null);
     expect(await findOfficialFileByHash({ sha256: 'abc' })).toBeNull();
+  });
+});
+
+describe('markFileReplaced', () => {
+  it('flags the file replaced + private and stashes prior visibility, without deleting', async () => {
+    mockDbRead.modelFile.findUnique.mockResolvedValue({
+      id: 88,
+      visibility: ModelFileVisibility.Public,
+      metadata: { format: 'SafeTensor' },
+      modelVersionId: 10,
+    });
+
+    const res = await markFileReplaced({ fileId: 88, recommendedResourceId: 1 });
+
+    expect(res).toEqual({ modelVersionId: 10 });
+    const arg = mockDbRead.modelFile.update.mock.calls[0][0];
+    expect(arg.where).toEqual({ id: 88 });
+    expect(arg.data.replacedAt).toBeInstanceOf(Date);
+    expect(arg.data.visibility).toBe(ModelFileVisibility.Private);
+    expect(arg.data.metadata).toMatchObject({
+      format: 'SafeTensor',
+      replacedBy: { recommendedResourceId: 1, priorVisibility: ModelFileVisibility.Public },
+    });
+  });
+
+  it('throws when the file does not exist', async () => {
+    mockDbRead.modelFile.findUnique.mockResolvedValue(null);
+    await expect(markFileReplaced({ fileId: 999, recommendedResourceId: 1 })).rejects.toThrow();
   });
 });

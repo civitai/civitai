@@ -21,7 +21,12 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { inferComponentType } from '~/server/utils/model-helpers';
-import { ModelHashType, ModelStatus, ModelUploadType } from '~/shared/utils/prisma/enums';
+import {
+  ModelFileVisibility,
+  ModelHashType,
+  ModelStatus,
+  ModelUploadType,
+} from '~/shared/utils/prisma/enums';
 import { deleteModelFileObject } from '~/utils/s3-utils';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { prepareFile } from '~/utils/file-helpers';
@@ -261,6 +266,44 @@ export async function deleteFile({
   }
 
   return row ? { modelVersionId: row.modelVersionId, modelId: row.modelId } : undefined;
+}
+
+export async function markFileReplaced({
+  fileId,
+  recommendedResourceId,
+}: {
+  fileId: number;
+  recommendedResourceId: number;
+}) {
+  // Quarantine (don't delete) the redundant local file: retain bytes for the
+  // grace window so a bad link can be restored. Ownership + primary/Training
+  // guards are enforced by addLinkedComponent before this is called.
+  const file = await dbWrite.modelFile.findUnique({
+    where: { id: fileId },
+    select: { id: true, visibility: true, metadata: true, modelVersionId: true },
+  });
+  if (!file) throw throwNotFoundError();
+
+  const metadata = (file.metadata ?? {}) as Record<string, unknown>;
+  const now = new Date();
+  await dbWrite.modelFile.update({
+    where: { id: fileId },
+    data: {
+      replacedAt: now,
+      visibility: ModelFileVisibility.Private,
+      metadata: {
+        ...metadata,
+        replacedBy: {
+          recommendedResourceId,
+          at: now.toISOString(),
+          priorVisibility: file.visibility,
+        },
+      },
+    },
+  });
+
+  await deleteFilesForModelVersionCache(file.modelVersionId);
+  return { modelVersionId: file.modelVersionId };
 }
 
 export const getRecentTrainingData = async ({
