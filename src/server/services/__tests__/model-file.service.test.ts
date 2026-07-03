@@ -6,6 +6,7 @@ const { mockDbRead } = vi.hoisted(() => ({
       count: vi.fn(),
       findFirst: vi.fn(),
       findUnique: vi.fn(),
+      findMany: vi.fn(),
       update: vi.fn(),
     },
   },
@@ -15,8 +16,10 @@ vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }
 // model-file.service builds a cached object at import (filesForModelVersionCache);
 // stub the cache/redis/cloudflare surface so importing it here doesn't require a
 // live redis connection — these official-file helpers only touch dbRead.
+// `lookupFn` isn't reachable through this stub, so the cache-filter test below calls
+// the exported `fetchModelFilesForCache` directly instead of going through the cache object.
 vi.mock('~/server/utils/cache-helpers', () => ({
-  createCachedObject: () => ({ bust: vi.fn(), fetch: vi.fn() }),
+  createCachedObject: () => ({ bust: vi.fn(), fetch: vi.fn(), lookupFn: undefined }),
 }));
 vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn() }));
 vi.mock('~/server/redis/client', () => ({
@@ -27,6 +30,7 @@ import {
   hasOfficialFileOfSize,
   findOfficialFileByHash,
   markFileReplaced,
+  fetchModelFilesForCache,
 } from '~/server/services/model-file.service';
 import { constants } from '~/server/common/constants';
 import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
@@ -158,5 +162,14 @@ describe('markFileReplaced', () => {
   it('throws when the file does not exist', async () => {
     mockDbRead.modelFile.findUnique.mockResolvedValue(null);
     await expect(markFileReplaced({ fileId: 999, recommendedResourceId: 1 })).rejects.toThrow();
+  });
+});
+
+describe('fetchModelFilesForCache', () => {
+  it('excludes replaced (quarantined) files from the version file list', async () => {
+    mockDbRead.modelFile.findMany.mockResolvedValue([]);
+    await fetchModelFilesForCache([10]);
+    const arg = mockDbRead.modelFile.findMany.mock.calls[0][0];
+    expect(arg.where).toMatchObject({ modelVersionId: { in: [10] }, replacedAt: null });
   });
 });

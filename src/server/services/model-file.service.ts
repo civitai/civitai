@@ -32,10 +32,10 @@ import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 
 export type ModelFileCached = AsyncReturnType<typeof fetchModelFilesForCache>[number];
-async function fetchModelFilesForCache(ids: number[]) {
+export async function fetchModelFilesForCache(ids: number[]) {
   return await dbRead.modelFile
     .findMany({
-      where: { modelVersionId: { in: ids } },
+      where: { modelVersionId: { in: ids }, replacedAt: null },
       select: modelFileSelect,
     })
     .then((data) =>
