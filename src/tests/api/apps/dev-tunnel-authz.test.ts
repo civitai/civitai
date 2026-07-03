@@ -171,4 +171,31 @@ describe('POST /api/apps/dev-tunnel/authz/<secret>', () => {
     await handler(makeReq({ secret: 'sish-shared-secret', method: 'GET' }), res);
     expect(res.statusCode).toBe(405);
   });
+
+  // F-4: a `?secret=` query param merged into the dynamic [secret] path segment
+  // yields a Next.js `string[]`. Lock the pathSecret()→sharedSecretMatch()
+  // type-guard contract so this can never become a bypass under a future
+  // refactor. pathSecret() takes index [0]; sharedSecretMatch() rejects
+  // non-strings — the correct secret is only accepted at index 0.
+  it('ARRAY path secret, correct at index 0 → 200 (first element wins)', async () => {
+    mockLookup.mockResolvedValue(validCred);
+    const res = makeRes();
+    await handler(makeReq({ secret: ['sish-shared-secret', 'injected'], authKey: PUBKEY }), res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.auth).toBe(true);
+  });
+
+  it('ARRAY path secret, real secret at index 1 → 401 (index-1 must NOT rescue)', async () => {
+    const res = makeRes();
+    await handler(makeReq({ secret: ['injected', 'sish-shared-secret'], authKey: PUBKEY }), res);
+    expect(res.statusCode).toBe(401);
+    expect(mockLookup).not.toHaveBeenCalled();
+  });
+
+  it('EMPTY array path secret → 401 (no lookup) — defense-in-depth', async () => {
+    const res = makeRes();
+    await handler(makeReq({ secret: [], authKey: PUBKEY }), res);
+    expect(res.statusCode).toBe(401);
+    expect(mockLookup).not.toHaveBeenCalled();
+  });
 });
