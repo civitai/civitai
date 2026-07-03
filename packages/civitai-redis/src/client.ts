@@ -767,7 +767,21 @@ function getBaseClient(type: 'cache' | 'system') {
         scanInterval: 10_000,
         // Keep sub-client errors local; we surface them via the client-error listener instead.
         passthroughClientErrorEvents: false,
-        reserveClient: false,
+        // reserveClient: true pins ONE master lease at connect() (#reservedClientInfo) and routes
+        // every master command through it, fully bypassing node-redis's racy shared-lease path:
+        //   this.#masterClientInfo ??= await this.#internal.getClientLease();
+        // The `??=` checks nullish BEFORE awaiting, so a COLD concurrent burst (no master command
+        // in flight → #masterClientInfo undefined) lets multiple callers all pass the check and each
+        // call getClientLease(). Extra leases orphan (release guard uses `===`, so only the last
+        // writer's lease is ever returned) and pin pool slots → with masterPoolSize:2 the pool
+        // exhausts and any code needing a fresh master lease hangs (deadlock). This bug is present
+        // and UNFIXED upstream through at least node-redis 6.1.0 (verified byte-identical in
+        // 5.8.3 / 5.12.1 / 6.1.0) — it is version-independent, so pinning the reserved client is the
+        // durable sidestep. The reserved lease is just an integer index into the master pool, which
+        // transform() rebuilds IN PLACE (same ids) on a switch-master, so it repoints to the new
+        // master on failover — no failover regression, and zero net connection delta (the pool still
+        // opens masterPoolSize connections either way).
+        reserveClient: true,
       })
     : isCluster
     ? createCluster({
