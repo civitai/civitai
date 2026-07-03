@@ -119,6 +119,10 @@ function modelTypeToComponentType(modelType: ModelType): ModelFileComponentType 
       return 'UNet';
     case ModelType.CLIPVision:
       return 'CLIPVision';
+    case ModelType.CLIP:
+      return 'CLIP';
+    case ModelType.VisionLanguage:
+      return 'VisionLanguage';
     case ModelType.Controlnet:
       return 'ControlNet';
     case ModelType.Upscaler:
@@ -239,6 +243,8 @@ export function Files() {
       ModelType.TextEncoder,
       ModelType.UNet,
       ModelType.CLIPVision,
+      ModelType.CLIP,
+      ModelType.VisionLanguage,
       ModelType.Controlnet,
       ModelType.Upscaler,
       ModelType.Poses,

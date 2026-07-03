@@ -4,6 +4,7 @@ import { ImageResponse } from 'next/og';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { dbRead } from '~/server/db/client';
+import { getImageMetricsObject } from '~/server/services/image.service';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { ArticleIngestionStatus } from '~/shared/utils/prisma/enums';
 import type { MediaType } from '~/shared/utils/prisma/enums';
@@ -334,25 +335,19 @@ async function fetchImageData(id: number): Promise<EntityData | null> {
   let reactionCount = 0;
   let commentCount = 0;
   let collectedCount = 0;
-  let viewCount = 0;
+  // ClickHouse entity metrics don't track image views; card shows 0.
+  const viewCount = 0;
   try {
-    const metric = await dbRead.imageMetric.findFirst({
-      where: { imageId: id, timeframe: 'AllTime' },
-      select: {
-        heartCount: true,
-        likeCount: true,
-        laughCount: true,
-        cryCount: true,
-        commentCount: true,
-        collectedCount: true,
-        viewCount: true,
-      },
-    });
+    const metrics = await getImageMetricsObject([{ id }]);
+    const metric = metrics[id];
     if (metric) {
-      reactionCount = sumReactions(metric);
-      commentCount = metric.commentCount;
-      collectedCount = metric.collectedCount;
-      viewCount = metric.viewCount;
+      reactionCount =
+        (metric.reactionLike ?? 0) +
+        (metric.reactionHeart ?? 0) +
+        (metric.reactionLaugh ?? 0) +
+        (metric.reactionCry ?? 0);
+      commentCount = metric.comment ?? 0;
+      collectedCount = metric.collection ?? 0;
     }
   } catch {
     /* stats unavailable */

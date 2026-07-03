@@ -15,6 +15,8 @@ const componentTypeDisplayNames: Record<ModelFileComponentType, string> = {
   UNet: 'UNet',
   DiffusionModel: 'Diffusion Model',
   CLIPVision: 'CLIP Vision',
+  CLIP: 'CLIP',
+  VisionLanguage: 'VLM',
   ControlNet: 'ControlNet',
   Upscaler: 'Upscale Model',
   Workflow: 'Workflow',

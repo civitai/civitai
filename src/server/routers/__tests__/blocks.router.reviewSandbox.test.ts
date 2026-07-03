@@ -23,6 +23,8 @@ const {
   mockIsReviewSandboxEnabled,
   mockPreviewRequest,
   mockGetReviewStatus,
+  mockTeardownPreview,
+  mockListActivePreviews,
   mockVerifyBlockToken,
   mockParseSubjectUserId,
   mockGetUserById,
@@ -36,6 +38,8 @@ const {
   mockIsReviewSandboxEnabled: vi.fn(),
   mockPreviewRequest: vi.fn(),
   mockGetReviewStatus: vi.fn(),
+  mockTeardownPreview: vi.fn(),
+  mockListActivePreviews: vi.fn(),
   mockVerifyBlockToken: vi.fn(),
   mockParseSubjectUserId: vi.fn(),
   mockGetUserById: vi.fn(),
@@ -58,6 +62,8 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
 vi.mock('~/server/services/blocks/publish-request.service', () => ({
   previewRequest: mockPreviewRequest,
   getReviewStatus: mockGetReviewStatus,
+  teardownPreview: mockTeardownPreview,
+  listActiveReviewPreviews: mockListActivePreviews,
 }));
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   verifyBlockToken: mockVerifyBlockToken,
@@ -163,6 +169,10 @@ beforeEach(() => {
     detail: { url: 'https://review-x.civit.ai/my-app' },
     updatedAt: new Date(),
   });
+  mockTeardownPreview.mockReset();
+  mockTeardownPreview.mockResolvedValue({ publishRequestId: PUBREQ, tornDown: true });
+  mockListActivePreviews.mockReset();
+  mockListActivePreviews.mockResolvedValue({ cap: 5, active: [] });
 });
 
 describe('blocks.previewRequest', () => {
@@ -207,7 +217,12 @@ describe('blocks.getReviewStatus', () => {
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
     const res = await caller.getReviewStatus({ publishRequestId: PUBREQ });
     expect(res.state).toBe('preview-live');
-    expect(mockGetReviewStatus).toHaveBeenCalledWith({ publishRequestId: PUBREQ });
+    // The router passes the SERVER-derived mod id so getReviewStatus can mint the
+    // fresh mod-bound previewUrl token when the preview is live.
+    expect(mockGetReviewStatus).toHaveBeenCalledWith({
+      publishRequestId: PUBREQ,
+      modUserId: 1,
+    });
   });
 
   it('non-moderator: UNAUTHORIZED', async () => {
@@ -225,5 +240,67 @@ describe('blocks.getReviewStatus', () => {
       TRPCError
     );
     expect(mockGetReviewStatus).not.toHaveBeenCalled();
+  });
+});
+
+describe('blocks.teardownPreview', () => {
+  it('moderator + flags on: reaches the service', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    const res = await caller.teardownPreview({ publishRequestId: PUBREQ });
+    expect(res.tornDown).toBe(true);
+    expect(mockTeardownPreview).toHaveBeenCalledWith({ publishRequestId: PUBREQ });
+  });
+
+  it('non-moderator: UNAUTHORIZED, service NOT reached', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(normalUser) as never);
+    await expect(caller.teardownPreview({ publishRequestId: PUBREQ })).rejects.toBeInstanceOf(
+      TRPCError
+    );
+    expect(mockTeardownPreview).not.toHaveBeenCalled();
+  });
+
+  it('moderator but review-sandbox flag OFF: UNAUTHORIZED (dark)', async () => {
+    mockIsReviewSandboxEnabled.mockResolvedValue(false);
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await expect(caller.teardownPreview({ publishRequestId: PUBREQ })).rejects.toBeInstanceOf(
+      TRPCError
+    );
+    expect(mockTeardownPreview).not.toHaveBeenCalled();
+  });
+});
+
+describe('blocks.listActivePreviews', () => {
+  it('moderator + flags on: returns the cap + active list', async () => {
+    mockListActivePreviews.mockResolvedValue({
+      cap: 5,
+      active: [
+        {
+          publishRequestId: PUBREQ,
+          slug: 'my-app',
+          version: '1.0.0',
+          state: 'preview-live',
+          host: 'review-x.civit.ai',
+          updatedAt: new Date(),
+        },
+      ],
+    });
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    const res = await caller.listActivePreviews();
+    expect(res.cap).toBe(5);
+    expect(res.active).toHaveLength(1);
+    expect(mockListActivePreviews).toHaveBeenCalled();
+  });
+
+  it('non-moderator: UNAUTHORIZED', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(normalUser) as never);
+    await expect(caller.listActivePreviews()).rejects.toBeInstanceOf(TRPCError);
+    expect(mockListActivePreviews).not.toHaveBeenCalled();
+  });
+
+  it('moderator but review-sandbox flag OFF: UNAUTHORIZED', async () => {
+    mockIsReviewSandboxEnabled.mockResolvedValue(false);
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await expect(caller.listActivePreviews()).rejects.toBeInstanceOf(TRPCError);
+    expect(mockListActivePreviews).not.toHaveBeenCalled();
   });
 });

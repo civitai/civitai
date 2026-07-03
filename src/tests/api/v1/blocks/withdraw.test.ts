@@ -64,6 +64,7 @@ function createMocks({
 const {
   mockGetSession,
   mockIsAppBlocksEnabled,
+  mockIsAppBlocksAuthorEnabled,
   mockWithdrawRequest,
   mockSysRedis,
   mockMultiIncr,
@@ -99,6 +100,7 @@ const {
   return {
     mockGetSession: vi.fn(),
     mockIsAppBlocksEnabled: vi.fn(),
+    mockIsAppBlocksAuthorEnabled: vi.fn(),
     mockWithdrawRequest: vi.fn(),
     mockSysRedis: {
       multi: vi.fn(multiFactory),
@@ -112,7 +114,10 @@ const {
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 vi.mock('~/server/auth/bearer-token', () => ({ getSessionFromBearerToken: mockGetSession }));
-vi.mock('~/server/services/app-blocks-flag', () => ({ isAppBlocksEnabled: mockIsAppBlocksEnabled }));
+vi.mock('~/server/services/app-blocks-flag', () => ({
+  isAppBlocksEnabled: mockIsAppBlocksEnabled,
+  isAppBlocksAuthorEnabled: mockIsAppBlocksAuthorEnabled,
+}));
 vi.mock('~/server/services/blocks/publish-request.service', () => ({
   withdrawRequest: mockWithdrawRequest,
   WithdrawRequestError,
@@ -165,6 +170,9 @@ beforeEach(() => {
   mockSysRedis.ttl.mockResolvedValue(60);
   mockSysRedis.expire.mockResolvedValue(1);
   mockIsAppBlocksEnabled.mockResolvedValue(true);
+  // Author capability defaults to the mod-floor (mirrors isAppBlocksAuthorEnabled
+  // when the app-blocks-author Flipt flag is absent): mods pass, non-mods don't.
+  mockIsAppBlocksAuthorEnabled.mockImplementation(async (opts?: { user?: { isModerator?: boolean } }) => !!opts?.user?.isModerator);
   mockWithdrawRequest.mockResolvedValue(undefined);
 });
 
@@ -217,12 +225,21 @@ describe('POST /api/v1/blocks/withdraw', () => {
     });
   });
 
-  it('403 when the resolved user is NOT a moderator', async () => {
+  it('403 when the resolved user is NOT a moderator (and not a cohort author)', async () => {
     mockGetSession.mockResolvedValueOnce(NONMOD_SESSION);
     const { req, res } = authPost();
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(403);
     expect(mockWithdrawRequest).not.toHaveBeenCalled();
+  });
+
+  it('accepts an author-capable NON-MOD (cohort widening): passes the authz line to the service', async () => {
+    mockGetSession.mockResolvedValueOnce(NONMOD_SESSION);
+    mockIsAppBlocksAuthorEnabled.mockResolvedValueOnce(true);
+    const { req, res } = authPost();
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).not.toBe(403);
+    expect(mockWithdrawRequest).toHaveBeenCalledTimes(1);
   });
 
   it('403 when the mod is banned', async () => {

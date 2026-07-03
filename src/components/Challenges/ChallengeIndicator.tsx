@@ -45,6 +45,7 @@ export function ChallengeIndicator() {
   return (
     <Indicator color="red" size={12} disabled={!hasUnseen} inline>
       <LegacyActionIcon
+        aria-label="Daily challenges"
         size="lg"
         className={clsx(hasUnseen && 'animate-wiggle')}
         color={hasUnseen ? (futureChallenge ? 'yellow' : 'teal') : 'dark'}

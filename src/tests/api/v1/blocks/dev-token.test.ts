@@ -59,30 +59,52 @@ function createMocks({
 const {
   mockGetSession,
   mockIsAppBlocksEnabled,
+  mockIsAppBlocksAuthorEnabled,
   mockSign,
   mockAppBlockFindUnique,
   mockPublishRequestFindFirst,
   mockSysRedis,
   mockMultiIncr,
+  mockWithSysReadDeadline,
+  sysDeadline,
 } = vi.hoisted(() => {
   const mockMultiIncr = {
     value: 1,
     malformedExec: false as unknown[] | null | false,
     throwExec: false,
+    // #28: simulate a SILENT half-open where `.exec()` never settles (parks the
+    // handler). withSysReadDeadline must reject it within the deadline → 503.
+    hangExec: false,
   };
   const multiFactory = () => ({
     set: vi.fn().mockReturnThis(),
     incr: vi.fn().mockReturnThis(),
     exec: vi.fn().mockImplementation(async () => {
+      if (mockMultiIncr.hangExec) return new Promise(() => {}); // never settles
       if (mockMultiIncr.throwExec) throw new Error('redis down');
       return mockMultiIncr.malformedExec !== false
         ? mockMultiIncr.malformedExec
         : ['OK', mockMultiIncr.value];
     }),
   });
+  // Faithful stand-in for the real withSysReadDeadline (sys-read-deadline.ts): race
+  // the wrapped promise against a rejecting timer; `<= 0` disables (no-op). A tiny
+  // default ms keeps the never-settles tests fast without fake timers.
+  const sysDeadline = { ms: 50 };
+  const mockWithSysReadDeadline = <T>(p: Promise<T>, ms = sysDeadline.ms): Promise<T> => {
+    if (!ms || ms <= 0) return p;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`sysRedis read timed out after ${ms}ms`)), ms);
+    });
+    return Promise.race([p, deadline]).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
+  };
   return {
     mockGetSession: vi.fn(),
     mockIsAppBlocksEnabled: vi.fn(),
+    mockIsAppBlocksAuthorEnabled: vi.fn(),
     mockSign: vi.fn(),
     mockAppBlockFindUnique: vi.fn(),
     mockPublishRequestFindFirst: vi.fn(),
@@ -92,12 +114,17 @@ const {
       expire: vi.fn().mockResolvedValue(1),
     },
     mockMultiIncr,
+    mockWithSysReadDeadline,
+    sysDeadline,
   };
 });
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 vi.mock('~/server/auth/bearer-token', () => ({ getSessionFromBearerToken: mockGetSession }));
-vi.mock('~/server/services/app-blocks-flag', () => ({ isAppBlocksEnabled: mockIsAppBlocksEnabled }));
+vi.mock('~/server/services/app-blocks-flag', () => ({
+  isAppBlocksEnabled: mockIsAppBlocksEnabled,
+  isAppBlocksAuthorEnabled: mockIsAppBlocksAuthorEnabled,
+}));
 vi.mock('~/server/services/block-token.service', () => ({
   BlockTokenService: { sign: mockSign },
 }));
@@ -110,6 +137,7 @@ vi.mock('~/server/db/client', () => ({
 vi.mock('~/server/redis/client', () => ({
   sysRedis: mockSysRedis,
   REDIS_SYS_KEYS: { BLOCKS: { DEV_TOKEN_RATE_LIMIT: 'system:blocks:dev-token-rate-limit' } },
+  withSysReadDeadline: mockWithSysReadDeadline,
 }));
 vi.mock('~/env/server', () => ({
   env: { BLOCK_TOKEN_PRIVATE_KEY: 'priv', BLOCK_TOKEN_PUBLIC_KEY: 'pub' },
@@ -208,9 +236,14 @@ beforeEach(() => {
   mockMultiIncr.value = 1;
   mockMultiIncr.malformedExec = false;
   mockMultiIncr.throwExec = false;
+  mockMultiIncr.hangExec = false;
+  sysDeadline.ms = 50;
   mockSysRedis.ttl.mockResolvedValue(60);
   mockSysRedis.expire.mockResolvedValue(1);
   mockIsAppBlocksEnabled.mockResolvedValue(true);
+  mockIsAppBlocksAuthorEnabled.mockImplementation(
+    async (opts) => !!opts?.user?.isModerator
+  );
   mockAppBlockFindUnique.mockResolvedValue(pageApp());
   // Default: no pending request. The local-manifest path tests set this per-case.
   mockPublishRequestFindFirst.mockResolvedValue(null);
@@ -299,12 +332,25 @@ describe('POST /api/v1/blocks/dev-token', () => {
     expect(out.buzzBudget).toBeUndefined();
   });
 
-  it('403 when the resolved user is NOT a moderator', async () => {
+  it('403 when the resolved user is NOT an app author (non-mod, no cohort grant)', async () => {
     mockGetSession.mockResolvedValueOnce(NONMOD_SESSION);
     const { req, res } = authPost({ appBlockId: 'apb_abc' });
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(403);
     expect(mockSign).not.toHaveBeenCalled();
+    // Denied on the authz line — never reached the enabled-flag check.
+    expect(mockIsAppBlocksEnabled).not.toHaveBeenCalled();
+  });
+
+  it('author-capable NON-MOD (cohort widening): passes the authz line into the flag check', async () => {
+    mockGetSession.mockResolvedValueOnce(NONMOD_SESSION);
+    mockIsAppBlocksAuthorEnabled.mockResolvedValueOnce(true);
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    // Got PAST the authz gate — not a 403 on the author line, and the enabled
+    // kill-switch flag was consulted next.
+    expect(res._getStatusCode()).not.toBe(403);
+    expect(mockIsAppBlocksEnabled).toHaveBeenCalled();
   });
 
   it('403 when the mod is banned', async () => {
@@ -432,6 +478,35 @@ describe('POST /api/v1/blocks/dev-token', () => {
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(503);
     // A Redis incident must never silently bypass the mint.
+    expect(mockSign).not.toHaveBeenCalled();
+  });
+
+  it('503 (fail closed) when the rate-limit exec() HANGS (#28: silent half-open never settles) — deadline-bounded, no park', async () => {
+    // The #28 root cause: a raw sysRedis MULTI on the critical path parks the
+    // handler on a silent half-open (no throw). withSysReadDeadline races the
+    // never-settling exec() against the deadline → rejects → the existing catch
+    // fails closed (503) instead of hanging ~11min to TCP keepalive.
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockMultiIncr.hangExec = true;
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never); // must RESOLVE (not hang)
+    expect(res._getStatusCode()).toBe(503);
+    // A hung limiter must never silently bypass the mint.
+    expect(mockSign).not.toHaveBeenCalled();
+  });
+
+  it('429 path does not park when the retry-after sysRedis.ttl HANGS (#28) — falls back to the window', async () => {
+    // Over the limit → the 429 path reads ttl for Retry-After. A hung ttl must not
+    // park the over-limit response: the deadline reject folds into the windowSeconds
+    // fallback so a 429 is still returned promptly.
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockMultiIncr.value = 31; // > RATE_LIMIT.max (30)
+    mockSysRedis.ttl.mockReturnValueOnce(new Promise(() => {})); // never settles
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never); // must RESOLVE
+    expect(res._getStatusCode()).toBe(429);
+    // Fallback Retry-After = RATE_LIMIT.windowSeconds (60).
+    expect(res._getHeaders()['Retry-After']).toBe('60');
     expect(mockSign).not.toHaveBeenCalled();
   });
 

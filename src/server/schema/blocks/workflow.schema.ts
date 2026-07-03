@@ -1,4 +1,15 @@
 import * as z from 'zod';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+
+// The spendable buzz account types a viewer may pick for a (money) page block.
+// Reuse the authoritative `buzzSpendTypes` (blue/green/yellow — `red` is
+// disabled and filtered out) rather than a fresh literal so this stays in sync
+// with the buzz-constants source of truth. The domain-maturity policy still
+// CLAMPS which of these is actually spendable per-request in blocks.router
+// (SFW → blue/green, mature → blue/yellow) — this enum only bounds the wire
+// surface; it never widens the allowed set.
+const blockAccountTypeSchema = z.enum(buzzSpendTypes as [BuzzSpendType, ...BuzzSpendType[]]);
 
 // v1: textToImage is the only block-supported kind. Adding a new kind here
 // must also (a) extend the discriminator in blocks.router workflow procedures,
@@ -48,6 +59,13 @@ const blockTextToImageBodySchema = z.object({
   // base-model-family-matches against the checkpoint before any spend. Capped
   // at MAX_ADDITIONAL_RESOURCES for the iframe posture above.
   additionalResources: z.array(blockAdditionalResourceSchema).max(MAX_ADDITIONAL_RESOURCES).optional(),
+  // Optional viewer-picked buzz account to spend (money page blocks). Absent →
+  // unchanged Auto behavior (domain-allowed currencies drained blue-first). When
+  // present, blocks.router moves it to the FRONT of the domain-allowed currency
+  // order (preferred-first, then fall back) and REJECTS it if it's outside the
+  // domain-allowed set — the maturity policy is never widened here. See
+  // `resolveBlockCurrenciesForAccount`.
+  accountType: blockAccountTypeSchema.optional(),
   params: z.object({
     prompt: z.string().max(PROMPT_MAX).default(''),
     negativePrompt: z.string().max(NEG_PROMPT_MAX).optional(),
@@ -80,6 +98,12 @@ export type BlockWorkflowSnapshot = {
   cost?: { total: number };
   imageUrls?: string[];
   error?: string;
+  // The buzz account that primarily funded this generation (the accountType of
+  // the largest realized debit). OPTIONAL + additive: existing consumers that
+  // don't read it are unaffected. Only the account TYPE is surfaced — nothing
+  // beyond what `cost.total` already implies. Absent on estimates, cache-hits,
+  // or any snapshot the orchestrator returned without transactions.
+  spentAccountType?: BuzzSpendType;
   autoClaim?: {
     type: 'dailyBoost';
     amount: number;

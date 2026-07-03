@@ -12,7 +12,6 @@ import {
   redisRoutingRetryCounter,
 } from '@civitai/telemetry/client';
 import { datapacketDbRead } from '~/server/db/datapacketDb';
-import { notifDbRead, notifDbWrite } from '~/server/db/notifDb';
 import { pgDbRead, pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
 // request-bulkhead is a pure leaf module (no imports), so this edge cannot form a cycle.
 import { bulkheadSnapshot } from '~/server/utils/request-bulkhead';
@@ -121,8 +120,6 @@ if (!global.pgGaugeInitialized) {
       this.set({ pool: 'read' }, pgDbRead?.totalCount ?? 0);
       this.set({ pool: 'write' }, pgDbWrite?.totalCount ?? 0);
       this.set({ pool: 'read_long' }, pgDbReadLong?.totalCount ?? 0);
-      this.set({ pool: 'notif_read' }, notifDbRead?.totalCount ?? 0);
-      this.set({ pool: 'notif_write' }, notifDbWrite?.totalCount ?? 0);
       this.set({ pool: 'datapacket_read' }, datapacketDbRead?.totalCount ?? 0);
     },
   });
@@ -134,8 +131,6 @@ if (!global.pgGaugeInitialized) {
       this.set({ pool: 'read' }, pgDbRead?.idleCount ?? 0);
       this.set({ pool: 'write' }, pgDbWrite?.idleCount ?? 0);
       this.set({ pool: 'read_long' }, pgDbReadLong?.idleCount ?? 0);
-      this.set({ pool: 'notif_read' }, notifDbRead?.idleCount ?? 0);
-      this.set({ pool: 'notif_write' }, notifDbWrite?.idleCount ?? 0);
       this.set({ pool: 'datapacket_read' }, datapacketDbRead?.idleCount ?? 0);
     },
   });
@@ -147,8 +142,6 @@ if (!global.pgGaugeInitialized) {
       this.set({ pool: 'read' }, pgDbRead?.waitingCount ?? 0);
       this.set({ pool: 'write' }, pgDbWrite?.waitingCount ?? 0);
       this.set({ pool: 'read_long' }, pgDbReadLong?.waitingCount ?? 0);
-      this.set({ pool: 'notif_read' }, notifDbRead?.waitingCount ?? 0);
-      this.set({ pool: 'notif_write' }, notifDbWrite?.waitingCount ?? 0);
       this.set({ pool: 'datapacket_read' }, datapacketDbRead?.waitingCount ?? 0);
     },
   });

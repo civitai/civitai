@@ -75,6 +75,8 @@ function Model3DsPage() {
   const tagIds = useMemo(() => parseNumericStringArray(router.query.tags) ?? [], [router.query.tags]);
 
   const animated = query.animated === 'true';
+  // Mod/owner-only "unrated" filter — the server ignores it for other viewers.
+  const unrated = query.unrated === 'true';
 
   // ---- Feed -------------------------------------------------------------------
   // The server-side `getModel3DsInfinite` SQL filter clamps Model3D.nsfwLevel
@@ -91,6 +93,7 @@ function Model3DsPage() {
         period,
         tagIds: tagIds.length ? tagIds : undefined,
         animated: animated || undefined,
+        unrated: unrated || undefined,
         browsingLevel,
       },
       {

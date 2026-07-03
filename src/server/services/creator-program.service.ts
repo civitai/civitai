@@ -10,6 +10,7 @@ import {
 } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { decodeRedisString } from '~/server/redis/buffer-decode';
 import type { BuzzCreatorProgramType, BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType, buzzBankTypes } from '~/shared/constants/buzz.constants';
 import type {
@@ -379,7 +380,7 @@ export async function bustCompensationPoolCache() {
 }
 
 async function getFlippedPhaseStatus() {
-  return await sysRedis.get(REDIS_SYS_KEYS.CREATOR_PROGRAM.FLIP_PHASES);
+  return decodeRedisString(await sysRedis.get(REDIS_SYS_KEYS.CREATOR_PROGRAM.FLIP_PHASES));
 }
 
 export async function bankBuzz(userId: number, amount: number, buzzType: BuzzSpendType) {

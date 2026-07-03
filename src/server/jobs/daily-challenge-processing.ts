@@ -1312,7 +1312,7 @@ export async function startScheduledChallenge(
     });
     if (model) {
       const resourceKeyId = challenge.challengeId ?? challenge.collectionId;
-      createNotification({
+      await createNotification({
         type: 'challenge-resource',
         category: NotificationCategory.System,
         key: `challenge-resource:${resourceKeyId}`,

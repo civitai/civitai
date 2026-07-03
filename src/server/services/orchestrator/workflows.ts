@@ -25,6 +25,7 @@ import type {
   workflowUpdateSchema,
 } from '~/server/schema/orchestrator/workflows.schema';
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
+import { observeOrchestratorRead } from '~/server/services/orchestrator/orchestrator-read-metrics';
 import {
   isUpstreamNetworkError,
   isUpstreamServerOrNetworkError,
@@ -55,6 +56,21 @@ const ORCHESTRATOR_UNAVAILABLE_MESSAGE =
 // queryWorkflowsByTags, queue-status, admin) — every one a request-scoped read.
 const ORCHESTRATOR_QUERY_TIMEOUT_MS = 20_000;
 
+// Backstop deadline for the single-workflow orchestrator READ (getWorkflow). This is
+// the `orchestrator.statusUpdate` poll path (getWorkflowStatusUpdate → getWorkflow),
+// which the generation UI fires continuously while a workflow runs — so it is the most
+// re-fetchable read we have: a bounded poll simply re-polls on the next tick with no
+// lost state. Left unbounded, a single getWorkflow can park on an orchestrator hang and
+// pin an api-pool connection; because the pool is shared, enough parked polls
+// head-of-line-block every cheap endpoint (a 7ms buzz.getBuzzAccount was seen at 40s edge
+// during parks). Bounding it caps that park blast radius. Sized to match the sibling
+// query backstop (well above the healthy sub-second GET tail; the ~24s GET/status p99 is
+// the park itself), so it 503s essentially nothing today and fires only on the park tail;
+// tighten later once the healthy-tail p99 is confirmed via the latency dashboard. A fired
+// AbortSignal.timeout() surfaces a `TimeoutError`, which the existing getWorkflow catch /
+// default branch classifies via isUpstreamNetworkError → retry-able 503 (no new handling).
+const ORCHESTRATOR_GET_TIMEOUT_MS = 20_000;
+
 // Per-attempt backstop for the whatIf cost-estimate SUBMIT only (not generate). whatIf
 // (orchestrator.whatIfFromGraph) is a side-effect-free estimate that, on img2img inputs,
 // can hang ~30s on an orchestrator source-image-download step; with the default 3
@@ -72,6 +88,23 @@ const ORCHESTRATOR_QUERY_TIMEOUT_MS = 20_000;
 // orchestrator-side root fix (stamp source dims / bound the download) is orch #261.
 const WHATIF_SUBMIT_ATTEMPT_TIMEOUT_MS = 8_000;
 
+// Classify an orchestrator READ failure as the fired read-backstop deadline (#2883,
+// ORCHESTRATOR_GET_TIMEOUT_MS / ORCHESTRATOR_QUERY_TIMEOUT_MS) vs any other error — for the additive read
+// metric ONLY (does NOT touch control flow / error mapping). A fired `AbortSignal.timeout()` surfaces as an
+// Error/DOMException named `TimeoutError` (or `AbortError` for a composed/manual abort). Because
+// `createOrchestratorClient` does NOT set `throwOnError`, this shape appears on BOTH the `.catch` reject path
+// (a mid-body abort rejects) AND the `if (!data)` resolve path (a pre-response abort RESOLVES with
+// `{ error: TimeoutError, response: undefined }`) — so both call sites classify with this. Walks the `.cause`
+// chain briefly since tRPC/undici nest the original.
+function isOrchestratorReadTimeout(e: unknown): boolean {
+  let cur = e as { name?: string; cause?: unknown } | undefined;
+  for (let depth = 0; depth < 4 && cur && typeof cur === 'object'; depth++) {
+    if (cur.name === 'TimeoutError' || cur.name === 'AbortError') return true;
+    cur = cur.cause as typeof cur;
+  }
+  return false;
+}
+
 export async function queryWorkflows({
   token,
   fromDate,
@@ -80,6 +113,10 @@ export async function queryWorkflows({
 }: z.output<typeof workflowQuerySchema> & { token: string; hideMatureContent: boolean }) {
   const client = createOrchestratorClient(token);
 
+  // Additive read instrumentation: time ONLY the orchestrator client network call (not the whole handler) and
+  // record exactly one observation — in the `.catch` on a reject, else on the resolve path below. See
+  // orchestrator-read-metrics.ts for why. Purely observational; does NOT change any control flow / mapping.
+  const readStart = performance.now();
   const { data, error } = await clientQueryWorkflows({
     client,
     // Read backstop: abort a runaway orchestrator query (see constant above). The
@@ -96,10 +133,23 @@ export async function queryWorkflows({
     // (fetch failed / ECONNREFUSED / timeout) is a transient upstream outage →
     // retry-able 503, not an app 500. An unrecognized throw (a real bug in our
     // code) is left to bubble as a 500.
+    observeOrchestratorRead(
+      'queryWorkflows',
+      isOrchestratorReadTimeout(thrown) ? 'timeout' : 'error',
+      (performance.now() - readStart) / 1000
+    );
     if (isUpstreamNetworkError(thrown))
       throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, thrown);
     throw thrown;
   });
+  // Resolve path (the `.catch` did NOT run). A `!data` result is either the pre-response backstop abort
+  // (`{ error: TimeoutError, response: undefined }` → timeout) or an upstream error; a `data` result is a
+  // success. Exactly one observation per call is recorded (here XOR in the catch above).
+  observeOrchestratorRead(
+    'queryWorkflows',
+    data ? 'ok' : isOrchestratorReadTimeout(error) ? 'timeout' : 'error',
+    (performance.now() - readStart) / 1000
+  );
   if (!data) {
     switch (error.status) {
       case 400:
@@ -143,16 +193,42 @@ export async function getWorkflow({
   query,
 }: Options<GetWorkflowData> & { token: string }) {
   const client = createOrchestratorClient(token);
-  const { data, error } = await clientGetWorkflow({ client, path, query }).catch((thrown) => {
+  // Additive read instrumentation: time ONLY the orchestrator client network call and record exactly one
+  // observation (in the `.catch` on a reject, else on the resolve path below). This is the statusUpdate poll
+  // hot path — the read the #2883 backstop targets. Purely observational; does NOT change control flow.
+  const readStart = performance.now();
+  const { data, error } = await clientGetWorkflow({
+    client,
+    path,
+    query,
+    // Read backstop: abort a runaway single-workflow read (see constant above). Mirrors
+    // queryWorkflows — the statusUpdate poll simply re-fetches, so bounding is safe and
+    // caps an orchestrator park from HOL-blocking the shared api pool. The resulting
+    // TimeoutError is caught below and mapped to a retry-able 503.
+    signal: AbortSignal.timeout(ORCHESTRATOR_GET_TIMEOUT_MS),
+  }).catch((thrown) => {
     // The generated client REJECTS (no `{ data, error }` result) when the fetch
     // itself fails — e.g. orchestrator unreachable. The statusUpdate poll fires
     // continuously, so a brief blip here otherwise becomes a wave of raw 500s
     // (TypeError: fetch failed). A recognized network failure → retry-able 503;
     // an unrecognized throw (a real bug) bubbles as a 500.
+    observeOrchestratorRead(
+      'getWorkflow',
+      isOrchestratorReadTimeout(thrown) ? 'timeout' : 'error',
+      (performance.now() - readStart) / 1000
+    );
     if (isUpstreamNetworkError(thrown))
       throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, thrown);
     throw thrown;
   });
+  // Resolve path (the `.catch` did NOT run). A `!data` result is either the pre-response backstop abort
+  // (`{ error: TimeoutError, response: undefined }` → timeout, the LOAD-BEARING resolve shape) or an upstream
+  // error; a `data` result is a success. Exactly one observation per call (here XOR in the catch above).
+  observeOrchestratorRead(
+    'getWorkflow',
+    data ? 'ok' : isOrchestratorReadTimeout(error) ? 'timeout' : 'error',
+    (performance.now() - readStart) / 1000
+  );
   if (!data) {
     switch (error.status) {
       case 400:

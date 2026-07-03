@@ -13,6 +13,7 @@ import { trpcProcedureDuration } from '~/server/prom/client';
 import { maybeLogTrpcSlow } from '~/server/logging/trpc-slow-log';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
@@ -105,9 +106,10 @@ async function needsUpdate(req?: NextApiRequest) {
     logSysRedisFailOpen('read-degraded', 'needsUpdate', err);
     return false;
   }
-  if (client.version) {
+  const clientVersion = decodeRedisString(client.version);
+  if (clientVersion) {
     if (!version || version === 'unknown') return true;
-    return semver.lt(version, client.version);
+    return semver.lt(version, clientVersion);
   }
   if (client.date) {
     if (!date) return true;
@@ -390,6 +392,28 @@ export const protectedProcedure = publicProcedure.use(isAuthed);
  * Moderator procedure
  **/
 export const moderatorProcedure = protectedProcedure.use(isMod);
+
+/**
+ * App developer procedure — authenticated + the `appBlocksAuthor` capability
+ * (Flipt `app-blocks-author`, static fallback mod-only). Gates the App Blocks
+ * AUTHOR surfaces (own submissions / revenue / analytics, withdraw, dev:live)
+ * for a curated non-mod cohort WITHOUT granting the mod REVIEW/curation powers
+ * (those stay on `moderatorProcedure`).
+ *
+ * Fail-CLOSED: `getFeatureFlags` resolves `appBlocksAuthor` from Flipt when the
+ * flag exists, else falls back to the static `availability: ['mod']` — so an
+ * absent flag / Flipt-down yields mods only, never open-to-all.
+ */
+const hasAppBlocksAuthor = t.middleware(({ ctx, next }) => {
+  const features = getFeatureFlags(ctx);
+  if (!features.appBlocksAuthor)
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'You do not have access to App Blocks authoring',
+    });
+  return next();
+});
+export const appDeveloperProcedure = protectedProcedure.use(hasAppBlocksAuthor);
 
 /**
  * Verified procedure to prevent users from making actions

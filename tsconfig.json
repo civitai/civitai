@@ -37,7 +37,9 @@
       "@civitai/telemetry": ["../packages/civitai-telemetry/src/index"],
       "@civitai/telemetry/*": ["../packages/civitai-telemetry/src/*"],
       "@civitai/brand": ["../packages/civitai-brand/src/index"],
-      "@civitai/brand/*": ["../packages/civitai-brand/src/*"]
+      "@civitai/brand/*": ["../packages/civitai-brand/src/*"],
+      "@civitai/notifications": ["../packages/civitai-notifications/src/index"],
+      "@civitai/notifications/*": ["../packages/civitai-notifications/src/*"]
     },
     "noErrorTruncation": true,
     "plugins": [
@@ -65,6 +67,7 @@
     "./node_modules/*",
     "src/pages/api/dev-local/*.ts",
     "scripts/local-dev/*.ts",
-    "src/**/__tests__/**"
+    "src/**/__tests__/**",
+    "packages/civitai-ui"
   ]
 }

@@ -8,6 +8,10 @@
     ".": "./src/index.ts",
     "./kysely": "./src/kysely.ts"
   },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
   "dependencies": {
     "@civitai/db-schema": "workspace:*",
     "kysely": "^0.28.7",
@@ -16,6 +20,7 @@
     "zod": "^4.0.17"
   },
   "devDependencies": {
-    "@types/pg": "^8.11.10"
+    "@types/pg": "^8.11.10",
+    "vitest": "^4.0.18"
   }
 }

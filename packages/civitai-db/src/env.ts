@@ -18,8 +18,11 @@ const schema = z.object({
   DATABASE_REPLICA_URL: z.url(),
   DATABASE_REPLICA_LONG_URL: z.url().optional(),
   DATABASE_SSL: booleanString.default(true),
-  NOTIFICATION_DB_URL: z.url(),
-  NOTIFICATION_DB_REPLICA_URL: z.url(),
+  // Optional: only the notifications app (apps/notifications) reaches the notification DB now, and it
+  // reads these via process.env directly (createClients), not loadDbEnv. `getClient` no longer has a
+  // notification instance, so the monolith doesn't require them.
+  NOTIFICATION_DB_URL: z.url().optional(),
+  NOTIFICATION_DB_REPLICA_URL: z.url().optional(),
   DATAPACKET_DATABASE_RO_URL: z.url().optional(),
   APPS_DATABASE_URL: z.url().optional(),
   DATABASE_CONNECTION_TIMEOUT: z.coerce.number().default(0),

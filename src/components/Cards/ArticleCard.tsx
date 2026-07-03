@@ -45,6 +45,7 @@ function ArticleCardContent({ data, aspectRatio }: Props) {
   return (
     <AspectRatioImageCard
       href={`/articles/${id}/${slugit(title)}`}
+      alt={title}
       aspectRatio={aspectRatio}
       contentType="article"
       contentId={id}

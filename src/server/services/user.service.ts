@@ -25,13 +25,7 @@ import { withSpan } from '~/server/utils/otel-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { MeiliCallTimeoutError, searchClient, withMeili } from '~/server/meilisearch/client';
 import { dbReadFallbackCounter, userUpdateCounter } from '~/server/prom/client';
-import {
-  articleMetrics,
-  imageMetrics,
-  modelMetrics,
-  postMetrics,
-  userMetrics,
-} from '~/server/metrics';
+import { articleMetrics, modelMetrics, postMetrics, userMetrics } from '~/server/metrics';
 import type { NotifDetailsFollowedBy } from '~/server/notifications/follow.notifications';
 import type { DetailsCanceledBid } from '~/server/notifications/auction.notifications';
 import { updatePaddleCustomerEmail } from '~/server/paddle/client';
@@ -1232,7 +1226,6 @@ export const removeAllContent = async ({ id }: { id: number }) => {
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
   await userMetrics.queueUpdate(id);
-  await imageMetrics.queueUpdate(images.map((i) => i.id));
   await articleMetrics.queueUpdate(articles.map((a) => a.id));
 
   for (const m of models) {
@@ -1874,10 +1867,11 @@ const collectionEntityProps: Partial<Record<CollectionType, string>> = {
   [CollectionType.Image]: 'imageId',
   [CollectionType.Post]: 'postId',
 };
+// Image intentionally absent: its metrics are ClickHouse-owned (the legacy PG
+// ImageMetric processor was retired), so image bookmarks skip the PG queueUpdate.
 const collectionEntityMetrics: Partial<Record<CollectionType, typeof articleMetrics>> = {
   [CollectionType.Article]: articleMetrics,
   [CollectionType.Model]: modelMetrics,
-  [CollectionType.Image]: imageMetrics,
   [CollectionType.Post]: postMetrics,
 };
 export const toggleBookmarked = async ({
@@ -1923,7 +1917,7 @@ export const toggleBookmarked = async ({
 
   const entityProp = collectionEntityProps[type];
   const metricsEngine = collectionEntityMetrics[type];
-  if (!entityProp || !metricsEngine) {
+  if (!entityProp) {
     // TODO(model3d-workstream-E): Model3D bookmarks land here until model3dMetrics ships.
     throw new Error(`toggleBookmarked: no bookmark route for CollectionType.${type}`);
   }
@@ -1946,7 +1940,7 @@ export const toggleBookmarked = async ({
         id: collectionItem.id,
       },
     });
-    metricsEngine.queueUpdate(entityId);
+    metricsEngine?.queueUpdate(entityId);
   } else if (!exists && setTo !== false) {
     // Race #2: the collection item is guarded by prod-only partial unique indexes
     // (`CollectionItem_model UNIQUE (collectionId, modelId) WHERE modelId IS NOT NULL`, and the

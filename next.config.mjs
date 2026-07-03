@@ -141,11 +141,13 @@ export default defineNextConfig(
       'superjson',
       '@civitai/db-schema',
       '@civitai/db',
+      '@civitai/buzz',
       '@civitai/redis',
       '@civitai/clickhouse',
       '@civitai/axiom',
       '@civitai/telemetry',
       '@civitai/auth',
+      '@civitai/notifications',
     ],
     // Renamed from experimental.serverComponentsExternalPackages → top-level serverExternalPackages in Next 15
     serverExternalPackages: [

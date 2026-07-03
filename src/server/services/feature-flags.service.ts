@@ -253,6 +253,16 @@ const featureFlags = createFeatureFlags({
   // land. The Flipt key stays the kill-switch / future-widen lever (flip it off
   // to drop the page + nav entry without a deploy).
   appBlocksGetStarted: { availability: ['mod'], fliptKey: 'app-blocks-get-started' },
+  // App Blocks — AUTHOR capability (developer soft-launch, Phase B). Grants the
+  // right to SUBMIT apps + use `dev:live` (the author surfaces + the runtime
+  // spend gate on a block-token subject). INDEPENDENT of the mod-only
+  // marketplace-visibility `appBlocks` flag ON PURPOSE: `appBlocks` widens to
+  // `public` at GA, but authoring must stay gated, so the author authz decision
+  // keys off THIS flag, never `appBlocks`. Mirrors `appBlocks` shape — staged
+  // mod-only today (`['mod']` = the Flipt-down / flag-absent fallback), widened
+  // to mods + a curated cohort via the Flipt `app-blocks-author` flag (created
+  // AFTER this merges: absent → static mod-only, identical to today).
+  appBlocksAuthor: { availability: ['mod'], fliptKey: 'app-blocks-author' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

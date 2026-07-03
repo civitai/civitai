@@ -71,6 +71,7 @@ import type { SessionUser } from '~/types/session';
 import { reviewConsumerStrikes } from '../http/orchestrator/flagged-consumers';
 import semver from 'semver';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { getAllowedAccountTypes } from '../utils/buzz-helpers';
 import { getVideoMetadata } from '~/server/services/orchestrator/videoEnhancement';
@@ -114,14 +115,10 @@ const experimentalMiddleware = middleware(async ({ ctx, next }) => {
   const user = ctx.user;
   if (!user) throw throwAuthorizationError();
 
-  const flags = await getExperimentalFlags({
-    userId: user.id,
-    isModerator: user.isModerator,
-    isMember: user.tier != null && user.tier !== 'free',
-  });
+  const flags = await getExperimentalFlags(user);
 
   // `enhancedCompatibilitySdcpp` forces experimental on — it requires the
-  // experimental path in the orchestrator regardless of the Redis config.
+  // experimental path in the orchestrator regardless of the Flipt flag.
   if (ctx.features?.enhancedCompatibilitySdcpp) flags.experimental = true;
 
   return next({ ctx: { ...ctx, user, ...flags } });
@@ -143,9 +140,11 @@ const enforceGenerationVersion = middleware(async ({ ctx, next }) => {
     return result;
   }
 
-  if (genClient.version && semver.lt(version, genClient.version)) {
-    ctx.res?.setHeader('x-generation-update-required', genClient.version);
-    if (genClient.notes) ctx.res?.setHeader('x-generation-update-notes', genClient.notes);
+  const genVersion = decodeRedisString(genClient.version);
+  if (genVersion && semver.lt(version, genVersion)) {
+    ctx.res?.setHeader('x-generation-update-required', genVersion);
+    if (genClient.notes)
+      ctx.res?.setHeader('x-generation-update-notes', decodeRedisString(genClient.notes));
   }
 
   return result;

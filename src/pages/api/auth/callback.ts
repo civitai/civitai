@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import requestIp from 'request-ip';
 import {
   setSessionCookie,
   postLoginMarkerCookie,
@@ -18,6 +19,7 @@ import {
 // first-party /session endpoint (server-to-server with the PKCE verifier), then set THIS domain's civ-token
 // cookie via setSessionCookie() and continue to returnUrl. The CSRF/exchange logic lives in @civitai/auth
 // (first-party-bridge). Cookie format is unchanged → existing sessions unaffected.
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   // Don't leak the code/state in the inbound URL onward via Referer.
   res.setHeader('Referrer-Policy', 'no-referrer');
@@ -43,6 +45,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       error: typeof req.query.error === 'string' ? req.query.error : null,
     },
     bridgeCookieValue: req.cookies[OAUTH_BRIDGE_COOKIE],
+    // The real end-user IP (request-ip resolver, same as createContext/tracker) — it reads x-forwarded-for
+    // FIRST (leftmost hop) then cf-connecting-ip. Forwarded to the hub as a single-value x-forwarded-for on the
+    // server-to-server exchange. On the INTERNAL path (no CF/proxy in front of the hub) this forwarded value is
+    // authoritative — it's what the hub's flood-guard keys on; on the PUBLIC path the hub's own cf-first
+    // getClientIp takes precedence (cf-connecting-ip = the spoke egress) and this is harmlessly shadowed. Coerce
+    // the resolver's null to undefined so the bridge omits the header when nothing resolves.
+    clientIp: requestIp.getClientIp(req) ?? undefined,
   });
 
   if ('error' in result) {

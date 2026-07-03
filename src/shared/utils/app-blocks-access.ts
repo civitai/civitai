@@ -36,8 +36,18 @@
  * Pure (no server/client-only imports) so it's usable from both the
  * `getServerSideProps` resolvers and the client-side nav hook.
  */
-export function isAppDeveloper(user: { isModerator?: boolean | null } | null | undefined): boolean {
-  return !!user?.isModerator;
+export function isAppDeveloper(
+  user: { isModerator?: boolean | null } | null | undefined,
+  // Developer soft-launch (Phase B): the `appBlocksAuthor` capability (Flipt
+  // `app-blocks-author`, static fallback mod-only) widens the developer surfaces
+  // to a curated non-mod cohort. Callers thread the resolved flag from
+  // `features.appBlocksAuthor` (SSR resolver) / `useFeatureFlags()` (client).
+  // OPTIONAL + defaulting undefined so pre-existing callers keep the mod-only
+  // meaning unchanged (no silent widening); moderators stay a hard floor via the
+  // `isModerator ||` so they never lose access regardless of Flipt config.
+  opts?: { appBlocksAuthor?: boolean }
+): boolean {
+  return !!user?.isModerator || !!opts?.appBlocksAuthor;
 }
 
 /**

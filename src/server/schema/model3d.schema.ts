@@ -14,7 +14,8 @@ import {
 export const Model3DSort = {
   Newest: 'Newest',
   MostDownloaded: 'Most Downloaded',
-  HighestRated: 'Highest Rated',
+  // "Most Liked" = thumbs-up (recommend) count. There is no separate
+  // "Highest Rated" — with only a thumbs-up signal it duplicated Most Liked.
   MostLiked: 'Most Liked',
 } as const;
 export type Model3DSort = (typeof Model3DSort)[keyof typeof Model3DSort];
@@ -89,6 +90,9 @@ export const getModel3DsInfiniteSchema = infiniteQuerySchema
     // The Meshy API binds rigging to animation, so the previous standalone
     // `rigged` filter is gone (any leftover `?rigged=` in the URL is ignored).
     animated: z.boolean().optional(),
+    // Mod/owner-only: show only not-yet-rated (nsfwLevel 0) models so mods can
+    // find and rate them. Ignored for viewers who can't see unrated content.
+    unrated: z.boolean().optional(),
   })
   .merge(baseQuerySchema);
 
@@ -140,6 +144,11 @@ export const restoreModel3DSchema = z.object({
 
 export type GetModel3DFilesInput = z.infer<typeof getModel3DFilesSchema>;
 export const getModel3DFilesSchema = z.object({
+  id: z.number().int().positive(),
+});
+
+export type TrackModel3DDownloadInput = z.infer<typeof trackModel3DDownloadSchema>;
+export const trackModel3DDownloadSchema = z.object({
   id: z.number().int().positive(),
 });
 

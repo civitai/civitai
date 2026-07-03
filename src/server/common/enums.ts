@@ -310,18 +310,11 @@ export enum EntityAccessPermission {
   All = 1 + 2, // Sum of all prev. permissions.
 }
 
-// nb: when updating this, similar updates must be made to the notification DB
-export enum NotificationCategory {
-  Comment = 'Comment',
-  Update = 'Update',
-  Milestone = 'Milestone',
-  Bounty = 'Bounty',
-  Buzz = 'Buzz',
-  Creator = 'Creator',
-  Referral = 'Referral',
-  System = 'System',
-  Other = 'Other',
-}
+// The notification category is owned by @civitai/notifications (the app + package own the notification
+// domain now). Re-exported here so the ~90 existing `~/server/common/enums` importers are unchanged and
+// there is ONE definition shared with the package — no enum-vs-union mismatch across the seam.
+// nb: when updating the values, similar updates must be made to the notification DB.
+export { NotificationCategory } from '@civitai/notifications';
 
 export enum BanReasonCode {
   SexualMinor = 'SexualMinor',

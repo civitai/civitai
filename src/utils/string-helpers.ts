@@ -85,6 +85,7 @@ const nameOverrides: Record<string, string> = {
   CLIPVision: 'CLIP Vision',
   VisionLanguage: 'VLM',
   CLIP: 'CLIP',
+  LLM: 'LLM',
   ControlNet: 'ControlNet',
   // ReportEntity enum value `'model3d'` would otherwise auto-split to
   // "model 3 d" / "3 D Models". Same story for the review variant.
@@ -179,6 +180,17 @@ export function getModelUrl({
   const slug = modelName ? slugit(modelName) : null;
   const path = slug ? `/models/${modelId}/${slug}` : `/models/${modelId}`;
   return modelVersionId ? `${path}?modelVersionId=${modelVersionId}` : path;
+}
+
+/**
+ * Build a canonical 3D-model detail URL. The `/3d-models/[id]/[[...slug]]`
+ * route ignores the slug segment (id is the source of truth), so this just
+ * appends the slugified name for pretty, index-friendly URLs. Falls back to
+ * the bare id path when the name is missing/empty.
+ */
+export function getModel3DUrl({ id, name }: { id: number; name?: string | null }): string {
+  const slug = name ? slugit(name) : null;
+  return slug ? `/3d-models/${id}/${slug}` : `/3d-models/${id}`;
 }
 
 /**

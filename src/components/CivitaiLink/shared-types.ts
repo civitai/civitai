@@ -59,7 +59,8 @@ export type ResourceType =
   | 'DoRA'
   | 'Detection'
   | 'VisionLanguage'
-  | 'CLIP';
+  | 'CLIP'
+  | 'LLM';
 
 type CommandBase = {
   id: string;
