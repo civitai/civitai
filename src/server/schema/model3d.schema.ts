@@ -90,6 +90,9 @@ export const getModel3DsInfiniteSchema = infiniteQuerySchema
     // The Meshy API binds rigging to animation, so the previous standalone
     // `rigged` filter is gone (any leftover `?rigged=` in the URL is ignored).
     animated: z.boolean().optional(),
+    // Mod/owner-only: show only not-yet-rated (nsfwLevel 0) models so mods can
+    // find and rate them. Ignored for viewers who can't see unrated content.
+    unrated: z.boolean().optional(),
   })
   .merge(baseQuerySchema);
 

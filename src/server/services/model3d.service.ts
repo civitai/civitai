@@ -364,6 +364,7 @@ export const getModel3DsInfinite = async ({
   sort,
   period,
   animated,
+  unrated,
   browsingLevel,
   user,
 }: GetModel3DsInfiniteInput & { user?: SessionUser | null }) => {
@@ -449,25 +450,31 @@ export const getModel3DsInfinite = async ({
         (!!username && !!user.username && username === user.username));
     const canSeeUnrated = isModerator || isOwnerScoped;
 
-    if (!canSeeUnrated) {
-      AND.push({ nsfwLevel: { not: 0 } });
-    }
+    if (unrated && canSeeUnrated) {
+      // Mod/owner "unrated" filter — surface only not-yet-rated rows so mods
+      // can find + rate them. Bypasses the browsing-level filter entirely.
+      AND.push({ nsfwLevel: 0 });
+    } else {
+      if (!canSeeUnrated) {
+        AND.push({ nsfwLevel: { not: 0 } });
+      }
 
-    // `browsingLevel` is already clamped per-request by the `applyDomainFeature`
-    // middleware on `publicProcedure` — SFW on the green domain, for everyone
-    // including mods. Trust it (like the models feed does) and default to
-    // SFW-public when it's absent/0, so a missing level can never fall back to
-    // "all levels" and leak mature content into the feed.
-    const effectiveBrowsingLevel = browsingLevel || publicBrowsingLevelsFlag;
-    const allowedLevels = parseBitwiseBrowsingLevel(effectiveBrowsingLevel);
-    if (allowedLevels.length > 0) {
-      if (canSeeUnrated) {
-        // Owners + mods may still see their unrated drafts (nsfwLevel = 0).
-        AND.push({
-          OR: [{ nsfwLevel: { in: allowedLevels } }, { nsfwLevel: 0 }],
-        });
-      } else {
-        AND.push({ nsfwLevel: { in: allowedLevels } });
+      // `browsingLevel` is already clamped per-request by the `applyDomainFeature`
+      // middleware on `publicProcedure` — SFW on the green domain, for everyone
+      // including mods. Trust it (like the models feed does) and default to
+      // SFW-public when it's absent/0, so a missing level can never fall back to
+      // "all levels" and leak mature content into the feed.
+      const effectiveBrowsingLevel = browsingLevel || publicBrowsingLevelsFlag;
+      const allowedLevels = parseBitwiseBrowsingLevel(effectiveBrowsingLevel);
+      if (allowedLevels.length > 0) {
+        if (canSeeUnrated) {
+          // Owners + mods may still see their unrated drafts (nsfwLevel = 0).
+          AND.push({
+            OR: [{ nsfwLevel: { in: allowedLevels } }, { nsfwLevel: 0 }],
+          });
+        } else {
+          AND.push({ nsfwLevel: { in: allowedLevels } });
+        }
       }
     }
 
