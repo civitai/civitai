@@ -121,8 +121,15 @@ export function redactText(input: string): string {
   }
 }
 
-const URL_KEY_RE = /url|href|location|referrer|uri/i;
-const MAX_DEPTH = 8;
+// Keys whose string values are treated as URLs (structure-preserving redactUrl first).
+// `stringValue` is the OTLP attribute-value key — browser-trace span/event attributes
+// (e.g. `http.url`) live at `resourceSpans[].scopeSpans[].spans[].attributes[].value
+// .stringValue`, ~10 levels deep, so they MUST be url-aware and reachable (see MAX_DEPTH).
+const URL_KEY_RE = /url|href|location|referrer|uri|stringValue/i;
+// Deep enough to reach OTLP trace-span attribute values (~depth 10) plus headroom.
+// A value past this cap is returned un-scrubbed, so it must exceed every real payload's
+// PII-bearing nesting (trace attributes are the deepest known surface).
+const MAX_DEPTH = 24;
 
 /**
  * Recursively redact every string in an arbitrary value (Faro transport payload/meta).

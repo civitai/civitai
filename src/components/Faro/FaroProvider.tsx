@@ -1,13 +1,18 @@
 import { useEffect } from 'react';
 import {
-  getWebInstrumentations,
+  ErrorsInstrumentation,
+  faro,
   initializeFaro,
+  NavigationInstrumentation,
+  SessionInstrumentation,
   type TransportItem,
+  ViewInstrumentation,
+  WebVitalsInstrumentation,
 } from '@grafana/faro-web-sdk';
 import { TracingInstrumentation } from '@grafana/faro-web-tracing';
 import { env } from '~/env/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { deepRedact, redactUrl } from '~/utils/faro/redact';
+import { deepRedact, redactText, redactUrl } from '~/utils/faro/redact';
 
 /**
  * Faro Real-User-Monitoring bootstrap (Phase 1 — SHIPPED DARK).
@@ -15,12 +20,23 @@ import { deepRedact, redactUrl } from '~/utils/faro/redact';
  * Initialises the Grafana Faro Web SDK ONLY when all of the following hold:
  *   1. `NEXT_PUBLIC_FARO_ENABLED` build-arg is true, AND
  *   2. `NEXT_PUBLIC_FARO_COLLECTOR_URL` is set, AND
- *   3. the runtime `faro` feature flag is on (instant kill-switch, no rebuild).
+ *   3. the runtime `faro` feature flag is on.
  * If any is off it renders nothing and does nothing.
  *
- * Captures: errors + web-vitals (100%) and browser tracing (sampled). NO session
- * replay. Console capture is OFF (it serialises arbitrary logged objects). Every
- * outgoing beacon is run through the deterministic PII scrub (`beforeSend`).
+ * KILL-SWITCH SCOPE: flipping the `faro` flag off takes effect on the NEXT page
+ * load/navigation. It best-effort `faro.pause()`s already-open tabs on a true→false
+ * transition, but the flag is SSR-seeded + client-cached, so open sessions may not see
+ * the change until reload. For an immediate cluster-wide stop, disable the
+ * `faro.civitai.com` ingress (infra kill-switch).
+ *
+ * Instrumentations (EXPLICIT allow-list — NOT the getWebInstrumentations() default set):
+ * errors, web-vitals, session (required for sampling), view, navigation, tracing.
+ * DELIBERATELY EXCLUDED for privacy on this adult/payments platform: Performance
+ * (emits full resource URLs), UserAction (captures element datasets), CSP, and Console
+ * (serialises arbitrary logged objects). NO session replay.
+ *
+ * Every outgoing beacon is run through the deterministic PII scrub (`beforeSend`), which
+ * FAILS CLOSED (drops the beacon on any scrub error).
  *
  * Must live inside `FeatureFlagsProvider` (for the flag) which is inside
  * `IsClientProvider` (client-only, high in the tree).
@@ -46,8 +62,14 @@ function sameOriginApiMatcher(): RegExp {
 
 /**
  * Deterministic PII scrub applied to EVERY beacon before it leaves the browser.
- * Fail-open: never throws into the app (a scrub failure must not break the page),
- * but scrubs each surface independently so one failure can't skip the others.
+ * FAILS CLOSED: on any scrub error it returns `null`, which the Faro transport treats as
+ * "drop this beacon" (a PII gate must never emit an unredacted item). Returning null is
+ * equally non-throwing for the app.
+ *
+ * NOTE: only `meta.page` is rewritten here; the rest of `meta` is spread as-is. That is
+ * safe ONLY because Phase 1 never populates identity/user meta. Do NOT call
+ * `faro.api.setUser()` (or otherwise set `meta.user`) without extending this scrub — user
+ * fields would bypass redaction and leak straight to Loki.
  */
 function scrubBeacon(item: TransportItem): TransportItem | null {
   try {
@@ -58,7 +80,9 @@ function scrubBeacon(item: TransportItem): TransportItem | null {
           ...meta,
           page: {
             ...page,
-            ...(typeof page.url === 'string' ? { url: redactUrl(page.url) } : {}),
+            // Mirror deepRedact's url-key treatment: redactUrl (query/fragment params)
+            // THEN redactText (emails/JWTs/tokens embedded in a path segment).
+            ...(typeof page.url === 'string' ? { url: redactText(redactUrl(page.url)) } : {}),
             ...(page.attributes ? { attributes: deepRedact(page.attributes) } : {}),
           },
         }
@@ -69,7 +93,8 @@ function scrubBeacon(item: TransportItem): TransportItem | null {
       payload: deepRedact(item.payload),
     } as TransportItem;
   } catch {
-    return item;
+    // Fail CLOSED — drop the beacon rather than risk sending unredacted PII.
+    return null;
   }
 }
 
@@ -115,10 +140,15 @@ function initFaro() {
       /chrome-extension:\/\//,
       /moz-extension:\/\//,
     ],
+    // EXPLICIT allow-list — do NOT use getWebInstrumentations() (it always includes
+    // UserAction + Performance + CSP + Console, which we exclude on privacy grounds —
+    // see the file header). Session is required for sampling.
     instrumentations: [
-      // errors + web-vitals + session (needed for sampling) + view. Console capture
-      // OFF: it serialises arbitrary logged objects (PII risk) into logs.
-      ...getWebInstrumentations({ captureConsole: false }),
+      new ErrorsInstrumentation(),
+      new WebVitalsInstrumentation(),
+      new SessionInstrumentation(),
+      new ViewInstrumentation(),
+      new NavigationInstrumentation(),
       // Default TracingInstrumentation — traces follow session sampling in Phase 1.
       new TracingInstrumentation({
         instrumentationOptions: {
@@ -129,7 +159,15 @@ function initFaro() {
         },
       }),
     ],
-    beforeSend: scrubBeacon,
+    // Defensive outer wrapper: scrubBeacon already fails closed, but guarantee that any
+    // unexpected throw still drops the beacon (null) rather than emitting it unscrubbed.
+    beforeSend: (item) => {
+      try {
+        return scrubBeacon(item);
+      } catch {
+        return null;
+      }
+    },
   });
 }
 
@@ -138,11 +176,20 @@ export function FaroProvider() {
   const enabled = env.NEXT_PUBLIC_FARO_ENABLED && !!features.faro;
 
   useEffect(() => {
-    if (!enabled) return;
     try {
-      initFaro();
+      if (enabled) {
+        initFaro();
+        // If a prior transition paused an already-initialised instance, resume it.
+        if (faroInitStarted) faro?.unpause?.();
+      } else if (faroInitStarted) {
+        // Best-effort kill-switch for an already-open tab. NOTE: the flag is SSR-seeded +
+        // client-cached (React Query staleTime Infinity), so it rarely flips within an
+        // open session — the real kill-switch is the next page load, or the
+        // faro.civitai.com ingress (infra). This just stops beaconing sooner if it does.
+        faro?.pause?.();
+      }
     } catch {
-      // Never let RUM bootstrap break the app.
+      // Never let RUM bootstrap / teardown break the app.
     }
   }, [enabled]);
 

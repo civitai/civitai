@@ -170,4 +170,81 @@ describe('deepRedact', () => {
     expect(deepRedact(undefined)).toBe(undefined);
     expect(deepRedact(true)).toBe(true);
   });
+
+  // F1 regression: OTLP browser-trace payloads bury `http.url` ~10 levels deep at
+  // resourceSpans[].scopeSpans[].spans[].attributes[].value.stringValue. It must be
+  // reachable (MAX_DEPTH) and url-aware (redactUrl), incl. span-event attributes.
+  it('scrubs sensitive URLs in deeply-nested OTLP trace span + event attributes', () => {
+    const otlp = {
+      resourceSpans: [
+        {
+          scopeSpans: [
+            {
+              spans: [
+                {
+                  name: 'HTTP GET',
+                  attributes: [
+                    { key: 'http.method', value: { stringValue: 'GET' } },
+                    {
+                      key: 'http.url',
+                      value: {
+                        stringValue:
+                          'https://civitai.com/api/download?token=SUPERSECRET123&modelId=5',
+                      },
+                    },
+                  ],
+                  events: [
+                    {
+                      name: 'redirect',
+                      attributes: [
+                        {
+                          key: 'location',
+                          value: { stringValue: 'https://civitai.com/verify?code=EVENTCODE' },
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const out = deepRedact(otlp);
+    const span = out.resourceSpans[0].scopeSpans[0].spans[0];
+    const urlAttr = span.attributes[1].value.stringValue;
+    expect(urlAttr).not.toContain('SUPERSECRET123');
+    expect(urlAttr).toContain('token=' + REDACTED);
+    expect(urlAttr).toContain('modelId=5');
+    // non-sensitive attribute untouched
+    expect(span.attributes[0].value.stringValue).toBe('GET');
+    // span-event attribute also scrubbed
+    const eventUrl = span.events[0].attributes[0].value.stringValue;
+    expect(eventUrl).not.toContain('EVENTCODE');
+    expect(eventUrl).toContain('code=' + REDACTED);
+  });
+});
+
+// F2 regression: page.url gets the STRONGER scrub (redactText ∘ redactUrl), matching
+// FaroProvider.scrubBeacon — so an email/token embedded in a URL PATH SEGMENT (not just
+// a query param) is redacted on every beacon's page.url.
+describe('page.url path-segment scrub (redactText ∘ redactUrl)', () => {
+  const scrubPageUrl = (u: string) => redactText(redactUrl(u));
+
+  it('redacts an email embedded in the URL path plus a sensitive query param', () => {
+    const out = scrubPageUrl('https://civitai.com/u/alice@example.com/settings?token=abc123');
+    expect(out).not.toContain('alice@example.com');
+    expect(out).toContain(REDACTED_EMAIL);
+    expect(out).toContain('token=' + REDACTED);
+    expect(out).toContain('/settings');
+  });
+
+  it('redacts a JWT embedded in a URL path segment', () => {
+    const jwt =
+      'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhYmMifQ.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U';
+    const out = scrubPageUrl(`https://civitai.com/magic/${jwt}/open`);
+    expect(out).not.toContain(jwt);
+    expect(out).toContain(REDACTED_TOKEN);
+  });
 });
