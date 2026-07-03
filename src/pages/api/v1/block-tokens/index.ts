@@ -347,7 +347,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // existence or consume those buckets.
   const appBlocksAvailable = getFeatureFlags({ user: session?.user, req }).appBlocks;
   if (!appBlocksAvailable) {
-    res.status(403).json({ error: 'App Blocks is not available to this account' });
+    res.status(403).json({ error: 'Apps are not available to this account' });
     return;
   }
 
@@ -403,7 +403,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     // surface enables independently and stays dark until its own flag is lit.
     const pagesAvailable = getFeatureFlags({ user: session?.user, req }).appBlocksPages;
     if (!pagesAvailable) {
-      res.status(403).json({ error: 'App Blocks pages are not available to this account' });
+      res.status(403).json({ error: 'App pages are not available to this account' });
       return;
     }
     // Gate 2: the slot must be a registered PAGE slot (defense in depth — a

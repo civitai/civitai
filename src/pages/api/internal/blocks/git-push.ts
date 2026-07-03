@@ -153,7 +153,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // (NOT the mod-segmented user flag) so the publish pipeline can run.
   const enabled = await isAppBlocksPipelineEnabled();
   if (!enabled) {
-    res.status(503).json({ error: 'App Blocks not enabled' });
+    res.status(503).json({ error: 'Apps are not enabled' });
     return;
   }
 
@@ -481,7 +481,7 @@ function notifyModsOfWebhookFailure(opts: {
   const payload = {
     embeds: [
       {
-        title: `🚨 App Blocks build-chain rejected: ${opts.slug}`,
+        title: `🚨 Apps build-chain rejected: ${opts.slug}`,
         description:
           'The git-push webhook refused the commit — the live pod is unchanged. ' +
           'After the H-4 fix this should not fire from the normal /apps/review approve ' +
@@ -494,7 +494,7 @@ function notifyModsOfWebhookFailure(opts: {
           { name: 'Commit', value: `\`${opts.sha.slice(0, 12)}\``, inline: true },
           { name: 'Details', value: opts.details.slice(0, 900) || '(none)' },
         ],
-        footer: { text: 'App Blocks git-push webhook' },
+        footer: { text: 'Apps git-push webhook' },
         timestamp: new Date().toISOString(),
       },
     ],

@@ -48,6 +48,6 @@ describe('TokenScope constants', () => {
   });
 
   it('AppBlocksSubmit has a human-readable consent label', () => {
-    expect(tokenScopeLabels[TokenScope.AppBlocksSubmit]).toBe('Submit App Blocks for review');
+    expect(tokenScopeLabels[TokenScope.AppBlocksSubmit]).toBe('Submit Apps for review');
   });
 });

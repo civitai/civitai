@@ -122,7 +122,7 @@ export const tokenScopeLabels: Record<number, string> = {
   [TokenScope.NotificationsWrite]: 'Manage notification preferences',
   [TokenScope.VaultRead]: 'View vault',
   [TokenScope.VaultWrite]: 'Manage vault',
-  [TokenScope.AppBlocksSubmit]: 'Submit App Blocks for review',
+  [TokenScope.AppBlocksSubmit]: 'Submit Apps for review',
 };
 
 /** Convenience presets for the API key creation UI */
