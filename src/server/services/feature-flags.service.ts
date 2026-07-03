@@ -97,6 +97,11 @@ const featureFlags = createFeatureFlags({
     availability: ['public'],
     fliptKey: 'enhanced-compatibility-sdcpp',
   },
+  // Anima ControlNet kill-switch. Default ON (public + fail-open when Flipt is
+  // down); the `anima-controlnet` Flipt flag is the lever — flip it OFF to hide
+  // the Anima ControlNet input (and strip controlNets server-side) without a
+  // deploy if the orchestrator side misbehaves.
+  animaControlnet: { availability: ['public'], fliptKey: 'anima-controlnet' },
   questions: ['dev', 'mod'],
   imageGeneration: ['public'],
   largerGenerationImages: {

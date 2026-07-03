@@ -83,14 +83,15 @@ export const animaGraph = new DataGraph<{ ecosystem: string; workflow: string },
     samplerNode({ options: animaSamplers, defaultValue: 'euler_a', presets: animaSamplerPresets })
   )
   .node('scheduler', schedulerNode({ options: animaSchedules, defaultValue: 'simple' }))
-  // ControlNets — only available for txt2img workflows.
+  // ControlNets — txt2img only, gated by the `animaControlnet` kill-switch flag
+  // (fail-open: shown unless the flag is explicitly false).
   .node(
     'controlNets',
-    (ctx) => ({
+    (ctx, ext) => ({
       ...controlNetsNode({ preprocessors: animaControlNetPreprocessors, limit: CONTROLNET_LIMIT }),
-      when: ctx.workflow === 'txt2img',
+      when: ctx.workflow === 'txt2img' && ext.flags?.animaControlnet !== false,
     }),
-    ['workflow']
+    ['workflow', 'ext:flags']
   )
   .merge(triggerWordsGraph)
   .merge(snippetsGraph)
