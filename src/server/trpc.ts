@@ -409,7 +409,7 @@ const hasAppBlocksAuthor = t.middleware(({ ctx, next }) => {
   if (!features.appBlocksAuthor)
     throw new TRPCError({
       code: 'FORBIDDEN',
-      message: 'You do not have access to App Blocks authoring',
+      message: 'You do not have access to Apps authoring',
     });
   return next();
 });
