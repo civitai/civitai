@@ -169,7 +169,10 @@ export async function cleanupNotifications(before: Date): Promise<number> {
 }
 
 // --- mark read: per-user serialized + retried on transient pool-acquire errors ----------------------
-const userWriteQueues = new Map<number, Promise<void>>();
+// Exported for test visibility only: `markNotificationsRead` returns void, so the fire-and-forget
+// per-user chain promise is otherwise unreachable and the serialization/retry behavior can't be awaited
+// deterministically. Not part of the module's public surface — do not depend on it from app code.
+export const userWriteQueues = new Map<number, Promise<void>>();
 
 const TRANSIENT_WRITE_ERRORS = [
   'Connection terminated due to connection timeout',
