@@ -1,4 +1,5 @@
 import { logToAxiom } from '~/server/logging/client';
+import { recordDevTunnelReaperRun } from '~/server/prom/dev-tunnel.metrics';
 import { reapExpiredDevTunnels } from '~/server/services/blocks/dev-tunnel.service';
 import { createJob } from './job';
 
@@ -54,16 +55,42 @@ import { createJob } from './job';
 export const reapDevTunnelsJob = createJob('reap-dev-tunnels', '*/5 * * * *', async () => {
   try {
     const result = await reapExpiredDevTunnels();
-    // Only log when there was actually something to sweep — a dark no-op stays silent.
-    if (result.swept > 0 || result.reaped > 0) {
+
+    // A non-2xx LIST is a DISTINCT failure from a healthy empty sweep — the
+    // reaper did nothing and could not reclaim routes. Log at error + count
+    // `list_failed` so a persistent RBAC/ns/5xx break is queryable/alertable and
+    // never a silent permanent no-op.
+    if (!result.listOk) {
+      recordDevTunnelReaperRun('list_failed');
       logToAxiom(
-        { type: 'reap-dev-tunnels', swept: result.swept, reaped: result.reaped },
+        {
+          type: 'reap-dev-tunnels',
+          level: 'error',
+          message: 'dev-tunnel route LIST failed — reaper cannot reclaim routes',
+          status: result.status,
+        },
+        'webhooks'
+      ).catch(() => undefined);
+      return result;
+    }
+
+    recordDevTunnelReaperRun('ok');
+    // Only log when the sweep actually did something — a dark no-op stays silent.
+    if (result.swept > 0 || result.reaped > 0 || result.skipped > 0) {
+      logToAxiom(
+        {
+          type: 'reap-dev-tunnels',
+          swept: result.swept,
+          reaped: result.reaped,
+          skipped: result.skipped,
+        },
         'webhooks'
       ).catch(() => undefined);
     }
     return result;
   } catch (error) {
-    // Never crash the runner on a reaper failure — log + continue.
+    // Never crash the runner on a reaper failure — log + count + continue.
+    recordDevTunnelReaperRun('error');
     logToAxiom(
       {
         type: 'reap-dev-tunnels',
@@ -73,6 +100,6 @@ export const reapDevTunnelsJob = createJob('reap-dev-tunnels', '*/5 * * * *', as
       },
       'webhooks'
     ).catch(() => undefined);
-    return { swept: 0, reaped: 0, error: true as const };
+    return { swept: 0, reaped: 0, skipped: 0, listOk: false, error: true as const };
   }
 });

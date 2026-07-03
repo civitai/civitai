@@ -236,4 +236,115 @@ describe('reapExpiredDevTunnels (server-authoritative)', () => {
     // the session record was removed during teardown
     expect(sysRedis._store.has(`system:blocks:dev-tunnel:session:${sessionId}`)).toBe(false);
   });
+
+  /** Helper: make the main label-scoped LIST return `items`, everything else ok. */
+  function listReturns(items: unknown[], listStatus?: { ok: boolean; status: number }) {
+    mockK8sFetch.mockImplementation(async (_t: unknown, path: string, init: any) => {
+      if (init?.method === 'GET' && path.includes('ingressroutes?labelSelector')) {
+        if (listStatus && !listStatus.ok) {
+          return { ok: false, status: listStatus.status, text: async () => 'forbidden' };
+        }
+        return okRes(JSON.stringify({ items }));
+      }
+      return okRes();
+    });
+  }
+  const deleteCalls = () =>
+    mockK8sFetch.mock.calls.filter((c: unknown[]) => (c[2] as any)?.method === 'DELETE');
+
+  it('(a) LEAVES an ACTIVE session ALONE — the delete blast-radius stays tight', async () => {
+    // Present session with a FUTURE hardExpiresAt = a live tunnel. Must survive.
+    const sessionId = 'bki_active';
+    const key = `system:blocks:dev-tunnel:session:${sessionId}`;
+    sysRedis._store.set(
+      key,
+      JSON.stringify({
+        sessionId,
+        userId: 7,
+        blockId: 'x',
+        host: 'dev-bbbbbbbbbbbbbbbb.civit.ai',
+        fingerprint: 'fp',
+        createdAt: 1,
+        hardExpiresAt: Math.floor(Date.now() / 1000) + 3600, // 1h in the future
+        spendCapBuzz: 100,
+      })
+    );
+    listReturns([{ metadata: { labels: { 'civitai.com/dev-tunnel-session': sessionId } } }]);
+
+    const result = await reapExpiredDevTunnels();
+
+    expect(result).toMatchObject({ swept: 1, reaped: 0, skipped: 0, listOk: true });
+    // the live session record is untouched + no route delete issued
+    expect(sysRedis._store.has(key)).toBe(true);
+    expect(deleteCalls().length).toBe(0);
+  });
+
+  it('(b) a non-2xx LIST surfaces listOk:false (NOT a silent empty sweep)', async () => {
+    listReturns([], { ok: false, status: 403 });
+
+    const result = await reapExpiredDevTunnels();
+
+    expect(result).toMatchObject({ swept: 0, reaped: 0, skipped: 0, listOk: false, status: 403 });
+    // nothing was deleted on a failed list
+    expect(deleteCalls().length).toBe(0);
+  });
+
+  it('(c) a Redis READ ERROR during the sweep does NOT delete the route (skip, not reap)', async () => {
+    const sessionId = 'bki_readerr';
+    // Old route (would clear the min-age guard) — proving the SKIP is due to the
+    // read FAILURE, not the age guard.
+    listReturns([
+      {
+        metadata: {
+          labels: { 'civitai.com/dev-tunnel-session': sessionId },
+          creationTimestamp: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+        },
+      },
+    ]);
+    // The session read throws (Redis timeout) — must be treated as "unknown", not "gone".
+    sysRedis.get.mockImplementation(async (k: string) => {
+      if (k.includes(`:session:${sessionId}`)) throw new Error('redis timeout');
+      return sysRedis._store.get(k) ?? null;
+    });
+
+    const result = await reapExpiredDevTunnels();
+
+    expect(result).toMatchObject({ swept: 1, reaped: 0, skipped: 1, listOk: true });
+    expect(deleteCalls().length).toBe(0);
+  });
+
+  it('(d) the min-age guard LEAVES a just-created route (create-before-persist race)', async () => {
+    const sessionId = 'bki_young';
+    // Route created just now, session record NOT yet written (clean miss).
+    listReturns([
+      {
+        metadata: {
+          labels: { 'civitai.com/dev-tunnel-session': sessionId },
+          creationTimestamp: new Date().toISOString(),
+        },
+      },
+    ]);
+
+    const result = await reapExpiredDevTunnels();
+
+    expect(result).toMatchObject({ swept: 1, reaped: 0, skipped: 1, listOk: true });
+    expect(deleteCalls().length).toBe(0);
+  });
+
+  it('(e) an OLD absent-record route IS reaped — proving the guard is age-gated, not blanket-skip', async () => {
+    const sessionId = 'bki_old_orphan';
+    // Route older than the min-age guard, session record confirmed-absent.
+    listReturns([
+      {
+        metadata: {
+          labels: { 'civitai.com/dev-tunnel-session': sessionId },
+          creationTimestamp: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+        },
+      },
+    ]);
+
+    const result = await reapExpiredDevTunnels();
+
+    expect(result).toMatchObject({ swept: 1, reaped: 1, skipped: 0, listOk: true });
+  });
 });
