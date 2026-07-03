@@ -172,7 +172,7 @@ describe('restoreReplacedFile', () => {
       id: 88,
       replacedAt: new Date(),
       dataPurged: false,
-      metadata: { format: 'SafeTensor', replacedBy: { priorVisibility: ModelFileVisibility.Public } },
+      metadata: { format: 'SafeTensor', replacedBy: { priorVisibility: ModelFileVisibility.Private } },
       modelVersionId: 10,
     });
 
@@ -181,7 +181,7 @@ describe('restoreReplacedFile', () => {
     expect(res).toEqual({ modelVersionId: 10 });
     const arg = mockDbRead.modelFile.update.mock.calls[0][0];
     expect(arg.data.replacedAt).toBeNull();
-    expect(arg.data.visibility).toBe(ModelFileVisibility.Public);
+    expect(arg.data.visibility).toBe(ModelFileVisibility.Private);
     expect(arg.data.metadata).toEqual({ format: 'SafeTensor' });
   });
 
@@ -197,6 +197,19 @@ describe('restoreReplacedFile', () => {
       id: 88, replacedAt: new Date(), dataPurged: true, metadata: {}, modelVersionId: 10,
     });
     await expect(restoreReplacedFile({ id: 88 })).rejects.toThrow();
+  });
+
+  it('defaults visibility to Public when no priorVisibility was stashed', async () => {
+    mockDbRead.modelFile.findUnique.mockResolvedValue({
+      id: 88, replacedAt: new Date(), dataPurged: false, metadata: {}, modelVersionId: 10,
+    });
+
+    const res = await restoreReplacedFile({ id: 88 });
+
+    expect(res).toEqual({ modelVersionId: 10 });
+    const arg = mockDbRead.modelFile.update.mock.calls[0][0];
+    expect(arg.data.replacedAt).toBeNull();
+    expect(arg.data.visibility).toBe(ModelFileVisibility.Public);
   });
 });
 
