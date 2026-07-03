@@ -1,6 +1,6 @@
 -- Quarantine marker for files replaced by a linked component (see
 -- docs/link-existing-files-quarantine-design.md). NULL = active file.
-ALTER TABLE "ModelFile" ADD COLUMN "replacedAt" timestamptz;
+ALTER TABLE "ModelFile" ADD COLUMN IF NOT EXISTS "replacedAt" timestamptz;
 
 -- Partial index: the purge job and read-path filters only ever look at rows
 -- where replacedAt IS NOT NULL, so keep the index tiny. CONCURRENTLY cannot run
