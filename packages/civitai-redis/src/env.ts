@@ -90,7 +90,11 @@ export const redisEnvSchema = z
     REDIS_SYS_SELFHEAL_CHECK_INTERVAL_MS: z.coerce.number().default(1000),
     // PER-POD RECONNECT JITTER (fleet-stampede brake): wait a random [0, this) before the actual
     // sentinel reconnect so a synchronized fleet flap doesn't stampede the sentinel/master at once.
-    REDIS_SYS_SELFHEAL_RECONNECT_JITTER_MS: z.coerce.number().default(1000),
+    // WIDER default than the cluster's (4s vs 1s): the sys watchdog's ONLY trigger is sustained-
+    // inflight (no deadline signal), so a sysRedis MASTER that's slow-but-alive would make ~100 pods
+    // all breach the same 20s window and, at 1s jitter, reconnect within a 1s spread → a thundering
+    // herd on the already-degraded master/sentinel every cooldown. 4s spreads it. Env-tunable.
+    REDIS_SYS_SELFHEAL_RECONNECT_JITTER_MS: z.coerce.number().default(4000),
     // ── CLUSTER ROUTING RETRY-AFTER-REDISCOVER (the topology-churn 500 wave) ────────────
     // ON by default; REDIS_CLUSTER_ROUTING_RETRY_ENABLED=false is a single-flip kill-switch
     // that restores today's exact behavior (one attempt, throw on a routing error).

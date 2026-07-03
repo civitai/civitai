@@ -33,6 +33,29 @@ describe('redisEnvSchema — HA defaults', () => {
   });
 });
 
+describe('redisEnvSchema — sys self-heal defaults', () => {
+  it('applies the sys (sentinel) self-heal defaults', () => {
+    const parsed = redisEnvSchema.parse(base);
+    // ON by default (a forced reconnect is the only thing that clears the inflight-leak wedge).
+    expect(parsed.REDIS_SYS_SELFHEAL_ENABLED).toBe(true);
+    // Healthy sys inflight is single-digit; the incident wedge was 7k+.
+    expect(parsed.REDIS_SYS_SELFHEAL_INFLIGHT_THRESHOLD).toBe(500);
+    expect(parsed.REDIS_SYS_SELFHEAL_SUSTAINED_MS).toBe(20000);
+    expect(parsed.REDIS_SYS_SELFHEAL_COOLDOWN_MS).toBe(60000);
+    expect(parsed.REDIS_SYS_SELFHEAL_CHECK_INTERVAL_MS).toBe(1000);
+    // WIDER than the cluster jitter (4s vs 1s) — the sys watchdog's only trigger is sustained-
+    // inflight, so a slow-but-alive master could sync ~100 pods into one window; 4s de-correlates.
+    expect(parsed.REDIS_SYS_SELFHEAL_RECONNECT_JITTER_MS).toBe(4000);
+    // The cluster jitter default is UNCHANGED (only the sys default was widened).
+    expect(parsed.REDIS_CLUSTER_SELFHEAL_RECONNECT_JITTER_MS).toBe(1000);
+  });
+
+  it('REDIS_SYS_SELFHEAL_ENABLED=false disables it (single-flip revert)', () => {
+    const parsed = redisEnvSchema.parse({ ...base, REDIS_SYS_SELFHEAL_ENABLED: 'false' });
+    expect(parsed.REDIS_SYS_SELFHEAL_ENABLED).toBe(false);
+  });
+});
+
 describe('redisEnvSchema — sentinel superRefine', () => {
   it('rejects REDIS_SYS_SENTINELS without REDIS_SYS_SENTINEL_NAME', () => {
     const result = redisEnvSchema.safeParse({

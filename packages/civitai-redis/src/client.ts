@@ -1456,6 +1456,14 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
   // the counter). The watchdog only samples a counter + reconnects on a wedge, so starting it here
   // (before the background connect() settles) is safe. Guarded by sysSelfHealInterval so re-entry /
   // the buffer-base build can't stack a second interval.
+  //
+  // SINGLE-SINGLETON INVARIANT — registering only the FIRST getClient('system') set is sufficient
+  // because the app builds exactly ONE sys client per process: `createRedisClients` is called once
+  // (src/server/redis/client.ts `make()`, memoized — prod evaluates the module const once, dev
+  // caches on global.__civitaiRedisClients, build builds nothing), and `createSysRedis` has zero
+  // callers (civitai-auth uses createCacheRedis → cache-only). So there is never a second, unwatched
+  // sys client. If a future caller builds an ADDITIONAL sys client, this guard would leave it
+  // unwatched — revisit the guard (key it per client set) at that point.
   if (type === 'system' && !sysSelfHealInterval) {
     const sysBaseClients: any[] = [client];
     if (sysBufferBaseClient) sysBaseClients.push(sysBufferBaseClient);
