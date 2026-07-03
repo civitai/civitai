@@ -164,6 +164,21 @@ describe('markFileReplaced', () => {
     mockDbRead.modelFile.findUnique.mockResolvedValue(null);
     await expect(markFileReplaced({ fileId: 999, recommendedResourceId: 1 })).rejects.toThrow();
   });
+
+  it('is a no-op when the file is already quarantined', async () => {
+    mockDbRead.modelFile.findUnique.mockResolvedValue({
+      id: 88,
+      replacedAt: new Date(),
+      visibility: ModelFileVisibility.Private,
+      metadata: { format: 'SafeTensor', replacedBy: { priorVisibility: ModelFileVisibility.Public } },
+      modelVersionId: 10,
+    });
+
+    const res = await markFileReplaced({ fileId: 88, recommendedResourceId: 2 });
+
+    expect(res).toEqual({ modelVersionId: 10 });
+    expect(mockDbRead.modelFile.update).not.toHaveBeenCalled();
+  });
 });
 
 describe('restoreReplacedFile', () => {

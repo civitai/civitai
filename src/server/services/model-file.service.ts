@@ -280,9 +280,14 @@ export async function markFileReplaced({
   // guards are enforced by addLinkedComponent before this is called.
   const file = await dbWrite.modelFile.findUnique({
     where: { id: fileId },
-    select: { id: true, visibility: true, metadata: true, modelVersionId: true },
+    select: { id: true, visibility: true, metadata: true, modelVersionId: true, replacedAt: true },
   });
   if (!file) throw throwNotFoundError();
+
+  // Idempotent: a file already quarantined must not be re-stamped — that would
+  // overwrite the stashed priorVisibility (with the now-Private value) and reset
+  // the 30-day clock, breaking a later restore.
+  if (file.replacedAt != null) return { modelVersionId: file.modelVersionId };
 
   const metadata = (file.metadata ?? {}) as Record<string, unknown>;
   const now = new Date();
