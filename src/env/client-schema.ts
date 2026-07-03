@@ -42,6 +42,14 @@ export const clientSchema = z.object({
   // (NEXT_PUBLIC_AUTH_HUB_URL removed: every client-initiated hub flow — login full-page + popup, account
   // connect, discord-link — now routes through a same-origin main-app endpoint that builds the hub URL from
   // the SERVER's AUTH_JWT_ISSUER, so the client no longer needs a build-time hub origin.)
+  // Faro RUM (frontend observability). ALL optional/defaulted so they are NOT
+  // required-in-prod (a required NEXT_PUBLIC_ var breaks fresh PR-preview builds).
+  // Shipped dark: even with the build-args set, Faro only inits when the runtime
+  // `faro` feature flag is also on.
+  NEXT_PUBLIC_FARO_ENABLED: z.stringbool().default(false),
+  NEXT_PUBLIC_FARO_COLLECTOR_URL: z.url().optional(), // e.g. https://faro.civitai.com/collect
+  NEXT_PUBLIC_FARO_TRACES_SAMPLE_RATE: z.string().default('0.1'),
+  NEXT_PUBLIC_FARO_SESSION_SAMPLE_RATE: z.string().default('1.0'),
 });
 
 /**
@@ -83,4 +91,8 @@ export const clientEnv = {
     process.env.NEXT_PUBLIC_CF_INVISIBLE_TURNSTILE_SITEKEY,
   NEXT_PUBLIC_CF_MANAGED_TURNSTILE_SITEKEY: process.env.NEXT_PUBLIC_CF_MANAGED_TURNSTILE_SITEKEY,
   NEXT_PUBLIC_AUTH_PROXY_URL: process.env.NEXT_PUBLIC_AUTH_PROXY_URL,
+  NEXT_PUBLIC_FARO_ENABLED: process.env.NEXT_PUBLIC_FARO_ENABLED,
+  NEXT_PUBLIC_FARO_COLLECTOR_URL: process.env.NEXT_PUBLIC_FARO_COLLECTOR_URL,
+  NEXT_PUBLIC_FARO_TRACES_SAMPLE_RATE: process.env.NEXT_PUBLIC_FARO_TRACES_SAMPLE_RATE,
+  NEXT_PUBLIC_FARO_SESSION_SAMPLE_RATE: process.env.NEXT_PUBLIC_FARO_SESSION_SAMPLE_RATE,
 };
