@@ -10,27 +10,33 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // flip to drop the deadline guard for the busy-loop cap test.
 const { hGet, hSet, sAdd, sMembers, del, exists, set, withSysReadDeadline, logSysRedisFailOpen, state } =
   vi.hoisted(() => {
-    // Real-ish wall-clock deadline race with a fixed short ms (env-independent).
-    // Mirrors sys-read-deadline.ts so the SLOW/hang path is genuinely exercised:
-    // a never-resolving op loses the race and rejects with a timeout error, which
-    // queues.ts must catch and fail open.
-    const DEADLINE_MS = 50;
+    // Real-ish wall-clock deadline race. Mirrors sys-read-deadline.ts so the
+    // SLOW/hang path is genuinely exercised: a never-resolving op loses the race
+    // and rejects with a timeout error, which queues.ts must catch and fail open.
+    // The INTERNAL timer is a fixed small value (env-independent) regardless of
+    // the requested `ms` — so a large consumer deadline (15s) doesn't make the
+    // SLOW tests actually wait 15s; the reported error message still echoes the
+    // requested `ms` (so the consumer deadline is observable via the message).
+    const INTERNAL_DEADLINE_MS = 50;
     const holder = { deadlineDisabled: false };
     return {
       hGet: vi.fn(),
       hSet: vi.fn(() => Promise.resolve(1)),
       sAdd: vi.fn(() => Promise.resolve(1)),
-      sMembers: vi.fn(() => Promise.resolve([] as string[])),
+      sMembers: vi.fn((_bucket?: string) => Promise.resolve([] as string[])),
       del: vi.fn(() => Promise.resolve(1)),
       exists: vi.fn(() => Promise.resolve(0)),
       set: vi.fn(() => Promise.resolve('OK')),
       logSysRedisFailOpen: vi.fn(),
       state: holder,
-      withSysReadDeadline: vi.fn(<T>(p: Promise<T>, ms: number = DEADLINE_MS): Promise<T> => {
-        if (holder.deadlineDisabled || !ms || ms <= 0) return p;
+      withSysReadDeadline: vi.fn(<T>(p: Promise<T>, ms?: number): Promise<T> => {
+        if (holder.deadlineDisabled) return p;
         let timer: ReturnType<typeof setTimeout> | undefined;
         const deadline = new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error(`sysRedis read timed out after ${ms}ms`)), ms);
+          timer = setTimeout(
+            () => reject(new Error(`sysRedis read timed out after ${ms ?? 'default'}ms`)),
+            INTERNAL_DEADLINE_MS
+          );
         });
         return Promise.race([p, deadline]).finally(() => {
           if (timer) clearTimeout(timer);
@@ -112,27 +118,36 @@ describe('getBucketNames (via queues.ts public API)', () => {
 // ---------------------------------------------------------------------------
 // Fail-open behavior (step 2 of the sysRedis soft-dependency sequence).
 //
-// The search-index queue is driven inline by content mutations. A sysRedis
-// outage must NEVER 500 or hang the mutation — dropping an enqueue degrades to
-// "content re-indexed on the next full reindex". Two failure modes:
+// The queue is driven inline by content mutations. A sysRedis outage must NEVER
+// 500 or hang the mutation — dropping an enqueue degrades to "recovered by the
+// delta update-scan / next trigger". Two failure modes:
 //   - DOWN  → the sysRedis command REJECTS fast (try/catch catches it).
 //   - SLOW  → the command PARKS forever (never rejects); only the deadline race
 //             in withSysReadDeadline unblocks the caller.
-// Every op must survive BOTH.
+// Every op must survive BOTH — AND the fail-open must be NON-DESTRUCTIVE: a
+// false-empty read must never drive a write that discards already-queued work
+// (see the "data-integrity" describe block below).
 // ---------------------------------------------------------------------------
 describe('queues fail-open — DOWN (sysRedis command rejects fast)', () => {
   const DOWN = () => Promise.reject(new Error('Redis connection lost'));
 
-  it('addToQueue: a rejecting hGet read fails open — does not throw, mints+writes as empty queue', async () => {
-    hGet.mockImplementation(DOWN); // getBucketNames read is DOWN
+  it('addToQueue: a rejecting hGet (bucket-list) read SKIPS the enqueue — does not throw, does not clobber', async () => {
+    hGet.mockImplementation(DOWN); // getBucketNames read is DOWN → degraded
 
     await expect(addToQueue('images_v6:Update', [1, 2, 3])).resolves.toBeUndefined();
-    // Fell open to "no buckets" → still attempts the best-effort writes.
-    expect(hSet).toHaveBeenCalledTimes(1);
-    expect(sAdd).toHaveBeenCalledTimes(1);
+    // Non-destructive: a false-empty bucket-list read must NOT drive a
+    // bucket-reference overwrite (which would orphan pre-existing buckets).
+    expect(hSet).not.toHaveBeenCalled();
+    expect(sAdd).not.toHaveBeenCalled();
     expect(logSysRedisFailOpen).toHaveBeenCalledWith(
       'read-degraded',
       'queues.getBucketNames hGet',
+      expect.any(Error),
+      expect.objectContaining({ key: 'images_v6:Update' })
+    );
+    expect(logSysRedisFailOpen).toHaveBeenCalledWith(
+      'write-degraded',
+      'queues.addToQueue skipped-degraded-read',
       expect.any(Error),
       expect.objectContaining({ key: 'images_v6:Update' })
     );
@@ -182,13 +197,16 @@ describe('queues fail-open — DOWN (sysRedis command rejects fast)', () => {
 });
 
 describe('queues fail-open — SLOW (sysRedis command parks; only the deadline saves it)', () => {
-  it('addToQueue: a HANGING hGet read is unblocked by the deadline race and fails open (does not hang/throw)', async () => {
+  it('addToQueue: a HANGING hGet read is unblocked by the deadline race and skips non-destructively (does not hang/throw)', async () => {
     // A try/catch ALONE would not save this — the op never rejects. The deadline
     // race in withSysReadDeadline is the only thing that unblocks the caller.
     hGet.mockImplementation(never);
 
     await expect(addToQueue('images_v6:Update', [1, 2, 3])).resolves.toBeUndefined();
     expect(withSysReadDeadline).toHaveBeenCalled();
+    // Degraded read → skip; never clobbers the (unknown) real bucket list.
+    expect(hSet).not.toHaveBeenCalled();
+    expect(sAdd).not.toHaveBeenCalled();
     expect(logSysRedisFailOpen).toHaveBeenCalledWith(
       'read-degraded',
       'queues.getBucketNames hGet',
@@ -268,5 +286,106 @@ describe('waitForMerge — terminates under a persistent stall (does not loop fo
     } finally {
       globalThis.setTimeout = realSetTimeout;
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Data-integrity: the fail-open path must be NON-DESTRUCTIVE.
+//
+// The regression the audit caught: on a transient blip (a read fails open, then
+// sysRedis recovers before the trailing write) the fail-open could SILENTLY
+// DISCARD already-queued work — worse than pre-PR, where a throwing read aborted
+// the job and preserved the data for retry. Two vectors, both fixed by gating
+// destructive writes on whether the driving read was degraded.
+// ---------------------------------------------------------------------------
+describe('queues data-integrity — non-destructive fail-open (regression guard)', () => {
+  const B1 = 'queues:buckets:images_v6:Update:111';
+  const B2 = 'queues:buckets:images_v6:Update:222';
+
+  it('checkoutQueue commit: a bucket whose sMembers read failed open is NOT deleted (preserved for retry)', async () => {
+    // Two queued buckets; B1 reads fine, B2's read fails open mid-checkout.
+    hGet.mockResolvedValue(`${B1},${B2}`);
+    sMembers.mockImplementation((bucket?: string) =>
+      bucket === B1
+        ? Promise.resolve(['1'])
+        : Promise.reject(new Error('Redis connection lost'))
+    );
+
+    const queue = await checkoutQueue('images_v6:Update', false, false);
+    // Only the readable bucket contributed ids.
+    expect(queue.content).toEqual([1]);
+
+    await queue.commit();
+
+    // CORE REGRESSION: pre-fix, commit() del'd ALL captured buckets ([B1,B2]) and
+    // rewrote the list removing them → B2's ids were dropped from the queue AND
+    // indexed empty. Now only the successfully-read bucket is retired; B2 stays.
+    expect(del).toHaveBeenCalledWith([B1]);
+    expect(del).not.toHaveBeenCalledWith([B1, B2]);
+    expect(del).not.toHaveBeenCalledWith([B2]);
+    // The rewritten bucket list still references B2 (left queued for next run).
+    expect(hSet).toHaveBeenCalledWith('queues:buckets', 'images_v6:Update', B2);
+  });
+
+  it('checkoutQueue: when EVERY sMembers read fails open, nothing is deleted and the list is not rewritten', async () => {
+    hGet.mockResolvedValue(`${B1},${B2}`);
+    sMembers.mockImplementation(() => Promise.reject(new Error('Redis connection lost')));
+
+    const queue = await checkoutQueue('images_v6:Update', false, false);
+    expect(queue.content).toEqual([]);
+    await queue.commit();
+
+    // readBuckets is empty → commit() short-circuits: no del, no bucket-list
+    // rewrite (the only hSet allowed is the checkout-time append, never a commit
+    // rewrite that would drop B1/B2).
+    expect(del).not.toHaveBeenCalled();
+    expect(hSet).not.toHaveBeenCalledWith('queues:buckets', 'images_v6:Update', '');
+  });
+
+  it('checkoutQueue: a degraded getBucketNames read aborts the checkout — no append write, no delete', async () => {
+    hGet.mockImplementation(() => Promise.reject(new Error('Redis connection lost')));
+
+    const queue = await checkoutQueue('images_v6:Update', false, false);
+    expect(queue.content).toEqual([]);
+    await queue.commit();
+
+    // Can't read the bucket list → process nothing, write nothing, delete nothing.
+    expect(hSet).not.toHaveBeenCalled();
+    expect(sMembers).not.toHaveBeenCalled();
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it('addToQueue: a degraded getBucketNames read SKIPS the enqueue (does not overwrite/orphan existing buckets)', async () => {
+    // Pre-existing buckets exist in reality, but the bucket-list read fails open
+    // (false-empty). Writing a fresh single-bucket reference would orphan them.
+    hGet.mockImplementation(() => Promise.reject(new Error('Redis connection lost')));
+
+    await addToQueue('images_v6:Update', [1, 2, 3]);
+
+    expect(hSet).not.toHaveBeenCalled(); // no clobbering bucket-list overwrite
+    expect(sAdd).not.toHaveBeenCalled(); // no write into a guessed bucket
+    expect(logSysRedisFailOpen).toHaveBeenCalledWith(
+      'write-degraded',
+      'queues.addToQueue skipped-degraded-read',
+      expect.any(Error),
+      expect.objectContaining({ key: 'images_v6:Update' })
+    );
+  });
+
+  it('checkoutQueue happy path (all reads succeed): retires exactly the processed buckets', async () => {
+    // Guards that the non-destructive gating did not break the normal commit:
+    // when both reads succeed, both buckets are deleted and dropped from the list.
+    hGet.mockResolvedValue(`${B1},${B2}`);
+    sMembers.mockImplementation((bucket?: string) =>
+      Promise.resolve(bucket === B1 ? ['1'] : ['2'])
+    );
+
+    const queue = await checkoutQueue('images_v6:Update', false, false);
+    expect(new Set(queue.content)).toEqual(new Set([1, 2]));
+    await queue.commit();
+
+    expect(del).toHaveBeenCalledWith([B1, B2]);
+    // Both retired → the rewritten list no longer references them.
+    expect(hSet).toHaveBeenCalledWith('queues:buckets', 'images_v6:Update', '');
   });
 });
