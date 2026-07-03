@@ -120,8 +120,8 @@ WHERE "replacedAt" < now() - interval '30 days'
 tRPC mutation `restoreReplacedFile({ fileId })` (sibling of the link mutations on the model-file /
 model-version router).
 
-- **Guard**: `isOwnerOrModerator` on the file's version (same as `addLinkedComponent`; covers
-  mod-restore of system/official dedup mistakes).
+- **Guard**: **moderator-only**. The risky case is the official/system bulk-dedupe mistake, and
+  restore reverts a moderation-adjacent action; keep it off the owner surface.
 - **Precondition**: `replacedAt IS NOT NULL AND dataPurged = false` → else `BAD_REQUEST` (already
   purged / not replaced).
 - **Action**: set `replacedAt = null`, restore `visibility` from `metadata.replacedBy.priorVisibility`
