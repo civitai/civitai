@@ -2406,6 +2406,7 @@ export type ModelFile = {
   headerData: unknown | null;
   visibility: Generated<ModelFileVisibility>;
   dataPurged: Generated<boolean>;
+  replacedAt: Timestamp | null;
 };
 export type ModelFileHash = {
   fileId: number;
