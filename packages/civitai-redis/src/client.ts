@@ -999,12 +999,51 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
   // cluster client (wrap `_execute`), 'system' is the single sysRedis client (wrap `sendCommand`).
   instrumentCommands(client, type === 'cache' ? 'cluster' : 'sys');
 
-  // Create a separate client instance with Buffer type mapping for packed operations
-  // `withTypeMapping` creates a NEW client instance - it doesn't modify the original client.
-  // So `bufferClient` returns Buffers, while `client` still returns strings.
-  const bufferClient = client.withTypeMapping({
-    [RESP_TYPES.BLOB_STRING]: Buffer,
-  }) as CustomRedisClient<K>;
+  // Create a Buffer-typed client for the packed operations (get<Buffer>/sMembers<Buffer>/…).
+  //
+  // `withTypeMapping` is *supposed* to return a NEW client that returns Buffers while the
+  // original keeps returning strings. That holds for the single-node (RedisClient) and cluster
+  // (RedisCluster) paths — both `_commandOptionsProxy` implementations set a proxy-LOCAL
+  // `_commandOptions` and never touch the base client (verified in @redis/client
+  // client/index.js:445 and cluster/index.js:144).
+  //
+  // But node-redis v5.8.3 has a Sentinel-specific defect: `RedisSentinel._commandOptionsProxy`
+  // (sentinel/index.js:220-228) writes `proxy._self.#commandOptions = { …, [key]: value }`, and
+  // `_self` IS the shared base sentinel client. So on the Sentinel path (prod sysRedis) a SINGLE
+  // `withTypeMapping(...)` call permanently rewrites the base client's DEFAULT command options —
+  // every subsequent plain `sMembers`/`get`/`hGet`/… on `client` returns Buffers instead of
+  // strings, 100% deterministically from process start. That silently broke session revocation
+  // (session-verifier's `Buffer === 'invalid'` is always false → fail-open), feature-flag string
+  // compares, and crashed New Order (`.split` on a Buffer). See the 14-site `decodeRedisString`
+  // band-aid that shipped earlier — this is the structural fix that retires the whole class.
+  //
+  // Fix: on the Sentinel path, derive the buffer client from its OWN dedicated base connection
+  // (same `getBaseClient` path → identical Sentinel discovery/failover/auth/socket config) so the
+  // poisoning mutation lands on a PRIVATE base that is only ever used in Buffer mode (harmless),
+  // leaving the shared serving `client` completely untouched. Cluster + single-node keep the
+  // cheap shared derivation — their `withTypeMapping` is side-effect-free, and a cluster client is
+  // many sockets, so a second one would double them for no benefit.
+  //
+  // TODO(upstream): file the RedisSentinel._commandOptionsProxy shared-`_self` mutation bug with
+  // node-redis — the correct behavior mirrors RedisClient (proxy-local `_commandOptions`).
+  const isSysSentinel = type === 'system' && !!config.sysSentinels;
+  let bufferClient: CustomRedisClient<K>;
+  if (isSysSentinel) {
+    const bufferBaseClient = getBaseClient(type) as unknown as CustomRedisClient<K>;
+    // This dedicated connection issues real reads (GET/SMEMBERS/HGET/…) to the SAME sysRedis
+    // backend, so instrument it under the same 'sys' label — its in-flight + duration metrics
+    // belong alongside `client`'s (dropping them would under-count sysRedis load). Note: this
+    // adds one extra sysRedis connection (+ a Sentinel master-pool lease); acceptable per the
+    // investigation, and the pool stays small (masterPoolSize 2 in getBaseClient).
+    instrumentCommands(bufferBaseClient, 'sys');
+    bufferClient = bufferBaseClient.withTypeMapping({
+      [RESP_TYPES.BLOB_STRING]: Buffer,
+    }) as CustomRedisClient<K>;
+  } else {
+    bufferClient = client.withTypeMapping({
+      [RESP_TYPES.BLOB_STRING]: Buffer,
+    }) as CustomRedisClient<K>;
+  }
 
   // Decode a packed Buffer, evicting the bad entry if msgpack fails so the next
   // read falls through to source. Returns null on decode failure, treated as cache miss.
