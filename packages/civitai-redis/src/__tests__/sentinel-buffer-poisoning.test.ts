@@ -1,5 +1,28 @@
 import { createClient, createCluster, createSentinel, RESP_TYPES } from 'redis';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { createSysRedis } from '../client';
+
+// Neutralize `.connect()` on every real client the package factory builds so the real-factory
+// test below stays hermetic (no TCP sockets / reconnect timers → no open handles), WITHOUT
+// stubbing `withTypeMapping` — construction alone triggers the poisoning mutation, which is the
+// whole point. Everything else (withTypeMapping, commandOptions, RESP_TYPES) is the REAL module,
+// so the node-redis-level tests in this file are unaffected (they never call `.connect()`).
+vi.mock('redis', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('redis')>();
+  const noConnect = <T>(client: T): T => {
+    (client as { connect: () => Promise<T> }).connect = () => Promise.resolve(client);
+    return client;
+  };
+  return {
+    ...actual,
+    createSentinel: (opts: Parameters<typeof actual.createSentinel>[0]) =>
+      noConnect(actual.createSentinel(opts)),
+    createCluster: (opts: Parameters<typeof actual.createCluster>[0]) =>
+      noConnect(actual.createCluster(opts)),
+    createClient: (opts: Parameters<typeof actual.createClient>[0]) =>
+      noConnect(actual.createClient(opts)),
+  };
+});
 
 /**
  * Regression guard for the node-redis v5.8.3 Sentinel `withTypeMapping` poisoning bug.
@@ -91,5 +114,58 @@ describe('sentinel withTypeMapping poisoning (node-redis v5.8.3)', () => {
     single.withTypeMapping(BUFFER_MAPPING);
 
     expect(single.commandOptions?.typeMapping).toBeUndefined();
+  });
+});
+
+/**
+ * The REAL guard: drives `getClient` via the exported `createSysRedis` factory (the entry the app
+ * uses to build the sysRedis client). Unlike the node-redis-level tests above — which prove the
+ * defect but would still pass if someone reverted the fix — this test goes RED if `getClient`
+ * regresses to deriving the buffer client from the shared serving client, because the serving
+ * client itself would be poisoned.
+ *
+ * Hermetic: the `vi.mock('redis')` above neutralizes `.connect()`, and `getClient` builds the
+ * `.packed` (buffer) client synchronously during construction — so by the time the factory
+ * returns, the poisoning mutation (if any) has already happened and is observable on the returned
+ * client, with no live Redis.
+ */
+describe('getClient sysRedis factory — Sentinel poisoning regression guard', () => {
+  beforeAll(() => {
+    // loadRedisEnv() validates process.env (REDIS_URL / REDIS_SYS_URL are required z.url()); the
+    // per-call overrides are merged on top. Sentinel config is supplied via the factory options,
+    // NOT process.env, so the single-node contrast test can omit it.
+    process.env.REDIS_URL ??= 'redis://127.0.0.1:6379';
+    process.env.REDIS_SYS_URL ??= 'redis://127.0.0.1:6379';
+  });
+
+  it('SENTINEL: the serving client is NOT poisoned after the .packed buffer client is built', () => {
+    const sysRedis = createSysRedis({
+      sysSentinels: '127.0.0.1:26379',
+      sysSentinelName: 'sysmaster',
+      log: () => undefined,
+    });
+
+    // `.packed` was built during construction (via getClient) — the buffer client exists.
+    expect(sysRedis.packed).toBeDefined();
+
+    // THE INVARIANT the bug violated: the serving client carries NO BLOB_STRING→Buffer mapping in
+    // its default command options, so a plain `get`/`sMembers`/`hGet`/… decodes to a STRING (not a
+    // Buffer). With the fix the buffer client has its own dedicated base; revert to the shared
+    // `client.withTypeMapping(...)` and this typeMapping becomes the Buffer mapping → RED.
+    const commandOptions = (sysRedis as unknown as { commandOptions?: { typeMapping?: unknown } })
+      .commandOptions;
+    expect(commandOptions?.typeMapping).toBeUndefined();
+  });
+
+  it('SINGLE-NODE contrast: the shared derivation is safe → serving client also unpoisoned', () => {
+    // No sysSentinels → getBaseClient uses createClient (single-node), whose withTypeMapping is
+    // side-effect-free, so getClient keeps the cheap SHARED derivation. Documents why the fix is
+    // scoped to the Sentinel path only.
+    const sysRedis = createSysRedis({ log: () => undefined });
+    expect(sysRedis.packed).toBeDefined();
+
+    const commandOptions = (sysRedis as unknown as { commandOptions?: { typeMapping?: unknown } })
+      .commandOptions;
+    expect(commandOptions?.typeMapping).toBeUndefined();
   });
 });
