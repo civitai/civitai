@@ -9,8 +9,8 @@
 As a creator, I open `/models` and see **my** models as rows with their **versions nested underneath** (drafts
 included). Per version I manage **all monetization**: set/clear a **licensing fee** (members only), edit **early/paid
 access** config, and — as a **Creator Program member** — make a version **available for sale indefinitely** (beyond
-early access). Secondarily I can **publish or schedule a version's publish date** from here (a management convenience,
-lower priority than fees). Changes save inline; I see immediately whether a fee is *active* or paused.
+early access). I can also **publish or schedule a version's publish date** from here (v1 — managing your models is the
+point). Changes save inline; I see immediately whether a fee is *active* or paused.
 
 ## Layout & components
 
@@ -32,10 +32,9 @@ Loaded server-side (kysely via `@civitai/db`), scoped to `locals.user.id`:
   `licensingFeeType` + the new **`active` flag** ([plan §7.1](../creator-studio-plan.md#71-schema--data-main-app-db)),
   `earlyAccessConfig` / `earlyAccessEndsAt`, and the "unlimited access / indefinite-sale" flag.
   `licensingFeeSettlementCurrency` is read **for display only** — creators can't set it (see Actions).
-- The user's **member `tier`** and **CP-membership** status — the fee gate keys on `tier`; **indefinite-sale keys on
-  Creator Program membership** (per Justin) — `CustomerSubscription → Product.metadata.tier` +
-  `creatorProgram.getCreatorRequirements` ([plan §5.2](../creator-studio-plan.md#52-reuse-existing-main-app-endpointsservices)).
-  *(The exact fee gate — tier vs full CP — is still a [pending confirm](../creator-studio-plan.md#9-decisions--open-questions).)*
+- The user's **Creator Program membership** status — the single gate for **all** monetization actions (both the fee and
+  indefinite-sale) — via `creatorProgram.getCreatorRequirements`
+  ([plan §5.2](../creator-studio-plan.md#52-reuse-existing-main-app-endpointsservices)).
 - **Not** an analytics page — no ClickHouse here. Per-model earnings/usage live on [analytics.md](analytics.md).
 
 ## Actions (writes) — form actions → monetization module
@@ -45,13 +44,13 @@ All mutations go through the creator-studio **monetization module** (`src/lib/se
 
 | Action | Op | Notes |
 |---|---|---|
-| Set / adjust / clear licensing fee | `setLicensingFee(versionId, fee)` | **member-only**; fractional (0.01 precision); validate bounds. Value kept even when paused. |
-| Edit early/paid access config | (access config write) | **Full** `earlyAccessConfig` (not just a toggle) — Justin wants *all monetization in the studio*. Field-by-field scope in Open questions. |
-| Sell access indefinitely | `setUnlimitedAccess(versionId)` | **Creator Program members only** (per Justin) — indefinite availability beyond early access; needs main-app support ([plan §7.1](../creator-studio-plan.md#71-schema--data-main-app-db)). |
-| Publish / schedule publish | (publish write) | **Management convenience — 2nd priority to fees.** Publish a version or set its publish date from the studio. |
+| Set / adjust / clear licensing fee | `setLicensingFee(versionId, fee)` | **Creator Program members only**; fractional (0.01 precision); floor 0.01, cap 100 buzz/image; validate bounds. Value kept even when paused. |
+| Edit early/paid access config | (access config write) | **Full** `earlyAccessConfig` brought over (not just a toggle) — Justin wants *all monetization in the studio*. Only the **generation price** field is a candidate for retirement (licensing fees now cover it). |
+| Sell access indefinitely | `setUnlimitedAccess(versionId)` | **Creator Program members only** — early-access pricing with **no end date** (same mechanism, one just has no early-access end); needs main-app support ([plan §7.1](../creator-studio-plan.md#71-schema--data-main-app-db)). |
+| Publish / schedule publish | (publish write) | **v1 — critical.** Publish a version or set its publish date from the studio; managing your models is the point of v1. |
 
-- **Authorization asserted inside the module** (disabled control is UX; the server re-checks): fee writes gate on member
-  `tier`; **indefinite-sale gates on CP membership**.
+- **Authorization asserted inside the module** (disabled control is UX; the server re-checks): **all** monetization
+  writes (fee, indefinite-sale) gate on **Creator Program membership** — one bar.
 - **Ownership check**: every action confirms `locals.user.id` owns the version.
 - **Settlement currency is not a creator choice** — cash settlement is done by Civitai only, in special circumstances,
   on the creator's behalf (Justin). No per-version or per-account control.
@@ -61,8 +60,8 @@ All mutations go through the creator-studio **monetization module** (`src/lib/se
 
 - **Loading** — skeleton rows (`skeleton`).
 - **Empty** — creator has no models → friendly empty state + link to upload on the main app.
-- **Non-member / non-CP** — page loads; **fee** controls disabled (member gate) and **sell-indefinitely** disabled (CP
-  gate) with an upsell to `/join`; access-config editing stays available (early access isn't member-gated). Drafts are
+- **Non-member** — page loads; **fee** and **sell-indefinitely** controls disabled (Creator Program membership gate)
+  with an upsell to `/join`; access-config editing stays available (early access isn't member-gated). Drafts are
   listed with a draft badge.
 - **Fee paused** — member set a fee then membership lapsed → fee shows `Paused`, value retained, not charged
   ([plan §7.1](../creator-studio-plan.md#71-schema--data-main-app-db)). Pre-cutover fees show a "not-yet-payable" state.
@@ -70,11 +69,9 @@ All mutations go through the creator-studio **monetization module** (`src/lib/se
 
 ## Gating
 
-Gating is **feature-specific**: **setting a fee** keys on member `tier`; **sell-indefinitely** keys on **Creator
-Program membership** (per Justin). Everything else (access config, publish) is open to any authenticated owner. Enforced
-in UI (disabled + tooltip) and re-checked in the module. The exact *fee* bar (tier vs full CP) is still
-[pending](../creator-studio-plan.md#9-decisions--open-questions) — Justin's CP answer for indefinite-sale hints the two
-gates may genuinely differ.
+Gating is a **single bar**: **Creator Program membership** gates every monetization action (setting a fee,
+sell-indefinitely). Everything else (access config, publish) is open to any authenticated owner. Enforced in UI
+(disabled + tooltip) and re-checked in the module.
 
 ## Shared / cross-refs
 
@@ -85,26 +82,33 @@ gates may genuinely differ.
 
 ## Routing & URL state
 
-- **Table state in the URL** — search (`?q=`), filters (`?status=`, `?fee=active|paused|off`, `?access=`), sort, page —
+- **Table state in the URL** — search (`?q=`), filters (`?status=`, `?fee=active|paused|off`, `?access=`), sort, cursor —
   read in `+page.server.ts` `load`, updated via `goto('?…', { keepFocus, noScroll })`; deep-linkable, refetches fresh.
 - **Grouped rows** — which models are expanded is view state; keep ephemeral (or `?open=<modelId>` for linkable expansion).
 - **Edit surfaces** — richer per-version editors (full access config, publish scheduling) open as a **URL-addressable
   drawer** (`?version=<id>`) via **shallow routing** (`pushState`) — linkable, back-button closes it, no page reload.
   Inline fee/on-off stays in the row.
 - **Optimistic** money updates with rollback on failure (confirmed OK — the fee is a stored value, not a live charge).
-- **Pagination** — offset vs cursor **undecided** (Justin: "not sure yet"); revisit for creators with many versions.
+- **Pagination** — **cursor-based virtualized infinite scroll** (load-more) with a total count shown, plus
+  filters/sort/search; **not** numbered pages (see Decisions).
 
-## Open questions
+## Decisions (resolved 2026-07-02)
 
-- **Fee gate — tier vs full CP membership** (still pending — [plan §9](../creator-studio-plan.md#9-decisions--open-questions)).
-  Justin scoped **indefinite-sale to CP members**, so the gates may genuinely differ (fee = `tier`, indefinite = CP).
-- **Access-config depth** — "all monetization in the studio" ⇒ expose the **full** `earlyAccessConfig` (download vs
-  generation price, trial limits, donation goals) here; confirm the field-by-field v1 scope vs. what trails.
-- **Indefinite-sale needs main-app work** — "available for sale indefinitely" (beyond early access, CP-gated) needs a
-  main-app representation + backend ([plan §7.1](../creator-studio-plan.md#71-schema--data-main-app-db)) before the
-  studio control is real. Scope/own with backend.
-- **Publish / schedule from the studio** — confirmed wanted but **2nd priority to fees**; v1 or fast-follow?
-- **Pagination** — offset vs cursor (undecided).
+- **MODELS-1 — Fee gate.** **Creator Program membership** — one bar for all gated actions (fee-setting and
+  indefinite-sale). No separate tier gate.
+- **MODELS-2 — Access-config depth.** Bring over the **full** `earlyAccessConfig` (download vs generation price, trial
+  limits, donation goals). Only the **generation price** is a candidate for retirement, since licensing fees now cover
+  that.
+- **MODELS-3 — Indefinite-sale.** It is **early-access pricing with no end date** (same mechanism). The main-app backend
+  needs the no-end-date representation; scope/own with backend.
+- **MODELS-4 — Publish / schedule.** **v1 — critical.** Managing your models (publish/schedule + bulk fee editing) is
+  the whole point of v1.
+- **MODELS-5 — Pagination.** **Cursor-based virtualized infinite scroll** (load-more) with strong filters/sort/search
+  and a total count shown — **not** numbered pages. Numbered/offset paging can be added later only if page-jumps are
+  explicitly requested.
 
-**Resolved (Justin):** table **grouped by model, versions nested** · **drafts shown** · **settlement currency is not a
-creator choice** (Civitai-only, special cases) · optimistic updates OK.
+**Also resolved (Justin):** table **grouped by model, versions nested** · **drafts shown** · **settlement currency is not
+a creator choice** (Civitai-only, special cases) · optimistic updates OK.
+
+**Still open / deferred:** indefinite-sale's main-app no-end-date backend representation must land before the studio
+control is real (MODELS-3, coordinate with backend).

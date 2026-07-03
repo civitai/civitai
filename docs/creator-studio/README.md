@@ -17,8 +17,8 @@ Actions (writes) → States → Gating → Shared/cross-refs → Open questions.
 | Model management | [models.md](models.md) | ⭐ | access toggles, per-version licensing fee, sell-indefinitely |
 | Analytics | [analytics.md](analytics.md) | ⭐ | `/earnings/analytics` — ClickHouse usage/earnings charts |
 | Earnings | [earnings.md](earnings.md) | ✓ | `/earnings` — earnings by source (ClickHouse) |
-| Licensing fees (bulk) | [licensing.md](licensing.md) | ~ | bulk fee editor; may trail the per-version editor |
-| Settings | [settings.md](settings.md) | ✓ | Tipalti/tier status, default fee suggestions |
+| Licensing fees (bulk) | [licensing.md](licensing.md) | ✓ | bulk fee editor — a mode of `/models`, not a separate page (v1-critical) |
+| Settings | [settings.md](settings.md) | ✓ | Tipalti/membership status, default fee suggestions |
 | Membership upsell | [join.md](join.md) | ✓ | `/join` — for non-members |
 
 ⭐ designer-prioritised · ✓ in v1 · ~ v1 if it lands, else fast-follow
@@ -26,24 +26,23 @@ Actions (writes) → States → Gating → Shared/cross-refs → Open questions.
 ## Cross-cutting (not a page — referenced by several)
 
 - **Nav** — one app-local `nav.ts` constant drives the desktop sidebar + mobile header ([plan §3](../creator-studio-plan.md#3-page-list-v1)).
-- **Member gate** — most write actions are member-`tier` gated; the exact bar (tier vs full CP membership) is a
-  [pending confirm](../creator-studio-plan.md#9-decisions--open-questions).
+- **Member gate** — all gated write actions are gated on **Creator Program membership** (one bar for everything;
+  resolved 2026-07-02).
 - **Monetization module** — `setLicensingFee` / `bulkSetLicensingFee` / `setUnlimitedAccess`
   ([plan §5.3](../creator-studio-plan.md#53-new-monetization-operations-creator-studio-module-extract-to-a-package-at-consolidation)).
 - **Analytics reads** — ClickHouse via `@civitai/clickhouse`, daily aggregates ([plan §7.6](../creator-studio-plan.md#76-clickhouse-analytics--materialized-views)).
 
-## Cross-cutting decisions needed (answer once — they recur across pages)
+## Cross-cutting decisions (resolved 2026-07-02)
 
-These surfaced in ≥2 page docs; deciding them once keeps the specs from drifting. **Justin's product/business review
-questions** are consolidated in [plan §9](../creator-studio-plan.md#questions-for-justin--review-pass-2026-07-02).
+These surfaced in ≥2 page docs; deciding them once keeps the specs from drifting. All resolved from the Q&A roundup.
 
-| # | Decision | Affects | Owner |
+| # | Question | Affects | Decision |
 |---|---|---|---|
-| 1 | **`/licensing`: separate page vs a mode/tab of `/models`** (they share rows + the fee action) | [licensing](licensing.md), [models](models.md) | eng/design |
-| 2 | **Owner-keyed earnings rollup** (§7.6 gap #1) — earnings tables key on `modelVersionId`, not the creator's `userId`; needed to scope "my" earnings/usage at scale | [dashboard](dashboard.md), [analytics](analytics.md), [earnings](earnings.md) | **backend / Koen** |
-| 3 | **Charting library** (no chart primitive in `@civitai/ui`; Chart.js is React-only) + **date-range/calendar** control (no calendar primitive) | [analytics](analytics.md), [earnings](earnings.md), [dashboard](dashboard.md) | eng |
-| 4 | **CP cash + withdrawal home** — dashboard vs `/earnings` vs `/settings` (pick one entry point) | [dashboard](dashboard.md), [earnings](earnings.md), [settings](settings.md) | design |
-| 5 | **`/earnings` vs `/earnings/analytics` vs dashboard boundary** — what's unique to each so the same numbers don't appear (and drift) in three places | [dashboard](dashboard.md), [earnings](earnings.md), [analytics](analytics.md) | design |
-| 6 | **Member gate: subscription `tier` vs full CP membership** (score ≥40k) — changes gating + `/join` CTA. Justin scoped **indefinite-sale to CP members**, so gates may be **feature-specific** (fee = `tier`, indefinite-sale = CP) | [join](join.md), [models](models.md), [licensing](licensing.md), [settings](settings.md) | **Justin** ([plan §9](../creator-studio-plan.md#9-decisions--open-questions)) |
-| 7 | **Access-sale + cosmetic-sale earnings** (§7.6 gap #2, a per-`toAccountId` buzz rollup) — in v1 or defer? | [earnings](earnings.md), [dashboard](dashboard.md) | design + backend |
-| 8 | **Default fee suggestion — per-account vs per-version** *(settlement currency resolved: not a creator choice — Civitai-only, special cases)* | [settings](settings.md), [models](models.md) | design |
+| 1 | **`/licensing`: separate page vs a mode/tab of `/models`** (they share rows + the fee action) | [licensing](licensing.md), [models](models.md) | **Mode of `/models`** — a bulk-edit column/mode; no separate page. |
+| 2 | **Owner-keyed earnings rollup** (§7.6 gap #1) — earnings tables key on `modelVersionId`, not the creator's `userId` | [dashboard](dashboard.md), [analytics](analytics.md), [earnings](earnings.md) | **ClickPipe/CDC → `modelVersion → ownerUserId` CH dictionary → owner-keyed AggregatingMergeTree MV.** Build handoff at [../plans/creator-studio-owner-rollup-handoff.md](../plans/creator-studio-owner-rollup-handoff.md); version-ID query is the fallback. |
+| 3 | **Charting library** + **date-range/calendar** control (none in `@civitai/ui`) | [analytics](analytics.md), [earnings](earnings.md), [dashboard](dashboard.md) | **LayerChart** (via shadcn-svelte, primitives in `@civitai/ui`; LayerChart 2.0) + **adopt a date picker**. |
+| 4 | **CP cash + withdrawal home** — dashboard vs `/earnings` vs `/settings` | [dashboard](dashboard.md), [earnings](earnings.md), [settings](settings.md) | **`/earnings`** — single entry point (dashboard shows a condensed preview + links out). |
+| 5 | **`/earnings` vs `/earnings/analytics` vs dashboard boundary** | [dashboard](dashboard.md), [earnings](earnings.md), [analytics](analytics.md) | **Analytics = non-buzz usage** (generations, downloads); **earnings = buzz + real-dollar cash**; dashboard = condensed preview. |
+| 6 | **Member gate: subscription `tier` vs full CP membership** | [join](join.md), [models](models.md), [licensing](licensing.md), [settings](settings.md) | **Creator Program membership — a single bar for all gated actions** (no feature-specific / tier hedging). |
+| 7 | **Access-sale + cosmetic-sale earnings** (§7.6 gap #2, a per-`toAccountId` buzz rollup) — in v1 or defer? | [earnings](earnings.md), [dashboard](dashboard.md) | **In v1** (all sources day 1 ideally); needs the gap #2 per-`toAccountId` MV. |
+| 8 | **Default fee suggestion — per-account vs per-version** *(settlement currency: not a creator choice — Civitai-only)* | [settings](settings.md), [models](models.md) | **Per-account baseline in Settings**, overridable per version in `/models`. |

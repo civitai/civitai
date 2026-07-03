@@ -17,15 +17,18 @@ the money I see on [earnings.md](./earnings.md). I can change the date range and
 `@civitai/ui` (shadcn-svelte) primitives — don't hand-build:
 
 - **`card`** — headline stat tiles (total generations, total downloads, engagement) for the selected range.
-- **charts** — generations-over-time + downloads-over-time line/area, per-resource. ⚠️ **`@civitai/ui` has NO chart
-  primitive**, and the main app's Chart.js is React-only — a **Svelte charting library must be chosen** (see open
-  questions). This is a real v1 dependency, not a detail.
-- **`table`** — **top models / versions** breakdown (generations · downloads · engagement, sortable). Depends on the
-  owner-keyed rollup (see Data) — may be deferred if that rollup slips.
+- **charts** — **generations-over-time** (with a **weekly** option, **split by buzz color** blue/yellow/green) and
+  downloads-over-time line/area, per-resource. Charting lib is **LayerChart** (via shadcn-svelte, primitives in
+  `@civitai/ui`; LayerChart 2.0). A real v1 dependency, not a detail.
+- **`table`** — **top models / versions** breakdown (per-week earnings · generations · **the fee currently set**,
+  sortable). Depends on the owner-keyed rollup (see Data) — may be deferred if that rollup slips.
+- **Pricing-reference metric** — avg buzz cost per image by **base model + type**, so creators know what to price at
+  (the same reference surfaced inline in the [licensing.md](./licensing.md) bulk editor).
 - **`tabs`** (optional) — switch metric views (usage vs. downloads vs. engagement) to keep each view basic.
-- **`badge`** for deltas vs. prior period; **`skeleton`** while loading; **`popover`** for metric definitions.
-- **Date-range control** — ⚠️ `@civitai/ui` has **no calendar** primitive; a preset range control (7d/30d/90d) or a
-  chosen date-picker is needed (see open questions).
+- **`badge`** for deltas vs. prior period (week-over-week); **`skeleton`** while loading; **`popover`** for metric
+  definitions.
+- **Date-range control** — adopt a **date-picker** plus a **granularity switcher** (daily / weekly / monthly),
+  default **last 30 days**, with a custom range.
 
 ## Data (reads) — `+page.server.ts`
 
@@ -70,8 +73,8 @@ all keyed by **`modelVersionId, date`**:
 ## Gating
 
 **Any logged-in user can access** — this is a read, so gating is light
-([plan §1](../creator-studio-plan.md#1-what-this-app-is)). No member-`tier` action gate here (that's a per-*action*
-concern, and this page has no actions). **Member vs non-member is a data-visibility nuance**: usage is only interesting
+([plan §1](../creator-studio-plan.md#1-what-this-app-is)). No Creator Program membership action gate here (that's a
+per-*action* concern, and this page has no actions). **Member vs non-member is a data-visibility nuance**: usage is only interesting
 where a fee is *active* (member) — a non-member's usage doesn't drive fees, so copy should frame usage as potential and
 point to [join.md](./join.md). Nav item is not `memberOnly`.
 
@@ -84,17 +87,19 @@ point to [join.md](./join.md). Nav item is not `memberOnly`.
 - **ClickHouse client** `@civitai/clickhouse` is shared; the creator-usage **query logic is new** here
   ([plan §7.6](../creator-studio-plan.md#76-clickhouse-analytics--materialized-views)).
 
-## Open questions
+## Decisions (resolved 2026-07-02)
 
-- **What counts as "basic" for v1?** Lock the metric/chart list (generations-over-time, downloads-over-time, top-models
-  table + a few stat tiles?) to guard against scope-balloon — richer analytics (cohorts, per-model funnels) is
-  **post-v1** ([plan §8](../creator-studio-plan.md#8-phasing)).
-- **Per-model breakdown table** depends on the **owner-keyed rollup**
-  ([plan §7.6 gap #1](../creator-studio-plan.md#76-clickhouse-analytics--materialized-views)) — is it **v1** (needs the MV
-  from backend) or **fast-follow** (v1 ships headline usage only)?
-- **Which Svelte charting library?** No chart primitive in `@civitai/ui`; Chart.js is React-only. Pick one
-  (LayerChart / LayerCake / d3-based) and decide whether it lands **in `@civitai/ui`** (shared) or app-local.
-- **Date-range picker** — `@civitai/ui` has no calendar; ship **presets** (7d/30d/90d) for v1 or adopt a date-picker?
-- **Default range + granularity** — proposed **last 30 days, daily** (matches the daily aggregates); confirm.
-- **Earnings-over-time boundary** — does the money time-series live **here** or on [earnings.md](./earnings.md)? Proposed:
-  usage here, money there, cross-linked — confirm so we don't double-build the same chart.
+- **ANALYTICS-1 — v1 metric/chart list.** Lock to: **generations-over-time** (weekly option + split by buzz color
+  blue/yellow/green), **earnings-over-time by source** (weekly, week-over-week delta), a **top-models table** (per-week
+  earnings + generations + the fee set), **stat tiles**, and a **pricing-reference metric** (avg buzz cost/image by
+  base model + type). Richer analytics (cohorts, per-model funnels) is post-v1.
+- **ANALYTICS-2 — Per-model breakdown.** Depends on the **owner-keyed rollup** (EARN-2). v1 if the rollup lands, else
+  fast-follow with the version-ID fallback.
+- **ANALYTICS-3 — Date control + charting lib.** **Adopt a date picker** (not just presets). Charting lib is
+  **LayerChart** (via shadcn-svelte, primitives added to `@civitai/ui`; LayerChart 2.0 approved).
+- **ANALYTICS-4 — Default range + granularity.** Default **last 30 days** with a **granularity switcher** (daily /
+  weekly / monthly) and a custom range.
+- **ANALYTICS-5 — Earnings-over-time boundary.** **Usage time-series (non-buzz: generations, downloads) lives here** in
+  analytics; the **money time-series lives on [earnings.md](./earnings.md)**. Split on buzz vs non-buzz.
+
+**Still open / deferred:** the per-model breakdown table (ANALYTICS-2) hinges on the owner-keyed rollup (EARN-2) landing.

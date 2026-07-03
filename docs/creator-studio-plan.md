@@ -22,8 +22,9 @@ Scope (from the ClickUp task), all creator-facing:
 main app; those stay put for now.
 
 **Access model (confirmed by Justin):** **any logged-in user can access Creator Studio.** Specific items/actions are
-restricted to **members**, gated on the user's subscription **`tier`**. The app is *not* CP-gated at the door — the
-gate is "authenticated," and member-only capabilities (e.g. setting a licensing fee) are enforced per-action.
+restricted to **Creator Program members** — a **single gate** for all gated actions. The app is *not* CP-gated at the
+door — the gate is "authenticated," and member-only capabilities (e.g. setting a licensing fee) are enforced per-action
+on Creator Program membership.
 
 **v1 build priority (from the designer meeting):** **model management** and **basic analytics** come first; the
 **Creator Shop is out of v1** — see the shop note below.
@@ -69,7 +70,7 @@ packages we import and wires each one's dependency, transpile entry, env vars, a
 | Framework | SvelteKit + `@sveltejs/adapter-node`, Svelte 5, Vite |
 | UI | `@civitai/ui` (shadcn-svelte / `bits-ui`) — reach for shadcn-svelte before hand-building; Civitai composites (EdgeMedia, ImageGuard, masonry) get built *on top of* the primitives, into `@civitai/ui` |
 | Styling | Tailwind v4 (`@tailwindcss/vite`), dark-only (`<html class="dark">`), `@import '@civitai/ui/theme.css'`, `@source` the package so classes aren't purged |
-| Auth | `createSpokeGuard` in `hooks.server.ts`; gate is **any authenticated user** (`require: (u) => !!u`). Member-only actions are enforced per-action on the `tier` (see [§5](#5-apiservice-plan)) |
+| Auth | `createSpokeGuard` in `hooks.server.ts`; gate is **any authenticated user** (`require: (u) => !!u`). Member-only actions are enforced per-action on **Creator Program membership** (see [§5](#5-apiservice-plan)) |
 | Data | `@civitai/db/kysely` (env-free, no Prisma engine) for domain reads/writes; monetization **mutations run in-process** via a creator-studio **module** (kysely + `@civitai/buzz`) — **no main-app tRPC hop**. See [§5](#5-apiservice-plan) |
 | Buzz | `@civitai/buzz` — a **server-side-only** client for the buzz service (transactions + earnings reads). All buzz comms are server-side; never imported into browser code |
 | Env | app-local `.env` (+ committed `.env.example`); `process.env` shim in `vite.config.ts` |
@@ -92,9 +93,9 @@ Routes under `apps/creator-studio/src/routes/`. Grouped, minimal, one screen per
 | `/earnings` | **Earnings** | Breakdown by source: license fees, tips, model-access sales, cosmetic sales. Time-series + totals. Links to CP cash/withdrawal. |
 | `/earnings/analytics` | **Basic analytics** ⭐ | Model usage that drives fees (generations per resource, downloads, engagement over time). **v1 priority — keep "basic" for v1; richer analytics is post-v1.** |
 | `/licensing` | **Licensing fees (bulk editor)** | Table of the creator's models/versions; multi-select; set/clear fee; apply model-type default suggestions (LoRA ~0.1, base ~1 buzz/image); fractional pricing. *(Bulk editor may trail the per-version editor on `/models` — [§8](#8-phasing).)* |
-| `/models` | **Model management** ⭐ | Grouped by model (versions nested, **drafts included**). Per-version: **full** early/paid-access config, licensing-fee on/off + amount (members only), "sell access indefinitely" for **CP members**, and (2nd-priority) **publish/schedule**. **v1 priority.** See [models.md](creator-studio/models.md). |
-| `/settings` | **Payout & settings** | Payment config (Tipalti) status, membership/`tier` status, per-account default fee suggestions. |
-| `/join` | **Membership upsell** | Shown to non-members (any logged-in user can reach the Studio): what the member tier unlocks + link to subscribe. *(Tier vs CP gate to confirm — [§5.2](#52-reuse-existing-main-app-endpointsservices).)* |
+| `/models` | **Model management** ⭐ | Grouped by model (versions nested, **drafts included**). Per-version: **full** early/paid-access config, licensing-fee on/off + amount (**CP members**), "sell access indefinitely" (**CP members**), and **publish/schedule**. **v1 priority.** See [models.md](creator-studio/models.md). |
+| `/settings` | **Payout & settings** | Payment config (Tipalti) status, Creator Program membership status, per-account default fee suggestions. |
+| `/join` | **Membership upsell** | Shown to non-members (any logged-in user can reach the Studio): what Creator Program membership unlocks + link to join. |
 
 Public/allowlisted (pre-gate): `/favicon.svg`, health check.
 
@@ -106,7 +107,7 @@ Public/allowlisted (pre-gate): `/favicon.svg`, health check.
 constant** (`apps/creator-studio/src/lib/nav.ts` — `{ href, label, icon, memberOnly? }[]`) that mirrors this table, so
 the two can't drift and adding a page is a one-line change. It's app-local config (one app → a module, not a package).
 Notes: match **active state** carefully for nested routes (`/earnings` vs `/earnings/analytics`); `memberOnly` lets
-both navs conditionally show/disable member-gated items off the user's `tier` (ties into the [§5.2](#52-reuse-existing-main-app-endpointsservices) gate).
+both navs conditionally show/disable member-gated items off the user's **Creator Program membership** (ties into the [§5.2](#52-reuse-existing-main-app-endpointsservices) gate).
 
 ---
 
@@ -115,7 +116,7 @@ both navs conditionally show/disable member-gated items off the user's `tier` (t
 | # | Workstream | Built today? | v1 work |
 |---|---|---|---|
 | 1 | Retire 25% comp | Live (to sunset) | **Post-v1 cutover track** (not this app's v1): stop minting `Compensation` rows; remove comp UI; keep tips + license-fee payout paths |
-| 2 | Creator-controlled licensing fees | **Mostly built** | Fractional pricing, member-`tier` gating, **bulk edit** (new), default suggestions |
+| 2 | Creator-controlled licensing fees | **Mostly built** | Fractional pricing, Creator Program membership gating, **bulk edit** (new), default suggestions |
 | 3 | Sell model access (no time cap) | Partially (score-capped EA) | Remove time/qty caps for members; expose toggle in Studio |
 | 4 | Creator Shops | **Being built in the main app** (by another dev) | Not this app's v1 — transferred into Creator Studio later; cosmetics 70/30; Shopify merch is fast-follow |
 | 5 | Creator Studio | **Net-new** | This whole app |
@@ -145,7 +146,7 @@ One new *package* (`@civitai/buzz`); monetization writes are a creator-studio *m
                      already uses it broadly AND creator-studio needs it. Lifted out of buzz.service.ts.
                      SERVER-ONLY — no browser entry; all buzz comms stay server-side.
 monetization module  (creator-studio MODULE — apps/creator-studio/src/lib/server/monetization/, NOT a package yet)
-                     the creator ops: setLicensingFee, bulkSetLicensingFee, setUnlimitedAccess + member-tier gate.
+                     the creator ops: setLicensingFee, bulkSetLicensingFee, setUnlimitedAccess + CP-membership gate.
                      Deps: @civitai/db (kysely) + @civitai/buzz. NO ClickHouse. NO stacking (backend handles it).
 ```
 
@@ -186,7 +187,7 @@ are **not** the analytics path.)*
 
 | Need | Existing surface |
 |---|---|
-| Is user a paying member (by `tier`)? | Active **subscription tier**: `CustomerSubscription` → `Product.metadata.tier` (bronze/silver/gold). ⚠️ `creatorProgram.getCreatorRequirements` *also* gates on creator score ≥40k (full **CP** membership) — a stricter bar; use it only if the gate is meant to be CP-membership, not tier alone. **Confirm which** (Justin said "tier," HackMD said "CP members" — see [§9](#9-decisions--open-questions) "to confirm"). `creator-program.service.ts:205` |
+| Is the user a Creator Program member? | **Creator Program membership** is the single gate (resolved 2026-07-02): `creatorProgram.getCreatorRequirements` (`creator-program.service.ts:205`) — CP membership = subscription tier **+** creator score ≥40k. Used for every gated action (fee-set, indefinite-sale, default-fee pref). |
 | Earnings + analytics (all) | **ClickHouse** via `@civitai/clickhouse` — buzz earnings + `resourceCompensations` aggregates live here; the buzz service is too slow for this. Work from materialized views / daily records ([§7.6](#76-clickhouse-analytics--materialized-views)) |
 | CP cash / banked / pool | `creatorProgram.getCash` / `getBanked` / `getCompensationPool` (`creator-program.router.ts`) |
 | Set a licensing fee (single) | `modelVersion` upsert — `licensingFee*` fields (`model-version.schema.ts:418`), flag `licensing-fee` |
@@ -204,8 +205,8 @@ implementation only at the consolidation ([§9](#9-decisions--open-questions) "f
 | `setLicensingFee` / `bulkSetLicensingFee` | Per-version fee set (member-only) + bulk edit across many versions — no bulk path exists today. |
 | `getDefaultFeeSuggestions` | Model-type default suggestions (LoRA ~0.1, base ~1 buzz/image). |
 | `setUnlimitedAccess` | Remove EA time/quantity caps for members. |
-| fee validation (member gate + fractional) | Enforce member `tier` + fractional bounds when setting a fee. **Stacking/split is NOT here** — the backend already handles it ([§7.3](#73-fee-stacking--already-handled-no-new-work)). |
-| member-`tier` gate | Authorization asserted **inside the module** on member-only operations (and reused when the main app adopts it at consolidation). |
+| fee validation (member gate + fractional) | Enforce **Creator Program membership** + fractional bounds when setting a fee. **Stacking/split is NOT here** — the backend already handles it ([§7.3](#73-fee-stacking--already-handled-no-new-work)). |
+| Creator Program membership gate | Authorization asserted **inside the module** on member-only operations (and reused when the main app adopts it at consolidation). |
 
 Earnings reads are **not** package operations — all analytics come from **ClickHouse** via `@civitai/clickhouse`
 ([§5.2](#52-reuse-existing-main-app-endpointsservices), [§7.6](#76-clickhouse-analytics--materialized-views)).
@@ -342,10 +343,10 @@ ships **~1 week before** it (Justin), so comp-retirement is **not** a v1 item.
 
 ### v1 — MVP (designer-prioritised)
 
-1. **App shell** — scaffold `apps/creator-studio`, auth spoke gate (**any authenticated user**) + member-`tier` action
-   gating, `@civitai/ui`, dashboard.
+1. **App shell** — scaffold `apps/creator-studio`, auth spoke gate (**any authenticated user**) + Creator Program
+   membership action gating, `@civitai/ui`, dashboard.
 2. **Buzz package + monetization module** — `@civitai/buzz` (client, **built**) + a creator-studio **monetization
-   module** (creator ops: `setLicensingFee` / `bulkSetLicensingFee` / `setUnlimitedAccess` + member-`tier` gate; **no
+   module** (creator ops: `setLicensingFee` / `bulkSetLicensingFee` / `setUnlimitedAccess` + Creator Program membership gate; **no
    stacking** — backend handles it) built on `@civitai/db` + `@civitai/buzz` ([§7.2](#72-new-package--creator-studio-modules)).
    No main-app repoint in v1 — that's the consolidation (post-v1).
 3. **Model management** ⭐ — `/models`: per-version early/paid-access toggles, per-version **licensing-fee on/off +
@@ -377,8 +378,9 @@ ships **~1 week before** it (Justin), so comp-retirement is **not** a v1 item.
 
 ### Decided (Justin, 2026-07-01)
 
-- **Access model.** Any logged-in user can access Creator Studio; member-only items/actions are gated on the user's
-  subscription **`tier`**. → app gate is "authenticated," not CP-only ([§1](#1-what-this-app-is), [§2](#2-architecture--tooling)).
+- **Access model.** Any logged-in user can access Creator Studio; member-only items/actions are gated on **Creator
+  Program membership** — a **single bar** for all gated actions (fee-set, indefinite-sale, default-fee pref), resolved
+  2026-07-02. → app gate is "authenticated," not CP-only at the door ([§1](#1-what-this-app-is), [§2](#2-architecture--tooling)).
 - **Timeline.** Launch by **end of month (~2026-07-31)**; Justin is working the orchestrator side with **Koen**.
 - **Fractional pricing.** Fees as small as **1 buzz per 100 images = 0.01 buzz/image**. → migrate `licensingFee` to
   decimal (0.01 precision), settle at the daily payout boundary ([§7.1](#71-schema--data-main-app-db)).
@@ -407,49 +409,46 @@ ships **~1 week before** it (Justin), so comp-retirement is **not** a v1 item.
 ### Decided — Q1: minimal monetization scope for v1
 
 The creator-studio **monetization module** ships the **minimal creator-side writes only** — `setLicensingFee` /
-`bulkSetLicensingFee` with a member-`tier` gate and the `active` flag ([§7.1](#71-schema--data-main-app-db)), plus
+`bulkSetLicensingFee` with a Creator Program membership gate and the `active` flag ([§7.1](#71-schema--data-main-app-db)), plus
 `setUnlimitedAccess` (same shape). These are plain `ModelVersion` writes — no buzz call, no domain co-write. The risky
 buyer-side paths (`earlyAccessPurchase`, cosmetic purchase) **stay in the main app**; they don't move for v1. It's a
 **module, not a package** (single caller in v1 — [§2](#2-architecture--tooling)); with the cutover decoupled (Q5) the
 extraction is off the critical path, so the dependency-map (§7.5) is no longer a blocker.
 
-### To confirm (surfaced in review)
+### Resolved — review pass (2026-07-02)
 
-- **Member gate: subscription `tier` vs full Creator Program membership — possibly feature-specific.** Justin said the
-  fee gate is **`tier`** (any active bronze/silver/gold subscription); the HackMD said "active **Creator Program**
-  members" (tier **+** creator score ≥40k). And Justin scoped **indefinite-sale specifically to CP members** — which
-  suggests the gates may **differ by feature** (licensing fee = `tier`; indefinite-sale = CP membership) rather than one
-  bar. Confirm both — it changes who can set a fee, who can sell indefinitely, and the `/join` upsell copy
-  ([§5.2](#52-reuse-existing-main-app-endpointsservices)).
+Product/business calls resolved from the Q&A roundup. (Eng/design-owned items — charting lib, `/licensing`
+separate-vs-mode, owner-keyed rollup, etc. — are resolved in [creator-studio/README.md](creator-studio/README.md#cross-cutting-decisions-resolved-2026-07-02).)
 
-### Questions for Justin — review pass (2026-07-02)
-
-Consolidated **product/business** calls for Justin's doc review. (Eng/design-owned items — charting lib, `/licensing`
-separate-vs-mode, owner-keyed rollup, etc. — are in [creator-studio/README.md](creator-studio/README.md#cross-cutting-decisions-needed-answer-once--they-recur-across-pages).)
-
-1. **Feature-specific gates?** Confirm the two bars differ: licensing fee gates on subscription **`tier`**;
-   indefinite-sale gates on **CP membership** (see the "To confirm" item above).
-2. **Indefinite-sale mechanics.** How does "available for sale indefinitely" actually work — a one-time purchase at a
-   **creator-set price**? How does it relate to early-access pricing (replaces / stacks / separate)? New and
-   underspecified; needs main-app support ([§7.1](#71-schema--data-main-app-db)).
-3. **v1 earnings sources.** Show **all** sources (incl. model-access + cosmetic sales — need a new buzz rollup,
-   [§7.6 gap #2](#76-clickhouse-analytics--materialized-views)), or ship **comp / license / tip only** in v1 and add the
-   rest later? ([earnings.md](creator-studio/earnings.md))
-4. **"Basic analytics" scope.** Lock the v1 metric/chart list (proposed: generations-over-time, downloads-over-time, a
-   top-models table, a few stat tiles) so it doesn't balloon ([analytics.md](creator-studio/analytics.md)).
-5. **Fee auto-pause → notify?** When a fee **silently pauses** because membership lapsed ([§7.1](#71-schema--data-main-app-db)),
-   is the creator **notified** (in-app / email)? A silent pause = lost income = support tickets. Do we need
-   notifications in v1 (fee paused, payout ready)?
-6. **Cutover creator comms / grandfathering.** When 25% comp retires (~1 week after v1), what's the creator-facing
-   story, and is there any **grandfathering / transition** for creators mid-accrual?
-7. **Max licensing fee.** Floor is **0.01 buzz/image** (confirmed). Is the **cap** still 100 buzz/image
-   (`MAX_LICENSING_FEE`) with fractional pricing, or does it change?
-8. **Studio discoverability.** How do creators find `creator.civitai.com` — a nav link from the main app for
-   **everyone**, only users **with models**, or a launch announcement? (Shapes the non-member / `/join` experience.)
-9. **Publish/schedule + bulk fee editor — v1 or fast-follow?** Both are flagged "2nd priority" / "may trail"
-   ([models.md](creator-studio/models.md), [licensing.md](creator-studio/licensing.md)) — confirm which land in v1.
-10. **Currency display.** Buzz-only in v1, or show **USD equivalents** for cash earnings (dashboard / earnings)?
-11. **Default fee suggestions.** Confirm the values (LoRA ~0.1, base ~1 buzz/image) and which model types get one.
+- **PLAN-TC / PLAN-1 — Member gate.** **Creator Program membership is the single bar** for every gated action (fee-set,
+  indefinite-sale, default-fee pref). No feature-specific split and no subscription-tier-only gate. Higher-tier-only
+  features may come eventually, but v1 gates everything on CP membership.
+- **PLAN-2 — Indefinite-sale mechanics.** It is an **extension of early-access pricing using the same mechanism** — one
+  simply has **no early-access end date**. (Early access becomes the switch you flip when selling a model.) Needs the
+  main-app no-end-date representation ([§7.1](#71-schema--data-main-app-db)).
+- **PLAN-3 — v1 earnings sources.** **All sources day 1** ideally, with a **source filter** (model access, cosmetic,
+  comp, licenses, tips; merch later). **Comp + licenses can share a chart** (comp is being retired). Access-sale +
+  cosmetic-sale need the [§7.6 gap #2](#76-clickhouse-analytics--materialized-views) MV.
+- **PLAN-4 / PLAN-11 — Analytics scope + defaults.** v1 charts: generations-over-time (weekly option + split by buzz
+  color blue/yellow/green), earnings-over-time by source (weekly, week-over-week delta), a top-models table (per-week
+  earnings + generations + fee set), stat tiles, and a pricing-reference metric (avg buzz cost/image by base model +
+  type). Confirm the final list with Alex DS before locking.
+- **PLAN-5 — Fee auto-pause → notify.** **Yes** — notify via **in-app + email**; the email **lists the affected models**
+  no longer collecting fees. **Notifications are needed in v1** (fee paused, payout ready), eased by the new
+  notifications app/SDK.
+- **PLAN-6 — Cutover comms / grandfathering.** Comms story lives in the dedicated article
+  ([civitai.com/articles/32087](https://civitai.com/articles/32087)). Creators get a **1-week window** to set licensing
+  fees, then Creator Comp is gone — **no grandfathering**. (Recommendation on the table: settle comp already accrued up
+  to the cutover, then stop all new accrual — kinder than a clean zero.)
+- **PLAN-7 — Max licensing fee.** Floor **0.01 buzz/image**, cap stays **100 buzz/image** (`MAX_LICENSING_FEE`).
+- **PLAN-8 — Discoverability.** A **nav item in the main-site user menu** linking to the Studio + a **launch
+  announcement** + a **nice notice on the Buzz dashboard** (where banking/creator controls live) pointing to the Studio.
+- **PLAN-9 — Publish/schedule + bulk fee editor.** **v1 — critical.** Managing your models is the whole point of v1.
+- **PLAN-10 — Currency display.** Display earnings **in the currency received** (buzz or USD); **no conversion/mapping**
+  (no rate exists). USD is available only for select users; most creators are buzz-only and don't set a currency.
+- **PLAN-11 — Default fee suggestions + eligible types.** Values LoRA ~0.1, base ~1 buzz/image. Model types are handled
+  as an **exclude set** — every type gets a fee **except**: **Poses, Wildcards, Workflows, Other, Detection,
+  VisionLanguage, LLM, CLIP, CLIPVision, TextEncoder**. **UNet IS eligible** (increasingly used like a checkpoint).
 
 ### For the full cutover (post-v1 notes)
 
