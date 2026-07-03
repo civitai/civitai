@@ -21,6 +21,7 @@ import { checkImageExistence } from '~/server/jobs/confirm-image-existence';
 import { confirmMutes } from '~/server/jobs/confirm-mutes';
 import { confirmPendingBlockAttributions } from '~/server/jobs/confirm-pending-block-attributions';
 import { bulkPayoutBlockAttributions } from '~/server/jobs/bulk-payout-block-attributions';
+import { reapDevTunnelsJob } from '~/server/jobs/reap-dev-tunnels';
 import { custodySweepJob } from '~/server/jobs/custody-sweep';
 import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
 import { countReviewImages } from '~/server/jobs/count-review-images';
@@ -162,6 +163,7 @@ export const jobs: Job[] = [
   confirmMutes,
   confirmPendingBlockAttributions,
   bulkPayoutBlockAttributions,
+  reapDevTunnelsJob,
   checkImageExistence,
   fullImageExistence,
   rewardsAdImpressions,
