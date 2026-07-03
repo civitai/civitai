@@ -82,12 +82,10 @@ vi.mock('~/server/db/client', () => ({
   dbRead: mockDbRead,
   dbWrite: { modelBlockInstall: { findUnique: vi.fn() }, model: { findUnique: vi.fn() } },
 }));
-vi.mock('~/server/redis/client', () => ({
-  redis: mockRedis,
-  sysRedis: mockSysRedis,
-  REDIS_KEYS: { BLOCKS: { POPULAR_CHECKPOINT: 'blocks:popular-checkpoint' } },
-  REDIS_SYS_KEYS: { BLOCKS: { BUZZ_CAP: 'system:blocks:buzz-cap' } },
-}));
+vi.mock('~/server/redis/client', async () => {
+  const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
+  return { ...actual, redis: mockRedis, sysRedis: mockSysRedis };
+});
 vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
   dailyBoostReward: { apply: vi.fn(), getUserRewardDetails: vi.fn() },
 }));

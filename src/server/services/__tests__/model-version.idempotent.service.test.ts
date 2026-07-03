@@ -57,7 +57,10 @@ vi.mock('~/server/prom/client', async (importOriginal) => {
 // Keep the heavy service/search-index graph out of the test module graph.
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
 vi.mock('~/server/redis/caches', () => ({}));
-vi.mock('~/server/redis/client', () => ({ REDIS_KEYS: {} }));
+vi.mock('~/server/redis/client', async () => {
+  const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
+  return { ...actual };
+});
 vi.mock('~/server/redis/resource-data.redis', () => ({ resourceDataCache: {} }));
 vi.mock('~/server/search-index', () => ({}));
 vi.mock('~/server/services/auction.service', () => ({ deleteBidsForModelVersion: vi.fn() }));
