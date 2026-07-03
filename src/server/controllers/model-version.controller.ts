@@ -144,7 +144,7 @@ const loadModelVersion = async ({
             availability: true,
           },
         },
-        files: withFiles ? { select: modelFileSelect } : false,
+        files: withFiles ? { select: modelFileSelect, where: { replacedAt: null } } : false,
         posts: withFiles ? { select: { id: true, userId: true } } : false,
         requireAuth: true,
         settings: true,

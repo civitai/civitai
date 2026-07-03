@@ -85,6 +85,7 @@ fragment) at:
   download / generation / resource-data. **Currently filters nothing** → must add `replacedAt: null`.
 - `model.selector.ts:143` files `where` (currently `dataPurged: false`).
 - `model.service.ts` `dataPurged: false` sites (≈3).
+- `model-version.controller.ts` `loadModelVersion` (line ~147) — the `files` select used by public `getById` and owner-edit; add `where: { replacedAt: null }` (found during the Task 3 audit; not in the original audit list).
 
 Covered **for free** by the `visibility = 'Private'` flip (these already `filter(visibility === Public)`):
 
