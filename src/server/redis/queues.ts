@@ -252,7 +252,11 @@ const WAIT_FOR_MERGE_MAX_ITERATIONS = 100; // ~10s at the 100ms poll interval
 const WAIT_FOR_MERGE_POLL_MS = 100;
 
 async function waitForMerge(key: string) {
-  const mergeKey = `${REDIS_SYS_KEYS.QUEUES.BUCKETS}:${key}:${REDIS_SUB_KEYS.QUEUES.MERGING}`;
+  // Cast to the branded key type: extracting the template literal into a const widens it to
+  // `string`, losing the contextual RedisKeyTemplateSys match the inline literal had (mirrors
+  // getNewBucket below). Without this, sysRedis.exists() rejects it (TS2345) — caught only by the
+  // preview build's typecheck, not local tsc against stale @civitai/redis types.
+  const mergeKey = `${REDIS_SYS_KEYS.QUEUES.BUCKETS}:${key}:${REDIS_SUB_KEYS.QUEUES.MERGING}` as RedisKeyTemplateSys;
   for (let i = 0; i < WAIT_FOR_MERGE_MAX_ITERATIONS; i++) {
     const { value: isMerging } = await safeSysRead(
       () => sysRedis.exists(mergeKey),
