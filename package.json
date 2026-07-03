@@ -113,6 +113,8 @@
     "@flipt-io/flipt-client-js": "^0.2.0",
     "@floating-ui/dom": "^1.6.0",
     "@google-cloud/recaptcha-enterprise": "^5.1.1",
+    "@grafana/faro-web-sdk": "2.8.2",
+    "@grafana/faro-web-tracing": "2.8.2",
     "@headlessui/react": "2.2",
     "@hookform/resolvers": "^5.1.1",
     "@mantine/core": "^7.17.7",
