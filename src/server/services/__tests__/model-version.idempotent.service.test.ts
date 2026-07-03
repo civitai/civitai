@@ -59,7 +59,10 @@ vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
 vi.mock('~/server/redis/caches', () => ({}));
 vi.mock('~/server/redis/client', async () => {
   const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
-  return { ...actual };
+  // The `redis`/`sysRedis` client instances live on the app shim, NOT the
+  // package (`...actual` only has the key consts + factory) — stub them so
+  // importers like db-lag-helpers resolve the named export.
+  return { ...actual, redis: { get: vi.fn(), set: vi.fn() }, sysRedis: { get: vi.fn() } };
 });
 vi.mock('~/server/redis/resource-data.redis', () => ({ resourceDataCache: {} }));
 vi.mock('~/server/search-index', () => ({}));

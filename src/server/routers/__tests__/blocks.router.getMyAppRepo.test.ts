@@ -30,7 +30,9 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
 vi.mock('~/env/server', () => ({
   // LOGGING is read by cache-helpers' createLogger at module-eval (the router
   // now statically imports appBlockReview.service, which imports cache-helpers).
-  env: { FORGEJO_PUBLIC_URL: 'https://forgejo.civitai.com', LOGGING: '' },
+  // MEILI_CALL_CONCURRENCY is read by meilisearch/client at module-eval
+  // (reached via the router's transitive imports) — pLimit() throws on undefined.
+  env: { FORGEJO_PUBLIC_URL: 'https://forgejo.civitai.com', LOGGING: '', MEILI_CALL_CONCURRENCY: 50 },
 }));
 vi.mock('~/server/services/blocks/dev-git-access.service', () => ({
   ensureForgejoIdentity: mockEnsureForgejoIdentity,
