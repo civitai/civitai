@@ -146,8 +146,13 @@ JWT for workflows. The orchestrator validates via the JWKS endpoint and
 buckets buzz spend by the token's `buzzBudget` claim. This keeps the host
 out of the request path on every generation.
 
-Phase 2/3 postMessage surfaces (`PURCHASE_BUZZ`, `NAVIGATE`, `TRACK_EVENT`)
-are not implemented in v1. The SDK should detect their absence gracefully.
+Several later postMessage surfaces have since landed: `OPEN_BUZZ_PURCHASE` /
+`GET_BUZZ_BALANCE` (host-mediated Buzz purchase + per-account balance read) and
+`NAVIGATE` (page host only — the model slot intentionally does not bridge it).
+`TRACK_EVENT` is still not host-bridged (no analytics sink wired) and is dropped
+silently. See `src/components/AppBlocks/hostHandlerParity.ts` for the
+authoritative host↔SDK message inventory. The SDK should detect an unhandled
+surface gracefully.
 
 ## Publish / review / deploy lifecycle (no trust on push)
 
