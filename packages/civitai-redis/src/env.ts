@@ -64,6 +64,37 @@ export const redisEnvSchema = z
     // PER-POD RECONNECT JITTER (fleet-stampede brake): wait a random [0, this) before the
     // actual reconnect so a synchronized fleet event doesn't stampede the cluster.
     REDIS_CLUSTER_SELFHEAL_RECONNECT_JITTER_MS: z.coerce.number().default(1000),
+    // ── SYS (SENTINEL) SELF-HEAL WATCHDOG ──────────────────────────────────────────────
+    // The exact mirror of the cluster self-heal, for the OTHER node-redis client — the sysRedis
+    // Sentinel HA client. WHY (incident 2026-07-03): a sentinel flap orphaned in-flight commands
+    // on the RedisSentinel client (inflight 7,000–253,000 per pod on ~11 pods), hung every request
+    // touching sysRedis, and did NOT self-heal until the pods were manually deleted. Only the
+    // SUSTAINED-INFLIGHT trigger applies here (the sys client has no per-command deadline, so
+    // there's no sawtooth/deadline-hit path — inflight climbs monotonically, exactly the incident
+    // signature). ON by default (a forced reconnect is the only thing that clears the wedge short
+    // of a pod restart); REDIS_SYS_SELFHEAL_ENABLED=false is the single-flip revert.
+    REDIS_SYS_SELFHEAL_ENABLED: z.preprocess(
+      // default true; only the literal string 'false' disables it (mirrors the cluster flag)
+      (x) => x !== 'false',
+      z.boolean().default(true)
+    ),
+    // Inflight count strictly above which the sys client is considered wedged. Healthy sys inflight
+    // is single-digit; the incident wedge was 7,000+ — 500 is a huge margin below any real wedge
+    // yet far above any legitimate burst.
+    REDIS_SYS_SELFHEAL_INFLIGHT_THRESHOLD: z.coerce.number().default(500),
+    // Inflight must stay ABOVE the threshold continuously for this long before a reconnect.
+    REDIS_SYS_SELFHEAL_SUSTAINED_MS: z.coerce.number().default(20000),
+    // Minimum time between two sys self-heal reconnects (at most one per cooldown).
+    REDIS_SYS_SELFHEAL_COOLDOWN_MS: z.coerce.number().default(60000),
+    // How often the watchdog samples inflight (cheap one-counter read).
+    REDIS_SYS_SELFHEAL_CHECK_INTERVAL_MS: z.coerce.number().default(1000),
+    // PER-POD RECONNECT JITTER (fleet-stampede brake): wait a random [0, this) before the actual
+    // sentinel reconnect so a synchronized fleet flap doesn't stampede the sentinel/master at once.
+    // WIDER default than the cluster's (4s vs 1s): the sys watchdog's ONLY trigger is sustained-
+    // inflight (no deadline signal), so a sysRedis MASTER that's slow-but-alive would make ~100 pods
+    // all breach the same 20s window and, at 1s jitter, reconnect within a 1s spread → a thundering
+    // herd on the already-degraded master/sentinel every cooldown. 4s spreads it. Env-tunable.
+    REDIS_SYS_SELFHEAL_RECONNECT_JITTER_MS: z.coerce.number().default(4000),
     // ── CLUSTER ROUTING RETRY-AFTER-REDISCOVER (the topology-churn 500 wave) ────────────
     // ON by default; REDIS_CLUSTER_ROUTING_RETRY_ENABLED=false is a single-flip kill-switch
     // that restores today's exact behavior (one attempt, throw on a routing error).
@@ -130,6 +161,12 @@ function buildEnv() {
     clusterSelfHealDeadlineHitThreshold: parsed.data.REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_THRESHOLD,
     clusterSelfHealDeadlineHitWindowMs: parsed.data.REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_WINDOW_MS,
     clusterSelfHealReconnectJitterMs: parsed.data.REDIS_CLUSTER_SELFHEAL_RECONNECT_JITTER_MS,
+    sysSelfHealEnabled: parsed.data.REDIS_SYS_SELFHEAL_ENABLED,
+    sysSelfHealInflightThreshold: parsed.data.REDIS_SYS_SELFHEAL_INFLIGHT_THRESHOLD,
+    sysSelfHealSustainedMs: parsed.data.REDIS_SYS_SELFHEAL_SUSTAINED_MS,
+    sysSelfHealCooldownMs: parsed.data.REDIS_SYS_SELFHEAL_COOLDOWN_MS,
+    sysSelfHealCheckIntervalMs: parsed.data.REDIS_SYS_SELFHEAL_CHECK_INTERVAL_MS,
+    sysSelfHealReconnectJitterMs: parsed.data.REDIS_SYS_SELFHEAL_RECONNECT_JITTER_MS,
     clusterRoutingRetryEnabled: parsed.data.REDIS_CLUSTER_ROUTING_RETRY_ENABLED,
     clusterRoutingRetryMax: parsed.data.REDIS_CLUSTER_ROUTING_RETRY_MAX,
     clusterRoutingRetryBackoffMs: parsed.data.REDIS_CLUSTER_ROUTING_RETRY_BACKOFF_MS,

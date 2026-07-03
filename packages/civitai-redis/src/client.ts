@@ -16,6 +16,12 @@ import {
   resetClusterInflight,
 } from './cluster-inflight';
 import {
+  decSysInflight,
+  getSysInflight,
+  incSysInflight,
+  resetSysInflight,
+} from './sys-inflight';
+import {
   countClusterDeadlineHits,
   recordClusterDeadlineHit,
   resetClusterDeadlineHits,
@@ -237,13 +243,14 @@ let isEnhancedFailoverEnabled: RedisFailoverResolver = async () => false;
 // Track topology refresh intervals for cleanup
 const clusterRefreshIntervals = new Map<string, ReturnType<typeof setInterval>>();
 
-// In-process count of in-flight CLUSTER commands lives in `./cluster-inflight` so EVERY
-// mutation goes through a single floored helper (the counter can never go negative — see
-// FIX #2 there). instrumentCommands inc/decs it in lockstep with the
-// redis_commands_inflight{client="cluster"} gauge — the same signal the gauge exposes, read
-// locally (the prom-client Gauge doesn't cheaply surface its value) so the self-heal watchdog
-// (FIX #1) can sample it without a prom dependency. (The sys client uses 'sys' and is NOT
-// tracked — the watchdog only ever acts on the cluster client.)
+// In-process counts of in-flight commands live in `./cluster-inflight` (CLUSTER) and
+// `./sys-inflight` (SYS) so EVERY mutation goes through a single floored helper (the counter
+// can never go negative). instrumentCommands inc/decs each in lockstep with the matching
+// redis_commands_inflight{client=...} gauge — the same signal the gauge exposes, read locally
+// (the prom-client Gauge doesn't cheaply surface its value) so each client's self-heal watchdog
+// can sample it without a prom dependency. Both the cluster client AND the sysRedis Sentinel
+// client now have a self-heal watchdog (the latter added after the 2026-07-03 sentinel-flap
+// inflight-leak incident).
 
 /**
  * Trigger topology rediscovery on a cluster client.
@@ -292,6 +299,11 @@ function triggerTopologyRediscovery(clusterClient: any, reason: string) {
 // Hold the watchdog interval so it can be cleared on client close (mirrors
 // clusterRefreshIntervals). Module-scoped: one cluster client per process.
 let clusterSelfHealInterval: ReturnType<typeof setInterval> | undefined;
+
+// Same, for the sys (sysRedis / Sentinel) self-heal watchdog. Module-scoped + guarded so the
+// watchdog interval is started exactly once per process regardless of how many sys base
+// connections getClient builds (serving + Buffer-mode on the sentinel path).
+let sysSelfHealInterval: ReturnType<typeof setInterval> | undefined;
 
 /**
  * FIX #2: decide whether the periodic `_slots.rediscover()` should be scheduled, from the
@@ -454,7 +466,7 @@ function startClusterSelfHeal(
         // Labeled by trigger so a rising `trigger="deadline"` series at the next prod wave is the
         // direct confirmation that the fix's new path fired (the one the inflight path could
         // never reach). See cluster-selfheal.ts and prom/client.ts.
-        getRedisMetrics()?.redisSelfHealReconnectCounter?.inc({ trigger });
+        getRedisMetrics()?.redisSelfHealReconnectCounter?.inc({ trigger, client: 'cluster' });
         log(
           `Cluster self-heal RECONNECT fired [trigger=${trigger}, inflight=${inflightAtTrigger}, inflightThreshold=${config.clusterSelfHealInflightThreshold}, sustainedMs=${config.clusterSelfHealSustainedMs}, deadlineHitThreshold=${config.clusterSelfHealDeadlineHitThreshold}, deadlineHitWindowMs=${config.clusterSelfHealDeadlineHitWindowMs}]`
         );
@@ -479,6 +491,140 @@ function startClusterSelfHeal(
   clusterSelfHealInterval.unref?.();
   log(
     `Cluster self-heal watchdog ENABLED [inflightThreshold=${config.clusterSelfHealInflightThreshold}, sustainedMs=${config.clusterSelfHealSustainedMs}, deadlineHitThreshold=${config.clusterSelfHealDeadlineHitThreshold}, deadlineHitWindowMs=${config.clusterSelfHealDeadlineHitWindowMs}, reconnectJitterMs=${config.clusterSelfHealReconnectJitterMs}, cooldownMs=${config.clusterSelfHealCooldownMs}, checkMs=${interval}]`
+  );
+  return watchdog;
+}
+
+/**
+ * Force a FULL reconnect of the sysRedis client(s) — the mirror of forceClusterReconnect for
+ * the OTHER node-redis client (incident 2026-07-03). A sentinel flap orphaned in-flight commands
+ * on the RedisSentinel client and the client never self-healed; a full destroy → connect is the
+ * only thing (short of a pod restart) that clears the orphaned in-flight promises.
+ *
+ * WHY `destroy()`, NOT `close()` (verified against @redis/client@5.8.3 sentinel/index.js):
+ *   - RedisSentinel `close()` → `#internal.close()` waits for the per-node reply queues to drain;
+ *     the whole reason we're reconnecting is that commands are ORPHANED and never get a reply, so
+ *     the queue never empties → `close()` can HANG. Because the watchdog single-flights on
+ *     `reconnecting=true` until reconnect settles, a hung close pins it forever — the watchdog
+ *     would be permanently dead after its first trigger, failing exactly when it's needed.
+ *   - RedisSentinel `destroy()` → `#internal.destroy()` (async) destroys the sentinel client +
+ *     master-pool clients + replica-pool clients; each per-node `RedisClient.destroy()` =
+ *     `flushAll(new DisconnectsClientError())` + `socket.destroy()`, REJECTING every in-flight
+ *     command immediately, and resets its internal `#destroy` flag so the client is reconnectable.
+ *     `connect()` then re-runs sentinel discovery (re-resolving the master via the sentinels) and,
+ *     with reserveClient:true, re-acquires the reserved master lease — so this is the client's
+ *     PROPER reconnect, never a raw socket poke, and the Buffer-mode quirk is untouched (the
+ *     derived buffer client shares the same reconnected base).
+ *
+ * ALL sys base connections are reconnected: on the sentinel path getClient builds TWO 'sys' base
+ * clients (serving + the dedicated Buffer-mode one), BOTH feed the aggregate sys inflight counter,
+ * so healing only one could leave the counter pinned by the other and the watchdog would never
+ * clear the wedge. Each rejected in-flight command runs its done() → decSysInflight() (floored at
+ * 0), so the counter drains to ~0; we also reset it up front so the sampled value snaps clean.
+ *
+ * Any teardown/connect error on one client is non-fatal — the others are still attempted and the
+ * watchdog re-arms after the cooldown regardless.
+ *
+ * Exported (like resolvePeriodicRefresh) so the sentinel destroy→connect correctness can be
+ * unit-tested directly without booting a real client.
+ */
+export async function forceSysReconnect(sysClients: any[]): Promise<void> {
+  // Reset the local inflight counter up front — destroy() rejects every in-flight command, so
+  // their done() closures fire as the rejections settle and EACH floored-decrements toward 0.
+  // The reset just snaps the watchdog's sampled value clean at the trigger instant.
+  resetSysInflight();
+
+  for (const client of sysClients) {
+    if (!client) continue;
+    try {
+      if (typeof client.destroy === 'function') {
+        // RedisSentinel.destroy() returns the async #internal.destroy() promise (rejects in-flight
+        // commands + tears sockets down); await it so connect() runs on a fully-destroyed client.
+        await client.destroy();
+      } else if (typeof client.disconnect === 'function') {
+        await client.disconnect();
+      } else if (typeof client.close === 'function') {
+        // Last resort only: close() can HANG on the wedged queue (see WHY above). Bound it so a
+        // hang can't pin reconnecting=true forever; fall through to connect() regardless.
+        await Promise.race([
+          client.close(),
+          new Promise<void>((resolve) => setTimeout(resolve, 2000)),
+        ]);
+      }
+    } catch (err) {
+      log(
+        `Sys self-heal: teardown threw (continuing to reconnect): ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
+    try {
+      await client.connect();
+    } catch (err) {
+      // Non-fatal: node-redis keeps retrying the connection in the background via its
+      // reconnectStrategy, and the watchdog re-arms after the cooldown.
+      log(
+        `Sys self-heal: reconnect() threw (background retry continues): ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
+  }
+}
+
+/**
+ * Start the sys (sysRedis / Sentinel) self-heal watchdog — the mirror of startClusterSelfHeal for
+ * the OTHER node-redis client. REUSES the generic ClusterSelfHealWatchdog (it's client-agnostic:
+ * a config + injected getInflight/reconnect/onReconnect). The DEADLINE-hit trigger is left OFF
+ * (deadlineHitThreshold 0, no getDeadlineHits dep) because the sys client has no per-command
+ * deadline — the incident wedge climbs inflight monotonically (no sawtooth), so the sustained-
+ * inflight path is exactly the right and only trigger. REDIS_SYS_SELFHEAL_ENABLED=false disables
+ * it entirely. Started once per process (guarded by sysSelfHealInterval).
+ */
+function startSysSelfHeal(sysClients: any[]): ClusterSelfHealWatchdog {
+  const watchdog = new ClusterSelfHealWatchdog(
+    {
+      enabled: config.sysSelfHealEnabled,
+      inflightThreshold: config.sysSelfHealInflightThreshold,
+      sustainedMs: config.sysSelfHealSustainedMs,
+      cooldownMs: config.sysSelfHealCooldownMs,
+      // Sys has no command deadline → no sawtooth/deadline-hit path. Disable that trigger.
+      deadlineHitThreshold: 0,
+      deadlineHitWindowMs: 0,
+      reconnectJitterMs: config.sysSelfHealReconnectJitterMs,
+    },
+    {
+      getInflight: () => getSysInflight(),
+      // getDeadlineHits intentionally omitted (deadline trigger inert for the sys client).
+      reconnect: () => forceSysReconnect(sysClients),
+      log,
+      onReconnect: (inflightAtTrigger: number, trigger: ClusterSelfHealTrigger) => {
+        // client="sys" label so a rising series confirms the SENTINEL client healed (vs cluster).
+        getRedisMetrics()?.redisSelfHealReconnectCounter?.inc({ trigger, client: 'sys' });
+        log(
+          `Sys self-heal RECONNECT fired [trigger=${trigger}, inflight=${inflightAtTrigger}, inflightThreshold=${config.sysSelfHealInflightThreshold}, sustainedMs=${config.sysSelfHealSustainedMs}, clients=${sysClients.length}]`
+        );
+      },
+    }
+  );
+
+  if (!config.sysSelfHealEnabled) {
+    log('Sys self-heal watchdog DISABLED (REDIS_SYS_SELFHEAL_ENABLED=false)');
+    return watchdog;
+  }
+
+  const interval = Math.max(250, config.sysSelfHealCheckIntervalMs);
+  sysSelfHealInterval = setInterval(() => {
+    try {
+      watchdog.tick();
+    } catch (err) {
+      log(`Sys self-heal tick error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, interval);
+  // Don't keep the event loop alive for the watchdog on a graceful process exit.
+  sysSelfHealInterval.unref?.();
+  log(
+    `Sys self-heal watchdog ENABLED [inflightThreshold=${config.sysSelfHealInflightThreshold}, sustainedMs=${config.sysSelfHealSustainedMs}, reconnectJitterMs=${config.sysSelfHealReconnectJitterMs}, cooldownMs=${config.sysSelfHealCooldownMs}, checkMs=${interval}, clients=${sysClients.length}]`
   );
   return watchdog;
 }
@@ -528,7 +674,7 @@ type RedisMetricsBridge = {
   // FIX #1 self-heal reconnect counter (labeled by `trigger`: 'deadline' | 'inflight'). Read via the
   // globalThis bridge so this client-bundle-reachable module avoids a static prom-client import (which
   // drags in fs/cluster). May be undefined until prom/client loads server-side; callers null-check.
-  redisSelfHealReconnectCounter?: { inc: (labels: { trigger: string }) => void };
+  redisSelfHealReconnectCounter?: { inc: (labels: { trigger: string; client: string }) => void };
   // Cluster routing retry-after-rediscover counter (the topology-churn 500 wave). Read via the
   // same globalThis bridge so this client-bundle-reachable module avoids a static prom import.
   redisRoutingRetryCounter?: { inc: (labels: { result: 'recovered' | 'exhausted' }) => void };
@@ -616,17 +762,20 @@ function instrumentCommands(client: any, clientLabel: 'cluster' | 'sys') {
     // prom module loads mid-flight (a dec without its inc would drive the gauge negative).
     const metrics = getRedisMetrics();
     metrics?.redisCommandsInflight.inc(labels);
-    // Mirror the gauge into the local counter for the self-heal watchdog (cluster only).
+    // Mirror the gauge into the local counter the self-heal watchdog samples. Each client kind
+    // has its OWN floored counter (cluster / sys) so its watchdog can sample it without a prom dep.
     if (clientLabel === 'cluster') incClusterInflight();
+    else incSysInflight();
     const start = Date.now();
     let dec = false; // per-closure guard so a double-settle (shouldn't happen) can't double-dec
     const done = () => {
-      if (clientLabel === 'cluster' && !dec) {
-        // FLOORED decrement (decClusterInflight clamps at 0). The per-closure `dec` guard above
-        // only stops THIS closure decrementing twice — it does NOT stop N distinct rejected
-        // closures (e.g. the burst destroy() rejects after a heal) decrementing past 0. The
-        // floor is what keeps the counter accurate post-heal so the watchdog can re-arm (FIX #2).
-        decClusterInflight();
+      if (!dec) {
+        // FLOORED decrement (dec{Cluster,Sys}Inflight clamp at 0). The per-closure `dec` guard
+        // above only stops THIS closure decrementing twice — it does NOT stop N distinct rejected
+        // closures (e.g. the burst destroy() rejects after a heal) decrementing past 0. The floor
+        // is what keeps the counter accurate post-heal so the watchdog can re-arm.
+        if (clientLabel === 'cluster') decClusterInflight();
+        else decSysInflight();
         dec = true;
       }
       metrics?.redisCommandsInflight.dec(labels);
@@ -1042,8 +1191,12 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
   // node-redis — the correct behavior mirrors RedisClient (proxy-local `_commandOptions`).
   const isSysSentinel = type === 'system' && !!config.sysSentinels;
   let bufferClient: CustomRedisClient<K>;
+  // Hoisted so the sys self-heal watchdog below can reconnect this dedicated Buffer-mode base
+  // connection alongside the serving one (both feed the aggregate sys inflight counter).
+  let sysBufferBaseClient: CustomRedisClient<K> | undefined;
   if (isSysSentinel) {
     const bufferBaseClient = getBaseClient(type) as unknown as CustomRedisClient<K>;
+    sysBufferBaseClient = bufferBaseClient;
     // This dedicated connection issues real reads (GET/SMEMBERS/HGET/…) to the SAME sysRedis
     // backend, so instrument it under the same 'sys' label — its in-flight + duration metrics
     // belong alongside `client`'s (dropping them would under-count sysRedis load). Note: this
@@ -1295,6 +1448,27 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
     const results = await Promise.all(key.map((k) => originalUnlink(k)));
     return results.reduce((sum, count) => sum + count, 0);
   };
+
+  // Start the sys (sysRedis / Sentinel) self-heal watchdog ONCE per process (incident 2026-07-03),
+  // mirroring the cluster watchdog started in getBaseClient's cluster connect() callback. It
+  // reconnects ALL sys base connections when the aggregate sys inflight counter stays wedged: the
+  // serving `client` always, plus the dedicated Buffer-mode base on the sentinel path (both feed
+  // the counter). The watchdog only samples a counter + reconnects on a wedge, so starting it here
+  // (before the background connect() settles) is safe. Guarded by sysSelfHealInterval so re-entry /
+  // the buffer-base build can't stack a second interval.
+  //
+  // SINGLE-SINGLETON INVARIANT — registering only the FIRST getClient('system') set is sufficient
+  // because the app builds exactly ONE sys client per process: `createRedisClients` is called once
+  // (src/server/redis/client.ts `make()`, memoized — prod evaluates the module const once, dev
+  // caches on global.__civitaiRedisClients, build builds nothing), and `createSysRedis` has zero
+  // callers (civitai-auth uses createCacheRedis → cache-only). So there is never a second, unwatched
+  // sys client. If a future caller builds an ADDITIONAL sys client, this guard would leave it
+  // unwatched — revisit the guard (key it per client set) at that point.
+  if (type === 'system' && !sysSelfHealInterval) {
+    const sysBaseClients: any[] = [client];
+    if (sysBufferBaseClient) sysBaseClients.push(sysBufferBaseClient);
+    startSysSelfHeal(sysBaseClients);
+  }
 
   return client;
 }
