@@ -1921,6 +1921,34 @@ export const validateContestCollectionEntry = async ({
     throw throwBadRequestError('You are banned from participating in contests');
   }
 
+  // Block re-submitting an image a challenge judge has already scored. Removal
+  // hard-deletes the CollectionItem (erasing tag/score), so the judge's comment is the
+  // durable "already judged" signal — across this and every other challenge. Limited to
+  // challenge collections (target has a linked Challenge) so community contests are
+  // unaffected. Scoped to genuine re-adds: an image still present as an entry is excluded,
+  // so editing a post that re-saves its images doesn't fail.
+  if (imageIds.length > 0 && !isModerator) {
+    const alreadyJudged = await dbRead.$queryRaw<{ imageId: number }[]>`
+      SELECT DISTINCT th."imageId"
+      FROM "Thread" th
+      JOIN "CommentV2" cm ON cm."threadId" = th.id
+      JOIN "ChallengeJudge" cj ON cj."userId" = cm."userId"
+      WHERE th."imageId" IN (${Prisma.join(imageIds)})
+        AND EXISTS (SELECT 1 FROM "Challenge" ch WHERE ch."collectionId" = ${collectionId})
+        AND NOT EXISTS (
+          SELECT 1 FROM "CollectionItem" ci
+          WHERE ci."collectionId" = ${collectionId}
+            AND ci."imageId" = th."imageId"
+            AND ci.status IN ('ACCEPTED', 'REVIEW')
+        )
+    `;
+    if (alreadyJudged.length > 0) {
+      throw throwBadRequestError(
+        'This image has already been judged in a challenge and cannot be re-submitted. Please enter a new image.'
+      );
+    }
+  }
+
   if (!metadata) {
     return;
   }
