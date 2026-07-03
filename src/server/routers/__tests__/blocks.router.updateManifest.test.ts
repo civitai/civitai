@@ -38,16 +38,9 @@ const {
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
 }));
-vi.mock('~/env/server', () => ({
-  // MEILI_CALL_CONCURRENCY is read by meilisearch/client at module-eval
-  // (reached via the router's transitive imports) — pLimit() throws on undefined.
-  env: {
-    FORGEJO_PUBLIC_URL: 'https://forgejo.civitai.com',
-    APPS_DOMAIN: 'civit.ai',
-    LOGGING: '',
-    MEILI_CALL_CONCURRENCY: 50,
-  },
-}));
+// env comes from the global ~/env/server mock in src/__tests__/setup.ts
+// (complete TEST_ENV_DEFAULTS incl. FORGEJO_PUBLIC_URL / APPS_DOMAIN / MEILI /
+// S3). Overriding it locally drops those defaults and crashes at import.
 vi.mock('~/server/services/blocks/forgejo.service', () => ({
   FORGEJO_ORG: 'civitai-apps',
   commitFiles: mockCommitFiles,
