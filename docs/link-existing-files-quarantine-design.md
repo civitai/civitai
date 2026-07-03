@@ -111,7 +111,10 @@ WHERE "replacedAt" < now() - interval '30 days'
 
 - Use `deleteModelFileObject` (refcount-guarded), **not** the raw `deleteObject` that
   `delete-old-training-data` uses — a replaced host file's url could theoretically be shared; don't
-  leak-delete a still-referenced object.
+  leak-delete a still-referenced object. Call it with the row's own `id` as `excludeId`
+  (`deleteModelFileObject(url, id)`): this job keeps the row (Option B below), so without excluding
+  its own id the refcount check always finds the row as a "live" reference to its own url and
+  silently no-ops forever, leaking the S3 bytes while the job still reports success.
 - Keep the row (Option B): `dataPurged = true` leaves a permanent "replaced by a link" audit trail.
 - Register in `src/pages/api/webhooks/run-jobs/[[...run]].ts`. 30-day window as a constant (follows
   `delete-old-training-data` precedent).

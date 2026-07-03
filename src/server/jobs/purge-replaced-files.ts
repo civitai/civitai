@@ -16,8 +16,11 @@ export async function processReplacedFiles(rows: ReplacedRow[]) {
   for (const { id, url } of rows) {
     try {
       // Refcount-guarded: skips the S3 delete if another live ModelFile still
-      // references this url. Do NOT swap for raw deleteObject.
-      await deleteModelFileObject(url);
+      // references this url. Do NOT swap for raw deleteObject. excludeId=id is
+      // required — this job keeps the row (only sets dataPurged), so without
+      // excluding its own id the guard would always find the row as a "live"
+      // reference to its own url and silently no-op forever.
+      await deleteModelFileObject(url, id);
       await dbWrite.modelFile.update({ where: { id }, data: { dataPurged: true } });
       purged += 1;
     } catch (e) {

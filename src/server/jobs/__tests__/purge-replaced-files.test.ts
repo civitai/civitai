@@ -16,7 +16,7 @@ beforeEach(() => vi.clearAllMocks());
 describe('processReplacedFiles', () => {
   it('purges S3 (refcount-guarded) then marks dataPurged for each row', async () => {
     const res = await processReplacedFiles([{ id: 1, url: 'https://bucket/a' }]);
-    expect(mockDeleteObj).toHaveBeenCalledWith('https://bucket/a');
+    expect(mockDeleteObj).toHaveBeenCalledWith('https://bucket/a', 1);
     expect(mockDbWrite.modelFile.update).toHaveBeenCalledWith({
       where: { id: 1 },
       data: { dataPurged: true },
