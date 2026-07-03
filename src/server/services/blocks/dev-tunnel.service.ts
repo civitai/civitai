@@ -520,6 +520,12 @@ export type ReserveDevSessionBuzzResult = { allowed: boolean; total: number };
  * error, never silently bypasses. This is a BACKSTOP over the block-token
  * DEV_BUZZ_BUDGET_CAP + the per-user daily cap; the author still spends only
  * their OWN Buzz.
+ *
+ * ⚠️ NOT WIRED in P1 — dev-session Buzz is NOT capped yet. This tested primitive
+ * has NO live call site: it is enforced at workflow-submit in P3 once the block
+ * token carries a dev-session id. Real dev spend TODAY rides the existing
+ * `/api/v1/blocks/dev-token` real-Buzz clamp (DEV_BUZZ_BUDGET_CAP + the per-user
+ * daily cap), NOT this per-session ceiling. Do NOT assume this backstop is active.
  */
 export async function reserveDevSessionBuzz(
   sessionId: string,

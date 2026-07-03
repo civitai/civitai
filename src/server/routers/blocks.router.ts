@@ -991,7 +991,11 @@ export const blocksRouter = router({
       try {
         return await startDevTunnel({
           userId: ctx.user.id,
-          blockId: input.blockId,
+          // Belt-and-suspenders: key the tunnel state off the RESOLVED, canonical
+          // block_id (app.blockId), never the raw client input. Safe today only
+          // because the ownership resolve above ran first — using the resolved
+          // value makes that independent of input normalization.
+          blockId: app.blockId,
           sshPublicKey: input.sshPublicKey,
         });
       } catch (err) {

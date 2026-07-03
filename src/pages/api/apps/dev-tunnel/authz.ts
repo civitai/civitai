@@ -104,9 +104,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   // collision alone must never authorize).
   if (!pubKeysMatch(authKey, cred.sshPublicKey)) return deny('pubkey-mismatch');
 
-  // 3b. SINGLE-USE consume — delete the pubkey→credential index so a REPLAYED
-  // authz POST is denied (next lookup misses). Done BEFORE the 200 so a replay
-  // racing us still can't double-authorize past the delete.
+  // 3b. Best-effort single-use consume — delete the pubkey→credential index so a
+  // LATER replay of this POST misses the lookup and is denied.
+  //
+  // NOT ATOMIC (honest): this is GET (step 2) → DEL (here), a TOCTOU window — two
+  // POSTs racing on the same pubkey can BOTH pass step 2 before either DELs, so
+  // both authorize. That is ACCEPTABLE because replay is structurally inert: the
+  // `auth_key` is a PUBLIC key, and by the time sish calls this the SSH transport
+  // has ALREADY proven the client holds the matching PRIVATE key — so a replayer
+  // who lacks the private key can never actually bind the tunnel and gains
+  // nothing by re-authorizing the same userId's own binding. The consume is
+  // belt-and-suspenders (shuts a leaked pubkey out of a fresh authz), NOT the
+  // security boundary.
+  // TODO(P3): make truly single-use via a Lua GETDEL if single-use ever becomes
+  // load-bearing (GETDEL is not exposed on this redis client today).
   await consumeDevTunnelCredential(fingerprint).catch(() => {});
 
   // 4. Authorized. The tunnel⇆userId binding was recorded at mint; return the

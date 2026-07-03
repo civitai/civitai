@@ -4,9 +4,11 @@ import { signDevTunnelAccessToken } from '~/server/services/blocks/dev-tunnel-se
 
 /**
  * APP DEV TUNNEL — coverage for the Traefik forwardAuth entry gate
- * `/api/internal/dev-tunnel-gate`. The LOAD-BEARING invariant (T3): a NAKED /
- * expired / wrong-user / host-mismatched request is DENIED before it can reach
- * the tunnel → the dev's localhost is never exposed.
+ * `/api/internal/dev-tunnel-gate`. The gate protects the ENTRY DOCUMENT only: a
+ * NAKED / expired / wrong-user / host-mismatched ENTRY request is DENIED (401),
+ * so a visitor who knows the host cannot LOAD the dev page. Non-entry
+ * subresources pass with no token (host-secrecy only — the accepted mod-gate.ts
+ * tradeoff), so this suite pins the ENTRY-gate behaviour, not full protection.
  */
 
 import handler from '~/pages/api/internal/dev-tunnel-gate';
@@ -75,8 +77,8 @@ describe('/api/internal/dev-tunnel-gate', () => {
     expect(res.statusCode).toBe(200);
   });
 
-  // ── THE LOAD-BEARING TEST (T3): naked URL denied ──────────────────────────
-  it('NAKED entry request (no dev token) → 401 (T3 — localhost never exposed)', () => {
+  // ── ENTRY-document gate: naked ENTRY denied (visitor can't LOAD the page) ──
+  it('NAKED entry request (no dev token) → 401 (entry document gated)', () => {
     const res = makeRes();
     handler(makeReq({ host: HOST, uri: '/', secFetchDest: 'document' }), res);
     expect(res.statusCode).toBe(401);
