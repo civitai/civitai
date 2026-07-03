@@ -45,6 +45,10 @@ export function isSensitiveParam(name: string): boolean {
 
 // Matches an email address anywhere in a string.
 const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+// Percent-encoded email (`@` → `%40`), as it appears in a URL/query string:
+// `location.href` encodes `@`, so an email in a benign-named param (e.g. `?u=a%40b.com`)
+// carries `%40` and would slip past EMAIL_RE.
+const EMAIL_ENCODED_RE = /[A-Za-z0-9._%+-]+%40[A-Za-z0-9.-]+\.[A-Za-z]{2,}/gi;
 // JWT (three base64url segments beginning with the `eyJ` header marker).
 const JWT_RE = /eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}/g;
 // Long opaque token-like strings (>=32 chars of base64url/hex alphabet). Requires at
@@ -114,6 +118,7 @@ export function redactText(input: string): string {
     return input
       .replace(URL_IN_TEXT_RE, (m) => redactUrl(m))
       .replace(EMAIL_RE, REDACTED_EMAIL)
+      .replace(EMAIL_ENCODED_RE, REDACTED_EMAIL)
       .replace(JWT_RE, REDACTED_TOKEN)
       .replace(LONG_TOKEN_RE, REDACTED_TOKEN);
   } catch {

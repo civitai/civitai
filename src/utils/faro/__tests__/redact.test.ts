@@ -247,4 +247,39 @@ describe('page.url path-segment scrub (redactText ∘ redactUrl)', () => {
     expect(out).not.toContain(jwt);
     expect(out).toContain(REDACTED_TOKEN);
   });
+
+  // Residual: `location.href` percent-encodes `@` to `%40`, so an email in a
+  // benign-named param slips past the literal-`@` EMAIL_RE. EMAIL_ENCODED_RE catches it.
+  it('redacts a percent-encoded (%40) email in a benign-named query param', () => {
+    const out = scrubPageUrl('https://civitai.com/settings?u=alice%40example.com&tab=1');
+    expect(out).not.toContain('alice%40example.com');
+    expect(out).toContain(REDACTED_EMAIL);
+    expect(out).toContain('tab=1');
+  });
+});
+
+// Residual: FaroProvider.scrubBeacon runs deepRedact over the WHOLE meta object, not just
+// meta.page — so PII planted in session/view/browser attributes is caught, while stable
+// identifiers (session id, user-agent, version) pass through untouched.
+describe('whole-meta scrub (deepRedact over meta)', () => {
+  it('redacts PII in meta.session attributes but leaves stable ids/UA/version', () => {
+    const meta = {
+      session: { id: 'abc123short', attributes: { note: 'contact bob@example.com' } },
+      view: { name: 'default' },
+      browser: { userAgent: 'Mozilla/5.0 (X11; Linux) AppleWebKit/537.36' },
+      app: { name: 'civitai-dp-prod', version: '5.0.1971' },
+      page: { url: 'https://civitai.com/verify?token=SECRETTOKEN' },
+    };
+    const out = deepRedact(meta);
+    expect(out.session.attributes.note).not.toContain('bob@example.com');
+    expect(out.session.attributes.note).toContain(REDACTED_EMAIL);
+    // stable identifiers untouched
+    expect(out.session.id).toBe('abc123short');
+    expect(out.browser.userAgent).toBe('Mozilla/5.0 (X11; Linux) AppleWebKit/537.36');
+    expect(out.app.version).toBe('5.0.1971');
+    expect(out.view.name).toBe('default');
+    // page.url still gets the url-key scrub
+    expect(out.page.url).not.toContain('SECRETTOKEN');
+    expect(out.page.url).toContain('token=' + REDACTED);
+  });
 });

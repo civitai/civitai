@@ -12,7 +12,7 @@ import {
 import { TracingInstrumentation } from '@grafana/faro-web-tracing';
 import { env } from '~/env/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { deepRedact, redactText, redactUrl } from '~/utils/faro/redact';
+import { deepRedact } from '~/utils/faro/redact';
 
 /**
  * Faro Real-User-Monitoring bootstrap (Phase 1 — SHIPPED DARK).
@@ -54,7 +54,12 @@ function parseRate(value: string | undefined, fallback: number): number {
   return Math.min(1, Math.max(0, n));
 }
 
-/** Regex matching same-origin `/api` URLs, for trace-header propagation. */
+/**
+ * Regex matching same-origin `/api` URLs. Note: `@opentelemetry/sdk-trace-web` attaches
+ * `traceparent` to ALL same-origin requests regardless of this list; the list only gates
+ * CROSS-origin propagation. A same-origin matcher can never match a cross-origin URL, so
+ * its practical effect is: no third-party (cross-origin) request ever receives the header.
+ */
 function sameOriginApiMatcher(): RegExp {
   const origin = window.location.origin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`^${origin}/api(/|$)`);
@@ -66,30 +71,21 @@ function sameOriginApiMatcher(): RegExp {
  * "drop this beacon" (a PII gate must never emit an unredacted item). Returning null is
  * equally non-throwing for the app.
  *
- * NOTE: only `meta.page` is rewritten here; the rest of `meta` is spread as-is. That is
- * safe ONLY because Phase 1 never populates identity/user meta. Do NOT call
- * `faro.api.setUser()` (or otherwise set `meta.user`) without extending this scrub — user
- * fields would bypass redaction and leak straight to Loki.
+ * BOTH `meta` and `payload` are run through `deepRedact`, so `meta.page.url` (url-key →
+ * redactUrl+redactText), `meta.page.attributes`, and `meta.session/view/browser/app`
+ * attributes are all covered — only values matching email/token patterns are rewritten,
+ * so session-id / user-agent / version pass through untouched.
+ *
+ * Even so: do NOT populate identity meta without re-reviewing this scrub. `faro.api
+ * .setUser()` (meta.user), or writing PII into `meta.session`/`meta.view` attributes,
+ * would rely entirely on deepRedact's pattern match — set structured PII (raw userId,
+ * username, email) only after adding explicit key-based redaction here.
  */
 function scrubBeacon(item: TransportItem): TransportItem | null {
   try {
-    const meta = item.meta;
-    const page = meta?.page;
-    const scrubbedMeta = page
-      ? {
-          ...meta,
-          page: {
-            ...page,
-            // Mirror deepRedact's url-key treatment: redactUrl (query/fragment params)
-            // THEN redactText (emails/JWTs/tokens embedded in a path segment).
-            ...(typeof page.url === 'string' ? { url: redactText(redactUrl(page.url)) } : {}),
-            ...(page.attributes ? { attributes: deepRedact(page.attributes) } : {}),
-          },
-        }
-      : meta;
     return {
       ...item,
-      meta: scrubbedMeta,
+      meta: item.meta ? deepRedact(item.meta) : item.meta,
       payload: deepRedact(item.payload),
     } as TransportItem;
   } catch {
@@ -152,9 +148,9 @@ function initFaro() {
       // Default TracingInstrumentation — traces follow session sampling in Phase 1.
       new TracingInstrumentation({
         instrumentationOptions: {
-          // Attach `traceparent` ONLY to same-origin /api calls — never to third-party
-          // fetches (Stripe/Paddle/Meili/signals/Turnstile/GA), which would trigger CORS
-          // preflights / breakage.
+          // `traceparent` is attached to all same-origin requests; this list ensures no
+          // cross-origin (third-party) request — Stripe/Paddle/Meili/signals/Turnstile/GA
+          // — ever receives it (which would trigger CORS preflights / breakage).
           propagateTraceHeaderCorsUrls: [sameOriginApiMatcher()],
         },
       }),
