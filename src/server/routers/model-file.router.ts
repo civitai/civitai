@@ -3,6 +3,7 @@ import {
   deleteFileHandler,
   hasOfficialFileOfSizeHandler,
   getFilesByVersionIdHandler,
+  restoreReplacedFileHandler,
   updateFileHandler,
   upsertFileHandler,
 } from '~/server/controllers/model-file.controller';
@@ -21,7 +22,7 @@ import {
 } from '~/server/services/model-file.service';
 import { CacheTTL } from '~/server/common/constants';
 import { edgeCacheIt } from '~/server/middleware.trpc';
-import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export const modelFileRouter = router({
@@ -50,6 +51,10 @@ export const modelFileRouter = router({
     .input(getByIdSchema)
     .mutation(deleteFileHandler),
   // deleteMany: protectedProcedure.input(deleteApiKeyInputSchema).mutation(deleteApiKeyHandler),
+  restoreReplaced: moderatorProcedure
+    .meta({ requiredScope: TokenScope.ModelsWrite })
+    .input(getByIdSchema)
+    .mutation(restoreReplacedFileHandler),
   getRecentTrainingData: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(recentTrainingDataSchema)

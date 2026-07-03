@@ -30,6 +30,7 @@ import {
   hasOfficialFileOfSize,
   findOfficialFileByHash,
   markFileReplaced,
+  restoreReplacedFile,
   fetchModelFilesForCache,
 } from '~/server/services/model-file.service';
 import { constants } from '~/server/common/constants';
@@ -162,6 +163,40 @@ describe('markFileReplaced', () => {
   it('throws when the file does not exist', async () => {
     mockDbRead.modelFile.findUnique.mockResolvedValue(null);
     await expect(markFileReplaced({ fileId: 999, recommendedResourceId: 1 })).rejects.toThrow();
+  });
+});
+
+describe('restoreReplacedFile', () => {
+  it('reverts replacedAt + prior visibility and clears the replacedBy marker', async () => {
+    mockDbRead.modelFile.findUnique.mockResolvedValue({
+      id: 88,
+      replacedAt: new Date(),
+      dataPurged: false,
+      metadata: { format: 'SafeTensor', replacedBy: { priorVisibility: ModelFileVisibility.Public } },
+      modelVersionId: 10,
+    });
+
+    const res = await restoreReplacedFile({ id: 88 });
+
+    expect(res).toEqual({ modelVersionId: 10 });
+    const arg = mockDbRead.modelFile.update.mock.calls[0][0];
+    expect(arg.data.replacedAt).toBeNull();
+    expect(arg.data.visibility).toBe(ModelFileVisibility.Public);
+    expect(arg.data.metadata).toEqual({ format: 'SafeTensor' });
+  });
+
+  it('rejects when the file is not replaced', async () => {
+    mockDbRead.modelFile.findUnique.mockResolvedValue({
+      id: 88, replacedAt: null, dataPurged: false, metadata: {}, modelVersionId: 10,
+    });
+    await expect(restoreReplacedFile({ id: 88 })).rejects.toThrow();
+  });
+
+  it('rejects once bytes have been purged', async () => {
+    mockDbRead.modelFile.findUnique.mockResolvedValue({
+      id: 88, replacedAt: new Date(), dataPurged: true, metadata: {}, modelVersionId: 10,
+    });
+    await expect(restoreReplacedFile({ id: 88 })).rejects.toThrow();
   });
 });
 

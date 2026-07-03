@@ -12,6 +12,7 @@ import {
   deleteFile,
   getFilesForModelVersionCache,
   hasOfficialFileOfSize,
+  restoreReplacedFile,
   updateFile,
 } from '~/server/services/model-file.service';
 import {
@@ -318,6 +319,15 @@ export const deleteFileHandler = async ({
     await preventModelVersionLag(modelId, modelVersionId);
 
     return { modelVersionId };
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const restoreReplacedFileHandler = async ({ input }: { input: GetByIdInput }) => {
+  try {
+    return await restoreReplacedFile({ id: input.id });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

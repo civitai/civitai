@@ -306,6 +306,30 @@ export async function markFileReplaced({
   return { modelVersionId: file.modelVersionId };
 }
 
+export async function restoreReplacedFile({ id }: { id: number }) {
+  const file = await dbWrite.modelFile.findUnique({
+    where: { id },
+    select: { id: true, replacedAt: true, dataPurged: true, metadata: true, modelVersionId: true },
+  });
+  if (!file) throw throwNotFoundError();
+  if (file.replacedAt == null) throw throwBadRequestError('File is not replaced');
+  if (file.dataPurged)
+    throw throwBadRequestError('File bytes were already purged and cannot be restored');
+
+  const metadata = (file.metadata ?? {}) as Record<string, unknown>;
+  const replacedBy = metadata.replacedBy as { priorVisibility?: ModelFileVisibility } | undefined;
+  const priorVisibility = replacedBy?.priorVisibility ?? ModelFileVisibility.Public;
+  const { replacedBy: _dropped, ...restMetadata } = metadata;
+
+  await dbWrite.modelFile.update({
+    where: { id },
+    data: { replacedAt: null, visibility: priorVisibility, metadata: restMetadata },
+  });
+
+  await deleteFilesForModelVersionCache(file.modelVersionId);
+  return { modelVersionId: file.modelVersionId };
+}
+
 export const getRecentTrainingData = async ({
   userId,
   limit,
