@@ -1,17 +1,29 @@
-# App Blocks (Phase 1)
+# Civitai Apps
 
-Third-party iframe-embedded blocks that render on civitai model pages,
-authenticated via short-lived RS256 JWTs scoped to a single block install.
+> Product name: **Civitai Apps** (historically "App Blocks"). The user-facing copy
+> is "Apps"; the codebase, tables, scopes, and message names still use `block` /
+> `app_block` — that technical vocabulary is retained throughout this doc on
+> purpose (a "block" is the hosted iframe unit an app ships).
+
+Third-party iframe-embedded **blocks** that render on civitai model pages and as
+full-page apps, authenticated via short-lived RS256 JWTs scoped to a single block
+install. Each app is served from its own platform-owned subdomain
+(`https://<slug>.civit.ai/`).
 
 ## Concepts
 
-- **Block**: a hosted iframe (`https://blocks.civitai.com/<name>` or
-  partner-controlled origin in v2) declared by a manifest. Owned by an
-  OauthClient (app).
+- **Block**: a hosted iframe served from the app's platform-owned subdomain
+  (`https://<slug>.civit.ai/`, where the root is `APPS_DOMAIN`, default
+  `civit.ai`), declared by a manifest and owned by an OauthClient (app). The
+  `iframe.src` is platform-stamped from the slug — a developer never authors it
+  (see `server/services/blocks/manifest-normalize.ts`).
 - **Install**: a row in `model_block_installs` pinning one block to one
   (model, slot). Publisher-controlled.
-- **Slot**: a named region on a model page where blocks render. Only three
-  ship in v1: `model.sidebar_top`, `model.below_images`, `model.actions_extra`.
+- **Slot**: a named region where a block renders. Model-page slots include
+  `model.sidebar_top`, `model.below_images`, and `model.actions_extra`. A block
+  can also run as a full-page app via the page host at `/apps/run/<slug>`
+  (`PageBlockHost.tsx`) — a distinct host surface with its own message-handler
+  requirements (see the message inventory below).
 - **Platform default**: a `platform_default_blocks` row promoting one
   block to render on every eligible model that hasn't opted out.
 - **BlockInstanceId**: per-install identifier (`bki_<ulid>`) — the primary
@@ -23,7 +35,7 @@ authenticated via short-lived RS256 JWTs scoped to a single block install.
 | ------------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------- |
 | `app_blocks`              | Registry of every block across every app | `status='pending'` until moderated; `trustTier` and `renderMode` are server-controlled |
 | `model_block_installs`    | Per-(model, slot) installs               | Unique on `(model_id, app_block_id, slot_id)`; max 3 installs per slot                 |
-| `block_user_settings`     | Per-(viewer, instance) prefs (Phase 2)   | CASCADE on install delete + GDPR user delete                                           |
+| `block_user_settings`     | Per-(viewer, instance) prefs             | CASCADE on install delete + GDPR user delete; populated e.g. by `SET_USER_CHECKPOINT`  |
 | `platform_default_blocks` | Promoted defaults                        | Filtered by `target_model_types` + content rating + ordered by `priority`              |
 
 ## Tokens
@@ -50,9 +62,15 @@ check at request time (`enforceContextBinding`).
 | `social:tip:self`                | non-anon `sub`                                    |                                   |
 | `user:read:self`                 | non-anon `sub`                                    | `/api/v1/blocks/me`               |
 | `ai:write:budgeted`              | positive `buzzBudget`                             |                                   |
-| `block:settings:read` / `:write` | `query.blockInstanceId == claims.blockInstanceId` | + caller-is-installer at issuance |
+| `block:settings:read` / `:write` | `query.blockInstanceId == claims.blockInstanceId` | + caller-is-installer at issuance; `SKIP_OAUTH_CHECK` |
+| `apps:storage:read` / `:write`   | scope present on `claims.scopes` per op           | per-app KV store (App Storage); no OAuth bit (`SKIP_OAUTH_CHECK`) — gated by the approved-scope snapshot + `resolveStorageContext` |
 
 Unknown scopes are rejected at runtime (deny-by-default in middleware).
+
+> There is intentionally **no** `catalog:read` scope. The block catalog endpoints
+> (`/api/v1/blocks/models`, `/api/v1/blocks/images`) serve public, maturity-clamped
+> data and accept any valid block token for its signed `maxBrowsingLevel` claim, not
+> for authorization (`catalog:read` was added in #2671 and retired the next day).
 
 ## Routes
 
@@ -114,7 +132,7 @@ the token endpoint has resolved. Matches `@civitai/app-sdk/blocks` v1:
   context: SlotContext;                // slotId + per-surface fields
   settings: {
     publisherSettings: Record<string, unknown>;  // model_block_installs.settings
-    userSettings: Record<string, unknown>;       // empty in v1; Phase 2 populates
+    userSettings: Record<string, unknown>;       // per-viewer prefs from block_user_settings (e.g. SET_USER_CHECKPOINT)
   };
   viewer: {
     id: number;
@@ -124,7 +142,7 @@ the token endpoint has resolved. Matches `@civitai/app-sdk/blocks` v1:
     // authoritative check is its own /api/v1/blocks/me call.
   } | null;                            // null for anon viewers
   theme: 'light' | 'dark';             // matches host color scheme
-  renderMode: 'iframe' | 'inline';     // always 'iframe' in v1
+  renderMode: 'iframe' | 'inline';     // always 'iframe' today (the inline host is a stub)
 }
 ```
 
@@ -139,20 +157,63 @@ Two flows, both delivering the same wrapped-token shape:
    `requestId`) and the host replies with `TOKEN_REFRESH_RESPONSE` carrying
    the current token. Useful right before an expensive orchestrator call.
 
-### What's NOT host-brokered
+### Block↔host message inventory
 
-By design, blocks call the **civitai-orchestration** API directly with their
-JWT for workflows. The orchestrator validates via the JWKS endpoint and
-buckets buzz spend by the token's `buzzBudget` claim. This keeps the host
-out of the request path on every generation.
+Blocks do **not** call the orchestrator directly. Generation and every other
+privileged capability is **host-brokered**: the iframe posts a typed message to
+its host, the host performs the action server-side against a block-token-authed
+tRPC mutation (which re-verifies the JWT and re-checks scopes/maturity), and the
+host posts the reply back. This keeps the block token in POST bodies (never in a
+GET URL) and keeps policy enforcement on the platform side of every call.
 
-Several later postMessage surfaces have since landed: `OPEN_BUZZ_PURCHASE` /
-`GET_BUZZ_BALANCE` (host-mediated Buzz purchase + per-account balance read) and
-`NAVIGATE` (page host only — the model slot intentionally does not bridge it).
-`TRACK_EVENT` is still not host-bridged (no analytics sink wired) and is dropped
-silently. See `src/components/AppBlocks/hostHandlerParity.ts` for the
-authoritative host↔SDK message inventory. The SDK should detect an unhandled
-surface gracefully.
+**The single source of truth for the message set is
+`src/components/AppBlocks/hostHandlerParity.ts`** — a compile-time-enforced
+inventory of every block→host message, which hosts must handle it, and whether
+it is REQUEST-style (awaits a `*_RESULT`/ack reply — an unhandled one hangs the
+block) or fire-and-forget. Rather than duplicate a list here that will re-drift,
+read that file. As of this writing the families are:
+
+- **Lifecycle** (fire-and-forget): `BLOCK_READY`, `BLOCK_ERROR`, `RESIZE_IFRAME`.
+- **Auth / consent**: `REQUEST_TOKEN` (→ `TOKEN_REFRESH_RESPONSE`),
+  `REQUEST_SIGN_IN`, `REQUEST_CONSENT`.
+- **Workflows** (REQUEST-style, host-brokered via `blocks.submitWorkflow` /
+  `estimateWorkflow` / `pollWorkflow`): `SUBMIT_WORKFLOW`, `ESTIMATE_WORKFLOW`,
+  `POLL_WORKFLOW`, `CANCEL_WORKFLOW`.
+- **Buzz**: `OPEN_BUZZ_PURCHASE` (host-mediated purchase) and `GET_BUZZ_BALANCE`
+  (per-account balance read — see below).
+- **Resource pickers** (host chrome so the iframe only learns the one resource the
+  user picked): `OPEN_CHECKPOINT_PICKER` (model slot) and the wider
+  `OPEN_RESOURCE_PICKER` (page host only). `SET_USER_CHECKPOINT` persists to
+  `block_user_settings` (model-bound installs only).
+- **App Storage** (per-app KV; `apps:storage:*` scopes): `APP_STORAGE_GET` /
+  `_SET` / `_DELETE` / `_LIST` / `_QUOTA`.
+- **Navigation**: `NAVIGATE` — page host only; the model slot intentionally does
+  not bridge it (an embedded panel navigating the host away is out of remit).
+- **Analytics**: `TRACK_EVENT` — fire-and-forget, **not** host-bridged by either
+  real host today (no analytics sink wired), so it is silently dropped (never
+  hangs the block). Flip the host entries to `required` in the inventory if/when
+  a sink lands.
+
+The `SUSPEND` / `RESUME` messages flow the other direction (parent→block). The
+SDK degrades gracefully when a host does not handle a fire-and-forget surface.
+
+### Buzz and per-account spend
+
+Civitai Buzz is split into spendable pools — **blue** (purchased), **green**
+(earned), and **yellow** (creator-program) — and blocks are per-account aware:
+
+- **Read balance**: the host answers `GET_BUZZ_BALANCE` from the block-token-authed
+  `blocks.getMyBuzzBalance` mutation, which returns `{ blue, green, yellow }` for
+  the token's subject (other account types — red / cash / creator-program — are
+  omitted). This backs the SDK `useBuzzBalance()` hook + the account picker.
+- **Choose the funding pool**: a workflow submit body may carry `accountType`
+  (`blue | green | yellow`). It is honored **preferred-first** while the maturity
+  policy clamp still applies (a SFW-domain block can't widen to a mature currency);
+  an out-of-set pick is rejected, absent → Auto (see
+  `resolveBlockCurrenciesForAccount`).
+- **Which pool actually paid**: the workflow status snapshot carries
+  `spentAccountType` — the `accountType` of the largest *realized* debit — so a
+  block can attribute spend after the fact (internal-only accounts are omitted).
 
 ## Publish / review / deploy lifecycle (no trust on push)
 
@@ -232,6 +293,12 @@ platform-owned recipe and ignores (and drops) any tenant-supplied build files
 
 ## Known gaps before Phase 2 admin tool ships
 
+> This section predates the shipped moderator review workflow (see "Publish /
+> review / deploy lifecycle" above — `/apps/review`, `approveRequest`). Some of
+> the "Phase 2 admin tool" premises here are now partly satisfied; the cache-
+> invalidation-on-`status`-transition gap below should be re-verified against
+> current `BlockRegistry` behavior before relying on it. Needs a maintainer pass.
+
 ### Cache invalidation on `app_blocks.status` transitions (audit-10 H3)
 
 `BlockRegistry.listForModel` caches results for 60 seconds and the SQL
@@ -268,6 +335,11 @@ availability gate is the canary posture. Flip to `['public']` when
 launching generally.
 
 ## Phase 2 / 3 follow-ups
+
+> Partly stale — several items below have since shipped (the moderator approval
+> workflow and per-app KV / App Storage among them). Treat this as a historical
+> backlog; confirm each item's live status before acting on it. Needs a
+> maintainer pass to prune the completed rows.
 
 - Publisher install UX (model-edit tab).
 - Moderator approval workflow + admin-only tier-change tool.
