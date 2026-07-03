@@ -93,7 +93,8 @@ const getPending = async (): Promise<PendingReturnRow[]> => {
   }
 };
 
-const handleNormal = async (row: PendingReturnRow, client: PoolClient): Promise<RetData[]> => {
+// Exported for behavioral unit tests (fake PoolClient). Export-for-test only — logic unchanged.
+export const handleNormal = async (row: PendingReturnRow, client: PoolClient): Promise<RetData[]> => {
   const { id, key, type, category, details, users } = row;
   let retData: RetData[] = [];
 
@@ -140,7 +141,8 @@ const handleNormal = async (row: PendingReturnRow, client: PoolClient): Promise<
   return retData;
 };
 
-const handleDebounce = async (row: PendingReturnRow, client: PoolClient): Promise<RetData[]> => {
+// Exported for behavioral unit tests (fake PoolClient). Export-for-test only — logic unchanged.
+export const handleDebounce = async (row: PendingReturnRow, client: PoolClient): Promise<RetData[]> => {
   const { id, key, type, category, details, users, debounceSeconds, lastTriggered, nextSendAt } = row;
   let retData: RetData[] = [];
 
@@ -194,7 +196,8 @@ const handleDebounce = async (row: PendingReturnRow, client: PoolClient): Promis
   return retData;
 };
 
-const create = async (row: PendingReturnRow): Promise<RetData[] | undefined> => {
+// Exported for behavioral unit tests. Export-for-test only — logic unchanged.
+export const create = async (row: PendingReturnRow): Promise<RetData[] | undefined> => {
   if (row.category === 'Other')
     logToAxiom({ type: 'warning', message: 'Missing category', data: { type: row.type } }).catch(
       () => {}
@@ -229,7 +232,8 @@ const create = async (row: PendingReturnRow): Promise<RetData[] | undefined> => 
   }
 };
 
-const run = async () => {
+// Exported for behavioral unit tests. Export-for-test only — logic unchanged.
+export const run = async () => {
   const rows = await getPending();
   for (const row of rows) {
     const affectedUsers = await create(row);
