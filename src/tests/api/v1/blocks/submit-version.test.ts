@@ -264,7 +264,7 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     });
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(403);
-    expect((res._getJSONData() as { message: string }).message).toContain('App Blocks submit scope');
+    expect((res._getJSONData() as { message: string }).message).toContain('Apps submit scope');
     // Must reject BEFORE the heavy publish path runs.
     expect(mockSubmitVersion).not.toHaveBeenCalled();
     // Must reject BEFORE the flag check / rate-limit round-trip (no leak).
@@ -294,7 +294,7 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(403);
     // Rejected by the mod gate (not the scope gate) — scope alone is insufficient.
-    expect((res._getJSONData() as { message: string }).message).toContain('civitai team');
+    expect((res._getJSONData() as { message: string }).message).toContain('Civitai team');
     expect(mockSubmitVersion).not.toHaveBeenCalled();
   });
 

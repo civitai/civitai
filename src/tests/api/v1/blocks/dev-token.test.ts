@@ -290,7 +290,7 @@ describe('POST /api/v1/blocks/dev-token', () => {
     const msg = (res._getJSONData() as { message: string }).message;
     // Actionable: tells the dev both how to fix it (personal key) and the OAuth path.
     expect(msg).toContain('personal API key');
-    expect(msg).toContain('App Blocks submit scope');
+    expect(msg).toContain('Apps submit scope');
     expect(mockSign).not.toHaveBeenCalled();
     // Rejected before flag / db / sign — no leak.
     expect(mockIsAppBlocksEnabled).not.toHaveBeenCalled();

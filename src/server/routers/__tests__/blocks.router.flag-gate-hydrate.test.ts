@@ -249,7 +249,7 @@ describe('assertAppBlocksEnabledForTokenUser — Flipt context is hydrated from 
     const caller = blocksRouter.createCaller(fakeCtx() as never);
     await expect(
       caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
-    ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
 
     // Global eval: with no user, isAppBlocksEnabled takes the no-user branch and
     // calls isFlipt(flag) with NO entityId/context (buildFliptContext is never

@@ -204,7 +204,7 @@ describe('GET /api/v1/blocks/me', () => {
     const { req, res } = createMocks();
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(403);
-    expect((res._getJSONData() as { error: string }).error).toMatch(/civitai team/);
+    expect((res._getJSONData() as { error: string }).error).toMatch(/Civitai team/);
   });
 
   it('403 when the resolved viewer is banned (bannedAt set) — second line of defense', async () => {

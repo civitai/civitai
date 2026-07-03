@@ -141,7 +141,7 @@ const enforceAppBlocksFlag = middleware(async ({ ctx, next, type }) => {
     // that always render the slot don't surface an error.
     return next({ ctx: { _appBlocksDisabled: true } });
   }
-  throw new TRPCError({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
+  throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
 });
 
 /**
@@ -175,7 +175,7 @@ async function assertViewerIsAppDeveloper(userId: number): Promise<void> {
   if (!(await isAppBlocksAuthorEnabled({ user: user ?? undefined }))) {
     throw new TRPCError({
       code: 'FORBIDDEN',
-      message: 'App Blocks authoring is not enabled for this account',
+      message: 'Apps authoring is not enabled for this account',
     });
   }
 }
@@ -233,7 +233,7 @@ async function assertAppBlocksEnabledForTokenUser(userId: number): Promise<void>
   // does) or null for a vanished user. null → undefined → isAppBlocksEnabled's global eval → flag false → blocked.
   const user = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
   if (!(await isAppBlocksEnabled({ user: user ?? undefined }))) {
-    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
   }
 }
 
@@ -1563,7 +1563,7 @@ export const blocksRouter = router({
       if (!ctx.features.appBlocks) {
         throw new TRPCError({
           code: 'FORBIDDEN',
-          message: 'App Blocks is not available to this account',
+          message: 'Apps are not available to this account',
         });
       }
       const block = await dbRead.appBlock.findUnique({
@@ -1996,7 +1996,7 @@ export const blocksRouter = router({
     .input(getMarketplaceMetaSchema)
     .query(async ({ ctx, input }) => {
       if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('App Blocks curation is restricted to civitai team');
+        throw throwAuthorizationError('Apps curation is restricted to the Civitai team');
       }
       const meta = await BlockRegistry.getMarketplaceMeta(input.appBlockId);
       if (!meta) throw throwNotFoundError('App block not found');
@@ -2023,7 +2023,7 @@ export const blocksRouter = router({
     .input(setMarketplaceMetaSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('App Blocks curation is restricted to civitai team');
+        throw throwAuthorizationError('Apps curation is restricted to the Civitai team');
       }
       return BlockRegistry.setMarketplaceMeta(input);
     }),
@@ -3302,7 +3302,7 @@ export const blocksRouter = router({
       if (!ctx.features.appBlocks) {
         throw new TRPCError({
           code: 'FORBIDDEN',
-          message: 'App Blocks is not available to this account',
+          message: 'Apps are not available to this account',
         });
       }
       const block = await dbRead.appBlock.findUnique({
@@ -3402,7 +3402,7 @@ export const blocksRouter = router({
       if (!ctx.features.appBlocks) {
         throw new TRPCError({
           code: 'FORBIDDEN',
-          message: 'App Blocks is not available to this account',
+          message: 'Apps are not available to this account',
         });
       }
       const block = await dbRead.appBlock.findUnique({
@@ -3514,7 +3514,7 @@ export const blocksRouter = router({
       if (!ctx.features.appBlocks) {
         throw new TRPCError({
           code: 'FORBIDDEN',
-          message: 'App Blocks is not available to this account',
+          message: 'Apps are not available to this account',
         });
       }
 
@@ -3704,7 +3704,7 @@ export const blocksRouter = router({
       if (!ctx.features.appBlocks) {
         throw new TRPCError({
           code: 'FORBIDDEN',
-          message: 'App Blocks is not available to this account',
+          message: 'Apps are not available to this account',
         });
       }
       const block = input.appBlockId

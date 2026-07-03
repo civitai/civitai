@@ -41,7 +41,7 @@ import { isHostForColor } from '~/server/utils/server-domain';
  */
 const enforceAppBlocksFlag = middleware(async ({ ctx, next }) => {
   if (await isAppBlocksEnabled({ user: ctx.user })) return next();
-  throw new TRPCError({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
+  throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
 });
 
 /**

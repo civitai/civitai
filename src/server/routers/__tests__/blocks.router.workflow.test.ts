@@ -1019,7 +1019,7 @@ describe('blocks.submitWorkflow', () => {
     const caller = blocksRouter.createCaller(fakeCtx() as never);
     await expect(
       caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
-    ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
     // The token IS verified (the flag gate is in-body now), but no spend/submit.
     expect(mockVerifyBlockToken).toHaveBeenCalled();
     expect(mockSubmitWorkflow).not.toHaveBeenCalled();
@@ -1119,7 +1119,7 @@ describe('blocks.submitWorkflow', () => {
       const caller = blocksRouter.createCaller(fakeCtx() as never);
       await expect(
         caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
-      ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
     });
 
@@ -1197,7 +1197,7 @@ describe('blocks.submitWorkflow', () => {
       caller = blocksRouter.createCaller(fakeCtx() as never);
       await expect(
         caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
-      ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
       expect(mockGetWorkflow).not.toHaveBeenCalled();
     });
   });
@@ -3493,7 +3493,7 @@ describe('blocks.getMyBuzzBalance', () => {
     const caller = blocksRouter.createCaller(fakeCtx() as never);
     await expect(caller.getMyBuzzBalance({ blockToken: 'tok' })).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
-      message: 'App Blocks not enabled',
+      message: 'Apps are not enabled',
     });
     expect(mockGetUserBuzzAccounts).not.toHaveBeenCalled();
   });
