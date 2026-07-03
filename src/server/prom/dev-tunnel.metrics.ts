@@ -55,10 +55,12 @@ const metrics =
       help:
         'Cumulative reap-dev-tunnels job runs by result. ' +
         'ok = the label-scoped LIST succeeded (healthy sweep, possibly a zero no-op); ' +
-        'list_failed = the k8s LIST returned a non-2xx (RBAC/wrong-ns/5xx) — a ' +
-        'persistent value here means the reaper CANNOT delete routes and orphans ' +
-        'accumulate; error = the job threw (getDp1Target/k8sFetch/TLS). Alert on a ' +
-        'sustained rate of list_failed|error.',
+        'list_failed = the k8s LIST could not reclaim routes — either a non-2xx ' +
+        '(RBAC/wrong-ns/5xx) OR the call threw/was unreachable (TLS-verify reject on ' +
+        'a pool without NODE_EXTRA_CA_CERTS, DNS, connection-refused, timeout); a ' +
+        'persistent value here means orphans accumulate; error = an UNEXPECTED ' +
+        'exception (a code bug, not API-unreachable). Alert on a sustained rate of ' +
+        'list_failed|error.',
       labelNames: ['result'],
     }),
   });

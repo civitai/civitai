@@ -149,14 +149,29 @@ async function readSessionChecked(sessionId: string): Promise<SessionReadOutcome
   }
 }
 
-/** Elapsed seconds since a k8s object's `creationTimestamp`, or null if it's
- *  missing/unparseable (in which case the reaper conservatively skips a
- *  confirmed-absent route rather than risk the create-before-persist race). */
-function routeAgeSeconds(creationTimestamp: string | undefined): number | null {
+/** Parse an HTTP `Date` header (apiserver-stamped) to epoch ms, or null if it's
+ *  missing/unparseable. */
+function parseHttpDate(dateHeader: string | null | undefined): number | null {
+  if (!dateHeader) return null;
+  const t = Date.parse(dateHeader);
+  return Number.isNaN(t) ? null : t;
+}
+
+/** Elapsed seconds between `nowMs` and a k8s object's `creationTimestamp`, or
+ *  null if `creationTimestamp` is missing/unparseable (in which case the reaper
+ *  conservatively skips a confirmed-absent route rather than risk the
+ *  create-before-persist race).
+ *
+ *  `nowMs` MUST be the apiserver's own clock (its LIST-response `Date` header) —
+ *  same clock domain as `creationTimestamp` — so the min-age guard is immune to
+ *  pod↔apiserver clock skew. A pod clock running ahead of the apiserver would
+ *  otherwise make a just-created route look ≥guard-old and reap a live tunnel
+ *  mid-creation. */
+function routeAgeSeconds(creationTimestamp: string | undefined, nowMs: number): number | null {
   if (!creationTimestamp) return null;
   const created = Date.parse(creationTimestamp);
   if (Number.isNaN(created)) return null;
-  return Math.floor((Date.now() - created) / 1000);
+  return Math.floor((nowMs - created) / 1000);
 }
 
 /** Discriminated result of one reaper sweep. `listOk:false` (with the HTTP
@@ -168,12 +183,18 @@ export type ReapResult = {
   /** Routes intentionally left this sweep (young/absent-guarded, or their session
    *  read errored) — retried next tick. */
   skipped: number;
-  /** false ⇒ the label-scoped LIST returned a non-2xx; the sweep did nothing and
-   *  the reaper could not reclaim routes. */
+  /** false ⇒ the label-scoped LIST failed (non-2xx, OR the call THREW: TLS-verify
+   *  reject / DNS / connection-refused / timeout / missing SA token); the sweep
+   *  did nothing and the reaper could not reclaim routes. */
   listOk: boolean;
-  /** HTTP status of the LIST when listOk is false. */
+  /** When listOk is false: the HTTP status of a non-2xx LIST, or the sentinel `0`
+   *  when the LIST call THREW (API server unreachable — no HTTP status exists). */
   status?: number;
 };
+
+/** Sentinel `status` for a LIST that threw (API unreachable — no real HTTP
+ *  status). Distinguishes "couldn't reach the apiserver" from a genuine non-2xx. */
+const LIST_UNREACHABLE_STATUS = 0;
 
 // ---------------------------------------------------------------------------
 // Manifest builders (PURE — exported for shape tests)
@@ -647,14 +668,25 @@ export async function reserveDevSessionBuzz(
  * the absent-key path then reaps it — same code path, min-age guarded.)
  */
 export async function reapExpiredDevTunnels(): Promise<ReapResult> {
-  const target = await getDp1Target();
   const ns = env.APPS_KUBE_NAMESPACE;
   const selector = encodeURIComponent(`${DEV_TUNNEL_LABEL}=true`);
-  const listRes = await k8sFetch(
-    target,
-    `/apis/traefik.io/v1alpha1/namespaces/${ns}/ingressroutes?labelSelector=${selector}`,
-    { method: 'GET' }
-  );
+  let listRes: Response;
+  try {
+    const target = await getDp1Target();
+    listRes = await k8sFetch(
+      target,
+      `/apis/traefik.io/v1alpha1/namespaces/${ns}/ingressroutes?labelSelector=${selector}`,
+      { method: 'GET' }
+    );
+  } catch {
+    // Couldn't even REACH the API server: TLS-verify reject (a pool without
+    // NODE_EXTRA_CA_CERTS), DNS, connection-refused, timeout, or a missing SA
+    // token. That's "can't reclaim routes" — a list_failed, NOT a code bug — so
+    // surface it as listOk:false (sentinel status 0), not a thrown exception that
+    // the job would misattribute to `error`. Recording `ok`/no-op here would
+    // re-open the silent-failure hole.
+    return { swept: 0, reaped: 0, skipped: 0, listOk: false, status: LIST_UNREACHABLE_STATUS };
+  }
   // A non-2xx LIST is a FAILURE, not an empty sweep — surface it distinctly so
   // the job logs `level:error` + increments the `list_failed` metric. Returning a
   // benign zero here would make an RBAC/ns/5xx break a permanent silent no-op.
@@ -667,6 +699,11 @@ export async function reapExpiredDevTunnels(): Promise<ReapResult> {
     }>;
   }>(listRes);
   const items = list?.items ?? [];
+  // Use the APISERVER's clock (the LIST response `Date` header) as "now" for the
+  // min-age guard — same clock domain as each object's creationTimestamp, so the
+  // guard is immune to pod↔apiserver skew. Fall back to the pod clock only if the
+  // header is missing/unparseable (then the guard assumes bounded NTP skew).
+  const nowMs = parseHttpDate(listRes.headers?.get?.('date')) ?? Date.now();
   let reaped = 0;
   let skipped = 0;
   for (const it of items) {
@@ -692,7 +729,7 @@ export async function reapExpiredDevTunnels(): Promise<ReapResult> {
     // create-before-persist race: only reap a route demonstrably older than the
     // min-age guard. A young route (or one whose age can't be determined) is left
     // for the next sweep.
-    const ageSec = routeAgeSeconds(it?.metadata?.creationTimestamp);
+    const ageSec = routeAgeSeconds(it?.metadata?.creationTimestamp, nowMs);
     if (ageSec === null || ageSec < DEV_TUNNEL_REAP_MIN_AGE_SECONDS) {
       skipped += 1;
       continue;

@@ -347,4 +347,59 @@ describe('reapExpiredDevTunnels (server-authoritative)', () => {
 
     expect(result).toMatchObject({ swept: 1, reaped: 1, skipped: 0, listOk: true });
   });
+
+  it('(f) a THROWN LIST (TLS/network) is list_failed (status 0), NOT a generic error — and deletes nothing', async () => {
+    // Simulate a TLS-verify reject / connection failure on the LIST call itself.
+    mockK8sFetch.mockImplementation(async (_t: unknown, path: string, init: any) => {
+      if (init?.method === 'GET' && path.includes('ingressroutes?labelSelector')) {
+        throw new Error('unable to verify the first certificate'); // TLS handshake reject
+      }
+      return okRes();
+    });
+
+    // MUST NOT throw — the reaper converts an unreachable API into a discriminated
+    // list_failed (sentinel status 0) so the job records `list_failed`, not `error`.
+    const result = await reapExpiredDevTunnels();
+
+    expect(result).toMatchObject({ swept: 0, reaped: 0, skipped: 0, listOk: false, status: 0 });
+    expect(deleteCalls().length).toBe(0);
+  });
+
+  it('(g) route age uses the apiserver Date header — young-per-apiserver route is SKIPPED despite a pod clock running ~1h ahead', async () => {
+    const sessionId = 'bki_skewguard';
+    // Fixed base ~1h in the PAST of the real pod clock: under Date.now() the route
+    // would look ~1h old → reaped. Session record confirmed-absent.
+    const base = Date.now() - 60 * 60 * 1000;
+    const creationTimestamp = new Date(base).toISOString();
+    // apiserver "now" = 5s after creation → YOUNG in the apiserver's own clock domain.
+    const apiserverDate = new Date(base + 5000).toUTCString();
+    mockK8sFetch.mockImplementation(async (_t: unknown, path: string, init: any) => {
+      if (init?.method === 'GET' && path.includes('ingressroutes?labelSelector')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: (h: string) => (h.toLowerCase() === 'date' ? apiserverDate : null) },
+          text: async () =>
+            JSON.stringify({
+              items: [
+                {
+                  metadata: {
+                    labels: { 'civitai.com/dev-tunnel-session': sessionId },
+                    creationTimestamp,
+                  },
+                },
+              ],
+            }),
+        };
+      }
+      return okRes();
+    });
+
+    const result = await reapExpiredDevTunnels();
+
+    // Age computed from the apiserver Date (~5s) < guard → SKIPPED. If the code used
+    // the pod clock (~1h ahead) it would have reaped a route mid-creation.
+    expect(result).toMatchObject({ swept: 1, reaped: 0, skipped: 1, listOk: true });
+    expect(deleteCalls().length).toBe(0);
+  });
 });
