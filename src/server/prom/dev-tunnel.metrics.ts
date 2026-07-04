@@ -29,6 +29,7 @@ declare global {
         active: client.Gauge<string>;
         mints: client.Counter<string>;
         teardowns: client.Counter<string>;
+        reaperRuns: client.Counter<string>;
       }
     | undefined;
 }
@@ -49,9 +50,23 @@ const metrics =
       help: 'Cumulative App Blocks dev-tunnel teardowns by reason (stop|reap-idle|reap-maxttl).',
       labelNames: ['reason'],
     }),
+    reaperRuns: new client.Counter({
+      name: PROM_PREFIX + 'dev_tunnel_reaper_runs_total',
+      help:
+        'Cumulative reap-dev-tunnels job runs by result. ' +
+        'ok = the label-scoped LIST succeeded (healthy sweep, possibly a zero no-op); ' +
+        'list_failed = the k8s LIST could not reclaim routes — either a non-2xx ' +
+        '(RBAC/wrong-ns/5xx) OR the call threw/was unreachable (TLS-verify reject on ' +
+        'a pool without NODE_EXTRA_CA_CERTS, DNS, connection-refused, timeout); a ' +
+        'persistent value here means orphans accumulate; error = an UNEXPECTED ' +
+        'exception (a code bug, not API-unreachable). Alert on a sustained rate of ' +
+        'list_failed|error.',
+      labelNames: ['result'],
+    }),
   });
 
 export type DevTunnelTeardownReason = 'stop' | 'reap-idle' | 'reap-maxttl';
+export type DevTunnelReaperResult = 'ok' | 'list_failed' | 'error';
 
 /** Record a successful mint: bump the active gauge + the mint counter. Never
  *  throws — a telemetry failure must not break the mint. */
@@ -76,6 +91,17 @@ export function recordDevTunnelTeardown(reason: DevTunnelTeardownReason): void {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const val = (metrics.active as any).hashMap?.['']?.value;
     if (typeof val === 'number' && val < 0) metrics.active.set(0);
+  } catch {
+    /* never throw from telemetry */
+  }
+}
+
+/** Record the outcome of a single reap-dev-tunnels job run. `list_failed` and
+ *  `error` are the actionable/alertable results — a sustained rate of either
+ *  means the reaper is NOT reclaiming routes. Never throws. */
+export function recordDevTunnelReaperRun(result: DevTunnelReaperResult): void {
+  try {
+    metrics.reaperRuns.inc({ result });
   } catch {
     /* never throw from telemetry */
   }

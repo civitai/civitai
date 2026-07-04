@@ -50,6 +50,15 @@ export const DEV_TUNNEL_HARD_SECONDS = 8 * 60 * 60; // 8h (design §9)
  *  local submit loop within ONE dev session. Conservative default. */
 export const DEV_TUNNEL_SESSION_BUZZ_CAP = 5000;
 
+/** A route whose backing session record is CONFIRMED-ABSENT is only reaped once
+ *  its k8s object is older than this. Closes the create-before-persist race:
+ *  `startDevTunnel` renders the route (`renderDevTunnelRoute`) BEFORE it writes
+ *  the session key, so a sweep landing in that window sees the route + a null
+ *  record and would otherwise tear down a just-created tunnel. The render+write
+ *  window is sub-second in practice; a 2-minute guard is ample slack while still
+ *  reclaiming a genuinely orphaned route within ~2 sweeps. */
+export const DEV_TUNNEL_REAP_MIN_AGE_SECONDS = 2 * 60; // 2m
+
 const SYS_PREFIX = REDIS_SYS_KEYS.BLOCKS.DEV_TUNNEL;
 const credKey = (fingerprint: string) => `${SYS_PREFIX}:cred:${fingerprint}` as const;
 const sessionKey = (sessionId: string) => `${SYS_PREFIX}:session:${sessionId}` as const;
@@ -108,6 +117,84 @@ async function readJson<T>(key: DevTunnelKey): Promise<T | null> {
     return null;
   }
 }
+
+/**
+ * Read outcome that distinguishes a CONFIRMED-ABSENT key (`ok:true, value:null`)
+ * from a Redis READ FAILURE (`ok:false`). The reaper MUST use this — not the
+ * error→null `readJson` — for its reap decision: collapsing a read failure to
+ * null would let a transient Redis blip mid-sweep be read as "session gone →
+ * delete route" and tear down ALL active tunnels whose read happened to error.
+ */
+type SessionReadOutcome =
+  | { ok: true; value: DevTunnelSessionRecord | null }
+  | { ok: false };
+
+async function readSessionChecked(sessionId: string): Promise<SessionReadOutcome> {
+  try {
+    const raw = await withSysReadDeadline(sysRedis.get(sessionKey(sessionId)));
+    // A clean miss: the key is genuinely absent (the read SUCCEEDED and returned
+    // nothing) — reap-eligible, subject to the min-age guard.
+    if (!raw || typeof raw !== 'string') return { ok: true, value: null };
+    try {
+      return { ok: true, value: JSON.parse(raw) as DevTunnelSessionRecord };
+    } catch {
+      // Present-but-corrupt value — a confirmed-bad record, not a read failure.
+      // Treat as absent (still min-age guarded before any delete).
+      return { ok: true, value: null };
+    }
+  } catch {
+    // Redis READ FAILURE (timeout / connection error). NOT a confirmed absence —
+    // the route may back a live session. The caller must SKIP, never reap.
+    return { ok: false };
+  }
+}
+
+/** Parse an HTTP `Date` header (apiserver-stamped) to epoch ms, or null if it's
+ *  missing/unparseable. */
+function parseHttpDate(dateHeader: string | null | undefined): number | null {
+  if (!dateHeader) return null;
+  const t = Date.parse(dateHeader);
+  return Number.isNaN(t) ? null : t;
+}
+
+/** Elapsed seconds between `nowMs` and a k8s object's `creationTimestamp`, or
+ *  null if `creationTimestamp` is missing/unparseable (in which case the reaper
+ *  conservatively skips a confirmed-absent route rather than risk the
+ *  create-before-persist race).
+ *
+ *  `nowMs` MUST be the apiserver's own clock (its LIST-response `Date` header) —
+ *  same clock domain as `creationTimestamp` — so the min-age guard is immune to
+ *  pod↔apiserver clock skew. A pod clock running ahead of the apiserver would
+ *  otherwise make a just-created route look ≥guard-old and reap a live tunnel
+ *  mid-creation. */
+function routeAgeSeconds(creationTimestamp: string | undefined, nowMs: number): number | null {
+  if (!creationTimestamp) return null;
+  const created = Date.parse(creationTimestamp);
+  if (Number.isNaN(created)) return null;
+  return Math.floor((nowMs - created) / 1000);
+}
+
+/** Discriminated result of one reaper sweep. `listOk:false` (with the HTTP
+ *  `status`) is the SILENT-FAILURE fix: a non-2xx LIST is surfaced distinctly
+ *  instead of masquerading as a healthy empty sweep. */
+export type ReapResult = {
+  swept: number;
+  reaped: number;
+  /** Routes intentionally left this sweep (young/absent-guarded, or their session
+   *  read errored) — retried next tick. */
+  skipped: number;
+  /** false ⇒ the label-scoped LIST failed (non-2xx, OR the call THREW: TLS-verify
+   *  reject / DNS / connection-refused / timeout / missing SA token); the sweep
+   *  did nothing and the reaper could not reclaim routes. */
+  listOk: boolean;
+  /** When listOk is false: the HTTP status of a non-2xx LIST, or the sentinel `0`
+   *  when the LIST call THREW (API server unreachable — no HTTP status exists). */
+  status?: number;
+};
+
+/** Sentinel `status` for a LIST that threw (API unreachable — no real HTTP
+ *  status). Distinguishes "couldn't reach the apiserver" from a genuine non-2xx. */
+const LIST_UNREACHABLE_STATUS = 0;
 
 // ---------------------------------------------------------------------------
 // Manifest builders (PURE — exported for shape tests)
@@ -557,48 +644,100 @@ export async function reserveDevSessionBuzz(
 
 /**
  * Sweep the ephemeral dev-tunnel routes and tear down any whose backing session
- * record has expired (hard-TTL) or vanished from Redis. Bounded by the number of
- * live routes (label-scoped LIST). Server-authoritative: even if the CLI crashes
- * without calling stopDevTunnel, the hard-TTL Redis expiry + this sweep reclaim
- * the route. Intended to be driven by a periodic job (P3 infra); the primitive is
- * complete + unit-tested here.
+ * record has genuinely expired (hard-TTL) or is confirmed-absent. Bounded by the
+ * number of live routes (label-scoped LIST). Server-authoritative: even if the
+ * CLI crashes without calling stopDevTunnel, the hard-TTL Redis expiry + this
+ * sweep reclaim the route. Driven by the `reap-dev-tunnels` periodic job.
  *
- * Idle handling: a session whose Redis record is gone (its keys carry a hard-TTL
- * EX) is reaped as `reap-maxttl`. A finer idle-timeout (`reap-idle`) is enforced
- * by refreshing the session key's TTL on browser activity and reaping the route
- * when the key is absent — same code path (absent key → reap). The `reason` here
- * is `reap-maxttl` for an expired/absent record.
+ * SAFETY (the delete blast-radius is the whole point of a reaper — it must be
+ * tight):
+ *  - **LIST failure is NOT an empty sweep.** A non-2xx LIST returns
+ *    `{ listOk:false, status }` (not a benign zero) so a persistent RBAC/ns/5xx
+ *    failure is detectable + alertable rather than a silent permanent no-op.
+ *  - **Never reap on a Redis READ FAILURE.** The reap decision uses
+ *    `readSessionChecked` (error vs absent), not the error→null `readJson`. On a
+ *    read error the route is SKIPPED — a transient Redis blip can never be read
+ *    as "session gone → delete" and tear down live tunnels.
+ *  - **Confirmed-absent record → min-age guarded.** A route whose session read
+ *    cleanly missed is only reaped once it's older than
+ *    DEV_TUNNEL_REAP_MIN_AGE_SECONDS, closing the create-before-persist race
+ *    (route rendered before the session key is written).
+ *
+ * A present record is reaped only when `hardExpiresAt <= now` (`reap-maxttl`).
+ * (A finer idle-timeout would refresh the session key's TTL on browser activity;
+ * the absent-key path then reaps it — same code path, min-age guarded.)
  */
-export async function reapExpiredDevTunnels(): Promise<{ swept: number; reaped: number }> {
-  const target = await getDp1Target();
+export async function reapExpiredDevTunnels(): Promise<ReapResult> {
   const ns = env.APPS_KUBE_NAMESPACE;
   const selector = encodeURIComponent(`${DEV_TUNNEL_LABEL}=true`);
-  const listRes = await k8sFetch(
-    target,
-    `/apis/traefik.io/v1alpha1/namespaces/${ns}/ingressroutes?labelSelector=${selector}`,
-    { method: 'GET' }
-  );
-  if (!listRes.ok) return { swept: 0, reaped: 0 };
+  let listRes: Response;
+  try {
+    const target = await getDp1Target();
+    listRes = await k8sFetch(
+      target,
+      `/apis/traefik.io/v1alpha1/namespaces/${ns}/ingressroutes?labelSelector=${selector}`,
+      { method: 'GET' }
+    );
+  } catch {
+    // Couldn't even REACH the API server: TLS-verify reject (a pool without
+    // NODE_EXTRA_CA_CERTS), DNS, connection-refused, timeout, or a missing SA
+    // token. That's "can't reclaim routes" — a list_failed, NOT a code bug — so
+    // surface it as listOk:false (sentinel status 0), not a thrown exception that
+    // the job would misattribute to `error`. Recording `ok`/no-op here would
+    // re-open the silent-failure hole.
+    return { swept: 0, reaped: 0, skipped: 0, listOk: false, status: LIST_UNREACHABLE_STATUS };
+  }
+  // A non-2xx LIST is a FAILURE, not an empty sweep — surface it distinctly so
+  // the job logs `level:error` + increments the `list_failed` metric. Returning a
+  // benign zero here would make an RBAC/ns/5xx break a permanent silent no-op.
+  if (!listRes.ok) {
+    return { swept: 0, reaped: 0, skipped: 0, listOk: false, status: listRes.status };
+  }
   const list = await unwrap<{
-    items?: Array<{ metadata?: { labels?: Record<string, string> } }>;
+    items?: Array<{
+      metadata?: { labels?: Record<string, string>; creationTimestamp?: string };
+    }>;
   }>(listRes);
   const items = list?.items ?? [];
+  // Use the APISERVER's clock (the LIST response `Date` header) as "now" for the
+  // min-age guard — same clock domain as each object's creationTimestamp, so the
+  // guard is immune to pod↔apiserver skew. Fall back to the pod clock only if the
+  // header is missing/unparseable (then the guard assumes bounded NTP skew).
+  const nowMs = parseHttpDate(listRes.headers?.get?.('date')) ?? Date.now();
   let reaped = 0;
+  let skipped = 0;
   for (const it of items) {
     const sessionId = it?.metadata?.labels?.[DEV_TUNNEL_SESSION_LABEL];
     if (!sessionId) continue;
-    const session = await readJson<DevTunnelSessionRecord>(sessionKey(sessionId));
-    const expired = !session || session.hardExpiresAt <= nowSec();
-    if (expired) {
-      if (session) {
-        await teardownSession(session, 'reap-maxttl').catch(() => {});
-      } else {
-        // Redis record gone but route survives — delete the route directly.
-        await deleteDevTunnelRoute(sessionId).catch(() => {});
-        recordDevTunnelTeardown('reap-maxttl');
-      }
-      reaped += 1;
+    const outcome = await readSessionChecked(sessionId);
+    if (!outcome.ok) {
+      // Redis READ FAILED — this route may back a LIVE session. Never reap on a
+      // read failure; skip and let the next sweep retry.
+      skipped += 1;
+      continue;
     }
+    const session = outcome.value;
+    if (session) {
+      // Record present: reap ONLY if genuinely past its hard-TTL.
+      if (session.hardExpiresAt <= nowSec()) {
+        await teardownSession(session, 'reap-maxttl').catch(() => {});
+        reaped += 1;
+      }
+      continue;
+    }
+    // Record CONFIRMED-ABSENT (clean miss or corrupt value). Guard the
+    // create-before-persist race: only reap a route demonstrably older than the
+    // min-age guard. A young route (or one whose age can't be determined) is left
+    // for the next sweep.
+    const ageSec = routeAgeSeconds(it?.metadata?.creationTimestamp, nowMs);
+    if (ageSec === null || ageSec < DEV_TUNNEL_REAP_MIN_AGE_SECONDS) {
+      skipped += 1;
+      continue;
+    }
+    // Redis record gone but route survives past the guard — delete it directly.
+    await deleteDevTunnelRoute(sessionId).catch(() => {});
+    recordDevTunnelTeardown('reap-maxttl');
+    reaped += 1;
   }
-  return { swept: items.length, reaped };
+  return { swept: items.length, reaped, skipped, listOk: true };
 }
