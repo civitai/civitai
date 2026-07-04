@@ -4,10 +4,11 @@ import { fingerprintSshPublicKey, normalizeSshPublicKey } from '~/server/service
 
 /**
  * APP DEV TUNNEL — coverage for the sish authz callback
- * `POST /api/apps/dev-tunnel/authz`. `user` / `remote_addr` are attacker-
- * controlled → never authz'd on; the decision is the presented `auth_key`
- * matching a live userId-bound credential (constant-time), gated by the shared
- * secret. Single-use → replay denied.
+ * `POST /api/apps/dev-tunnel/authz/<secret>`. The shared secret is carried in the
+ * URL PATH (F5: sish v2.23.0 cannot attach a custom header), not a header.
+ * `user` / `remote_addr` are attacker-controlled → never authz'd on; the decision
+ * is the presented `auth_key` matching a live userId-bound credential
+ * (constant-time), gated by the path secret. Single-use → replay denied.
  */
 
 const { mockLookup, mockConsume, mockEnv } = vi.hoisted(() => ({
@@ -22,7 +23,7 @@ vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
   consumeDevTunnelCredential: (...a: unknown[]) => mockConsume(...a),
 }));
 
-import handler from '~/pages/api/apps/dev-tunnel/authz';
+import handler from '~/pages/api/apps/dev-tunnel/authz/[secret]';
 
 const PUBKEY = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyBytes0123456789abcdefg dev@laptop';
 const NORMALIZED = normalizeSshPublicKey(PUBKEY);
@@ -60,22 +61,25 @@ function makeRes() {
 }
 
 function makeReq(opts: {
-  secret?: string;
+  /** The trailing path segment (the shared secret). `undefined` ⇒ no path param
+   *  at all (e.g. a request that somehow reached the handler with no [secret]). */
+  secret?: string | string[];
   authKey?: string;
   user?: string;
   remoteAddr?: string;
   method?: string;
 }): NextApiRequest {
-  const headers: Record<string, string> = {};
-  if (opts.secret !== undefined) headers['x-dev-tunnel-secret'] = opts.secret;
+  const query: Record<string, string | string[]> = {};
+  if (opts.secret !== undefined) query.secret = opts.secret;
   return {
     method: opts.method ?? 'POST',
-    headers,
+    headers: {},
+    query,
     body: { auth_key: opts.authKey, user: opts.user, remote_addr: opts.remoteAddr },
   } as unknown as NextApiRequest;
 }
 
-describe('POST /api/apps/dev-tunnel/authz', () => {
+describe('POST /api/apps/dev-tunnel/authz/<secret>', () => {
   beforeEach(() => {
     mockLookup.mockReset();
     mockConsume.mockClear();
@@ -83,7 +87,7 @@ describe('POST /api/apps/dev-tunnel/authz', () => {
   });
   afterEach(() => vi.clearAllMocks());
 
-  it('valid secret + matching pubkey → 200 (and consumes the credential)', async () => {
+  it('valid PATH secret + matching pubkey → 200 (and consumes the credential)', async () => {
     mockLookup.mockResolvedValue(validCred);
     const res = makeRes();
     await handler(makeReq({ secret: 'sish-shared-secret', authKey: PUBKEY, user: 'anything' }), res);
@@ -140,29 +144,58 @@ describe('POST /api/apps/dev-tunnel/authz', () => {
     expect(mockLookup).not.toHaveBeenCalled();
   });
 
-  it('WRONG shared secret → 401 (random internet cannot POST)', async () => {
+  it('WRONG path secret → 401 (random internet cannot POST) — no Redis lookup (DoS-safe ordering)', async () => {
     const res = makeRes();
     await handler(makeReq({ secret: 'nope', authKey: PUBKEY }), res);
     expect(res.statusCode).toBe(401);
     expect(mockLookup).not.toHaveBeenCalled();
   });
 
-  it('MISSING shared secret header → 401', async () => {
+  it('MISSING path secret → 401 (no lookup)', async () => {
     const res = makeRes();
     await handler(makeReq({ authKey: PUBKEY }), res);
     expect(res.statusCode).toBe(401);
+    expect(mockLookup).not.toHaveBeenCalled();
   });
 
-  it('UNCONFIGURED sish secret (env unset) → 503 (inert until provisioned)', async () => {
+  it('UNCONFIGURED sish secret (env unset) → 503 (inert until provisioned), even with a path secret', async () => {
     mockEnv.APPS_DEV_TUNNEL_SISH_SECRET = undefined;
     const res = makeRes();
     await handler(makeReq({ secret: 'anything', authKey: PUBKEY }), res);
     expect(res.statusCode).toBe(503);
+    expect(mockLookup).not.toHaveBeenCalled();
   });
 
   it('non-POST → 405', async () => {
     const res = makeRes();
     await handler(makeReq({ secret: 'sish-shared-secret', method: 'GET' }), res);
     expect(res.statusCode).toBe(405);
+  });
+
+  // F-4: a `?secret=` query param merged into the dynamic [secret] path segment
+  // yields a Next.js `string[]`. Lock the pathSecret()→sharedSecretMatch()
+  // type-guard contract so this can never become a bypass under a future
+  // refactor. pathSecret() takes index [0]; sharedSecretMatch() rejects
+  // non-strings — the correct secret is only accepted at index 0.
+  it('ARRAY path secret, correct at index 0 → 200 (first element wins)', async () => {
+    mockLookup.mockResolvedValue(validCred);
+    const res = makeRes();
+    await handler(makeReq({ secret: ['sish-shared-secret', 'injected'], authKey: PUBKEY }), res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.auth).toBe(true);
+  });
+
+  it('ARRAY path secret, real secret at index 1 → 401 (index-1 must NOT rescue)', async () => {
+    const res = makeRes();
+    await handler(makeReq({ secret: ['injected', 'sish-shared-secret'], authKey: PUBKEY }), res);
+    expect(res.statusCode).toBe(401);
+    expect(mockLookup).not.toHaveBeenCalled();
+  });
+
+  it('EMPTY array path secret → 401 (no lookup) — defense-in-depth', async () => {
+    const res = makeRes();
+    await handler(makeReq({ secret: [], authKey: PUBKEY }), res);
+    expect(res.statusCode).toBe(401);
+    expect(mockLookup).not.toHaveBeenCalled();
   });
 });
