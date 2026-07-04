@@ -54,6 +54,14 @@ const JWT_RE = /eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}/g;
 // Long opaque token-like strings (>=32 chars of base64url/hex alphabet). Requires at
 // least one digit AND one letter so it doesn't nuke ordinary long words. Catches API
 // keys, signatures, opaque session ids, etc. embedded in free text.
+//
+// ⚠️ COLLATERAL-DAMAGE HAZARD: this pattern ALSO matches legitimate STRUCTURAL identifiers
+// that happen to be long hex/base64 — most importantly an OTLP `traceId` (32 hex). Rewriting
+// one to `[redacted-token]` produces an invalid id and Alloy's faro.receiver rejects the whole
+// beacon with HTTP 400 (prod incident). It is therefore applied ONLY in genuine free-text
+// contexts (`redactText`: error messages, stack traces, breadcrumbs), NEVER on arbitrary
+// structural leaf values (`redactValue`) and NEVER on `traceId`/`spanId`/`parentSpanId`
+// (`deepRedact` skips those keys entirely).
 const LONG_TOKEN_RE = /(?=[A-Za-z0-9_-]*[0-9])(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{32,}/g;
 // A URL embedded in free text (message/stack). Stops at whitespace/quotes/brackets.
 const URL_IN_TEXT_RE = /https?:\/\/[^\s"'<>()\][{}]+/gi;
@@ -107,20 +115,42 @@ export function redactUrl(input: string): string {
 }
 
 /**
- * Scrub free text (error messages, stack traces, breadcrumb strings): redact query
- * params in any embedded URL, then emails, then JWTs and long token-like strings.
- * URLs are handled FIRST so their sensitive params are redacted before the email/
- * token passes touch them. Never throws.
+ * Structural-leaf scrub for an arbitrary string VALUE (not known to be free text): redact
+ * query params in any embedded URL, then emails, then JWTs. Deliberately does NOT apply the
+ * bare "long token-like string" heuristic (`LONG_TOKEN_RE`) — that heuristic corrupts
+ * legitimate long structural identifiers (OTLP trace/span ids, content hashes, cache keys)
+ * and is reserved for genuine free text (see `redactText`). Never throws.
+ *
+ * This still catches every enumerated leak path that isn't message-embedded: OAuth `code`
+ * and signed-URL signatures (URL query params → `redactUrl`), and emails (raw or `%40`).
  */
-export function redactText(input: string): string {
+export function redactValue(input: string): string {
   if (!input || typeof input !== 'string') return input;
   try {
     return input
       .replace(URL_IN_TEXT_RE, (m) => redactUrl(m))
       .replace(EMAIL_RE, REDACTED_EMAIL)
       .replace(EMAIL_ENCODED_RE, REDACTED_EMAIL)
-      .replace(JWT_RE, REDACTED_TOKEN)
-      .replace(LONG_TOKEN_RE, REDACTED_TOKEN);
+      .replace(JWT_RE, REDACTED_TOKEN);
+  } catch {
+    return input;
+  }
+}
+
+/**
+ * Scrub genuine FREE TEXT (error messages, stack traces, breadcrumb strings): everything
+ * `redactValue` does, plus the bare "long token-like string" heuristic for opaque secrets
+ * pasted into prose (API keys/signatures with no `eyJ` JWT marker and not in a URL param).
+ * URLs are handled FIRST so their sensitive params are redacted before the email/token
+ * passes touch them. Never throws.
+ *
+ * Use this ONLY where the string is known to be free text; on arbitrary structural leaves
+ * use `redactValue` (which omits the collateral-damage-prone long-token pass).
+ */
+export function redactText(input: string): string {
+  if (!input || typeof input !== 'string') return input;
+  try {
+    return redactValue(input).replace(LONG_TOKEN_RE, REDACTED_TOKEN);
   } catch {
     return input;
   }
@@ -131,6 +161,14 @@ export function redactText(input: string): string {
 // (e.g. `http.url`) live at `resourceSpans[].scopeSpans[].spans[].attributes[].value
 // .stringValue`, ~10 levels deep, so they MUST be url-aware and reachable (see MAX_DEPTH).
 const URL_KEY_RE = /url|href|location|referrer|uri|stringValue/i;
+// STRUCTURAL OTLP identifier keys (camelCase Faro/OTLP-JSON + snake_case OTLP variants).
+// Their values are trace/span ids that MUST be valid hex (traceId 32, spanId 16) or Alloy's
+// faro.receiver rejects the whole beacon with HTTP 400. They carry no PII, so they are passed
+// through byte-identical — never scrubbed — wherever they appear (span, span-event, span-link).
+const STRUCTURAL_ID_KEY_RE = /^(?:trace_?id|span_?id|parent_?span_?id)$/i;
+// Keys whose string values are genuine FREE TEXT (error/log messages, stack traces,
+// breadcrumbs) — the only place the collateral-damage-prone long-token heuristic is applied.
+const TEXT_KEY_RE = /^(?:message|value|reason|description|error|stack|stacktrace|stack_trace)$/i;
 // Deep enough to reach OTLP trace-span attribute values (~depth 10) plus headroom.
 // A value past this cap is returned un-scrubbed, so it must exceed every real payload's
 // PII-bearing nesting (trace attributes are the deepest known surface).
@@ -138,16 +176,38 @@ const MAX_DEPTH = 24;
 
 /**
  * Recursively redact every string in an arbitrary value (Faro transport payload/meta).
- * URL-ish keys use the structure-preserving `redactUrl`; all other strings use
- * `redactText`. Returns a scrubbed CLONE — the input is not mutated. Bounded depth so
- * a pathological/cyclic payload can't blow the stack. Never throws (returns the input
- * as-is on error — the caller is a fire-and-forget beacon hook).
+ * Per-string routing by KEY (deterministic, not value-shape heuristics):
+ *   - structural OTLP id keys (traceId/spanId/parentSpanId, camel + snake) → passed through
+ *     untouched (scrubbing them = invalid id = Alloy 400 drops the beacon);
+ *   - URL-ish keys → structure-preserving `redactUrl` + structural-leaf `redactValue`;
+ *   - free-text keys (message/stack/…) → full `redactText` (incl. the long-token heuristic);
+ *   - every other string → `redactValue` (email/JWT/embedded-URL params only — NO bare
+ *     long-token pass, which would corrupt long structural ids/hashes).
+ * Returns a scrubbed CLONE — the input is not mutated. Bounded depth so a pathological/cyclic
+ * payload can't blow the stack. Never throws (returns the input as-is on error — the caller is
+ * a fire-and-forget beacon hook).
  */
 export function deepRedact<T>(value: T, key = '', depth = 0): T {
   try {
     if (depth > MAX_DEPTH) return value;
     if (typeof value === 'string') {
-      const scrubbed = URL_KEY_RE.test(key) ? redactText(redactUrl(value)) : redactText(value);
+      // Structural OTLP ids (traceId/spanId/parentSpanId, camel + snake) pass through
+      // untouched — scrubbing them yields an invalid id and Alloy 400s the whole beacon.
+      if (STRUCTURAL_ID_KEY_RE.test(key)) return value;
+      let scrubbed: string;
+      if (URL_KEY_RE.test(key)) {
+        // URL-ish value: structure-preserving param scrub, then the structural-leaf pass
+        // (email/JWT/embedded-URL) — NOT the long-token heuristic, so long id-bearing path
+        // segments in the URL aren't corrupted.
+        scrubbed = redactValue(redactUrl(value));
+      } else if (TEXT_KEY_RE.test(key)) {
+        // Genuine free text (error/log messages, stack traces): full scrub incl. long-token.
+        scrubbed = redactText(value);
+      } else {
+        // Arbitrary structural leaf: scrub PII (email/JWT/embedded-URL params) but never the
+        // bare long-token heuristic that corrupts ids/hashes.
+        scrubbed = redactValue(value);
+      }
       return scrubbed as unknown as T;
     }
     if (Array.isArray(value)) {

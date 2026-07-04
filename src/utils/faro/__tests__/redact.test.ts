@@ -7,7 +7,14 @@ import {
   isSensitiveParam,
   redactText,
   redactUrl,
+  redactValue,
 } from '~/utils/faro/redact';
+
+// Valid OTLP structural ids: traceId MUST be 32 hex, spanId/parentSpanId 16 hex. The
+// Alloy faro.receiver rejects the whole beacon (HTTP 400) if any is not exactly that
+// shape, so the redactor must pass them through byte-identical.
+const HEX32 = /^[0-9a-f]{32}$/;
+const HEX16 = /^[0-9a-f]{16}$/;
 
 describe('isSensitiveParam', () => {
   it('matches sensitive names case-insensitively and as substrings', () => {
@@ -281,5 +288,163 @@ describe('whole-meta scrub (deepRedact over meta)', () => {
     // page.url still gets the url-key scrub
     expect(out.page.url).not.toContain('SECRETTOKEN');
     expect(out.page.url).toContain('token=' + REDACTED);
+  });
+});
+
+// F3 regression (prod HTTP 400 on /collect): a real browser TRACE beacon carries OTLP
+// structural ids — `traceId` (32 hex), `spanId`/`parentSpanId` (16 hex) — at the span AND
+// span-event level. The blanket "long token-like string" heuristic matched the 32-hex
+// traceId and rewrote it to `[redacted-token]`; Alloy's OTLP id parser then rejected the
+// malformed id and dropped the ENTIRE beacon (logs + web-vitals + errors + traces).
+// These ids MUST pass through byte-identical while genuine PII in attributes is still
+// scrubbed. (This test FAILS against the pre-fix code on the traceId corruption.)
+describe('OTLP trace structural-id protection (deepRedact)', () => {
+  // 32-hex traceId: has both digits and letters, so the >=32-char token heuristic matched.
+  const TRACE_ID = '4bf92f3577b34da6a3ce929d0e0e4736';
+  const SPAN_ID = '00f067aa0ba902b7'; // 16 hex
+  const PARENT_SPAN_ID = 'a3ce929d0e0e4736'; // 16 hex
+  const EVENT_TRACE_ID = '0af7651916cd43dd8448eb211c80319c'; // 32 hex
+  const EVENT_SPAN_ID = 'b7ad6b7169203331'; // 16 hex
+
+  const otlpTracePayload = () => ({
+    resourceSpans: [
+      {
+        scopeSpans: [
+          {
+            spans: [
+              {
+                traceId: TRACE_ID,
+                spanId: SPAN_ID,
+                parentSpanId: PARENT_SPAN_ID,
+                name: 'HTTP GET',
+                attributes: [
+                  {
+                    key: 'http.url',
+                    value: {
+                      stringValue: 'https://civitai.com/api/x?code=SECRET123&state=ok',
+                    },
+                  },
+                ],
+                events: [
+                  {
+                    name: 'link',
+                    // OTLP span events / links carry their OWN traceId/spanId.
+                    traceId: EVENT_TRACE_ID,
+                    spanId: EVENT_SPAN_ID,
+                    attributes: [],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+
+  it('leaves traceId/spanId/parentSpanId byte-identical at span + event level', () => {
+    const out = deepRedact(otlpTracePayload());
+    const span = out.resourceSpans[0].scopeSpans[0].spans[0];
+
+    // Span-level ids unchanged and still valid hex length (32 / 16 / 16).
+    expect(span.traceId).toBe(TRACE_ID);
+    expect(span.traceId).toMatch(HEX32);
+    expect(span.spanId).toBe(SPAN_ID);
+    expect(span.spanId).toMatch(HEX16);
+    expect(span.parentSpanId).toBe(PARENT_SPAN_ID);
+    expect(span.parentSpanId).toMatch(HEX16);
+
+    // Event-level ids unchanged and still valid hex length.
+    const event = span.events[0];
+    expect(event.traceId).toBe(EVENT_TRACE_ID);
+    expect(event.traceId).toMatch(HEX32);
+    expect(event.spanId).toBe(EVENT_SPAN_ID);
+    expect(event.spanId).toMatch(HEX16);
+
+    // None were rewritten to the redaction sentinel.
+    expect(span.traceId).not.toContain(REDACTED_TOKEN);
+    expect(event.traceId).not.toContain(REDACTED_TOKEN);
+  });
+
+  it('still scrubs the sensitive query token in the span http.url attribute', () => {
+    const out = deepRedact(otlpTracePayload());
+    const url = out.resourceSpans[0].scopeSpans[0].spans[0].attributes[0].value.stringValue;
+    expect(url).not.toContain('SECRET123');
+    expect(url).toContain('code=' + REDACTED);
+    expect(url).toContain('state=ok');
+  });
+
+  it('protects snake_case OTLP id variants (trace_id/span_id/parent_span_id)', () => {
+    const snake = {
+      trace_id: TRACE_ID,
+      span_id: SPAN_ID,
+      parent_span_id: PARENT_SPAN_ID,
+    };
+    const out = deepRedact(snake);
+    expect(out.trace_id).toBe(TRACE_ID);
+    expect(out.span_id).toBe(SPAN_ID);
+    expect(out.parent_span_id).toBe(PARENT_SPAN_ID);
+  });
+
+  // The fix constrains the bare long-token heuristic to genuine free-text contexts, so an
+  // arbitrary long structural value (e.g. a content hash / cache key attribute) is no
+  // longer corrupted just for being long. Only genuine PII (params/email/JWT) is touched.
+  it('does not corrupt a long structural hex/hash attribute value', () => {
+    const contentHash = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'; // 64 hex
+    const payload = {
+      attributes: [{ key: 'db.rows.hash', value: { stringValue: contentHash } }],
+      cacheKey: contentHash,
+    };
+    const out = deepRedact(payload);
+    expect(out.attributes[0].value.stringValue).toBe(contentHash);
+    expect(out.cacheKey).toBe(contentHash);
+  });
+});
+
+// The long-token heuristic must STILL fire in genuine free-text contexts (error messages,
+// stack traces) so an opaque secret pasted into an error string is scrubbed — this is the
+// PII protection we must NOT weaken while fixing the structural-id corruption.
+describe('long-token heuristic retained for free text', () => {
+  it('redactText redacts a bare opaque long token embedded in an error message', () => {
+    // Opaque 40-char token (letters+digits, no vendor prefix) — triggers LONG_TOKEN_RE.
+    const secret = 'Xg7K2p9Qm4Rt6Vn1Bz8Ld3Fh5Jw0Cs2Ey4Ab6Nq';
+    const out = redactText(`payment call failed with key ${secret} on retry 2`);
+    expect(out).not.toContain(secret);
+    expect(out).toContain(REDACTED_TOKEN);
+    // surrounding prose preserved
+    expect(out).toContain('payment call failed with key');
+    expect(out).toContain('on retry 2');
+  });
+
+  it('deepRedact applies the long-token scrub to message/stack-trace keys', () => {
+    const secret = 'Qm4Rt6Vn1Bz8Ld3Fh5Jw0Cs2Ey4Ab9Xk7Pd5Tg';
+    const payload = {
+      message: `boom ${secret}`,
+      stacktrace: `Error: nope ${secret}\n  at foo (app.js:1:1)`,
+    };
+    const out = deepRedact(payload);
+    expect(out.message).not.toContain(secret);
+    expect(out.message).toContain(REDACTED_TOKEN);
+    expect(out.stacktrace).not.toContain(secret);
+    expect(out.stacktrace).toContain(REDACTED_TOKEN);
+  });
+});
+
+// redactValue is the structural-leaf scrubber: URL params in embedded URLs, emails, and
+// JWTs — but NOT the bare long-token heuristic (so it can't corrupt structural ids/hashes).
+describe('redactValue (structural-leaf scrub)', () => {
+  it('scrubs embedded URL params, emails and JWTs', () => {
+    const jwt =
+      'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTYifQ.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U';
+    expect(redactValue('see https://civitai.com/verify?code=SECRET1 for details')).toContain(
+      'code=' + REDACTED
+    );
+    expect(redactValue('mail bob@example.com')).toContain(REDACTED_EMAIL);
+    expect(redactValue(`token ${jwt}`)).toContain(REDACTED_TOKEN);
+  });
+
+  it('leaves a bare long hex/token value UNCHANGED (no bare-token heuristic)', () => {
+    const hexId = '4bf92f3577b34da6a3ce929d0e0e4736';
+    expect(redactValue(hexId)).toBe(hexId);
   });
 });

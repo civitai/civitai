@@ -72,9 +72,11 @@ function sameOriginApiMatcher(): RegExp {
  * equally non-throwing for the app.
  *
  * BOTH `meta` and `payload` are run through `deepRedact`, so `meta.page.url` (url-key →
- * redactUrl+redactText), `meta.page.attributes`, and `meta.session/view/browser/app`
+ * redactUrl + redactValue), `meta.page.attributes`, and `meta.session/view/browser/app`
  * attributes are all covered — only values matching email/token patterns are rewritten,
- * so session-id / user-agent / version pass through untouched.
+ * so session-id / user-agent / version pass through untouched. Structural OTLP ids in the
+ * trace payload (traceId/spanId/parentSpanId) are passed through byte-identical (deepRedact
+ * skips those keys) so the Alloy faro.receiver never 400-rejects a real trace beacon.
  *
  * Even so: do NOT populate identity meta without re-reviewing this scrub. `faro.api
  * .setUser()` (meta.user), or writing PII into `meta.session`/`meta.view` attributes,
