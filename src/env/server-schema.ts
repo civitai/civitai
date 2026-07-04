@@ -781,6 +781,13 @@ export const serverSchema = z
     APPS_DEV_TUNNEL_SISH_BACKEND: z
       .string()
       .default('http://sish-http.apps-dev-tunnel.svc.cluster.local:8080'),
+    // APPS_DEV_TUNNEL_SSH_HOST_PUBKEY   the sish server's SSH HOST public key, as a
+    //   NON-SECRET OpenSSH line (`ssh-ed25519 AAAA...`). Returned by
+    //   startDevTunnel so the CLI can PIN it on the `ssh -R` hop (R1 — closes the
+    //   MITM window; see design Revision-2 gate #6). Unset → startDevTunnel returns
+    //   an empty string and the CLI must fail closed (refuse to connect without a
+    //   pin) rather than fall back to InsecureIgnoreHostKey.
+    APPS_DEV_TUNNEL_SSH_HOST_PUBKEY: z.string().optional(),
   })
   .superRefine((env, ctx) => {
     // Sentinel-mode for the system Redis client requires an explicit master group

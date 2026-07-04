@@ -2739,6 +2739,57 @@ export const blocksRouter = router({
         };
       }
 
+      // APP DEV TUNNEL per-session spend backstop (F4). When the caller has an
+      // ACTIVE dev tunnel for THIS block, bound cumulative spend within that ONE
+      // dev session (a backstop OVER the per-call budget + the per-user daily cap
+      // above) so a runaway LOCAL submit loop can't drain Buzz. The block token
+      // carries no dev-session id (see the P4 audit / handoff note), so the
+      // session is resolved SERVER-SIDE from (userId, blockId) — a single Redis
+      // GET that misses (and no-ops) for every non-dev submit.
+      //
+      // Posture: the LOOKUP fails OPEN (a getActiveDevTunnel error → treat as
+      // non-dev, so a Redis blip can't break ALL generation — the daily cap still
+      // applies), but the ENFORCEMENT fails CLOSED (reserveDevSessionBuzz denies
+      // on a Redis error once we know it IS a dev session). Mirrors the daily
+      // cap's refund-on-throw so a failed submit doesn't permanently burn the
+      // session ceiling. Why the fail-open is SAFE: the fail-CLOSED per-user daily
+      // cap (reserveBlockBuzzSpend above, whose incrBy is NOT wrapped in a catch)
+      // has ALREADY run and throws on any Redis error — so a real Redis outage
+      // rejects the submit BEFORE this lookup even executes. The fail-open here
+      // can therefore only degrade the finer session cap while the daily cap is
+      // healthy, i.e. within an already-daily-capped bound — never an uncapped one.
+      let devSessionReserve: { sessionId: string; cost: number } | null = null;
+      {
+        const { getActiveDevTunnel, reserveDevSessionBuzz } = await import(
+          '~/server/services/blocks/dev-tunnel.service'
+        );
+        const devTunnel = await getActiveDevTunnel(userId, claims.blockId).catch(() => null);
+        if (devTunnel) {
+          const reserved = await reserveDevSessionBuzz(
+            devTunnel.sessionId,
+            cost,
+            devTunnel.spendCapBuzz
+          );
+          if (!reserved.allowed) {
+            // Over the session ceiling → refund the daily reservation made above
+            // (the session reserve rolled ITSELF back on deny) and reject.
+            await refundBlockBuzzSpend(buzzCapKey, cost);
+            return {
+              snapshot: {
+                workflowId: 'failed',
+                status: 'failed' as const,
+                cost: { total: cost },
+                error:
+                  `dev tunnel session Buzz cap reached: ${reserved.total} already spent ` +
+                  `this dev session, this generation costs ${Math.ceil(cost)}, ` +
+                  `session cap is ${devTunnel.spendCapBuzz}`,
+              },
+            };
+          }
+          devSessionReserve = { sessionId: devTunnel.sessionId, cost: Math.ceil(cost) };
+        }
+      }
+
       // From here the reservation is live. If ANYTHING throws before a resolved
       // submitWorkflow, refund the reservation and re-throw — this matches the
       // original semantics exactly (the old code recorded the spend only after
@@ -2800,6 +2851,14 @@ export const blocksRouter = router({
         // "only record after a resolved submit" behavior) and propagate. Refund
         // against the pinned key, not a re-derived one (midnight-UTC race).
         await refundBlockBuzzSpend(buzzCapKey, cost);
+        // F4 — mirror the daily refund for the dev-session reservation so a failed
+        // submit doesn't permanently burn the session ceiling. Best-effort.
+        if (devSessionReserve) {
+          const { refundDevSessionBuzz } = await import(
+            '~/server/services/blocks/dev-tunnel.service'
+          );
+          await refundDevSessionBuzz(devSessionReserve.sessionId, devSessionReserve.cost);
+        }
         throw e;
       }
 

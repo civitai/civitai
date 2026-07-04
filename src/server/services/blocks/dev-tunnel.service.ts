@@ -5,7 +5,7 @@ import {
   getDp1Target,
   k8sFetch,
   unwrap,
-  type K8sTarget,
+  waitForApplyJob,
 } from '~/server/services/blocks/apps-pipeline.service';
 import {
   fingerprintSshPublicKey,
@@ -85,6 +85,12 @@ export type DevTunnelSessionRecord = {
   createdAt: number; // unix seconds
   hardExpiresAt: number; // unix seconds
   spendCapBuzz: number;
+  /** Last browser-activity marker (unix seconds), refreshed by the forwardAuth
+   *  gate on each successful ENTRY-document hit (F3). The reaper reaps a session
+   *  idle past DEV_TUNNEL_IDLE_SECONDS. ABSENT on a never-visited tunnel → the
+   *  reaper falls back to `createdAt` so a CLI that dies before the browser ever
+   *  loads still idle-reaps. */
+  lastActivityAt?: number;
 };
 
 /** The subset of the credential the sish authz callback needs. Stored separately
@@ -118,83 +124,11 @@ async function readJson<T>(key: DevTunnelKey): Promise<T | null> {
   }
 }
 
-/**
- * Read outcome that distinguishes a CONFIRMED-ABSENT key (`ok:true, value:null`)
- * from a Redis READ FAILURE (`ok:false`). The reaper MUST use this — not the
- * error→null `readJson` — for its reap decision: collapsing a read failure to
- * null would let a transient Redis blip mid-sweep be read as "session gone →
- * delete route" and tear down ALL active tunnels whose read happened to error.
- */
-type SessionReadOutcome =
-  | { ok: true; value: DevTunnelSessionRecord | null }
-  | { ok: false };
-
-async function readSessionChecked(sessionId: string): Promise<SessionReadOutcome> {
-  try {
-    const raw = await withSysReadDeadline(sysRedis.get(sessionKey(sessionId)));
-    // A clean miss: the key is genuinely absent (the read SUCCEEDED and returned
-    // nothing) — reap-eligible, subject to the min-age guard.
-    if (!raw || typeof raw !== 'string') return { ok: true, value: null };
-    try {
-      return { ok: true, value: JSON.parse(raw) as DevTunnelSessionRecord };
-    } catch {
-      // Present-but-corrupt value — a confirmed-bad record, not a read failure.
-      // Treat as absent (still min-age guarded before any delete).
-      return { ok: true, value: null };
-    }
-  } catch {
-    // Redis READ FAILURE (timeout / connection error). NOT a confirmed absence —
-    // the route may back a live session. The caller must SKIP, never reap.
-    return { ok: false };
-  }
-}
-
-/** Parse an HTTP `Date` header (apiserver-stamped) to epoch ms, or null if it's
- *  missing/unparseable. */
-function parseHttpDate(dateHeader: string | null | undefined): number | null {
-  if (!dateHeader) return null;
-  const t = Date.parse(dateHeader);
-  return Number.isNaN(t) ? null : t;
-}
-
-/** Elapsed seconds between `nowMs` and a k8s object's `creationTimestamp`, or
- *  null if `creationTimestamp` is missing/unparseable (in which case the reaper
- *  conservatively skips a confirmed-absent route rather than risk the
- *  create-before-persist race).
- *
- *  `nowMs` MUST be the apiserver's own clock (its LIST-response `Date` header) —
- *  same clock domain as `creationTimestamp` — so the min-age guard is immune to
- *  pod↔apiserver clock skew. A pod clock running ahead of the apiserver would
- *  otherwise make a just-created route look ≥guard-old and reap a live tunnel
- *  mid-creation. */
-function routeAgeSeconds(creationTimestamp: string | undefined, nowMs: number): number | null {
-  if (!creationTimestamp) return null;
-  const created = Date.parse(creationTimestamp);
-  if (Number.isNaN(created)) return null;
-  return Math.floor((nowMs - created) / 1000);
-}
-
-/** Discriminated result of one reaper sweep. `listOk:false` (with the HTTP
- *  `status`) is the SILENT-FAILURE fix: a non-2xx LIST is surfaced distinctly
- *  instead of masquerading as a healthy empty sweep. */
-export type ReapResult = {
-  swept: number;
-  reaped: number;
-  /** Routes intentionally left this sweep (young/absent-guarded, or their session
-   *  read errored) — retried next tick. */
-  skipped: number;
-  /** false ⇒ the label-scoped LIST failed (non-2xx, OR the call THREW: TLS-verify
-   *  reject / DNS / connection-refused / timeout / missing SA token); the sweep
-   *  did nothing and the reaper could not reclaim routes. */
-  listOk: boolean;
-  /** When listOk is false: the HTTP status of a non-2xx LIST, or the sentinel `0`
-   *  when the LIST call THREW (API server unreachable — no HTTP status exists). */
-  status?: number;
-};
-
-/** Sentinel `status` for a LIST that threw (API unreachable — no real HTTP
- *  status). Distinguishes "couldn't reach the apiserver" from a genuine non-2xx. */
-const LIST_UNREACHABLE_STATUS = 0;
+// NOTE (rebase resolution): the reaper's `ReapResult` contract + the reap
+// session-read / apiserver-clock / idle helpers are defined together in the
+// Reaper section below (this PR's superset version — idle-reap + ingressroute∪
+// middleware union). #2928's parallel helpers here were dropped to keep a SINGLE
+// canonical copy; the shared `readJson` above stays.
 
 // ---------------------------------------------------------------------------
 // Manifest builders (PURE — exported for shape tests)
@@ -321,45 +255,168 @@ function manifestOpts(host: string, sessionId: string): DevTunnelManifestOpts {
 // k8s apply / delete (thin, reuses apps-pipeline helpers)
 // ---------------------------------------------------------------------------
 
-async function applyManifest(target: K8sTarget, ns: string, kindPath: string, obj: unknown, name: string) {
-  // Delete-then-create so a re-render of the same session name is idempotent
-  // (mirrors the review apply Job's pre-delete). 404 on delete is fine.
-  await k8sFetch(target, `${kindPath}/${name}?propagationPolicy=Background`, {
-    method: 'DELETE',
-  }).then(async (r) => {
-    if (!r.ok && r.status !== 404) {
-      const body = await r.text().catch(() => '');
-      throw new Error(`dev-tunnel pre-delete ${name} ${r.status}: ${body.slice(0, 200)}`);
-    }
-  });
-  const res = await k8sFetch(target, kindPath, { method: 'POST', body: JSON.stringify(obj) });
-  await unwrap<{ metadata: { name: string } }>(res);
+/** DNS-1123 Job name for a session's route-apply Job. `sessionId` is opaque
+ *  (`bki_<ulid>`); sanitize + bound it so the Job name is always valid. */
+export function devTunnelApplyJobName(sessionId: string): string {
+  const suffix = sessionId.replace(/[^a-z0-9-]/gi, '-').toLowerCase().slice(0, 40);
+  return `dev-tunnel-apply-${suffix}`;
 }
 
-/** Render the ephemeral Traefik IngressRoute + forwardAuth Middleware for a
- *  dev-tunnel host by POSTing them directly to the k8s API (the same in-pod SA
- *  surface + create/delete RBAC the review teardown uses — no bash render Job, no
- *  template ConfigMap dependency). */
+/**
+ * The bash script the route-apply Job runs. `kubectl apply`s the (fully
+ * server-rendered) Middleware then IngressRoute from env-injected JSON — no
+ * template ConfigMap, no envsubst. `kubectl apply` is create-or-update, so a
+ * re-render of the same session is naturally idempotent. Pure + exported so the
+ * shape stays locked in a unit test.
+ */
+export function buildDevTunnelApplyScript(): string {
+  return `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s' "\${MIDDLEWARE_JSON}" | kubectl apply -f -
+printf '%s' "\${INGRESSROUTE_JSON}" | kubectl apply -f -
+echo "dev-tunnel route applied"
+`;
+}
+
+/**
+ * Build the route-apply Job. CRITICAL (F1): runs as the narrowly-scoped
+ * `apps-applier` ServiceAccount — the SAME SA the review sandbox renders through
+ * (`triggerApplyReview`) — which HAS `create`/`patch` on traefik.io CRDs and
+ * cannot escape the `civitai-apps` namespace. The web-pod SA
+ * (`civitai-web-apps-consumer`) grants only get/list/watch/delete on those CRDs,
+ * so rendering the route DIRECTLY from the web pod 403'd (the untracked P3
+ * functional blocker); it would ALSO be a security regression to broaden the
+ * live web-pod SA to `create` (any civitai-web SSRF/RCE → arbitrary-IngressRoute
+ * creation → hijack of live app hosts). The Job is the isolation boundary. The
+ * web-pod SA only CREATES the Job (it has that) + DELETEs routes on teardown
+ * (it has that) — it never itself creates a traefik CRD.
+ *
+ * Pure + exported for a shape test.
+ */
+export function buildDevTunnelApplyJob(opts: {
+  ns: string;
+  jobName: string;
+  sessionId: string;
+  middleware: unknown;
+  ingressRoute: unknown;
+}) {
+  return {
+    apiVersion: 'batch/v1',
+    kind: 'Job',
+    metadata: {
+      name: opts.jobName,
+      namespace: opts.ns,
+      labels: {
+        app: opts.jobName,
+        'civitai.com/role': 'apply-job',
+        [DEV_TUNNEL_LABEL]: 'true',
+        [DEV_TUNNEL_SESSION_LABEL]: opts.sessionId,
+      },
+    },
+    spec: {
+      backoffLimit: 2,
+      // F1-1: a hung apply pod (restartPolicy:Never, stuck image pull / API
+      // throttle) would never become terminal → never TTL-GC'd, and since each
+      // re-mint uses a fresh sessionId→jobName the pre-delete-by-name can't reclaim
+      // it → hung Jobs would accumulate. activeDeadlineSeconds guarantees the Job
+      // becomes terminal (DeadlineExceeded) so ttlSecondsAfterFinished GCs it.
+      // MUST be >= renderDevTunnelRoute's waitForApplyJob timeout (180s) so a
+      // slow-but-succeeding cold image pull isn't killed before the wait observes
+      // success (which would orphan a route the pod may have already applied).
+      activeDeadlineSeconds: 200,
+      // Short TTL after the Job reaches a terminal state (Complete/DeadlineExceeded).
+      ttlSecondsAfterFinished: 300,
+      template: {
+        metadata: {
+          labels: {
+            'civitai.com/role': 'apply-job',
+            [DEV_TUNNEL_LABEL]: 'true',
+            [DEV_TUNNEL_SESSION_LABEL]: opts.sessionId,
+          },
+        },
+        spec: {
+          // The narrowly-scoped apply SA (has create on traefik CRDs; ns-locked).
+          serviceAccountName: 'apps-applier',
+          restartPolicy: 'Never',
+          securityContext: {
+            runAsNonRoot: true,
+            runAsUser: 65532,
+            runAsGroup: 65532,
+            seccompProfile: { type: 'RuntimeDefault' },
+          },
+          containers: [
+            {
+              name: 'apply',
+              image: 'alpine/k8s:1.34.0',
+              imagePullPolicy: 'IfNotPresent',
+              env: [
+                { name: 'MIDDLEWARE_JSON', value: JSON.stringify(opts.middleware) },
+                { name: 'INGRESSROUTE_JSON', value: JSON.stringify(opts.ingressRoute) },
+              ],
+              securityContext: {
+                allowPrivilegeEscalation: false,
+                readOnlyRootFilesystem: true,
+                capabilities: { drop: ['ALL'] },
+              },
+              volumeMounts: [{ name: 'tmp', mountPath: '/tmp' }],
+              command: ['/bin/bash', '-c'],
+              args: [buildDevTunnelApplyScript()],
+              resources: {
+                requests: { cpu: '50m', memory: '64Mi' },
+                limits: { cpu: '250m', memory: '128Mi' },
+              },
+            },
+          ],
+          volumes: [{ name: 'tmp', emptyDir: { sizeLimit: '8Mi' } }],
+        },
+      },
+    },
+  };
+}
+
+/**
+ * Render the ephemeral Traefik IngressRoute + forwardAuth Middleware for a
+ * dev-tunnel host by dispatching a render-and-apply Job that runs as the scoped
+ * `apps-applier` SA — the SAME mechanism the review sandbox uses (F1). The
+ * web-pod SA only creates the Job + waits for it; the Job (apps-applier) is what
+ * `kubectl apply`s the CRDs. Awaits the Job to Succeeded so `startDevTunnel` can
+ * keep its "render FIRST → persist state only on success" contract (a failed
+ * render throws → nothing is persisted → no orphan).
+ */
 export async function renderDevTunnelRoute(host: string, sessionId: string): Promise<void> {
   const target = await getDp1Target();
   const ns = env.APPS_KUBE_NAMESPACE;
   const opts = manifestOpts(host, sessionId);
   const mw = buildDevTunnelMiddleware(opts);
   const ir = buildDevTunnelIngressRoute(opts);
-  await applyManifest(
-    target,
-    ns,
-    `/apis/traefik.io/v1alpha1/namespaces/${ns}/middlewares`,
-    mw,
-    mw.metadata.name
-  );
-  await applyManifest(
-    target,
-    ns,
-    `/apis/traefik.io/v1alpha1/namespaces/${ns}/ingressroutes`,
-    ir,
-    ir.metadata.name
-  );
+  const jobName = devTunnelApplyJobName(sessionId);
+  const job = buildDevTunnelApplyJob({ ns, jobName, sessionId, middleware: mw, ingressRoute: ir });
+
+  // Re-rendering the same session must restart the apply — delete a same-name Job
+  // first (404 is fine). This is a Job DELETE, which the web-pod SA CAN do.
+  await k8sFetch(target, `/apis/batch/v1/namespaces/${ns}/jobs/${jobName}?propagationPolicy=Background`, {
+    method: 'DELETE',
+  }).then(async (r) => {
+    if (!r.ok && r.status !== 404) {
+      const body = await r.text().catch(() => '');
+      throw new Error(`dev-tunnel pre-delete apply Job ${r.status}: ${body.slice(0, 200)}`);
+    }
+  });
+
+  const res = await k8sFetch(target, `/apis/batch/v1/namespaces/${ns}/jobs`, {
+    method: 'POST',
+    body: JSON.stringify(job),
+  });
+  await unwrap<{ metadata: { name: string } }>(res);
+
+  // F1-3: 180s tolerates a cold `alpine/k8s` image pull (the review-sandbox
+  // reference waits ~6min). Kept < the Job's activeDeadlineSeconds (200s) so a
+  // slow-but-succeeding pull is observed as success here before the Job's own
+  // deadline fires — see buildDevTunnelApplyJob for the reconciliation.
+  const outcome = await waitForApplyJob(jobName, { timeoutMs: 180_000, pollMs: 2_000 });
+  if (outcome !== 'succeeded') {
+    throw new Error(`dev-tunnel route apply Job ${outcome} (session ${sessionId})`);
+  }
 }
 
 /** Delete the ephemeral Traefik route for ONE session by label selector. Scoped
@@ -418,6 +475,10 @@ export type StartDevTunnelResult = {
   url: string;
   expiresAt: number;
   spendCapBuzz: number;
+  /** The sish server's SSH HOST public key (non-secret OpenSSH line) so the CLI
+   *  can PIN it on the `ssh -R` hop (R1). Empty string when unconfigured — the
+   *  CLI MUST fail closed (refuse to connect) rather than ignore the host key. */
+  sshHostPublicKey: string;
 };
 
 /**
@@ -453,6 +514,9 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
     createdAt: created,
     hardExpiresAt,
     spendCapBuzz: DEV_TUNNEL_SESSION_BUZZ_CAP,
+    // Seed the idle marker at mint so a never-visited tunnel still idle-reaps
+    // (createdAt fallback in the reaper covers an absent field too).
+    lastActivityAt: created,
   };
   const credential: DevTunnelCredentialRecord = {
     sessionId,
@@ -496,6 +560,9 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
     url: `${(env.NEXTAUTH_URL ?? 'https://civitai.com').replace(/\/$/, '')}/apps/dev/${params.blockId}`,
     expiresAt: hardExpiresAt,
     spendCapBuzz: DEV_TUNNEL_SESSION_BUZZ_CAP,
+    // R1: hand the CLI the sish host pubkey to pin. Empty when unconfigured (the
+    // CLI fails closed). Non-secret, so it rides the mint response directly.
+    sshHostPublicKey: env.APPS_DEV_TUNNEL_SSH_HOST_PUBKEY ?? '',
   };
 }
 
@@ -565,6 +632,35 @@ export async function getActiveDevTunnel(
   if (session.host && !isValidDevHost(session.host, env.APPS_DOMAIN)) return null;
   if (session.hardExpiresAt <= nowSec()) return null;
   return session;
+}
+
+/**
+ * Refresh a session's idle marker on browser activity (F3). Called by the
+ * forwardAuth gate on each successful ENTRY-document hit. Resolves the session
+ * from the dev host, stamps `lastActivityAt = now`, and re-persists the session
+ * key WITHOUT extending the hard-TTL: the EX is recomputed as the REMAINING time
+ * until `hardExpiresAt`, so activity can never push a tunnel past its 8h hard
+ * cap. Best-effort — a Redis hiccup here must never fail the gate decision (the
+ * auth response is already sent), so it swallows all errors and is a no-op past
+ * the hard expiry (the reaper then collects the route).
+ */
+export async function touchDevTunnelActivity(host: string): Promise<void> {
+  if (!host || typeof host !== 'string') return;
+  try {
+    const sessionId = await withSysReadDeadline(sysRedis.get(hostKey(host)));
+    if (!sessionId || typeof sessionId !== 'string') return;
+    const session = await readJson<DevTunnelSessionRecord>(sessionKey(sessionId));
+    if (!session) return;
+    const now = nowSec();
+    const remaining = session.hardExpiresAt - now;
+    // Past the hard cap → do NOT re-persist (would resurrect an expired session /
+    // set a non-positive EX). Let the reaper + hard-TTL collect it.
+    if (remaining <= 0) return;
+    const updated: DevTunnelSessionRecord = { ...session, lastActivityAt: now };
+    await sysRedis.set(sessionKey(sessionId), JSON.stringify(updated), { EX: remaining });
+  } catch {
+    /* best-effort idle refresh — never throw into the gate */
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -638,106 +734,224 @@ export async function reserveDevSessionBuzz(
   }
 }
 
+/**
+ * Refund a previously-reserved dev-session `costBuzz` (best-effort DECRBY). Used
+ * by the submit path when the workflow submit throws AFTER a successful
+ * reservation, mirroring the per-user daily cap's refund-on-throw so a failed
+ * submit doesn't permanently burn the session ceiling. Best-effort: a lost
+ * refund only OVER-counts (a STRICTER backstop) and never throws into the caller.
+ */
+export async function refundDevSessionBuzz(sessionId: string, costBuzz: number): Promise<void> {
+  const cost = Math.max(0, Math.ceil(costBuzz));
+  if (cost === 0) return;
+  await sysRedis.decrBy(spendKey(sessionId), cost).catch(() => {
+    /* best-effort — a lost refund over-counts (stricter cap) */
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Reaper (server-authoritative — NOT CLI-dependent)
 // ---------------------------------------------------------------------------
 
+/** A reaper session read that distinguishes a genuine ABSENCE (reap) from a
+ *  transient read ERROR (skip) — `readJson` collapses both to null, which would
+ *  let a Redis blip reap a LIVE route. */
+type ReaperRead =
+  | { status: 'ok'; session: DevTunnelSessionRecord }
+  | { status: 'absent' }
+  | { status: 'error' };
+
+async function readSessionForReap(sessionId: string): Promise<ReaperRead> {
+  let raw: string | null;
+  try {
+    raw = await withSysReadDeadline(sysRedis.get(sessionKey(sessionId)));
+  } catch {
+    return { status: 'error' };
+  }
+  if (raw == null) return { status: 'absent' };
+  if (typeof raw !== 'string') return { status: 'error' };
+  try {
+    return { status: 'ok', session: JSON.parse(raw) as DevTunnelSessionRecord };
+  } catch {
+    // Corrupt JSON — ambiguous, don't reap on it.
+    return { status: 'error' };
+  }
+}
+
+/** Prefer the apiserver's clock (the LIST response `Date` header) over the pod's
+ *  local clock for the min-age / idle windows, so a skewed pod can't over- or
+ *  under-reap. Falls back to the local clock when the header is unavailable. */
+function apiServerNowSec(res: Response): number {
+  try {
+    const d = (res as { headers?: { get?: (k: string) => string | null } }).headers?.get?.('date');
+    if (typeof d === 'string' && d) {
+      const t = Date.parse(d);
+      if (Number.isFinite(t)) return Math.floor(t / 1000);
+    }
+  } catch {
+    /* fall through */
+  }
+  return nowSec();
+}
+
+/** True iff the session has been idle longer than DEV_TUNNEL_IDLE_SECONDS.
+ *  Falls back to `createdAt` when `lastActivityAt` is absent (never-visited). */
+function isIdleExpired(session: DevTunnelSessionRecord, now: number): boolean {
+  const activity =
+    typeof session.lastActivityAt === 'number' ? session.lastActivityAt : session.createdAt;
+  return now - activity > DEV_TUNNEL_IDLE_SECONDS;
+}
+
+/**
+ * Discriminated result of one reaper sweep — matches the sibling reaper-schedule
+ * contract (civitai #2928) BYTE-FOR-BYTE so its `reap-dev-tunnels` job + the
+ * `dev_tunnel_reaper_runs_total{result}` metric compile + work unchanged against
+ * this (superset) reaper. `listOk:false` (with the HTTP `status`) is the
+ * SILENT-FAILURE fix: a non-2xx / unreachable LIST is surfaced DISTINCTLY instead
+ * of masquerading as a healthy empty sweep (which would let the job record `ok`
+ * on a permanent no-op). Do NOT return a bare `{swept,reaped}` — the job hard-reads
+ * `result.listOk` (undefined ⇒ every healthy run mis-records `list_failed`).
+ */
+export type ReapResult = {
+  swept: number;
+  reaped: number;
+  /** Sessions intentionally left this sweep (young/absent-guarded, or their
+   *  session read errored) — retried next tick. */
+  skipped: number;
+  /** false ⇒ a label-scoped LIST failed (non-2xx, OR the call THREW: TLS-verify
+   *  reject / DNS / connection-refused / timeout / missing SA token); the sweep
+   *  did nothing and could not reclaim routes. */
+  listOk: boolean;
+  /** When listOk is false: the HTTP status of a non-2xx LIST, or the sentinel `0`
+   *  when the LIST call THREW (API server unreachable — no HTTP status exists). */
+  status?: number;
+};
+
+/** Sentinel `status` for a LIST that threw (API unreachable — no real HTTP
+ *  status). Distinguishes "couldn't reach the apiserver" from a genuine non-2xx.
+ *  Matches #2928's constant of the same name + value. */
+const LIST_UNREACHABLE_STATUS = 0;
+
 /**
  * Sweep the ephemeral dev-tunnel routes and tear down any whose backing session
- * record has genuinely expired (hard-TTL) or is confirmed-absent. Bounded by the
+ * is HARD-expired (8h max-TTL), IDLE-expired (no browser activity for
+ * DEV_TUNNEL_IDLE_SECONDS — F3), or genuinely GONE from Redis. Bounded by the
  * number of live routes (label-scoped LIST). Server-authoritative: even if the
- * CLI crashes without calling stopDevTunnel, the hard-TTL Redis expiry + this
- * sweep reclaim the route. Driven by the `reap-dev-tunnels` periodic job.
+ * CLI crashes without calling stopDevTunnel, this sweep + the hard-TTL Redis
+ * expiry reclaim the route. Driven by the `reap-dev-tunnels` periodic job (#2928).
  *
- * SAFETY (the delete blast-radius is the whole point of a reaper — it must be
- * tight):
- *  - **LIST failure is NOT an empty sweep.** A non-2xx LIST returns
- *    `{ listOk:false, status }` (not a benign zero) so a persistent RBAC/ns/5xx
- *    failure is detectable + alertable rather than a silent permanent no-op.
- *  - **Never reap on a Redis READ FAILURE.** The reap decision uses
- *    `readSessionChecked` (error vs absent), not the error→null `readJson`. On a
- *    read error the route is SKIPPED — a transient Redis blip can never be read
- *    as "session gone → delete" and tear down live tunnels.
- *  - **Confirmed-absent record → min-age guarded.** A route whose session read
- *    cleanly missed is only reaped once it's older than
- *    DEV_TUNNEL_REAP_MIN_AGE_SECONDS, closing the create-before-persist race
- *    (route rendered before the session key is written).
- *
- * A present record is reaped only when `hardExpiresAt <= now` (`reap-maxttl`).
- * (A finer idle-timeout would refresh the session key's TTL on browser activity;
- * the absent-key path then reaps it — same code path, min-age guarded.)
+ * Hardening (preserved + extended — this is the SUPERSET of #2928's reaper,
+ * returning #2928's EXACT {@link ReapResult} contract):
+ *   - CONTRACT (non-regressing): an errored or unreachable LIST is
+ *     `{listOk:false, status}`, NEVER a silent `{swept:0,reaped:0}` that the
+ *     `reap-dev-tunnels` job would mis-record as a healthy `ok` run.
+ *   - BOTH KINDS (F1-2): discover ingressroutes AND middlewares, then reap over the
+ *     UNION of session ids. buildDevTunnelApplyScript applies the Middleware BEFORE
+ *     the IngressRoute under `set -e`, so a failed IngressRoute apply can leave an
+ *     orphan Middleware (session-labelled) while the mint aborts. LISTing routes
+ *     only would never discover it → an unbounded (inert) leak. deleteDevTunnelRoute
+ *     already deletes both kinds, so a middleware-only orphan gets fully cleaned.
+ *   - read-error skip: a transient Redis read error SKIPS the session (counted in
+ *     `skipped`) — reap only on a CONFIRMED absent/expired/idle record, never a blip.
+ *   - min-age guard: an absent-record session whose EARLIEST discovered object is
+ *     younger than DEV_TUNNEL_REAP_MIN_AGE_SECONDS — OR whose age can't be
+ *     determined (mirrors #2928) — is SKIPPED (counted), not reaped: it may be
+ *     mid-mint (render precedes persist).
+ *   - apiserver-clock: the min-age + idle windows use the LIST response Date header.
  */
 export async function reapExpiredDevTunnels(): Promise<ReapResult> {
   const ns = env.APPS_KUBE_NAMESPACE;
   const selector = encodeURIComponent(`${DEV_TUNNEL_LABEL}=true`);
-  let listRes: Response;
+  const listPaths = [
+    `/apis/traefik.io/v1alpha1/namespaces/${ns}/ingressroutes?labelSelector=${selector}`,
+    `/apis/traefik.io/v1alpha1/namespaces/${ns}/middlewares?labelSelector=${selector}`,
+  ];
+
+  // Resolve the in-pod target once. A getDp1Target throw (missing SA token / not
+  // in-cluster) is "can't reach the apiserver" — surface as listOk:false with the
+  // unreachable sentinel, NOT a propagated exception (which the job would
+  // mis-attribute to `error` rather than `list_failed`).
+  let target: Awaited<ReturnType<typeof getDp1Target>>;
   try {
-    const target = await getDp1Target();
-    listRes = await k8sFetch(
-      target,
-      `/apis/traefik.io/v1alpha1/namespaces/${ns}/ingressroutes?labelSelector=${selector}`,
-      { method: 'GET' }
-    );
+    target = await getDp1Target();
   } catch {
-    // Couldn't even REACH the API server: TLS-verify reject (a pool without
-    // NODE_EXTRA_CA_CERTS), DNS, connection-refused, timeout, or a missing SA
-    // token. That's "can't reclaim routes" — a list_failed, NOT a code bug — so
-    // surface it as listOk:false (sentinel status 0), not a thrown exception that
-    // the job would misattribute to `error`. Recording `ok`/no-op here would
-    // re-open the silent-failure hole.
     return { swept: 0, reaped: 0, skipped: 0, listOk: false, status: LIST_UNREACHABLE_STATUS };
   }
-  // A non-2xx LIST is a FAILURE, not an empty sweep — surface it distinctly so
-  // the job logs `level:error` + increments the `list_failed` metric. Returning a
-  // benign zero here would make an RBAC/ns/5xx break a permanent silent no-op.
-  if (!listRes.ok) {
-    return { swept: 0, reaped: 0, skipped: 0, listOk: false, status: listRes.status };
+
+  // Discover sessions across BOTH kinds. Map sessionId → EARLIEST discovered
+  // object creationTimestamp (seconds), used by the min-age guard (a session with
+  // even one old object is not mid-mint; a freshly-created pair stays young).
+  const discovered = new Map<string, number | undefined>();
+  let apiNow = nowSec();
+  for (const listPath of listPaths) {
+    let listRes: Response;
+    try {
+      listRes = await k8sFetch(target, listPath, { method: 'GET' });
+    } catch {
+      // Couldn't even REACH the apiserver for this LIST — list_failed (unreachable),
+      // never a silent empty sweep.
+      return { swept: 0, reaped: 0, skipped: 0, listOk: false, status: LIST_UNREACHABLE_STATUS };
+    }
+    // A non-2xx LIST is a FAILURE (RBAC/ns/5xx), NOT an empty cluster — surface it
+    // distinctly so the job records `list_failed` instead of a healthy `ok` no-op.
+    if (!listRes.ok) {
+      return { swept: 0, reaped: 0, skipped: 0, listOk: false, status: listRes.status };
+    }
+    apiNow = apiServerNowSec(listRes);
+    const list = await unwrap<{
+      items?: Array<{ metadata?: { labels?: Record<string, string>; creationTimestamp?: string } }>;
+    }>(listRes);
+    for (const it of list?.items ?? []) {
+      const sessionId = it?.metadata?.labels?.[DEV_TUNNEL_SESSION_LABEL];
+      if (!sessionId) continue;
+      const parsed = Date.parse(it?.metadata?.creationTimestamp ?? '');
+      const createdSec = Number.isFinite(parsed) ? Math.floor(parsed / 1000) : undefined;
+      if (!discovered.has(sessionId)) {
+        discovered.set(sessionId, createdSec);
+      } else {
+        const prev = discovered.get(sessionId);
+        if (createdSec != null && (prev == null || createdSec < prev)) {
+          discovered.set(sessionId, createdSec);
+        }
+      }
+    }
   }
-  const list = await unwrap<{
-    items?: Array<{
-      metadata?: { labels?: Record<string, string>; creationTimestamp?: string };
-    }>;
-  }>(listRes);
-  const items = list?.items ?? [];
-  // Use the APISERVER's clock (the LIST response `Date` header) as "now" for the
-  // min-age guard — same clock domain as each object's creationTimestamp, so the
-  // guard is immune to pod↔apiserver skew. Fall back to the pod clock only if the
-  // header is missing/unparseable (then the guard assumes bounded NTP skew).
-  const nowMs = parseHttpDate(listRes.headers?.get?.('date')) ?? Date.now();
+
   let reaped = 0;
   let skipped = 0;
-  for (const it of items) {
-    const sessionId = it?.metadata?.labels?.[DEV_TUNNEL_SESSION_LABEL];
-    if (!sessionId) continue;
-    const outcome = await readSessionChecked(sessionId);
-    if (!outcome.ok) {
-      // Redis READ FAILED — this route may back a LIVE session. Never reap on a
-      // read failure; skip and let the next sweep retry.
+  for (const [sessionId, createdSec] of discovered) {
+    const read = await readSessionForReap(sessionId);
+
+    // read-error skip: a Redis blip must never reap a LIVE session.
+    if (read.status === 'error') {
       skipped += 1;
       continue;
     }
-    const session = outcome.value;
-    if (session) {
-      // Record present: reap ONLY if genuinely past its hard-TTL.
-      if (session.hardExpiresAt <= nowSec()) {
-        await teardownSession(session, 'reap-maxttl').catch(() => {});
-        reaped += 1;
+
+    if (read.status === 'absent') {
+      // min-age guard: a just-created object (or one whose age can't be
+      // determined — createdSec undefined) may be mid-mint → skip, never reap.
+      if (createdSec == null || apiNow - createdSec < DEV_TUNNEL_REAP_MIN_AGE_SECONDS) {
+        skipped += 1;
+        continue;
       }
+      // Orphan (record genuinely gone, object old enough) — delete BOTH kinds.
+      await deleteDevTunnelRoute(sessionId).catch(() => {});
+      recordDevTunnelTeardown('reap-maxttl');
+      reaped += 1;
       continue;
     }
-    // Record CONFIRMED-ABSENT (clean miss or corrupt value). Guard the
-    // create-before-persist race: only reap a route demonstrably older than the
-    // min-age guard. A young route (or one whose age can't be determined) is left
-    // for the next sweep.
-    const ageSec = routeAgeSeconds(it?.metadata?.creationTimestamp, nowMs);
-    if (ageSec === null || ageSec < DEV_TUNNEL_REAP_MIN_AGE_SECONDS) {
-      skipped += 1;
-      continue;
+
+    // status === 'ok': reap on hard-TTL OR idle expiry. A healthy non-expired
+    // session is neither reaped nor `skipped` — it's a live route intentionally
+    // kept (matches #2928: skipped counts read-error + guarded-absent only).
+    const session = read.session;
+    const hardExpired = session.hardExpiresAt <= apiNow;
+    const idleExpired = isIdleExpired(session, apiNow);
+    if (hardExpired || idleExpired) {
+      await teardownSession(session, hardExpired ? 'reap-maxttl' : 'reap-idle').catch(() => {});
+      reaped += 1;
     }
-    // Redis record gone but route survives past the guard — delete it directly.
-    await deleteDevTunnelRoute(sessionId).catch(() => {});
-    recordDevTunnelTeardown('reap-maxttl');
-    reaped += 1;
   }
-  return { swept: items.length, reaped, skipped, listOk: true };
+  return { swept: discovered.size, reaped, skipped, listOk: true };
 }

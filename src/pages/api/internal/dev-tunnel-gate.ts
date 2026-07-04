@@ -57,7 +57,7 @@ function extractDevToken(forwardedUri: string | undefined): string | undefined {
   }
 }
 
-export default function handler(req: NextApiRequest, res: NextApiResponse) {
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const forwardedHost = firstHeader(req.headers['x-forwarded-host']);
   const forwardedUri = firstHeader(req.headers['x-forwarded-uri']);
   const secFetchDest = firstHeader(req.headers['sec-fetch-dest']);
@@ -84,6 +84,19 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
   if (result.ok && result.userId != null) {
     res.setHeader('X-Dev-User-Id', String(result.userId));
     res.status(200).json({ ok: true, via: 'token' });
+    // F3 — refresh the session's idle marker on this (successful, browser-driven)
+    // ENTRY hit so the server-side idle-reaper measures real activity, not just
+    // the 8h hard-TTL. Runs AFTER the auth response is flushed above so a Redis
+    // hiccup can NEVER change the gate decision or add user-facing latency
+    // (touchDevTunnelActivity swallows all errors; awaited only so tests settle).
+    try {
+      const { touchDevTunnelActivity } = await import(
+        '~/server/services/blocks/dev-tunnel.service'
+      );
+      await touchDevTunnelActivity(forwardedHost);
+    } catch {
+      /* idle-refresh is best-effort — the auth decision already stands */
+    }
     return;
   }
 

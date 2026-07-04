@@ -103,6 +103,22 @@ const {
   mockRecordSpendAttribution: vi.fn(),
 }));
 
+// F4: submitWorkflow dynamically imports the dev-tunnel spend backstop. Mock the
+// module so the default (no active tunnel → getActiveDevTunnel null) leaves every
+// existing test unchanged, and the F4 tests can drive an active dev session.
+const { mockGetActiveDevTunnel, mockReserveDevSessionBuzz, mockRefundDevSessionBuzz } = vi.hoisted(
+  () => ({
+    mockGetActiveDevTunnel: vi.fn(async () => null as unknown),
+    mockReserveDevSessionBuzz: vi.fn(async () => ({ allowed: true, total: 0 })),
+    mockRefundDevSessionBuzz: vi.fn(async () => undefined),
+  })
+);
+vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
+  getActiveDevTunnel: (...a: unknown[]) => mockGetActiveDevTunnel(...(a as [])),
+  reserveDevSessionBuzz: (...a: unknown[]) => mockReserveDevSessionBuzz(...(a as [])),
+  refundDevSessionBuzz: (...a: unknown[]) => mockRefundDevSessionBuzz(...(a as [])),
+}));
+
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   verifyBlockToken: mockVerifyBlockToken,
   parseSubjectUserId: (...args: unknown[]) => mockParseSubjectUserId(...args),
@@ -341,9 +357,17 @@ beforeEach(() => {
     mockResolveCanGenerateForVersions,
     mockRecordSpendAttribution,
     mockIsAppBlocksAuthorEnabled,
+    mockGetActiveDevTunnel,
+    mockReserveDevSessionBuzz,
+    mockRefundDevSessionBuzz,
   ]) {
     fn.mockReset();
   }
+  // F4 defaults: no active dev tunnel (getActiveDevTunnel → null) so the dev
+  // spend backstop is inert for every non-dev test. The F4 tests override these.
+  mockGetActiveDevTunnel.mockResolvedValue(null);
+  mockReserveDevSessionBuzz.mockResolvedValue({ allowed: true, total: 0 });
+  mockRefundDevSessionBuzz.mockResolvedValue(undefined);
   // W3 flow A default: the spend-attribution write resolves successfully.
   // Tests that exercise best-effort override it to reject.
   mockRecordSpendAttribution.mockResolvedValue({
@@ -616,6 +640,79 @@ describe('blocks.submitWorkflow', () => {
     expect(mockAuditPromptServer).toHaveBeenCalledWith(
       expect.objectContaining({ prompt: 'a cat', userId: 42 })
     );
+  });
+
+  // ---- F4: dev-tunnel per-session spend backstop --------------------------
+  describe('dev-tunnel session spend cap (F4)', () => {
+    function setupSubmit() {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({ id: 'wf_real', status: 'unassigned', cost: { total: 25 }, steps: [] });
+    }
+
+    it('rejects (fail-closed) when the dev session ceiling is exceeded — no real submit', async () => {
+      setupSubmit();
+      // Active dev tunnel for this (user, block); the reserve DENIES.
+      mockGetActiveDevTunnel.mockResolvedValue({ sessionId: 'bki_dev', spendCapBuzz: 5000 });
+      mockReserveDevSessionBuzz.mockResolvedValue({ allowed: false, total: 5000 });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.error).toMatch(/dev tunnel session Buzz cap reached/);
+      // Only the whatIf cost-check submit ran; the REAL submit was never reached.
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+      // The reserve was checked against the session's own ceiling.
+      expect(mockReserveDevSessionBuzz).toHaveBeenCalledWith('bki_dev', 25, 5000);
+      // The daily-cap reservation was refunded (DECRBY) on the reject.
+      expect(mockSysRedis.decrBy).toHaveBeenCalled();
+    });
+
+    it('passes through when the dev session is UNDER the ceiling (real submit proceeds)', async () => {
+      setupSubmit();
+      mockGetActiveDevTunnel.mockResolvedValue({ sessionId: 'bki_dev', spendCapBuzz: 5000 });
+      mockReserveDevSessionBuzz.mockResolvedValue({ allowed: true, total: 25 });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(2);
+      expect(mockRefundDevSessionBuzz).not.toHaveBeenCalled();
+    });
+
+    it('refunds the dev-session reservation when the real submit THROWS', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+      happyVersionLookup();
+      happyUser();
+      mockGetActiveDevTunnel.mockResolvedValue({ sessionId: 'bki_dev', spendCapBuzz: 5000 });
+      mockReserveDevSessionBuzz.mockResolvedValue({ allowed: true, total: 25 });
+      // whatIf ok, then the REAL submit throws.
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockRejectedValueOnce(new Error('orchestrator down'));
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
+      ).rejects.toThrow(/orchestrator down/);
+      // both the daily cap AND the dev session reservation were refunded.
+      expect(mockSysRedis.decrBy).toHaveBeenCalled();
+      expect(mockRefundDevSessionBuzz).toHaveBeenCalledWith('bki_dev', 25);
+    });
+
+    it('is INERT for a normal submit (no active dev tunnel → reserve never called)', async () => {
+      setupSubmit();
+      // default mockGetActiveDevTunnel → null
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      expect(mockReserveDevSessionBuzz).not.toHaveBeenCalled();
+    });
   });
 
   // ---- workflow metadata parity (queue/remix view) ------------------------
