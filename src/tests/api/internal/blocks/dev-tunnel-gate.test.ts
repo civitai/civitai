@@ -1,6 +1,16 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { signDevTunnelAccessToken } from '~/server/services/blocks/dev-tunnel-session';
+
+// F3: the gate refreshes the session idle marker on a successful ENTRY hit via a
+// dynamic import of dev-tunnel.service. Mock it so the gate suite stays lean (no
+// Redis/k8s) and we can assert WHEN the refresh fires.
+const { mockTouchDevTunnelActivity } = vi.hoisted(() => ({
+  mockTouchDevTunnelActivity: vi.fn(async (_host: string): Promise<void> => undefined),
+}));
+vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
+  touchDevTunnelActivity: (...a: unknown[]) => mockTouchDevTunnelActivity(...(a as [string])),
+}));
 
 /**
  * APP DEV TUNNEL — coverage for the Traefik forwardAuth entry gate
@@ -56,6 +66,7 @@ describe('/api/internal/dev-tunnel-gate', () => {
   const prev = process.env.NEXTAUTH_SECRET;
   beforeEach(() => {
     process.env.NEXTAUTH_SECRET = SECRET;
+    mockTouchDevTunnelActivity.mockClear();
   });
   afterEach(() => {
     if (prev === undefined) delete process.env.NEXTAUTH_SECRET;
@@ -131,5 +142,28 @@ describe('/api/internal/dev-tunnel-gate', () => {
     const res = makeRes();
     handler(makeReq({ host: HOST, uri: '/app.js', secFetchDest: 'script' }), res);
     expect(res.statusCode).toBe(200);
+  });
+
+  // ── F3: idle-marker refresh fires ONLY on a successful ENTRY hit ──
+  it('refreshes the session idle marker on a successful ENTRY hit', async () => {
+    const token = signDevTunnelAccessToken({ userId: USER, host: HOST, secret: SECRET });
+    const res = makeRes();
+    await handler(makeReq({ host: HOST, uri: entryUri(token), secFetchDest: 'document' }), res);
+    expect(res.statusCode).toBe(200);
+    expect(mockTouchDevTunnelActivity).toHaveBeenCalledWith(HOST);
+  });
+
+  it('does NOT refresh on a denied (naked) ENTRY request', async () => {
+    const res = makeRes();
+    await handler(makeReq({ host: HOST, uri: '/', secFetchDest: 'document' }), res);
+    expect(res.statusCode).toBe(401);
+    expect(mockTouchDevTunnelActivity).not.toHaveBeenCalled();
+  });
+
+  it('does NOT refresh on a SUBRESOURCE (no auth decision to bind activity to)', async () => {
+    const res = makeRes();
+    await handler(makeReq({ host: HOST, uri: '/app.js', secFetchDest: 'script' }), res);
+    expect(res.statusCode).toBe(200);
+    expect(mockTouchDevTunnelActivity).not.toHaveBeenCalled();
   });
 });

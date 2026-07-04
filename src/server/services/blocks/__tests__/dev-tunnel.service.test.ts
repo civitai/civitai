@@ -6,17 +6,30 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * the per-session spend-cap backstop, and the reaper.
  */
 
-const { mockK8sFetch, mockGetDp1Target, mockUnwrap, sysRedis, mockEnv, mockNewId } = vi.hoisted(
-  () => {
-    const store = new Map<string, string>();
-    return {
-      store,
-      mockK8sFetch: vi.fn(),
-      mockGetDp1Target: vi.fn(async () => ({ server: 'https://k8s', token: 't' })),
-      mockUnwrap: vi.fn(async (res: any) => {
-        const t = await res.text();
-        return t ? JSON.parse(t) : {};
-      }),
+const {
+  mockK8sFetch,
+  mockGetDp1Target,
+  mockUnwrap,
+  mockWaitForApplyJob,
+  mockRecordTeardown,
+  sysRedis,
+  mockEnv,
+  mockNewId,
+} = vi.hoisted(() => {
+  const store = new Map<string, string>();
+  return {
+    store,
+    mockK8sFetch: vi.fn(),
+    mockGetDp1Target: vi.fn(async () => ({ server: 'https://k8s', token: 't' })),
+    mockUnwrap: vi.fn(async (res: any) => {
+      const t = await res.text();
+      return t ? JSON.parse(t) : {};
+    }),
+    // F1: the route now renders via an apps-applier Job that renderDevTunnelRoute
+    // awaits to Succeeded. Default the wait to 'succeeded' so start/render tests
+    // don't poll; the failure test overrides it.
+    mockWaitForApplyJob: vi.fn(async () => 'succeeded' as const),
+    mockRecordTeardown: vi.fn(),
       sysRedis: {
         _store: store,
         get: vi.fn(async (k: string) => store.get(k) ?? null),
@@ -41,23 +54,26 @@ const { mockK8sFetch, mockGetDp1Target, mockUnwrap, sysRedis, mockEnv, mockNewId
         expire: vi.fn(async () => 1),
         ttl: vi.fn(async () => 100),
       },
-      mockEnv: {
-        APPS_DOMAIN: 'civit.ai',
-        APPS_KUBE_NAMESPACE: 'civitai-apps',
-        NEXTAUTH_URL: 'https://civitai.com',
-        APPS_DEV_TUNNEL_SISH_BACKEND: 'http://sish-http.apps-dev-tunnel.svc.cluster.local:8080',
-        APPS_DEV_TUNNEL_FORWARDAUTH_URL: undefined as string | undefined,
-      },
-      mockNewId: vi.fn(() => 'bki_testsession'),
-    };
-  }
-);
+    mockEnv: {
+      APPS_DOMAIN: 'civit.ai',
+      APPS_KUBE_NAMESPACE: 'civitai-apps',
+      NEXTAUTH_URL: 'https://civitai.com',
+      APPS_DEV_TUNNEL_SISH_BACKEND: 'http://sish-http.apps-dev-tunnel.svc.cluster.local:8080',
+      APPS_DEV_TUNNEL_FORWARDAUTH_URL: undefined as string | undefined,
+      APPS_DEV_TUNNEL_SSH_HOST_PUBKEY: 'ssh-ed25519 AAAAC3NzaHostKeyExample sish-host' as
+        | string
+        | undefined,
+    },
+    mockNewId: vi.fn(() => 'bki_testsession'),
+  };
+});
 
 vi.mock('~/env/server', () => ({ env: mockEnv }));
 vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   getDp1Target: (...a: unknown[]) => mockGetDp1Target(...(a as [])),
   k8sFetch: (...a: unknown[]) => mockK8sFetch(...(a as [])),
   unwrap: (...a: unknown[]) => mockUnwrap(...(a as [any])),
+  waitForApplyJob: (...a: unknown[]) => mockWaitForApplyJob(...(a as [])),
 }));
 vi.mock('~/server/redis/client', () => ({
   sysRedis,
@@ -67,17 +83,23 @@ vi.mock('~/server/redis/client', () => ({
 vi.mock('~/server/utils/app-block-ids', () => ({ newBlockInstanceId: () => mockNewId() }));
 vi.mock('~/server/prom/dev-tunnel.metrics', () => ({
   recordDevTunnelMint: vi.fn(),
-  recordDevTunnelTeardown: vi.fn(),
+  recordDevTunnelTeardown: (...a: unknown[]) => mockRecordTeardown(...(a as [])),
 }));
 
 import {
+  buildDevTunnelApplyJob,
   buildDevTunnelIngressRoute,
   buildDevTunnelMiddleware,
   getActiveDevTunnel,
+  refundDevSessionBuzz,
   reserveDevSessionBuzz,
   startDevTunnel,
   stopDevTunnel,
   reapExpiredDevTunnels,
+  touchDevTunnelActivity,
+  DEV_TUNNEL_IDLE_SECONDS,
+  DEV_TUNNEL_HARD_SECONDS,
+  DEV_TUNNEL_REAP_MIN_AGE_SECONDS,
   DEV_TUNNEL_SESSION_BUZZ_CAP,
 } from '~/server/services/blocks/dev-tunnel.service';
 import { DEV_HOST_LABEL_REGEX } from '~/server/services/blocks/dev-tunnel-session';
@@ -93,6 +115,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockK8sFetch.mockResolvedValue(okRes());
   mockGetDp1Target.mockResolvedValue({ server: 'https://k8s', token: 't' });
+  mockWaitForApplyJob.mockResolvedValue('succeeded');
 });
 afterEach(() => vi.clearAllMocks());
 
@@ -129,21 +152,49 @@ describe('manifest builders (SSRF-safe, server-derived host)', () => {
 });
 
 describe('startDevTunnel', () => {
-  it('mints an unguessable host, renders the route, persists state, returns the URL', async () => {
+  it('mints an unguessable host, renders the route (via the apply Job), persists state, returns the URL + host pubkey', async () => {
     const result = await startDevTunnel({ userId: 555, blockId: 'my-app', sshPublicKey: PUBKEY });
     // host = dev-<16hex>.civit.ai
     expect(result.host).toMatch(/^dev-[a-f0-9]{16}\.civit\.ai$/);
     expect(result.host.split('.')[0]).toMatch(DEV_HOST_LABEL_REGEX);
     expect(result.url).toBe('https://civitai.com/apps/dev/my-app');
     expect(result.spendCapBuzz).toBe(DEV_TUNNEL_SESSION_BUZZ_CAP);
-    // rendered: middleware + ingressroute each pre-deleted (DELETE) + POSTed
+    // R1: returns the sish host pubkey (from env) for the CLI to pin.
+    expect(result.sshHostPublicKey).toBe('ssh-ed25519 AAAAC3NzaHostKeyExample sish-host');
+    // F1: the route renders via ONE apply Job POST (NOT direct CRD POSTs from the
+    // web-pod SA), pre-deleted first, then awaited to Succeeded.
     const posts = mockK8sFetch.mock.calls.filter((c) => (c[2] as any)?.method === 'POST');
-    expect(posts.length).toBe(2);
+    expect(posts.length).toBe(1);
+    expect(posts[0][1]).toMatch(/\/jobs$/);
+    expect(mockWaitForApplyJob).toHaveBeenCalledTimes(1);
     // persisted the 4 index keys (cred/session/host/user-block)
     expect(sysRedis.set).toHaveBeenCalledTimes(4);
     // the credential is keyed by pubkey fingerprint (sish authz lookup index)
     const credKeys = [...sysRedis._store.keys()].filter((k) => k.includes(':cred:'));
     expect(credKeys.length).toBe(1);
+    // the session record carries the initial idle marker
+    const sessionRaw = sysRedis._store.get('system:blocks:dev-tunnel:session:bki_testsession')!;
+    expect(JSON.parse(sessionRaw).lastActivityAt).toBeTypeOf('number');
+  });
+
+  it('R1: returns an EMPTY host pubkey when the env is unset (CLI fails closed)', async () => {
+    mockEnv.APPS_DEV_TUNNEL_SSH_HOST_PUBKEY = undefined;
+    try {
+      const result = await startDevTunnel({ userId: 5, blockId: 'a', sshPublicKey: PUBKEY });
+      expect(result.sshHostPublicKey).toBe('');
+    } finally {
+      mockEnv.APPS_DEV_TUNNEL_SSH_HOST_PUBKEY = 'ssh-ed25519 AAAAC3NzaHostKeyExample sish-host';
+    }
+  });
+
+  it('F1: a FAILED route-apply Job aborts the mint — nothing is persisted', async () => {
+    mockWaitForApplyJob.mockResolvedValueOnce('failed');
+    await expect(
+      startDevTunnel({ userId: 9, blockId: 'b', sshPublicKey: PUBKEY })
+    ).rejects.toThrow(/apply Job failed/);
+    // render threw before persist → no dev-tunnel keys left behind
+    const keys = [...sysRedis._store.keys()].filter((k) => k.startsWith('system:blocks:dev-tunnel'));
+    expect(keys).toEqual([]);
   });
 
   it('rejects an invalid SSH public key before touching k8s/redis', async () => {
@@ -152,6 +203,50 @@ describe('startDevTunnel', () => {
     ).rejects.toThrow(/invalid SSH public key/);
     expect(mockK8sFetch).not.toHaveBeenCalled();
     expect(sysRedis.set).not.toHaveBeenCalled();
+  });
+});
+
+describe('buildDevTunnelApplyJob (F1 — renders via the scoped apps-applier SA)', () => {
+  it('runs as the apps-applier SA and injects both manifests (never the web-pod SA)', () => {
+    const mw = buildDevTunnelMiddleware({
+      host: 'dev-0123456789abcdef.civit.ai',
+      sessionId: 'bki_s',
+      namespace: 'civitai-apps',
+      forwardAuthUrl: 'http://civitai-web/api/internal/dev-tunnel-gate',
+      sishBackend: 'http://sish-http.apps-dev-tunnel.svc.cluster.local:8080',
+    });
+    const ir = buildDevTunnelIngressRoute({
+      host: 'dev-0123456789abcdef.civit.ai',
+      sessionId: 'bki_s',
+      namespace: 'civitai-apps',
+      forwardAuthUrl: 'http://civitai-web/api/internal/dev-tunnel-gate',
+      sishBackend: 'http://sish-http.apps-dev-tunnel.svc.cluster.local:8080',
+    });
+    const job = buildDevTunnelApplyJob({
+      ns: 'civitai-apps',
+      jobName: 'dev-tunnel-apply-bki_s',
+      sessionId: 'bki_s',
+      middleware: mw,
+      ingressRoute: ir,
+    });
+    // THE F1 SECURITY INVARIANT: the create runs as the narrowly-scoped applier SA.
+    expect(job.spec.template.spec.serviceAccountName).toBe('apps-applier');
+    // F1-1: a bounded deadline guarantees a hung apply pod becomes terminal → GC'd,
+    // and it must be >= the 180s render wait so a slow-succeeding pull isn't killed.
+    expect(job.spec.activeDeadlineSeconds).toBe(200);
+    expect(job.spec.activeDeadlineSeconds).toBeGreaterThanOrEqual(180);
+    // Both manifests are injected into the Job (kubectl apply -f -), not POSTed
+    // by the web pod.
+    const env = job.spec.template.spec.containers[0].env;
+    const mwEnv = env.find((e) => e.name === 'MIDDLEWARE_JSON')!;
+    const irEnv = env.find((e) => e.name === 'INGRESSROUTE_JSON')!;
+    expect(JSON.parse(mwEnv.value).kind).toBe('Middleware');
+    expect(JSON.parse(irEnv.value).kind).toBe('IngressRoute');
+    // labelled for the reaper/teardown sweep
+    expect(job.metadata.labels['civitai.com/dev-tunnel-session']).toBe('bki_s');
+    // hardened pod spec (non-root, RO fs, drop ALL)
+    expect(job.spec.template.spec.securityContext.runAsNonRoot).toBe(true);
+    expect(job.spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem).toBe(true);
   });
 });
 
@@ -202,10 +297,57 @@ describe('reserveDevSessionBuzz (spend-cap backstop)', () => {
   });
 });
 
-describe('reapExpiredDevTunnels (server-authoritative)', () => {
-  it('tears down a route whose backing session has expired', async () => {
-    // Seed an EXPIRED session + a k8s route labelled with it.
-    const sessionId = 'bki_expired';
+describe('touchDevTunnelActivity (F3 — idle refresh on gate entry)', () => {
+  it('stamps lastActivityAt without extending the hard-TTL', async () => {
+    await startDevTunnel({ userId: 555, blockId: 'my-app', sshPublicKey: PUBKEY });
+    const host = JSON.parse(
+      sysRedis._store.get('system:blocks:dev-tunnel:session:bki_testsession')!
+    ).host as string;
+    // move the marker back so a refresh is observable
+    const before = JSON.parse(
+      sysRedis._store.get('system:blocks:dev-tunnel:session:bki_testsession')!
+    );
+    before.lastActivityAt = 1000;
+    sysRedis._store.set(
+      'system:blocks:dev-tunnel:session:bki_testsession',
+      JSON.stringify(before)
+    );
+
+    await touchDevTunnelActivity(host);
+
+    const after = JSON.parse(
+      sysRedis._store.get('system:blocks:dev-tunnel:session:bki_testsession')!
+    );
+    expect(after.lastActivityAt).toBeGreaterThan(1000);
+    // the re-persist used EX = remaining-until-hard-expiry, NOT a fresh 8h reset
+    const setCall = sysRedis.set.mock.calls.find(
+      (c) => c[0] === 'system:blocks:dev-tunnel:session:bki_testsession' && c[2]
+    );
+    expect((setCall![2] as { EX: number }).EX).toBeLessThanOrEqual(DEV_TUNNEL_HARD_SECONDS);
+  });
+
+  it('is a no-op for an unknown host (never throws)', async () => {
+    await expect(touchDevTunnelActivity('dev-ffffffffffffffff.civit.ai')).resolves.toBeUndefined();
+  });
+});
+
+describe('reserveDevSessionBuzz / refundDevSessionBuzz (F4 support)', () => {
+  it('refund reverses a reservation (best-effort DECRBY)', async () => {
+    const cap = 100;
+    await reserveDevSessionBuzz('sess', 60, cap);
+    await refundDevSessionBuzz('sess', 60);
+    // back under the cap → a fresh 60 fits again
+    expect(await reserveDevSessionBuzz('sess', 60, cap)).toEqual({ allowed: true, total: 60 });
+  });
+});
+
+describe('reapExpiredDevTunnels (server-authoritative, idle + hardened)', () => {
+  const NOW = Math.floor(Date.now() / 1000);
+
+  function seedSession(
+    sessionId: string,
+    over: Partial<Record<string, unknown>> = {}
+  ) {
     sysRedis._store.set(
       `system:blocks:dev-tunnel:session:${sessionId}`,
       JSON.stringify({
@@ -214,192 +356,155 @@ describe('reapExpiredDevTunnels (server-authoritative)', () => {
         blockId: 'x',
         host: 'dev-aaaaaaaaaaaaaaaa.civit.ai',
         fingerprint: 'fp',
-        createdAt: 1,
-        hardExpiresAt: 1, // long past
+        createdAt: NOW - 60,
+        hardExpiresAt: NOW + DEV_TUNNEL_HARD_SECONDS, // NOT hard-expired
         spendCapBuzz: 100,
+        lastActivityAt: NOW,
+        ...over,
       })
     );
-    // First k8sFetch (the LIST) returns the labelled route; subsequent DELETEs ok.
+  }
+
+  /** Make the LIST return a single route labelled `sessionId`, with an optional
+   *  creationTimestamp; every other call (DELETE) is a plain OK. */
+  function listOneRoute(sessionId: string, creationTimestamp?: string) {
     mockK8sFetch.mockImplementation(async (_t: unknown, path: string, init: any) => {
       if (init?.method === 'GET' && path.includes('ingressroutes?labelSelector')) {
         return okRes(
           JSON.stringify({
-            items: [{ metadata: { labels: { 'civitai.com/dev-tunnel-session': sessionId } } }],
+            items: [
+              {
+                metadata: {
+                  labels: { 'civitai.com/dev-tunnel-session': sessionId },
+                  ...(creationTimestamp ? { creationTimestamp } : {}),
+                },
+              },
+            ],
+          })
+        );
+      }
+      return okRes();
+    });
+  }
+
+  it('tears down a route whose backing session is HARD-expired (reap-maxttl)', async () => {
+    const sessionId = 'bki_expired';
+    seedSession(sessionId, { hardExpiresAt: 1, createdAt: 1, lastActivityAt: 1 });
+    listOneRoute(sessionId);
+    const result = await reapExpiredDevTunnels();
+    expect(result).toEqual({ swept: 1, reaped: 1, skipped: 0, listOk: true });
+    expect(sysRedis._store.has(`system:blocks:dev-tunnel:session:${sessionId}`)).toBe(false);
+    expect(mockRecordTeardown).toHaveBeenCalledWith('reap-maxttl');
+  });
+
+  it('F3: reaps an IDLE-expired session (activity older than the idle window) as reap-idle', async () => {
+    const sessionId = 'bki_idle';
+    seedSession(sessionId, { lastActivityAt: NOW - DEV_TUNNEL_IDLE_SECONDS - 60 });
+    listOneRoute(sessionId);
+    const result = await reapExpiredDevTunnels();
+    expect(result).toMatchObject({ reaped: 1, skipped: 0, listOk: true });
+    expect(mockRecordTeardown).toHaveBeenCalledWith('reap-idle');
+    expect(sysRedis._store.has(`system:blocks:dev-tunnel:session:${sessionId}`)).toBe(false);
+  });
+
+  it('F3: does NOT reap a recently-ACTIVE session (survives, not counted as skipped)', async () => {
+    const sessionId = 'bki_active';
+    seedSession(sessionId, { lastActivityAt: NOW - 5 }); // just active
+    listOneRoute(sessionId);
+    const result = await reapExpiredDevTunnels();
+    // a live session is kept: reaped 0 AND skipped 0 (skipped = read-error/guarded-absent only)
+    expect(result).toEqual({ swept: 1, reaped: 0, skipped: 0, listOk: true });
+    expect(sysRedis._store.has(`system:blocks:dev-tunnel:session:${sessionId}`)).toBe(true);
+  });
+
+  it('read-error skip: a Redis read error leaves a LIVE route alone (counted in skipped)', async () => {
+    const sessionId = 'bki_blip';
+    seedSession(sessionId);
+    listOneRoute(sessionId);
+    sysRedis.get.mockRejectedValueOnce(new Error('redis blip'));
+    const result = await reapExpiredDevTunnels();
+    expect(result).toEqual({ swept: 1, reaped: 0, skipped: 1, listOk: true });
+    // route + record untouched
+    expect(sysRedis._store.has(`system:blocks:dev-tunnel:session:${sessionId}`)).toBe(true);
+  });
+
+  it('min-age guard: an absent-record route that is TOO YOUNG (mid-mint) is skipped, not reaped', async () => {
+    const sessionId = 'bki_young';
+    // no session record seeded → absent; route created just now
+    listOneRoute(sessionId, new Date().toISOString());
+    const result = await reapExpiredDevTunnels();
+    expect(result).toEqual({ swept: 1, reaped: 0, skipped: 1, listOk: true });
+  });
+
+  it('min-age guard: an absent-record route with UNKNOWN age (no creationTimestamp) is skipped', async () => {
+    const sessionId = 'bki_noage';
+    listOneRoute(sessionId); // no creationTimestamp → age indeterminable → skip (never reap)
+    const result = await reapExpiredDevTunnels();
+    expect(result).toEqual({ swept: 1, reaped: 0, skipped: 1, listOk: true });
+  });
+
+  it('orphan reap: an absent-record route OLDER than the min-age is deleted', async () => {
+    const sessionId = 'bki_orphan';
+    const old = new Date((NOW - DEV_TUNNEL_REAP_MIN_AGE_SECONDS - 60) * 1000).toISOString();
+    listOneRoute(sessionId, old);
+    const result = await reapExpiredDevTunnels();
+    expect(result).toEqual({ swept: 1, reaped: 1, skipped: 0, listOk: true });
+    expect(mockRecordTeardown).toHaveBeenCalledWith('reap-maxttl');
+  });
+
+  it('listOk: a NON-2xx LIST surfaces listOk:false + the HTTP status (not a silent empty sweep)', async () => {
+    mockK8sFetch.mockResolvedValue({ ok: false, status: 403, text: async () => 'forbidden' });
+    const result = await reapExpiredDevTunnels();
+    expect(result).toEqual({ swept: 0, reaped: 0, skipped: 0, listOk: false, status: 403 });
+  });
+
+  it('listOk: a THROWN LIST (apiserver unreachable) surfaces listOk:false + status 0 sentinel', async () => {
+    mockK8sFetch.mockRejectedValue(new Error('connection refused'));
+    const result = await reapExpiredDevTunnels();
+    expect(result).toEqual({ swept: 0, reaped: 0, skipped: 0, listOk: false, status: 0 });
+  });
+
+  it('listOk: getDp1Target throwing (no SA token) surfaces listOk:false + status 0', async () => {
+    mockGetDp1Target.mockRejectedValueOnce(new Error('not in-cluster'));
+    const result = await reapExpiredDevTunnels();
+    expect(result).toEqual({ swept: 0, reaped: 0, skipped: 0, listOk: false, status: 0 });
+  });
+
+  it('F1-2: discovers + reaps an ORPHAN MIDDLEWARE (no IngressRoute) for an absent session', async () => {
+    const sessionId = 'bki_mw_orphan';
+    const old = new Date((NOW - DEV_TUNNEL_REAP_MIN_AGE_SECONDS - 60) * 1000).toISOString();
+    // ingressroutes LIST → EMPTY (the IngressRoute apply failed); middlewares LIST
+    // → the orphan Middleware. No session record seeded → absent.
+    mockK8sFetch.mockImplementation(async (_t: unknown, path: string, init: any) => {
+      if (init?.method === 'GET' && path.includes('ingressroutes?labelSelector')) {
+        return okRes(JSON.stringify({ items: [] }));
+      }
+      if (init?.method === 'GET' && path.includes('middlewares?labelSelector')) {
+        return okRes(
+          JSON.stringify({
+            items: [
+              {
+                metadata: {
+                  name: `dev-tunnel-gate-${sessionId}`,
+                  labels: { 'civitai.com/dev-tunnel-session': sessionId },
+                  creationTimestamp: old,
+                },
+              },
+            ],
           })
         );
       }
       return okRes();
     });
     const result = await reapExpiredDevTunnels();
+    // the Middleware-only session was discovered (swept) + reaped (both-kind delete)
     expect(result.swept).toBe(1);
     expect(result.reaped).toBe(1);
-    // the session record was removed during teardown
-    expect(sysRedis._store.has(`system:blocks:dev-tunnel:session:${sessionId}`)).toBe(false);
-  });
-
-  /** Helper: make the main label-scoped LIST return `items`, everything else ok. */
-  function listReturns(items: unknown[], listStatus?: { ok: boolean; status: number }) {
-    mockK8sFetch.mockImplementation(async (_t: unknown, path: string, init: any) => {
-      if (init?.method === 'GET' && path.includes('ingressroutes?labelSelector')) {
-        if (listStatus && !listStatus.ok) {
-          return { ok: false, status: listStatus.status, text: async () => 'forbidden' };
-        }
-        return okRes(JSON.stringify({ items }));
-      }
-      return okRes();
-    });
-  }
-  const deleteCalls = () =>
-    mockK8sFetch.mock.calls.filter((c: unknown[]) => (c[2] as any)?.method === 'DELETE');
-
-  it('(a) LEAVES an ACTIVE session ALONE — the delete blast-radius stays tight', async () => {
-    // Present session with a FUTURE hardExpiresAt = a live tunnel. Must survive.
-    const sessionId = 'bki_active';
-    const key = `system:blocks:dev-tunnel:session:${sessionId}`;
-    sysRedis._store.set(
-      key,
-      JSON.stringify({
-        sessionId,
-        userId: 7,
-        blockId: 'x',
-        host: 'dev-bbbbbbbbbbbbbbbb.civit.ai',
-        fingerprint: 'fp',
-        createdAt: 1,
-        hardExpiresAt: Math.floor(Date.now() / 1000) + 3600, // 1h in the future
-        spendCapBuzz: 100,
-      })
+    expect(mockRecordTeardown).toHaveBeenCalledWith('reap-maxttl');
+    // deleteDevTunnelRoute issued a DELETE against the orphan middleware
+    const mwDeletes = mockK8sFetch.mock.calls.filter(
+      (c) => (c[2] as any)?.method === 'DELETE' && String(c[1]).includes('/middlewares/')
     );
-    listReturns([{ metadata: { labels: { 'civitai.com/dev-tunnel-session': sessionId } } }]);
-
-    const result = await reapExpiredDevTunnels();
-
-    expect(result).toMatchObject({ swept: 1, reaped: 0, skipped: 0, listOk: true });
-    // the live session record is untouched + no route delete issued
-    expect(sysRedis._store.has(key)).toBe(true);
-    expect(deleteCalls().length).toBe(0);
-  });
-
-  it('(b) a non-2xx LIST surfaces listOk:false (NOT a silent empty sweep)', async () => {
-    listReturns([], { ok: false, status: 403 });
-
-    const result = await reapExpiredDevTunnels();
-
-    expect(result).toMatchObject({ swept: 0, reaped: 0, skipped: 0, listOk: false, status: 403 });
-    // nothing was deleted on a failed list
-    expect(deleteCalls().length).toBe(0);
-  });
-
-  it('(c) a Redis READ ERROR during the sweep does NOT delete the route (skip, not reap)', async () => {
-    const sessionId = 'bki_readerr';
-    // Old route (would clear the min-age guard) — proving the SKIP is due to the
-    // read FAILURE, not the age guard.
-    listReturns([
-      {
-        metadata: {
-          labels: { 'civitai.com/dev-tunnel-session': sessionId },
-          creationTimestamp: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
-        },
-      },
-    ]);
-    // The session read throws (Redis timeout) — must be treated as "unknown", not "gone".
-    sysRedis.get.mockImplementation(async (k: string) => {
-      if (k.includes(`:session:${sessionId}`)) throw new Error('redis timeout');
-      return sysRedis._store.get(k) ?? null;
-    });
-
-    const result = await reapExpiredDevTunnels();
-
-    expect(result).toMatchObject({ swept: 1, reaped: 0, skipped: 1, listOk: true });
-    expect(deleteCalls().length).toBe(0);
-  });
-
-  it('(d) the min-age guard LEAVES a just-created route (create-before-persist race)', async () => {
-    const sessionId = 'bki_young';
-    // Route created just now, session record NOT yet written (clean miss).
-    listReturns([
-      {
-        metadata: {
-          labels: { 'civitai.com/dev-tunnel-session': sessionId },
-          creationTimestamp: new Date().toISOString(),
-        },
-      },
-    ]);
-
-    const result = await reapExpiredDevTunnels();
-
-    expect(result).toMatchObject({ swept: 1, reaped: 0, skipped: 1, listOk: true });
-    expect(deleteCalls().length).toBe(0);
-  });
-
-  it('(e) an OLD absent-record route IS reaped — proving the guard is age-gated, not blanket-skip', async () => {
-    const sessionId = 'bki_old_orphan';
-    // Route older than the min-age guard, session record confirmed-absent.
-    listReturns([
-      {
-        metadata: {
-          labels: { 'civitai.com/dev-tunnel-session': sessionId },
-          creationTimestamp: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
-        },
-      },
-    ]);
-
-    const result = await reapExpiredDevTunnels();
-
-    expect(result).toMatchObject({ swept: 1, reaped: 1, skipped: 0, listOk: true });
-  });
-
-  it('(f) a THROWN LIST (TLS/network) is list_failed (status 0), NOT a generic error — and deletes nothing', async () => {
-    // Simulate a TLS-verify reject / connection failure on the LIST call itself.
-    mockK8sFetch.mockImplementation(async (_t: unknown, path: string, init: any) => {
-      if (init?.method === 'GET' && path.includes('ingressroutes?labelSelector')) {
-        throw new Error('unable to verify the first certificate'); // TLS handshake reject
-      }
-      return okRes();
-    });
-
-    // MUST NOT throw — the reaper converts an unreachable API into a discriminated
-    // list_failed (sentinel status 0) so the job records `list_failed`, not `error`.
-    const result = await reapExpiredDevTunnels();
-
-    expect(result).toMatchObject({ swept: 0, reaped: 0, skipped: 0, listOk: false, status: 0 });
-    expect(deleteCalls().length).toBe(0);
-  });
-
-  it('(g) route age uses the apiserver Date header — young-per-apiserver route is SKIPPED despite a pod clock running ~1h ahead', async () => {
-    const sessionId = 'bki_skewguard';
-    // Fixed base ~1h in the PAST of the real pod clock: under Date.now() the route
-    // would look ~1h old → reaped. Session record confirmed-absent.
-    const base = Date.now() - 60 * 60 * 1000;
-    const creationTimestamp = new Date(base).toISOString();
-    // apiserver "now" = 5s after creation → YOUNG in the apiserver's own clock domain.
-    const apiserverDate = new Date(base + 5000).toUTCString();
-    mockK8sFetch.mockImplementation(async (_t: unknown, path: string, init: any) => {
-      if (init?.method === 'GET' && path.includes('ingressroutes?labelSelector')) {
-        return {
-          ok: true,
-          status: 200,
-          headers: { get: (h: string) => (h.toLowerCase() === 'date' ? apiserverDate : null) },
-          text: async () =>
-            JSON.stringify({
-              items: [
-                {
-                  metadata: {
-                    labels: { 'civitai.com/dev-tunnel-session': sessionId },
-                    creationTimestamp,
-                  },
-                },
-              ],
-            }),
-        };
-      }
-      return okRes();
-    });
-
-    const result = await reapExpiredDevTunnels();
-
-    // Age computed from the apiserver Date (~5s) < guard → SKIPPED. If the code used
-    // the pod clock (~1h ahead) it would have reaped a route mid-creation.
-    expect(result).toMatchObject({ swept: 1, reaped: 0, skipped: 1, listOk: true });
-    expect(deleteCalls().length).toBe(0);
+    expect(mwDeletes.length).toBeGreaterThanOrEqual(1);
   });
 });
