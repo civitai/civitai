@@ -179,7 +179,8 @@ const MAX_DEPTH = 24;
  * Per-string routing by KEY (deterministic, not value-shape heuristics):
  *   - structural OTLP id keys (traceId/spanId/parentSpanId, camel + snake) → passed through
  *     untouched (scrubbing them = invalid id = Alloy 400 drops the beacon);
- *   - URL-ish keys → structure-preserving `redactUrl` + structural-leaf `redactValue`;
+ *   - URL-ish keys → structure-preserving `redactUrl` + full `redactText` (page.url is the
+ *     top PII surface — tokens ride in path segments too, so it keeps the long-token pass);
  *   - free-text keys (message/stack/…) → full `redactText` (incl. the long-token heuristic);
  *   - every other string → `redactValue` (email/JWT/embedded-URL params only — NO bare
  *     long-token pass, which would corrupt long structural ids/hashes).
@@ -196,10 +197,17 @@ export function deepRedact<T>(value: T, key = '', depth = 0): T {
       if (STRUCTURAL_ID_KEY_RE.test(key)) return value;
       let scrubbed: string;
       if (URL_KEY_RE.test(key)) {
-        // URL-ish value: structure-preserving param scrub, then the structural-leaf pass
-        // (email/JWT/embedded-URL) — NOT the long-token heuristic, so long id-bearing path
-        // segments in the URL aren't corrupted.
-        scrubbed = redactValue(redactUrl(value));
+        // URL-ish value (page.url, http.url stringValue, href/location/referrer/uri):
+        // structure-preserving param scrub, then the FULL free-text scrub incl. the
+        // long-token pass. page.url is on every beacon and the highest-value PII surface —
+        // reset/verify/unsubscribe tokens and bare opaque tokens can ride in PATH segments
+        // (not just query params), so the long-token pass must cover it (restores #2929).
+        // SAFE re: the Alloy 400 — structural ids (traceId/spanId/parentSpanId) are
+        // keyed-skipped ABOVE this branch, and Alloy's faro.receiver does not format-validate
+        // attribute/URL string values (only the structural ids), so this cannot recreate the
+        // incident. A cosmetically-corrupted long path segment is an acceptable price for the
+        // PII coverage.
+        scrubbed = redactText(redactUrl(value));
       } else if (TEXT_KEY_RE.test(key)) {
         // Genuine free text (error/log messages, stack traces): full scrub incl. long-token.
         scrubbed = redactText(value);

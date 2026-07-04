@@ -233,11 +233,19 @@ describe('deepRedact', () => {
   });
 });
 
-// F2 regression: page.url gets the STRONGER scrub (redactText ∘ redactUrl), matching
-// FaroProvider.scrubBeacon — so an email/token embedded in a URL PATH SEGMENT (not just
-// a query param) is redacted on every beacon's page.url.
-describe('page.url path-segment scrub (redactText ∘ redactUrl)', () => {
-  const scrubPageUrl = (u: string) => redactText(redactUrl(u));
+// F2 regression: `page.url` (a url-key) gets the STRONGER scrub — deepRedact routes url-keys
+// through `redactText(redactUrl(value))`, so an email/token/opaque-token in a URL PATH SEGMENT
+// (not just a query param) is redacted on every beacon's page.url. These drive the REAL
+// production path (`deepRedact` over a `{ meta: { page: { url } } }` object), NOT a local
+// helper — so they actually exercise FaroProvider.scrubBeacon's routing. The bare-token case
+// FAILS if url-keys are downgraded to `redactValue` (the long-token pass is what catches it).
+describe('page.url path-segment scrub (real deepRedact path)', () => {
+  const scrubPageUrl = (u: string): string => {
+    const out = deepRedact({ meta: { page: { url: u } } }) as {
+      meta: { page: { url: string } };
+    };
+    return out.meta.page.url;
+  };
 
   it('redacts an email embedded in the URL path plus a sensitive query param', () => {
     const out = scrubPageUrl('https://civitai.com/u/alice@example.com/settings?token=abc123');
@@ -253,6 +261,18 @@ describe('page.url path-segment scrub (redactText ∘ redactUrl)', () => {
     const out = scrubPageUrl(`https://civitai.com/magic/${jwt}/open`);
     expect(out).not.toContain(jwt);
     expect(out).toContain(REDACTED_TOKEN);
+  });
+
+  // Bare opaque token (no `eyJ` JWT marker, not a query param) in a PATH segment — e.g. a
+  // magic-link / unsubscribe token. Only the long-token pass catches this; this asserts that
+  // url-keys keep it (regression guard for the redactValue downgrade). Would FAIL without it.
+  it('redacts a bare opaque long token embedded in a URL path segment', () => {
+    const token = 'Xg7K2p9Qm4Rt6Vn1Bz8Ld3Fh5Jw0Cs2Ey4Ab6Nq';
+    const out = scrubPageUrl(`https://civitai.com/unsubscribe/${token}/confirm`);
+    expect(out).not.toContain(token);
+    expect(out).toContain(REDACTED_TOKEN);
+    expect(out).toContain('/unsubscribe/');
+    expect(out).toContain('/confirm');
   });
 
   // Residual: `location.href` percent-encodes `@` to `%40`, so an email in a
@@ -366,6 +386,37 @@ describe('OTLP trace structural-id protection (deepRedact)', () => {
     expect(event.traceId).not.toContain(REDACTED_TOKEN);
   });
 
+  it('leaves span LINK ids byte-identical (the real id-bearing nested OTLP structure)', () => {
+    // Real OTLP span events carry NO ids; the nested id-bearing structure is
+    // spans[].links[].{traceId,spanId}. These must survive too or Alloy 400s the beacon.
+    const LINK_TRACE_ID = 'a1b2c3d4e5f60718293a4b5c6d7e8f90'; // 32 hex
+    const LINK_SPAN_ID = '1122334455667788'; // 16 hex
+    const payload = {
+      resourceSpans: [
+        {
+          scopeSpans: [
+            {
+              spans: [
+                {
+                  traceId: TRACE_ID,
+                  spanId: SPAN_ID,
+                  links: [{ traceId: LINK_TRACE_ID, spanId: LINK_SPAN_ID, attributes: [] }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const out = deepRedact(payload);
+    const link = out.resourceSpans[0].scopeSpans[0].spans[0].links[0];
+    expect(link.traceId).toBe(LINK_TRACE_ID);
+    expect(link.traceId).toMatch(HEX32);
+    expect(link.spanId).toBe(LINK_SPAN_ID);
+    expect(link.spanId).toMatch(HEX16);
+    expect(link.traceId).not.toContain(REDACTED_TOKEN);
+  });
+
   it('still scrubs the sensitive query token in the span http.url attribute', () => {
     const out = deepRedact(otlpTracePayload());
     const url = out.resourceSpans[0].scopeSpans[0].spans[0].attributes[0].value.stringValue;
@@ -386,18 +437,23 @@ describe('OTLP trace structural-id protection (deepRedact)', () => {
     expect(out.parent_span_id).toBe(PARENT_SPAN_ID);
   });
 
-  // The fix constrains the bare long-token heuristic to genuine free-text contexts, so an
-  // arbitrary long structural value (e.g. a content hash / cache key attribute) is no
-  // longer corrupted just for being long. Only genuine PII (params/email/JWT) is touched.
-  it('does not corrupt a long structural hex/hash attribute value', () => {
+  // The fix constrains the bare long-token heuristic to url-key + free-text contexts, so an
+  // arbitrary long structural value under a GENERIC (non-url, non-message) key — e.g. a
+  // content hash / cache key — is no longer corrupted just for being long. (A long hex value
+  // that rides under a url-key such as `stringValue` DOES still get the long-token pass; that
+  // is the accepted Fix-1 tradeoff and is only cosmetic — Alloy does not format-validate
+  // attribute values, only the structural ids, so it never 400s.)
+  it('does not corrupt a long structural hex/hash value under a generic key', () => {
     const contentHash = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'; // 64 hex
     const payload = {
-      attributes: [{ key: 'db.rows.hash', value: { stringValue: contentHash } }],
       cacheKey: contentHash,
+      etag: contentHash,
+      nested: { checksum: contentHash },
     };
     const out = deepRedact(payload);
-    expect(out.attributes[0].value.stringValue).toBe(contentHash);
     expect(out.cacheKey).toBe(contentHash);
+    expect(out.etag).toBe(contentHash);
+    expect(out.nested.checksum).toBe(contentHash);
   });
 });
 
