@@ -100,8 +100,48 @@ export async function queryNotifications(input: {
   return await query.result();
 }
 
-// --- read: per-category counts (cache-fronted, lag-aware) -------------------------------------------
-export async function countNotifications(input: {
+// --- read: per-category counts (cache-fronted, lag-aware, single-flighted) --------------------------
+// Per-key request coalescing (single-flight). The bell-count query is the heaviest read on the DB and,
+// within a user's replication-lag window, busts the cache and hits the primary on EVERY call — so N
+// concurrent count requests for the same (userId, unread, category) used to each launch the multi-second
+// `GROUP BY category` scan (an observed 43-way thundering herd on one user). Here, if an identical call is
+// already in flight we await ITS promise and return that result instead of launching another. On settle the
+// entry is removed (finally) so the next call re-derives fresh cache/lag state. Correctness-neutral: same
+// user + same params ⇒ same count, so sharing one execution and one result changes nothing observable.
+//
+// NOTE the semantic difference from markNotificationsRead's `userWriteQueues`: writes SERIALIZE (each
+// enqueued onto the tail of the prior) because concurrent writes must not overlap; reads COALESCE (all
+// awaiters share the ONE in-flight promise) because the result is identical and re-running is pure waste.
+//
+// Exported for test visibility only (like userWriteQueues) — not part of the public surface.
+export const countInFlight = new Map<string, Promise<NotificationCategoryCount[]>>();
+
+export function countNotifications(input: {
+  userId: number;
+  unread: boolean;
+  category?: NotificationCategory | null;
+}): Promise<NotificationCategoryCount[]> {
+  const { userId, unread, category } = input;
+  const key = `${userId}:${unread}:${category ?? 'all'}`;
+
+  const existing = countInFlight.get(key);
+  if (existing) return existing;
+
+  const inFlight = countNotificationsImpl(input);
+  countInFlight.set(key, inFlight);
+  // Clean up on settle (success OR failure) so a rejection can't poison the key and the next call re-derives
+  // fresh state. Guard on identity in case a later call already replaced this entry. The trailing .catch
+  // swallows ONLY this cleanup chain's copy of a rejection (the real rejection still reaches the callers
+  // awaiting `inFlight`); without it, the derived finally-promise would surface as an unhandled rejection.
+  void inFlight
+    .finally(() => {
+      if (countInFlight.get(key) === inFlight) countInFlight.delete(key);
+    })
+    .catch(() => {});
+  return inFlight;
+}
+
+async function countNotificationsImpl(input: {
   userId: number;
   unread: boolean;
   category?: NotificationCategory | null;
