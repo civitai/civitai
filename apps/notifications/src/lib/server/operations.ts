@@ -157,14 +157,29 @@ async function countNotificationsImpl(input: {
 }): Promise<NotificationCategoryCount[]> {
   const { userId, unread, category } = input;
 
+  // The count cache (cache.ts) is a SINGLE per-user redis hash of per-category UNREAD counts, maintained
+  // incrementally by the worker's incrementUser (fan-out) / decrementUser (mark-read). It is keyed on
+  // `userId` ONLY — it does not distinguish the `unread` flag or a `category` filter. So it can correctly
+  // represent EXACTLY ONE variant of this query: `unread:true` with no category. For any other variant:
+  //   - `unread:false` (totals incl. read): there is no worker-maintained "total" counter, so this is
+  //     fundamentally uncacheable in this structure — and writing a total into the hash would CORRUPT the
+  //     worker's unread counters for every subsequent read.
+  //   - a `category`-scoped call: getUser returns the ALL-category hash, not the requested subset.
+  // Therefore gate the ENTIRE cache interaction (read + recent-writer bust + populate) on the cacheable
+  // variant. Non-cacheable variants touch the cache NOT AT ALL and just run the DB query uncached —
+  // getNotifDbWithoutLag still routes recent-writers to the primary, so freshness is preserved.
+  const cacheable = unread === true && category == null;
+
   // Check the lag flag BEFORE the cache — if a recent write flagged this user, bust the cache and read
-  // the primary to avoid a stale count.
+  // the primary to avoid a stale count. Only the cacheable variant interacts with the cache at all.
   const db = await getNotifDbWithoutLag(userId);
-  if (isWritePool(db)) {
-    await notificationCache.bustUser(userId);
-  } else {
-    const cached = await notificationCache.getUser(userId);
-    if (cached) return cached;
+  if (cacheable) {
+    if (isWritePool(db)) {
+      await notificationCache.bustUser(userId);
+    } else {
+      const cached = await notificationCache.getUser(userId);
+      if (cached) return cached;
+    }
   }
 
   const where: string[] = ['un."userId" = $1'];
@@ -183,7 +198,7 @@ async function countNotificationsImpl(input: {
     params
   );
   const result = await query.result();
-  await notificationCache.setUser(userId, result);
+  if (cacheable) await notificationCache.setUser(userId, result);
   return result;
 }
 
