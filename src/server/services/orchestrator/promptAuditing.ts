@@ -145,7 +145,16 @@ async function addBlockedPrompt(userId: number, entry: BlockedPromptEntry): Prom
 /** Get all blocked prompts (excludes reset marker) */
 async function getBlockedPrompts(userId: number): Promise<BlockedPromptEntry[]> {
   const key = getBlockedPromptsKey(userId);
-  const entries = (await sysRedis.lRange(key, 0, -1)).map((e) => decodeRedisString(e));
+  // Park-bounding only. This read is on the auto-mute sub-path — called from
+  // reportProhibitedRequest INSIDE its `try { … } catch (banError)` block, so a
+  // throw here is caught there (auto-mute is skipped + logged as
+  // `user-ban-creation-error`; the current prompt is still blocked upstream).
+  // Deadline the read so a silent half-open rejects at ~2s instead of parking
+  // ~11min; we add no fail-open catch of our own — the existing banError handler
+  // already bounds the blast to "mute skipped this once."
+  const entries = (await withSysReadDeadline(sysRedis.lRange(key, 0, -1))).map((e) =>
+    decodeRedisString(e)
+  );
   return entries
     .filter((e) => e !== RESET_MARKER)
     .map((entry) => JSON.parse(entry) as BlockedPromptEntry);
