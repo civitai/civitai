@@ -81,7 +81,13 @@ import {
   userImageVideoCountCache,
 } from '~/server/redis/caches';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
-import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import {
+  redis,
+  REDIS_KEYS,
+  REDIS_SYS_KEYS,
+  sysRedis,
+  withSysReadDeadline,
+} from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { createCachedObject, queryCacheRaw } from '~/server/utils/cache-helpers';
 import { createLruCache } from '~/server/utils/lru-cache';
@@ -3501,7 +3507,9 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
       // to DB — slower but correct).
       let cachedResults: (string | null)[];
       try {
-        cachedResults = await sysRedis.packed.mGet(cacheKeys);
+        // Wall-clock deadline so a silent sysRedis half-open can't park this
+        // highest-traffic read ~11min (a fast DOWN already rejects into catch).
+        cachedResults = await withSysReadDeadline(sysRedis.packed.mGet(cacheKeys));
       } catch (err) {
         logSysRedisFailOpen('read-degraded', 'checkImageExistence mGet', err);
         cachedResults = new Array(uniqueIds.length).fill(null);
@@ -4548,7 +4556,10 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       // sibling checkImageExistence call site above for the same pattern.
       let cachedResults: (string | null)[];
       try {
-        cachedResults = cacheKeys.length > 0 ? await sysRedis.packed.mGet(cacheKeys) : [];
+        // Wall-clock deadline — see the sibling checkImageExistence call site
+        // above; bounds a silent sysRedis half-open on this hot read.
+        cachedResults =
+          cacheKeys.length > 0 ? await withSysReadDeadline(sysRedis.packed.mGet(cacheKeys)) : [];
       } catch (err) {
         logSysRedisFailOpen('read-degraded', 'checkImageExistence mGet', err);
         cachedResults = new Array(uniqueIds.length).fill(null);
