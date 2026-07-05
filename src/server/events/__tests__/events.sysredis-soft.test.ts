@@ -13,8 +13,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * *lPopCount is a DESTRUCTIVE atomic LPOP-with-count. On a fast DOWN the
  * command is never written (disableOfflineQueue + fast reject) so it pops
  * nothing and the queued items STAY on the list for next cycle (#2922
- * non-destructive lesson). On DOWN/SLOW we skip this event's queue this cycle
- * rather than dropping the drained-but-unprocessed items.
+ * non-destructive lesson). CAVEAT: on a slow-but-alive sysRedis the LPOP CAN
+ * execute server-side and pop items whose reply then lands after the deadline
+ * — those are dropped (a narrow, accepted loss window for best-effort Discord
+ * role grants; see the source comment). The SLOW test below models the
+ * never-popped sub-case (server never executes), which is what the wrap
+ * protects against; it does NOT assert the popped-then-late case is lossless.
  *
  * The SLOW tests are fail-on-revert: the sysRedis op NEVER settles, so if the
  * `withSysReadDeadline(...)` wrap were removed the caller would hang and the
@@ -211,7 +215,7 @@ describe('processAddRoleQueue — lLen + lPopCount READ soft-dependency', () => 
     expect(mockLogSysRedisFailOpen.mock.calls[0][1]).toBe('events.processAddRoleQueue lLen');
   });
 
-  it('SLOW/half-open (lPopCount NEVER settles + deadline REJECTS): skips cycle → items not lost (fail-on-revert)', async () => {
+  it('SLOW/half-open (lPopCount NEVER settles + deadline REJECTS): skips cycle, no items processed (fail-on-revert; never-popped sub-case)', async () => {
     mockLLen.mockResolvedValue(3);
     mockLPopCount.mockReturnValue(new Promise(() => undefined));
     // lLen resolves (transparent), only the lPopCount race rejects. Make the

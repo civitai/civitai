@@ -552,10 +552,15 @@ export const eventEngine = {
         `${REDIS_SYS_KEYS.EVENT}:${eventDef.name}:${REDIS_SUB_KEYS.EVENT.ADD_ROLE}` as const;
 
       // Both reads are deadline-raced + fail-open. On a sysRedis DOWN/SLOW we
-      // SKIP this event's queue this cycle so the queued role-adds STAY on the
-      // list and are drained next cycle — never lost (#2922 non-destructive
-      // lesson). lPopCount is an atomic LPOP-with-count: a fast DOWN reject
-      // never writes the command, so it pops nothing and the items remain.
+      // SKIP this event's queue this cycle and drain it next cycle.
+      // lPopCount is an atomic LPOP-with-count. On a fast DOWN the command is
+      // never written → nothing is popped → items stay queued (safe, #2922).
+      // CAVEAT (slow-but-alive): if the LPOP *does* execute server-side but its
+      // reply lands after the ~2s deadline, those items are popped-then-skipped
+      // and lost. That window is narrow and the payload is best-effort Discord
+      // team-role grants (no money/security/correctness) — an acceptable trade
+      // vs the ~11min park the deadline prevents. If loss ever mattered here,
+      // switch to a non-destructive lRange + conditional lTrim.
       let queueLength = 0;
       try {
         queueLength = await withSysReadDeadline(sysRedis.lLen(queueKey));
