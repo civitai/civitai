@@ -6,7 +6,7 @@ node_modules
 .pnp.js
 
 # testing
-/coverage
+coverage/
 
 # database
 /prisma/db.sqlite
