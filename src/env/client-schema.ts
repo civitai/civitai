@@ -54,6 +54,11 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_FARO_TRACES_SAMPLE_RATE: z.string().default('0.1'),
   // Session sampling ratio — gates ALL Faro signals (errors/web-vitals/events/sessions).
   NEXT_PUBLIC_FARO_SESSION_SAMPLE_RATE: z.string().default('1.0'),
+  // Resource Timing decomposition (DNS/TCP/TLS/TTFB/download splits for same-origin `/api`
+  // requests, emitted as custom Faro measurements). Ships DARK — default OFF — so it can be
+  // ramped INDEPENDENTLY of the main RUM flag once volume is confirmed on a small cohort.
+  // Only takes effect when NEXT_PUBLIC_FARO_ENABLED + the `faro` flag are also on.
+  NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED: z.stringbool().default(false),
 });
 
 /**
@@ -99,4 +104,5 @@ export const clientEnv = {
   NEXT_PUBLIC_FARO_COLLECTOR_URL: process.env.NEXT_PUBLIC_FARO_COLLECTOR_URL,
   NEXT_PUBLIC_FARO_TRACES_SAMPLE_RATE: process.env.NEXT_PUBLIC_FARO_TRACES_SAMPLE_RATE,
   NEXT_PUBLIC_FARO_SESSION_SAMPLE_RATE: process.env.NEXT_PUBLIC_FARO_SESSION_SAMPLE_RATE,
+  NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED: process.env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED,
 };

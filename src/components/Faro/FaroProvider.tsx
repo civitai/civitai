@@ -13,6 +13,7 @@ import { env } from '~/env/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { deepRedact } from '~/utils/faro/redact';
 import { resolveFaroSampling } from '~/utils/faro/traceSampler';
+import { ResourceTimingInstrumentation } from './ResourceTimingInstrumentation';
 import { SampledTracingInstrumentation } from './SampledTracingInstrumentation';
 
 /**
@@ -31,10 +32,17 @@ import { SampledTracingInstrumentation } from './SampledTracingInstrumentation';
  * `faro.civitai.com` ingress (infra kill-switch).
  *
  * Instrumentations (EXPLICIT allow-list — NOT the getWebInstrumentations() default set):
- * errors, web-vitals, session (required for sampling), view, navigation, tracing.
- * DELIBERATELY EXCLUDED for privacy on this adult/payments platform: Performance
- * (emits full resource URLs), UserAction (captures element datasets), CSP, and Console
- * (serialises arbitrary logged objects). NO session replay.
+ * errors, web-vitals, session (required for sampling), view, navigation, tracing, and —
+ * behind its own dark build-arg — a privacy-safe Resource Timing decomposition.
+ * DELIBERATELY EXCLUDED for privacy on this adult/payments platform: the stock Performance
+ * instrumentation (emits full resource URLs), UserAction (captures element datasets), CSP,
+ * and Console (serialises arbitrary logged objects). NO session replay.
+ *
+ * The Resource Timing decomposition (`ResourceTimingInstrumentation`, gated on
+ * `NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED`, default OFF) is the ONE resource-timing surface
+ * we allow: unlike stock Performance it normalizes every URL to a coarse route BEFORE emit
+ * (no URL/query ever leaves the browser), scopes to same-origin `/api` only, and is
+ * volume-gated independently of trace sampling. See ResourceTimingInstrumentation.
  *
  * SAMPLING (two decoupled layers):
  *   - SESSION sampling (`NEXT_PUBLIC_FARO_SESSION_SAMPLE_RATE`, 1.0) gates ALL signals →
@@ -170,6 +178,15 @@ function initFaro() {
           propagateTraceHeaderCorsUrls: [sameOriginApiMatcher()],
         },
       }),
+      // Resource Timing phase decomposition (DNS/TCP/TLS/TTFB/download) for same-origin
+      // `/api` requests, emitted as custom measurements. This is NOT the stock
+      // PerformanceInstrumentation (which stays excluded — it emits full URLs); it
+      // normalizes every URL to a coarse route BEFORE emit and is volume-gated
+      // independently of trace sampling. Ships DARK behind its own build-arg so it can be
+      // ramped separately from the main RUM flag — see ResourceTimingInstrumentation.
+      ...(env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED
+        ? [new ResourceTimingInstrumentation()]
+        : []),
     ],
     // Defensive outer wrapper: scrubBeacon already fails closed, but guarantee that any
     // unexpected throw still drops the beacon (null) rather than emitting it unscrubbed.
