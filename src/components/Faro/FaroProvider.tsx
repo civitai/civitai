@@ -12,9 +12,8 @@ import {
 import { env } from '~/env/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { deepRedact } from '~/utils/faro/redact';
-import { resolveResourceTimingConfig } from '~/utils/faro/resourceTiming';
 import { resolveFaroSampling } from '~/utils/faro/traceSampler';
-import { ResourceTimingInstrumentation } from './ResourceTimingInstrumentation';
+import { buildResourceTimingInstrumentations } from './ResourceTimingInstrumentation';
 import { SampledTracingInstrumentation } from './SampledTracingInstrumentation';
 
 /**
@@ -34,16 +33,24 @@ import { SampledTracingInstrumentation } from './SampledTracingInstrumentation';
  *
  * Instrumentations (EXPLICIT allow-list — NOT the getWebInstrumentations() default set):
  * errors, web-vitals, session (required for sampling), view, navigation, tracing, and —
- * behind its own dark build-arg — a privacy-safe Resource Timing decomposition.
+ * behind its own build-arg + a cohort Flipt flag — a privacy-safe Resource Timing decomposition.
  * DELIBERATELY EXCLUDED for privacy on this adult/payments platform: the stock Performance
  * instrumentation (emits full resource URLs), UserAction (captures element datasets), CSP,
  * and Console (serialises arbitrary logged objects). NO session replay.
  *
- * The Resource Timing decomposition (`ResourceTimingInstrumentation`, gated on
- * `NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED`, default OFF) is the ONE resource-timing surface
- * we allow: unlike stock Performance it normalizes every URL to a coarse route BEFORE emit
- * (no URL/query ever leaves the browser), scopes to same-origin `/api` only, and is
- * volume-gated independently of trace sampling. See ResourceTimingInstrumentation.
+ * The Resource Timing decomposition (`ResourceTimingInstrumentation`) is the ONE resource-timing
+ * surface we allow: unlike stock Performance it normalizes every URL to a coarse route BEFORE
+ * emit (no URL/query ever leaves the browser), scopes to same-origin `/api` only, and is
+ * volume-gated independently of trace sampling. It is gated on BOTH (AND):
+ *   - the `NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED` build-arg (default OFF) = compiled-in
+ *     master enable/kill, AND
+ *   - the `faro-resource-timing` Flipt flag (`features.faroResourceTiming`, base `enabled:false`)
+ *     = which COHORT — so it ramps by % of users at RUNTIME, mirroring how the main `faro` flag
+ *     ramped. Never flip it 100%-at-once; bump the Flipt % rollout and watch the faro-rum stream
+ *     bytes stay under the 10 MB/s per-stream ceiling.
+ * The cohort boolean is read once at first-init (threaded in via `initFaro`, same model as the
+ * `features.faro` gate on the whole SDK) — a flag change applies on the next page load.
+ * See ResourceTimingInstrumentation.
  *
  * SAMPLING (two decoupled layers):
  *   - SESSION sampling (`NEXT_PUBLIC_FARO_SESSION_SAMPLE_RATE`, 1.0) gates ALL signals →
@@ -109,7 +116,19 @@ function scrubBeacon(item: TransportItem): TransportItem | null {
   }
 }
 
-function initFaro() {
+interface InitFaroOptions {
+  /**
+   * Whether THIS user is in the resource_timing cohort — the resolved value of the
+   * `faro-resource-timing` Flipt flag (`features.faroResourceTiming`), threaded in from the
+   * component so module-scope init never imports the hook. Combined (AND) with the build-arg
+   * `NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED` to decide whether to attach
+   * ResourceTimingInstrumentation. Read once at first-init (same model as the `features.faro`
+   * gate on the whole SDK) — ramping the flag % takes effect on the next page load.
+   */
+  resourceTimingCohort: boolean;
+}
+
+function initFaro({ resourceTimingCohort }: InitFaroOptions) {
   if (faroInitStarted) return;
   if (typeof window === 'undefined') return;
   if ((window as unknown as Record<string, unknown>)[WINDOW_GUARD_KEY]) return;
@@ -183,21 +202,19 @@ function initFaro() {
       // `/api` requests, emitted as custom measurements. This is NOT the stock
       // PerformanceInstrumentation (which stays excluded — it emits full URLs); it
       // normalizes every URL to a coarse route BEFORE emit and is volume-gated
-      // independently of trace sampling. Ships DARK behind its own build-arg so it can be
-      // ramped separately from the main RUM flag. The volume knobs (sample rate + per-client
-      // cap) are env-tunable so the ramp is dial-able WITHOUT a rebuild — resolved here with a
-      // safe fallback to the defaults (sample rate 0.05 keeps the shared faro-rum Loki stream
-      // under its 10 MB/s ceiling at 100k concurrent). See ResourceTimingInstrumentation.
-      ...(env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED
-        ? [
-            new ResourceTimingInstrumentation(
-              resolveResourceTimingConfig(
-                env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_SAMPLE_RATE,
-                env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_MAX_PER_WINDOW
-              )
-            ),
-          ]
-        : []),
+      // independently of trace sampling. TWO gates (AND): the build-arg
+      // NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED = compiled-in master enable/kill, and the
+      // `faro-resource-timing` Flipt flag (resourceTimingCohort) = which % of users — so ops
+      // ramps the cohort at runtime by bumping the flag %, no rebuild, mirroring how `faro`
+      // ramped. The volume knobs (sample rate + per-client cap) are env-tunable, resolved here
+      // with a safe fallback to the defaults (sample rate 0.05 keeps the shared faro-rum Loki
+      // stream under its 10 MB/s ceiling at 100k concurrent). See ResourceTimingInstrumentation.
+      ...buildResourceTimingInstrumentations({
+        buildArgEnabled: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED,
+        cohortEnabled: resourceTimingCohort,
+        sampleRateEnv: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_SAMPLE_RATE,
+        maxPerWindowEnv: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_MAX_PER_WINDOW,
+      }),
     ],
     // Defensive outer wrapper: scrubBeacon already fails closed, but guarantee that any
     // unexpected throw still drops the beacon (null) rather than emitting it unscrubbed.
@@ -218,7 +235,7 @@ export function FaroProvider() {
   useEffect(() => {
     try {
       if (enabled) {
-        initFaro();
+        initFaro({ resourceTimingCohort: !!features.faroResourceTiming });
         // If a prior transition paused an already-initialised instance, resume it.
         if (faroInitStarted) faro?.unpause?.();
       } else if (faroInitStarted) {
