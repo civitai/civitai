@@ -5,7 +5,15 @@ import type { DonationCosmeticData, EngagementEvent, TeamScore } from '~/server/
 import { holiday2024 } from '~/server/events/holiday2024.event';
 import { discord } from '~/server/integrations/discord';
 import { logToAxiom } from '~/server/logging/client';
-import { redis, REDIS_KEYS, REDIS_SUB_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import {
+  redis,
+  REDIS_KEYS,
+  REDIS_SUB_KEYS,
+  REDIS_SYS_KEYS,
+  sysRedis,
+  withSysReadDeadline,
+} from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type { TeamScoreHistoryInput } from '~/server/schema/event.schema';
 import {
@@ -487,11 +495,18 @@ export const eventEngine = {
     const eventDef = events.find((x) => x.name === event);
     if (!eventDef) throw new Error("That event doesn't exist");
 
-    const partnersCache = await sysRedis.lRange(
-      `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.PARTNERS}`,
-      0,
-      -1
-    );
+    let partnersCache: string[] = [];
+    try {
+      // Wall-clock deadline + fail-open: a fast sysRedis DOWN would 500 this
+      // read; a silent half-open would park the awaited lRange ~11min. On
+      // DOWN/SLOW fail open to an empty partners list.
+      partnersCache = await withSysReadDeadline(
+        sysRedis.lRange(`${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.PARTNERS}`, 0, -1)
+      );
+    } catch (err) {
+      logSysRedisFailOpen('read-degraded', 'events.getPartners', err, { event });
+      return [];
+    }
     const partners = partnersCache.map((x) => JSON.parse(x)) as EventPartner[];
 
     return partners.sort((a, b) => b.amount - a.amount);
@@ -500,10 +515,19 @@ export const eventEngine = {
     const eventDef = events.find((x) => x.name === event);
     if (!eventDef) throw new Error("That event doesn't exist");
 
-    await sysRedis.lPush(
-      `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.ADD_ROLE}`,
-      JSON.stringify({ team, userId })
-    );
+    try {
+      // Best-effort write fail-open (NOT deadline-raced — writes are bounded
+      // by the sys client's commandsQueueMaxLength, not this helper). On a
+      // sysRedis DOWN/SLOW the queued role-add is dropped (acceptable feature
+      // degrade — the Discord team role just isn't granted this cycle) rather
+      // than 500ing the caller.
+      await sysRedis.lPush(
+        `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.ADD_ROLE}`,
+        JSON.stringify({ team, userId })
+      );
+    } catch (err) {
+      logSysRedisFailOpen('write-degraded', 'events.queueAddRole', err, { event, team, userId });
+    }
   },
   async addRole({ event, team, userId }: { event: string; team: string; userId: number }) {
     const eventDef = events.find((x) => x.name === event);
@@ -526,8 +550,32 @@ export const eventEngine = {
     for (const eventDef of activeEvents) {
       const queueKey =
         `${REDIS_SYS_KEYS.EVENT}:${eventDef.name}:${REDIS_SUB_KEYS.EVENT.ADD_ROLE}` as const;
-      const queueLength = await sysRedis.lLen(queueKey);
-      const queueJson = await sysRedis.lPopCount(queueKey, queueLength);
+
+      // Both reads are deadline-raced + fail-open. On a sysRedis DOWN/SLOW we
+      // SKIP this event's queue this cycle so the queued role-adds STAY on the
+      // list and are drained next cycle — never lost (#2922 non-destructive
+      // lesson). lPopCount is an atomic LPOP-with-count: a fast DOWN reject
+      // never writes the command, so it pops nothing and the items remain.
+      let queueLength = 0;
+      try {
+        queueLength = await withSysReadDeadline(sysRedis.lLen(queueKey));
+      } catch (err) {
+        logSysRedisFailOpen('read-degraded', 'events.processAddRoleQueue lLen', err, {
+          event: eventDef.name,
+        });
+        continue;
+      }
+      if (!queueLength) continue;
+
+      let queueJson: string[] | null = null;
+      try {
+        queueJson = await withSysReadDeadline(sysRedis.lPopCount(queueKey, queueLength));
+      } catch (err) {
+        logSysRedisFailOpen('read-degraded', 'events.processAddRoleQueue lPopCount', err, {
+          event: eventDef.name,
+        });
+        continue;
+      }
       if (!queueJson) continue;
       const queue = queueJson.map((x) => JSON.parse(x)) as { team: string; userId: number }[];
 

@@ -265,9 +265,16 @@ export async function getLiveNow() {
 }
 
 export async function getBrowsingSettingAddons() {
-  let cached: string | null;
+  let cached: string | null = null;
   try {
-    cached = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.BROWSING_SETTING_ADDONS);
+    // Wall-clock deadline: this is an SSR every-render read (via _app.tsx
+    // getInitialProps). Without the race a silent sysRedis half-open parks
+    // the awaited get ~11min on EVERY page render; the try/catch below only
+    // covers a fast DOWN reject. On timeout the deadline rejects into the
+    // catch → fail open to defaults.
+    cached = await withSysReadDeadline(
+      sysRedis.get(REDIS_SYS_KEYS.SYSTEM.BROWSING_SETTING_ADDONS)
+    );
   } catch (err) {
     logSysRedisFailOpen('read-degraded', 'getBrowsingSettingAddons', err);
     return DEFAULT_BROWSING_SETTINGS_ADDONS;
@@ -302,9 +309,14 @@ export async function getCreationBlockedTags(): Promise<CreationBlockedTag[]> {
   // from model.controller.ts. A sysRedis outage would otherwise 500
   // every model upload. Empty list matches the unset-key behavior — no
   // tags blocked during the outage window.
-  let raw: string | null;
+  let raw: string | null = null;
   try {
-    raw = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.CREATION_BLOCKED_TAGS);
+    // Wall-clock deadline: called on every model upsert (ModelUpsertForm
+    // tRPC) + model.controller.ts, so a silent sysRedis half-open would park
+    // this awaited get ~11min on the upload path; the try/catch only covers a
+    // fast DOWN reject. On timeout the deadline rejects into the catch →
+    // fail open to the empty (no-tags-blocked) list.
+    raw = await withSysReadDeadline(sysRedis.get(REDIS_SYS_KEYS.SYSTEM.CREATION_BLOCKED_TAGS));
   } catch (err) {
     logSysRedisFailOpen('defaults-firing', 'getCreationBlockedTags', err);
     return [];
