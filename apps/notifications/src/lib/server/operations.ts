@@ -100,8 +100,57 @@ export async function queryNotifications(input: {
   return await query.result();
 }
 
-// --- read: per-category counts (cache-fronted, lag-aware) -------------------------------------------
-export async function countNotifications(input: {
+// --- read: per-category counts (cache-fronted, lag-aware, single-flighted) --------------------------
+// Per-key request coalescing (single-flight). The bell-count query is the heaviest read on the DB and,
+// within a user's replication-lag window, busts the cache and hits the primary on EVERY call — so N
+// concurrent count requests for the same (userId, unread, category) used to each launch the multi-second
+// `GROUP BY category` scan (an observed 43-way thundering herd on one user). Here, if an identical call is
+// already in flight we await ITS promise and return that result instead of launching another. On settle the
+// entry is removed (finally) so the next call re-derives fresh cache/lag state.
+//
+// NOT strictly correctness-neutral: countNotificationsImpl's result also depends on the lag-flag state AT
+// EXECUTION time (replica vs primary read via getNotifDbWithoutLag), which the (userId, unread, category)
+// key does not capture. If a mark-read lands DURING an in-flight replica read, a caller that arrives after
+// the write and coalesces gets the pre-write (replica) count instead of its own fresh primary read. This is
+// bounded and self-healing: mark-read busts the cache so the next poll re-queries; the staleness lasts at
+// most one in-flight-query duration; and the client already optimistically decremented, so the badge shows
+// the right number regardless. We deliberately do NOT gate coalescing on the lag flag — that check is async
+// (Redis), which would reintroduce the TOCTOU race the synchronous set() below avoids, and recent-writers
+// are exactly the herd single-flight most needs to collapse.
+//
+// NOTE the semantic difference from markNotificationsRead's `userWriteQueues`: writes SERIALIZE (each
+// enqueued onto the tail of the prior) because concurrent writes must not overlap; reads COALESCE (all
+// awaiters share the ONE in-flight promise) because the result is identical and re-running is pure waste.
+//
+// Exported for test visibility only (like userWriteQueues) — not part of the public surface.
+export const countInFlight = new Map<string, Promise<NotificationCategoryCount[]>>();
+
+export function countNotifications(input: {
+  userId: number;
+  unread: boolean;
+  category?: NotificationCategory | null;
+}): Promise<NotificationCategoryCount[]> {
+  const { userId, unread, category } = input;
+  const key = `${userId}:${unread}:${category ?? 'all'}`;
+
+  const existing = countInFlight.get(key);
+  if (existing) return existing;
+
+  const inFlight = countNotificationsImpl(input);
+  countInFlight.set(key, inFlight);
+  // Clean up on settle (success OR failure) so a rejection can't poison the key and the next call re-derives
+  // fresh state. Guard on identity in case a later call already replaced this entry. The trailing .catch
+  // swallows ONLY this cleanup chain's copy of a rejection (the real rejection still reaches the callers
+  // awaiting `inFlight`); without it, the derived finally-promise would surface as an unhandled rejection.
+  void inFlight
+    .finally(() => {
+      if (countInFlight.get(key) === inFlight) countInFlight.delete(key);
+    })
+    .catch(() => {});
+  return inFlight;
+}
+
+async function countNotificationsImpl(input: {
   userId: number;
   unread: boolean;
   category?: NotificationCategory | null;
