@@ -80,6 +80,9 @@ vi.mock('~/server/utils/cache-helpers', () => ({
   fetchThroughCache: vi.fn(),
   bustFetchThroughCache: vi.fn(),
 }));
+// The mute path's banError catch logs via logToAxiom — stub it so the test
+// doesn't attempt a real network call.
+vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 
@@ -131,6 +134,46 @@ describe('auditPromptServer → addBlockedPrompt — sysRedis reads (fail-CLOSED
     // The wrap was applied to the first read (exists). Without it, the bare
     // `await sysRedis.exists` would hang and this test would TIME OUT.
     expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
+    expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
+  });
+});
+
+describe('auditPromptServer → reportProhibitedRequest → getBlockedPrompts (mute path, fail-CAUGHT)', () => {
+  // Drive count > muted (constants.imageGeneration.requestBlocking.muted = 8) so
+  // reportProhibitedRequest enters the auto-mute branch and calls getBlockedPrompts.
+  // The downstream dbWrite.userRestriction.create throws (dbWrite is mocked {}),
+  // absorbed by the existing `catch (banError)` — so no heavy mute-path scaffolding
+  // is needed. Unlike addBlockedPrompt (fail-PROPAGATED), a sysRedis error in
+  // getBlockedPrompts is fail-CAUGHT: the auto-mute is skipped, and the current
+  // prompt is still blocked upstream via throwBadRequestError.
+  it('mute path: getBlockedPrompts lRange goes through withSysReadDeadline (4th wrapped read); prompt still blocked', async () => {
+    mockLLen.mockResolvedValue(9); // > muted (8) → enters the mute branch
+
+    await expect(auditPromptServer(blockingOptions)).rejects.toThrow();
+
+    // exists + lRange + lLen (addBlockedPrompt) + lRange (getBlockedPrompts) = 4.
+    expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(4);
+    // No fail-open branch here — getBlockedPrompts' outcome is handled by banError.
+    expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
+  });
+
+  it('SLOW/half-open on getBlockedPrompts: its lRange never settles + deadline REJECTS → caught by banError (mute skipped), prompt still blocked (fail-on-revert)', async () => {
+    mockLLen.mockResolvedValue(9); // enter the mute branch
+    // addBlockedPrompt's lRange (1st) resolves; getBlockedPrompts' lRange (2nd) never settles.
+    mockLRange.mockResolvedValueOnce([]).mockReturnValueOnce(new Promise(() => undefined));
+    // Transparent for the three addBlockedPrompt reads; reject the 4th call
+    // (getBlockedPrompts lRange) to model the half-open deadline trip.
+    mockWithSysReadDeadline
+      .mockImplementationOnce((p) => p)
+      .mockImplementationOnce((p) => p)
+      .mockImplementationOnce((p) => p)
+      .mockRejectedValueOnce(new Error('sysRedis read timed out after 2000ms'));
+
+    // The deadline-reject is absorbed by reportProhibitedRequest's banError catch;
+    // auditPromptServer still throws the user-facing block. Without the wrap on
+    // getBlockedPrompts, the bare `await sysRedis.lRange` would HANG → test times out.
+    await expect(auditPromptServer(blockingOptions)).rejects.toThrow();
+    expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(4);
     expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
   });
 });
