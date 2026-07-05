@@ -9,6 +9,7 @@ import { pgDbWrite } from '~/server/db/pgDb';
 import type { JobContext } from '~/server/jobs/job';
 import { getJobDate } from '~/server/jobs/job';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { addToQueue, checkoutQueue } from '~/server/redis/queues';
 
 const DEFAULT_UPDATE_INTERVAL = 60 * 1000;
@@ -66,11 +67,15 @@ export function createMetricProcessor({
         metricRaw = await withSysReadDeadline(
           sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, `metric:${name.toLowerCase()}`)
         );
-      } catch {
+      } catch (err) {
         // sysRedis DOWN (throw) or SLOW (deadline) — the metric kill-switch fails
         // OPEN to its absent default ('true' = allowed) below. Metric/rank updates
         // are DB/ClickHouse-driven and non-destructive, and the queue commit is
         // already blip-hardened (#2922), so a sysRedis stall must not stop them.
+        // Emit the fail-open so a blip that silently bypasses a deliberately-set
+        // 'false' kill-switch is visible (Loki `sysredis-fail-open`), matching the
+        // queues.ts safeSysRead pattern.
+        logSysRedisFailOpen('read-degraded', 'base.metrics metric-flag', err, { metric: name });
         metricRaw = null;
       }
       const metricFlag = Buffer.isBuffer(metricRaw) ? metricRaw.toString('utf8') : metricRaw;
@@ -102,9 +107,10 @@ export function createMetricProcessor({
         rankRaw = await withSysReadDeadline(
           sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, `rank:${name.toLowerCase()}`)
         );
-      } catch {
+      } catch (err) {
         // sysRedis DOWN/SLOW — the rank kill-switch fails OPEN to its absent
         // default ('true' = allowed) below, same rationale as the metric flag.
+        logSysRedisFailOpen('read-degraded', 'base.metrics rank-flag', err, { metric: name });
         rankRaw = null;
       }
       const rankFlag = Buffer.isBuffer(rankRaw) ? rankRaw.toString('utf8') : rankRaw;
