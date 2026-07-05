@@ -106,8 +106,17 @@ export async function queryNotifications(input: {
 // concurrent count requests for the same (userId, unread, category) used to each launch the multi-second
 // `GROUP BY category` scan (an observed 43-way thundering herd on one user). Here, if an identical call is
 // already in flight we await ITS promise and return that result instead of launching another. On settle the
-// entry is removed (finally) so the next call re-derives fresh cache/lag state. Correctness-neutral: same
-// user + same params ⇒ same count, so sharing one execution and one result changes nothing observable.
+// entry is removed (finally) so the next call re-derives fresh cache/lag state.
+//
+// NOT strictly correctness-neutral: countNotificationsImpl's result also depends on the lag-flag state AT
+// EXECUTION time (replica vs primary read via getNotifDbWithoutLag), which the (userId, unread, category)
+// key does not capture. If a mark-read lands DURING an in-flight replica read, a caller that arrives after
+// the write and coalesces gets the pre-write (replica) count instead of its own fresh primary read. This is
+// bounded and self-healing: mark-read busts the cache so the next poll re-queries; the staleness lasts at
+// most one in-flight-query duration; and the client already optimistically decremented, so the badge shows
+// the right number regardless. We deliberately do NOT gate coalescing on the lag flag — that check is async
+// (Redis), which would reintroduce the TOCTOU race the synchronous set() below avoids, and recent-writers
+// are exactly the herd single-flight most needs to collapse.
 //
 // NOTE the semantic difference from markNotificationsRead's `userWriteQueues`: writes SERIALIZE (each
 // enqueued onto the tail of the prior) because concurrent writes must not overlap; reads COALESCE (all

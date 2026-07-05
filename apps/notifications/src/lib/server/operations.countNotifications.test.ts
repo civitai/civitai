@@ -47,6 +47,7 @@ vi.mock('./cache', () => ({
 }));
 
 import { countNotifications, countInFlight } from './operations';
+import { notificationCache } from './cache'; // mocked above — used to assert the bust/primary path is taken
 
 // One macrotask hop flushes all currently-queued microtasks — enough to advance the count path up to its
 // pending cancellableQuery.result().
@@ -216,5 +217,39 @@ describe('cache-hit path under coalescing', () => {
     expect(r1).toBe(cached);
     expect(r2).toBe(cached);
     expect(h.calls).toHaveLength(0);
+  });
+});
+
+// =========================================================================================================
+// The recent-writer path — isWritePool=true — busts the cache and reads the PRIMARY on every call (no
+// getUser short-circuit). This is the exact herd that caused the observed pile-up (a user polling within
+// their mark-read lag window) and the path carrying coalescing's bounded read-your-writes staleness, so it
+// must be exercised under coalescing too — the other tests pin isWritePool=false.
+describe('recent-writer (lag/primary) path under coalescing', () => {
+  it('collapses two concurrent same-key calls into ONE primary read and busts the cache once', async () => {
+    h.state.isWritePool = true; // recent writer → bust + primary read, cache short-circuit skipped
+    // A cache value is present but MUST be ignored on the write-pool branch — if coalescing wrongly took the
+    // cache path this would surface as 0 DB queries.
+    h.state.getUser = async () => [{ category: 'System', count: 99 }];
+    const d = deferred<unknown[]>();
+    h.state.resultImpl = () => d.promise;
+
+    const p1 = countNotifications({ userId: 7, unread: true });
+    const p2 = countNotifications({ userId: 7, unread: true });
+
+    await tick();
+    // Even on the bust/primary path the query fires exactly once for the coalesced herd.
+    expect(h.calls).toHaveLength(1);
+    expect(p2).toBe(p1);
+    // Proves the write-pool branch was actually taken (not the cache path), and only ONCE for the herd.
+    expect(notificationCache.bustUser).toHaveBeenCalledTimes(1);
+    expect(notificationCache.bustUser).toHaveBeenCalledWith(7);
+
+    const rows = [{ category: 'Comment', count: 2 }];
+    d.resolve(rows);
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r1).toEqual(rows); // fresh primary read, not the stale cached [System,99]
+    expect(r2).toEqual(rows);
+    expect(h.calls).toHaveLength(1);
   });
 });
