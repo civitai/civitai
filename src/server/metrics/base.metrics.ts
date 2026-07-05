@@ -8,7 +8,7 @@ import type { AugmentedPool } from '~/server/db/db-helpers';
 import { pgDbWrite } from '~/server/db/pgDb';
 import type { JobContext } from '~/server/jobs/job';
 import { getJobDate } from '~/server/jobs/job';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { addToQueue, checkoutQueue } from '~/server/redis/queues';
 
 const DEFAULT_UPDATE_INTERVAL = 60 * 1000;
@@ -61,10 +61,18 @@ export function createMetricProcessor({
       // which silently flips this flag to disabled in sentinel mode. Coerce
       // to a utf8 string before comparing. See PR #2697 for the canonical
       // regression case (queues.ts getBucketNames).
-      const metricRaw = await sysRedis.hGet(
-        REDIS_SYS_KEYS.SYSTEM.FEATURES,
-        `metric:${name.toLowerCase()}`
-      );
+      let metricRaw: string | Buffer | null = null;
+      try {
+        metricRaw = await withSysReadDeadline(
+          sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, `metric:${name.toLowerCase()}`)
+        );
+      } catch {
+        // sysRedis DOWN (throw) or SLOW (deadline) — the metric kill-switch fails
+        // OPEN to its absent default ('true' = allowed) below. Metric/rank updates
+        // are DB/ClickHouse-driven and non-destructive, and the queue commit is
+        // already blip-hardened (#2922), so a sysRedis stall must not stop them.
+        metricRaw = null;
+      }
       const metricFlag = Buffer.isBuffer(metricRaw) ? metricRaw.toString('utf8') : metricRaw;
       const metricUpdateAllowed = (metricFlag ?? 'true') === 'true';
       if (!shouldUpdate || !metricUpdateAllowed) return;
@@ -89,10 +97,16 @@ export function createMetricProcessor({
       // Buffer-coerce mirror of the metric flag above. Same root cause —
       // sentinel-mode sysRedis returns Buffer, which silently fails the
       // === 'true' check. See PR #2697.
-      const rankRaw = await sysRedis.hGet(
-        REDIS_SYS_KEYS.SYSTEM.FEATURES,
-        `rank:${name.toLowerCase()}`
-      );
+      let rankRaw: string | Buffer | null = null;
+      try {
+        rankRaw = await withSysReadDeadline(
+          sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, `rank:${name.toLowerCase()}`)
+        );
+      } catch {
+        // sysRedis DOWN/SLOW — the rank kill-switch fails OPEN to its absent
+        // default ('true' = allowed) below, same rationale as the metric flag.
+        rankRaw = null;
+      }
       const rankFlag = Buffer.isBuffer(rankRaw) ? rankRaw.toString('utf8') : rankRaw;
       const rankUpdateAllowed = (rankFlag ?? 'true') === 'true';
       if (!shouldUpdateRank || !rankUpdateAllowed) return;

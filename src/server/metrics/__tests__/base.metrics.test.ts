@@ -11,11 +11,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // fixed in PR #2697. Both use the same hoisted-mock pattern to control the
 // hGet return type per-test — that's the exact axis of the bug.
 
-const { hGet, hSet, sAdd, sMembers } = vi.hoisted(() => ({
+const { hGet, hSet, sAdd, sMembers, withSysReadDeadline } = vi.hoisted(() => ({
   hGet: vi.fn(),
   hSet: vi.fn(() => Promise.resolve(1)),
   sAdd: vi.fn(() => Promise.resolve(1)),
   sMembers: vi.fn(() => Promise.resolve([] as string[])),
+  // STEP-3 soft-dependency: the flag reads are now wrapped in withSysReadDeadline
+  // so a SLOW/half-open sysRedis rejects (deadline) instead of parking ~11min.
+  // Transparent by default (returns the wrapped promise) — override per-test to reject.
+  withSysReadDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
 }));
 
 vi.mock('~/server/redis/client', () => ({
@@ -25,6 +29,7 @@ vi.mock('~/server/redis/client', () => ({
     QUEUES: { BUCKETS: 'queues:buckets' },
   },
   REDIS_SUB_KEYS: { QUEUES: { MERGING: 'merging' } },
+  withSysReadDeadline,
 }));
 
 // Provide a non-null clickhouse so the early-return in update()/refreshRank()
@@ -64,6 +69,7 @@ const jobContext = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  withSysReadDeadline.mockImplementation((p) => p); // transparent by default
 });
 
 describe('createMetricProcessor — update() metric flag (Buffer-vs-string)', () => {
@@ -109,6 +115,27 @@ describe('createMetricProcessor — update() metric flag (Buffer-vs-string)', ()
 
     expect(update).toHaveBeenCalledTimes(1);
   });
+
+  // STEP-3 soft-dependency: a sysRedis DOWN (hGet throws) or SLOW/half-open
+  // (withSysReadDeadline rejects) must FAIL OPEN to the absent default (allowed)
+  // and keep running the update — never park ~11min or skip on a blip.
+  it('FAILS OPEN and still runs the update when sysRedis is DOWN (hGet throws)', async () => {
+    hGet.mockRejectedValue(new Error('sysRedis connection is down'));
+    const update = vi.fn(() => Promise.resolve(undefined));
+    const proc = createMetricProcessor({ name: 'TestMetric', update });
+
+    await expect(proc.update(jobContext)).resolves.toBeUndefined(); // no throw escapes
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  it('FAILS OPEN and still runs the update when the read-deadline REJECTS (SLOW/half-open)', async () => {
+    withSysReadDeadline.mockRejectedValue(new Error('sysRedis read timed out after 2000ms'));
+    const update = vi.fn(() => Promise.resolve(undefined));
+    const proc = createMetricProcessor({ name: 'TestMetric', update });
+
+    await expect(proc.update(jobContext)).resolves.toBeUndefined();
+    expect(update).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('createMetricProcessor — refreshRank() rank flag (Buffer-vs-string)', () => {
@@ -138,5 +165,32 @@ describe('createMetricProcessor — refreshRank() rank flag (Buffer-vs-string)',
     await proc.refreshRank(jobContext);
 
     expect(refresh).not.toHaveBeenCalled();
+  });
+
+  // STEP-3 soft-dependency: same fail-open contract as the metric flag.
+  it('FAILS OPEN and still runs the rank refresh when sysRedis is DOWN (hGet throws)', async () => {
+    hGet.mockRejectedValue(new Error('sysRedis connection is down'));
+    const refresh = vi.fn(() => Promise.resolve(undefined));
+    const proc = createMetricProcessor({
+      name: 'TestMetric',
+      update: vi.fn(),
+      rank: { refresh } as any,
+    });
+
+    await expect(proc.refreshRank(jobContext)).resolves.toBeUndefined();
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('FAILS OPEN and still runs the rank refresh when the read-deadline REJECTS (SLOW/half-open)', async () => {
+    withSysReadDeadline.mockRejectedValue(new Error('sysRedis read timed out after 2000ms'));
+    const refresh = vi.fn(() => Promise.resolve(undefined));
+    const proc = createMetricProcessor({
+      name: 'TestMetric',
+      update: vi.fn(),
+      rank: { refresh } as any,
+    });
+
+    await expect(proc.refreshRank(jobContext)).resolves.toBeUndefined();
+    expect(refresh).toHaveBeenCalledTimes(1);
   });
 });
