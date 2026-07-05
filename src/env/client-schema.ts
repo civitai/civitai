@@ -48,7 +48,11 @@ export const clientSchema = z.object({
   // `faro` feature flag is also on.
   NEXT_PUBLIC_FARO_ENABLED: z.stringbool().default(false),
   NEXT_PUBLIC_FARO_COLLECTOR_URL: z.url().optional(), // e.g. https://faro.civitai.com/collect
+  // Browser-trace (OTel span) sampling ratio — wired into the tracer provider via
+  // SampledTracingInstrumentation. Independent of session sampling: lowering it reduces
+  // trace volume WITHOUT reducing error/web-vitals coverage.
   NEXT_PUBLIC_FARO_TRACES_SAMPLE_RATE: z.string().default('0.1'),
+  // Session sampling ratio — gates ALL Faro signals (errors/web-vitals/events/sessions).
   NEXT_PUBLIC_FARO_SESSION_SAMPLE_RATE: z.string().default('1.0'),
 });
 

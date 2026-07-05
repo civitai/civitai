@@ -9,10 +9,11 @@ import {
   ViewInstrumentation,
   WebVitalsInstrumentation,
 } from '@grafana/faro-web-sdk';
-import { TracingInstrumentation } from '@grafana/faro-web-tracing';
 import { env } from '~/env/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { deepRedact } from '~/utils/faro/redact';
+import { resolveFaroSampling } from '~/utils/faro/traceSampler';
+import { SampledTracingInstrumentation } from './SampledTracingInstrumentation';
 
 /**
  * Faro Real-User-Monitoring bootstrap (Phase 1 — SHIPPED DARK).
@@ -35,6 +36,15 @@ import { deepRedact } from '~/utils/faro/redact';
  * (emits full resource URLs), UserAction (captures element datasets), CSP, and Console
  * (serialises arbitrary logged objects). NO session replay.
  *
+ * SAMPLING (two decoupled layers):
+ *   - SESSION sampling (`NEXT_PUBLIC_FARO_SESSION_SAMPLE_RATE`, 1.0) gates ALL signals →
+ *     errors + web-vitals + events + sessions stay at 100%.
+ *   - BROWSER-TRACE sampling (`NEXT_PUBLIC_FARO_TRACES_SAMPLE_RATE`, ~0.1) samples ONLY the
+ *     OTel fetch/xhr spans, via a genuine `TraceIdRatioBasedSampler` on the browser tracer
+ *     provider (see `SampledTracingInstrumentation`). Lowering it reduces trace volume
+ *     WITHOUT reducing error/web-vitals coverage — the pre-widening gate. Because the two
+ *     layers are independent, a non-sampled trace does NOT drop that session's errors/vitals.
+ *
  * Every outgoing beacon is run through the deterministic PII scrub (`beforeSend`), which
  * FAILS CLOSED (drops the beacon on any scrub error).
  *
@@ -47,12 +57,6 @@ import { deepRedact } from '~/utils/faro/redact';
 // Faro instance persists.
 let faroInitStarted = false;
 const WINDOW_GUARD_KEY = '__civitaiFaroInitialized__';
-
-function parseRate(value: string | undefined, fallback: number): number {
-  const n = Number.parseFloat(value ?? '');
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(1, Math.max(0, n));
-}
 
 /**
  * Regex matching same-origin `/api` URLs. Note: `@opentelemetry/sdk-trace-web` attaches
@@ -106,12 +110,19 @@ function initFaro() {
   faroInitStarted = true;
   (window as unknown as Record<string, unknown>)[WINDOW_GUARD_KEY] = true;
 
-  const sessionSampleRate = parseRate(env.NEXT_PUBLIC_FARO_SESSION_SAMPLE_RATE, 1.0);
-  // RESERVED: NEXT_PUBLIC_FARO_TRACES_SAMPLE_RATE is not wired in Phase 1 — browser
-  // traces follow session sampling. Genuine per-trace sampling MUST be wired before
-  // widening past the mod cohort (Faro couples per-trace sampling to session sampling,
-  // and a non-sampled session drops ALL signals, so session sampling can't sub-sample
-  // traces without also dropping errors/web-vitals). See PR #2929.
+  // Two independent sampling layers (see file header). Both are derived from
+  // `resolveFaroSampling` — the SAME helper the decoupling unit test asserts on — so that
+  // test is load-bearing on this production wiring, not a parallel path that can drift:
+  //   - `sessionSamplingRate` (from NEXT_PUBLIC_FARO_SESSION_SAMPLE_RATE, default 1.0) gates
+  //     ALL Faro signals — keep at 1.0 so errors + web-vitals + events + sessions stay 100%.
+  //   - `traceSampler` (from NEXT_PUBLIC_FARO_TRACES_SAMPLE_RATE, default 0.1) gates ONLY OTel
+  //     browser spans. It's the genuine per-trace sampler that replaces faro's default
+  //     session-coupled one, so lowering trace volume never drops errors/web-vitals. Neither
+  //     value is derived from the other.
+  const { sessionSamplingRate, traceSampler } = resolveFaroSampling(
+    env.NEXT_PUBLIC_FARO_SESSION_SAMPLE_RATE,
+    env.NEXT_PUBLIC_FARO_TRACES_SAMPLE_RATE
+  );
 
   const gitHash = env.NEXT_PUBLIC_GIT_HASH ? env.NEXT_PUBLIC_GIT_HASH.slice(0, 7) : undefined;
   const version = process.env.version ?? gitHash ?? 'unknown';
@@ -125,10 +136,10 @@ function initFaro() {
       version,
       ...(gitHash ? { environment: gitHash } : {}),
     },
-    // Session sampling gates ALL signals in Faro; keep at 1.0 so errors + web-vitals
-    // stay at 100%. In Phase 1 browser traces follow this session sampling (no separate
-    // per-trace sampler — see the RESERVED note above).
-    sessionTracking: { samplingRate: sessionSampleRate },
+    // Session sampling gates ALL signals in Faro; keep at 1.0 so errors + web-vitals +
+    // events + sessions stay at 100%. Browser traces are sub-sampled SEPARATELY by the OTel
+    // sampler on SampledTracingInstrumentation below — this rate does NOT gate them.
+    sessionTracking: { samplingRate: sessionSamplingRate },
     // Error-storm guard: drop known browser noise so a broken deploy can't turn every
     // session into a flood.
     ignoreErrors: [
@@ -147,8 +158,11 @@ function initFaro() {
       new SessionInstrumentation(),
       new ViewInstrumentation(),
       new NavigationInstrumentation(),
-      // Default TracingInstrumentation — traces follow session sampling in Phase 1.
-      new TracingInstrumentation({
+      // Browser traces sampled at NEXT_PUBLIC_FARO_TRACES_SAMPLE_RATE via a genuine OTel
+      // sampler on the tracer provider (NOT session-coupled) — see
+      // SampledTracingInstrumentation. errors/web-vitals stay 100% (session sampling above).
+      new SampledTracingInstrumentation({
+        sampler: traceSampler,
         instrumentationOptions: {
           // `traceparent` is attached to all same-origin requests; this list ensures no
           // cross-origin (third-party) request — Stripe/Paddle/Meili/signals/Turnstile/GA
