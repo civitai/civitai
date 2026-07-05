@@ -5,7 +5,11 @@ import {
   computeResourcePhases,
   createRateLimiter,
   normalizeApiRoute,
+  parseMaxPerWindow,
+  parseSampleRate,
+  RESOURCE_TIMING_DEFAULTS,
   RESOURCE_TIMING_MEASUREMENT_TYPE,
+  resolveResourceTimingConfig,
   type ResourceTimingLike,
   sanitizeProtocol,
 } from '~/utils/faro/resourceTiming';
@@ -246,5 +250,78 @@ describe('createRateLimiter — the volume gate', () => {
       now: () => 0,
     });
     expect(limiter.allow()).toBe(true);
+  });
+});
+
+describe('RESOURCE_TIMING_DEFAULTS', () => {
+  // The default sample rate is 0.05 (NOT 0.25) so the aggregate resource-timing volume keeps the
+  // shared `source="faro-rum"` Loki stream under its 10 MB/s per-stream ceiling at civitai's
+  // 100k-concurrent target. This assertion guards that scale decision against a silent regression.
+  it('defaults sampleRate to 0.05 for the Loki per-stream ceiling', () => {
+    expect(RESOURCE_TIMING_DEFAULTS.sampleRate).toBe(0.05);
+  });
+
+  it('keeps the per-client belt at 8 emissions / 15s window', () => {
+    expect(RESOURCE_TIMING_DEFAULTS.maxPerWindow).toBe(8);
+    expect(RESOURCE_TIMING_DEFAULTS.windowMs).toBe(15000);
+  });
+});
+
+describe('parseSampleRate', () => {
+  it('parses a valid fraction and clamps into [0, 1]', () => {
+    expect(parseSampleRate('0.05', 0.05)).toBe(0.05);
+    expect(parseSampleRate('0.5', 0.05)).toBe(0.5);
+    expect(parseSampleRate('2', 0.05)).toBe(1);
+    expect(parseSampleRate('-1', 0.05)).toBe(0);
+  });
+
+  it('falls back on NaN / unset / non-numeric input', () => {
+    expect(parseSampleRate(undefined, 0.05)).toBe(0.05);
+    expect(parseSampleRate('', 0.05)).toBe(0.05);
+    expect(parseSampleRate('not-a-number', 0.05)).toBe(0.05);
+  });
+});
+
+describe('parseMaxPerWindow', () => {
+  it('parses a positive integer', () => {
+    expect(parseMaxPerWindow('8', 8)).toBe(8);
+    expect(parseMaxPerWindow('20', 8)).toBe(20);
+    expect(parseMaxPerWindow('12.9', 8)).toBe(12); // parseInt truncates
+  });
+
+  it('falls back on NaN / unset / invalid / non-positive input', () => {
+    expect(parseMaxPerWindow(undefined, 8)).toBe(8);
+    expect(parseMaxPerWindow('', 8)).toBe(8);
+    expect(parseMaxPerWindow('abc', 8)).toBe(8);
+    expect(parseMaxPerWindow('0', 8)).toBe(8);
+    expect(parseMaxPerWindow('-3', 8)).toBe(8);
+  });
+});
+
+describe('resolveResourceTimingConfig — the deploy-tunable knobs', () => {
+  it('reads sample rate + cap from their env strings', () => {
+    expect(resolveResourceTimingConfig('0.1', '20')).toEqual({ sampleRate: 0.1, maxPerWindow: 20 });
+  });
+
+  it('falls back to the defaults on invalid/NaN env (never zeroes the gate or crashes)', () => {
+    expect(resolveResourceTimingConfig('garbage', 'garbage')).toEqual({
+      sampleRate: RESOURCE_TIMING_DEFAULTS.sampleRate,
+      maxPerWindow: RESOURCE_TIMING_DEFAULTS.maxPerWindow,
+    });
+    expect(resolveResourceTimingConfig(undefined, undefined)).toEqual({
+      sampleRate: 0.05,
+      maxPerWindow: 8,
+    });
+  });
+
+  it('resolves each knob independently (one invalid does not taint the other)', () => {
+    expect(resolveResourceTimingConfig('0.2', 'nope')).toEqual({
+      sampleRate: 0.2,
+      maxPerWindow: 8,
+    });
+    expect(resolveResourceTimingConfig('nope', '16')).toEqual({
+      sampleRate: 0.05,
+      maxPerWindow: 16,
+    });
   });
 });

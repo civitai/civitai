@@ -244,3 +244,57 @@ export function createRateLimiter(options: RateLimiterOptions): RateLimiter {
     },
   };
 }
+
+/**
+ * Numeric defaults for the volume gate.
+ *
+ * WHY `sampleRate` IS 0.05 (NOT 0.25) — the 10 MB/s Loki per-stream ceiling:
+ * All RUM signals land on a SINGLE Loki stream (`source="faro-rum"`) which is capped at
+ * `per_stream_rate_limit` = 10 MB/s. At civitai's 100k-concurrent target a 0.25 sample rate
+ * would push the aggregate resource-timing volume so the shared stream breaches ~10 MB/s near
+ * ~84.5k sessions — and Loki sheds WHOLE BATCHES, dropping errors + web-vitals with it, not just
+ * these measurements. At 0.05 the aggregate is ~1,000 beacons/s (~0.74 MB/s), keeping the
+ * faro-rum stream ~8.9 MB/s — under the limit with headroom. It is deliberately conservative for
+ * the ramp; dial it UP via env once the observed stream rate at a cohort confirms headroom.
+ * `maxPerWindow`/`windowMs` are the pathological-single-client belt, not the aggregate control.
+ */
+export const RESOURCE_TIMING_DEFAULTS = {
+  maxPerWindow: 8,
+  windowMs: 15000,
+  sampleRate: 0.05,
+} as const;
+
+/** Parse a sampling fraction env string to [0, 1], falling back on NaN/unset/invalid. */
+export function parseSampleRate(raw: string | undefined, fallback: number): number {
+  const n = Number.parseFloat(raw ?? '');
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(1, Math.max(0, n));
+}
+
+/** Parse a positive-integer cap env string, falling back on NaN/unset/invalid/`< 1`. */
+export function parseMaxPerWindow(raw: string | undefined, fallback: number): number {
+  const n = Number.parseInt(raw ?? '', 10);
+  if (!Number.isFinite(n) || n < 1) return fallback;
+  return n;
+}
+
+export interface ResourceTimingConfig {
+  sampleRate: number;
+  maxPerWindow: number;
+}
+
+/**
+ * Resolve the deploy-tunable volume knobs from their env strings, each with a safe fallback to
+ * `RESOURCE_TIMING_DEFAULTS` (mirroring how `resolveFaroSampling` guards the trace/session
+ * rates). This makes the ramp dial-able (sample rate + per-client cap) WITHOUT a rebuild — an
+ * invalid/NaN env can never zero the gate or crash init; it degrades to the default.
+ */
+export function resolveResourceTimingConfig(
+  sampleRateRaw: string | undefined,
+  maxPerWindowRaw: string | undefined
+): ResourceTimingConfig {
+  return {
+    sampleRate: parseSampleRate(sampleRateRaw, RESOURCE_TIMING_DEFAULTS.sampleRate),
+    maxPerWindow: parseMaxPerWindow(maxPerWindowRaw, RESOURCE_TIMING_DEFAULTS.maxPerWindow),
+  };
+}

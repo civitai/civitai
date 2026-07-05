@@ -12,6 +12,7 @@ import {
 import { env } from '~/env/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { deepRedact } from '~/utils/faro/redact';
+import { resolveResourceTimingConfig } from '~/utils/faro/resourceTiming';
 import { resolveFaroSampling } from '~/utils/faro/traceSampler';
 import { ResourceTimingInstrumentation } from './ResourceTimingInstrumentation';
 import { SampledTracingInstrumentation } from './SampledTracingInstrumentation';
@@ -183,9 +184,19 @@ function initFaro() {
       // PerformanceInstrumentation (which stays excluded — it emits full URLs); it
       // normalizes every URL to a coarse route BEFORE emit and is volume-gated
       // independently of trace sampling. Ships DARK behind its own build-arg so it can be
-      // ramped separately from the main RUM flag — see ResourceTimingInstrumentation.
+      // ramped separately from the main RUM flag. The volume knobs (sample rate + per-client
+      // cap) are env-tunable so the ramp is dial-able WITHOUT a rebuild — resolved here with a
+      // safe fallback to the defaults (sample rate 0.05 keeps the shared faro-rum Loki stream
+      // under its 10 MB/s ceiling at 100k concurrent). See ResourceTimingInstrumentation.
       ...(env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED
-        ? [new ResourceTimingInstrumentation()]
+        ? [
+            new ResourceTimingInstrumentation(
+              resolveResourceTimingConfig(
+                env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_SAMPLE_RATE,
+                env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_MAX_PER_WINDOW
+              )
+            ),
+          ]
         : []),
     ],
     // Defensive outer wrapper: scrubBeacon already fails closed, but guarantee that any

@@ -3,6 +3,7 @@ import {
   buildResourceMeasurement,
   createRateLimiter,
   type RateLimiter,
+  RESOURCE_TIMING_DEFAULTS,
   type ResourceTimingLike,
 } from '~/utils/faro/resourceTiming';
 
@@ -23,6 +24,13 @@ import {
  * rate limiter (sampling fraction + hard cap per rolling window), INDEPENDENT of trace/session
  * sampling. Ships behind `NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED` (default OFF) so it can be
  * ramped separately from the main RUM flag.
+ *
+ * The default `sampleRate` is 0.05 (not 0.25) to keep the aggregate under Loki's 10 MB/s
+ * per-stream ceiling on the shared `source="faro-rum"` stream at civitai's 100k-concurrent
+ * target — see `RESOURCE_TIMING_DEFAULTS`. Both `sampleRate` and `maxPerWindow` are
+ * DEPLOY-TUNABLE via env (`NEXT_PUBLIC_FARO_RESOURCE_TIMING_SAMPLE_RATE` /
+ * `..._MAX_PER_WINDOW`, resolved in FaroProvider) so the ramp can be dialed without a rebuild;
+ * the constructor options remain the override path that keeps this core unit-testable.
  */
 
 export interface ResourceTimingInstrumentationOptions {
@@ -30,7 +38,7 @@ export interface ResourceTimingInstrumentationOptions {
   maxPerWindow?: number;
   /** Rolling window length in ms. Default 15000. */
   windowMs?: number;
-  /** Per-candidate sampling fraction in [0, 1]. Default 0.25. */
+  /** Per-candidate sampling fraction in [0, 1]. Default 0.05 (Loki per-stream ceiling). */
   sampleRate?: number;
   /** Injectable RNG — for tests. */
   random?: () => number;
@@ -38,7 +46,7 @@ export interface ResourceTimingInstrumentationOptions {
   now?: () => number;
 }
 
-const DEFAULTS = { maxPerWindow: 8, windowMs: 15000, sampleRate: 0.25 } as const;
+const DEFAULTS = RESOURCE_TIMING_DEFAULTS;
 
 export class ResourceTimingInstrumentation extends BaseInstrumentation {
   readonly name = '@civitai/faro-instrumentation-resource-timing';
