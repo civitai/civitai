@@ -40,7 +40,10 @@ vi.mock('./lag', () => ({
 vi.mock('./clients/db', () => ({ notifDbWrite: () => h.readPool, notifDbRead: () => h.readPool }));
 vi.mock('./cache', () => ({
   notificationCache: {
-    getUser: (userId: number) => h.state.getUser(userId),
+    // vi.fn wrapper (delegating to the swappable state impl) so tests can assert getUser's call COUNT —
+    // e.g. that a non-cacheable variant never consults the cache. vi.clearAllMocks() clears call history
+    // but preserves this implementation, so the delegation survives across tests.
+    getUser: vi.fn((userId: number) => h.state.getUser(userId)),
     setUser: vi.fn(async () => {}),
     bustUser: vi.fn(async () => {}),
   },
@@ -249,6 +252,123 @@ describe('recent-writer (lag/primary) path under coalescing', () => {
     d.resolve(rows);
     const [r1, r2] = await Promise.all([p1, p2]);
     expect(r1).toEqual(rows); // fresh primary read, not the stale cached [System,99]
+    expect(r2).toEqual(rows);
+    expect(h.calls).toHaveLength(1);
+  });
+});
+
+// =========================================================================================================
+// The cacheability GATE. The count cache is a single per-user hash of per-category UNREAD counts, so it can
+// only represent the `unread:true`, no-category variant. countNotificationsImpl must therefore consult /
+// bust / populate the cache ONLY for that variant; every other variant (unread:false totals, or a
+// category-scoped subset) must run the DB query WITHOUT touching the cache — otherwise a stale/wrong-variant
+// hit is served, and (worse) writing an unread:false total into the hash corrupts the worker's unread
+// counters. These tests pin every branch of `cacheable = unread === true && category == null`.
+describe('cacheability gate (unread:true + no category only)', () => {
+  it('cacheable variant: consults the cache; a HIT short-circuits with no DB query', async () => {
+    const cached = [{ category: 'System', count: 5 }];
+    h.state.getUser = async () => cached;
+
+    const result = await countNotifications({ userId: 20, unread: true });
+
+    expect(result).toBe(cached);
+    expect(notificationCache.getUser).toHaveBeenCalledTimes(1); // cache WAS consulted
+    expect(notificationCache.getUser).toHaveBeenCalledWith(20);
+    expect(h.calls).toHaveLength(0); // hit → no DB query
+    expect(notificationCache.setUser).not.toHaveBeenCalled(); // nothing to populate on a hit
+  });
+
+  it('cacheable variant: a MISS runs the DB query and populates the cache via setUser', async () => {
+    h.state.getUser = async () => undefined; // miss
+    const rows = [{ category: 'Comment', count: 4 }];
+    h.state.resultImpl = async () => rows;
+
+    const result = await countNotifications({ userId: 21, unread: true });
+
+    expect(notificationCache.getUser).toHaveBeenCalledTimes(1);
+    expect(h.calls).toHaveLength(1); // DB query ran
+    expect(notificationCache.setUser).toHaveBeenCalledTimes(1);
+    expect(notificationCache.setUser).toHaveBeenCalledWith(21, rows); // populated with the fresh result
+    expect(result).toEqual(rows);
+  });
+
+  it('unread:false variant: NEVER touches the cache (no getUser/setUser/bustUser), runs DB, returns uncached', async () => {
+    // A cache value is present but MUST be ignored — an unread:false total is not what the unread hash holds.
+    h.state.getUser = async () => [{ category: 'System', count: 99 }];
+    const rows = [{ category: 'Comment', count: 8 }];
+    h.state.resultImpl = async () => rows;
+
+    const result = await countNotifications({ userId: 22, unread: false });
+
+    expect(notificationCache.getUser).not.toHaveBeenCalled();
+    expect(notificationCache.setUser).not.toHaveBeenCalled();
+    expect(notificationCache.bustUser).not.toHaveBeenCalled();
+    expect(h.calls).toHaveLength(1); // DB query ran
+    expect(result).toEqual(rows); // fresh DB result, NOT the [System,99] cache
+  });
+
+  it('category-scoped variant (unread:true + category): same cache bypass, DB runs, no populate', async () => {
+    h.state.getUser = async () => [{ category: 'System', count: 99 }]; // would be wrong subset if used
+    const rows = [{ category: 'System', count: 2 }];
+    h.state.resultImpl = async () => rows;
+
+    const result = await countNotifications({ userId: 23, unread: true, category: 'System' });
+
+    expect(notificationCache.getUser).not.toHaveBeenCalled();
+    expect(notificationCache.setUser).not.toHaveBeenCalled();
+    expect(notificationCache.bustUser).not.toHaveBeenCalled();
+    expect(h.calls).toHaveLength(1);
+    // The DB WHERE carries the category param — proves the scoped query, not the all-category hash, was used.
+    expect(h.calls[0].params).toEqual([23, 'System']);
+    expect(result).toEqual(rows);
+  });
+
+  it('recent-writer + cacheable variant: busts the cache exactly once', async () => {
+    h.state.isWritePool = true;
+    h.state.getUser = async () => [{ category: 'System', count: 99 }]; // ignored on the write-pool branch
+    const rows = [{ category: 'Comment', count: 1 }];
+    h.state.resultImpl = async () => rows;
+
+    const result = await countNotifications({ userId: 24, unread: true });
+
+    expect(notificationCache.bustUser).toHaveBeenCalledTimes(1);
+    expect(notificationCache.bustUser).toHaveBeenCalledWith(24);
+    expect(notificationCache.getUser).not.toHaveBeenCalled(); // write-pool branch skips the cache read
+    expect(h.calls).toHaveLength(1); // primary read
+    expect(result).toEqual(rows);
+  });
+
+  it('recent-writer + NON-cacheable variant: no cache interaction at all (bustUser NOT called)', async () => {
+    h.state.isWritePool = true; // recent writer, but the variant is uncacheable → still zero cache ops
+    const rows = [{ category: 'Comment', count: 6 }];
+    h.state.resultImpl = async () => rows;
+
+    const result = await countNotifications({ userId: 25, unread: false });
+
+    expect(notificationCache.bustUser).not.toHaveBeenCalled();
+    expect(notificationCache.getUser).not.toHaveBeenCalled();
+    expect(notificationCache.setUser).not.toHaveBeenCalled();
+    expect(h.calls).toHaveLength(1); // still routed to the primary via getNotifDbWithoutLag
+    expect(result).toEqual(rows);
+  });
+
+  it('single-flight still coalesces a NON-cacheable variant (gate is inside the impl, key unchanged)', async () => {
+    const d = deferred<unknown[]>();
+    h.state.resultImpl = () => d.promise;
+
+    const p1 = countNotifications({ userId: 26, unread: false });
+    const p2 = countNotifications({ userId: 26, unread: false });
+
+    await tick();
+    expect(h.calls).toHaveLength(1); // two same-key uncacheable calls collapse to ONE DB query
+    expect(p2).toBe(p1);
+    expect(countInFlight.has('26:false:all')).toBe(true);
+    expect(notificationCache.getUser).not.toHaveBeenCalled(); // still no cache interaction
+
+    const rows = [{ category: 'Comment', count: 3 }];
+    d.resolve(rows);
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r1).toEqual(rows);
     expect(r2).toEqual(rows);
     expect(h.calls).toHaveLength(1);
   });
