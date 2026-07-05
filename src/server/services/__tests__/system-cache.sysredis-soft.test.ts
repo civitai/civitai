@@ -32,6 +32,7 @@ vi.mock('~/server/redis/client', () => ({
     SYSTEM: {
       BROWSING_SETTING_ADDONS: 'system:browsing-setting-addons',
       CREATION_BLOCKED_TAGS: 'system:creation-blocked-tags',
+      LIVE_FEATURE_FLAGS: 'system:live-feature-flags',
     },
   },
   withSysReadDeadline: mockWithSysReadDeadline,
@@ -46,8 +47,10 @@ vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 import {
   getBrowsingSettingAddons,
   getCreationBlockedTags,
+  getLiveFeatureFlags,
 } from '~/server/services/system-cache';
 import { DEFAULT_BROWSING_SETTINGS_ADDONS } from '~/shared/constants/browsing-settings-addons';
+import { DEFAULT_LIVE_FEATURE_FLAGS } from '~/server/common/constants';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -128,5 +131,46 @@ describe('getCreationBlockedTags — sysRedis soft-dependency (adjacent sibling)
     expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen.mock.calls[0][0]).toBe('defaults-firing');
+  });
+});
+
+// STEP-6: getLiveFeatureFlags is evaluated on the generation/feature-flag hot
+// path. It already try/catch fail-opens to DEFAULT_LIVE_FEATURE_FLAGS; STEP-6
+// adds the missing wall-clock deadline so a silent half-open rejects instead of
+// parking ~11min.
+describe('getLiveFeatureFlags — sysRedis soft-dependency (STEP-6)', () => {
+  it('happy path: returns the parsed cached value through withSysReadDeadline, no fail-open', async () => {
+    const flags = { ...DEFAULT_LIVE_FEATURE_FLAGS };
+    mockGet.mockResolvedValue(JSON.stringify(flags));
+
+    const result = await getLiveFeatureFlags();
+
+    expect(result).toEqual(flags);
+    expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
+    expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
+  });
+
+  it('DOWN: get throws → fails open to defaults, does not throw, logs read-degraded', async () => {
+    mockGet.mockRejectedValue(new Error('sysRedis connection is down'));
+
+    const result = await getLiveFeatureFlags();
+
+    expect(result).toBe(DEFAULT_LIVE_FEATURE_FLAGS);
+    expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
+    const [subtype, fn] = mockLogSysRedisFailOpen.mock.calls[0];
+    expect(subtype).toBe('read-degraded');
+    expect(fn).toBe('getLiveFeatureFlags');
+  });
+
+  it('SLOW/half-open: get NEVER settles + deadline REJECTS → fails open to defaults (fail-on-revert)', async () => {
+    mockGet.mockReturnValue(new Promise(() => undefined));
+    mockWithSysReadDeadline.mockRejectedValue(new Error('sysRedis read timed out after 2000ms'));
+
+    const result = await getLiveFeatureFlags();
+
+    expect(result).toBe(DEFAULT_LIVE_FEATURE_FLAGS);
+    expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
+    expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
+    expect(mockLogSysRedisFailOpen.mock.calls[0][0]).toBe('read-degraded');
   });
 });

@@ -381,7 +381,9 @@ export async function removeCreationBlockedTags(tagIds: number[]): Promise<Creat
 export async function getLiveFeatureFlags() {
   let cached: string | null;
   try {
-    cached = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.LIVE_FEATURE_FLAGS);
+    // Wall-clock deadline so a silent sysRedis half-open can't park this read
+    // (evaluated on the generation/feature-flag hot path) ~11min.
+    cached = await withSysReadDeadline(sysRedis.get(REDIS_SYS_KEYS.SYSTEM.LIVE_FEATURE_FLAGS));
   } catch (err) {
     logSysRedisFailOpen('read-degraded', 'getLiveFeatureFlags', err);
     return DEFAULT_LIVE_FEATURE_FLAGS;

@@ -18,7 +18,8 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { tagIdsForImagesCache, userCollectionCountCache } from '~/server/redis/caches';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import { userPreferencesSchema } from '~/server/schema/base.schema';
 import type {
@@ -106,7 +107,17 @@ function computeHourlySeed(): number {
 
 // Get the current random seed from Redis, or compute a new one
 export async function getCollectionRandomSeed(): Promise<number> {
-  const cached = await sysRedis.get(REDIS_SYS_KEYS.COLLECTION.RANDOM_SEED);
+  // Fail open + wall-clock deadline: a Random-sorted collection view should
+  // degrade to a locally-computed hourly seed, not 500/park, on a sysRedis blip.
+  // computeHourlySeed() is the same value this function writes on a cache miss,
+  // so a degraded read just skips the shared-cache round-trip.
+  let cached: string | null;
+  try {
+    cached = await withSysReadDeadline(sysRedis.get(REDIS_SYS_KEYS.COLLECTION.RANDOM_SEED));
+  } catch (err) {
+    logSysRedisFailOpen('read-degraded', 'getCollectionRandomSeed', err);
+    return computeHourlySeed();
+  }
   if (cached) return Number(cached);
 
   const seed = computeHourlySeed();

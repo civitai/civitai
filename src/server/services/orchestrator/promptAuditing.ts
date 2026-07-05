@@ -3,7 +3,7 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { createNotification } from '~/server/services/notification.service';
 import { updateUserById } from '~/server/services/user.service';
@@ -112,7 +112,14 @@ async function getBlockedPromptCount(userId: number): Promise<number> {
 /** Add a blocked prompt and return the new count */
 async function addBlockedPrompt(userId: number, entry: BlockedPromptEntry): Promise<number> {
   const key = getBlockedPromptsKey(userId);
-  const exists = await sysRedis.exists(key);
+  // SAFETY-SENSITIVE: this runs only AFTER a prompt is flagged (inside
+  // auditPromptServer's catch), on the way to auto-mute accounting. A sysRedis
+  // error MUST keep propagating so auditPromptServer fails CLOSED (the generation
+  // request aborts) rather than silently proceeding — do NOT add a fail-open catch.
+  // The deadline only BOUNDS a silent half-open (which would otherwise park each
+  // awaited read ~11min): it rejects at ~2s, preserving the same fail-closed
+  // direction. See STEP-6 report's promptAuditing note.
+  const exists = await withSysReadDeadline(sysRedis.exists(key));
 
   if (!exists) {
     await seedBlockedPromptsFromClickHouse(userId);
@@ -124,13 +131,15 @@ async function addBlockedPrompt(userId: number, entry: BlockedPromptEntry): Prom
 
   // If the seeded list was just a reset marker, drop the marker now that we
   // have a real entry. Using lRem (not del) preserves the TTL set by the seed.
-  const currentEntries = (await sysRedis.lRange(key, 0, -1)).map((e) => decodeRedisString(e));
+  const currentEntries = (await withSysReadDeadline(sysRedis.lRange(key, 0, -1))).map((e) =>
+    decodeRedisString(e)
+  );
   if (currentEntries.includes(RESET_MARKER)) {
     await sysRedis.lRem(key, 0, RESET_MARKER);
   }
 
   // Marker has been removed above, so lLen now equals the real violation count.
-  return await sysRedis.lLen(key);
+  return await withSysReadDeadline(sysRedis.lLen(key));
 }
 
 /** Get all blocked prompts (excludes reset marker) */
