@@ -5,6 +5,7 @@ import {
   type RateLimiter,
   RESOURCE_TIMING_DEFAULTS,
   type ResourceTimingLike,
+  resolveResourceTimingConfig,
 } from '~/utils/faro/resourceTiming';
 
 /**
@@ -112,4 +113,38 @@ export class ResourceTimingInstrumentation extends BaseInstrumentation {
       }
     }
   }
+}
+
+export interface ResourceTimingGate {
+  /** NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED — compiled-in master enable/kill. */
+  buildArgEnabled: boolean;
+  /** The `faro-resource-timing` Flipt flag for THIS user — the runtime % cohort. */
+  cohortEnabled: boolean;
+  /** NEXT_PUBLIC_FARO_RESOURCE_TIMING_SAMPLE_RATE (parsed with a safe fallback). */
+  sampleRateEnv?: string;
+  /** NEXT_PUBLIC_FARO_RESOURCE_TIMING_MAX_PER_WINDOW (parsed with a safe fallback). */
+  maxPerWindowEnv?: string;
+}
+
+/**
+ * The gating decision for whether to attach `ResourceTimingInstrumentation`, factored out of
+ * FaroProvider so it is unit-testable (and so the wiring test is load-bearing on the REAL
+ * production path, not a parallel copy that can drift). Returns a 0-or-1-element array to spread
+ * directly into the Faro `instrumentations` list.
+ *
+ * Attaches ONLY when BOTH gates are true (AND):
+ *   - `buildArgEnabled` = the build-arg (compiled-in master enable/kill), AND
+ *   - `cohortEnabled`   = the `faro-resource-timing` Flipt flag (runtime % cohort ramp).
+ * Either false ⇒ no instrumentation. This is what lets ops ramp resource_timing by % of users at
+ * runtime (bump the Flipt %) without a rebuild — mirroring how the main `faro` flag ramped.
+ */
+export function buildResourceTimingInstrumentations(
+  gate: ResourceTimingGate
+): ResourceTimingInstrumentation[] {
+  if (!gate.buildArgEnabled || !gate.cohortEnabled) return [];
+  return [
+    new ResourceTimingInstrumentation(
+      resolveResourceTimingConfig(gate.sampleRateEnv, gate.maxPerWindowEnv)
+    ),
+  ];
 }

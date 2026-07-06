@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ResourceTimingInstrumentation } from '../ResourceTimingInstrumentation';
+import {
+  buildResourceTimingInstrumentations,
+  ResourceTimingInstrumentation,
+} from '../ResourceTimingInstrumentation';
 import type { ResourceTimingLike } from '~/utils/faro/resourceTiming';
 
 /**
@@ -133,5 +136,50 @@ describe('ResourceTimingInstrumentation', () => {
     const push = vi.fn();
     // Should not throw during initialize; nothing to observe.
     expect(() => makeInstrumentation(push).initialize()).not.toThrow();
+  });
+});
+
+describe('buildResourceTimingInstrumentations — the two-gate cohort ramp', () => {
+  // This is the EXACT decision FaroProvider spreads into the Faro `instrumentations` list, so
+  // these assertions are load-bearing on the production wiring. resource_timing attaches ONLY
+  // when BOTH the build-arg AND the `faro-resource-timing` Flipt cohort flag are true (AND).
+  it('attaches the instrumentation when BOTH build-arg and cohort flag are true', () => {
+    const list = buildResourceTimingInstrumentations({
+      buildArgEnabled: true,
+      cohortEnabled: true,
+    });
+    expect(list).toHaveLength(1);
+    expect(list[0]).toBeInstanceOf(ResourceTimingInstrumentation);
+  });
+
+  it('excludes it when the cohort flag is false even though the build-arg is on', () => {
+    expect(
+      buildResourceTimingInstrumentations({ buildArgEnabled: true, cohortEnabled: false })
+    ).toEqual([]);
+  });
+
+  it('excludes it when the build-arg is off even though the cohort flag is on', () => {
+    expect(
+      buildResourceTimingInstrumentations({ buildArgEnabled: false, cohortEnabled: true })
+    ).toEqual([]);
+  });
+
+  it('excludes it when both gates are false', () => {
+    expect(
+      buildResourceTimingInstrumentations({ buildArgEnabled: false, cohortEnabled: false })
+    ).toEqual([]);
+  });
+
+  it('passes the env-tunable volume knobs through to the instrumentation when attached', () => {
+    // A valid sample-rate/cap env resolves without throwing and yields exactly one instrumentation
+    // (the env-parse-with-fallback itself is covered in resourceTiming.test.ts).
+    const list = buildResourceTimingInstrumentations({
+      buildArgEnabled: true,
+      cohortEnabled: true,
+      sampleRateEnv: '0.2',
+      maxPerWindowEnv: '16',
+    });
+    expect(list).toHaveLength(1);
+    expect(list[0]).toBeInstanceOf(ResourceTimingInstrumentation);
   });
 });

@@ -56,6 +56,13 @@ const featureFlags = createFeatureFlags({
   // Flipt (`faro`). Runtime kill-switch for the Faro Web SDK — the FaroProvider only
   // initialises when this flag is on AND the NEXT_PUBLIC_FARO_* build-args are set.
   faro: { availability: ['mod'], fliptKey: 'faro' },
+  // Cohort-ramp gate for the Faro resource_timing decomposition. SEPARATE from `faro` so the
+  // network-phase measurements can be ramped by % of users at runtime (via Flipt) independently
+  // of the main RUM signals — the FaroProvider includes ResourceTimingInstrumentation only when
+  // this flag is on AND the NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED build-arg is set.
+  // availability ['mod'] is the Flipt-DOWN fallback (mirrors `faro`); Flipt is authoritative
+  // when the flag exists — ramp by bumping its % rollout, never all-at-once.
+  faroResourceTiming: { availability: ['mod'], fliptKey: 'faro-resource-timing' },
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },
