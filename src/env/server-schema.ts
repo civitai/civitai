@@ -793,7 +793,9 @@ export const serverSchema = z
     //   P0 sish Service.
     APPS_DEV_TUNNEL_SISH_BACKEND: z
       .string()
-      .default('http://sish-http.apps-dev-tunnel.svc.cluster.local:8080'),
+      // Port 80 = the sish-http SERVICE port (targetPort 8080 on the pod). A Traefik
+      // IngressRoute service ref must match a Service port, not the pod targetPort.
+      .default('http://sish-http.apps-dev-tunnel.svc.cluster.local:80'),
     // APPS_DEV_TUNNEL_INGRESS_TARGET   the Traefik LB IP the ephemeral
     //   `dev-<hex>.<APPS_DOMAIN>` DNS record points at. Set PER-ENVIRONMENT (e.g. the
     //   dp-prod SOPS env) — intentionally NO default so the origin IP is not committed

@@ -320,8 +320,11 @@ echo "dev-tunnel route applied"
 /**
  * Build the route-apply Job. CRITICAL (F1): runs as the narrowly-scoped
  * `apps-applier` ServiceAccount — the SAME SA the review sandbox renders through
- * (`triggerApplyReview`) — which HAS `create`/`patch` on traefik.io CRDs and
- * cannot escape the `civitai-apps` namespace. The web-pod SA
+ * (`triggerApplyReview`) — which HAS `create`/`patch` on traefik.io CRDs in
+ * `civitai-apps` (review sandbox) AND, via the dev-tunnel-route-applier RoleBinding,
+ * in `apps-dev-tunnel` (this feature's route namespace — same ns as the sish backend,
+ * so Traefik accepts the service ref). Scoped to those two CRDs in those two
+ * namespaces; it cannot touch anything else. The web-pod SA
  * (`civitai-web-apps-consumer`) grants only get/list/watch/delete on those CRDs,
  * so rendering the route DIRECTLY from the web pod 403'd (the untracked P3
  * functional blocker); it would ALSO be a security regression to broaden the

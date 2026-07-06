@@ -215,6 +215,21 @@ describe('startDevTunnel', () => {
     const posts = mockK8sFetch.mock.calls.filter((c) => (c[2] as any)?.method === 'POST');
     expect(posts.length).toBe(1);
     expect(posts[0][1]).toMatch(/\/jobs$/);
+    // NAMESPACE SPLIT (the fix): the apply Job is created in civitai-apps (APPS_KUBE_NAMESPACE,
+    // where apps-applier + the Job-create RBAC live), but the manifests it applies target the
+    // ROUTE namespace (apps-dev-tunnel = the sish backend's ns) so Traefik accepts the
+    // same-namespace service ref. Reverting manifestOpts to APPS_KUBE_NAMESPACE fails here.
+    expect(posts[0][1]).toContain('/namespaces/civitai-apps/jobs');
+    const job = JSON.parse((posts[0][2] as { body: string }).body);
+    const envVal = (name: string) =>
+      job.spec.template.spec.containers[0].env.find((e: { name: string }) => e.name === name)?.value;
+    const appliedIr = JSON.parse(envVal('INGRESSROUTE_JSON'));
+    const appliedMw = JSON.parse(envVal('MIDDLEWARE_JSON'));
+    expect(appliedIr.metadata.namespace).toBe('apps-dev-tunnel');
+    expect(appliedMw.metadata.namespace).toBe('apps-dev-tunnel');
+    // service + middleware refs are now SAME-namespace (the cross-ns 404 cause).
+    expect(appliedIr.spec.routes[0].services[0].namespace).toBe('apps-dev-tunnel');
+    expect(appliedIr.spec.routes[0].middlewares[0].namespace).toBe('apps-dev-tunnel');
     expect(mockWaitForApplyJob).toHaveBeenCalledTimes(1);
     // persisted the 4 index keys (cred/session/host/user-block)
     expect(sysRedis.set).toHaveBeenCalledTimes(4);
