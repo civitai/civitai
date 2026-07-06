@@ -1,11 +1,16 @@
 import { createJob } from './job';
 import { dbRead, dbWrite } from '~/server/db/client';
 import nowpaymentsCaller from '~/server/http/nowpayments/nowpayments.caller';
-import { stuckCryptoDepositEmail } from '~/server/email/templates/stuckCryptoDeposit.email';
 import { stuckCryptoDepositUserEmail } from '~/server/email/templates/stuckCryptoDepositUser.email';
+import {
+  stuckCryptoDepositDigestEmail,
+  type StuckCryptoDepositDigestItem,
+} from '~/server/email/templates/stuckCryptoDepositDigest.email';
 import { logToAxiom } from '~/server/logging/client';
 import { env } from '~/env/server';
 import dayjs from '~/shared/utils/dayjs';
+
+const DIGEST_TO = 'hello@civitai.com';
 
 type NpPayment = Awaited<ReturnType<typeof nowpaymentsCaller.getPaymentStatus>>;
 
@@ -13,12 +18,12 @@ type NpPayment = Awaited<ReturnType<typeof nowpaymentsCaller.getPaymentStatus>>;
 // able to produce a USDC conversion. It is NOT compared to the order value: this
 // is a wallet-style deposit, so the amount sent is arbitrary.
 //   - null/0  => Category 3: unsupported/wrapped coin (cbBTC). NP can't convert,
-//               only refunds, and requires the account holder to request it.
-//               We email the USER a self-service packet.
+//               only refunds, and requires the account holder to request it. We
+//               auto-email the USER a self-service packet.
 //   - present => Category 2: convertible wrong-network (USDT-BSC -> USDC-Base).
-//               NP can convert but didn't settle. We email NP to convert-or-return.
-//               (The email quotes actually_paid, never outcome_amount, so a garbage
-//               outcome value does no harm here.)
+//               NP produced a conversion but didn't settle. The signal is fuzzier,
+//               so we collect these into one digest to the support team to review
+//               and forward to NP, rather than emailing NP directly.
 const isFailedPaid = (p: NonNullable<NpPayment>) =>
   p.payment_status === 'failed' && Number(p.actually_paid) > 0;
 
@@ -48,12 +53,15 @@ export const notifyStuckCryptoDepositsJob = createJob(
     });
 
     if (candidates.length === 0)
-      return { candidates: 0, stuck: 0, emailedUser: 0, emailedNp: 0 };
+      return { candidates: 0, stuck: 0, emailedUser: 0, digestSent: 0 };
 
     let stuck = 0;
     let emailedUser = 0;
-    let emailedNp = 0;
+    let skippedNoConfig = 0;
     let skippedNoEmail = 0;
+    // Cat 2, collected for the support digest and stamped only once it sends.
+    const digestItems: StuckCryptoDepositDigestItem[] = [];
+    const digestPaymentIds: bigint[] = [];
 
     for (const deposit of candidates) {
       const paymentId = deposit.paymentId.toString();
@@ -61,45 +69,87 @@ export const notifyStuckCryptoDepositsJob = createJob(
       if (!payment || !isFailedPaid(payment)) continue;
       stuck++;
 
-      const target = route(payment);
-      const userEmail = deposit.user?.email;
-      // supportEmail gates the whole feature and is the NP contact address shown
-      // to users; userEmail is the recipient (Cat 3) or CC (Cat 2).
-      if (!supportEmail || !userEmail) {
-        skippedNoEmail++;
-        continue; // leave stuckNotifiedAt null so it retries once config/email exists
+      // supportEmail gates the feature and is the NP address referenced in both
+      // the user email and the support digest.
+      if (!supportEmail) {
+        skippedNoConfig++;
+        continue;
       }
 
-      const shared = {
-        username: deposit.user?.username ?? 'there',
-        paymentId,
-        payCurrency: payment.pay_currency,
-        payAmount: payment.actually_paid != null ? Number(payment.actually_paid) : null,
-        payAddress: payment.pay_address,
-        payinHash: payment.payin_hash,
-        network: payment.network,
-      };
+      const payAmount = payment.actually_paid != null ? Number(payment.actually_paid) : null;
+
+      if (route(payment) === 'nowpayments') {
+        digestItems.push({
+          paymentId,
+          username: deposit.user?.username ?? 'unknown',
+          userId: deposit.userId,
+          payCurrency: payment.pay_currency,
+          payAmount,
+          payAddress: payment.pay_address,
+          payinHash: payment.payin_hash,
+          network: payment.network,
+          outcomeAmount: payment.outcome_amount ?? null,
+        });
+        digestPaymentIds.push(deposit.paymentId);
+        continue;
+      }
+
+      // Cat 3 — auto-email the user their self-service refund packet.
+      const userEmail = deposit.user?.email;
+      if (!userEmail) {
+        skippedNoEmail++;
+        continue; // leave stuckNotifiedAt null so it retries once we have an email
+      }
 
       try {
-        if (target === 'user') {
-          await stuckCryptoDepositUserEmail.send({ userEmail, npSupportEmail: supportEmail, ...shared });
-          emailedUser++;
-        } else {
-          await stuckCryptoDepositEmail.send({ supportEmail, userEmail, ...shared });
-          emailedNp++;
-        }
-
+        await stuckCryptoDepositUserEmail.send({
+          userEmail,
+          npSupportEmail: supportEmail,
+          username: deposit.user?.username ?? 'there',
+          paymentId,
+          payCurrency: payment.pay_currency,
+          payAmount,
+          payAddress: payment.pay_address,
+          payinHash: payment.payin_hash,
+          network: payment.network,
+        });
         await dbWrite.cryptoDeposit.update({
           where: { paymentId: deposit.paymentId },
           data: { stuckNotifiedAt: new Date() },
         });
+        emailedUser++;
       } catch (e) {
         await logToAxiom({
           name: 'notify-stuck-crypto-deposits-job',
           type: 'error',
-          message: 'Failed to email stuck deposit',
+          message: 'Failed to email user about stuck deposit',
           paymentId,
-          target,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+
+    // Cat 2 — one digest to the support team to validate + forward to NP. Stamp
+    // only after it sends, so a send failure re-lists them next run.
+    let digestSent = 0;
+    if (digestItems.length && supportEmail) {
+      try {
+        await stuckCryptoDepositDigestEmail.send({
+          to: DIGEST_TO,
+          npSupportEmail: supportEmail,
+          items: digestItems,
+        });
+        await dbWrite.cryptoDeposit.updateMany({
+          where: { paymentId: { in: digestPaymentIds } },
+          data: { stuckNotifiedAt: new Date() },
+        });
+        digestSent = digestItems.length;
+      } catch (e) {
+        await logToAxiom({
+          name: 'notify-stuck-crypto-deposits-job',
+          type: 'error',
+          message: 'Failed to send Cat 2 support digest',
+          count: digestItems.length,
           error: e instanceof Error ? e.message : String(e),
         });
       }
@@ -108,16 +158,17 @@ export const notifyStuckCryptoDepositsJob = createJob(
     logToAxiom({
       name: 'notify-stuck-crypto-deposits-job',
       type: 'info',
-      message: `Stuck-deposit notifier: ${emailedUser} user + ${emailedNp} NP emailed, ${stuck} stuck, ${candidates.length} scanned`,
+      message: `Stuck-deposit notifier: ${emailedUser} user emails, ${digestSent} in support digest, ${stuck} stuck, ${candidates.length} scanned`,
       candidates: candidates.length,
       stuck,
       emailedUser,
-      emailedNp,
+      digestSent,
       skippedNoEmail,
+      skippedNoConfig,
       supportEmailConfigured: !!supportEmail,
     });
 
-    return { candidates: candidates.length, stuck, emailedUser, emailedNp, skippedNoEmail };
+    return { candidates: candidates.length, stuck, emailedUser, digestSent, skippedNoEmail, skippedNoConfig };
   },
   {
     lockExpiration: 10 * 60,
