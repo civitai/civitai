@@ -92,12 +92,61 @@ export function __getTrpcBatchingEnabled() {
  * `window.isAuthed` is set by `CivitaiSessionProvider` AFTER hydration, so on the server
  * and during early hydration this is `false` — the SAFE direction: anonymous + unknown
  * ⇒ do NOT batch, so anonymous edge-cacheable tRPC GETs stay unbatched (no `?batch`
- * param) and remain CF-cacheable. Authenticated requests have `edgeTTL` forced to 0 in
- * `createContext`, so batching them loses no edge cache.
+ * param) and remain CF-cacheable.
  */
 function isAuthedBrowser() {
   return typeof window !== 'undefined' && window.isAuthed === true;
 }
+
+/**
+ * tRPC procedure paths (`<routerKey>.<procedure>`) that are EDGE-CACHEABLE for
+ * AUTHENTICATED sessions and therefore must NEVER be batched — batching appends
+ * `?batch=1`, which `edgeCacheIt` (`src/server/middleware.trpc.ts`) refuses to cache, so
+ * batching one of these would trade an authed CF edge-hit for extra api-pool load (the
+ * opposite of the goal).
+ *
+ * IMPORTANT — this is the FULL set of procedures that apply `edgeCacheIt` and do NOT opt
+ * back out for authed sessions via `noEdgeCache({ authedOnly: true })` (or a blanket
+ * `noEdgeCache()`). NB: `createContext` seeds `edgeTTL: 0` for logged-in users, but
+ * `edgeCacheIt` OVERWRITES it with a positive TTL (it only honors the `?batch` bail and
+ * `ctx.cache.canCache`), so these responses ARE cacheable for authed users today.
+ *
+ * 🔴 Keep this in sync with the routers. `trpc-batching.test.ts` re-derives this set by
+ * parsing every `*.router.ts` and FAILS if it drifts — so adding a new `edgeCacheIt`
+ * procedure without listing it here (or without an authed `noEdgeCache`) breaks CI rather
+ * than silently starting to batch (and de-cache) it.
+ */
+export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
+  'article.getCivitaiNews',
+  'bug.getLatest',
+  'changelog.getLatest',
+  'event.getData',
+  'event.getDonors',
+  'event.getPartners',
+  'event.getRewards',
+  'event.getTeamScoreHistory',
+  'event.getTeamScores',
+  'generation.checkResourcesCoverage',
+  'generation.getStatus',
+  'homeBlock.getHomeBlock',
+  'image.get404Images',
+  'image.getGenerationData',
+  'image.getResources',
+  'model.getAll',
+  'modelFile.getOptions',
+  'nowPayments.getBuzzConversionRate',
+  'nowPayments.getMinAmount',
+  'nowPayments.getSupportedCurrencies',
+  'system.getCreationBlockedTags',
+  'system.getDbKV',
+  'system.getLiveNow',
+  'tag.getHomeExcluded',
+  'tag.getTagsForReview',
+  'technique.getAll',
+  'tool.getAll',
+  'training.getStatus',
+  'user.getCreator',
+]);
 
 /**
  * Route an operation to the streaming batch link only when ALL hold:
@@ -105,11 +154,13 @@ function isAuthedBrowser() {
  *    the large-mutation POST path intact),
  *  - the `trpcBatching` flag is on for this user,
  *  - we're in an authenticated browser (see `isAuthedBrowser` — anon stays cacheable),
+ *  - the procedure is NOT edge-cacheable for authed sessions (see `CACHEABLE_PROCEDURES`),
  *  - the caller didn't opt out via `context.skipBatch === true`,
  *  - it isn't a large query (those go out as POST `methodOverride`, body-carried).
  */
 export function shouldBatch(op: {
   type: string;
+  path: string;
   input: unknown;
   context: Record<string, unknown>;
 }) {
@@ -117,6 +168,7 @@ export function shouldBatch(op: {
     op.type === 'query' &&
     trpcBatchingEnabled &&
     isAuthedBrowser() &&
+    !CACHEABLE_PROCEDURES.has(op.path) &&
     op.context.skipBatch !== true &&
     !isLargeQuery(op)
   );

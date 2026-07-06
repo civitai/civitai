@@ -1,6 +1,9 @@
+import { readFileSync, readdirSync } from 'fs';
+import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   __getTrpcBatchingEnabled,
+  CACHEABLE_PROCEDURES,
   setTrpcBatchingEnabled,
   shouldBatch,
 } from '~/utils/trpc';
@@ -10,13 +13,15 @@ import {
  * `splitLink` terminating link uses to route a query to `httpBatchStreamLink`
  * (batch) vs the unbatched large-query-aware link. The link objects themselves
  * are tRPC internals; the branch SELECTION is the behaviour we own, so we test
- * the predicate directly.
+ * the predicate directly. Plus a durable guard keeping `CACHEABLE_PROCEDURES` in
+ * sync with the routers.
  */
 
 // tRPC operations only need these fields for `shouldBatch`.
-type Op = { type: string; input: unknown; context: Record<string, unknown> };
+type Op = { type: string; path: string; input: unknown; context: Record<string, unknown> };
 const op = (over: Partial<Op> = {}): Op => ({
   type: 'query',
+  path: 'model.getInfinite', // a non-edge-cacheable authed feed query (safe to batch)
   input: { limit: 5 },
   context: {},
   ...over,
@@ -79,6 +84,25 @@ describe('shouldBatch', () => {
     expect(shouldBatch(op())).toBe(false);
   });
 
+  it('does NOT batch a procedure that is edge-cacheable for authed sessions', () => {
+    setTrpcBatchingEnabled(true);
+    setWindowAuthed(true);
+    // `model.getAll` applies `edgeCacheIt` and does NOT opt out for authed, so it emits a
+    // cacheable response for logged-in users — batching would append `?batch=1` and lose
+    // the CF edge-hit. Must stay unbatched.
+    expect(CACHEABLE_PROCEDURES.has('model.getAll')).toBe(true);
+    expect(shouldBatch(op({ path: 'model.getAll' }))).toBe(false);
+  });
+
+  it('DOES batch a non-cacheable authed query on the same router', () => {
+    setTrpcBatchingEnabled(true);
+    setWindowAuthed(true);
+    // `model.getInfinite` is NOT edge-cached → safe to batch (sanity that the exclusion is
+    // path-scoped, not router-scoped).
+    expect(CACHEABLE_PROCEDURES.has('model.getInfinite')).toBe(false);
+    expect(shouldBatch(op({ path: 'model.getInfinite' }))).toBe(true);
+  });
+
   it('honors the skipBatch context escape hatch', () => {
     setTrpcBatchingEnabled(true);
     setWindowAuthed(true);
@@ -102,5 +126,83 @@ describe('shouldBatch', () => {
     setTrpcBatchingEnabled(true);
     setWindowAuthed(true);
     expect(shouldBatch(op({ input: { q: 'x'.repeat(100) } }))).toBe(true);
+  });
+});
+
+/**
+ * Durable guard: independently RE-DERIVE the set of procedures that are edge-cacheable for
+ * authenticated sessions (apply `edgeCacheIt` and do NOT opt out for authed via
+ * `noEdgeCache({ authedOnly })` / blanket `noEdgeCache()`) by statically parsing the router
+ * sources, and assert it equals `CACHEABLE_PROCEDURES`. This is what makes the exclusion
+ * durable: add a new `edgeCacheIt` procedure without excluding it from batching and THIS
+ * test fails — the batch link can't silently start de-caching authed feed queries.
+ */
+describe('CACHEABLE_PROCEDURES stays in sync with the routers (batch-skip guard)', () => {
+  const routersDir = join(process.cwd(), 'src/server/routers');
+
+  // Map `<basename>.router.ts` -> tRPC key prefix from the appRouter registration:
+  //   `key: lazy(() => import('.../x.router').then((m) => m.xRouter))`
+  const buildFileToKey = (): Record<string, string> => {
+    const index = readFileSync(join(routersDir, 'index.ts'), 'utf8');
+    const map: Record<string, string> = {};
+    const re = /(\w+):\s*lazy\(\(\)\s*=>\s*import\(['"]([^'"]+)['"]\)/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(index))) {
+      const [, key, importPath] = m;
+      const base = importPath.split('/').pop()!; // e.g. "model.router"
+      map[base.endsWith('.ts') ? base : `${base}.ts`] = key;
+    }
+    return map;
+  };
+
+  // Split a router file into top-level procedure blocks keyed by name (2-space indent).
+  const procedureBlocks = (content: string): Array<{ name: string; block: string }> => {
+    const lines = content.split('\n');
+    const starts: number[] = [];
+    lines.forEach((l, i) => {
+      if (/^ {2}[a-zA-Z_]\w*:\s/.test(l)) starts.push(i);
+    });
+    return starts.map((start, idx) => {
+      const end = idx + 1 < starts.length ? starts[idx + 1] : lines.length;
+      const name = /^ {2}([a-zA-Z_]\w*):/.exec(lines[start])![1];
+      return { name, block: lines.slice(start, end).join('\n') };
+    });
+  };
+
+  it('matches the statically-derived cacheable-for-authed set exactly', () => {
+    const fileToKey = buildFileToKey();
+    const derived = new Set<string>();
+    const missingKey: string[] = [];
+
+    for (const file of readdirSync(routersDir)) {
+      if (!file.endsWith('.router.ts')) continue;
+      const content = readFileSync(join(routersDir, file), 'utf8');
+      if (!content.includes('edgeCacheIt(')) continue;
+      const key = fileToKey[file];
+      if (!key) {
+        missingKey.push(file);
+        continue;
+      }
+      for (const { name, block } of procedureBlocks(content)) {
+        if (!block.includes('edgeCacheIt(')) continue;
+        // opts out of edge cache for authed (or everyone) => not cacheable-for-authed
+        if (/noEdgeCache\(\s*\{\s*authedOnly/.test(block) || /noEdgeCache\(\s*\)/.test(block)) {
+          continue;
+        }
+        derived.add(`${key}.${name}`);
+      }
+    }
+
+    // Every edgeCacheIt router must be resolvable to an appRouter key, or the guard is blind.
+    expect(missingKey).toEqual([]);
+    expect(derived.size).toBeGreaterThan(0);
+
+    const listed = [...CACHEABLE_PROCEDURES].sort();
+    const expected = [...derived].sort();
+    // Symmetric diff surfaces BOTH a new cached procedure not listed AND a stale listing.
+    const notListed = expected.filter((p) => !CACHEABLE_PROCEDURES.has(p));
+    const stale = listed.filter((p) => !derived.has(p));
+    expect({ notListed, stale }).toEqual({ notListed: [], stale: [] });
+    expect(listed).toEqual(expected);
   });
 });
