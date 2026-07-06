@@ -76,7 +76,7 @@ export const submitExternalListingSchema = z
   .superRefine((val, ctx) => {
     const url = validateExternalUrl(val.externalUrl);
     if (!url.ok) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: url.error, path: ['externalUrl'] });
+      ctx.addIssue({ code: 'custom', message: url.error, path: ['externalUrl'] });
     }
     const surface = assertNoOnPlatformSurface({
       page: val.page,
@@ -84,7 +84,7 @@ export const submitExternalListingSchema = z
       iframe: val.iframe,
     });
     if (!surface.ok) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: surface.error, path: ['externalUrl'] });
+      ctx.addIssue({ code: 'custom', message: surface.error, path: ['externalUrl'] });
     }
   });
 

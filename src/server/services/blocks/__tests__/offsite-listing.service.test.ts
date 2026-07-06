@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
 
 import {
+  MAX_PENDING_OFFSITE_SUBMISSIONS,
   OffsiteRequestError,
   submitExternalListing,
   withdrawExternalRequest,
@@ -30,6 +31,7 @@ const { mockDb, ids } = vi.hoisted(() => ({
     },
     appListingPublishRequest: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      count: vi.fn(async (..._a: unknown[]) => 0),
       create: vi.fn(async (args: { data: unknown }) => args.data),
       updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
     },
@@ -62,6 +64,7 @@ beforeEach(() => {
   mockDb.appListing.deleteMany.mockReset().mockResolvedValue({ count: 1 });
   mockDb.appBlock.findFirst.mockReset().mockResolvedValue(null);
   mockDb.appListingPublishRequest.findUnique.mockReset().mockResolvedValue(null);
+  mockDb.appListingPublishRequest.count.mockReset().mockResolvedValue(0);
   mockDb.appListingPublishRequest.create
     .mockReset()
     .mockImplementation(async (a: { data: unknown }) => a.data);
@@ -147,6 +150,54 @@ describe('submitExternalListing', () => {
     await expect(submitExternalListing({ input: validInput, userId: CALLER })).rejects.toMatchObject(
       { code: 'BAD_REQUEST', message: expect.stringContaining('already taken') }
     );
+    expect(mockDb.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('cross-kind: block_id collision missed by the replica pre-check is caught by the PRIMARY re-check inside the tx (no draft created)', async () => {
+    // Replica pre-check (1st findFirst) is lag-stale → null; the PRIMARY re-read
+    // inside the tx (2nd findFirst) sees the block → same friendly error, and the
+    // draft AppListing is never created.
+    mockDb.appBlock.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'block_lagged' });
+    await expect(submitExternalListing({ input: validInput, userId: CALLER })).rejects.toMatchObject(
+      { code: 'BAD_REQUEST', message: expect.stringContaining('already taken') }
+    );
+    // The tx opened (primary re-check runs inside it) but no rows were created.
+    expect(mockDb.$transaction).toHaveBeenCalledTimes(1);
+    expect(mockDb.appListing.create).not.toHaveBeenCalled();
+    expect(mockDb.appListingPublishRequest.create).not.toHaveBeenCalled();
+  });
+
+  it('per-user pending cap: AT the cap → TOO_MANY_REQUESTS, no write', async () => {
+    mockDb.appListingPublishRequest.count.mockResolvedValue(MAX_PENDING_OFFSITE_SUBMISSIONS);
+    await expect(submitExternalListing({ input: validInput, userId: CALLER })).rejects.toMatchObject(
+      { code: 'TOO_MANY_REQUESTS', message: expect.stringContaining('pending') }
+    );
+    // The count is scoped to the caller's pending offsite requests.
+    expect(mockDb.appListingPublishRequest.count).toHaveBeenCalledWith({
+      where: { submittedByUserId: CALLER, kind: 'offsite', status: 'pending' },
+    });
+    expect(mockDb.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('per-user pending cap: UNDER the cap → allowed (draft created)', async () => {
+    mockDb.appListingPublishRequest.count.mockResolvedValue(MAX_PENDING_OFFSITE_SUBMISSIONS - 1);
+    const res = await submitExternalListing({ input: validInput, userId: CALLER });
+    expect(res.slug).toBe('cool-app');
+    expect(mockDb.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-asserts contentRating against the offsite enum (an out-of-set value is rejected before any write)', async () => {
+    await expect(
+      submitExternalListing({
+        input: { ...validInput, contentRating: 'xxx' as never },
+        userId: CALLER,
+      })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('content rating'),
+    });
     expect(mockDb.$transaction).not.toHaveBeenCalled();
   });
 

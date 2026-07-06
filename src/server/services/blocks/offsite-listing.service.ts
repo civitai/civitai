@@ -5,7 +5,10 @@ import {
   assertNoOnPlatformSurface,
   validateExternalUrl,
 } from '~/server/schema/blocks/external-app.schema';
-import type { SubmitExternalListingInput } from '~/server/schema/blocks/offsite-listing.schema';
+import {
+  OFFSITE_CONTENT_RATINGS,
+  type SubmitExternalListingInput,
+} from '~/server/schema/blocks/offsite-listing.schema';
 import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import { newAppListingId, newAppListingPublishRequestId } from '~/server/utils/app-block-ids';
 
@@ -54,6 +57,15 @@ function slugTakenError(slug: string): TRPCError {
   return new TRPCError({ code: 'BAD_REQUEST', message: `slug "${slug}" already taken` });
 }
 
+/**
+ * Per-user cap on OUTSTANDING (`pending`) off-site submissions. Drafts only clear
+ * on withdraw/reject (no TTL), so an unbounded submit rate would let one author
+ * accrue orphan drafts + squat slugs; this bounds the standing count (the router
+ * `rateLimit` bounds the submit RATE). Mods bypass the router rate-limit but are
+ * still subject to this cap.
+ */
+export const MAX_PENDING_OFFSITE_SUBMISSIONS = 10;
+
 // ---------------------------------------------------------------------------
 // submitExternalListing (author).
 // ---------------------------------------------------------------------------
@@ -74,8 +86,14 @@ export type SubmitExternalListingResult = {
  *
  * Slug collision: pre-checked against BOTH `AppListing.slug` (unique across both
  * kinds) AND an existing `AppBlock.block_id` (an on-site slug), then backstopped
- * by the `AppListing.slug @unique` constraint (P2002) to close the check→create
- * race. Either path → the SAME friendly `slug "X" already taken`.
+ * inside the tx — the `AppListing.slug @unique` constraint (P2002) closes the
+ * AppListing check→create race, and a PRIMARY re-read of `AppBlock.block_id`
+ * closes the (constraint-less) block-id replica-lag window. Every path → the SAME
+ * friendly `slug "X" already taken`.
+ *
+ * Abuse bounds: a per-user cap on OUTSTANDING pending submissions
+ * ({@link MAX_PENDING_OFFSITE_SUBMISSIONS}) bounds standing orphan-draft accrual
+ * (drafts have no TTL); the router adds a submit-RATE limit.
  */
 export async function submitExternalListing(opts: {
   input: SubmitExternalListingInput;
@@ -98,6 +116,29 @@ export async function submitExternalListing(opts: {
     throw new TRPCError({ code: 'BAD_REQUEST', message: `unknown category "${input.category}"` });
   }
 
+  // Re-assert the author-declared maturity against the shared enum (this fn is
+  // exported + unit-tested directly, so mirror the URL/surface/category re-checks
+  // rather than trusting the caller). Absent → the SFW `'g'` default below.
+  const contentRating = input.contentRating ?? 'g';
+  if (!(OFFSITE_CONTENT_RATINGS as readonly string[]).includes(contentRating)) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `unknown content rating "${contentRating}"`,
+    });
+  }
+
+  // Per-user pending-submission cap: bound the standing orphan-draft count (drafts
+  // only clear on withdraw/reject, no TTL). At/over the cap → TOO_MANY_REQUESTS.
+  const pendingCount = await dbRead.appListingPublishRequest.count({
+    where: { submittedByUserId: userId, kind: 'offsite', status: 'pending' },
+  });
+  if (pendingCount >= MAX_PENDING_OFFSITE_SUBMISSIONS) {
+    throw new TRPCError({
+      code: 'TOO_MANY_REQUESTS',
+      message: `You have ${pendingCount} pending submissions (max ${MAX_PENDING_OFFSITE_SUBMISSIONS}). Withdraw one or wait for review before submitting another.`,
+    });
+  }
+
   const slug = input.slug;
 
   // Pre-check both the store slug (both kinds) and an on-site block id so the
@@ -118,6 +159,17 @@ export async function submitExternalListing(opts: {
 
   try {
     await dbWrite.$transaction(async (tx) => {
+      // Cross-kind block_id collision — PRIMARY re-check. The AppListing.slug
+      // pre-check is backstopped by its @unique (P2002), but AppBlock.block_id
+      // has no such constraint against AppListing, so its replica pre-check above
+      // has a lag window. Re-read from the PRIMARY inside the tx to close it —
+      // same friendly `slug "X" already taken`.
+      const blockOnPrimary = await tx.appBlock.findFirst({
+        where: { blockId: slug },
+        select: { id: true },
+      });
+      if (blockOnPrimary) throw slugTakenError(slug);
+
       await tx.appListing.create({
         data: {
           id: listingId,
@@ -128,8 +180,9 @@ export async function submitExternalListing(opts: {
           tagline: input.tagline ?? null,
           description: input.description ?? null,
           category: input.category ?? null,
-          // Author-declared; defaults to SFW so an omitted rating is never mature.
-          contentRating: input.contentRating ?? 'g',
+          // Author-declared, re-asserted against the enum above; defaults to SFW
+          // so an omitted rating is never mature.
+          contentRating,
           externalUrl: url.url,
           // External-link sub-kind only — the OAuth-connect seam stays inert.
           connectClientId: null,

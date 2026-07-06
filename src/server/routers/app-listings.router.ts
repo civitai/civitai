@@ -198,6 +198,17 @@ export const appListingsRouter = router({
    * approves it (PR-b). Owner-bound to the caller (no user-supplied owner).
    */
   submitExternalListing: appDeveloperProcedure
+    .use(
+      rateLimit({
+        // A row-creating write reachable by non-mod dev-testers — heavier than
+        // the store reads, so a conservative hourly cap throttles draft-spam /
+        // slug-squat. The per-user PENDING cap in the service bounds the standing
+        // orphan-draft count; this bounds the submit RATE.
+        limit: 10,
+        period: 3600,
+        errorMessage: 'Too many submissions — slow down.',
+      })
+    )
     .input(submitExternalListingSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
