@@ -23,7 +23,7 @@ import {
 } from './sys-inflight';
 import {
   countClusterDeadlineHits,
-  recordClusterDeadlineHit,
+  recordClusterCommandSettle,
   resetClusterDeadlineHits,
 } from './cluster-deadline-hits';
 import { compressPacked, decompressPacked } from './packed-compression';
@@ -482,6 +482,14 @@ function startClusterSelfHeal(
   const interval = Math.max(250, config.clusterSelfHealCheckIntervalMs);
   clusterSelfHealInterval = setInterval(() => {
     try {
+      // Publish what the watchdog SEES (its own in-process slow-settle window) BEFORE ticking, so
+      // the gauge reflects the same value the trigger evaluates. Distinct from the duration
+      // histogram — this is the watchdog's own observation, the signal that was invisible during
+      // the 2026-07-06 wedge. Cheap: an O(ring) windowed count. No-op until the prom bridge loads.
+      getRedisMetrics()?.redisSelfHealDeadlineHitsWindow?.set(
+        { client: 'cluster' },
+        countClusterDeadlineHits(config.clusterSelfHealDeadlineHitWindowMs)
+      );
       watchdog.tick();
     } catch (err) {
       log(`Cluster self-heal tick error: ${err instanceof Error ? err.message : String(err)}`);
@@ -675,6 +683,11 @@ type RedisMetricsBridge = {
   // globalThis bridge so this client-bundle-reachable module avoids a static prom-client import (which
   // drags in fs/cluster). May be undefined until prom/client loads server-side; callers null-check.
   redisSelfHealReconnectCounter?: { inc: (labels: { trigger: string; client: string }) => void };
+  // The watchdog's OWN observation: the in-process slow-settle count it samples each tick (the
+  // deadline-hit window). Exposed so we can SEE what the watchdog sees, distinct from the
+  // redis_command_duration histogram — diagnosing the 2026-07-06 wedge was hard precisely because
+  // this was invisible. Set each watchdog tick (client="cluster").
+  redisSelfHealDeadlineHitsWindow?: { set: (labels: { client: string }, value: number) => void };
   // Cluster routing retry-after-rediscover counter (the topology-churn 500 wave). Read via the
   // same globalThis bridge so this client-bundle-reachable module avoids a static prom import.
   redisRoutingRetryCounter?: { inc: (labels: { result: 'recovered' | 'exhausted' }) => void };
@@ -736,13 +749,35 @@ export function attachSysSentinelListeners(
 }
 
 /**
+ * Per-command chokepoint knobs. Default to the module `config` in production; a test can inject
+ * them so `instrumentCommands` is exercisable against a fake client WITHOUT booting the factory
+ * (which eagerly connects). All optional — omitted values fall back to `config` (then a safe 0).
+ */
+export interface InstrumentCommandsOptions {
+  deadlineMs?: number;
+  slowCommandMs?: number;
+  routingRetryEnabled?: boolean;
+  routingRetryMax?: number;
+  routingRetryBackoffMs?: number;
+  routingRetryBackoffMaxMs?: number;
+}
+
+/**
  * Wrap the per-client command chokepoint so EVERY command is counted in the inflight gauge
  * and timed. The chokepoint differs by kind: SINGLE client -> `sendCommand`; CLUSTER client
  * -> `_execute` (typed methods route through it, not the top-level sendCommand). The cluster
  * command is additionally raced against `withCommandDeadline` so a never-settling `_execute`
- * still reaches done() (gauge dec'd, handler unparked).
+ * still reaches done() (gauge dec'd, handler unparked) AND records a self-heal slow-settle hit
+ * from done() when its observed duration crosses the slow threshold.
+ *
+ * Exported (with injectable `opts`) so the self-heal SLOW-SETTLE recording path can be unit-tested
+ * end-to-end against a fake `_execute` — the 2026-07-06 regression driver.
  */
-function instrumentCommands(client: any, clientLabel: 'cluster' | 'sys') {
+export function instrumentCommands(
+  client: any,
+  clientLabel: 'cluster' | 'sys',
+  opts: InstrumentCommandsOptions = {}
+) {
   const self = client?._self ?? client;
   if (!self) return;
   const labels = { client: clientLabel } as const;
@@ -756,7 +791,16 @@ function instrumentCommands(client: any, clientLabel: 'cluster' | 'sys') {
     return;
   }
   const wrapWithDeadline = isClusterClient && clientLabel === 'cluster';
-  const deadlineMs = config.clusterCommandTimeoutMs;
+  const deadlineMs = opts.deadlineMs ?? config?.clusterCommandTimeoutMs ?? 0;
+  // Self-heal SLOW-SETTLE threshold (cluster only): a command whose observed settle duration
+  // reaches this counts as a wedge hit for the deadline-hit trigger. Sourced at SETTLE time (done)
+  // so it can't diverge from redis_command_duration_seconds the way the old onTimeout-only path did.
+  const slowCommandMs = opts.slowCommandMs ?? config?.clusterSelfHealSlowCommandMs ?? 0;
+  const routingRetryEnabled = opts.routingRetryEnabled ?? config?.clusterRoutingRetryEnabled ?? false;
+  const routingRetryMax = opts.routingRetryMax ?? config?.clusterRoutingRetryMax ?? 0;
+  const routingRetryBackoffMs = opts.routingRetryBackoffMs ?? config?.clusterRoutingRetryBackoffMs ?? 0;
+  const routingRetryBackoffMaxMs =
+    opts.routingRetryBackoffMaxMs ?? config?.clusterRoutingRetryBackoffMaxMs ?? 0;
   self[methodName] = function (this: any, ...args: any[]) {
     // Capture the metric handles ONCE per command so inc/dec stay balanced even if the app's
     // prom module loads mid-flight (a dec without its inc would drive the gauge negative).
@@ -769,6 +813,7 @@ function instrumentCommands(client: any, clientLabel: 'cluster' | 'sys') {
     const start = Date.now();
     let dec = false; // per-closure guard so a double-settle (shouldn't happen) can't double-dec
     const done = () => {
+      const durationMs = Date.now() - start;
       if (!dec) {
         // FLOORED decrement (dec{Cluster,Sys}Inflight clamp at 0). The per-closure `dec` guard
         // above only stops THIS closure decrementing twice — it does NOT stop N distinct rejected
@@ -779,7 +824,18 @@ function instrumentCommands(client: any, clientLabel: 'cluster' | 'sys') {
         dec = true;
       }
       metrics?.redisCommandsInflight.dec(labels);
-      metrics?.redisCommandDuration.observe(labels, (Date.now() - start) / 1000);
+      metrics?.redisCommandDuration.observe(labels, durationMs / 1000);
+      // SELF-HEAL SIGNAL (cluster client only): record a wedge "hit" whenever a cluster command's
+      // OBSERVED settle duration reaches the slow threshold — the SAME settle-time observation as
+      // the duration histogram above. This is the 2026-07-06 fix: it REPLACES the old
+      // withCommandDeadline.onTimeout recorder, which fired only when the 15s deadline REAPED a
+      // still-hanging command. During that fleet wedge the slow cluster commands settled on their
+      // own past the deadline (~29s), so onTimeout never fired and the deadline-hit trigger stayed
+      // silent while the histogram plainly showed ~4/s > 15s commands. Recording at settle time is
+      // sawtooth-immune (a rate of slow settles, not an inflight level) and covers BOTH wedge
+      // shapes: a deadline-reaped orphan settles at ~deadlineMs, a self-settling command at ~29s —
+      // both >= the slow threshold. sysRedis (single-node) is deliberately untouched (#2556/#2586).
+      if (clientLabel === 'cluster') recordClusterCommandSettle(durationMs, slowCommandMs);
     };
 
     // Run the underlying command, capturing a SYNCHRONOUS routing throw (the getSlotRandomNode
@@ -808,10 +864,11 @@ function instrumentCommands(client: any, clientLabel: 'cluster' | 'sys') {
     // is what gives the in-flight slot-map refresh time to settle before the retry.
     const executed: Promise<any> = wrapWithDeadline
       ? withClusterRoutingRetry(runOnce, {
-          // Env-driven knobs (a pure module can't read env itself; client.ts injects config here).
-          enabled: config.clusterRoutingRetryEnabled,
-          maxRetries: config.clusterRoutingRetryMax,
-          backoffMs: [config.clusterRoutingRetryBackoffMs, config.clusterRoutingRetryBackoffMaxMs],
+          // Env-driven knobs (a pure module can't read env itself; client.ts injects config here,
+          // resolved once above so instrumentCommands stays testable with injected opts).
+          enabled: routingRetryEnabled,
+          maxRetries: routingRetryMax,
+          backoffMs: [routingRetryBackoffMs, routingRetryBackoffMaxMs],
           rediscover: () => triggerTopologyRediscovery(self, 'routing-retry'),
           onResult: (result) => getRedisMetrics()?.redisRoutingRetryCounter?.inc({ result }),
         })
@@ -822,10 +879,11 @@ function instrumentCommands(client: any, clientLabel: 'cluster' | 'sys') {
     // the sys client (wrapWithDeadline=false). withCommandDeadline reaps the late
     // rejection of the orphaned command so it can't surface as an unhandledRejection.
     // Layered OUTSIDE the routing retry so the 15s deadline bounds the WHOLE retried sequence
-    // (the bounded ~50ms+150ms backoff is well inside it).
-    const settled = wrapWithDeadline
-      ? withCommandDeadline(executed, deadlineMs, recordClusterDeadlineHit)
-      : executed;
+    // (the bounded ~50ms+150ms backoff is well inside it). The self-heal wedge signal is NO
+    // LONGER sourced from this deadline's reap (onTimeout) — done() records it from the observed
+    // settle duration instead (see the recordClusterCommandSettle call above), so the trigger
+    // fires whether or not the deadline actually reaps the command (2026-07-06 fix).
+    const settled = wrapWithDeadline ? withCommandDeadline(executed, deadlineMs) : executed;
     return settled.finally(done);
   };
 }

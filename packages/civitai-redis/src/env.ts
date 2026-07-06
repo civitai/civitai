@@ -57,10 +57,19 @@ export const redisEnvSchema = z
     REDIS_CLUSTER_SELFHEAL_COOLDOWN_MS: z.coerce.number().default(60000),
     // How often the watchdog samples inflight (cheap one-gauge read).
     REDIS_CLUSTER_SELFHEAL_CHECK_INTERVAL_MS: z.coerce.number().default(1000),
-    // DEADLINE-HIT TRIGGER (the sawtooth-immune self-heal signal): N cluster command-deadline
-    // TIMEOUTS within the window force a reconnect. <= 0 disables this trigger.
+    // DEADLINE-HIT / SLOW-SETTLE TRIGGER (the sawtooth-immune self-heal signal): N cluster command
+    // SLOW-SETTLES within the window force a reconnect. <= 0 disables this trigger.
     REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_THRESHOLD: z.coerce.number().default(10),
     REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_WINDOW_MS: z.coerce.number().default(20000),
+    // A cluster command whose OBSERVED settle duration reaches this many ms counts as a wedge hit
+    // (recordClusterCommandSettle, wired from instrumentCommands' done() — the SAME settle-time
+    // observation as redis_command_duration_seconds). 2026-07-06: the trigger used to key off
+    // withCommandDeadline's onTimeout (deadline REAP), which never fires when slow commands settle
+    // on their own past the deadline (~29s tail), so the ring stayed empty and self-heal 0-fired.
+    // Set BELOW the command deadline (15s) so an early wedge trips before the reaper and so it works
+    // even if the deadline reaper is disabled. Healthy p99 ≈ 23ms, so 10s is ~400× p99 — a one-off
+    // slow command is far below the N-in-window threshold. <= 0 disables slow-settle recording.
+    REDIS_CLUSTER_SELFHEAL_SLOW_COMMAND_MS: z.coerce.number().default(10000),
     // PER-POD RECONNECT JITTER (fleet-stampede brake): wait a random [0, this) before the
     // actual reconnect so a synchronized fleet event doesn't stampede the cluster.
     REDIS_CLUSTER_SELFHEAL_RECONNECT_JITTER_MS: z.coerce.number().default(1000),
@@ -160,6 +169,7 @@ function buildEnv() {
     clusterSelfHealCheckIntervalMs: parsed.data.REDIS_CLUSTER_SELFHEAL_CHECK_INTERVAL_MS,
     clusterSelfHealDeadlineHitThreshold: parsed.data.REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_THRESHOLD,
     clusterSelfHealDeadlineHitWindowMs: parsed.data.REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_WINDOW_MS,
+    clusterSelfHealSlowCommandMs: parsed.data.REDIS_CLUSTER_SELFHEAL_SLOW_COMMAND_MS,
     clusterSelfHealReconnectJitterMs: parsed.data.REDIS_CLUSTER_SELFHEAL_RECONNECT_JITTER_MS,
     sysSelfHealEnabled: parsed.data.REDIS_SYS_SELFHEAL_ENABLED,
     sysSelfHealInflightThreshold: parsed.data.REDIS_SYS_SELFHEAL_INFLIGHT_THRESHOLD,

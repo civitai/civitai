@@ -321,6 +321,18 @@ export const redisSelfHealReconnectCounter = registerCounterWithLabels({
   labelNames: ['trigger', 'client'] as const,
 });
 
+// The self-heal watchdog's OWN observation of the wedge: the in-process count of cluster command
+// SLOW-SETTLES in its sliding window (the deadline-hit trigger's input), sampled + published each
+// watchdog tick. This is DISTINCT from redis_command_duration_seconds — it is exactly what the
+// watchdog evaluates against REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_THRESHOLD, so a rising series that
+// crosses the threshold is the leading indicator of an imminent self-heal reconnect. Added after
+// the 2026-07-06 fleet wedge, where the watchdog's own signal was invisible and the trigger 0-fired.
+export const redisSelfHealDeadlineHitsWindow = registerGaugeWithLabels({
+  name: 'redis_selfheal_deadline_hits_window',
+  help: "The self-heal watchdog's in-process cluster slow-settle count over its sliding window, by client; the deadline-hit trigger fires when this crosses the threshold",
+  labelNames: ['client'] as const,
+});
+
 // Cluster ROUTING retry-after-rediscover counter (the topology-churn 500 wave). Incremented when a cluster
 // `_execute` hit a TRANSIENT pre-dispatch routing throw and the guard retried after a rediscover. `result`
 // ∈ recovered|exhausted: a rising `recovered` series during a rolling update / failover confirms the fix
