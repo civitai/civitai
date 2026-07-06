@@ -245,6 +245,16 @@ describe('batch-size gate is distinct from the non-batch GET→POST gate (#1)', 
     expect(isTooLargeToBatch({ type: 'mutation', input: { s: 'x'.repeat(3000) } })).toBe(false);
     expect(isLargeQuery({ type: 'mutation', input: { s: 'x'.repeat(3000) } })).toBe(false);
   });
+
+  it('isTooLargeToBatch sizes the SERIALIZED input, not raw JSON (superjson can expand)', () => {
+    // Regression: superjson.serialize expands special types (Set/Map/Date) into a larger
+    // {json,meta} shape. This input is tiny as raw JSON (~190 chars) but serializes+encodes to
+    // >2083 — a raw-length fast-path would wave it through as "small" and it would overflow the
+    // batch URL (the original "Input is too big for a single dispatch" crash). Must be excluded.
+    const expandingInput = { items: Array.from({ length: 60 }, () => new Set()) };
+    expect(JSON.stringify(expandingInput).length).toBeLessThan(500); // raw looks tiny…
+    expect(isTooLargeToBatch(q(expandingInput))).toBe(true); // …but serialized is too big to batch
+  });
 });
 
 /**

@@ -57,31 +57,29 @@ const url = '/api/trpc';
 const URL_INPUT_BUDGET = 1800;
 
 /**
- * Cheap raw-JSON-length short-circuit for `isTooLargeToBatch`, which runs on EVERY query op
- * (the `shouldBatch` predicate) and otherwise does a full `superjson.serialize` +
- * `encodeURIComponent` — redundant when the input is obviously small, and hot (the generator
- * fires `whatIf` on every change). Encoding can at most triple a string (`%XX` per char), so
- * `rawLen ≤ URL_INPUT_BUDGET/3 − wrapper` guarantees the encoded length stays under budget;
- * 500 sits safely below that provable bound (empirically the densest possible JSON first
- * crosses 1800 encoded at ~600 raw). Only the rare near-boundary op pays for the exact check.
- */
-const URL_INPUT_FASTPATH = 500;
-
-/**
  * Whether a query's input is too large to safely ride the BATCH link (whose single-op URL is
  * hard-capped at `maxURLLength: 2083`). Excludes such a query from batching (see `shouldBatch`)
  * so it can never trip the "Input is too big for a single dispatch" throw. Measures the actual
  * encoded wire cost against `URL_INPUT_BUDGET`.
+ *
+ * It runs on EVERY query op, so it short-circuits before the (relatively costly)
+ * `encodeURIComponent` walk. The short-circuit is measured on the SERIALIZED string — the exact
+ * bytes that get encoded — NOT on the raw `JSON.stringify(input)`: `superjson.serialize` can
+ * EXPAND the input for special types (a `Set`/`Map`/`Date` serializes to a larger `{json,meta}`
+ * shape), so a raw-length gate could pass a small-raw / large-serialized input through as
+ * "small" and let it overflow the batch URL. `encodeURIComponent` expands each char to at most
+ * `%XX` (3×), so `serializedLen * 3 ≤ URL_INPUT_BUDGET` guarantees the encoded length is under
+ * budget without doing the encode.
  */
 export function isTooLargeToBatch(op: { type: string; input: unknown }) {
   if (op.type !== 'query' || op.input == null) return false;
   try {
-    // Fast path: a small raw payload provably can't reach URL_INPUT_BUDGET once encoded, so
-    // skip the superjson+encode work for the common case (most query ops are tiny).
-    if (JSON.stringify(op.input).length <= URL_INPUT_FASTPATH) return false;
-    // Otherwise mirror tRPC's GET-URL encoding so the check reflects the real wire cost, not
-    // an approximation: superjson-serialize (the configured transformer) then percent-encode.
-    return encodeURIComponent(JSON.stringify(superjson.serialize(op.input))).length > URL_INPUT_BUDGET;
+    // Serialize the way tRPC will on the wire (the configured superjson transformer), once.
+    const serialized = JSON.stringify(superjson.serialize(op.input));
+    // Cheap exit: even worst-case 3× percent-encoding can't reach the budget → definitely small.
+    if (serialized.length * 3 <= URL_INPUT_BUDGET) return false;
+    // Near the boundary: measure the real encoded length.
+    return encodeURIComponent(serialized).length > URL_INPUT_BUDGET;
   } catch {
     return false;
   }
@@ -89,10 +87,13 @@ export function isTooLargeToBatch(op: { type: string; input: unknown }) {
 
 /**
  * Raw-input threshold for the NON-BATCHED single GET. That path has no 2083 batch cap — the
- * only ceiling is HTTP 431 / proxy URL limits (~4000+ chars), so a coarse raw-char heuristic
- * is sufficient. Held at the long-standing 2500 so this path's GET→POST (and therefore
- * edge-cacheability) behaviour is UNCHANGED from before batching shipped: the tight encoded
- * batch budget governs the batch link ONLY, never 100% of live GET traffic.
+ * only ceiling is the server/proxy URL limit (HTTP 431; Node ~16KB, nginx/Traefik default 8KB),
+ * which is far looser than the batch cap, so a coarse raw-char heuristic is sufficient here.
+ * NOTE this bounds RAW input, not the encoded URL: a punctuation-dense raw-2500 input can encode
+ * to a multi-KB GET URL — still well under those limits, but do NOT read 2500 as "≈4KB URL".
+ * Held at the long-standing 2500 so this path's GET→POST (and therefore edge-cacheability)
+ * behaviour is UNCHANGED from before batching shipped: the tight encoded batch budget governs
+ * the batch link ONLY, never 100% of live GET traffic.
  */
 const MAX_GET_INPUT_LENGTH = 2500;
 
