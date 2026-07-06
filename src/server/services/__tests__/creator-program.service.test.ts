@@ -586,6 +586,8 @@ describe('getPoolParticipantsV2', () => {
     expect(alex).toHaveLength(1);
     expect(alex[0].amount).toBe(252280);
     expect(participants).toHaveLength(2);
+    // Upstream contributor order is preserved (the distribute pool-depletion cutoff depends on it).
+    expect(participants.map((p) => p.userId)).toEqual([4944, 999]);
   });
 
   it('drops banned participants after summing', async () => {

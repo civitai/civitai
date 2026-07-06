@@ -74,19 +74,36 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   }
 
   // For each creator, subtract what actually landed (original grant + any prior -fix grant).
-  const rows = await limitConcurrency(
+  const rows: {
+    userId: number;
+    correctShare: number;
+    alreadyPaid: number;
+    topUp: number;
+    hasOriginal: boolean;
+  }[] = [];
+  await limitConcurrency(
     Array.from(correctShares.entries()).map(([userId, correctShare]) => async () => {
       const [original, priorFix] = await Promise.all([
         getTransactionByExternalId(`comp-pool-unified-${monthStr}-${userId}`),
         getTransactionByExternalId(`comp-pool-unified-${monthStr}-${userId}-fix`),
       ]);
       const alreadyPaid = (original?.amount ?? 0) + (priorFix?.amount ?? 0);
-      return { userId, correctShare, alreadyPaid, topUp: correctShare - alreadyPaid };
+      rows.push({
+        userId,
+        correctShare,
+        alreadyPaid,
+        topUp: correctShare - alreadyPaid,
+        // Only ever correct an existing distribution. A creator with no original grant was never
+        // paid for this month (unaffected / never-distributed month), so paying a full corrected
+        // share here would mint money that the distribute job never intended.
+        hasOriginal: !!original,
+      });
     }),
     10
   );
 
-  const topUps = rows.filter((r) => r.topUp > 0);
+  const skippedNoOriginal = rows.filter((r) => r.topUp > 0 && !r.hasOriginal);
+  const topUps = rows.filter((r) => r.topUp > 0 && r.hasOriginal);
   const totalTopUp = topUps.reduce((sum, r) => sum + r.topUp, 0);
 
   if (!dryRun && topUps.length > 0) {
@@ -120,6 +137,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     affectedCreators: topUps.length,
     totalTopUpCents: totalTopUp,
     totalTopUpUsd: totalTopUp / 100,
+    skippedNoOriginal: skippedNoOriginal.length,
     rows: topUps.sort((a, b) => b.topUp - a.topUp),
   });
 });
