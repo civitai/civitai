@@ -48,6 +48,19 @@ const url = '/api/trpc';
 const URL_INPUT_BUDGET = 1800;
 
 /**
+ * Cheap raw-JSON-length short-circuit for `isLargeQuery`. `isLargeQuery` runs on EVERY query
+ * op (it's the `splitLink` condition), and the exact encoded measurement below does a full
+ * `superjson.serialize` + `encodeURIComponent` — redundant work when the input is obviously
+ * small, and hot: the generator fires `whatIf` on every change. Encoding can at most triple a
+ * string (`%XX` per char), so `rawLen ≤ URL_INPUT_BUDGET/3 − wrapper` guarantees the encoded
+ * length stays under budget; 500 sits safely below that provable bound (empirically the
+ * densest possible JSON first crosses 1800 encoded at ~600 raw), so any input at/below it is
+ * DEFINITELY not large and skips the expensive path. Only the rare near-boundary op pays for
+ * the exact check.
+ */
+const URL_INPUT_FASTPATH = 500;
+
+/**
  * Whether a query's input is large enough that carrying it in the URL as a GET would risk
  * overflowing the batch link's `maxURLLength` (or, on the non-batched path, HTTP 431 /
  * proxy URL limits). Such queries are routed through tRPC's native `methodOverride: 'POST'`,
@@ -57,8 +70,11 @@ const URL_INPUT_BUDGET = 1800;
 function isLargeQuery(op: { type: string; input: unknown }) {
   if (op.type !== 'query' || op.input == null) return false;
   try {
-    // Mirror tRPC's GET-URL encoding so the check reflects the real wire cost, not an
-    // approximation: superjson-serialize (the configured transformer) then percent-encode.
+    // Fast path: a small raw payload provably can't reach URL_INPUT_BUDGET once encoded, so
+    // skip the superjson+encode work for the common case (most query ops are tiny).
+    if (JSON.stringify(op.input).length <= URL_INPUT_FASTPATH) return false;
+    // Otherwise mirror tRPC's GET-URL encoding so the check reflects the real wire cost, not
+    // an approximation: superjson-serialize (the configured transformer) then percent-encode.
     return encodeURIComponent(JSON.stringify(superjson.serialize(op.input))).length > URL_INPUT_BUDGET;
   } catch {
     return false;
