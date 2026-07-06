@@ -4,6 +4,7 @@ import {
   isWithdrawableOffsiteStatus,
   offsiteStatusChip,
 } from '~/components/Apps/offsiteSubmissionStatus';
+import { isHttpsUrl } from '~/components/Apps/offsiteUrl';
 import { ReviewerNotesButton } from '~/components/Apps/MySubmissionsList';
 
 /**
@@ -98,20 +99,25 @@ export function OffsiteSubmissionsList({
                 )}
               </Table.Td>
               <Table.Td>
-                {s.appListing?.externalUrl ? (
+                {isHttpsUrl(s.appListing?.externalUrl) ? (
                   <Anchor
-                    href={s.appListing.externalUrl}
+                    href={s.appListing?.externalUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     size="xs"
                   >
                     <Group gap={4} wrap="nowrap">
                       <Text size="xs" lineClamp={1} style={{ maxWidth: 220 }}>
-                        {s.appListing.externalUrl}
+                        {s.appListing?.externalUrl}
                       </Text>
                       <IconExternalLink size={12} />
                     </Group>
                   </Anchor>
+                ) : s.appListing?.externalUrl ? (
+                  // Present but non-https (defense-in-depth) → INERT text, no anchor.
+                  <Text size="xs" c="red" lineClamp={1} style={{ maxWidth: 220 }}>
+                    {s.appListing.externalUrl}
+                  </Text>
                 ) : (
                   <Text size="xs" c="dimmed">
                     —

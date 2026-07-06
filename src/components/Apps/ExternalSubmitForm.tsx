@@ -21,7 +21,7 @@ import {
   IconUpload,
 } from '@tabler/icons-react';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import {
   OFFSITE_CATEGORY_OPTIONS,
@@ -68,6 +68,14 @@ type AssetState = {
 };
 
 const emptyAsset: AssetState = { status: 'idle', imageId: null, message: null };
+
+/**
+ * A screenshot slot carries a STABLE per-file `id`. A multi-file batch is added in
+ * one loop where the `screenshots` array closure is stale between iterations, so
+ * capturing `screenshots.length` as the slot index collides (every file writes the
+ * same slot). Patching by `id` instead fills distinct slots regardless of batching.
+ */
+type ScreenshotState = AssetState & { id: string };
 
 const SCAN_INCOMPLETE = /scan is not complete/i;
 
@@ -273,7 +281,8 @@ function AssetStep({
   const { uploadToCF } = useCFImageUpload();
   const [icon, setIcon] = useState<AssetState>(emptyAsset);
   const [cover, setCover] = useState<AssetState>(emptyAsset);
-  const [screenshots, setScreenshots] = useState<AssetState[]>([]);
+  const [screenshots, setScreenshots] = useState<ScreenshotState[]>([]);
+  const screenshotIdRef = useRef(0);
 
   const persistMutation = trpc.appListings.persistAssetImage.useMutation();
   const setIconMutation = trpc.appListings.setIcon.useMutation();
@@ -344,16 +353,25 @@ function AssetStep({
 
   async function handleScreenshots(files: File[]) {
     for (const file of files) {
-      const idx = screenshots.length;
-      setScreenshots((prev) => [...prev, { status: 'working', imageId: null, message: null }]);
+      // Reserve a slot with a STABLE id up-front, then patch THAT slot by id — the
+      // `screenshots` closure is stale within this loop, so an index derived from
+      // `screenshots.length` would collide across a multi-file batch.
+      const id = `ss_${screenshotIdRef.current++}`;
+      setScreenshots((prev: ScreenshotState[]) => [
+        ...prev,
+        { id, status: 'working', imageId: null, message: null },
+      ]);
       try {
         const imageId = await uploadAndPersist(file);
         const result = await attach('screenshot', imageId);
-        setScreenshots((prev) => prev.map((s, i) => (i === idx ? result : s)));
+        setScreenshots((prev: ScreenshotState[]) =>
+          prev.map((s) => (s.id === id ? { ...result, id } : s))
+        );
       } catch (err) {
-        setScreenshots((prev) =>
-          prev.map((s, i) =>
-            i === idx ? { status: 'error', imageId: null, message: (err as Error).message } : s
+        const message = (err as Error).message;
+        setScreenshots((prev: ScreenshotState[]) =>
+          prev.map((s) =>
+            s.id === id ? { id, status: 'error', imageId: null, message } : s
           )
         );
         showErrorNotification({ title: 'Could not add screenshot', error: err as Error });
@@ -361,12 +379,17 @@ function AssetStep({
     }
   }
 
-  async function retryScreenshot(idx: number) {
-    const state = screenshots[idx];
+  async function retryScreenshot(id: string) {
+    const state = screenshots.find((s) => s.id === id);
     if (!state || state.imageId == null) return;
-    setScreenshots((prev) => prev.map((s, i) => (i === idx ? { ...s, status: 'working' } : s)));
-    const result = await attach('screenshot', state.imageId);
-    setScreenshots((prev) => prev.map((s, i) => (i === idx ? result : s)));
+    const imageId = state.imageId;
+    setScreenshots((prev: ScreenshotState[]) =>
+      prev.map((s) => (s.id === id ? { ...s, status: 'working' } : s))
+    );
+    const result = await attach('screenshot', imageId);
+    setScreenshots((prev: ScreenshotState[]) =>
+      prev.map((s) => (s.id === id ? { ...result, id } : s))
+    );
   }
 
   const attachedScreenshots = screenshots.filter((s) => s.status === 'attached').length;
@@ -424,7 +447,7 @@ function AssetStep({
           {screenshots.length > 0 && (
             <Stack gap={4}>
               {screenshots.map((s, i) => (
-                <Group key={i} gap={8} justify="space-between">
+                <Group key={s.id} gap={8} justify="space-between">
                   <Text size="xs">Screenshot {i + 1}</Text>
                   <Group gap={6}>
                     <AssetStatusBadge state={s} />
@@ -433,7 +456,7 @@ function AssetStep({
                         size="compact-xs"
                         variant="subtle"
                         leftSection={<IconRefresh size={12} />}
-                        onClick={() => void retryScreenshot(i)}
+                        onClick={() => void retryScreenshot(s.id)}
                       >
                         Retry
                       </Button>
