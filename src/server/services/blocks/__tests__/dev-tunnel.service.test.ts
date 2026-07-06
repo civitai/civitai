@@ -59,6 +59,7 @@ const {
       APPS_KUBE_NAMESPACE: 'civitai-apps',
       NEXTAUTH_URL: 'https://civitai.com',
       APPS_DEV_TUNNEL_SISH_BACKEND: 'http://sish-http.apps-dev-tunnel.svc.cluster.local:8080',
+      APPS_DEV_TUNNEL_ROUTE_NAMESPACE: 'apps-dev-tunnel',
       APPS_DEV_TUNNEL_INGRESS_TARGET: '192.0.2.1' as string | undefined,
       APPS_DEV_TUNNEL_FORWARDAUTH_URL: undefined as string | undefined,
       APPS_DEV_TUNNEL_SSH_HOST_PUBKEY: 'ssh-ed25519 AAAAC3NzaHostKeyExample sish-host' as

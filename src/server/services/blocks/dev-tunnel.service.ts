@@ -274,7 +274,7 @@ function manifestOpts(host: string, sessionId: string): DevTunnelManifestOpts {
   return {
     host,
     sessionId,
-    namespace: env.APPS_KUBE_NAMESPACE,
+    namespace: env.APPS_DEV_TUNNEL_ROUTE_NAMESPACE,
     forwardAuthUrl: forwardAuthUrl(),
     sishBackend: sishBackend(),
     ingressTarget: env.APPS_DEV_TUNNEL_INGRESS_TARGET,
@@ -463,7 +463,7 @@ export async function renderDevTunnelRoute(host: string, sessionId: string): Pro
  *  session's objects, never a live app. Best-effort + idempotent. */
 export async function deleteDevTunnelRoute(sessionId: string): Promise<void> {
   const target = await getDp1Target();
-  const ns = env.APPS_KUBE_NAMESPACE;
+  const ns = env.APPS_DEV_TUNNEL_ROUTE_NAMESPACE;
   const selector = encodeURIComponent(`${DEV_TUNNEL_SESSION_LABEL}=${sessionId}`);
   const kinds: Array<{ listPath: string; itemPath: (n: string) => string }> = [
     {
@@ -899,7 +899,7 @@ const LIST_UNREACHABLE_STATUS = 0;
  *   - apiserver-clock: the min-age + idle windows use the LIST response Date header.
  */
 export async function reapExpiredDevTunnels(): Promise<ReapResult> {
-  const ns = env.APPS_KUBE_NAMESPACE;
+  const ns = env.APPS_DEV_TUNNEL_ROUTE_NAMESPACE;
   const selector = encodeURIComponent(`${DEV_TUNNEL_LABEL}=true`);
   const listPaths = [
     `/apis/traefik.io/v1alpha1/namespaces/${ns}/ingressroutes?labelSelector=${selector}`,

@@ -802,6 +802,11 @@ export const serverSchema = z
     //   created (the tunnel host is NXDOMAIN). external-dns runs source=traefik-proxy,
     //   domain civit.ai.
     APPS_DEV_TUNNEL_INGRESS_TARGET: z.string().optional(),
+    // APPS_DEV_TUNNEL_ROUTE_NAMESPACE   the namespace the ephemeral dev-tunnel
+    //   IngressRoute + forwardAuth Middleware are created in. MUST match the sish
+    //   backend's namespace (apps-dev-tunnel) — Traefik rejects a cross-namespace
+    //   service reference. The apply Job still runs in APPS_KUBE_NAMESPACE.
+    APPS_DEV_TUNNEL_ROUTE_NAMESPACE: z.string().default('apps-dev-tunnel'),
     // APPS_DEV_TUNNEL_SSH_HOST_PUBKEY   the sish server's SSH HOST public key, as a
     //   NON-SECRET OpenSSH line (`ssh-ed25519 AAAA...`). Returned by
     //   startDevTunnel so the CLI can PIN it on the `ssh -R` hop (R1 — closes the
