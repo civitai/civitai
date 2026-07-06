@@ -2131,6 +2131,25 @@ export const validateContestCollectionEntry = async ({
       );
     }
   }
+
+  // Entry fee: for user-created challenges with an entry fee, charge the participant once
+  // per submitted image (idempotent per challenge+image, so duplicate validation calls in the
+  // save path can't double-charge). Runs only after all other validation has passed.
+  if (imageIds.length > 0 && !isModerator) {
+    const feeChallenge = await dbRead.challenge.findFirst({
+      where: { collectionId, source: 'User', entryFee: { gt: 0 }, status: 'Active' },
+      select: { id: true, entryFee: true },
+    });
+    if (feeChallenge) {
+      const { chargeEntryFees } = await import('~/server/games/daily-challenge/challenge-funding');
+      await chargeEntryFees({
+        challengeId: feeChallenge.id,
+        userId,
+        imageIds,
+        entryFee: feeChallenge.entryFee,
+      });
+    }
+  }
 };
 
 const validateFeaturedCollectionEntry = async ({
