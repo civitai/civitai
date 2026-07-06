@@ -147,6 +147,15 @@ describe('manifest builders (SSRF-safe, server-derived host)', () => {
   it('IngressRoute matches EXACTLY the assigned host (never a wildcard/user input)', () => {
     const ir = buildDevTunnelIngressRoute(opts);
     expect(ir.spec.routes[0].match).toBe('Host(`dev-0123456789abcdef.civit.ai`)');
+    // REGRESSION (dev-tunnel 404 via Cloudflare): CF pulls the civit.ai origin over
+    // HTTP :80 (Flexible SSL), so a websecure-only (443) route is invisible to CF's
+    // port-80 origin request → 404. Must listen on BOTH `web` (:80) and `websecure`
+    // (:443), mirroring the working app-block routes. Never revert to 443-only.
+    expect(ir.spec.entryPoints).toEqual(['web', 'websecure']);
+    expect(ir.spec.entryPoints).toContain('web');
+    // No explicit `tls` block — Traefik serves TLS on `websecure` via its default
+    // cert, matching the app-block IngressRoute shape (which carry no `tls` key).
+    expect('tls' in ir.spec).toBe(false);
     // routes to the sish backend service, parsed into name/namespace/port
     expect(ir.spec.routes[0].services[0]).toMatchObject({
       name: 'sish-http',

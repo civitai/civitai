@@ -224,7 +224,13 @@ export function buildDevTunnelIngressRoute(opts: DevTunnelManifestOpts) {
       ...(externalDnsAnnotations ? { annotations: externalDnsAnnotations } : {}),
     },
     spec: {
-      entryPoints: ['websecure'],
+      // Cloudflare pulls the civit.ai origin over HTTP :80 (Flexible SSL); a
+      // websecure-only route is invisible to CF's port-80 origin request → 404.
+      // Mirror the app-block IngressRoutes (web+websecure). The forwardAuth gate
+      // middleware below is per-route, so naked-URL protection holds on both ports.
+      // Traefik still serves TLS on `websecure` via its default cert (no `tls` key
+      // needed — matches the proven-working app-block route shape).
+      entryPoints: ['web', 'websecure'],
       routes: [
         {
           match: `Host(\`${opts.host}\`)`,
@@ -239,7 +245,6 @@ export function buildDevTunnelIngressRoute(opts: DevTunnelManifestOpts) {
           ],
         },
       ],
-      tls: {},
     },
   } as const;
 }
