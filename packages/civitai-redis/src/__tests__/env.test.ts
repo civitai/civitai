@@ -43,11 +43,10 @@ describe('redisEnvSchema — sys self-heal defaults', () => {
     expect(parsed.REDIS_SYS_SELFHEAL_SUSTAINED_MS).toBe(20000);
     expect(parsed.REDIS_SYS_SELFHEAL_COOLDOWN_MS).toBe(60000);
     expect(parsed.REDIS_SYS_SELFHEAL_CHECK_INTERVAL_MS).toBe(1000);
-    // WIDER than the cluster jitter (4s vs 1s) — the sys watchdog's only trigger is sustained-
-    // inflight, so a slow-but-alive master could sync ~100 pods into one window; 4s de-correlates.
+    // Sys jitter is 4s; the cluster jitter was widened to 3s (2026-07-06) — the settle-time trigger
+    // fires on a broader (>=10s) envelope, so more pods can trip together and need de-correlating.
     expect(parsed.REDIS_SYS_SELFHEAL_RECONNECT_JITTER_MS).toBe(4000);
-    // The cluster jitter default is UNCHANGED (only the sys default was widened).
-    expect(parsed.REDIS_CLUSTER_SELFHEAL_RECONNECT_JITTER_MS).toBe(1000);
+    expect(parsed.REDIS_CLUSTER_SELFHEAL_RECONNECT_JITTER_MS).toBe(3000);
   });
 
   it('REDIS_SYS_SELFHEAL_ENABLED=false disables it (single-flip revert)', () => {

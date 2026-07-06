@@ -19,11 +19,14 @@
  * from the orphaned command so it never surfaces as an unhandledRejection.
  *
  * `onTimeout` (optional) is invoked exactly once iff the deadline fires (the command did NOT
- * settle in time). This is the SELF-HEAL TRIGGER SIGNAL: a healthy cluster client never hits the
- * deadline, a half-open one hits it constantly, and — unlike the inflight gauge — the
- * deadline-drain cannot erase this count (the drains ARE the hits). instrumentCommands wires it to
- * recordClusterDeadlineHit; tests inject a spy. It must never throw into the hot path, so it is
- * isolated in a try/catch.
+ * settle in time). It is isolated in a try/catch so a throwing hook can never break the deadline
+ * guard. NOTE (2026-07-06): instrumentCommands NO LONGER passes an onTimeout. The self-heal wedge
+ * signal used to be sourced here (onTimeout → recordClusterDeadlineHit), but that recorded a hit
+ * ONLY when the deadline REAPED a still-hanging command — invisible to slow commands that COMPLETE
+ * in the 10–15s band (under the 15s reap) and to any wedge where the deadline is not reaping. The
+ * signal moved to SETTLE time in instrumentCommands' done() (recordClusterCommandSettle), which
+ * observes every command's actual duration. `onTimeout` is retained as a generic optional hook
+ * (exercised by deadline.test.ts) but has no production caller.
  */
 export function withCommandDeadline<T>(
   p: Promise<T>,

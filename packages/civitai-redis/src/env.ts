@@ -70,9 +70,15 @@ export const redisEnvSchema = z
     // even if the deadline reaper is disabled. Healthy p99 ≈ 23ms, so 10s is ~400× p99 — a one-off
     // slow command is far below the N-in-window threshold. <= 0 disables slow-settle recording.
     REDIS_CLUSTER_SELFHEAL_SLOW_COMMAND_MS: z.coerce.number().default(10000),
-    // PER-POD RECONNECT JITTER (fleet-stampede brake): wait a random [0, this) before the
-    // actual reconnect so a synchronized fleet event doesn't stampede the cluster.
-    REDIS_CLUSTER_SELFHEAL_RECONNECT_JITTER_MS: z.coerce.number().default(1000),
+    // PER-POD RECONNECT JITTER (fleet-stampede brake): wait a random [0, this) before the actual
+    // reconnect so a synchronized fleet event doesn't stampede the cluster. WIDENED to 3s (was 1s)
+    // for the settle-time trigger: it fires on a BROADER envelope than the old reaper-only signal —
+    // any cluster command completing >= REDIS_CLUSTER_SELFHEAL_SLOW_COMMAND_MS (10s), not just those
+    // reaped at the 15s deadline. So a genuine >10s cluster event can trip ~100 pods on nearly the
+    // same tick; 1s was too thin to de-correlate that many destroy()+connect()s against an already-
+    // degraded cluster. 3s spreads them out while still keeping a single-pod heal well inside the
+    // ~60s kubelet readiness-shed window. Env-tunable (3–5s reasonable).
+    REDIS_CLUSTER_SELFHEAL_RECONNECT_JITTER_MS: z.coerce.number().default(3000),
     // ── SYS (SENTINEL) SELF-HEAL WATCHDOG ──────────────────────────────────────────────
     // The exact mirror of the cluster self-heal, for the OTHER node-redis client — the sysRedis
     // Sentinel HA client. WHY (incident 2026-07-03): a sentinel flap orphaned in-flight commands
