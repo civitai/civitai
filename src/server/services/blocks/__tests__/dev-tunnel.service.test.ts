@@ -137,9 +137,11 @@ describe('manifest builders (SSRF-safe, server-derived host)', () => {
       namespace: 'apps-dev-tunnel',
       port: 8080,
     });
-    // gated by the forwardAuth middleware
-    expect(ir.spec.routes[0].middlewares[0].name).toBe('dev-tunnel-gate-bki_s');
-    // labelled for the reaper + teardown sweep
+    // gated by the forwardAuth middleware — the ref uses the DNS-1123-sanitized
+    // suffix (`bki_s` → `bki-s`), matching the Middleware's actual resource name.
+    expect(ir.spec.routes[0].middlewares[0].name).toBe('dev-tunnel-gate-bki-s');
+    // labelled for the reaper + teardown sweep — the LABEL keeps the RAW sessionId
+    // (label values permit `_`; the reaper deletes by this label, not by name).
     expect(ir.metadata.labels['civitai.com/dev-tunnel']).toBe('true');
     expect(ir.metadata.labels['civitai.com/dev-tunnel-session']).toBe('bki_s');
   });
@@ -148,6 +150,33 @@ describe('manifest builders (SSRF-safe, server-derived host)', () => {
     const mw = buildDevTunnelMiddleware(opts);
     expect(mw.spec.forwardAuth.address).toBe('http://civitai-web/api/internal/dev-tunnel-gate');
     expect(mw.spec.forwardAuth.authResponseHeaders).toContain('X-Dev-User-Id');
+  });
+
+  // REGRESSION: the real sessionId is `bki_<ULID>` — Crockford base32 (UPPERCASE)
+  // with a `_`. Interpolating it raw into a k8s RESOURCE name produces an invalid
+  // name ("must be a lowercase RFC 1123 subdomain"), so the route-apply Job fails,
+  // the mint hangs, and the CLI times out. The Middleware/IngressRoute names (and
+  // the route→middleware ref) MUST be DNS-1123-sanitized; the session LABEL keeps
+  // the raw id for the reaper.
+  it('derives DNS-1123-valid resource names from a real bki_<ULID> sessionId', () => {
+    const RFC1123 = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/;
+    const realId = 'bki_01KWW3E1GT3JZW1XNBA9XA06ZM'; // uppercase + underscore
+    const realOpts = { ...opts, sessionId: realId };
+
+    const mw = buildDevTunnelMiddleware(realOpts);
+    const ir = buildDevTunnelIngressRoute(realOpts);
+    const expectedSuffix = 'bki-01kww3e1gt3jzw1xnba9xa06zm';
+
+    // Names are valid k8s resource names (no uppercase / underscore).
+    expect(mw.metadata.name).toBe(`dev-tunnel-gate-${expectedSuffix}`);
+    expect(ir.metadata.name).toBe(`dev-tunnel-${expectedSuffix}`);
+    expect(mw.metadata.name).toMatch(RFC1123);
+    expect(ir.metadata.name).toMatch(RFC1123);
+    // The route's middleware ref must equal the Middleware's actual name.
+    expect(ir.spec.routes[0].middlewares[0].name).toBe(mw.metadata.name);
+    // Labels retain the RAW sessionId so the reaper's label-selector delete matches.
+    expect(mw.metadata.labels['civitai.com/dev-tunnel-session']).toBe(realId);
+    expect(ir.metadata.labels['civitai.com/dev-tunnel-session']).toBe(realId);
   });
 });
 
