@@ -7,8 +7,11 @@ import {
 } from '~/server/schema/blocks/external-app.schema';
 import {
   OFFSITE_CONTENT_RATINGS,
+  OFFSITE_REJECTION_REASON_MAX,
+  OFFSITE_REJECTION_REASON_MIN,
   type SubmitExternalListingInput,
 } from '~/server/schema/blocks/offsite-listing.schema';
+import { assertListingAssetsComplete } from '~/server/services/blocks/app-listing-assets.service';
 import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import { newAppListingId, newAppListingPublishRequestId } from '~/server/utils/app-block-ids';
 
@@ -297,6 +300,225 @@ export async function withdrawExternalRequest(opts: {
 async function deleteDraftListing(appListingId: string | null): Promise<void> {
   if (!appListingId) return;
   await dbWrite.appListing.deleteMany({ where: { id: appListingId, status: 'draft' } });
+}
+
+// ---------------------------------------------------------------------------
+// approveExternalRequest / rejectExternalRequest (moderator) — PR-b.
+//
+// Mirror the on-site `publish-request.service` approve/reject state machine over
+// the `AppListingPublishRequest` + `AppListing` tables (no bundle / build /
+// deploy). Approve flips the DRAFT listing → approved (the read path then
+// surfaces it in the store); reject DELETES the draft (releases the slug). Both
+// writes are status-guarded `updateMany`/`deleteMany` so a concurrent
+// approve/reject/withdraw can never double-act (TOCTOU).
+// ---------------------------------------------------------------------------
+
+export type ApproveExternalRequestResult = {
+  publishRequestId: string;
+  listingId: string;
+  slug: string;
+};
+
+/**
+ * MOD approve of a pending off-site request. Loads the request + its draft
+ * `AppListing`, asserts `pending`, and enforces two gates BEFORE any mutation:
+ *
+ *   1. {@link assertListingAssetsComplete} — **THE P3 ACTIVATION.** Approve FAILS
+ *      `BAD_REQUEST { missing }` unless the draft has an icon AND a cover AND ≥1
+ *      screenshot (a screenshot whose backing Image was deleted — `imageId` null
+ *      — does NOT count, mirroring `getListingAssets`' completeness math). This is
+ *      the intended live wiring of the dark P1 gate.
+ *   2. `validateExternalUrl` on the STORED `externalUrl` (defense-in-depth — a
+ *      somehow-bad stored value blocks approve; the card link opens in the user's
+ *      browser, so a non-https stored URL must never reach the store).
+ *
+ * Then, in ONE transaction: flip the request `pending → approved` (status-guarded
+ * TOCTOU), flip the listing `draft → approved` (status-guarded), and supersede any
+ * sibling pending request for the same slug (parity with the on-site approve).
+ *
+ * NOTE (self-approve): v1 deliberately ALLOWS a moderator to approve their OWN
+ * submission (reviewer == submitter) — this enables single-mod dogfooding + the
+ * approve e2e, and mods are trusted. A reviewer≠submitter restriction is DEFERRED
+ * to GA / P3b hardening (alongside report → verify-ownership → delist/claim). Do
+ * NOT add a self-approve block here without that product decision.
+ */
+export async function approveExternalRequest(opts: {
+  publishRequestId: string;
+  reviewerUserId: number;
+  approvalNotes?: string | null;
+}): Promise<ApproveExternalRequestResult> {
+  const { publishRequestId, reviewerUserId } = opts;
+  const approvalNotes = opts.approvalNotes ?? null;
+
+  // (1) Classify: an off-site + pending request pointing at a draft listing.
+  const request = await dbRead.appListingPublishRequest.findUnique({
+    where: { id: publishRequestId },
+    select: { id: true, status: true, kind: true, slug: true, appListingId: true },
+  });
+  if (!request) {
+    throw new OffsiteRequestError('NOT_FOUND', `publish request ${publishRequestId} not found`);
+  }
+  if (request.kind !== 'offsite') {
+    throw new OffsiteRequestError(
+      'NOT_FOUND',
+      `publish request ${publishRequestId} is not an off-site request`
+    );
+  }
+  if (request.status !== 'pending') {
+    throw new OffsiteRequestError(
+      'NOT_PENDING',
+      `cannot approve a request in status ${request.status}`
+    );
+  }
+  if (!request.appListingId) {
+    throw new OffsiteRequestError(
+      'NOT_FOUND',
+      `publish request ${publishRequestId} has no draft listing`
+    );
+  }
+
+  // (2) Load the draft listing + count its REAL (imageId-bearing) screenshots.
+  const listing = await dbRead.appListing.findUnique({
+    where: { id: request.appListingId },
+    select: { id: true, status: true, externalUrl: true, iconId: true, coverId: true },
+  });
+  if (!listing) {
+    throw new OffsiteRequestError('NOT_FOUND', `draft listing ${request.appListingId} not found`);
+  }
+  const screenshotCount = await dbRead.appListingScreenshot.count({
+    where: { appListingId: request.appListingId, imageId: { not: null } },
+  });
+
+  // (3) THE P3 ACTIVATION — mandatory-asset gate (throws BAD_REQUEST { missing }).
+  assertListingAssetsComplete({
+    iconId: listing.iconId,
+    coverId: listing.coverId,
+    screenshotCount,
+  });
+
+  // (4) Defense-in-depth: re-validate the STORED externalUrl before it can reach
+  // the store (mirrors submit + the read-path `safeExternalUrl`).
+  const url = validateExternalUrl(listing.externalUrl);
+  if (!url.ok) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `stored externalUrl is invalid and cannot be approved: ${url.error}`,
+    });
+  }
+
+  // (5) One transaction: guarded request flip + guarded listing flip + supersede.
+  await dbWrite.$transaction(async (tx) => {
+    const req = await tx.appListingPublishRequest.updateMany({
+      where: { id: publishRequestId, status: 'pending' },
+      data: {
+        status: 'approved',
+        reviewedByUserId: reviewerUserId,
+        reviewedAt: new Date(),
+        approvalNotes,
+      },
+    });
+    if (req.count === 0) {
+      // Lost the TOCTOU race to a concurrent withdraw/reject/approve — the whole
+      // tx rolls back.
+      throw new OffsiteRequestError(
+        'NOT_PENDING',
+        `cannot approve — the request is no longer pending`
+      );
+    }
+    const flipped = await tx.appListing.updateMany({
+      where: { id: request.appListingId, status: 'draft' },
+      data: { status: 'approved' },
+    });
+    if (flipped.count === 0) {
+      // The draft was concurrently deleted / already flipped — abort (rolls back
+      // the request flip) rather than approve a request whose listing is gone.
+      throw new OffsiteRequestError(
+        'NOT_PENDING',
+        `cannot approve — the draft listing is no longer available`
+      );
+    }
+    // Supersede any OTHER pending off-site request for this slug (parity with the
+    // on-site approve). With `AppListing.slug @unique` a sibling draft can't exist,
+    // so this is a rarely-non-empty safety net; scoped to NOT touch the approved
+    // row.
+    await tx.appListingPublishRequest.updateMany({
+      where: {
+        slug: request.slug,
+        status: 'pending',
+        kind: 'offsite',
+        NOT: { id: publishRequestId },
+      },
+      data: { status: 'withdrawn' },
+    });
+  });
+
+  return { publishRequestId, listingId: request.appListingId, slug: request.slug };
+}
+
+/**
+ * MOD reject of a pending off-site request. Requires a `rejectionReason` of ≥10
+ * (trimmed) chars, flips the request `pending → rejected` + sets `reviewedBy*` /
+ * `rejectionReason`, and DELETES the draft `AppListing` (status-guarded
+ * `deleteMany({ id, status:'draft' })` so it can never remove an approved listing
+ * — releases the slug). The request flip is a status-guarded `updateMany` so a
+ * concurrent approve/withdraw that already flipped the row yields NOT_PENDING here
+ * (and, having matched 0, we never reach the delete). Non-pending → NOT_PENDING.
+ */
+export async function rejectExternalRequest(opts: {
+  publishRequestId: string;
+  reviewerUserId: number;
+  rejectionReason: string;
+}): Promise<void> {
+  const { publishRequestId, reviewerUserId } = opts;
+  const reason = opts.rejectionReason.trim();
+  if (reason.length < OFFSITE_REJECTION_REASON_MIN) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `rejection reason must be at least ${OFFSITE_REJECTION_REASON_MIN} characters`,
+    });
+  }
+  if (reason.length > OFFSITE_REJECTION_REASON_MAX) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `rejection reason must be at most ${OFFSITE_REJECTION_REASON_MAX} characters`,
+    });
+  }
+
+  const request = await dbRead.appListingPublishRequest.findUnique({
+    where: { id: publishRequestId },
+    select: { id: true, status: true, kind: true, appListingId: true },
+  });
+  if (!request) {
+    throw new OffsiteRequestError('NOT_FOUND', `publish request ${publishRequestId} not found`);
+  }
+  if (request.kind !== 'offsite') {
+    throw new OffsiteRequestError(
+      'NOT_FOUND',
+      `publish request ${publishRequestId} is not an off-site request`
+    );
+  }
+  if (request.status !== 'pending') {
+    throw new OffsiteRequestError(
+      'NOT_PENDING',
+      `cannot reject a request in status ${request.status}`
+    );
+  }
+
+  // Status-guarded flip (TOCTOU): a concurrent approve/withdraw that already
+  // flipped the row matches 0 here → NOT_PENDING; only the winner deletes.
+  const { count } = await dbWrite.appListingPublishRequest.updateMany({
+    where: { id: publishRequestId, status: 'pending' },
+    data: {
+      status: 'rejected',
+      reviewedByUserId: reviewerUserId,
+      reviewedAt: new Date(),
+      rejectionReason: reason,
+    },
+  });
+  if (count === 0) {
+    throw new OffsiteRequestError('NOT_PENDING', `cannot reject — the request is no longer pending`);
+  }
+  await deleteDraftListing(request.appListingId);
 }
 
 // ---------------------------------------------------------------------------

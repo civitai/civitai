@@ -15,8 +15,10 @@ import {
   listAppListingsSchema,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import {
+  approveExternalRequestSchema,
   listMySubmissionsSchema,
   listOffsiteRequestsSchema,
+  rejectExternalRequestSchema,
   submitExternalListingSchema,
   withdrawExternalRequestSchema,
 } from '~/server/schema/blocks/offsite-listing.schema';
@@ -281,6 +283,64 @@ export const appListingsRouter = router({
         '~/server/services/blocks/offsite-listing.service'
       );
       return listRejectedOffsiteRequests(input);
+    }),
+
+  /**
+   * MOD: approve a pending off-site request (PR-b). Loads the request + its draft
+   * listing, enforces `assertListingAssetsComplete` (THE P3 activation — approve
+   * FAILS unless icon+cover+≥1 screenshot) + re-validates the stored externalUrl,
+   * then flips the listing draft→approved + the request→approved (status-guarded)
+   * and supersedes sibling pendings. v1 ALLOWS mod self-approve (reviewer ==
+   * submitter — trusted, enables single-mod dogfood; a reviewer≠submitter
+   * restriction is deferred to GA/P3b). All failure modes map to BAD_REQUEST with
+   * the service message (mirrors `blocks.approveRequest`).
+   */
+  approveExternalRequest: moderatorProcedure
+    .input(approveExternalRequestSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Approving off-site listings is restricted to civitai team');
+      }
+      const { approveExternalRequest } = await import(
+        '~/server/services/blocks/offsite-listing.service'
+      );
+      try {
+        return await approveExternalRequest({
+          publishRequestId: input.publishRequestId,
+          reviewerUserId: ctx.user.id,
+          approvalNotes: input.approvalNotes,
+        });
+      } catch (err) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+      }
+    }),
+
+  /**
+   * MOD: reject a pending off-site request (PR-b). Requires `rejectionReason` ≥10
+   * chars; flips the request→rejected + sets `reviewedBy*` and DELETES the draft
+   * listing (status-guarded — releases the slug, never removes an approved
+   * listing). All failure modes map to BAD_REQUEST with the service message
+   * (mirrors `blocks.rejectRequest`).
+   */
+  rejectExternalRequest: moderatorProcedure
+    .input(rejectExternalRequestSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Rejecting off-site listings is restricted to civitai team');
+      }
+      const { rejectExternalRequest } = await import(
+        '~/server/services/blocks/offsite-listing.service'
+      );
+      try {
+        await rejectExternalRequest({
+          publishRequestId: input.publishRequestId,
+          reviewerUserId: ctx.user.id,
+          rejectionReason: input.rejectionReason,
+        });
+      } catch (err) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+      }
+      return { ok: true };
     }),
 
   // -------------------------------------------------------------------------

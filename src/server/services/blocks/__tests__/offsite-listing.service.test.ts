@@ -4,6 +4,8 @@ import { TRPCError } from '@trpc/server';
 import {
   MAX_PENDING_OFFSITE_SUBMISSIONS,
   OffsiteRequestError,
+  approveExternalRequest,
+  rejectExternalRequest,
   submitExternalListing,
   withdrawExternalRequest,
 } from '~/server/services/blocks/offsite-listing.service';
@@ -24,7 +26,11 @@ const { mockDb, ids } = vi.hoisted(() => ({
     appListing: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       create: vi.fn(async (args: { data: unknown }) => args.data),
+      updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
       deleteMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
+    },
+    appListingScreenshot: {
+      count: vi.fn(async (..._a: unknown[]) => 0),
     },
     appBlock: {
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
@@ -61,7 +67,9 @@ beforeEach(() => {
   ids.n = 0;
   mockDb.appListing.findUnique.mockReset().mockResolvedValue(null);
   mockDb.appListing.create.mockReset().mockImplementation(async (a: { data: unknown }) => a.data);
+  mockDb.appListing.updateMany.mockReset().mockResolvedValue({ count: 1 });
   mockDb.appListing.deleteMany.mockReset().mockResolvedValue({ count: 1 });
+  mockDb.appListingScreenshot.count.mockReset().mockResolvedValue(0);
   mockDb.appBlock.findFirst.mockReset().mockResolvedValue(null);
   mockDb.appListingPublishRequest.findUnique.mockReset().mockResolvedValue(null);
   mockDb.appListingPublishRequest.count.mockReset().mockResolvedValue(0);
@@ -351,5 +359,279 @@ describe('withdrawExternalRequest', () => {
     await expect(
       withdrawExternalRequest({ publishRequestId: 'alpr_1', userId: CALLER })
     ).rejects.toBeInstanceOf(OffsiteRequestError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// approveExternalRequest
+// ---------------------------------------------------------------------------
+
+const MOD = 7; // reviewer
+
+/** Stage a pending offsite request + a draft listing with the given asset state. */
+function stageApproveScenario(listing: {
+  iconId?: number | null;
+  coverId?: number | null;
+  screenshotCount?: number;
+  externalUrl?: string;
+  status?: string;
+}) {
+  mockDb.appListingPublishRequest.findUnique.mockResolvedValue({
+    id: 'alpr_1',
+    status: 'pending',
+    kind: 'offsite',
+    slug: 'cool-app',
+    appListingId: 'apl_1',
+  });
+  mockDb.appListing.findUnique.mockResolvedValue({
+    id: 'apl_1',
+    status: listing.status ?? 'draft',
+    externalUrl: listing.externalUrl ?? 'https://cool.example.com/app',
+    iconId: listing.iconId === undefined ? 1 : listing.iconId,
+    coverId: listing.coverId === undefined ? 2 : listing.coverId,
+  });
+  mockDb.appListingScreenshot.count.mockResolvedValue(
+    listing.screenshotCount === undefined ? 1 : listing.screenshotCount
+  );
+}
+
+describe('approveExternalRequest', () => {
+  it('happy path: pending + assets-complete → listing draft→approved + request approved w/ reviewedBy*/approvalNotes', async () => {
+    stageApproveScenario({ iconId: 1, coverId: 2, screenshotCount: 1 });
+    const res = await approveExternalRequest({
+      publishRequestId: 'alpr_1',
+      reviewerUserId: MOD,
+      approvalNotes: 'looks good',
+    });
+    expect(res).toEqual({ publishRequestId: 'alpr_1', listingId: 'apl_1', slug: 'cool-app' });
+
+    // Request flip (status-guarded) is the FIRST updateMany call.
+    const reqCall = mockDb.appListingPublishRequest.updateMany.mock.calls[0][0] as {
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    };
+    expect(reqCall.where).toEqual({ id: 'alpr_1', status: 'pending' });
+    expect(reqCall.data).toMatchObject({
+      status: 'approved',
+      reviewedByUserId: MOD,
+      approvalNotes: 'looks good',
+    });
+    expect(reqCall.data.reviewedAt).toBeInstanceOf(Date);
+
+    // Listing flip (status-guarded so an approved listing is never re-flipped).
+    expect(mockDb.appListing.updateMany).toHaveBeenCalledWith({
+      where: { id: 'apl_1', status: 'draft' },
+      data: { status: 'approved' },
+    });
+    expect(mockDb.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('supersedes any SIBLING pending request for the same slug (parity with on-site)', async () => {
+    stageApproveScenario({ iconId: 1, coverId: 2, screenshotCount: 1 });
+    await approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD });
+    // The 2nd request updateMany is the supersede: same slug, pending, NOT this row.
+    const supersede = mockDb.appListingPublishRequest.updateMany.mock.calls[1][0] as {
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    };
+    expect(supersede.where).toMatchObject({
+      slug: 'cool-app',
+      status: 'pending',
+      kind: 'offsite',
+      NOT: { id: 'alpr_1' },
+    });
+    expect(supersede.data).toEqual({ status: 'withdrawn' });
+  });
+
+  it('BLOCKED by assertListingAssetsComplete — missing ICON → BAD_REQUEST, no mutation', async () => {
+    stageApproveScenario({ iconId: null, coverId: 2, screenshotCount: 1 });
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('icon') });
+    expect(mockDb.$transaction).not.toHaveBeenCalled();
+    expect(mockDb.appListing.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('BLOCKED by assertListingAssetsComplete — missing COVER → BAD_REQUEST, no mutation', async () => {
+    stageApproveScenario({ iconId: 1, coverId: null, screenshotCount: 1 });
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('cover') });
+    expect(mockDb.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('BLOCKED by assertListingAssetsComplete — missing SCREENSHOT → BAD_REQUEST, no mutation', async () => {
+    stageApproveScenario({ iconId: 1, coverId: 2, screenshotCount: 0 });
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('screenshots'),
+    });
+    expect(mockDb.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('all assets present → the gate PASSES (approve proceeds)', async () => {
+    stageApproveScenario({ iconId: 9, coverId: 8, screenshotCount: 3 });
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
+    ).resolves.toMatchObject({ listingId: 'apl_1' });
+    // A screenshot whose Image was deleted (imageId null) is excluded by the count
+    // query — assert we filter on imageId != null.
+    expect(mockDb.appListingScreenshot.count).toHaveBeenCalledWith({
+      where: { appListingId: 'apl_1', imageId: { not: null } },
+    });
+  });
+
+  it('rejects a NON-PENDING request (already approved) → NOT_PENDING, no listing load', async () => {
+    mockDb.appListingPublishRequest.findUnique.mockResolvedValue({
+      id: 'alpr_1',
+      status: 'approved',
+      kind: 'offsite',
+      slug: 'cool-app',
+      appListingId: 'apl_1',
+    });
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
+    ).rejects.toMatchObject({ code: 'NOT_PENDING' });
+    expect(mockDb.appListing.findUnique).not.toHaveBeenCalled();
+    expect(mockDb.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('NOT_FOUND when the request does not exist', async () => {
+    mockDb.appListingPublishRequest.findUnique.mockResolvedValue(null);
+    await expect(
+      approveExternalRequest({ publishRequestId: 'nope', reviewerUserId: MOD })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('re-validates the STORED externalUrl — a non-https stored value BLOCKS approve', async () => {
+    stageApproveScenario({
+      iconId: 1,
+      coverId: 2,
+      screenshotCount: 1,
+      externalUrl: 'http://insecure.example.com',
+    });
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('externalUrl'),
+    });
+    expect(mockDb.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('TOCTOU: the guarded request flip matches 0 rows (concurrent withdraw) → NOT_PENDING, listing NOT flipped', async () => {
+    stageApproveScenario({ iconId: 1, coverId: 2, screenshotCount: 1 });
+    // Inside the tx, the request updateMany loses the race → count 0.
+    mockDb.appListingPublishRequest.updateMany.mockResolvedValue({ count: 0 });
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
+    ).rejects.toMatchObject({ code: 'NOT_PENDING' });
+    // The tx opened + the request flip ran, but we bailed BEFORE the listing flip.
+    expect(mockDb.$transaction).toHaveBeenCalledTimes(1);
+    expect(mockDb.appListing.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('mod SELF-APPROVE is ALLOWED (v1): reviewer == submitter succeeds (no self-approve block)', async () => {
+    // The request was submitted by the SAME mod who now approves it. The service
+    // does not compare reviewer to submitter, so this is allowed by design.
+    mockDb.appListingPublishRequest.findUnique.mockResolvedValue({
+      id: 'alpr_1',
+      status: 'pending',
+      kind: 'offsite',
+      slug: 'cool-app',
+      appListingId: 'apl_1',
+      submittedByUserId: MOD, // == reviewerUserId below
+    });
+    mockDb.appListing.findUnique.mockResolvedValue({
+      id: 'apl_1',
+      status: 'draft',
+      externalUrl: 'https://cool.example.com/app',
+      iconId: 1,
+      coverId: 2,
+    });
+    mockDb.appListingScreenshot.count.mockResolvedValue(1);
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
+    ).resolves.toMatchObject({ publishRequestId: 'alpr_1', listingId: 'apl_1' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// rejectExternalRequest
+// ---------------------------------------------------------------------------
+
+describe('rejectExternalRequest', () => {
+  const REASON = 'not a real app, looks like spam';
+
+  it('reason < 10 chars → BAD_REQUEST, no DB read/write', async () => {
+    await expect(
+      rejectExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD, rejectionReason: 'too short' })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('at least') });
+    expect(mockDb.appListingPublishRequest.findUnique).not.toHaveBeenCalled();
+    expect(mockDb.appListingPublishRequest.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('pending → rejected + reviewedBy*/rejectionReason set + draft listing DELETED', async () => {
+    mockDb.appListingPublishRequest.findUnique.mockResolvedValue({
+      id: 'alpr_1',
+      status: 'pending',
+      kind: 'offsite',
+      appListingId: 'apl_1',
+    });
+    await rejectExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD, rejectionReason: REASON });
+
+    const call = mockDb.appListingPublishRequest.updateMany.mock.calls[0][0] as {
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    };
+    expect(call.where).toEqual({ id: 'alpr_1', status: 'pending' });
+    expect(call.data).toMatchObject({
+      status: 'rejected',
+      reviewedByUserId: MOD,
+      rejectionReason: REASON,
+    });
+    expect(call.data.reviewedAt).toBeInstanceOf(Date);
+    // The draft listing is deleted (status-guarded — never removes an approved one).
+    expect(mockDb.appListing.deleteMany).toHaveBeenCalledWith({
+      where: { id: 'apl_1', status: 'draft' },
+    });
+  });
+
+  it('a NON-PENDING request → NOT_PENDING, no write', async () => {
+    mockDb.appListingPublishRequest.findUnique.mockResolvedValue({
+      id: 'alpr_1',
+      status: 'approved',
+      kind: 'offsite',
+      appListingId: 'apl_1',
+    });
+    await expect(
+      rejectExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD, rejectionReason: REASON })
+    ).rejects.toMatchObject({ code: 'NOT_PENDING' });
+    expect(mockDb.appListingPublishRequest.updateMany).not.toHaveBeenCalled();
+    expect(mockDb.appListing.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('NOT_FOUND when the request does not exist', async () => {
+    mockDb.appListingPublishRequest.findUnique.mockResolvedValue(null);
+    await expect(
+      rejectExternalRequest({ publishRequestId: 'nope', reviewerUserId: MOD, rejectionReason: REASON })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('TOCTOU: the guarded flip matches 0 rows (concurrent approve) → NOT_PENDING, draft NOT deleted', async () => {
+    mockDb.appListingPublishRequest.findUnique.mockResolvedValue({
+      id: 'alpr_1',
+      status: 'pending',
+      kind: 'offsite',
+      appListingId: 'apl_1',
+    });
+    mockDb.appListingPublishRequest.updateMany.mockResolvedValue({ count: 0 });
+    await expect(
+      rejectExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD, rejectionReason: REASON })
+    ).rejects.toMatchObject({ code: 'NOT_PENDING' });
+    // Lost the flip → we never delete the draft (the winner owns cleanup).
+    expect(mockDb.appListing.deleteMany).not.toHaveBeenCalled();
   });
 });
