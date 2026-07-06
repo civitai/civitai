@@ -3614,7 +3614,12 @@ export async function bustModelModRulesCache() {
 
 export const getPrivateModelCount = async ({ userId }: { userId: number }) => {
   return await dbRead.model.count({
-    where: { userId, availability: Availability.Private },
+    where: {
+      userId,
+      availability: Availability.Private,
+      status: { not: ModelStatus.Deleted },
+      deletedAt: null,
+    },
   });
 };
 

@@ -18,29 +18,19 @@
  * timer is always cleared in finally() (within `ms`), and Promise.race reaps any late rejection
  * from the orphaned command so it never surfaces as an unhandledRejection.
  *
- * `onTimeout` (optional) is invoked exactly once iff the deadline fires (the command did NOT
- * settle in time). This is the SELF-HEAL TRIGGER SIGNAL: a healthy cluster client never hits the
- * deadline, a half-open one hits it constantly, and — unlike the inflight gauge — the
- * deadline-drain cannot erase this count (the drains ARE the hits). instrumentCommands wires it to
- * recordClusterDeadlineHit; tests inject a spy. It must never throw into the hot path, so it is
- * isolated in a try/catch.
+ * NOTE (2026-07-06): this used to take an optional `onTimeout` hook that instrumentCommands wired
+ * to recordClusterDeadlineHit — the self-heal wedge signal was sourced from the deadline REAP. That
+ * recorded a hit ONLY when the deadline reaped a still-hanging command, so it was blind to slow
+ * commands that COMPLETE in the 10–15s band (under the 15s reap) and to any wedge where the deadline
+ * isn't reaping. The signal moved to SETTLE time in instrumentCommands' done()
+ * (recordClusterCommandSettle), which observes every command's actual duration. With no remaining
+ * caller, the `onTimeout` param was dropped (YAGNI).
  */
-export function withCommandDeadline<T>(
-  p: Promise<T>,
-  ms: number,
-  onTimeout?: () => void
-): Promise<T> {
+export function withCommandDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
   if (!ms || ms <= 0) return p;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
-      if (onTimeout) {
-        try {
-          onTimeout();
-        } catch {
-          // A broken hook (e.g. a throwing recorder) must never break the deadline guard.
-        }
-      }
       reject(new Error(`redis cluster command timed out after ${ms}ms`));
     }, ms);
   });

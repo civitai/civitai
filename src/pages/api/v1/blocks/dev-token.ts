@@ -374,7 +374,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
         message:
           'dev-token needs a personal API key (full scope, create at ' +
           'civitai.com/user/account) OR an OAuth login whose token carries the ' +
-          'App Blocks submit scope; real Buzz spend additionally needs AI Services scope',
+          'Apps submit scope; real Buzz spend additionally needs AI Services scope',
       });
       return;
     }
@@ -386,18 +386,18 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // rejected. The runtime spend belt re-checks the author capability against the
   // token SUBJECT; we keep the MINT author-gated too (scope doc §4 / §6 R2).
   if (user.bannedAt) {
-    res.status(403).json({ message: 'App Blocks is restricted to the civitai team' });
+    res.status(403).json({ message: 'Apps are restricted to the Civitai team' });
     return;
   }
   if (!(await isAppBlocksAuthorEnabled({ user }))) {
-    res.status(403).json({ message: 'App Blocks is restricted to the civitai team' });
+    res.status(403).json({ message: 'Apps are restricted to the Civitai team' });
     return;
   }
 
   // 3. Feature flag for THIS user (mirrors submit-version + the prod mint's
   // per-user `appBlocks` gate). 503 (dark) when off.
   if (!(await isAppBlocksEnabled({ user }))) {
-    res.status(503).json({ message: 'App Blocks is not enabled' });
+    res.status(503).json({ message: 'Apps are not enabled' });
     return;
   }
 

@@ -135,7 +135,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     if (!Flags.hasFlag(session.tokenScope, TokenScope.AppBlocksSubmit)) {
       res.status(403).json({
         message:
-          'App Blocks submit requires a personal API key or an OAuth token with the App Blocks submit scope',
+          'Submitting an App requires a personal API key or an OAuth token with the Apps submit scope',
       });
       return;
     }
@@ -148,11 +148,11 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // costs a decode. (This is AUTHZ; the `isAppBlocksEnabled` kill-switch below
   // is a separate gate.)
   if (user.bannedAt) {
-    res.status(403).json({ message: 'App Blocks is restricted to the civitai team' });
+    res.status(403).json({ message: 'Apps are restricted to the Civitai team' });
     return;
   }
   if (!(await isAppBlocksAuthorEnabled({ user }))) {
-    res.status(403).json({ message: 'App Blocks is restricted to the civitai team' });
+    res.status(403).json({ message: 'Apps are restricted to the Civitai team' });
     return;
   }
 
@@ -160,7 +160,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // `moderators`-segmented flag resolves ON for them (mirrors the session route
   // + enforceAppBlocksFlag). 503 when off.
   if (!(await isAppBlocksEnabled({ user }))) {
-    res.status(503).json({ message: 'App Blocks is not enabled' });
+    res.status(503).json({ message: 'Apps are not enabled' });
     return;
   }
 

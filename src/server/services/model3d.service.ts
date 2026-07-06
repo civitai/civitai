@@ -19,8 +19,8 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { enqueueJobs } from '~/server/services/job-queue.service';
 import {
-  allBrowsingLevelsFlag,
   parseBitwiseBrowsingLevel,
+  publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { canViewModel3d } from '~/server/services/model3d.visibility';
 import { imageSelect } from '~/server/selectors/image.selector';
@@ -215,9 +215,19 @@ export const getModel3DById = async ({
       if (model3d.deletedAt) throw throwNotFoundError(`No 3D model with id ${id}`);
     }
 
+    // The signed-in user's own recommend (thumbs-up), so the detail page can
+    // render the gold thumbs-up toggle in its correct state.
+    const userReview = user
+      ? await dbRead.model3DReview.findUnique({
+          where: { model3dId_userId: { model3dId: id, userId: user.id } },
+          select: { id: true, recommended: true },
+        })
+      : null;
+
     return {
       ...model3d,
       tags: model3d.tags.map((t) => t.tag),
+      userReview,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -354,25 +364,19 @@ export const getModel3DsInfinite = async ({
   sort,
   period,
   animated,
+  unrated,
   browsingLevel,
   user,
 }: GetModel3DsInfiniteInput & { user?: SessionUser | null }) => {
   try {
     const isModerator = !!user?.isModerator;
 
-    // Mod-only gating at the service layer (feature-flag-equivalent). Without a
-    // signed-in mod, surface nothing. Workstream H wires the Flipt flag at the
-    // router middleware layer; this is a defense-in-depth check.
-    if (!isModerator) {
-      // Owner-scoped listing is allowed (so users can see their own drafts on
-      // their profile tab once the feature flag opens up). Anonymous + non-mod
-      // viewers get an empty list until the flag flips.
-      if (!user) return { items: [], nextCursor: undefined as number | undefined };
-      // Allow the user to fetch their own; otherwise empty.
-      if (userId && userId !== user.id && !username) {
-        return { items: [], nextCursor: undefined as number | undefined };
-      }
-    }
+    // Access to the feed is gated by the `model3dFeed` flag at the router /
+    // page layer. Content visibility below is self-contained — the status
+    // filter serves Published-only to non-owners, drafts are gated to
+    // owner/mod, and unrated/nsfw rows are filtered for non-owners — so the
+    // feed is safe to serve to anonymous + non-mod viewers (previously they
+    // were short-circuited to an empty list, which hid the public feed).
 
     const AND: Prisma.Model3DWhereInput[] = [{ deletedAt: null }];
 
@@ -446,20 +450,31 @@ export const getModel3DsInfinite = async ({
         (!!username && !!user.username && username === user.username));
     const canSeeUnrated = isModerator || isOwnerScoped;
 
-    if (!canSeeUnrated) {
-      AND.push({ nsfwLevel: { not: 0 } });
-    }
+    if (unrated && canSeeUnrated) {
+      // Mod/owner "unrated" filter — surface only not-yet-rated rows so mods
+      // can find + rate them. Bypasses the browsing-level filter entirely.
+      AND.push({ nsfwLevel: 0 });
+    } else {
+      if (!canSeeUnrated) {
+        AND.push({ nsfwLevel: { not: 0 } });
+      }
 
-    const effectiveBrowsingLevel = browsingLevel ?? allBrowsingLevelsFlag;
-    const allowedLevels = parseBitwiseBrowsingLevel(effectiveBrowsingLevel);
-    if (allowedLevels.length > 0) {
-      if (canSeeUnrated) {
-        // Owners + mods may still see their unrated drafts (nsfwLevel = 0).
-        AND.push({
-          OR: [{ nsfwLevel: { in: allowedLevels } }, { nsfwLevel: 0 }],
-        });
-      } else {
-        AND.push({ nsfwLevel: { in: allowedLevels } });
+      // `browsingLevel` is already clamped per-request by the `applyDomainFeature`
+      // middleware on `publicProcedure` — SFW on the green domain, for everyone
+      // including mods. Trust it (like the models feed does) and default to
+      // SFW-public when it's absent/0, so a missing level can never fall back to
+      // "all levels" and leak mature content into the feed.
+      const effectiveBrowsingLevel = browsingLevel || publicBrowsingLevelsFlag;
+      const allowedLevels = parseBitwiseBrowsingLevel(effectiveBrowsingLevel);
+      if (allowedLevels.length > 0) {
+        if (canSeeUnrated) {
+          // Owners + mods may still see their unrated drafts (nsfwLevel = 0).
+          AND.push({
+            OR: [{ nsfwLevel: { in: allowedLevels } }, { nsfwLevel: 0 }],
+          });
+        } else {
+          AND.push({ nsfwLevel: { in: allowedLevels } });
+        }
       }
     }
 
@@ -483,18 +498,11 @@ export const getModel3DsInfinite = async ({
       switch (sort) {
         case Model3DSort.MostDownloaded:
           return [{ metric: { downloadCount: 'desc' } }, { id: 'desc' }];
-        case Model3DSort.HighestRated:
-          // "Highest rated" = highest thumbs-up share. We don't have a stored
-          // ratio column, so order by recommendedCount as a proxy (rows with
-          // more recommends rise) — matches the spirit of the regular models
-          // feed (which also uses an aggregate metric, not a normalized rate).
-          return [
-            { metric: { recommendedCount: 'desc' } },
-            { metric: { ratingCount: 'desc' } },
-            { id: 'desc' },
-          ];
         case Model3DSort.MostLiked:
-          return [{ metric: { reactionCount: 'desc' } }, { id: 'desc' }];
+          // "Most Liked" = thumbs-up (recommend) count. `reactionCount` used to
+          // back this but it was copied from the thumbnail image's reactions —
+          // a metric nothing feeds — so it was effectively always 0.
+          return [{ metric: { recommendedCount: 'desc' } }, { id: 'desc' }];
         case Model3DSort.Newest:
         default:
           return [{ publishedAt: { sort: 'desc', nulls: 'last' } }, { id: 'desc' }];
@@ -516,13 +524,30 @@ export const getModel3DsInfinite = async ({
       nextCursor = nextItem?.id;
     }
 
+    // The signed-in user's own recommend (thumbs-up) per row, so the card can
+    // render the gold thumbs-up in its toggled state. One indexed lookup keyed
+    // on (userId, model3dId) rather than a per-row correlated sub-select.
+    const rowIds = rows.map((r) => r.id);
+    const userReviews =
+      user && rowIds.length
+        ? await dbRead.model3DReview.findMany({
+            where: { userId: user.id, model3dId: { in: rowIds } },
+            select: { id: true, model3dId: true, recommended: true },
+          })
+        : [];
+    const reviewByModel = new Map(userReviews.map((r) => [r.model3dId, r]));
+
     // Flatten `tags: [{ tagId }]` → `tags: number[]` so the client-side
     // `useApplyHiddenPreferences` hook can apply tag-based filtering with
     // the same shape it uses for the `'models'` branch.
-    const items = rows.map(({ tags, ...rest }) => ({
-      ...rest,
-      tags: tags.map((t) => t.tagId),
-    }));
+    const items = rows.map(({ tags, ...rest }) => {
+      const review = reviewByModel.get(rest.id);
+      return {
+        ...rest,
+        tags: tags.map((t) => t.tagId),
+        userReview: review ? { id: review.id, recommended: review.recommended } : null,
+      };
+    });
 
     return { items, nextCursor };
   } catch (error) {
@@ -748,6 +773,7 @@ export const publishModel3D = async ({
       id: true,
       userId: true,
       status: true,
+      name: true,
       thumbnailImageId: true,
       deletedAt: true,
     },
@@ -755,6 +781,12 @@ export const publishModel3D = async ({
   if (!existing) throw throwNotFoundError(`No 3D model with id ${input.id}`);
   if (!isModerator && existing.userId !== user.id) throw throwAuthorizationError();
   if (existing.deletedAt) throw throwBadRequestError('Cannot publish a deleted 3D model');
+  // Drafts are materialized with a blank name (forces the user to name them);
+  // publish is a separate mutation from the name-enforcing upsert, so guard the
+  // name here too — otherwise a nameless draft could be published directly.
+  if (!existing.name?.trim()) {
+    throw throwBadRequestError('A name is required before publishing.');
+  }
   if (!existing.thumbnailImageId) {
     throw throwBadRequestError('A thumbnail image is required before publishing.');
   }
@@ -1346,7 +1378,9 @@ export const upsertModel3DFromWorkflow = async ({
 
     const created = await tx.model3D.create({
       data: {
-        name: `Generated 3D Model`,
+        // Intentionally blank so the edit page forces the user to name the
+        // model rather than skipping past a pre-filled placeholder.
+        name: '',
         userId,
         workflowId,
         thumbnailImageId,

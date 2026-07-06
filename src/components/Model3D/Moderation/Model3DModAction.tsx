@@ -1,6 +1,7 @@
 import { Badge, Button, Group, Stack, Text } from '@mantine/core';
 import { IconCube, IconExternalLink } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { getModel3DUrl } from '~/utils/string-helpers';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { Model3DStatus } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -56,7 +57,7 @@ export function Model3DModAction({ imageId }: { imageId: number }) {
         <Text size="xs" c="dimmed" lineClamp={1} style={{ flex: 1, minWidth: 0 }}>
           Thumbnail of{' '}
           <Link
-            href={`/3d-models/${model3d.id}`}
+            href={getModel3DUrl({ id: model3d.id, name: model3d.name })}
             target="_blank"
             style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}
           >

@@ -26,6 +26,7 @@ import {
   imageScanTypes,
 } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
+import { queueModel3DForThumbnailImage } from '~/server/services/nsfwLevels.service';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
 import { getTagRules } from '~/server/services/system-cache';
 import {
@@ -269,6 +270,11 @@ async function updateImage(
       // await dbWrite.$executeRaw`SELECT update_nsfw_level_new(${id}::int);`;
       if (image.postId) await updatePostNsfwLevel(image.postId);
 
+      // Re-enqueue the parent Model3D (if this image is a 3D thumbnail) so its
+      // nsfwLevel picks up the now-scanned thumbnail. The new scanner path does
+      // this too; the legacy path must mirror it or the model stays unrated.
+      await queueModel3DForThumbnailImage(id);
+
       await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
 
       // - this is still active
@@ -309,6 +315,7 @@ async function updateImage(
         // #endregion
       }
     } else if (data.ingestion === 'Blocked') {
+      await queueModel3DForThumbnailImage(id);
       await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Delete });
     }
 

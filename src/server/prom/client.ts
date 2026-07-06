@@ -9,6 +9,7 @@ import {
   sysredisSentinelTopologyChangesCounter,
   sysredisSentinelClientErrorsCounter,
   redisSelfHealReconnectCounter,
+  redisSelfHealDeadlineHitsWindow,
   redisRoutingRetryCounter,
 } from '@civitai/telemetry/client';
 import { datapacketDbRead } from '~/server/db/datapacketDb';
@@ -30,6 +31,7 @@ export * from '@civitai/telemetry/client';
   sysredisSentinelTopologyChangesCounter,
   sysredisSentinelClientErrorsCounter,
   redisSelfHealReconnectCounter,
+  redisSelfHealDeadlineHitsWindow,
   redisRoutingRetryCounter,
 };
 

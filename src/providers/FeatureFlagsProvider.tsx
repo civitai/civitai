@@ -1,7 +1,7 @@
 import { useSession } from '~/providers/SessionProvider';
-import { createContext, useContext, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { type FeatureAccess } from '~/server/services/feature-flags.service';
-import { trpc } from '~/utils/trpc';
+import { setTrpcBatchingEnabled, trpc } from '~/utils/trpc';
 
 const FeatureFlagsCtx = createContext<FeatureAccess | null>(null);
 // Whether the per-user `getFeatureFlags` overlay has resolved. SSR seeds
@@ -71,6 +71,14 @@ export const FeatureFlagsProvider = ({
     }),
     [flags, userFeatures]
   );
+
+  // Bridge the resolved `trpcBatching` flag to the module-scope tRPC terminating
+  // link (which can't read a hook). Runs client-side only; until this fires the
+  // link stays unbatched (dark default), so anon + early-hydration queries never
+  // batch. See `shouldBatch` in `~/utils/trpc`.
+  useEffect(() => {
+    setTrpcBatchingEnabled(!!featureFlags.trpcBatching);
+  }, [featureFlags.trpcBatching]);
 
   return (
     <FeatureFlagsCtx.Provider value={featureFlags}>

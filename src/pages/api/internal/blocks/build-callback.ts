@@ -234,7 +234,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // `app-blocks-pipeline-enabled` flag (NOT the mod-segmented user flag), so the
   // pipeline can run for mod-approved blocks without enabling the user feature.
   if (!(await isAppBlocksPipelineEnabled())) {
-    res.status(503).json({ error: 'App Blocks not enabled' });
+    res.status(503).json({ error: 'Apps are not enabled' });
     return;
   }
 

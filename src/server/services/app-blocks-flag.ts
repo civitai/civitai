@@ -280,6 +280,61 @@ export async function isAppBlocksRuntimeEnabled(): Promise<boolean> {
 }
 
 /**
+ * Dedicated mod+cohort-segmented flag for the APP DEV TUNNEL (on-site dev via a
+ * hardened sish tunnel — the `dev-<random16>.<APPS_DOMAIN>` generalization of the
+ * mod review sandbox).
+ *
+ * When ON for the caller, an approved app developer may mint a tunnel credential
+ * (`blocks.startDevTunnel`), get an ephemeral `dev-<random16>.<APPS_DOMAIN>` host
+ * wired to their LOCAL dev server, and open `civitai.com/apps/dev/<blockId>` to
+ * see their local code rendered inside the real production `PageBlockHost`. The
+ * whole feature is DORMANT until this flag is on for the caller, so it ships dark
+ * and enables per-cohort without touching the user-facing `app-blocks-enabled`
+ * rollout or the build pipeline.
+ *
+ * This is a USER-VISIBILITY / capability gate (the `startDevTunnel` / `stop` /
+ * `status` tRPC procedures + the `/apps/dev` SSR route + the entry-token mint), so
+ * — exactly like `app-blocks-review-sandbox-enabled` — it is segment-gated and
+ * MUST be evaluated WITH the caller's context. Create it in Flipt as base
+ * `enabled: false` with the `moderators` segment PLUS the `app-dev-testers` cohort
+ * segment (mirror `app-blocks-pages-enabled` / `app-blocks-review-sandbox-enabled`
+ * exactly) so mods + the dev-testers cohort resolve `true` and everyone else
+ * `false`.
+ *
+ * NB: this flag gates only the CONTROL PLANE (mint / route / entry-token). The
+ * public SSH exposure of the sish tunnel is a separate, deliberately-windowed
+ * infra change (P3) — enabling this flag alone can never expose a dev's machine,
+ * because with no public `ssh -R` reachability there is no tunnel to serve.
+ *
+ * Fail-safe: the flag does NOT exist in Flipt yet (created only AFTER this merges)
+ * → `isFlipt` returns `false` → `startDevTunnel` throws FORBIDDEN and the
+ * `/apps/dev` route 404s. So the as-merged behaviour is fully dark and cannot
+ * regress the gate open.
+ */
+export const APP_BLOCKS_DEV_TUNNEL_FLAG = 'app-blocks-dev-tunnel';
+
+/**
+ * Segment-gated gate for the APP DEV TUNNEL. Evaluated WITH the caller's context
+ * (entityId = user id, context carries server-side `isModerator`) so the
+ * `moderators` / `app-dev-testers` segments can match — identical eval shape to
+ * `isAppBlocksReviewSandboxEnabled`. No user → preserves a global eval that can
+ * never match a segment (fail-closed). See APP_BLOCKS_DEV_TUNNEL_FLAG.
+ *
+ * NOTE: unlike `isAppBlocksAuthorEnabled`, there is NO moderator static floor —
+ * the flag is created as the rollout, so an absent flag resolves `false` for
+ * EVERYONE (mods included). That is intentional and load-bearing: the dev tunnel
+ * is a brand-new surface (no existing mod access to preserve), so fail-closed for
+ * all until the flag exists is the safe posture.
+ */
+export async function isAppBlocksDevTunnelEnabled(opts?: {
+  user?: SessionUser;
+}): Promise<boolean> {
+  if (!opts?.user) return isFlipt(APP_BLOCKS_DEV_TUNNEL_FLAG);
+  const user = opts.user;
+  return isFlipt(APP_BLOCKS_DEV_TUNNEL_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
  * Dedicated GLOBAL fail-closed flag for the attribution BACKPAY reader
  * (W3 attribution back-half — Slice 4 read leg, see backpay.service.ts).
  *

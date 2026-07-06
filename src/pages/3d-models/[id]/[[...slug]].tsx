@@ -24,6 +24,7 @@ import {
   IconDownload,
   IconLicense,
   IconMessageCircle2,
+  IconPhoto,
   IconShare3,
   IconThumbDown,
   IconThumbUp,
@@ -31,6 +32,7 @@ import {
 } from '@tabler/icons-react';
 import { useMediaQuery } from '@mantine/hooks';
 import dynamic from 'next/dynamic';
+import { useRouter } from 'next/router';
 import type { InferGetServerSidePropsType } from 'next';
 import React, { useEffect, useMemo, useState } from 'react';
 import * as z from 'zod';
@@ -53,6 +55,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { AppealDialog } from '~/components/Dialog/Common/AppealDialog';
 import { Model3DComments } from '~/components/Model3D/Comments/Model3DComments';
 import { Model3DActionsMenu } from '~/components/Model3D/Actions/Model3DActionsMenu';
+import { Model3DThumbsUpButton } from '~/components/Model3D/ThumbsUp/Model3DThumbsUpButton';
 import { Model3DGallery } from '~/components/Model3D/Gallery/Model3DGallery';
 import type { Model3DReviewModalProps } from '~/components/Model3D/Reviews/Model3DReviewModal';
 import type { Model3DViewableVariant } from '~/components/Model3D/Viewer/Model3DVariantViewer';
@@ -67,6 +70,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { EntityType, Model3DStatus } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { getModel3DUrl } from '~/utils/string-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -149,6 +153,21 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const { data: model3d, isLoading, isRefetching } = trpc.model3d.getById.useQuery({ id });
   const { data: filesData } = trpc.model3d.getFiles.useQuery({ id }, { enabled: !!model3d });
   const { data: reviewSummary } = trpc.model3d.reviews.getSummary.useQuery({ model3dId: id });
+
+  // Canonicalize the URL to include the name slug once the model loads, so a
+  // bare /3d-models/:id (direct hit, old link) upgrades to the pretty form
+  // without a reload. Shallow → no getServerSideProps re-run. Query params
+  // (e.g. ?highlight= from comment notifications) are preserved.
+  const router = useRouter();
+  useEffect(() => {
+    if (!model3d?.name) return;
+    const [path, qs] = router.asPath.split('?');
+    const desired = getModel3DUrl({ id, name: model3d.name });
+    if (path !== desired) {
+      router.replace(qs ? `${desired}?${qs}` : desired, undefined, { shallow: true });
+    }
+  }, [id, model3d?.name, router]);
+  const trackDownload = trpc.model3d.trackDownload.useMutation();
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model3D', entityId: id });
 
   const files = filesData?.files ?? [];
@@ -178,6 +197,11 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
       });
       return;
     }
+    // Fire-and-forget ClickHouse download tracking (feeds Model3DMetric
+    // .downloadCount → the "Most Downloaded" sort). Tracked per model, not
+    // per file/format, so re-picking a format doesn't multiply the count.
+    trackDownload.mutate({ id });
+
     // Trigger download via anchor — `download` hint preserves the filename when
     // the browser respects it; signed URL handles auth.
     const a = document.createElement('a');
@@ -224,16 +248,31 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
       push('PBR materials', params.enablePbr);
       push('Mode', params.mode);
       push('Seed', params.seed);
-      // `Rigging` row was removed once the form collapsed both flags
-      // into a single Animate toggle (Meshy requires rigging when
-      // animation is on). The legacy `params.enableRigging` may still
-      // be `true` on older records — surfaced via `Animation` instead
-      // for new generations, and on old records the bool is implied.
-      push('Animation', params.enableAnimation);
+      // `enableAnimation` reliably records whether the user *requested*
+      // animation, but Meshy can silently fail to animate a mesh — the
+      // request succeeds and returns only the base model, no animated /
+      // walking / running variants (observed on model 56). So when
+      // animation was requested we confirm against the actual output
+      // files and, if none arrived, say so rather than printing a
+      // misleading "Yes". `enableRigging` is intentionally not surfaced —
+      // it's derived from `enableAnimation` at submit time and never
+      // persisted with a real value in the params snapshot.
+      if (params.enableAnimation === true) {
+        const hasAnimationOutput = files.some((f) => {
+          const variant = (f.variant ?? 'primary').replace(/-armature$/, '');
+          return variant === 'animated' || variant === 'walking' || variant === 'running';
+        });
+        surfaced.push([
+          'Animation',
+          hasAnimationOutput ? 'Yes' : 'Requested — Unable to animate model',
+        ]);
+      } else {
+        push('Animation', params.enableAnimation);
+      }
       push('Texture prompt', params.texturePrompt);
     }
     return surfaced;
-  }, [model3d?.generationParams]);
+  }, [model3d?.generationParams, files]);
 
   if (isLoading) return <PageLoader />;
   if (!model3d) return <NotFound />;
@@ -308,7 +347,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
       meta={{
         title: `${model3d.name} | 3D Models | Civitai`,
         description: model3d.description?.slice(0, 200) ?? '3D model on Civitai',
-        canonical: `/3d-models/${model3d.id}`,
+        canonical: getModel3DUrl({ id: model3d.id, name: model3d.name }),
         images: model3d.thumbnailImage ?? undefined,
         deIndex: isDraft || isUnpublished,
       }}
@@ -360,19 +399,20 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                     · Buzz. The thumbs-up badge surfaces positive-review count
                     (`recommendedCount`); the % chip is folded into the Details
                     card so we don't double-surface the same signal. */}
-                <IconBadge
-                  radius="sm"
-                  size="lg"
-                  color="green"
-                  icon={<IconThumbUp size={18} />}
-                >
-                  <Text size="sm">{abbreviateNumber(recommendedCount)}</Text>
-                </IconBadge>
+                <Model3DThumbsUpButton
+                  model3dId={id}
+                  recommendedCount={recommendedCount}
+                  userReview={model3d.userReview ?? null}
+                  variant="detail"
+                />
                 <IconBadge radius="sm" size="lg" icon={<IconDownload size={18} />}>
                   <Text size="sm">{abbreviateNumber(model3d.metric?.downloadCount ?? 0)}</Text>
                 </IconBadge>
                 <IconBadge radius="sm" size="lg" icon={<IconMessageCircle2 size={18} />}>
                   <Text size="sm">{abbreviateNumber(model3d.metric?.commentCount ?? 0)}</Text>
+                </IconBadge>
+                <IconBadge radius="sm" size="lg" icon={<IconPhoto size={18} />}>
+                  <Text size="sm">{abbreviateNumber(model3d.metric?.imageCount ?? 0)}</Text>
                 </IconBadge>
                 {/* Single buzz surface: the metrics-row badge IS the tip CTA. */}
                 <InteractiveTipBuzzButton
@@ -397,7 +437,10 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               </Group>
 
               <Group gap={4} align="center" wrap="nowrap">
-                <ShareButton url={`/3d-models/${model3d.id}`} title={model3d.name}>
+                <ShareButton
+                  url={getModel3DUrl({ id: model3d.id, name: model3d.name })}
+                  title={model3d.name}
+                >
                   <LegacyActionIcon variant="light" size="lg" aria-label="Share">
                     <IconShare3 size={20} />
                   </LegacyActionIcon>

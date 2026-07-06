@@ -21,11 +21,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *                 fail-open logger is touched.
  */
 
-const { mockHSetMultiWithTTL, mockLogSysRedisFailOpen, mockHGetAll } = vi.hoisted(() => ({
-  mockHSetMultiWithTTL: vi.fn(),
-  mockLogSysRedisFailOpen: vi.fn(),
-  mockHGetAll: vi.fn(),
-}));
+const { mockHSetMultiWithTTL, mockLogSysRedisFailOpen, mockHGetAll, mockWithSysReadDeadline } =
+  vi.hoisted(() => ({
+    mockHSetMultiWithTTL: vi.fn(),
+    mockLogSysRedisFailOpen: vi.fn(),
+    mockHGetAll: vi.fn(),
+    // STEP-4 soft-dependency: the hGetAll read is now wrapped in
+    // withSysReadDeadline so a SLOW/half-open sysRedis rejects (deadline)
+    // instead of parking ~11min. Transparent by default (returns the wrapped
+    // promise) — override per-test to reject to model the SLOW path.
+    mockWithSysReadDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
+  }));
 
 vi.mock('~/server/redis/atomic', () => ({
   hSetMultiWithTTL: mockHSetMultiWithTTL,
@@ -50,7 +56,7 @@ vi.mock('~/server/redis/client', () => ({
       ALL: 'sys:session:all',
     },
   },
-  withSysReadDeadline: <T>(p: Promise<T>) => p, // transparent in tests (matches rate-limiting.test.ts)
+  withSysReadDeadline: mockWithSysReadDeadline,
 }));
 
 vi.mock('~/server/utils/cache-helpers', () => ({
@@ -79,6 +85,7 @@ import { refreshSession, invalidateSession } from '../session-invalidation';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockWithSysReadDeadline.mockImplementation((p) => p); // transparent by default
   // Default: user has 2 tokens in the hash.
   mockHGetAll.mockResolvedValue({ 'token-a': 'active', 'token-b': 'active' });
 });
@@ -124,6 +131,54 @@ describe('updateSessionState fail-open wrapper (via refreshSession)', () => {
 
     expect(mockHSetMultiWithTTL).not.toHaveBeenCalled();
     expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
+  });
+});
+
+describe('updateSessionState READ fail-open wrapper (STEP-4 hGetAll)', () => {
+  it('happy path: reads the token hash through withSysReadDeadline and does not log fail-open', async () => {
+    mockHSetMultiWithTTL.mockResolvedValue(undefined);
+
+    await refreshSession(7, { sendSignal: false });
+
+    // The read is deadline-wrapped even on the happy path.
+    expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
+    expect(mockHGetAll).toHaveBeenCalledTimes(1);
+    // Tokens resolved → the write ran with them.
+    expect(mockHSetMultiWithTTL).toHaveBeenCalledTimes(1);
+    expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
+  });
+
+  it('DOWN: hGetAll throws → fails open to an empty hash, does not throw, skips the write, logs read-degraded', async () => {
+    mockHGetAll.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+
+    // Must NOT throw (would otherwise 500 the logout/ban request).
+    await expect(invalidateSession(99)).resolves.toBeUndefined();
+
+    // Empty token hash → no write attempted.
+    expect(mockHSetMultiWithTTL).not.toHaveBeenCalled();
+    expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
+    const [subtype, fn, , extra] = mockLogSysRedisFailOpen.mock.calls[0];
+    expect(subtype).toBe('read-degraded');
+    expect(fn).toBe('session-invalidation.updateSessionState read');
+    expect(extra).toMatchObject({ userId: 99, type: 'invalid' });
+  });
+
+  it('SLOW/half-open: hGetAll NEVER settles + deadline REJECTS → fails open (fail-on-revert: a bare await would hang and time out)', async () => {
+    // Model a SLOW/half-open sysRedis: hGetAll never settles (would park
+    // ~11min in prod), so ONLY the withSysReadDeadline race can unblock the
+    // caller. This PINS the wrap — remove `withSysReadDeadline(...)` and the
+    // bare `await sysRedis.hGetAll` hangs forever → this test TIMES OUT. A
+    // resolved-hGetAll mock would pass even without the wrap.
+    mockHGetAll.mockReturnValue(new Promise(() => undefined));
+    mockWithSysReadDeadline.mockRejectedValue(new Error('sysRedis read timed out after 2000ms'));
+
+    await expect(refreshSession(123, { sendSignal: false })).resolves.toBeUndefined();
+
+    expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
+    expect(mockHSetMultiWithTTL).not.toHaveBeenCalled();
+    expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
+    expect(mockLogSysRedisFailOpen.mock.calls[0][0]).toBe('read-degraded');
+    expect(mockLogSysRedisFailOpen.mock.calls[0][3]).toMatchObject({ userId: 123, type: 'refresh' });
   });
 });
 

@@ -15,6 +15,9 @@ const civitaiWorkspacePkgs = [
   'axiom',
   'telemetry',
   'brand',
+  // `@civitai/notifications` (packages/civitai-notifications) is re-exported by
+  // src/server/common/enums.ts; without this alias Vitest can't resolve it and
+  // the whole server suite cascades (enums.ts → BlockRegistry undefined → …).
   'notifications',
 ];
 const civitaiAlias = civitaiWorkspacePkgs.flatMap((p) => {

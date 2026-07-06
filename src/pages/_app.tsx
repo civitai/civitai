@@ -50,6 +50,7 @@ import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { FiltersProvider } from '~/providers/FiltersProvider';
 import { ThirdPartyConsentProvider } from '~/components/Consent/ThirdPartyConsentProvider';
 import { GoogleAnalytics } from '~/providers/GoogleAnalytics';
+import { FaroProvider } from '~/components/Faro/FaroProvider';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 // import { PaddleProvider } from '~/providers/PaddleProvider';
 // import { PaypalProvider } from '~/providers/PaypalProvider';
@@ -230,6 +231,8 @@ function MyApp(props: CustomAppProps) {
                 <RouterTransition />
                 {/* <ChadGPT isAuthed={!!session} /> */}
                 <FeatureFlagsProvider flags={flags} userFlags={userFeatureFlags}>
+                  {/* Faro RUM bootstrap — dark until the `faro` flag + build-args are on */}
+                  <FaroProvider />
                   <GoogleAnalytics />
                   <AccountProvider>
                     <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
