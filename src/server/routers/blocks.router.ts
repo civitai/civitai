@@ -92,6 +92,7 @@ import { getResourceGenerationSupport } from '~/shared/constants/basemodel.const
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { BuzzTypes } from '~/shared/constants/buzz.constants';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 import {
   getBlockAllowedAccountTypes,
   isPayoutEligibleBuzz,
@@ -965,6 +966,12 @@ export const blocksRouter = router({
    * SAME bare NOT_FOUND, no ownership oracle). DARK until the flag is on.
    */
   startDevTunnel: appDeveloperProcedure
+    // Scope gate: an OAuth token (the `civitai login` token the civitai-cli mints)
+    // may open a dev tunnel ONLY if it carries the opt-in AppBlocksDevTunnel bit.
+    // NOTE: enforceTokenScope (trpc.ts) EARLY-RETURNS for `ctx.tokenScope === TokenScope.Full`,
+    // so a Full-scope PERSONAL API key still passes regardless of this meta — this is the
+    // no-regression guarantee. Do NOT "tighten" enforceTokenScope to also gate Full keys here.
+    .meta({ requiredScope: TokenScope.AppBlocksDevTunnel })
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -1010,6 +1017,9 @@ export const blocksRouter = router({
    * can never tear down another author's tunnel. Same gates as startDevTunnel.
    */
   stopDevTunnel: appDeveloperProcedure
+    // Same AppBlocksDevTunnel scope gate as startDevTunnel. A Full personal API key
+    // still passes (enforceTokenScope early-returns on TokenScope.Full) — no regression.
+    .meta({ requiredScope: TokenScope.AppBlocksDevTunnel })
     .use(enforceAppBlocksFlag)
     .input(
       z
@@ -1041,6 +1051,9 @@ export const blocksRouter = router({
    * expiry, spend ceiling), or null when none is active. Same gates.
    */
   devTunnelStatus: appDeveloperProcedure
+    // Same AppBlocksDevTunnel scope gate as startDevTunnel. A Full personal API key
+    // still passes (enforceTokenScope early-returns on TokenScope.Full) — no regression.
+    .meta({ requiredScope: TokenScope.AppBlocksDevTunnel })
     .use(enforceAppBlocksFlag)
     .input(z.object({ blockId: z.string().min(1).max(64) }))
     .query(async ({ ctx, input }) => {
