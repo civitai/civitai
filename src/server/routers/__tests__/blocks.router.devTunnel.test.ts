@@ -198,3 +198,108 @@ describe('stopDevTunnel / devTunnelStatus', () => {
     expect(res).toMatchObject({ active: true, host: 'dev-0123456789abcdef.civit.ai' });
   });
 });
+
+/**
+ * OAuth token-scope gate on the 3 dev-tunnel procs. enforceTokenScope (trpc.ts)
+ * runs in the publicProcedure base chain, BEFORE the appDeveloperProcedure author
+ * gate, so a token lacking AppBlocksDevTunnel is rejected at the scope gate with a
+ * message mentioning "scope" (distinguishing it from the author-capability
+ * FORBIDDEN). Bitmask values are hard-coded so a drift in the enum trips the test.
+ *
+ *   - Full personal API key (33554431)           → passes gate (no regression;
+ *                                                    enforceTokenScope early-returns on Full).
+ *   - New CLI OAuth token (UserRead|AppBlocksSubmit|AppBlocksDevTunnel = 100663297)
+ *                                                 → passes gate.
+ *   - Old CLI OAuth token (UserRead|AppBlocksSubmit = 33554433, NO DevTunnel bit)
+ *                                                 → FORBIDDEN at the scope gate.
+ */
+describe('dev-tunnel procs — AppBlocksDevTunnel scope gate', () => {
+  const FULL = 33554431; // TokenScope.Full
+  const NEW_CLI = 1 | (1 << 25) | (1 << 26); // UserRead|AppBlocksSubmit|AppBlocksDevTunnel = 100663297
+  const OLD_CLI = 1 | (1 << 25); // UserRead|AppBlocksSubmit = 33554433 (pre-widen CLI token)
+
+  // Ctx for a token-authenticated caller (apiKeyId set) carrying `scope`. isModerator
+  // stays true so the author gate is satisfied and the ONLY thing under test is the scope gate.
+  function tokenCtx(userId: number, scope: number) {
+    return { ...authedCtx(userId, true), apiKeyId: 999, tokenScope: scope };
+  }
+
+  it('sanity: the hard-coded bitmasks match the enum', () => {
+    expect(TokenScope.Full).toBe(FULL);
+    expect(TokenScope.UserRead | TokenScope.AppBlocksSubmit | TokenScope.AppBlocksDevTunnel).toBe(
+      NEW_CLI
+    );
+    expect(TokenScope.UserRead | TokenScope.AppBlocksSubmit).toBe(OLD_CLI);
+  });
+
+  describe('startDevTunnel', () => {
+    it('Full personal key passes the scope gate and mints (no regression)', async () => {
+      const caller = blocksRouter.createCaller(tokenCtx(100, FULL) as never);
+      const res = await caller.startDevTunnel(input);
+      expect(res.host).toMatch(/^dev-[a-f0-9]{16}\.civit\.ai$/);
+      expect(mockStart).toHaveBeenCalledTimes(1);
+    });
+
+    it('new CLI OAuth token (with DevTunnel bit) passes the scope gate and mints', async () => {
+      const caller = blocksRouter.createCaller(tokenCtx(100, NEW_CLI) as never);
+      const res = await caller.startDevTunnel(input);
+      expect(res.host).toMatch(/^dev-[a-f0-9]{16}\.civit\.ai$/);
+      expect(mockStart).toHaveBeenCalledWith({ userId: 100, blockId: 'my-app', sshPublicKey: PUBKEY });
+    });
+
+    it('old CLI OAuth token (no DevTunnel bit) → FORBIDDEN at the scope gate, never mints', async () => {
+      const caller = blocksRouter.createCaller(tokenCtx(100, OLD_CLI) as never);
+      await expect(caller.startDevTunnel(input)).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        message: expect.stringContaining('scope'),
+      });
+      expect(mockStart).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('stopDevTunnel', () => {
+    it('Full personal key passes the scope gate (no regression)', async () => {
+      const caller = blocksRouter.createCaller(tokenCtx(100, FULL) as never);
+      expect(await caller.stopDevTunnel({ sessionId: 'bki_s' })).toEqual({ ok: true, stopped: true });
+    });
+
+    it('new CLI OAuth token (with DevTunnel bit) passes the scope gate', async () => {
+      const caller = blocksRouter.createCaller(tokenCtx(100, NEW_CLI) as never);
+      expect(await caller.stopDevTunnel({ sessionId: 'bki_s' })).toEqual({ ok: true, stopped: true });
+      expect(mockStop).toHaveBeenCalledWith(100, 'bki_s');
+    });
+
+    it('old CLI OAuth token (no DevTunnel bit) → FORBIDDEN at the scope gate', async () => {
+      const caller = blocksRouter.createCaller(tokenCtx(100, OLD_CLI) as never);
+      await expect(caller.stopDevTunnel({ sessionId: 'bki_s' })).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        message: expect.stringContaining('scope'),
+      });
+      expect(mockStop).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('devTunnelStatus', () => {
+    it('Full personal key passes the scope gate (no regression)', async () => {
+      mockGetActive.mockResolvedValue(null);
+      const caller = blocksRouter.createCaller(tokenCtx(100, FULL) as never);
+      expect(await caller.devTunnelStatus({ blockId: 'my-app' })).toEqual({ active: false });
+    });
+
+    it('new CLI OAuth token (with DevTunnel bit) passes the scope gate', async () => {
+      mockGetActive.mockResolvedValue(null);
+      const caller = blocksRouter.createCaller(tokenCtx(100, NEW_CLI) as never);
+      expect(await caller.devTunnelStatus({ blockId: 'my-app' })).toEqual({ active: false });
+      expect(mockGetActive).toHaveBeenCalledWith(100, 'my-app');
+    });
+
+    it('old CLI OAuth token (no DevTunnel bit) → FORBIDDEN at the scope gate', async () => {
+      const caller = blocksRouter.createCaller(tokenCtx(100, OLD_CLI) as never);
+      await expect(caller.devTunnelStatus({ blockId: 'my-app' })).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        message: expect.stringContaining('scope'),
+      });
+      expect(mockGetActive).not.toHaveBeenCalled();
+    });
+  });
+});
