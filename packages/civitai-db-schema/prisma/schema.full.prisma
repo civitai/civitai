@@ -2613,7 +2613,7 @@ model AppListingMetric {
 /// on-site Tekton build queue clean. STRUCTURE ONLY in P0; wired in P3.
 model AppListingPublishRequest {
   id                String      @id // alpr_<ULID>
-  appListingId      String?     @map("app_listing_id") // NULL while first request pending; FK on approve
+  appListingId      String?     @map("app_listing_id") // Off-site (B1): set at SUBMIT to the draft AppListing. On-site: NULL until approve. Nullable (SetNull on listing delete).
   appListing        AppListing? @relation(fields: [appListingId], references: [id], onDelete: SetNull)
   kind              String // 'onsite' | 'offsite'
   slug              String
