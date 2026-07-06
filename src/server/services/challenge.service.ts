@@ -1341,6 +1341,15 @@ export async function scanUserChallenge(challengeId: number): Promise<void> {
   }
 }
 
+// Public-safe judge options for the user challenge form: id/name/bio only (no prompt fields).
+export async function getActiveJudgeOptions() {
+  return dbRead.challengeJudge.findMany({
+    where: { active: true },
+    select: { id: true, name: true, bio: true },
+    orderBy: { name: 'asc' },
+  });
+}
+
 export async function updateChallengeStatus(id: number, status: ChallengeStatus) {
   const challenge = await dbWrite.challenge.update({
     where: { id },

@@ -51,6 +51,7 @@ import {
   requestReview,
   upsertChallenge,
   upsertUserChallenge,
+  getActiveJudgeOptions,
   upsertChallengeEvent,
   voidChallenge,
   getActiveJudges,
@@ -154,6 +155,12 @@ export const challengeRouter = router({
     .input(upsertChallengeSchema)
     .use(isFlagProtected('challengePlatform'))
     .mutation(({ input, ctx }) => upsertChallenge({ ...input, userId: ctx.user.id })),
+
+  // User: judge options for the create form (id/name/bio only)
+  getJudgeOptions: protectedProcedure
+    .use(isFlagProtected('challengePlatform'))
+    .use(isFlagProtected('userChallenges'))
+    .query(() => getActiveJudgeOptions()),
 
   // User: Create or update a user-owned challenge.
   // Eligibility (score + standing + tier cap), ownership, and edit-locks are enforced
