@@ -192,6 +192,8 @@ export type PoolTrigger = "Entry" | "User";
 
 export type ChallengeReviewCostType = "None" | "PerEntry" | "Flat";
 
+export type ChallengeScanStatus = "Pending" | "Scanned" | "Blocked" | "Error";
+
 export type EntityMetric_EntityType_Type = "Image";
 
 export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz";
@@ -3538,11 +3540,13 @@ export interface Challenge {
   modelVersionIds: number[];
   allowedNsfwLevel: number;
   judgingPrompt: string | null;
+  judgingCategories: JsonValue | null;
   reviewPercentage: number;
   maxReviews: number | null;
   collectionId: number | null;
   collection?: Collection | null;
   maxEntriesPerUser: number;
+  maxParticipants: number | null;
   prizes: JsonValue;
   entryPrize: JsonValue | null;
   entryPrizeRequirement: number;
@@ -3557,12 +3561,15 @@ export interface Challenge {
   operationSpent: number;
   reviewCostType: ChallengeReviewCostType;
   reviewCost: number;
-  createdById: number;
-  createdBy?: User;
+  entryFee: number;
+  createdById: number | null;
+  createdBy?: User | null;
   source: ChallengeSource;
   judgeId: number | null;
   judge?: ChallengeJudge | null;
   status: ChallengeStatus;
+  scanStatus: ChallengeScanStatus;
+  scannedAt: Date | null;
   metadata: JsonValue | null;
   createdAt: Date;
   updatedAt: Date;

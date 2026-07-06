@@ -5027,6 +5027,13 @@ enum ChallengeReviewCostType {
   Flat     // Single flat rate for all entries
 }
 
+enum ChallengeScanStatus {
+  Pending // Awaiting text+cover scan; hidden from public feeds
+  Scanned // Passed scan, nsfwLevel assigned, publicly visible
+  Blocked // Hard-blocked (hate/CSAM/etc.); never shown
+  Error   // Scan failed; needs retry
+}
+
 model Challenge {
   id Int @id @default(autoincrement())
 
@@ -5051,14 +5058,16 @@ model Challenge {
   allowedNsfwLevel Int @default(1) // Bitwise NSFW levels allowed (1=PG, 2=PG13, 4=R, etc.)
 
   // Judging Configuration
-  judgingPrompt    String? @db.Text // Custom AI judging prompt
-  reviewPercentage Int     @default(100) // % of entries to score
-  maxReviews       Int? // Hard cap on reviews (cost control)
+  judgingPrompt     String? @db.Text // Custom AI judging prompt (mod/system only)
+  judgingCategories Json? // User challenges: [{name, criteria}]; drives dynamic score schema + public display
+  reviewPercentage  Int     @default(100) // % of entries to score
+  maxReviews        Int? // Hard cap on reviews (cost control)
 
   // Entries - stored in a Contest Collection (auto-created if not provided)
   collectionId      Int? // Optional - auto-created on challenge creation
   collection        Collection? @relation(fields: [collectionId], references: [id], onDelete: SetNull)
-  maxEntriesPerUser Int         @default(20)
+  maxEntriesPerUser Int         @default(20) // Max submissions per participant
+  maxParticipants   Int? // Max distinct participants (null = unlimited); bounds entry-fee judging cost
 
   // Prizes & Costs
   prizes               Json @default("[]") // [{buzz: 5000, points: 150}, ...]
@@ -5075,10 +5084,11 @@ model Challenge {
   operationSpent  Int  @default(0) // Actual spent (use atomic increment)
   reviewCostType  ChallengeReviewCostType @default(None) // Type of paid review pricing
   reviewCost      Int  @default(0) // Buzz cost (per entry or flat, depending on reviewCostType)
+  entryFee        Int  @default(0) // Buzz charged per entry to participate (0 = free). Net to pool = entryFee - platform cut
 
   // Ownership & Source
-  createdById Int
-  createdBy   User            @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  createdById Int?
+  createdBy   User?           @relation(fields: [createdById], references: [id], onDelete: SetNull)
   source      ChallengeSource @default(System)
 
   // Judge
@@ -5087,6 +5097,11 @@ model Challenge {
 
   // Lifecycle
   status ChallengeStatus @default(Scheduled)
+
+  // Moderation / scan gating (user challenges hidden until Scanned). Default Scanned so
+  // existing + system/mod challenges stay visible without a backfill blackout.
+  scanStatus ChallengeScanStatus @default(Scanned)
+  scannedAt  DateTime?
 
   // Metadata
   metadata  Json?
@@ -5105,6 +5120,7 @@ model Challenge {
   @@index([status, endsAt]) // "Ending Soon" feed
   @@index([status, startsAt]) // "Just Started" feed
   @@index([status, visibleAt]) // "Upcoming" feed
+  @@index([status, scanStatus]) // public feed excludes non-Scanned challenges
   @@index([createdById, status]) // User's challenges by status
   @@index([judgeId])
   @@index([eventId])

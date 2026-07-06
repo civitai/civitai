@@ -101,6 +101,7 @@ import type {
   PrizeMode,
   PoolTrigger,
   ChallengeReviewCostType,
+  ChallengeScanStatus,
   EntityMetric_EntityType_Type,
   EntityMetric_MetricType_Type,
   ComicProjectStatus,
@@ -1245,10 +1246,12 @@ export type Challenge = {
   modelVersionIds: Generated<number[]>;
   allowedNsfwLevel: Generated<number>;
   judgingPrompt: string | null;
+  judgingCategories: unknown | null;
   reviewPercentage: Generated<number>;
   maxReviews: number | null;
   collectionId: number | null;
   maxEntriesPerUser: Generated<number>;
+  maxParticipants: number | null;
   prizes: Generated<unknown>;
   entryPrize: unknown | null;
   entryPrizeRequirement: Generated<number>;
@@ -1263,10 +1266,13 @@ export type Challenge = {
   operationSpent: Generated<number>;
   reviewCostType: Generated<ChallengeReviewCostType>;
   reviewCost: Generated<number>;
-  createdById: number;
+  entryFee: Generated<number>;
+  createdById: number | null;
   source: Generated<ChallengeSource>;
   judgeId: number | null;
   status: Generated<ChallengeStatus>;
+  scanStatus: Generated<ChallengeScanStatus>;
+  scannedAt: Timestamp | null;
   metadata: unknown | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
