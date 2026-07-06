@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   __getTrpcBatchingEnabled,
   CACHEABLE_PROCEDURES,
+  queryRetry,
   setTrpcBatchingEnabled,
   shouldBatch,
 } from '~/utils/trpc';
@@ -204,5 +205,31 @@ describe('CACHEABLE_PROCEDURES stays in sync with the routers (batch-skip guard)
     const stale = listed.filter((p) => !derived.has(p));
     expect({ notListed, stale }).toEqual({ notListed: [], stale: [] });
     expect(listed).toEqual(expected);
+  });
+});
+
+describe('queryRetry (batch-cohort thundering-herd guard)', () => {
+  const err = new Error('boom');
+  beforeEach(() => setTrpcBatchingEnabled(false));
+  afterEach(() => setTrpcBatchingEnabled(false));
+
+  it('flag OFF: identical to the prior retry:1 (exactly one retry)', () => {
+    setTrpcBatchingEnabled(false);
+    expect(queryRetry(0, err)).toBe(true); // 1st failure => retry once
+    expect(queryRetry(1, err)).toBe(false); // already retried once => stop
+    expect(queryRetry(2, err)).toBe(false);
+  });
+
+  it('flag ON: 0 retries (a batch failure must not fan out N retries)', () => {
+    setTrpcBatchingEnabled(true);
+    expect(queryRetry(0, err)).toBe(false);
+    expect(queryRetry(1, err)).toBe(false);
+  });
+
+  it('tracks live flips of the module flag', () => {
+    setTrpcBatchingEnabled(false);
+    expect(queryRetry(0, err)).toBe(true);
+    setTrpcBatchingEnabled(true);
+    expect(queryRetry(0, err)).toBe(false);
   });
 });

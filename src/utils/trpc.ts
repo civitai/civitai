@@ -82,10 +82,16 @@ let trpcBatchingEnabled = false;
 export function setTrpcBatchingEnabled(enabled: boolean) {
   trpcBatchingEnabled = enabled;
 }
-// Test-only accessor: lets unit tests exercise the split condition deterministically.
-export function __getTrpcBatchingEnabled() {
+/**
+ * Whether tRPC request batching is active for THIS client (the `trpcBatching` flag
+ * resolved on for this user). Read by both `shouldBatch` (link routing) and the
+ * `QueryClient` `retry` policy, so retry behavior stays coupled to the batch cohort.
+ */
+export function getTrpcBatchingEnabled() {
   return trpcBatchingEnabled;
 }
+// Back-compat alias used by existing unit tests.
+export const __getTrpcBatchingEnabled = getTrpcBatchingEnabled;
 
 /**
  * True ONLY when we are definitively in an authenticated browser session.
@@ -206,11 +212,31 @@ const headers: RequestHeaders = {
  * browser `QueryClient` returned by `getQueryClient()` for callsites that
  * import `queryClient` directly.
  */
+/**
+ * Query retry policy.
+ *
+ * Dark path (batching flag OFF): `failureCount < 1` == exactly one retry — byte-for-byte
+ * the prior `retry: 1` behavior for every non-batched user.
+ *
+ * Batch cohort (flag ON): 0 retries. A batch transport failure (e.g. a 5xx on the single
+ * coalesced HTTP request) fails ALL N queries in that batch at once; with `retry: 1` that
+ * would fire N simultaneous retries — a thundering herd on the event-loop-bound api pool
+ * during the exact incident the retry was meant to smooth. Suppressing retries for the
+ * batch cohort keeps a batch failure to a single in-flight request. Reverts with the flag.
+ *
+ * Scope: `defaultOptions.queries` only — mutations (which never batch) keep React Query's
+ * own default (0 query-retries), so this does not change mutation behavior.
+ */
+export function queryRetry(failureCount: number, _error: unknown): boolean {
+  if (getTrpcBatchingEnabled()) return false;
+  return failureCount < 1;
+}
+
 const queryClientConfig: QueryClientConfig = {
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,
-      retry: 1,
+      retry: queryRetry,
       staleTime: Infinity,
     },
   },
