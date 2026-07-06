@@ -65,6 +65,8 @@ const {
       APPS_DEV_TUNNEL_SSH_HOST_PUBKEY: 'ssh-ed25519 AAAAC3NzaHostKeyExample sish-host' as
         | string
         | undefined,
+      APPS_DEV_TUNNEL_CF_API_TOKEN: undefined as string | undefined,
+      APPS_DEV_TUNNEL_CF_ZONE_ID: undefined as string | undefined,
     },
     mockNewId: vi.fn(() => 'bki_testsession'),
   };
@@ -92,6 +94,8 @@ import {
   buildDevTunnelApplyJob,
   buildDevTunnelIngressRoute,
   buildDevTunnelMiddleware,
+  deleteDevTunnelDns,
+  deleteDevTunnelRoute,
   getActiveDevTunnel,
   refundDevSessionBuzz,
   reserveDevSessionBuzz,
@@ -99,6 +103,7 @@ import {
   stopDevTunnel,
   reapExpiredDevTunnels,
   touchDevTunnelActivity,
+  __resetDevTunnelDnsCacheForTest,
   DEV_TUNNEL_IDLE_SECONDS,
   DEV_TUNNEL_HARD_SECONDS,
   DEV_TUNNEL_REAP_MIN_AGE_SECONDS,
@@ -118,8 +123,16 @@ beforeEach(() => {
   mockK8sFetch.mockResolvedValue(okRes());
   mockGetDp1Target.mockResolvedValue({ server: 'https://k8s', token: 't' });
   mockWaitForApplyJob.mockResolvedValue('succeeded');
+  mockEnv.APPS_DEV_TUNNEL_CF_API_TOKEN = undefined;
+  mockEnv.APPS_DEV_TUNNEL_CF_ZONE_ID = undefined;
+  __resetDevTunnelDnsCacheForTest();
 });
-afterEach(() => vi.clearAllMocks());
+afterEach(() => {
+  vi.clearAllMocks();
+  vi.unstubAllGlobals();
+  mockEnv.APPS_DEV_TUNNEL_CF_API_TOKEN = undefined;
+  mockEnv.APPS_DEV_TUNNEL_CF_ZONE_ID = undefined;
+});
 
 describe('manifest builders (SSRF-safe, server-derived host)', () => {
   const opts = {
@@ -573,5 +586,234 @@ describe('reapExpiredDevTunnels (server-authoritative, idle + hardened)', () => 
       (c) => (c[2] as any)?.method === 'DELETE' && String(c[1]).includes('/middlewares/')
     );
     expect(mwDeletes.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cloudflare orphan-DNS cleanup (best-effort, opt-in, dev-<hex>-only guard)
+// ---------------------------------------------------------------------------
+
+const CF_DEV_HOST = 'dev-0123456789abcdef.civit.ai';
+
+/** A CF v4 envelope Response stub. */
+function cfEnvelope(result: unknown, ok = true, status = 200) {
+  return { ok, status, json: async () => ({ success: ok, result, errors: [] }) };
+}
+
+/** Route CF fetch by URL + method: zone lookup, per-name record list, deletes. */
+function routeCfFetch(recordsByName: Record<string, Array<{ id: string }>>, zoneResult = [{ id: 'zone-1' }]) {
+  return vi.fn(async (url: string, init?: any) => {
+    const method = init?.method ?? 'GET';
+    if (String(url).includes('/zones?name=')) return cfEnvelope(zoneResult);
+    const listMatch = String(url).match(/dns_records\?name=([^&]+)$/);
+    if (method === 'GET' && listMatch) {
+      const name = decodeURIComponent(listMatch[1]);
+      return cfEnvelope(recordsByName[name] ?? []);
+    }
+    if (method === 'DELETE') return cfEnvelope({ id: 'deleted' });
+    return cfEnvelope([]);
+  });
+}
+
+describe('deleteDevTunnelDns (best-effort orphan CF DNS cleanup)', () => {
+  beforeEach(() => {
+    mockEnv.APPS_DEV_TUNNEL_CF_API_TOKEN = 'cf-token';
+    mockEnv.APPS_DEV_TUNNEL_CF_ZONE_ID = undefined;
+    __resetDevTunnelDnsCacheForTest();
+  });
+
+  it('looks up the zone by name, queries BOTH host + a-host names, and DELETEs each returned record', async () => {
+    const fetchMock = routeCfFetch({
+      [CF_DEV_HOST]: [{ id: 'rec-a' }],
+      [`a-${CF_DEV_HOST}`]: [{ id: 'rec-txt' }],
+    });
+    await deleteDevTunnelDns(CF_DEV_HOST, fetchMock as unknown as typeof fetch);
+    const urls = fetchMock.mock.calls.map((c) => String(c[0]));
+    // zone looked up by the registrable (last-two-label) domain of the host
+    expect(urls.some((u) => u.includes('/zones?name=civit.ai'))).toBe(true);
+    // both name forms queried (A record + external-dns TXT-registry forms)
+    expect(urls.some((u) => u.includes(`dns_records?name=${encodeURIComponent(CF_DEV_HOST)}`))).toBe(true);
+    expect(urls.some((u) => u.includes(`dns_records?name=${encodeURIComponent('a-' + CF_DEV_HOST)}`))).toBe(
+      true
+    );
+    // one DELETE per returned record id
+    const deletes = fetchMock.mock.calls
+      .filter((c) => (c[1] as any)?.method === 'DELETE')
+      .map((c) => String(c[0]));
+    expect(deletes.some((u) => u.endsWith('/zones/zone-1/dns_records/rec-a'))).toBe(true);
+    expect(deletes.some((u) => u.endsWith('/zones/zone-1/dns_records/rec-txt'))).toBe(true);
+  });
+
+  it('uses APPS_DEV_TUNNEL_CF_ZONE_ID directly when set (no zone lookup)', async () => {
+    mockEnv.APPS_DEV_TUNNEL_CF_ZONE_ID = 'zone-env';
+    const fetchMock = routeCfFetch({ [CF_DEV_HOST]: [{ id: 'r1' }], [`a-${CF_DEV_HOST}`]: [] });
+    await deleteDevTunnelDns(CF_DEV_HOST, fetchMock as unknown as typeof fetch);
+    const urls = fetchMock.mock.calls.map((c) => String(c[0]));
+    expect(urls.some((u) => u.includes('/zones?name='))).toBe(false);
+    expect(urls.some((u) => u.includes('/zones/zone-env/dns_records'))).toBe(true);
+  });
+
+  it('SAFETY: refuses any host that is not a well-formed dev-<16hex>.… (no CF calls)', async () => {
+    const fetchMock = vi.fn();
+    await deleteDevTunnelDns('civitai.com', fetchMock as unknown as typeof fetch);
+    await deleteDevTunnelDns('dev-notenoughhex.civit.ai', fetchMock as unknown as typeof fetch);
+    await deleteDevTunnelDns('evil-dev-0123456789abcdef.civit.ai', fetchMock as unknown as typeof fetch);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('is a no-op when the CF token is unset (feature off — no fetch)', async () => {
+    mockEnv.APPS_DEV_TUNNEL_CF_API_TOKEN = undefined;
+    const fetchMock = vi.fn();
+    await deleteDevTunnelDns(CF_DEV_HOST, fetchMock as unknown as typeof fetch);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('never throws when the CF call rejects (best-effort)', async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new Error('cf down');
+    });
+    await expect(
+      deleteDevTunnelDns(CF_DEV_HOST, fetchMock as unknown as typeof fetch)
+    ).resolves.toBeUndefined();
+  });
+
+  it('never throws on a non-2xx CF response and issues no deletes', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes('/zones?name=')) return cfEnvelope([], false, 403);
+      return cfEnvelope([], false, 500);
+    });
+    await expect(
+      deleteDevTunnelDns(CF_DEV_HOST, fetchMock as unknown as typeof fetch)
+    ).resolves.toBeUndefined();
+    const deletes = fetchMock.mock.calls.filter((c) => (c[1] as any)?.method === 'DELETE');
+    expect(deletes.length).toBe(0);
+  });
+});
+
+describe('orphan-DNS GC wiring (teardown + reap call the CF deleter, best-effort)', () => {
+  /** LIST a route carrying the external-dns hostname annotation so
+   *  deleteDevTunnelRoute can discover the host for CF cleanup. */
+  function listRouteWithHost(sessionId: string, host: string) {
+    mockK8sFetch.mockImplementation(async (_t: unknown, path: string, init: any) => {
+      if (init?.method === 'GET' && path.includes('ingressroutes?labelSelector')) {
+        return okRes(
+          JSON.stringify({
+            items: [
+              {
+                metadata: {
+                  name: 'dev-tunnel-x',
+                  labels: { 'civitai.com/dev-tunnel-session': sessionId },
+                  annotations: { 'external-dns.alpha.kubernetes.io/hostname': host },
+                },
+              },
+            ],
+          })
+        );
+      }
+      return okRes();
+    });
+  }
+
+  it('deleteDevTunnelRoute deletes the orphan CF record for the route host', async () => {
+    mockEnv.APPS_DEV_TUNNEL_CF_API_TOKEN = 'cf-token';
+    mockEnv.APPS_DEV_TUNNEL_CF_ZONE_ID = 'zone-1';
+    listRouteWithHost('bki_wire', CF_DEV_HOST);
+    const cf: Array<[string, string]> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: any) => {
+        cf.push([init?.method ?? 'GET', String(url)]);
+        if (String(url).includes('dns_records?name=')) return cfEnvelope([{ id: 'rec-1' }]);
+        return cfEnvelope({});
+      })
+    );
+    await deleteDevTunnelRoute('bki_wire');
+    // the CF deleter was invoked with the route host and DELETEd its record
+    expect(cf.some(([m, u]) => m === 'DELETE' && u.endsWith('/zones/zone-1/dns_records/rec-1'))).toBe(true);
+  });
+
+  it('a CF failure does NOT break teardown (route + keys still deleted)', async () => {
+    mockEnv.APPS_DEV_TUNNEL_CF_API_TOKEN = 'cf-token';
+    mockEnv.APPS_DEV_TUNNEL_CF_ZONE_ID = 'zone-1';
+    sysRedis._store.set(
+      'system:blocks:dev-tunnel:session:bki_wire2',
+      JSON.stringify({
+        sessionId: 'bki_wire2',
+        userId: 42,
+        blockId: 'b',
+        host: CF_DEV_HOST,
+        fingerprint: 'fp',
+        createdAt: 1,
+        hardExpiresAt: 9999999999,
+        spendCapBuzz: 100,
+      })
+    );
+    listRouteWithHost('bki_wire2', CF_DEV_HOST);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('cf down');
+      })
+    );
+    // stopDevTunnel → teardownSession → deleteDevTunnelRoute (which GCs CF)
+    expect(await stopDevTunnel(42, 'bki_wire2')).toBe(true);
+    // teardown completed despite the CF failure — all keys gone
+    const remaining = [...sysRedis._store.keys()].filter((k) =>
+      k.startsWith('system:blocks:dev-tunnel')
+    );
+    expect(remaining).toEqual([]);
+  });
+
+  it('reapExpiredDevTunnels GCs CF DNS for a reaped session; a CF failure does not change counts', async () => {
+    mockEnv.APPS_DEV_TUNNEL_CF_API_TOKEN = 'cf-token';
+    mockEnv.APPS_DEV_TUNNEL_CF_ZONE_ID = 'zone-1';
+    const sessionId = 'bki_reapdns';
+    // hard-expired session record
+    sysRedis._store.set(
+      `system:blocks:dev-tunnel:session:${sessionId}`,
+      JSON.stringify({
+        sessionId,
+        userId: 7,
+        blockId: 'x',
+        host: CF_DEV_HOST,
+        fingerprint: 'fp',
+        createdAt: 1,
+        hardExpiresAt: 1,
+        spendCapBuzz: 100,
+        lastActivityAt: 1,
+      })
+    );
+    // LIST returns the route WITH the hostname annotation (discovery + host source)
+    mockK8sFetch.mockImplementation(async (_t: unknown, path: string, init: any) => {
+      if (init?.method === 'GET' && path.includes('ingressroutes?labelSelector')) {
+        return okRes(
+          JSON.stringify({
+            items: [
+              {
+                metadata: {
+                  name: 'dev-tunnel-x',
+                  labels: { 'civitai.com/dev-tunnel-session': sessionId },
+                  annotations: { 'external-dns.alpha.kubernetes.io/hostname': CF_DEV_HOST },
+                },
+              },
+            ],
+          })
+        );
+      }
+      return okRes();
+    });
+    const cfUrls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        cfUrls.push(String(url));
+        throw new Error('cf down');
+      })
+    );
+    const result = await reapExpiredDevTunnels();
+    // reap counts are unaffected by the (failing) best-effort CF cleanup
+    expect(result).toEqual({ swept: 1, reaped: 1, skipped: 0, listOk: true });
+    // the CF deleter WAS invoked for the reaped host's zone
+    expect(cfUrls.some((u) => u.includes('/zones/zone-1/dns_records'))).toBe(true);
   });
 });

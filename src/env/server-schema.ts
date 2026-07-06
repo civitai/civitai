@@ -817,6 +817,18 @@ export const serverSchema = z
     //   an empty string and the CLI must fail closed (refuse to connect without a
     //   pin) rather than fall back to InsecureIgnoreHostKey.
     APPS_DEV_TUNNEL_SSH_HOST_PUBKEY: z.string().optional(),
+    // APPS_DEV_TUNNEL_CF_API_TOKEN   Cloudflare API token (DNS:Edit on the civit.ai
+    //   zone) used to DELETE the ephemeral `dev-<hex>.civit.ai` DNS records when a
+    //   dev-tunnel is torn down or reaped. external-dns runs `policy: upsert-only`, so
+    //   it NEVER removes a record on route deletion — the A record + its external-dns
+    //   ownership TXT records would otherwise accumulate forever (a CF zone record-cap
+    //   risk at scale). OPT-IN: unset ⇒ orphan-DNS GC is skipped (records linger exactly
+    //   as today). MUST be set on dp-prod for the cleanup to activate.
+    APPS_DEV_TUNNEL_CF_API_TOKEN: z.string().optional(),
+    // APPS_DEV_TUNNEL_CF_ZONE_ID   the civit.ai Cloudflare zone id. When set it is used
+    //   directly; when unset (but the token IS set) the zone is looked up by name
+    //   (GET /zones?name=civit.ai) and cached in-process. Optional.
+    APPS_DEV_TUNNEL_CF_ZONE_ID: z.string().optional(),
   })
   .superRefine((env, ctx) => {
     // Sentinel-mode for the system Redis client requires an explicit master group
