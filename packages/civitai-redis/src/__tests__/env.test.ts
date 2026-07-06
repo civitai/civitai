@@ -18,6 +18,12 @@ describe('redisEnvSchema — HA defaults', () => {
     // Keepalive ping + cluster command backstop.
     expect(parsed.REDIS_PING_INTERVAL_MS).toBe(5000);
     expect(parsed.REDIS_CLUSTER_COMMAND_TIMEOUT_MS).toBe(15000);
+    // Self-heal slow-settle threshold: 10s, deliberately BELOW the 15s reaper (invariant enforced
+    // in the superRefine) so it catches the invisible 10–15s under-reaper band.
+    expect(parsed.REDIS_CLUSTER_SELFHEAL_SLOW_COMMAND_MS).toBe(10000);
+    expect(parsed.REDIS_CLUSTER_SELFHEAL_SLOW_COMMAND_MS).toBeLessThan(
+      parsed.REDIS_CLUSTER_COMMAND_TIMEOUT_MS
+    );
     // Sentinel is opt-in.
     expect(parsed.REDIS_SYS_SENTINELS).toBeUndefined();
   });
@@ -43,11 +49,10 @@ describe('redisEnvSchema — sys self-heal defaults', () => {
     expect(parsed.REDIS_SYS_SELFHEAL_SUSTAINED_MS).toBe(20000);
     expect(parsed.REDIS_SYS_SELFHEAL_COOLDOWN_MS).toBe(60000);
     expect(parsed.REDIS_SYS_SELFHEAL_CHECK_INTERVAL_MS).toBe(1000);
-    // WIDER than the cluster jitter (4s vs 1s) — the sys watchdog's only trigger is sustained-
-    // inflight, so a slow-but-alive master could sync ~100 pods into one window; 4s de-correlates.
+    // Sys jitter is 4s; the cluster jitter was widened to 3s (2026-07-06) — the settle-time trigger
+    // fires on a broader (>=10s) envelope, so more pods can trip together and need de-correlating.
     expect(parsed.REDIS_SYS_SELFHEAL_RECONNECT_JITTER_MS).toBe(4000);
-    // The cluster jitter default is UNCHANGED (only the sys default was widened).
-    expect(parsed.REDIS_CLUSTER_SELFHEAL_RECONNECT_JITTER_MS).toBe(1000);
+    expect(parsed.REDIS_CLUSTER_SELFHEAL_RECONNECT_JITTER_MS).toBe(3000);
   });
 
   it('REDIS_SYS_SELFHEAL_ENABLED=false disables it (single-flip revert)', () => {
@@ -81,5 +86,54 @@ describe('redisEnvSchema — sentinel superRefine', () => {
 
   it('leaves the non-sentinel path (REDIS_SYS_URL only) unaffected', () => {
     expect(redisEnvSchema.safeParse(base).success).toBe(true);
+  });
+});
+
+describe('redisEnvSchema — slow-settle < reaper invariant', () => {
+  it('REJECTS a slow-settle threshold >= the command deadline (fix-defeating misconfig)', () => {
+    // Operator lowers the reaper below the slow threshold: reaped orphans then settle at ~8s < 10s
+    // → no hit recorded → self-heal blind. Must fail fast at startup.
+    const result = redisEnvSchema.safeParse({
+      ...base,
+      REDIS_CLUSTER_COMMAND_TIMEOUT_MS: '8000',
+      REDIS_CLUSTER_SELFHEAL_SLOW_COMMAND_MS: '10000',
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.error.issues.some((i) => i.path.includes('REDIS_CLUSTER_SELFHEAL_SLOW_COMMAND_MS'))
+      ).toBe(true);
+    }
+  });
+
+  it('REJECTS slow-settle == reaper (must be strictly below)', () => {
+    const result = redisEnvSchema.safeParse({
+      ...base,
+      REDIS_CLUSTER_COMMAND_TIMEOUT_MS: '10000',
+      REDIS_CLUSTER_SELFHEAL_SLOW_COMMAND_MS: '10000',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('ACCEPTS the defaults (10s slow < 15s reaper)', () => {
+    expect(redisEnvSchema.safeParse(base).success).toBe(true);
+  });
+
+  it('does NOT enforce when the reaper is disabled (T=0): settle-time signal works without it', () => {
+    const result = redisEnvSchema.safeParse({
+      ...base,
+      REDIS_CLUSTER_COMMAND_TIMEOUT_MS: '0',
+      REDIS_CLUSTER_SELFHEAL_SLOW_COMMAND_MS: '10000',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('does NOT enforce when slow-settle recording is disabled (S=0)', () => {
+    const result = redisEnvSchema.safeParse({
+      ...base,
+      REDIS_CLUSTER_COMMAND_TIMEOUT_MS: '15000',
+      REDIS_CLUSTER_SELFHEAL_SLOW_COMMAND_MS: '0',
+    });
+    expect(result.success).toBe(true);
   });
 });

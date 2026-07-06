@@ -57,13 +57,28 @@ export const redisEnvSchema = z
     REDIS_CLUSTER_SELFHEAL_COOLDOWN_MS: z.coerce.number().default(60000),
     // How often the watchdog samples inflight (cheap one-gauge read).
     REDIS_CLUSTER_SELFHEAL_CHECK_INTERVAL_MS: z.coerce.number().default(1000),
-    // DEADLINE-HIT TRIGGER (the sawtooth-immune self-heal signal): N cluster command-deadline
-    // TIMEOUTS within the window force a reconnect. <= 0 disables this trigger.
+    // DEADLINE-HIT / SLOW-SETTLE TRIGGER (the sawtooth-immune self-heal signal): N cluster command
+    // SLOW-SETTLES within the window force a reconnect. <= 0 disables this trigger.
     REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_THRESHOLD: z.coerce.number().default(10),
     REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_WINDOW_MS: z.coerce.number().default(20000),
-    // PER-POD RECONNECT JITTER (fleet-stampede brake): wait a random [0, this) before the
-    // actual reconnect so a synchronized fleet event doesn't stampede the cluster.
-    REDIS_CLUSTER_SELFHEAL_RECONNECT_JITTER_MS: z.coerce.number().default(1000),
+    // A cluster command whose OBSERVED settle duration reaches this many ms counts as a wedge hit
+    // (recordClusterCommandSettle, wired from instrumentCommands' done() — the SAME settle-time
+    // observation as redis_command_duration_seconds). 2026-07-06: the trigger used to key off
+    // withCommandDeadline's onTimeout (deadline REAP), which never fires when slow commands settle
+    // on their own past the deadline (~29s tail), so the ring stayed empty and self-heal 0-fired.
+    // Set BELOW the command deadline (15s) so an early wedge trips before the reaper and so it works
+    // even if the deadline reaper is disabled. Healthy p99 ≈ 23ms, so 10s is ~400× p99 — a one-off
+    // slow command is far below the N-in-window threshold. <= 0 disables slow-settle recording.
+    REDIS_CLUSTER_SELFHEAL_SLOW_COMMAND_MS: z.coerce.number().default(10000),
+    // PER-POD RECONNECT JITTER (fleet-stampede brake): wait a random [0, this) before the actual
+    // reconnect so a synchronized fleet event doesn't stampede the cluster. WIDENED to 3s (was 1s)
+    // for the settle-time trigger: it fires on a BROADER envelope than the old reaper-only signal —
+    // any cluster command completing >= REDIS_CLUSTER_SELFHEAL_SLOW_COMMAND_MS (10s), not just those
+    // reaped at the 15s deadline. So a genuine >10s cluster event can trip ~100 pods on nearly the
+    // same tick; 1s was too thin to de-correlate that many destroy()+connect()s against an already-
+    // degraded cluster. 3s spreads them out while still keeping a single-pod heal well inside the
+    // ~60s kubelet readiness-shed window. Env-tunable (3–5s reasonable).
+    REDIS_CLUSTER_SELFHEAL_RECONNECT_JITTER_MS: z.coerce.number().default(3000),
     // ── SYS (SENTINEL) SELF-HEAL WATCHDOG ──────────────────────────────────────────────
     // The exact mirror of the cluster self-heal, for the OTHER node-redis client — the sysRedis
     // Sentinel HA client. WHY (incident 2026-07-03): a sentinel flap orphaned in-flight commands
@@ -129,6 +144,25 @@ export const redisEnvSchema = z
           'REDIS_SYS_SENTINEL_NAME is required when REDIS_SYS_SENTINELS is set (cluster uses "sysmaster")',
       });
     }
+    // Self-heal invariant: the slow-settle threshold MUST stay BELOW the per-command deadline
+    // reaper. When the reaper is active at T and a command orphans, the deadline reaps it at ~T, so
+    // done() observes ~T; if the slow threshold S >= T, that reaped orphan is NOT recorded (T < S)
+    // and the self-heal goes BLIND to the exact deadline-park wedge this trigger exists to catch
+    // (2026-07-06). Only enforced when BOTH are active (>0): the reaper can be disabled (T=0) — the
+    // settle-time signal still works without it — and slow-settle recording can be disabled (S=0).
+    const reaperMs = env.REDIS_CLUSTER_COMMAND_TIMEOUT_MS;
+    const slowMs = env.REDIS_CLUSTER_SELFHEAL_SLOW_COMMAND_MS;
+    if (reaperMs > 0 && slowMs > 0 && slowMs >= reaperMs) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['REDIS_CLUSTER_SELFHEAL_SLOW_COMMAND_MS'],
+        message:
+          `REDIS_CLUSTER_SELFHEAL_SLOW_COMMAND_MS (${slowMs}) must be < REDIS_CLUSTER_COMMAND_TIMEOUT_MS ` +
+          `(${reaperMs}): the slow-settle self-heal threshold has to stay below the deadline reaper, ` +
+          `else deadline-reaped orphans settle at ~${reaperMs}ms < ${slowMs}ms and never record a hit ` +
+          `→ the cluster self-heal goes blind to the deadline-park wedge.`,
+      });
+    }
   });
 
 // Normalized, env-derived defaults. The factory accepts a Partial<RedisConfig> to
@@ -160,6 +194,7 @@ function buildEnv() {
     clusterSelfHealCheckIntervalMs: parsed.data.REDIS_CLUSTER_SELFHEAL_CHECK_INTERVAL_MS,
     clusterSelfHealDeadlineHitThreshold: parsed.data.REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_THRESHOLD,
     clusterSelfHealDeadlineHitWindowMs: parsed.data.REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_WINDOW_MS,
+    clusterSelfHealSlowCommandMs: parsed.data.REDIS_CLUSTER_SELFHEAL_SLOW_COMMAND_MS,
     clusterSelfHealReconnectJitterMs: parsed.data.REDIS_CLUSTER_SELFHEAL_RECONNECT_JITTER_MS,
     sysSelfHealEnabled: parsed.data.REDIS_SYS_SELFHEAL_ENABLED,
     sysSelfHealInflightThreshold: parsed.data.REDIS_SYS_SELFHEAL_INFLIGHT_THRESHOLD,
