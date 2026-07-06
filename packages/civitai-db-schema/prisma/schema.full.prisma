@@ -1365,6 +1365,7 @@ model Report {
   reportedUser   UserReport?
   collection     CollectionReport?
   bounty         BountyReport?
+  challenge      ChallengeReport?
   bountyEntry    BountyEntryReport?
   chat           ChatReport?
   comicProject   ComicProjectReport?
@@ -5111,6 +5112,7 @@ model Challenge {
   // Relations
   winners ChallengeWinner[]
   threads Thread[]
+  reports ChallengeReport[]
 
   // Event grouping
   eventId Int?
@@ -5124,6 +5126,16 @@ model Challenge {
   @@index([createdById, status]) // User's challenges by status
   @@index([judgeId])
   @@index([eventId])
+}
+
+model ChallengeReport {
+  challengeId Int
+  challenge   Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  reportId    Int       @unique
+  report      Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, challengeId])
+  @@index([challengeId], type: Hash)
 }
 
 model ChallengeJudge {

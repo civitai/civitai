@@ -1307,6 +1307,10 @@ export type ChallengeJudge = {
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
+export type ChallengeReport = {
+  challengeId: number;
+  reportId: number;
+};
 export type ChallengeWinner = {
   id: Generated<number>;
   challengeId: number;
@@ -3773,6 +3777,7 @@ export type DB = {
   Challenge: Challenge;
   ChallengeEvent: ChallengeEvent;
   ChallengeJudge: ChallengeJudge;
+  ChallengeReport: ChallengeReport;
   ChallengeWinner: ChallengeWinner;
   Changelog: Changelog;
   Chat: Chat;

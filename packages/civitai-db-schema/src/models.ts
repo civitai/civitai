@@ -1131,6 +1131,7 @@ export interface Report {
   reportedUser?: UserReport | null;
   collection?: CollectionReport | null;
   bounty?: BountyReport | null;
+  challenge?: ChallengeReport | null;
   bountyEntry?: BountyEntryReport | null;
   chat?: ChatReport | null;
   comicProject?: ComicProjectReport | null;
@@ -3575,8 +3576,16 @@ export interface Challenge {
   updatedAt: Date;
   winners?: ChallengeWinner[];
   threads?: Thread[];
+  reports?: ChallengeReport[];
   eventId: number | null;
   event?: ChallengeEvent | null;
+}
+
+export interface ChallengeReport {
+  challengeId: number;
+  challenge?: Challenge;
+  reportId: number;
+  report?: Report;
 }
 
 export interface ChallengeJudge {
