@@ -14,9 +14,16 @@ import {
   getAppListingDetailSchema,
   listAppListingsSchema,
 } from '~/server/schema/blocks/app-listing-read.schema';
-import { rateLimit } from '~/server/middleware.trpc';
-import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import {
+  listMySubmissionsSchema,
+  listOffsiteRequestsSchema,
+  submitExternalListingSchema,
+  withdrawExternalRequestSchema,
+} from '~/server/schema/blocks/offsite-listing.schema';
+import { rateLimit } from '~/server/middleware.trpc';
+import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
+import {
+  appDeveloperProcedure,
   middleware,
   moderatorProcedure,
   protectedProcedure,
@@ -27,21 +34,42 @@ import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/erro
 import { isHostForColor } from '~/server/utils/server-domain';
 
 /**
- * App Store Listings (W13) — P1 asset pipeline router (NEW router, locked
- * decision §5.1 — NOT an extension of `blocks.router`). All procs are DARK and
- * additive: owner-scoped (mod override) creator asset management + a mod-only
- * placeholder backfill. Nothing here is on a public read path (that is P2) or a
- * live approval gate (P3).
+ * App Store Listings (W13) — asset pipeline + off-site submission router (NEW
+ * router, locked decision §5.1 — NOT an extension of `blocks.router`). All procs
+ * are DARK and additive: owner-scoped (mod override) creator asset management, a
+ * mod-only placeholder backfill, the P2a unified store read path, and (P3a) the
+ * off-site submission flow. No UI in P3a.
  *
- * Flag gate: reuses the mod-segmented `app-blocks-enabled` flag (evaluated WITH
- * the request user's context, like blocks.router's `enforceAppBlocksFlag`), so
- * P1 ships dark-to-non-mods and immediately usable by the civitai team. A
- * dedicated `app-listings-enabled` flag lands with the P2 read path when there
- * is a user-facing surface to widen independently.
+ * Flag gates (three tiers):
+ *   - `enforceAppBlocksAuthorFlag` (`app-blocks-author`) — the AUTHOR gate on the
+ *     creator asset-CRUD procs + the off-site submit/withdraw/my-submissions
+ *     procs (mods + app-dev-testers). Widened from mod-only in P3a so a dev-tester
+ *     can manage their OWN listing's assets + submit off-site apps; the
+ *     service-layer owner check still bounds every mutation to the caller.
+ *   - `moderatorProcedure` (+ `enforceAppBlocksFlag` on backfill) — the mod-only
+ *     backfill + the read-only off-site review-queue lists.
+ *   - `enforceAppListingsReadFlag` (`app-blocks-enabled`) — the DARK public store
+ *     read path (empty page / NOT_FOUND until the segment widens at cutover).
  */
 const enforceAppBlocksFlag = middleware(async ({ ctx, next }) => {
   if (await isAppBlocksEnabled({ user: ctx.user })) return next();
   throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
+});
+
+/**
+ * AUTHOR flag gate (P3a) — the WIDENED gate for the creator asset-CRUD procs +
+ * the off-site submit/withdraw/my-submissions procs. Evaluated WITH the caller's
+ * context against `app-blocks-author` (`isAppBlocksAuthorEnabled`: mod floor +
+ * the `app-dev-testers` cohort segment), so an app-dev-tester may manage their
+ * OWN listing's assets + submit off-site apps — while the SERVICE-layer owner
+ * check still bounds every mutation to the caller's own listings. This REPLACES
+ * the mod-only `enforceAppBlocksFlag` (`isAppBlocksEnabled`) on those procs;
+ * mods still pass via the author floor. Fail-CLOSED: absent flag / Flipt-down →
+ * mods only. (The mod-only `backfillAssets` proc keeps `enforceAppBlocksFlag`.)
+ */
+const enforceAppBlocksAuthorFlag = middleware(async ({ ctx, next }) => {
+  if (await isAppBlocksAuthorEnabled({ user: ctx.user })) return next();
+  throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps authoring is not enabled' });
 });
 
 /**
@@ -72,7 +100,7 @@ function isRedCapableRequest(ctx: { req?: { headers?: { host?: string } } }): bo
 export const appListingsRouter = router({
   /** Owner/mod read of a listing's current assets (creator dashboard). */
   getAssets: protectedProcedure
-    .use(enforceAppBlocksFlag)
+    .use(enforceAppBlocksAuthorFlag)
     .input(listingAssetsQuerySchema)
     .query(async ({ ctx, input }) => {
       const { getListingAssets } = await import('~/server/services/blocks/app-listing-assets.service');
@@ -80,7 +108,7 @@ export const appListingsRouter = router({
     }),
 
   setIcon: protectedProcedure
-    .use(enforceAppBlocksFlag)
+    .use(enforceAppBlocksAuthorFlag)
     .input(setListingIconSchema)
     .mutation(async ({ ctx, input }) => {
       const { setListingIcon } = await import('~/server/services/blocks/app-listing-assets.service');
@@ -88,7 +116,7 @@ export const appListingsRouter = router({
     }),
 
   setCover: protectedProcedure
-    .use(enforceAppBlocksFlag)
+    .use(enforceAppBlocksAuthorFlag)
     .input(setListingCoverSchema)
     .mutation(async ({ ctx, input }) => {
       const { setListingCover } = await import('~/server/services/blocks/app-listing-assets.service');
@@ -96,7 +124,7 @@ export const appListingsRouter = router({
     }),
 
   addScreenshot: protectedProcedure
-    .use(enforceAppBlocksFlag)
+    .use(enforceAppBlocksAuthorFlag)
     .input(addListingScreenshotSchema)
     .mutation(async ({ ctx, input }) => {
       const { addListingScreenshot } = await import(
@@ -106,7 +134,7 @@ export const appListingsRouter = router({
     }),
 
   reorderScreenshots: protectedProcedure
-    .use(enforceAppBlocksFlag)
+    .use(enforceAppBlocksAuthorFlag)
     .input(reorderListingScreenshotsSchema)
     .mutation(async ({ ctx, input }) => {
       const { reorderListingScreenshots } = await import(
@@ -116,7 +144,7 @@ export const appListingsRouter = router({
     }),
 
   updateScreenshotCaption: protectedProcedure
-    .use(enforceAppBlocksFlag)
+    .use(enforceAppBlocksAuthorFlag)
     .input(updateListingScreenshotCaptionSchema)
     .mutation(async ({ ctx, input }) => {
       const { updateListingScreenshotCaption } = await import(
@@ -126,7 +154,7 @@ export const appListingsRouter = router({
     }),
 
   removeScreenshot: protectedProcedure
-    .use(enforceAppBlocksFlag)
+    .use(enforceAppBlocksAuthorFlag)
     .input(removeListingScreenshotSchema)
     .mutation(async ({ ctx, input }) => {
       const { removeListingScreenshot } = await import(
@@ -150,6 +178,98 @@ export const appListingsRouter = router({
         '~/server/services/blocks/app-listing-assets.service'
       );
       return backfillListingAssets({ limit: input.limit, dryRun: input.dryRun });
+    }),
+
+  // -------------------------------------------------------------------------
+  // P3a OFF-SITE SUBMISSION (external-link) — DARK behind `app-blocks-author`.
+  //
+  // The native publish-request flow for a pure external-link off-site app
+  // (design B1: submit creates a DRAFT AppListing + a pending
+  // AppListingPublishRequest in one tx). AUTHOR procs (submit/withdraw/
+  // my-submissions) are `appDeveloperProcedure` (mods + app-dev-testers); the
+  // read-only review-queue lists are `moderatorProcedure`. approve/reject land in
+  // PR-b. Nothing renders any UI in this PR.
+  // -------------------------------------------------------------------------
+
+  /**
+   * AUTHOR: submit a pure external-link off-site app. Creates a DRAFT
+   * `AppListing` + a `pending` `AppListingPublishRequest` (B1); the author then
+   * attaches assets via the (author-gated) asset-CRUD procs above before a mod
+   * approves it (PR-b). Owner-bound to the caller (no user-supplied owner).
+   */
+  submitExternalListing: appDeveloperProcedure
+    .input(submitExternalListingSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { submitExternalListing } = await import(
+        '~/server/services/blocks/offsite-listing.service'
+      );
+      return submitExternalListing({ input, userId: ctx.user.id });
+    }),
+
+  /**
+   * AUTHOR: withdraw the caller's OWN pending off-site request (terminal). IDOR +
+   * TOCTOU checked in the service; deletes the draft listing (releases the slug).
+   * Idempotent. All failure modes map to BAD_REQUEST with the service message
+   * (mirrors `blocks.withdrawPublishRequest`).
+   */
+  withdrawExternalRequest: appDeveloperProcedure
+    .input(withdrawExternalRequestSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { withdrawExternalRequest } = await import(
+        '~/server/services/blocks/offsite-listing.service'
+      );
+      try {
+        await withdrawExternalRequest({
+          publishRequestId: input.publishRequestId,
+          userId: ctx.user.id,
+        });
+      } catch (err) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+      }
+      return { ok: true };
+    }),
+
+  /** AUTHOR: the caller's OWN off-site submissions (my-submissions page, PR-c). */
+  listMySubmissions: appDeveloperProcedure
+    .input(listMySubmissionsSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user) return { items: [], nextCursor: null };
+      const { listMySubmissions } = await import(
+        '~/server/services/blocks/offsite-listing.service'
+      );
+      return listMySubmissions({ userId: ctx.user.id, limit: input.limit, cursor: input.cursor });
+    }),
+
+  /** MOD: pending off-site review queue (read-only in PR-a; approve/reject in PR-b). */
+  listPendingRequests: moderatorProcedure
+    .input(listOffsiteRequestsSchema)
+    .query(async ({ input }) => {
+      const { listPendingOffsiteRequests } = await import(
+        '~/server/services/blocks/offsite-listing.service'
+      );
+      return listPendingOffsiteRequests(input);
+    }),
+
+  /** MOD: approved off-site request history. */
+  listApprovedRequests: moderatorProcedure
+    .input(listOffsiteRequestsSchema)
+    .query(async ({ input }) => {
+      const { listApprovedOffsiteRequests } = await import(
+        '~/server/services/blocks/offsite-listing.service'
+      );
+      return listApprovedOffsiteRequests(input);
+    }),
+
+  /** MOD: rejected off-site request history. */
+  listRejectedRequests: moderatorProcedure
+    .input(listOffsiteRequestsSchema)
+    .query(async ({ input }) => {
+      const { listRejectedOffsiteRequests } = await import(
+        '~/server/services/blocks/offsite-listing.service'
+      );
+      return listRejectedOffsiteRequests(input);
     }),
 
   // -------------------------------------------------------------------------
