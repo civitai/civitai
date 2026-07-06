@@ -330,8 +330,11 @@ echo "dev-tunnel route applied"
  * functional blocker); it would ALSO be a security regression to broaden the
  * live web-pod SA to `create` (any civitai-web SSRF/RCE → arbitrary-IngressRoute
  * creation → hijack of live app hosts). The Job is the isolation boundary. The
- * web-pod SA only CREATES the Job (it has that) + DELETEs routes on teardown
- * (it has that) — it never itself creates a traefik CRD.
+ * web-pod SA (civitai-dp-prod `default`) CREATES the Job + LISTs/DELETEs routes on
+ * teardown (deleteDevTunnelRoute / reapExpiredDevTunnels). Its RoleBinding in
+ * apps-dev-tunnel currently grants the full CRD verb set (tracked hardening: narrow it
+ * to read+delete); but allowCrossNamespace=false confines any IngressRoute it could
+ * create there to apps-dev-tunnel services (sish only) — no live-app-host hijack.
  *
  * Pure + exported for a shape test.
  */

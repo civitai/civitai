@@ -58,7 +58,7 @@ const {
       APPS_DOMAIN: 'civit.ai',
       APPS_KUBE_NAMESPACE: 'civitai-apps',
       NEXTAUTH_URL: 'https://civitai.com',
-      APPS_DEV_TUNNEL_SISH_BACKEND: 'http://sish-http.apps-dev-tunnel.svc.cluster.local:8080',
+      APPS_DEV_TUNNEL_SISH_BACKEND: 'http://sish-http.apps-dev-tunnel.svc.cluster.local:80',
       APPS_DEV_TUNNEL_ROUTE_NAMESPACE: 'apps-dev-tunnel',
       APPS_DEV_TUNNEL_INGRESS_TARGET: '192.0.2.1' as string | undefined,
       APPS_DEV_TUNNEL_FORWARDAUTH_URL: undefined as string | undefined,
@@ -229,6 +229,9 @@ describe('startDevTunnel', () => {
     expect(appliedMw.metadata.namespace).toBe('apps-dev-tunnel');
     // service + middleware refs are now SAME-namespace (the cross-ns 404 cause).
     expect(appliedIr.spec.routes[0].services[0].namespace).toBe('apps-dev-tunnel');
+    // PORT: reference the sish-http SERVICE port (80), not the pod targetPort (8080) —
+    // Traefik matches a service ref by Service port number. A revert to :8080 fails here.
+    expect(appliedIr.spec.routes[0].services[0].port).toBe(80);
     expect(appliedIr.spec.routes[0].middlewares[0].namespace).toBe('apps-dev-tunnel');
     expect(mockWaitForApplyJob).toHaveBeenCalledTimes(1);
     // persisted the 4 index keys (cred/session/host/user-block)
