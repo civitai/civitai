@@ -80,19 +80,3 @@ export async function assertCanCreateUserChallenge(userId: number): Promise<void
   await assertUserInGoodStanding(userId);
   await assertUnderActiveChallengeLimit(userId);
 }
-
-/** Challenge creators may not enter their own challenge (self-dealing). */
-export async function assertNotChallengeOwner({
-  challengeId,
-  userId,
-}: {
-  challengeId: number;
-  userId: number;
-}): Promise<void> {
-  const challenge = await dbRead.challenge.findUnique({
-    where: { id: challengeId },
-    select: { createdById: true },
-  });
-  if (challenge?.createdById != null && challenge.createdById === userId)
-    throw forbidden('You cannot submit entries to your own challenge.');
-}

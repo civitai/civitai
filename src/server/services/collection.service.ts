@@ -1932,6 +1932,17 @@ export const validateContestCollectionEntry = async ({
     throw throwBadRequestError('You are banned from participating in contests');
   }
 
+  // Challenge creators may not enter their own challenge (self-dealing on the prize pool).
+  if (!isModerator) {
+    const ownChallenge = await dbRead.challenge.findFirst({
+      where: { collectionId, createdById: userId },
+      select: { id: true },
+    });
+    if (ownChallenge) {
+      throw throwBadRequestError('You cannot submit entries to your own challenge.');
+    }
+  }
+
   // Block re-submitting an image a challenge judge has already scored. Removal
   // hard-deletes the CollectionItem (erasing tag/score), so the judge's comment is the
   // durable "already judged" signal — across this and every other challenge. Limited to

@@ -13,6 +13,7 @@ import {
   getWinnerCooldownStatusSchema,
   requestReviewSchema,
   upsertChallengeSchema,
+  userChallengeUpsertSchema,
   upsertChallengeEventSchema,
   updateChallengeConfigSchema,
   getJudgeByIdSchema,
@@ -49,6 +50,7 @@ import {
   getWinnerCooldownStatus,
   requestReview,
   upsertChallenge,
+  upsertUserChallenge,
   upsertChallengeEvent,
   voidChallenge,
   getActiveJudges,
@@ -152,6 +154,16 @@ export const challengeRouter = router({
     .input(upsertChallengeSchema)
     .use(isFlagProtected('challengePlatform'))
     .mutation(({ input, ctx }) => upsertChallenge({ ...input, userId: ctx.user.id })),
+
+  // User: Create or update a user-owned challenge.
+  // Eligibility (score + standing + tier cap), ownership, and edit-locks are enforced
+  // in the service (upsertUserChallenge). Dark behind the `userChallenges` flag.
+  upsertUserChallenge: protectedProcedure
+    .meta({ requiredScope: TokenScope.SocialWrite, blockApiKeys: true })
+    .input(userChallengeUpsertSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .use(isFlagProtected('userChallenges'))
+    .mutation(({ input, ctx }) => upsertUserChallenge({ ...input, userId: ctx.user.id })),
 
   // Moderator: End challenge early and pick winners
   endAndPickWinners: moderatorProcedure

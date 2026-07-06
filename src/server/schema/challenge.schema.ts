@@ -9,6 +9,10 @@ import {
   PoolTrigger,
 } from '~/shared/utils/prisma/enums';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  CHALLENGE_MAX_ENTRY_FEE,
+  CHALLENGE_MIN_ENTRY_FEE,
+} from '~/shared/constants/challenge.constants';
 import { infiniteQuerySchema } from './base.schema';
 import { imageSchema } from './image.schema';
 import type { ProfileImage } from '~/server/selectors/image.selector';
@@ -344,6 +348,43 @@ export const upsertChallengeSchema = upsertChallengeBaseSchema.refine(
   { message: 'End date must be after start date', path: ['endsAt'] }
 );
 export type UpsertChallengeInput = z.infer<typeof upsertChallengeSchema>;
+
+// --- User (public) challenge create/update ---
+// A restricted, safe subset of the moderator upsert: no free-form judgingPrompt, no
+// arbitrary status/source/prizePool. Judging is category-based; funding is entry-fee.
+// The judge must be an existing active judge (validated server-side).
+export const challengeJudgingCategorySchema = z.object({
+  name: z.string().trim().min(1).max(50),
+  criteria: z.string().trim().min(1).max(500),
+});
+export type ChallengeJudgingCategory = z.infer<typeof challengeJudgingCategorySchema>;
+
+export const userChallengeUpsertBaseSchema = z.object({
+  id: z.number().optional(),
+  title: z.string().trim().min(3).max(200),
+  description: z.string().max(5000).optional(),
+  theme: z.string().trim().min(1).max(100),
+  themeElements: z.array(z.string().max(100)).max(20).optional(),
+  invitation: z.string().max(300).optional(),
+  coverImage: imageSchema,
+  allowedNsfwLevel: z.number().min(1).max(63).default(sfwBrowsingLevelsFlag),
+  modelVersionIds: z.array(z.number()).max(20).default([]),
+  judgeId: z.number(),
+  judgingCategories: z.array(challengeJudgingCategorySchema).min(1).max(8),
+  entryFee: z.number().int().min(CHALLENGE_MIN_ENTRY_FEE).max(CHALLENGE_MAX_ENTRY_FEE),
+  initialPrizeBuzz: z.number().int().min(0).default(0),
+  prizeDistribution: prizeDistributionSchema,
+  maxParticipants: z.number().int().min(1).max(100_000).optional(),
+  maxEntriesPerUser: z.number().int().min(1).max(100).default(5),
+  startsAt: z.date(),
+  endsAt: z.date(),
+});
+
+export const userChallengeUpsertSchema = userChallengeUpsertBaseSchema.refine(
+  (data) => data.endsAt > data.startsAt,
+  { message: 'End date must be after start date', path: ['endsAt'] }
+);
+export type UserChallengeUpsertInput = z.infer<typeof userChallengeUpsertSchema>;
 
 // Moderator: Delete challenge
 export type DeleteChallengeInput = z.infer<typeof deleteChallengeSchema>;

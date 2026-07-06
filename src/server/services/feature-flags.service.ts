@@ -236,6 +236,7 @@ const featureFlags = createFeatureFlags({
   cashManagement: { availability: ['granted'], fliptKey: 'feature-cash-management' },
   auctionsMod: ['granted'],
   challengePlatform: ['public'],
+  userChallenges: ['granted'], // public user-created challenges — dark until rolled out
   comicCreator: { availability: ['mod'], fliptKey: 'comic-creator' },
   licensingFee: { availability: ['user'], fliptKey: 'licensing-fee' },
   liveMetrics: { availability: ['mod'], fliptKey: 'live-metrics' },

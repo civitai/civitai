@@ -30,6 +30,7 @@ import {
   type ImageEligibilityResult,
   type UpcomingTheme,
   type UpsertChallengeInput,
+  type UserChallengeUpsertInput,
   type UpsertChallengeEventInput,
   type UpdateChallengeConfigInput,
   type UpsertJudgeInput,
@@ -39,19 +40,25 @@ import {
   type UserChallengeEntriesResult,
   type WinnerCooldownStatus,
 } from '~/server/schema/challenge.schema';
-import type { ChallengeSource } from '~/shared/utils/prisma/enums';
 import {
   ChallengeReviewCostType,
+  ChallengeScanStatus,
+  ChallengeSource,
   ChallengeStatus,
   CollectionItemStatus,
   CollectionMode,
   CollectionReadConfiguration,
   CollectionType,
   CollectionWriteConfiguration,
+  PoolTrigger,
+  PrizeMode,
 } from '~/shared/utils/prisma/enums';
 import { createImage, imagesForModelVersionsCache } from '~/server/services/image.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { assertCanCreateUserChallenge } from '~/server/services/challenge-eligibility.service';
+import { getEntryPoolContribution } from '~/shared/constants/challenge.constants';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
@@ -1094,6 +1101,177 @@ export async function upsertChallenge({
   }
 }
 
+// Create/update a PUBLIC (user-created) challenge. Restricted, safe path — forces
+// source=User, scan gating (Pending), category-based judging (no free-form prompt),
+// entry-fee funding (Dynamic pool). Prize payout / entry-fee charging is wired in Phase 2.
+export async function upsertUserChallenge({
+  userId,
+  ...input
+}: UserChallengeUpsertInput & { userId: number }) {
+  const {
+    id,
+    coverImage,
+    judgeId,
+    themeElements,
+    entryFee,
+    initialPrizeBuzz,
+    prizeDistribution,
+    judgingCategories,
+    maxParticipants,
+    ...rest
+  } = input;
+
+  if (rest.endsAt <= rest.startsAt) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'End date must be after start date' });
+  }
+
+  // Judge must be an existing, active judge — users can only pick, not create or reprompt one.
+  const judge = await dbRead.challengeJudge.findFirst({
+    where: { id: judgeId, active: true },
+    select: { id: true },
+  });
+  if (!judge) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Selected judge is not available.' });
+
+  const allowedNsfwLevel = rest.allowedNsfwLevel ?? sfwBrowsingLevelsFlag;
+  const themeEls = themeElements?.length ? themeElements : undefined;
+
+  // Cover image: reuse an existing Image or create one from the upload (like the mod path).
+  const coverImageId = coverImage.id ?? (await createImage({ ...coverImage, userId })).id;
+
+  // Fields shared by create + update. Entry-fee funded pools are modeled with the existing
+  // Dynamic prize machinery: pool grows by `buzzPerAction` (net of the house cut) per entry.
+  const commonData = {
+    title: rest.title,
+    description: rest.description ?? null,
+    theme: rest.theme,
+    invitation: rest.invitation ?? null,
+    coverImageId,
+    allowedNsfwLevel,
+    nsfwLevel: deriveChallengeNsfwLevel(allowedNsfwLevel),
+    modelVersionIds: rest.modelVersionIds ?? [],
+    maxEntriesPerUser: rest.maxEntriesPerUser,
+    maxParticipants: maxParticipants ?? null,
+    startsAt: rest.startsAt,
+    endsAt: rest.endsAt,
+    judgeId,
+    judgingPrompt: null,
+    judgingCategories: judgingCategories as unknown as Prisma.InputJsonValue,
+    entryFee,
+    prizeMode: PrizeMode.Dynamic,
+    poolTrigger: PoolTrigger.Entry,
+    buzzPerAction: getEntryPoolContribution(entryFee),
+    basePrizePool: initialPrizeBuzz,
+    prizeDistribution: prizeDistribution as unknown as Prisma.InputJsonValue,
+  };
+
+  if (id) {
+    const existing = await dbRead.challenge.findUnique({
+      where: { id },
+      select: {
+        createdById: true,
+        source: true,
+        status: true,
+        collectionId: true,
+      },
+    });
+    if (!existing) throw throwNotFoundError('Challenge not found');
+    if (existing.source !== ChallengeSource.User)
+      throw new TRPCError({ code: 'FORBIDDEN', message: 'This challenge cannot be edited here.' });
+    if (existing.createdById !== userId)
+      throw new TRPCError({ code: 'FORBIDDEN', message: 'You can only edit your own challenges.' });
+    // Text/config locks once the challenge is live; only Scheduled + entry-free challenges are editable.
+    if (existing.status !== ChallengeStatus.Scheduled)
+      throw new TRPCError({
+        code: 'PRECONDITION_FAILED',
+        message: 'A published challenge can no longer be edited.',
+      });
+    if (existing.collectionId) {
+      const entryCount = await dbRead.collectionItem.count({
+        where: { collectionId: existing.collectionId },
+      });
+      if (entryCount > 0)
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'This challenge already has entries and can no longer be edited.',
+        });
+    }
+
+    return dbWrite.$transaction(async (tx) => {
+      const updated = await tx.challenge.update({
+        where: { id },
+        data: {
+          ...commonData,
+          // Any content edit requires a fresh scan before the challenge is public again.
+          scanStatus: ChallengeScanStatus.Pending,
+          scannedAt: null,
+          ...(themeEls && { metadata: { themeElements: themeEls } }),
+        },
+      });
+
+      if (existing.collectionId) {
+        const collection = await tx.collection.findUnique({
+          where: { id: existing.collectionId },
+          select: { metadata: true },
+        });
+        await tx.collection.update({
+          where: { id: existing.collectionId },
+          data: {
+            metadata: {
+              ...(collection?.metadata as CollectionMetadataSchema),
+              submissionStartDate: rest.startsAt,
+              submissionEndDate: rest.endsAt,
+              maxItemsPerUser: rest.maxEntriesPerUser,
+              forcedBrowsingLevel: allowedNsfwLevel,
+            },
+          },
+        });
+      }
+
+      return updated;
+    });
+  }
+
+  // Create — gate on eligibility (score + standing + tier concurrent cap).
+  await assertCanCreateUserChallenge(userId);
+
+  return dbWrite.$transaction(async (tx) => {
+    const collection = await tx.collection.create({
+      data: {
+        name: `Challenge: ${rest.title}`,
+        description: rest.description || `Entries for challenge: ${rest.title}`,
+        userId,
+        mode: CollectionMode.Contest,
+        write: CollectionWriteConfiguration.Review,
+        read: CollectionReadConfiguration.Public,
+        type: CollectionType.Image,
+        imageId: coverImageId,
+        metadata: {
+          maxItemsPerUser: rest.maxEntriesPerUser,
+          submissionStartDate: rest.startsAt,
+          submissionEndDate: rest.endsAt,
+          forcedBrowsingLevel: allowedNsfwLevel,
+          disableFollowOnSubmission: true,
+          disableTagRequired: true,
+        },
+      },
+    });
+
+    return tx.challenge.create({
+      data: {
+        ...commonData,
+        collectionId: collection.id,
+        createdById: userId,
+        source: ChallengeSource.User,
+        status: ChallengeStatus.Scheduled,
+        scanStatus: ChallengeScanStatus.Pending,
+        // Appears in the Upcoming feed once scanned (scanStatus gate hides it until then).
+        visibleAt: new Date(),
+        ...(themeEls && { metadata: { themeElements: themeEls } }),
+      },
+    });
+  });
+}
+
 export async function updateChallengeStatus(id: number, status: ChallengeStatus) {
   const challenge = await dbWrite.challenge.update({
     where: { id },
@@ -1827,7 +2005,9 @@ export async function getActiveEvents(): Promise<ChallengeEventListItem[]> {
   // Collect all display user IDs (judge user or creator)
   const displayUserIds = [
     ...new Set(
-      allChallenges.map((c) => (c.judgeId ? judgeUserMap.get(c.judgeId) : null) ?? c.createdById)
+      allChallenges
+        .map((c) => (c.judgeId ? judgeUserMap.get(c.judgeId) : null) ?? c.createdById)
+        .filter(isDefined)
     ),
   ];
 
@@ -1883,7 +2063,9 @@ export async function getActiveEvents(): Promise<ChallengeEventListItem[]> {
     startDate: event.startDate,
     endDate: event.endDate,
     challenges: event.challenges.map((c) => {
-      const displayUserId = (c.judgeId ? judgeUserMap.get(c.judgeId) : null) ?? c.createdById;
+      // createdById can be null (creator account deleted); fall back to the system user (-1).
+      const displayUserId =
+        (c.judgeId ? judgeUserMap.get(c.judgeId) : null) ?? c.createdById ?? -1;
       const user = users.get(displayUserId);
       const coverImage = c.coverImageId ? coverImages.get(c.coverImageId) : null;
 
