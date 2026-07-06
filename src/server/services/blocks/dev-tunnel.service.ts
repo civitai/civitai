@@ -464,13 +464,185 @@ export async function renderDevTunnelRoute(host: string, sessionId: string): Pro
   }
 }
 
+// ---------------------------------------------------------------------------
+// Cloudflare orphan-DNS cleanup (best-effort — external-dns is upsert-only)
+// ---------------------------------------------------------------------------
+//
+// external-dns runs `policy: upsert-only` on the civit.ai zone, so deleting a
+// dev-tunnel IngressRoute leaves its `dev-<hex>.civit.ai` A record AND the
+// external-dns ownership TXT registry records behind — with no GC they accumulate
+// forever (a CF zone record-cap risk at scale). This best-effort deleter removes
+// them via the Cloudflare API when a tunnel is torn down or reaped. It is OPT-IN
+// (unset APPS_DEV_TUNNEL_CF_API_TOKEN ⇒ no-op, records linger as before) and NEVER
+// throws — it must not break teardown/reap.
+
+const CF_API_BASE = 'https://api.cloudflare.com/client/v4';
+/** Per-call HTTP timeout — the CF API is best-effort, keep it snappy. */
+const CF_CALL_TIMEOUT_MS = 5_000;
+/** External-dns annotation carrying the ephemeral dev host on the IngressRoute. */
+const EXTERNAL_DNS_HOSTNAME_ANNOTATION = 'external-dns.alpha.kubernetes.io/hostname';
+/** SAFETY guard: only ever act on a well-formed ephemeral dev host
+ *  `dev-<16hex>.<...>` — refuse anything else so a malformed/foreign host can
+ *  never delete an unrelated CF record. Extends DEV_HOST_LABEL_REGEX (the label)
+ *  to the full-host prefix; the queried names are `<host>` and `a-<host>`, both of
+ *  which then necessarily start with `dev-`/`a-dev-`. */
+const DEV_HOST_PREFIX_REGEX = /^dev-[a-f0-9]{16}\./;
+
+/** The CF v4 response envelope. */
+type CfEnvelope<T> = { success: boolean; result: T; errors?: unknown };
+
+/** In-process cache of the resolved civit.ai zone id (only used on the lookup
+ *  path — the env-provided id bypasses it). */
+let cfZoneIdCache: string | null = null;
+
+/** TEST-ONLY: reset the in-process zone-id cache between cases. */
+export function __resetDevTunnelDnsCacheForTest(): void {
+  cfZoneIdCache = null;
+}
+
+/** The registrable (last-two-label) domain of a host — the CF zone name. e.g.
+ *  `dev-abc.civit.ai` → `civit.ai`. */
+function registrableDomain(host: string): string {
+  return host.split('.').slice(-2).join('.');
+}
+
+async function cfFetch(
+  path: string,
+  token: string,
+  init: RequestInit,
+  fetchImpl: typeof fetch
+): Promise<Response> {
+  return fetchImpl(`${CF_API_BASE}${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      ...(init.headers ?? {}),
+    },
+    signal: AbortSignal.timeout(CF_CALL_TIMEOUT_MS),
+  });
+}
+
+/** Resolve the CF zone id: prefer the env id; else look it up by name (once,
+ *  cached). Returns null when it can't be resolved (the deleter then no-ops). */
+async function resolveCfZoneId(
+  domain: string,
+  token: string,
+  fetchImpl: typeof fetch
+): Promise<string | null> {
+  if (env.APPS_DEV_TUNNEL_CF_ZONE_ID) return env.APPS_DEV_TUNNEL_CF_ZONE_ID;
+  if (cfZoneIdCache) return cfZoneIdCache;
+  const res = await cfFetch(
+    `/zones?name=${encodeURIComponent(domain)}`,
+    token,
+    { method: 'GET' },
+    fetchImpl
+  );
+  if (!res.ok) return null;
+  const body = (await res.json()) as CfEnvelope<Array<{ id?: string }>>;
+  const id = body?.success ? body.result?.[0]?.id : undefined;
+  if (typeof id === 'string' && id) {
+    cfZoneIdCache = id;
+    return id;
+  }
+  return null;
+}
+
+/** List the CF record ids (any type) whose name is exactly `name`. */
+async function listCfRecordIds(
+  zoneId: string,
+  name: string,
+  token: string,
+  fetchImpl: typeof fetch
+): Promise<string[]> {
+  const res = await cfFetch(
+    `/zones/${zoneId}/dns_records?name=${encodeURIComponent(name)}`,
+    token,
+    { method: 'GET' },
+    fetchImpl
+  );
+  if (!res.ok) return [];
+  const body = (await res.json()) as CfEnvelope<Array<{ id?: string }>>;
+  if (!body?.success || !Array.isArray(body.result)) return [];
+  return body.result
+    .map((r) => r?.id)
+    .filter((id): id is string => typeof id === 'string' && id.length > 0);
+}
+
+/**
+ * Best-effort deletion of the orphan Cloudflare DNS records for a dev-tunnel
+ * host. Removes EVERY record named `<host>` OR `a-<host>` (external-dns's A record
+ * PLUS its TXT-registry ownership records — whose name is either the bare host or
+ * the type-prefixed `a-<host>` form depending on external-dns version — so
+ * deleting both names covers the A record + both TXT formats). No-op when
+ * unconfigured; refuses any host that isn't a well-formed `dev-<16hex>.…`; NEVER
+ * throws. `fetchImpl` is injected for testing (defaults to global fetch).
+ */
+export async function deleteDevTunnelDns(
+  host: string,
+  fetchImpl: typeof fetch = fetch
+): Promise<void> {
+  try {
+    const token = env.APPS_DEV_TUNNEL_CF_API_TOKEN;
+    if (!token) return; // feature off — records linger as before
+    if (!host || typeof host !== 'string' || !DEV_HOST_PREFIX_REGEX.test(host)) {
+      // SAFETY: never touch a name that isn't a well-formed ephemeral dev host.
+      // eslint-disable-next-line no-console
+      console.warn(JSON.stringify({ event: 'app-blocks.dev-tunnel.dns-gc.refused', host }));
+      return;
+    }
+    const zoneId = await resolveCfZoneId(registrableDomain(host), token, fetchImpl);
+    if (!zoneId) return;
+    // The A record and BOTH external-dns TXT-registry name forms.
+    const ids = new Set<string>();
+    for (const name of [host, `a-${host}`]) {
+      for (const id of await listCfRecordIds(zoneId, name, token, fetchImpl)) ids.add(id);
+    }
+    for (const id of ids) {
+      await cfFetch(`/zones/${zoneId}/dns_records/${id}`, token, { method: 'DELETE' }, fetchImpl)
+        .then((r) => {
+          if (!r.ok) {
+            // eslint-disable-next-line no-console
+            console.warn(
+              JSON.stringify({
+                event: 'app-blocks.dev-tunnel.dns-gc.delete-failed',
+                host,
+                id,
+                status: r.status,
+              })
+            );
+          }
+        })
+        .catch(() => {
+          /* best-effort per-record delete */
+        });
+    }
+  } catch (e) {
+    // Best-effort — a CF hiccup must NEVER break teardown/reap.
+    // eslint-disable-next-line no-console
+    console.warn(
+      JSON.stringify({
+        event: 'app-blocks.dev-tunnel.dns-gc.error',
+        host,
+        error: (e as Error)?.message,
+      })
+    );
+  }
+}
+
 /** Delete the ephemeral Traefik route for ONE session by label selector. Scoped
  *  to `civitai.com/dev-tunnel-session=<id>` so it can only ever touch THAT
- *  session's objects, never a live app. Best-effort + idempotent. */
+ *  session's objects, never a live app. Best-effort + idempotent. Also best-effort
+ *  GCs the orphan CF DNS record for the route host (external-dns is upsert-only, so
+ *  it never removes the `dev-<hex>.civit.ai` record itself) — the host is read from
+ *  the IngressRoute's external-dns hostname annotation, so cleanup runs iff a record
+ *  was actually created (annotation present ⟺ ingressTarget was set at mint). */
 export async function deleteDevTunnelRoute(sessionId: string): Promise<void> {
   const target = await getDp1Target();
   const ns = env.APPS_DEV_TUNNEL_ROUTE_NAMESPACE;
   const selector = encodeURIComponent(`${DEV_TUNNEL_SESSION_LABEL}=${sessionId}`);
+  let devHost: string | undefined;
   const kinds: Array<{ listPath: string; itemPath: (n: string) => string }> = [
     {
       listPath: `/apis/traefik.io/v1alpha1/namespaces/${ns}/ingressroutes?labelSelector=${selector}`,
@@ -485,8 +657,17 @@ export async function deleteDevTunnelRoute(sessionId: string): Promise<void> {
     try {
       const listRes = await k8sFetch(target, k.listPath, { method: 'GET' });
       if (!listRes.ok) continue;
-      const list = await unwrap<{ items?: Array<{ metadata?: { name?: string } }> }>(listRes);
-      const names = (list?.items ?? [])
+      const list = await unwrap<{
+        items?: Array<{ metadata?: { name?: string; annotations?: Record<string, string> } }>;
+      }>(listRes);
+      const items = list?.items ?? [];
+      // Capture the ephemeral DNS host from the IngressRoute annotation (only the
+      // IngressRoute carries it) for the post-delete CF GC.
+      for (const it of items) {
+        const h = it?.metadata?.annotations?.[EXTERNAL_DNS_HOSTNAME_ANNOTATION];
+        if (!devHost && typeof h === 'string' && h) devHost = h;
+      }
+      const names = items
         .map((it) => it?.metadata?.name)
         .filter((n): n is string => typeof n === 'string' && n.length > 0);
       for (const name of names) {
@@ -500,6 +681,9 @@ export async function deleteDevTunnelRoute(sessionId: string): Promise<void> {
       /* a single kind failing must not abort the sweep */
     }
   }
+  // Best-effort orphan-DNS GC AFTER the k8s objects are gone — never blocks/fails
+  // teardown. No annotation ⇒ no record was created ⇒ nothing to clean.
+  if (devHost) await deleteDevTunnelDns(devHost).catch(() => {});
 }
 
 // ---------------------------------------------------------------------------
