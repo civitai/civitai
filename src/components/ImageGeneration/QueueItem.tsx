@@ -53,7 +53,10 @@ import { TwCard } from '~/components/TwCard/TwCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import { type WorkflowData, type StepData } from '~/server/services/orchestrator';
-import { orchestratorPendingStatuses } from '~/shared/constants/generation.constants';
+import {
+  orchestratorCompletedStatuses,
+  orchestratorPendingStatuses,
+} from '~/shared/constants/generation.constants';
 import { getEcosystem } from '~/shared/constants/basemodel.constants';
 import { generationGraphPanel, generationGraphStore } from '~/store/generation-graph.store';
 import { formatDateMin } from '~/utils/date-helpers';
@@ -989,14 +992,33 @@ function Model3DQueueCardOutputs({
   const [viewerOpen, setViewerOpen] = useState(false);
 
   // PolyGen outputs flow through `formatStepOutputs` as `Model3DBlob`s —
-  // one per generated mesh, with the 2D preview carried on `thumbnailUrl`
-  // and the GLB at `url`. Take the first such blob across the workflow.
+  // one per generated mesh, with the GLB at `url`. Take the first such blob
+  // across the workflow.
   const model3dBlob = request.steps
     .flatMap((s) => s.output)
     .find((blob) => blob?.type === 'model3d');
   const blob = model3dBlob?.type === 'model3d' ? model3dBlob : null;
-  const thumbnailUrl = blob?.thumbnailUrl ?? null;
   const modelUrl = blob?.url ?? null;
+
+  // Prefer the chained `model3DPreview` step's render (a controllable-angle 2D
+  // preview). The preview step is `suppressOutput`, so its image only surfaces
+  // here as the 3D card thumbnail — never as its own output card.
+  const previewStep = request.steps.find((s) => s.$type === 'model3DPreview');
+  const previewImage = previewStep?.output.find(
+    (b): b is ImageBlob => b?.type === 'image' && b.available
+  );
+  // While the preview step exists but hasn't reached a terminal status, keep
+  // waiting on it — don't flash the lower-quality polyGen `thumbnail` and make
+  // the card look done. Only fall back to the polyGen thumbnail once the
+  // preview step is terminal (failed/expired/canceled/succeeded) or absent.
+  const previewPending =
+    !!previewStep &&
+    (!previewStep.status || !orchestratorCompletedStatuses.includes(previewStep.status));
+  const thumbnailUrl =
+    previewImage?.previewUrl ??
+    previewImage?.url ??
+    (previewPending ? null : blob?.thumbnailUrl) ??
+    null;
 
   // GLB-only siblings the three.js viewer can mount; shared with the
   // full-screen lightbox so both render the same variant taxonomy.

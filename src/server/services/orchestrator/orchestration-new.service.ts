@@ -685,6 +685,9 @@ async function createImagePreprocessInput(
 const STEP_TYPES_WITHOUT_IMAGE_METADATA: readonly string[] = [
   'promptEnhancement',
   'chatCompletion',
+  // Renders a 2D preview of a prior polyGen mesh — its input has no image to
+  // tag, so injecting imageMetadata would only pollute the request payload.
+  'model3DPreview',
 ];
 
 function withImageMetadata(input: object, type: string, imageMetadata: string): object {
@@ -1079,7 +1082,12 @@ export async function createWorkflowStepsFromGraph({
         $type: step.$type,
         input: {
           ...(step.input as object),
-          outputFormat: data.outputFormat,
+          // A handler-set outputFormat wins (e.g. model3DPreview pins 'png');
+          // otherwise inherit the workflow's image outputFormat choice. For
+          // non-image workflows `data.outputFormat` is undefined, so this also
+          // avoids clobbering an intermediate step's own format with undefined.
+          outputFormat:
+            (step.input as { outputFormat?: string }).outputFormat ?? data.outputFormat,
         },
         priority: data.priority,
         timeout,
@@ -1956,6 +1964,10 @@ function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] {
       return output.blobs?.map((blob) => ({ ...blob, type: 'image' as const })) ?? [];
     case 'imageGen':
     case 'textToImage':
+    // model3DPreview renders 2D preview image(s) of a prior polyGen mesh; its
+    // output shape mirrors an image step. The queue card reads these as the
+    // 3D thumbnail (the step is suppressOutput, so they don't render as cards).
+    case 'model3DPreview':
       return output.images?.map((img) => ({ ...img, type: 'image' as const })) ?? [];
     case 'imageUpscaler':
     case 'preprocessImage':
