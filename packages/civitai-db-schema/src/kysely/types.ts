@@ -1819,6 +1819,7 @@ export type CryptoDeposit = {
   paidFiat: number | null;
   chain: string | null;
   retryCount: Generated<number>;
+  stuckNotifiedAt: Timestamp | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };

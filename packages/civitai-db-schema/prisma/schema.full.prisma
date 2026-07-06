@@ -352,10 +352,11 @@ model CryptoDeposit {
   serviceFee    Float?
   feeCurrency   String?
   paidFiat      Float?
-  chain         String?
-  retryCount    Int      @default(0)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  chain           String?
+  retryCount      Int       @default(0)
+  stuckNotifiedAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   @@index([userId, createdAt(sort: Desc)])
   @@index([status])
