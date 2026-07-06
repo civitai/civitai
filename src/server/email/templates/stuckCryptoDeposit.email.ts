@@ -23,6 +23,7 @@ export const stuckCryptoDepositEmail = createEmail({
     subject: `Unprocessed crypto deposit ${paymentId} - wrong token / network`,
     to: supportEmail,
     cc: userEmail,
+    from: 'Civitai Support <hello@civitai.com>',
   }),
   html(data: StuckCryptoDepositData) {
     const { username, paymentId, payAddress, payinHash } = data;
