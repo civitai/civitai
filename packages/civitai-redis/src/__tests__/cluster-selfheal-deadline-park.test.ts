@@ -126,6 +126,64 @@ describe('cluster self-heal: deadline-park wedge (2026-07-06 regression)', () =>
     expect(firedTrigger).toBe('deadline');
   });
 
+  it('PROD SHAPE: active 15s reaper, commands COMPLETING ~12s in the under-reaper band still record hits → self-heals', async () => {
+    // The exact prod configuration (verified 2026-07-06): the 15s reaper is ACTIVE (deadlineMs:
+    // 15000). The wedge here is the invisible band the OLD reaper-only signal missed: cluster
+    // commands that are slow but COMPLETE in ~12s — UNDER the 15s reap, so withCommandDeadline never
+    // fires onTimeout (the command settles at 12s < 15s) → the old path recorded ZERO hits. Each
+    // 12s command lands in the redis_command_duration tail (le=30 captures 10–30s) and IS a wedge
+    // symptom. The settle-time recorder (slowCommandMs:10000, below the reaper) captures it.
+    const N = 12;
+    const pending = Array.from({ length: N }, () => deferred<string>());
+    let i = 0;
+    const fake: { _execute: (...a: unknown[]) => Promise<string> } = {
+      _execute: () => pending[i++].promise,
+    };
+    instrumentCommands(fake, 'cluster', {
+      deadlineMs: 15000, // ACTIVE reaper — the real prod value
+      slowCommandMs: 10000, // below the reaper (invariant)
+      routingRetryEnabled: false,
+    });
+
+    const calls = Array.from({ length: N }, () =>
+      (fake._execute('GET', 'k') as Promise<unknown>).catch(() => undefined)
+    );
+    // Commands COMPLETE (resolve) at ~12s — under the 15s reap, so the reaper never fires; the
+    // command settles on its own. done() observes 12s >= 10s → records a slow-settle hit for each.
+    vi.setSystemTime(12000);
+    pending.forEach((d) => d.resolve('ok'));
+    await Promise.all(calls);
+
+    // The reaper was ACTIVE the whole time yet the ring filled — because recording is at settle,
+    // not at reap. The old onTimeout path would have recorded 0 (nothing hit the 15s deadline).
+    expect(countClusterDeadlineHits(20000, 12000)).toBeGreaterThanOrEqual(
+      WATCHDOG_CFG.deadlineHitThreshold
+    );
+
+    const nowMs = 12000;
+    let reconnects = 0;
+    let firedTrigger: string | undefined;
+    const deps: ClusterSelfHealDeps = {
+      getInflight: () => getClusterInflight(),
+      getDeadlineHits: (w) => countClusterDeadlineHits(w, nowMs),
+      resetDeadlineHits: () => resetClusterDeadlineHits(),
+      reconnect: () => {
+        reconnects++;
+        return Promise.resolve();
+      },
+      now: () => nowMs,
+      log: () => {},
+      onReconnect: (_inflight, trigger) => {
+        firedTrigger = trigger;
+      },
+    };
+    const watchdog = new ClusterSelfHealWatchdog({ ...WATCHDOG_CFG }, deps);
+    expect(watchdog.tick()).toBe(true);
+    await flush();
+    expect(reconnects).toBe(1);
+    expect(firedTrigger).toBe('deadline');
+  });
+
   it('BUG SHAPE: without settle-time recording (slowCommandMs disabled) the same wedge is invisible → self-heal 0-fires', async () => {
     // Identical wedge, but the settle-time recorder disabled — models the PRE-FIX behavior where
     // done() did not record slow settles and the only recorder (withCommandDeadline.onTimeout) is
