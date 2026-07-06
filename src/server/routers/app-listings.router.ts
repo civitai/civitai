@@ -123,7 +123,7 @@ function mapOffsiteError(err: unknown): TRPCError {
     err.name === 'OffsiteRequestError' &&
     typeof (err as { code?: unknown }).code === 'string'
   ) {
-    const code = (err as { code: string }).code;
+    const code = (err as { code?: unknown }).code as string;
     const trpcCode =
       code === 'NOT_FOUND' ? 'NOT_FOUND' : code === 'NOT_OWNED' ? 'FORBIDDEN' : 'BAD_REQUEST';
     return new TRPCError({ code: trpcCode, message: err.message });
