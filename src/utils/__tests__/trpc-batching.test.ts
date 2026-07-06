@@ -119,7 +119,7 @@ describe('shouldBatch', () => {
   it('does NOT batch large queries (they go out as POST methodOverride, body-carried)', () => {
     setTrpcBatchingEnabled(true);
     setWindowAuthed(true);
-    // input serializes to > MAX_QUERY_INPUT_LENGTH (2500 chars) => large => unbatched
+    // input serializes to > MAX_QUERY_INPUT_LENGTH => large => unbatched
     expect(shouldBatch(op({ input: { q: 'x'.repeat(3000) } }))).toBe(false);
   });
 

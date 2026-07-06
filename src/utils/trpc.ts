@@ -27,13 +27,16 @@ type RequestHeaders = {
 const url = '/api/trpc';
 
 /**
- * Approximate input-size threshold (serialized chars) above which a query is
- * sent as POST instead of GET. Mirrors the old ~4000-char GET URL budget: the
- * percent-encoded URL runs ~1.4x the raw input JSON, so ~2500 chars of input
- * lands around the 4000-char URL limit where proxies / HTTP header limits start
- * rejecting (HTTP 431).
+ * Approximate input-size threshold (serialized RAW-JSON chars) above which a query is
+ * sent as POST instead of GET. Must stay BELOW the point where the percent-encoded URL
+ * crosses the batch link's `maxURLLength` (2083, see `terminatingLink`). The encoded URL
+ * runs ~1.4x the raw JSON, so the raw threshold has to be ≤ 2083 / 1.4 ≈ 1487 or a
+ * mid-size query slips past this POST-diversion yet still overflows the batched GET URL
+ * and throws "Input is too big for a single dispatch" (bit the generator's whatIf query
+ * once the batch link shipped — several LoRAs, each carrying trigger words, landed in the
+ * gap between the old 2500 threshold and the 2083 URL cap).
  */
-const MAX_QUERY_INPUT_LENGTH = 2500;
+const MAX_QUERY_INPUT_LENGTH = 1400;
 
 /**
  * Whether a query's input is large enough that carrying it in the URL as a GET
