@@ -57,6 +57,7 @@ import { createImage, imagesForModelVersionsCache } from '~/server/services/imag
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { assertCanCreateUserChallenge } from '~/server/services/challenge-eligibility.service';
+import { extModeration } from '~/server/integrations/moderation';
 import {
   chargeInitialPrize,
   refundUserChallengeFunds,
@@ -198,6 +199,15 @@ export async function getInfiniteChallenges(
 
   // Only show visible challenges
   conditions.push(Prisma.sql`c."visibleAt" <= now()`);
+
+  // Scan gate: hide challenges that haven't passed the moderation scan, except from their
+  // own creator (so a creator can preview their pending challenge). System/mod challenges
+  // default to Scanned, so they're unaffected.
+  conditions.push(
+    currentUserId
+      ? Prisma.sql`(c."scanStatus" = 'Scanned'::"ChallengeScanStatus" OR c."createdById" = ${currentUserId})`
+      : Prisma.sql`c."scanStatus" = 'Scanned'::"ChallengeScanStatus"`
+  );
 
   // Status filter (parameterized)
   if (status && status.length > 0) {
@@ -1200,8 +1210,8 @@ export async function upsertUserChallenge({
         });
     }
 
-    return dbWrite.$transaction(async (tx) => {
-      const updated = await tx.challenge.update({
+    const updated = await dbWrite.$transaction(async (tx) => {
+      const saved = await tx.challenge.update({
         where: { id },
         data: {
           ...commonData,
@@ -1231,8 +1241,12 @@ export async function upsertUserChallenge({
         });
       }
 
-      return updated;
+      return saved;
     });
+
+    // Re-scan after any content edit (fail-soft; the scan gate hides it until Scanned).
+    await scanUserChallenge(id);
+    return updated;
   }
 
   // Create — gate on eligibility (score + standing + tier concurrent cap).
@@ -1290,7 +1304,41 @@ export async function upsertUserChallenge({
     }
   }
 
+  // Moderation scan (fail-soft) — flips Pending → Scanned/Blocked; hidden until Scanned.
+  await scanUserChallenge(created.id);
+
   return created;
+}
+
+// Moderation scan for a user challenge's author-supplied text (title/theme/invitation/
+// description). Flips scanStatus Pending → Scanned, or → Blocked when the external
+// moderator flags hate/CSAM/etc. Fail-soft: on error we mark Error (retryable) rather than
+// auto-approving — the scan gate keeps the challenge hidden until it reaches Scanned.
+export async function scanUserChallenge(challengeId: number): Promise<void> {
+  const challenge = await dbRead.challenge.findUnique({
+    where: { id: challengeId },
+    select: { title: true, description: true, theme: true, invitation: true },
+  });
+  if (!challenge) return;
+
+  const text = [challenge.title, challenge.theme, challenge.invitation, challenge.description]
+    .filter(Boolean)
+    .join('\n');
+
+  try {
+    const { flagged } = await extModeration.moderatePrompt(text);
+    await dbWrite.challenge.update({
+      where: { id: challengeId },
+      data: {
+        scanStatus: flagged ? ChallengeScanStatus.Blocked : ChallengeScanStatus.Scanned,
+        scannedAt: new Date(),
+      },
+    });
+  } catch {
+    await dbWrite.challenge
+      .update({ where: { id: challengeId }, data: { scanStatus: ChallengeScanStatus.Error } })
+      .catch(() => undefined);
+  }
 }
 
 export async function updateChallengeStatus(id: number, status: ChallengeStatus) {
