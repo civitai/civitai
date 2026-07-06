@@ -63,6 +63,15 @@ const featureFlags = createFeatureFlags({
   // availability ['mod'] is the Flipt-DOWN fallback (mirrors `faro`); Flipt is authoritative
   // when the flag exists — ramp by bumping its % rollout, never all-at-once.
   faroResourceTiming: { availability: ['mod'], fliptKey: 'faro-resource-timing' },
+  // Cohort-ramp gate for tRPC request batching (httpBatchStreamLink). Default OFF
+  // (mods only) so batching is dark until ramped via Flipt (`trpc-batching`). Batching
+  // is applied ONLY to AUTHENTICATED-browser queries — anonymous tRPC GETs stay
+  // unbatched so they remain CF edge-cacheable (verified: anon `model.getAll` GET
+  // returns cf-cache-status HIT with s-maxage=60; authed requests have edgeTTL forced
+  // to 0 in createContext, so batching them loses no edge cache). availability ['mod']
+  // is the Flipt-DOWN fallback (mirrors `faro`); Flipt is authoritative when the flag
+  // exists — ramp by bumping its % rollout, never all-at-once. See `src/utils/trpc.ts`.
+  trpcBatching: { availability: ['mod'], fliptKey: 'trpc-batching' },
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },

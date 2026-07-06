@@ -1,7 +1,13 @@
 // src/utils/trpc.ts
 import { QueryClient, type QueryClientConfig } from '@tanstack/react-query';
 import type { CreateTRPCClient, TRPCLink } from '@trpc/client';
-import { createTRPCClient, httpLink, loggerLink, splitLink } from '@trpc/client';
+import {
+  createTRPCClient,
+  httpBatchStreamLink,
+  httpLink,
+  loggerLink,
+  splitLink,
+} from '@trpc/client';
 import type { CreateTRPCNext } from '@trpc/next';
 import { createTRPCNext } from '@trpc/next';
 import type { NextPageContext } from 'next';
@@ -61,6 +67,79 @@ function httpLinkWithLargeQuerySupport({
     condition: isLargeQuery,
     true: httpLink({ transformer: superjson, url, methodOverride: 'POST', headers }),
     false: httpLink({ transformer: superjson, url, headers }),
+  });
+}
+
+/**
+ * Module-scoped, flag-driven batch toggle. Default OFF so batching is dark until the
+ * `trpcBatching` feature flag ramps. Set from `FeatureFlagsProvider` once the per-user
+ * flag overlay resolves in the browser. Kept as a mutable module flag (not React state)
+ * because the tRPC terminating link is built once at module init and cannot read a hook;
+ * the `splitLink` condition re-reads this per operation, so a later flip takes effect on
+ * subsequent queries without rebuilding the client.
+ */
+let trpcBatchingEnabled = false;
+export function setTrpcBatchingEnabled(enabled: boolean) {
+  trpcBatchingEnabled = enabled;
+}
+// Test-only accessor: lets unit tests exercise the split condition deterministically.
+export function __getTrpcBatchingEnabled() {
+  return trpcBatchingEnabled;
+}
+
+/**
+ * True ONLY when we are definitively in an authenticated browser session.
+ * `window.isAuthed` is set by `CivitaiSessionProvider` AFTER hydration, so on the server
+ * and during early hydration this is `false` — the SAFE direction: anonymous + unknown
+ * ⇒ do NOT batch, so anonymous edge-cacheable tRPC GETs stay unbatched (no `?batch`
+ * param) and remain CF-cacheable. Authenticated requests have `edgeTTL` forced to 0 in
+ * `createContext`, so batching them loses no edge cache.
+ */
+function isAuthedBrowser() {
+  return typeof window !== 'undefined' && window.isAuthed === true;
+}
+
+/**
+ * Route an operation to the streaming batch link only when ALL hold:
+ *  - it's a `query` (mutations stay standalone — matches the historical link, and keeps
+ *    the large-mutation POST path intact),
+ *  - the `trpcBatching` flag is on for this user,
+ *  - we're in an authenticated browser (see `isAuthedBrowser` — anon stays cacheable),
+ *  - the caller didn't opt out via `context.skipBatch === true`,
+ *  - it isn't a large query (those go out as POST `methodOverride`, body-carried).
+ */
+export function shouldBatch(op: {
+  type: string;
+  input: unknown;
+  context: Record<string, unknown>;
+}) {
+  return (
+    op.type === 'query' &&
+    trpcBatchingEnabled &&
+    isAuthedBrowser() &&
+    op.context.skipBatch !== true &&
+    !isLargeQuery(op)
+  );
+}
+
+/**
+ * Shared terminating link. Authenticated-browser queries (flag-gated) go out batched via
+ * `httpBatchStreamLink` (results stream as they resolve, so the fastest query in a batch
+ * isn't blocked by the slowest); everything else — anonymous traffic, mutations, large
+ * queries, and `skipBatch` opt-outs — falls through to the unbatched large-query-aware
+ * path, preserving CF edge-cache for anon GETs and the `methodOverride: 'POST'` route.
+ */
+function terminatingLink({
+  url,
+  headers,
+}: {
+  url: string;
+  headers: ReturnType<typeof getHeaders>;
+}): TRPCLink<AppRouter> {
+  return splitLink({
+    condition: shouldBatch,
+    true: httpBatchStreamLink({ transformer: superjson, url, headers, maxURLLength: 2083 }),
+    false: httpLinkWithLargeQuerySupport({ url, headers }),
   });
 }
 const headers: RequestHeaders = {
@@ -155,7 +234,7 @@ export const trpcVanilla: CreateTRPCClient<AppRouter> = createTRPCClient<AppRout
         (isDev && env.NEXT_PUBLIC_LOG_TRPC) ||
         (opts.direction === 'down' && opts.result instanceof Error),
     }),
-    httpLinkWithLargeQuerySupport({ url, headers: getHeaders() }),
+    terminatingLink({ url, headers: getHeaders() }),
   ],
 });
 
@@ -182,19 +261,10 @@ export const trpc: CreateTRPCNext<AppRouter, NextPageContext> = createTRPCNext<A
             (isDev && env.NEXT_PUBLIC_LOG_TRPC) ||
             (opts.direction === 'down' && opts.result instanceof Error),
         }),
-        httpLinkWithLargeQuerySupport({
+        terminatingLink({
           url: isClient ? url : `${env.NEXT_PUBLIC_BASE_URL as string}${url}`,
           headers: getHeaders(ctx),
         }),
-        // splitLink({
-        //   // do not batch post requests
-        //   condition: (op) => (op.type === 'query' ? op.context.skipBatch === true : true),
-        //   // when condition is true, use normal request
-        //   true: httpLink({ url, headers: getHeaders }),
-        //   // when condition is false, use batching
-        //   // false: unstable_httpBatchStreamLink({ url, maxURLLength: 2083 }),
-        //   false: httpLink({ url, headers: getHeaders }), // Let's disable batching for now
-        // }),
       ],
     };
   },
