@@ -15,6 +15,9 @@ export const CHALLENGE_MIN_ENTRY_FEE = 50;
 /** Upper bound on entry fee (sanity ceiling; not a product limit). */
 export const CHALLENGE_MAX_ENTRY_FEE = 100_000;
 
+/** Upper bound on the creator's optional initial prize (escrowed at creation). */
+export const CHALLENGE_MAX_INITIAL_PRIZE = 10_000_000;
+
 /** Max simultaneously Scheduled+Active user-created challenges, by membership tier.
  * (fib: free 1, bronze 2, silver 3, gold 5; founder treated as bronze.) */
 export const CHALLENGE_TIER_ACTIVE_LIMITS: Record<string, number> = {

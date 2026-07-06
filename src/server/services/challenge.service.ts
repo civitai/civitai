@@ -1186,6 +1186,7 @@ export async function upsertUserChallenge({
         source: true,
         status: true,
         collectionId: true,
+        basePrizePool: true,
       },
     });
     if (!existing) throw throwNotFoundError('Challenge not found');
@@ -1215,6 +1216,9 @@ export async function upsertUserChallenge({
         where: { id },
         data: {
           ...commonData,
+          // The initial prize is escrowed once at creation; never let an edit rewrite the
+          // (already-charged) pool from client input — that would pay out unfunded Buzz.
+          basePrizePool: existing.basePrizePool,
           // Any content edit requires a fresh scan before the challenge is public again.
           scanStatus: ChallengeScanStatus.Pending,
           scannedAt: null,

@@ -11,6 +11,7 @@ import {
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import {
   CHALLENGE_MAX_ENTRY_FEE,
+  CHALLENGE_MAX_INITIAL_PRIZE,
   CHALLENGE_MIN_ENTRY_FEE,
 } from '~/shared/constants/challenge.constants';
 import { infiniteQuerySchema } from './base.schema';
@@ -372,7 +373,7 @@ export const userChallengeUpsertBaseSchema = z.object({
   judgeId: z.number(),
   judgingCategories: z.array(challengeJudgingCategorySchema).min(1).max(8),
   entryFee: z.number().int().min(CHALLENGE_MIN_ENTRY_FEE).max(CHALLENGE_MAX_ENTRY_FEE),
-  initialPrizeBuzz: z.number().int().min(0).default(0),
+  initialPrizeBuzz: z.number().int().min(0).max(CHALLENGE_MAX_INITIAL_PRIZE).default(0),
   prizeDistribution: prizeDistributionSchema,
   maxParticipants: z.number().int().min(1).max(100_000).optional(),
   maxEntriesPerUser: z.number().int().min(1).max(100).default(5),

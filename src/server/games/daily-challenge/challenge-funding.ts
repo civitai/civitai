@@ -11,6 +11,7 @@
  */
 import { dbRead, dbWrite } from '~/server/db/client';
 import { createBuzzTransaction, createBuzzTransactionMany } from '~/server/services/buzz.service';
+import { throwInsufficientFundsError } from '~/server/utils/errorHandling';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { getEntryPoolContribution } from '~/shared/constants/challenge.constants';
 import { ChallengeSource } from '~/shared/utils/prisma/enums';
@@ -59,7 +60,11 @@ export async function chargeEntryFees({
 }) {
   if (entryFee <= 0 || imageIds.length === 0) return { charged: 0 };
 
-  await createBuzzTransactionMany(
+  // createBuzzTransactionMany SILENTLY DROPS insufficient-funds results (it does not throw),
+  // so we must reconcile: every entry must be either a new transaction or a benign idempotency
+  // conflict (already paid). Any shortfall means the payer couldn't afford an entry — throw so
+  // the caller aborts the submission and the unpaid entry is never committed/counted.
+  const result = await createBuzzTransactionMany(
     imageIds.map((imageId) => ({
       fromAccountId: userId,
       toAccountId: 0,
@@ -71,14 +76,21 @@ export async function chargeEntryFees({
     }))
   );
 
-  const poolDelta = getEntryPoolContribution(entryFee) * imageIds.length;
+  const settled = result.transactions.length + result.conflicts.length;
+  if (settled < imageIds.length) {
+    throw throwInsufficientFundsError('You do not have enough Buzz to pay the entry fee.');
+  }
+
+  // Grow the pool only by entries charged for the FIRST time (conflicts were already counted
+  // on the original charge), so re-validation of the same images can't inflate the pool.
+  const poolDelta = getEntryPoolContribution(entryFee) * result.transactions.length;
   if (poolDelta > 0) {
     await dbWrite.challenge.update({
       where: { id: challengeId },
       data: { prizePool: { increment: poolDelta } },
     });
   }
-  return { charged: imageIds.length };
+  return { charged: result.transactions.length };
 }
 
 /**
