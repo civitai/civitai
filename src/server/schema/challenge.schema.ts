@@ -42,8 +42,10 @@ export type ChallengeSort = (typeof ChallengeSort)[keyof typeof ChallengeSort];
 
 // Prize structure
 export const prizeSchema = z.object({
-  buzz: z.number(),
-  points: z.number(),
+  // Floors: these feed winner payouts (createBuzzTransaction). A negative prize would be a
+  // grant-instead-of-charge / broken-payout vector, so never allow below zero.
+  buzz: z.number().min(0),
+  points: z.number().min(0),
 });
 export type Prize = z.infer<typeof prizeSchema>;
 
@@ -369,8 +371,8 @@ export const userChallengeUpsertBaseSchema = z.object({
   invitation: z.string().max(300).optional(),
   coverImage: imageSchema,
   allowedNsfwLevel: z.number().min(1).max(63).default(sfwBrowsingLevelsFlag),
-  modelVersionIds: z.array(z.number()).max(20).default([]),
-  judgeId: z.number(),
+  modelVersionIds: z.array(z.number().int().positive()).max(20).default([]),
+  judgeId: z.number().int().positive(),
   judgingCategories: z.array(challengeJudgingCategorySchema).min(1).max(8),
   entryFee: z.number().int().min(CHALLENGE_MIN_ENTRY_FEE).max(CHALLENGE_MAX_ENTRY_FEE),
   initialPrizeBuzz: z.number().int().min(0).max(CHALLENGE_MAX_INITIAL_PRIZE).default(0),
