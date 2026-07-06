@@ -218,6 +218,9 @@ type GenerateReviewInput = {
   imageUrl: string;
   config: JudgingConfig;
   model?: AIModel;
+  // User-created challenges: creator-defined judging categories. When present the review
+  // JSON schema is built from these instead of the fixed theme/wittiness/humor/aesthetic set.
+  categories?: { name: string; criteria: string }[];
 };
 type GeneratedReview = {
   score: Score;
@@ -237,8 +240,30 @@ const RESPONSE_SCHEMA = `{
   "reaction": "Laugh" | "Heart" | "Like" | "Cry",
   "comment": "your review comment (2-3 sentences)",
   "summary": "concise factual summary of the image"
-  "aestheticFlaws": ["string describing flaw 1","string describing flaw 2",...] // optional array of strings describing specific aesthetic flaws in the image 
+  "aestheticFlaws": ["string describing flaw 1","string describing flaw 2",...] // optional array of strings describing specific aesthetic flaws in the image
 }`;
+
+/**
+ * Build the review response schema for a user-created challenge from its creator-defined
+ * judging categories. Each category becomes a 0-10 score key. Category names/criteria are
+ * sanitized for inclusion in the JSON-schema string (quotes/newlines stripped).
+ */
+export function buildCategoryReviewSchema(
+  categories: { name: string; criteria: string }[]
+): string {
+  const sanitize = (s: string) => s.replace(/"/g, "'").replace(/\s+/g, ' ').trim();
+  const scoreLines = categories
+    .map((c) => `    "${sanitize(c.name)}": number // 0-10, ${sanitize(c.criteria)}`)
+    .join('\n');
+  return `{
+  "score": {
+${scoreLines}
+  },
+  "reaction": "Laugh" | "Heart" | "Like" | "Cry",
+  "comment": "your review comment (2-3 sentences)",
+  "summary": "concise factual summary of the image"
+}`;
+}
 
 export async function generateReview(input: GenerateReviewInput): Promise<GeneratedReview> {
   let messages: SimpleMessage[];
@@ -331,9 +356,12 @@ function buildMessagesFromTemplate(input: GenerateReviewInput): SimpleMessage[] 
 function buildFallbackMessages(input: GenerateReviewInput): SimpleMessage[] {
   const themeElementsLine = formatThemeElementsLine(input.themeElements);
   const userText = `Theme: ${input.theme}${themeElementsLine}\nCreator: ${input.creator}`;
+  const responseSchema = input.categories?.length
+    ? buildCategoryReviewSchema(input.categories)
+    : RESPONSE_SCHEMA;
 
   return [
-    prepareSystemMessage(input.config, 'review', RESPONSE_SCHEMA),
+    prepareSystemMessage(input.config, 'review', responseSchema),
     {
       role: 'user' as const,
       content: [

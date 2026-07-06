@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  calculateCategoryScore,
   calculateWeightedScore,
   SCORE_WEIGHTS,
   THEME_DISQUALIFY_THRESHOLD,
@@ -67,5 +68,21 @@ describe('calculateWeightedScore', () => {
     expect(THEME_DISQUALIFY_THRESHOLD).toBe(2);
     expect(THEME_GATE_THRESHOLD).toBe(4);
     expect(THEME_GATE_MAX_SCORE).toBe(5.0);
+  });
+});
+
+describe('calculateCategoryScore (user-defined categories)', () => {
+  it('averages arbitrary categories equally', () => {
+    expect(calculateCategoryScore({ horror: 8, originality: 6 })).toBe(7);
+    expect(calculateCategoryScore({ a: 10, b: 0 })).toBe(5);
+  });
+
+  it('clamps out-of-range LLM output and ignores NaN', () => {
+    expect(calculateCategoryScore({ a: 12, b: -3 })).toBe(5); // clamps to 10 and 0
+    expect(calculateCategoryScore({ a: 6, b: NaN })).toBe(6);
+  });
+
+  it('returns null when there are no categories', () => {
+    expect(calculateCategoryScore({})).toBeNull();
   });
 });

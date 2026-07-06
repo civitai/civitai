@@ -50,3 +50,17 @@ export function calculateWeightedScore(score: Score): number | null {
 
   return weighted;
 }
+
+/**
+ * Ranking score for user-created challenges, which use arbitrary creator-defined judging
+ * categories instead of the fixed theme/aesthetic/humor/wittiness set. Every category is
+ * weighted equally: the final score is the mean of the category scores (0-10). Categories
+ * are clamped to 0-10 defensively (the LLM output is not trusted). Returns null if there are
+ * no category scores to average.
+ */
+export function calculateCategoryScore(scores: Record<string, number>): number | null {
+  const values = Object.values(scores).filter((v) => typeof v === 'number' && !Number.isNaN(v));
+  if (values.length === 0) return null;
+  const clamped = values.map((v) => Math.min(10, Math.max(0, v)));
+  return clamped.reduce((a, b) => a + b, 0) / clamped.length;
+}
