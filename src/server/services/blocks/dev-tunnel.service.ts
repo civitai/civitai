@@ -274,7 +274,7 @@ function manifestOpts(host: string, sessionId: string): DevTunnelManifestOpts {
   return {
     host,
     sessionId,
-    namespace: env.APPS_KUBE_NAMESPACE,
+    namespace: env.APPS_DEV_TUNNEL_ROUTE_NAMESPACE,
     forwardAuthUrl: forwardAuthUrl(),
     sishBackend: sishBackend(),
     ingressTarget: env.APPS_DEV_TUNNEL_INGRESS_TARGET,
@@ -320,15 +320,21 @@ echo "dev-tunnel route applied"
 /**
  * Build the route-apply Job. CRITICAL (F1): runs as the narrowly-scoped
  * `apps-applier` ServiceAccount — the SAME SA the review sandbox renders through
- * (`triggerApplyReview`) — which HAS `create`/`patch` on traefik.io CRDs and
- * cannot escape the `civitai-apps` namespace. The web-pod SA
+ * (`triggerApplyReview`) — which HAS `create`/`patch` on traefik.io CRDs in
+ * `civitai-apps` (review sandbox) AND, via the dev-tunnel-route-applier RoleBinding,
+ * in `apps-dev-tunnel` (this feature's route namespace — same ns as the sish backend,
+ * so Traefik accepts the service ref). Scoped to those two CRDs in those two
+ * namespaces; it cannot touch anything else. The web-pod SA
  * (`civitai-web-apps-consumer`) grants only get/list/watch/delete on those CRDs,
  * so rendering the route DIRECTLY from the web pod 403'd (the untracked P3
  * functional blocker); it would ALSO be a security regression to broaden the
  * live web-pod SA to `create` (any civitai-web SSRF/RCE → arbitrary-IngressRoute
  * creation → hijack of live app hosts). The Job is the isolation boundary. The
- * web-pod SA only CREATES the Job (it has that) + DELETEs routes on teardown
- * (it has that) — it never itself creates a traefik CRD.
+ * web-pod SA (civitai-dp-prod `default`) CREATES the Job + LISTs/DELETEs routes on
+ * teardown (deleteDevTunnelRoute / reapExpiredDevTunnels). Its RoleBinding in
+ * apps-dev-tunnel currently grants the full CRD verb set (tracked hardening: narrow it
+ * to read+delete); but allowCrossNamespace=false confines any IngressRoute it could
+ * create there to apps-dev-tunnel services (sish only) — no live-app-host hijack.
  *
  * Pure + exported for a shape test.
  */
@@ -463,7 +469,7 @@ export async function renderDevTunnelRoute(host: string, sessionId: string): Pro
  *  session's objects, never a live app. Best-effort + idempotent. */
 export async function deleteDevTunnelRoute(sessionId: string): Promise<void> {
   const target = await getDp1Target();
-  const ns = env.APPS_KUBE_NAMESPACE;
+  const ns = env.APPS_DEV_TUNNEL_ROUTE_NAMESPACE;
   const selector = encodeURIComponent(`${DEV_TUNNEL_SESSION_LABEL}=${sessionId}`);
   const kinds: Array<{ listPath: string; itemPath: (n: string) => string }> = [
     {
@@ -899,7 +905,7 @@ const LIST_UNREACHABLE_STATUS = 0;
  *   - apiserver-clock: the min-age + idle windows use the LIST response Date header.
  */
 export async function reapExpiredDevTunnels(): Promise<ReapResult> {
-  const ns = env.APPS_KUBE_NAMESPACE;
+  const ns = env.APPS_DEV_TUNNEL_ROUTE_NAMESPACE;
   const selector = encodeURIComponent(`${DEV_TUNNEL_LABEL}=true`);
   const listPaths = [
     `/apis/traefik.io/v1alpha1/namespaces/${ns}/ingressroutes?labelSelector=${selector}`,

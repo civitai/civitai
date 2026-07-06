@@ -58,7 +58,8 @@ const {
       APPS_DOMAIN: 'civit.ai',
       APPS_KUBE_NAMESPACE: 'civitai-apps',
       NEXTAUTH_URL: 'https://civitai.com',
-      APPS_DEV_TUNNEL_SISH_BACKEND: 'http://sish-http.apps-dev-tunnel.svc.cluster.local:8080',
+      APPS_DEV_TUNNEL_SISH_BACKEND: 'http://sish-http.apps-dev-tunnel.svc.cluster.local:80',
+      APPS_DEV_TUNNEL_ROUTE_NAMESPACE: 'apps-dev-tunnel',
       APPS_DEV_TUNNEL_INGRESS_TARGET: '192.0.2.1' as string | undefined,
       APPS_DEV_TUNNEL_FORWARDAUTH_URL: undefined as string | undefined,
       APPS_DEV_TUNNEL_SSH_HOST_PUBKEY: 'ssh-ed25519 AAAAC3NzaHostKeyExample sish-host' as
@@ -214,6 +215,24 @@ describe('startDevTunnel', () => {
     const posts = mockK8sFetch.mock.calls.filter((c) => (c[2] as any)?.method === 'POST');
     expect(posts.length).toBe(1);
     expect(posts[0][1]).toMatch(/\/jobs$/);
+    // NAMESPACE SPLIT (the fix): the apply Job is created in civitai-apps (APPS_KUBE_NAMESPACE,
+    // where apps-applier + the Job-create RBAC live), but the manifests it applies target the
+    // ROUTE namespace (apps-dev-tunnel = the sish backend's ns) so Traefik accepts the
+    // same-namespace service ref. Reverting manifestOpts to APPS_KUBE_NAMESPACE fails here.
+    expect(posts[0][1]).toContain('/namespaces/civitai-apps/jobs');
+    const job = JSON.parse((posts[0][2] as { body: string }).body);
+    const envVal = (name: string) =>
+      job.spec.template.spec.containers[0].env.find((e: { name: string }) => e.name === name)?.value;
+    const appliedIr = JSON.parse(envVal('INGRESSROUTE_JSON'));
+    const appliedMw = JSON.parse(envVal('MIDDLEWARE_JSON'));
+    expect(appliedIr.metadata.namespace).toBe('apps-dev-tunnel');
+    expect(appliedMw.metadata.namespace).toBe('apps-dev-tunnel');
+    // service + middleware refs are now SAME-namespace (the cross-ns 404 cause).
+    expect(appliedIr.spec.routes[0].services[0].namespace).toBe('apps-dev-tunnel');
+    // PORT: reference the sish-http SERVICE port (80), not the pod targetPort (8080) —
+    // Traefik matches a service ref by Service port number. A revert to :8080 fails here.
+    expect(appliedIr.spec.routes[0].services[0].port).toBe(80);
+    expect(appliedIr.spec.routes[0].middlewares[0].namespace).toBe('apps-dev-tunnel');
     expect(mockWaitForApplyJob).toHaveBeenCalledTimes(1);
     // persisted the 4 index keys (cred/session/host/user-block)
     expect(sysRedis.set).toHaveBeenCalledTimes(4);
