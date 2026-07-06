@@ -135,3 +135,25 @@ export type ListMySubmissionsInput = z.infer<typeof listMySubmissionsSchema>;
 /** Keyset-paginate the mod-facing off-site review queue (pending/approved/rejected). */
 export const listOffsiteRequestsSchema = listMySubmissionsSchema;
 export type ListOffsiteRequestsInput = z.infer<typeof listOffsiteRequestsSchema>;
+
+/**
+ * AUTHOR: persist a Cloudflare-uploaded image into an `Image` row and return its
+ * numeric id, so the submit form's asset step can then attach it to the draft
+ * listing via the P1 asset-CRUD procs (`setIcon`/`setCover`/`addScreenshot`,
+ * which take a numeric `imageId`). The `url` is the CF upload key (a uuid); the
+ * width/height/mime/size come from the client media-preprocess pass and are
+ * re-validated for the target asset kind by the P1 attach proc — this proc only
+ * MATERIALISES the row (and kicks off ingestion/scan). No listing binding here;
+ * ownership is bound to the caller (`userId` from ctx), and the attach proc's
+ * owner check gates which listing it can be attached to.
+ */
+export const persistListingAssetImageSchema = z.object({
+  // The CF upload key returned by `useCFImageUpload` — imageSchema requires a uuid.
+  url: z.string().uuid(),
+  name: z.string().max(255).nullish(),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  mimeType: z.string().max(120).optional(),
+  sizeBytes: z.number().int().nonnegative().optional(),
+});
+export type PersistListingAssetImageInput = z.infer<typeof persistListingAssetImageSchema>;

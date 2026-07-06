@@ -9,6 +9,7 @@ import {
   OFFSITE_CONTENT_RATINGS,
   OFFSITE_REJECTION_REASON_MAX,
   OFFSITE_REJECTION_REASON_MIN,
+  type PersistListingAssetImageInput,
   type SubmitExternalListingInput,
 } from '~/server/schema/blocks/offsite-listing.schema';
 import { assertListingAssetsComplete } from '~/server/services/blocks/app-listing-assets.service';
@@ -583,6 +584,41 @@ export async function rejectExternalRequest(opts: {
     }
     await deleteDraftListing(request.appListingId, tx);
   });
+}
+
+// ---------------------------------------------------------------------------
+// persistListingAssetImage (author) — asset-step glue for the submit form.
+// ---------------------------------------------------------------------------
+
+/**
+ * Materialise a CF-uploaded image into an `Image` row (owned by the caller) and
+ * return its numeric id, so the submit form's asset step can attach it to the
+ * draft listing via the P1 asset-CRUD procs. Kicks off the standard ingestion/scan
+ * pipeline (`createImage` with default ingestion) — the P1 attach proc enforces
+ * `ingestion === Scanned` + the per-kind image validation, so this proc does NOT
+ * re-validate dimensions/mime (it only persists). `createImage` is dynamically
+ * imported so the heavy `image.service` module stays out of this service's static
+ * graph (mirrors the router's dynamic-import discipline + keeps the unit tests,
+ * which mock only `dbRead`/`dbWrite`, light).
+ */
+export async function persistListingAssetImage(opts: {
+  input: PersistListingAssetImageInput;
+  userId: number;
+}): Promise<{ imageId: number }> {
+  const { input, userId } = opts;
+  const { createImage } = await import('~/server/services/image.service');
+  const image = await createImage({
+    url: input.url,
+    name: input.name ?? undefined,
+    type: 'image',
+    width: input.width,
+    height: input.height,
+    mimeType: input.mimeType,
+    // The P1 image validator reads the byte size from `Image.metadata.size`.
+    metadata: input.sizeBytes != null ? { size: input.sizeBytes } : undefined,
+    userId,
+  });
+  return { imageId: image.id };
 }
 
 // ---------------------------------------------------------------------------

@@ -36,6 +36,7 @@ import { useRouter } from 'next/router';
 import type { MouseEvent } from 'react';
 import { useMemo, useRef, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { OffsiteReviewQueue } from '~/components/Apps/OffsiteReviewQueue';
 import { pickReviewIframeSrc } from '~/components/Apps/reviewIframeSrc';
 import { Meta } from '~/components/Meta/Meta';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
@@ -236,9 +237,13 @@ export default function ReviewQueuePage() {
           </Tabs.List>
 
           <Tabs.Panel value="pending" pt="md">
+            {/* On-site (App Block) queue — deep code review (byte-unchanged). */}
             <PendingTab
               onSelect={(r) => setSelected({ request: r, mode: 'pending' })}
             />
+            {/* Off-site (external-link) queue — lighter content-only review (W13
+                P3a). Kind-aware: its own table + modal + approve/reject procs. */}
+            <OffsiteReviewQueue />
           </Tabs.Panel>
 
           <Tabs.Panel value="approved" pt="md">
