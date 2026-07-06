@@ -148,7 +148,7 @@ export function ExternalSubmitForm() {
   const busy = submitMutation.isPending;
 
   return (
-    <Stack gap="md">
+    <Stack gap="md" data-testid="apps-offsite-submit-form">
       <Alert color="blue" variant="light" icon={<IconExternalLink size={16} />} title="External link app">
         <Text size="sm">
           List an app hosted off-site. Users get a card with a <b>Visit ↗</b> button that opens your
@@ -175,6 +175,7 @@ export function ExternalSubmitForm() {
         required
         disabled={busy}
         data-autofocus
+        data-testid="apps-offsite-submit-slug"
       />
 
       <TextInput
@@ -186,6 +187,7 @@ export function ExternalSubmitForm() {
         maxLength={OFFSITE_SUBMIT_LIMITS.nameMax}
         required
         disabled={busy}
+        data-testid="apps-offsite-submit-name"
       />
 
       <TextInput
@@ -198,6 +200,7 @@ export function ExternalSubmitForm() {
         maxLength={OFFSITE_SUBMIT_LIMITS.urlMax}
         required
         disabled={busy}
+        data-testid="apps-offsite-submit-url"
       />
 
       <TextInput
@@ -264,7 +267,12 @@ export function ExternalSubmitForm() {
         <Button variant="default" component={Link} href="/apps/my-submissions" disabled={busy}>
           Cancel
         </Button>
-        <Button onClick={handleSubmit} loading={busy} leftSection={<IconExternalLink size={16} />}>
+        <Button
+          onClick={handleSubmit}
+          loading={busy}
+          leftSection={<IconExternalLink size={16} />}
+          data-testid="apps-offsite-submit-create"
+        >
           Create draft
         </Button>
       </Group>
@@ -395,7 +403,7 @@ function AssetStep({
     icon.status === 'attached' && cover.status === 'attached' && attachedScreenshots >= 1;
 
   return (
-    <Stack gap="md">
+    <Stack gap="md" data-testid="apps-offsite-submit-success">
       <Alert color="green" variant="light" icon={<IconCheck size={16} />} title="Draft created">
         <Text size="sm">
           <Code>{submitted.slug}</Code> is a pending off-site submission. Attach an icon, a cover and

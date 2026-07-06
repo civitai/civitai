@@ -84,7 +84,7 @@ export function OffsiteSubmissionsList({
         </Table.Thead>
         <Table.Tbody>
           {submissions.map((s) => (
-            <Table.Tr key={s.id}>
+            <Table.Tr key={s.id} data-testid={`apps-offsite-submission-row-${s.slug}`}>
               <Table.Td>
                 <Group gap={6}>
                   <Code>{s.slug}</Code>
@@ -144,6 +144,7 @@ export function OffsiteSubmissionsList({
                     onClick={() => onWithdraw(s.id)}
                     disabled={withdrawing}
                     loading={withdrawing}
+                    data-testid={`apps-offsite-withdraw-${s.slug}`}
                   >
                     Withdraw
                   </Button>

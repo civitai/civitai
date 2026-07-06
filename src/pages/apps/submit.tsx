@@ -328,8 +328,14 @@ export default function SubmitAppPage() {
           value={mode}
           onChange={(v) => setMode(v as SubmitMode)}
           data={[
-            { label: 'App Block (CLI)', value: 'block' },
-            { label: 'External link', value: 'external' },
+            {
+              label: <span data-testid="apps-offsite-submit-mode-block">App Block (CLI)</span>,
+              value: 'block',
+            },
+            {
+              label: <span data-testid="apps-offsite-submit-mode-external">External link</span>,
+              value: 'external',
+            },
           ]}
         />
 

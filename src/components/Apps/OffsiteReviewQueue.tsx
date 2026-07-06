@@ -156,6 +156,7 @@ export function OffsiteReviewQueue() {
                       variant="default"
                       onClick={() => setSelected(r)}
                       rightSection={<IconExternalLink size={12} />}
+                      data-testid={`apps-offsite-review-${r.slug}`}
                     >
                       Review
                     </Button>
@@ -387,6 +388,7 @@ function OffsiteReviewModal({
               value={rejectionReason}
               onChange={(e) => setRejectionReason(e.currentTarget.value)}
               disabled={busy}
+              data-testid="apps-offsite-reject-reason"
             />
             <Group justify="flex-end" gap="xs">
               <Button variant="default" onClick={() => setActionMode('view')} disabled={busy}>
@@ -403,6 +405,7 @@ function OffsiteReviewModal({
                 }
                 disabled={busy || rejectionReason.trim().length < 10}
                 loading={rejectMut.isPending}
+                data-testid="apps-offsite-reject-confirm"
               >
                 Reject
               </Button>
@@ -427,6 +430,7 @@ function OffsiteReviewModal({
                 leftSection={<IconX size={14} />}
                 onClick={() => setActionMode('reject')}
                 disabled={busy}
+                data-testid="apps-offsite-reject-open"
               >
                 Reject…
               </Button>
