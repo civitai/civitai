@@ -794,6 +794,14 @@ export const serverSchema = z
     APPS_DEV_TUNNEL_SISH_BACKEND: z
       .string()
       .default('http://sish-http.apps-dev-tunnel.svc.cluster.local:8080'),
+    // APPS_DEV_TUNNEL_INGRESS_TARGET   the Traefik LB IP the ephemeral
+    //   `dev-<hex>.<APPS_DOMAIN>` DNS record points at. Set PER-ENVIRONMENT (e.g. the
+    //   dp-prod SOPS env) — intentionally NO default so the origin IP is not committed
+    //   to the repo. When set, the dev-tunnel IngressRoute carries external-dns
+    //   annotations and the host resolves (CF-proxied); when unset, no record is
+    //   created (the tunnel host is NXDOMAIN). external-dns runs source=traefik-proxy,
+    //   domain civit.ai.
+    APPS_DEV_TUNNEL_INGRESS_TARGET: z.string().optional(),
     // APPS_DEV_TUNNEL_SSH_HOST_PUBKEY   the sish server's SSH HOST public key, as a
     //   NON-SECRET OpenSSH line (`ssh-ed25519 AAAA...`). Returned by
     //   startDevTunnel so the CLI can PIN it on the `ssh -R` hop (R1 — closes the

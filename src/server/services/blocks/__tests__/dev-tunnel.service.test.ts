@@ -59,6 +59,7 @@ const {
       APPS_KUBE_NAMESPACE: 'civitai-apps',
       NEXTAUTH_URL: 'https://civitai.com',
       APPS_DEV_TUNNEL_SISH_BACKEND: 'http://sish-http.apps-dev-tunnel.svc.cluster.local:8080',
+      APPS_DEV_TUNNEL_INGRESS_TARGET: '192.0.2.1' as string | undefined,
       APPS_DEV_TUNNEL_FORWARDAUTH_URL: undefined as string | undefined,
       APPS_DEV_TUNNEL_SSH_HOST_PUBKEY: 'ssh-ed25519 AAAAC3NzaHostKeyExample sish-host' as
         | string
@@ -126,6 +127,7 @@ describe('manifest builders (SSRF-safe, server-derived host)', () => {
     namespace: 'civitai-apps',
     forwardAuthUrl: 'http://civitai-web/api/internal/dev-tunnel-gate',
     sishBackend: 'http://sish-http.apps-dev-tunnel.svc.cluster.local:8080',
+    ingressTarget: '192.0.2.1', // RFC-5737 doc placeholder; the real LB IP is a per-env secret
   };
 
   it('IngressRoute matches EXACTLY the assigned host (never a wildcard/user input)', () => {
@@ -144,6 +146,23 @@ describe('manifest builders (SSRF-safe, server-derived host)', () => {
     // (label values permit `_`; the reaper deletes by this label, not by name).
     expect(ir.metadata.labels['civitai.com/dev-tunnel']).toBe('true');
     expect(ir.metadata.labels['civitai.com/dev-tunnel-session']).toBe('bki_s');
+    // external-dns annotations present when ingressTarget is set — without them the
+    // ephemeral host is NXDOMAIN and the browser can't load the tunnel.
+    expect(ir.metadata.annotations['external-dns.alpha.kubernetes.io/hostname']).toBe(
+      'dev-0123456789abcdef.civit.ai'
+    );
+    expect(ir.metadata.annotations['external-dns.alpha.kubernetes.io/target']).toBe('192.0.2.1');
+    expect(ir.metadata.annotations['external-dns.alpha.kubernetes.io/cloudflare-proxied']).toBe(
+      'true'
+    );
+  });
+
+  it('omits external-dns annotations when no ingressTarget is configured (no DNS record)', () => {
+    const { ingressTarget: _drop, ...noTarget } = opts;
+    const ir = buildDevTunnelIngressRoute(noTarget);
+    // No target → no annotations → external-dns creates no record. The route still
+    // renders (routing is correct); the host just won't resolve until the env is set.
+    expect(ir.metadata.annotations).toBeUndefined();
   });
 
   it('Middleware points forwardAuth at the dev-tunnel-gate endpoint', () => {
