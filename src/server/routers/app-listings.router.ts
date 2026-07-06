@@ -99,6 +99,42 @@ function isRedCapableRequest(ctx: { req?: { headers?: { host?: string } } }): bo
   return host !== '' && isHostForColor(host, 'red');
 }
 
+/**
+ * Map a thrown off-site SERVICE error to the correct TRPC error for the mod client.
+ *
+ *   - A `TRPCError` the service already shaped (BAD_REQUEST: assets-incomplete /
+ *     invalid stored URL / reason-length) passes THROUGH unchanged.
+ *   - A typed `OffsiteRequestError` maps to its precise TRPC code
+ *     (`NOT_FOUND`→NOT_FOUND, `NOT_OWNED`→FORBIDDEN, `NOT_PENDING`/other→
+ *     BAD_REQUEST). It is DUCK-TYPED on `name` + `code` so the router never has to
+ *     eagerly `import` the service module (services are loaded via dynamic
+ *     `import()` to keep the Prisma client out of the router's import graph).
+ *   - Anything else is an UNEXPECTED infra/Prisma failure → INTERNAL_SERVER_ERROR
+ *     with a GENERIC message; the raw error is preserved only on `cause` (for the
+ *     central server-fault logger) and NEVER surfaced to the client.
+ *
+ * Replaces the previous blanket `BAD_REQUEST + (err as Error).message`, which both
+ * mis-coded typed failures and leaked raw infra messages to moderators.
+ */
+function mapOffsiteError(err: unknown): TRPCError {
+  if (err instanceof TRPCError) return err;
+  if (
+    err instanceof Error &&
+    err.name === 'OffsiteRequestError' &&
+    typeof (err as { code?: unknown }).code === 'string'
+  ) {
+    const code = (err as { code: string }).code;
+    const trpcCode =
+      code === 'NOT_FOUND' ? 'NOT_FOUND' : code === 'NOT_OWNED' ? 'FORBIDDEN' : 'BAD_REQUEST';
+    return new TRPCError({ code: trpcCode, message: err.message });
+  }
+  return new TRPCError({
+    code: 'INTERNAL_SERVER_ERROR',
+    message: 'An unexpected error occurred while processing the request. Please try again later.',
+    cause: err,
+  });
+}
+
 export const appListingsRouter = router({
   /** Owner/mod read of a listing's current assets (creator dashboard). */
   getAssets: protectedProcedure
@@ -292,8 +328,10 @@ export const appListingsRouter = router({
    * then flips the listing draft→approved + the request→approved (status-guarded)
    * and supersedes sibling pendings. v1 ALLOWS mod self-approve (reviewer ==
    * submitter — trusted, enables single-mod dogfood; a reviewer≠submitter
-   * restriction is deferred to GA/P3b). All failure modes map to BAD_REQUEST with
-   * the service message (mirrors `blocks.approveRequest`).
+   * restriction is deferred to GA/P3b). Failure modes are mapped by
+   * `mapOffsiteError`: typed NOT_FOUND→NOT_FOUND, NOT_PENDING/assets-incomplete/
+   * bad-URL→BAD_REQUEST, and any unexpected infra error→INTERNAL_SERVER_ERROR
+   * (generic message, no raw leak).
    */
   approveExternalRequest: moderatorProcedure
     .input(approveExternalRequestSchema)
@@ -311,16 +349,17 @@ export const appListingsRouter = router({
           approvalNotes: input.approvalNotes,
         });
       } catch (err) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+        throw mapOffsiteError(err);
       }
     }),
 
   /**
    * MOD: reject a pending off-site request (PR-b). Requires `rejectionReason` ≥10
-   * chars; flips the request→rejected + sets `reviewedBy*` and DELETES the draft
-   * listing (status-guarded — releases the slug, never removes an approved
-   * listing). All failure modes map to BAD_REQUEST with the service message
-   * (mirrors `blocks.rejectRequest`).
+   * chars; in ONE tx flips the request→rejected + sets `reviewedBy*` and DELETES
+   * the draft listing (status-guarded — releases the slug, never removes an
+   * approved listing). Failure modes are mapped by `mapOffsiteError` (typed
+   * NOT_FOUND→NOT_FOUND, NOT_PENDING/reason-length→BAD_REQUEST, unexpected→
+   * INTERNAL_SERVER_ERROR with a generic message).
    */
   rejectExternalRequest: moderatorProcedure
     .input(rejectExternalRequestSchema)
@@ -338,7 +377,7 @@ export const appListingsRouter = router({
           rejectionReason: input.rejectionReason,
         });
       } catch (err) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+        throw mapOffsiteError(err);
       }
       return { ok: true };
     }),
