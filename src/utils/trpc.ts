@@ -27,28 +27,39 @@ type RequestHeaders = {
 const url = '/api/trpc';
 
 /**
- * Approximate input-size threshold (serialized RAW-JSON chars) above which a query is
- * sent as POST instead of GET. Must stay BELOW the point where the percent-encoded URL
- * crosses the batch link's `maxURLLength` (2083, see `terminatingLink`). The encoded URL
- * runs ~1.4x the raw JSON, so the raw threshold has to be ≤ 2083 / 1.4 ≈ 1487 or a
- * mid-size query slips past this POST-diversion yet still overflows the batched GET URL
- * and throws "Input is too big for a single dispatch" (bit the generator's whatIf query
- * once the batch link shipped — several LoRAs, each carrying trigger words, landed in the
- * gap between the old 2500 threshold and the 2083 URL cap).
+ * Encoded-URL budget (percent-encoded chars) for a single query's input. A query whose
+ * input encodes to more than this is diverted from GET to POST (`methodOverride`), moving
+ * the input into the request body.
+ *
+ * Measured against the ACTUAL wire cost — `encodeURIComponent(JSON.stringify(
+ * superjson.serialize(input)))`, the same transform tRPC applies when building the GET URL
+ * — NOT a raw-char heuristic. The batch link caps the whole per-request URL at
+ * `maxURLLength: 2083` (see `terminatingLink`) and throws "Input is too big for a single
+ * dispatch" if ONE operation alone exceeds it. The budget sits ~280 under 2083 to absorb
+ * the path (`/api/trpc/<proc>`) + `?batch=1&input={"0":…}` wrapper overhead, so a single op
+ * can never overflow the batched GET regardless of how punctuation-dense its JSON is.
+ *
+ * Why not a raw-JSON-char threshold: JSON near the limit is structurally dense (`{}",:[]`,
+ * each → %XX), so the encoded URL runs ~1.75–1.9× the raw JSON — not the ~1.4× a fixed
+ * factor assumes. A raw threshold that looks safe (e.g. 1400) still lets a ~12–14-resource
+ * whatIf payload stay batched yet overflow 2083 (the exact #2962 crash). Measuring the
+ * encoded length removes the guess and can't drift with payload composition.
  */
-const MAX_QUERY_INPUT_LENGTH = 1400;
+const URL_INPUT_BUDGET = 1800;
 
 /**
- * Whether a query's input is large enough that carrying it in the URL as a GET
- * would risk HTTP 431 (Request Header Fields Too Large) / proxy URL limits.
- * Such queries are routed through tRPC's native `methodOverride: 'POST'`, which
- * moves the input into the request body. Requires `allowMethodOverride: true`
- * on the server adapter — see `src/pages/api/trpc/[trpc].ts`.
+ * Whether a query's input is large enough that carrying it in the URL as a GET would risk
+ * overflowing the batch link's `maxURLLength` (or, on the non-batched path, HTTP 431 /
+ * proxy URL limits). Such queries are routed through tRPC's native `methodOverride: 'POST'`,
+ * which moves the input into the request body. Requires `allowMethodOverride: true` on the
+ * server adapter — see `src/pages/api/trpc/[trpc].ts`.
  */
 function isLargeQuery(op: { type: string; input: unknown }) {
   if (op.type !== 'query' || op.input == null) return false;
   try {
-    return JSON.stringify(op.input).length > MAX_QUERY_INPUT_LENGTH;
+    // Mirror tRPC's GET-URL encoding so the check reflects the real wire cost, not an
+    // approximation: superjson-serialize (the configured transformer) then percent-encode.
+    return encodeURIComponent(JSON.stringify(superjson.serialize(op.input))).length > URL_INPUT_BUDGET;
   } catch {
     return false;
   }

@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
+import superjson from 'superjson';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   __getTrpcBatchingEnabled,
@@ -119,7 +120,7 @@ describe('shouldBatch', () => {
   it('does NOT batch large queries (they go out as POST methodOverride, body-carried)', () => {
     setTrpcBatchingEnabled(true);
     setWindowAuthed(true);
-    // input serializes to > MAX_QUERY_INPUT_LENGTH => large => unbatched
+    // input encodes to > URL_INPUT_BUDGET => large => unbatched
     expect(shouldBatch(op({ input: { q: 'x'.repeat(3000) } }))).toBe(false);
   });
 
@@ -127,6 +128,77 @@ describe('shouldBatch', () => {
     setTrpcBatchingEnabled(true);
     setWindowAuthed(true);
     expect(shouldBatch(op({ input: { q: 'x'.repeat(100) } }))).toBe(true);
+  });
+});
+
+/**
+ * Regression guard for the batched-GET URL overflow (#2962). The batch link caps the whole
+ * request URL at `maxURLLength: 2083` and tRPC throws "Input is too big for a single
+ * dispatch" if ONE operation alone exceeds it. `shouldBatch` must therefore NEVER keep a
+ * query batched whose single-op batched URL would cross 2083 — otherwise a power user
+ * stacking LoRAs on the generator's `whatIf` cost query crashes.
+ *
+ * The original fix used a raw-JSON-char threshold with a ~1.4× encoding assumption; the
+ * real ratio is ~1.75–1.9× for punctuation-dense JSON, which left a ~12–14-resource crash
+ * band still batched-but-overflowing. `isLargeQuery` now measures the ACTUAL encoded wire
+ * cost, so we assert the end-to-end invariant against a tRPC-faithful URL model — raising
+ * the budget too high would fail this test.
+ */
+describe('shouldBatch never keeps a URL-overflowing query batched (#2962)', () => {
+  const BATCH_MAX_URL_LENGTH = 2083; // must match `maxURLLength` on httpBatchStreamLink
+  const whatIfPath = 'orchestrator.whatIfFromGraph';
+
+  // The single-op batched GET URL tRPC builds: `/api/trpc/<path>?batch=1&input=<enc {0: serialized}>`.
+  const batchedUrlLength = (path: string, input: unknown) =>
+    `/api/trpc/${path}?batch=1&input=`.length +
+    encodeURIComponent(JSON.stringify({ 0: superjson.serialize(input) })).length;
+
+  // A whatIf-shaped payload: a checkpoint + N LoRA resources (minimal post-filter shape,
+  // i.e. trainedWords already stripped by `filterSnapshotForSubmit`).
+  const whatIfInput = (loraCount: number) => ({
+    resources: [
+      { id: 1288280, baseModel: 'Illustrious', model: { type: 'Checkpoint' }, strength: 1 },
+      ...Array.from({ length: loraCount }, (_, i) => ({
+        id: 1200000 + i,
+        baseModel: 'Illustrious',
+        model: { type: 'LORA' },
+        strength: 1,
+      })),
+    ],
+  });
+
+  beforeEach(() => {
+    setTrpcBatchingEnabled(true);
+    setWindowAuthed(true);
+  });
+
+  it('whatIf path is not edge-cacheable (so batching is otherwise eligible)', () => {
+    // Guards the premise: if this ever became cacheable, shouldBatch would return false for
+    // an unrelated reason and the invariant below would pass vacuously.
+    expect(CACHEABLE_PROCEDURES.has(whatIfPath)).toBe(false);
+  });
+
+  it('diverts the exact crash-band payload to POST instead of overflowing the batch URL', () => {
+    // 14 LoRAs is the regression point: under the old raw-1400 threshold this stayed batched
+    // (raw JSON ~1335 ≤ 1400) yet its encoded URL was ~2101 > 2083 → the #2962 crash. The
+    // encoded-budget check must now classify it large → unbatched → POST. (Fails on the
+    // pre-fix raw-char threshold, which is what makes this a real regression guard.)
+    const crashBand = { type: 'query', path: whatIfPath, input: whatIfInput(14), context: {} };
+    expect(batchedUrlLength(whatIfPath, whatIfInput(14))).toBeGreaterThan(BATCH_MAX_URL_LENGTH);
+    expect(shouldBatch(crashBand)).toBe(false);
+    // And a small stack still batches (the win isn't thrown away for the common case).
+    const small = { type: 'query', path: whatIfPath, input: whatIfInput(3), context: {} };
+    expect(shouldBatch(small)).toBe(true);
+  });
+
+  it('holds the invariant across a resource-count sweep: batched ⇒ URL < 2083', () => {
+    for (let n = 0; n <= 40; n++) {
+      const input = whatIfInput(n);
+      const operation = { type: 'query', path: whatIfPath, input, context: {} };
+      if (shouldBatch(operation)) {
+        expect(batchedUrlLength(whatIfPath, input)).toBeLessThan(BATCH_MAX_URL_LENGTH);
+      }
+    }
   });
 });
 
