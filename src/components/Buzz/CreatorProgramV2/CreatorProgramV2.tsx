@@ -35,7 +35,6 @@ import {
   useBankedBuzz,
   useCompensationPool,
   useCreatorPoolListener,
-  useCreatorProgramForecast,
   useCreatorProgramMutate,
   useCreatorProgramPhase,
   useCreatorProgramRequirements,
@@ -99,7 +98,8 @@ const TosModal = dynamic(() => import('~/components/ToSModal/TosModal'), {
 });
 
 const cardProps: HTMLProps<HTMLDivElement> = {
-  className: 'bg-gray-0 align-center flex flex-col rounded-lg border border-gray-2 p-4 dark:border-dark-4 dark:bg-dark-5',
+  className:
+    'bg-gray-0 align-center flex flex-col rounded-lg border border-gray-2 p-4 dark:border-dark-4 dark:bg-dark-5',
 };
 
 const DATE_FORMAT = 'MMM D, YYYY @ hA z';
@@ -357,11 +357,7 @@ export const CompensationPoolCard = () => {
         <div className="flex flex-col">
           <h3 className="my-0 text-center text-xl font-bold">Current Banked Buzz</h3>
           <div className="flex justify-center gap-1">
-            <CurrencyIcon
-              className="my-auto"
-              currency={Currency.BUZZ}
-              size={20}
-            />
+            <CurrencyIcon className="my-auto" currency={Currency.BUZZ} size={20} />
             <span className="text-2xl font-bold">
               {numberWithCommas(compensationPool?.size.current)}
             </span>
@@ -459,7 +455,9 @@ const BankBuzzCard = () => {
           <NumberInputWrapper
             label="Buzz"
             labelProps={{ className: 'hidden' }}
-            leftSection={<CurrencyIcon currency={Currency.BUZZ} type={selectedBuzzType} size={18} />}
+            leftSection={
+              <CurrencyIcon currency={Currency.BUZZ} type={selectedBuzzType} size={18} />
+            }
             value={toBank ? toBank : undefined}
             min={10000}
             max={maxBankable}
@@ -1185,11 +1183,7 @@ const ExtractBuzzCard = () => {
           <div className="flex items-center gap-2">
             <p>
               <span className="font-bold">Extraction Fee:</span>{' '}
-              <CurrencyIcon
-                currency={Currency.BUZZ}
-                size={14}
-                className="inline"
-              />
+              <CurrencyIcon currency={Currency.BUZZ} size={14} className="inline" />
               {numberWithCommas(extractionFee)}
             </p>
             <LegacyActionIcon

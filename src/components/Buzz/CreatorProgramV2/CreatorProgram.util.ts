@@ -1,5 +1,5 @@
 import dayjs from '~/shared/utils/dayjs';
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useSignalConnection, useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SignalMessages, SignalTopic } from '~/server/common/enums';
@@ -100,52 +100,6 @@ export const useCreatorProgramPhase = () => {
   return {
     phase,
     isLoading,
-  };
-};
-
-export const useCreatorProgramForecast = ({
-  bankPortion: initialBankPortion,
-  creatorBankPortion: initalCreatorBankPortion,
-  buzz,
-}: {
-  bankPortion?: number;
-  creatorBankPortion?: number;
-  buzz?: number;
-} = {}) => {
-  const currentUser = useCurrentUser();
-  const [bankPortion, setBankPortion] = useState<number>(initialBankPortion ?? 50);
-  const [creatorBankPortion, setCreatorBankPortion] = useState<number>(
-    initalCreatorBankPortion ?? 100
-  );
-
-  const { data: potential, isLoading } = trpc.buzz.getPoolForecast.useQuery(
-    { username: currentUser?.username as string },
-    { enabled: !!currentUser }
-  );
-  const poolValue = potential?.poolValue ?? 0;
-  const poolSize = potential?.poolSize ?? 0;
-  const earned = buzz ?? potential?.earned ?? 0;
-
-  const bankedBuzz = (poolSize * bankPortion) / 100;
-  const creatorBankedBuzz = (earned * creatorBankPortion) / 100;
-  const rewardRate = Math.min(poolValue / bankedBuzz, 1 / 1000);
-  const forecastedEarning = rewardRate * creatorBankedBuzz;
-
-  return {
-    forecast: {
-      bankPortion,
-      creatorBankPortion,
-      poolValue,
-      poolSize,
-      earned,
-      bankedBuzz,
-      creatorBankedBuzz,
-      rewardRate,
-      forecastedEarning,
-    },
-    isLoading,
-    setBankPortion,
-    setCreatorBankPortion,
   };
 };
 

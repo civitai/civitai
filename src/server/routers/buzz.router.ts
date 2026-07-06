@@ -32,7 +32,6 @@ import {
   claimWatchedAdReward,
   getClaimStatus,
   getEarnPotential,
-  getPoolForecast,
   getUserBuzzAccounts,
 } from '~/server/services/buzz.service';
 import { guardedProcedure, isFlagProtected, protectedProcedure, router } from '~/server/trpc';
@@ -97,14 +96,6 @@ export const buzzRouter = router({
       if (!ctx.user.isModerator) input.userId = ctx.user.id;
       if (!input.username && !input.userId) input.userId = ctx.user.id;
       return getEarnPotential(input);
-    }),
-  getPoolForecast: buzzProcedure
-    .meta({ requiredScope: TokenScope.BuzzRead })
-    .input(getEarnPotentialSchema)
-    .query(({ input, ctx }) => {
-      if (!ctx.user.isModerator) input.userId = ctx.user.id;
-      if (!input.username && !input.userId) input.userId = ctx.user.id;
-      return getPoolForecast(input);
     }),
   getDailyBuzzCompensation: buzzProcedure
     .meta({ requiredScope: TokenScope.BuzzRead })
