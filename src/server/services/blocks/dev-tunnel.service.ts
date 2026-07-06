@@ -142,6 +142,13 @@ export type DevTunnelManifestOpts = {
   forwardAuthUrl: string;
   /** sish HTTP backend the reverse tunnel is bound behind. */
   sishBackend: string;
+  /** Traefik LB IP the ephemeral `dev-<hex>.<APPS_DOMAIN>` DNS record targets.
+   *  When set, the IngressRoute carries external-dns annotations so external-dns
+   *  (source=traefik-proxy, domain civit.ai) creates the CF-proxied record — WITHOUT
+   *  it the host is NXDOMAIN and the browser can't load the tunnel. Sourced from env
+   *  (APPS_DEV_TUNNEL_INGRESS_TARGET, set per-environment) rather than hardcoded, so
+   *  the origin IP is not committed here; unset ⇒ annotations omitted (no record). */
+  ingressTarget?: string;
 };
 
 /** Build the ephemeral forwardAuth Middleware for a dev-tunnel host. The
@@ -190,6 +197,20 @@ export function buildDevTunnelIngressRoute(opts: DevTunnelManifestOpts) {
   // Service by name+port. The sish backend is a Service in the sish namespace, so
   // we use a Traefik `services[].name` + `namespace`. Parse host/port defensively.
   const backend = parseBackend(opts.sishBackend);
+  // external-dns (source=traefik-proxy, domain civit.ai) creates the CF-proxied DNS
+  // record for the ephemeral host from THESE annotations — mirroring the per-app-block
+  // routes (`<slug>.civit.ai`). Without them the host is NXDOMAIN and the browser can't
+  // load the tunnel. Gated on ingressTarget (the Traefik LB IP, from env) so the origin
+  // IP is not committed here; unset ⇒ no annotations ⇒ no record.
+  // ⚠️ NOT auto-cleaned: the civit.ai external-dns is `policy: upsert-only`, so deleting
+  // the route does NOT remove the record (orphan-DNS GC is a tracked follow-up).
+  const externalDnsAnnotations = opts.ingressTarget
+    ? {
+        'external-dns.alpha.kubernetes.io/hostname': opts.host,
+        'external-dns.alpha.kubernetes.io/target': opts.ingressTarget,
+        'external-dns.alpha.kubernetes.io/cloudflare-proxied': 'true',
+      }
+    : undefined;
   return {
     apiVersion: 'traefik.io/v1alpha1',
     kind: 'IngressRoute',
@@ -200,6 +221,7 @@ export function buildDevTunnelIngressRoute(opts: DevTunnelManifestOpts) {
         [DEV_TUNNEL_LABEL]: 'true',
         [DEV_TUNNEL_SESSION_LABEL]: opts.sessionId,
       },
+      ...(externalDnsAnnotations ? { annotations: externalDnsAnnotations } : {}),
     },
     spec: {
       entryPoints: ['websecure'],
@@ -255,6 +277,7 @@ function manifestOpts(host: string, sessionId: string): DevTunnelManifestOpts {
     namespace: env.APPS_KUBE_NAMESPACE,
     forwardAuthUrl: forwardAuthUrl(),
     sishBackend: sishBackend(),
+    ingressTarget: env.APPS_DEV_TUNNEL_INGRESS_TARGET,
   };
 }
 
