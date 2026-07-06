@@ -1,10 +1,14 @@
-import { Alert, Button, Card, Stack, Text } from '@mantine/core';
-import { IconAlertTriangle, IconArrowRight } from '@tabler/icons-react';
+import { Alert, Button, Card, Group, Stack, Text, Title } from '@mantine/core';
+import { IconAlertTriangle, IconArrowRight, IconExternalLink } from '@tabler/icons-react';
 import Link from 'next/link';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { deployRefetchInterval } from '~/components/Apps/deploy-status';
 import { MySubmissionsList, type Submission } from '~/components/Apps/MySubmissionsList';
+import {
+  OffsiteSubmissionsList,
+  type OffsiteSubmission,
+} from '~/components/Apps/OffsiteSubmissionsList';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
@@ -69,9 +73,27 @@ export default function MySubmissionsPage() {
     },
   });
 
+  // OFF-SITE (external-link) submissions (W13 P3a) — listed alongside the on-site
+  // publish requests. Dark behind `app-blocks-author` at the proc; enabled here on
+  // the same `appBlocks` gate as the on-site list.
+  const offsiteQuery = trpc.appListings.listMySubmissions.useQuery(
+    { limit: 100 },
+    { enabled: !!features?.appBlocks }
+  );
+  const offsiteWithdrawMutation = trpc.appListings.withdrawExternalRequest.useMutation({
+    onSuccess: async () => {
+      showSuccessNotification({ message: 'External submission withdrawn.' });
+      await offsiteQuery.refetch();
+    },
+    onError: (e) => {
+      showErrorNotification({ title: 'Withdraw failed', error: new Error(e.message) });
+    },
+  });
+
   if (!features?.appBlocks) return <NotFound />;
 
   const submissions = (submissionsQuery.data ?? []) as Submission[];
+  const offsiteSubmissions = (offsiteQuery.data?.items ?? []) as OffsiteSubmission[];
 
   return (
     <>
@@ -95,16 +117,25 @@ export default function MySubmissionsPage() {
           </Alert>
         )}
 
-        {!submissionsQuery.isLoading && submissions.length === 0 && (
-          <Card withBorder p="lg">
-            <Stack gap="xs" align="center" py="md">
-              <Text>You haven't submitted any apps yet.</Text>
-              <Button component={Link} href="/apps/submit">
-                Submit your first app
-              </Button>
-            </Stack>
-          </Card>
+        {offsiteQuery.isError && (
+          <Alert color="red" icon={<IconAlertTriangle size={16} />}>
+            {offsiteQuery.error.message}
+          </Alert>
         )}
+
+        {!submissionsQuery.isLoading &&
+          !offsiteQuery.isLoading &&
+          submissions.length === 0 &&
+          offsiteSubmissions.length === 0 && (
+            <Card withBorder p="lg">
+              <Stack gap="xs" align="center" py="md">
+                <Text>You haven't submitted any apps yet.</Text>
+                <Button component={Link} href="/apps/submit">
+                  Submit your first app
+                </Button>
+              </Stack>
+            </Card>
+          )}
 
         {submissions.length > 0 && (
           <MySubmissionsList
@@ -112,6 +143,20 @@ export default function MySubmissionsPage() {
             onWithdraw={(id) => withdrawMutation.mutate({ publishRequestId: id })}
             withdrawing={withdrawMutation.isPending}
           />
+        )}
+
+        {offsiteSubmissions.length > 0 && (
+          <Stack gap="xs" mt={submissions.length > 0 ? 'lg' : undefined}>
+            <Group gap={6}>
+              <IconExternalLink size={16} />
+              <Title order={5}>External-link submissions</Title>
+            </Group>
+            <OffsiteSubmissionsList
+              submissions={offsiteSubmissions}
+              onWithdraw={(id) => offsiteWithdrawMutation.mutate({ publishRequestId: id })}
+              withdrawing={offsiteWithdrawMutation.isPending}
+            />
+          </Stack>
         )}
       </AppsPageLayout>
     </>

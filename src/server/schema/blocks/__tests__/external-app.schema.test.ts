@@ -59,6 +59,18 @@ describe('validateExternalUrl', () => {
     }
   });
 
+  it('REJECTS malformed https-prefixed values the loose `^https://` regex accepts (anchor-guard unification)', () => {
+    // The mod/author anchors previously gated on a loose `^https://` regex while the
+    // review checklist used this URL-parse guard. These values match the regex (so the
+    // old anchor rendered them CLICKABLE) but have no parseable host (so the checklist
+    // warned) — the exact disagreement. Both anchors now gate on `validateExternalUrl`,
+    // so a malformed-but-https-prefixed value renders as INERT text everywhere.
+    for (const url of ['https://', 'https:///', 'https://[bad', 'https://%', 'https:// nohost', 'https://a b']) {
+      const r = validateExternalUrl(url);
+      expect(r.ok, `"${url}" must be rejected (no parseable host)`).toBe(false);
+    }
+  });
+
   it('REJECTS a non-string / empty input', () => {
     expect(validateExternalUrl(undefined).ok).toBe(false);
     expect(validateExternalUrl(null).ok).toBe(false);

@@ -8,6 +8,7 @@ import {
   FileInput,
   Group,
   Loader,
+  SegmentedControl,
   Stack,
   Text,
   Title,
@@ -26,6 +27,7 @@ import { useEffect, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { CliSubmitCta } from '~/components/Apps/CliSubmitCta';
+import { ExternalSubmitForm } from '~/components/Apps/ExternalSubmitForm';
 import { ManualUploadSection } from '~/components/Apps/ManualUploadSection';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -190,8 +192,11 @@ async function previewManifest(file: File): Promise<ManifestPreview> {
   };
 }
 
+type SubmitMode = 'block' | 'external';
+
 export default function SubmitAppPage() {
   const features = useFeatureFlags();
+  const [mode, setMode] = useState<SubmitMode>('block');
   const [bundle, setBundle] = useState<File | null>(null);
   const [preview, setPreview] = useState<ManifestPreview | null>(null);
   const [encoding, setEncoding] = useState(false);
@@ -317,7 +322,26 @@ export default function SubmitAppPage() {
           </>
         }
       >
-        {submitted ? (
+        <SegmentedControl
+          fullWidth
+          mb="md"
+          value={mode}
+          onChange={(v) => setMode(v as SubmitMode)}
+          data={[
+            {
+              label: <span data-testid="apps-offsite-submit-mode-block">App Block (CLI)</span>,
+              value: 'block',
+            },
+            {
+              label: <span data-testid="apps-offsite-submit-mode-external">External link</span>,
+              value: 'external',
+            },
+          ]}
+        />
+
+        {mode === 'external' ? (
+          <ExternalSubmitForm />
+        ) : submitted ? (
           <SuccessCard submitted={submitted} />
         ) : (
           <>

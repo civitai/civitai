@@ -18,6 +18,7 @@ import {
   approveExternalRequestSchema,
   listMySubmissionsSchema,
   listOffsiteRequestsSchema,
+  persistListingAssetImageSchema,
   rejectExternalRequestSchema,
   submitExternalListingSchema,
   withdrawExternalRequestSchema,
@@ -278,6 +279,30 @@ export const appListingsRouter = router({
         throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
       }
       return { ok: true };
+    }),
+
+  /**
+   * AUTHOR: persist a CF-uploaded image → `Image` row, returning its numeric id
+   * for the submit form's asset step (which then attaches it to the draft listing
+   * via `setIcon`/`setCover`/`addScreenshot`). Author-gated (mods + app-dev-testers)
+   * + rate-limited; the row is owned by the caller and the attach proc's owner +
+   * per-kind-image validation still bounds where/whether it can be used.
+   */
+  persistAssetImage: appDeveloperProcedure
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 3600,
+        errorMessage: 'Too many image uploads — slow down.',
+      })
+    )
+    .input(persistListingAssetImageSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { persistListingAssetImage } = await import(
+        '~/server/services/blocks/offsite-listing.service'
+      );
+      return persistListingAssetImage({ input, userId: ctx.user.id });
     }),
 
   /** AUTHOR: the caller's OWN off-site submissions (my-submissions page, PR-c). */

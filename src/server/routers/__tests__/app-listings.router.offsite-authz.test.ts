@@ -33,6 +33,7 @@ const {
   mockListRejected,
   mockApprove,
   mockReject,
+  mockPersist,
   mockSetIcon,
   mockIsAppBlocksEnabled,
   mockIsAppBlocksAuthorEnabled,
@@ -45,6 +46,7 @@ const {
   mockListRejected: vi.fn(async () => ({ items: [], nextCursor: null })),
   mockApprove: vi.fn(async () => ({ publishRequestId: 'alpr_1', listingId: 'apl_1', slug: 's' })),
   mockReject: vi.fn(async () => undefined),
+  mockPersist: vi.fn(async () => ({ imageId: 99 })),
   // Faithful owner-check stand-in: throw FORBIDDEN when the caller doesn't own
   // the target listing (listingId encodes the owner: `own-<id>` / `other-<id>`).
   mockSetIcon: vi.fn(async (input: { listingId: string }, user: { id: number }) => {
@@ -65,6 +67,7 @@ vi.mock('~/server/services/blocks/offsite-listing.service', () => ({
   listRejectedOffsiteRequests: mockListRejected,
   approveExternalRequest: mockApprove,
   rejectExternalRequest: mockReject,
+  persistListingAssetImage: mockPersist,
 }));
 vi.mock('~/server/services/blocks/app-listing-assets.service', () => ({
   setListingIcon: mockSetIcon,
@@ -206,6 +209,30 @@ describe('listMySubmissions — appDeveloperProcedure', () => {
     const caller = appListingsRouter.createCaller(fakeCtx(tester) as never);
     await caller.listMySubmissions({});
     expect(mockListMy).toHaveBeenCalledWith(expect.objectContaining({ userId: tester.id }));
+  });
+});
+
+describe('persistAssetImage — appDeveloperProcedure (asset-step glue)', () => {
+  const imgInput = {
+    url: '123e4567-e89b-42d3-a456-426614174000',
+    name: 'icon.png',
+    width: 512,
+    height: 512,
+    mimeType: 'image/png',
+    sizeBytes: 1024,
+  };
+
+  it('non-author → FORBIDDEN, service NOT called', async () => {
+    const caller = appListingsRouter.createCaller(fakeCtx(nonAuthor) as never);
+    await expect(caller.persistAssetImage(imgInput)).rejects.toBeInstanceOf(TRPCError);
+    expect(mockPersist).not.toHaveBeenCalled();
+  });
+
+  it('tester (author cohort) → passes; persisted for the caller id', async () => {
+    const caller = appListingsRouter.createCaller(fakeCtx(tester) as never);
+    await caller.persistAssetImage(imgInput);
+    expect(mockPersist).toHaveBeenCalledTimes(1);
+    expect(mockPersist.mock.calls[0][0]).toMatchObject({ userId: tester.id });
   });
 });
 

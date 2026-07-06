@@ -5,11 +5,15 @@ import {
   MAX_PENDING_OFFSITE_SUBMISSIONS,
   OffsiteRequestError,
   approveExternalRequest,
+  persistListingAssetImage,
   rejectExternalRequest,
   submitExternalListing,
   withdrawExternalRequest,
 } from '~/server/services/blocks/offsite-listing.service';
-import type { SubmitExternalListingInput } from '~/server/schema/blocks/offsite-listing.schema';
+import type {
+  PersistListingAssetImageInput,
+  SubmitExternalListingInput,
+} from '~/server/schema/blocks/offsite-listing.schema';
 
 /**
  * App Store Listings (W13 P3a) — off-site submission SERVICE tests (design B1).
@@ -45,6 +49,13 @@ type Client = {
   };
 };
 
+// `persistListingAssetImage` dynamically imports `createImage` from the image
+// service. Mock it so the scan-invariant test can assert HOW it is called (owner +
+// no `skipIngestion`) without pulling the heavy image.service graph.
+const { mockCreateImage } = vi.hoisted(() => ({
+  mockCreateImage: vi.fn(async (..._a: unknown[]) => ({ id: 12345 })),
+}));
+
 const { mockRead, mockWrite, ids } = vi.hoisted(() => {
   const makeClient = () => ({
     appListing: {
@@ -78,6 +89,7 @@ const { mockRead, mockWrite, ids } = vi.hoisted(() => {
 });
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
+vi.mock('~/server/services/image.service', () => ({ createImage: mockCreateImage }));
 vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingId: () => `apl_test_${++ids.n}`,
   newAppListingPublishRequestId: () => `alpr_test_${++ids.n}`,
@@ -115,6 +127,7 @@ beforeEach(() => {
   mockWrite.$transaction
     .mockReset()
     .mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(mockWrite));
+  mockCreateImage.mockReset().mockResolvedValue({ id: 12345 });
 });
 
 // ---------------------------------------------------------------------------
@@ -713,5 +726,51 @@ describe('rejectExternalRequest', () => {
     ).rejects.toMatchObject({ code: 'NOT_PENDING' });
     // Lost the flip → the tx rolls back and we never delete the draft.
     expect(mockWrite.appListing.deleteMany).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// persistListingAssetImage — SCAN-INVARIANT regression guard
+// ---------------------------------------------------------------------------
+
+/**
+ * SECURITY INVARIANT (the exact property the pre-merge audit turned on): a listing
+ * asset image is created OWNED BY THE CALLER and goes through the standard
+ * ingestion/scan pipeline — it is NEVER created with `skipIngestion`. `skipIngestion`
+ * would create the Image already-Scanned (PendingManualAssignment), letting an
+ * author inject an UNSCANNED, publicly-rendered listing asset. A future edit that
+ * adds `skipIngestion: true` here MUST fail this test.
+ */
+describe('persistListingAssetImage (scan invariant)', () => {
+  const persistInput: PersistListingAssetImageInput = {
+    url: '11111111-1111-4111-8111-111111111111',
+    name: 'icon.png',
+    width: 512,
+    height: 512,
+    mimeType: 'image/png',
+    sizeBytes: 4096,
+  };
+
+  it('creates the image OWNED BY THE CALLER and WITHOUT skipIngestion (Pending → ingestImage)', async () => {
+    const res = await persistListingAssetImage({ input: persistInput, userId: CALLER });
+    expect(res).toEqual({ imageId: 12345 });
+
+    expect(mockCreateImage).toHaveBeenCalledTimes(1);
+    const arg = mockCreateImage.mock.calls[0][0] as Record<string, unknown>;
+    // Owner is the AUTHENTICATED caller — never a value from input.
+    expect(arg.userId).toBe(CALLER);
+    // The scan-bypass flag must be absent/falsy so the standard ingestion runs.
+    expect(arg.skipIngestion).toBeFalsy();
+    expect('skipIngestion' in arg && arg.skipIngestion === true).toBe(false);
+    // Sanity: the persisted row carries the byte size the P1 validator reads.
+    expect(arg).toMatchObject({ url: persistInput.url, type: 'image', userId: CALLER });
+    expect(arg.metadata).toEqual({ size: 4096 });
+  });
+
+  it('binds the owner to the caller even for a different user id', async () => {
+    await persistListingAssetImage({ input: persistInput, userId: OTHER });
+    const arg = mockCreateImage.mock.calls[0][0] as Record<string, unknown>;
+    expect(arg.userId).toBe(OTHER);
+    expect(arg.skipIngestion).toBeFalsy();
   });
 });
