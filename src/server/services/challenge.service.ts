@@ -57,6 +57,10 @@ import { createImage, imagesForModelVersionsCache } from '~/server/services/imag
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { assertCanCreateUserChallenge } from '~/server/services/challenge-eligibility.service';
+import {
+  chargeInitialPrize,
+  refundUserChallengeFunds,
+} from '~/server/games/daily-challenge/challenge-funding';
 import { getEntryPoolContribution } from '~/shared/constants/challenge.constants';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
@@ -1234,7 +1238,7 @@ export async function upsertUserChallenge({
   // Create — gate on eligibility (score + standing + tier concurrent cap).
   await assertCanCreateUserChallenge(userId);
 
-  return dbWrite.$transaction(async (tx) => {
+  const created = await dbWrite.$transaction(async (tx) => {
     const collection = await tx.collection.create({
       data: {
         name: `Challenge: ${rest.title}`,
@@ -1270,6 +1274,23 @@ export async function upsertUserChallenge({
       },
     });
   });
+
+  // Escrow the creator's initial prize (if any). On failure, roll back the unfunded
+  // challenge + its auto-created collection so we never leave a partially funded challenge.
+  if (initialPrizeBuzz > 0) {
+    try {
+      await chargeInitialPrize({ challengeId: created.id, userId, amount: initialPrizeBuzz });
+    } catch (e) {
+      await dbWrite.challenge.delete({ where: { id: created.id } }).catch(() => undefined);
+      if (created.collectionId)
+        await dbWrite.collection
+          .delete({ where: { id: created.collectionId } })
+          .catch(() => undefined);
+      throw e;
+    }
+  }
+
+  return created;
 }
 
 export async function updateChallengeStatus(id: number, status: ChallengeStatus) {
@@ -1799,6 +1820,10 @@ export async function voidChallenge(challengeId: number) {
     data: { status: ChallengeStatus.Cancelled },
   });
   log('Challenge status updated to Cancelled');
+
+  // Refund entry fees + initial prize for user-created challenges (no-op otherwise).
+  const { refundedEntries } = await refundUserChallengeFunds(challengeId);
+  log(`Refunded ${refundedEntries} entry fees`);
 
   return { success: true };
 }
