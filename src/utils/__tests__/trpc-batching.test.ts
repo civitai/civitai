@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   __getTrpcBatchingEnabled,
   CACHEABLE_PROCEDURES,
+  isLargeQuery,
+  isTooLargeToBatch,
   queryRetry,
   setTrpcBatchingEnabled,
   shouldBatch,
@@ -199,6 +201,49 @@ describe('shouldBatch never keeps a URL-overflowing query batched (#2962)', () =
         expect(batchedUrlLength(whatIfPath, input)).toBeLessThan(BATCH_MAX_URL_LENGTH);
       }
     }
+  });
+});
+
+/**
+ * The two size gates serve two different URL limits and must NOT be conflated (audit #1):
+ *  - `isTooLargeToBatch` (tight, encoded) keeps a query off the batch link (hard 2083 cap).
+ *  - `isLargeQuery` (coarse, raw 2500) decides GET→POST on the NON-batched path, whose only
+ *    ceiling is HTTP 431 (~4000 chars). It governs the path EVERY query takes while batching
+ *    is off, so it must stay at the pre-batching 2500 — otherwise mid-size cacheable GETs
+ *    flip to uncacheable POST for 100% of live traffic on deploy. This guards that split.
+ */
+describe('batch-size gate is distinct from the non-batch GET→POST gate (#1)', () => {
+  const q = (input: unknown) => ({ type: 'query', input });
+
+  it('a mid-size query is excluded from batching but STILL sent as a (cacheable) GET', () => {
+    // ~2000 raw chars: encoded > 1800 (too big for the 2083 batch cap) but raw ≤ 2500 (a
+    // single GET is well under the 431 limit). Must be off the batch link YET stay a GET —
+    // this is the edge-cacheability that a shared tight gate would have destroyed.
+    const mid = q({ filter: 'x'.repeat(2000) });
+    expect(isTooLargeToBatch(mid)).toBe(true); //   → not batched
+    expect(isLargeQuery(mid)).toBe(false); //        → stays GET (not forced to POST)
+  });
+
+  it('a genuinely huge query goes POST on the non-batch path too', () => {
+    const huge = q({ filter: 'x'.repeat(3000) }); // raw > 2500
+    expect(isTooLargeToBatch(huge)).toBe(true);
+    expect(isLargeQuery(huge)).toBe(true); //        → POST (body-carried)
+  });
+
+  it('a small query trips neither gate', () => {
+    const small = q({ limit: 5 });
+    expect(isTooLargeToBatch(small)).toBe(false);
+    expect(isLargeQuery(small)).toBe(false);
+  });
+
+  it('the non-batch GET→POST threshold is the pre-batching 2500 raw chars (unchanged)', () => {
+    expect(isLargeQuery(q({ s: 'x'.repeat(2600) }))).toBe(true); // just over 2500 raw → POST
+    expect(isLargeQuery(q({ s: 'x'.repeat(2000) }))).toBe(false); // under → GET
+  });
+
+  it('neither gate fires on mutations (they keep the native POST path)', () => {
+    expect(isTooLargeToBatch({ type: 'mutation', input: { s: 'x'.repeat(3000) } })).toBe(false);
+    expect(isLargeQuery({ type: 'mutation', input: { s: 'x'.repeat(3000) } })).toBe(false);
   });
 });
 

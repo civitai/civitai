@@ -27,47 +27,53 @@ type RequestHeaders = {
 const url = '/api/trpc';
 
 /**
- * Encoded-URL budget (percent-encoded chars) for a single query's input. A query whose
- * input encodes to more than this is diverted from GET to POST (`methodOverride`), moving
- * the input into the request body.
- *
+ * ── Two size gates for two different URL limits ─────────────────────────────────────────
+ * A tRPC query can leave the browser two ways, each with a DIFFERENT URL ceiling:
+ *   1. Batched (`httpBatchStreamLink`) — the batch link hard-caps the whole per-request URL
+ *      at `maxURLLength: 2083` and throws "Input is too big for a single dispatch" if ONE op
+ *      alone exceeds it. → gated by `isTooLargeToBatch` (tight, ENCODED-precise) below.
+ *   2. Non-batched single GET (`httpLinkWithLargeQuerySupport`) — no 2083 cap; the only limit
+ *      is HTTP 431 / proxy URL limits (~4000+ chars). → gated by `isLargeQuery` (coarse RAW).
+ * Keeping these SEPARATE matters: `isLargeQuery` governs the GET→POST decision on the path
+ * EVERY query takes while the `trpcBatching` flag is off, so it must NOT inherit the tight
+ * batch budget — doing so would needlessly flip mid-size cacheable GETs to (uncacheable) POST
+ * for 100% of live traffic. The tight budget applies ONLY to the batch link.
+ */
+
+/**
+ * Encoded-URL budget (percent-encoded chars) for a single query's input on the BATCH link.
  * Measured against the ACTUAL wire cost — `encodeURIComponent(JSON.stringify(
- * superjson.serialize(input)))`, the same transform tRPC applies when building the GET URL
- * — NOT a raw-char heuristic. The batch link caps the whole per-request URL at
- * `maxURLLength: 2083` (see `terminatingLink`) and throws "Input is too big for a single
- * dispatch" if ONE operation alone exceeds it. The budget sits ~280 under 2083 to absorb
+ * superjson.serialize(input)))`, the same transform tRPC applies when building the GET URL —
+ * NOT a raw-char heuristic. Sits ~280 under the batch link's `maxURLLength: 2083` to absorb
  * the path (`/api/trpc/<proc>`) + `?batch=1&input={"0":…}` wrapper overhead, so a single op
  * can never overflow the batched GET regardless of how punctuation-dense its JSON is.
  *
- * Why not a raw-JSON-char threshold: JSON near the limit is structurally dense (`{}",:[]`,
- * each → %XX), so the encoded URL runs ~1.75–1.9× the raw JSON — not the ~1.4× a fixed
- * factor assumes. A raw threshold that looks safe (e.g. 1400) still lets a ~12–14-resource
- * whatIf payload stay batched yet overflow 2083 (the exact #2962 crash). Measuring the
- * encoded length removes the guess and can't drift with payload composition.
+ * Why encoded, not raw: JSON near the limit is structurally dense (`{}",:[]`, each → %XX), so
+ * the encoded URL runs ~1.75–1.9× the raw JSON — not the ~1.4× a fixed factor assumes. A raw
+ * threshold that looks safe (e.g. 1400) still lets a ~12–14-resource whatIf payload stay
+ * batched yet overflow 2083 (the exact #2962 crash). Measuring the encoded length removes the
+ * guess and can't drift with payload composition.
  */
 const URL_INPUT_BUDGET = 1800;
 
 /**
- * Cheap raw-JSON-length short-circuit for `isLargeQuery`. `isLargeQuery` runs on EVERY query
- * op (it's the `splitLink` condition), and the exact encoded measurement below does a full
- * `superjson.serialize` + `encodeURIComponent` — redundant work when the input is obviously
- * small, and hot: the generator fires `whatIf` on every change. Encoding can at most triple a
- * string (`%XX` per char), so `rawLen ≤ URL_INPUT_BUDGET/3 − wrapper` guarantees the encoded
- * length stays under budget; 500 sits safely below that provable bound (empirically the
- * densest possible JSON first crosses 1800 encoded at ~600 raw), so any input at/below it is
- * DEFINITELY not large and skips the expensive path. Only the rare near-boundary op pays for
- * the exact check.
+ * Cheap raw-JSON-length short-circuit for `isTooLargeToBatch`, which runs on EVERY query op
+ * (the `shouldBatch` predicate) and otherwise does a full `superjson.serialize` +
+ * `encodeURIComponent` — redundant when the input is obviously small, and hot (the generator
+ * fires `whatIf` on every change). Encoding can at most triple a string (`%XX` per char), so
+ * `rawLen ≤ URL_INPUT_BUDGET/3 − wrapper` guarantees the encoded length stays under budget;
+ * 500 sits safely below that provable bound (empirically the densest possible JSON first
+ * crosses 1800 encoded at ~600 raw). Only the rare near-boundary op pays for the exact check.
  */
 const URL_INPUT_FASTPATH = 500;
 
 /**
- * Whether a query's input is large enough that carrying it in the URL as a GET would risk
- * overflowing the batch link's `maxURLLength` (or, on the non-batched path, HTTP 431 /
- * proxy URL limits). Such queries are routed through tRPC's native `methodOverride: 'POST'`,
- * which moves the input into the request body. Requires `allowMethodOverride: true` on the
- * server adapter — see `src/pages/api/trpc/[trpc].ts`.
+ * Whether a query's input is too large to safely ride the BATCH link (whose single-op URL is
+ * hard-capped at `maxURLLength: 2083`). Excludes such a query from batching (see `shouldBatch`)
+ * so it can never trip the "Input is too big for a single dispatch" throw. Measures the actual
+ * encoded wire cost against `URL_INPUT_BUDGET`.
  */
-function isLargeQuery(op: { type: string; input: unknown }) {
+export function isTooLargeToBatch(op: { type: string; input: unknown }) {
   if (op.type !== 'query' || op.input == null) return false;
   try {
     // Fast path: a small raw payload provably can't reach URL_INPUT_BUDGET once encoded, so
@@ -76,6 +82,30 @@ function isLargeQuery(op: { type: string; input: unknown }) {
     // Otherwise mirror tRPC's GET-URL encoding so the check reflects the real wire cost, not
     // an approximation: superjson-serialize (the configured transformer) then percent-encode.
     return encodeURIComponent(JSON.stringify(superjson.serialize(op.input))).length > URL_INPUT_BUDGET;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Raw-input threshold for the NON-BATCHED single GET. That path has no 2083 batch cap — the
+ * only ceiling is HTTP 431 / proxy URL limits (~4000+ chars), so a coarse raw-char heuristic
+ * is sufficient. Held at the long-standing 2500 so this path's GET→POST (and therefore
+ * edge-cacheability) behaviour is UNCHANGED from before batching shipped: the tight encoded
+ * batch budget governs the batch link ONLY, never 100% of live GET traffic.
+ */
+const MAX_GET_INPUT_LENGTH = 2500;
+
+/**
+ * Whether a query's input is large enough that carrying it in a NON-BATCHED GET URL would risk
+ * HTTP 431 / proxy URL limits. Such queries are routed through tRPC's native
+ * `methodOverride: 'POST'`, which moves the input into the request body. Requires
+ * `allowMethodOverride: true` on the server adapter — see `src/pages/api/trpc/[trpc].ts`.
+ */
+export function isLargeQuery(op: { type: string; input: unknown }) {
+  if (op.type !== 'query' || op.input == null) return false;
+  try {
+    return JSON.stringify(op.input).length > MAX_GET_INPUT_LENGTH;
   } catch {
     return false;
   }
@@ -192,7 +222,9 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
  *  - we're in an authenticated browser (see `isAuthedBrowser` — anon stays cacheable),
  *  - the procedure is NOT edge-cacheable for authed sessions (see `CACHEABLE_PROCEDURES`),
  *  - the caller didn't opt out via `context.skipBatch === true`,
- *  - it isn't a large query (those go out as POST `methodOverride`, body-carried).
+ *  - its encoded input fits the batch link's URL cap (`isTooLargeToBatch` — otherwise it
+ *    would trip "Input is too big for a single dispatch"; excluded ops fall to the
+ *    non-batched link, which sends them as GET or POST per `isLargeQuery`).
  */
 export function shouldBatch(op: {
   type: string;
@@ -206,7 +238,7 @@ export function shouldBatch(op: {
     isAuthedBrowser() &&
     !CACHEABLE_PROCEDURES.has(op.path) &&
     op.context.skipBatch !== true &&
-    !isLargeQuery(op)
+    !isTooLargeToBatch(op)
   );
 }
 
