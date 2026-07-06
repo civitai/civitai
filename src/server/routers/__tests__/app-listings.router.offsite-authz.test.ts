@@ -31,6 +31,8 @@ const {
   mockListPending,
   mockListApproved,
   mockListRejected,
+  mockApprove,
+  mockReject,
   mockSetIcon,
   mockIsAppBlocksEnabled,
   mockIsAppBlocksAuthorEnabled,
@@ -41,6 +43,8 @@ const {
   mockListPending: vi.fn(async () => ({ items: [{ id: 'alpr_1' }], nextCursor: null })),
   mockListApproved: vi.fn(async () => ({ items: [], nextCursor: null })),
   mockListRejected: vi.fn(async () => ({ items: [], nextCursor: null })),
+  mockApprove: vi.fn(async () => ({ publishRequestId: 'alpr_1', listingId: 'apl_1', slug: 's' })),
+  mockReject: vi.fn(async () => undefined),
   // Faithful owner-check stand-in: throw FORBIDDEN when the caller doesn't own
   // the target listing (listingId encodes the owner: `own-<id>` / `other-<id>`).
   mockSetIcon: vi.fn(async (input: { listingId: string }, user: { id: number }) => {
@@ -59,6 +63,8 @@ vi.mock('~/server/services/blocks/offsite-listing.service', () => ({
   listPendingOffsiteRequests: mockListPending,
   listApprovedOffsiteRequests: mockListApproved,
   listRejectedOffsiteRequests: mockListRejected,
+  approveExternalRequest: mockApprove,
+  rejectExternalRequest: mockReject,
 }));
 vi.mock('~/server/services/blocks/app-listing-assets.service', () => ({
   setListingIcon: mockSetIcon,
@@ -108,6 +114,15 @@ function fakeCtx(user: unknown) {
     features: {} as never,
     track: undefined,
   };
+}
+
+/**
+ * Fabricate a typed `OffsiteRequestError`-shaped throwable WITHOUT importing the
+ * (mocked) service module. The router duck-types on `name === 'OffsiteRequestError'`
+ * + a string `code`, so this exercises the real mapping path.
+ */
+function offsiteErr(code: string, message: string): Error {
+  return Object.assign(new Error(message), { name: 'OffsiteRequestError', code });
 }
 
 const mod = { id: 1, isModerator: true, tier: 'free', username: 'mod', onboarding: 0x1f };
@@ -215,6 +230,141 @@ describe('review-queue lists — moderatorProcedure', () => {
       await expect(caller[proc]({})).resolves.toBeDefined();
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// MOD approve / reject (moderatorProcedure) — PR-b.
+// ---------------------------------------------------------------------------
+
+const approveInput = { publishRequestId: 'alpr_1', approvalNotes: 'ok' };
+const rejectInput = { publishRequestId: 'alpr_1', rejectionReason: 'spam listing, not a real app' };
+
+describe('approveExternalRequest — moderatorProcedure', () => {
+  it('a non-mod AUTHOR (tester) is FORBIDDEN; service NOT called', async () => {
+    const caller = appListingsRouter.createCaller(fakeCtx(tester) as never);
+    await expect(caller.approveExternalRequest(approveInput)).rejects.toBeInstanceOf(TRPCError);
+    expect(mockApprove).not.toHaveBeenCalled();
+  });
+
+  it('a plain user is FORBIDDEN', async () => {
+    const caller = appListingsRouter.createCaller(fakeCtx(nonAuthor) as never);
+    await expect(caller.approveExternalRequest(approveInput)).rejects.toBeInstanceOf(TRPCError);
+    expect(mockApprove).not.toHaveBeenCalled();
+  });
+
+  it('a moderator passes; service called with the reviewer id', async () => {
+    const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
+    await caller.approveExternalRequest(approveInput);
+    expect(mockApprove).toHaveBeenCalledWith({
+      publishRequestId: 'alpr_1',
+      reviewerUserId: mod.id,
+      approvalNotes: 'ok',
+    });
+  });
+
+  it('a typed BAD_REQUEST service failure (e.g. missing assets) passes THROUGH as BAD_REQUEST with the message', async () => {
+    // The real assets-incomplete failure is a TRPCError(BAD_REQUEST) from the
+    // service — it passes through unchanged so the mod sees the useful message.
+    mockApprove.mockRejectedValueOnce(
+      new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'Listing is missing required assets: screenshots',
+      })
+    );
+    const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
+    await expect(caller.approveExternalRequest(approveInput)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('missing required assets'),
+    });
+  });
+
+  it('a typed OffsiteRequestError(NOT_FOUND) maps to TRPC NOT_FOUND (not BAD_REQUEST)', async () => {
+    mockApprove.mockRejectedValueOnce(offsiteErr('NOT_FOUND', 'publish request alpr_1 not found'));
+    const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
+    await expect(caller.approveExternalRequest(approveInput)).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+      message: expect.stringContaining('not found'),
+    });
+  });
+
+  it('a typed OffsiteRequestError(NOT_PENDING) maps to TRPC BAD_REQUEST', async () => {
+    mockApprove.mockRejectedValueOnce(
+      offsiteErr('NOT_PENDING', 'cannot approve — the request is no longer pending')
+    );
+    const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
+    await expect(caller.approveExternalRequest(approveInput)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('no longer pending'),
+    });
+  });
+
+  it('an UNEXPECTED/untyped service error maps to INTERNAL_SERVER_ERROR and does NOT leak the raw message', async () => {
+    const raw = 'connect ECONNREFUSED 10.0.0.5:5432 postgres://secret-dsn';
+    mockApprove.mockRejectedValueOnce(new Error(raw));
+    const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
+    const err = await caller.approveExternalRequest(approveInput).then(
+      () => {
+        throw new Error('expected approve to reject');
+      },
+      (e) => e as TRPCError
+    );
+    expect(err).toBeInstanceOf(TRPCError);
+    expect(err.code).toBe('INTERNAL_SERVER_ERROR');
+    // The raw infra message must NOT reach the mod client (generic message only);
+    // the original is preserved on `cause` for server-side logging.
+    expect(err.message).not.toContain('ECONNREFUSED');
+    expect(err.message).not.toContain('secret-dsn');
+    expect((err.cause as Error | undefined)?.message).toBe(raw);
+  });
+});
+
+describe('rejectExternalRequest — moderatorProcedure', () => {
+  it('a non-mod AUTHOR (tester) is FORBIDDEN; service NOT called', async () => {
+    const caller = appListingsRouter.createCaller(fakeCtx(tester) as never);
+    await expect(caller.rejectExternalRequest(rejectInput)).rejects.toBeInstanceOf(TRPCError);
+    expect(mockReject).not.toHaveBeenCalled();
+  });
+
+  it('a moderator passes; service called with the reviewer id + reason', async () => {
+    const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
+    await caller.rejectExternalRequest(rejectInput);
+    expect(mockReject).toHaveBeenCalledWith({
+      publishRequestId: 'alpr_1',
+      reviewerUserId: mod.id,
+      rejectionReason: rejectInput.rejectionReason,
+    });
+  });
+
+  it('a short reason is rejected at the SCHEMA boundary (min 10)', async () => {
+    const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
+    await expect(
+      caller.rejectExternalRequest({ publishRequestId: 'alpr_1', rejectionReason: 'short' })
+    ).rejects.toBeInstanceOf(TRPCError);
+    expect(mockReject).not.toHaveBeenCalled();
+  });
+
+  it('a typed OffsiteRequestError(NOT_FOUND) maps to TRPC NOT_FOUND', async () => {
+    mockReject.mockRejectedValueOnce(offsiteErr('NOT_FOUND', 'publish request alpr_1 not found'));
+    const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
+    await expect(caller.rejectExternalRequest(rejectInput)).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
+
+  it('an UNEXPECTED/untyped service error maps to INTERNAL_SERVER_ERROR without leaking the message', async () => {
+    const raw = 'Prisma P1001: cannot reach database server at db:5432';
+    mockReject.mockRejectedValueOnce(new Error(raw));
+    const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
+    const err = await caller.rejectExternalRequest(rejectInput).then(
+      () => {
+        throw new Error('expected reject to reject');
+      },
+      (e) => e as TRPCError
+    );
+    expect(err.code).toBe('INTERNAL_SERVER_ERROR');
+    expect(err.message).not.toContain('P1001');
+    expect((err.cause as Error | undefined)?.message).toBe(raw);
+  });
 });
 
 // ---------------------------------------------------------------------------

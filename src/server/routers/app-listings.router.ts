@@ -15,8 +15,10 @@ import {
   listAppListingsSchema,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import {
+  approveExternalRequestSchema,
   listMySubmissionsSchema,
   listOffsiteRequestsSchema,
+  rejectExternalRequestSchema,
   submitExternalListingSchema,
   withdrawExternalRequestSchema,
 } from '~/server/schema/blocks/offsite-listing.schema';
@@ -95,6 +97,42 @@ const enforceAppListingsReadFlag = middleware(async ({ ctx, next }) => {
 function isRedCapableRequest(ctx: { req?: { headers?: { host?: string } } }): boolean {
   const host = ctx.req?.headers?.host ?? '';
   return host !== '' && isHostForColor(host, 'red');
+}
+
+/**
+ * Map a thrown off-site SERVICE error to the correct TRPC error for the mod client.
+ *
+ *   - A `TRPCError` the service already shaped (BAD_REQUEST: assets-incomplete /
+ *     invalid stored URL / reason-length) passes THROUGH unchanged.
+ *   - A typed `OffsiteRequestError` maps to its precise TRPC code
+ *     (`NOT_FOUND`→NOT_FOUND, `NOT_OWNED`→FORBIDDEN, `NOT_PENDING`/other→
+ *     BAD_REQUEST). It is DUCK-TYPED on `name` + `code` so the router never has to
+ *     eagerly `import` the service module (services are loaded via dynamic
+ *     `import()` to keep the Prisma client out of the router's import graph).
+ *   - Anything else is an UNEXPECTED infra/Prisma failure → INTERNAL_SERVER_ERROR
+ *     with a GENERIC message; the raw error is preserved only on `cause` (for the
+ *     central server-fault logger) and NEVER surfaced to the client.
+ *
+ * Replaces the previous blanket `BAD_REQUEST + (err as Error).message`, which both
+ * mis-coded typed failures and leaked raw infra messages to moderators.
+ */
+function mapOffsiteError(err: unknown): TRPCError {
+  if (err instanceof TRPCError) return err;
+  if (
+    err instanceof Error &&
+    err.name === 'OffsiteRequestError' &&
+    typeof (err as { code?: unknown }).code === 'string'
+  ) {
+    const code = (err as { code?: unknown }).code as string;
+    const trpcCode =
+      code === 'NOT_FOUND' ? 'NOT_FOUND' : code === 'NOT_OWNED' ? 'FORBIDDEN' : 'BAD_REQUEST';
+    return new TRPCError({ code: trpcCode, message: err.message });
+  }
+  return new TRPCError({
+    code: 'INTERNAL_SERVER_ERROR',
+    message: 'An unexpected error occurred while processing the request. Please try again later.',
+    cause: err,
+  });
 }
 
 export const appListingsRouter = router({
@@ -281,6 +319,67 @@ export const appListingsRouter = router({
         '~/server/services/blocks/offsite-listing.service'
       );
       return listRejectedOffsiteRequests(input);
+    }),
+
+  /**
+   * MOD: approve a pending off-site request (PR-b). Loads the request + its draft
+   * listing, enforces `assertListingAssetsComplete` (THE P3 activation — approve
+   * FAILS unless icon+cover+≥1 screenshot) + re-validates the stored externalUrl,
+   * then flips the listing draft→approved + the request→approved (status-guarded)
+   * and supersedes sibling pendings. v1 ALLOWS mod self-approve (reviewer ==
+   * submitter — trusted, enables single-mod dogfood; a reviewer≠submitter
+   * restriction is deferred to GA/P3b). Failure modes are mapped by
+   * `mapOffsiteError`: typed NOT_FOUND→NOT_FOUND, NOT_PENDING/assets-incomplete/
+   * bad-URL→BAD_REQUEST, and any unexpected infra error→INTERNAL_SERVER_ERROR
+   * (generic message, no raw leak).
+   */
+  approveExternalRequest: moderatorProcedure
+    .input(approveExternalRequestSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Approving off-site listings is restricted to civitai team');
+      }
+      const { approveExternalRequest } = await import(
+        '~/server/services/blocks/offsite-listing.service'
+      );
+      try {
+        return await approveExternalRequest({
+          publishRequestId: input.publishRequestId,
+          reviewerUserId: ctx.user.id,
+          approvalNotes: input.approvalNotes,
+        });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
+   * MOD: reject a pending off-site request (PR-b). Requires `rejectionReason` ≥10
+   * chars; in ONE tx flips the request→rejected + sets `reviewedBy*` and DELETES
+   * the draft listing (status-guarded — releases the slug, never removes an
+   * approved listing). Failure modes are mapped by `mapOffsiteError` (typed
+   * NOT_FOUND→NOT_FOUND, NOT_PENDING/reason-length→BAD_REQUEST, unexpected→
+   * INTERNAL_SERVER_ERROR with a generic message).
+   */
+  rejectExternalRequest: moderatorProcedure
+    .input(rejectExternalRequestSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Rejecting off-site listings is restricted to civitai team');
+      }
+      const { rejectExternalRequest } = await import(
+        '~/server/services/blocks/offsite-listing.service'
+      );
+      try {
+        await rejectExternalRequest({
+          publishRequestId: input.publishRequestId,
+          reviewerUserId: ctx.user.id,
+          rejectionReason: input.rejectionReason,
+        });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+      return { ok: true };
     }),
 
   // -------------------------------------------------------------------------

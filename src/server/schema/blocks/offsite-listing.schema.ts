@@ -41,6 +41,11 @@ export const OFFSITE_TAGLINE_MAX = 140;
 export const OFFSITE_DESCRIPTION_MAX = 2000;
 export const OFFSITE_CHANGELOG_MAX = 2000;
 
+/** Mod-review note bounds (mirror the on-site approve/reject shapes). */
+export const OFFSITE_APPROVAL_NOTES_MAX = 2000;
+export const OFFSITE_REJECTION_REASON_MIN = 10;
+export const OFFSITE_REJECTION_REASON_MAX = 2000;
+
 /**
  * Author submit input for a pure external-link off-site listing.
  *
@@ -95,6 +100,30 @@ export const withdrawExternalRequestSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
 });
 export type WithdrawExternalRequestInput = z.infer<typeof withdrawExternalRequestSchema>;
+
+/**
+ * MOD approve of a pending off-site request (PR-b). Mirrors the on-site
+ * `approveRequestSchema` shape: the request id + an optional `approvalNotes`.
+ * The asset-completeness gate + the external-URL re-validation are enforced in
+ * the SERVICE (not the schema — they read the stored draft listing).
+ */
+export const approveExternalRequestSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
+  approvalNotes: z.string().max(OFFSITE_APPROVAL_NOTES_MAX).optional(),
+});
+export type ApproveExternalRequestInput = z.infer<typeof approveExternalRequestSchema>;
+
+/**
+ * MOD reject of a pending off-site request (PR-b). Mirrors the on-site
+ * `rejectRequestSchema` shape: the request id + a `rejectionReason` of at least
+ * 10 chars (the service re-checks the trimmed length as defense-in-depth, since
+ * the service is exported + unit-tested directly).
+ */
+export const rejectExternalRequestSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
+  rejectionReason: z.string().min(OFFSITE_REJECTION_REASON_MIN).max(OFFSITE_REJECTION_REASON_MAX),
+});
+export type RejectExternalRequestInput = z.infer<typeof rejectExternalRequestSchema>;
 
 /** Keyset-paginate the caller's own off-site submissions (my-submissions page, PR-c). */
 export const listMySubmissionsSchema = z.object({

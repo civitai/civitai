@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { MAX_EXTERNAL_URL_LENGTH } from '~/server/schema/blocks/external-app.schema';
 import {
   OFFSITE_DESCRIPTION_MAX,
+  approveExternalRequestSchema,
+  rejectExternalRequestSchema,
   submitExternalListingSchema,
 } from '~/server/schema/blocks/offsite-listing.schema';
 
@@ -149,5 +151,66 @@ describe('submitExternalListingSchema — external ⟂ on-platform mutual exclus
 
   it('an EMPTY targets array declares nothing → accepted', () => {
     expect(submitExternalListingSchema.safeParse({ ...base, targets: [] }).success).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// approve / reject input schemas (PR-b) — mirror the on-site shapes.
+// ---------------------------------------------------------------------------
+
+describe('approveExternalRequestSchema', () => {
+  it('accepts a bare publishRequestId', () => {
+    expect(approveExternalRequestSchema.safeParse({ publishRequestId: 'alpr_1' }).success).toBe(true);
+  });
+
+  it('accepts an optional approvalNotes', () => {
+    expect(
+      approveExternalRequestSchema.safeParse({ publishRequestId: 'alpr_1', approvalNotes: 'ok' })
+        .success
+    ).toBe(true);
+  });
+
+  it('rejects an empty publishRequestId', () => {
+    expect(approveExternalRequestSchema.safeParse({ publishRequestId: '' }).success).toBe(false);
+  });
+
+  it('rejects over-long approvalNotes (>2000)', () => {
+    expect(
+      approveExternalRequestSchema.safeParse({
+        publishRequestId: 'alpr_1',
+        approvalNotes: 'x'.repeat(2001),
+      }).success
+    ).toBe(false);
+  });
+});
+
+describe('rejectExternalRequestSchema', () => {
+  it('accepts a reason ≥10 chars', () => {
+    expect(
+      rejectExternalRequestSchema.safeParse({
+        publishRequestId: 'alpr_1',
+        rejectionReason: 'spam listing, not a real app',
+      }).success
+    ).toBe(true);
+  });
+
+  it('rejects a reason <10 chars', () => {
+    expect(
+      rejectExternalRequestSchema.safeParse({ publishRequestId: 'alpr_1', rejectionReason: 'short' })
+        .success
+    ).toBe(false);
+  });
+
+  it('rejects a missing reason', () => {
+    expect(rejectExternalRequestSchema.safeParse({ publishRequestId: 'alpr_1' }).success).toBe(false);
+  });
+
+  it('rejects an over-long reason (>2000)', () => {
+    expect(
+      rejectExternalRequestSchema.safeParse({
+        publishRequestId: 'alpr_1',
+        rejectionReason: 'x'.repeat(2001),
+      }).success
+    ).toBe(false);
   });
 });
