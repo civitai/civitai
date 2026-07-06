@@ -2,19 +2,30 @@ import { createJob } from './job';
 import { dbRead, dbWrite } from '~/server/db/client';
 import nowpaymentsCaller from '~/server/http/nowpayments/nowpayments.caller';
 import { stuckCryptoDepositEmail } from '~/server/email/templates/stuckCryptoDeposit.email';
+import { stuckCryptoDepositUserEmail } from '~/server/email/templates/stuckCryptoDepositUser.email';
 import { logToAxiom } from '~/server/logging/client';
 import { env } from '~/env/server';
 import dayjs from '~/shared/utils/dayjs';
 
-// A deposit is "stuck" when the user paid but NowPayments never converted the
-// funds to our payout currency (outcome_amount is null) and the payment failed.
-// That means the money is on NP's side in an unsupported/wrapped coin and we
-// cannot credit Buzz. We can only email NP support (CC the user) to get it
-// processed or refunded. See docs: outcome_amount is the discriminator.
-const isStuckAtNp = (payment: { payment_status: string; actually_paid?: unknown; outcome_amount?: unknown }) => {
-  const paid = Number(payment.actually_paid) > 0;
-  const outcome = Number(payment.outcome_amount) || 0;
-  return payment.payment_status === 'failed' && paid && outcome <= 0;
+type NpPayment = Awaited<ReturnType<typeof nowpaymentsCaller.getPaymentStatus>>;
+
+// A paid deposit that ended `failed` splits by outcome_amount (what NP could
+// settle to our USDC payout):
+//   - null/0   => Category 3: unsupported/wrapped coin (cbBTC). NP can't convert,
+//                 only refunds, and requires the account holder to request it.
+//                 We email the USER a self-service packet.
+//   - ~= price => Category 2: convertible wrong-network (USDT-BSC -> USDC-Base).
+//                 NP can convert but didn't settle. We email NP to convert-or-return.
+//   - implausible (dust/underpaid) => skip; not worth an NP ticket.
+const isFailedPaid = (p: NonNullable<NpPayment>) =>
+  p.payment_status === 'failed' && Number(p.actually_paid) > 0;
+
+const route = (p: NonNullable<NpPayment>): 'user' | 'nowpayments' | 'skip' => {
+  const outcome = Number(p.outcome_amount) || 0;
+  if (outcome <= 0) return 'user';
+  const price = Number(p.price_amount) || 0;
+  const convertible = price > 0 && outcome >= price * 0.4 && outcome <= price * 1.5;
+  return convertible ? 'nowpayments' : 'skip';
 };
 
 export const notifyStuckCryptoDepositsJob = createJob(
@@ -39,48 +50,65 @@ export const notifyStuckCryptoDepositsJob = createJob(
       },
     });
 
-    if (candidates.length === 0) return { candidates: 0, stuck: 0, notified: 0 };
+    if (candidates.length === 0)
+      return { candidates: 0, stuck: 0, emailedUser: 0, emailedNp: 0, skipped: 0 };
 
     let stuck = 0;
-    let notified = 0;
+    let emailedUser = 0;
+    let emailedNp = 0;
+    let skipped = 0;
     let skippedNoEmail = 0;
 
     for (const deposit of candidates) {
       const paymentId = deposit.paymentId.toString();
       const payment = await nowpaymentsCaller.getPaymentStatus(paymentId);
-      if (!payment || !isStuckAtNp(payment)) continue;
+      if (!payment || !isFailedPaid(payment)) continue;
       stuck++;
 
+      const target = route(payment);
+      if (target === 'skip') {
+        skipped++;
+        continue; // dust/underpaid — ages out of the window on its own
+      }
+
       const userEmail = deposit.user?.email;
+      // supportEmail gates the whole feature and is the NP contact address shown
+      // to users; userEmail is the recipient (Cat 3) or CC (Cat 2).
       if (!supportEmail || !userEmail) {
         skippedNoEmail++;
         continue; // leave stuckNotifiedAt null so it retries once config/email exists
       }
 
+      const shared = {
+        username: deposit.user?.username ?? 'there',
+        paymentId,
+        payCurrency: payment.pay_currency,
+        payAmount: payment.actually_paid != null ? Number(payment.actually_paid) : null,
+        payAddress: payment.pay_address,
+        payinHash: payment.payin_hash,
+        network: payment.network,
+      };
+
       try {
-        await stuckCryptoDepositEmail.send({
-          supportEmail,
-          userEmail,
-          username: deposit.user?.username ?? 'there',
-          paymentId,
-          payCurrency: payment.pay_currency,
-          payAmount: payment.actually_paid != null ? Number(payment.actually_paid) : null,
-          payAddress: payment.pay_address,
-          payinHash: payment.payin_hash,
-          network: payment.network,
-        });
+        if (target === 'user') {
+          await stuckCryptoDepositUserEmail.send({ userEmail, npSupportEmail: supportEmail, ...shared });
+          emailedUser++;
+        } else {
+          await stuckCryptoDepositEmail.send({ supportEmail, userEmail, ...shared });
+          emailedNp++;
+        }
 
         await dbWrite.cryptoDeposit.update({
           where: { paymentId: deposit.paymentId },
           data: { stuckNotifiedAt: new Date() },
         });
-        notified++;
       } catch (e) {
         await logToAxiom({
           name: 'notify-stuck-crypto-deposits-job',
           type: 'error',
           message: 'Failed to email stuck deposit',
           paymentId,
+          target,
           error: e instanceof Error ? e.message : String(e),
         });
       }
@@ -89,15 +117,17 @@ export const notifyStuckCryptoDepositsJob = createJob(
     logToAxiom({
       name: 'notify-stuck-crypto-deposits-job',
       type: 'info',
-      message: `Stuck-deposit notifier: ${notified} emailed, ${stuck} stuck, ${candidates.length} scanned`,
+      message: `Stuck-deposit notifier: ${emailedUser} user + ${emailedNp} NP emailed, ${skipped} skipped, ${stuck} stuck, ${candidates.length} scanned`,
       candidates: candidates.length,
       stuck,
-      notified,
+      emailedUser,
+      emailedNp,
+      skipped,
       skippedNoEmail,
       supportEmailConfigured: !!supportEmail,
     });
 
-    return { candidates: candidates.length, stuck, notified, skippedNoEmail };
+    return { candidates: candidates.length, stuck, emailedUser, emailedNp, skipped, skippedNoEmail };
   },
   {
     lockExpiration: 10 * 60,
