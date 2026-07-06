@@ -25,7 +25,7 @@ import {
 } from '@tabler/icons-react';
 import { useState } from 'react';
 import { getOffsiteReviewChecklist } from '~/components/Apps/offsiteReviewChecklist';
-import { isHttpsUrl } from '~/components/Apps/offsiteUrl';
+import { validateExternalUrl } from '~/server/schema/blocks/external-app.schema';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -285,7 +285,7 @@ function OffsiteReviewModal({
                 <Text size="xs" c="dimmed">
                   URL
                 </Text>
-                {isHttpsUrl(request.appListing.externalUrl) ? (
+                {validateExternalUrl(request.appListing.externalUrl).ok ? (
                   <Anchor
                     href={request.appListing.externalUrl}
                     target="_blank"

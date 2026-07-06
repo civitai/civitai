@@ -4,7 +4,7 @@ import {
   isWithdrawableOffsiteStatus,
   offsiteStatusChip,
 } from '~/components/Apps/offsiteSubmissionStatus';
-import { isHttpsUrl } from '~/components/Apps/offsiteUrl';
+import { validateExternalUrl } from '~/server/schema/blocks/external-app.schema';
 import { ReviewerNotesButton } from '~/components/Apps/MySubmissionsList';
 
 /**
@@ -99,7 +99,7 @@ export function OffsiteSubmissionsList({
                 )}
               </Table.Td>
               <Table.Td>
-                {isHttpsUrl(s.appListing?.externalUrl) ? (
+                {validateExternalUrl(s.appListing?.externalUrl).ok ? (
                   <Anchor
                     href={s.appListing?.externalUrl}
                     target="_blank"

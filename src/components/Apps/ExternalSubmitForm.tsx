@@ -32,6 +32,12 @@ import {
   type OffsiteSubmitFormErrors,
   type OffsiteSubmitFormValues,
 } from '~/components/Apps/offsiteSubmitFormConfig';
+import {
+  appendScreenshotSlot,
+  makeScreenshotSlotId,
+  patchScreenshotSlot,
+  type ScreenshotSlot,
+} from '~/components/Apps/screenshotSlots';
 import type { MarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listing.schema';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -74,8 +80,10 @@ const emptyAsset: AssetState = { status: 'idle', imageId: null, message: null };
  * one loop where the `screenshots` array closure is stale between iterations, so
  * capturing `screenshots.length` as the slot index collides (every file writes the
  * same slot). Patching by `id` instead fills distinct slots regardless of batching.
+ * The pure slot-management logic (append / patch-by-id / id) lives in
+ * `screenshotSlots.ts` so it is unit-testable without mounting the form.
  */
-type ScreenshotState = AssetState & { id: string };
+type ScreenshotState = ScreenshotSlot;
 
 const SCAN_INCOMPLETE = /scan is not complete/i;
 
@@ -355,24 +363,18 @@ function AssetStep({
     for (const file of files) {
       // Reserve a slot with a STABLE id up-front, then patch THAT slot by id — the
       // `screenshots` closure is stale within this loop, so an index derived from
-      // `screenshots.length` would collide across a multi-file batch.
-      const id = `ss_${screenshotIdRef.current++}`;
-      setScreenshots((prev: ScreenshotState[]) => [
-        ...prev,
-        { id, status: 'working', imageId: null, message: null },
-      ]);
+      // `screenshots.length` would collide across a multi-file batch. See
+      // `screenshotSlots.ts` for the pure append/patch-by-id logic.
+      const id = makeScreenshotSlotId(screenshotIdRef.current++);
+      setScreenshots((prev: ScreenshotState[]) => appendScreenshotSlot(prev, id));
       try {
         const imageId = await uploadAndPersist(file);
         const result = await attach('screenshot', imageId);
-        setScreenshots((prev: ScreenshotState[]) =>
-          prev.map((s) => (s.id === id ? { ...result, id } : s))
-        );
+        setScreenshots((prev: ScreenshotState[]) => patchScreenshotSlot(prev, id, result));
       } catch (err) {
         const message = (err as Error).message;
         setScreenshots((prev: ScreenshotState[]) =>
-          prev.map((s) =>
-            s.id === id ? { id, status: 'error', imageId: null, message } : s
-          )
+          patchScreenshotSlot(prev, id, { status: 'error', imageId: null, message })
         );
         showErrorNotification({ title: 'Could not add screenshot', error: err as Error });
       }
@@ -380,16 +382,12 @@ function AssetStep({
   }
 
   async function retryScreenshot(id: string) {
-    const state = screenshots.find((s) => s.id === id);
+    const state = screenshots.find((s: ScreenshotState) => s.id === id);
     if (!state || state.imageId == null) return;
     const imageId = state.imageId;
-    setScreenshots((prev: ScreenshotState[]) =>
-      prev.map((s) => (s.id === id ? { ...s, status: 'working' } : s))
-    );
+    setScreenshots((prev: ScreenshotState[]) => patchScreenshotSlot(prev, id, { status: 'working' }));
     const result = await attach('screenshot', imageId);
-    setScreenshots((prev: ScreenshotState[]) =>
-      prev.map((s) => (s.id === id ? { ...result, id } : s))
-    );
+    setScreenshots((prev: ScreenshotState[]) => patchScreenshotSlot(prev, id, result));
   }
 
   const attachedScreenshots = screenshots.filter((s) => s.status === 'attached').length;
