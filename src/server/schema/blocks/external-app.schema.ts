@@ -1,6 +1,3 @@
-import * as z from 'zod';
-import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
-
 /**
  * App Blocks — off-site (external-link) apps.
  *
@@ -108,21 +105,3 @@ export function assertNoOnPlatformSurface(manifest: ExternalAppManifestInput): E
   }
   return { ok: true };
 }
-
-/**
- * Mod-only registration input for a pure external-link app. The slug + display
- * name + (optional) description are the only authored fields; `externalUrl` is
- * the off-site target. No bundle, no scopes, no version.
- */
-export const registerExternalAppSchema = z.object({
-  slug: z.string().min(3).max(40).regex(SLUG_REGEX),
-  name: z.string().min(1).max(120),
-  description: z.string().max(2000).optional(),
-  externalUrl: z.string().min(1).max(MAX_EXTERNAL_URL_LENGTH),
-  // Optional mod-assigned marketplace category (free-text, validated against the
-  // taxonomy const at the service layer — kept loose here so adding a category
-  // needs no schema change).
-  category: z.string().max(64).optional(),
-});
-
-export type RegisterExternalAppInput = z.infer<typeof registerExternalAppSchema>;

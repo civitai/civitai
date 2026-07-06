@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   assertNoOnPlatformSurface,
   MAX_EXTERNAL_URL_LENGTH,
-  registerExternalAppSchema,
   validateExternalUrl,
 } from '~/server/schema/blocks/external-app.schema';
 
@@ -111,47 +110,5 @@ describe('assertNoOnPlatformSurface (external ⟂ on-platform)', () => {
 
   it('an EMPTY targets array is allowed (declares nothing)', () => {
     expect(assertNoOnPlatformSurface({ name: 'X', targets: [] }).ok).toBe(true);
-  });
-});
-
-describe('registerExternalAppSchema', () => {
-  it('accepts a valid registration input', () => {
-    const parsed = registerExternalAppSchema.safeParse({
-      slug: 'cool-app',
-      name: 'Cool App',
-      description: 'A cool off-site app',
-      externalUrl: 'https://cool.example.com',
-      category: 'utility',
-    });
-    expect(parsed.success).toBe(true);
-  });
-
-  it('accepts without optional description/category', () => {
-    const parsed = registerExternalAppSchema.safeParse({
-      slug: 'cool-app',
-      name: 'Cool App',
-      externalUrl: 'https://cool.example.com',
-    });
-    expect(parsed.success).toBe(true);
-  });
-
-  it('rejects a malformed slug (uppercase / leading digit / too short)', () => {
-    for (const slug of ['Cool', '1app', 'ab', 'a_b', '-app']) {
-      const parsed = registerExternalAppSchema.safeParse({
-        slug,
-        name: 'X',
-        externalUrl: 'https://x.com',
-      });
-      expect(parsed.success, `slug "${slug}" should fail`).toBe(false);
-    }
-  });
-
-  it('rejects an empty name', () => {
-    const parsed = registerExternalAppSchema.safeParse({
-      slug: 'cool-app',
-      name: '',
-      externalUrl: 'https://x.com',
-    });
-    expect(parsed.success).toBe(false);
   });
 });

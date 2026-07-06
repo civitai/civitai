@@ -49,7 +49,6 @@ import {
   teardownPreviewSchema,
   withdrawRequestSchema,
 } from '~/server/schema/blocks/publish-request.schema';
-import { registerExternalAppSchema } from '~/server/schema/blocks/external-app.schema';
 import { blockWorkflowBodySchema } from '~/server/schema/blocks/workflow.schema';
 import {
   allowMatureContentForCeiling,
@@ -1319,43 +1318,6 @@ export const blocksRouter = router({
           publishRequestId: input.publishRequestId,
           reviewerUserId: ctx.user.id,
           approvalNotes: input.approvalNotes,
-        });
-      } catch (err) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: (err as Error).message,
-        });
-      }
-    }),
-
-  /**
-   * Register an off-site (external-link) app — PURE EXTERNAL LINK model.
-   *
-   * MOD-ONLY, single-step (no bundle / Forgejo / approve pipeline): inserts an
-   * `status='approved'` app_blocks row with `external_url` set so the
-   * marketplace renders a listing that opens the URL in a new tab. The app has
-   * NO install, NO scopes, NO block token, NO subscription, and NO on-platform
-   * hosting. The service validates the https:// URL + the
-   * external-vs-on-platform mutual exclusivity.
-   */
-  registerExternalApp: moderatorProcedure
-    .use(enforceAppBlocksFlag)
-    .input(registerExternalAppSchema)
-    .mutation(async ({ ctx, input }) => {
-      const { registerExternalApp } = await import(
-        '~/server/services/blocks/external-app.service'
-      );
-      if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('Registering external apps is restricted to civitai team');
-      }
-      try {
-        return await registerExternalApp({
-          slug: input.slug,
-          name: input.name,
-          description: input.description,
-          externalUrl: input.externalUrl,
-          category: input.category,
-          reviewerUserId: ctx.user.id,
         });
       } catch (err) {
         throw new TRPCError({
