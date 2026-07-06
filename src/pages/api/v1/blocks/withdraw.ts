@@ -125,7 +125,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     if (!Flags.hasFlag(session.tokenScope, TokenScope.AppBlocksSubmit)) {
       res.status(403).json({
         message:
-          'App Blocks withdraw requires a personal API key or an OAuth token with the App Blocks submit scope',
+          'Withdrawing an App requires a personal API key or an OAuth token with the Apps submit scope',
       });
       return;
     }
@@ -135,18 +135,18 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // (parity with submit-version + submissions + dev-token). AUTHZ; the
   // isAppBlocksEnabled kill-switch below is separate.
   if (user.bannedAt) {
-    res.status(403).json({ message: 'App Blocks is restricted to the civitai team' });
+    res.status(403).json({ message: 'Apps are restricted to the Civitai team' });
     return;
   }
   if (!(await isAppBlocksAuthorEnabled({ user }))) {
-    res.status(403).json({ message: 'App Blocks is restricted to the civitai team' });
+    res.status(403).json({ message: 'Apps are restricted to the Civitai team' });
     return;
   }
 
   // 3. Feature flag for THIS user (mirrors submit-version + the prod mint).
   // 503 (dark) when off.
   if (!(await isAppBlocksEnabled({ user }))) {
-    res.status(503).json({ message: 'App Blocks is not enabled' });
+    res.status(503).json({ message: 'Apps are not enabled' });
     return;
   }
 

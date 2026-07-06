@@ -92,6 +92,7 @@ import { getResourceGenerationSupport } from '~/shared/constants/basemodel.const
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { BuzzTypes } from '~/shared/constants/buzz.constants';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 import {
   getBlockAllowedAccountTypes,
   isPayoutEligibleBuzz,
@@ -141,7 +142,7 @@ const enforceAppBlocksFlag = middleware(async ({ ctx, next, type }) => {
     // that always render the slot don't surface an error.
     return next({ ctx: { _appBlocksDisabled: true } });
   }
-  throw new TRPCError({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
+  throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
 });
 
 /**
@@ -175,7 +176,7 @@ async function assertViewerIsAppDeveloper(userId: number): Promise<void> {
   if (!(await isAppBlocksAuthorEnabled({ user: user ?? undefined }))) {
     throw new TRPCError({
       code: 'FORBIDDEN',
-      message: 'App Blocks authoring is not enabled for this account',
+      message: 'Apps authoring is not enabled for this account',
     });
   }
 }
@@ -233,7 +234,7 @@ async function assertAppBlocksEnabledForTokenUser(userId: number): Promise<void>
   // does) or null for a vanished user. null → undefined → isAppBlocksEnabled's global eval → flag false → blocked.
   const user = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
   if (!(await isAppBlocksEnabled({ user: user ?? undefined }))) {
-    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
   }
 }
 
@@ -954,6 +955,126 @@ export const blocksRouter = router({
     }),
 
   /**
+   * APP DEV TUNNEL — start an on-site dev tunnel for one of the caller's OWN
+   * apps. Mints a pubkey-bound tunnel credential + an unguessable
+   * `dev-<16hex>.<APPS_DOMAIN>` host, and renders the ephemeral Traefik route.
+   *
+   * GATES (all server-side, fail-closed): `appDeveloperProcedure` (author cap) +
+   * `enforceAppBlocksFlag` (app-blocks-enabled) — the dual-flag — PLUS the
+   * `app-blocks-dev-tunnel` kill-switch (base off → dark) PLUS the caller must OWN
+   * `blockId` (resolveDevPageBlockForAuthor → null for a foreign/absent app → the
+   * SAME bare NOT_FOUND, no ownership oracle). DARK until the flag is on.
+   */
+  startDevTunnel: appDeveloperProcedure
+    // Scope gate: an OAuth token (the `civitai login` token the civitai-cli mints)
+    // may open a dev tunnel ONLY if it carries the opt-in AppBlocksDevTunnel bit.
+    // NOTE: enforceTokenScope (trpc.ts) EARLY-RETURNS for `ctx.tokenScope === TokenScope.Full`,
+    // so a Full-scope PERSONAL API key still passes regardless of this meta — this is the
+    // no-regression guarantee. Do NOT "tighten" enforceTokenScope to also gate Full keys here.
+    .meta({ requiredScope: TokenScope.AppBlocksDevTunnel })
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        blockId: z.string().min(1).max(64),
+        // The CLI's ephemeral SSH public key (raw OpenSSH line). Bounded so a
+        // determined caller can't push parse pressure; a real ed25519/rsa pubkey
+        // is well under 2kb.
+        sshPublicKey: z.string().min(1).max(4096),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { isAppBlocksDevTunnelEnabled } = await import('~/server/services/app-blocks-flag');
+      if (!(await isAppBlocksDevTunnelEnabled({ user: ctx.user }))) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Dev tunnels are not available' });
+      }
+      // Ownership gate — resolve the caller's OWN app at any status. null → the
+      // bare NOT_FOUND (no existence/ownership oracle, mirrors dev-token).
+      const app = await BlockRegistry.resolveDevPageBlockForAuthor(input.blockId, ctx.user.id, {
+        db: 'write',
+      });
+      if (!app) throw throwNotFoundError('App not found');
+      const { startDevTunnel } = await import('~/server/services/blocks/dev-tunnel.service');
+      try {
+        return await startDevTunnel({
+          userId: ctx.user.id,
+          // Belt-and-suspenders: key the tunnel state off the RESOLVED, canonical
+          // block_id (app.blockId), never the raw client input. Safe today only
+          // because the ownership resolve above ran first — using the resolved
+          // value makes that independent of input normalization.
+          blockId: app.blockId,
+          sshPublicKey: input.sshPublicKey,
+        });
+      } catch (err) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+      }
+    }),
+
+  /**
+   * APP DEV TUNNEL — stop the caller's dev tunnel (revokes the credential +
+   * entry-token binding + deletes the Traefik route). Idempotent. By `sessionId`
+   * (from startDevTunnel) OR `blockId`. Ownership-checked server-side: a caller
+   * can never tear down another author's tunnel. Same gates as startDevTunnel.
+   */
+  stopDevTunnel: appDeveloperProcedure
+    // Same AppBlocksDevTunnel scope gate as startDevTunnel. A Full personal API key
+    // still passes (enforceTokenScope early-returns on TokenScope.Full) — no regression.
+    .meta({ requiredScope: TokenScope.AppBlocksDevTunnel })
+    .use(enforceAppBlocksFlag)
+    .input(
+      z
+        .object({
+          sessionId: z.string().min(1).max(128).optional(),
+          blockId: z.string().min(1).max(64).optional(),
+        })
+        .refine((v) => !!v.sessionId || !!v.blockId, {
+          message: 'one of sessionId or blockId is required',
+        })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { isAppBlocksDevTunnelEnabled } = await import('~/server/services/app-blocks-flag');
+      if (!(await isAppBlocksDevTunnelEnabled({ user: ctx.user }))) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Dev tunnels are not available' });
+      }
+      const { stopDevTunnel, stopDevTunnelForUserBlock } = await import(
+        '~/server/services/blocks/dev-tunnel.service'
+      );
+      const stopped = input.sessionId
+        ? await stopDevTunnel(ctx.user.id, input.sessionId)
+        : await stopDevTunnelForUserBlock(ctx.user.id, input.blockId!);
+      return { ok: true, stopped };
+    }),
+
+  /**
+   * APP DEV TUNNEL — status of the caller's active tunnel for a block (host,
+   * expiry, spend ceiling), or null when none is active. Same gates.
+   */
+  devTunnelStatus: appDeveloperProcedure
+    // Same AppBlocksDevTunnel scope gate as startDevTunnel. A Full personal API key
+    // still passes (enforceTokenScope early-returns on TokenScope.Full) — no regression.
+    .meta({ requiredScope: TokenScope.AppBlocksDevTunnel })
+    .use(enforceAppBlocksFlag)
+    .input(z.object({ blockId: z.string().min(1).max(64) }))
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { isAppBlocksDevTunnelEnabled } = await import('~/server/services/app-blocks-flag');
+      if (!(await isAppBlocksDevTunnelEnabled({ user: ctx.user }))) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Dev tunnels are not available' });
+      }
+      const { getActiveDevTunnel } = await import('~/server/services/blocks/dev-tunnel.service');
+      const session = await getActiveDevTunnel(ctx.user.id, input.blockId);
+      if (!session) return { active: false as const };
+      return {
+        active: true as const,
+        sessionId: session.sessionId,
+        host: session.host,
+        expiresAt: session.hardExpiresAt,
+        spendCapBuzz: session.spendCapBuzz,
+      };
+    }),
+
+  /**
    * Mod queue: paginated list of publish requests waiting for review,
    * oldest first. Powers /apps/review.
    */
@@ -1563,7 +1684,7 @@ export const blocksRouter = router({
       if (!ctx.features.appBlocks) {
         throw new TRPCError({
           code: 'FORBIDDEN',
-          message: 'App Blocks is not available to this account',
+          message: 'Apps are not available to this account',
         });
       }
       const block = await dbRead.appBlock.findUnique({
@@ -1996,7 +2117,7 @@ export const blocksRouter = router({
     .input(getMarketplaceMetaSchema)
     .query(async ({ ctx, input }) => {
       if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('App Blocks curation is restricted to civitai team');
+        throw throwAuthorizationError('Apps curation is restricted to the Civitai team');
       }
       const meta = await BlockRegistry.getMarketplaceMeta(input.appBlockId);
       if (!meta) throw throwNotFoundError('App block not found');
@@ -2023,7 +2144,7 @@ export const blocksRouter = router({
     .input(setMarketplaceMetaSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('App Blocks curation is restricted to civitai team');
+        throw throwAuthorizationError('Apps curation is restricted to the Civitai team');
       }
       return BlockRegistry.setMarketplaceMeta(input);
     }),
@@ -2631,6 +2752,57 @@ export const blocksRouter = router({
         };
       }
 
+      // APP DEV TUNNEL per-session spend backstop (F4). When the caller has an
+      // ACTIVE dev tunnel for THIS block, bound cumulative spend within that ONE
+      // dev session (a backstop OVER the per-call budget + the per-user daily cap
+      // above) so a runaway LOCAL submit loop can't drain Buzz. The block token
+      // carries no dev-session id (see the P4 audit / handoff note), so the
+      // session is resolved SERVER-SIDE from (userId, blockId) — a single Redis
+      // GET that misses (and no-ops) for every non-dev submit.
+      //
+      // Posture: the LOOKUP fails OPEN (a getActiveDevTunnel error → treat as
+      // non-dev, so a Redis blip can't break ALL generation — the daily cap still
+      // applies), but the ENFORCEMENT fails CLOSED (reserveDevSessionBuzz denies
+      // on a Redis error once we know it IS a dev session). Mirrors the daily
+      // cap's refund-on-throw so a failed submit doesn't permanently burn the
+      // session ceiling. Why the fail-open is SAFE: the fail-CLOSED per-user daily
+      // cap (reserveBlockBuzzSpend above, whose incrBy is NOT wrapped in a catch)
+      // has ALREADY run and throws on any Redis error — so a real Redis outage
+      // rejects the submit BEFORE this lookup even executes. The fail-open here
+      // can therefore only degrade the finer session cap while the daily cap is
+      // healthy, i.e. within an already-daily-capped bound — never an uncapped one.
+      let devSessionReserve: { sessionId: string; cost: number } | null = null;
+      {
+        const { getActiveDevTunnel, reserveDevSessionBuzz } = await import(
+          '~/server/services/blocks/dev-tunnel.service'
+        );
+        const devTunnel = await getActiveDevTunnel(userId, claims.blockId).catch(() => null);
+        if (devTunnel) {
+          const reserved = await reserveDevSessionBuzz(
+            devTunnel.sessionId,
+            cost,
+            devTunnel.spendCapBuzz
+          );
+          if (!reserved.allowed) {
+            // Over the session ceiling → refund the daily reservation made above
+            // (the session reserve rolled ITSELF back on deny) and reject.
+            await refundBlockBuzzSpend(buzzCapKey, cost);
+            return {
+              snapshot: {
+                workflowId: 'failed',
+                status: 'failed' as const,
+                cost: { total: cost },
+                error:
+                  `dev tunnel session Buzz cap reached: ${reserved.total} already spent ` +
+                  `this dev session, this generation costs ${Math.ceil(cost)}, ` +
+                  `session cap is ${devTunnel.spendCapBuzz}`,
+              },
+            };
+          }
+          devSessionReserve = { sessionId: devTunnel.sessionId, cost: Math.ceil(cost) };
+        }
+      }
+
       // From here the reservation is live. If ANYTHING throws before a resolved
       // submitWorkflow, refund the reservation and re-throw — this matches the
       // original semantics exactly (the old code recorded the spend only after
@@ -2692,6 +2864,14 @@ export const blocksRouter = router({
         // "only record after a resolved submit" behavior) and propagate. Refund
         // against the pinned key, not a re-derived one (midnight-UTC race).
         await refundBlockBuzzSpend(buzzCapKey, cost);
+        // F4 — mirror the daily refund for the dev-session reservation so a failed
+        // submit doesn't permanently burn the session ceiling. Best-effort.
+        if (devSessionReserve) {
+          const { refundDevSessionBuzz } = await import(
+            '~/server/services/blocks/dev-tunnel.service'
+          );
+          await refundDevSessionBuzz(devSessionReserve.sessionId, devSessionReserve.cost);
+        }
         throw e;
       }
 
@@ -3302,7 +3482,7 @@ export const blocksRouter = router({
       if (!ctx.features.appBlocks) {
         throw new TRPCError({
           code: 'FORBIDDEN',
-          message: 'App Blocks is not available to this account',
+          message: 'Apps are not available to this account',
         });
       }
       const block = await dbRead.appBlock.findUnique({
@@ -3402,7 +3582,7 @@ export const blocksRouter = router({
       if (!ctx.features.appBlocks) {
         throw new TRPCError({
           code: 'FORBIDDEN',
-          message: 'App Blocks is not available to this account',
+          message: 'Apps are not available to this account',
         });
       }
       const block = await dbRead.appBlock.findUnique({
@@ -3514,7 +3694,7 @@ export const blocksRouter = router({
       if (!ctx.features.appBlocks) {
         throw new TRPCError({
           code: 'FORBIDDEN',
-          message: 'App Blocks is not available to this account',
+          message: 'Apps are not available to this account',
         });
       }
 
@@ -3704,7 +3884,7 @@ export const blocksRouter = router({
       if (!ctx.features.appBlocks) {
         throw new TRPCError({
           code: 'FORBIDDEN',
-          message: 'App Blocks is not available to this account',
+          message: 'Apps are not available to this account',
         });
       }
       const block = input.appBlockId

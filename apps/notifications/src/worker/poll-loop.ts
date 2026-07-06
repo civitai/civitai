@@ -50,30 +50,42 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Batch-claim query for due PendingNotification rows. `FOR UPDATE SKIP LOCKED` on the inner SELECT is the
+// load-bearing concurrency guard: without it, two workers' CTE SELECTs can pick the SAME rows (the SELECT
+// takes no locks), and the outer UPDATE's `WHERE r.id = pn.id` does NOT re-check `claimedAt IS NULL` — so
+// the second UPDATE, once it unblocks on the first's row lock, re-stamps `claimedAt` and RETURNS the same
+// rows → both workers fan the batch out (double signals + debounce rows resurrected via the ON CONFLICT
+// DO UPDATE ... viewed=FALSE path). The worker Deployment is replicas:1 + strategy:Recreate today, so no
+// two workers run concurrently in normal operation; SKIP LOCKED makes the claim correct regardless of
+// replica count (an accidental scale-up or a future HA change can't cause double fan-out). With a single
+// worker there is zero contention, so this clause is a no-op on the happy path.
+export const PENDING_CLAIM_QUERY = `
+  WITH
+    return_data AS (
+      SELECT
+        id, type, category, key, users, details,
+        "debounceSeconds", "lastTriggered", "nextSendAt"
+      FROM "PendingNotification"
+      WHERE
+        ("claimedAt" IS NULL OR "claimedAt" < NOW() - INTERVAL '${tooOld}')
+        AND (
+          "debounceSeconds" IS NULL
+          OR ("debounceSeconds" IS NOT NULL AND NOW() >= "nextSendAt")
+        )
+      ORDER BY id
+      LIMIT ${rowsToFetch}
+      FOR UPDATE SKIP LOCKED
+    )
+  UPDATE "PendingNotification" pn
+  SET "claimedAt" = NOW()
+  FROM return_data r
+  WHERE r.id = pn.id
+  RETURNING *
+`;
+
 const getPending = async (): Promise<PendingReturnRow[]> => {
   try {
-    const query = await notifDbWrite().cancellableQuery<PendingReturnRow>(`
-      WITH
-        return_data AS (
-          SELECT
-            id, type, category, key, users, details,
-            "debounceSeconds", "lastTriggered", "nextSendAt"
-          FROM "PendingNotification"
-          WHERE
-            ("claimedAt" IS NULL OR "claimedAt" < NOW() - INTERVAL '${tooOld}')
-            AND (
-              "debounceSeconds" IS NULL
-              OR ("debounceSeconds" IS NOT NULL AND NOW() >= "nextSendAt")
-            )
-          ORDER BY id
-          LIMIT ${rowsToFetch}
-        )
-      UPDATE "PendingNotification" pn
-      SET "claimedAt" = NOW()
-      FROM return_data r
-      WHERE r.id = pn.id
-      RETURNING *
-    `);
+    const query = await notifDbWrite().cancellableQuery<PendingReturnRow>(PENDING_CLAIM_QUERY);
     return await query.result();
   } catch (e) {
     logAxiomError(e as Error);
@@ -81,7 +93,8 @@ const getPending = async (): Promise<PendingReturnRow[]> => {
   }
 };
 
-const handleNormal = async (row: PendingReturnRow, client: PoolClient): Promise<RetData[]> => {
+// Exported for behavioral unit tests (fake PoolClient). Export-for-test only — logic unchanged.
+export const handleNormal = async (row: PendingReturnRow, client: PoolClient): Promise<RetData[]> => {
   const { id, key, type, category, details, users } = row;
   let retData: RetData[] = [];
 
@@ -128,7 +141,8 @@ const handleNormal = async (row: PendingReturnRow, client: PoolClient): Promise<
   return retData;
 };
 
-const handleDebounce = async (row: PendingReturnRow, client: PoolClient): Promise<RetData[]> => {
+// Exported for behavioral unit tests (fake PoolClient). Export-for-test only — logic unchanged.
+export const handleDebounce = async (row: PendingReturnRow, client: PoolClient): Promise<RetData[]> => {
   const { id, key, type, category, details, users, debounceSeconds, lastTriggered, nextSendAt } = row;
   let retData: RetData[] = [];
 
@@ -182,7 +196,8 @@ const handleDebounce = async (row: PendingReturnRow, client: PoolClient): Promis
   return retData;
 };
 
-const create = async (row: PendingReturnRow): Promise<RetData[] | undefined> => {
+// Exported for behavioral unit tests. Export-for-test only — logic unchanged.
+export const create = async (row: PendingReturnRow): Promise<RetData[] | undefined> => {
   if (row.category === 'Other')
     logToAxiom({ type: 'warning', message: 'Missing category', data: { type: row.type } }).catch(
       () => {}
@@ -217,7 +232,8 @@ const create = async (row: PendingReturnRow): Promise<RetData[] | undefined> => 
   }
 };
 
-const run = async () => {
+// Exported for behavioral unit tests. Export-for-test only — logic unchanged.
+export const run = async () => {
   const rows = await getPending();
   for (const row of rows) {
     const affectedUsers = await create(row);

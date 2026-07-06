@@ -46,7 +46,13 @@ import {
 } from '~/server/services/generation/generation.service';
 import { applicableRulesFor } from '~/shared/data-graph/generation/gates';
 import type { GenerationResource } from '~/shared/types/generation.types';
-import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import {
+  redis,
+  REDIS_KEYS,
+  REDIS_SYS_KEYS,
+  sysRedis,
+  withSysReadDeadline,
+} from '~/server/redis/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
@@ -230,7 +236,11 @@ async function getGenerationStatus(): Promise<GenerationStatus> {
   // Fail open: a sysRedis outage shouldn't crash generation context build.
   let raw: string | null | undefined;
   try {
-    raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS);
+    // Wall-clock deadline so a silent sysRedis half-open can't park this read
+    // (runs while building the generation context) ~11min.
+    raw = await withSysReadDeadline(
+      sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS)
+    );
   } catch (err) {
     logSysRedisFailOpen('defaults-firing', 'getGenerationStatus orchestration-new', err);
     raw = undefined;

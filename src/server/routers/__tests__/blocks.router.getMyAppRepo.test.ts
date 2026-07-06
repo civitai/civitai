@@ -27,11 +27,9 @@ const { mockIsAppBlocksEnabled, mockEnsureForgejoIdentity, mockAddCollaborator }
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
 }));
-vi.mock('~/env/server', () => ({
-  // LOGGING is read by cache-helpers' createLogger at module-eval (the router
-  // now statically imports appBlockReview.service, which imports cache-helpers).
-  env: { FORGEJO_PUBLIC_URL: 'https://forgejo.civitai.com', LOGGING: '' },
-}));
+// env comes from the global ~/env/server mock in src/__tests__/setup.ts
+// (complete TEST_ENV_DEFAULTS incl. FORGEJO_PUBLIC_URL / MEILI / S3). Overriding
+// it locally drops those defaults and crashes the heavy import graph at load.
 vi.mock('~/server/services/blocks/dev-git-access.service', () => ({
   ensureForgejoIdentity: mockEnsureForgejoIdentity,
 }));
@@ -79,12 +77,14 @@ vi.mock('~/server/db/client', () => ({
   dbRead: { appBlock: { findUnique: vi.fn() } },
   dbWrite: {},
 }));
-vi.mock('~/server/redis/client', () => ({
-  redis: { get: vi.fn(), set: vi.fn() },
-  sysRedis: { get: vi.fn(), incrBy: vi.fn(), expire: vi.fn(), ttl: vi.fn() },
-  REDIS_KEYS: { BLOCKS: { POPULAR_CHECKPOINT: 'blocks:popular-checkpoint' } },
-  REDIS_SYS_KEYS: { BLOCKS: { BUZZ_CAP: 'system:blocks:buzz-cap' } },
-}));
+vi.mock('~/server/redis/client', async () => {
+  const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
+  return {
+    ...actual,
+    redis: { get: vi.fn(), set: vi.fn() },
+    sysRedis: { get: vi.fn(), incrBy: vi.fn(), expire: vi.fn(), ttl: vi.fn() },
+  };
+});
 vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
   dailyBoostReward: { apply: vi.fn(), getUserRewardDetails: vi.fn() },
 }));

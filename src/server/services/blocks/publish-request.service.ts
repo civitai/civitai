@@ -907,7 +907,7 @@ async function notifyModsOfNewRequest(opts: {
             { name: 'Changes', value: changeSummary, inline: true },
             { name: 'Request ID', value: `\`${opts.publishRequestId}\`` },
           ],
-          footer: { text: 'App Blocks publish-request queue' },
+          footer: { text: 'Apps publish-request queue' },
           timestamp: new Date().toISOString(),
         },
       ],

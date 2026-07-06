@@ -184,7 +184,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
 
   // Pipeline kill-switch — same global flag the production build-callback uses.
   if (!(await isAppBlocksPipelineEnabled())) {
-    res.status(503).json({ error: 'App Blocks not enabled' });
+    res.status(503).json({ error: 'Apps are not enabled' });
     return;
   }
 

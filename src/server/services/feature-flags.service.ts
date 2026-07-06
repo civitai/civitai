@@ -52,6 +52,26 @@ const featureFlags = createFeatureFlags({
   apiKeys: ['public'],
   apiKeyBuzzLimit: { availability: ['mod'], fliptKey: 'api-key-buzz-limit' },
   oauthApps: { availability: ['mod'], fliptKey: 'oauth-apps' },
+  // Faro RUM frontend observability. Default OFF (mods only); widen the cohort via
+  // Flipt (`faro`). Runtime kill-switch for the Faro Web SDK — the FaroProvider only
+  // initialises when this flag is on AND the NEXT_PUBLIC_FARO_* build-args are set.
+  faro: { availability: ['mod'], fliptKey: 'faro' },
+  // Cohort-ramp gate for the Faro resource_timing decomposition. SEPARATE from `faro` so the
+  // network-phase measurements can be ramped by % of users at runtime (via Flipt) independently
+  // of the main RUM signals — the FaroProvider includes ResourceTimingInstrumentation only when
+  // this flag is on AND the NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED build-arg is set.
+  // availability ['mod'] is the Flipt-DOWN fallback (mirrors `faro`); Flipt is authoritative
+  // when the flag exists — ramp by bumping its % rollout, never all-at-once.
+  faroResourceTiming: { availability: ['mod'], fliptKey: 'faro-resource-timing' },
+  // Cohort-ramp gate for tRPC request batching (httpBatchStreamLink). Default OFF
+  // (mods only) so batching is dark until ramped via Flipt (`trpc-batching`). Batching
+  // is applied ONLY to AUTHENTICATED-browser queries — anonymous tRPC GETs stay
+  // unbatched so they remain CF edge-cacheable (verified: anon `model.getAll` GET
+  // returns cf-cache-status HIT with s-maxage=60; authed requests have edgeTTL forced
+  // to 0 in createContext, so batching them loses no edge cache). availability ['mod']
+  // is the Flipt-DOWN fallback (mirrors `faro`); Flipt is authoritative when the flag
+  // exists — ramp by bumping its % rollout, never all-at-once. See `src/utils/trpc.ts`.
+  trpcBatching: { availability: ['mod'], fliptKey: 'trpc-batching' },
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },
@@ -97,6 +117,11 @@ const featureFlags = createFeatureFlags({
     availability: ['public'],
     fliptKey: 'enhanced-compatibility-sdcpp',
   },
+  // Anima ControlNet kill-switch. Default ON (public + fail-open when Flipt is
+  // down); the `anima-controlnet` Flipt flag is the lever — flip it OFF to hide
+  // the Anima ControlNet input (and strip controlNets server-side) without a
+  // deploy if the orchestrator side misbehaves.
+  animaControlnet: { availability: ['public'], fliptKey: 'anima-controlnet' },
   questions: ['dev', 'mod'],
   imageGeneration: ['public'],
   largerGenerationImages: {

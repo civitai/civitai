@@ -12,7 +12,8 @@ import {
 import { articleWhereSchema } from '~/server/schema/article.schema';
 import { getArticles } from '~/server/services/article.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { ChallengeStatus } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
 import { isFutureDate, startOfDay } from '~/utils/date-helpers';
@@ -116,7 +117,18 @@ const customChallengeSchema = z.object({
 });
 
 export async function getCustomChallenge() {
-  const data = await sysRedis.get(REDIS_SYS_KEYS.GENERATION.CUSTOM_CHALLENGE);
+  // Fail-open read: this feeds the (deprecated but still live) getCurrentDailyChallenge
+  // query. A sysRedis outage shouldn't 500 the challenge view — degrade to "no
+  // custom challenge" (null) so the regular challenge is shown. Wall-clock deadline
+  // bounds a silent half-open (this awaited get would otherwise park ~11min); on
+  // DOWN or timeout we fail open to null.
+  let data: string | null;
+  try {
+    data = await withSysReadDeadline(sysRedis.get(REDIS_SYS_KEYS.GENERATION.CUSTOM_CHALLENGE));
+  } catch (err) {
+    logSysRedisFailOpen('read-degraded', 'getCustomChallenge', err);
+    return null;
+  }
   if (!data) return null;
   const challenge = customChallengeSchema.parse(JSON.parse(data));
   const date = new Date(challenge.endsAtDate).toISOString().split('T')[0];

@@ -3,7 +3,7 @@ import { readFile } from 'fs/promises';
 import { access } from 'fs/promises';
 import matter from 'gray-matter';
 import { join, resolve } from 'path';
-import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
+import { sysRedis, REDIS_SYS_KEYS, withSysReadDeadline } from '~/server/redis/client';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import type { Context } from '~/server/createContext';
 
@@ -168,7 +168,13 @@ export async function getTosMeta({
 
 export async function getMarkdownContent({ key }: { key: string }) {
   try {
-    const content = await sysRedis.hGet(REDIS_SYS_KEYS.CONTENT.REGION_WARNING, key);
+    // Wall-clock deadline: bounds a silent sysRedis half-open (this awaited hGet
+    // would otherwise park ~11min on the region-warning content query). The fail
+    // direction is UNCHANGED — a timeout rejects into the catch below, which
+    // already collapses any read error to a 404 (same as a fast DOWN).
+    const content = await withSysReadDeadline(
+      sysRedis.hGet(REDIS_SYS_KEYS.CONTENT.REGION_WARNING, key)
+    );
     if (!content) throw throwNotFoundError('Content not found');
 
     const { data: frontmatter, content: markdown } = matter(content);
