@@ -148,7 +148,10 @@ export type DevTunnelManifestOpts = {
  *  Middleware points Traefik at the dev-tunnel-gate endpoint, which requires the
  *  parent-minted author-bound entry token on the ENTRY document (T3). */
 export function buildDevTunnelMiddleware(opts: DevTunnelManifestOpts) {
-  const name = `dev-tunnel-gate-${opts.sessionId}`;
+  // Name is a k8s RESOURCE name → must be DNS-1123 (no uppercase/`_` from the raw
+  // bki_<ULID> sessionId). Labels below keep the raw sessionId (label values allow
+  // them, and the reaper matches on the label).
+  const name = `dev-tunnel-gate-${sessionResourceSuffix(opts.sessionId)}`;
   return {
     apiVersion: 'traefik.io/v1alpha1',
     kind: 'Middleware',
@@ -176,8 +179,12 @@ export function buildDevTunnelMiddleware(opts: DevTunnelManifestOpts) {
  *  Middleware, and routes to the sish HTTP backend. TLS via the existing
  *  `*.civit.ai` wildcard cert (default TLS store — no per-host cert). */
 export function buildDevTunnelIngressRoute(opts: DevTunnelManifestOpts) {
-  const name = `dev-tunnel-${opts.sessionId}`;
-  const middlewareName = `dev-tunnel-gate-${opts.sessionId}`;
+  // k8s RESOURCE names → DNS-1123 (see sessionResourceSuffix). middlewareName MUST
+  // derive identically to buildDevTunnelMiddleware's name so the route references the
+  // Middleware that actually gets created. Labels keep the raw sessionId.
+  const suffix = sessionResourceSuffix(opts.sessionId);
+  const name = `dev-tunnel-${suffix}`;
+  const middlewareName = `dev-tunnel-gate-${suffix}`;
   // Split the backend into host:port for the Traefik ExternalName-style service
   // reference is not needed — Traefik IngressRoute services reference an in-ns
   // Service by name+port. The sish backend is a Service in the sish namespace, so
@@ -255,11 +262,20 @@ function manifestOpts(host: string, sessionId: string): DevTunnelManifestOpts {
 // k8s apply / delete (thin, reuses apps-pipeline helpers)
 // ---------------------------------------------------------------------------
 
-/** DNS-1123 Job name for a session's route-apply Job. `sessionId` is opaque
- *  (`bki_<ulid>`); sanitize + bound it so the Job name is always valid. */
+/** DNS-1123-safe suffix from an opaque sessionId for use in k8s RESOURCE NAMES.
+ *  `sessionId` is `bki_<ulid>` — Crockford base32 (UPPERCASE) with a `_` separator;
+ *  k8s resource names forbid uppercase and `_` (RFC 1123 subdomain), so we lowercase
+ *  + replace any non-`[a-z0-9-]` char and bound the length. Label VALUES, by
+ *  contrast, DO permit uppercase/`_`, so labels keep the RAW sessionId (the reaper
+ *  deletes routes by label selector, not by name). Used by the Job, Middleware, and
+ *  IngressRoute names so they all agree. */
+export function sessionResourceSuffix(sessionId: string): string {
+  return sessionId.replace(/[^a-z0-9-]/gi, '-').toLowerCase().slice(0, 40);
+}
+
+/** DNS-1123 Job name for a session's route-apply Job. */
 export function devTunnelApplyJobName(sessionId: string): string {
-  const suffix = sessionId.replace(/[^a-z0-9-]/gi, '-').toLowerCase().slice(0, 40);
-  return `dev-tunnel-apply-${suffix}`;
+  return `dev-tunnel-apply-${sessionResourceSuffix(sessionId)}`;
 }
 
 /**
