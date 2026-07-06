@@ -178,20 +178,35 @@ export const b2PutMetricsMiddleware =
     const bucket = args?.input?.Bucket;
     try {
       const result = await next(args);
-      recordB2PutSend({
-        bucket,
-        op,
-        result: 'success',
-        retries: retriesFromMetadata(result?.output?.$metadata),
-      });
+      // Guard the WHOLE telemetry expression — including the retriesFromMetadata
+      // argument evaluation — so no telemetry helper can throw into a successful
+      // upload's return path. (recordB2PutSend also self-guards; this makes the
+      // "telemetry never throws into an upload" guarantee structural, not just
+      // empirical about which helpers currently can throw.)
+      try {
+        recordB2PutSend({
+          bucket,
+          op,
+          result: 'success',
+          retries: retriesFromMetadata(result?.output?.$metadata),
+        });
+      } catch {
+        /* never throw from telemetry */
+      }
       return result;
     } catch (error) {
-      recordB2PutSend({
-        bucket,
-        op,
-        result: classifyErrorResult(error),
-        retries: retriesFromMetadata((error as { $metadata?: B2Metadata })?.$metadata),
-      });
+      // Guard telemetry (classifyErrorResult + retriesFromMetadata arg evaluation)
+      // so the ORIGINAL SDK error is always the one re-thrown, never a telemetry error.
+      try {
+        recordB2PutSend({
+          bucket,
+          op,
+          result: classifyErrorResult(error),
+          retries: retriesFromMetadata((error as { $metadata?: B2Metadata })?.$metadata),
+        });
+      } catch {
+        /* never throw from telemetry */
+      }
       throw error;
     }
   };
