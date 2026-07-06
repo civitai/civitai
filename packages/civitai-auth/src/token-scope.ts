@@ -96,10 +96,10 @@ export type TokenScopeValue = (typeof TokenScope)[keyof typeof TokenScope];
 
 /**
  * Mask of EVERY defined scope bit, including opt-in scopes that are NOT part of
- * `Full` (currently `AppBlocksSubmit` and `AppBlocksDevTunnel`). Use this as the upper bound when
- * validating a requested/stored scope value in the OAuth flow — bounding against
- * `Full` would reject any value carrying an opt-in bit. Computed from the enum so
- * it can never drift behind a newly-added bit.
+ * `Full` (currently `AppBlocksSubmit` and `AppBlocksDevTunnel`). Use this as the
+ * upper bound when validating a requested/stored scope value in the OAuth flow —
+ * bounding against `Full` would reject any value carrying an opt-in bit. Computed
+ * from the enum so it can never drift behind a newly-added bit.
  */
 export const ALL_SCOPES: number = Object.entries(TokenScope)
   .filter(([key]) => key !== 'None' && key !== 'Full')
