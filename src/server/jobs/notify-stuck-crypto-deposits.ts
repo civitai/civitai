@@ -9,24 +9,21 @@ import dayjs from '~/shared/utils/dayjs';
 
 type NpPayment = Awaited<ReturnType<typeof nowpaymentsCaller.getPaymentStatus>>;
 
-// A paid deposit that ended `failed` splits by outcome_amount (what NP could
-// settle to our USDC payout):
-//   - null/0   => Category 3: unsupported/wrapped coin (cbBTC). NP can't convert,
-//                 only refunds, and requires the account holder to request it.
-//                 We email the USER a self-service packet.
-//   - ~= price => Category 2: convertible wrong-network (USDT-BSC -> USDC-Base).
-//                 NP can convert but didn't settle. We email NP to convert-or-return.
-//   - implausible (dust/underpaid) => skip; not worth an NP ticket.
+// A paid deposit that ended `failed` splits by outcome_amount — whether NP was
+// able to produce a USDC conversion. It is NOT compared to the order value: this
+// is a wallet-style deposit, so the amount sent is arbitrary.
+//   - null/0  => Category 3: unsupported/wrapped coin (cbBTC). NP can't convert,
+//               only refunds, and requires the account holder to request it.
+//               We email the USER a self-service packet.
+//   - present => Category 2: convertible wrong-network (USDT-BSC -> USDC-Base).
+//               NP can convert but didn't settle. We email NP to convert-or-return.
+//               (The email quotes actually_paid, never outcome_amount, so a garbage
+//               outcome value does no harm here.)
 const isFailedPaid = (p: NonNullable<NpPayment>) =>
   p.payment_status === 'failed' && Number(p.actually_paid) > 0;
 
-const route = (p: NonNullable<NpPayment>): 'user' | 'nowpayments' | 'skip' => {
-  const outcome = Number(p.outcome_amount) || 0;
-  if (outcome <= 0) return 'user';
-  const price = Number(p.price_amount) || 0;
-  const convertible = price > 0 && outcome >= price * 0.4 && outcome <= price * 1.5;
-  return convertible ? 'nowpayments' : 'skip';
-};
+const route = (p: NonNullable<NpPayment>): 'user' | 'nowpayments' =>
+  (Number(p.outcome_amount) || 0) <= 0 ? 'user' : 'nowpayments';
 
 export const notifyStuckCryptoDepositsJob = createJob(
   'notify-stuck-crypto-deposits',
@@ -51,12 +48,11 @@ export const notifyStuckCryptoDepositsJob = createJob(
     });
 
     if (candidates.length === 0)
-      return { candidates: 0, stuck: 0, emailedUser: 0, emailedNp: 0, skipped: 0 };
+      return { candidates: 0, stuck: 0, emailedUser: 0, emailedNp: 0 };
 
     let stuck = 0;
     let emailedUser = 0;
     let emailedNp = 0;
-    let skipped = 0;
     let skippedNoEmail = 0;
 
     for (const deposit of candidates) {
@@ -66,11 +62,6 @@ export const notifyStuckCryptoDepositsJob = createJob(
       stuck++;
 
       const target = route(payment);
-      if (target === 'skip') {
-        skipped++;
-        continue; // dust/underpaid — ages out of the window on its own
-      }
-
       const userEmail = deposit.user?.email;
       // supportEmail gates the whole feature and is the NP contact address shown
       // to users; userEmail is the recipient (Cat 3) or CC (Cat 2).
@@ -117,17 +108,16 @@ export const notifyStuckCryptoDepositsJob = createJob(
     logToAxiom({
       name: 'notify-stuck-crypto-deposits-job',
       type: 'info',
-      message: `Stuck-deposit notifier: ${emailedUser} user + ${emailedNp} NP emailed, ${skipped} skipped, ${stuck} stuck, ${candidates.length} scanned`,
+      message: `Stuck-deposit notifier: ${emailedUser} user + ${emailedNp} NP emailed, ${stuck} stuck, ${candidates.length} scanned`,
       candidates: candidates.length,
       stuck,
       emailedUser,
       emailedNp,
-      skipped,
       skippedNoEmail,
       supportEmailConfigured: !!supportEmail,
     });
 
-    return { candidates: candidates.length, stuck, emailedUser, emailedNp, skipped, skippedNoEmail };
+    return { candidates: candidates.length, stuck, emailedUser, emailedNp, skippedNoEmail };
   },
   {
     lockExpiration: 10 * 60,
