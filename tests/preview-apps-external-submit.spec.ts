@@ -6,24 +6,29 @@ import { trpcMutation, trpcQuery } from './preview-trpc';
 /**
  * Preview-e2e: App Blocks W13 P3a — OFF-SITE (external-link) submission backend.
  *
- * The dark author-submit → mod-review-queue leg (design B1):
- *   - as the `tester` role (the app-dev-testers cohort — a NON-mod author),
- *     `appListings.submitExternalListing` creates a DRAFT AppListing + a pending
+ * The dark author-submit → mod-review-queue leg (design B1), run as `mod`:
+ *   - `appListings.submitExternalListing` creates a DRAFT AppListing + a pending
  *     AppListingPublishRequest (kind='offsite') for an https target.
- *   - as the `mod` role, `appListings.listPendingRequests` shows the row.
- *   - as the `tester`, `appListings.withdrawExternalRequest` is terminal — the
- *     draft listing is deleted and the row leaves the pending queue.
+ *   - `appListings.listPendingRequests` shows the row.
+ *   - `appListings.withdrawExternalRequest` is terminal — the draft listing is
+ *     deleted and the row leaves the pending queue.
  *
  * approve/reject + the store render + the Visit-anchor invariant land in PR-b/PR-c
  * (with the approve service + UI), so they are NOT exercised here — this PR ships
  * the submission backend only.
  *
- * GATES the preview must satisfy for this to pass (Tekton `pr-smoke-test` is the
- * authoritative gate — do NOT run browser-mode Playwright locally on NixOS):
- *   - `submitExternalListing`/`withdrawExternalRequest` are `appDeveloperProcedure`
- *     (`app-blocks-author`); the `tester` fixture must be in that flag's cohort
- *     (mirrors the flipt-state `testers` allowlist — preview-fixtures.ts).
- *   - `listPendingRequests` is `moderatorProcedure`; the `mod` fixture passes.
+ * ROLE — why `mod`, not `tester`: `submitExternalListing`/`withdrawExternalRequest`
+ * are `appDeveloperProcedure` (`app-blocks-author`) and `listPendingRequests` is
+ * `moderatorProcedure`. The `mod` fixture satisfies BOTH (mods are authors via the
+ * app-blocks-author mod floor), so — like every sibling apps smoke spec
+ * (preview-apps-publish/-install/-marketplace/-page) — the whole leg runs as mod.
+ * The synthetic preview `tester` fixture is in the preview-ACCESS allowlist but NOT
+ * the `app-blocks-author` cohort (that's the real dev-tester user ids), so it 403s
+ * this proc BY DESIGN; the author-gate rejection is covered by the unit router-authz
+ * tests, not here.
+ *
+ * GATES (Tekton `pr-smoke-test` is authoritative — do NOT run browser-mode locally
+ * on NixOS): the `mod` fixture passes app-blocks-author (floor) + moderatorProcedure.
  *
  * SAFE + SELF-CLEANING (the dev DB is shared across concurrent previews):
  *   - The slug is per-preview (`ci-smoke-ext-<host-label>`), so two previews never
@@ -34,7 +39,7 @@ import { trpcMutation, trpcQuery } from './preview-trpc';
  *     mid-test failure leaves no draft/pending row and re-runs don't collide.
  */
 
-const AUTHOR_ROLE = 'tester' as const;
+const AUTHOR_ROLE = 'mod' as const;
 const PREVIEW_URL = process.env.PREVIEW_URL ?? '';
 
 // Per-preview slug so concurrent previews don't collide on AppListing.slug @unique.
@@ -104,20 +109,20 @@ async function withdrawPendingForSlug(
   }
 }
 
-test.describe('App Blocks P3a: off-site submit → mod queue → withdraw (tester+mod, self-cleaning)', () => {
+test.describe('App Blocks P3a: off-site submit → mod queue → withdraw (mod, self-cleaning)', () => {
   test.use({ storageState: storageStatePath(AUTHOR_ROLE) });
 
-  test('tester submits an external listing → appears in the mod pending queue → withdraw removes it', async ({
+  test('mod submits an external listing → appears in the pending queue → withdraw removes it', async ({
     page,
     playwright,
     baseURL,
   }) => {
-    // Warm page.request against the preview origin (carries the tester auth cookie;
+    // Warm page.request against the preview origin (carries the mod auth cookie;
     // the trpc helpers stamp Origin/Referer for the CSRF gate).
     await page.goto('/', { waitUntil: 'domcontentloaded' });
     const authorRequest = page.request;
 
-    // A second context authed as the moderator, to read the review queue.
+    // A second mod context, to read the review queue independently of the submitter.
     const modRequest = await playwright.request.newContext({
       baseURL: baseURL ?? PREVIEW_URL,
       storageState: storageStatePath('mod'),
@@ -128,7 +133,7 @@ test.describe('App Blocks P3a: off-site submit → mod queue → withdraw (teste
       // Pre-clean any leftover pending row for this preview's slug (prior crashed run).
       await withdrawPendingForSlug(authorRequest, modRequest, SLUG);
 
-      // SUBMIT as the tester (author) — creates a draft AppListing + pending request.
+      // SUBMIT as mod (author via the app-blocks-author mod floor) — creates a draft AppListing + pending request.
       const result = await trpcMutation<SubmitResult>(
         authorRequest,
         'appListings.submitExternalListing',
@@ -147,7 +152,7 @@ test.describe('App Blocks P3a: off-site submit → mod queue → withdraw (teste
         'the draft listing carries the submitted https URL'
       ).toBe(EXTERNAL_URL);
 
-      // WITHDRAW as the tester — terminal; deletes the draft listing + releases the slug.
+      // WITHDRAW as mod — terminal; deletes the draft listing + releases the slug.
       await trpcMutation(authorRequest, 'appListings.withdrawExternalRequest', {
         publishRequestId,
       });
