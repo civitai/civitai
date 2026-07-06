@@ -794,6 +794,13 @@ export const serverSchema = z
     APPS_DEV_TUNNEL_SISH_BACKEND: z
       .string()
       .default('http://sish-http.apps-dev-tunnel.svc.cluster.local:8080'),
+    // APPS_DEV_TUNNEL_INGRESS_TARGET   the Traefik LB IP the ephemeral
+    //   `dev-<hex>.<APPS_DOMAIN>` DNS record points at. external-dns
+    //   (source=traefik-proxy, domain civit.ai) creates the CF-proxied record from
+    //   the IngressRoute's external-dns annotations; default matches the per-app
+    //   block template (`app-templates-cm.yaml`). Without a resolvable record the
+    //   tunnel host is NXDOMAIN and the browser cannot load it.
+    APPS_DEV_TUNNEL_INGRESS_TARGET: z.string().default('192.0.2.1'),
     // APPS_DEV_TUNNEL_SSH_HOST_PUBKEY   the sish server's SSH HOST public key, as a
     //   NON-SECRET OpenSSH line (`ssh-ed25519 AAAA...`). Returned by
     //   startDevTunnel so the CLI can PIN it on the `ssh -R` hop (R1 — closes the
