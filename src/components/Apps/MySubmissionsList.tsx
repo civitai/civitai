@@ -33,6 +33,7 @@ import { AppAnalyticsInline } from '~/components/Apps/AppAnalyticsInline';
 import { AuthorViaGit } from '~/components/Apps/AuthorViaGit';
 import { isStaleDeploy } from '~/components/Apps/deploy-status';
 import {
+  currentlyPublishedVersionId,
   filterGroups,
   groupSubmissionsByApp,
   nextSortState,
@@ -43,6 +44,7 @@ import {
   type SubmissionAccessors,
 } from '~/components/Apps/submissionsTable';
 import { SortableTh, SubmissionSearch, VersionToggle } from '~/components/Apps/submissionsTableUi';
+import { formatDate } from '~/utils/date-helpers';
 
 /** Civitai CLI repo — the recommended author + submit path (replaces the raw
  *  git-clone affordance as the PRIMARY way to author/update an app). */
@@ -88,13 +90,19 @@ export type Submission = {
   userSubscriptionCount: number | null;
 };
 
-function formatDate(d: string | Date): string {
-  const date = typeof d === 'string' ? new Date(d) : d;
-  return date.toLocaleString();
+/** "Month D, YYYY" (e.g. `June 7, 2026`) — the whole-day form used for the
+ *  submitted / reviewed timestamps (no hour/minute; those aren't decision-useful
+ *  to a submitter). Uses the shared repo date util. */
+export function formatSubmissionDate(d: string | Date): string {
+  return formatDate(d, 'MMMM D, YYYY');
 }
 
 export function statusBadge(
-  submission: Pick<Submission, 'status' | 'deployState' | 'deployUpdatedAt'>
+  submission: Pick<Submission, 'status' | 'deployState' | 'deployUpdatedAt'>,
+  /** The "live" green badge is reserved for the CURRENTLY-PUBLISHED version (the
+   *  newest approved one). A previous approved version — even one whose deploy is
+   *  still marked 'live' — shows a plain "approved" badge instead. */
+  isCurrentlyPublished: boolean
 ) {
   const { status } = submission;
   // For an approved request, show the real build/deploy lifecycle rather than a
@@ -131,9 +139,11 @@ export function statusBadge(
           </Badge>
         );
       case 'live':
+        // Only the currently-published version wears the "live" badge; an older
+        // approved version that once deployed shows a plain "approved" instead.
         return (
           <Badge color="green" leftSection={<IconCheck size={12} />}>
-            live
+            {isCurrentlyPublished ? 'live' : 'approved'}
           </Badge>
         );
       default:
@@ -218,14 +228,20 @@ export function ReviewerNotesButton({
  * rows with an app block).
  */
 
-function StatusCell({ submission }: { submission: Submission }) {
+function StatusCell({
+  submission,
+  isCurrentlyPublished,
+}: {
+  submission: Submission;
+  isCurrentlyPublished: boolean;
+}) {
   const { status, rejectionReason, approvalNotes } = submission;
   const notes =
     status === 'rejected' ? rejectionReason : status === 'approved' ? approvalNotes : null;
   const variant = status === 'rejected' ? 'rejected' : 'approved';
   return (
     <Stack gap={6} align="flex-start">
-      {statusBadge(submission)}
+      {statusBadge(submission, isCurrentlyPublished)}
       {notes && <ReviewerNotesButton notes={notes} variant={variant} />}
     </Stack>
   );
@@ -246,11 +262,15 @@ const ONSITE_ACCESSORS: SubmissionAccessors<Submission> = {
 
 /** One submission's rows: the main row + (approved) a deploy-failed alert and the
  *  authoring affordance. `nested` demotes an older (expanded) version row;
- *  `showAuthor` renders the app-level authoring affordance only on the latest. */
+ *  `showAuthor` renders the app-level authoring affordance only on the latest;
+ *  `isCurrentlyPublished` marks THIS version as the live one (drives the "live"
+ *  badge + the "Open live" button — see {@link currentlyPublishedVersionId}). The
+ *  "N versions" toggle renders BELOW the slug, not inline beside it. */
 function OnsiteRow({
   s,
   nested,
   showAuthor,
+  isCurrentlyPublished,
   onWithdraw,
   withdrawing,
   toggle,
@@ -258,44 +278,40 @@ function OnsiteRow({
   s: Submission;
   nested: boolean;
   showAuthor: boolean;
+  isCurrentlyPublished: boolean;
   onWithdraw: (id: string) => void;
   withdrawing: boolean;
   toggle?: ReactNode;
 }) {
-  const mds = (s.manifestDiffSummary ?? {}) as ManifestDiffSummary;
-  const isFirst = mds.kind === 'first-version';
   const isApproved = s.status === 'approved';
   return (
     <>
       <Table.Tr>
         <Table.Td>
-          <Group gap={6} pl={nested ? 'lg' : undefined}>
-            {nested && (
-              <Text size="xs" c="dimmed">
-                ·
-              </Text>
-            )}
-            <Code>{s.slug}</Code>
-            {isFirst && (
-              <Badge color="violet" size="xs">
-                first version
-              </Badge>
-            )}
+          <Stack gap={4} align="flex-start">
+            <Group gap={6} pl={nested ? 'lg' : undefined}>
+              {nested && (
+                <Text size="xs" c="dimmed">
+                  ·
+                </Text>
+              )}
+              <Code>{s.slug}</Code>
+            </Group>
             {toggle}
-          </Group>
+          </Stack>
         </Table.Td>
         <Table.Td>
           <Code>{s.version}</Code>
         </Table.Td>
         <Table.Td>
-          <StatusCell submission={s} />
+          <StatusCell submission={s} isCurrentlyPublished={isCurrentlyPublished} />
         </Table.Td>
         <Table.Td>
-          <Text size="xs">{formatDate(s.submittedAt)}</Text>
+          <Text size="xs">{formatSubmissionDate(s.submittedAt)}</Text>
         </Table.Td>
         <Table.Td>
           {s.reviewedAt ? (
-            <Text size="xs">{formatDate(s.reviewedAt)}</Text>
+            <Text size="xs">{formatSubmissionDate(s.reviewedAt)}</Text>
           ) : (
             <Text size="xs" c="dimmed">
               —
@@ -320,7 +336,7 @@ function OnsiteRow({
         <Table.Td>
           <SubmissionActions
             submission={s}
-            isFirstVersion={isFirst}
+            isCurrentlyPublished={isCurrentlyPublished}
             onWithdraw={() => onWithdraw(s.id)}
             busy={withdrawing}
           />
@@ -418,12 +434,16 @@ export function MySubmissionsList({
             ) : (
               groups.map((g) => {
                 const isExpanded = expanded.has(g.identity);
+                // Single source of truth for the "live" badge + "Open live" button:
+                // the newest approved version across this listing's history.
+                const publishedId = currentlyPublishedVersionId([g.latest, ...g.older]);
                 return (
                   <Fragment key={g.identity}>
                     <OnsiteRow
                       s={g.latest}
                       nested={false}
                       showAuthor
+                      isCurrentlyPublished={g.latest.id === publishedId}
                       onWithdraw={onWithdraw}
                       withdrawing={withdrawing}
                       toggle={
@@ -432,6 +452,7 @@ export function MySubmissionsList({
                             expanded={isExpanded}
                             count={g.versionCount}
                             onToggle={() => toggle(g.identity)}
+                            variant="subtle"
                             testId={`apps-submissions-versions-${g.identity}`}
                           />
                         ) : undefined
@@ -444,6 +465,7 @@ export function MySubmissionsList({
                           s={older}
                           nested
                           showAuthor={false}
+                          isCurrentlyPublished={older.id === publishedId}
                           onWithdraw={onWithdraw}
                           withdrawing={withdrawing}
                         />
@@ -502,12 +524,12 @@ export function AuthorAffordance({ appBlockId }: { appBlockId: string }) {
 
 function SubmissionActions({
   submission,
-  isFirstVersion,
+  isCurrentlyPublished,
   onWithdraw,
   busy,
 }: {
   submission: Submission;
-  isFirstVersion: boolean;
+  isCurrentlyPublished: boolean;
   onWithdraw: () => void;
   busy: boolean;
 }) {
@@ -526,8 +548,9 @@ function SubmissionActions({
     );
   }
   if (submission.status === 'approved') {
-    const live = submission.deployState === 'live' || submission.deployState == null;
-    if (!live && isFirstVersion) {
+    // "Open live" belongs ONLY on the currently-published version — an older
+    // approved version links to nothing live, so it shows no action.
+    if (!isCurrentlyPublished) {
       return (
         <Text size="xs" c="dimmed">
           —
