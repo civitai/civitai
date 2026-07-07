@@ -2064,7 +2064,7 @@ export const getAllImages = async (
         hasPositivePrompt?: boolean;
         poi?: boolean;
         minor?: boolean;
-        judgeScore?: JudgeScore | null;
+        judgeScore?: JudgeScore | Record<string, number> | null;
         // Visibility-gated linked-Model3D id (or null) for the "Posted to 3D
         // Model" chip on the feed-modal path. See the model3dId override below.
         model3dId?: number | null;

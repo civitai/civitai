@@ -195,7 +195,7 @@ export type ChallengeDetail = {
     imageHash: string | null;
     buzzAwarded: number;
     reason: string | null;
-    judgeScore?: JudgeScore | null;
+    judgeScore?: JudgeScore | Record<string, number> | null;
     profilePicture?: ProfileImage | null;
     cosmetics?: UserWithCosmetics['cosmetics'] | null;
   }>;
@@ -486,7 +486,7 @@ export type ChallengeWinnerSummary = {
   imageHash: string | null;
   buzzAwarded: number;
   reason?: string | null;
-  judgeScore?: JudgeScore | null;
+  judgeScore?: JudgeScore | Record<string, number> | null;
   profilePicture?: ProfileImage | null;
   cosmetics?: UserWithCosmetics['cosmetics'] | null;
 };

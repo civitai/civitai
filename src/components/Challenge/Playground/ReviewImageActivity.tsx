@@ -19,7 +19,7 @@ import { usePlaygroundStore } from './playground.store';
 import { TemplateVariableIndicators } from './TemplateVariableIndicators';
 
 type ReviewResult = {
-  score: { theme: number; wittiness: number; humor: number; aesthetic: number };
+  score: Record<string, number>;
   reaction: string;
   comment: string;
   summary: string;

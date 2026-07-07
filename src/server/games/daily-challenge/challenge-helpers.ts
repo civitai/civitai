@@ -477,7 +477,7 @@ export async function getChallengeWinners(challengeId: number): Promise<
     buzzAwarded: number;
     pointsAwarded: number;
     reason: string | null;
-    judgeScore: JudgeScore | null;
+    judgeScore: JudgeScore | Record<string, number> | null;
   }>
 > {
   const rows = await dbRead.$queryRaw<
