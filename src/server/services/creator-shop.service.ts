@@ -5,6 +5,9 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
+import { getCreatorRequirements } from '~/server/services/creator-program.service';
+import { createNotification } from '~/server/services/notification.service';
+import { NotificationCategory } from '~/server/common/enums';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -419,7 +422,14 @@ export const reviewCreatorShopItem = async ({
 }: ReviewCreatorShopItemInput & { reviewerId: number }) => {
   const item = await dbRead.cosmeticShopItem.findUnique({
     where: { id },
-    select: { id: true, unitAmount: true, status: true, meta: true },
+    select: {
+      id: true,
+      unitAmount: true,
+      status: true,
+      meta: true,
+      title: true,
+      cosmetic: { select: { createdById: true, creator: { select: { username: true } } } },
+    },
   });
   if (!item) throw throwNotFoundError('Shop item not found');
   if (item.status === CosmeticShopItemStatus.Archived)
@@ -427,32 +437,56 @@ export const reviewCreatorShopItem = async ({
 
   const meta = (item.meta ?? {}) as CosmeticShopItemMeta;
 
-  if (action === 'reject') {
-    return dbWrite.cosmeticShopItem.update({
-      where: { id },
-      data: {
-        status: CosmeticShopItemStatus.Rejected,
-        reviewedById: reviewerId,
-        reviewedAt: new Date(),
-        rejectionReason: rejectionReason ?? null,
-      },
-      select: creatorShopItemSelect,
-    });
+  const updated =
+    action === 'reject'
+      ? await dbWrite.cosmeticShopItem.update({
+          where: { id },
+          data: {
+            status: CosmeticShopItemStatus.Rejected,
+            reviewedById: reviewerId,
+            reviewedAt: new Date(),
+            rejectionReason: rejectionReason ?? null,
+          },
+          select: creatorShopItemSelect,
+        })
+      : // Approve: publish + record the approved price. Payout is wired at purchase
+        // time from cosmetic.createdById — no paidToUserIds needed.
+        await dbWrite.cosmeticShopItem.update({
+          where: { id },
+          data: {
+            status: CosmeticShopItemStatus.Published,
+            reviewedById: reviewerId,
+            reviewedAt: new Date(),
+            rejectionReason: null,
+            meta: { ...meta, lastApprovedAmount: item.unitAmount } as Prisma.InputJsonValue,
+          },
+          select: creatorShopItemSelect,
+        });
+
+  // Let the creator know the review outcome (best-effort).
+  const creatorId = item.cosmetic.createdById;
+  if (creatorId) {
+    const username = item.cosmetic.creator?.username ?? undefined;
+    await createNotification(
+      action === 'approve'
+        ? {
+            type: 'creator-shop-item-approved',
+            userId: creatorId,
+            category: NotificationCategory.System,
+            key: `creator-shop-item-approved:${id}`,
+            details: { title: item.title, username },
+          }
+        : {
+            type: 'creator-shop-item-rejected',
+            userId: creatorId,
+            category: NotificationCategory.System,
+            key: `creator-shop-item-rejected:${id}:${new Date().getTime()}`,
+            details: { title: item.title, username, reason: rejectionReason ?? undefined },
+          }
+    );
   }
 
-  // Approve: publish + record the approved price. Payout is wired at purchase
-  // time from cosmetic.createdById — no paidToUserIds needed.
-  return dbWrite.cosmeticShopItem.update({
-    where: { id },
-    data: {
-      status: CosmeticShopItemStatus.Published,
-      reviewedById: reviewerId,
-      reviewedAt: new Date(),
-      rejectionReason: null,
-      meta: { ...meta, lastApprovedAmount: item.unitAmount } as Prisma.InputJsonValue,
-    },
-    select: creatorShopItemSelect,
-  });
+  return updated;
 };
 
 // ---------------------------------------------------------------------------

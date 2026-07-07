@@ -3,6 +3,29 @@ import { createNotificationProcessor } from '~/server/notifications/base.notific
 import { numberWithCommas } from '~/utils/number-helpers';
 
 export const cosmeticShopNotifications = createNotificationProcessor({
+  // Event-driven (created in reviewCreatorShopItem) — a creator's submission was reviewed.
+  'creator-shop-item-approved': {
+    displayName: 'Creator Shop: Cosmetic approved',
+    category: NotificationCategory.System,
+    prepareMessage: ({ details }) => ({
+      message: `Your cosmetic "${
+        details.title as string
+      }" was approved and is now live in your shop.`,
+      url: details.username ? `/user/${details.username as string}/shop` : '/',
+    }),
+  },
+  'creator-shop-item-rejected': {
+    displayName: 'Creator Shop: Cosmetic needs changes',
+    category: NotificationCategory.System,
+    prepareMessage: ({ details }) => ({
+      message: details.reason
+        ? `Your cosmetic "${details.title as string}" needs changes: ${details.reason as string}`
+        : `Your cosmetic "${
+            details.title as string
+          }" wasn't approved. Edit and resubmit it from your shop.`,
+      url: details.username ? `/user/${details.username as string}/shop/manage` : '/',
+    }),
+  },
   // Moveable (if created through API)
   'cosmetic-shop-item-added-to-section': {
     defaultDisabled: true,
