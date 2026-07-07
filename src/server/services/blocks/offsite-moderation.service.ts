@@ -1,10 +1,22 @@
+import { TRPCError } from '@trpc/server';
+
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   APP_LISTING_REPORT_REASONS,
+  OFFSITE_MOD_REASON_MIN,
+  type DelistListingInput,
+  type DismissReportInput,
   type ListListingReportsInput,
+  type ListModerationEventsInput,
+  type PurgeListingInput,
+  type RelistListingInput,
   type ReportListingInput,
+  type ResolveReportInput,
 } from '~/server/schema/blocks/offsite-moderation.schema';
-import { newAppListingReportId } from '~/server/utils/app-block-ids';
+import {
+  newAppListingModerationEventId,
+  newAppListingReportId,
+} from '~/server/utils/app-block-ids';
 
 /**
  * App Store Listings (W13) — P3b OFF-SITE MODERATION service.
@@ -36,7 +48,15 @@ import { newAppListingReportId } from '~/server/utils/app-block-ids';
 export type OffsiteModerationErrorCode =
   | 'NOT_FOUND'
   | 'NOT_REPORTABLE'
-  | 'ALREADY_REPORTED';
+  | 'ALREADY_REPORTED'
+  // PR3 mod-action failure modes:
+  //   NOT_TRANSITIONABLE — a status-guarded delist/relist matched 0 rows (the
+  //     listing was already moved by a concurrent action) → BAD_REQUEST.
+  //   REPORT_NOT_PENDING — resolve/dismiss on an already-closed report → BAD_REQUEST.
+  // A kind mismatch (an on-site listing) reuses NOT_FOUND (generic — a mod caller
+  // must not be able to probe a listing's kind through this surface).
+  | 'NOT_TRANSITIONABLE'
+  | 'REPORT_NOT_PENDING';
 
 export class OffsiteModerationError extends Error {
   readonly code: OffsiteModerationErrorCode;
@@ -174,7 +194,10 @@ const reportQueueSelect = {
   createdAt: true,
   resolvedAt: true,
   reporter: { select: { id: true, username: true, image: true } },
-  appListing: { select: { slug: true, name: true, kind: true } },
+  // `status` is included so the report-queue UI can compute the per-row action set
+  // (delist only on an approved listing, relist/purge on a removed one) WITHOUT a
+  // second fetch. slug/name/kind/status are all public-safe listing fields.
+  appListing: { select: { slug: true, name: true, kind: true, status: true } },
 } as const;
 
 /**
@@ -194,6 +217,319 @@ export async function listListingReports(opts: ListListingReportsInput = {}) {
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
     select: reportQueueSelect,
+  });
+  const hasNext = rows.length > limit;
+  const items = hasNext ? rows.slice(0, limit) : rows;
+  return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
+}
+
+// ---------------------------------------------------------------------------
+// PR3 — mod ACTIONS (delist / relist / purge / resolve / dismiss). Each writes
+// EXACTLY ONE `AppListingModerationEvent` in the SAME transaction as its mutation
+// (a crash can't split the mutation from its audit record). All mod-only at the
+// router (`moderatorProcedure` + `isModerator` recheck). `claim` is PR4.
+//
+// Discipline mirrored from the P3a offsite-listing approve/reject:
+//   - CLASSIFY on the replica (kind guard), then MUTATE with a status-guarded
+//     `updateMany`/`deleteMany` so a concurrent action can't double-act (TOCTOU);
+//     a 0-count rolls the whole tx back BEFORE the audit event is written.
+//   - A missing listing AND an on-site listing both raise the SAME generic
+//     NOT_FOUND — a mod caller can't probe a listing's kind/existence here.
+// ---------------------------------------------------------------------------
+
+/**
+ * Trim + re-assert the mod reason floor (defense-in-depth — these fns are exported
+ * and unit-tested directly, not only reached through the zod schema). A too-short
+ * reason is a plain BAD_REQUEST (passed through by `mapOffsiteError`).
+ */
+function requireModReason(raw: string): string {
+  const reason = raw.trim();
+  if (reason.length < OFFSITE_MOD_REASON_MIN) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `reason must be at least ${OFFSITE_MOD_REASON_MIN} characters`,
+    });
+  }
+  return reason;
+}
+
+/**
+ * Load + classify an off-site listing for a mod action. A missing listing AND an
+ * on-site (kind!=='offsite') listing BOTH raise the SAME generic NOT_FOUND — the
+ * kind guard (delist/relist/purge are offsite-only, §8 of the scope doc) must not
+ * let a mod caller probe a listing's kind or existence through this surface.
+ */
+async function classifyOffsiteListing(
+  appListingId: string
+): Promise<{ id: string; status: string; slug: string }> {
+  const listing = await dbRead.appListing.findUnique({
+    where: { id: appListingId },
+    select: { id: true, kind: true, status: true, slug: true },
+  });
+  if (!listing || listing.kind !== 'offsite') {
+    throw new OffsiteModerationError('NOT_FOUND', 'Off-site listing not found.');
+  }
+  return { id: listing.id, status: listing.status, slug: listing.slug };
+}
+
+export type DelistListingResult = { appListingId: string; status: 'removed' };
+
+/**
+ * MOD delist an APPROVED off-site listing (approved → removed). The read path is
+ * approved-only, so a `removed` listing drops out of `listAvailableListings` +
+ * `getListingDetail` automatically (no read-path change). Status-guarded: the
+ * mutate is `updateMany({ id, kind:'offsite', status:'approved' })`; a 0-count
+ * means a concurrent action already moved the row → NOT_TRANSITIONABLE and the tx
+ * rolls back BEFORE the audit event is written (so a guarded failure emits ZERO
+ * events). Optionally resolves the triggering `reportId` in the same tx.
+ */
+export async function delistListing(opts: {
+  input: DelistListingInput;
+  reviewerUserId: number;
+}): Promise<DelistListingResult> {
+  const { input, reviewerUserId } = opts;
+  const reason = requireModReason(input.reason);
+  const listing = await classifyOffsiteListing(input.appListingId);
+
+  await dbWrite.$transaction(async (tx) => {
+    const flipped = await tx.appListing.updateMany({
+      where: { id: input.appListingId, kind: 'offsite', status: 'approved' },
+      data: { status: 'removed' },
+    });
+    if (flipped.count === 0) {
+      throw new OffsiteModerationError(
+        'NOT_TRANSITIONABLE',
+        'This listing can no longer be delisted.'
+      );
+    }
+    await tx.appListingModerationEvent.create({
+      data: {
+        id: newAppListingModerationEventId(),
+        appListingId: input.appListingId,
+        slug: listing.slug,
+        action: 'delist',
+        actorUserId: reviewerUserId,
+        reason,
+        reportId: input.reportId ?? null,
+        before: { status: 'approved' },
+        after: { status: 'removed' },
+      },
+    });
+    if (input.reportId) {
+      // Resolve the triggering report in the same tx. Best-effort + status-guarded:
+      // a report a concurrent action already closed is left as-is (0 rows) — the
+      // delist still stands and the event still links the reportId.
+      await tx.appListingReport.updateMany({
+        where: { id: input.reportId, status: 'pending' },
+        data: { status: 'resolved', resolvedByUserId: reviewerUserId, resolvedAt: new Date() },
+      });
+    }
+  });
+
+  return { appListingId: input.appListingId, status: 'removed' };
+}
+
+export type RelistListingResult = { appListingId: string; status: 'approved' };
+
+/**
+ * MOD relist a REMOVED off-site listing (removed → approved) — reversibility for a
+ * mistaken/appealed takedown; restores store visibility instantly. Status-guarded
+ * (`status:'removed'`) + one audit event, same TOCTOU discipline as delist.
+ */
+export async function relistListing(opts: {
+  input: RelistListingInput;
+  reviewerUserId: number;
+}): Promise<RelistListingResult> {
+  const { input, reviewerUserId } = opts;
+  const reason = requireModReason(input.reason);
+  const listing = await classifyOffsiteListing(input.appListingId);
+
+  await dbWrite.$transaction(async (tx) => {
+    const flipped = await tx.appListing.updateMany({
+      where: { id: input.appListingId, kind: 'offsite', status: 'removed' },
+      data: { status: 'approved' },
+    });
+    if (flipped.count === 0) {
+      throw new OffsiteModerationError(
+        'NOT_TRANSITIONABLE',
+        'This listing can no longer be relisted.'
+      );
+    }
+    await tx.appListingModerationEvent.create({
+      data: {
+        id: newAppListingModerationEventId(),
+        appListingId: input.appListingId,
+        slug: listing.slug,
+        action: 'relist',
+        actorUserId: reviewerUserId,
+        reason,
+        before: { status: 'removed' },
+        after: { status: 'approved' },
+      },
+    });
+  });
+
+  return { appListingId: input.appListingId, status: 'approved' };
+}
+
+export type PurgeListingResult = { appListingId: string; purged: true };
+
+/**
+ * MOD hard-delete (purge) an off-site listing — the genuine final expunge that
+ * also makes the delist round-trip self-cleaning.
+ *
+ * 🔴 ORDER MATTERS: the audit event is written FIRST (capturing the slug snapshot +
+ * the pre-delete status), THEN the `AppListing` row is deleted. The event's
+ * `appListingId` FK is `ON DELETE SET NULL`, so the delete nulls the event's
+ * `appListingId` but the event + its denormalized `slug` SURVIVE — an append-only
+ * audit trail must outlive the row it references. `AppListingScreenshot` +
+ * `AppListingReport` cascade-delete with the listing (intended). Both the event
+ * write + the delete are in ONE tx; a 0-count delete (raced) rolls the event back.
+ */
+export async function purgeListing(opts: {
+  input: PurgeListingInput;
+  reviewerUserId: number;
+}): Promise<PurgeListingResult> {
+  const { input, reviewerUserId } = opts;
+  const reason = requireModReason(input.reason);
+  const listing = await classifyOffsiteListing(input.appListingId);
+
+  await dbWrite.$transaction(async (tx) => {
+    // Event FIRST (so the slug/state snapshot is captured before the row is gone).
+    await tx.appListingModerationEvent.create({
+      data: {
+        id: newAppListingModerationEventId(),
+        appListingId: input.appListingId,
+        slug: listing.slug,
+        action: 'purge',
+        actorUserId: reviewerUserId,
+        reason,
+        before: { status: listing.status },
+      },
+    });
+    // THEN the hard delete (nulls the event's appListingId via SetNull; cascades
+    // screenshots + reports).
+    const deleted = await tx.appListing.deleteMany({ where: { id: input.appListingId } });
+    if (deleted.count === 0) {
+      // Raced (concurrently purged between classify and here) → roll the event back.
+      throw new OffsiteModerationError('NOT_FOUND', 'Off-site listing not found.');
+    }
+  });
+
+  return { appListingId: input.appListingId, purged: true };
+}
+
+/**
+ * Shared close-a-report path for resolve/dismiss: status-guarded flip
+ * (pending → resolved|dismissed) + one audit event in the same tx. A non-pending
+ * report → REPORT_NOT_PENDING (rolls back before the event). The optional `note`
+ * lands on the event's `reason` (nullable — no note is fine).
+ */
+async function closeReport(opts: {
+  reportId: string;
+  reviewerUserId: number;
+  note?: string;
+  target: 'resolved' | 'dismissed';
+  action: 'report-resolve' | 'report-dismiss';
+}): Promise<void> {
+  const report = await dbRead.appListingReport.findUnique({
+    where: { id: opts.reportId },
+    select: { id: true, status: true, appListingId: true, appListing: { select: { slug: true } } },
+  });
+  if (!report) throw new OffsiteModerationError('NOT_FOUND', 'Report not found.');
+
+  const note = opts.note?.trim() ? opts.note.trim() : null;
+
+  await dbWrite.$transaction(async (tx) => {
+    const flipped = await tx.appListingReport.updateMany({
+      where: { id: opts.reportId, status: 'pending' },
+      data: { status: opts.target, resolvedByUserId: opts.reviewerUserId, resolvedAt: new Date() },
+    });
+    if (flipped.count === 0) {
+      throw new OffsiteModerationError(
+        'REPORT_NOT_PENDING',
+        'This report has already been handled.'
+      );
+    }
+    await tx.appListingModerationEvent.create({
+      data: {
+        id: newAppListingModerationEventId(),
+        appListingId: report.appListingId,
+        slug: report.appListing?.slug ?? '(unknown)',
+        action: opts.action,
+        actorUserId: opts.reviewerUserId,
+        reason: note,
+        reportId: opts.reportId,
+        before: { status: 'pending' },
+        after: { status: opts.target },
+      },
+    });
+  });
+}
+
+/** MOD resolve a pending report (pending → resolved). */
+export async function resolveReport(opts: {
+  input: ResolveReportInput;
+  reviewerUserId: number;
+}): Promise<void> {
+  await closeReport({
+    reportId: opts.input.reportId,
+    reviewerUserId: opts.reviewerUserId,
+    note: opts.input.note,
+    target: 'resolved',
+    action: 'report-resolve',
+  });
+}
+
+/** MOD dismiss a pending report (pending → dismissed; no action taken). */
+export async function dismissReport(opts: {
+  input: DismissReportInput;
+  reviewerUserId: number;
+}): Promise<void> {
+  await closeReport({
+    reportId: opts.input.reportId,
+    reviewerUserId: opts.reviewerUserId,
+    note: opts.input.note,
+    target: 'dismissed',
+    action: 'report-dismiss',
+  });
+}
+
+// ---------------------------------------------------------------------------
+// listModerationEvents (moderator) — per-listing append-only audit history.
+// ---------------------------------------------------------------------------
+
+/**
+ * PII-safe moderation-event projection: the audit fields + the acting mod's public
+ * chip ({id,username,image}) + the denormalized slug. No raw actorUserId FK.
+ */
+const moderationEventSelect = {
+  id: true,
+  appListingId: true,
+  slug: true,
+  action: true,
+  reason: true,
+  detail: true,
+  before: true,
+  after: true,
+  reportId: true,
+  createdAt: true,
+  actor: { select: { id: true, username: true, image: true } },
+} as const;
+
+/**
+ * MOD per-listing moderation history, NEWEST-first, keyset-paginated. The cursor is
+ * the event id (`alme_<ULID>`, time-sortable so it tracks the `createdAt desc`
+ * order); the `id` tie-break makes same-millisecond ordering deterministic.
+ */
+export async function listModerationEvents(opts: ListModerationEventsInput) {
+  const limit = Math.min(opts.limit ?? 25, 50);
+  const rows = await dbRead.appListingModerationEvent.findMany({
+    where: { appListingId: opts.appListingId },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    take: limit + 1,
+    ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
+    select: moderationEventSelect,
   });
   const hasNext = rows.length > limit;
   const items = hasNext ? rows.slice(0, limit) : rows;

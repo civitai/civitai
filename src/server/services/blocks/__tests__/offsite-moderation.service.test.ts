@@ -300,8 +300,11 @@ describe('listListingReports — read-only mod queue', () => {
     // The reporter chip is the standard public {id,username,image} shape only.
     expect(select.reporter).toEqual({ select: { id: true, username: true, image: true } });
     expect(select.reporter.select.email).toBeUndefined();
-    // The target listing exposes only slug/name/kind.
-    expect(select.appListing).toEqual({ select: { slug: true, name: true, kind: true } });
+    // The target listing exposes only slug/name/kind/status (status drives the
+    // report-queue action set; still all public-safe listing fields).
+    expect(select.appListing).toEqual({
+      select: { slug: true, name: true, kind: true, status: true },
+    });
     // No reporterUserId (raw FK) / resolvedByUserId leaked in the projection.
     expect(select.reporterUserId).toBeUndefined();
     expect(select.resolvedByUserId).toBeUndefined();

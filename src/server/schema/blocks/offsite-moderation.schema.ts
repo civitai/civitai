@@ -65,3 +65,95 @@ export const listListingReportsSchema = z.object({
   limit: z.number().int().min(1).max(50).optional(),
 });
 export type ListListingReportsInput = z.infer<typeof listListingReportsSchema>;
+
+// ---------------------------------------------------------------------------
+// P3b PR3 — mod ACTIONS (delist / relist / purge / resolve / dismiss) + the
+// per-listing moderation-history read.
+// ---------------------------------------------------------------------------
+
+/**
+ * Moderation-event action taxonomy — MUST equal the `app_listing_mod_events_action_check`
+ * CHECK set (migration `20260706120100_w13_p3b_app_listing_moderation_events`). A
+ * drift here would let a proc write an `action` the DB rejects (23514). The
+ * action-agreement unit test pins this tuple against the migration's IN-list.
+ *
+ * NOTE the hyphen form (`report-resolve`/`report-dismiss`) — it matches the
+ * shipped migration CHECK verbatim. `claim` is reserved for PR4 (not written by
+ * any PR3 proc), but stays in the tuple because the DB CHECK already allows it.
+ */
+export const APP_LISTING_MODERATION_ACTIONS = [
+  'delist',
+  'relist',
+  'claim',
+  'purge',
+  'report-resolve',
+  'report-dismiss',
+] as const;
+export type AppListingModerationAction = (typeof APP_LISTING_MODERATION_ACTIONS)[number];
+
+/**
+ * Bounds for the mod-supplied rationale (`reason`, REQUIRED on delist/relist/purge)
+ * and the optional resolution `note` (resolve/dismiss). The reason is the audit
+ * trail's human record of WHY a takedown happened, so a small non-empty floor is
+ * enforced (mirrors the reject-reason discipline, lighter).
+ */
+export const OFFSITE_MOD_REASON_MIN = 3;
+export const OFFSITE_MOD_REASON_MAX = 1000;
+export const OFFSITE_MOD_NOTE_MAX = 1000;
+
+const modReason = z.string().min(OFFSITE_MOD_REASON_MIN).max(OFFSITE_MOD_REASON_MAX);
+const modNote = z.string().max(OFFSITE_MOD_NOTE_MAX).optional();
+
+/**
+ * MOD delist an APPROVED off-site listing (approved → removed). `reason` is
+ * required (audit); `reportId` optionally links the report that triggered the
+ * takedown (resolved in the same tx). The reviewer is bound to `ctx.user.id` in
+ * the service — never supplied by the client.
+ */
+export const delistListingSchema = z.object({
+  appListingId: z.string().min(1).max(64),
+  reason: modReason,
+  reportId: z.string().min(1).max(64).optional(),
+});
+export type DelistListingInput = z.infer<typeof delistListingSchema>;
+
+/** MOD relist a REMOVED off-site listing (removed → approved). Reversibility. */
+export const relistListingSchema = z.object({
+  appListingId: z.string().min(1).max(64),
+  reason: modReason,
+});
+export type RelistListingInput = z.infer<typeof relistListingSchema>;
+
+/**
+ * MOD hard-delete (purge) an off-site listing — the final expunge that also makes
+ * the delist round-trip self-cleaning. Destructive: the UI gates it behind a
+ * confirm. `reason` required for the audit event (which SURVIVES the delete via
+ * the SetNull FK + the denormalized slug snapshot).
+ */
+export const purgeListingSchema = z.object({
+  appListingId: z.string().min(1).max(64),
+  reason: modReason,
+});
+export type PurgeListingInput = z.infer<typeof purgeListingSchema>;
+
+/** MOD resolve a PENDING report (pending → resolved). Optional resolution note. */
+export const resolveReportSchema = z.object({
+  reportId: z.string().min(1).max(64),
+  note: modNote,
+});
+export type ResolveReportInput = z.infer<typeof resolveReportSchema>;
+
+/** MOD dismiss a PENDING report (pending → dismissed; no action taken). */
+export const dismissReportSchema = z.object({
+  reportId: z.string().min(1).max(64),
+  note: modNote,
+});
+export type DismissReportInput = z.infer<typeof dismissReportSchema>;
+
+/** MOD per-listing moderation-history read (keyset, newest-first). */
+export const listModerationEventsSchema = z.object({
+  appListingId: z.string().min(1).max(64),
+  cursor: z.string().min(1).max(64).optional(),
+  limit: z.number().int().min(1).max(50).optional(),
+});
+export type ListModerationEventsInput = z.infer<typeof listModerationEventsSchema>;

@@ -24,8 +24,14 @@ import {
   withdrawExternalRequestSchema,
 } from '~/server/schema/blocks/offsite-listing.schema';
 import {
+  delistListingSchema,
+  dismissReportSchema,
   listListingReportsSchema,
+  listModerationEventsSchema,
+  purgeListingSchema,
+  relistListingSchema,
   reportListingSchema,
+  resolveReportSchema,
 } from '~/server/schema/blocks/offsite-moderation.schema';
 import { rateLimit } from '~/server/middleware.trpc';
 import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
@@ -473,6 +479,113 @@ export const appListingsRouter = router({
         '~/server/services/blocks/offsite-moderation.service'
       );
       return listListingReports(input);
+    }),
+
+  // -------------------------------------------------------------------------
+  // P3b PR3 mod ACTIONS — delist / relist / purge / resolve / dismiss (DARK).
+  //
+  // Each is `moderatorProcedure` + the inner `isModerator` recheck (belt +
+  // braces, mirroring approve/reject) + `mapOffsiteError` (typed → TRPC code, no
+  // infra leak). The reviewer is bound to `ctx.user.id` — never client-supplied.
+  // Each writes exactly one `AppListingModerationEvent` in the same tx as its
+  // mutation. `claimListing` is a separate PR4. All offsite-only + dark.
+  // -------------------------------------------------------------------------
+
+  /**
+   * MOD delist an approved off-site listing (approved → removed). Drops out of the
+   * approved-only store read path automatically. Optionally resolves a linked
+   * `reportId` in the same tx. Typed failures map via `mapOffsiteError`
+   * (NOT_FOUND→NOT_FOUND, NOT_TRANSITIONABLE→BAD_REQUEST, infra→INTERNAL/no leak).
+   */
+  delistListing: moderatorProcedure
+    .input(delistListingSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Delisting off-site listings is restricted to civitai team');
+      }
+      const { delistListing } = await import('~/server/services/blocks/offsite-moderation.service');
+      try {
+        return await delistListing({ input, reviewerUserId: ctx.user.id });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /** MOD relist a removed off-site listing (removed → approved). Reversibility. */
+  relistListing: moderatorProcedure
+    .input(relistListingSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Relisting off-site listings is restricted to civitai team');
+      }
+      const { relistListing } = await import('~/server/services/blocks/offsite-moderation.service');
+      try {
+        return await relistListing({ input, reviewerUserId: ctx.user.id });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
+   * MOD hard-delete (purge) an off-site listing — the final expunge + the
+   * self-clean primitive. Writes the audit event BEFORE the delete so the event
+   * survives (SetNull FK + slug snapshot). Destructive — the UI gates it behind a
+   * confirm.
+   */
+  purgeListing: moderatorProcedure
+    .input(purgeListingSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Purging off-site listings is restricted to civitai team');
+      }
+      const { purgeListing } = await import('~/server/services/blocks/offsite-moderation.service');
+      try {
+        return await purgeListing({ input, reviewerUserId: ctx.user.id });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /** MOD resolve a pending report (pending → resolved) + audit event. */
+  resolveReport: moderatorProcedure
+    .input(resolveReportSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Resolving reports is restricted to civitai team');
+      }
+      const { resolveReport } = await import('~/server/services/blocks/offsite-moderation.service');
+      try {
+        await resolveReport({ input, reviewerUserId: ctx.user.id });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+      return { ok: true };
+    }),
+
+  /** MOD dismiss a pending report (pending → dismissed) + audit event. */
+  dismissReport: moderatorProcedure
+    .input(dismissReportSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Dismissing reports is restricted to civitai team');
+      }
+      const { dismissReport } = await import('~/server/services/blocks/offsite-moderation.service');
+      try {
+        await dismissReport({ input, reviewerUserId: ctx.user.id });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+      return { ok: true };
+    }),
+
+  /** MOD per-listing moderation history (audit trail), newest-first, keyset. */
+  listModerationEvents: moderatorProcedure
+    .input(listModerationEventsSchema)
+    .query(async ({ input }) => {
+      const { listModerationEvents } = await import(
+        '~/server/services/blocks/offsite-moderation.service'
+      );
+      return listModerationEvents(input);
     }),
 
   // -------------------------------------------------------------------------
