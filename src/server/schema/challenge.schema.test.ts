@@ -22,7 +22,7 @@ describe('userChallengeUpsertSchema money/quantity floors', () => {
     theme: 'Neon',
     coverImage: { url: '123e4567-e89b-12d3-a456-426614174000' },
     judgeId: 1,
-    judgingCategories: [{ name: 'Theme', criteria: 'Fits the theme.' }],
+    judgingCategories: [{ key: 'theme', label: 'Theme', criteria: 'Fits the theme.', weight: 100 }],
     entryFee: CHALLENGE_MIN_ENTRY_FEE,
     initialPrizeBuzz: 0,
     prizeDistribution: [50, 30, 20],
