@@ -119,3 +119,12 @@ export function newAppListingScreenshotId(): string {
 export function newAppListingPublishRequestId(): string {
   return `alpr_${newUlid()}`;
 }
+
+// App Store Listings (W13) — P3b off-site moderation (report / delist / claim).
+export function newAppListingReportId(): string {
+  return `alrp_${newUlid()}`;
+}
+
+export function newAppListingModerationEventId(): string {
+  return `alme_${newUlid()}`;
+}
