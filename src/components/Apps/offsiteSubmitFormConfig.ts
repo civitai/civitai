@@ -158,8 +158,11 @@ export function isOffsiteSubmitFormValid(values: OffsiteSubmitFormValues): boole
  *   - `slug`  = the base kebab-cased + SLUG_REGEX-sanitized: lower-cased, every
  *     run of non `[a-z0-9]` chars collapsed to a single `-`, leading/trailing `-`
  *     trimmed, and any leading non-letters dropped (SLUG_REGEX requires a leading
- *     letter). If the sanitized result still can't satisfy SLUG_REGEX (e.g. a
- *     single-char host like `x.com`), `slug` is `''` (name may still be set).
+ *     letter). If the sanitized result can't satisfy SLUG_REGEX (e.g. a
+ *     single-char host like `x.com`) OR falls outside the server's
+ *     `OFFSITE_SLUG_MIN`–`OFFSITE_SLUG_MAX` length bound (e.g. `ab.com` → len 2,
+ *     or a ≥41-char DNS label), `slug` is `''` (name may still be set) — the
+ *     prefill never seeds a value the client validator would reject.
  */
 export function deriveListingFromUrl(url: string): { name: string; slug: string } {
   const validation = validateExternalUrl(url);
@@ -186,7 +189,12 @@ export function deriveListingFromUrl(url: string): { name: string; slug: string 
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .replace(/^[^a-z]+/, '');
-  const slug = SLUG_REGEX.test(slugCandidate) ? slugCandidate : '';
+  const slug =
+    SLUG_REGEX.test(slugCandidate) &&
+    slugCandidate.length >= OFFSITE_SLUG_MIN &&
+    slugCandidate.length <= OFFSITE_SLUG_MAX
+      ? slugCandidate
+      : '';
 
   return { name, slug };
 }

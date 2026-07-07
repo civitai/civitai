@@ -30,6 +30,7 @@ import {
   OFFSITE_SUBMIT_LIMITS,
   deriveListingFromUrl,
   emptyOffsiteSubmitForm,
+  isDetailsStepComplete,
   isUrlStepComplete,
   validateOffsiteSubmitForm,
   type OffsiteSubmitFormErrors,
@@ -376,6 +377,11 @@ export function ExternalSubmitForm() {
               <Button
                 onClick={handleCreateDraft}
                 loading={busy}
+                // UX gate: the Details step must be complete before a draft can be
+                // created. `handleCreateDraft` still runs the authoritative
+                // `validateOffsiteSubmitForm` on click — this only disables the
+                // button early so the Details→Assets gate is explicit in the UI.
+                disabled={!isDetailsStepComplete(values)}
                 leftSection={<IconExternalLink size={16} />}
                 data-testid="apps-offsite-submit-create"
               >

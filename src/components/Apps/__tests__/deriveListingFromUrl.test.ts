@@ -101,6 +101,73 @@ describe('deriveListingFromUrl — slug is always SLUG_REGEX-safe or empty', () 
   });
 });
 
+describe('deriveListingFromUrl — slug clamped to the server 3–40 length bound', () => {
+  // The derived slug is regex-valid but was previously unbounded on length, so a
+  // 2-char host or a ≥41-char DNS label prefilled a slug the client validator
+  // (min 3 / max 40) would immediately reject. The clamp returns '' instead so the
+  // field is simply left blank for the user to fill.
+  it('a 2-char host is below the min → slug empty, name still set', () => {
+    expect(deriveListingFromUrl('https://ab.com')).toEqual({ name: 'Ab', slug: '' });
+  });
+
+  it('a single-char host is below the min → slug empty (regex also rejects it)', () => {
+    expect(deriveListingFromUrl('https://x.com')).toEqual({ name: 'X', slug: '' });
+  });
+
+  it('a 3-char host is exactly the min → slug kept', () => {
+    expect(deriveListingFromUrl('https://abc.com')).toEqual({ name: 'Abc', slug: 'abc' });
+  });
+
+  it('a ≥41-char DNS label exceeds the max → slug empty, name still set', () => {
+    const label = 'a'.repeat(41);
+    const result = deriveListingFromUrl(`https://${label}.com`);
+    expect(result.slug).toBe('');
+    expect(result.name).toBe(`A${'a'.repeat(40)}`);
+  });
+});
+
+describe('deriveListingFromUrl — hostile / edge hosts never throw', () => {
+  // Each host below was hand-verified by the audit; pin the exact {name,slug} the
+  // (length-clamped) function returns so the parse-then-sanitize path can't regress
+  // into a throw or a server-invalid prefill.
+  it('IDN host is punycode-derived (no throw, regex-safe slug)', () => {
+    // The URL parser converts `münchen.de` → `xn--mnchen-3ya.de` before we see it.
+    const result = deriveListingFromUrl('https://münchen.de');
+    expect(result).toEqual({ name: 'Xn-Mnchen-3ya', slug: 'xn-mnchen-3ya' });
+    expect(SLUG_REGEX.test(result.slug)).toBe(true);
+  });
+
+  it('IPv6 literal host → slug empty (leading non-letter stripped to nothing)', () => {
+    expect(deriveListingFromUrl('https://[::1]')).toEqual({ name: '[::1]', slug: '' });
+  });
+
+  it('userinfo is stripped — derivation uses the host only', () => {
+    expect(deriveListingFromUrl('https://user:pass@example.com')).toEqual({
+      name: 'Example',
+      slug: 'example',
+    });
+  });
+
+  it('an all-numeric dotted host → slug empty (leading-letter rule)', () => {
+    expect(deriveListingFromUrl('https://123.45.67.89').slug).toBe('');
+  });
+
+  it('an all-numeric first label → slug empty (leading-letter rule)', () => {
+    expect(deriveListingFromUrl('https://12345.example.com').slug).toBe('');
+  });
+
+  it('a hyphen-only label sanitizes to empty', () => {
+    expect(deriveListingFromUrl('https://--.com')).toEqual({ name: '', slug: '' });
+  });
+
+  it('a trailing-dot host still derives from the first label', () => {
+    expect(deriveListingFromUrl('https://example.com.')).toEqual({
+      name: 'Example',
+      slug: 'example',
+    });
+  });
+});
+
 describe('wizard step gating', () => {
   const withUrl = (externalUrl: string): OffsiteSubmitFormValues => ({
     ...emptyOffsiteSubmitForm(),
