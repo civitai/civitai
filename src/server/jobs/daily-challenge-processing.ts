@@ -46,6 +46,7 @@ import {
   getUpcomingSystemChallenge,
   type JudgingConfig,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
+import { calculateWeightedCategoryScore } from '~/server/games/daily-challenge/daily-challenge-scoring';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import {
   generateArticle,
@@ -57,6 +58,7 @@ import { logToAxiom } from '~/server/logging/client';
 import {
   challengeJudgingCategoriesSchema,
   parseChallengeMetadata,
+  type ChallengeJudgingCategory,
 } from '~/server/schema/challenge.schema';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
@@ -1138,11 +1140,17 @@ export async function pickWinnersForChallenge(
       // 2. Get judging config and event context from Challenge
       const [challengeJudgeRow] = await dbRead.$queryRaw<
         [
-          | { judgeId: number | null; judgingPrompt: string | null; eventId: number | null }
+          | {
+              judgeId: number | null;
+              judgingPrompt: string | null;
+              eventId: number | null;
+              source: ChallengeSource;
+              judgingCategories: unknown;
+            }
           | undefined
         ]
       >`
-        SELECT "judgeId", "judgingPrompt", "eventId" FROM "Challenge"
+        SELECT "judgeId", "judgingPrompt", "eventId", "source", "judgingCategories" FROM "Challenge"
         WHERE id = ${currentChallenge.challengeId}
         LIMIT 1
       `;
@@ -1156,6 +1164,14 @@ export async function pickWinnersForChallenge(
 
       const eventContext = await resolveEventContext(challengeJudgeRow?.eventId ?? null);
 
+      // User-source challenges rank by creator-defined weighted categories (see
+      // getJudgedEntries); other sources keep the fixed theme/wittiness/humor/aesthetic rubric.
+      const userJudgingCategories =
+        challengeJudgeRow?.source === ChallengeSource.User
+          ? challengeJudgingCategoriesSchema.safeParse(challengeJudgeRow.judgingCategories)
+          : undefined;
+      const userCategories = userJudgingCategories?.success ? userJudgingCategories.data : undefined;
+
       // Close challenge collection
       await endChallenge(currentChallenge);
       log('Collection closed');
@@ -1164,7 +1180,9 @@ export async function pickWinnersForChallenge(
       const judgedEntries = await getJudgedEntries(
         currentChallenge.collectionId,
         config,
-        eventContext
+        eventContext,
+        challengeJudgeRow?.source ?? ChallengeSource.System,
+        userCategories
       );
       if (!judgedEntries.length) {
         log('No judged entries for challenge:', currentChallenge.challengeId);
@@ -1443,38 +1461,62 @@ export async function getCoverOfModel(modelId: number) {
 export async function getJudgedEntries(
   collectionId: number,
   config: ChallengeConfig,
-  eventContext?: EventContext
+  eventContext?: EventContext,
+  source: ChallengeSource = ChallengeSource.System,
+  categories?: ChallengeJudgingCategory[]
 ) {
+  // User-source challenges score against creator-defined category labels, not the fixed
+  // theme/aesthetic/humor/wittiness keys, so the SQL weighted ordering below can't apply to
+  // them — rank those in JS instead (see the branch after the winner-cooldown filter).
+  // A User challenge whose categories failed validation falls back to the fixed schema at
+  // review time (see reviewEntriesForChallenge), so it must also rank via the fixed-key path.
+  const useWeightedCategories = source === ChallengeSource.User && !!categories?.length;
+
   // Get each user's BEST entry only (by AI score), so users with many entries
   // don't have an advantage over users with fewer entries
-  const userBestEntries = await dbRead.$queryRaw<JudgedEntry[]>`
-    WITH ranked AS (
-      SELECT
-        ci."imageId",
-        i."userId",
-        u."username",
-        ci.note,
-        ROW_NUMBER() OVER (
-          PARTITION BY i."userId"
-          ORDER BY (
-            (ci.note::json->'score'->>'theme')::float * ${SCORE_WEIGHTS.theme} +
-            (ci.note::json->'score'->>'aesthetic')::float * ${SCORE_WEIGHTS.aesthetic} +
-            (ci.note::json->'score'->>'humor')::float * ${SCORE_WEIGHTS.humor} +
-            (ci.note::json->'score'->>'wittiness')::float * ${SCORE_WEIGHTS.wittiness}
-          ) DESC
-        ) as rn
-      FROM "CollectionItem" ci
-      JOIN "Image" i ON i.id = ci."imageId"
-      JOIN "User" u ON u.id = i."userId"
-      WHERE ci."collectionId" = ${collectionId}
-      AND ci."tagId" = ${config.judgedTagId}
-      AND ci.note IS NOT NULL
-      AND ci.status = 'ACCEPTED'
-    )
-    SELECT "imageId", "userId", username, note
-    FROM ranked
-    WHERE rn = 1
-  `;
+  const userBestEntries = useWeightedCategories
+    ? await dbRead.$queryRaw<JudgedEntry[]>`
+        SELECT
+          ci."imageId",
+          i."userId",
+          u."username",
+          ci.note
+        FROM "CollectionItem" ci
+        JOIN "Image" i ON i.id = ci."imageId"
+        JOIN "User" u ON u.id = i."userId"
+        WHERE ci."collectionId" = ${collectionId}
+        AND ci."tagId" = ${config.judgedTagId}
+        AND ci.note IS NOT NULL
+        AND ci.status = 'ACCEPTED'
+      `
+    : await dbRead.$queryRaw<JudgedEntry[]>`
+        WITH ranked AS (
+          SELECT
+            ci."imageId",
+            i."userId",
+            u."username",
+            ci.note,
+            ROW_NUMBER() OVER (
+              PARTITION BY i."userId"
+              ORDER BY (
+                (ci.note::json->'score'->>'theme')::float * ${SCORE_WEIGHTS.theme} +
+                (ci.note::json->'score'->>'aesthetic')::float * ${SCORE_WEIGHTS.aesthetic} +
+                (ci.note::json->'score'->>'humor')::float * ${SCORE_WEIGHTS.humor} +
+                (ci.note::json->'score'->>'wittiness')::float * ${SCORE_WEIGHTS.wittiness}
+              ) DESC
+            ) as rn
+          FROM "CollectionItem" ci
+          JOIN "Image" i ON i.id = ci."imageId"
+          JOIN "User" u ON u.id = i."userId"
+          WHERE ci."collectionId" = ${collectionId}
+          AND ci."tagId" = ${config.judgedTagId}
+          AND ci.note IS NOT NULL
+          AND ci.status = 'ACCEPTED'
+        )
+        SELECT "imageId", "userId", username, note
+        FROM ranked
+        WHERE rn = 1
+      `;
   log('Users with judged entries:', userBestEntries?.length);
   if (!userBestEntries.length) {
     return [];
@@ -1531,6 +1573,31 @@ export async function getJudgedEntries(
     eligible: eligibleEntries.length,
     cooldown: cooldownSource,
   });
+
+  if (useWeightedCategories) {
+    // categories is non-empty here (useWeightedCategories guard above)
+    const cats = categories!;
+    const ranked = eligibleEntries
+      .map(({ note, ...entry }) => {
+        const { score, summary } = JSON.parse(note);
+        const weightedRating = calculateWeightedCategoryScore(score, cats);
+        return { ...entry, summary, score, weightedRating };
+      })
+      .filter((e): e is typeof e & { weightedRating: number } => e.weightedRating !== null);
+
+    // Best entry per user (entries aren't deduped in SQL for this path)
+    const bestPerUser = new Map<number, (typeof ranked)[number]>();
+    for (const entry of ranked) {
+      const current = bestPerUser.get(entry.userId);
+      if (!current || entry.weightedRating > current.weightedRating) {
+        bestPerUser.set(entry.userId, entry);
+      }
+    }
+
+    return [...bestPerUser.values()]
+      .sort((a, b) => b.weightedRating - a.weightedRating)
+      .slice(0, config.finalReviewAmount);
+  }
 
   // Rank entries by weighted AI judge score with theme gate rules
   const judgedEntries = eligibleEntries
