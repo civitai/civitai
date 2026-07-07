@@ -8,21 +8,25 @@ import {
   Loader,
   Menu,
   Paper,
+  Select,
   SimpleGrid,
   Stack,
   Table,
   Text,
+  TextInput,
   ThemeIcon,
   Title,
 } from '@mantine/core';
 import {
   IconArchive,
+  IconArrowsSort,
   IconBolt,
   IconCircleCheck,
   IconClock,
   IconDots,
   IconEdit,
   IconPlus,
+  IconSearch,
   IconSettings,
   IconShoppingBag,
 } from '@tabler/icons-react';
@@ -94,7 +98,7 @@ function StatCard({
   label,
   value,
   icon,
-  color,
+  color = 'gray',
 }: {
   label: string;
   value: number | string;
@@ -102,16 +106,29 @@ function StatCard({
   color?: string;
 }) {
   return (
-    <Paper withBorder radius="md" p="md">
+    <Paper
+      withBorder
+      radius="md"
+      p="md"
+      style={{
+        backgroundColor: `var(--mantine-color-${color}-light)`,
+        borderColor: `var(--mantine-color-${color}-outline)`,
+      }}
+    >
       <Group gap="sm" wrap="nowrap" align="center">
-        <ThemeIcon variant="light" radius="md" size={40} color={color ?? 'gray'}>
+        <ThemeIcon variant="filled" radius="md" size={40} color={color}>
           {icon}
         </ThemeIcon>
         <Stack gap={0} className="min-w-0">
           <Text size="xs" c="dimmed" lineClamp={1}>
             {label}
           </Text>
-          <Text size="lg" fw={700} c={color} className="whitespace-nowrap">
+          <Text
+            size="lg"
+            fw={700}
+            className="whitespace-nowrap"
+            style={{ color: `var(--mantine-color-${color}-light-color)` }}
+          >
             {value}
           </Text>
         </Stack>
@@ -119,6 +136,15 @@ function StatCard({
     </Paper>
   );
 }
+
+const sortOptions: Array<{ value: string; label: string }> = [
+  { value: 'newest', label: 'Newest' },
+  { value: 'best', label: 'Best selling' },
+  { value: 'revenue', label: 'Top revenue' },
+  { value: 'price-high', label: 'Price: High to Low' },
+  { value: 'price-low', label: 'Price: Low to High' },
+  { value: 'name', label: 'Name (A–Z)' },
+];
 
 function ManageShopPage() {
   const router = useRouter();
@@ -130,11 +156,40 @@ function ManageShopPage() {
   const { items, isLoading } = useQueryCreatorShopManage(isOwner);
   const { archiveItem } = useMutateCreatorShop();
   const [status, setStatus] = useState('all');
+  const [search, setSearch] = useState('');
+  const [sort, setSort] = useState('newest');
 
-  const filtered = useMemo(
-    () => (status === 'all' ? items : items.filter((i) => i.status === status)),
-    [items, status]
-  );
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const result = items.filter((i) => {
+      const statusMatch = status === 'all' || i.status === status;
+      const titleMatch = !q || i.title.toLowerCase().includes(q);
+      return statusMatch && titleMatch;
+    });
+    const revenue = (i: (typeof items)[number]) => i.purchases * i.unitAmount;
+    switch (sort) {
+      case 'best':
+        result.sort((a, b) => b.purchases - a.purchases);
+        break;
+      case 'revenue':
+        result.sort((a, b) => revenue(b) - revenue(a));
+        break;
+      case 'price-high':
+        result.sort((a, b) => b.unitAmount - a.unitAmount);
+        break;
+      case 'price-low':
+        result.sort((a, b) => a.unitAmount - b.unitAmount);
+        break;
+      case 'name':
+        result.sort((a, b) => a.title.localeCompare(b.title));
+        break;
+      case 'newest':
+      default:
+        result.sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
+        break;
+    }
+    return result;
+  }, [items, status, search, sort]);
 
   const stats = useMemo(() => {
     const by = (s: CosmeticShopItemStatus) => items.filter((i) => i.status === s).length;
@@ -198,22 +253,44 @@ function ManageShopPage() {
           <StatCard
             label="Revenue"
             value={`${numberWithCommas(stats.revenue)} Buzz`}
-            color="yellow"
+            color="grape"
             icon={<IconBolt size={20} />}
           />
         </SimpleGrid>
       )}
 
       {!isLoading && items.length > 0 && (
-        <Chip.Group multiple={false} value={status} onChange={(v) => setStatus(v as string)}>
-          <Group gap={6} wrap="wrap">
-            {statusFilters.map((f) => (
-              <Chip key={f.value} value={f.value} size="xs" variant="filled" radius="sm">
-                {f.label}
-              </Chip>
-            ))}
+        <Group justify="space-between" align="center" gap="sm" wrap="wrap">
+          <Chip.Group multiple={false} value={status} onChange={(v) => setStatus(v as string)}>
+            <Group gap={6} wrap="wrap">
+              {statusFilters.map((f) => (
+                <Chip key={f.value} value={f.value} size="xs" variant="filled">
+                  {f.label}
+                </Chip>
+              ))}
+            </Group>
+          </Chip.Group>
+          <Group gap="xs" wrap="nowrap">
+            <TextInput
+              placeholder="Search items"
+              leftSection={<IconSearch size={16} />}
+              value={search}
+              onChange={(e) => setSearch(e.currentTarget.value)}
+              size="xs"
+              w={200}
+            />
+            <Select
+              data={sortOptions}
+              value={sort}
+              onChange={(v) => setSort(v ?? 'newest')}
+              size="xs"
+              w={190}
+              allowDeselect={false}
+              leftSection={<IconArrowsSort size={16} />}
+              comboboxProps={{ withinPortal: true }}
+            />
           </Group>
-        </Chip.Group>
+        </Group>
       )}
 
       {isLoading ? (
