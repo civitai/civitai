@@ -11,7 +11,17 @@
  * id removes the index/closure dependency entirely.
  */
 
-export type ScreenshotSlotStatus = 'idle' | 'working' | 'attached' | 'processing' | 'error';
+export type ScreenshotSlotStatus =
+  | 'idle'
+  | 'working'
+  /** actively auto-polling the attach while the async scan completes */
+  | 'scanning'
+  | 'attached'
+  /** @deprecated superseded by the auto-poll `scanning`/`timeout` states */
+  | 'processing'
+  /** the scan didn't complete within the poll budget — manual Retry offered */
+  | 'timeout'
+  | 'error';
 
 export type ScreenshotSlot = {
   /** Stable per-file id — the ONLY key used to address a slot after creation. */

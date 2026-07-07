@@ -190,25 +190,40 @@ describe('MySubmissionsList', () => {
   });
 
   test('the inline analytics `from` is floored to start-of-day, so same-app rows share one query key (per-row dedup)', async () => {
-    // Two APPROVED versions of the SAME app block. Pre-fix, each AppAnalyticsInline
-    // computed `from = dayjs().subtract(30,'day').toISOString()` at ms precision per
-    // instance → two distinct query inputs → no React-Query dedup → 2 heavy queries.
-    // The floor (.startOf('day')) makes both rows pass the IDENTICAL input.
+    // Two APPROVED versions of the SAME app block. They now COLLAPSE into one group
+    // (latest shown; older behind a "2 versions" toggle), so expand to mount BOTH
+    // inline stats. Pre-fix, each AppAnalyticsInline computed `from` at ms precision
+    // per instance → two distinct query inputs → no React-Query dedup. The floor
+    // (.startOf('day')) makes both rows pass the IDENTICAL input.
     const appBlockId = 'block-dedup';
     renderWithProviders(
       <MySubmissionsList
         submissions={[
-          makeSubmission({ id: 'v1', version: '1.0.0', appBlockId }),
-          makeSubmission({ id: 'v2', version: '2.0.0', appBlockId }),
+          makeSubmission({
+            id: 'v1',
+            version: '1.0.0',
+            appBlockId,
+            submittedAt: new Date('2026-01-01T00:00:00Z'),
+          }),
+          makeSubmission({
+            id: 'v2',
+            version: '2.0.0',
+            appBlockId,
+            submittedAt: new Date('2026-02-01T00:00:00Z'),
+          }),
         ]}
         onWithdraw={vi.fn()}
         withdrawing={false}
       />
     );
     await expect.element(page.getByText('my-app', { exact: false }).first()).toBeInTheDocument();
+    // Expand the collapsed versions so the OLDER version's inline stat also mounts.
+    await page.getByRole('button', { name: /versions/i }).click();
 
     // Every call carried the same app id.
-    const inputs = mocks.analyticsUseQuery.mock.calls.map((c) => c[0] as { appBlockId: string; from: string });
+    const inputs = mocks.analyticsUseQuery.mock.calls.map(
+      (c) => c[0] as { appBlockId: string; from: string }
+    );
     const appInputs = inputs.filter((i) => i?.appBlockId === appBlockId);
     expect(appInputs.length).toBeGreaterThanOrEqual(2); // both rows mounted an inline stat
 
@@ -273,5 +288,78 @@ describe('MySubmissionsList', () => {
     await expect.element(advanced).toBeInTheDocument();
     await advanced.click();
     await expect.element(page.getByTestId('author-via-git')).toBeInTheDocument();
+  });
+});
+
+describe('MySubmissionsList — UX pass: filter / sort / version-collapse', () => {
+  test('the text filter narrows rows by app slug', async () => {
+    renderWithProviders(
+      <MySubmissionsList
+        submissions={[
+          makeSubmission({ id: 'a', slug: 'alpha-app', appBlockId: 'block-a' }),
+          makeSubmission({ id: 'b', slug: 'bravo-app', appBlockId: 'block-b' }),
+        ]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    await expect.element(page.getByText('alpha-app', { exact: false })).toBeInTheDocument();
+    await expect.element(page.getByText('bravo-app', { exact: false })).toBeInTheDocument();
+
+    await page.getByTestId('apps-submissions-filter').fill('bravo');
+    // Only the matching app remains.
+    await expect.element(page.getByText('bravo-app', { exact: false })).toBeInTheDocument();
+    expect(page.getByText('alpha-app', { exact: false }).elements()).toHaveLength(0);
+  });
+
+  test('clicking the App header sorts and exposes aria-sort', async () => {
+    renderWithProviders(
+      <MySubmissionsList
+        submissions={[
+          makeSubmission({ id: 'b', slug: 'bravo-app', appBlockId: 'block-b' }),
+          makeSubmission({ id: 'a', slug: 'alpha-app', appBlockId: 'block-a' }),
+        ]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    const appHeader = page.getByRole('button', { name: /sort by app/i });
+    await appHeader.click();
+    // The header's <th> reflects the active sort for screen readers.
+    const th = appHeader.element().closest('th');
+    expect(th?.getAttribute('aria-sort')).toBe('ascending');
+  });
+
+  test('multiple versions of one app collapse; the toggle reveals older versions', async () => {
+    renderWithProviders(
+      <MySubmissionsList
+        submissions={[
+          makeSubmission({
+            id: 'v1',
+            version: '1.0.0',
+            appBlockId: 'block-x',
+            submittedAt: new Date('2026-01-01T00:00:00Z'),
+          }),
+          makeSubmission({
+            id: 'v2',
+            version: '2.0.0',
+            appBlockId: 'block-x',
+            submittedAt: new Date('2026-02-01T00:00:00Z'),
+          }),
+        ]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    // Collapsed: only the newest version (2.0.0) is shown; 1.0.0 is hidden.
+    await expect.element(page.getByText('2.0.0', { exact: true })).toBeInTheDocument();
+    expect(page.getByText('1.0.0', { exact: true }).elements()).toHaveLength(0);
+
+    // The "2 versions" toggle carries aria-expanded and reveals the older row.
+    const toggle = page.getByRole('button', { name: /2 versions/i });
+    expect(toggle.element().getAttribute('aria-expanded')).toBe('false');
+    await toggle.click();
+    await expect.element(page.getByText('1.0.0', { exact: true })).toBeInTheDocument();
+    expect(toggle.element().getAttribute('aria-expanded')).toBe('true');
   });
 });
