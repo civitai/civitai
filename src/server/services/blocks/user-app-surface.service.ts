@@ -409,6 +409,17 @@ export async function recordScopeInvocation(opts: {
   scope: string;
   endpoint: string;
   statusCode: number;
+  /**
+   * App Dev Tunnel Phase 2 — set when the token is a DEV token (`claims.dev`).
+   * A dev token MAY carry a SYNTHETIC, non-FK-resolving `appBlockId` (a
+   * PRE-APPROVAL app has no AppBlock row: `ephemeral-<slug>` / `local-<slug>` /
+   * `pubreq_<id>`). When the direct INSERT FK-fails for such a token we retry with
+   * `appBlockId: null` + `syntheticAppId` so the durable per-spend audit row
+   * PERSISTS instead of being swallowed. The APPROVED dev-token path carries a
+   * REAL appBlockId and writes on the first attempt (no retry). Absent/false →
+   * the historical behaviour (a real FK orphan just logs, no row).
+   */
+  dev?: boolean;
 }): Promise<void> {
   try {
     await dbWrite.blockScopeInvocation.create({
@@ -424,6 +435,41 @@ export async function recordScopeInvocation(opts: {
       },
     });
   } catch (err) {
+    // App Dev Tunnel Phase 2: a DEV token with a SYNTHETIC (non-resolving)
+    // appBlockId FK-fails here. Retry with `appBlockId: null` + `syntheticAppId`
+    // so the pre-approval per-spend audit row PERSISTS (the durable trail the
+    // synthetic-appId attribution path can't write). Scoped to `dev === true` +
+    // an FK violation so a deleted REAL app on the normal path keeps the historical
+    // "log, no row" behaviour (never mislabelled synthetic).
+    const isFkViolation =
+      typeof err === 'object' &&
+      err !== null &&
+      (err as { code?: unknown }).code === 'P2003';
+    if (opts.dev && isFkViolation) {
+      try {
+        // `appBlockId: null` + `syntheticAppId` require the schema change in this
+        // PR (BlockScopeInvocation.appBlockId → nullable, + synthetic_app_id).
+        // The generated Prisma client is regenerated from that schema at build
+        // time (postinstall → `pnpm db:generate`); this bridge cast keeps the
+        // source type-clean against a client generated BEFORE the migration lands
+        // (the NixOS dev env can't run `prisma generate`). Field names mirror the
+        // schema exactly — see schema.full.prisma model BlockScopeInvocation.
+        const retryData = {
+          userId: opts.userId,
+          appBlockId: null,
+          syntheticAppId: opts.appBlockId,
+          blockInstanceId: opts.blockInstanceId,
+          scope: opts.scope,
+          endpoint: opts.endpoint.slice(0, 512),
+          statusCode: opts.statusCode,
+        } as unknown as Parameters<typeof dbWrite.blockScopeInvocation.create>[0]['data'];
+        await dbWrite.blockScopeInvocation.create({ data: retryData });
+        return;
+      } catch (retryErr) {
+        // Fall through to the best-effort log below with the retry error.
+        err = retryErr;
+      }
+    }
     // Don't let an audit-write failure crash the request lifecycle. Most
     // common cause: app_block_id FK orphaned because the block was
     // deleted between token issuance and this scope call.
