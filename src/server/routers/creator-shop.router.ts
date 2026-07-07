@@ -63,7 +63,13 @@ export const creatorShopRouter = router({
   getShop: publicProcedure
     .use(isFlagProtected('creatorShop'))
     .input(getCreatorShopSchema)
-    .query(({ input }) => getCreatorShop(input)),
+    .query(({ input, ctx }) =>
+      getCreatorShop({
+        ...input,
+        viewerId: ctx.user?.id,
+        isModerator: ctx.user?.isModerator,
+      })
+    ),
   // #endregion
 
   // #region [Shop settings]

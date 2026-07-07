@@ -289,6 +289,7 @@ export const userSettingsSchema = z.object({
   // Creator Shop storefront settings (see docs/features/creator-shop.md).
   creatorShop: z
     .object({
+      enabled: z.boolean().optional(),
       showModels: z.boolean().optional(),
       featuredItemIds: z.array(z.number()).optional(),
       description: z.string().nullish(),

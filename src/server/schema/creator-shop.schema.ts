@@ -159,6 +159,8 @@ export const creatorShopSectionSchema = z.object({
 
 export type UpdateCreatorShopSettingsInput = z.infer<typeof updateCreatorShopSettingsSchema>;
 export const updateCreatorShopSettingsSchema = z.object({
+  // Whether the shop is public. Off by default so creators can prep in private.
+  enabled: z.boolean().optional(),
   showModels: z.boolean().optional(),
   featuredItemIds: z.array(z.number()).max(CREATOR_SHOP_MAX_FEATURED).optional(),
   description: z.string().max(1000).nullish(),

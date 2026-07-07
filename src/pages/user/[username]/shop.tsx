@@ -2,7 +2,11 @@ import { Center, Loader, Stack } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
-import { useQueryCreatorShop } from '~/components/CreatorShop/creator-shop.util';
+import {
+  useMutateCreatorShop,
+  useQueryCreatorShop,
+} from '~/components/CreatorShop/creator-shop.util';
+import { ShopDraftBanner } from '~/components/CreatorShop/Manage/ShopDraftBanner';
 import { EmptyShopState } from '~/components/CreatorShop/Storefront/EmptyShopState';
 import { ShopHeader } from '~/components/CreatorShop/Storefront/ShopHeader';
 import { StorefrontSections } from '~/components/CreatorShop/Storefront/StorefrontSections';
@@ -40,13 +44,16 @@ function UserShopPage() {
     { username },
     { enabled: !!username }
   );
-  const { shop, isLoading } = useQueryCreatorShop(user?.id);
+  const { shop, isLoading, isError } = useQueryCreatorShop(user?.id);
+  const { updateSettings } = useMutateCreatorShop();
   const ownedCosmeticIds = useOwnedCosmeticIds();
 
   const isOwner =
     !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
 
   if (!username) return <NotFound />;
+  // A disabled shop returns NOT_FOUND to visitors — stay quiet about it.
+  if (isError) return <NotFound />;
 
   const baseUrl = `/user/${username}`;
   const displayName = user?.username ?? username;
@@ -61,6 +68,13 @@ function UserShopPage() {
         isOwner={isOwner}
         baseUrl={baseUrl}
       />
+
+      {isOwner && shop && shop.settings.enabled !== true && (
+        <ShopDraftBanner
+          onEnable={() => updateSettings.mutate({ enabled: true })}
+          enabling={updateSettings.isPending}
+        />
+      )}
 
       {isLoading ? (
         <Center py="xl">

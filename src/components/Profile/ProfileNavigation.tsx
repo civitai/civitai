@@ -16,8 +16,9 @@ import { trpc } from '~/utils/trpc';
 import type { DataItem } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
 import { HomeStyleSegmentedControl } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
 import homeStyleClasses from '~/components/HomeContentToggle/HomeStyleSegmentedControl.module.css';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { getDisplayName } from '~/utils/string-helpers';
+import { getDisplayName, postgresSlugify } from '~/utils/string-helpers';
 
 type ProfileNavigationProps = {
   username: string;
@@ -28,6 +29,9 @@ const overviewPath = '[username]';
 export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
   const router = useRouter();
   const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
+  const isShopOwner =
+    !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
 
   const {
     data: userOverview,
@@ -99,7 +103,9 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       icon: (props) => <IconShoppingBag {...props} />,
       label: 'Shop',
       className: homeStyleClasses.tabHighlight,
-      disabled: !features.creatorShop || !!user?.bannedAt,
+      // A disabled shop is hidden from everyone but its owner.
+      disabled:
+        !features.creatorShop || !!user?.bannedAt || (!isShopOwner && !user?.creatorShopEnabled),
     },
   };
 

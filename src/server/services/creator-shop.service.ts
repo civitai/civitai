@@ -337,7 +337,20 @@ export const getCreatorShopManageItems = async ({ userId }: { userId: number }) 
 // Public: creator storefront
 // ---------------------------------------------------------------------------
 
-export const getCreatorShop = async ({ userId }: { userId: number }) => {
+export const getCreatorShop = async ({
+  userId,
+  viewerId,
+  isModerator,
+}: {
+  userId: number;
+  viewerId?: number;
+  isModerator?: boolean;
+}) => {
+  const settings = await getCreatorShopSettings({ userId });
+  // A disabled shop is invisible to everyone but its owner and moderators.
+  if (settings.enabled !== true && viewerId !== userId && !isModerator)
+    throw throwNotFoundError('Shop not found');
+
   const now = new Date();
   const items = await dbRead.cosmeticShopItem.findMany({
     where: {
@@ -354,7 +367,6 @@ export const getCreatorShop = async ({ userId }: { userId: number }) => {
     orderBy: { createdAt: 'desc' },
   });
 
-  const settings = await getCreatorShopSettings({ userId });
   // Sanitize meta to only the purchase count the card needs — never the creator
   // payout/fee internals.
   const cosmetics = items.map((item) => ({

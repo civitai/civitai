@@ -144,6 +144,7 @@ export function CreatorShopSettingsModal() {
 
   const [sections, setSections] = useSeededState(settings, seedSections);
   const [description, setDescription] = useSeededState(settings, (s) => s?.description ?? '');
+  const [enabled, setEnabled] = useSeededState(settings, (s) => s?.enabled ?? false);
   const featuredCount = settings?.featuredItemIds?.length ?? 0;
 
   const toggleVisible = (key: CreatorShopSectionKey) =>
@@ -161,6 +162,7 @@ export function CreatorShopSettingsModal() {
   const handleSave = async () => {
     const showModels = sections.find((s) => s.key === 'models')?.visible ?? false;
     await updateSettings.mutateAsync({
+      enabled,
       sections,
       showModels,
       description: description.trim() || null,
@@ -173,6 +175,33 @@ export function CreatorShopSettingsModal() {
   return (
     <Modal {...dialog} size="lg" title="Shop settings">
       <Stack gap="lg">
+        <Stack gap={8}>
+          <Text fw={600}>Visibility</Text>
+          {loading ? (
+            <Skeleton height={62} radius="md" />
+          ) : (
+            <Paper withBorder radius="md" p="md">
+              <Group justify="space-between" wrap="nowrap" gap="sm">
+                <Stack gap={0} style={{ minWidth: 0 }}>
+                  <Text size="sm" fw={600}>
+                    Shop is {enabled ? 'public' : 'private'}
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    {enabled
+                      ? 'Visitors can find your shop on your profile.'
+                      : 'Only you can see your shop while you get it ready.'}
+                  </Text>
+                </Stack>
+                <Switch
+                  checked={enabled}
+                  onChange={(e) => setEnabled(e.currentTarget.checked)}
+                  aria-label="Shop is public"
+                />
+              </Group>
+            </Paper>
+          )}
+        </Stack>
+
         <Stack gap={8}>
           <Text fw={600}>Featured cosmetics</Text>
           {loading ? (
