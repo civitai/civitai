@@ -13,8 +13,9 @@ import { renderWithProviders } from '../../../test/component-setup';
  *   3. An approved row shows the compact runs/users (30d) inline stat + an
  *      "Analytics" button that opens AppAnalyticsPanel (scoped) in a modal; a
  *      non-approved row shows neither.
- *   4. The authoring affordance links the Civitai CLI (the git path is demoted
- *      to a collapsed "Advanced" footnote).
+ *   4. The authoring footnote (the "civitai CLI" guidance + the collapsed
+ *      "Advanced: author via git" panel) is GONE — it no longer renders on any
+ *      row (own submissions don't need an author-via-git affordance here).
  *
  * tRPC + the heavy analytics panel are mocked per the documented scaffold
  * pattern so this stays network-free and chart-free.
@@ -53,12 +54,6 @@ vi.mock('~/components/AppBlocks/AppAnalyticsPanel', () => ({
     mocks.panelRenders(scopedAppBlockId);
     return <div data-testid="analytics-panel">analytics-panel:{scopedAppBlockId}</div>;
   },
-}));
-
-// AuthorViaGit provisions a Forgejo identity on mount — stub to a marker so the
-// "Advanced: author via git" footnote is testable without that side-effect.
-vi.mock('~/components/Apps/AuthorViaGit', () => ({
-  AuthorViaGit: () => <div data-testid="author-via-git">git-panel</div>,
 }));
 
 // Type-only import is erased at runtime, so it's safe above the dynamic value
@@ -270,7 +265,7 @@ describe('MySubmissionsList', () => {
     expect(page.getByText('runs', { exact: true }).elements()).toHaveLength(0);
   });
 
-  test('the authoring affordance links the Civitai CLI (git demoted to an Advanced footnote)', async () => {
+  test('the authoring footnote (CLI guidance + Advanced author-via-git) is GONE on an approved row', async () => {
     renderWithProviders(
       <MySubmissionsList
         submissions={[makeSubmission({ appBlockId: 'block-1' })]}
@@ -278,17 +273,14 @@ describe('MySubmissionsList', () => {
         withdrawing={false}
       />
     );
-    // CLI link present + points at the CLI repo.
-    const cliLink = page.getByRole('link', { name: /civitai.*CLI/i });
-    await expect.element(cliLink).toBeInTheDocument();
-    expect(cliLink.element().getAttribute('href')).toBe('https://github.com/civitai/cli');
-
-    // Git is NOT a primary affordance — the panel is collapsed behind "Advanced".
+    // The approved row renders (its analytics stat is present).
+    await expect.element(page.getByText('my-app', { exact: false })).toBeInTheDocument();
+    // No authoring footnote anywhere: no CLI link, no CLI guidance text, no
+    // "Advanced: author via git" toggle, and the git panel never mounts.
+    expect(page.getByRole('link', { name: /civitai.*CLI/i }).elements()).toHaveLength(0);
+    expect(page.getByText(/author and submit updates/i).elements()).toHaveLength(0);
+    expect(page.getByRole('button', { name: /advanced.*git/i }).elements()).toHaveLength(0);
     expect(page.getByTestId('author-via-git').elements()).toHaveLength(0);
-    const advanced = page.getByRole('button', { name: /advanced.*git/i });
-    await expect.element(advanced).toBeInTheDocument();
-    await advanced.click();
-    await expect.element(page.getByTestId('author-via-git')).toBeInTheDocument();
   });
 });
 

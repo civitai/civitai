@@ -1,36 +1,19 @@
-import {
-  Alert,
-  Anchor,
-  Badge,
-  Button,
-  Card,
-  Code,
-  Group,
-  Modal,
-  Stack,
-  Table,
-  Text,
-} from '@mantine/core';
+import { Alert, Badge, Button, Card, Code, Group, Modal, Stack, Table, Text } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import {
   IconAlertTriangle,
   IconArrowRight,
   IconBox,
-  IconBrandGit,
   IconCheck,
-  IconChevronDown,
-  IconChevronRight,
   IconClock,
   IconExternalLink,
   IconMessage,
-  IconTerminal2,
   IconUsers,
   IconX,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { AppAnalyticsInline } from '~/components/Apps/AppAnalyticsInline';
-import { AuthorViaGit } from '~/components/Apps/AuthorViaGit';
 import { isStaleDeploy } from '~/components/Apps/deploy-status';
 import {
   currentlyPublishedVersionId,
@@ -45,10 +28,6 @@ import {
 } from '~/components/Apps/submissionsTable';
 import { SortableTh, SubmissionSearch, VersionToggle } from '~/components/Apps/submissionsTableUi';
 import { formatDate } from '~/utils/date-helpers';
-
-/** Civitai CLI repo — the recommended author + submit path (replaces the raw
- *  git-clone affordance as the PRIMARY way to author/update an app). */
-export const CIVITAI_CLI_URL = 'https://github.com/civitai/cli';
 
 export type FileSummary = {
   files?: Array<{ path: string; sha256: string; sizeBytes: number }>;
@@ -260,16 +239,14 @@ const ONSITE_ACCESSORS: SubmissionAccessors<Submission> = {
   reviewedAt: (s) => toDate(s.reviewedAt),
 };
 
-/** One submission's rows: the main row + (approved) a deploy-failed alert and the
- *  authoring affordance. `nested` demotes an older (expanded) version row;
- *  `showAuthor` renders the app-level authoring affordance only on the latest;
- *  `isCurrentlyPublished` marks THIS version as the live one (drives the "live"
- *  badge + the "Open live" button — see {@link currentlyPublishedVersionId}). The
- *  "N versions" toggle renders BELOW the slug, not inline beside it. */
+/** One submission's rows: the main row + (approved) a deploy-failed alert.
+ *  `nested` demotes an older (expanded) version row; `isCurrentlyPublished` marks
+ *  THIS version as the live one (drives the "live" badge + the "Open live" button
+ *  — see {@link currentlyPublishedVersionId}). The "N versions" toggle renders
+ *  BELOW the slug, not inline beside it. */
 function OnsiteRow({
   s,
   nested,
-  showAuthor,
   isCurrentlyPublished,
   onWithdraw,
   withdrawing,
@@ -277,7 +254,6 @@ function OnsiteRow({
 }: {
   s: Submission;
   nested: boolean;
-  showAuthor: boolean;
   isCurrentlyPublished: boolean;
   onWithdraw: (id: string) => void;
   withdrawing: boolean;
@@ -360,16 +336,6 @@ function OnsiteRow({
           </Table.Td>
         </Table.Tr>
       )}
-      {/* Authoring updates: the CLI is the recommended path; git is a collapsed
-          advanced footnote. Only approved rows with an app block (FK set on
-          approve) can author updates; app-level, so only on the latest version. */}
-      {showAuthor && s.status === 'approved' && s.appBlockId && (
-        <Table.Tr>
-          <Table.Td colSpan={8}>
-            <AuthorAffordance appBlockId={s.appBlockId} />
-          </Table.Td>
-        </Table.Tr>
-      )}
     </>
   );
 }
@@ -442,7 +408,6 @@ export function MySubmissionsList({
                     <OnsiteRow
                       s={g.latest}
                       nested={false}
-                      showAuthor
                       isCurrentlyPublished={g.latest.id === publishedId}
                       onWithdraw={onWithdraw}
                       withdrawing={withdrawing}
@@ -464,7 +429,6 @@ export function MySubmissionsList({
                           key={older.id}
                           s={older}
                           nested
-                          showAuthor={false}
                           isCurrentlyPublished={older.id === publishedId}
                           onWithdraw={onWithdraw}
                           withdrawing={withdrawing}
@@ -477,47 +441,6 @@ export function MySubmissionsList({
           </Table.Tbody>
         </Table>
       </Card>
-    </Stack>
-  );
-}
-
-/**
- * Authoring guidance for an approved app. Leads with the Civitai CLI (the
- * recommended `author + submit` path); the raw git clone-URL flow is demoted to
- * a collapsed "Advanced: author via git" footnote so it isn't a confusing
- * primary option. The git provisioning side-effect (getMyAppRepo) still only
- * fires when the footnote is expanded AND the user clicks within AuthorViaGit.
- */
-export function AuthorAffordance({ appBlockId }: { appBlockId: string }) {
-  const [showGit, setShowGit] = useState(false);
-  return (
-    <Stack gap="xs">
-      <Group gap={6}>
-        <IconTerminal2 size={16} />
-        <Text size="sm">
-          Author and submit updates with the{' '}
-          <Anchor href={CIVITAI_CLI_URL} target="_blank" rel="noopener noreferrer">
-            <Code>civitai</Code> CLI
-          </Anchor>
-          . Install it, then run <Code>civitai app submit</Code> to publish a new version for
-          review.
-        </Text>
-      </Group>
-      <Group>
-        <Button
-          size="compact-xs"
-          variant="subtle"
-          color="gray"
-          leftSection={showGit ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
-          onClick={() => setShowGit((v) => !v)}
-        >
-          <Group gap={4}>
-            <IconBrandGit size={14} />
-            <Text size="xs">Advanced: author via git</Text>
-          </Group>
-        </Button>
-      </Group>
-      {showGit && <AuthorViaGit appBlockId={appBlockId} />}
     </Stack>
   );
 }
