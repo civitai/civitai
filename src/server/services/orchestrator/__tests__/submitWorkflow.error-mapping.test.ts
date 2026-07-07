@@ -179,6 +179,34 @@ describe('submitWorkflow — genuine app/validation faults are NOT converted to 
     expect((err as TRPCError).cause).toMatchObject({ status: 200, detail: 'no data' });
   });
 
+  it('a 2xx/empty-body anomaly with `error: undefined` → clean INTERNAL_SERVER_ERROR (500), NOT a TypeError', async () => {
+    // Reachable shape: `!data` + truthy `response` + status < 400 + NO `error`
+    // (e.g. a 204/empty body). `throwInternalServerError` reads
+    // `(error as any).message`, so an undefined `error` would itself throw a
+    // spurious `TypeError: Cannot read properties of undefined (reading 'message')`
+    // — ironic for a causeless-500 fix. The site synthesizes a defined Error instead.
+    mockSubmitWorkflow.mockResolvedValue({
+      data: undefined,
+      error: undefined,
+      response: { status: 204 },
+    });
+
+    const err = await submitWorkflow({
+      token: 'tok',
+      body: {} as any,
+      query: {} as any,
+    }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(TRPCError);
+    expect(err).not.toBeInstanceOf(TypeError);
+    expect((err as TRPCError).code).toBe('INTERNAL_SERVER_ERROR');
+    // Clean, defined message — not the spurious undefined-read TypeError.
+    expect((err as TRPCError).message).toBeTruthy();
+    expect((err as TRPCError).message).not.toMatch(/Cannot read properties of undefined/i);
+    // Not retryable (status < 500) → single attempt, no backoff.
+    expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+  });
+
   it('returns data untouched on the success path', async () => {
     mockSubmitWorkflow.mockResolvedValue({ data: { id: 'wf-1' }, response: { status: 200 } });
 

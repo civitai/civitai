@@ -411,7 +411,15 @@ export async function submitWorkflow({
         // carry the ORIGINAL client error as `cause` (not a bare string) so
         // `buildServerFaultErrorLog` can un-mask the real message/stack. We do NOT
         // blanket-convert to 503 — only recognized transient upstream failures above.
-        throw throwInternalServerError(error);
+        // When `error` is nullish here (a 2xx/empty-body anomaly: `!data` +
+        // truthy `response` + `status < 400` + no `error`), synthesize a defined
+        // Error so `throwInternalServerError`'s `(error as any).message` read
+        // (errorHandling.ts) can't itself throw a spurious TypeError — the very
+        // causeless-500 shape this PR exists to kill. A non-nullish `error` flows
+        // through unchanged, cause preserved (Item B).
+        throw throwInternalServerError(
+          error ?? new Error('orchestrator returned no data', { cause: error })
+        );
     }
   }
 
