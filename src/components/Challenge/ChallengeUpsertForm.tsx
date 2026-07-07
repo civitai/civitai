@@ -285,7 +285,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
         description: data.description || undefined,
         theme: data.theme,
         coverImage: data.coverImage,
-        allowedNsfwLevel: sfwBrowsingLevelsFlag,
+        allowedNsfwLevel: data.allowedNsfwLevel,
         modelVersionIds: [],
         judgeId: Number(data.judgeId ?? 0),
         judgingCategories: data.judgingCategories,
@@ -793,13 +793,9 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
           <Stack gap="md">
             <Title order={4}>Entry Requirements</Title>
 
-            {/* Content Rating Selection (moderator-only; user challenges are forced SFW) */}
-            {!isUser && (
-              <>
-                <InputContentRatingSelect name="allowedNsfwLevel" disabled={isActive || isTerminal} />
-                <Divider />
-              </>
-            )}
+            {/* Content Rating Selection — creator picks the browsing level; defaults to SFW */}
+            <InputContentRatingSelect name="allowedNsfwLevel" disabled={isActive || isTerminal} />
+            <Divider />
 
             {/* Entry Limits */}
             <SimpleGrid cols={{ base: 1, sm: 2 }}>
