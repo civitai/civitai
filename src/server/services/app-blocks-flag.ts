@@ -5,6 +5,24 @@ import { buildFliptContext } from '~/server/services/feature-flags.service';
 const APP_BLOCKS_FLAG = 'app-blocks-enabled';
 
 /**
+ * Dedicated App Store VISIBILITY flag (W13 — PR-W1a / D8).
+ *
+ * DECOUPLES the App Store *catalog visibility* from `app-blocks-enabled`, which
+ * doubles as the BLOCK-RUNTIME kill-switch. The store-visibility surfaces (the
+ * `/apps` store SSR gate + landing, the store DETAIL page, the store grid query,
+ * and the PUBLIC store read procs) key off THIS flag so the catalog can widen to
+ * `public` INDEPENDENTLY of the deliberately-held block-runtime GA — a future
+ * true-public flip widens ONLY `app-listings`, while `app-blocks-enabled` (the
+ * runtime gate) stays mod-segmented.
+ *
+ * Mirrors the `appListings` entry in feature-flags.service.ts
+ * (`availability: ['mod']`, `fliptKey: 'app-listings'`). The flag does NOT exist
+ * in Flipt at merge time — it is created AFTER (a companion `flipt-state` PR)
+ * with the SAME mods + `app-dev-testers` segment `app-blocks-enabled` uses.
+ */
+export const APP_LISTINGS_FLAG = 'app-listings';
+
+/**
  * Dedicated flag for the App Blocks AUTHOR capability (developer soft-launch,
  * Phase B). Grants the right to SUBMIT apps + use `dev:live` (mint a dev token,
  * generate/spend from your own block) to a curated cohort — INDEPENDENT of the
@@ -176,6 +194,59 @@ export async function isAppBlocksEnabled(opts?: { user?: SessionUser }): Promise
   // server-side `isModerator` that the `moderators` segment keys on.
   const user = opts.user;
   return isFlipt(APP_BLOCKS_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
+ * Server-side check for the App Store VISIBILITY flag (W13 — PR-W1a / D8).
+ *
+ * Gates the STORE-VISIBILITY surfaces only — the public store read procs
+ * (`appListings.listAvailable` / `getAppDetail`), reached via the
+ * `enforceAppListingsReadFlag` middleware. This DECOUPLES store catalog
+ * visibility from `app-blocks-enabled`, which doubles as the block-runtime
+ * kill-switch, so the catalog can widen to public independently of the held
+ * block-runtime GA.
+ *
+ * ## Eval shape mirrors `isAppBlocksEnabled`, WITH an OR-fallback (load-bearing)
+ *
+ * Same per-user Flipt eval as `isAppBlocksEnabled` (entityId = user id, context
+ * from `buildFliptContext`) against the dedicated `app-listings` flag. The ONE
+ * difference: if `app-listings` resolves `false`, this FALLS BACK to
+ * `isAppBlocksEnabled(opts)`. That fallback is the whole point of the dark
+ * decoupling:
+ *   - The `app-listings` flag does NOT exist in Flipt at merge time (created
+ *     AFTER, as a companion `flipt-state` PR). A bare eval of an absent flag
+ *     resolves `false` for EVERYONE — which would REGRESS the currently-visible
+ *     cohort (mods + the `app-dev-testers` segment of `app-blocks-enabled`) the
+ *     instant this merges. The OR-fallback to `app-blocks-enabled` preserves
+ *     their store access verbatim through the transition window.
+ *   - Because `app-blocks-enabled` already grants the mods + app-dev-testers
+ *     cohort today, `isAppListingsEnabled` grants EXACTLY that same set until the
+ *     `app-listings` flag is created and later widened — so the as-merged change
+ *     is a NO-OP on visibility (zero behavior change today).
+ *
+ * Remove the `|| isAppBlocksEnabled` fallback ONLY after the store widens past
+ * the `app-blocks-enabled` cohort (i.e. once `app-listings` is the sole, wider
+ * source of truth); until then the fallback is what keeps existing viewers in.
+ *
+ * No user → preserve a global eval of `app-listings` that can never match a
+ * segment, then fall through to the no-arg `isAppBlocksEnabled()` global eval —
+ * fail-closed, identical to today's no-arg store-read behaviour.
+ */
+export async function isAppListingsEnabled(opts?: { user?: SessionUser }): Promise<boolean> {
+  const user = opts?.user;
+  // Per-user eval of the dedicated visibility flag — same entityId + context
+  // shape as isAppBlocksEnabled, so the `app-listings` segment resolves
+  // identically to the client/hasFeature gate. No user → global eval (never
+  // matches a segment).
+  const listingsOn = user
+    ? await isFlipt(APP_LISTINGS_FLAG, String(user.id), buildFliptContext(user))
+    : await isFlipt(APP_LISTINGS_FLAG);
+  if (listingsOn) return true;
+  // OR-fallback: the `app-listings` flag doesn't exist yet (dark window) / hasn't
+  // been widened, so defer to `app-blocks-enabled` to keep the existing
+  // mods + app-dev-testers cohort's store access intact. Same opts (per-user or
+  // no-user global) so the fallback eval matches the primary eval's shape.
+  return isAppBlocksEnabled(opts);
 }
 
 /**
