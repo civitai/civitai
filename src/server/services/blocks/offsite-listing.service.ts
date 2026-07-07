@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import type { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
@@ -14,7 +15,13 @@ import {
 } from '~/server/schema/blocks/offsite-listing.schema';
 import { assertListingAssetsComplete } from '~/server/services/blocks/app-listing-assets.service';
 import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
-import { newAppListingId, newAppListingPublishRequestId } from '~/server/utils/app-block-ids';
+import {
+  newAppListingId,
+  newAppListingPublishRequestId,
+  newAppListingScreenshotId,
+  newUlid,
+} from '~/server/utils/app-block-ids';
+import type { UpdateListingPatch } from '~/server/schema/blocks/offsite-listing.schema';
 
 /**
  * App Store Listings (W13) — P3a OFF-SITE submission service (Design B1).
@@ -45,7 +52,17 @@ import { newAppListingId, newAppListingPublishRequestId } from '~/server/utils/a
 // Typed failure modes for withdrawExternalRequest (mirror WithdrawRequestError).
 // ---------------------------------------------------------------------------
 
-export type OffsiteRequestErrorCode = 'NOT_FOUND' | 'NOT_OWNED' | 'NOT_PENDING';
+export type OffsiteRequestErrorCode =
+  | 'NOT_FOUND'
+  | 'NOT_OWNED'
+  | 'NOT_PENDING'
+  // Author tried to edit a `removed` (mod-taken-down) listing — mod-only.
+  | 'FORBIDDEN'
+  // Author tried to edit a `rejected` listing (no row exists) — resubmit instead.
+  | 'MUST_RESUBMIT'
+  // A shadow-draft revision precondition failed (not a shadow / not a draft /
+  // a concurrent revision is already pending / the parent isn't approved).
+  | 'INVALID_REVISION';
 
 export class OffsiteRequestError extends Error {
   readonly code: OffsiteRequestErrorCode;
@@ -231,6 +248,13 @@ export async function submitExternalListing(opts: {
  * orphan draft accrues; the delete is status-guarded (`status:'draft'`) so it can
  * never remove an approved listing.
  *
+ * REVISION-AWARE (no branch needed): a pending REVISION request points at a SHADOW
+ * `AppListing`, which is itself `status:'draft'`. So the same status-guarded
+ * `deleteDraftListing` deletes ONLY the shadow — the LIVE parent (a separate,
+ * `approved` row, never referenced by this request's `appListingId`) is untouched
+ * and stays live. Withdrawing a revision therefore behaves exactly like withdrawing
+ * a first-time submission, by construction.
+ *
  * CONCURRENCY (TOCTOU): the `findUnique` only CLASSIFIES; the mutation is a
  * status-guarded `updateMany({ id, status:'pending' })`, so a withdraw that read
  * `pending` can't clobber a row a concurrent approve flipped. If the guarded
@@ -306,6 +330,466 @@ async function deleteDraftListing(
 ): Promise<void> {
   if (!appListingId) return;
   await client.appListing.deleteMany({ where: { id: appListingId, status: 'draft' } });
+}
+
+// ---------------------------------------------------------------------------
+// updateListing / beginListingRevision / submitListingRevision (author) —
+// edit an off-site listing WITHOUT withdrawing it (shadow-draft revision).
+//
+// State machine (on the LIVE listing's status):
+//   draft | pending  → edit IN PLACE (no re-review). A pending listing's existing
+//                      pending request keeps reviewing the now-updated row.
+//   approved         → the live version STAYS LIVE. A TRIVIAL-only edit (tagline/
+//                      description/category/contentRating) applies in place; any
+//                      MATERIAL change (externalUrl/name — or assets, edited
+//                      separately) is staged on a hidden DRAFT clone (the shadow)
+//                      and applied to the parent only on mod re-approve.
+//   rejected         → no row exists (reject deletes it) → MUST_RESUBMIT.
+//   removed          → mod-only takedown → FORBIDDEN for an author edit.
+// ---------------------------------------------------------------------------
+
+/**
+ * MATERIAL scalar fields — a change to ANY of these on an approved listing forces
+ * re-review (routes through a shadow revision, not an in-place edit).
+ *
+ * `contentRating` is material because it drives the public SFW filter
+ * (`content_rating NOT IN ('r','x')`): letting an approved author lower an 'x'/'r'
+ * listing to 'g' in place with no mod re-review would surface a still-mature
+ * listing to SFW users. `externalUrl`/`name` are the listing's identity/destination.
+ * `tagline`/`description`/`category` stay trivial — quick copy edits are intended
+ * and are delistable if abused.
+ */
+const MATERIAL_PATCH_FIELDS = ['externalUrl', 'name', 'contentRating'] as const;
+
+/**
+ * Validate + normalize an update patch (shared by the in-place + shadow paths).
+ * Re-runs the shared URL / category / contentRating validators (this fn is
+ * exported + unit-tested directly, so it can't trust the schema boundary) and
+ * returns a Prisma `data` object carrying ONLY the fields the patch actually set
+ * (an omitted field is left untouched; an explicit `null` clears a nullable one).
+ * `externalUrl` is normalized to the validator's canonical form.
+ */
+function buildListingPatchData(patch: UpdateListingPatch): Prisma.AppListingUpdateInput {
+  const data: Prisma.AppListingUpdateInput = {};
+  if (patch.externalUrl !== undefined) {
+    const url = validateExternalUrl(patch.externalUrl);
+    if (!url.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: url.error });
+    data.externalUrl = url.url;
+  }
+  if (patch.name !== undefined) data.name = patch.name;
+  if (patch.tagline !== undefined) data.tagline = patch.tagline;
+  if (patch.description !== undefined) data.description = patch.description;
+  if (patch.category !== undefined) {
+    if (patch.category != null && !isMarketplaceCategory(patch.category)) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: `unknown category "${patch.category}"` });
+    }
+    data.category = patch.category;
+  }
+  if (patch.contentRating !== undefined) {
+    if (!(OFFSITE_CONTENT_RATINGS as readonly string[]).includes(patch.contentRating)) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: `unknown content rating "${patch.contentRating}"`,
+      });
+    }
+    data.contentRating = patch.contentRating;
+  }
+  return data;
+}
+
+/**
+ * True iff the patch changes a MATERIAL field (see MATERIAL_PATCH_FIELDS) to a
+ * value DIFFERENT from the live listing. Iterates the material-field list so the
+ * set is edited in ONE place; `externalUrl` compares against the validator's
+ * canonical form, the rest are plain scalar inequality.
+ */
+function patchHasMaterialChange(
+  patch: UpdateListingPatch,
+  live: { externalUrl: string | null; name: string; contentRating: string | null }
+): boolean {
+  for (const field of MATERIAL_PATCH_FIELDS) {
+    const patched = patch[field];
+    if (patched === undefined) continue;
+    if (field === 'externalUrl') {
+      const url = validateExternalUrl(patched);
+      // An invalid URL is a material change (it will be rejected downstream, but
+      // it is not "unchanged").
+      if (!url.ok || url.url !== live.externalUrl) return true;
+      continue;
+    }
+    // name / contentRating: plain scalar inequality vs the live value.
+    if (patched !== live[field]) return true;
+  }
+  return false;
+}
+
+export type UpdateListingResult = {
+  /** The LIVE listing id (unchanged — a shadow never surfaces its own id here). */
+  listingId: string;
+  /** The listing's status after the edit (unchanged for a live listing). */
+  status: string;
+  /** True when the edit was staged for mod re-review (approved-material path). */
+  requiresReview: boolean;
+  /** The shadow id created/reused for a staged revision, else null. */
+  shadowId: string | null;
+};
+
+/**
+ * A minimal listing projection used by the author edit paths (owner-check + state).
+ */
+type EditableListing = {
+  id: string;
+  kind: string;
+  slug: string;
+  status: string;
+  userId: number;
+  revisionOfId: string | null;
+  name: string;
+  tagline: string | null;
+  description: string | null;
+  category: string | null;
+  contentRating: string | null;
+  externalUrl: string | null;
+  connectClientId: string | null;
+  iconId: number | null;
+  coverId: number | null;
+};
+
+const editableListingSelect = {
+  id: true,
+  kind: true,
+  slug: true,
+  status: true,
+  userId: true,
+  revisionOfId: true,
+  name: true,
+  tagline: true,
+  description: true,
+  category: true,
+  contentRating: true,
+  externalUrl: true,
+  connectClientId: true,
+  iconId: true,
+  coverId: true,
+} as const;
+
+/** Load a listing and assert the caller is its OWNER (strict — no mod override on the author edit path). */
+async function loadOwnedEditableListing(
+  listingId: string,
+  userId: number
+): Promise<EditableListing> {
+  const listing = (await dbRead.appListing.findUnique({
+    where: { id: listingId },
+    select: editableListingSelect,
+  })) as EditableListing | null;
+  if (!listing) {
+    throw new OffsiteRequestError('NOT_FOUND', `listing ${listingId} not found`);
+  }
+  if (listing.userId !== userId) {
+    throw new OffsiteRequestError('NOT_OWNED', 'you can only edit your own listings');
+  }
+  return listing;
+}
+
+/**
+ * AUTHOR: edit an off-site listing without withdrawing it. State-aware (see the
+ * section header). Owner-bound (non-owner → NOT_OWNED/FORBIDDEN). Returns the
+ * LIVE listing id + whether the edit was staged for re-review.
+ */
+export async function updateListing(opts: {
+  listingId: string;
+  patch: UpdateListingPatch;
+  userId: number;
+}): Promise<UpdateListingResult> {
+  const { listingId, patch, userId } = opts;
+  const listing = await loadOwnedEditableListing(listingId, userId);
+
+  // A shadow is an internal draft — never editable via this top-level path (its
+  // scalars are edited by updateListing's approved-material branch / asset procs).
+  if (listing.revisionOfId != null) {
+    throw new OffsiteRequestError(
+      'INVALID_REVISION',
+      'this listing is an internal revision draft and cannot be edited directly'
+    );
+  }
+
+  switch (listing.status) {
+    case 'removed':
+      throw new OffsiteRequestError(
+        'FORBIDDEN',
+        'this listing has been removed by a moderator and can no longer be edited'
+      );
+    case 'rejected':
+      // reject() deletes the draft, so this row usually doesn't exist (→ NOT_FOUND
+      // above). If a rejected row somehow persists, steer the caller to resubmit.
+      throw new OffsiteRequestError(
+        'MUST_RESUBMIT',
+        'this listing was rejected; submit a new listing instead of editing it'
+      );
+    case 'draft':
+    case 'pending': {
+      // Edit IN PLACE — no re-review. A pending listing's existing pending request
+      // keeps reviewing the now-updated row (it references the row, not a snapshot).
+      const data = buildListingPatchData(patch);
+      await dbWrite.appListing.update({ where: { id: listingId }, data });
+      return { listingId, status: listing.status, requiresReview: false, shadowId: null };
+    }
+    case 'approved': {
+      const material = patchHasMaterialChange(patch, {
+        externalUrl: listing.externalUrl,
+        name: listing.name,
+        contentRating: listing.contentRating,
+      });
+      if (!material) {
+        // TRIVIAL-only edit → apply to the LIVE row in place (no re-review). Any
+        // material key present is byte-identical to the live value (material ===
+        // false), so writing it is a harmless no-op.
+        const data = buildListingPatchData(patch);
+        await dbWrite.appListing.update({ where: { id: listingId }, data });
+        return { listingId, status: listing.status, requiresReview: false, shadowId: null };
+      }
+      // MATERIAL change → stage on a shadow. The parent stays LIVE untouched; the
+      // FULL patch (material + trivial) is written to the shadow. Assets are edited
+      // separately against the shadow id, then submitListingRevision re-reviews it.
+      const { shadowId } = await beginListingRevision({ listingId, userId });
+      const data = buildListingPatchData(patch);
+      await dbWrite.appListing.update({ where: { id: shadowId }, data });
+      return { listingId, status: listing.status, requiresReview: true, shadowId };
+    }
+    default:
+      throw new OffsiteRequestError(
+        'INVALID_REVISION',
+        `cannot edit a listing in status ${listing.status}`
+      );
+  }
+}
+
+export type BeginListingRevisionResult = { shadowId: string; created: boolean };
+
+/**
+ * AUTHOR: create (or re-open) a shadow-draft revision of an APPROVED listing.
+ *
+ * Idempotent: if a shadow (an AppListing with revisionOfId === parentId) already
+ * exists it is returned as-is (so re-entering the edit flow doesn't clone a second
+ * shadow). Otherwise the approved parent is cloned into a hidden DRAFT AppListing
+ * — scalars copied, appBlockId NULL, a synthetic unique slug (`rev-<ulid>`, never
+ * public), revisionOfId = parentId, owned by the parent's owner — and each of the
+ * parent's screenshots is copied (imageId/order/caption). The author then edits
+ * the shadow's ASSETS via the EXISTING setIcon/setCover/addScreenshot procs by
+ * passing the shadow id (no new asset procs).
+ */
+export async function beginListingRevision(opts: {
+  listingId: string;
+  userId: number;
+}): Promise<BeginListingRevisionResult> {
+  const { listingId, userId } = opts;
+  const parent = await loadOwnedEditableListing(listingId, userId);
+
+  if (parent.revisionOfId != null) {
+    throw new OffsiteRequestError(
+      'INVALID_REVISION',
+      'cannot open a revision of a revision draft'
+    );
+  }
+  if (parent.status !== 'approved') {
+    throw new OffsiteRequestError(
+      'INVALID_REVISION',
+      `only an approved listing can be revised (status is ${parent.status})`
+    );
+  }
+
+  // Idempotent reuse: a parent has at most one in-flight shadow.
+  const existing = await dbRead.appListing.findFirst({
+    where: { revisionOfId: listingId },
+    select: { id: true },
+  });
+  if (existing) return { shadowId: existing.id, created: false };
+
+  const shadowId = newAppListingId();
+  // Synthetic, globally-unique slug: the shadow is never public, but slug is
+  // @unique, so it must not collide with the parent or any other listing.
+  const shadowSlug = `rev-${newUlid()}`;
+
+  try {
+    await dbWrite.$transaction(async (tx) => {
+      // Re-check inside the tx (primary) that no shadow was created concurrently.
+      const race = await tx.appListing.findFirst({
+        where: { revisionOfId: listingId },
+        select: { id: true },
+      });
+      if (race) return; // lost the race — the other caller's shadow stands.
+      await tx.appListing.create({
+        data: {
+          id: shadowId,
+          kind: parent.kind,
+          status: 'draft',
+          slug: shadowSlug,
+          revisionOfId: listingId,
+          name: parent.name,
+          tagline: parent.tagline,
+          description: parent.description,
+          category: parent.category,
+          contentRating: parent.contentRating,
+          externalUrl: parent.externalUrl,
+          connectClientId: parent.connectClientId,
+          iconId: parent.iconId,
+          coverId: parent.coverId,
+          // A shadow has NO backing AppBlock (appBlockId is @unique — it stays on
+          // the parent) and no publish request yet (submitListingRevision adds it).
+          appBlockId: null,
+          userId: parent.userId,
+        },
+      });
+      const shots = await tx.appListingScreenshot.findMany({
+        where: { appListingId: listingId },
+        select: { imageId: true, order: true, caption: true },
+        orderBy: { order: 'asc' },
+      });
+      if (shots.length > 0) {
+        await tx.appListingScreenshot.createMany({
+          data: shots.map((s: { imageId: number | null; order: number; caption: string | null }) => ({
+            id: newAppListingScreenshotId(),
+            appListingId: shadowId,
+            imageId: s.imageId,
+            order: s.order,
+            caption: s.caption,
+          })),
+        });
+      }
+    });
+  } catch (err) {
+    // A concurrent creator committed its shadow between our in-tx read-check and
+    // our INSERT → the partial-UNIQUE index on revision_of_id (WHERE NOT NULL)
+    // rejects the duplicate with P2002. Collapse to the idempotent-reuse path
+    // (the winner re-read below returns the standing shadow) instead of
+    // surfacing the race as an error. Duck-type on `code` (the Prisma error
+    // class isn't reliably constructible with a stale client). Re-throw anything
+    // else.
+    const code = (err as { code?: unknown })?.code;
+    if (code !== 'P2002') throw err;
+  }
+
+  // If we lost the concurrent-create race (in-tx read-check OR a P2002 on
+  // insert) the row we minted was never written; re-read the winning shadow so
+  // the caller always gets a live shadow id.
+  const winner = await dbWrite.appListing.findFirst({
+    where: { revisionOfId: listingId },
+    select: { id: true },
+  });
+  if (!winner) {
+    throw new OffsiteRequestError('INVALID_REVISION', 'failed to open a revision draft');
+  }
+  return { shadowId: winner.id, created: winner.id === shadowId };
+}
+
+export type SubmitListingRevisionResult = {
+  publishRequestId: string;
+  shadowId: string;
+  /** The PUBLIC parent slug denormalized onto the review-queue request. */
+  slug: string;
+};
+
+/**
+ * AUTHOR: submit a prepared shadow-draft revision for mod re-approval. Asserts the
+ * shadow is a draft revision (revisionOfId set), asset-complete, and URL-valid,
+ * then creates a pending AppListingPublishRequest pointing at the SHADOW but
+ * carrying the PUBLIC PARENT slug (so the queue reads the live slug). Idempotent /
+ * concurrency-guarded: a shadow that already has a pending request returns it
+ * rather than creating a second concurrent pending revision.
+ */
+export async function submitListingRevision(opts: {
+  shadowId: string;
+  userId: number;
+  changelog?: string | null;
+}): Promise<SubmitListingRevisionResult> {
+  const { shadowId, userId } = opts;
+  const changelog = opts.changelog ?? null;
+
+  const shadow = (await dbRead.appListing.findUnique({
+    where: { id: shadowId },
+    select: {
+      id: true,
+      kind: true,
+      status: true,
+      userId: true,
+      revisionOfId: true,
+      externalUrl: true,
+      iconId: true,
+      coverId: true,
+      revisionOf: { select: { slug: true, status: true } },
+    },
+  })) as
+    | {
+        id: string;
+        kind: string;
+        status: string;
+        userId: number;
+        revisionOfId: string | null;
+        externalUrl: string | null;
+        iconId: number | null;
+        coverId: number | null;
+        revisionOf: { slug: string; status: string } | null;
+      }
+    | null;
+
+  if (!shadow) {
+    throw new OffsiteRequestError('NOT_FOUND', `revision draft ${shadowId} not found`);
+  }
+  if (shadow.userId !== userId) {
+    throw new OffsiteRequestError('NOT_OWNED', 'you can only submit your own revision');
+  }
+  if (shadow.revisionOfId == null || !shadow.revisionOf) {
+    throw new OffsiteRequestError('INVALID_REVISION', 'this listing is not a revision draft');
+  }
+  if (shadow.status !== 'draft') {
+    throw new OffsiteRequestError(
+      'INVALID_REVISION',
+      `a revision can only be submitted from draft (status is ${shadow.status})`
+    );
+  }
+
+  // Asset-completeness (authoritative on the primary — the asset mutators write to
+  // dbWrite, so a replica count could be stale-complete under lag) + URL re-validate.
+  const screenshotCount = await dbWrite.appListingScreenshot.count({
+    where: { appListingId: shadowId, imageId: { not: null } },
+  });
+  assertListingAssetsComplete({
+    iconId: shadow.iconId,
+    coverId: shadow.coverId,
+    screenshotCount,
+  });
+  const url = validateExternalUrl(shadow.externalUrl);
+  if (!url.ok) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `stored externalUrl is invalid and cannot be submitted: ${url.error}`,
+    });
+  }
+
+  // Guard a second concurrent pending revision: one open request per shadow.
+  const openRequest = await dbRead.appListingPublishRequest.findFirst({
+    where: { appListingId: shadowId, status: 'pending' },
+    select: { id: true, slug: true },
+  });
+  if (openRequest) {
+    return { publishRequestId: openRequest.id, shadowId, slug: openRequest.slug };
+  }
+
+  const publishRequestId = newAppListingPublishRequestId();
+  await dbWrite.appListingPublishRequest.create({
+    data: {
+      id: publishRequestId,
+      appListingId: shadowId,
+      kind: shadow.kind,
+      // Denormalize the PUBLIC parent slug so the mod queue reads the live slug,
+      // not the synthetic rev-<ulid>.
+      slug: shadow.revisionOf.slug,
+      submittedByUserId: userId,
+      status: 'pending',
+      changelog,
+    },
+  });
+  return { publishRequestId, shadowId, slug: shadow.revisionOf.slug };
 }
 
 // ---------------------------------------------------------------------------
@@ -399,11 +883,33 @@ export async function approveExternalRequest(opts: {
   // stale-complete). See step (5).
   const listing = await dbRead.appListing.findUnique({
     where: { id: appListingId },
-    select: { id: true, status: true, externalUrl: true, iconId: true, coverId: true },
+    select: {
+      id: true,
+      status: true,
+      externalUrl: true,
+      iconId: true,
+      coverId: true,
+      revisionOfId: true,
+    },
   });
   if (!listing) {
     throw new OffsiteRequestError('NOT_FOUND', `draft listing ${appListingId} not found`);
   }
+
+  // REVISION branch: the request points at a SHADOW (an edit of an approved
+  // parent), not a first-time draft. Apply the shadow onto its live parent instead
+  // of the first-time draft→approved flip. The NON-revision path below is
+  // deliberately left byte-for-behavior UNCHANGED.
+  if (listing.revisionOfId != null) {
+    return applyApprovedRevision({
+      request,
+      shadowId: appListingId,
+      parentId: listing.revisionOfId,
+      reviewerUserId,
+      approvalNotes,
+    });
+  }
+
   const screenshotCount = await dbRead.appListingScreenshot.count({
     where: { appListingId, imageId: { not: null } },
   });
@@ -509,6 +1015,155 @@ export async function approveExternalRequest(opts: {
 }
 
 /**
+ * REVISION APPLY (shadow-draft): copy an approved shadow's contents onto its live
+ * parent, preserving the parent's id / slug / appBlockId / metric / reports, then
+ * retire the shadow. Called by {@link approveExternalRequest} when the request's
+ * listing has `revisionOfId` set.
+ *
+ * In ONE transaction (authoritative on the primary):
+ *   1. Re-load the shadow from the primary; re-assert it is still a draft revision,
+ *      asset-complete, and URL-valid (any failure rolls the whole tx back before
+ *      any mutation — the parent stays exactly as it was).
+ *   2. Flip the request pending→approved (status-guarded TOCTOU) AND re-point it at
+ *      the PARENT (so the approved request documents the live listing, and deleting
+ *      the shadow can't SetNull it — the FK is `onDelete: SetNull`).
+ *   3. Copy the shadow's scalars (name/tagline/description/category/contentRating/
+ *      externalUrl/iconId/coverId/connectClientId) onto the parent. NOT status /
+ *      slug / appBlockId / id — the live identity + placement are preserved.
+ *   4. REPARENT the shadow's screenshots onto the parent: delete the parent's
+ *      existing screenshot rows, then UPDATE the shadow's screenshots'
+ *      appListingId → parent BEFORE deleting the shadow, so the CASCADE on the
+ *      shadow delete drops nothing (the rows have already left the shadow).
+ *   5. Delete the shadow (guarded to a revision row so it can never remove a real
+ *      listing). Its screenshots are gone (moved) and its only request is re-pointed
+ *      at the parent, so the cascade is a no-op.
+ */
+async function applyApprovedRevision(opts: {
+  request: { id: string; slug: string; appListingId: string | null };
+  shadowId: string;
+  parentId: string;
+  reviewerUserId: number;
+  approvalNotes: string | null;
+}): Promise<ApproveExternalRequestResult> {
+  const { request, shadowId, parentId, reviewerUserId, approvalNotes } = opts;
+
+  // Parent must still exist (defense — its delete would CASCADE the shadow away).
+  const parent = await dbRead.appListing.findUnique({
+    where: { id: parentId },
+    select: { id: true, slug: true, status: true },
+  });
+  if (!parent) {
+    throw new OffsiteRequestError('NOT_FOUND', `parent listing ${parentId} not found`);
+  }
+  // The live parent must still be APPROVED. If a mod REMOVED (took down) or
+  // otherwise un-approved it after this revision was submitted, applying the
+  // shadow's scalars would leave a confusing "approved request → still-hidden
+  // listing" state (the copy doesn't flip status). Refuse instead.
+  if (parent.status !== 'approved') {
+    throw new OffsiteRequestError(
+      'INVALID_REVISION',
+      `the live listing is no longer approved (status is ${parent.status}); cannot apply this revision`
+    );
+  }
+
+  await dbWrite.$transaction(async (tx) => {
+    // (1) AUTHORITATIVE re-read of the shadow on the PRIMARY (row-consistent with
+    // the copy). The sibling asset mutators write to dbWrite, so a pre-tx replica
+    // gate could pass on stale-complete state — re-assert here.
+    const shadow = await tx.appListing.findUnique({
+      where: { id: shadowId },
+      select: {
+        id: true,
+        status: true,
+        revisionOfId: true,
+        name: true,
+        tagline: true,
+        description: true,
+        category: true,
+        contentRating: true,
+        externalUrl: true,
+        connectClientId: true,
+        iconId: true,
+        coverId: true,
+      },
+    });
+    if (!shadow || shadow.revisionOfId !== parentId || shadow.status !== 'draft') {
+      throw new OffsiteRequestError(
+        'NOT_PENDING',
+        'cannot approve — the revision draft is no longer available'
+      );
+    }
+    const screenshotCount = await tx.appListingScreenshot.count({
+      where: { appListingId: shadowId, imageId: { not: null } },
+    });
+    assertListingAssetsComplete({
+      iconId: shadow.iconId,
+      coverId: shadow.coverId,
+      screenshotCount,
+    });
+    const url = validateExternalUrl(shadow.externalUrl);
+    if (!url.ok) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: `stored externalUrl is invalid and cannot be approved: ${url.error}`,
+      });
+    }
+
+    // (2) Flip the request pending→approved AND re-point it at the PARENT.
+    const req = await tx.appListingPublishRequest.updateMany({
+      where: { id: request.id, status: 'pending' },
+      data: {
+        status: 'approved',
+        reviewedByUserId: reviewerUserId,
+        reviewedAt: new Date(),
+        approvalNotes,
+        // Re-point at the live parent so (a) the approved request documents the
+        // live listing and (b) the shadow delete below can't SetNull this row.
+        appListingId: parentId,
+      },
+    });
+    if (req.count === 0) {
+      throw new OffsiteRequestError(
+        'NOT_PENDING',
+        'cannot approve — the request is no longer pending'
+      );
+    }
+
+    // (3) Copy scalars onto the parent (id / slug / appBlockId / status untouched).
+    await tx.appListing.update({
+      where: { id: parentId },
+      data: {
+        name: shadow.name,
+        tagline: shadow.tagline,
+        description: shadow.description,
+        category: shadow.category,
+        contentRating: shadow.contentRating,
+        externalUrl: shadow.externalUrl,
+        connectClientId: shadow.connectClientId,
+        iconId: shadow.iconId,
+        coverId: shadow.coverId,
+      },
+    });
+
+    // (4) Reparent screenshots BEFORE deleting the shadow (cascade-safe): drop the
+    // parent's current rows, then move the shadow's rows onto the parent.
+    await tx.appListingScreenshot.deleteMany({ where: { appListingId: parentId } });
+    await tx.appListingScreenshot.updateMany({
+      where: { appListingId: shadowId },
+      data: { appListingId: parentId },
+    });
+
+    // (5) Retire the shadow (guarded to a revision row). Screenshots already moved;
+    // the request already re-pointed — the cascade drops nothing.
+    await tx.appListing.deleteMany({
+      where: { id: shadowId, revisionOfId: { not: null } },
+    });
+  });
+
+  return { publishRequestId: request.id, listingId: parentId, slug: parent.slug };
+}
+
+/**
  * MOD reject of a pending off-site request. Requires a `rejectionReason` of ≥10
  * (trimmed) chars, then — in ONE transaction — flips the request
  * `pending → rejected` + sets `reviewedBy*` / `rejectionReason` and DELETES the
@@ -519,6 +1174,12 @@ export async function approveExternalRequest(opts: {
  * `updateMany` so a concurrent approve/withdraw that already flipped the row yields
  * NOT_PENDING (and, having matched 0, the tx rolls back before the delete).
  * Non-pending → NOT_PENDING.
+ *
+ * REVISION-AWARE (no branch needed): a pending REVISION request points at a SHADOW
+ * `AppListing`, which is `status:'draft'`, so the status-guarded `deleteDraftListing`
+ * deletes ONLY the shadow — the LIVE parent (a separate `approved` row) is untouched
+ * and stays live. Rejecting a revision therefore behaves exactly like rejecting a
+ * first-time submission, by construction.
  */
 export async function rejectExternalRequest(opts: {
   publishRequestId: string;
@@ -636,7 +1297,15 @@ const submissionSelect = {
   approvalNotes: true,
   changelog: true,
   appListing: {
-    select: { name: true, externalUrl: true, category: true, contentRating: true },
+    // `revisionOfId` lets a caller INFER whether a request targets a shadow (a
+    // revision) vs a top-level listing — no dedicated column on the request.
+    select: {
+      name: true,
+      externalUrl: true,
+      category: true,
+      contentRating: true,
+      revisionOfId: true,
+    },
   },
 } as const;
 
@@ -647,20 +1316,65 @@ export type ListOffsiteRequestsOptions = { limit?: number; cursor?: string };
 /**
  * The caller's OWN off-site submissions, newest-first, keyset-paginated. Scoped
  * to `submittedByUserId` — never another user's rows.
+ *
+ * SHADOW handling: a pending REVISION request targets a hidden SHADOW listing
+ * (`appListing.revisionOfId != null`) — it must NOT surface as its own top-level
+ * submission. Those requests are excluded here; instead each PARENT row carries a
+ * `hasPendingRevision` flag so the my-submissions UI can badge "a revision is
+ * under review". (A request whose listing was deleted — `appListingId` null, e.g.
+ * a rejected/withdrawn submission — is still shown.) The shape is otherwise
+ * backward-compatible: `hasPendingRevision` is purely additive.
  */
 export async function listMySubmissions(
   opts: { userId: number } & ListOffsiteRequestsOptions
 ) {
   const limit = Math.min(opts.limit ?? 25, 100);
   const rows = await dbRead.appListingPublishRequest.findMany({
-    where: { submittedByUserId: opts.userId, kind: 'offsite' },
+    where: {
+      submittedByUserId: opts.userId,
+      kind: 'offsite',
+      // Exclude requests targeting a SHADOW (revision) listing — surfaced as a
+      // flag on the parent, not as their own row. Keep requests with no listing.
+      OR: [{ appListingId: null }, { appListing: { revisionOfId: null } }],
+    },
     orderBy: { submittedAt: 'desc' },
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
     select: submissionSelect,
   });
   const hasNext = rows.length > limit;
-  const items = hasNext ? rows.slice(0, limit) : rows;
+  const page = hasNext ? rows.slice(0, limit) : rows;
+
+  // Flag which parent listings on this page have a revision UNDER REVIEW. This is
+  // derived from the existence of a PENDING publish request that targets a shadow
+  // (a `revisionOfId`-bearing listing) for the parent — NOT from mere shadow
+  // existence. An abandoned shadow (opened via beginListingRevision but never
+  // submitListingRevision-ed → no pending request) must NOT falsely badge the
+  // parent "revision in review".
+  const parentIds = page
+    .map((r) => r.appListingId)
+    .filter((id): id is string => id != null);
+  const pendingRevisionReqs =
+    parentIds.length > 0
+      ? await dbRead.appListingPublishRequest.findMany({
+          where: {
+            status: 'pending',
+            kind: 'offsite',
+            appListing: { revisionOfId: { in: parentIds } },
+          },
+          select: { appListing: { select: { revisionOfId: true } } },
+        })
+      : [];
+  const parentsWithRevision = new Set(
+    pendingRevisionReqs
+      .map((r) => r.appListing?.revisionOfId)
+      .filter((id): id is string => id != null)
+  );
+  const items = page.map((r) => ({
+    ...r,
+    hasPendingRevision: r.appListingId != null && parentsWithRevision.has(r.appListingId),
+  }));
+
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }
 

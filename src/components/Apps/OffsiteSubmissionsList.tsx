@@ -2,9 +2,11 @@ import { Anchor, Badge, Button, Card, Code, Group, Stack, Table, Text } from '@m
 import { IconExternalLink } from '@tabler/icons-react';
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import {
+  isEditableOffsiteStatus,
   isWithdrawableOffsiteStatus,
   offsiteStatusChip,
 } from '~/components/Apps/offsiteSubmissionStatus';
+import { OffsiteEditModal } from '~/components/Apps/OffsiteEditModal';
 import { validateExternalUrl } from '~/server/schema/blocks/external-app.schema';
 import { ReviewerNotesButton } from '~/components/Apps/MySubmissionsList';
 import {
@@ -47,7 +49,11 @@ export type OffsiteSubmission = {
     externalUrl: string | null;
     category: string | null;
     contentRating: string | null;
+    /** Non-null only for a shadow revision draft (never surfaced here — inferred). */
+    revisionOfId?: string | null;
   } | null;
+  /** True when this parent listing has an in-flight shadow revision under review. */
+  hasPendingRevision?: boolean;
 };
 
 /** Field adapters for the shared filter/sort/group helpers. Collapse identity =
@@ -134,6 +140,47 @@ function OffsiteRow({
   toggle?: ReactNode;
 }) {
   const s = submission;
+  // Edit only on the latest (non-nested) row of an editable request; older
+  // versions are historical. Withdraw stays available per-row where applicable.
+  const canEdit = !nested && isEditableOffsiteStatus(s.status) && !!s.appListingId;
+  const canWithdraw = isWithdrawableOffsiteStatus(s.status);
+  const renderActions = () => {
+    if (!canEdit && !canWithdraw && !s.hasPendingRevision) {
+      return (
+        <Text size="xs" c="dimmed">
+          —
+        </Text>
+      );
+    }
+    return (
+      <Group gap={6} wrap="nowrap">
+        {canEdit && <OffsiteEditModal submission={s} />}
+        {canWithdraw && (
+          <Button
+            size="xs"
+            variant="default"
+            color="red"
+            onClick={() => onWithdraw(s.id)}
+            disabled={withdrawing}
+            loading={withdrawing}
+            data-testid={`apps-offsite-withdraw-${s.slug}`}
+          >
+            Withdraw
+          </Button>
+        )}
+        {s.hasPendingRevision && (
+          <Badge
+            size="xs"
+            color="orange"
+            variant="light"
+            data-testid={`apps-offsite-revision-pending-${s.slug}`}
+          >
+            revision in review
+          </Badge>
+        )}
+      </Group>
+    );
+  };
   return (
     <Table.Tr data-testid={`apps-offsite-submission-row-${s.slug}`}>
       <Table.Td>
@@ -171,25 +218,7 @@ function OffsiteRow({
           {formatDate(s.reviewedAt)}
         </Text>
       </Table.Td>
-      <Table.Td>
-        {isWithdrawableOffsiteStatus(s.status) ? (
-          <Button
-            size="xs"
-            variant="default"
-            color="red"
-            onClick={() => onWithdraw(s.id)}
-            disabled={withdrawing}
-            loading={withdrawing}
-            data-testid={`apps-offsite-withdraw-${s.slug}`}
-          >
-            Withdraw
-          </Button>
-        ) : (
-          <Text size="xs" c="dimmed">
-            —
-          </Text>
-        )}
-      </Table.Td>
+      <Table.Td>{renderActions()}</Table.Td>
     </Table.Tr>
   );
 }

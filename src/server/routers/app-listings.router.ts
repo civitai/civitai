@@ -21,11 +21,14 @@ import {
 } from '~/server/schema/blocks/app-listing-review.schema';
 import {
   approveExternalRequestSchema,
+  beginListingRevisionSchema,
   listMySubmissionsSchema,
   listOffsiteRequestsSchema,
   persistListingAssetImageSchema,
   rejectExternalRequestSchema,
   submitExternalListingSchema,
+  submitListingRevisionSchema,
+  updateListingSchema,
   withdrawExternalRequestSchema,
 } from '~/server/schema/blocks/offsite-listing.schema';
 import {
@@ -150,7 +153,7 @@ function mapOffsiteError(err: unknown): TRPCError {
     const trpcCode =
       code === 'NOT_FOUND'
         ? 'NOT_FOUND'
-        : code === 'NOT_OWNED'
+        : code === 'NOT_OWNED' || code === 'FORBIDDEN'
         ? 'FORBIDDEN'
         : code === 'ALREADY_REPORTED'
         ? 'CONFLICT'
@@ -307,6 +310,90 @@ export const appListingsRouter = router({
         throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
       }
       return { ok: true };
+    }),
+
+  /**
+   * AUTHOR: edit an existing off-site listing WITHOUT withdrawing it (state-aware).
+   * draft/pending → in place; approved-trivial (tagline/description/category/
+   * contentRating) → in place; approved-material (externalUrl/name) → staged on a
+   * shadow-draft revision (`requiresReview:true` + the `shadowId` to edit assets
+   * against, then `submitListingRevision`). Owner-bound in the service. Rejected →
+   * MUST_RESUBMIT; removed → FORBIDDEN. Typed failures map via `mapOffsiteError`.
+   */
+  updateListing: appDeveloperProcedure
+    .use(
+      rateLimit({
+        limit: 30,
+        period: 3600,
+        errorMessage: 'Too many edits — slow down.',
+      })
+    )
+    .input(updateListingSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { updateListing } = await import('~/server/services/blocks/offsite-listing.service');
+      try {
+        return await updateListing({
+          listingId: input.listingId,
+          patch: input.patch,
+          userId: ctx.user.id,
+        });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
+   * AUTHOR: open (or re-open) a shadow-draft revision of an APPROVED listing so its
+   * MATERIAL fields / assets can be edited while the current version stays live.
+   * Idempotent (re-opening returns the existing shadow). Returns the shadow id;
+   * the author then edits its assets via `setIcon`/`setCover`/`addScreenshot`
+   * (passing the shadow id) and calls `submitListingRevision`.
+   */
+  beginListingRevision: appDeveloperProcedure
+    .input(beginListingRevisionSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { beginListingRevision } = await import(
+        '~/server/services/blocks/offsite-listing.service'
+      );
+      try {
+        return await beginListingRevision({ listingId: input.listingId, userId: ctx.user.id });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
+   * AUTHOR: submit a prepared shadow-draft revision for mod re-approval. Asserts
+   * the shadow is a draft revision, asset-complete + URL-valid, then creates a
+   * pending publish request pointing at the shadow but carrying the PUBLIC PARENT
+   * slug. Guards a second concurrent pending revision. Typed failures map via
+   * `mapOffsiteError`.
+   */
+  submitListingRevision: appDeveloperProcedure
+    .use(
+      rateLimit({
+        limit: 20,
+        period: 3600,
+        errorMessage: 'Too many revision submissions — slow down.',
+      })
+    )
+    .input(submitListingRevisionSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { submitListingRevision } = await import(
+        '~/server/services/blocks/offsite-listing.service'
+      );
+      try {
+        return await submitListingRevision({
+          shadowId: input.shadowId,
+          userId: ctx.user.id,
+          changelog: input.changelog,
+        });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
     }),
 
   /**

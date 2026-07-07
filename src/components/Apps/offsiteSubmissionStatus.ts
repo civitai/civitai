@@ -35,3 +35,14 @@ export function offsiteStatusChip(status: string): OffsiteStatusChip {
 export function isWithdrawableOffsiteStatus(status: string): boolean {
   return status === 'pending';
 }
+
+/**
+ * True for a REQUEST status whose backing listing is still editable WITHOUT
+ * withdrawing it. `pending` (the listing is a live draft under review — edited in
+ * place) and `approved` (the listing is live — a trivial edit applies in place, a
+ * material edit is staged as a shadow revision). `rejected`/`withdrawn` deleted
+ * their listing (→ resubmit), so they are NOT editable here.
+ */
+export function isEditableOffsiteStatus(status: string): boolean {
+  return status === 'pending' || status === 'approved';
+}

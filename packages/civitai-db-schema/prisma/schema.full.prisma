@@ -2517,6 +2517,19 @@ model AppListing {
   // Only a natively-created off-site listing (no backing AppBlock) leaves it NULL.
   appBlockId      String?      @unique @map("app_block_id")
   appBlock        AppBlock?    @relation(fields: [appBlockId], references: [id], onDelete: SetNull)
+  // Edit-without-withdraw (shadow-draft revision): a hidden DRAFT clone of an
+  // APPROVED parent listing points here at its parent. On mod re-approve the
+  // shadow's contents are copied onto the parent (which keeps its id/slug/
+  // app_block_id/metrics/reports) and the shadow is deleted; on reject/withdraw
+  // the shadow is deleted and the parent is untouched. NULL for a normal (top-
+  // level) listing. CASCADE so deleting a parent removes its in-flight shadow.
+  // A request is a REVISION iff its listing's revisionOfId != null (no extra
+  // column on the request — it is inferred). The read path filters
+  // revisionOfId != null out (shadows are draft, so already hidden — this is
+  // defense-in-depth).
+  revisionOfId    String?      @map("revision_of_id")
+  revisionOf      AppListing?  @relation("AppListingRevision", fields: [revisionOfId], references: [id], onDelete: Cascade)
+  revisions       AppListing[] @relation("AppListingRevision")
   // Curation rail (mirrors AppBlock.featured / featured_order).
   featured        Boolean      @default(false)
   featuredOrder   Int?         @map("featured_order")
@@ -2543,6 +2556,14 @@ model AppListing {
   // P1 populates icon/cover (Postgres does NOT auto-index a FK). Free now (empty).
   @@index([iconId], map: "app_listings_icon_idx")
   @@index([coverId], map: "app_listings_cover_idx")
+  // Shadow-lookup (WHERE revisionOfId = parent) + the parent-delete cascade scan.
+  // NB: the migration creates this as a PARTIAL UNIQUE index (UNIQUE on
+  // revisionOfId WHERE revisionOfId IS NOT NULL) so a parent has at most ONE
+  // in-flight shadow at the DB level. Prisma can't express a partial-unique
+  // index, so this stays a plain @@index in the schema; the real one-shadow
+  // guard is the migration's partial-unique index + the app-level P2002 →
+  // idempotent-reuse handling in beginListingRevision.
+  @@index([revisionOfId], map: "app_listings_revision_of_id_key")
   @@map("app_listings")
 }
 
