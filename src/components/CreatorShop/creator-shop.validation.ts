@@ -1,5 +1,9 @@
 import type { AutoCheck } from '~/server/schema/creator-shop.schema';
-import { cosmeticImageRequirements } from '~/server/schema/creator-shop.schema';
+import {
+  cosmeticDimensionsLabel,
+  cosmeticDimensionsPass,
+  cosmeticImageRequirements,
+} from '~/server/schema/creator-shop.schema';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { formatBytes } from '~/utils/number-helpers';
 
@@ -69,10 +73,8 @@ export async function validateCosmeticImage(
     { key: 'format', label: 'PNG or WebP', passed: validFormat },
     {
       key: 'dimensions',
-      label: req.exact ? `${req.width}×${req.height}px` : `At least ${req.width}×${req.height}px`,
-      passed: req.exact
-        ? width === req.width && height === req.height
-        : width >= req.width && height >= req.height,
+      label: cosmeticDimensionsLabel(req),
+      passed: cosmeticDimensionsPass(req, width, height),
       detail: width ? `${width}×${height}px` : 'unreadable',
     },
   ];

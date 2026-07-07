@@ -45,6 +45,34 @@ export const cosmeticImageRequirements = (type: CosmeticType): CosmeticImageRequ
   }
 };
 
+const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
+
+// Human-readable aspect ratio, e.g. 144×144 -> "1:1", 450×155 -> "90:31".
+export const aspectRatioLabel = (width: number, height: number): string => {
+  const g = gcd(width, height) || 1;
+  return `${width / g}:${height / g}`;
+};
+
+// Dimensions requirement label — shared by the submit form and both validators.
+export const cosmeticDimensionsLabel = (req: CosmeticImageRequirement): string =>
+  req.exact
+    ? `${req.width}×${req.height}px`
+    : `At least ${req.width}×${req.height}px · ${aspectRatioLabel(req.width, req.height)} ratio`;
+
+// `exact` types must match WxH exactly; the rest must meet the minimum size AND
+// keep the requirement's aspect ratio (within 2%).
+export const cosmeticDimensionsPass = (
+  req: CosmeticImageRequirement,
+  width: number,
+  height: number
+): boolean => {
+  if (req.exact) return width === req.width && height === req.height;
+  const meetsMin = width >= req.width && height >= req.height;
+  const targetRatio = req.width / req.height;
+  const ratioMatch = height > 0 && Math.abs(width / height - targetRatio) <= 0.02 * targetRatio;
+  return meetsMin && ratioMatch;
+};
+
 // Computed SERVER-SIDE from the uploaded artwork and persisted to item meta so
 // moderators can see them. Not accepted as client input.
 export type AutoCheck = z.infer<typeof autoCheckSchema>;

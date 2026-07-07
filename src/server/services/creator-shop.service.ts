@@ -22,6 +22,8 @@ import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import {
   CREATOR_SHOP_SUBMISSION_FEE,
   PRICE_REVIEW_THRESHOLD,
+  cosmeticDimensionsLabel,
+  cosmeticDimensionsPass,
   cosmeticImageRequirements,
 } from '~/server/schema/creator-shop.schema';
 import type {
@@ -102,10 +104,6 @@ const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
     throw throwBadRequestError('Could not read the uploaded artwork for validation');
   }
 
-  const dimensionsOk = req.exact
-    ? width === req.width && height === req.height
-    : width >= req.width && height >= req.height;
-
   const checks: AutoCheck[] = [
     {
       key: 'format',
@@ -115,8 +113,8 @@ const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
     },
     {
       key: 'dimensions',
-      label: req.exact ? `${req.width}×${req.height}px` : `At least ${req.width}×${req.height}px`,
-      passed: dimensionsOk,
+      label: cosmeticDimensionsLabel(req),
+      passed: cosmeticDimensionsPass(req, width, height),
       detail: `${width}×${height}px`,
     },
   ];
