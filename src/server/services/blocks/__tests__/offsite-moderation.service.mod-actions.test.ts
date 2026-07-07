@@ -22,7 +22,12 @@ import {
 
 type WriteMock = {
   $transaction: ReturnType<typeof vi.fn>;
-  appListing: { updateMany: ReturnType<typeof vi.fn>; deleteMany: ReturnType<typeof vi.fn> };
+  appListing: {
+    updateMany: ReturnType<typeof vi.fn>;
+    deleteMany: ReturnType<typeof vi.fn>;
+    // purge re-reads the pre-delete snapshot on the PRIMARY inside the tx.
+    findUnique: ReturnType<typeof vi.fn>;
+  };
   appListingModerationEvent: { create: ReturnType<typeof vi.fn> };
   appListingReport: { updateMany: ReturnType<typeof vi.fn> };
 };
@@ -38,6 +43,7 @@ const { mockRead, mockWrite, ids } = vi.hoisted(() => {
     appListing: {
       updateMany: vi.fn(async () => ({ count: 1 })),
       deleteMany: vi.fn(async () => ({ count: 1 })),
+      findUnique: vi.fn(async () => null),
     },
     appListingModerationEvent: { create: vi.fn(async (a: { data: unknown }) => a.data) },
     appListingReport: { updateMany: vi.fn(async () => ({ count: 1 })) },
@@ -76,6 +82,9 @@ beforeEach(() => {
   );
   mockWrite.appListing.updateMany.mockResolvedValue({ count: 1 });
   mockWrite.appListing.deleteMany.mockResolvedValue({ count: 1 });
+  // Default the in-tx purge primary read to a valid offsite listing (overridden
+  // per-test where the snapshot status is load-bearing).
+  mockWrite.appListing.findUnique.mockResolvedValue(offsiteListing('removed'));
   mockWrite.appListingModerationEvent.create.mockImplementation(async (a: { data: unknown }) => a.data);
   mockWrite.appListingReport.updateMany.mockResolvedValue({ count: 1 });
   mockRead.appListing.findUnique.mockResolvedValue(null);
@@ -143,18 +152,40 @@ describe('delistListing', () => {
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
-  it('with a reportId, resolves that report in the SAME tx (status-guarded)', async () => {
+  it('with a reportId, resolves that report in the SAME tx (status+listing-scoped)', async () => {
     mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('approved'));
     await delistListing({
       input: { appListingId: APP_ID, reason: GOOD_REASON, reportId: REPORT_ID },
       reviewerUserId: REVIEWER,
     });
+    // The resolve is scoped to THIS listing (appListingId) AND the pending status —
+    // so a reportId for another listing can't be closed by this delist.
     expect(mockWrite.appListingReport.updateMany).toHaveBeenCalledWith({
-      where: { id: REPORT_ID, status: 'pending' },
+      where: { id: REPORT_ID, appListingId: APP_ID, status: 'pending' },
       data: { status: 'resolved', resolvedByUserId: REVIEWER, resolvedAt: expect.any(Date) },
     });
     // The event carries the reportId link.
     expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data.reportId).toBe(REPORT_ID);
+  });
+
+  it('a reportId belonging to a DIFFERENT listing is NOT resolved (0-row no-op); the delist still succeeds', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('approved'));
+    // The listing-scoped, status-guarded updateMany matches 0 rows (the report is
+    // for another listing) — the delist must still succeed (silent no-op).
+    mockWrite.appListingReport.updateMany.mockResolvedValueOnce({ count: 0 });
+    const res = await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON, reportId: REPORT_ID },
+      reviewerUserId: REVIEWER,
+    });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'removed' });
+    // The WHERE is scoped to THIS listing, so a cross-listing report can never match.
+    expect(mockWrite.appListingReport.updateMany).toHaveBeenCalledWith({
+      where: { id: REPORT_ID, appListingId: APP_ID, status: 'pending' },
+      data: { status: 'resolved', resolvedByUserId: REVIEWER, resolvedAt: expect.any(Date) },
+    });
+    // The delist event still stands + still links the supplied reportId.
+    expect(mockWrite.appListingModerationEvent.create).toHaveBeenCalledTimes(1);
+    expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data.action).toBe('delist');
   });
 
   it('a too-short reason is a BAD_REQUEST (defense-in-depth) with no DB touch', async () => {
@@ -206,6 +237,7 @@ describe('relistListing', () => {
 describe('purgeListing', () => {
   it('writes the audit event BEFORE the hard delete (so the event captures the snapshot)', async () => {
     mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
     const res = await purgeListing({
       input: { appListingId: APP_ID, reason: 'confirmed impersonation' },
       reviewerUserId: REVIEWER,
@@ -217,17 +249,21 @@ describe('purgeListing', () => {
     const deleteOrder = mockWrite.appListing.deleteMany.mock.invocationCallOrder[0];
     expect(createOrder).toBeLessThan(deleteOrder);
 
-    // The event snapshots the pre-delete status + slug; the delete targets the id.
+    // The event snapshots the pre-delete status + slug; the delete targets the id
+    // (kind-guarded — offsite-only, defense-in-depth on the destructive op).
     expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data).toMatchObject({
       action: 'purge',
       slug: SLUG,
       before: { status: 'removed' },
     });
-    expect(mockWrite.appListing.deleteMany).toHaveBeenCalledWith({ where: { id: APP_ID } });
+    expect(mockWrite.appListing.deleteMany).toHaveBeenCalledWith({
+      where: { id: APP_ID, kind: 'offsite' },
+    });
   });
 
   it('purges regardless of the source status (approved allowed), snapshotting it', async () => {
     mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('approved'));
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(offsiteListing('approved'));
     await purgeListing({
       input: { appListingId: APP_ID, reason: 'spam expunge' },
       reviewerUserId: REVIEWER,
@@ -237,7 +273,35 @@ describe('purgeListing', () => {
     });
   });
 
-  it('the kind guard rejects an on-site listing (no tx)', async () => {
+  it('snapshots before.status + slug from the in-tx PRIMARY read, not the (lagging) replica classify', async () => {
+    // Replica classify sees a STALE `approved`/old-slug; the primary tx read sees the
+    // true current `removed`/new-slug. The audit `before` must reflect the PRIMARY.
+    mockRead.appListing.findUnique.mockResolvedValueOnce({
+      id: APP_ID,
+      kind: 'offsite',
+      status: 'approved',
+      slug: 'stale-slug',
+    });
+    mockWrite.appListing.findUnique.mockResolvedValueOnce({
+      status: 'removed',
+      slug: 'fresh-slug',
+      kind: 'offsite',
+    });
+    await purgeListing({
+      input: { appListingId: APP_ID, reason: 'confirmed impersonation' },
+      reviewerUserId: REVIEWER,
+    });
+    // The in-tx primary read is what feeds the snapshot.
+    expect(mockWrite.appListing.findUnique).toHaveBeenCalledWith({
+      where: { id: APP_ID },
+      select: { status: true, slug: true, kind: true },
+    });
+    const data = mockWrite.appListingModerationEvent.create.mock.calls[0][0].data;
+    expect(data.before).toEqual({ status: 'removed' });
+    expect(data.slug).toBe('fresh-slug');
+  });
+
+  it('the kind guard rejects an on-site listing at the replica classify (no tx)', async () => {
     mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed', 'onsite'));
     await expect(
       purgeListing({ input: { appListingId: APP_ID, reason: 'spam expunge' }, reviewerUserId: REVIEWER })
@@ -245,8 +309,21 @@ describe('purgeListing', () => {
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
   });
 
+  it('a row that vanished/turned non-offsite between classify and the in-tx primary read → NOT_FOUND, ZERO events', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
+    // Passed the replica classify, but the primary tx read finds it gone.
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(null);
+    await expect(
+      purgeListing({ input: { appListingId: APP_ID, reason: 'spam expunge' }, reviewerUserId: REVIEWER })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    // Guard threw before the event write.
+    expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
+    expect(mockWrite.appListing.deleteMany).not.toHaveBeenCalled();
+  });
+
   it('a raced delete (0-count) → NOT_FOUND', async () => {
     mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
     mockWrite.appListing.deleteMany.mockResolvedValueOnce({ count: 0 });
     await expect(
       purgeListing({ input: { appListingId: APP_ID, reason: 'spam expunge' }, reviewerUserId: REVIEWER })

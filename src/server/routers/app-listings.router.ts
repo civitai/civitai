@@ -482,13 +482,17 @@ export const appListingsRouter = router({
     }),
 
   // -------------------------------------------------------------------------
-  // P3b PR3 mod ACTIONS — delist / relist / purge / resolve / dismiss (DARK).
+  // P3b PR3 mod ACTIONS — delist / relist / purge / resolve / dismiss.
   //
-  // Each is `moderatorProcedure` + the inner `isModerator` recheck (belt +
-  // braces, mirroring approve/reject) + `mapOffsiteError` (typed → TRPC code, no
-  // infra leak). The reviewer is bound to `ctx.user.id` — never client-supplied.
-  // Each writes exactly one `AppListingModerationEvent` in the same tx as its
-  // mutation. `claimListing` is a separate PR4. All offsite-only + dark.
+  // Posture: UI-dark (the mod takedown affordance renders only on the mod-only
+  // store-preview surface). The SERVER gate is `moderatorProcedure` + the inner
+  // `isModerator` recheck (belt + braces, mirroring approve/reject) — NOT the
+  // `app-blocks-enabled` flag: that flag darkens the UI only, and mods bypass it
+  // anyway, so `enforceAppBlocksFlag` here would be inert (deliberately omitted).
+  // Plus `mapOffsiteError` (typed → TRPC code, no infra leak). The reviewer is bound
+  // to `ctx.user.id` — never client-supplied. Each writes exactly one
+  // `AppListingModerationEvent` in the same tx as its mutation. `claimListing` is a
+  // separate PR4. All offsite-only.
   // -------------------------------------------------------------------------
 
   /**
@@ -528,9 +532,12 @@ export const appListingsRouter = router({
 
   /**
    * MOD hard-delete (purge) an off-site listing — the final expunge + the
-   * self-clean primitive. Writes the audit event BEFORE the delete so the event
-   * survives (SetNull FK + slug snapshot). Destructive — the UI gates it behind a
-   * confirm.
+   * self-clean primitive. Writes the audit event BEFORE the delete so the event row
+   * survives at the ROW level for audit/compliance (SetNull FK + slug snapshot). It
+   * is NOT retrievable via the per-listing history read (`listModerationEvents`)
+   * once purged — the FK is nulled, so post-purge it's reachable only via the actor
+   * index / raw SQL (a slug-keyed orphaned-events read path is deferred to pre-GA).
+   * Destructive — the UI gates it behind a confirm.
    */
   purgeListing: moderatorProcedure
     .input(purgeListingSchema)

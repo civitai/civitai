@@ -316,11 +316,16 @@ export async function delistListing(opts: {
       },
     });
     if (input.reportId) {
-      // Resolve the triggering report in the same tx. Best-effort + status-guarded:
-      // a report a concurrent action already closed is left as-is (0 rows) — the
-      // delist still stands and the event still links the reportId.
+      // Resolve the triggering report in the same tx. Best-effort + status-guarded
+      // AND SCOPED to the delisted listing (`appListingId`): a caller passing a
+      // `reportId` that belongs to a DIFFERENT listing matches 0 rows (no
+      // cross-listing report closure) — the delist of THIS listing still stands and
+      // its event still links the supplied reportId; the mismatched report is just
+      // left untouched (silent no-op, not a hard failure — the delist is the primary
+      // action, a bad reportId must not fail it). A report a concurrent action
+      // already closed is likewise left as-is (0 rows).
       await tx.appListingReport.updateMany({
-        where: { id: input.reportId, status: 'pending' },
+        where: { id: input.reportId, appListingId: input.appListingId, status: 'pending' },
         data: { status: 'resolved', resolvedByUserId: reviewerUserId, resolvedAt: new Date() },
       });
     }
@@ -381,10 +386,22 @@ export type PurgeListingResult = { appListingId: string; purged: true };
  * 🔴 ORDER MATTERS: the audit event is written FIRST (capturing the slug snapshot +
  * the pre-delete status), THEN the `AppListing` row is deleted. The event's
  * `appListingId` FK is `ON DELETE SET NULL`, so the delete nulls the event's
- * `appListingId` but the event + its denormalized `slug` SURVIVE — an append-only
- * audit trail must outlive the row it references. `AppListingScreenshot` +
- * `AppListingReport` cascade-delete with the listing (intended). Both the event
- * write + the delete are in ONE tx; a 0-count delete (raced) rolls the event back.
+ * `appListingId` but the event row + its denormalized `slug` survive at the ROW
+ * level (compliance/forensics — an append-only audit trail must outlive the row it
+ * references). NOTE: because the FK is nulled on purge, a purged listing's events
+ * are NOT retrievable via `listModerationEvents({appListingId})` (the per-listing
+ * history read) — post-purge they're reachable only via the actor index or raw SQL
+ * (a slug-keyed orphaned-events read path is deferred to pre-GA).
+ * `AppListingScreenshot` + `AppListingReport` cascade-delete with the listing
+ * (intended). Both the event write + the delete are in ONE tx; a 0-count delete
+ * (raced) rolls the event back.
+ *
+ * The pre-delete snapshot (status/slug + the kind guard) is re-read INSIDE the tx
+ * from the PRIMARY (`tx.appListing.findUnique`), NOT from the replica classify —
+ * under replica lag the replica read could otherwise stamp a stale `before.status`
+ * (e.g. `approved` on a row already `removed`). The early replica `classify` is
+ * kept only as a fail-fast + info-leak-parity gate (missing/on-site → generic
+ * NOT_FOUND with no tx opened).
  */
 export async function purgeListing(opts: {
   input: PurgeListingInput;
@@ -392,26 +409,45 @@ export async function purgeListing(opts: {
 }): Promise<PurgeListingResult> {
   const { input, reviewerUserId } = opts;
   const reason = requireModReason(input.reason);
-  const listing = await classifyOffsiteListing(input.appListingId);
+  // Fail-fast + info-leak parity (replica): a missing OR on-site listing throws the
+  // same generic NOT_FOUND before any tx is opened. The authoritative snapshot is
+  // re-read on the primary inside the tx below.
+  await classifyOffsiteListing(input.appListingId);
 
   await dbWrite.$transaction(async (tx) => {
+    // Authoritative pre-delete snapshot from the PRIMARY (not the replica classify),
+    // so `before.status` + `slug` reflect the true current row and the kind guard is
+    // re-checked on the primary. A row that vanished (or turned non-offsite) between
+    // classify and here → generic NOT_FOUND, tx rolls back with no event written.
+    const current = await tx.appListing.findUnique({
+      where: { id: input.appListingId },
+      select: { status: true, slug: true, kind: true },
+    });
+    if (!current || current.kind !== 'offsite') {
+      throw new OffsiteModerationError('NOT_FOUND', 'Off-site listing not found.');
+    }
     // Event FIRST (so the slug/state snapshot is captured before the row is gone).
     await tx.appListingModerationEvent.create({
       data: {
         id: newAppListingModerationEventId(),
         appListingId: input.appListingId,
-        slug: listing.slug,
+        slug: current.slug,
         action: 'purge',
         actorUserId: reviewerUserId,
         reason,
-        before: { status: listing.status },
+        before: { status: current.status },
       },
     });
     // THEN the hard delete (nulls the event's appListingId via SetNull; cascades
-    // screenshots + reports).
-    const deleted = await tx.appListing.deleteMany({ where: { id: input.appListingId } });
+    // screenshots + reports). The inline `kind: 'offsite'` guard mirrors delist/relist
+    // for defense-in-depth on a DESTRUCTIVE op — a 0-count delete (raced, or a
+    // non-offsite row slipping past classify) throws → the tx (incl. the event) rolls
+    // back.
+    const deleted = await tx.appListing.deleteMany({
+      where: { id: input.appListingId, kind: 'offsite' },
+    });
     if (deleted.count === 0) {
-      // Raced (concurrently purged between classify and here) → roll the event back.
+      // Raced (concurrently purged between the snapshot and here) → roll the event back.
       throw new OffsiteModerationError('NOT_FOUND', 'Off-site listing not found.');
     }
   });
