@@ -2557,7 +2557,13 @@ model AppListing {
   @@index([iconId], map: "app_listings_icon_idx")
   @@index([coverId], map: "app_listings_cover_idx")
   // Shadow-lookup (WHERE revisionOfId = parent) + the parent-delete cascade scan.
-  @@index([revisionOfId], map: "app_listings_revision_of_idx")
+  // NB: the migration creates this as a PARTIAL UNIQUE index (UNIQUE on
+  // revisionOfId WHERE revisionOfId IS NOT NULL) so a parent has at most ONE
+  // in-flight shadow at the DB level. Prisma can't express a partial-unique
+  // index, so this stays a plain @@index in the schema; the real one-shadow
+  // guard is the migration's partial-unique index + the app-level P2002 →
+  // idempotent-reuse handling in beginListingRevision.
+  @@index([revisionOfId], map: "app_listings_revision_of_id_key")
   @@map("app_listings")
 }
 

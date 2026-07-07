@@ -348,8 +348,18 @@ async function deleteDraftListing(
 //   removed          → mod-only takedown → FORBIDDEN for an author edit.
 // ---------------------------------------------------------------------------
 
-/** MATERIAL scalar fields — a change to any of these on an approved listing forces re-review. */
-const MATERIAL_PATCH_FIELDS = ['externalUrl', 'name'] as const;
+/**
+ * MATERIAL scalar fields — a change to ANY of these on an approved listing forces
+ * re-review (routes through a shadow revision, not an in-place edit).
+ *
+ * `contentRating` is material because it drives the public SFW filter
+ * (`content_rating NOT IN ('r','x')`): letting an approved author lower an 'x'/'r'
+ * listing to 'g' in place with no mod re-review would surface a still-mature
+ * listing to SFW users. `externalUrl`/`name` are the listing's identity/destination.
+ * `tagline`/`description`/`category` stay trivial — quick copy edits are intended
+ * and are delistable if abused.
+ */
+const MATERIAL_PATCH_FIELDS = ['externalUrl', 'name', 'contentRating'] as const;
 
 /**
  * Validate + normalize an update patch (shared by the in-place + shadow paths).
@@ -387,18 +397,29 @@ function buildListingPatchData(patch: UpdateListingPatch): Prisma.AppListingUpda
   return data;
 }
 
-/** True iff the patch changes a MATERIAL field to a value DIFFERENT from the live listing. */
+/**
+ * True iff the patch changes a MATERIAL field (see MATERIAL_PATCH_FIELDS) to a
+ * value DIFFERENT from the live listing. Iterates the material-field list so the
+ * set is edited in ONE place; `externalUrl` compares against the validator's
+ * canonical form, the rest are plain scalar inequality.
+ */
 function patchHasMaterialChange(
   patch: UpdateListingPatch,
-  live: { externalUrl: string | null; name: string }
+  live: { externalUrl: string | null; name: string; contentRating: string | null }
 ): boolean {
-  if (patch.externalUrl !== undefined) {
-    const url = validateExternalUrl(patch.externalUrl);
-    // An invalid URL is a material change (it will be rejected downstream, but it
-    // is not "unchanged").
-    if (!url.ok || url.url !== live.externalUrl) return true;
+  for (const field of MATERIAL_PATCH_FIELDS) {
+    const patched = patch[field];
+    if (patched === undefined) continue;
+    if (field === 'externalUrl') {
+      const url = validateExternalUrl(patched);
+      // An invalid URL is a material change (it will be rejected downstream, but
+      // it is not "unchanged").
+      if (!url.ok || url.url !== live.externalUrl) return true;
+      continue;
+    }
+    // name / contentRating: plain scalar inequality vs the live value.
+    if (patched !== live[field]) return true;
   }
-  if (patch.name !== undefined && patch.name !== live.name) return true;
   return false;
 }
 
@@ -517,6 +538,7 @@ export async function updateListing(opts: {
       const material = patchHasMaterialChange(patch, {
         externalUrl: listing.externalUrl,
         name: listing.name,
+        contentRating: listing.contentRating,
       });
       if (!material) {
         // TRIVIAL-only edit → apply to the LIVE row in place (no re-review). Any
@@ -588,55 +610,68 @@ export async function beginListingRevision(opts: {
   // @unique, so it must not collide with the parent or any other listing.
   const shadowSlug = `rev-${newUlid()}`;
 
-  await dbWrite.$transaction(async (tx) => {
-    // Re-check inside the tx (primary) that no shadow was created concurrently.
-    const race = await tx.appListing.findFirst({
-      where: { revisionOfId: listingId },
-      select: { id: true },
-    });
-    if (race) return; // lost the race — the other caller's shadow stands.
-    await tx.appListing.create({
-      data: {
-        id: shadowId,
-        kind: parent.kind,
-        status: 'draft',
-        slug: shadowSlug,
-        revisionOfId: listingId,
-        name: parent.name,
-        tagline: parent.tagline,
-        description: parent.description,
-        category: parent.category,
-        contentRating: parent.contentRating,
-        externalUrl: parent.externalUrl,
-        connectClientId: parent.connectClientId,
-        iconId: parent.iconId,
-        coverId: parent.coverId,
-        // A shadow has NO backing AppBlock (appBlockId is @unique — it stays on
-        // the parent) and no publish request yet (submitListingRevision adds it).
-        appBlockId: null,
-        userId: parent.userId,
-      },
-    });
-    const shots = await tx.appListingScreenshot.findMany({
-      where: { appListingId: listingId },
-      select: { imageId: true, order: true, caption: true },
-      orderBy: { order: 'asc' },
-    });
-    if (shots.length > 0) {
-      await tx.appListingScreenshot.createMany({
-        data: shots.map((s: { imageId: number | null; order: number; caption: string | null }) => ({
-          id: newAppListingScreenshotId(),
-          appListingId: shadowId,
-          imageId: s.imageId,
-          order: s.order,
-          caption: s.caption,
-        })),
+  try {
+    await dbWrite.$transaction(async (tx) => {
+      // Re-check inside the tx (primary) that no shadow was created concurrently.
+      const race = await tx.appListing.findFirst({
+        where: { revisionOfId: listingId },
+        select: { id: true },
       });
-    }
-  });
+      if (race) return; // lost the race — the other caller's shadow stands.
+      await tx.appListing.create({
+        data: {
+          id: shadowId,
+          kind: parent.kind,
+          status: 'draft',
+          slug: shadowSlug,
+          revisionOfId: listingId,
+          name: parent.name,
+          tagline: parent.tagline,
+          description: parent.description,
+          category: parent.category,
+          contentRating: parent.contentRating,
+          externalUrl: parent.externalUrl,
+          connectClientId: parent.connectClientId,
+          iconId: parent.iconId,
+          coverId: parent.coverId,
+          // A shadow has NO backing AppBlock (appBlockId is @unique — it stays on
+          // the parent) and no publish request yet (submitListingRevision adds it).
+          appBlockId: null,
+          userId: parent.userId,
+        },
+      });
+      const shots = await tx.appListingScreenshot.findMany({
+        where: { appListingId: listingId },
+        select: { imageId: true, order: true, caption: true },
+        orderBy: { order: 'asc' },
+      });
+      if (shots.length > 0) {
+        await tx.appListingScreenshot.createMany({
+          data: shots.map((s: { imageId: number | null; order: number; caption: string | null }) => ({
+            id: newAppListingScreenshotId(),
+            appListingId: shadowId,
+            imageId: s.imageId,
+            order: s.order,
+            caption: s.caption,
+          })),
+        });
+      }
+    });
+  } catch (err) {
+    // A concurrent creator committed its shadow between our in-tx read-check and
+    // our INSERT → the partial-UNIQUE index on revision_of_id (WHERE NOT NULL)
+    // rejects the duplicate with P2002. Collapse to the idempotent-reuse path
+    // (the winner re-read below returns the standing shadow) instead of
+    // surfacing the race as an error. Duck-type on `code` (the Prisma error
+    // class isn't reliably constructible with a stale client). Re-throw anything
+    // else.
+    const code = (err as { code?: unknown })?.code;
+    if (code !== 'P2002') throw err;
+  }
 
-  // If we lost the concurrent-create race the row we minted was never written;
-  // re-read the winning shadow so the caller always gets a live shadow id.
+  // If we lost the concurrent-create race (in-tx read-check OR a P2002 on
+  // insert) the row we minted was never written; re-read the winning shadow so
+  // the caller always gets a live shadow id.
   const winner = await dbWrite.appListing.findFirst({
     where: { revisionOfId: listingId },
     select: { id: true },
@@ -1015,10 +1050,20 @@ async function applyApprovedRevision(opts: {
   // Parent must still exist (defense — its delete would CASCADE the shadow away).
   const parent = await dbRead.appListing.findUnique({
     where: { id: parentId },
-    select: { id: true, slug: true },
+    select: { id: true, slug: true, status: true },
   });
   if (!parent) {
     throw new OffsiteRequestError('NOT_FOUND', `parent listing ${parentId} not found`);
+  }
+  // The live parent must still be APPROVED. If a mod REMOVED (took down) or
+  // otherwise un-approved it after this revision was submitted, applying the
+  // shadow's scalars would leave a confusing "approved request → still-hidden
+  // listing" state (the copy doesn't flip status). Refuse instead.
+  if (parent.status !== 'approved') {
+    throw new OffsiteRequestError(
+      'INVALID_REVISION',
+      `the live listing is no longer approved (status is ${parent.status}); cannot apply this revision`
+    );
   }
 
   await dbWrite.$transaction(async (tx) => {
@@ -1300,19 +1345,30 @@ export async function listMySubmissions(
   const hasNext = rows.length > limit;
   const page = hasNext ? rows.slice(0, limit) : rows;
 
-  // Flag which parent listings on this page have an in-flight shadow revision.
+  // Flag which parent listings on this page have a revision UNDER REVIEW. This is
+  // derived from the existence of a PENDING publish request that targets a shadow
+  // (a `revisionOfId`-bearing listing) for the parent — NOT from mere shadow
+  // existence. An abandoned shadow (opened via beginListingRevision but never
+  // submitListingRevision-ed → no pending request) must NOT falsely badge the
+  // parent "revision in review".
   const parentIds = page
     .map((r) => r.appListingId)
     .filter((id): id is string => id != null);
-  const shadows =
+  const pendingRevisionReqs =
     parentIds.length > 0
-      ? await dbRead.appListing.findMany({
-          where: { revisionOfId: { in: parentIds } },
-          select: { revisionOfId: true },
+      ? await dbRead.appListingPublishRequest.findMany({
+          where: {
+            status: 'pending',
+            kind: 'offsite',
+            appListing: { revisionOfId: { in: parentIds } },
+          },
+          select: { appListing: { select: { revisionOfId: true } } },
         })
       : [];
   const parentsWithRevision = new Set(
-    shadows.map((s) => s.revisionOfId).filter((id): id is string => id != null)
+    pendingRevisionReqs
+      .map((r) => r.appListing?.revisionOfId)
+      .filter((id): id is string => id != null)
   );
   const items = page.map((r) => ({
     ...r,

@@ -183,7 +183,9 @@ describe('updateListing', () => {
     mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
     const res = await updateListing({
       listingId: 'apl_parent',
-      patch: { tagline: 'fresh tagline', category: 'games', contentRating: 'pg' },
+      // tagline/description/category are trivial; contentRating is MATERIAL (see
+      // its own test below) so it is deliberately NOT in this trivial patch.
+      patch: { tagline: 'fresh tagline', category: 'games', description: 'new desc' },
       userId: OWNER,
     });
     expect(res).toEqual({
@@ -194,9 +196,54 @@ describe('updateListing', () => {
     });
     expect(mockWrite.appListing.update).toHaveBeenCalledWith({
       where: { id: 'apl_parent' },
-      data: { tagline: 'fresh tagline', category: 'games', contentRating: 'pg' },
+      data: { tagline: 'fresh tagline', category: 'games', description: 'new desc' },
     });
     // No shadow — a trivial edit does not stage a revision.
+    expect(mockWrite.appListing.create).not.toHaveBeenCalled();
+  });
+
+  it('approved + contentRating change → treated as MATERIAL → shadow path (maturity re-review)', async () => {
+    // Regression guard for the maturity-gate bypass: an approved author lowering
+    // contentRating ('x'→'g') must NOT apply in place (the public SFW filter would
+    // then show a still-mature listing to SFW users). It routes through a shadow.
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent({ contentRating: 'x' }));
+    mockRead.appListing.findFirst.mockResolvedValue(null); // no existing shadow
+    mockWrite.appListing.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'apl_new_1' });
+    const res = await updateListing({
+      listingId: 'apl_parent',
+      patch: { contentRating: 'g' },
+      userId: OWNER,
+    });
+    expect(res.requiresReview).toBe(true);
+    expect(res.shadowId).toBe('apl_new_1');
+    // The contentRating change landed on the SHADOW, never the live parent.
+    const updateCalls = mockWrite.appListing.update.mock.calls.map((c) => c[0]);
+    expect(updateCalls).toContainEqual({
+      where: { id: 'apl_new_1' },
+      data: { contentRating: 'g' },
+    });
+    expect(updateCalls.every((c) => (c as { where: { id: string } }).where.id !== 'apl_parent')).toBe(
+      true
+    );
+  });
+
+  it('DRAFT + contentRating change → edits IN PLACE (no shadow — pre-approval, no gate to bypass)', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(
+      approvedParent({ status: 'draft', contentRating: 'x' })
+    );
+    const res = await updateListing({
+      listingId: 'apl_parent',
+      patch: { contentRating: 'g' },
+      userId: OWNER,
+    });
+    expect(res.requiresReview).toBe(false);
+    expect(res.shadowId).toBeNull();
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { contentRating: 'g' },
+    });
     expect(mockWrite.appListing.create).not.toHaveBeenCalled();
   });
 
@@ -368,6 +415,36 @@ describe('beginListingRevision', () => {
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
   });
 
+  it('P2002 on insert (a concurrent creator won the partial-UNIQUE) → idempotent reuse of the winning shadow', async () => {
+    // Two creators race past the pre-tx + in-tx read-checks (neither sees the
+    // other's uncommitted row); the loser's INSERT hits the partial-UNIQUE index
+    // on revision_of_id → P2002. It must collapse to the winner, not throw.
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+    mockRead.appListing.findFirst.mockResolvedValue(null); // pre-tx idempotent check → none
+    mockWrite.appListing.findFirst
+      .mockResolvedValueOnce(null) // in-tx race check → none
+      .mockResolvedValueOnce({ id: 'apl_winner_shadow' }); // post-tx winner re-read
+    mockWrite.appListing.create.mockRejectedValueOnce(
+      Object.assign(new Error('Unique constraint failed'), { code: 'P2002' })
+    );
+
+    const res = await beginListingRevision({ listingId: 'apl_parent', userId: OWNER });
+    // Reused the concurrent winner (created: false — we did not mint it).
+    expect(res).toEqual({ shadowId: 'apl_winner_shadow', created: false });
+  });
+
+  it('a NON-P2002 insert error is re-thrown (not swallowed as idempotent reuse)', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+    mockRead.appListing.findFirst.mockResolvedValue(null);
+    mockWrite.appListing.findFirst.mockResolvedValueOnce(null); // in-tx race check
+    mockWrite.appListing.create.mockRejectedValueOnce(
+      Object.assign(new Error('deadlock detected'), { code: 'P2034' })
+    );
+    await expect(
+      beginListingRevision({ listingId: 'apl_parent', userId: OWNER })
+    ).rejects.toThrow('deadlock detected');
+  });
+
   it('non-approved parent → INVALID_REVISION', async () => {
     mockRead.appListing.findUnique.mockResolvedValue(approvedParent({ status: 'pending' }));
     await expect(
@@ -496,11 +573,11 @@ describe('approveExternalRequest (revision apply)', () => {
       coverId: 6,
       revisionOfId: 'apl_parent',
     };
-    // Parent load (dbRead) inside applyApprovedRevision.
+    // Parent load (dbRead) inside applyApprovedRevision — must still be approved.
     mockRead.appListing.findUnique.mockImplementation(
       findUniqueById({
         apl_shadow: shadowListing as Row,
-        apl_parent: { id: 'apl_parent', slug: 'cool-app' } as Row,
+        apl_parent: { id: 'apl_parent', slug: 'cool-app', status: 'approved' } as Row,
       })
     );
     // In-tx authoritative shadow re-read (dbWrite) — full scalars to copy.
@@ -604,6 +681,34 @@ describe('approveExternalRequest (revision apply)', () => {
     expect(mockWrite.appListing.update).not.toHaveBeenCalled();
     expect(mockWrite.appListing.deleteMany).not.toHaveBeenCalled();
   });
+
+  it('parent no longer approved (mod REMOVED it after submit) → INVALID_REVISION, nothing copied', async () => {
+    // Guards the confusing "approved request → still-hidden listing" state: applying
+    // the shadow's scalars onto a removed parent would not flip its status back to
+    // approved. Refuse before touching the request/parent.
+    stageRevisionApprove();
+    mockRead.appListing.findUnique.mockImplementation(
+      findUniqueById({
+        apl_shadow: {
+          id: 'apl_shadow',
+          status: 'draft',
+          externalUrl: 'https://cool.example.com/edited',
+          iconId: 5,
+          coverId: 6,
+          revisionOfId: 'apl_parent',
+        } as Row,
+        apl_parent: { id: 'apl_parent', slug: 'cool-app', status: 'removed' } as Row,
+      })
+    );
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_rev', reviewerUserId: MOD })
+    ).rejects.toMatchObject({ code: 'INVALID_REVISION' });
+    // No re-point, no scalar copy, no shadow delete — the whole apply is refused
+    // before the transaction.
+    expect(mockWrite.appListingPublishRequest.updateMany).not.toHaveBeenCalled();
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+    expect(mockWrite.appListing.deleteMany).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -652,20 +757,22 @@ describe('reject/withdraw a pending REVISION', () => {
 // ---------------------------------------------------------------------------
 
 describe('listMySubmissions (shadow handling)', () => {
-  it('excludes shadow-targeting requests from the query and flags parents with a pending revision', async () => {
-    // The query returns only the parent's own (non-shadow) request; assert the WHERE
-    // excludes shadow-targeting requests.
-    mockRead.appListingPublishRequest.findMany.mockResolvedValue([
-      {
-        id: 'alpr_parent',
-        appListingId: 'apl_parent',
-        slug: 'cool-app',
-        status: 'approved',
-        appListing: { name: 'Cool App', revisionOfId: null },
-      },
-    ]);
-    // A shadow exists for apl_parent → hasPendingRevision should be true.
-    mockRead.appListing.findMany.mockResolvedValue([{ revisionOfId: 'apl_parent' }]);
+  /** The parent's own (non-shadow) request row as the main query returns it. */
+  const parentRequestRow = {
+    id: 'alpr_parent',
+    appListingId: 'apl_parent',
+    slug: 'cool-app',
+    status: 'approved',
+    appListing: { name: 'Cool App', revisionOfId: null },
+  };
+
+  it('excludes shadow-targeting requests from the main query and flags a parent with a PENDING revision request', async () => {
+    // findMany is called TWICE: (1) the main rows query, (2) the pending-revision
+    // detection. Chain the two responses.
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([parentRequestRow])
+      // (2) a PENDING request targets a shadow of apl_parent → hasPendingRevision.
+      .mockResolvedValueOnce([{ appListing: { revisionOfId: 'apl_parent' } }]);
 
     const res = await listMySubmissions({ userId: OWNER });
 
@@ -677,21 +784,37 @@ describe('listMySubmissions (shadow handling)', () => {
     // Shadow-targeting requests are excluded (OR: appListingId null OR parent listing).
     expect(where.OR).toEqual([{ appListingId: null }, { appListing: { revisionOfId: null } }]);
 
+    // The detection query filters on a PENDING request targeting a shadow — NOT on
+    // shadow existence (an abandoned shadow has no such request).
+    const revWhere = mockRead.appListingPublishRequest.findMany.mock.calls[1][0].where as Record<
+      string,
+      unknown
+    >;
+    expect(revWhere).toMatchObject({
+      status: 'pending',
+      kind: 'offsite',
+      appListing: { revisionOfId: { in: ['apl_parent'] } },
+    });
+
     expect(res.items).toHaveLength(1);
     expect(res.items[0]).toMatchObject({ id: 'alpr_parent', hasPendingRevision: true });
   });
 
-  it('a parent with NO in-flight shadow → hasPendingRevision false', async () => {
-    mockRead.appListingPublishRequest.findMany.mockResolvedValue([
-      {
-        id: 'alpr_parent',
-        appListingId: 'apl_parent',
-        slug: 'cool-app',
-        status: 'approved',
-        appListing: { name: 'Cool App', revisionOfId: null },
-      },
-    ]);
-    mockRead.appListing.findMany.mockResolvedValue([]); // no shadows
+  it('a parent with NO pending revision request → hasPendingRevision false', async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([parentRequestRow])
+      .mockResolvedValueOnce([]); // no pending revision requests
+    const res = await listMySubmissions({ userId: OWNER });
+    expect(res.items[0]).toMatchObject({ hasPendingRevision: false });
+  });
+
+  it('an ABANDONED shadow (opened but never submitted → no pending request) does NOT badge the parent', async () => {
+    // Regression guard for the 🟢 fix: hasPendingRevision is derived from a PENDING
+    // publish request, not from shadow existence. A shadow that was created but
+    // never submitted produces no pending request → the detection query returns [].
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([parentRequestRow])
+      .mockResolvedValueOnce([]); // shadow exists in the DB, but no PENDING request targets it
     const res = await listMySubmissions({ userId: OWNER });
     expect(res.items[0]).toMatchObject({ hasPendingRevision: false });
   });

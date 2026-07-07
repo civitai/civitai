@@ -49,8 +49,15 @@ BEGIN
   END IF;
 END $$;
 
--- Index the FK: the shadow-lookup (WHERE revision_of_id = <parent>) + the read
--- path's defense-in-depth `revision_of_id IS NULL` filter both scan on it, and
--- Postgres does NOT auto-index a FK (so a parent DELETE would seq-scan otherwise).
-CREATE INDEX IF NOT EXISTS "app_listings_revision_of_idx"
-  ON "app_listings" ("revision_of_id");
+-- PARTIAL UNIQUE index on the FK: at most ONE in-flight shadow per parent (a
+-- second concurrent `beginListingRevision` that races past the read-check now
+-- hits this constraint → the app catches P2002 and collapses to idempotent
+-- reuse of the winning shadow instead of stranding a duplicate). The predicate
+-- (`revision_of_id IS NOT NULL`) excludes the many top-level listings (all NULL,
+-- which would otherwise collide) so uniqueness applies only to shadows. This
+-- index ALSO serves the shadow-lookup (WHERE revision_of_id = <parent>) + the
+-- read path's `revision_of_id IS NULL` filter that the FK would otherwise
+-- seq-scan (Postgres does NOT auto-index a FK). Idempotent (IF NOT EXISTS).
+CREATE UNIQUE INDEX IF NOT EXISTS "app_listings_revision_of_id_key"
+  ON "app_listings" ("revision_of_id")
+  WHERE "revision_of_id" IS NOT NULL;
