@@ -138,3 +138,85 @@ export function validateOffsiteSubmitForm(
 export function isOffsiteSubmitFormValid(values: OffsiteSubmitFormValues): boolean {
   return Object.keys(validateOffsiteSubmitForm(values)).length === 0;
 }
+
+/**
+ * Derive a suggested `name` + `slug` from a candidate external URL, for the
+ * External-link submit wizard's Step 1 → Step 2 prefill. PURE + deterministic so
+ * it is unit-testable without the form.
+ *
+ * Rules (chosen + pinned by the unit tests):
+ *   - The URL must pass the shared `validateExternalUrl` (absolute, https-only,
+ *     has a host). An invalid / `http:` / empty / unparseable URL yields
+ *     `{ name: '', slug: '' }` and NEVER throws — the wizard then just shows the
+ *     existing inline https validation error and prefills nothing.
+ *   - Take the hostname (already lowercased by the URL parser), strip a leading
+ *     `www.`, and use the FIRST dot-label as the base
+ *     (`vitrine.civitai.com` → `vitrine`; `www.my-app.io` → `my-app`).
+ *   - `name`  = the base, hyphen-word title-cased: each `-`-separated word gets
+ *     its first char upper-cased and the remainder lower-cased, rejoined with
+ *     `-` (`vitrine` → `Vitrine`; `my-app` → `My-App`; `example` → `Example`).
+ *   - `slug`  = the base kebab-cased + SLUG_REGEX-sanitized: lower-cased, every
+ *     run of non `[a-z0-9]` chars collapsed to a single `-`, leading/trailing `-`
+ *     trimmed, and any leading non-letters dropped (SLUG_REGEX requires a leading
+ *     letter). If the sanitized result can't satisfy SLUG_REGEX (e.g. a
+ *     single-char host like `x.com`) OR falls outside the server's
+ *     `OFFSITE_SLUG_MIN`–`OFFSITE_SLUG_MAX` length bound (e.g. `ab.com` → len 2,
+ *     or a ≥41-char DNS label), `slug` is `''` (name may still be set) — the
+ *     prefill never seeds a value the client validator would reject.
+ */
+export function deriveListingFromUrl(url: string): { name: string; slug: string } {
+  const validation = validateExternalUrl(url);
+  if (!validation.ok) return { name: '', slug: '' };
+
+  let hostname: string;
+  try {
+    hostname = new URL(validation.url).hostname;
+  } catch {
+    return { name: '', slug: '' };
+  }
+
+  const base = hostname.replace(/^www\./i, '').split('.')[0] ?? '';
+  if (base.length === 0) return { name: '', slug: '' };
+
+  const name = base
+    .split('-')
+    .filter((word) => word.length > 0)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join('-');
+
+  const slugCandidate = base
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/^[^a-z]+/, '');
+  const slug =
+    SLUG_REGEX.test(slugCandidate) &&
+    slugCandidate.length >= OFFSITE_SLUG_MIN &&
+    slugCandidate.length <= OFFSITE_SLUG_MAX
+      ? slugCandidate
+      : '';
+
+  return { name, slug };
+}
+
+/**
+ * Wizard step-gating (PURE, unit-tested). The External-link submit wizard is:
+ *   Step 0 (URL) → Step 1 (Details) → Step 2 (Assets).
+ *
+ * `isUrlStepComplete`     — the URL passes the shared https validation, so the
+ *                           Details step is reachable.
+ * `isDetailsStepComplete` — the whole client mirror validates (name/slug/category/
+ *                           rating + the still-required URL), so the draft can be
+ *                           created and the Assets step entered.
+ *
+ * The Assets step itself is only reachable AFTER the server creates the draft
+ * (`submitExternalListing` succeeds); that transition is owned by the component,
+ * not this pure gate.
+ */
+export function isUrlStepComplete(values: OffsiteSubmitFormValues): boolean {
+  return validateExternalUrl(values.externalUrl).ok;
+}
+
+export function isDetailsStepComplete(values: OffsiteSubmitFormValues): boolean {
+  return isOffsiteSubmitFormValid(values);
+}
