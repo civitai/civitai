@@ -16,34 +16,35 @@ const BATCH_SIZE = 200;
 // App Store Listings (W13) — AllTime-only rollup for AppListingMetric.
 //
 // AppListingMetric is a SINGLE row per listing keyed by `app_listing_id` (no
-// `timeframe` column, like Model3DMetric). This processor owns ONLY the
-// install/connect counters:
+// `timeframe` column, like Model3DMetric). This processor owns ONLY the counter
+// the read path actually consumes:
 //
 //   • installCount  — on-site listings: count of ACTIVE BlockUserSubscription
 //     rows for the listing's app_block_id. "Active" = `enabled = true`, matching
 //     how app-analytics.service.ts defines the live install base (total vs
-//     enabled). BlockUserSubscription has NO soft-delete/`deletedAt` column; a
-//     toggle-off flips `enabled=false` (which bumps `updated_at` via @updatedAt,
-//     so the incremental affected-query catches it). A hard uninstall (row DELETE)
-//     is NOT catchable incrementally — see the SQL note in appListing.metrics.sql.
-//
-//   • connectCount  — off-site connect listings: count of OauthConsent rows for
-//     the listing's connect_client_id (→ OauthClient.id → OauthConsent.clientId).
-//     OauthConsent has NO soft-delete column, so a consent revocation DELETEs the
-//     row → a bare COUNT(*) is the correct "active grants" number.
+//     enabled) + the marketplace `_count userSubscriptions`. BlockUserSubscription
+//     has NO soft-delete/`deletedAt` column; a toggle-off flips `enabled=false`
+//     (which bumps `updated_at` via @updatedAt, so the incremental affected-query
+//     catches it). A hard uninstall (row DELETE) is NOT catchable incrementally —
+//     see the SQL note in appListing.metrics.sql. This is the only counter read
+//     today (the store `popular` sort = `install_count DESC` + the top-rated
+//     Bayesian tiebreak).
 //
 // 🔴 OWNERSHIP CONTRACT: `thumbs_up_count` / `thumbs_down_count` are owned by the
 // SYNCHRONOUS writer in app-listing-review.service.ts (upsert tx). This job MUST
 // NEVER write those two columns — the ON CONFLICT DO UPDATE names ONLY
-// install_count / connect_count / updated_at, so a metric row that already exists
-// (created by the thumbs writer) keeps its thumbs untouched. On CREATE, thumbs
-// default to 0 (schema default), correct for a never-reviewed listing.
+// install_count / updated_at, so a metric row that already exists (created by the
+// thumbs writer) keeps its thumbs untouched. On CREATE, thumbs default to 0
+// (schema default), correct for a never-reviewed listing.
 //
-// UN-SOURCED (left at their schema default 0, deliberately NOT populated — no
-// server-side source table exists): `open_count`, `visit_count`, `tipped_count`,
-// `tipped_amount_count`. Open/visit are never recorded server-side; AppListing is
-// not a BuzzTip entity (BuzzTip.entityId is Int, AppListing.id is a string ULID).
-// If a source is ever added, add a task here for it.
+// NOT POPULATED (left at their schema default 0 — no reader today, and each maps
+// to a feature that isn't live): `connect_count` (off-site OAuth-connect grants —
+// OAuth-connect submission is a locked-deferred product decision, so there are no
+// connect listings yet and nothing reads the count), `open_count`, `visit_count`,
+// `tipped_count`, `tipped_amount_count` (open/visit are never recorded
+// server-side; AppListing is not a BuzzTip entity — BuzzTip.entityId is Int,
+// AppListing.id is a string ULID). Populate each with the PR that ships its
+// consumer, not speculatively.
 // ---------------------------------------------------------------------------
 
 export const appListingMetrics = createMetricProcessor({

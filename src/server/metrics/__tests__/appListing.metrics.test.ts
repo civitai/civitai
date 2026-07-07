@@ -8,11 +8,11 @@ import {
 } from '~/server/metrics/appListing.metrics.sql';
 
 /**
- * W13 — AppListingMetric install/connect ROLLUP job.
+ * W13 — AppListingMetric install ROLLUP job.
  *
  * The SQL runs in Postgres; `computeAppListingMetricUpdates` is the executable
  * spec that mirrors it, so the aggregate invariants are testable without a DB.
- * The final block asserts the invariants directly against the production SQL
+ * The final blocks assert the invariants directly against the production SQL
  * strings (the thumbs-ownership contract is enforced structurally there).
  */
 
@@ -21,12 +21,11 @@ const base = (over: Partial<AppListingComputeInput['listings'][number]>) => ({
   kind: 'onsite' as const,
   status: 'approved',
   appBlockId: null,
-  connectClientId: null,
   ...over,
 });
 
-describe('computeAppListingMetricUpdates — install/connect aggregate spec', () => {
-  it('on-site approved listing → installCount = its ACTIVE (enabled) subscription count; connectCount 0', () => {
+describe('computeAppListingMetricUpdates — install aggregate spec', () => {
+  it('on-site approved listing → installCount = its ACTIVE (enabled) subscription count', () => {
     const input: AppListingComputeInput = {
       listings: [base({ id: 'apl_onsite', kind: 'onsite', appBlockId: 'ab_1' })],
       subscriptions: [
@@ -36,40 +35,33 @@ describe('computeAppListingMetricUpdates — install/connect aggregate spec', ()
         { appBlockId: 'ab_1', enabled: false }, // toggled-off → NOT an active install
         { appBlockId: 'ab_other', enabled: true }, // different app → excluded
       ],
-      consents: [],
     };
 
     expect(computeAppListingMetricUpdates(input)).toEqual([
-      { appListingId: 'apl_onsite', installCount: 3, connectCount: 0 },
+      { appListingId: 'apl_onsite', installCount: 3 },
     ]);
   });
 
   it('off-site listing → installCount 0 (installs are on-site only)', () => {
     const input: AppListingComputeInput = {
-      listings: [base({ id: 'apl_offsite', kind: 'offsite', connectClientId: 'client_1' })],
+      listings: [base({ id: 'apl_offsite', kind: 'offsite' })],
       // Even if a subscription somehow matched, an off-site listing must never
       // count installs — the CASE gates on kind='onsite'.
       subscriptions: [{ appBlockId: 'ab_1', enabled: true }],
-      consents: [{ clientId: 'client_1' }],
     };
 
     const [row] = computeAppListingMetricUpdates(input);
     expect(row.installCount).toBe(0);
   });
 
-  it('off-site connect listing → connectCount = its active OauthConsent count', () => {
+  it('on-site listing with a null app_block_id → installCount 0', () => {
     const input: AppListingComputeInput = {
-      listings: [base({ id: 'apl_connect', kind: 'offsite', connectClientId: 'client_1' })],
-      subscriptions: [],
-      consents: [
-        { clientId: 'client_1' },
-        { clientId: 'client_1' },
-        { clientId: 'client_other' }, // different client → excluded
-      ],
+      listings: [base({ id: 'apl_noblock', kind: 'onsite', appBlockId: null })],
+      subscriptions: [{ appBlockId: 'ab_1', enabled: true }],
     };
 
     expect(computeAppListingMetricUpdates(input)).toEqual([
-      { appListingId: 'apl_connect', installCount: 0, connectCount: 2 },
+      { appListingId: 'apl_noblock', installCount: 0 },
     ]);
   });
 
@@ -83,7 +75,6 @@ describe('computeAppListingMetricUpdates — install/connect aggregate spec', ()
         base({ id: 'apl_ok', status: 'approved', appBlockId: 'ab_1' }),
       ],
       subscriptions: [{ appBlockId: 'ab_1', enabled: true }],
-      consents: [],
     };
 
     const out = computeAppListingMetricUpdates(input);
@@ -96,9 +87,8 @@ describe('production SQL — thumbs-ownership contract (regression guard)', () =
   const upsert = APP_LISTING_METRIC_UPSERT_SQL.replace(/\s+/g, ' ');
   const doUpdate = upsert.slice(upsert.indexOf('ON CONFLICT'));
 
-  it('the ON CONFLICT DO UPDATE writes ONLY install_count / connect_count / updated_at', () => {
+  it('the ON CONFLICT DO UPDATE writes ONLY install_count / updated_at', () => {
     expect(doUpdate).toContain('"install_count" = EXCLUDED."install_count"');
-    expect(doUpdate).toContain('"connect_count" = EXCLUDED."connect_count"');
     expect(doUpdate).toContain('"updated_at" = NOW()');
   });
 
@@ -108,6 +98,14 @@ describe('production SQL — thumbs-ownership contract (regression guard)', () =
     // the synchronous thumbs writer must survive this rollup untouched.
     expect(upsert).not.toContain('thumbs_up_count');
     expect(upsert).not.toContain('thumbs_down_count');
+  });
+
+  it('does not write connect/open/visit/tipped counters (no reader; feature not live)', () => {
+    // Only install_count is populated; the rest stay at their schema default 0.
+    expect(upsert).not.toContain('connect_count');
+    expect(upsert).not.toContain('open_count');
+    expect(upsert).not.toContain('visit_count');
+    expect(upsert).not.toContain('tipped_count');
   });
 
   it('the active-install filter is enabled = TRUE', () => {
