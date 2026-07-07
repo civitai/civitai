@@ -5,11 +5,12 @@ import { renderWithProviders } from '../../../test/component-setup';
 
 /**
  * W13 — /apps/submit "External link" mode WIZARD. Browser-mode surface test
- * (report-only in Tekton): the stepper starts on the URL step, advancing from a
- * valid URL prefills name + slug on the Details step (derived from the URL), and
- * an invalid URL blocks the advance with the shared inline https error. The pure
- * derivation + step-gating are unit-tested separately in
- * `__tests__/deriveListingFromUrl.test.ts`.
+ * (report-only in Tekton): the stepper starts on the URL step (field renamed to
+ * "Link URL"), advancing from a valid URL prefills name + slug on the Details step
+ * (derived from the URL), a bare domain is accepted (normalized to https), an
+ * explicit http:// blocks the advance with an inline error, and Enter advances the
+ * step. The pure derivation / normalization / step-gating are unit-tested in
+ * `__tests__/deriveListingFromUrl.test.ts` + `__tests__/normalizeLinkUrl.test.ts`.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -38,7 +39,12 @@ vi.mock('~/utils/trpc', () => {
 });
 
 vi.mock('~/hooks/useCFImageUpload', () => ({
-  useCFImageUpload: () => ({ uploadToCF: vi.fn(), files: [], resetFiles: vi.fn(), removeImage: vi.fn() }),
+  useCFImageUpload: () => ({
+    uploadToCF: vi.fn(),
+    files: [],
+    resetFiles: vi.fn(),
+    removeImage: vi.fn(),
+  }),
 }));
 
 vi.mock('~/utils/notifications', () => ({
@@ -54,11 +60,11 @@ beforeEach(() => {
 });
 
 describe('ExternalSubmitForm — wizard', () => {
-  test('starts on the URL step (details/create not yet shown)', async () => {
+  test('starts on the URL step with the renamed "Link URL" field', async () => {
     renderWithProviders(<ExternalSubmitForm />);
-    await expect
-      .element(page.getByRole('textbox', { name: /External URL/ }))
-      .toBeInTheDocument();
+    await expect.element(page.getByRole('textbox', { name: /Link URL/ })).toBeInTheDocument();
+    // The renamed field carries its "where users will land" description.
+    await expect.element(page.getByText(/where users will land/i)).toBeInTheDocument();
     await expect.element(page.getByRole('button', { name: 'Next' })).toBeInTheDocument();
     // The Create-draft button lives on the Details step and is not rendered yet.
     expect(page.getByRole('button', { name: 'Create draft' }).elements()).toHaveLength(0);
@@ -66,7 +72,7 @@ describe('ExternalSubmitForm — wizard', () => {
 
   test('a valid URL advances to Details and prefills name + slug', async () => {
     renderWithProviders(<ExternalSubmitForm />);
-    await page.getByRole('textbox', { name: /External URL/ }).fill('https://vitrine.civitai.com');
+    await page.getByRole('textbox', { name: /Link URL/ }).fill('https://vitrine.civitai.com');
     await page.getByRole('button', { name: 'Next' }).click();
 
     // Details step is now active with the prefilled name + slug.
@@ -75,18 +81,36 @@ describe('ExternalSubmitForm — wizard', () => {
     await expect.element(page.getByRole('button', { name: 'Create draft' })).toBeInTheDocument();
   });
 
-  test('an invalid (http) URL blocks the advance with an inline error', async () => {
+  test('a bare domain (no scheme) is accepted and normalized to https', async () => {
     renderWithProviders(<ExternalSubmitForm />);
-    await page.getByRole('textbox', { name: /External URL/ }).fill('http://example.com');
+    await page.getByRole('textbox', { name: /Link URL/ }).fill('vitrine.civitai.com');
     await page.getByRole('button', { name: 'Next' }).click();
-    // Shared https validation surfaces inline; we stay on the URL step.
+    // Bare domain no longer errors — it advances and prefills from the https form.
+    await expect.element(page.getByRole('textbox', { name: /^Slug/ })).toHaveValue('vitrine');
+  });
+
+  test('an explicit http:// URL blocks the advance with an inline error', async () => {
+    renderWithProviders(<ExternalSubmitForm />);
+    await page.getByRole('textbox', { name: /Link URL/ }).fill('http://example.com');
+    await page.getByRole('button', { name: 'Next' }).click();
+    // The "Use https://" fix-it error surfaces inline; we stay on the URL step.
     await expect.element(page.getByText(/https/i)).toBeInTheDocument();
     expect(page.getByRole('button', { name: 'Create draft' }).elements()).toHaveLength(0);
   });
 
+  test('Enter on the URL field advances to Details', async () => {
+    renderWithProviders(<ExternalSubmitForm />);
+    const url = page.getByRole('textbox', { name: /Link URL/ });
+    await url.fill('https://vitrine.civitai.com');
+    await url
+      .element()
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await expect.element(page.getByRole('button', { name: 'Create draft' })).toBeInTheDocument();
+  });
+
   test('submitting valid details calls submitExternalListing (server owns the draft)', async () => {
     renderWithProviders(<ExternalSubmitForm />);
-    await page.getByRole('textbox', { name: /External URL/ }).fill('https://vitrine.civitai.com');
+    await page.getByRole('textbox', { name: /Link URL/ }).fill('https://vitrine.civitai.com');
     await page.getByRole('button', { name: 'Next' }).click();
     await page.getByRole('button', { name: 'Create draft' }).click();
     expect(mocks.mutate).toHaveBeenCalledTimes(1);

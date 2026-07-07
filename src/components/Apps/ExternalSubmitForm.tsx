@@ -6,6 +6,7 @@ import {
   Code,
   FileInput,
   Group,
+  Loader,
   Select,
   Stack,
   Stepper,
@@ -22,7 +23,7 @@ import {
   IconUpload,
 } from '@tabler/icons-react';
 import Link from 'next/link';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import {
   OFFSITE_CATEGORY_OPTIONS,
@@ -32,11 +33,16 @@ import {
   emptyOffsiteSubmitForm,
   isDetailsStepComplete,
   isUrlStepComplete,
+  normalizeLinkUrl,
   validateOffsiteSubmitForm,
   type OffsiteSubmitFormErrors,
   type OffsiteSubmitFormValues,
 } from '~/components/Apps/offsiteSubmitFormConfig';
-import { validateExternalUrl } from '~/server/schema/blocks/external-app.schema';
+import {
+  classifyAttachResult,
+  shouldKeepPolling,
+  type AttachOutcome,
+} from '~/components/Apps/assetPolling';
 import {
   appendScreenshotSlot,
   makeScreenshotSlotId,
@@ -67,13 +73,26 @@ type Submitted = { listingId: string; publishRequestId: string; slug: string };
 type AssetKind = 'icon' | 'cover' | 'screenshot';
 
 /**
- * Per-asset attach lifecycle. `processing` = the image was persisted but the async
- * scan is not complete yet, so the P1 attach proc rejected with "scan is not
- * complete" — the author can Retry once the scan lands (a listing asset is publicly
- * rendered, so the P1 gate requires a scan-complete image).
+ * Per-asset attach lifecycle:
+ *   idle      — nothing uploaded yet.
+ *   working   — uploading + persisting, or the very first attach attempt.
+ *   scanning  — the persisted image is still being virus/NSFW-scanned, so the P1
+ *               attach proc rejected with "scan is not complete"; we AUTO-POLL the
+ *               attach on a backoff (see `assetPolling.ts`) and flip to `attached`
+ *               the moment the scan lands — no manual Retry needed.
+ *   attached  — the attach succeeded (terminal).
+ *   error     — the attach failed for a NON-scan reason (blocked / NSFW / bad
+ *               dimensions); polling stops and the reason is shown (terminal).
+ *   timeout   — the scan didn't complete within the ~3-min poll budget; polling
+ *               stops but the manual Retry stays as a fallback.
+ *
+ * NOTE: on a PR PREVIEW the scanner is unreachable, so a real image will poll →
+ * `timeout` (expected). The auto-poll is validated on PROD, where the scan
+ * actually completes and the asset transitions scanning → attached on its own.
  */
+type AssetStatus = 'idle' | 'working' | 'scanning' | 'attached' | 'timeout' | 'error';
 type AssetState = {
-  status: 'idle' | 'working' | 'attached' | 'processing' | 'error';
+  status: AssetStatus;
   imageId: number | null;
   message: string | null;
 };
@@ -89,8 +108,6 @@ const emptyAsset: AssetState = { status: 'idle', imageId: null, message: null };
  * `screenshotSlots.ts` so it is unit-testable without mounting the form.
  */
 type ScreenshotState = ScreenshotSlot;
-
-const SCAN_INCOMPLETE = /scan is not complete/i;
 
 /** Read the intrinsic pixel dimensions of an image File (the P1 attach proc
  *  rejects unknown/zero dimensions, so they must accompany the persisted row). */
@@ -138,29 +155,67 @@ export function ExternalSubmitForm() {
   }
 
   /**
-   * Step 1 → Step 2 prefill: derive name + slug from the URL. NON-DESTRUCTIVE —
-   * only fills a currently-blank field, so a name/slug the author already typed
-   * (or edited on the details step) is never clobbered. Fires on URL blur and on
-   * advancing out of the URL step.
+   * Store the canonical https URL and derive name + slug from it. The prefill is
+   * NON-DESTRUCTIVE — only fills a currently-blank field, so a name/slug the author
+   * already typed (or edited on the Details step) is never clobbered. `normalized`
+   * is the already-validated https URL from `normalizeLinkUrl`, so the STORED /
+   * submitted `externalUrl` is guaranteed https and the derivation runs on it.
    */
-  function prefillFromUrl() {
-    const derived = deriveListingFromUrl(values.externalUrl);
+  function applyNormalizedUrl(normalized: string) {
+    const derived = deriveListingFromUrl(normalized);
     setValues((v) => ({
       ...v,
+      externalUrl: normalized,
       name: v.name.trim().length === 0 && derived.name ? derived.name : v.name,
       slug: v.slug.trim().length === 0 && derived.slug ? derived.slug : v.slug,
     }));
   }
 
+  /**
+   * URL-field blur: normalize (bare domain → https, host:port → https) and store
+   * the canonical https value + prefill. GENTLE — an invalid URL (empty, explicit
+   * `http://`, non-https scheme) is left as-is with NO inline error on blur; the
+   * error only surfaces when the author tries to advance.
+   */
+  function handleUrlBlur() {
+    const result = normalizeLinkUrl(values.externalUrl);
+    if (result.error) return;
+    applyNormalizedUrl(result.url);
+    setErrors((prev) => ({ ...prev, externalUrl: undefined }));
+  }
+
+  /**
+   * Advance URL → Details. Normalize + validate first: a bare domain is accepted
+   * (upgraded to https and stored) so it no longer shows an error, but an explicit
+   * `http://` (or any non-https scheme) is REJECTED inline and blocks the advance.
+   */
   function handleAdvanceFromUrl() {
-    prefillFromUrl();
-    const urlResult = validateExternalUrl(values.externalUrl);
-    if (!urlResult.ok) {
-      setErrors((prev) => ({ ...prev, externalUrl: urlResult.error }));
+    const result = normalizeLinkUrl(values.externalUrl);
+    if (result.error) {
+      setErrors((prev) => ({ ...prev, externalUrl: result.error }));
       return;
     }
+    applyNormalizedUrl(result.url);
     setErrors((prev) => ({ ...prev, externalUrl: undefined }));
     setActive(STEP_DETAILS);
+  }
+
+  /** Enter on the URL field advances the step (same normalize+validate as Next). */
+  function handleUrlKeyDown(e: ReactKeyboardEvent<HTMLInputElement>) {
+    if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
+    e.preventDefault();
+    handleAdvanceFromUrl();
+  }
+
+  /**
+   * Enter on a Details text field creates the draft — but ONLY when the whole
+   * Details step validates, guarding against an accidental empty submit. The
+   * authoritative `validateOffsiteSubmitForm` still runs inside `handleCreateDraft`.
+   */
+  function handleDetailsKeyDown(e: ReactKeyboardEvent<HTMLInputElement>) {
+    if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
+    e.preventDefault();
+    if (isDetailsStepComplete(values)) handleCreateDraft();
   }
 
   function handleCreateDraft() {
@@ -192,8 +247,10 @@ export function ExternalSubmitForm() {
       setActive(STEP_URL);
       return;
     }
-    if (step === STEP_DETAILS && isUrlStepComplete(values)) {
-      prefillFromUrl();
+    if (step === STEP_DETAILS) {
+      const result = normalizeLinkUrl(values.externalUrl);
+      if (result.error) return; // can't reach Details with an invalid URL
+      applyNormalizedUrl(result.url);
       setActive(STEP_DETAILS);
     }
   }
@@ -227,12 +284,7 @@ export function ExternalSubmitForm() {
         </Alert>
       )}
 
-      <Stepper
-        active={active}
-        onStepClick={handleStepClick}
-        allowNextStepsSelect={false}
-        size="sm"
-      >
+      <Stepper active={active} onStepClick={handleStepClick} allowNextStepsSelect={false} size="sm">
         <Stepper.Step
           label="URL"
           description="The link"
@@ -241,12 +293,13 @@ export function ExternalSubmitForm() {
         >
           <Stack gap="md" mt="md">
             <TextInput
-              label="External URL"
-              description="An https:// link. Opens in a new tab with rel=noopener. We'll suggest a name + slug from it."
-              placeholder="https://example.com/app"
+              label="Link URL"
+              description="Where users will land when they click your app. Just type the domain — we'll add https:// and suggest a name + slug from it."
+              placeholder="example.com/app"
               value={values.externalUrl}
               onChange={(e) => setField('externalUrl', e.currentTarget.value)}
-              onBlur={prefillFromUrl}
+              onBlur={handleUrlBlur}
+              onKeyDown={handleUrlKeyDown}
               error={errors.externalUrl}
               maxLength={OFFSITE_SUBMIT_LIMITS.urlMax}
               required
@@ -255,7 +308,12 @@ export function ExternalSubmitForm() {
               data-testid="apps-offsite-submit-url"
             />
             <Group justify="space-between">
-              <Button variant="default" component={Link} href="/apps/my-submissions" disabled={busy}>
+              <Button
+                variant="default"
+                component={Link}
+                href="/apps/my-submissions"
+                disabled={busy}
+              >
                 Cancel
               </Button>
               <Button
@@ -282,6 +340,7 @@ export function ExternalSubmitForm() {
               placeholder="My External App"
               value={values.name}
               onChange={(e) => setField('name', e.currentTarget.value)}
+              onKeyDown={handleDetailsKeyDown}
               error={errors.name}
               maxLength={OFFSITE_SUBMIT_LIMITS.nameMax}
               required
@@ -296,6 +355,7 @@ export function ExternalSubmitForm() {
               placeholder="my-external-app"
               value={values.slug}
               onChange={(e) => setField('slug', e.currentTarget.value)}
+              onKeyDown={handleDetailsKeyDown}
               error={errors.slug}
               maxLength={OFFSITE_SUBMIT_LIMITS.slugMax}
               required
@@ -308,6 +368,7 @@ export function ExternalSubmitForm() {
               description="A short one-liner (optional)."
               value={values.tagline}
               onChange={(e) => setField('tagline', e.currentTarget.value)}
+              onKeyDown={handleDetailsKeyDown}
               error={errors.tagline}
               maxLength={OFFSITE_SUBMIT_LIMITS.taglineMax}
               disabled={busy}
@@ -437,6 +498,46 @@ function AssetStep({
   const setCoverMutation = trpc.appListings.setCover.useMutation();
   const addScreenshotMutation = trpc.appListings.addScreenshot.useMutation();
 
+  /**
+   * Poll bookkeeping, keyed by asset ('icon' / 'cover' / a screenshot slot id):
+   *   - `timers`  holds the ONE pending re-try timeout per asset (so a poll never
+   *               stacks), cleared on success / error / timeout / retry / unmount.
+   *   - `epochs`  is a per-asset generation counter; a new upload or manual Retry
+   *               bumps it, and an in-flight poll cycle bails when its captured
+   *               epoch is stale — so a Retry can't be raced by an older cycle.
+   */
+  const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const epochsRef = useRef<Map<string, number>>(new Map());
+
+  function clearTimer(key: string) {
+    const t = timersRef.current.get(key);
+    if (t !== undefined) {
+      clearTimeout(t);
+      timersRef.current.delete(key);
+    }
+  }
+
+  function bumpEpoch(key: string): number {
+    const next = (epochsRef.current.get(key) ?? 0) + 1;
+    epochsRef.current.set(key, next);
+    return next;
+  }
+
+  function isCurrentEpoch(key: string, epoch: number): boolean {
+    return (epochsRef.current.get(key) ?? 0) === epoch;
+  }
+
+  // Cancel every pending poll when the step unmounts (navigating away). This
+  // covers "clear the timer on unmount / when leaving the step" — the earlier
+  // wizard steps are locked once submitted, so unmount is the only exit.
+  useEffect(() => {
+    const timers = timersRef.current;
+    return () => {
+      for (const t of timers.values()) clearTimeout(t);
+      timers.clear();
+    };
+  }, []);
+
   /** Upload → persist → return the persisted numeric imageId (throws on failure). */
   async function uploadAndPersist(file: File): Promise<number> {
     const { width, height } = await readImageDimensions(file);
@@ -453,8 +554,9 @@ function AssetStep({
     return imageId;
   }
 
-  /** Run the attach proc for an already-persisted imageId; classify the result. */
-  async function attach(kind: AssetKind, imageId: number): Promise<AssetState> {
+  /** Run the attach proc once for an already-persisted imageId; classify the
+   *  outcome (attached / scanning / non-scan error) with the pure helper. */
+  async function attachOnce(kind: AssetKind, imageId: number): Promise<AttachOutcome> {
     try {
       if (kind === 'icon') {
         await setIconMutation.mutateAsync({ listingId: submitted.listingId, imageId });
@@ -463,40 +565,91 @@ function AssetStep({
       } else {
         await addScreenshotMutation.mutateAsync({ listingId: submitted.listingId, imageId });
       }
-      return { status: 'attached', imageId, message: null };
+      return classifyAttachResult(null);
     } catch (err) {
-      const message = (err as Error).message;
-      if (SCAN_INCOMPLETE.test(message)) {
-        return {
-          status: 'processing',
-          imageId,
-          message: 'Image is still processing (virus/NSFW scan). Retry in a moment.',
-        };
-      }
-      return { status: 'error', imageId, message };
+      return classifyAttachResult((err as Error).message);
     }
   }
 
-  async function handleSingle(
+  /**
+   * Drive one attach cycle for `key`: run the attach, then on
+   *   attached → terminal 'attached';
+   *   error    → terminal 'error' (show the reason, stop);
+   *   scanning → if the backoff still has budget, show the spinner and schedule the
+   *              next cycle; else terminal 'timeout' (manual Retry stays).
+   * `attempt` is the 0-indexed re-try number (attempt 0 = the first attach). The
+   * captured `epoch` guards against a superseding upload/Retry. On PR PREVIEW the
+   * scanner is unreachable, so this cycles scanning → timeout (expected); on PROD
+   * it lands scanning → attached.
+   */
+  async function drive(
+    key: string,
+    kind: AssetKind,
+    imageId: number,
+    attempt: number,
+    epoch: number,
+    apply: (s: AssetState) => void
+  ) {
+    const outcome = await attachOnce(kind, imageId);
+    if (!isCurrentEpoch(key, epoch)) return; // superseded by a newer cycle
+    if (outcome.kind === 'attached') {
+      clearTimer(key);
+      apply({ status: 'attached', imageId, message: null });
+      return;
+    }
+    if (outcome.kind === 'error') {
+      clearTimer(key);
+      apply({ status: 'error', imageId, message: outcome.message });
+      return;
+    }
+    const decision = shouldKeepPolling(outcome, attempt);
+    if (!decision.keep) {
+      clearTimer(key);
+      apply({ status: 'timeout', imageId, message: 'Still scanning — Retry in a moment.' });
+      return;
+    }
+    apply({ status: 'scanning', imageId, message: null });
+    const timer = setTimeout(() => {
+      void drive(key, kind, imageId, attempt + 1, epoch, apply);
+    }, decision.delayMs);
+    timersRef.current.set(key, timer);
+  }
+
+  /** Upload a fresh file then start the attach/poll cycle for `key`. */
+  async function startAttach(
+    key: string,
+    kind: AssetKind,
     file: File | null,
-    kind: 'icon' | 'cover',
-    set: (s: AssetState) => void
+    apply: (s: AssetState) => void
   ) {
     if (!file) return;
-    set({ status: 'working', imageId: null, message: null });
+    clearTimer(key);
+    const epoch = bumpEpoch(key);
+    apply({ status: 'working', imageId: null, message: null });
     try {
       const imageId = await uploadAndPersist(file);
-      set(await attach(kind, imageId));
+      if (!isCurrentEpoch(key, epoch)) return; // a newer upload/Retry superseded this
+      await drive(key, kind, imageId, 0, epoch, apply);
     } catch (err) {
-      set({ status: 'error', imageId: null, message: (err as Error).message });
+      if (!isCurrentEpoch(key, epoch)) return;
+      clearTimer(key);
+      apply({ status: 'error', imageId: null, message: (err as Error).message });
       showErrorNotification({ title: `Could not add ${kind}`, error: err as Error });
     }
   }
 
-  async function retrySingle(kind: 'icon' | 'cover', state: AssetState, set: (s: AssetState) => void) {
-    if (state.imageId == null) return;
-    set({ ...state, status: 'working' });
-    set(await attach(kind, state.imageId));
+  /** Manual Retry: reset the poll (new epoch, cleared timer) and re-drive from the
+   *  already-persisted imageId. */
+  async function retryAttach(
+    key: string,
+    kind: AssetKind,
+    imageId: number,
+    apply: (s: AssetState) => void
+  ) {
+    clearTimer(key);
+    const epoch = bumpEpoch(key);
+    apply({ status: 'working', imageId, message: null });
+    await drive(key, kind, imageId, 0, epoch, apply);
   }
 
   async function handleScreenshots(files: File[]) {
@@ -507,27 +660,18 @@ function AssetStep({
       // `screenshotSlots.ts` for the pure append/patch-by-id logic.
       const id = makeScreenshotSlotId(screenshotIdRef.current++);
       setScreenshots((prev: ScreenshotState[]) => appendScreenshotSlot(prev, id));
-      try {
-        const imageId = await uploadAndPersist(file);
-        const result = await attach('screenshot', imageId);
-        setScreenshots((prev: ScreenshotState[]) => patchScreenshotSlot(prev, id, result));
-      } catch (err) {
-        const message = (err as Error).message;
-        setScreenshots((prev: ScreenshotState[]) =>
-          patchScreenshotSlot(prev, id, { status: 'error', imageId: null, message })
-        );
-        showErrorNotification({ title: 'Could not add screenshot', error: err as Error });
-      }
+      await startAttach(id, 'screenshot', file, (s: AssetState) =>
+        setScreenshots((prev: ScreenshotState[]) => patchScreenshotSlot(prev, id, s))
+      );
     }
   }
 
-  async function retryScreenshot(id: string) {
+  function retryScreenshot(id: string) {
     const state = screenshots.find((s: ScreenshotState) => s.id === id);
     if (!state || state.imageId == null) return;
-    const imageId = state.imageId;
-    setScreenshots((prev: ScreenshotState[]) => patchScreenshotSlot(prev, id, { status: 'working' }));
-    const result = await attach('screenshot', imageId);
-    setScreenshots((prev: ScreenshotState[]) => patchScreenshotSlot(prev, id, result));
+    void retryAttach(id, 'screenshot', state.imageId, (s: AssetState) =>
+      setScreenshots((prev: ScreenshotState[]) => patchScreenshotSlot(prev, id, s))
+    );
   }
 
   const attachedScreenshots = screenshots.filter((s) => s.status === 'attached').length;
@@ -538,9 +682,9 @@ function AssetStep({
     <Stack gap="md" data-testid="apps-offsite-submit-success">
       <Alert color="green" variant="light" icon={<IconCheck size={16} />} title="Draft created">
         <Text size="sm">
-          <Code>{submitted.slug}</Code> is a pending off-site submission. Attach an icon, a cover and
-          at least one screenshot below — a moderator can only approve an asset-complete listing.
-          Content rating: <Badge size="xs">{contentRating}</Badge>
+          <Code>{submitted.slug}</Code> is a pending off-site submission. Attach an icon, a cover
+          and at least one screenshot below — a moderator can only approve an asset-complete
+          listing. Content rating: <Badge size="xs">{contentRating}</Badge>
         </Text>
       </Alert>
 
@@ -549,16 +693,20 @@ function AssetStep({
         label="Icon"
         description="Square-ish, ≥128px, png/jpeg/webp."
         state={icon}
-        onFile={(f) => void handleSingle(f, 'icon', setIcon)}
-        onRetry={() => void retrySingle('icon', icon, setIcon)}
+        onFile={(f) => void startAttach('icon', 'icon', f, setIcon)}
+        onRetry={() => {
+          if (icon.imageId != null) void retryAttach('icon', 'icon', icon.imageId, setIcon);
+        }}
       />
       <AssetRow
         kind="cover"
         label="Cover"
         description="Landscape, ≥640px wide, png/jpeg/webp."
         state={cover}
-        onFile={(f) => void handleSingle(f, 'cover', setCover)}
-        onRetry={() => void retrySingle('cover', cover, setCover)}
+        onFile={(f) => void startAttach('cover', 'cover', f, setCover)}
+        onRetry={() => {
+          if (cover.imageId != null) void retryAttach('cover', 'cover', cover.imageId, setCover);
+        }}
       />
 
       <Card withBorder p="sm">
@@ -589,12 +737,12 @@ function AssetStep({
                   <Text size="xs">Screenshot {i + 1}</Text>
                   <Group gap={6}>
                     <AssetStatusBadge state={s} />
-                    {(s.status === 'processing' || s.status === 'error') && s.imageId != null && (
+                    {(s.status === 'error' || s.status === 'timeout') && s.imageId != null && (
                       <Button
                         size="compact-xs"
                         variant="subtle"
                         leftSection={<IconRefresh size={12} />}
-                        onClick={() => void retryScreenshot(s.id)}
+                        onClick={() => retryScreenshot(s.id)}
                       >
                         Retry
                       </Button>
@@ -620,7 +768,11 @@ function AssetStep({
       </Alert>
 
       <Group justify="flex-end">
-        <Button component={Link} href="/apps/my-submissions" rightSection={<IconExternalLink size={16} />}>
+        <Button
+          component={Link}
+          href="/apps/my-submissions"
+          rightSection={<IconExternalLink size={16} />}
+        >
           View my submissions
         </Button>
       </Group>
@@ -655,7 +807,7 @@ function AssetRow({
           </Group>
           <Group gap={6}>
             <AssetStatusBadge state={state} />
-            {(state.status === 'processing' || state.status === 'error') && state.imageId != null && (
+            {(state.status === 'error' || state.status === 'timeout') && state.imageId != null && (
               <Button
                 size="compact-xs"
                 variant="subtle"
@@ -676,7 +828,7 @@ function AssetRow({
           leftSection={<IconUpload size={16} />}
           value={null}
           onChange={onFile}
-          disabled={state.status === 'working'}
+          disabled={state.status === 'working' || state.status === 'scanning'}
         />
         {state.message && (
           <Text size="xs" c={state.status === 'error' ? 'red' : 'dimmed'}>
@@ -688,20 +840,51 @@ function AssetRow({
   );
 }
 
-function AssetStatusBadge({ state }: { state: AssetState }) {
+// Accepts either an AssetState (icon/cover) or a ScreenshotSlot (screenshots) via
+// the minimal shared shape — AssetStatus ⊆ ScreenshotSlotStatus, and no `id` is
+// required so both structurally satisfy it. The legacy `processing` value is
+// rendered like `scanning` (the component no longer produces it, but the shared
+// ScreenshotSlot type still permits it).
+type BadgeState = {
+  status: ScreenshotSlot['status'];
+  imageId: number | null;
+  message: string | null;
+};
+function AssetStatusBadge({ state }: { state: BadgeState }) {
   switch (state.status) {
     case 'working':
-      return <Badge size="xs" color="blue">uploading…</Badge>;
+      return (
+        <Badge size="xs" color="blue" leftSection={<Loader size={10} color="blue" />}>
+          uploading…
+        </Badge>
+      );
+    case 'scanning':
+    case 'processing':
+      // Auto-poll in progress: spinner + "Scanning image…" (no Retry — it retries
+      // itself on a backoff until the scan lands or the budget is spent).
+      return (
+        <Badge size="xs" color="yellow" leftSection={<Loader size={10} color="yellow" />}>
+          Scanning image…
+        </Badge>
+      );
     case 'attached':
       return (
         <Badge size="xs" color="green" leftSection={<IconCheck size={10} />}>
           attached
         </Badge>
       );
-    case 'processing':
-      return <Badge size="xs" color="yellow">processing</Badge>;
+    case 'timeout':
+      return (
+        <Badge size="xs" color="orange" leftSection={<IconAlertTriangle size={10} />}>
+          still scanning
+        </Badge>
+      );
     case 'error':
-      return <Badge size="xs" color="red">error</Badge>;
+      return (
+        <Badge size="xs" color="red">
+          error
+        </Badge>
+      );
     default:
       return (
         <Text size="xs" c="dimmed">

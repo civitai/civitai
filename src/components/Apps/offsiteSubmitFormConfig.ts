@@ -55,9 +55,7 @@ export type OffsiteSubmitFormValues = {
   changelog: string;
 };
 
-export type OffsiteSubmitFormErrors = Partial<
-  Record<keyof OffsiteSubmitFormValues, string>
->;
+export type OffsiteSubmitFormErrors = Partial<Record<keyof OffsiteSubmitFormValues, string>>;
 
 /** Category `<Select>` data (value + human label). */
 export const OFFSITE_CATEGORY_OPTIONS: Array<{ value: MarketplaceCategory; label: string }> =
@@ -197,6 +195,46 @@ export function deriveListingFromUrl(url: string): { name: string; slug: string 
       : '';
 
   return { name, slug };
+}
+
+/**
+ * Normalize a raw "Link URL" input into the canonical https URL that will be
+ * STORED / submitted. PURE + unit-tested. Locked policy: *prepend https if the
+ * scheme is missing, but REJECT an explicit `http://`* (don't silently upgrade —
+ * make the user fix it so they're never surprised their http link became https).
+ *
+ * Rules (deterministic, pinned by the unit tests):
+ *   - trim; empty → `{ url: '', error }` (as `validateExternalUrl` would).
+ *   - starts with `http://` (case-insensitive) → `{ url: '', error }` with a
+ *     "Use https://" message — NOT a silent upgrade.
+ *   - contains NO scheme separator (`://`) → prepend `https://` (a bare domain
+ *     `example.com/app`, or a `host:port` like `example.com:8443/app`, becomes
+ *     `https://…`). A pseudo-scheme with no `://` (`javascript:…`, `data:…`) is
+ *     also prepended, then rejected by `validateExternalUrl` when the resulting
+ *     string fails to parse — the reject outcome is what matters.
+ *   - already has a scheme (`https://…`, `ftp://…`, …) → passed through unchanged
+ *     to `validateExternalUrl`, which accepts only https and rejects the rest.
+ *   - then run the shared `validateExternalUrl` on the result → `{ url }` (the
+ *     canonical https URL) on ok, else `{ url: '', error }`.
+ *
+ * The SERVER validation (`validateExternalUrl`, https-only) is unchanged; the
+ * client just normalizes so the submitted `externalUrl` is already https.
+ */
+export function normalizeLinkUrl(raw: string): { url: string; error?: string } {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    return { url: '', error: 'externalUrl must not be empty' };
+  }
+  // Explicit http:// → reject (do NOT silently upgrade to https).
+  if (/^http:\/\//i.test(trimmed)) {
+    return { url: '', error: 'Use https:// (or omit the scheme)' };
+  }
+  // No scheme separator → prepend https://. A scheme present (`ftp://`, `data:…`
+  // once it parses, etc.) is left for `validateExternalUrl` to reject.
+  const candidate = trimmed.includes('://') ? trimmed : `https://${trimmed}`;
+  const result = validateExternalUrl(candidate);
+  if (!result.ok) return { url: '', error: result.error };
+  return { url: result.url };
 }
 
 /**
