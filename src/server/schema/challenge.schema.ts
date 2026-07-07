@@ -379,6 +379,14 @@ export const challengeJudgingCategoriesSchema = z
         code: z.ZodIssueCode.custom,
         message: 'Each preset category can be used once',
       });
+    // Labels become JSON keys in the AI judge schema, so a case-insensitive collision (e.g. a
+    // custom "Humor" alongside preset Humor) would shadow one category during scoring.
+    const normalizedLabels = cats.map((c) => sanitizeCategoryLabel(c.label).toLowerCase());
+    if (new Set(normalizedLabels).size !== normalizedLabels.length)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Category labels must be unique (case-insensitive)',
+      });
     if (cats.reduce((s, c) => s + c.weight, 0) !== 100)
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Category weights must sum to 100%' });
   });

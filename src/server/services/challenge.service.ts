@@ -1172,6 +1172,10 @@ export async function upsertUserChallenge({
   const allowedNsfwLevel = rest.allowedNsfwLevel ?? sfwBrowsingLevelsFlag;
   const themeEls = themeElements?.length ? themeElements : undefined;
 
+  // Create — gate on eligibility (score + standing + tier concurrent cap) before creating any
+  // resources, so an ineligible caller can't leave an orphan cover Image behind.
+  if (!id) await assertCanCreateUserChallenge(userId);
+
   // Cover image: reuse an existing Image or create one from the upload (like the mod path).
   const coverImageId = coverImage.id ?? (await createImage({ ...coverImage, userId })).id;
 
@@ -1280,9 +1284,6 @@ export async function upsertUserChallenge({
     await scanUserChallenge(id);
     return updated;
   }
-
-  // Create — gate on eligibility (score + standing + tier concurrent cap).
-  await assertCanCreateUserChallenge(userId);
 
   const created = await dbWrite.$transaction(async (tx) => {
     const collection = await tx.collection.create({

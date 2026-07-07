@@ -70,4 +70,32 @@ describe('challengeJudgingCategoriesSchema', () => {
     expect(result.success).toBe(true);
     if (result.success) expect(result.data[1].label).toBe("Say 'wow'");
   });
+
+  it('rejects a custom label that collides case-insensitively with a preset label', () => {
+    const cats = [
+      { key: 'theme', label: 'Theme', criteria: 'fit', weight: 40 },
+      { key: 'humor', label: 'Humor', criteria: 'funny', weight: 30 },
+      { key: 'custom', label: 'humor', criteria: 'x', weight: 30 },
+    ];
+    expect(challengeJudgingCategoriesSchema.safeParse(cats).success).toBe(false);
+  });
+
+  it('rejects two custom labels that collide case-insensitively', () => {
+    const cats = [
+      { key: 'theme', label: 'Theme', criteria: 'fit', weight: 40 },
+      { key: 'custom', label: 'Color', criteria: 'palette', weight: 30 },
+      { key: 'custom', label: 'color', criteria: 'x', weight: 30 },
+    ];
+    expect(challengeJudgingCategoriesSchema.safeParse(cats).success).toBe(false);
+  });
+
+  it('accepts distinct labels that only differ by case from unrelated words', () => {
+    const cats = [
+      { key: 'theme', label: 'Theme', criteria: 'fit', weight: 40 },
+      { key: 'custom', label: 'Color', criteria: 'palette', weight: 30 },
+      { key: 'custom', label: 'Say "x"', criteria: 'x', weight: 30 },
+    ];
+    const result = challengeJudgingCategoriesSchema.safeParse(cats);
+    expect(result.success).toBe(true);
+  });
 });
