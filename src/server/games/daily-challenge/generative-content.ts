@@ -239,7 +239,7 @@ const RESPONSE_SCHEMA = `{
   },
   "reaction": "Laugh" | "Heart" | "Like" | "Cry",
   "comment": "your review comment (2-3 sentences)",
-  "summary": "concise factual summary of the image"
+  "summary": "concise factual summary of the image",
   "aestheticFlaws": ["string describing flaw 1","string describing flaw 2",...] // optional array of strings describing specific aesthetic flaws in the image
 }`;
 

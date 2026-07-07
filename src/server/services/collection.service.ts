@@ -15,6 +15,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { tagIdsForImagesCache, userCollectionCountCache } from '~/server/redis/caches';
@@ -1899,6 +1900,35 @@ export function getContributorCount({ collectionIds: ids }: { collectionIds: num
   `;
 }
 
+// Charge the active user-challenge entry fee for `imageIds` on this collection, if any.
+// Idempotent per (challenge, image) — see chargeEntryFees. No-op for moderators, empty input,
+// or collections without an Active fee challenge.
+const chargeContestEntryFeesForCollection = async ({
+  collectionId,
+  userId,
+  imageIds,
+  isModerator,
+}: {
+  collectionId: number;
+  userId: number;
+  imageIds: number[];
+  isModerator?: boolean;
+}) => {
+  if (isModerator || imageIds.length === 0) return;
+  const feeChallenge = await dbRead.challenge.findFirst({
+    where: { collectionId, source: 'User', entryFee: { gt: 0 }, status: 'Active' },
+    select: { id: true, entryFee: true },
+  });
+  if (!feeChallenge) return;
+  const { chargeEntryFees } = await import('~/server/games/daily-challenge/challenge-funding');
+  await chargeEntryFees({
+    challengeId: feeChallenge.id,
+    userId,
+    imageIds,
+    entryFee: feeChallenge.entryFee,
+  });
+};
+
 export const validateContestCollectionEntry = async ({
   collectionId,
   userId,
@@ -1908,6 +1938,9 @@ export const validateContestCollectionEntry = async ({
   modelIds = [],
   imageIds = [],
   postIds = [],
+  // bulkSaveItems defers the entry-fee charge until AFTER the CollectionItem write (so a failed
+  // save can't leave a paid-but-missing entry); every other caller charges here, before its write.
+  deferEntryFeeCharge = false,
 }: {
   collectionId: number;
   userId: number;
@@ -1917,6 +1950,7 @@ export const validateContestCollectionEntry = async ({
   modelIds?: number[];
   imageIds?: number[];
   postIds?: number[];
+  deferEntryFeeCharge?: boolean;
 }) => {
   const user = await dbRead.user.findUnique({
     where: { id: userId },
@@ -2132,23 +2166,11 @@ export const validateContestCollectionEntry = async ({
     }
   }
 
-  // Entry fee: for user-created challenges with an entry fee, charge the participant once
-  // per submitted image (idempotent per challenge+image, so duplicate validation calls in the
-  // save path can't double-charge). Runs only after all other validation has passed.
-  if (imageIds.length > 0 && !isModerator) {
-    const feeChallenge = await dbRead.challenge.findFirst({
-      where: { collectionId, source: 'User', entryFee: { gt: 0 }, status: 'Active' },
-      select: { id: true, entryFee: true },
-    });
-    if (feeChallenge) {
-      const { chargeEntryFees } = await import('~/server/games/daily-challenge/challenge-funding');
-      await chargeEntryFees({
-        challengeId: feeChallenge.id,
-        userId,
-        imageIds,
-        entryFee: feeChallenge.entryFee,
-      });
-    }
+  // Entry fee: for user-created challenges, charge the participant once per submitted image
+  // (idempotent per challenge+image). Runs only after all other validation has passed. Callers
+  // that defer (bulkSaveItems) charge after their write instead, to avoid a paid-but-missing entry.
+  if (!deferEntryFeeCharge) {
+    await chargeContestEntryFeesForCollection({ collectionId, userId, imageIds, isModerator });
   }
 };
 
@@ -2274,6 +2296,8 @@ export const bulkSaveItems = async ({
       modelIds,
       imageIds,
       postIds,
+      // Charge the entry fee AFTER the write below (with rollback), not here.
+      deferEntryFeeCharge: true,
     });
   }
 
@@ -2374,9 +2398,47 @@ export const bulkSaveItems = async ({
       }));
   }
 
-  await homeBlockCacheBust(HomeBlockType.Collection, collectionId);
-
   const { count } = await dbWrite.collectionItem.createMany({ data });
+
+  // Entry fee (user challenges): charge AFTER the entries are written so a failed save never
+  // leaves a paid-but-missing entry. On charge failure (e.g. insufficient funds), roll back the
+  // just-written rows — a Buzz charge can't be undone by a Postgres rollback. Idempotent per
+  // (challenge, image), so a retry never double-charges.
+  if (collection.mode === CollectionMode.Contest) {
+    const chargeImageIds = data.map((d) => d.imageId).filter(isDefined);
+    try {
+      await chargeContestEntryFeesForCollection({
+        collectionId,
+        userId,
+        imageIds: chargeImageIds,
+        isModerator,
+      });
+    } catch (e) {
+      if (chargeImageIds.length > 0)
+        await dbWrite.collectionItem
+          .deleteMany({
+            where: { collectionId, addedById: userId, imageId: { in: chargeImageIds } },
+          })
+          .catch((rollbackError) => {
+            // Charge failed AND rollback failed → unpaid entries persist. Surface loudly; still
+            // throw the original charge error below so the user sees the real failure.
+            logToAxiom({
+              type: 'error',
+              name: 'contest-entry-fee-rollback-failed',
+              message:
+                rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+              stack: rollbackError instanceof Error ? rollbackError.stack : undefined,
+              collectionId,
+              userId,
+              imageIds: chargeImageIds,
+            });
+          });
+      throw e;
+    }
+  }
+
+  // Bust AFTER the write so a concurrent read can't repopulate the cache with pre-write data.
+  await homeBlockCacheBust(HomeBlockType.Collection, collectionId);
 
   // Check for challenge entry prize eligibility (Contest mode collections only)
   if (collection.mode === CollectionMode.Contest && count > 0) {

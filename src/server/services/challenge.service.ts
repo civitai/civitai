@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { logToAxiom } from '~/server/logging/client';
 import {
   claimChallengeForCompletion,
   closeChallengeCollection,
@@ -1117,7 +1118,8 @@ export async function upsertChallenge({
 
 // Create/update a PUBLIC (user-created) challenge. Restricted, safe path — forces
 // source=User, scan gating (Pending), category-based judging (no free-form prompt),
-// entry-fee funding (Dynamic pool). Prize payout / entry-fee charging is wired in Phase 2.
+// entry-fee funding (Dynamic pool). Entry-fee charging + initial-prize escrow are live
+// via challenge-funding.ts.
 export async function upsertUserChallenge({
   userId,
   ...input
@@ -1175,6 +1177,9 @@ export async function upsertUserChallenge({
     poolTrigger: PoolTrigger.Entry,
     buzzPerAction: getEntryPoolContribution(entryFee),
     basePrizePool: initialPrizeBuzz,
+    // Seed the displayed pool with the escrowed initial prize so an Upcoming challenge
+    // shows its prize before the dynamic-pool recompute job runs (it only runs once Active).
+    prizePool: initialPrizeBuzz,
     prizeDistribution: prizeDistribution as unknown as Prisma.InputJsonValue,
   };
 
@@ -1194,7 +1199,7 @@ export async function upsertUserChallenge({
       throw new TRPCError({ code: 'FORBIDDEN', message: 'This challenge cannot be edited here.' });
     if (existing.createdById !== userId)
       throw new TRPCError({ code: 'FORBIDDEN', message: 'You can only edit your own challenges.' });
-    // Text/config locks once the challenge is live; only Scheduled + entry-free challenges are editable.
+    // Text/config locks once live: only Scheduled challenges with no entries yet are editable.
     if (existing.status !== ChallengeStatus.Scheduled)
       throw new TRPCError({
         code: 'PRECONDITION_FAILED',
@@ -1218,7 +1223,9 @@ export async function upsertUserChallenge({
           ...commonData,
           // The initial prize is escrowed once at creation; never let an edit rewrite the
           // (already-charged) pool from client input — that would pay out unfunded Buzz.
+          // Edits are limited to Scheduled + no entries, so the pool equals the base here.
           basePrizePool: existing.basePrizePool,
+          prizePool: existing.basePrizePool,
           // Any content edit requires a fresh scan before the challenge is public again.
           scanStatus: ChallengeScanStatus.Pending,
           scannedAt: null,
@@ -1299,11 +1306,32 @@ export async function upsertUserChallenge({
     try {
       await chargeInitialPrize({ challengeId: created.id, userId, amount: initialPrizeBuzz });
     } catch (e) {
-      await dbWrite.challenge.delete({ where: { id: created.id } }).catch(() => undefined);
+      // Prize charge failed — remove the unfunded challenge + its auto-created collection. If the
+      // cleanup itself fails we'd strand an unfunded challenge, so log loudly instead of swallowing.
+      await dbWrite.challenge.delete({ where: { id: created.id } }).catch((cleanupError) => {
+        logToAxiom({
+          type: 'error',
+          name: 'user-challenge-rollback-failed',
+          message: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+          stack: cleanupError instanceof Error ? cleanupError.stack : undefined,
+          challengeId: created.id,
+          userId,
+        });
+      });
       if (created.collectionId)
         await dbWrite.collection
           .delete({ where: { id: created.collectionId } })
-          .catch(() => undefined);
+          .catch((cleanupError) => {
+            logToAxiom({
+              type: 'error',
+              name: 'user-challenge-collection-rollback-failed',
+              message: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+              stack: cleanupError instanceof Error ? cleanupError.stack : undefined,
+              challengeId: created.id,
+              collectionId: created.collectionId,
+              userId,
+            });
+          });
       throw e;
     }
   }
@@ -1338,7 +1366,16 @@ export async function scanUserChallenge(challengeId: number): Promise<void> {
         scannedAt: new Date(),
       },
     });
-  } catch {
+  } catch (e) {
+    // Fail-soft: mark Error (retryable; the scan gate keeps it hidden) but log so scan failures
+    // aren't invisible in prod.
+    logToAxiom({
+      type: 'error',
+      name: 'user-challenge-scan-failed',
+      message: e instanceof Error ? e.message : String(e),
+      stack: e instanceof Error ? e.stack : undefined,
+      challengeId,
+    });
     await dbWrite.challenge
       .update({ where: { id: challengeId }, data: { scanStatus: ChallengeScanStatus.Error } })
       .catch(() => undefined);
