@@ -14,7 +14,7 @@ import {
   CHALLENGE_MAX_ENTRY_FEE,
   CHALLENGE_MAX_INITIAL_PRIZE,
   CHALLENGE_MIN_ENTRY_FEE,
-  sanitizeCategoryLabel,
+  CHALLENGE_PRESET_CATEGORIES,
 } from '~/shared/constants/challenge.constants';
 import { infiniteQuerySchema } from './base.schema';
 import { imageSchema } from './image.schema';
@@ -358,12 +358,19 @@ export type UpsertChallengeInput = z.infer<typeof upsertChallengeSchema>;
 // A restricted, safe subset of the moderator upsert: no free-form judgingPrompt, no
 // arbitrary status/source/prizePool. Judging is category-based; funding is entry-fee.
 // The judge must be an existing active judge (validated server-side).
-export const challengeJudgingCategorySchema = z.object({
-  key: z.enum(CHALLENGE_CATEGORY_KEYS),
-  label: z.string().trim().min(1).max(50).transform(sanitizeCategoryLabel),
-  criteria: z.string().trim().min(1).max(500),
-  weight: z.number().int().min(1).max(100),
-});
+export const challengeJudgingCategorySchema = z
+  .object({
+    key: z.enum(CHALLENGE_CATEGORY_KEYS),
+    weight: z.number().int().min(1).max(100),
+  })
+  // Derive label + criteria from the key server-side so the client can never inject its own
+  // criteria text into the AI judge; any client-sent label/criteria are ignored/stripped.
+  .transform(({ key, weight }) => ({
+    key,
+    weight,
+    label: CHALLENGE_PRESET_CATEGORIES[key].label,
+    criteria: CHALLENGE_PRESET_CATEGORIES[key].criteria,
+  }));
 export type ChallengeJudgingCategory = z.infer<typeof challengeJudgingCategorySchema>;
 
 export const challengeJudgingCategoriesSchema = z
@@ -373,20 +380,9 @@ export const challengeJudgingCategoriesSchema = z
   .superRefine((cats, ctx) => {
     if (cats.filter((c) => c.key === 'theme').length !== 1)
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Theme is required exactly once' });
-    const presetKeys = cats.filter((c) => c.key !== 'custom').map((c) => c.key);
-    if (new Set(presetKeys).size !== presetKeys.length)
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Each preset category can be used once',
-      });
-    // Labels become JSON keys in the AI judge schema, so a case-insensitive collision (e.g. a
-    // custom "Humor" alongside preset Humor) would shadow one category during scoring.
-    const normalizedLabels = cats.map((c) => sanitizeCategoryLabel(c.label).toLowerCase());
-    if (new Set(normalizedLabels).size !== normalizedLabels.length)
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Category labels must be unique (case-insensitive)',
-      });
+    const keys = cats.map((c) => c.key);
+    if (new Set(keys).size !== keys.length)
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Each category can be used once' });
     if (cats.reduce((s, c) => s + c.weight, 0) !== 100)
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Category weights must sum to 100%' });
   });

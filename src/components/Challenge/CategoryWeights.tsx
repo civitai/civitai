@@ -1,8 +1,9 @@
-import { ActionIcon, Button, Group, NumberInput, Select, Stack, Text, Textarea, TextInput, Tooltip } from '@mantine/core';
+import { ActionIcon, Button, Group, NumberInput, Select, Stack, Text, Tooltip } from '@mantine/core';
 import { IconPlus, IconX } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
 import { useFormContext } from 'react-hook-form';
 import {
+  CHALLENGE_CATEGORY_GROUPS,
   CHALLENGE_CATEGORY_KEYS,
   CHALLENGE_PRESET_CATEGORIES,
   type ChallengeCategoryKey,
@@ -17,34 +18,43 @@ export type CategoryWeightRow = {
 
 const MAX_CATEGORIES = 4;
 // Presets a non-Theme row may pick; Theme is reserved for the always-present first row.
-const ADDABLE_PRESET_KEYS = CHALLENGE_CATEGORY_KEYS.filter(
-  (key): key is Exclude<ChallengeCategoryKey, 'theme' | 'custom'> =>
-    key !== 'theme' && key !== 'custom'
-);
+const ADDABLE_PRESET_KEYS = CHALLENGE_CATEGORY_KEYS.filter((key) => key !== 'theme');
+
+function makeRow(key: ChallengeCategoryKey): CategoryWeightRow {
+  const preset = CHALLENGE_PRESET_CATEGORIES[key];
+  return { key, label: preset.label, criteria: preset.criteria, weight: 0 };
+}
 
 // Default starting categories mirror the daily rubric split (theme 50 / wittiness 15 / humor 15 /
 // aesthetic 20 = 100) so a creator has a sensible default without configuring anything. Theme stays
 // first + non-removable; the other three are freely editable or removable.
 const DEFAULT_CATEGORY_ROWS: CategoryWeightRow[] = [
-  { key: 'theme', label: CHALLENGE_PRESET_CATEGORIES.theme.label, criteria: CHALLENGE_PRESET_CATEGORIES.theme.criteria, weight: 50 },
-  { key: 'wittiness', label: CHALLENGE_PRESET_CATEGORIES.wittiness.label, criteria: CHALLENGE_PRESET_CATEGORIES.wittiness.criteria, weight: 15 },
-  { key: 'humor', label: CHALLENGE_PRESET_CATEGORIES.humor.label, criteria: CHALLENGE_PRESET_CATEGORIES.humor.criteria, weight: 15 },
-  { key: 'aesthetic', label: CHALLENGE_PRESET_CATEGORIES.aesthetic.label, criteria: CHALLENGE_PRESET_CATEGORIES.aesthetic.criteria, weight: 20 },
+  { ...makeRow('theme'), weight: 50 },
+  { ...makeRow('wittiness'), weight: 15 },
+  { ...makeRow('humor'), weight: 15 },
+  { ...makeRow('aesthetic'), weight: 20 },
 ];
-
-function makeRow(key: ChallengeCategoryKey): CategoryWeightRow {
-  if (key === 'custom') return { key, label: '', criteria: '', weight: 0 };
-  const preset = CHALLENGE_PRESET_CATEGORIES[key];
-  return { key, label: preset.label, criteria: preset.criteria, weight: 0 };
-}
 
 type LocalRow = CategoryWeightRow & { id: number };
 
+// Build the grouped Select options for one row: every category the row may switch to — its own key
+// plus any preset not already used by another row — grouped by vibe. Empty groups are dropped.
+function keyOptionsFor(row: LocalRow, rows: LocalRow[]) {
+  const usedByOthers = new Set(rows.filter((r) => r.id !== row.id).map((r) => r.key));
+  return CHALLENGE_CATEGORY_GROUPS.map((group) => ({
+    group,
+    items: ADDABLE_PRESET_KEYS.filter((key) => CHALLENGE_PRESET_CATEGORIES[key].group === group)
+      .filter((key) => key === row.key || !usedByOthers.has(key))
+      .map((key) => ({ value: key, label: CHALLENGE_PRESET_CATEGORIES[key].label })),
+  })).filter((g) => g.items.length > 0);
+}
+
 /**
- * Judging-category editor: Theme is always present and locked; up to 3 more rows can be
- * added, each an unused preset (humor/wittiness/aesthetic) or a custom label+criteria.
- * Writes the assembled array to the ambient RHF form's `judgingCategories` field on every
- * change. Renders only the row list + add/total controls — the parent supplies the
+ * Judging-category editor: Theme is always present and locked; up to 3 more rows can be added,
+ * each an unused preset from the curated library (grouped by vibe). Criteria are fixed per preset
+ * (shown read-only) — the server re-derives label+criteria from the key, so no free text reaches
+ * the judge. Writes the assembled array to the ambient RHF form's `judgingCategories` field on
+ * every change. Renders only the row list + add/total controls — the parent supplies the
  * surrounding chrome (the "Judging" card in ChallengeUpsertForm, user variant).
  */
 export default function CategoryWeights() {
@@ -69,9 +79,7 @@ export default function CategoryWeights() {
   }, [rows, setValue]);
 
   const total = rows.reduce((sum, row) => sum + (row.weight || 0), 0);
-  const hasInvalidRow = rows.some(
-    (row) => row.weight < 1 || (row.key === 'custom' && !row.label.trim())
-  );
+  const hasInvalidRow = rows.some((row) => row.weight < 1);
   const canAdd = rows.length < MAX_CATEGORIES;
 
   const updateRow = (id: number, patch: Partial<CategoryWeightRow>) => {
@@ -83,9 +91,9 @@ export default function CategoryWeights() {
   };
 
   const addRow = () => {
-    const usedPresets = new Set(rows.map((row) => row.key));
-    const nextPreset = ADDABLE_PRESET_KEYS.find((key) => !usedPresets.has(key));
-    setRows((prev) => [...prev, withId(makeRow(nextPreset ?? 'custom'))]);
+    const usedKeys = new Set(rows.map((row) => row.key));
+    const nextKey = ADDABLE_PRESET_KEYS.find((key) => !usedKeys.has(key));
+    if (nextKey) setRows((prev) => [...prev, withId(makeRow(nextKey))]);
   };
 
   const handleKeyChange = (id: number, key: ChallengeCategoryKey) => {
@@ -97,29 +105,22 @@ export default function CategoryWeights() {
     <Stack gap="md">
       {rows.map((row) => {
         const isTheme = row.key === 'theme';
-        const isCustom = row.key === 'custom';
-        const usedByOthers = new Set(
-          rows.filter((r) => r.id !== row.id).map((r) => r.key)
-        );
-        const keyOptions = [
-          ...(isTheme ? [{ value: 'theme', label: CHALLENGE_PRESET_CATEGORIES.theme.label }] : []),
-          ...ADDABLE_PRESET_KEYS.filter((key) => key === row.key || !usedByOthers.has(key)).map(
-            (key) => ({ value: key, label: CHALLENGE_PRESET_CATEGORIES[key].label })
-          ),
-          { value: 'custom', label: 'Custom' },
-        ];
-
         return (
           <Stack key={row.id} gap={4}>
             <Group align="flex-end" wrap="nowrap" gap="sm">
               <Select
                 label="Category"
-                data={keyOptions}
+                data={
+                  isTheme
+                    ? [{ value: 'theme', label: CHALLENGE_PRESET_CATEGORIES.theme.label }]
+                    : keyOptionsFor(row, rows)
+                }
                 value={row.key}
                 onChange={(value) => value && handleKeyChange(row.id, value as ChallengeCategoryKey)}
                 disabled={isTheme}
                 allowDeselect={false}
-                className="w-40 shrink-0"
+                searchable
+                className="w-56 shrink-0"
               />
               <NumberInput
                 label="Weight"
@@ -148,31 +149,9 @@ export default function CategoryWeights() {
                 </Tooltip>
               )}
             </Group>
-
-            {isCustom ? (
-              <Stack gap={4}>
-                <TextInput
-                  label="Label"
-                  placeholder="Category name"
-                  maxLength={50}
-                  value={row.label}
-                  onChange={(e) => updateRow(row.id, { label: e.currentTarget.value })}
-                />
-                <Textarea
-                  label="Criteria"
-                  placeholder="How should the judge score this category?"
-                  maxLength={500}
-                  autosize
-                  minRows={2}
-                  value={row.criteria}
-                  onChange={(e) => updateRow(row.id, { criteria: e.currentTarget.value })}
-                />
-              </Stack>
-            ) : (
-              <Text size="sm" c="dimmed">
-                {row.criteria}
-              </Text>
-            )}
+            <Text size="sm" c="dimmed">
+              {row.criteria}
+            </Text>
           </Stack>
         );
       })}
@@ -189,7 +168,7 @@ export default function CategoryWeights() {
         </Button>
         <Text size="sm" fw={500} c={total === 100 && !hasInvalidRow ? 'dimmed' : 'red'}>
           Total weight: {total}%{total !== 100 ? ' (must equal 100%)' : ''}
-          {total === 100 && hasInvalidRow ? ' (each category needs a label and weight ≥ 1)' : ''}
+          {total === 100 && hasInvalidRow ? ' (each category needs a weight ≥ 1)' : ''}
         </Text>
       </Group>
     </Stack>

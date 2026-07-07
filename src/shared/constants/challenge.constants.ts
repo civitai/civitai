@@ -44,20 +44,57 @@ export function getEntryPoolContribution(entryFee: number): number {
 // stable across the write, the AI prompt, and the ranking lookup. Normalize once at write time.
 export const sanitizeCategoryLabel = (s: string) => s.replace(/"/g, "'").replace(/\s+/g, ' ').trim();
 
-export const CHALLENGE_CATEGORY_KEYS = ['theme', 'humor', 'wittiness', 'aesthetic', 'custom'] as const;
-export type ChallengeCategoryKey = (typeof CHALLENGE_CATEGORY_KEYS)[number];
+// Vibe groups the judging categories are organized into (used for the grouped picker in the form).
+export const CHALLENGE_CATEGORY_GROUPS = [
+  'Universal',
+  'Horror / Dark',
+  'Comedy / Playful',
+  'Cute / Wholesome',
+  'Beauty / Glamour',
+  'Sci-Fi / Fantasy',
+  'Action / Drama',
+] as const;
+export type ChallengeCategoryGroup = (typeof CHALLENGE_CATEGORY_GROUPS)[number];
 
-// Preset judging categories offered in the public challenge form. Each carries the criteria the
-// AI judge scores against. `theme` is mandatory (see the schema refine) and its gate always applies.
-export const CHALLENGE_PRESET_CATEGORIES: Record<
-  Exclude<ChallengeCategoryKey, 'custom'>,
-  { label: string; criteria: string }
-> = {
-  theme: { label: 'Theme', criteria: 'How well the entry fits the challenge theme.' },
-  humor: { label: 'Humor', criteria: 'How funny or amusing the entry is.' },
-  wittiness: { label: 'Wittiness', criteria: 'Cleverness and wit of the concept.' },
-  aesthetic: { label: 'Aesthetic', criteria: 'Overall visual quality and craft of the image.' },
-};
+// Curated judging categories a public-challenge creator can weight. `theme` is mandatory (schema
+// refine) and its gate always applies. `criteria` is the scoring instruction injected into the AI
+// judge per selected category — the server derives label + criteria from the key, so the client can
+// never inject its own criteria text. Keep criteria free of double quotes (they become JSON keys/
+// comments in the review schema; the sanitizer collapses quotes/whitespace anyway).
+export const CHALLENGE_PRESET_CATEGORIES = {
+  theme: { label: 'Theme', group: 'Universal', criteria: 'How well the entry fits and interprets the challenge theme; higher for a clear, strong, on-theme interpretation.' },
+  creativity: { label: 'Creativity', group: 'Universal', criteria: 'Originality and inventiveness of the concept; higher for fresh, unexpected takes over clichés.' },
+  aesthetic: { label: 'Aesthetic', group: 'Universal', criteria: 'Overall visual appeal — composition, color, lighting, and style; higher for striking, well-composed images.' },
+  technical: { label: 'Technical Quality', group: 'Universal', criteria: 'Rendering correctness — coherent anatomy and objects, clean detail, minimal artifacts or distortions.' },
+  emotion: { label: 'Emotional Impact', group: 'Universal', criteria: 'Mood and atmosphere; higher for images that strongly evoke a feeling.' },
+  storytelling: { label: 'Storytelling', group: 'Universal', criteria: 'How well the image conveys a narrative or sense of scene; higher for a clear, compelling story.' },
+  gruesomeness: { label: 'Gruesomeness', group: 'Horror / Dark', criteria: 'How visceral and gory the imagery is; higher for convincingly grisly, unsettling detail.' },
+  dread: { label: 'Dread', group: 'Horror / Dark', criteria: 'Tension, unease, and a sense of impending danger; higher for a strong sense of dread.' },
+  creepiness: { label: 'Creepiness', group: 'Horror / Dark', criteria: 'How eerie or disturbing the entry feels; higher for genuinely unnerving results.' },
+  shock: { label: 'Shock Value', group: 'Horror / Dark', criteria: 'Boldness and impact; higher for provocatively surprising imagery.' },
+  humor: { label: 'Humor', group: 'Comedy / Playful', criteria: 'How funny or amusing the entry is; higher for genuinely funny results.' },
+  wittiness: { label: 'Wittiness', group: 'Comedy / Playful', criteria: 'Cleverness and conceptual wit of the idea; higher for sharp, clever concepts.' },
+  absurdity: { label: 'Absurdity', group: 'Comedy / Playful', criteria: 'Surreal, ridiculous invention; higher for wonderfully absurd ideas.' },
+  cuteness: { label: 'Cuteness', group: 'Cute / Wholesome', criteria: 'How adorable or endearing the subject is; higher for irresistibly cute results.' },
+  charm: { label: 'Charm', group: 'Cute / Wholesome', criteria: 'Overall charm and likeability; higher for warm, appealing entries.' },
+  wholesomeness: { label: 'Wholesomeness', group: 'Cute / Wholesome', criteria: 'How heartwarming or wholesome the mood is; higher for uplifting, feel-good images.' },
+  elegance: { label: 'Elegance', group: 'Beauty / Glamour', criteria: 'Grace and refinement of the composition and subject; higher for elegant, polished results.' },
+  sensuality: { label: 'Sensuality', group: 'Beauty / Glamour', criteria: 'Tasteful, confident allure; higher for compellingly sensual imagery.' },
+  glamour: { label: 'Glamour', group: 'Beauty / Glamour', criteria: 'Glamour and style; higher for striking, fashionable presentation.' },
+  futurism: { label: 'Futurism', group: 'Sci-Fi / Fantasy', criteria: 'How convincingly futuristic or high-tech the vision is; higher for imaginative, believable future tech.' },
+  worldbuilding: { label: 'Worldbuilding', group: 'Sci-Fi / Fantasy', criteria: 'Depth and coherence of the world or setting; higher for rich, immersive environments.' },
+  epicness: { label: 'Epicness', group: 'Sci-Fi / Fantasy', criteria: 'Scale and grandeur; higher for sweeping, awe-inspiring imagery.' },
+  detail: { label: 'Detail', group: 'Sci-Fi / Fantasy', criteria: 'Richness and density of meaningful detail; higher for intricate, rewarding-to-explore images.' },
+  dynamism: { label: 'Dynamism', group: 'Action / Drama', criteria: 'Sense of motion and energy; higher for dynamic, kinetic compositions.' },
+  intensity: { label: 'Intensity', group: 'Action / Drama', criteria: 'Emotional or dramatic intensity; higher for gripping, high-stakes imagery.' },
+  cinematics: { label: 'Cinematics', group: 'Action / Drama', criteria: 'Cinematic quality — lighting, framing, and mood like a film still; higher for cinematic results.' },
+} as const satisfies Record<string, { label: string; group: ChallengeCategoryGroup; criteria: string }>;
+
+export type ChallengeCategoryKey = keyof typeof CHALLENGE_PRESET_CATEGORIES;
+export const CHALLENGE_CATEGORY_KEYS = Object.keys(CHALLENGE_PRESET_CATEGORIES) as [
+  ChallengeCategoryKey,
+  ...ChallengeCategoryKey[]
+];
 
 // Judges a public-challenge creator may pick. Keyed on NAME (env-stable; excludes "CivChan NSFW",
 // which shares CivChan's userId — public challenges are SFW-only).
