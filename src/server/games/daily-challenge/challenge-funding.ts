@@ -10,14 +10,14 @@
  *
  * Charges use deterministic externalTransactionId values so re-charge attempts are idempotent.
  * Cancellation reverses those actual charges (never mints a fresh credit): entry fees via a
- * prefix refund over `challenge-entry-fee-${challengeId}-`, the initial prize by refunding the
- * `challenge-initial-prize-${challengeId}` charge.
+ * prefix refund over `challenge-entry-fee-${challengeId}-`, the initial prize via a prefix refund
+ * over `challenge-initial-prize-${challengeId}-creator`. Both prefixes end in a non-numeric token
+ * so one challenge's refund can't collide with another's (5 vs 50, 51, ...).
  */
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   createBuzzTransaction,
   createBuzzTransactionMany,
-  getTransactionByExternalId,
   refundMultiAccountTransaction,
   refundTransaction,
 } from '~/server/services/buzz.service';
@@ -46,7 +46,9 @@ export async function chargeInitialPrize({
     type: TransactionType.Purchase,
     amount,
     description: 'Challenge initial prize pool',
-    externalTransactionId: `challenge-initial-prize-${challengeId}`,
+    // Trailing non-numeric token keeps the completion refund's startsWith prefix match unambiguous
+    // vs other challenge ids (challenge 5 would otherwise prefix-match 50, 51, ...).
+    externalTransactionId: `challenge-initial-prize-${challengeId}-creator`,
     details: { challengeId },
   });
   log(`Escrowed ${amount} buzz initial prize for challenge ${challengeId}`);
@@ -118,10 +120,11 @@ export async function chargeEntryFees({
  * Nothing is minted — each refund reverses a real prior charge, not a fresh credit.
  *
  * Re-runnable: entry fees are reversed by a single prefix refund over the actual
- * `challenge-entry-fee-${challengeId}-` charges, and the initial prize by refunding the actual
- * `challenge-initial-prize-${challengeId}` charge; the buzz refund endpoints do not re-reverse an
- * already-refunded transaction, and voidChallenge reaches here at most once (Active/Scheduled →
- * Cancelled). No-op for non-User challenges, entryFee <= 0, and challenges with no initial prize.
+ * `challenge-entry-fee-${challengeId}-` charges, and the initial prize by a prefix refund over the
+ * actual `challenge-initial-prize-${challengeId}-creator` charge; the buzz refund endpoints do not
+ * re-reverse an already-refunded transaction, and voidChallenge reaches here at most once
+ * (Active/Scheduled → Cancelled). No-op for non-User challenges, entryFee <= 0, and challenges with
+ * no initial prize.
  */
 export async function refundUserChallengeFunds(challengeId: number) {
   const challenge = await dbRead.challenge.findUnique({
@@ -148,15 +151,13 @@ export async function refundUserChallengeFunds(challengeId: number) {
   }
 
   if (challenge.basePrizePool > 0 && challenge.createdById != null) {
-    const prizeExternalId = `challenge-initial-prize-${challengeId}`;
-    const prizeCharge = await getTransactionByExternalId(prizeExternalId);
-    // /transactions/{id}/refund resolves by INTERNAL transaction id — pass the id from the
-    // looked-up charge, not the external id (which would 404 and silently skip the refund).
-    if (prizeCharge?.transactionId) {
-      await refundTransaction(prizeCharge.transactionId, 'Challenge cancelled — initial prize refund', {
-        challengeId,
-      });
-    }
+    // Reverse the actual escrow charge by its collision-safe prefix (mint-safe) — the `-creator`
+    // token makes this prefix unambiguous vs other challenge ids (5 vs 50, 51, ...).
+    await refundMultiAccountTransaction({
+      externalTransactionIdPrefix: `challenge-initial-prize-${challengeId}-creator`,
+      description: 'Challenge cancelled — initial prize refund',
+      details: { challengeId },
+    });
   }
 
   log(
