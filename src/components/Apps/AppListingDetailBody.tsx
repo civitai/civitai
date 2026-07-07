@@ -33,6 +33,7 @@ import {
   type ListingBadgeKind,
 } from '~/components/Apps/appListingCardView';
 import { getDetailPrimaryAction } from '~/components/Apps/appListingDetailView';
+import { ReportListingButton } from '~/components/Apps/ReportListingButton';
 import {
   CATEGORY_ICONS,
   FALLBACK_CATEGORY_ICON,
@@ -346,7 +347,12 @@ export function AppListingDetailBody({ detail, canOpenPage = false }: AppListing
           </Stack>
         </Group>
         <Box style={{ flexShrink: 0 }}>
-          <PrimaryAction detail={detail} canOpenPage={canOpenPage} />
+          <Stack gap="xs" align="flex-end">
+            <PrimaryAction detail={detail} canOpenPage={canOpenPage} />
+            {/* Report affordance — dark behind the mod-only store surface; the
+                proc is protected + rate-limited + reporter-bound server-side. */}
+            <ReportListingButton appListingId={detail.id} />
+          </Stack>
         </Box>
       </Group>
 

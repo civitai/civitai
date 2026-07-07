@@ -23,6 +23,10 @@ import {
   submitExternalListingSchema,
   withdrawExternalRequestSchema,
 } from '~/server/schema/blocks/offsite-listing.schema';
+import {
+  listListingReportsSchema,
+  reportListingSchema,
+} from '~/server/schema/blocks/offsite-moderation.schema';
 import { rateLimit } from '~/server/middleware.trpc';
 import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import {
@@ -105,11 +109,13 @@ function isRedCapableRequest(ctx: { req?: { headers?: { host?: string } } }): bo
  *
  *   - A `TRPCError` the service already shaped (BAD_REQUEST: assets-incomplete /
  *     invalid stored URL / reason-length) passes THROUGH unchanged.
- *   - A typed `OffsiteRequestError` maps to its precise TRPC code
- *     (`NOT_FOUND`→NOT_FOUND, `NOT_OWNED`→FORBIDDEN, `NOT_PENDING`/other→
- *     BAD_REQUEST). It is DUCK-TYPED on `name` + `code` so the router never has to
- *     eagerly `import` the service module (services are loaded via dynamic
- *     `import()` to keep the Prisma client out of the router's import graph).
+ *   - A typed `OffsiteRequestError` (P3a) OR `OffsiteModerationError` (P3b report/
+ *     delist/claim) maps to its precise TRPC code (`NOT_FOUND`→NOT_FOUND,
+ *     `NOT_OWNED`→FORBIDDEN, `ALREADY_REPORTED`→CONFLICT, `NOT_PENDING`/
+ *     `NOT_REPORTABLE`/other→BAD_REQUEST). It is DUCK-TYPED on `name` + `code` so
+ *     the router never has to eagerly `import` the service module (services are
+ *     loaded via dynamic `import()` to keep the Prisma client out of the router's
+ *     import graph).
  *   - Anything else is an UNEXPECTED infra/Prisma failure → INTERNAL_SERVER_ERROR
  *     with a GENERIC message; the raw error is preserved only on `cause` (for the
  *     central server-fault logger) and NEVER surfaced to the client.
@@ -121,12 +127,18 @@ function mapOffsiteError(err: unknown): TRPCError {
   if (err instanceof TRPCError) return err;
   if (
     err instanceof Error &&
-    err.name === 'OffsiteRequestError' &&
+    (err.name === 'OffsiteRequestError' || err.name === 'OffsiteModerationError') &&
     typeof (err as { code?: unknown }).code === 'string'
   ) {
     const code = (err as { code?: unknown }).code as string;
     const trpcCode =
-      code === 'NOT_FOUND' ? 'NOT_FOUND' : code === 'NOT_OWNED' ? 'FORBIDDEN' : 'BAD_REQUEST';
+      code === 'NOT_FOUND'
+        ? 'NOT_FOUND'
+        : code === 'NOT_OWNED'
+        ? 'FORBIDDEN'
+        : code === 'ALREADY_REPORTED'
+        ? 'CONFLICT'
+        : 'BAD_REQUEST';
     return new TRPCError({ code: trpcCode, message: err.message });
   }
   return new TRPCError({
@@ -405,6 +417,62 @@ export const appListingsRouter = router({
         throw mapOffsiteError(err);
       }
       return { ok: true };
+    }),
+
+  // -------------------------------------------------------------------------
+  // P3b OFF-SITE MODERATION — report affordance + mod report-queue read (DARK).
+  //
+  // `reportListing` is any-signed-in-user (`protectedProcedure`) + rate-limited
+  // (report-spam guard) — the reporter is bound to `ctx.user.id` in the service
+  // (IDOR-safe) and the DB partial-unique dedups a duplicate open report.
+  // `listListingReports` is a read-only `moderatorProcedure`. The mod ACTIONS
+  // (delist / relist / claim / resolve / dismiss + the audit writes) land in PR3.
+  // -------------------------------------------------------------------------
+
+  /**
+   * USER: report an approved off-site listing. The reporter is bound to the
+   * caller (no user-supplied reporter — IDOR guard); the DB partial-unique
+   * (`one_open_per_reporter`) dedups a duplicate open report → a friendly
+   * CONFLICT via `mapOffsiteError`. Reporting a non-approved / missing listing →
+   * NOT_REPORTABLE(BAD_REQUEST) / NOT_FOUND. Unexpected infra → INTERNAL (no leak).
+   */
+  reportListing: protectedProcedure
+    .use(
+      rateLimit({
+        // Report-spam guard (mirrors the submit rate-limit idiom). The DB
+        // one-open-report-per-(listing,reporter) partial-unique bounds duplicate
+        // reports; this bounds the report RATE across listings.
+        limit: 20,
+        period: 3600,
+        errorMessage: 'Too many reports — slow down.',
+      })
+    )
+    .input(reportListingSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { reportListing } = await import(
+        '~/server/services/blocks/offsite-moderation.service'
+      );
+      try {
+        return await reportListing({ input, userId: ctx.user.id });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
+   * MOD: the off-site report queue (read-only in PR2; the delist/claim/resolve
+   * actions land in PR3). Oldest-first (FIFO), keyset-paginated, optional `status`
+   * filter; a public-safe projection (reporter chip + target listing slug/name/
+   * kind — no PII/secret).
+   */
+  listListingReports: moderatorProcedure
+    .input(listListingReportsSchema)
+    .query(async ({ input }) => {
+      const { listListingReports } = await import(
+        '~/server/services/blocks/offsite-moderation.service'
+      );
+      return listListingReports(input);
     }),
 
   // -------------------------------------------------------------------------
