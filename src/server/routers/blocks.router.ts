@@ -578,6 +578,38 @@ async function refundBlockBuzzSpend(
   });
 }
 
+// EPHEMERAL DEV-TUNNEL rate limit (Phase 1 pre-submit). Per-user fixed window,
+// bounding how many EPHEMERAL (no-owned-AppBlock) dev-tunnel starts a single
+// author can trigger — blunts host-pool enumeration / DoS across many unclaimed
+// slugs. Applies ONLY to the ephemeral branch; the approved/owned path never
+// increments this counter.
+const EPHEMERAL_DEV_TUNNEL_RATE_LIMIT = { max: 20, windowSeconds: 3600 } as const;
+
+/**
+ * Atomically counts one ephemeral dev-tunnel start against this user's fixed
+ * window and returns whether the call is ALLOWED. Same `INCR` + first-hit `EX`
+ * (with a ttl<0 self-heal) shape as reserveBlockBuzzSpend / the dev-token
+ * limiter. Fails CLOSED (returns false) on a Redis error — an ephemeral tunnel
+ * start is not latency-critical, and failing closed here can never block the
+ * approved/owned path (which does not call this).
+ */
+async function checkEphemeralDevTunnelRateLimit(userId: number): Promise<boolean> {
+  const key = `${REDIS_SYS_KEYS.BLOCKS.DEV_TUNNEL_EPHEMERAL_RATE_LIMIT}:${userId}` as const;
+  try {
+    const count = await sysRedis.incrBy(key, 1);
+    if (count === 1) {
+      await sysRedis.expire(key, EPHEMERAL_DEV_TUNNEL_RATE_LIMIT.windowSeconds);
+    } else {
+      const ttl = await sysRedis.ttl(key);
+      if (ttl < 0) await sysRedis.expire(key, EPHEMERAL_DEV_TUNNEL_RATE_LIMIT.windowSeconds);
+    }
+    return count <= EPHEMERAL_DEV_TUNNEL_RATE_LIMIT.max;
+  } catch {
+    // Fail closed — never silently bypass the ephemeral enumeration limiter.
+    return false;
+  }
+}
+
 // Free-form slot strings are a cache-busting surface for anon callers. Bound
 // to the explicit model-slot set; the canonical source is now the slot registry
 // (src/shared/constants/slot-registry.ts) — re-exported under the SAME name so
@@ -993,6 +1025,23 @@ export const blocksRouter = router({
         db: 'write',
       });
       if (!app) throw throwNotFoundError('App not found');
+      // EPHEMERAL PRE-SUBMIT PATH (Phase 1): the caller owns no AppBlock row for
+      // this slug yet (resolveEphemeralDevPageBlock returned a synthetic
+      // `status:'ephemeral'` resolution — already anti-shadow-guarded so the slug
+      // is unclaimed / the caller's own pending). Rate-limit these host-pool
+      // allocations per-user to blunt enumeration / DoS across unclaimed slugs.
+      // The approved/owned path skips this entirely. Same bare NOT_FOUND is NOT
+      // reused here — the caller already proved ownership intent (unclaimed slug),
+      // so a 429 is the honest signal (no existence oracle: it fires only on the
+      // caller's OWN allowed ephemeral starts, never as a probe result).
+      if (app.status === 'ephemeral') {
+        if (!(await checkEphemeralDevTunnelRateLimit(ctx.user.id))) {
+          throw new TRPCError({
+            code: 'TOO_MANY_REQUESTS',
+            message: 'Too many dev tunnel starts for unsubmitted apps; please retry shortly',
+          });
+        }
+      }
       const { startDevTunnel } = await import('~/server/services/blocks/dev-tunnel.service');
       try {
         return await startDevTunnel({
