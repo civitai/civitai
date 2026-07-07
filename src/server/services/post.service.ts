@@ -73,7 +73,6 @@ import {
   Availability,
   CollectionContributorPermission,
   CollectionMode,
-  CollectionReadConfiguration,
   CollectionType,
   MediaType,
   Model3DStatus,
