@@ -39,6 +39,7 @@ import {
 } from '~/server/services/collection.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { canViewCollectionPost } from '~/server/services/post-collection-visibility';
 import {
   createImage,
   createImageResources,
@@ -550,12 +551,7 @@ export const getPostsInfinite = async ({
             const collection = collections.find((x) => x.id === p.collectionId);
             if (!collection) return false;
 
-            if (
-              collection.read !== CollectionReadConfiguration.Public &&
-              !collection?.contributors[0]?.permissions.includes(
-                CollectionContributorPermission.VIEW
-              )
-            ) {
+            if (!canViewCollectionPost(collection)) {
               return false;
             }
           }
