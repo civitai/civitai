@@ -54,7 +54,10 @@ import {
   generateWinners,
 } from '~/server/games/daily-challenge/generative-content';
 import { logToAxiom } from '~/server/logging/client';
-import { parseChallengeMetadata } from '~/server/schema/challenge.schema';
+import {
+  challengeJudgingCategoriesSchema,
+  parseChallengeMetadata,
+} from '~/server/schema/challenge.schema';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
   createBuzzTransactionMany,
@@ -595,13 +598,15 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
           maxPrizePool: number | null;
           prizeDistribution: number[] | null;
           metadata: unknown;
+          source: ChallengeSource;
+          judgingCategories: unknown;
         }
       | undefined
     ]
   >`
     SELECT "allowedNsfwLevel", "judgeId", "judgingPrompt",
            "prizeMode", "basePrizePool", "buzzPerAction", "poolTrigger", "maxPrizePool", "prizeDistribution",
-           "metadata"
+           "metadata", "source", "judgingCategories"
     FROM "Challenge"
     WHERE id = ${currentChallenge.challengeId}
     LIMIT 1
@@ -609,6 +614,14 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   const allowedNsfwLevel = challengeRecord?.allowedNsfwLevel ?? 1;
   const challengeMetadata = parseChallengeMetadata(challengeRecord?.metadata);
   const themeElements = challengeMetadata.themeElements;
+  // User-source challenges carry creator-defined judging categories (JSONB); other sources
+  // leave this null. Parse defensively — a malformed/corrupt value falls back to the
+  // fixed theme/wittiness/humor/aesthetic scoring schema instead of failing the review.
+  const userJudgingCategories =
+    challengeRecord?.source === ChallengeSource.User
+      ? challengeJudgingCategoriesSchema.safeParse(challengeRecord.judgingCategories)
+      : undefined;
+  const userCategories = userJudgingCategories?.success ? userJudgingCategories.data : undefined;
 
   // Get judging config from ChallengeJudge (or cached default judge if not assigned)
   const judgeId = challengeRecord?.judgeId ?? config.defaultJudgeId;
@@ -896,6 +909,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         creator: entry.username,
         imageUrl: getEdgeUrl(entry.url, { width: 1200, name: 'image' }),
         config: judgingConfig,
+        categories: userCategories?.map((c) => ({ name: c.label, criteria: c.criteria })),
       });
       log('Review prepared', entry.imageId, review);
 

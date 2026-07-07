@@ -267,7 +267,7 @@ ${scoreLines}
 
 export async function generateReview(input: GenerateReviewInput): Promise<GeneratedReview> {
   let messages: SimpleMessage[];
-  if (input.config.reviewTemplate) {
+  if (input.config.reviewTemplate && !input.categories?.length) {
     try {
       messages = buildMessagesFromTemplate(input);
     } catch (e) {
