@@ -1,7 +1,7 @@
 import { Alert, Button, Modal, Radio, Stack, Text, Textarea } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconAlertTriangle, IconFlag } from '@tabler/icons-react';
-import { type ChangeEvent, useState } from 'react';
+import { useState } from 'react';
 
 import {
   APP_LISTING_REPORT_REASON_OPTIONS,

@@ -40,12 +40,30 @@ export type OffsiteModerationErrorCode =
 
 export class OffsiteModerationError extends Error {
   readonly code: OffsiteModerationErrorCode;
-  constructor(code: OffsiteModerationErrorCode, message: string) {
-    super(message);
+  constructor(code: OffsiteModerationErrorCode, message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = 'OffsiteModerationError';
     this.code = code;
   }
 }
+
+/**
+ * Generic client-facing message for the not-reportable failure mode.
+ *
+ * Info-leak guard: the router's `mapOffsiteError` forwards `err.message` straight
+ * to the client, so a caller holding an arbitrary listing id must NOT be able to
+ * probe (a) whether the id EXISTS and (b) its exact moderation status. Both the
+ * missing-listing and the non-approved-listing cases therefore throw the SAME
+ * code (`NOT_REPORTABLE` → BAD_REQUEST) with this SAME generic message; the real
+ * distinction (not-found vs the actual status) is carried only on `cause`, which
+ * `mapOffsiteError` keeps server-side (central fault logger) and never surfaces.
+ */
+export const REPORT_UNAVAILABLE_MESSAGE = 'This app can no longer be reported.';
+
+/** Server-only (on `cause`) reason for a not-reportable throw — for logs/tests. */
+export type NotReportableCause =
+  | { reason: 'NOT_FOUND'; appListingId: string }
+  | { reason: 'NOT_APPROVED'; status: string };
 
 // ---------------------------------------------------------------------------
 // reportListing (any signed-in user).
@@ -61,10 +79,13 @@ export type ReportListingResult = { reportId: string };
  * caller can never file a report as another user.
  *
  * Reportable-state gate: the target listing must EXIST and be `approved`. A
- * missing listing → NOT_FOUND; a draft / pending / rejected / removed listing →
- * NOT_REPORTABLE (a non-approved listing is not in the store — nothing to report).
- * `reason` is re-validated against the shared tuple (defense-in-depth: this fn is
- * exported + unit-tested directly, not only reached through the zod schema).
+ * missing listing AND a non-approved (draft / pending / rejected / removed)
+ * listing BOTH raise `NOT_REPORTABLE` with the SAME generic client message
+ * (`REPORT_UNAVAILABLE_MESSAGE`) — the caller cannot tell existence apart from
+ * non-approvability, nor read the exact status (info-leak guard; the real reason
+ * rides on `cause`, server-only). `reason` is re-validated against the shared
+ * tuple (defense-in-depth: this fn is exported + unit-tested directly, not only
+ * reached through the zod schema).
  *
  * Dedup / anti-spam: the insert relies on the DB partial-unique
  * `app_listing_reports_one_open_per_reporter` (one PENDING report per
@@ -86,18 +107,23 @@ export async function reportListing(opts: {
   }
 
   // Reportable-state gate: must be an existing, APPROVED listing.
+  //
+  // Info-leak guard: a missing listing and a non-approved listing are BOTH
+  // surfaced to the client as the same code + `REPORT_UNAVAILABLE_MESSAGE`, so a
+  // caller cannot distinguish "id doesn't exist" from "exists but not approvable"
+  // nor read the exact moderation status. The real reason (and the raw status)
+  // rides on `cause` — server-only (logs/tests), never client-visible.
   const listing = await dbRead.appListing.findUnique({
     where: { id: input.appListingId },
     select: { id: true, status: true },
   });
   if (!listing) {
-    throw new OffsiteModerationError('NOT_FOUND', `listing ${input.appListingId} not found`);
+    const cause: NotReportableCause = { reason: 'NOT_FOUND', appListingId: input.appListingId };
+    throw new OffsiteModerationError('NOT_REPORTABLE', REPORT_UNAVAILABLE_MESSAGE, { cause });
   }
   if (listing.status !== 'approved') {
-    throw new OffsiteModerationError(
-      'NOT_REPORTABLE',
-      `only an approved listing can be reported (status ${listing.status})`
-    );
+    const cause: NotReportableCause = { reason: 'NOT_APPROVED', status: listing.status };
+    throw new OffsiteModerationError('NOT_REPORTABLE', REPORT_UNAVAILABLE_MESSAGE, { cause });
   }
 
   const details = input.details?.trim() ? input.details.trim() : null;
@@ -160,7 +186,11 @@ export async function listListingReports(opts: ListListingReportsInput = {}) {
   const limit = Math.min(opts.limit ?? 25, 50);
   const rows = await dbRead.appListingReport.findMany({
     where: opts.status ? { status: opts.status } : {},
-    orderBy: { createdAt: 'asc' },
+    // Total order: `createdAt` alone is non-unique (default now()), so
+    // same-millisecond inserts could skip/duplicate a row across a page boundary.
+    // The `id` tie-break makes the ordering deterministic; the native cursor
+    // (cursor:{id}, skip:1) still paginates on the unique id.
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
     select: reportQueueSelect,

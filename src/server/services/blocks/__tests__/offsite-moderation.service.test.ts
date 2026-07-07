@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   OffsiteModerationError,
+  REPORT_UNAVAILABLE_MESSAGE,
   listListingReports,
   reportListing,
 } from '~/server/services/blocks/offsite-moderation.service';
@@ -117,29 +118,81 @@ describe('reportListing — happy path', () => {
 });
 
 describe('reportListing — reportable-state gate', () => {
-  it('rejects a nonexistent listing with NOT_FOUND', async () => {
+  // Info-leak guard: a caller holding an arbitrary listing id must NOT be able to
+  // probe existence or read the exact moderation status. Both the missing-listing
+  // and the non-approved-listing cases surface the SAME client-visible code
+  // (`NOT_REPORTABLE`) + `REPORT_UNAVAILABLE_MESSAGE`; the real reason/status is
+  // carried only on `cause` (server-only, for logs/tests).
+  it('rejects a nonexistent listing generically (NOT_REPORTABLE + generic message; NOT_FOUND only on cause)', async () => {
     (mockRead as unknown as Client).appListing.findUnique.mockResolvedValueOnce(null);
-    await expect(reportListing({ input: validInput, userId: CALLER })).rejects.toMatchObject({
-      name: 'OffsiteModerationError',
-      code: 'NOT_FOUND',
-    });
+    const err: OffsiteModerationError = await reportListing({
+      input: validInput,
+      userId: CALLER,
+    }).then(
+      () => {
+        throw new Error('expected reportListing to reject');
+      },
+      (e: OffsiteModerationError) => e
+    );
+    expect(err.name).toBe('OffsiteModerationError');
+    expect(err.code).toBe('NOT_REPORTABLE');
+    // Client-visible message reveals NOTHING about existence.
+    expect(err.message).toBe(REPORT_UNAVAILABLE_MESSAGE);
+    // The real reason is server-only (on cause) — not in the client-facing message.
+    expect(err.cause).toMatchObject({ reason: 'NOT_FOUND', appListingId: APP_ID });
     expect((mockWrite as unknown as Client).appListingReport.create).not.toHaveBeenCalled();
   });
 
   it.each(['draft', 'pending', 'rejected', 'removed'])(
-    'rejects a %s listing with NOT_REPORTABLE (only approved is reportable)',
+    'rejects a %s listing generically (status is NOT client-visible — only on cause)',
     async (status) => {
       (mockRead as unknown as Client).appListing.findUnique.mockResolvedValueOnce({
         id: APP_ID,
         status,
       });
-      await expect(reportListing({ input: validInput, userId: CALLER })).rejects.toMatchObject({
-        name: 'OffsiteModerationError',
-        code: 'NOT_REPORTABLE',
-      });
+      const err: OffsiteModerationError = await reportListing({
+        input: validInput,
+        userId: CALLER,
+      }).then(
+        () => {
+          throw new Error('expected reportListing to reject');
+        },
+        (e: OffsiteModerationError) => e
+      );
+      expect(err.name).toBe('OffsiteModerationError');
+      expect(err.code).toBe('NOT_REPORTABLE');
+      expect(err.message).toBe(REPORT_UNAVAILABLE_MESSAGE);
+      // The exact status must NEVER leak into the client-facing message.
+      expect(err.message).not.toContain(status);
+      // …but it IS preserved server-side on cause for logs/mod tooling.
+      expect(err.cause).toMatchObject({ reason: 'NOT_APPROVED', status });
       expect((mockWrite as unknown as Client).appListingReport.create).not.toHaveBeenCalled();
     }
   );
+
+  it('missing vs non-approved are INDISTINGUISHABLE client-side (same code + same message)', async () => {
+    (mockRead as unknown as Client).appListing.findUnique.mockResolvedValueOnce(null);
+    const missing: OffsiteModerationError = await reportListing({
+      input: validInput,
+      userId: CALLER,
+    }).catch((e: OffsiteModerationError) => e);
+
+    (mockRead as unknown as Client).appListing.findUnique.mockResolvedValueOnce({
+      id: APP_ID,
+      status: 'draft',
+    });
+    const notApproved: OffsiteModerationError = await reportListing({
+      input: validInput,
+      userId: CALLER,
+    }).catch((e: OffsiteModerationError) => e);
+
+    // A caller cannot tell "doesn't exist" from "exists but not approvable".
+    expect(missing.code).toBe(notApproved.code);
+    expect(missing.message).toBe(notApproved.message);
+    expect(missing.message).toBe(REPORT_UNAVAILABLE_MESSAGE);
+    // Only the server-side cause differs.
+    expect(missing.cause).not.toEqual(notApproved.cause);
+  });
 
   it('rejects an unknown reason (defense-in-depth) BEFORE touching the DB', async () => {
     await expect(
@@ -217,11 +270,13 @@ describe('listListingReports — read-only mod queue', () => {
     expect(res.nextCursor).toBeNull();
   });
 
-  it('is FIFO (oldest-first) and caps limit at 50', async () => {
+  it('is FIFO (oldest-first) with an id tie-break for a total order, and caps limit at 50', async () => {
     (mockRead as unknown as Client).appListingReport.findMany.mockResolvedValueOnce([]);
     await listListingReports({ limit: 999 });
     const args = (mockRead as unknown as Client).appListingReport.findMany.mock.calls[0][0];
-    expect(args.orderBy).toEqual({ createdAt: 'asc' });
+    // `createdAt` alone is non-unique (default now()) → keyset tie-break on `id`
+    // so same-millisecond inserts can't skip/duplicate across a page boundary.
+    expect(args.orderBy).toEqual([{ createdAt: 'asc' }, { id: 'asc' }]);
     expect(args.take).toBe(51); // 50 (cap) + 1
   });
 

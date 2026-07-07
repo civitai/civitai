@@ -137,18 +137,38 @@ describe('reportListing — protectedProcedure', () => {
     });
   });
 
-  it('a NOT_REPORTABLE listing maps to BAD_REQUEST', async () => {
-    mockReport.mockRejectedValueOnce(
-      offsiteModErr('NOT_REPORTABLE', 'only an approved listing can be reported (status draft)')
-    );
+  // Info-leak guard: the service now raises the SAME generic NOT_REPORTABLE for a
+  // missing AND a non-approved listing, so a caller can neither probe existence nor
+  // read the moderation status. Both map to BAD_REQUEST with the generic message.
+  it('a not-reportable listing (missing OR non-approved) maps to BAD_REQUEST with a generic message', async () => {
     const caller = appListingsRouter.createCaller(fakeCtx(user) as never);
-    await expect(caller.reportListing(reportInput)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+    mockReport.mockRejectedValueOnce(
+      offsiteModErr('NOT_REPORTABLE', 'This app can no longer be reported.')
+    );
+    await expect(caller.reportListing(reportInput)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'This app can no longer be reported.',
+    });
   });
 
-  it('a NOT_FOUND listing maps to NOT_FOUND', async () => {
-    mockReport.mockRejectedValueOnce(offsiteModErr('NOT_FOUND', 'listing apl_x not found'));
+  it('the not-reportable client message never leaks the exact status or existence', async () => {
     const caller = appListingsRouter.createCaller(fakeCtx(user) as never);
-    await expect(caller.reportListing(reportInput)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    // Even though the service knows the real reason, the client-facing message is
+    // generic — no 'draft'/'not found'/status token reaches the caller.
+    mockReport.mockRejectedValueOnce(
+      offsiteModErr('NOT_REPORTABLE', 'This app can no longer be reported.')
+    );
+    const err = await caller.reportListing(reportInput).then(
+      () => {
+        throw new Error('expected reportListing to reject');
+      },
+      (e) => e as TRPCError
+    );
+    expect(err.code).toBe('BAD_REQUEST');
+    expect(err.message).not.toContain('draft');
+    expect(err.message).not.toContain('not found');
+    expect(err.message).not.toContain('status');
   });
 
   it('an UNEXPECTED/untyped error maps to INTERNAL_SERVER_ERROR without leaking the raw message', async () => {
