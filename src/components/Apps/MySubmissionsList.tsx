@@ -471,9 +471,13 @@ function SubmissionActions({
     );
   }
   if (submission.status === 'approved') {
-    // "Open live" belongs ONLY on the currently-published version — an older
-    // approved version links to nothing live, so it shows no action.
-    if (!isCurrentlyPublished) {
+    // "Open live" belongs ONLY on the currently-published version AND only when
+    // it is actually serving — an older approved version links to nothing live,
+    // and a published version still building / with a failed deploy would link to
+    // a slug that 404s (and disagree with its "deploy failed"/"building" badge).
+    // `null` deployState = legacy/untracked → treated as live (pre-UX-pass behavior).
+    const isLiveNow = submission.deployState === 'live' || submission.deployState == null;
+    if (!isCurrentlyPublished || !isLiveNow) {
       return (
         <Text size="xs" c="dimmed">
           —

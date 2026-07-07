@@ -533,4 +533,29 @@ describe('MySubmissionsList — UX pass 2: dates, author, first-version, live/Op
     expect(page.getByText('live', { exact: true }).elements()).toHaveLength(1);
     expect(page.getByRole('link', { name: /open live/i }).elements()).toHaveLength(1);
   });
+
+  test('the published version shows NO "Open live" while its deploy is not live (building/failed)', async () => {
+    // The newest-approved version is the "currently published" one by version logic,
+    // but a failed/incomplete deploy means the slug 404s — the button must be hidden
+    // so it never links to a dead URL nor contradicts the "deploy failed" badge.
+    renderWithProviders(
+      <MySubmissionsList
+        submissions={[
+          makeSubmission({
+            id: 'only',
+            version: '1.0.0',
+            appBlockId: 'block-r',
+            status: 'approved',
+            deployState: 'failed',
+            submittedAt: new Date('2026-03-01T00:00:00Z'),
+          }),
+        ]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    // Approved + currently-published, but deploy failed → no Open live, no "live" badge.
+    expect(page.getByRole('link', { name: /open live/i }).elements()).toHaveLength(0);
+    expect(page.getByText('live', { exact: true }).elements()).toHaveLength(0);
+  });
 });
