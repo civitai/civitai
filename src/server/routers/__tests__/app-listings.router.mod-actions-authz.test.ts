@@ -5,18 +5,20 @@ import { TRPCError } from '@trpc/server';
  * W13 P3b PR3 — off-site mod-ACTION router AUTHZ matrix + error mapping.
  *
  * Drives the REAL `appListingsRouter` via `createCaller` so the middleware wiring
- * decides: delist / relist / purge / resolveReport / dismissReport /
+ * decides: delist / relist / claim / purge / resolveReport / dismissReport /
  * listModerationEvents are ALL `moderatorProcedure` (+ the inner `isModerator`
  * recheck) → a tester (non-mod) is FORBIDDEN on every one, a mod passes with the
  * reviewer bound to `ctx.user.id`, and typed `OffsiteModerationError`s map through
- * `mapOffsiteError` (NOT_FOUND→NOT_FOUND, NOT_TRANSITIONABLE→BAD_REQUEST,
- * unexpected infra→INTERNAL with no raw leak). The `claimListing` proc does NOT
- * exist yet (PR4) — asserted by absence.
+ * `mapOffsiteError` (NOT_FOUND→NOT_FOUND, NOT_TRANSITIONABLE/INVALID_TARGET_USER→
+ * BAD_REQUEST, unexpected infra→INTERNAL with no raw leak). `claimListing` (PR4) is
+ * `moderatorProcedure` — there is deliberately NO `protectedProcedure` self-claim
+ * endpoint (mod-only is the whole boundary), asserted by the caller-proc probe.
  */
 
 const {
   mockDelist,
   mockRelist,
+  mockClaim,
   mockPurge,
   mockResolve,
   mockDismiss,
@@ -28,6 +30,7 @@ const {
 } = vi.hoisted(() => ({
   mockDelist: vi.fn(async () => ({ appListingId: 'apl_1', status: 'removed' as const })),
   mockRelist: vi.fn(async () => ({ appListingId: 'apl_1', status: 'approved' as const })),
+  mockClaim: vi.fn(async () => ({ appListingId: 'apl_1', userId: 42 })),
   mockPurge: vi.fn(async () => ({ appListingId: 'apl_1', purged: true as const })),
   mockResolve: vi.fn(async () => undefined),
   mockDismiss: vi.fn(async () => undefined),
@@ -43,6 +46,7 @@ vi.mock('~/server/services/blocks/offsite-moderation.service', () => ({
   listListingReports: mockListReports,
   delistListing: mockDelist,
   relistListing: mockRelist,
+  claimListing: mockClaim,
   purgeListing: mockPurge,
   resolveReport: mockResolve,
   dismissReport: mockDismiss,
@@ -110,6 +114,11 @@ const MOD_ACTIONS: Array<{
     call: (c) => c.relistListing({ appListingId: 'apl_1', reason: REASON }),
   },
   {
+    name: 'claimListing',
+    mock: mockClaim,
+    call: (c) => c.claimListing({ appListingId: 'apl_1', targetUserId: 42, reason: REASON }),
+  },
+  {
     name: 'purgeListing',
     mock: mockPurge,
     call: (c) => c.purgeListing({ appListingId: 'apl_1', reason: REASON }),
@@ -154,13 +163,19 @@ describe('mod actions — every one is moderator-only', () => {
 });
 
 describe('mod actions — reviewer id is bound to ctx (never client-supplied)', () => {
-  it('delist/relist/purge pass reviewerUserId = ctx.user.id', async () => {
+  it('delist/relist/claim/purge pass reviewerUserId = ctx.user.id', async () => {
     const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
     await caller.delistListing({ appListingId: 'apl_1', reason: REASON });
     await caller.relistListing({ appListingId: 'apl_1', reason: REASON });
+    await caller.claimListing({ appListingId: 'apl_1', targetUserId: 42, reason: REASON });
     await caller.purgeListing({ appListingId: 'apl_1', reason: REASON });
     expect(mockDelist.mock.calls[0][0]).toMatchObject({ reviewerUserId: mod.id });
     expect(mockRelist.mock.calls[0][0]).toMatchObject({ reviewerUserId: mod.id });
+    // claim forwards the whole input (targetUserId) + the ctx-bound reviewer.
+    expect(mockClaim.mock.calls[0][0]).toMatchObject({
+      reviewerUserId: mod.id,
+      input: { appListingId: 'apl_1', targetUserId: 42, reason: REASON },
+    });
     expect(mockPurge.mock.calls[0][0]).toMatchObject({ reviewerUserId: mod.id });
   });
 
@@ -199,6 +214,19 @@ describe('mod actions — error mapping via mapOffsiteError', () => {
     });
   });
 
+  it('a typed INVALID_TARGET_USER (claim) maps to BAD_REQUEST with the friendly message', async () => {
+    mockClaim.mockRejectedValueOnce(
+      offsiteModErr('INVALID_TARGET_USER', 'The target user could not be found.')
+    );
+    const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
+    await expect(
+      caller.claimListing({ appListingId: 'apl_1', targetUserId: 999999, reason: REASON })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('target user'),
+    });
+  });
+
   it('an unexpected infra error maps to INTERNAL without leaking the raw message', async () => {
     const raw = 'connect ECONNREFUSED 10.0.0.5:5432 postgres://secret-dsn';
     mockPurge.mockRejectedValueOnce(new Error(raw));
@@ -221,10 +249,24 @@ describe('mod actions — error mapping via mapOffsiteError', () => {
     ).rejects.toBeInstanceOf(TRPCError);
     expect(mockDelist).not.toHaveBeenCalled();
   });
+
+  it('rejects a too-short claim reason + a non-positive targetUserId at the SCHEMA boundary', async () => {
+    const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
+    await expect(
+      caller.claimListing({ appListingId: 'apl_1', targetUserId: 42, reason: 'x' })
+    ).rejects.toBeInstanceOf(TRPCError);
+    await expect(
+      caller.claimListing({ appListingId: 'apl_1', targetUserId: 0, reason: REASON })
+    ).rejects.toBeInstanceOf(TRPCError);
+    await expect(
+      caller.claimListing({ appListingId: 'apl_1', targetUserId: -5, reason: REASON })
+    ).rejects.toBeInstanceOf(TRPCError);
+    expect(mockClaim).not.toHaveBeenCalled();
+  });
 });
 
-describe('claimListing is NOT exposed in PR3 (it is PR4)', () => {
-  it('the router exposes the 5 PR3 mod actions but NOT claimListing', () => {
+describe('claimListing (PR4) is exposed as moderator-only — NO self-service endpoint', () => {
+  it('the router exposes claimListing alongside the other mod actions', () => {
     // The tRPC caller proxy fabricates a function for ANY path, so probe the router
     // DEFINITION's procedure record (the source of truth) instead of the caller.
     const procs = Object.keys(
@@ -234,6 +276,7 @@ describe('claimListing is NOT exposed in PR3 (it is PR4)', () => {
     for (const p of [
       'delistListing',
       'relistListing',
+      'claimListing',
       'purgeListing',
       'resolveReport',
       'dismissReport',
@@ -241,6 +284,16 @@ describe('claimListing is NOT exposed in PR3 (it is PR4)', () => {
     ]) {
       expect(procs).toContain(p);
     }
-    expect(procs).not.toContain('claimListing');
+  });
+
+  it('there is EXACTLY ONE claim endpoint (no separate protectedProcedure self-claim)', () => {
+    // The mod-only gate is the whole boundary: a user cannot claim their own listing.
+    // Assert by absence — no `claimMyListing`/`requestClaim`/`selfClaim`-style proc.
+    const procs = Object.keys(
+      (appListingsRouter as unknown as { _def: { procedures: Record<string, unknown> } })._def
+        .procedures
+    );
+    const claimProcs = procs.filter((p) => /claim/i.test(p));
+    expect(claimProcs).toEqual(['claimListing']);
   });
 });

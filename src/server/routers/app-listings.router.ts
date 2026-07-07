@@ -24,6 +24,7 @@ import {
   withdrawExternalRequestSchema,
 } from '~/server/schema/blocks/offsite-listing.schema';
 import {
+  claimListingSchema,
   delistListingSchema,
   dismissReportSchema,
   listListingReportsSchema,
@@ -482,7 +483,7 @@ export const appListingsRouter = router({
     }),
 
   // -------------------------------------------------------------------------
-  // P3b PR3 mod ACTIONS — delist / relist / purge / resolve / dismiss.
+  // P3b PR3/PR4 mod ACTIONS — delist / relist / claim / purge / resolve / dismiss.
   //
   // Posture: UI-dark (the mod takedown affordance renders only on the mod-only
   // store-preview surface). The SERVER gate is `moderatorProcedure` + the inner
@@ -491,8 +492,9 @@ export const appListingsRouter = router({
   // anyway, so `enforceAppBlocksFlag` here would be inert (deliberately omitted).
   // Plus `mapOffsiteError` (typed → TRPC code, no infra leak). The reviewer is bound
   // to `ctx.user.id` — never client-supplied. Each writes exactly one
-  // `AppListingModerationEvent` in the same tx as its mutation. `claimListing` is a
-  // separate PR4. All offsite-only.
+  // `AppListingModerationEvent` in the same tx as its mutation. `claimListing` (PR4)
+  // reassigns ownership — there is NO self-service claim endpoint (mod-only is the
+  // whole boundary). All offsite-only.
   // -------------------------------------------------------------------------
 
   /**
@@ -525,6 +527,32 @@ export const appListingsRouter = router({
       const { relistListing } = await import('~/server/services/blocks/offsite-moderation.service');
       try {
         return await relistListing({ input, reviewerUserId: ctx.user.id });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
+   * MOD claim (reassign ownership of) an approved/removed off-site listing (PR4) —
+   * the mod-arbitrated ownership transfer. Reassigns `AppListing.userId` to a
+   * mod-verified `targetUserId`; the historical `AppListingPublishRequest`
+   * submitter is left INTACT. `moderatorProcedure` + `isModerator` recheck is the
+   * WHOLE trust boundary — there is deliberately NO `protectedProcedure` self-claim
+   * endpoint (a user cannot claim their own listing). Typed failures map via
+   * `mapOffsiteError` (NOT_FOUND→NOT_FOUND, NOT_TRANSITIONABLE/INVALID_TARGET_USER→
+   * BAD_REQUEST, infra→INTERNAL with no leak).
+   */
+  claimListing: moderatorProcedure
+    .input(claimListingSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError(
+          'Reassigning off-site listings is restricted to civitai team'
+        );
+      }
+      const { claimListing } = await import('~/server/services/blocks/offsite-moderation.service');
+      try {
+        return await claimListing({ input, reviewerUserId: ctx.user.id });
       } catch (err) {
         throw mapOffsiteError(err);
       }

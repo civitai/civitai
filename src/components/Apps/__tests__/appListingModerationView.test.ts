@@ -18,17 +18,19 @@ import { APP_LISTING_MODERATION_ACTIONS } from '~/server/schema/blocks/offsite-m
  */
 
 describe('reportRowActions — the per-row action set', () => {
-  it('an APPROVED listing with a PENDING report offers delist + resolve + dismiss', () => {
+  it('an APPROVED listing with a PENDING report offers delist + claim + resolve + dismiss', () => {
     expect(reportRowActions({ reportStatus: 'pending', listingStatus: 'approved' })).toEqual([
       'delist',
+      'claim',
       'resolve',
       'dismiss',
     ]);
   });
 
-  it('a REMOVED listing with a PENDING report offers relist + purge + resolve + dismiss', () => {
+  it('a REMOVED listing with a PENDING report offers relist + claim + purge + resolve + dismiss', () => {
     expect(reportRowActions({ reportStatus: 'pending', listingStatus: 'removed' })).toEqual([
       'relist',
+      'claim',
       'purge',
       'resolve',
       'dismiss',
@@ -38,11 +40,26 @@ describe('reportRowActions — the per-row action set', () => {
   it('a resolved/dismissed report offers NO report actions (only listing actions remain)', () => {
     expect(reportRowActions({ reportStatus: 'resolved', listingStatus: 'approved' })).toEqual([
       'delist',
+      'claim',
     ]);
     expect(reportRowActions({ reportStatus: 'dismissed', listingStatus: 'removed' })).toEqual([
       'relist',
+      'claim',
       'purge',
     ]);
+  });
+
+  it('claim is offered on BOTH an approved and a removed listing (a mod may reclaim either)', () => {
+    expect(reportRowActions({ reportStatus: 'pending', listingStatus: 'approved' })).toContain(
+      'claim'
+    );
+    expect(reportRowActions({ reportStatus: 'pending', listingStatus: 'removed' })).toContain(
+      'claim'
+    );
+    // …but NOT on a gone/unknown-status listing (no listing-level actions at all).
+    expect(reportRowActions({ reportStatus: 'pending', listingStatus: null })).not.toContain(
+      'claim'
+    );
   });
 
   it('purge is ONLY offered on a removed listing (never on an approved/live one)', () => {
@@ -64,7 +81,7 @@ describe('reportRowActions — the per-row action set', () => {
 describe('isDestructiveAction', () => {
   it('only purge is destructive', () => {
     expect(isDestructiveAction('purge')).toBe(true);
-    for (const a of ['delist', 'relist', 'resolve', 'dismiss'] as ReportRowAction[]) {
+    for (const a of ['delist', 'relist', 'claim', 'resolve', 'dismiss'] as ReportRowAction[]) {
       expect(isDestructiveAction(a)).toBe(false);
     }
   });
@@ -100,9 +117,9 @@ describe('chips', () => {
 
 describe('reportActionLabel', () => {
   it('gives a distinct human label for each action', () => {
-    const labels = (['delist', 'relist', 'purge', 'resolve', 'dismiss'] as ReportRowAction[]).map(
-      reportActionLabel
-    );
+    const labels = (
+      ['delist', 'relist', 'claim', 'purge', 'resolve', 'dismiss'] as ReportRowAction[]
+    ).map(reportActionLabel);
     expect(new Set(labels).size).toBe(labels.length);
     for (const l of labels) expect(l.trim().length).toBeGreaterThan(0);
   });

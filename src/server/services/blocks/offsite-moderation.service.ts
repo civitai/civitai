@@ -4,6 +4,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import {
   APP_LISTING_REPORT_REASONS,
   OFFSITE_MOD_REASON_MIN,
+  type ClaimListingInput,
   type DelistListingInput,
   type DismissReportInput,
   type ListListingReportsInput,
@@ -50,13 +51,17 @@ export type OffsiteModerationErrorCode =
   | 'NOT_REPORTABLE'
   | 'ALREADY_REPORTED'
   // PR3 mod-action failure modes:
-  //   NOT_TRANSITIONABLE — a status-guarded delist/relist matched 0 rows (the
-  //     listing was already moved by a concurrent action) → BAD_REQUEST.
+  //   NOT_TRANSITIONABLE — a status-guarded delist/relist/claim matched 0 rows (the
+  //     listing was already moved by a concurrent action, or is not in a claimable
+  //     status) → BAD_REQUEST.
   //   REPORT_NOT_PENDING — resolve/dismiss on an already-closed report → BAD_REQUEST.
+  //   INVALID_TARGET_USER — claim targeted a userId that is not a real User (a
+  //     friendly BAD_REQUEST instead of a raw FK 23503 leaking as INTERNAL).
   // A kind mismatch (an on-site listing) reuses NOT_FOUND (generic — a mod caller
   // must not be able to probe a listing's kind through this surface).
   | 'NOT_TRANSITIONABLE'
-  | 'REPORT_NOT_PENDING';
+  | 'REPORT_NOT_PENDING'
+  | 'INVALID_TARGET_USER';
 
 export class OffsiteModerationError extends Error {
   readonly code: OffsiteModerationErrorCode;
@@ -224,10 +229,12 @@ export async function listListingReports(opts: ListListingReportsInput = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// PR3 — mod ACTIONS (delist / relist / purge / resolve / dismiss). Each writes
-// EXACTLY ONE `AppListingModerationEvent` in the SAME transaction as its mutation
-// (a crash can't split the mutation from its audit record). All mod-only at the
-// router (`moderatorProcedure` + `isModerator` recheck). `claim` is PR4.
+// PR3/PR4 — mod ACTIONS (delist / relist / claim / purge / resolve / dismiss). Each
+// writes EXACTLY ONE `AppListingModerationEvent` in the SAME transaction as its
+// mutation (a crash can't split the mutation from its audit record). All mod-only at
+// the router (`moderatorProcedure` + `isModerator` recheck). `claim` (PR4) reassigns
+// the listing OWNER (`AppListing.userId`) — the historical
+// `AppListingPublishRequest.submittedByUserId` is left INTACT.
 //
 // Discipline mirrored from the P3a offsite-listing approve/reject:
 //   - CLASSIFY on the replica (kind guard), then MUTATE with a status-guarded
@@ -375,6 +382,117 @@ export async function relistListing(opts: {
   });
 
   return { appListingId: input.appListingId, status: 'approved' };
+}
+
+export type ClaimListingResult = { appListingId: string; userId: number };
+
+/**
+ * MOD claim (reassign ownership of) an off-site listing (PR4) — the mod-arbitrated
+ * ownership transfer that resolves an impersonation / verified-owner dispute. A mod
+ * verifies ownership OUT-OF-BAND, then re-points `AppListing.userId` from the current
+ * owner to `targetUserId`; the mod IS the whole trust boundary (there is NO
+ * self-service `protectedProcedure` claim endpoint — a user cannot claim their own
+ * listing).
+ *
+ * Guards (mirror delist/relist/purge):
+ *   - KIND: offsite-only. An on-site `AppListing` is 1:1 with an owned `AppBlock`, so
+ *     reassigning its `userId` would desync it from the backing block's real owner —
+ *     rejected via the shared `classifyOffsiteListing` (missing/on-site → generic
+ *     NOT_FOUND, no tx; info-leak parity with the other actions).
+ *   - STATUS: only `approved` OR `removed` (a mod-verified owner may reclaim a live
+ *     OR a delisted listing). A draft/pending/rejected listing → NOT_TRANSITIONABLE,
+ *     no event.
+ *   - TARGET USER: `targetUserId` must be a REAL `User` — validated on the PRIMARY
+ *     inside the tx so a bad id is a friendly INVALID_TARGET_USER (BAD_REQUEST), NOT
+ *     a raw FK 23503 leaking as an INTERNAL error.
+ *
+ * The pre-state (`before.userId` + `slug` + the status/kind re-check) is snapshotted
+ * from the PRIMARY inside the tx (mirroring purge's in-tx-snapshot fix) — a replica
+ * read could otherwise stamp a stale owner under replica lag. The reassign is a
+ * status-guarded `updateMany` (`status IN (approved,removed)`); a 0-count means a
+ * concurrent action moved the row → NOT_TRANSITIONABLE, and the tx rolls back BEFORE
+ * the audit event is written (ZERO events on a guarded/rolled-back claim).
+ *
+ * 🔴 `AppListingPublishRequest.submittedByUserId` is left INTACT (the locked
+ * decision): claim reassigns the listing OWNER only; the historical submission record
+ * is preserved for audit fidelity (who actually submitted it). This fn NEVER touches
+ * the publish request. The audit event's before/after userId captures the transfer.
+ */
+export async function claimListing(opts: {
+  input: ClaimListingInput;
+  reviewerUserId: number;
+}): Promise<ClaimListingResult> {
+  const { input, reviewerUserId } = opts;
+  const reason = requireModReason(input.reason);
+  // Fail-fast + info-leak parity (replica): a missing OR on-site listing throws the
+  // same generic NOT_FOUND before any tx is opened. The authoritative snapshot is
+  // re-read on the primary inside the tx below.
+  await classifyOffsiteListing(input.appListingId);
+
+  await dbWrite.$transaction(async (tx) => {
+    // Authoritative pre-state snapshot from the PRIMARY (not the replica classify),
+    // so `before.userId` + `slug` reflect the TRUE current row and the kind/status
+    // guards are re-checked on the primary. A row that vanished (or turned
+    // non-offsite) between classify and here → generic NOT_FOUND, tx rolls back with
+    // no event written.
+    const current = await tx.appListing.findUnique({
+      where: { id: input.appListingId },
+      select: { userId: true, status: true, slug: true, kind: true },
+    });
+    if (!current || current.kind !== 'offsite') {
+      throw new OffsiteModerationError('NOT_FOUND', 'Off-site listing not found.');
+    }
+    // Status guard: claim is allowed only on an approved OR removed listing (a
+    // mod-verified owner may reclaim a live OR a delisted listing). draft/pending/
+    // rejected → NOT_TRANSITIONABLE, no event.
+    if (current.status !== 'approved' && current.status !== 'removed') {
+      throw new OffsiteModerationError(
+        'NOT_TRANSITIONABLE',
+        'Only an approved or delisted listing can be reassigned.'
+      );
+    }
+    // Validate the target is a REAL user — a friendly error rather than relying on
+    // the FK to 23503-fail (which would surface as a generic INTERNAL). Read on the
+    // primary (inside the tx) so the check is consistent with the write below.
+    const target = await tx.user.findUnique({
+      where: { id: input.targetUserId },
+      select: { id: true },
+    });
+    if (!target) {
+      throw new OffsiteModerationError(
+        'INVALID_TARGET_USER',
+        'The target user could not be found.'
+      );
+    }
+    // Status-guarded reassign (TOCTOU): a 0-count means a concurrent action moved the
+    // row out of {approved,removed} → NOT_TRANSITIONABLE, rolls the tx (incl. the
+    // event) back. `AppListingPublishRequest.submittedByUserId` is deliberately NOT
+    // touched (locked decision — the submission record is historical).
+    const flipped = await tx.appListing.updateMany({
+      where: { id: input.appListingId, kind: 'offsite', status: { in: ['approved', 'removed'] } },
+      data: { userId: input.targetUserId },
+    });
+    if (flipped.count === 0) {
+      throw new OffsiteModerationError(
+        'NOT_TRANSITIONABLE',
+        'This listing can no longer be reassigned.'
+      );
+    }
+    await tx.appListingModerationEvent.create({
+      data: {
+        id: newAppListingModerationEventId(),
+        appListingId: input.appListingId,
+        slug: current.slug,
+        action: 'claim',
+        actorUserId: reviewerUserId,
+        reason,
+        before: { userId: current.userId },
+        after: { userId: input.targetUserId },
+      },
+    });
+  });
+
+  return { appListingId: input.appListingId, userId: input.targetUserId };
 }
 
 export type PurgeListingResult = { appListingId: string; purged: true };

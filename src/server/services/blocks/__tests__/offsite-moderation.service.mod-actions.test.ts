@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 
 import {
   OffsiteModerationError,
+  claimListing,
   delistListing,
   dismissReport,
   listModerationEvents,
@@ -25,11 +26,15 @@ type WriteMock = {
   appListing: {
     updateMany: ReturnType<typeof vi.fn>;
     deleteMany: ReturnType<typeof vi.fn>;
-    // purge re-reads the pre-delete snapshot on the PRIMARY inside the tx.
+    // purge + claim re-read the pre-mutation snapshot on the PRIMARY inside the tx.
     findUnique: ReturnType<typeof vi.fn>;
   };
   appListingModerationEvent: { create: ReturnType<typeof vi.fn> };
   appListingReport: { updateMany: ReturnType<typeof vi.fn> };
+  // claim validates the target owner on the primary inside the tx.
+  user: { findUnique: ReturnType<typeof vi.fn> };
+  // NEVER touched by claim (the submitter record is preserved) — asserted by absence.
+  appListingPublishRequest: { updateMany: ReturnType<typeof vi.fn> };
 };
 type ReadMock = {
   appListing: { findUnique: ReturnType<typeof vi.fn> };
@@ -47,6 +52,8 @@ const { mockRead, mockWrite, ids } = vi.hoisted(() => {
     },
     appListingModerationEvent: { create: vi.fn(async (a: { data: unknown }) => a.data) },
     appListingReport: { updateMany: vi.fn(async () => ({ count: 1 })) },
+    user: { findUnique: vi.fn(async () => ({ id: 1 })) },
+    appListingPublishRequest: { updateMany: vi.fn(async () => ({ count: 1 })) },
   };
   // The tx client is the write mock itself, so tx.* calls land on the same spies.
   write.$transaction.mockImplementation(async (cb: (tx: WriteMock) => Promise<unknown>) => cb(write));
@@ -87,6 +94,9 @@ beforeEach(() => {
   mockWrite.appListing.findUnique.mockResolvedValue(offsiteListing('removed'));
   mockWrite.appListingModerationEvent.create.mockImplementation(async (a: { data: unknown }) => a.data);
   mockWrite.appListingReport.updateMany.mockResolvedValue({ count: 1 });
+  // claim: default the target-owner lookup to a real user + the reassign to 1 row.
+  mockWrite.user.findUnique.mockResolvedValue({ id: 42 });
+  mockWrite.appListingPublishRequest.updateMany.mockResolvedValue({ count: 1 });
   mockRead.appListing.findUnique.mockResolvedValue(null);
   mockRead.appListingReport.findUnique.mockResolvedValue(null);
   mockRead.appListingModerationEvent.findMany.mockResolvedValue([]);
@@ -227,6 +237,160 @@ describe('relistListing', () => {
       relistListing({ input: { appListingId: APP_ID, reason: 'appeal upheld' }, reviewerUserId: REVIEWER })
     ).rejects.toMatchObject({ code: 'NOT_TRANSITIONABLE' });
     expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// claimListing
+// ---------------------------------------------------------------------------
+
+describe('claimListing', () => {
+  const OLD_OWNER = 500;
+  const TARGET = 42;
+
+  /** The in-tx PRIMARY snapshot shape claim reads (userId + status + slug + kind). */
+  function primarySnapshot(status: string, kind = 'offsite', userId = OLD_OWNER) {
+    return { userId, status, slug: SLUG, kind };
+  }
+
+  it('reassigns userId on an APPROVED listing + writes exactly ONE claim event (before/after userId)', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('approved'));
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(primarySnapshot('approved'));
+    const res = await claimListing({
+      input: { appListingId: APP_ID, targetUserId: TARGET, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(res).toEqual({ appListingId: APP_ID, userId: TARGET });
+
+    // The reassign is status+kind-guarded (approved|removed, offsite-only).
+    expect(mockWrite.appListing.updateMany).toHaveBeenCalledWith({
+      where: { id: APP_ID, kind: 'offsite', status: { in: ['approved', 'removed'] } },
+      data: { userId: TARGET },
+    });
+    // Exactly ONE audit event, capturing the ownership transfer.
+    expect(mockWrite.appListingModerationEvent.create).toHaveBeenCalledTimes(1);
+    const data = mockWrite.appListingModerationEvent.create.mock.calls[0][0].data;
+    expect(data).toMatchObject({
+      appListingId: APP_ID,
+      slug: SLUG,
+      action: 'claim',
+      actorUserId: REVIEWER,
+      reason: GOOD_REASON,
+      before: { userId: OLD_OWNER },
+      after: { userId: TARGET },
+    });
+  });
+
+  it('reassigns userId on a REMOVED (delisted) listing too', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(primarySnapshot('removed'));
+    const res = await claimListing({
+      input: { appListingId: APP_ID, targetUserId: TARGET, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(res).toEqual({ appListingId: APP_ID, userId: TARGET });
+    expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data.after).toEqual({
+      userId: TARGET,
+    });
+  });
+
+  it('leaves AppListingPublishRequest.submittedByUserId INTACT (never touches the publish request)', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('approved'));
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(primarySnapshot('approved'));
+    await claimListing({
+      input: { appListingId: APP_ID, targetUserId: TARGET, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    // The locked decision: claim reassigns AppListing.userId only — the historical
+    // submission record is preserved. The publish-request table is NEVER written.
+    expect(mockWrite.appListingPublishRequest.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('a draft/pending/rejected status → NOT_TRANSITIONABLE, ZERO events, no reassign', async () => {
+    for (const status of ['draft', 'pending', 'rejected']) {
+      vi.clearAllMocks();
+      mockWrite.$transaction.mockImplementation(
+        async (cb: (tx: WriteMock) => Promise<unknown>) => cb(mockWrite)
+      );
+      mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing(status));
+      mockWrite.appListing.findUnique.mockResolvedValueOnce(primarySnapshot(status));
+      await expect(
+        claimListing({
+          input: { appListingId: APP_ID, targetUserId: TARGET, reason: GOOD_REASON },
+          reviewerUserId: REVIEWER,
+        })
+      ).rejects.toMatchObject({ name: 'OffsiteModerationError', code: 'NOT_TRANSITIONABLE' });
+      expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+      expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
+    }
+  });
+
+  it('an ON-SITE listing is rejected by the kind guard (generic NOT_FOUND, no tx)', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('approved', 'onsite'));
+    await expect(
+      claimListing({
+        input: { appListingId: APP_ID, targetUserId: TARGET, reason: GOOD_REASON },
+        reviewerUserId: REVIEWER,
+      })
+    ).rejects.toMatchObject({ name: 'OffsiteModerationError', code: 'NOT_FOUND' });
+    expect(mockWrite.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('a nonexistent targetUserId → friendly INVALID_TARGET_USER, no reassign, ZERO events', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('approved'));
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(primarySnapshot('approved'));
+    // The target-owner lookup finds no user.
+    mockWrite.user.findUnique.mockResolvedValueOnce(null);
+    await expect(
+      claimListing({
+        input: { appListingId: APP_ID, targetUserId: 999999, reason: GOOD_REASON },
+        reviewerUserId: REVIEWER,
+      })
+    ).rejects.toMatchObject({ name: 'OffsiteModerationError', code: 'INVALID_TARGET_USER' });
+    // Guarded before the reassign + the event write.
+    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+    expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
+  });
+
+  it('a status-guarded updateMany 0-count (TOCTOU) → NOT_TRANSITIONABLE, ZERO events', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('approved'));
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(primarySnapshot('approved'));
+    // The row was moved out of {approved,removed} between the snapshot and the write.
+    mockWrite.appListing.updateMany.mockResolvedValueOnce({ count: 0 });
+    await expect(
+      claimListing({
+        input: { appListingId: APP_ID, targetUserId: TARGET, reason: GOOD_REASON },
+        reviewerUserId: REVIEWER,
+      })
+    ).rejects.toMatchObject({ code: 'NOT_TRANSITIONABLE' });
+    expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
+  });
+
+  it('snapshots before.userId from the in-tx PRIMARY read, not the (lagging) replica classify', async () => {
+    // The replica classify sees a stale row; the primary tx read sees the TRUE owner.
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('approved'));
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(primarySnapshot('approved', 'offsite', 777));
+    await claimListing({
+      input: { appListingId: APP_ID, targetUserId: TARGET, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(mockWrite.appListing.findUnique).toHaveBeenCalledWith({
+      where: { id: APP_ID },
+      select: { userId: true, status: true, slug: true, kind: true },
+    });
+    expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data.before).toEqual({
+      userId: 777,
+    });
+  });
+
+  it('a too-short reason is a BAD_REQUEST (defense-in-depth) with no DB touch', async () => {
+    await expect(
+      claimListing({
+        input: { appListingId: APP_ID, targetUserId: TARGET, reason: 'x' },
+        reviewerUserId: REVIEWER,
+      })
+    ).rejects.toBeInstanceOf(TRPCError);
+    expect(mockRead.appListing.findUnique).not.toHaveBeenCalled();
   });
 });
 
@@ -436,9 +600,10 @@ describe('listModerationEvents', () => {
   });
 });
 
-describe('OffsiteModerationError (PR3 codes)', () => {
-  it('carries the new NOT_TRANSITIONABLE / REPORT_NOT_PENDING codes', () => {
+describe('OffsiteModerationError (PR3/PR4 codes)', () => {
+  it('carries the NOT_TRANSITIONABLE / REPORT_NOT_PENDING / INVALID_TARGET_USER codes', () => {
     expect(new OffsiteModerationError('NOT_TRANSITIONABLE', 'x').code).toBe('NOT_TRANSITIONABLE');
     expect(new OffsiteModerationError('REPORT_NOT_PENDING', 'x').code).toBe('REPORT_NOT_PENDING');
+    expect(new OffsiteModerationError('INVALID_TARGET_USER', 'x').code).toBe('INVALID_TARGET_USER');
   });
 });

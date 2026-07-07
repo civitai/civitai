@@ -13,7 +13,7 @@
  */
 
 /** The mod actions a report row can offer (a subset renders per row). */
-export type ReportRowAction = 'delist' | 'relist' | 'purge' | 'resolve' | 'dismiss';
+export type ReportRowAction = 'delist' | 'relist' | 'claim' | 'purge' | 'resolve' | 'dismiss';
 
 /** A pill descriptor: a human label + a Mantine color name. */
 export type Chip = { label: string; color: string };
@@ -26,6 +26,10 @@ export type Chip = { label: string; color: string };
  *     be re-closed).
  *   - delist: only while the listing is `approved` (delist is approved→removed).
  *   - relist: only while the listing is `removed` (relist is removed→approved).
+ *   - claim: on either a live (`approved`) OR a delisted (`removed`) listing — a
+ *     mod-verified owner may reclaim either. The report queue only lists OFF-SITE
+ *     reports (the report table is offsite-only), so the service's kind guard is
+ *     implicitly satisfied here (no kind input needed at the view-model layer).
  *   - purge: only once the listing is `removed` — a mod delists first, THEN purges;
  *     this keeps the destructive hard-delete off a still-live approved listing in
  *     the queue UI (the service itself allows purge on any status, but the queue
@@ -42,9 +46,13 @@ export function reportRowActions(input: {
   const actions: ReportRowAction[] = [];
   const listingStatus = input.listingStatus ?? null;
 
-  if (listingStatus === 'approved') actions.push('delist');
+  if (listingStatus === 'approved') {
+    actions.push('delist');
+    actions.push('claim');
+  }
   if (listingStatus === 'removed') {
     actions.push('relist');
+    actions.push('claim');
     actions.push('purge');
   }
   if (input.reportStatus === 'pending') {
@@ -105,6 +113,8 @@ export function reportActionLabel(action: ReportRowAction): string {
       return 'Delist';
     case 'relist':
       return 'Relist';
+    case 'claim':
+      return 'Claim';
     case 'purge':
       return 'Purge';
     case 'resolve':
