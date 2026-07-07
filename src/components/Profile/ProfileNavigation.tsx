@@ -15,6 +15,7 @@ import { useRouter } from 'next/router';
 import { trpc } from '~/utils/trpc';
 import type { DataItem } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
 import { HomeStyleSegmentedControl } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
+import homeStyleClasses from '~/components/HomeContentToggle/HomeStyleSegmentedControl.module.css';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { getDisplayName } from '~/utils/string-helpers';
 
@@ -97,6 +98,7 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       url: `${baseUrl}/shop`,
       icon: (props) => <IconShoppingBag {...props} />,
       label: 'Shop',
+      className: homeStyleClasses.tabHighlight,
       disabled: !features.creatorShop || !!user?.bannedAt,
     },
   };
