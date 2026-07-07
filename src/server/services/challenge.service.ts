@@ -63,7 +63,10 @@ import {
   chargeInitialPrize,
   refundUserChallengeFunds,
 } from '~/server/games/daily-challenge/challenge-funding';
-import { getEntryPoolContribution } from '~/shared/constants/challenge.constants';
+import {
+  getEntryPoolContribution,
+  USER_SELECTABLE_JUDGE_NAMES,
+} from '~/shared/constants/challenge.constants';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
@@ -1143,7 +1146,7 @@ export async function upsertUserChallenge({
 
   // Judge must be an existing, active judge — users can only pick, not create or reprompt one.
   const judge = await dbRead.challengeJudge.findFirst({
-    where: { id: judgeId, active: true },
+    where: { id: judgeId, active: true, name: { in: [...USER_SELECTABLE_JUDGE_NAMES] } },
     select: { id: true },
   });
   if (!judge) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Selected judge is not available.' });
@@ -1385,7 +1388,7 @@ export async function scanUserChallenge(challengeId: number): Promise<void> {
 // Public-safe judge options for the user challenge form: id/name/bio only (no prompt fields).
 export async function getActiveJudgeOptions() {
   return dbRead.challengeJudge.findMany({
-    where: { active: true },
+    where: { active: true, name: { in: [...USER_SELECTABLE_JUDGE_NAMES] } },
     select: { id: true, name: true, bio: true },
     orderBy: { name: 'asc' },
   });
