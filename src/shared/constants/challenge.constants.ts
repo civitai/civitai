@@ -39,3 +39,22 @@ export function getChallengeActiveLimit(tier?: string | null): number {
 export function getEntryPoolContribution(entryFee: number): number {
   return Math.max(0, entryFee - CHALLENGE_ENTRY_HOUSE_CUT);
 }
+
+export const CHALLENGE_CATEGORY_KEYS = ['theme', 'humor', 'wittiness', 'aesthetic', 'custom'] as const;
+export type ChallengeCategoryKey = (typeof CHALLENGE_CATEGORY_KEYS)[number];
+
+// Preset judging categories offered in the public challenge form. Each carries the criteria the
+// AI judge scores against. `theme` is mandatory (see the schema refine) and its gate always applies.
+export const CHALLENGE_PRESET_CATEGORIES: Record<
+  Exclude<ChallengeCategoryKey, 'custom'>,
+  { label: string; criteria: string }
+> = {
+  theme: { label: 'Theme', criteria: 'How well the entry fits the challenge theme.' },
+  humor: { label: 'Humor', criteria: 'How funny or amusing the entry is.' },
+  wittiness: { label: 'Wittiness', criteria: 'Cleverness and wit of the concept.' },
+  aesthetic: { label: 'Aesthetic', criteria: 'Overall visual quality and craft of the image.' },
+};
+
+// Judges a public-challenge creator may pick. Keyed on NAME (env-stable; excludes "CivChan NSFW",
+// which shares CivChan's userId — public challenges are SFW-only).
+export const USER_SELECTABLE_JUDGE_NAMES = ['CivBot', 'CivChan'] as const;
