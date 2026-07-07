@@ -24,6 +24,10 @@ import {
   withdrawExternalRequestSchema,
 } from '~/server/schema/blocks/offsite-listing.schema';
 import {
+  fetchListingMetaSchema,
+  ingestListingAssetFromUrlSchema,
+} from '~/server/schema/blocks/listing-meta.schema';
+import {
   claimListingSchema,
   delistListingSchema,
   dismissReportSchema,
@@ -322,6 +326,57 @@ export const appListingsRouter = router({
         '~/server/services/blocks/offsite-listing.service'
       );
       return persistListingAssetImage({ input, userId: ctx.user.id });
+    }),
+
+  /**
+   * AUTHOR: SSRF-safe metadata auto-pull for the submit form. Given an external
+   * listing URL, server-side fetches the target page (hardened `safeFetch`:
+   * https-only + DNS-resolved-public + manual-redirect-revalidate + timeout + size
+   * cap + text/html allowlist) and returns SUGGESTIONS (name / tagline + cover/icon
+   * image URLs). Nothing is persisted — the author accepts or overrides. Never
+   * throws on "nothing found" (returns empty fields); SSRF/timeout/size failures
+   * map to a friendly BAD_REQUEST with no internal detail leaked. Rate-limited
+   * (~30/hr) — it triggers an outbound fetch per call.
+   */
+  fetchListingMetaFromUrl: appDeveloperProcedure
+    .use(
+      rateLimit({
+        limit: 30,
+        period: 3600,
+        errorMessage: 'Too many preview lookups — slow down.',
+      })
+    )
+    .input(fetchListingMetaSchema)
+    .query(async ({ input }) => {
+      const { fetchListingMeta } = await import('~/server/services/blocks/listing-meta.service');
+      return fetchListingMeta(input);
+    }),
+
+  /**
+   * AUTHOR: ingest an ACCEPTED suggested image URL into a scannable `Image` row.
+   * The remote URL is attacker-influenced + cross-origin, so the SERVER pulls the
+   * bytes (SSRF-safe) → uploads to CF → `createImage` through the STANDARD scan
+   * pipeline (default ingestion, NO skipIngestion / NO scan bypass) and returns the
+   * numeric `imageId`. The client then attaches it via `setIcon`/`setCover` (which
+   * enforce `ingestion === Scanned` + per-kind validation), polling until Scanned —
+   * exactly like an author-uploaded asset. Rate-limited (~30/hr, outbound fetch +
+   * CF upload per call). Ownership is bound to the caller.
+   */
+  ingestAssetFromUrl: appDeveloperProcedure
+    .use(
+      rateLimit({
+        limit: 30,
+        period: 3600,
+        errorMessage: 'Too many image imports — slow down.',
+      })
+    )
+    .input(ingestListingAssetFromUrlSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { ingestListingAssetFromUrl } = await import(
+        '~/server/services/blocks/listing-meta.service'
+      );
+      return ingestListingAssetFromUrl({ input, userId: ctx.user.id });
     }),
 
   /** AUTHOR: the caller's OWN off-site submissions (my-submissions page, PR-c). */

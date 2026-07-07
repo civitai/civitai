@@ -82,6 +82,26 @@ describe('validateExternalUrl', () => {
     const long = 'https://example.com/' + 'a'.repeat(MAX_EXTERNAL_URL_LENGTH);
     expect(validateExternalUrl(long).ok).toBe(false);
   });
+
+  it('REJECTS a URL with embedded credentials (userinfo phishing vector)', () => {
+    // `https://example.com@evil.com` DISPLAYS as example.com but the real host is
+    // evil.com — a display-vs-real-host phishing vector; reject it outright.
+    for (const url of [
+      'https://example.com@evil.com',
+      'https://user:pass@evil.com',
+      'https://user@example.com/app',
+      'https://:pass@example.com',
+    ]) {
+      const r = validateExternalUrl(url);
+      expect(r.ok, `"${url}" must be rejected`).toBe(false);
+      if (!r.ok) expect(r.error).toMatch(/credential/i);
+    }
+  });
+
+  it('accepts a normal https URL that merely CONTAINS an @ in the path/query (not userinfo)', () => {
+    const r = validateExternalUrl('https://example.com/u/@handle?to=a@b.com');
+    expect(r.ok).toBe(true);
+  });
 });
 
 describe('assertNoOnPlatformSurface (external ⟂ on-platform)', () => {

@@ -6,6 +6,7 @@ import {
   Code,
   FileInput,
   Group,
+  Image,
   Loader,
   Select,
   Stack,
@@ -70,6 +71,9 @@ import { trpc } from '~/utils/trpc';
 
 type Submitted = { listingId: string; publishRequestId: string; slug: string };
 
+/** Server-suggested image URLs from the URL's page metadata (cover = og:image, icon = favicon/apple-touch). */
+type MetaSuggestions = { coverImageUrl?: string; iconImageUrl?: string };
+
 type AssetKind = 'icon' | 'cover' | 'screenshot';
 
 /**
@@ -131,6 +135,35 @@ export function ExternalSubmitForm() {
   const [errors, setErrors] = useState<OffsiteSubmitFormErrors>({});
   const [serverError, setServerError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState<Submitted | null>(null);
+
+  // Metadata auto-pull: once a valid URL advances to Details, fetch the target
+  // page's OG metadata SERVER-side (SSRF-safe) and surface suggestions. The query
+  // is keyed on `metaUrl` (set when advancing) so it fires once per URL; failures
+  // are non-blocking (the form still works with manual entry).
+  const [metaUrl, setMetaUrl] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<MetaSuggestions>({});
+  const appliedMetaRef = useRef<string | null>(null);
+
+  const metaQuery = trpc.appListings.fetchListingMetaFromUrl.useQuery(
+    { url: metaUrl ?? '' },
+    { enabled: !!metaUrl, retry: false, refetchOnWindowFocus: false, staleTime: Infinity }
+  );
+
+  // Apply a fetched suggestion set ONCE per URL: non-destructively prefill any
+  // still-blank name/tagline (never clobber what the author typed or the
+  // host-derived name), and stash the cover/icon image suggestions for the Assets
+  // step (they can only be attached after the draft listing exists).
+  useEffect(() => {
+    if (!metaQuery.data || appliedMetaRef.current === metaUrl) return;
+    appliedMetaRef.current = metaUrl;
+    const data = metaQuery.data;
+    setValues((v) => ({
+      ...v,
+      name: v.name.trim().length === 0 && data.name ? data.name : v.name,
+      tagline: v.tagline.trim().length === 0 && data.tagline ? data.tagline : v.tagline,
+    }));
+    setSuggestions({ coverImageUrl: data.coverImageUrl, iconImageUrl: data.iconImageUrl });
+  }, [metaQuery.data, metaUrl]);
 
   const submitMutation = trpc.appListings.submitExternalListing.useMutation({
     onSuccess: (res: Submitted) => {
@@ -197,6 +230,7 @@ export function ExternalSubmitForm() {
     }
     applyNormalizedUrl(result.url);
     setErrors((prev) => ({ ...prev, externalUrl: undefined }));
+    setMetaUrl(result.url); // kick off the (SSRF-safe) metadata auto-pull
     setActive(STEP_DETAILS);
   }
 
@@ -251,6 +285,7 @@ export function ExternalSubmitForm() {
       const result = normalizeLinkUrl(values.externalUrl);
       if (result.error) return; // can't reach Details with an invalid URL
       applyNormalizedUrl(result.url);
+      setMetaUrl(result.url);
       setActive(STEP_DETAILS);
     }
   }
@@ -334,6 +369,24 @@ export function ExternalSubmitForm() {
           data-testid="apps-offsite-wizard-step-details"
         >
           <Stack gap="md" mt="md">
+            {metaQuery.isFetching && (
+              <Group gap={6} data-testid="apps-offsite-meta-loading">
+                <Loader size={12} />
+                <Text size="xs" c="dimmed">
+                  Looking for a name, description and images from your link…
+                </Text>
+              </Group>
+            )}
+            {!metaQuery.isFetching &&
+              metaQuery.isSuccess &&
+              !metaQuery.data.name &&
+              !metaQuery.data.tagline &&
+              !metaQuery.data.coverImageUrl &&
+              !metaQuery.data.iconImageUrl && (
+                <Text size="xs" c="dimmed" data-testid="apps-offsite-meta-empty">
+                  No suggestions found — fill in the details and upload assets manually.
+                </Text>
+              )}
             <TextInput
               label="Name"
               description="Prefilled from your URL — edit as needed."
@@ -460,7 +513,11 @@ export function ExternalSubmitForm() {
         >
           <div data-testid="apps-offsite-wizard-assets-panel">
             {submitted ? (
-              <AssetStep submitted={submitted} contentRating={values.contentRating} />
+              <AssetStep
+                submitted={submitted}
+                contentRating={values.contentRating}
+                suggestions={suggestions}
+              />
             ) : (
               <Alert color="gray" variant="light" mt="md">
                 <Text size="sm">Create the draft on the previous step to add assets.</Text>
@@ -483,9 +540,11 @@ export function ExternalSubmitForm() {
 function AssetStep({
   submitted,
   contentRating,
+  suggestions,
 }: {
   submitted: Submitted;
   contentRating: OffsiteContentRating;
+  suggestions: MetaSuggestions;
 }) {
   const { uploadToCF } = useCFImageUpload();
   const [icon, setIcon] = useState<AssetState>(emptyAsset);
@@ -494,6 +553,7 @@ function AssetStep({
   const screenshotIdRef = useRef(0);
 
   const persistMutation = trpc.appListings.persistAssetImage.useMutation();
+  const ingestMutation = trpc.appListings.ingestAssetFromUrl.useMutation();
   const setIconMutation = trpc.appListings.setIcon.useMutation();
   const setCoverMutation = trpc.appListings.setCover.useMutation();
   const addScreenshotMutation = trpc.appListings.addScreenshot.useMutation();
@@ -638,6 +698,34 @@ function AssetStep({
     }
   }
 
+  /**
+   * Accept a server-suggested image URL (og:image cover / favicon icon): the
+   * SERVER re-fetches the remote URL (SSRF-safe) → uploads to CF → ingests through
+   * the STANDARD scan pipeline, returning a scannable imageId; we then run the SAME
+   * attach/poll cycle as an uploaded file (drive → scanning → attached). No scan
+   * bypass — the attach proc still requires `ingestion === Scanned`.
+   */
+  async function acceptSuggestion(
+    key: string,
+    kind: 'icon' | 'cover',
+    url: string,
+    apply: (s: AssetState) => void
+  ) {
+    clearTimer(key);
+    const epoch = bumpEpoch(key);
+    apply({ status: 'working', imageId: null, message: null });
+    try {
+      const { imageId } = await ingestMutation.mutateAsync({ url, kind });
+      if (!isCurrentEpoch(key, epoch)) return; // a newer upload/accept superseded this
+      await drive(key, kind, imageId, 0, epoch, apply);
+    } catch (err) {
+      if (!isCurrentEpoch(key, epoch)) return;
+      clearTimer(key);
+      apply({ status: 'error', imageId: null, message: (err as Error).message });
+      showErrorNotification({ title: `Could not import ${kind}`, error: err as Error });
+    }
+  }
+
   /** Manual Retry: reset the poll (new epoch, cleared timer) and re-drive from the
    *  already-persisted imageId. */
   async function retryAttach(
@@ -697,6 +785,11 @@ function AssetStep({
         onRetry={() => {
           if (icon.imageId != null) void retryAttach('icon', 'icon', icon.imageId, setIcon);
         }}
+        suggestionUrl={suggestions.iconImageUrl}
+        onAcceptSuggestion={() => {
+          if (suggestions.iconImageUrl)
+            void acceptSuggestion('icon', 'icon', suggestions.iconImageUrl, setIcon);
+        }}
       />
       <AssetRow
         kind="cover"
@@ -706,6 +799,11 @@ function AssetStep({
         onFile={(f) => void startAttach('cover', 'cover', f, setCover)}
         onRetry={() => {
           if (cover.imageId != null) void retryAttach('cover', 'cover', cover.imageId, setCover);
+        }}
+        suggestionUrl={suggestions.coverImageUrl}
+        onAcceptSuggestion={() => {
+          if (suggestions.coverImageUrl)
+            void acceptSuggestion('cover', 'cover', suggestions.coverImageUrl, setCover);
         }}
       />
 
@@ -787,6 +885,8 @@ function AssetRow({
   state,
   onFile,
   onRetry,
+  suggestionUrl,
+  onAcceptSuggestion,
 }: {
   kind: AssetKind;
   label: string;
@@ -794,7 +894,12 @@ function AssetRow({
   state: AssetState;
   onFile: (file: File | null) => void;
   onRetry: () => void;
+  suggestionUrl?: string;
+  onAcceptSuggestion?: () => void;
 }) {
+  // Offer the server-suggested image (og:image / favicon) only while the asset is
+  // idle — once the author uploads or accepts, the suggestion preview steps aside.
+  const showSuggestion = state.status === 'idle' && !!suggestionUrl && !!onAcceptSuggestion;
   return (
     <Card withBorder p="sm">
       <Stack gap="xs">
@@ -819,8 +924,40 @@ function AssetRow({
             )}
           </Group>
         </Group>
+        {showSuggestion && (
+          <Card withBorder p="xs" bg="var(--mantine-color-blue-light)">
+            <Group gap="sm" wrap="nowrap">
+              <Image
+                src={suggestionUrl}
+                w={48}
+                h={48}
+                radius="sm"
+                fit="contain"
+                alt={`suggested ${kind}`}
+                data-testid={`apps-offsite-suggested-${kind}-preview`}
+              />
+              <Stack gap={2} style={{ flex: 1 }}>
+                <Text size="xs" fw={600}>
+                  Suggested from your link
+                </Text>
+                <Text size="xs" c="dimmed">
+                  We&apos;ll re-scan it just like an upload.
+                </Text>
+              </Stack>
+              <Button
+                size="compact-xs"
+                variant="light"
+                leftSection={<IconCheck size={12} />}
+                onClick={onAcceptSuggestion}
+                data-testid={`apps-offsite-accept-${kind}`}
+              >
+                Use this
+              </Button>
+            </Group>
+          </Card>
+        )}
         <FileInput
-          label={`Upload ${kind}`}
+          label={showSuggestion ? `Or upload your own ${kind}` : `Upload ${kind}`}
           description={description}
           placeholder="Select an image"
           accept="image/png,image/jpeg,image/webp"
