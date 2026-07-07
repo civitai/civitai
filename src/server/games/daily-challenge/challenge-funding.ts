@@ -150,8 +150,10 @@ export async function refundUserChallengeFunds(challengeId: number) {
   if (challenge.basePrizePool > 0 && challenge.createdById != null) {
     const prizeExternalId = `challenge-initial-prize-${challengeId}`;
     const prizeCharge = await getTransactionByExternalId(prizeExternalId);
-    if (prizeCharge) {
-      await refundTransaction(prizeExternalId, 'Challenge cancelled — initial prize refund', {
+    // /transactions/{id}/refund resolves by INTERNAL transaction id — pass the id from the
+    // looked-up charge, not the external id (which would 404 and silently skip the refund).
+    if (prizeCharge?.transactionId) {
+      await refundTransaction(prizeCharge.transactionId, 'Challenge cancelled — initial prize refund', {
         challengeId,
       });
     }
