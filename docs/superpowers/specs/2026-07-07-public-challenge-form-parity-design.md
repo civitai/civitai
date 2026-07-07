@@ -38,7 +38,7 @@ still AI-judged by the fixed daily rubric (`theme/wittiness/humor/aesthetic` + h
 | 1 | Scope | Full end-to-end (form + schema + judging pipeline) |
 | 2 | Category model | ≤4 total, Theme mandatory, mix of presets + custom, weights=100 |
 | 3 | Theme | Always present + **theme gate always applies**; others bias only |
-| 4 | Judge gating | Constant list keyed on stable **userIds** (env-safe), not judge ids |
+| 4 | Judge gating | Constant list keyed on judge **name** (env-safe; excludes CivChan NSFW) |
 | 5 | Form | Single `ChallengeUpsertForm` with `variant` prop |
 
 ## Design
@@ -87,14 +87,17 @@ export const CHALLENGE_PRESET_CATEGORIES = {
 
 `src/shared/constants/challenge.constants.ts`:
 ```ts
-// Judges a public-challenge creator may pick. Keyed on the judge's stable User id
-// (autoincrement ChallengeJudge.id differs per environment). CivBot + CivChan.
-export const USER_SELECTABLE_JUDGE_USER_IDS = [<CIVBOT_USER_ID>, 7665867] as const;
+// Judges a public-challenge creator may pick. Keyed on judge NAME, not id/userId:
+//  - autoincrement ChallengeJudge.id differs per environment (dev vs prod)
+//  - CivChan and "CivChan NSFW" share userId 7665867, and public challenges are SFW-only,
+//    so a userId filter would wrongly expose the NSFW judge.
+// Name is the stable, seeded, SFW-correct identifier. (Verified: CivBot id=1 userId=6235605,
+// CivChan id=2 userId=7665867, "CivChan NSFW" id=4 userId=7665867.)
+export const USER_SELECTABLE_JUDGE_NAMES = ['CivBot', 'CivChan'] as const;
 ```
-(`<CIVBOT_USER_ID>` resolved during implementation from `ChallengeJudge` id=1's `userId`.)
 
-- `getActiveJudgeOptions` (`challenge.service.ts`): `where: { active: true, userId: { in: USER_SELECTABLE_JUDGE_USER_IDS } }`.
-- `upsertUserChallenge` judge validation: also assert the chosen judge's `userId` is in the
+- `getActiveJudgeOptions` (`challenge.service.ts`): `where: { active: true, name: { in: USER_SELECTABLE_JUDGE_NAMES } }`.
+- `upsertUserChallenge` judge validation: also assert the chosen judge's `name` is in the
   allowed set (defense-in-depth; client can't smuggle another judgeId).
 
 ### C. Unified form (`variant` prop)
