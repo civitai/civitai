@@ -4,32 +4,36 @@ import { storageStatePath } from './preview-fixtures';
 import { trpcMutation, trpcQuery } from './preview-trpc';
 
 /**
- * Preview-e2e: App Blocks W13 P3b PR3 — OFF-SITE moderation ACTIONS (delist /
- * relist / purge / resolve / dismiss), tRPC-driven, SELF-CLEANING.
+ * Preview-e2e: App Blocks W13 P3b PR3/PR4 — OFF-SITE moderation ACTIONS (delist /
+ * relist / claim / purge / resolve / dismiss), tRPC-driven, SELF-CLEANING.
  *
  * WHAT THIS COVERS (deterministically, in a preview) and WHY NOT the full
- * approve-success → store-render → delist round-trip:
+ * approve-success → store-render → delist/claim round-trip:
  *
- *   The full "approve an off-site listing, see it in the store, delist it, purge to
- *   self-clean" round-trip requires a SUCCESSFUL approve, which the dark P1 asset
- *   gate (`assertListingAssetsComplete`) blocks unless the draft has an icon+cover
- *   +≥1 screenshot whose backing Image is `ingestion = Scanned`. In a PR preview
- *   the external image scanner is UNREACHABLE, so uploaded images stay `Pending`
- *   forever (see `tests/preview-post-images.spec.ts`: "image ingestion … is
- *   unreachable in preview so the row stays Pending"). An attach of a Pending image
- *   is rejected ("scan is not complete"), so an off-site listing can NOT reach
- *   `approved` in preview — the approve→delist→store leg is therefore covered
- *   EXHAUSTIVELY in the unit/integration tests instead
- *   (`offsite-moderation.service.mod-actions.test.ts`), not here.
+ *   The full "approve an off-site listing, see it in the store, delist/claim it,
+ *   purge to self-clean" round-trip requires a SUCCESSFUL approve, which the dark P1
+ *   asset gate (`assertListingAssetsComplete`) blocks unless the draft has an
+ *   icon+cover+≥1 screenshot whose backing Image is `ingestion = Scanned`. In a PR
+ *   preview the external image scanner is UNREACHABLE, so uploaded images stay
+ *   `Pending` forever (see `tests/preview-post-images.spec.ts`: "image ingestion …
+ *   is unreachable in preview so the row stays Pending"). An attach of a Pending
+ *   image is rejected ("scan is not complete"), so an off-site listing can NOT reach
+ *   `approved`/`removed` in preview — i.e. a CLAIMABLE-state listing is not
+ *   constructible here. So the claim HAPPY-PATH (approved/removed → reassigned +
+ *   audit event) is covered EXHAUSTIVELY in the unit tests instead
+ *   (`offsite-moderation.service.mod-actions.test.ts`), NOT here. This preview spec
+ *   exercises only what is reachable: the claim GUARD rejections (claiming a draft /
+ *   a nonexistent listing → typed error, zero events) + the mod-only AUTHZ (a tester
+ *   is FORBIDDEN). Same rationale as the delist/purge legs below.
  *
  *   `purge` (the PR3 self-clean primitive) DOES solve the P3a "un-cleanable approved
  *   row" problem the sibling approve spec deferred on — and it works on ANY off-site
  *   status, so this spec exercises purge END-TO-END on a self-seeded DRAFT (the one
- *   listing state reachable in preview), plus the report/delist GUARDS (a draft is
- *   not reportable / not delistable) and the full mod-only AUTHZ matrix. All
- *   self-cleaning via `purge` / `withdrawExternalRequest`.
+ *   listing state reachable in preview), plus the report/delist/claim GUARDS (a draft
+ *   is not reportable / not delistable / not claimable) and the full mod-only AUTHZ
+ *   matrix. All self-cleaning via `purge` / `withdrawExternalRequest`.
  *
- * ROLE — `mod` for the action legs (every PR3 proc is `moderatorProcedure`; mod
+ * ROLE — `mod` for the action legs (every PR3/PR4 proc is `moderatorProcedure`; mod
  * also authors via the app-blocks-author floor, so a single mod runs submit +
  * purge), `tester` for the authz-denial matrix.
  *
@@ -125,6 +129,29 @@ test.describe('App Blocks P3b PR3: off-site moderation actions (mod, self-cleani
         'delisting a draft listing must be rejected'
       );
 
+      // A draft is NOT claimable — the status guard (approved|removed-only) fires
+      // (NOT_TRANSITIONABLE → BAD_REQUEST) BEFORE the target-user validation, so this
+      // rejects regardless of targetUserId. No event on the guarded fail.
+      await expectRejects(
+        trpcMutation(request, 'appListings.claimListing', {
+          appListingId: listingId,
+          targetUserId: 1,
+          reason: 'ci-smoke claim guard probe',
+        }),
+        'claiming a draft listing must be rejected'
+      );
+
+      // Claiming a NONEXISTENT listing → the kind/existence guard (generic NOT_FOUND
+      // → 404). Also zero events (no such listing to record against).
+      await expectRejects(
+        trpcMutation(request, 'appListings.claimListing', {
+          appListingId: 'apl_ci_nonexistent',
+          targetUserId: 1,
+          reason: 'ci-smoke claim missing probe',
+        }),
+        'claiming a nonexistent listing must 404'
+      );
+
       // The guarded failures wrote NO moderation events (zero-event-on-guard).
       const history = await trpcQuery<ModEventList>(request, 'appListings.listModerationEvents', {
         appListingId: listingId,
@@ -197,6 +224,14 @@ test.describe('App Blocks P3b PR3: mod actions are moderator-only (tester denied
         reason: 'ci authz probe reason',
       }),
       'tester relist must be forbidden'
+    );
+    await expectRejects(
+      trpcMutation(request, 'appListings.claimListing', {
+        appListingId: 'apl_ci_authz',
+        targetUserId: 1,
+        reason: 'ci authz probe reason',
+      }),
+      'tester claim must be forbidden (mod-only is the whole boundary; no self-claim)'
     );
     await expectRejects(
       trpcMutation(request, 'appListings.purgeListing', {

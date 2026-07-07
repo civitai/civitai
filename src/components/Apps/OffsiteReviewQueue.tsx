@@ -10,6 +10,7 @@ import {
   List,
   Loader,
   Modal,
+  NumberInput,
   SegmentedControl,
   Stack,
   Table,
@@ -680,11 +681,15 @@ function ReportActionModal({
 }) {
   const utils = trpc.useUtils();
   const [text, setText] = useState('');
+  // The claim target-owner id (a numeric userId; a mod may reassign to any real
+  // user). Empty until the mod types one — claim submit is gated on a positive int.
+  const [targetUserId, setTargetUserId] = useState<number | ''>('');
 
   async function afterSuccess(message: string) {
     showSuccessNotification({ message });
     await utils.appListings.listListingReports.invalidate();
     setText('');
+    setTargetUserId('');
     onClose();
   }
   function onError(title: string) {
@@ -699,6 +704,10 @@ function ReportActionModal({
   const relistMut = trpc.appListings.relistListing.useMutation({
     onSuccess: () => afterSuccess('Listing relisted.'),
     onError: onError('Relist failed'),
+  });
+  const claimMut = trpc.appListings.claimListing.useMutation({
+    onSuccess: () => afterSuccess('Ownership reassigned.'),
+    onError: onError('Claim failed'),
   });
   const purgeMut = trpc.appListings.purgeListing.useMutation({
     onSuccess: () => afterSuccess('Listing purged.'),
@@ -716,15 +725,22 @@ function ReportActionModal({
   const busy =
     delistMut.isPending ||
     relistMut.isPending ||
+    claimMut.isPending ||
     purgeMut.isPending ||
     resolveMut.isPending ||
     dismissMut.isPending;
 
   if (!pending) return null;
   const { action, report } = pending;
-  const reasonRequired = action === 'delist' || action === 'relist' || action === 'purge';
+  const reasonRequired =
+    action === 'delist' || action === 'relist' || action === 'claim' || action === 'purge';
+  const isClaim = action === 'claim';
   const trimmed = text.trim();
-  const canSubmit = !busy && (!reasonRequired || trimmed.length >= OFFSITE_MOD_REASON_MIN);
+  const validTarget = typeof targetUserId === 'number' && Number.isInteger(targetUserId) && targetUserId > 0;
+  const canSubmit =
+    !busy &&
+    (!reasonRequired || trimmed.length >= OFFSITE_MOD_REASON_MIN) &&
+    (!isClaim || validTarget);
 
   function submit() {
     switch (action) {
@@ -736,6 +752,18 @@ function ReportActionModal({
         });
       case 'relist':
         return relistMut.mutate({ appListingId: report.appListingId, reason: trimmed });
+      case 'claim':
+        // Narrow to a concrete number (validTarget alone doesn't narrow the union).
+        if (typeof targetUserId !== 'number' || !validTarget) return;
+        return claimMut.mutate({
+          appListingId: report.appListingId,
+          targetUserId,
+          reason: trimmed,
+          // The claim here is always initiated from a report row (the impersonation
+          // report → delist → claim flow), so link + resolve that report in the same
+          // tx — exactly like the delist action above.
+          reportId: report.id,
+        });
       case 'purge':
         return purgeMut.mutate({ appListingId: report.appListingId, reason: trimmed });
       case 'resolve':
@@ -751,6 +779,7 @@ function ReportActionModal({
       onClose={() => {
         if (busy) return;
         setText('');
+        setTargetUserId('');
         onClose();
       }}
       title={
@@ -770,6 +799,27 @@ function ReportActionModal({
               (with the slug snapshot) is kept. This cannot be undone.
             </Text>
           </Alert>
+        )}
+        {isClaim && (
+          <>
+            <Alert color="blue" variant="light" icon={<IconAlertTriangle size={16} />}>
+              <Text size="sm">
+                Reassigns the listing OWNER to the user id below (verify ownership out-of-band
+                first). The original submission record is preserved. Reversible via a later claim.
+              </Text>
+            </Alert>
+            <NumberInput
+              label="New owner user id"
+              placeholder="e.g. 12345"
+              value={targetUserId}
+              onChange={(v) => setTargetUserId(typeof v === 'number' ? v : '')}
+              min={1}
+              allowNegative={false}
+              allowDecimal={false}
+              disabled={busy}
+              data-testid="apps-report-claim-target"
+            />
+          </>
         )}
         <Textarea
           label={reasonRequired ? `Reason (≥${OFFSITE_MOD_REASON_MIN} chars, audited)` : 'Note (optional)'}
@@ -791,6 +841,7 @@ function ReportActionModal({
             variant="default"
             onClick={() => {
               setText('');
+              setTargetUserId('');
               onClose();
             }}
             disabled={busy}
@@ -827,6 +878,23 @@ type ModEvent = {
 };
 
 type ModEventList = { items: ModEvent[]; nextCursor: string | null };
+
+/**
+ * The ownership transfer carried by a `claim` event's `{userId}`-shaped before/after.
+ * Returns null for any non-claim event (delist/relist/purge/report-* carry a
+ * `{status}`-shaped before/after instead), so the history row only renders the
+ * transfer for claims — it never mis-reads a status event's payload. before/after are
+ * typed `unknown` (JSON columns), so each userId is narrowed to a number defensively.
+ */
+function claimOwnerTransfer(e: ModEvent): { from: number | null; to: number | null } | null {
+  if (e.action !== 'claim') return null;
+  const before = (e.before ?? null) as { userId?: unknown } | null;
+  const after = (e.after ?? null) as { userId?: unknown } | null;
+  const from = typeof before?.userId === 'number' ? before.userId : null;
+  const to = typeof after?.userId === 'number' ? after.userId : null;
+  if (from === null && to === null) return null;
+  return { from, to };
+}
 
 /** Read-only per-listing moderation history (newest-first audit trail). */
 function ModerationHistoryModal({
@@ -873,6 +941,7 @@ function ModerationHistoryModal({
         <Stack gap="xs">
           {events.map((e) => {
             const chip = moderationActionChip(e.action);
+            const transfer = claimOwnerTransfer(e);
             return (
               <Card key={e.id} withBorder p="sm">
                 <Group justify="space-between" gap="xs">
@@ -888,6 +957,11 @@ function ModerationHistoryModal({
                     {formatDate(e.createdAt)}
                   </Text>
                 </Group>
+                {transfer && (
+                  <Text size="xs" c="dimmed" mt={4} data-testid={`apps-mod-event-owner-${e.id}`}>
+                    owner: {transfer.from ?? '?'} → {transfer.to ?? '?'}
+                  </Text>
+                )}
                 {e.reason && (
                   <Text size="sm" mt={4} style={{ whiteSpace: 'pre-wrap' }}>
                     {e.reason}
