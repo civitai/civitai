@@ -26,7 +26,6 @@ import {
 import { ChallengeSort } from '~/server/schema/challenge.schema';
 import { ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({
@@ -45,7 +44,6 @@ const statusMap: Record<string, ChallengeStatus> = {
 function ChallengesPage() {
   const router = useRouter();
   const currentUser = useCurrentUser();
-  const features = useFeatureFlags();
   const [infoOpened, { open: openInfo, close: closeInfo }] = useDisclosure(false);
 
   // Parse query params
@@ -150,11 +148,6 @@ function ChallengesPage() {
               >
                 Previous Winners
               </Button>
-              {currentUser && features.userChallenges && (
-                <Button component={Link} href="/challenges/create" variant="light" color="blue">
-                  Create Challenge
-                </Button>
-              )}
               {currentUser?.isModerator && (
                 <Button
                   component={Link}

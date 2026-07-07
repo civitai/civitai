@@ -23,6 +23,7 @@ import {
   IconProgressBolt,
   IconSword,
   IconThumbUp,
+  IconTrophy,
   IconUpload,
   IconUser,
   IconUserCircle,
@@ -363,6 +364,15 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
       label: 'Create a Bounty',
       currency: true,
+    },
+    {
+      href: '/challenges/create',
+      visible: !isMuted && canCreate && features.challengePlatform && features.userChallenges,
+      redirectReason: 'create-challenge',
+      rel: 'nofollow',
+      icon: IconTrophy,
+      color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
+      label: 'Create a Challenge',
     },
     // {
     //   href: '/clubs/create',
