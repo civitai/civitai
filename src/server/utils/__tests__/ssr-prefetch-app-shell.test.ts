@@ -189,4 +189,29 @@ describe('prefetchAppShellQueries — unit', () => {
       prefetchAppShellQueries(h.fakeSsg as any, authedSession, features())
     ).resolves.toBeUndefined();
   });
+
+  it('resolves via the deadline (never hangs SSR) when a prefetch never settles', async () => {
+    vi.useFakeTimers();
+    try {
+      // A prefetch that hangs forever — without the deadline this would block SSR.
+      h.checkNotifications.mockImplementationOnce(() => new Promise<undefined>(() => {}));
+
+      const pending = prefetchAppShellQueries(h.fakeSsg as any, authedSession, features());
+      let settled = false;
+      const tracked = pending.then(() => {
+        settled = true;
+      });
+
+      // Not resolved before the deadline elapses…
+      await vi.advanceTimersByTimeAsync(299);
+      expect(settled).toBe(false);
+
+      // …but the 300ms deadline resolves it (never throws) even with a task still hung.
+      await vi.advanceTimersByTimeAsync(1);
+      await tracked;
+      expect(settled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

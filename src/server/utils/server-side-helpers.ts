@@ -50,10 +50,10 @@ type SSGHelpers = Awaited<ReturnType<typeof getServerProxySSGHelpers>>;
  * `defaultOptions.queries.staleTime: Infinity` (`src/utils/trpc.ts`), and these
  * queries carry no lower per-call `staleTime`, so once React Query hydrates the
  * dehydrated entry it is never stale → NO background refetch on mount. The
- * client `useQuery(undefined)` key (path + `superjson`-serialized input) matches
- * the input-less `.prefetch()` here exactly, so hydration hits. (The
- * `authedCacheBypassLink` mutates the WIRE input, not the react-query key, so
- * keys still match.)
+ * client `useQuery(undefined)` key (path + the RAW input in the key array,
+ * `[path, { input, type }]` — not a superjson string) matches the input-less
+ * `.prefetch()` here exactly, so hydration hits. (The `authedCacheBypassLink`
+ * mutates the WIRE input, not the react-query key, so keys still match.)
  *
  * SCOPE — only queries NOT already SSR-seeded via `initialData` in
  * `_app.getInitialProps` are prefetched here. `user.getFeatureFlags`,
@@ -69,7 +69,18 @@ type SSGHelpers = Awaited<ReturnType<typeof getServerProxySSGHelpers>>;
  * ROBUSTNESS — best-effort via `Promise.allSettled`: a failing shell query
  * degrades to the normal client fetch, it MUST NEVER reject out of SSR and 500
  * the page.
+ *
+ * DEADLINE — the whole batch is `await`ed on the SSR critical path, so it is
+ * bounded by `APP_SHELL_PREFETCH_TIMEOUT_MS`: on timeout we resolve (never throw)
+ * and the un-prefetched queries fall back to their normal client fetch — same
+ * graceful-degradation contract as a failed prefetch. Without this a slow
+ * postgres/redis would add directly to TTFB on every authed full-SSR render.
  */
+// Tight cap: these are input-less in-process reads that return in single-digit
+// ms on the happy path, so 300ms costs nothing normally but stops a backend
+// slowdown from becoming a fleet-wide authed-SSR TTFB regression.
+const APP_SHELL_PREFETCH_TIMEOUT_MS = 300;
+
 export async function prefetchAppShellQueries(
   ssg: SSGHelpers,
   session: Session | null,
@@ -88,7 +99,21 @@ export async function prefetchAppShellQueries(
     if (features.buzz) tasks.push(ssg.buzz.getUserMultipliers.prefetch());
   }
 
-  await Promise.allSettled(tasks);
+  if (!tasks.length) return;
+
+  // `allSettled` never rejects and keeps handling each task even after the race
+  // resolves on timeout, so a late rejection can't surface as an unhandled
+  // rejection. We race it against a resolving deadline (not a rejecting one) so
+  // a slow backend can't drag SSR past the cap.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, APP_SHELL_PREFETCH_TIMEOUT_MS);
+  });
+  try {
+    await Promise.race([Promise.allSettled(tasks), deadline]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 export function createServerSideProps<P>({
