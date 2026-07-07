@@ -262,6 +262,16 @@ const featureFlags = createFeatureFlags({
   // default until we ship publisher install UX + moderator approval workflow.
   // When off, BlockSlot renders nothing and no token-issuance traffic fires.
   appBlocks: { availability: ['mod'], fliptKey: 'app-blocks-enabled' },
+  // App Blocks W13 — dedicated App Store VISIBILITY flag, decoupled from
+  // `app-blocks-enabled` (which doubles as the block-runtime kill-switch) so the
+  // store catalog can widen to public INDEPENDENTLY of the held block-runtime GA.
+  // Store-visibility surfaces gate on `appListings || appBlocks` (client) /
+  // `isAppListingsEnabled()` which falls back to `isAppBlocksEnabled()` (server),
+  // so while the `app-listings` Flipt flag does not yet exist this resolves via
+  // the `availability: ['mod']` Flipt-down fallback (mods only) + the OR-fallback
+  // to `app-blocks-enabled` — i.e. ZERO behavior change today (the currently
+  // mod+app-dev-testers cohort keeps identical store access).
+  appListings: { availability: ['mod'], fliptKey: 'app-listings' },
   // App Blocks W10 — full-page apps (`/apps/run/<slug>`). A SEPARATE dark flag
   // so the page surface enables independently of the master `app-blocks-enabled`
   // gate. The page route + page-token mint require BOTH `appBlocks` AND

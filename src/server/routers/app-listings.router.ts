@@ -47,7 +47,11 @@ import {
   resolveReportSchema,
 } from '~/server/schema/blocks/offsite-moderation.schema';
 import { rateLimit } from '~/server/middleware.trpc';
-import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
+import {
+  isAppBlocksAuthorEnabled,
+  isAppBlocksEnabled,
+  isAppListingsEnabled,
+} from '~/server/services/app-blocks-flag';
 import {
   appDeveloperProcedure,
   middleware,
@@ -100,15 +104,21 @@ const enforceAppBlocksAuthorFlag = middleware(async ({ ctx, next }) => {
 
 /**
  * Flag gate for the P2a PUBLIC READ procs (unified store). Anon-CAPABLE but DARK
- * until launch: for a real anon / non-mod viewer the mod-segmented
- * `app-blocks-enabled` flag never matches → mark `_appBlocksDisabled` so the
- * query returns an EMPTY page / NOT_FOUND (never an error, mirroring
- * `blocks.router`'s read gate) rather than throwing. The surface only serves
- * real anon callers once the SEGMENT is widened at launch (a deliberate, separate
- * Flipt change — and, at the read-path cutover, its own `appListings` flag).
+ * until launch: for a real anon / non-mod viewer the flag never matches → mark
+ * `_appBlocksDisabled` so the query returns an EMPTY page / NOT_FOUND (never an
+ * error, mirroring `blocks.router`'s read gate) rather than throwing.
+ *
+ * W13 (PR-W1a / D8): repointed onto the DEDICATED store-visibility flag
+ * `isAppListingsEnabled` — which itself OR-falls-back to `isAppBlocksEnabled`, so
+ * the currently-visible cohort (mods + app-dev-testers via `app-blocks-enabled`)
+ * is UNCHANGED today while the `app-listings` flag does not yet exist. A future
+ * true-public flip widens ONLY `app-listings` (this store read path) WITHOUT
+ * touching the held block-runtime gate. The AUTHOR gate
+ * (`enforceAppBlocksAuthorFlag`) + the mod-only backfill (`enforceAppBlocksFlag`)
+ * intentionally stay on their existing flags.
  */
 const enforceAppListingsReadFlag = middleware(async ({ ctx, next }) => {
-  if (await isAppBlocksEnabled({ user: ctx.user })) return next();
+  if (await isAppListingsEnabled({ user: ctx.user })) return next();
   return next({ ctx: { _appBlocksDisabled: true } });
 });
 

@@ -26,7 +26,11 @@ vi.mock('~/server/flipt/client', () => ({
   isFlipt: mockIsFlipt,
 }));
 
-import { isAppBlocksEnabled, isAppBlocksAuthorEnabled } from '../app-blocks-flag';
+import {
+  isAppBlocksEnabled,
+  isAppBlocksAuthorEnabled,
+  isAppListingsEnabled,
+} from '../app-blocks-flag';
 
 // Faithful stand-in for the live `app-blocks-enabled` rule: base OFF, with a
 // `moderators` segment keyed on `context.isModerator === 'true'`. The no-arg
@@ -226,5 +230,114 @@ describe('isAppBlocksAuthorEnabled — author capability (developer soft-launch)
       expect.anything(),
       expect.anything()
     );
+  });
+});
+
+/**
+ * W13 (PR-W1a / D8) — dedicated App Store VISIBILITY flag with an OR-fallback.
+ *
+ * `isAppListingsEnabled` DECOUPLES store visibility from `app-blocks-enabled`
+ * (the block-runtime kill-switch): it evaluates the dedicated `app-listings`
+ * flag and, ONLY if that resolves false, FALLS BACK to `isAppBlocksEnabled`.
+ * That fallback is load-bearing — `app-listings` does not exist at merge time,
+ * so the fallback keeps the current mods+testers cohort in (zero behavior change
+ * today). A future true-public flip widens ONLY `app-listings`.
+ *
+ * The fake models BOTH flags: `app-blocks-enabled` = mod segment; `app-listings`
+ * = a configurable per-user grant set (empty = the dark window / flag absent).
+ */
+describe('isAppListingsEnabled — dedicated visibility flag + OR-fallback (W13)', () => {
+  let appListingsGrants: Set<string>;
+
+  function fakeVisibilityFlags(
+    flag: string,
+    entityId = 'global',
+    context: Record<string, string> = {}
+  ): boolean {
+    if (flag === 'app-blocks-enabled') return context.isModerator === 'true';
+    if (flag === 'app-listings') {
+      // Per-user segment grant. No-user / global eval never matches (dark window).
+      return typeof context.userId === 'string' && appListingsGrants.has(context.userId);
+    }
+    return false;
+  }
+
+  beforeEach(() => {
+    appListingsGrants = new Set();
+    mockIsFlipt.mockReset();
+    mockIsFlipt.mockImplementation(async (...args: Parameters<typeof fakeVisibilityFlags>) =>
+      fakeVisibilityFlags(...args)
+    );
+  });
+
+  it('app-listings granted for the user → true (dedicated flag lit, no fallback needed)', async () => {
+    appListingsGrants.add('888');
+    const user = makeUser({ id: 888, isModerator: false });
+    await expect(isAppListingsEnabled({ user })).resolves.toBe(true);
+    // Evaluated the dedicated visibility flag WITH the user's context...
+    expect(mockIsFlipt).toHaveBeenCalledWith(
+      'app-listings',
+      '888',
+      expect.objectContaining({ userId: '888' })
+    );
+    // ...and short-circuited: the fallback flag was never consulted.
+    expect(mockIsFlipt).not.toHaveBeenCalledWith(
+      'app-blocks-enabled',
+      expect.anything(),
+      expect.anything()
+    );
+  });
+
+  it('app-listings false + app-blocks-enabled true (mod) → true via the OR-fallback', async () => {
+    // The dark-window case: `app-listings` grants nobody yet, but a mod still has
+    // store access through the `app-blocks-enabled` fallback.
+    const user = makeUser({ id: 123, isModerator: true });
+    await expect(isAppListingsEnabled({ user })).resolves.toBe(true);
+    // Read app-listings FIRST, then fell back to app-blocks-enabled.
+    expect(mockIsFlipt).toHaveBeenCalledWith(
+      'app-listings',
+      '123',
+      expect.objectContaining({ userId: '123' })
+    );
+    expect(mockIsFlipt).toHaveBeenCalledWith(
+      'app-blocks-enabled',
+      '123',
+      expect.objectContaining({ isModerator: 'true' })
+    );
+  });
+
+  it('both flags false (non-mod, no listings grant) → false', async () => {
+    const user = makeUser({ id: 555, isModerator: false });
+    await expect(isAppListingsEnabled({ user })).resolves.toBe(false);
+    // Fell through both the dedicated flag AND the fallback.
+    expect(mockIsFlipt).toHaveBeenCalledWith(
+      'app-listings',
+      '555',
+      expect.objectContaining({ userId: '555' })
+    );
+    expect(mockIsFlipt).toHaveBeenCalledWith(
+      'app-blocks-enabled',
+      '555',
+      expect.objectContaining({ isModerator: 'false' })
+    );
+  });
+
+  it('no user → global eval of BOTH flags, fail-closed false', async () => {
+    await expect(isAppListingsEnabled({ user: undefined })).resolves.toBe(false);
+    await expect(isAppListingsEnabled()).resolves.toBe(false);
+    // Both the dedicated flag and the fallback are evaluated globally (no context).
+    expect(mockIsFlipt).toHaveBeenCalledWith('app-listings');
+    expect(mockIsFlipt).toHaveBeenCalledWith('app-blocks-enabled');
+  });
+
+  it('reads ONLY app-listings + app-blocks-enabled (never the pipeline / runtime keys)', async () => {
+    const user = makeUser({ id: 555, isModerator: false });
+    await isAppListingsEnabled({ user });
+    for (const call of mockIsFlipt.mock.calls) {
+      expect(['app-listings', 'app-blocks-enabled']).toContain(call[0]);
+    }
+    expect(mockIsFlipt).not.toHaveBeenCalledWith('app-blocks-pipeline-enabled');
+    expect(mockIsFlipt).not.toHaveBeenCalledWith('app-blocks-runtime-enabled');
+    expect(mockIsFlipt).not.toHaveBeenCalledWith('app-blocks-author');
   });
 });
