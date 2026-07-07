@@ -59,27 +59,20 @@ const URL_INPUT_BUDGET = 1800;
 /**
  * Whether a query's input is too large to safely ride the BATCH link (whose single-op URL is
  * hard-capped at `maxURLLength: 2083`). Excludes such a query from batching (see `shouldBatch`)
- * so it can never trip the "Input is too big for a single dispatch" throw. Measures the actual
- * encoded wire cost against `URL_INPUT_BUDGET`.
+ * so it can never trip the "Input is too big for a single dispatch" throw.
  *
- * It runs on EVERY query op, so it short-circuits before the (relatively costly)
- * `encodeURIComponent` walk. The short-circuit is measured on the SERIALIZED string — the exact
- * bytes that get encoded — NOT on the raw `JSON.stringify(input)`: `superjson.serialize` can
- * EXPAND the input for special types (a `Set`/`Map`/`Date` serializes to a larger `{json,meta}`
- * shape), so a raw-length gate could pass a small-raw / large-serialized input through as
- * "small" and let it overflow the batch URL. `encodeURIComponent` expands each char to at most
- * `%XX` (3×), so `serializedLen * 3 ≤ URL_INPUT_BUDGET` guarantees the encoded length is under
- * budget without doing the encode.
+ * Measures the ACTUAL encoded wire cost — the exact `encodeURIComponent(JSON.stringify(
+ * superjson.serialize(input)))` tRPC builds the GET URL from — against `URL_INPUT_BUDGET`. No
+ * length-based short-circuit: a byte/char-count proxy underestimates the encoded length in the
+ * unsafe direction (a small-count input can encode large — `superjson` expands special types,
+ * and `encodeURIComponent` expands one non-ASCII UTF-16 unit to up to 9 chars, e.g. `中` →
+ * `%E4%B8%AD`), which twice let an overflowing op stay batched. `serialize` + `stringify`
+ * already run unconditionally, so the encode walk is a marginal added cost, not worth the hole.
  */
 export function isTooLargeToBatch(op: { type: string; input: unknown }) {
   if (op.type !== 'query' || op.input == null) return false;
   try {
-    // Serialize the way tRPC will on the wire (the configured superjson transformer), once.
-    const serialized = JSON.stringify(superjson.serialize(op.input));
-    // Cheap exit: even worst-case 3× percent-encoding can't reach the budget → definitely small.
-    if (serialized.length * 3 <= URL_INPUT_BUDGET) return false;
-    // Near the boundary: measure the real encoded length.
-    return encodeURIComponent(serialized).length > URL_INPUT_BUDGET;
+    return encodeURIComponent(JSON.stringify(superjson.serialize(op.input))).length > URL_INPUT_BUDGET;
   } catch {
     return false;
   }

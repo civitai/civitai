@@ -255,6 +255,16 @@ describe('batch-size gate is distinct from the non-batch GET→POST gate (#1)', 
     expect(JSON.stringify(expandingInput).length).toBeLessThan(500); // raw looks tiny…
     expect(isTooLargeToBatch(q(expandingInput))).toBe(true); // …but serialized is too big to batch
   });
+
+  it('isTooLargeToBatch measures ENCODED length, not char count (non-ASCII expands >3x)', () => {
+    // Regression: `encodeURIComponent` expands one non-ASCII UTF-16 unit to up to 9 chars
+    // (中 → %E4%B8%AD), so a char-count×3 short-circuit under-counts a CJK-dense input and would
+    // wave it onto the batch link → 2083 overflow. 300 CJK chars: ~320 serialized chars but the
+    // batched URL is ~2790 > 2083. Must be excluded from batching.
+    const cjk = q({ q: '中'.repeat(300) });
+    expect(JSON.stringify('中'.repeat(300)).length).toBeLessThan(320); // char count looks modest…
+    expect(isTooLargeToBatch(cjk)).toBe(true); // …but the ENCODED URL overflows → must not batch
+  });
 });
 
 /**
