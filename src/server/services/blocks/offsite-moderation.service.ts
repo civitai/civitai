@@ -417,6 +417,12 @@ export type ClaimListingResult = { appListingId: string; userId: number };
  * decision): claim reassigns the listing OWNER only; the historical submission record
  * is preserved for audit fidelity (who actually submitted it). This fn NEVER touches
  * the publish request. The audit event's before/after userId captures the transfer.
+ *
+ * Optionally links + resolves the triggering `reportId` in the SAME tx (mirrors
+ * delist EXACTLY, listing-scoped): in the impersonation workflow (report → delist →
+ * claim → ban) the claim is the substantive resolution, so it ties to and closes the
+ * report just like delist. A mismatched/already-closed reportId is a silent no-op —
+ * the claim still succeeds.
  */
 export async function claimListing(opts: {
   input: ClaimListingInput;
@@ -486,10 +492,26 @@ export async function claimListing(opts: {
         action: 'claim',
         actorUserId: reviewerUserId,
         reason,
+        reportId: input.reportId ?? null,
         before: { userId: current.userId },
         after: { userId: input.targetUserId },
       },
     });
+    if (input.reportId) {
+      // Resolve the triggering report in the same tx — mirrors delist EXACTLY. In the
+      // impersonation flow (report → delist → claim → ban) the claim is the substantive
+      // resolution, so it ties to + closes the report just like delist. Best-effort +
+      // status-guarded AND SCOPED to THIS listing (`appListingId`): a `reportId` that
+      // belongs to a DIFFERENT listing matches 0 rows (no cross-listing report closure)
+      // — the claim of THIS listing still stands and its event still links the supplied
+      // reportId; the mismatched (or already-closed) report is left untouched (silent
+      // no-op, not a hard failure — the claim is the primary action, a bad reportId
+      // must not fail it).
+      await tx.appListingReport.updateMany({
+        where: { id: input.reportId, appListingId: input.appListingId, status: 'pending' },
+        data: { status: 'resolved', resolvedByUserId: reviewerUserId, resolvedAt: new Date() },
+      });
+    }
   });
 
   return { appListingId: input.appListingId, userId: input.targetUserId };

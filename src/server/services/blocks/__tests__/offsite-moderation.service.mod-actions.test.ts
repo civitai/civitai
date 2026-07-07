@@ -278,7 +278,48 @@ describe('claimListing', () => {
       reason: GOOD_REASON,
       before: { userId: OLD_OWNER },
       after: { userId: TARGET },
+      reportId: null,
     });
+    // No linked report → the report table is untouched.
+    expect(mockWrite.appListingReport.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('with a reportId, resolves that report in the SAME tx (status+listing-scoped) + links it on the event', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('approved'));
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(primarySnapshot('approved'));
+    await claimListing({
+      input: { appListingId: APP_ID, targetUserId: TARGET, reason: GOOD_REASON, reportId: REPORT_ID },
+      reviewerUserId: REVIEWER,
+    });
+    // Scoped to THIS listing (appListingId) AND pending — a reportId for another
+    // listing can't be closed by this claim (mirrors delist EXACTLY).
+    expect(mockWrite.appListingReport.updateMany).toHaveBeenCalledWith({
+      where: { id: REPORT_ID, appListingId: APP_ID, status: 'pending' },
+      data: { status: 'resolved', resolvedByUserId: REVIEWER, resolvedAt: expect.any(Date) },
+    });
+    // The claim event carries the reportId link.
+    expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data.reportId).toBe(REPORT_ID);
+  });
+
+  it('a reportId belonging to a DIFFERENT listing is NOT resolved (0-row no-op); the claim still succeeds', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('approved'));
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(primarySnapshot('approved'));
+    // The listing-scoped, status-guarded updateMany matches 0 rows (report is for
+    // another listing) — the claim must still succeed (silent no-op).
+    mockWrite.appListingReport.updateMany.mockResolvedValueOnce({ count: 0 });
+    const res = await claimListing({
+      input: { appListingId: APP_ID, targetUserId: TARGET, reason: GOOD_REASON, reportId: REPORT_ID },
+      reviewerUserId: REVIEWER,
+    });
+    expect(res).toEqual({ appListingId: APP_ID, userId: TARGET });
+    // The WHERE is scoped to THIS listing, so a cross-listing report can never match.
+    expect(mockWrite.appListingReport.updateMany).toHaveBeenCalledWith({
+      where: { id: REPORT_ID, appListingId: APP_ID, status: 'pending' },
+      data: { status: 'resolved', resolvedByUserId: REVIEWER, resolvedAt: expect.any(Date) },
+    });
+    // The claim event still stands + still links the supplied reportId.
+    expect(mockWrite.appListingModerationEvent.create).toHaveBeenCalledTimes(1);
+    expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data.action).toBe('claim');
   });
 
   it('reassigns userId on a REMOVED (delisted) listing too', async () => {

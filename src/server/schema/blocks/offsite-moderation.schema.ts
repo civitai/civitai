@@ -133,11 +133,16 @@ export type RelistListingInput = z.infer<typeof relistListingSchema>;
  * — never client-supplied. There is NO self-service / `protectedProcedure` claim
  * endpoint: a mod is the whole trust boundary (a mod MAY reassign to any real user,
  * including resolving an impersonation by re-pointing to the verified owner).
+ *
+ * `reportId` optionally links the report that triggered the claim (the substantive
+ * resolution of an impersonation report → delist → claim → ban flow) — resolved in
+ * the same tx, listing-scoped, exactly like `delistListingSchema.reportId`.
  */
 export const claimListingSchema = z.object({
   appListingId: z.string().min(1).max(64),
   targetUserId: z.number().int().positive(),
   reason: modReason,
+  reportId: z.string().min(1).max(64).optional(),
 });
 export type ClaimListingInput = z.infer<typeof claimListingSchema>;
 
