@@ -135,6 +135,31 @@ describe('BlockRegistry.resolveDevPageBlockForAuthor', () => {
     expect(res?.blockId).toBe('my-pending');
   });
 
+  it.each([
+    ['UpperCase', 'uppercase letters'],
+    ['my.app', 'a dot'],
+    ['my:app', 'a colon'],
+    ['1leading', 'a leading digit'],
+    ['-leading', 'a leading hyphen'],
+    ['trailing-', 'a trailing hyphen'],
+    ['ab', 'under the 3-char minimum'],
+    ['a'.repeat(41), 'over the 40-char maximum'],
+  ])(
+    '(e) REFUSES (→ null, no oracle) a NON-CANONICAL slug %s (%s) WITHOUT any ephemeral DB lookup',
+    async (badSlug) => {
+      // No owned row for the (non-canonical) slug → falls into the ephemeral path,
+      // where guard (C) rejects it BEFORE the anti-shadow DB reads. Same bare null
+      // a claimed slug returns — a non-canonical slug can never match a real row
+      // (every stored blockId/pending slug is canonical), so this only burns a
+      // rate-limited host-pool allocation if allowed through.
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      expect(await BlockRegistry.resolveDevPageBlockForAuthor(badSlug, 555)).toBeNull();
+      // Rejected up-front — neither anti-shadow lookup runs.
+      expect(mockDbRead.appBlock.findUnique).not.toHaveBeenCalled();
+      expect(mockDbRead.appBlockPublishRequest.findFirst).not.toHaveBeenCalled();
+    }
+  );
+
   it('returns null on empty inputs (fail-closed)', async () => {
     expect(await BlockRegistry.resolveDevPageBlockForAuthor('', 555)).toBeNull();
     expect(await BlockRegistry.resolveDevPageBlockForAuthor('my-app', 0)).toBeNull();

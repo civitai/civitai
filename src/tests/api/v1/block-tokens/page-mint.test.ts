@@ -351,6 +351,33 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
     expect(mockTokenService.sign).not.toHaveBeenCalled();
   });
 
+  it('treats a synthetic ephemeral-<slug> page instance id as non-approved → 404, no token', async () => {
+    // The dev-tunnel ephemeral resolution mints synthetic `ephemeral-<slug>`
+    // ids (page instance `page_ephemeral-<slug>`). Those never name a real
+    // approved AppBlock.id, so the mint's resolvePageBlock(appBlockId) lookup
+    // yields null → 404. This locks that a pre-submit ephemeral app can never
+    // mint a scoped block token (Buzz / App Storage stay 403/404 until approval).
+    mockBlockRegistry.resolvePageBlock.mockResolvedValue(null);
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(
+      makeReq({
+        origin: 'https://civitai.com',
+        body: {
+          blockInstanceId: 'page_ephemeral-my-app',
+          slotContext: { entityType: 'none', slotId: 'app.page' },
+        },
+      }),
+      res
+    );
+    expect(res._status).toBe(404);
+    // The synthetic id is passed through verbatim to the (null-yielding) lookup.
+    expect(mockBlockRegistry.resolvePageBlock).toHaveBeenCalledWith('ephemeral-my-app', {
+      db: 'write',
+    });
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
+  });
+
   it('rejects a page request whose instance id is not page_<appBlockId>', async () => {
     const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const res = makeRes();
