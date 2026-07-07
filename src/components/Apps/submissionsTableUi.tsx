@@ -80,22 +80,26 @@ export function SubmissionSearch({
   );
 }
 
-/** The "N versions" expand/collapse affordance on a collapsed app group row. */
+/** The "N versions" expand/collapse affordance on a collapsed app group row.
+ *  `variant` defaults to the filled-`light` chip (offsite list); the onsite list
+ *  passes `subtle` to render it as a quiet link-styled button under the title. */
 export function VersionToggle({
   expanded,
   count,
   onToggle,
   testId,
+  variant = 'light',
 }: {
   expanded: boolean;
   count: number;
   onToggle: () => void;
   testId?: string;
+  variant?: 'light' | 'subtle' | 'transparent';
 }) {
   return (
     <Button
       size="compact-xs"
-      variant="light"
+      variant={variant}
       color="gray"
       aria-expanded={expanded}
       leftSection={expanded ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}

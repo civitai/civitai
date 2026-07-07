@@ -126,6 +126,29 @@ export function groupSubmissionsByApp<T>(
   return result;
 }
 
+/**
+ * The id of a listing's "currently-published" (live) version, or `null` if none.
+ *
+ * Given a listing's version list ordered NEWEST-FIRST (exactly what
+ * {@link groupSubmissionsByApp} yields as `[group.latest, ...group.older]`), the
+ * currently-published version is the newest version whose status is `'approved'`:
+ *   - the latest version if it is approved,
+ *   - else the most-recent PREVIOUSLY-approved version,
+ *   - else `null` — nothing has been approved yet, so nothing is live.
+ *
+ * This is the SINGLE SOURCE OF TRUTH for the "live" badge + the "Open live"
+ * button, so the two can never disagree about which version is live. PURE — reads
+ * only `id`/`status` and never mutates the input.
+ */
+export function currentlyPublishedVersionId(
+  versionsNewestFirst: readonly { readonly id: string; readonly status: string }[]
+): string | null {
+  for (const v of versionsNewestFirst) {
+    if (v.status === 'approved') return v.id;
+  }
+  return null;
+}
+
 // ── filter + sort over the grouped view ────────────────────────────────────────
 
 /** Keep a group if ANY of its versions matches the query (name or slug). */

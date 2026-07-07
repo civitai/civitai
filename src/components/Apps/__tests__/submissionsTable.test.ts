@@ -4,6 +4,7 @@ import {
   compareDate,
   compareStatus,
   compareText,
+  currentlyPublishedVersionId,
   filterGroups,
   groupSubmissionsByApp,
   matchesQuery,
@@ -292,6 +293,51 @@ describe('ariaSortFor', () => {
     expect(ariaSortFor(s, 'submitted')).toBe('ascending');
     expect(ariaSortFor({ column: 'submitted', direction: 'desc' }, 'submitted')).toBe('descending');
     expect(ariaSortFor(s, 'app')).toBe('none');
+  });
+});
+
+describe('currentlyPublishedVersionId — newest approved version is the live one', () => {
+  // Helper: a minimal newest-first version list (the shape the caller passes as
+  // `[group.latest, ...group.older]`).
+  const v = (id: string, status: string) => ({ id, status });
+
+  it('the LATEST version is approved → it is the published one', () => {
+    expect(
+      currentlyPublishedVersionId([v('v3', 'approved'), v('v2', 'approved'), v('v1', 'rejected')])
+    ).toBe('v3');
+  });
+
+  it('latest is PENDING but a previous version is approved → the previous approved one', () => {
+    expect(
+      currentlyPublishedVersionId([v('v3', 'pending'), v('v2', 'approved'), v('v1', 'approved')])
+    ).toBe('v2');
+  });
+
+  it('latest is rejected/draft/removed → skips to the most-recent approved', () => {
+    expect(
+      currentlyPublishedVersionId([
+        v('v4', 'rejected'),
+        v('v3', 'draft'),
+        v('v2', 'removed'),
+        v('v1', 'approved'),
+      ])
+    ).toBe('v1');
+  });
+
+  it('nothing approved yet → null (no live version)', () => {
+    expect(currentlyPublishedVersionId([v('v2', 'pending'), v('v1', 'rejected')])).toBeNull();
+  });
+
+  it('a single approved version → it', () => {
+    expect(currentlyPublishedVersionId([v('only', 'approved')])).toBe('only');
+  });
+
+  it('a single pending version → null', () => {
+    expect(currentlyPublishedVersionId([v('only', 'pending')])).toBeNull();
+  });
+
+  it('an empty list → null', () => {
+    expect(currentlyPublishedVersionId([])).toBeNull();
   });
 });
 
