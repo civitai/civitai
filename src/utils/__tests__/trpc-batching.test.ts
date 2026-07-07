@@ -142,9 +142,9 @@ describe('shouldBatch', () => {
  *
  * The original fix used a raw-JSON-char threshold with a ~1.4× encoding assumption; the
  * real ratio is ~1.75–1.9× for punctuation-dense JSON, which left a ~12–14-resource crash
- * band still batched-but-overflowing. `isLargeQuery` now measures the ACTUAL encoded wire
- * cost, so we assert the end-to-end invariant against a tRPC-faithful URL model — raising
- * the budget too high would fail this test.
+ * band still batched-but-overflowing. `isTooLargeToBatch` (the batch-exclusion gate) now
+ * measures the ACTUAL encoded wire cost, so we assert the end-to-end invariant against a
+ * tRPC-faithful URL model — raising the budget too high would fail this test.
  */
 describe('shouldBatch never keeps a URL-overflowing query batched (#2962)', () => {
   const BATCH_MAX_URL_LENGTH = 2083; // must match `maxURLLength` on httpBatchStreamLink
