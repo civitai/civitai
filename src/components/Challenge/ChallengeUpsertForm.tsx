@@ -881,10 +881,10 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
           </Stack>
         </Paper>
 
-        {/* Judge */}
+        {/* Judging: judge persona + (user) weighted categories in one card */}
         <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
           <Stack gap="md">
-            <Title order={4}>Judge</Title>
+            <Title order={4}>Judging</Title>
             <InputSelect
               classNames={{ option: '[&[data-checked="true"]]:bg-blue-9/30' }}
               name="judgeId"
@@ -922,22 +922,20 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                 disabled={isActive || isTerminal}
               />
             )}
+            {/* User challenges score against creator-defined categories; mods use the prompt above. */}
+            {isUser && (
+              <>
+                <Divider label="Categories" />
+                <Text size="sm" c="dimmed">
+                  These categories and how they&apos;re scored are shown publicly so entrants know
+                  exactly how they&apos;ll be judged. The defaults below are a sensible starting point
+                  — adjust or replace them however you like (weights must total 100%).
+                </Text>
+                <CategoryWeights />
+              </>
+            )}
           </Stack>
         </Paper>
-
-        {/* Judging Categories (user-only; moderator judging uses judgingPrompt instead) */}
-        {isUser && (
-          <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
-            <Stack gap="md">
-              <Title order={4}>Judging Categories</Title>
-              <Text size="sm" c="dimmed">
-                These categories and how they&apos;re scored are shown publicly so entrants know
-                exactly how they&apos;ll be judged.
-              </Text>
-              <CategoryWeights />
-            </Stack>
-          </Paper>
-        )}
 
         {/* Event (moderator-only) */}
         {!isUser && (

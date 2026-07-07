@@ -22,12 +22,15 @@ const ADDABLE_PRESET_KEYS = CHALLENGE_CATEGORY_KEYS.filter(
     key !== 'theme' && key !== 'custom'
 );
 
-const THEME_ROW: CategoryWeightRow = {
-  key: 'theme',
-  label: CHALLENGE_PRESET_CATEGORIES.theme.label,
-  criteria: CHALLENGE_PRESET_CATEGORIES.theme.criteria,
-  weight: 100,
-};
+// Default starting categories mirror the daily rubric split (theme 50 / wittiness 15 / humor 15 /
+// aesthetic 20 = 100) so a creator has a sensible default without configuring anything. Theme stays
+// first + non-removable; the other three are freely editable or removable.
+const DEFAULT_CATEGORY_ROWS: CategoryWeightRow[] = [
+  { key: 'theme', label: CHALLENGE_PRESET_CATEGORIES.theme.label, criteria: CHALLENGE_PRESET_CATEGORIES.theme.criteria, weight: 50 },
+  { key: 'wittiness', label: CHALLENGE_PRESET_CATEGORIES.wittiness.label, criteria: CHALLENGE_PRESET_CATEGORIES.wittiness.criteria, weight: 15 },
+  { key: 'humor', label: CHALLENGE_PRESET_CATEGORIES.humor.label, criteria: CHALLENGE_PRESET_CATEGORIES.humor.criteria, weight: 15 },
+  { key: 'aesthetic', label: CHALLENGE_PRESET_CATEGORIES.aesthetic.label, criteria: CHALLENGE_PRESET_CATEGORIES.aesthetic.criteria, weight: 20 },
+];
 
 function makeRow(key: ChallengeCategoryKey): CategoryWeightRow {
   if (key === 'custom') return { key, label: '', criteria: '', weight: 0 };
@@ -42,7 +45,7 @@ type LocalRow = CategoryWeightRow & { id: number };
  * added, each an unused preset (humor/wittiness/aesthetic) or a custom label+criteria.
  * Writes the assembled array to the ambient RHF form's `judgingCategories` field on every
  * change. Renders only the row list + add/total controls — the parent supplies the
- * surrounding Paper/Title chrome (see UserChallengeUpsertForm's "Judging categories" section).
+ * surrounding chrome (the "Judging" card in ChallengeUpsertForm, user variant).
  */
 export default function CategoryWeights() {
   const { setValue, watch } = useFormContext();
@@ -52,7 +55,7 @@ export default function CategoryWeights() {
 
   const [rows, setRows] = useState<LocalRow[]>(() => {
     if (existing?.length) return existing.map(withId);
-    return [withId(THEME_ROW)];
+    return DEFAULT_CATEGORY_ROWS.map(withId);
   });
 
   useEffect(() => {
