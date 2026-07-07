@@ -72,6 +72,22 @@ const featureFlags = createFeatureFlags({
   // is the Flipt-DOWN fallback (mirrors `faro`); Flipt is authoritative when the flag
   // exists — ramp by bumping its % rollout, never all-at-once. See `src/utils/trpc.ts`.
   trpcBatching: { availability: ['mod'], fliptKey: 'trpc-batching' },
+  // Cohort-ramp gate for SSR-prefetch of the universal app-shell tRPC queries
+  // (see `createServerSideProps` / `prefetchAppShellQueries` in
+  // `src/server/utils/server-side-helpers.ts`). When ON, pages that use
+  // `createServerSideProps({ useSSG: true })` also prefetch the session's
+  // input-less shell queries (`user.checkNotifications`,
+  // `user.getBookmarkCollections`, and — when `buzz` is on — `buzz.getUserMultipliers`)
+  // server-side, so they hydrate from the page HTML instead of each firing a
+  // client→CF→origin round-trip on mount (client `staleTime: Infinity` makes the
+  // hydrated value stick, so the round-trip is truly saved, not just deferred).
+  // Default OFF (mods only) so the added per-SSR backend calls are dark until
+  // ramped via Flipt (`ssr-prefetch-shell`); availability ['mod'] is the
+  // Flipt-DOWN fallback (mirrors `trpc-batching`). This is a per-request server
+  // behavior gate — `features` is already resolved in that path — and the whole
+  // behavior is best-effort (a failing shell prefetch degrades to client fetch,
+  // never breaks SSR), so flipping the flag off is an instant, safe rollback.
+  ssrPrefetchShell: { availability: ['mod'], fliptKey: 'ssr-prefetch-shell' },
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },

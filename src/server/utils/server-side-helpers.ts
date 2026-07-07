@@ -39,6 +39,58 @@ export const getServerProxySSGHelpers = async (
   return ssg;
 };
 
+type SSGHelpers = Awaited<ReturnType<typeof getServerProxySSGHelpers>>;
+
+/**
+ * SSR-prefetch the universal app-shell tRPC queries so they hydrate from the
+ * dehydrated `trpcState` in the page HTML instead of each firing a
+ * client→CF→origin round-trip on mount (~188ms network floor per query).
+ *
+ * WHY THE WIN LANDS (hydration mechanics): the shared QueryClient runs with
+ * `defaultOptions.queries.staleTime: Infinity` (`src/utils/trpc.ts`), and these
+ * queries carry no lower per-call `staleTime`, so once React Query hydrates the
+ * dehydrated entry it is never stale → NO background refetch on mount. The
+ * client `useQuery(undefined)` key (path + `superjson`-serialized input) matches
+ * the input-less `.prefetch()` here exactly, so hydration hits. (The
+ * `authedCacheBypassLink` mutates the WIRE input, not the react-query key, so
+ * keys still match.)
+ *
+ * SCOPE — only queries NOT already SSR-seeded via `initialData` in
+ * `_app.getInitialProps` are prefetched here. `user.getFeatureFlags`,
+ * `user.getSettings`, `user.getFollowingUsers`, `system.getLiveNow`, and
+ * `chat.getUserSettings` are already seeded there; re-prefetching them would be
+ * a duplicate backend call for no gain.
+ *
+ * All targets are input-less protected reads (session-gated on the client), so
+ * they are prefetched ONLY for authenticated sessions. `buzz.getUserMultipliers`
+ * additionally requires the `buzz` feature flag (its `buzzProcedure` throws
+ * without it), so it is gated on `features.buzz`.
+ *
+ * ROBUSTNESS — best-effort via `Promise.allSettled`: a failing shell query
+ * degrades to the normal client fetch, it MUST NEVER reject out of SSR and 500
+ * the page.
+ */
+export async function prefetchAppShellQueries(
+  ssg: SSGHelpers,
+  session: Session | null,
+  features: FeatureAccess
+): Promise<void> {
+  const tasks: Promise<unknown>[] = [];
+
+  if (session?.user) {
+    // Input-less, protected, static-at-load; `staleTime: Infinity` on the client
+    // so the hydrated value sticks (round-trip truly saved).
+    tasks.push(ssg.user.checkNotifications.prefetch());
+    tasks.push(ssg.user.getBookmarkCollections.prefetch());
+    // buzzProcedure = protected + `isFlagProtected('buzz')`: throws unless the
+    // `buzz` flag is on, so only prefetch when it is (allSettled would swallow
+    // the throw anyway, but skipping avoids a guaranteed-failed backend call).
+    if (features.buzz) tasks.push(ssg.buzz.getUserMultipliers.prefetch());
+  }
+
+  await Promise.allSettled(tasks);
+}
+
 export function createServerSideProps<P>({
   resolver,
   useSSG,
@@ -74,6 +126,16 @@ export function createServerSideProps<P>({
       useSSG && (prefetch === 'always' || !isClient)
         ? await getServerProxySSGHelpers(context, session, features)
         : undefined;
+
+    // Flag-gated SSR-prefetch of the universal app-shell queries into the shared
+    // `ssg` cache so they ride down in `trpcState` (dehydrated below) and hydrate
+    // instead of round-tripping on mount. Runs only when the `ssg` helper exists
+    // (i.e. full SSR, or `prefetch: 'always'` — never a bare client-nav
+    // `/_next/data` fetch) and the `ssrPrefetchShell` flag is on for this user.
+    // Best-effort: never throws (see `prefetchAppShellQueries`).
+    if (ssg && features.ssrPrefetchShell) {
+      await prefetchAppShellQueries(ssg, session, features);
+    }
 
     const result = ((await resolver?.({
       ctx: context,
