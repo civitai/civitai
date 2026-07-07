@@ -4,33 +4,53 @@ import {
   Group,
   Modal,
   Paper,
+  Skeleton,
   Stack,
   Switch,
   Text,
   Textarea,
   ThemeIcon,
 } from '@mantine/core';
-import { IconChevronDown, IconChevronUp, IconStar } from '@tabler/icons-react';
+import type { Icon, IconProps } from '@tabler/icons-react';
+import {
+  IconBox,
+  IconChevronDown,
+  IconChevronUp,
+  IconShirt,
+  IconSparkles,
+  IconStar,
+} from '@tabler/icons-react';
+import type { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { CreatorShopFeaturePickerModal } from '~/components/CreatorShop/CreatorShopFeaturePickerModal';
+import { CREATOR_SHOP_BORDER } from '~/components/CreatorShop/creator-shop.constants';
 import {
   useMutateCreatorShop,
   useQueryCreatorShopSettings,
 } from '~/components/CreatorShop/creator-shop.util';
 import {
+  CREATOR_SHOP_MAX_FEATURED,
   creatorShopSectionKeys,
   type CreatorShopSectionKey,
 } from '~/server/schema/creator-shop.schema';
 
 type SectionState = { key: CreatorShopSectionKey; visible: boolean };
+type TablerIcon = ForwardRefExoticComponent<Omit<IconProps, 'ref'> & RefAttributes<Icon>>;
 
 const sectionLabels: Record<CreatorShopSectionKey, string> = {
   featured: 'Featured',
   cosmetics: 'Cosmetics',
   merch: 'Merch (coming soon)',
   models: 'Models',
+};
+
+const sectionIcons: Record<CreatorShopSectionKey, TablerIcon> = {
+  featured: IconStar,
+  cosmetics: IconSparkles,
+  merch: IconShirt,
+  models: IconBox,
 };
 
 function seedSections(settings?: {
@@ -55,7 +75,7 @@ function seedSections(settings?: {
 
 export function CreatorShopSettingsModal() {
   const dialog = useDialogContext();
-  const { settings } = useQueryCreatorShopSettings();
+  const { settings, isLoading } = useQueryCreatorShopSettings();
   const { updateSettings } = useMutateCreatorShop();
 
   const [sections, setSections] = useState<SectionState[]>(() => seedSections(settings));
@@ -92,85 +112,135 @@ export function CreatorShopSettingsModal() {
     dialog.onClose();
   };
 
+  const loading = isLoading && !settings;
+
   return (
     <Modal {...dialog} size="lg" title="Shop settings">
-      <Stack>
-        <Stack gap={6}>
+      <Stack gap="lg">
+        <Stack gap={8}>
           <Text fw={600}>Featured cosmetics</Text>
-          <Paper withBorder radius="md" p="sm">
-            <Group justify="space-between">
-              <Group gap={8}>
-                <ThemeIcon variant="light" color="yellow" radius="xl">
-                  <IconStar size={16} />
-                </ThemeIcon>
-                <Text size="sm">
-                  {featuredCount} item{featuredCount === 1 ? '' : 's'} featured
-                </Text>
-              </Group>
-              <Button
-                variant="default"
-                size="xs"
-                onClick={() => dialogStore.trigger({ component: CreatorShopFeaturePickerModal })}
-              >
-                Manage featured
-              </Button>
-            </Group>
-          </Paper>
-        </Stack>
-
-        <Stack gap={6}>
-          <Text fw={600}>Sections</Text>
-          <Text size="xs" c="dimmed">
-            Toggle sections on or off and drag their order with the arrows.
-          </Text>
-          <Stack gap={8}>
-            {sections.map((section, index) => (
-              <Paper key={section.key} withBorder radius="md" p="sm">
-                <Group justify="space-between" wrap="nowrap">
-                  <Switch
-                    checked={section.visible}
-                    onChange={() => toggleVisible(section.key)}
-                    label={sectionLabels[section.key]}
-                  />
-                  <Group gap={4} wrap="nowrap">
-                    <ActionIcon
-                      variant="default"
-                      onClick={() => move(index, -1)}
-                      disabled={index === 0}
-                      aria-label={`Move ${sectionLabels[section.key]} up`}
-                    >
-                      <IconChevronUp size={16} />
-                    </ActionIcon>
-                    <ActionIcon
-                      variant="default"
-                      onClick={() => move(index, 1)}
-                      disabled={index === sections.length - 1}
-                      aria-label={`Move ${sectionLabels[section.key]} down`}
-                    >
-                      <IconChevronDown size={16} />
-                    </ActionIcon>
-                  </Group>
+          {loading ? (
+            <Skeleton height={62} radius="md" />
+          ) : (
+            <Paper withBorder radius="md" p="md">
+              <Group justify="space-between" wrap="nowrap">
+                <Group gap="sm" wrap="nowrap">
+                  <ThemeIcon variant="light" color="yellow" radius="xl" size="lg">
+                    <IconStar size={18} />
+                  </ThemeIcon>
+                  <Stack gap={0}>
+                    <Text size="sm" fw={600}>
+                      {featuredCount} of {CREATOR_SHOP_MAX_FEATURED} featured
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      Highlighted at the top of your shop
+                    </Text>
+                  </Stack>
                 </Group>
-              </Paper>
-            ))}
-          </Stack>
+                <Button
+                  variant="light"
+                  color="yellow"
+                  size="xs"
+                  onClick={() => dialogStore.trigger({ component: CreatorShopFeaturePickerModal })}
+                >
+                  Manage featured
+                </Button>
+              </Group>
+            </Paper>
+          )}
         </Stack>
 
-        <Textarea
-          label="Shop description"
-          value={description}
-          onChange={(e) => setDescription(e.currentTarget.value)}
-          autosize
-          minRows={2}
-          maxLength={1000}
-          placeholder="Tell shoppers about your shop (optional)"
-        />
+        <Stack gap={8}>
+          <div>
+            <Text fw={600}>Sections</Text>
+            <Text size="xs" c="dimmed">
+              Toggle sections on or off, and use the arrows to reorder them.
+            </Text>
+          </div>
+          {loading ? (
+            <Stack gap={8}>
+              {creatorShopSectionKeys.map((key) => (
+                <Skeleton key={key} height={58} radius="md" />
+              ))}
+            </Stack>
+          ) : (
+            <Stack gap={8}>
+              {sections.map((section, index) => {
+                const SectionIcon = sectionIcons[section.key];
+                return (
+                  <Paper key={section.key} withBorder radius="md" p="sm">
+                    <Group justify="space-between" wrap="nowrap">
+                      <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
+                        <ThemeIcon
+                          variant="light"
+                          color={section.visible ? 'yellow' : 'gray'}
+                          radius="md"
+                          size="lg"
+                        >
+                          <SectionIcon size={18} />
+                        </ThemeIcon>
+                        <Text
+                          size="sm"
+                          fw={500}
+                          c={section.visible ? undefined : 'dimmed'}
+                          lineClamp={1}
+                        >
+                          {sectionLabels[section.key]}
+                        </Text>
+                      </Group>
+                      <Group gap={4} wrap="nowrap">
+                        <ActionIcon
+                          variant="default"
+                          onClick={() => move(index, -1)}
+                          disabled={index === 0}
+                          aria-label={`Move ${sectionLabels[section.key]} up`}
+                        >
+                          <IconChevronUp size={16} />
+                        </ActionIcon>
+                        <ActionIcon
+                          variant="default"
+                          onClick={() => move(index, 1)}
+                          disabled={index === sections.length - 1}
+                          aria-label={`Move ${sectionLabels[section.key]} down`}
+                        >
+                          <IconChevronDown size={16} />
+                        </ActionIcon>
+                        <Switch
+                          ml={4}
+                          checked={section.visible}
+                          onChange={() => toggleVisible(section.key)}
+                          aria-label={`Show ${sectionLabels[section.key]} section`}
+                        />
+                      </Group>
+                    </Group>
+                  </Paper>
+                );
+              })}
+            </Stack>
+          )}
+        </Stack>
 
-        <Group justify="flex-end">
+        <Stack gap={8}>
+          <Text fw={600}>Description</Text>
+          {loading ? (
+            <Skeleton height={72} radius="md" />
+          ) : (
+            <Textarea
+              value={description}
+              onChange={(e) => setDescription(e.currentTarget.value)}
+              autosize
+              minRows={2}
+              maxLength={1000}
+              placeholder="Tell shoppers about your shop (optional)"
+            />
+          )}
+        </Stack>
+
+        <Group justify="flex-end" pt="sm" style={{ borderTop: CREATOR_SHOP_BORDER }}>
           <Button variant="default" onClick={dialog.onClose}>
             Cancel
           </Button>
-          <Button loading={updateSettings.isPending} onClick={handleSave}>
+          <Button loading={updateSettings.isPending} disabled={loading} onClick={handleSave}>
             Save changes
           </Button>
         </Group>

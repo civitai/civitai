@@ -1,19 +1,20 @@
 import {
-  Badge,
+  Box,
   Button,
-  Card,
   Center,
   Group,
   Loader,
   Modal,
+  Paper,
+  Progress,
   SimpleGrid,
   Stack,
   Text,
   ThemeIcon,
 } from '@mantine/core';
-import { IconCheck, IconStar } from '@tabler/icons-react';
+import { IconCheck, IconPhotoOff, IconStar } from '@tabler/icons-react';
 import type { ComponentProps } from 'react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import {
   useMutateCreatorShop,
@@ -29,11 +30,21 @@ type SampleCosmetic = ComponentProps<typeof CosmeticSample>['cosmetic'];
 
 export function CreatorShopFeaturePickerModal() {
   const dialog = useDialogContext();
-  const { items, isLoading } = useQueryCreatorShopManage();
-  const { settings } = useQueryCreatorShopSettings();
+  const { items, isLoading: itemsLoading } = useQueryCreatorShopManage();
+  const { settings, isLoading: settingsLoading } = useQueryCreatorShopSettings();
   const { updateSettings } = useMutateCreatorShop();
 
   const [selected, setSelected] = useState<number[]>(settings?.featuredItemIds ?? []);
+  // The settings query may still be loading on first render; re-seed the
+  // selection once it first resolves so previously-featured items stay selected.
+  const seededRef = useRef(!!settings);
+  useEffect(() => {
+    if (!settings || seededRef.current) return;
+    seededRef.current = true;
+    setSelected(settings.featuredItemIds ?? []);
+  }, [settings]);
+
+  const loading = itemsLoading || settingsLoading;
   const publishedItems = items.filter((i) => i.status === CosmeticShopItemStatus.Published);
   const atCap = selected.length >= CREATOR_SHOP_MAX_FEATURED;
 
@@ -51,38 +62,49 @@ export function CreatorShopFeaturePickerModal() {
     <Modal {...dialog} size="lg" title="Feature cosmetics">
       <Stack>
         <Text size="sm" c="dimmed">
-          Choose cosmetics to highlight at the top of your shop. Only published items can be
-          featured.
+          Choose up to {CREATOR_SHOP_MAX_FEATURED} cosmetics to highlight at the top of your shop.
+          Only published items can be featured.
         </Text>
 
-        {isLoading ? (
+        {loading ? (
           <Center py="xl">
             <Loader />
           </Center>
         ) : publishedItems.length === 0 ? (
-          <Text size="sm" c="dimmed" ta="center" py="lg">
-            You have no published cosmetics to feature yet.
-          </Text>
+          <Paper withBorder radius="md" p="xl">
+            <Stack align="center" gap={6}>
+              <ThemeIcon variant="light" color="gray" radius="xl" size={44}>
+                <IconPhotoOff size={22} />
+              </ThemeIcon>
+              <Text size="sm" fw={600}>
+                No published cosmetics to feature yet
+              </Text>
+              <Text size="xs" c="dimmed" ta="center">
+                Once an item is approved and published, it&apos;ll show up here.
+              </Text>
+            </Stack>
+          </Paper>
         ) : (
           <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="sm">
             {publishedItems.map((item) => {
               const isSelected = selected.includes(item.id);
               const disabled = !isSelected && atCap;
               return (
-                <Card
+                <Paper
                   key={item.id}
                   withBorder
-                  padding={6}
                   radius="md"
+                  p={6}
                   onClick={() => !disabled && toggle(item.id)}
                   style={{
                     cursor: disabled ? 'not-allowed' : 'pointer',
-                    opacity: disabled ? 0.5 : 1,
-                    borderColor: isSelected ? 'var(--mantine-color-blue-6)' : undefined,
-                    borderWidth: isSelected ? 2 : 1,
+                    opacity: disabled ? 0.45 : 1,
+                    transition: 'border-color 100ms ease, box-shadow 100ms ease',
+                    borderColor: isSelected ? 'var(--mantine-color-yellow-5)' : undefined,
+                    boxShadow: isSelected ? '0 0 0 1px var(--mantine-color-yellow-5)' : undefined,
                   }}
                 >
-                  <Card.Section
+                  <Box
                     pos="relative"
                     style={{
                       height: 90,
@@ -90,6 +112,8 @@ export function CreatorShopFeaturePickerModal() {
                       alignItems: 'center',
                       justifyContent: 'center',
                       background: 'var(--mantine-color-dark-8)',
+                      borderRadius: 'var(--mantine-radius-sm)',
+                      overflow: 'hidden',
                     }}
                   >
                     <CosmeticSample
@@ -103,41 +127,55 @@ export function CreatorShopFeaturePickerModal() {
                         right={6}
                         radius="xl"
                         size="sm"
-                        color="blue"
+                        color="yellow"
                       >
-                        <IconCheck size={12} />
+                        <IconCheck size={12} stroke={3} />
                       </ThemeIcon>
                     )}
-                  </Card.Section>
-                  <Stack gap={2} mt={6}>
-                    <Text size="xs" fw={600} lineClamp={1}>
+                  </Box>
+                  <Stack gap={0} mt={8} px={4} pb={2}>
+                    <Text size="sm" fw={600} lineClamp={1}>
                       {item.title}
                     </Text>
-                    <Badge size="xs" variant="light" color="gray">
+                    <Text size="xs" c="dimmed" lineClamp={1}>
                       {getDisplayName(item.cosmetic.type)}
-                    </Badge>
+                    </Text>
                   </Stack>
-                </Card>
+                </Paper>
               );
             })}
           </SimpleGrid>
         )}
 
-        <Group justify="space-between">
-          <Group gap={6} align="center">
-            <IconStar size={16} color="var(--mantine-color-yellow-5)" />
-            <Text size="sm">
-              {selected.length} of {CREATOR_SHOP_MAX_FEATURED} selected
-            </Text>
+        <Stack gap={6}>
+          <Group justify="space-between" align="center">
+            <Group gap={6} align="center">
+              <IconStar size={16} color="var(--mantine-color-yellow-5)" />
+              <Text size="sm" fw={500}>
+                {selected.length} of {CREATOR_SHOP_MAX_FEATURED} selected
+              </Text>
+            </Group>
+            {atCap && (
+              <Text size="xs" c="dimmed">
+                Maximum reached
+              </Text>
+            )}
           </Group>
-          <Group gap="xs">
-            <Button variant="default" onClick={dialog.onClose}>
-              Cancel
-            </Button>
-            <Button loading={updateSettings.isPending} onClick={handleSave}>
-              Save featured
-            </Button>
-          </Group>
+          <Progress
+            value={(selected.length / CREATOR_SHOP_MAX_FEATURED) * 100}
+            color="yellow"
+            size="xs"
+            radius="xl"
+          />
+        </Stack>
+
+        <Group justify="flex-end" gap="xs">
+          <Button variant="default" onClick={dialog.onClose}>
+            Cancel
+          </Button>
+          <Button loading={updateSettings.isPending} disabled={loading} onClick={handleSave}>
+            Save featured
+          </Button>
         </Group>
       </Stack>
     </Modal>
