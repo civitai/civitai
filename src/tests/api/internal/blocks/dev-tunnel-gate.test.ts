@@ -52,11 +52,17 @@ function makeRes() {
   };
 }
 
-function makeReq(opts: { host?: string; uri?: string; secFetchDest?: string }): NextApiRequest {
+function makeReq(opts: {
+  host?: string;
+  uri?: string;
+  secFetchDest?: string;
+  upgrade?: string;
+}): NextApiRequest {
   const headers: Record<string, string> = {};
   if (opts.host !== undefined) headers['x-forwarded-host'] = opts.host;
   if (opts.uri !== undefined) headers['x-forwarded-uri'] = opts.uri;
   if (opts.secFetchDest !== undefined) headers['sec-fetch-dest'] = opts.secFetchDest;
+  if (opts.upgrade !== undefined) headers['upgrade'] = opts.upgrade;
   return { method: 'GET', headers } as unknown as NextApiRequest;
 }
 
@@ -142,6 +148,45 @@ describe('/api/internal/dev-tunnel-gate', () => {
     const res = makeRes();
     handler(makeReq({ host: HOST, uri: '/app.js', secFetchDest: 'script' }), res);
     expect(res.statusCode).toBe(200);
+  });
+
+  // ── WEBSOCKET UPGRADE (Vite HMR socket) → allowed deterministically ──
+  it('WEBSOCKET UPGRADE (Upgrade: websocket) with NO token → 200 (HMR socket allowed)', () => {
+    const res = makeRes();
+    handler(
+      makeReq({ host: HOST, uri: '/?token=abc', upgrade: 'websocket', secFetchDest: 'websocket' }),
+      res
+    );
+    expect(res.statusCode).toBe(200);
+    expect((res.body as { via?: string }).via).toBe('websocket');
+  });
+
+  it('WEBSOCKET UPGRADE with ABSENT Sec-Fetch-Dest → still 200 (not treated as ENTRY)', () => {
+    // The load-bearing case: without the explicit Upgrade allow, an absent
+    // Sec-Fetch-Dest would route a ws handshake into the ENTRY branch → 401.
+    const res = makeRes();
+    handler(makeReq({ host: HOST, uri: '/?token=abc', upgrade: 'websocket' }), res);
+    expect(res.statusCode).toBe(200);
+    expect((res.body as { via?: string }).via).toBe('websocket');
+  });
+
+  it('WEBSOCKET UPGRADE is case-insensitive (Upgrade: WebSocket) → 200', () => {
+    const res = makeRes();
+    handler(makeReq({ host: HOST, uri: '/?token=abc', upgrade: 'WebSocket' }), res);
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('WEBSOCKET UPGRADE without X-Forwarded-Host → 401 (fail-closed still wins)', () => {
+    const res = makeRes();
+    handler(makeReq({ uri: '/?token=abc', upgrade: 'websocket' }), res);
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('does NOT refresh the idle marker on a ws upgrade (no ENTRY auth decision)', async () => {
+    const res = makeRes();
+    await handler(makeReq({ host: HOST, uri: '/?token=abc', upgrade: 'websocket' }), res);
+    expect(res.statusCode).toBe(200);
+    expect(mockTouchDevTunnelActivity).not.toHaveBeenCalled();
   });
 
   // ── F3: idle-marker refresh fires ONLY on a successful ENTRY hit ──

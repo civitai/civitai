@@ -29,6 +29,14 @@ import { verifyDevTunnelAccessToken } from '~/server/services/blocks/dev-tunnel-
  * Authorizes ONLY the ENTRY document/iframe request (the one that can carry the
  * `dev` token) and ALLOWS subresources through, per the tradeoff above.
  *
+ *   - WEBSOCKET UPGRADE (`Upgrade: websocket`, e.g. the Vite HMR socket
+ *     `wss://dev-<hex>/?token=…`): 200 (allow). A ws handshake is structurally a
+ *     subresource — it can NEVER be a top-level document navigation — so allowing
+ *     it does not weaken the naked-entry-document 401 property. Keyed on the
+ *     DEFINITIONAL `Upgrade` handshake header (RFC 6455), not on the browser
+ *     emitting `Sec-Fetch-Dest: websocket` (which the subresource branch would
+ *     also allow, but which some browsers/proxies omit → the request would fall
+ *     into the ENTRY branch and 401 the HMR socket). Deterministic, not heuristic.
  *   - ENTRY (Sec-Fetch-Dest document/iframe/frame/nested-document, OR ABSENT →
  *     treated as entry, fail-safe): require a valid `dev` token bound to
  *     X-Forwarded-Host → 200 + X-Dev-User-Id, else 401.
@@ -65,6 +73,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   // Fail-closed: without the dev host we can't bind/verify anything.
   if (!forwardedHost) {
     res.status(401).json({ error: 'Missing dev host' });
+    return;
+  }
+
+  // WEBSOCKET UPGRADE → allow (e.g. the Vite HMR socket `wss://dev-<hex>/?token=…`
+  // so live-reload flows over the tunnel). A ws handshake is structurally a
+  // subresource and can never be a top-level document navigation, so this does
+  // NOT weaken the naked-entry-document 401 property (and the ws still only
+  // reaches the AUTHOR'S OWN localhost, host-secrecy protected — same tradeoff as
+  // every other subresource). Keyed on the DEFINITIONAL `Upgrade` handshake
+  // header (RFC 6455) rather than `Sec-Fetch-Dest: websocket`, which some
+  // browsers/proxies omit → the request would otherwise fall into the ENTRY
+  // branch below and 401 the HMR socket. Deterministic + structural.
+  const upgrade = firstHeader(req.headers['upgrade']);
+  if (upgrade && upgrade.toLowerCase() === 'websocket') {
+    res.status(200).json({ ok: true, via: 'websocket' });
     return;
   }
 
