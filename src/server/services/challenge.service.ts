@@ -17,6 +17,7 @@ export { getChallengeWinners } from '~/server/games/daily-challenge/challenge-he
 import {
   ChallengeParticipation,
   ChallengeSort,
+  challengeJudgingCategoriesSchema,
   parseChallengeMetadata,
   type ChallengeDetail,
   type ChallengeDetailForEdit,
@@ -1712,7 +1713,31 @@ export async function endChallengeAndPickWinners(challengeId: number) {
       // Resolve event context for cooldown scoping (eventId comes from getChallengeById)
       const eventContext = await resolveEventContext(challenge.eventId);
 
-      const judgedEntries = await getJudgedEntries(challenge.collectionId, config, eventContext);
+      // User-source challenges rank by creator-defined weighted categories (see
+      // getJudgedEntries); other sources keep the fixed theme/wittiness/humor/aesthetic rubric.
+      // judgingCategories isn't in the slim ChallengeDetails type, so fetch it separately.
+      const [judgingCategoriesRow] = await dbRead.$queryRaw<
+        [{ judgingCategories: unknown } | undefined]
+      >`
+        SELECT "judgingCategories" FROM "Challenge"
+        WHERE id = ${challengeId}
+        LIMIT 1
+      `;
+      const userJudgingCategories =
+        challenge.source === ChallengeSource.User
+          ? challengeJudgingCategoriesSchema.safeParse(judgingCategoriesRow?.judgingCategories)
+          : undefined;
+      const userCategories = userJudgingCategories?.success
+        ? userJudgingCategories.data
+        : undefined;
+
+      const judgedEntries = await getJudgedEntries(
+        challenge.collectionId,
+        config,
+        eventContext,
+        challenge.source,
+        userCategories
+      );
       if (!judgedEntries.length) {
         // No judged entries, just mark as completed
         await dbWrite.challenge.update({
@@ -2505,7 +2530,28 @@ export async function playgroundPickWinners(input: PlaygroundPickWinnersInput) {
   if (!challenge.collectionId)
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'Challenge has no collection' });
 
-  const entries = await getJudgedEntries(challenge.collectionId, challengeConfig);
+  // User-source challenges rank by creator-defined weighted categories (see getJudgedEntries);
+  // judgingCategories isn't in the slim ChallengeDetails type, so fetch it separately.
+  const [judgingCategoriesRow] = await dbRead.$queryRaw<
+    [{ judgingCategories: unknown } | undefined]
+  >`
+    SELECT "judgingCategories" FROM "Challenge"
+    WHERE id = ${input.challengeId}
+    LIMIT 1
+  `;
+  const userJudgingCategories =
+    challenge.source === ChallengeSource.User
+      ? challengeJudgingCategoriesSchema.safeParse(judgingCategoriesRow?.judgingCategories)
+      : undefined;
+  const userCategories = userJudgingCategories?.success ? userJudgingCategories.data : undefined;
+
+  const entries = await getJudgedEntries(
+    challenge.collectionId,
+    challengeConfig,
+    undefined,
+    challenge.source,
+    userCategories
+  );
   if (entries.length < 3)
     throw new TRPCError({
       code: 'BAD_REQUEST',
