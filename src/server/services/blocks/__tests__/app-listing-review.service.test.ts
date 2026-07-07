@@ -283,6 +283,15 @@ describe('listAppListingReviews', () => {
     expect(args.orderBy).toEqual({ id: 'desc' });
   });
 
+  it('gates on the listing being approved (reviews of a removed/rejected listing are not enumerable)', async () => {
+    mockRead.appListingReview.findMany.mockResolvedValue([]);
+    await listAppListingReviews({ appListingId: APP_ID, limit: 20 });
+    const args = mockRead.appListingReview.findMany.mock.calls[0][0];
+    // The relation filter is what makes a later-removed listing's reviews vanish (and a
+    // missing listing return empty) — critical before the P2d public read cutover.
+    expect(args.where).toMatchObject({ appListing: { is: { status: 'approved' } } });
+  });
+
   it('emits a nextCursor when a full page + 1 comes back (keyset)', async () => {
     // limit 2 → take 3; return 3 rows → hasNext, cursor = last VISIBLE row id.
     mockRead.appListingReview.findMany.mockResolvedValue([row(5), row(4), row(3)]);

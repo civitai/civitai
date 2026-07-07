@@ -166,6 +166,12 @@ export async function upsertAppListingReview(opts: {
     // Feed the metric in the SAME tx. Only touch it when there's a real delta (a
     // details-only edit leaves the counters untouched). The upsert CREATES the row
     // (clamped ≥0) when absent, else applies the atomic per-counter increments.
+    // Concurrency note: two users filing the first-ever reviews on a listing with no
+    // metric row both take the create branch; this is safe ONLY because Prisma emits a
+    // native INSERT … ON CONFLICT DO UPDATE for a single-PK upsert (the loser's insert
+    // converts to the increment). If Prisma ever falls back to select-then-insert, the
+    // loser's tx would 500 once (retriable — the row then exists). Single writer today
+    // (no P5 rollup job); a future job MUST NOT also write thumbsUp/DownCount here.
     if (upDelta !== 0 || downDelta !== 0) {
       await tx.appListingMetric.upsert({
         where: { appListingId },
@@ -229,6 +235,11 @@ export async function listAppListingReviews(
   const rows = await dbRead.appListingReview.findMany({
     where: {
       appListingId: input.appListingId,
+      // Only surface reviews for a currently-approved listing: reviews accrue while
+      // approved, but a listing can later be removed/rejected — its reviews must not
+      // stay publicly enumerable by id once the read flag widens to anon at the P2d
+      // cutover. Filtering on the relation also makes a missing listing return empty.
+      appListing: { is: { status: 'approved' } },
       exclude: false,
       tosViolation: false,
       ...(input.cursor ? { id: { lt: input.cursor } } : {}),
