@@ -184,6 +184,33 @@ describe('/api/v1/users transient-upstream 503 reclassification', () => {
     expect(res._getHeader('Retry-After')).toBeUndefined();
   });
 
+  it('returns a clean 500 (no throw, no 503) for the REAL prod non-transient shape: a throwDbError-wrapped TRPCError INTERNAL_SERVER_ERROR with a PLAIN-STRING (non-JSON) message', async () => {
+    // This is what a non-transient user.getAll failure (Prisma error / generic
+    // app bug) actually looks like after throwDbError: TRPCError
+    // INTERNAL_SERVER_ERROR whose `message` is a bare string, NOT JSON. Against
+    // the UN-hardened handler this hits `JSON.parse('Database connection lost')`
+    // → SyntaxError → the throw escapes the catch → a raw unhandled Next 500 (the
+    // original failure mode, still live for the non-transient subset). The
+    // hardened handler falls back to the { error, code } shape with the correct
+    // HTTP status — a clean 500, never a throw, never a 503.
+    const dbError = new TRPCError({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: 'Database connection lost',
+    });
+    mockGetAll.mockRejectedValue(dbError);
+    const { req, res } = createMocks({ query: { query: 'heidi' } });
+
+    // Must NOT throw (the pre-hardening crash).
+    await expect(handler(req, res)).resolves.toBeUndefined();
+
+    expect(res._getStatusCode()).toBe(500);
+    expect(res._getJSONData()).toEqual({
+      error: 'Database connection lost',
+      code: 'INTERNAL_SERVER_ERROR',
+    });
+    expect(res._getHeader('Retry-After')).toBeUndefined();
+  });
+
   it('does NOT mask a generic app error (null deref) as 503 — bubbles to 500', async () => {
     // A non-transient, non-TRPCError failure must still surface as a hard 500 —
     // only transient search errors become 503.

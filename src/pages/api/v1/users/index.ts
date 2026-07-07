@@ -60,9 +60,22 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     }
     if (error instanceof TRPCError) {
       const status = getHTTPStatusCodeFromError(error);
-      const parsedError = JSON.parse(error.message);
-
-      res.status(status).json(parsedError);
+      // Some tRPC errors carry a JSON-stringified message (e.g. zod/validation
+      // issues serialized as a JSON array) — preserve that shape. But a
+      // throwDbError-wrapped INTERNAL_SERVER_ERROR carries a PLAIN-STRING message
+      // (`message: e.message` — Prisma errors / generic app bugs), so a blind
+      // JSON.parse would THROW and escape this catch → a raw unhandled 500 (the
+      // exact failure mode this PR fixes, previously still live for the
+      // non-transient subset). Fall back to the /api/v1/images error shape
+      // ({ error, code }) on a non-JSON message so NO input path can produce a
+      // raw unhandled 500.
+      let body: unknown;
+      try {
+        body = JSON.parse(error.message);
+      } catch {
+        body = { error: error.message, code: error.code };
+      }
+      res.status(status).json(body);
     } else {
       const err = error as Error;
       res.status(500).json({ message: 'An unexpected error occurred', error: err.message });
