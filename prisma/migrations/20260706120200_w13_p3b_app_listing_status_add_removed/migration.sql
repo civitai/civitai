@@ -30,7 +30,13 @@
 --
 -- Idempotent: DROP IF EXISTS then ADD, so a manual re-run is a no-op.
 -- (To add 'suspended' later: the same two-line ALTER with the value appended.)
-
+--
+-- Wrapped in a single transaction so the DROP+ADD swap is ATOMIC: without it,
+-- there is a sub-ms window between DROP and ADD where the table has NO status
+-- CHECK and a concurrent bad write could slip through. BEGIN/COMMIT closes that
+-- window (mirrors the P0/partial-unique single-transaction precedent).
+BEGIN;
 ALTER TABLE "app_listings" DROP CONSTRAINT IF EXISTS "app_listings_status_check";
 ALTER TABLE "app_listings" ADD  CONSTRAINT "app_listings_status_check"
   CHECK ("status" IN ('draft', 'pending', 'approved', 'rejected', 'removed'));
+COMMIT;

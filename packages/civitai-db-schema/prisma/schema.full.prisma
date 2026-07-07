@@ -2682,6 +2682,8 @@ model AppListingReport {
   resolvedAt       DateTime?  @map("resolved_at") @db.Timestamptz(6)
   createdAt        DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  // Mod events this report triggered (SetNull back-relation — see below).
+  moderationEvents AppListingModerationEvent[]
 
   // FIFO mod queue (open reports first).
   @@index([status, createdAt(sort: Desc)], map: "app_listing_reports_queue_idx")
@@ -2700,8 +2702,10 @@ model AppListingReport {
 /// mutation from its audit record. DEDICATED table (do NOT overload
 /// AppListingPublishRequest) — see the P3b scope doc.
 ///
-/// The listing FK is nullable + SetNull so an event SURVIVES a later hard-delete
-/// (purge) of the listing; the denormalized `slug` snapshot keeps the event
+/// The listing FK, the actor FK, and the report FK are all nullable + SetNull so
+/// an event SURVIVES a later hard-delete (purge) of the listing, a moderator
+/// account delete, or a report delete — an append-only audit trail must outlive
+/// the things it references. The denormalized `slug` snapshot keeps the event
 /// self-describing even once the listing row is gone. `before`/`after` carry the
 /// structured state change (e.g. status approved->removed, or userId reassign).
 ///
@@ -2715,9 +2719,16 @@ model AppListingModerationEvent {
   appListing   AppListing? @relation(fields: [appListingId], references: [id], onDelete: SetNull)
   // Denormalized snapshot so the event is self-describing after a purge.
   slug         String
-  // The acting moderator. CASCADE on GDPR user-delete.
-  actorUserId  Int         @map("actor_user_id")
-  actor        User        @relation("AppListingModEventActor", fields: [actorUserId], references: [id], onDelete: Cascade)
+  // The acting moderator. NULLABLE + SetNull so the audit trail SURVIVES a
+  // moderator-account delete (consistent with the report's resolvedBy) — the
+  // whole point of an append-only audit log is that it outlives the actor.
+  actorUserId  Int?        @map("actor_user_id")
+  actor        User?       @relation("AppListingModEventActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  // The report that triggered this event (if any). Nullable + SetNull: not every
+  // event comes from a report (e.g. a proactive delist), and the event outlives
+  // the report. Lets PR3 correlate a mod-event to its originating report.
+  reportId     String?     @map("report_id")
+  report       AppListingReport? @relation(fields: [reportId], references: [id], onDelete: SetNull)
   // Mod action (CHECK-constrained in the .sql).
   action       String
   // Mod-supplied rationale / ownership-verification note.
@@ -2733,6 +2744,8 @@ model AppListingModerationEvent {
   @@index([appListingId, createdAt(sort: Desc)], map: "app_listing_mod_events_listing_idx")
   // Per-moderator activity.
   @@index([actorUserId, createdAt(sort: Desc)], map: "app_listing_mod_events_actor_idx")
+  // Correlate events back to the report that triggered them.
+  @@index([reportId], map: "app_listing_mod_events_report_idx")
   @@map("app_listing_moderation_events")
 }
 

@@ -20,8 +20,10 @@
 -- Idempotent: IF NOT EXISTS guards so a manual re-run is a no-op. Indexes on a
 -- brand-new EMPTY table — no meaningful lock.
 --
--- The app_listing_id FK is NULLABLE + SET NULL so an event SURVIVES a later
--- hard-delete (purge) of the listing; the denormalized "slug" snapshot keeps the
+-- The app_listing_id, actor_user_id, and report_id FKs are ALL NULLABLE + SET
+-- NULL so an event SURVIVES a later hard-delete (purge) of the listing, a
+-- moderator-account delete, or a report delete — an append-only audit trail must
+-- outlive the things it references. The denormalized "slug" snapshot keeps the
 -- event self-describing once the listing row is gone.
 
 CREATE TABLE IF NOT EXISTS "app_listing_moderation_events" (
@@ -30,8 +32,12 @@ CREATE TABLE IF NOT EXISTS "app_listing_moderation_events" (
   "app_listing_id"  TEXT REFERENCES "app_listings"("id") ON DELETE SET NULL,
   -- Denormalized snapshot so the event is self-describing after a purge.
   "slug"            TEXT NOT NULL,
-  -- The acting moderator. CASCADE on GDPR user-delete.
-  "actor_user_id"   INTEGER NOT NULL REFERENCES "User"("id") ON DELETE CASCADE,
+  -- The acting moderator. NULLABLE + SET NULL so the audit trail survives a
+  -- moderator-account delete (an audit log must outlive its actor).
+  "actor_user_id"   INTEGER REFERENCES "User"("id") ON DELETE SET NULL,
+  -- The report that triggered this event (if any). Nullable + SET NULL: not
+  -- every event comes from a report, and the event outlives the report.
+  "report_id"       TEXT REFERENCES "app_listing_reports"("id") ON DELETE SET NULL,
   "action"          TEXT NOT NULL,
   -- Mod-supplied rationale / ownership-verification note.
   "reason"          TEXT,
@@ -51,3 +57,6 @@ CREATE INDEX IF NOT EXISTS "app_listing_mod_events_listing_idx"
 -- Per-moderator activity.
 CREATE INDEX IF NOT EXISTS "app_listing_mod_events_actor_idx"
   ON "app_listing_moderation_events" ("actor_user_id", "created_at" DESC);
+-- Correlate events back to the report that triggered them.
+CREATE INDEX IF NOT EXISTS "app_listing_mod_events_report_idx"
+  ON "app_listing_moderation_events" ("report_id");

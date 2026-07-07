@@ -1,4 +1,4 @@
-import { readFileSync } from 'fs';
+import { readdirSync, readFileSync } from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 
@@ -21,10 +21,24 @@ import { APP_LISTING_STATUSES } from '~/server/services/blocks/app-listing-statu
 
 // repo root: this file is src/server/services/blocks/__tests__ → 5 levels up.
 const REPO_ROOT = path.resolve(__dirname, '../../../../..');
-const STATUS_CHECK_MIGRATION = path.join(
-  REPO_ROOT,
-  'prisma/migrations/20260706120200_w13_p3b_app_listing_status_add_removed/migration.sql'
-);
+const MIGRATIONS_DIR = path.join(REPO_ROOT, 'prisma/migrations');
+
+/**
+ * Resolve the LATEST `app_listing_status_*` migration `.sql` — glob rather than
+ * hardcode, so a FUTURE widen (e.g. adding 'suspended' in a new dated dir) is
+ * automatically the one checked. Migration dir names are timestamp-prefixed, so
+ * the lexicographically-last match is the newest.
+ */
+function latestStatusCheckMigration(): string {
+  const dirs = readdirSync(MIGRATIONS_DIR)
+    .filter((d) => /_app_listing_status_/.test(d))
+    .sort();
+  if (dirs.length === 0)
+    throw new Error('no *_app_listing_status_* migration dir found under prisma/migrations');
+  return path.join(MIGRATIONS_DIR, dirs[dirs.length - 1], 'migration.sql');
+}
+
+const STATUS_CHECK_MIGRATION = latestStatusCheckMigration();
 
 /** Extract the quoted tokens from the `... "status" IN ('a', 'b', ...)` list. */
 function parseStatusCheckInList(sql: string): string[] {
