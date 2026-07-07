@@ -8,6 +8,7 @@ import {
   Group,
   Select,
   Stack,
+  Stepper,
   Text,
   TextInput,
   Textarea,
@@ -27,11 +28,14 @@ import {
   OFFSITE_CATEGORY_OPTIONS,
   OFFSITE_CONTENT_RATING_OPTIONS,
   OFFSITE_SUBMIT_LIMITS,
+  deriveListingFromUrl,
   emptyOffsiteSubmitForm,
+  isUrlStepComplete,
   validateOffsiteSubmitForm,
   type OffsiteSubmitFormErrors,
   type OffsiteSubmitFormValues,
 } from '~/components/Apps/offsiteSubmitFormConfig';
+import { validateExternalUrl } from '~/server/schema/blocks/external-app.schema';
 import {
   appendScreenshotSlot,
   makeScreenshotSlotId,
@@ -98,7 +102,13 @@ async function readImageDimensions(file: File): Promise<{ width: number; height:
   }
 }
 
+/** Wizard step indices — URL → Details → Assets. */
+const STEP_URL = 0;
+const STEP_DETAILS = 1;
+const STEP_ASSETS = 2;
+
 export function ExternalSubmitForm() {
+  const [active, setActive] = useState<number>(STEP_URL);
   const [values, setValues] = useState<OffsiteSubmitFormValues>(emptyOffsiteSubmitForm());
   const [errors, setErrors] = useState<OffsiteSubmitFormErrors>({});
   const [serverError, setServerError] = useState<string | null>(null);
@@ -108,6 +118,7 @@ export function ExternalSubmitForm() {
     onSuccess: (res: Submitted) => {
       setSubmitted(res);
       setServerError(null);
+      setActive(STEP_ASSETS); // draft created — advance into the asset step
       showSuccessNotification({ message: 'Draft created. Add your assets to finish.' });
     },
     onError: (e: { message: string }) => {
@@ -125,7 +136,33 @@ export function ExternalSubmitForm() {
     setValues((v) => ({ ...v, [key]: value }));
   }
 
-  function handleSubmit() {
+  /**
+   * Step 1 → Step 2 prefill: derive name + slug from the URL. NON-DESTRUCTIVE —
+   * only fills a currently-blank field, so a name/slug the author already typed
+   * (or edited on the details step) is never clobbered. Fires on URL blur and on
+   * advancing out of the URL step.
+   */
+  function prefillFromUrl() {
+    const derived = deriveListingFromUrl(values.externalUrl);
+    setValues((v) => ({
+      ...v,
+      name: v.name.trim().length === 0 && derived.name ? derived.name : v.name,
+      slug: v.slug.trim().length === 0 && derived.slug ? derived.slug : v.slug,
+    }));
+  }
+
+  function handleAdvanceFromUrl() {
+    prefillFromUrl();
+    const urlResult = validateExternalUrl(values.externalUrl);
+    if (!urlResult.ok) {
+      setErrors((prev) => ({ ...prev, externalUrl: urlResult.error }));
+      return;
+    }
+    setErrors((prev) => ({ ...prev, externalUrl: undefined }));
+    setActive(STEP_DETAILS);
+  }
+
+  function handleCreateDraft() {
     const nextErrors = validateOffsiteSubmitForm(values);
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) return;
@@ -141,15 +178,35 @@ export function ExternalSubmitForm() {
     });
   }
 
-  if (submitted) {
-    return <AssetStep submitted={submitted} contentRating={values.contentRating} />;
+  /**
+   * Step-marker navigation. Once the draft is created (`submitted`) the earlier
+   * steps are locked — the listing already exists server-side, so re-editing the
+   * URL/details would be a lie. Before that, the URL step is always reachable and
+   * the Details step is reachable once the URL validates. The Assets step is only
+   * reachable via a successful submit (handled in `onSuccess`).
+   */
+  function handleStepClick(step: number) {
+    if (submitted) return;
+    if (step === STEP_URL) {
+      setActive(STEP_URL);
+      return;
+    }
+    if (step === STEP_DETAILS && isUrlStepComplete(values)) {
+      prefillFromUrl();
+      setActive(STEP_DETAILS);
+    }
   }
 
   const busy = submitMutation.isPending;
 
   return (
     <Stack gap="md" data-testid="apps-offsite-submit-form">
-      <Alert color="blue" variant="light" icon={<IconExternalLink size={16} />} title="External link app">
+      <Alert
+        color="blue"
+        variant="light"
+        icon={<IconExternalLink size={16} />}
+        title="External link app"
+      >
         <Text size="sm">
           List an app hosted off-site. Users get a card with a <b>Visit ↗</b> button that opens your
           https link in a new tab — no bundle, no install. A moderator reviews it before it appears.
@@ -157,125 +214,194 @@ export function ExternalSubmitForm() {
       </Alert>
 
       {serverError && (
-        <Alert color="red" variant="light" icon={<IconAlertTriangle size={16} />} title="Submission problem">
+        <Alert
+          color="red"
+          variant="light"
+          icon={<IconAlertTriangle size={16} />}
+          title="Submission problem"
+        >
           <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
             {serverError}
           </Text>
         </Alert>
       )}
 
-      <TextInput
-        label="Slug"
-        description={`Your app's URL slug (${OFFSITE_SUBMIT_LIMITS.slugMin}–${OFFSITE_SUBMIT_LIMITS.slugMax} chars, lowercase a–z / 0–9 / hyphens).`}
-        placeholder="my-external-app"
-        value={values.slug}
-        onChange={(e) => setField('slug', e.currentTarget.value)}
-        error={errors.slug}
-        maxLength={OFFSITE_SUBMIT_LIMITS.slugMax}
-        required
-        disabled={busy}
-        data-autofocus
-        data-testid="apps-offsite-submit-slug"
-      />
-
-      <TextInput
-        label="Name"
-        placeholder="My External App"
-        value={values.name}
-        onChange={(e) => setField('name', e.currentTarget.value)}
-        error={errors.name}
-        maxLength={OFFSITE_SUBMIT_LIMITS.nameMax}
-        required
-        disabled={busy}
-        data-testid="apps-offsite-submit-name"
-      />
-
-      <TextInput
-        label="External URL"
-        description="An https:// link. Opens in a new tab with rel=noopener."
-        placeholder="https://example.com/app"
-        value={values.externalUrl}
-        onChange={(e) => setField('externalUrl', e.currentTarget.value)}
-        error={errors.externalUrl}
-        maxLength={OFFSITE_SUBMIT_LIMITS.urlMax}
-        required
-        disabled={busy}
-        data-testid="apps-offsite-submit-url"
-      />
-
-      <TextInput
-        label="Tagline"
-        description="A short one-liner (optional)."
-        value={values.tagline}
-        onChange={(e) => setField('tagline', e.currentTarget.value)}
-        error={errors.tagline}
-        maxLength={OFFSITE_SUBMIT_LIMITS.taglineMax}
-        disabled={busy}
-      />
-
-      <Textarea
-        label="Description"
-        description="What the app does (optional)."
-        autosize
-        minRows={3}
-        maxRows={8}
-        value={values.description}
-        onChange={(e) => setField('description', e.currentTarget.value)}
-        error={errors.description}
-        maxLength={OFFSITE_SUBMIT_LIMITS.descriptionMax}
-        disabled={busy}
-      />
-
-      <Group grow align="flex-start">
-        <Select
-          label="Category"
-          placeholder="No category"
-          data={OFFSITE_CATEGORY_OPTIONS}
-          value={values.category}
-          onChange={(v: string | null) => setField('category', (v as MarketplaceCategory) || null)}
-          error={errors.category}
-          clearable
-          disabled={busy}
-        />
-        <Select
-          label="Content rating"
-          data={OFFSITE_CONTENT_RATING_OPTIONS}
-          value={values.contentRating}
-          onChange={(v: string | null) =>
-            setField('contentRating', (v as OffsiteContentRating) || 'g')
-          }
-          error={errors.contentRating}
-          allowDeselect={false}
-          disabled={busy}
-        />
-      </Group>
-
-      <Textarea
-        label="What is this app? (optional)"
-        description="A note for the reviewer — recorded on the request."
-        autosize
-        minRows={2}
-        maxRows={6}
-        value={values.changelog}
-        onChange={(e) => setField('changelog', e.currentTarget.value)}
-        error={errors.changelog}
-        maxLength={OFFSITE_SUBMIT_LIMITS.changelogMax}
-        disabled={busy}
-      />
-
-      <Group justify="flex-end">
-        <Button variant="default" component={Link} href="/apps/my-submissions" disabled={busy}>
-          Cancel
-        </Button>
-        <Button
-          onClick={handleSubmit}
-          loading={busy}
-          leftSection={<IconExternalLink size={16} />}
-          data-testid="apps-offsite-submit-create"
+      <Stepper
+        active={active}
+        onStepClick={handleStepClick}
+        allowNextStepsSelect={false}
+        size="sm"
+      >
+        <Stepper.Step
+          label="URL"
+          description="The link"
+          allowStepClick={!submitted}
+          data-testid="apps-offsite-wizard-step-url"
         >
-          Create draft
-        </Button>
-      </Group>
+          <Stack gap="md" mt="md">
+            <TextInput
+              label="External URL"
+              description="An https:// link. Opens in a new tab with rel=noopener. We'll suggest a name + slug from it."
+              placeholder="https://example.com/app"
+              value={values.externalUrl}
+              onChange={(e) => setField('externalUrl', e.currentTarget.value)}
+              onBlur={prefillFromUrl}
+              error={errors.externalUrl}
+              maxLength={OFFSITE_SUBMIT_LIMITS.urlMax}
+              required
+              disabled={busy}
+              data-autofocus
+              data-testid="apps-offsite-submit-url"
+            />
+            <Group justify="space-between">
+              <Button variant="default" component={Link} href="/apps/my-submissions" disabled={busy}>
+                Cancel
+              </Button>
+              <Button
+                onClick={handleAdvanceFromUrl}
+                disabled={busy}
+                data-testid="apps-offsite-wizard-next-url"
+              >
+                Next
+              </Button>
+            </Group>
+          </Stack>
+        </Stepper.Step>
+
+        <Stepper.Step
+          label="Details"
+          description="Name & metadata"
+          allowStepClick={!submitted && isUrlStepComplete(values)}
+          data-testid="apps-offsite-wizard-step-details"
+        >
+          <Stack gap="md" mt="md">
+            <TextInput
+              label="Name"
+              description="Prefilled from your URL — edit as needed."
+              placeholder="My External App"
+              value={values.name}
+              onChange={(e) => setField('name', e.currentTarget.value)}
+              error={errors.name}
+              maxLength={OFFSITE_SUBMIT_LIMITS.nameMax}
+              required
+              disabled={busy}
+              data-autofocus
+              data-testid="apps-offsite-submit-name"
+            />
+
+            <TextInput
+              label="Slug"
+              description={`Your app's URL slug (${OFFSITE_SUBMIT_LIMITS.slugMin}–${OFFSITE_SUBMIT_LIMITS.slugMax} chars, lowercase a–z / 0–9 / hyphens). Prefilled from your URL.`}
+              placeholder="my-external-app"
+              value={values.slug}
+              onChange={(e) => setField('slug', e.currentTarget.value)}
+              error={errors.slug}
+              maxLength={OFFSITE_SUBMIT_LIMITS.slugMax}
+              required
+              disabled={busy}
+              data-testid="apps-offsite-submit-slug"
+            />
+
+            <TextInput
+              label="Tagline"
+              description="A short one-liner (optional)."
+              value={values.tagline}
+              onChange={(e) => setField('tagline', e.currentTarget.value)}
+              error={errors.tagline}
+              maxLength={OFFSITE_SUBMIT_LIMITS.taglineMax}
+              disabled={busy}
+            />
+
+            <Textarea
+              label="Description"
+              description="What the app does (optional)."
+              autosize
+              minRows={3}
+              maxRows={8}
+              value={values.description}
+              onChange={(e) => setField('description', e.currentTarget.value)}
+              error={errors.description}
+              maxLength={OFFSITE_SUBMIT_LIMITS.descriptionMax}
+              disabled={busy}
+            />
+
+            <Group grow align="flex-start">
+              <Select
+                label="Category"
+                placeholder="No category"
+                data={OFFSITE_CATEGORY_OPTIONS}
+                value={values.category}
+                onChange={(v: string | null) =>
+                  setField('category', (v as MarketplaceCategory) || null)
+                }
+                error={errors.category}
+                clearable
+                disabled={busy}
+              />
+              <Select
+                label="Content rating"
+                data={OFFSITE_CONTENT_RATING_OPTIONS}
+                value={values.contentRating}
+                onChange={(v: string | null) =>
+                  setField('contentRating', (v as OffsiteContentRating) || 'g')
+                }
+                error={errors.contentRating}
+                allowDeselect={false}
+                disabled={busy}
+              />
+            </Group>
+
+            <Textarea
+              label="What is this app? (optional)"
+              description="A note for the reviewer — recorded on the request."
+              autosize
+              minRows={2}
+              maxRows={6}
+              value={values.changelog}
+              onChange={(e) => setField('changelog', e.currentTarget.value)}
+              error={errors.changelog}
+              maxLength={OFFSITE_SUBMIT_LIMITS.changelogMax}
+              disabled={busy}
+            />
+
+            <Group justify="space-between">
+              <Button
+                variant="default"
+                onClick={() => setActive(STEP_URL)}
+                disabled={busy}
+                data-testid="apps-offsite-wizard-back-details"
+              >
+                Back
+              </Button>
+              <Button
+                onClick={handleCreateDraft}
+                loading={busy}
+                leftSection={<IconExternalLink size={16} />}
+                data-testid="apps-offsite-submit-create"
+              >
+                Create draft
+              </Button>
+            </Group>
+          </Stack>
+        </Stepper.Step>
+
+        <Stepper.Step
+          label="Assets"
+          description="Icon, cover, screenshots"
+          allowStepClick={false}
+          data-testid="apps-offsite-wizard-step-assets"
+        >
+          <div data-testid="apps-offsite-wizard-assets-panel">
+            {submitted ? (
+              <AssetStep submitted={submitted} contentRating={values.contentRating} />
+            ) : (
+              <Alert color="gray" variant="light" mt="md">
+                <Text size="sm">Create the draft on the previous step to add assets.</Text>
+              </Alert>
+            )}
+          </div>
+        </Stepper.Step>
+      </Stepper>
     </Stack>
   );
 }
