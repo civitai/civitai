@@ -1671,6 +1671,16 @@ export const REDIS_SYS_KEYS = {
      * `sysRedis`, like the sibling BLOCKS caps/limiters.
      */
     DEV_TUNNEL: 'system:blocks:dev-tunnel',
+    /**
+     * Per-user rate-limit counter for EPHEMERAL (pre-submit) dev-tunnel starts —
+     * `startDevTunnel` when the caller owns NO AppBlock row for the slug yet
+     * (block-registry.service.ts resolveEphemeralDevPageBlock). Keyed
+     * `${DEV_TUNNEL_EPHEMERAL_RATE_LIMIT}:<userId>`. Same `INCR` + first-hit `EX`
+     * shape as the sibling BLOCKS limiters, on `sysRedis`. Blunts host-pool
+     * enumeration / DoS via ephemeral tunnel starts across many unclaimed slugs;
+     * the approved/owned path is unaffected (only the ephemeral branch increments).
+     */
+    DEV_TUNNEL_EPHEMERAL_RATE_LIMIT: 'system:blocks:dev-tunnel-ephemeral-rate-limit',
   },
   DOWNLOAD: {
     LIMITS: 'download:limits',

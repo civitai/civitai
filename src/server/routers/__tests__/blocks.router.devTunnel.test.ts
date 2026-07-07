@@ -19,6 +19,7 @@ const {
   mockStop,
   mockStopForUserBlock,
   mockGetActive,
+  mockSysRedis,
 } = vi.hoisted(() => ({
   mockIsAppBlocksEnabled: vi.fn(async () => true),
   mockIsDevTunnelEnabled: vi.fn(async () => true),
@@ -27,6 +28,13 @@ const {
   mockStop: vi.fn(async () => true),
   mockStopForUserBlock: vi.fn(async () => true),
   mockGetActive: vi.fn(async () => null),
+  // Ephemeral dev-tunnel rate limiter (INCR + first-hit EX). Default counter = 1
+  // (under the limit). Only the ephemeral branch touches it.
+  mockSysRedis: {
+    incrBy: vi.fn(async () => 1),
+    expire: vi.fn(async () => 1),
+    ttl: vi.fn(async () => 3600),
+  },
 }));
 
 vi.mock('~/server/services/block-registry.service', () => ({
@@ -55,7 +63,11 @@ vi.mock('~/server/db/client', () => ({
 }));
 vi.mock('~/server/redis/client', async () => {
   const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
-  return { ...actual, redis: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) } };
+  return {
+    ...actual,
+    redis: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
+    sysRedis: mockSysRedis,
+  };
 });
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   verifyBlockToken: vi.fn(),
@@ -111,11 +123,29 @@ const OWN_APP = {
   contentRating: null,
 };
 
+// Ephemeral (pre-submit) resolution — the synthetic shape resolveEphemeralDevPageBlock
+// returns when the caller owns NO AppBlock row for an UNCLAIMED slug.
+const EPHEMERAL_APP = {
+  appBlockId: 'ephemeral-new-app',
+  blockId: 'new-app',
+  appId: 'ephemeral-new-app',
+  status: 'ephemeral',
+  trustTier: 'unverified',
+  name: 'new-app',
+  pageTitle: 'new-app',
+  sandbox: 'allow-scripts allow-forms',
+  scopes: [],
+  contentRating: null,
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockIsAppBlocksEnabled.mockResolvedValue(true);
   mockIsDevTunnelEnabled.mockResolvedValue(true);
   mockResolveDev.mockResolvedValue(OWN_APP);
+  mockSysRedis.incrBy.mockResolvedValue(1); // under the ephemeral rate limit
+  mockSysRedis.expire.mockResolvedValue(1);
+  mockSysRedis.ttl.mockResolvedValue(3600);
   mockStart.mockResolvedValue({
     sessionId: 'bki_s',
     host: 'dev-0123456789abcdef.civit.ai',
@@ -160,6 +190,52 @@ describe('startDevTunnel — authz matrix', () => {
     });
     // ownership resolve was scoped to the caller
     expect(mockResolveDev).toHaveBeenCalledWith('my-app', 100, { db: 'write' });
+  });
+});
+
+describe('startDevTunnel — EPHEMERAL pre-submit rate limit (Phase 1)', () => {
+  const ephemeralInput = { blockId: 'new-app', sshPublicKey: PUBKEY };
+
+  it('ephemeral start UNDER the limit → mints, and increments the per-user limiter', async () => {
+    mockResolveDev.mockResolvedValue(EPHEMERAL_APP);
+    const caller = blocksRouter.createCaller(authedCtx(100, true) as never);
+    const res = await caller.startDevTunnel(ephemeralInput);
+    expect(res.host).toMatch(/^dev-[a-f0-9]{16}\.civit\.ai$/);
+    // The ephemeral limiter was incremented on the caller's own key.
+    expect(mockSysRedis.incrBy).toHaveBeenCalledTimes(1);
+    expect(mockSysRedis.incrBy).toHaveBeenCalledWith(
+      expect.stringContaining('dev-tunnel-ephemeral-rate-limit:100'),
+      1
+    );
+    expect(mockStart).toHaveBeenCalledWith({ userId: 100, blockId: 'new-app', sshPublicKey: PUBKEY });
+  });
+
+  it('ephemeral start OVER the limit → TOO_MANY_REQUESTS, never mints', async () => {
+    mockResolveDev.mockResolvedValue(EPHEMERAL_APP);
+    mockSysRedis.incrBy.mockResolvedValue(21); // max is 20
+    const caller = blocksRouter.createCaller(authedCtx(100, true) as never);
+    await expect(caller.startDevTunnel(ephemeralInput)).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+    });
+    expect(mockStart).not.toHaveBeenCalled();
+  });
+
+  it('ephemeral start with a Redis-DOWN limiter → fails CLOSED (TOO_MANY_REQUESTS), never mints', async () => {
+    mockResolveDev.mockResolvedValue(EPHEMERAL_APP);
+    mockSysRedis.incrBy.mockRejectedValue(new Error('redis down'));
+    const caller = blocksRouter.createCaller(authedCtx(100, true) as never);
+    await expect(caller.startDevTunnel(ephemeralInput)).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+    });
+    expect(mockStart).not.toHaveBeenCalled();
+  });
+
+  it('the OWNED (non-ephemeral) path NEVER touches the ephemeral limiter', async () => {
+    // OWN_APP has status:'pending' (an owned, real row) — not 'ephemeral'.
+    const caller = blocksRouter.createCaller(authedCtx(100, true) as never);
+    await caller.startDevTunnel(input);
+    expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    expect(mockStart).toHaveBeenCalledTimes(1);
   });
 });
 

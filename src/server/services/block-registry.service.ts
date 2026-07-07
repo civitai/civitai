@@ -1846,6 +1846,16 @@ export class BlockRegistry {
    *
    * NOTE: this returns NO iframeSrc — the route derives the iframe host from the
    * assigned tunnel host ONLY (T6). It cannot be used to serve a deployed bundle.
+   *
+   * EPHEMERAL PRE-SUBMIT FALLBACK (Phase 1): when the caller owns NO AppBlock row
+   * for `blockId` at all (the app has not been submitted/approved — no row + no
+   * OauthClient are created until moderator APPROVE), we attempt an EPHEMERAL
+   * resolution so an author can iterate on local code in the real host BEFORE
+   * submitting. It writes NO DB row and returns a synthetic resolution with safe
+   * `unverified` defaults (see resolveEphemeralDevPageBlock). SCOPED features
+   * (Buzz / App Storage block-token mint) remain 403 until approval — the prod
+   * block-token mint (`/api/v1/block-tokens`) still gates on `status:'approved'`
+   * and is untouched here; this is UI / local-code rendering only.
    */
   static async resolveDevPageBlockForAuthor(
     blockId: string,
@@ -1856,7 +1866,8 @@ export class BlockRegistry {
     const db = opts?.db === 'write' ? dbWrite : dbRead;
     const ab = await db.appBlock.findFirst({
       // Ownership-scoped: the app's OauthClient.userId is the v1 ownership source
-      // of truth (same as getMyAppRepo). A foreign-owned or missing app → null.
+      // of truth (same as getMyAppRepo). A foreign-owned or missing app → null,
+      // in which case we fall through to the ephemeral pre-submit path below.
       where: { blockId, app: { userId } },
       select: {
         id: true,
@@ -1868,7 +1879,10 @@ export class BlockRegistry {
         contentRating: true,
       },
     });
-    if (!ab) return null;
+    // No OWNED AppBlock row → try the ephemeral pre-submit resolution (Phase 1).
+    // resolveEphemeralDevPageBlock returns null (→ same bare NOT_FOUND, no oracle)
+    // for a slug claimed by anyone else, so a foreign-owned app is never leaked.
+    if (!ab) return this.resolveEphemeralDevPageBlock(blockId, userId, db);
     const manifest = (ab.manifest ?? {}) as Record<string, unknown>;
     const iframe = (manifest.iframe ?? {}) as { sandbox?: unknown };
     const page = (manifest.page ?? {}) as { title?: unknown };
@@ -1890,6 +1904,86 @@ export class BlockRegistry {
       sandbox: typeof iframe.sandbox === 'string' ? iframe.sandbox : '',
       scopes: declaredScopes,
       contentRating: typeof ab.contentRating === 'string' ? ab.contentRating : null,
+    };
+  }
+
+  /**
+   * EPHEMERAL PRE-SUBMIT DEV RESOLUTION (Phase 1 — "ephemeral resolution", design
+   * approach C). Reached ONLY from resolveDevPageBlockForAuthor when the caller
+   * owns NO AppBlock row for `blockId`. Lets an author open a dev tunnel for a
+   * BRAND-NEW app they have not yet submitted (before any AppBlock/OauthClient row
+   * exists), so they can iterate on local code inside the real host. Writes NO DB
+   * row — the returned resolution is a purely synthetic, ownership/existence gate
+   * plus manifest DISPLAY defaults; the iframe host is still derived from the live
+   * tunnel only (the resolution carries no iframeSrc).
+   *
+   * SECURITY — ANTI-SHADOW GUARD (refuse any slug claimed by someone else, with NO
+   * existence oracle — every refusal returns the SAME bare null the "foreign /
+   * absent app" case returns):
+   *   (A) if ANY AppBlock row exists for `blockId` → REFUSE. The caller-owned row
+   *       was already checked (and returned) by the caller, so any row reaching
+   *       here is FOREIGN. `block_id` is GLOBALLY unique (`@@unique([blockId])`,
+   *       `app_blocks_block_id_unique`), so a single indexed lookup settles it: a
+   *       row (any status/owner) means the slug is claimed and can never become
+   *       the caller's — a superset of "an approved AppBlock exists (any owner)".
+   *   (B) if an AppBlockPublishRequest with `status:'pending'` exists for `blockId`
+   *       owned by a DIFFERENT user → REFUSE. The partial unique index
+   *       `UNIQUE(slug) WHERE status='pending'` guarantees ≤1 pending row per slug,
+   *       so this is a single indexed (`app_block_publish_requests_slug_idx`)
+   *       lookup. The caller's OWN pending request is ALLOWED (they are claiming
+   *       the slug), as is a truly-unclaimed slug.
+   * A user can therefore NEVER get an ephemeral resolution for a slug that belongs
+   * to — or is pending for — anyone else, and the refusal never reveals which case
+   * triggered it (no existence/ownership/state oracle).
+   *
+   * Safe DISPLAY defaults (no DB row, no reviewed manifest): `unverified` trust
+   * tier, EMPTY scopes (scoped block-token mint stays 403 until approval — Phase 2),
+   * SFW `contentRating`, and a minimal `allow-scripts allow-forms` sandbox that
+   * matches the unverified-tier allowed set (the client re-clamps via
+   * intersectSandbox, so this can only ever be as wide as the tier permits). The
+   * synthetic appBlockId/appId use an `ephemeral-<slug>` namespace that can never
+   * collide with a real AppBlock.id or an OauthClient.id (UUIDv4 / `appblk-<slug>`).
+   */
+  private static async resolveEphemeralDevPageBlock(
+    blockId: string,
+    userId: number,
+    db: typeof dbRead | typeof dbWrite
+  ): Promise<DevPageBlockResolution | null> {
+    // Guard (A): any FOREIGN AppBlock row for this slug → refuse (slug is claimed
+    // globally via @@unique([blockId])). Indexed on app_blocks_block_id_unique.
+    const claimed = await db.appBlock.findUnique({
+      where: { blockId },
+      select: { id: true },
+    });
+    if (claimed) return null;
+    // Guard (B): a FOREIGN pending publish request for this slug → refuse. ≤1
+    // pending row per slug (partial unique index). The caller's own pending is OK.
+    const pending = await db.appBlockPublishRequest.findFirst({
+      where: { slug: blockId, status: 'pending' },
+      select: { submittedByUserId: true },
+    });
+    if (pending && pending.submittedByUserId !== userId) return null;
+    // ALLOWED — truly-unclaimed slug, or the caller owns the pending request.
+    return {
+      // Synthetic, non-resolving ids (`ephemeral-<slug>`): the render path never
+      // FK-resolves these (the prod block-token mint 403s on the unapproved app
+      // before any appId/appBlockId lookup), and the prefix can never equal a real
+      // AppBlock.id nor an OauthClient.id (UUIDv4 / `appblk-<slug>`).
+      appBlockId: `ephemeral-${blockId}`,
+      blockId,
+      appId: `ephemeral-${blockId}`,
+      status: 'ephemeral',
+      trustTier: 'unverified',
+      name: blockId,
+      pageTitle: blockId,
+      // Minimal safe sandbox for an unverified tier (client intersectSandbox
+      // re-clamps to the allowlist ∪ MINIMAL_SANDBOX regardless).
+      sandbox: 'allow-scripts allow-forms',
+      // EMPTY — scoped features (Buzz / App Storage) require an approved,
+      // mod-reviewed scope grant; the block-token mint stays 403 until approval.
+      scopes: [],
+      // SFW default — no reviewed content rating exists pre-submit.
+      contentRating: null,
     };
   }
 
