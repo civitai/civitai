@@ -102,6 +102,62 @@ export const withdrawExternalRequestSchema = z.object({
 export type WithdrawExternalRequestInput = z.infer<typeof withdrawExternalRequestSchema>;
 
 /**
+ * AUTHOR: edit an existing off-site listing WITHOUT withdrawing it (state-aware).
+ *
+ * `patch` carries ONLY the editable display fields — never `slug` or `kind`
+ * (those are immutable for a live listing; a slug change would break its public
+ * URL + squat protection). `externalUrl` is bounded loose here and re-validated
+ * for the https-only shape by the shared `validateExternalUrl` in the service
+ * (single source of truth; this fn is exported + unit-tested directly). Category
+ * / contentRating are re-checked against their taxonomies in the service too.
+ *
+ * At least one field must be present (an empty patch is a no-op the schema
+ * rejects, so the client can't accidentally fire a meaningless mutation). The
+ * SERVICE routes the patch by the listing's status: draft/pending → in place;
+ * approved-trivial → in place; approved-material → staged on a shadow revision.
+ */
+export const updateListingPatchSchema = z
+  .object({
+    externalUrl: z.string().min(1).max(MAX_EXTERNAL_URL_LENGTH).optional(),
+    name: z.string().min(1).max(OFFSITE_NAME_MAX).optional(),
+    tagline: z.string().max(OFFSITE_TAGLINE_MAX).nullable().optional(),
+    description: z.string().max(OFFSITE_DESCRIPTION_MAX).nullable().optional(),
+    category: z.enum(MARKETPLACE_CATEGORIES).nullable().optional(),
+    contentRating: z.enum(OFFSITE_CONTENT_RATINGS).optional(),
+  })
+  .refine((p) => Object.values(p).some((v) => v !== undefined), {
+    message: 'patch must change at least one field',
+  });
+export type UpdateListingPatch = z.infer<typeof updateListingPatchSchema>;
+
+export const updateListingSchema = z.object({
+  listingId: z.string().min(1).max(64),
+  patch: updateListingPatchSchema,
+});
+export type UpdateListingInput = z.infer<typeof updateListingSchema>;
+
+/**
+ * AUTHOR: begin (or re-open) a shadow-draft revision of an APPROVED listing so
+ * its MATERIAL fields / assets can be edited while the current version stays
+ * live. Idempotent in the service (re-opening returns the existing shadow).
+ */
+export const beginListingRevisionSchema = z.object({
+  listingId: z.string().min(1).max(64),
+});
+export type BeginListingRevisionInput = z.infer<typeof beginListingRevisionSchema>;
+
+/**
+ * AUTHOR: submit a prepared shadow-draft revision for mod re-approval. `shadowId`
+ * is the id returned by `beginListingRevision` (the hidden draft clone). The
+ * optional changelog is denormalized onto the pending publish request.
+ */
+export const submitListingRevisionSchema = z.object({
+  shadowId: z.string().min(1).max(64),
+  changelog: z.string().max(OFFSITE_CHANGELOG_MAX).optional(),
+});
+export type SubmitListingRevisionInput = z.infer<typeof submitListingRevisionSchema>;
+
+/**
  * MOD approve of a pending off-site request (PR-b). Mirrors the on-site
  * `approveRequestSchema` shape: the request id + an optional `approvalNotes`.
  * The asset-completeness gate + the external-URL re-validation are enforced in

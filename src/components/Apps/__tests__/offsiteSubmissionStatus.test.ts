@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isEditableOffsiteStatus,
   isWithdrawableOffsiteStatus,
   offsiteStatusChip,
 } from '../offsiteSubmissionStatus';
@@ -27,6 +28,18 @@ describe('isWithdrawableOffsiteStatus', () => {
     expect(isWithdrawableOffsiteStatus('pending')).toBe(true);
     for (const s of ['approved', 'rejected', 'withdrawn', 'weird']) {
       expect(isWithdrawableOffsiteStatus(s)).toBe(false);
+    }
+  });
+});
+
+describe('isEditableOffsiteStatus', () => {
+  it('pending (live draft under review) and approved (live) are editable without withdrawing', () => {
+    expect(isEditableOffsiteStatus('pending')).toBe(true);
+    expect(isEditableOffsiteStatus('approved')).toBe(true);
+  });
+  it('rejected/withdrawn (listing deleted) and unknown are NOT editable', () => {
+    for (const s of ['rejected', 'withdrawn', 'weird']) {
+      expect(isEditableOffsiteStatus(s)).toBe(false);
     }
   });
 });
