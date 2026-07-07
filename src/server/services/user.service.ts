@@ -23,7 +23,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { logToAxiom } from '~/server/logging/client';
-import { MeiliCallTimeoutError, searchClient, withMeili } from '~/server/meilisearch/client';
+import { isTransientMeiliError, searchClient, withMeili } from '~/server/meilisearch/client';
 import { dbReadFallbackCounter, userUpdateCounter } from '~/server/prom/client';
 import { articleMetrics, modelMetrics, postMetrics, userMetrics } from '~/server/metrics';
 import type { NotifDetailsFollowedBy } from '~/server/notifications/follow.notifications';
@@ -270,11 +270,24 @@ export async function getUsersWithSearch({
       })
     );
   } catch (err) {
-    // Mirror image.getInfinite's handling: surface a fast, retryable 503 via
+    // Mirror /api/v1/images (#2759/#2765): surface a fast, retryable 503 via
     // TRPCError SERVICE_UNAVAILABLE so the client can retry instead of waiting
     // on Traefik's 30s router timeout. (Was TIMEOUT/408 under tRPC v10, which
     // lacked SERVICE_UNAVAILABLE; v11 has it.)
-    if (err instanceof MeiliCallTimeoutError) {
+    //
+    // Widened from `instanceof MeiliCallTimeoutError` to isTransientMeiliError:
+    // the timeout-wrapper only covers civitai's own MeiliCallTimeoutError, but a
+    // Meilisearch brownout also throws the SDK's OWN transient error types
+    // (MeiliSearchCommunicationError with statusCode=408/503, MeiliSearchApiError
+    // with a gateway httpStatus, MeiliSearchTimeOutError, network ECONNRESET, …).
+    // Those fell through this branch as raw Errors → throwDbError wrapped them as
+    // TRPCError INTERNAL_SERVER_ERROR → the handler emitted a raw 500 (the top
+    // REST 500 source on the ?query= path). Converting them here preserves the
+    // "transient" signal as SERVICE_UNAVAILABLE through throwDbError (which
+    // re-throws an existing TRPCError unchanged) so the handler maps it to 503.
+    // Non-transient errors (malformed filter / auth / real app bug) are NOT
+    // matched and continue to surface as their real status (500).
+    if (isTransientMeiliError(err)) {
       throw new TRPCError({
         code: 'SERVICE_UNAVAILABLE',
         message: 'User search is temporarily overloaded — please retry.',

@@ -7,6 +7,7 @@ import { publicApiContext2 } from '~/server/createContext';
 import { getAllUsersInput } from '~/server/schema/user.schema';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { isClientAbortError } from '~/server/utils/errorHandling';
+import { isTransientMeiliError } from '~/server/meilisearch/client';
 
 const schema = getAllUsersInput.extend({
   email: z.never().optional(),
@@ -31,6 +32,30 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     if (isClientAbortError(error)) {
       // Client disconnected mid-request — not a server fault. 499, not 500.
       if (!res.headersSent) res.status(499).end();
+      return;
+    }
+    // Transient user-search backend failure → retryable 503 (mirrors
+    // /api/v1/images + #2759/#2765). The ?query= path runs getUsersWithSearch
+    // (Meilisearch), which now wraps a transient upstream error as TRPCError
+    // SERVICE_UNAVAILABLE (status 503). We match BOTH that wrapped 503 AND a raw
+    // SDK Meili error that escaped the service wrap (isTransientMeiliError) as
+    // defense-in-depth. no-store so an edge layer can't cache the error; a
+    // Retry-After so clients/CF retry the (typically seconds-long) flap. This
+    // MUST run before the generic TRPCError branch below, whose
+    // JSON.parse(error.message) would otherwise throw on the plain-text
+    // SERVICE_UNAVAILABLE message and bubble a raw 500 — the exact leak this
+    // fixes (transient search error was surfacing as an unhandled 500). A
+    // non-transient error (real app bug / auth / NOT_FOUND) is NOT matched and
+    // still surfaces as its real status.
+    const trpcStatus = error instanceof TRPCError ? getHTTPStatusCodeFromError(error) : undefined;
+    if (isTransientMeiliError(error) || trpcStatus === 503) {
+      if (!res.headersSent) {
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Retry-After', '2');
+        res
+          .status(503)
+          .json({ error: 'User search is temporarily overloaded — please retry.' });
+      }
       return;
     }
     if (error instanceof TRPCError) {
