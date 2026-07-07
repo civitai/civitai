@@ -1739,7 +1739,13 @@ export async function endChallengeAndPickWinners(challengeId: number) {
         userCategories
       );
       if (!judgedEntries.length) {
-        // No judged entries, just mark as completed
+        // Zero-winner completion of a paid user challenge strands its entry fees + initial prize in
+        // account 0 (no payout runs below). Reverse the actual charges (mint-safe + idempotent —
+        // keyed off real charges) BEFORE marking Completed. No-op for daily/mod/system.
+        if (challenge.source === ChallengeSource.User) {
+          const { refundedEntries } = await refundUserChallengeFunds(challengeId);
+          log(`Refunded ${refundedEntries} entry fees (no winners)`);
+        }
         await dbWrite.challenge.update({
           where: { id: challengeId },
           data: { status: ChallengeStatus.Completed },
@@ -1864,6 +1870,27 @@ export async function endChallengeAndPickWinners(challengeId: number) {
           });
           log('Entry prize users notified');
         }
+      }
+    }
+
+    // Partial-winner residual: fewer winners than distribution places leaves the unfilled places'
+    // buzz sitting in account 0 for a paid user challenge. No pro-rata redistribution yet — just
+    // surface the stranded amount for a manual follow-up.
+    if (challenge.source === ChallengeSource.User) {
+      const totalPrizeBuzz = challenge.prizes.reduce((sum, p) => sum + (p.buzz ?? 0), 0);
+      const distributedPrizeBuzz = winningEntries.reduce((sum, e) => sum + e.prize, 0);
+      const residualBuzz = totalPrizeBuzz - distributedPrizeBuzz;
+      if (residualBuzz > 0) {
+        await logToAxiom({
+          type: 'warning',
+          name: 'challenge-partial-winner-residual',
+          message:
+            'User challenge completed with fewer winners than prize places; buzz not paid out',
+          challengeId,
+          residualBuzz,
+          winnersCount: winningEntries.length,
+          prizePlaces: challenge.prizes.length,
+        });
       }
     }
 

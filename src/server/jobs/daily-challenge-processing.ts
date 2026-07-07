@@ -7,6 +7,7 @@ import { eventEngine } from '~/server/events';
 import {
   claimChallengeForCompletion,
   computeDynamicPool,
+  distributePrizes,
   createChallengeRecord,
   createChallengeWinner,
   getChallengeById,
@@ -68,6 +69,7 @@ import {
 import { upsertComment } from '~/server/services/commentsv2.service';
 import { createNotification } from '~/server/services/notification.service';
 import { toggleReaction } from '~/server/services/reaction.service';
+import { refundUserChallengeFunds } from '~/server/games/daily-challenge/challenge-funding';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { getRandom, shuffle } from '~/utils/array-helpers';
 import { withRetries } from '~/utils/errorHandling';
@@ -594,6 +596,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
           judgeId: number | null;
           judgingPrompt: string | null;
           prizeMode: PrizeMode;
+          prizePool: number;
           basePrizePool: number;
           buzzPerAction: number;
           poolTrigger: PoolTrigger | null;
@@ -607,7 +610,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     ]
   >`
     SELECT "allowedNsfwLevel", "judgeId", "judgingPrompt",
-           "prizeMode", "basePrizePool", "buzzPerAction", "poolTrigger", "maxPrizePool", "prizeDistribution",
+           "prizeMode", "prizePool", "basePrizePool", "buzzPerAction", "poolTrigger", "maxPrizePool", "prizeDistribution",
            "metadata", "source", "judgingCategories"
     FROM "Challenge"
     WHERE id = ${currentChallenge.challengeId}
@@ -1036,38 +1039,58 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     challengeRecord.poolTrigger &&
     challengeRecord.prizeDistribution
   ) {
-    const [stats] = await dbRead.$queryRaw<[{ entryCount: bigint; uniqueUsers: bigint }]>`
-      SELECT
-        COUNT(*) as "entryCount",
-        COUNT(DISTINCT i."userId") as "uniqueUsers"
-      FROM "CollectionItem" ci
-      JOIN "Image" i ON i.id = ci."imageId"
-      WHERE ci."collectionId" = ${currentChallenge.collectionId}
-        AND ci.status = 'ACCEPTED'
-    `;
+    if (challengeRecord.source === ChallengeSource.User) {
+      // Entry-fee challenges: the pool is the REAL collected total already accumulated in
+      // Challenge.prizePool (seeded to basePrizePool, grown by chargeEntryFees only for entries
+      // that actually paid). NEVER derive it from the ACCEPTED entry count — accepted entries can
+      // be unpaid (mod-curated images, entry-fee rollback survivors), which would inflate the pool
+      // into minted payout from account 0. Only recompute the per-place breakdown from that total.
+      const totalPool = challengeRecord.prizePool;
+      const dynamicPrizes = distributePrizes(totalPool, challengeRecord.prizeDistribution);
 
-    const actionCount =
-      challengeRecord.poolTrigger === PoolTrigger.Entry
-        ? Number(stats.entryCount)
-        : Number(stats.uniqueUsers);
+      await dbWrite.challenge.update({
+        where: { id: currentChallenge.challengeId },
+        data: { prizes: dynamicPrizes as unknown as Prisma.InputJsonValue },
+      });
 
-    const { totalPool, prizes: dynamicPrizes } = computeDynamicPool({
-      basePrizePool: challengeRecord.basePrizePool,
-      buzzPerAction: challengeRecord.buzzPerAction,
-      actionCount,
-      maxPrizePool: challengeRecord.maxPrizePool,
-      prizeDistribution: challengeRecord.prizeDistribution,
-    });
+      log('Dynamic prizes recomputed from real collected pool (user challenge):', {
+        totalPool,
+        prizes: dynamicPrizes,
+      });
+    } else {
+      const [stats] = await dbRead.$queryRaw<[{ entryCount: bigint; uniqueUsers: bigint }]>`
+        SELECT
+          COUNT(*) as "entryCount",
+          COUNT(DISTINCT i."userId") as "uniqueUsers"
+        FROM "CollectionItem" ci
+        JOIN "Image" i ON i.id = ci."imageId"
+        WHERE ci."collectionId" = ${currentChallenge.collectionId}
+          AND ci.status = 'ACCEPTED'
+      `;
 
-    await dbWrite.challenge.update({
-      where: { id: currentChallenge.challengeId },
-      data: {
-        prizePool: totalPool,
-        prizes: dynamicPrizes as unknown as Prisma.InputJsonValue,
-      },
-    });
+      const actionCount =
+        challengeRecord.poolTrigger === PoolTrigger.Entry
+          ? Number(stats.entryCount)
+          : Number(stats.uniqueUsers);
 
-    log('Dynamic prize pool updated:', { totalPool, prizes: dynamicPrizes });
+      const { totalPool, prizes: dynamicPrizes } = computeDynamicPool({
+        basePrizePool: challengeRecord.basePrizePool,
+        buzzPerAction: challengeRecord.buzzPerAction,
+        actionCount,
+        maxPrizePool: challengeRecord.maxPrizePool,
+        prizeDistribution: challengeRecord.prizeDistribution,
+      });
+
+      await dbWrite.challenge.update({
+        where: { id: currentChallenge.challengeId },
+        data: {
+          prizePool: totalPool,
+          prizes: dynamicPrizes as unknown as Prisma.InputJsonValue,
+        },
+      });
+
+      log('Dynamic prize pool updated:', { totalPool, prizes: dynamicPrizes });
+    }
   }
 
   // Update last review time in Challenge metadata
@@ -1186,6 +1209,13 @@ export async function pickWinnersForChallenge(
       );
       if (!judgedEntries.length) {
         log('No judged entries for challenge:', currentChallenge.challengeId);
+        // Zero-winner completion of a paid user challenge strands its entry fees + initial prize in
+        // account 0 (no payout runs below). Reverse the actual charges (mint-safe + idempotent —
+        // keyed off real charges) BEFORE marking Completed. No-op for daily/mod/system.
+        if (challengeJudgeRow?.source === ChallengeSource.User) {
+          await refundUserChallengeFunds(currentChallenge.challengeId);
+          log('Refunded user challenge funds (no winners)');
+        }
         await updateChallengeStatus(currentChallenge.challengeId, ChallengeStatus.Completed);
         log('Challenge marked as completed (no entries)');
         return;
@@ -1270,6 +1300,27 @@ export async function pickWinnersForChallenge(
 
     // 7. Set Completed status + store summary (AFTER all prizes distributed)
     const challengeRecord = await getChallengeById(currentChallenge.challengeId);
+
+    // Partial-winner residual: fewer winners than distribution places leaves the unfilled places'
+    // buzz sitting in account 0 for a paid user challenge. No pro-rata redistribution yet — just
+    // surface the stranded amount for a manual follow-up.
+    if (challengeRecord?.source === ChallengeSource.User) {
+      const totalPrizeBuzz = challengeRecord.prizes.reduce((sum, p) => sum + (p.buzz ?? 0), 0);
+      const distributedPrizeBuzz = winningEntries.reduce((sum, e) => sum + e.prize, 0);
+      const residualBuzz = totalPrizeBuzz - distributedPrizeBuzz;
+      if (residualBuzz > 0) {
+        await logToAxiom({
+          type: 'warning',
+          name: 'challenge-partial-winner-residual',
+          message: 'User challenge completed with fewer winners than prize places; buzz not paid out',
+          challengeId: currentChallenge.challengeId,
+          residualBuzz,
+          winnersCount: winningEntries.length,
+          prizePlaces: challengeRecord.prizes.length,
+        });
+      }
+    }
+
     const existingMetadata = parseChallengeMetadata(challengeRecord?.metadata);
     await dbWrite.challenge.update({
       where: { id: currentChallenge.challengeId },

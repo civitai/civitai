@@ -20,7 +20,7 @@ import {
 
 // Re-export pure pool computation (lives in separate file to avoid pulling
 // DB/Redis into client bundles)
-export { computeDynamicPool } from './challenge-pool';
+export { computeDynamicPool, distributePrizes } from './challenge-pool';
 
 // =============================================================================
 // Challenge Table Helpers (New System)
