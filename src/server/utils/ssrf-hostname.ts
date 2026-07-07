@@ -189,6 +189,24 @@ function isPrivateIpv6(addr: string): boolean {
   if (g.slice(0, 6).every((h) => h === 0) && (g[6] !== 0 || g[7] !== 0)) {
     return isPrivateIpv4(`${g[6] >> 8}.${g[6] & 0xff}.${g[7] >> 8}.${g[7] & 0xff}`);
   }
+  // NAT64 well-known prefix 64:ff9b::/96 (RFC 6052) — the low 32 bits embed an
+  // IPv4 dest a NAT64 translator will reach. `64:ff9b::a9fe:a9fe` embeds
+  // 169.254.169.254, so the embedded v4 MUST be run through the v4 guard.
+  if (
+    g[0] === 0x0064 &&
+    g[1] === 0xff9b &&
+    g[2] === 0 &&
+    g[3] === 0 &&
+    g[4] === 0 &&
+    g[5] === 0
+  ) {
+    return isPrivateIpv4(`${g[6] >> 8}.${g[6] & 0xff}.${g[7] >> 8}.${g[7] & 0xff}`);
+  }
+  // 6to4 2002::/16 (RFC 3056) — the next 32 bits after the 2002 prefix embed the
+  // IPv4 of the 6to4 relay/host; reject if that embedded v4 is private/reserved.
+  if (g[0] === 0x2002) {
+    return isPrivateIpv4(`${g[1] >> 8}.${g[1] & 0xff}.${g[2] >> 8}.${g[2] & 0xff}`);
+  }
   return false;
 }
 

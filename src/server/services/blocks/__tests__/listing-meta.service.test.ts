@@ -161,6 +161,25 @@ describe('ingestListingAssetFromUrl', () => {
     expect(mockCreateImage).not.toHaveBeenCalled();
   });
 
+  it('rejects an image whose decoded dimensions exceed the max-side cap (decompression-bomb guard)', async () => {
+    mockSafeFetch.mockResolvedValue({
+      finalUrl: 'https://cdn.example.com/huge.png',
+      contentType: 'image/png',
+      bytes: imageBytes,
+    });
+    // Tiny file, but decodes to an absurd 100000×100000 canvas — must be rejected
+    // BEFORE the CF upload + createImage scan pipeline.
+    mockMetadata.mockResolvedValue({ width: 100_000, height: 100_000, format: 'png' });
+    await expect(
+      ingestListingAssetFromUrl({
+        input: { url: 'https://cdn.example.com/huge.png', kind: 'cover' },
+        userId: 1,
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockUploadBufferToCF).not.toHaveBeenCalled();
+    expect(mockCreateImage).not.toHaveBeenCalled();
+  });
+
   it('rejects when the bytes cannot be decoded as an image', async () => {
     mockSafeFetch.mockResolvedValue({
       finalUrl: 'https://cdn.example.com/x',

@@ -110,6 +110,22 @@ describe('isPrivateIp (DNS-resolved-address guard)', () => {
     expect(isPrivateIp('2001:4860:4860::8888')).toBe(false); // Google DNS
   });
 
+  it('flags NAT64 (64:ff9b::/96) with a private/metadata embedded IPv4', () => {
+    expect(isPrivateIp('64:ff9b::a9fe:a9fe')).toBe(true); // embeds 169.254.169.254 (metadata)
+    expect(isPrivateIp('64:ff9b::7f00:1')).toBe(true); // embeds 127.0.0.1 (loopback)
+    expect(isPrivateIp('64:ff9b::a00:1')).toBe(true); // embeds 10.0.0.1 (RFC1918)
+    // A NAT64-wrapped PUBLIC IPv4 stays public (8.8.8.8 = 0808:0808).
+    expect(isPrivateIp('64:ff9b::808:808')).toBe(false);
+  });
+
+  it('flags 6to4 (2002::/16) with a private/metadata embedded IPv4', () => {
+    expect(isPrivateIp('2002:a9fe:a9fe::1')).toBe(true); // embeds 169.254.169.254 (metadata)
+    expect(isPrivateIp('2002:a00:1::')).toBe(true); // embeds 10.0.0.1 (RFC1918)
+    expect(isPrivateIp('2002:7f00:1::')).toBe(true); // embeds 127.0.0.1 (loopback)
+    // A 6to4-wrapped PUBLIC IPv4 stays public (8.8.8.8 = 0808:0808).
+    expect(isPrivateIp('2002:808:808::1')).toBe(false);
+  });
+
   it('flags an IPv6 with a zone id and fails closed on garbage', () => {
     expect(isPrivateIp('fe80::1%eth0')).toBe(true);
     expect(isPrivateIp('not-an-ip')).toBe(true); // unparseable → fail closed

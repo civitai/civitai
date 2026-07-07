@@ -67,6 +67,20 @@ describe('extractListingMeta', () => {
     expect(extractListingMeta(html, BASE).coverImageUrl).toBeUndefined();
   });
 
+  it('drops a non-https (http:) suggested image/icon so the preview matches the https-only accept path', () => {
+    const html = `
+      <meta property="og:image" content="http://cdn.example.com/og.png">
+      <link rel="apple-touch-icon" href="http://cdn.example.com/touch.png">`;
+    const r = extractListingMeta(html, BASE);
+    expect(r.coverImageUrl).toBeUndefined();
+    expect(r.iconImageUrl).toBeUndefined();
+  });
+
+  it('keeps a protocol-relative asset (//host/x) since it resolves to https against an https page', () => {
+    const html = `<meta property="og:image" content="//cdn.example.com/og.png">`;
+    expect(extractListingMeta(html, BASE).coverImageUrl).toBe('https://cdn.example.com/og.png');
+  });
+
   it('clamps an over-long name to the listing name bound', () => {
     const long = 'x'.repeat(300);
     const r = extractListingMeta(`<meta property="og:title" content="${long}">`, BASE);

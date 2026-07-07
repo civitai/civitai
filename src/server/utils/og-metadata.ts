@@ -128,7 +128,13 @@ function pickIconHref(candidates: IconCandidate[]): string | undefined {
   return icons[0]?.href;
 }
 
-/** Resolve a possibly-relative asset URL against the final page URL; drop unparseable. */
+/**
+ * Resolve a possibly-relative asset URL against the final page URL; drop
+ * unparseable OR non-https results. https-only mirrors the accept-side `safeFetch`
+ * (which is https-only): a suggested `http://` image would render as a
+ * mixed-content preview client-side but then FAIL ingestion on accept — so we
+ * never suggest one (the UI falls back to manual upload instead).
+ */
 function resolveUrl(href: string | undefined, baseUrl: string): string | undefined {
   if (!href) return undefined;
   const trimmed = href.trim();
@@ -136,11 +142,16 @@ function resolveUrl(href: string | undefined, baseUrl: string): string | undefin
   // Skip data: URIs and other non-fetchable schemes early — the accept-side
   // safeFetch would reject them anyway, but there's no point suggesting them.
   if (/^data:/i.test(trimmed)) return undefined;
+  let resolved: URL;
   try {
-    return new URL(trimmed, baseUrl).toString();
+    resolved = new URL(trimmed, baseUrl);
   } catch {
     return undefined;
   }
+  // Only https suggestions — matches what safeFetch can actually ingest, so the
+  // preview never shows an asset the accept step will reject.
+  if (resolved.protocol !== 'https:') return undefined;
+  return resolved.toString();
 }
 
 function clamp(s: string | undefined, max: number): string | undefined {
