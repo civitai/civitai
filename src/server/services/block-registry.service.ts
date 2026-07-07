@@ -3,6 +3,7 @@ import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { manifestSettingsSchema } from '~/server/schema/blocks/manifest-settings.meta.schema';
+import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import {
   getPopularCheckpointForEcosystem,
@@ -1917,9 +1918,18 @@ export class BlockRegistry {
    * plus manifest DISPLAY defaults; the iframe host is still derived from the live
    * tunnel only (the resolution carries no iframeSrc).
    *
-   * SECURITY — ANTI-SHADOW GUARD (refuse any slug claimed by someone else, with NO
-   * existence oracle — every refusal returns the SAME bare null the "foreign /
-   * absent app" case returns):
+   * SECURITY — ANTI-SHADOW GUARD (refuse any slug claimed by someone else). Every
+   * refusal returns the SAME bare null the "foreign / absent app" case returns, so
+   * the guard NEVER distinguishes AMONG the claimed cases: foreign-approved,
+   * foreign-pending, and foreign-suspended all yield an identical bare null. It is
+   * NOT a full "no existence oracle" (see the caller comment in blocks.router.ts):
+   * a claimed slug returns null (consuming no host-pool / rate-limit budget) while
+   * an unclaimed slug returns a synthetic resolution (which downstream may allocate
+   * a rate-limited host), so a claimed-vs-unclaimed signal is inherent. Approved
+   * slugs are already PUBLIC (they render at `<slug>.civit.ai`), so the only
+   * residual signal this leaks is the EXISTENCE of a pending/suspended slug — and
+   * only to another author-flagged (trusted-cohort) caller, gated behind the
+   * per-user rate limit. That residual is the accepted trade for the pre-submit UX.
    *   (A) if ANY AppBlock row exists for `blockId` → REFUSE. The caller-owned row
    *       was already checked (and returned) by the caller, so any row reaching
    *       here is FOREIGN. `block_id` is GLOBALLY unique (`@@unique([blockId])`,
@@ -1932,9 +1942,17 @@ export class BlockRegistry {
    *       so this is a single indexed (`app_block_publish_requests_slug_idx`)
    *       lookup. The caller's OWN pending request is ALLOWED (they are claiming
    *       the slug), as is a truly-unclaimed slug.
+   *   (C) if `blockId` is not a CANONICAL slug (the same `SLUG_REGEX` + 3–40-char
+   *       bounds submit enforces on `manifest.blockId`) → REFUSE, returning the
+   *       same bare null BEFORE any DB read. Every stored AppBlock.blockId / pending
+   *       slug is canonical, so a non-canonical `blockId` can never match a real row
+   *       — without this guard an uppercase / dotted / over-length / leading-digit
+   *       string would sail past guards (A)/(B) as "unclaimed" and burn a
+   *       rate-limited host-pool allocation. The owned path is unaffected (its rows
+   *       are always canonical, so it never reaches here).
    * A user can therefore NEVER get an ephemeral resolution for a slug that belongs
-   * to — or is pending for — anyone else, and the refusal never reveals which case
-   * triggered it (no existence/ownership/state oracle).
+   * to — or is pending for — anyone else, nor for a structurally-invalid slug, and
+   * the refusal never reveals WHICH of these cases triggered it.
    *
    * Safe DISPLAY defaults (no DB row, no reviewed manifest): `unverified` trust
    * tier, EMPTY scopes (scoped block-token mint stays 403 until approval — Phase 2),
@@ -1949,6 +1967,17 @@ export class BlockRegistry {
     userId: number,
     db: typeof dbRead | typeof dbWrite
   ): Promise<DevPageBlockResolution | null> {
+    // Guard (C): reject a non-CANONICAL slug BEFORE any DB read (same bare null,
+    // no oracle). Canonical = the exact constraint submit enforces on
+    // manifest.blockId (SLUG_REGEX + 3–40 chars). Every stored blockId/pending
+    // slug is canonical, so a non-canonical string can never match a real row —
+    // rejecting it here stops an uppercase / dotted (`a.b`) / over-length /
+    // leading-digit slug from being treated as "unclaimed" and burning a
+    // rate-limited host-pool allocation. The owned path never reaches this
+    // (its rows are always canonical, so guard-A/B and this are moot for it).
+    if (blockId.length < 3 || blockId.length > 40 || !SLUG_REGEX.test(blockId)) {
+      return null;
+    }
     // Guard (A): any FOREIGN AppBlock row for this slug → refuse (slug is claimed
     // globally via @@unique([blockId])). Indexed on app_blocks_block_id_unique.
     const claimed = await db.appBlock.findUnique({

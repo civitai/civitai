@@ -237,6 +237,22 @@ describe('startDevTunnel — EPHEMERAL pre-submit rate limit (Phase 1)', () => {
     expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
     expect(mockStart).toHaveBeenCalledTimes(1);
   });
+
+  it('a FOREIGN/absent slug (resolve → null) → NOT_FOUND WITHOUT touching the ephemeral limiter', async () => {
+    // The resolver already refused (foreign-claimed OR non-canonical slug → the
+    // same bare null). The router must NOT_FOUND at the ownership gate BEFORE the
+    // ephemeral branch — so a probe for someone else's slug can never even
+    // consume the caller's rate-limit budget (the claimed-vs-unclaimed budget
+    // asymmetry the honest-oracle comment documents). Distinct from the "OWNED
+    // path" test above: that resolves to a real row, this resolves to null.
+    mockResolveDev.mockResolvedValue(null);
+    const caller = blocksRouter.createCaller(authedCtx(100, true) as never);
+    await expect(caller.startDevTunnel({ blockId: 'their-app', sshPublicKey: PUBKEY })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+    expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    expect(mockStart).not.toHaveBeenCalled();
+  });
 });
 
 describe('stopDevTunnel / devTunnelStatus', () => {

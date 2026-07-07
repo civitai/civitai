@@ -1028,12 +1028,24 @@ export const blocksRouter = router({
       // EPHEMERAL PRE-SUBMIT PATH (Phase 1): the caller owns no AppBlock row for
       // this slug yet (resolveEphemeralDevPageBlock returned a synthetic
       // `status:'ephemeral'` resolution — already anti-shadow-guarded so the slug
-      // is unclaimed / the caller's own pending). Rate-limit these host-pool
-      // allocations per-user to blunt enumeration / DoS across unclaimed slugs.
-      // The approved/owned path skips this entirely. Same bare NOT_FOUND is NOT
-      // reused here — the caller already proved ownership intent (unclaimed slug),
-      // so a 429 is the honest signal (no existence oracle: it fires only on the
-      // caller's OWN allowed ephemeral starts, never as a probe result).
+      // is unclaimed / the caller's own pending / canonical). Rate-limit these
+      // host-pool allocations per-user to blunt enumeration / DoS across unclaimed
+      // slugs. The approved/owned path skips this entirely.
+      //
+      // HONEST SECURITY NOTE (not a full "no existence oracle"): a claimed slug
+      // returns the bare NOT_FOUND above (consuming NO rate-limit budget) while an
+      // unclaimed slug reaches this branch (consuming budget / allocating a host),
+      // so a claimed-vs-unclaimed signal is INHERENT — and once a caller exhausts
+      // their 20/hr budget, claimed→NOT_FOUND vs unclaimed→429 becomes freely
+      // distinguishable. What the guard DOES guarantee: it never distinguishes
+      // AMONG the claimed cases (foreign-approved / foreign-pending / foreign-
+      // suspended all return the identical bare NOT_FOUND). Approved slugs are
+      // already public (they render at `<slug>.civit.ai`), so the only residual
+      // leak is the existence of a PENDING/SUSPENDED slug — and only to another
+      // author-flagged (trusted-cohort) caller. The 429 message is kept (not
+      // suppressed to NOT_FOUND): actionable rate-limit feedback is better UX for
+      // that trusted cohort, and it exposes nothing an exhausted-budget probe
+      // couldn't already infer.
       if (app.status === 'ephemeral') {
         if (!(await checkEphemeralDevTunnelRateLimit(ctx.user.id))) {
           throw new TRPCError({
