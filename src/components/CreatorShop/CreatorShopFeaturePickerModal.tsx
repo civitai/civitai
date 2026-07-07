@@ -14,13 +14,14 @@ import {
 } from '@mantine/core';
 import { IconCheck, IconPhotoOff, IconStar } from '@tabler/icons-react';
 import type { ComponentProps } from 'react';
-import { useEffect, useRef, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import type { CreatorShopManageItem } from '~/components/CreatorShop/creator-shop.util';
 import {
   useMutateCreatorShop,
   useQueryCreatorShopManage,
   useQueryCreatorShopSettings,
 } from '~/components/CreatorShop/creator-shop.util';
+import { useSeededState } from '~/components/CreatorShop/useSeededState';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
 import { CREATOR_SHOP_MAX_FEATURED } from '~/server/schema/creator-shop.schema';
 import { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
@@ -28,21 +29,71 @@ import { getDisplayName } from '~/utils/string-helpers';
 
 type SampleCosmetic = ComponentProps<typeof CosmeticSample>['cosmetic'];
 
+const ART_THUMB_HEIGHT = 90;
+
+function FeaturePickerCard({
+  item,
+  isSelected,
+  disabled,
+  onToggle,
+}: {
+  item: CreatorShopManageItem;
+  isSelected: boolean;
+  disabled: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <Paper
+      withBorder
+      radius="md"
+      p={6}
+      onClick={() => !disabled && onToggle()}
+      style={{
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.45 : 1,
+        transition: 'border-color 100ms ease, box-shadow 100ms ease',
+        borderColor: isSelected ? 'var(--mantine-color-yellow-5)' : undefined,
+        boxShadow: isSelected ? '0 0 0 1px var(--mantine-color-yellow-5)' : undefined,
+      }}
+    >
+      <Box
+        pos="relative"
+        style={{
+          height: ART_THUMB_HEIGHT,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'var(--mantine-color-dark-8)',
+          borderRadius: 'var(--mantine-radius-sm)',
+          overflow: 'hidden',
+        }}
+      >
+        <CosmeticSample cosmetic={item.cosmetic as unknown as SampleCosmetic} size="md" />
+        {isSelected && (
+          <ThemeIcon pos="absolute" top={6} right={6} radius="xl" size="sm" color="yellow">
+            <IconCheck size={12} stroke={3} />
+          </ThemeIcon>
+        )}
+      </Box>
+      <Stack gap={0} mt={8} px={4} pb={2}>
+        <Text size="sm" fw={600} lineClamp={1}>
+          {item.title}
+        </Text>
+        <Text size="xs" c="dimmed" lineClamp={1}>
+          {getDisplayName(item.cosmetic.type)}
+        </Text>
+      </Stack>
+    </Paper>
+  );
+}
+
 export function CreatorShopFeaturePickerModal() {
   const dialog = useDialogContext();
   const { items, isLoading: itemsLoading } = useQueryCreatorShopManage();
   const { settings, isLoading: settingsLoading } = useQueryCreatorShopSettings();
   const { updateSettings } = useMutateCreatorShop();
 
-  const [selected, setSelected] = useState<number[]>(settings?.featuredItemIds ?? []);
-  // The settings query may still be loading on first render; re-seed the
-  // selection once it first resolves so previously-featured items stay selected.
-  const seededRef = useRef(!!settings);
-  useEffect(() => {
-    if (!settings || seededRef.current) return;
-    seededRef.current = true;
-    setSelected(settings.featuredItemIds ?? []);
-  }, [settings]);
+  const [selected, setSelected] = useSeededState(settings, (s) => s?.featuredItemIds ?? []);
 
   const loading = itemsLoading || settingsLoading;
   const publishedItems = items.filter((i) => i.status === CosmeticShopItemStatus.Published);
@@ -88,60 +139,14 @@ export function CreatorShopFeaturePickerModal() {
           <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="sm">
             {publishedItems.map((item) => {
               const isSelected = selected.includes(item.id);
-              const disabled = !isSelected && atCap;
               return (
-                <Paper
+                <FeaturePickerCard
                   key={item.id}
-                  withBorder
-                  radius="md"
-                  p={6}
-                  onClick={() => !disabled && toggle(item.id)}
-                  style={{
-                    cursor: disabled ? 'not-allowed' : 'pointer',
-                    opacity: disabled ? 0.45 : 1,
-                    transition: 'border-color 100ms ease, box-shadow 100ms ease',
-                    borderColor: isSelected ? 'var(--mantine-color-yellow-5)' : undefined,
-                    boxShadow: isSelected ? '0 0 0 1px var(--mantine-color-yellow-5)' : undefined,
-                  }}
-                >
-                  <Box
-                    pos="relative"
-                    style={{
-                      height: 90,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      background: 'var(--mantine-color-dark-8)',
-                      borderRadius: 'var(--mantine-radius-sm)',
-                      overflow: 'hidden',
-                    }}
-                  >
-                    <CosmeticSample
-                      cosmetic={item.cosmetic as unknown as SampleCosmetic}
-                      size="md"
-                    />
-                    {isSelected && (
-                      <ThemeIcon
-                        pos="absolute"
-                        top={6}
-                        right={6}
-                        radius="xl"
-                        size="sm"
-                        color="yellow"
-                      >
-                        <IconCheck size={12} stroke={3} />
-                      </ThemeIcon>
-                    )}
-                  </Box>
-                  <Stack gap={0} mt={8} px={4} pb={2}>
-                    <Text size="sm" fw={600} lineClamp={1}>
-                      {item.title}
-                    </Text>
-                    <Text size="xs" c="dimmed" lineClamp={1}>
-                      {getDisplayName(item.cosmetic.type)}
-                    </Text>
-                  </Stack>
-                </Paper>
+                  item={item}
+                  isSelected={isSelected}
+                  disabled={!isSelected && atCap}
+                  onToggle={() => toggle(item.id)}
+                />
               );
             })}
           </SimpleGrid>

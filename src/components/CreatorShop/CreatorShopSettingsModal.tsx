@@ -21,7 +21,6 @@ import {
   IconStar,
 } from '@tabler/icons-react';
 import type { ForwardRefExoticComponent, RefAttributes } from 'react';
-import { useEffect, useRef, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { CreatorShopFeaturePickerModal } from '~/components/CreatorShop/CreatorShopFeaturePickerModal';
@@ -30,6 +29,7 @@ import {
   useMutateCreatorShop,
   useQueryCreatorShopSettings,
 } from '~/components/CreatorShop/creator-shop.util';
+import { useSeededState } from '~/components/CreatorShop/useSeededState';
 import {
   CREATOR_SHOP_MAX_FEATURED,
   creatorShopSectionKeys,
@@ -53,10 +53,12 @@ const sectionIcons: Record<CreatorShopSectionKey, TablerIcon> = {
   models: IconBox,
 };
 
-function seedSections(settings?: {
+type SeedableSettings = {
   showModels?: boolean;
   sections?: { key: CreatorShopSectionKey; visible: boolean }[];
-}): SectionState[] {
+};
+
+function seedSections(settings?: SeedableSettings | null): SectionState[] {
   const saved = settings?.sections;
   let ordered: SectionState[];
   if (saved?.length) {
@@ -73,22 +75,76 @@ function seedSections(settings?: {
   );
 }
 
+function SectionRow({
+  section,
+  isFirst,
+  isLast,
+  onMoveUp,
+  onMoveDown,
+  onToggle,
+}: {
+  section: SectionState;
+  isFirst: boolean;
+  isLast: boolean;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+  onToggle: () => void;
+}) {
+  const label = sectionLabels[section.key];
+  const SectionIcon = sectionIcons[section.key];
+  return (
+    <Paper withBorder radius="md" p="sm">
+      <Group justify="space-between" wrap="nowrap">
+        <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
+          <ThemeIcon
+            variant="light"
+            color={section.visible ? 'yellow' : 'gray'}
+            radius="md"
+            size="lg"
+          >
+            <SectionIcon size={18} />
+          </ThemeIcon>
+          <Text size="sm" fw={500} c={section.visible ? undefined : 'dimmed'} lineClamp={1}>
+            {label}
+          </Text>
+        </Group>
+        <Group gap={4} wrap="nowrap">
+          <ActionIcon
+            variant="default"
+            onClick={onMoveUp}
+            disabled={isFirst}
+            aria-label={`Move ${label} up`}
+          >
+            <IconChevronUp size={16} />
+          </ActionIcon>
+          <ActionIcon
+            variant="default"
+            onClick={onMoveDown}
+            disabled={isLast}
+            aria-label={`Move ${label} down`}
+          >
+            <IconChevronDown size={16} />
+          </ActionIcon>
+          <Switch
+            ml={4}
+            checked={section.visible}
+            onChange={onToggle}
+            aria-label={`Show ${label} section`}
+          />
+        </Group>
+      </Group>
+    </Paper>
+  );
+}
+
 export function CreatorShopSettingsModal() {
   const dialog = useDialogContext();
   const { settings, isLoading } = useQueryCreatorShopSettings();
   const { updateSettings } = useMutateCreatorShop();
 
-  const [sections, setSections] = useState<SectionState[]>(() => seedSections(settings));
-  const [description, setDescription] = useState(settings?.description ?? '');
-  const seededRef = useRef(!!settings);
+  const [sections, setSections] = useSeededState(settings, seedSections);
+  const [description, setDescription] = useSeededState(settings, (s) => s?.description ?? '');
   const featuredCount = settings?.featuredItemIds?.length ?? 0;
-
-  useEffect(() => {
-    if (!settings || seededRef.current) return;
-    seededRef.current = true;
-    setSections(seedSections(settings));
-    setDescription(settings.description ?? '');
-  }, [settings]);
 
   const toggleVisible = (key: CreatorShopSectionKey) =>
     setSections((prev) => prev.map((s) => (s.key === key ? { ...s, visible: !s.visible } : s)));
@@ -165,57 +221,17 @@ export function CreatorShopSettingsModal() {
             </Stack>
           ) : (
             <Stack gap={8}>
-              {sections.map((section, index) => {
-                const SectionIcon = sectionIcons[section.key];
-                return (
-                  <Paper key={section.key} withBorder radius="md" p="sm">
-                    <Group justify="space-between" wrap="nowrap">
-                      <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
-                        <ThemeIcon
-                          variant="light"
-                          color={section.visible ? 'yellow' : 'gray'}
-                          radius="md"
-                          size="lg"
-                        >
-                          <SectionIcon size={18} />
-                        </ThemeIcon>
-                        <Text
-                          size="sm"
-                          fw={500}
-                          c={section.visible ? undefined : 'dimmed'}
-                          lineClamp={1}
-                        >
-                          {sectionLabels[section.key]}
-                        </Text>
-                      </Group>
-                      <Group gap={4} wrap="nowrap">
-                        <ActionIcon
-                          variant="default"
-                          onClick={() => move(index, -1)}
-                          disabled={index === 0}
-                          aria-label={`Move ${sectionLabels[section.key]} up`}
-                        >
-                          <IconChevronUp size={16} />
-                        </ActionIcon>
-                        <ActionIcon
-                          variant="default"
-                          onClick={() => move(index, 1)}
-                          disabled={index === sections.length - 1}
-                          aria-label={`Move ${sectionLabels[section.key]} down`}
-                        >
-                          <IconChevronDown size={16} />
-                        </ActionIcon>
-                        <Switch
-                          ml={4}
-                          checked={section.visible}
-                          onChange={() => toggleVisible(section.key)}
-                          aria-label={`Show ${sectionLabels[section.key]} section`}
-                        />
-                      </Group>
-                    </Group>
-                  </Paper>
-                );
-              })}
+              {sections.map((section, index) => (
+                <SectionRow
+                  key={section.key}
+                  section={section}
+                  isFirst={index === 0}
+                  isLast={index === sections.length - 1}
+                  onMoveUp={() => move(index, -1)}
+                  onMoveDown={() => move(index, 1)}
+                  onToggle={() => toggleVisible(section.key)}
+                />
+              ))}
             </Stack>
           )}
         </Stack>
