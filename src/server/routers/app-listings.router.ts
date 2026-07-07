@@ -78,8 +78,9 @@ import { isHostForColor } from '~/server/utils/server-domain';
  *     service-layer owner check still bounds every mutation to the caller.
  *   - `moderatorProcedure` (+ `enforceAppBlocksFlag` on backfill) — the mod-only
  *     backfill + the read-only off-site review-queue lists.
- *   - `enforceAppListingsReadFlag` (`app-blocks-enabled`) — the DARK public store
- *     read path (empty page / NOT_FOUND until the segment widens at cutover).
+ *   - `enforceAppListingsReadFlag` (`app-listings`, OR-falling-back to
+ *     `app-blocks-enabled`) — the DARK public store read path (empty page /
+ *     NOT_FOUND until the segment widens at cutover).
  */
 const enforceAppBlocksFlag = middleware(async ({ ctx, next }) => {
   if (await isAppBlocksEnabled({ user: ctx.user })) return next();
