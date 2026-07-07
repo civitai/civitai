@@ -85,11 +85,27 @@ describe('normalizeLinkUrl — hostile schemes are rejected', () => {
     expect(result.error).toBeDefined();
   });
 
-  // NOTE: a scheme-LIKE prefix with no `://` and an `@` (e.g. `mailto:x@host`)
-  // is, under the locked `://` policy, prepended to `https://mailto:x@host` — which
-  // parses as a valid https URL (`mailto:x` becomes userinfo). It is NOT rejected.
-  // That's a harmless consequence of the policy (the result is still https) and was
-  // not a spec-required reject case, so it is intentionally not asserted here.
+  // NOTE: a scheme-LIKE prefix with no `://` and an `@` (e.g. `mailto:x@host`) is,
+  // under the locked `://` policy, prepended to `https://mailto:x@host` — which
+  // WHATWG-parses `mailto:x` as USERINFO. Since `validateExternalUrl` now rejects
+  // any URL carrying userinfo (the phishing-vector fold-in), this is rejected.
+  it('a scheme-like prefix that parses as userinfo is now rejected', () => {
+    const result = normalizeLinkUrl('mailto:x@host.com');
+    expect(result.url).toBe('');
+    expect(result.error).toBeDefined();
+  });
+});
+
+describe('normalizeLinkUrl — embedded credentials (userinfo) are rejected (mirrors the server)', () => {
+  it.each([
+    ['host-confusion', 'https://example.com@evil.com'],
+    ['user:pass', 'https://user:pass@evil.com'],
+    ['bare-domain host-confusion (no scheme)', 'example.com@evil.com'],
+  ])('%s → error (credentials rejected)', (_label, input) => {
+    const result = normalizeLinkUrl(input);
+    expect(result.url).toBe('');
+    expect(result.error).toMatch(/credential/i);
+  });
 });
 
 describe('normalizeLinkUrl — empty / whitespace', () => {

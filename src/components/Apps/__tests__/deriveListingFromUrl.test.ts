@@ -141,10 +141,16 @@ describe('deriveListingFromUrl — hostile / edge hosts never throw', () => {
     expect(deriveListingFromUrl('https://[::1]')).toEqual({ name: '[::1]', slug: '' });
   });
 
-  it('userinfo is stripped — derivation uses the host only', () => {
+  it('userinfo is rejected — no derivation (credentials in URL are invalid)', () => {
+    // validateExternalUrl now rejects any userinfo (user:pass@host) as a
+    // phishing/display-spoof vector, so derivation yields nothing.
     expect(deriveListingFromUrl('https://user:pass@example.com')).toEqual({
-      name: 'Example',
-      slug: 'example',
+      name: '',
+      slug: '',
+    });
+    expect(deriveListingFromUrl('https://example.com@evil.com')).toEqual({
+      name: '',
+      slug: '',
     });
   });
 

@@ -16,6 +16,9 @@ import { renderWithProviders } from '../../../test/component-setup';
 const mocks = vi.hoisted(() => ({
   submit: vi.fn(),
   mutate: vi.fn(),
+  // The metadata auto-pull query result the mocked `fetchListingMetaFromUrl`
+  // returns — tests mutate this to simulate a suggestion set / empty result.
+  meta: { data: undefined as unknown, isFetching: false, isSuccess: false },
 }));
 
 vi.mock('~/utils/trpc', () => {
@@ -29,7 +32,13 @@ vi.mock('~/utils/trpc', () => {
             return { mutate: mocks.mutate, mutateAsync: vi.fn(), isPending: false };
           },
         },
+        // The auto-pull query — driven by the mutable `mocks.meta` result so a test
+        // can assert prefill (mock a suggestion) or the empty state (default).
+        fetchListingMetaFromUrl: {
+          useQuery: () => mocks.meta,
+        },
         persistAssetImage: { useMutation: mutation },
+        ingestAssetFromUrl: { useMutation: mutation },
         setIcon: { useMutation: mutation },
         setCover: { useMutation: mutation },
         addScreenshot: { useMutation: mutation },
@@ -57,6 +66,8 @@ const { ExternalSubmitForm } = await import('./ExternalSubmitForm');
 beforeEach(() => {
   mocks.submit.mockClear();
   mocks.mutate.mockClear();
+  // Reset the auto-pull query result to "found nothing" between tests.
+  mocks.meta = { data: undefined, isFetching: false, isSuccess: false };
 });
 
 describe('ExternalSubmitForm — wizard', () => {
@@ -94,7 +105,11 @@ describe('ExternalSubmitForm — wizard', () => {
     await page.getByRole('textbox', { name: /Link URL/ }).fill('http://example.com');
     await page.getByRole('button', { name: 'Next' }).click();
     // The "Use https://" fix-it error surfaces inline; we stay on the URL step.
-    await expect.element(page.getByText(/https/i)).toBeInTheDocument();
+    // Assert the EXACT validator string — `/https/i` matches 3 elements (the field
+    // description + the alert copy + the error), a strict-mode violation.
+    await expect
+      .element(page.getByText('Use https:// (or omit the scheme)'))
+      .toBeInTheDocument();
     expect(page.getByRole('button', { name: 'Create draft' }).elements()).toHaveLength(0);
   });
 
@@ -106,6 +121,41 @@ describe('ExternalSubmitForm — wizard', () => {
       .element()
       .dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await expect.element(page.getByRole('button', { name: 'Create draft' })).toBeInTheDocument();
+  });
+
+  test('a fetched suggestion prefills the (blank) tagline on the Details step', async () => {
+    // Simulate the SSRF-safe auto-pull returning og:description + image suggestions.
+    mocks.meta = {
+      data: {
+        name: 'Og Title App',
+        tagline: 'The best off-site app around',
+        coverImageUrl: 'https://cdn.example.com/og.png',
+        iconImageUrl: 'https://cdn.example.com/icon.png',
+      },
+      isFetching: false,
+      isSuccess: true,
+    };
+    renderWithProviders(<ExternalSubmitForm />);
+    await page.getByRole('textbox', { name: /Link URL/ }).fill('https://vitrine.civitai.com');
+    await page.getByRole('button', { name: 'Next' }).click();
+
+    // Tagline was blank → prefilled from og:description. (Name is already
+    // host-derived to "Vitrine" on advance, so it is not clobbered — the
+    // non-destructive prefill only fills blank fields.)
+    await expect
+      .element(page.getByRole('textbox', { name: /Tagline/ }))
+      .toHaveValue('The best off-site app around');
+    await expect.element(page.getByRole('textbox', { name: /^Name/ })).toHaveValue('Vitrine');
+  });
+
+  test('the empty-suggestions state renders when the auto-pull finds nothing', async () => {
+    mocks.meta = { data: {}, isFetching: false, isSuccess: true };
+    renderWithProviders(<ExternalSubmitForm />);
+    await page.getByRole('textbox', { name: /Link URL/ }).fill('https://vitrine.civitai.com');
+    await page.getByRole('button', { name: 'Next' }).click();
+    await expect
+      .element(page.getByText(/No suggestions found/i))
+      .toBeInTheDocument();
   });
 
   test('submitting valid details calls submitExternalListing (server owns the draft)', async () => {
