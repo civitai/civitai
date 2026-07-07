@@ -15,6 +15,11 @@ import {
   listAppListingsSchema,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import {
+  getMyAppListingReviewSchema,
+  listAppListingReviewsSchema,
+  upsertAppListingReviewSchema,
+} from '~/server/schema/blocks/app-listing-review.schema';
+import {
   approveExternalRequestSchema,
   listMySubmissionsSchema,
   listOffsiteRequestsSchema,
@@ -733,5 +738,82 @@ export const appListingsRouter = router({
       const detail = await getListingDetail(input, { redCapable: isRedCapableRequest(ctx) });
       if (!detail) throw throwNotFoundError('Listing not found');
       return detail;
+    }),
+
+  // -------------------------------------------------------------------------
+  // REVIEW (thumbs/recommend) WRITE + READ — the write half of AppListingReview
+  // (the model + the "N% recommend (M)" DISPLAY already existed; only the write
+  // path + read procs + the SYNCHRONOUS metric feed were missing).
+  //
+  // ELIGIBILITY (locked W13 decision, enforced in the service): any signed-in
+  // user EXCEPT the listing owner, for BOTH kinds, NO install/usage gate.
+  //
+  // FLAG GATING: the WRITEs (`upsertReview`/`getMyReview`) are `protectedProcedure`
+  // (auth REQUIRED) + `enforceAppBlocksFlag` — the "store enabled for this viewer"
+  // gate that THROWS UNAUTHORIZED when off (a real anon/non-mod caller can't write
+  // until the segment widens at GA). `listReviews` is `publicProcedure` +
+  // `enforceAppListingsReadFlag` (empty page when off, same posture as
+  // listAvailable). The review affordance renders only on the mod-only
+  // store-preview surface today (the public `/apps/[slug]` cutover is P2d).
+  //
+  // FOLLOW-UP (deferred): a MOD exclude/report path for individual reviews.
+  // `listReviews` ALREADY filters `exclude`/`tosViolation`, so a future mod action
+  // takes effect on the visible list with no read-path change.
+  // -------------------------------------------------------------------------
+
+  /**
+   * USER: create-or-update the caller's review for a listing (thumbs/recommend),
+   * feeding the recommend metric SYNCHRONOUSLY in the same tx. Self-review /
+   * non-approved-listing gates are enforced in the service (FORBIDDEN / BAD_REQUEST).
+   */
+  upsertReview: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .use(
+      rateLimit({
+        limit: 30,
+        period: 60,
+        errorMessage: 'Too many review submissions — slow down.',
+      })
+    )
+    .input(upsertAppListingReviewSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { upsertAppListingReview } = await import(
+        '~/server/services/blocks/app-listing-review.service'
+      );
+      return upsertAppListingReview({ userId: ctx.user.id, input });
+    }),
+
+  /** USER: the caller's OWN review for a listing (form prefill), or null. */
+  getMyReview: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(getMyAppListingReviewSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user) return null;
+      const { getMyAppListingReview } = await import(
+        '~/server/services/blocks/app-listing-review.service'
+      );
+      return getMyAppListingReview(input.appListingId, ctx.user.id);
+    }),
+
+  /** PUBLIC: keyset-paginated reviews for a listing (newest-first, mod-filtered). */
+  listReviews: publicProcedure
+    .use(enforceAppListingsReadFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many review requests — slow down.',
+      })
+    )
+    .input(listAppListingReviewsSchema)
+    .query(async ({ ctx, input }) => {
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
+        return { items: [], nextCursor: undefined };
+      }
+      const { listAppListingReviews } = await import(
+        '~/server/services/blocks/app-listing-review.service'
+      );
+      return listAppListingReviews(input);
     }),
 });
