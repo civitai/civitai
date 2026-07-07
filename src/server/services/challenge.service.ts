@@ -535,6 +535,10 @@ async function buildChallengeDetail(
 ) {
   const id = challenge.id;
 
+  // createdById is nullable (creator account deleted, FK ON DELETE SET NULL); fall back to the
+  // system user (-1) so lookups don't degrade to WHERE id = NULL and drop the creator identity.
+  const createdById = challenge.createdById ?? -1;
+
   // Get entry count from the challenge's collection (only accepted entries)
   let entryCount = 0;
   if (challenge.collectionId) {
@@ -553,13 +557,13 @@ async function buildChallengeDetail(
   >`
     SELECT id, username, image, "deletedAt"
     FROM "User"
-    WHERE id = ${challenge.createdById}
+    WHERE id = ${createdById}
   `;
 
   // Fetch profile picture and cosmetics for creator
   const [profilePictures, cosmetics] = await Promise.all([
-    getProfilePicturesForUsers([challenge.createdById]),
-    getCosmeticsForUsers([challenge.createdById]),
+    getProfilePicturesForUsers([createdById]),
+    getCosmeticsForUsers([createdById]),
   ]);
 
   // Get model info for all modelVersionIds
@@ -653,7 +657,7 @@ async function buildChallengeDetail(
   }
 
   // Resolve display user: prefer judge's user over creator
-  const displayUserId = judge?.userId ?? challenge.createdById;
+  const displayUserId = judge?.userId ?? createdById;
   let displayUser: {
     id: number;
     username: string | null;
@@ -663,7 +667,7 @@ async function buildChallengeDetail(
   let displayProfilePics: Awaited<ReturnType<typeof getProfilePicturesForUsers>>;
   let displayCosmetics: Awaited<ReturnType<typeof getCosmeticsForUsers>>;
 
-  if (displayUserId !== challenge.createdById) {
+  if (displayUserId !== createdById) {
     const [judgeUser] = await dbRead.$queryRaw<
       [{ id: number; username: string | null; image: string | null; deletedAt: Date | null }]
     >`
@@ -753,7 +757,10 @@ async function buildChallengeDetail(
  * Public challenge detail — strips sensitive fields that could give users
  * an unfair advantage (judging prompt, theme elements, etc.).
  */
-export async function getChallengeDetail(id: number): Promise<ChallengeDetail | null> {
+export async function getChallengeDetail(
+  id: number,
+  viewerId?: number
+): Promise<ChallengeDetail | null> {
   const challenge = await getChallengeById(id);
   if (!challenge) return null;
 
@@ -761,6 +768,16 @@ export async function getChallengeDetail(id: number): Promise<ChallengeDetail | 
   const now = new Date();
   if (challenge.visibleAt > now) return null;
   if (challenge.status === ChallengeStatus.Cancelled) return null;
+
+  // Scan gate: user-created challenges stay hidden until moderation scan passes. The creator can
+  // still see their own pending/blocked challenge; everyone else (incl. anonymous) cannot.
+  if (
+    challenge.source === ChallengeSource.User &&
+    challenge.scanStatus !== ChallengeScanStatus.Scanned &&
+    challenge.createdById !== viewerId
+  ) {
+    return null;
+  }
 
   const { _internal, ...detail } = await buildChallengeDetail(challenge);
   return detail;
@@ -1715,17 +1732,9 @@ export async function endChallengeAndPickWinners(challengeId: number) {
 
       // User-source challenges rank by creator-defined weighted categories (see
       // getJudgedEntries); other sources keep the fixed theme/wittiness/humor/aesthetic rubric.
-      // judgingCategories isn't in the slim ChallengeDetails type, so fetch it separately.
-      const [judgingCategoriesRow] = await dbRead.$queryRaw<
-        [{ judgingCategories: unknown } | undefined]
-      >`
-        SELECT "judgingCategories" FROM "Challenge"
-        WHERE id = ${challengeId}
-        LIMIT 1
-      `;
       const userJudgingCategories =
         challenge.source === ChallengeSource.User
-          ? challengeJudgingCategoriesSchema.safeParse(judgingCategoriesRow?.judgingCategories)
+          ? challengeJudgingCategoriesSchema.safeParse(challenge.judgingCategories)
           : undefined;
       const userCategories = userJudgingCategories?.success
         ? userJudgingCategories.data
@@ -2558,17 +2567,10 @@ export async function playgroundPickWinners(input: PlaygroundPickWinnersInput) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'Challenge has no collection' });
 
   // User-source challenges rank by creator-defined weighted categories (see getJudgedEntries);
-  // judgingCategories isn't in the slim ChallengeDetails type, so fetch it separately.
-  const [judgingCategoriesRow] = await dbRead.$queryRaw<
-    [{ judgingCategories: unknown } | undefined]
-  >`
-    SELECT "judgingCategories" FROM "Challenge"
-    WHERE id = ${input.challengeId}
-    LIMIT 1
-  `;
+  // other sources keep the fixed rubric.
   const userJudgingCategories =
     challenge.source === ChallengeSource.User
-      ? challengeJudgingCategoriesSchema.safeParse(judgingCategoriesRow?.judgingCategories)
+      ? challengeJudgingCategoriesSchema.safeParse(challenge.judgingCategories)
       : undefined;
   const userCategories = userJudgingCategories?.success ? userJudgingCategories.data : undefined;
 

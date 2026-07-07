@@ -6,6 +6,7 @@ import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constant
 import type { PoolTrigger } from '~/shared/utils/prisma/enums';
 import {
   ChallengeReviewCostType,
+  ChallengeScanStatus,
   ChallengeSource,
   ChallengeStatus,
   CollectionMode,
@@ -65,9 +66,14 @@ export type ChallengeDetails = {
   operationSpent: number;
   reviewCostType: ChallengeReviewCostType;
   reviewCost: number;
-  createdById: number;
+  createdById: number | null; // nullable: creator account deletion sets this NULL (FK ON DELETE SET NULL)
   source: ChallengeSource;
   status: ChallengeStatus;
+  scanStatus: ChallengeScanStatus;
+  scannedAt: Date | null;
+  entryFee: number;
+  maxParticipants: number | null;
+  judgingCategories: unknown; // raw JSON; parse with challengeJudgingCategoriesSchema
   eventId: number | null;
   metadata: Record<string, unknown> | null;
 };
@@ -140,6 +146,11 @@ export async function getChallengeById(challengeId: number): Promise<ChallengeDe
       c."createdById",
       c.source,
       c.status,
+      c."scanStatus",
+      c."scannedAt",
+      c."entryFee",
+      c."maxParticipants",
+      c."judgingCategories",
       c."eventId",
       c.metadata
     FROM "Challenge" c
@@ -241,10 +252,30 @@ export async function getScheduledChallengesReadyToStart(): Promise<ChallengeDet
     FROM "Challenge"
     WHERE status = ${ChallengeStatus.Scheduled}::"ChallengeStatus"
     AND "startsAt" <= now()
+    AND ("source" != 'User' OR "scanStatus" = 'Scanned')
     ORDER BY "startsAt" ASC
   `;
   const challenges = await Promise.all(rows.map((row) => getChallengeById(row.id)));
   return challenges.filter((c): c is ChallengeDetails => c !== null);
+}
+
+/**
+ * Gets user-created challenges that are past their start time but were hard-blocked
+ * by moderation scan. These can never be activated (getScheduledChallengesReadyToStart
+ * excludes them) and must be voided so their entry fees / initial prize are refunded
+ * instead of stranded. Returns challenge IDs ordered by startsAt ASC.
+ */
+export async function getBlockedUserChallengesPastStart(): Promise<number[]> {
+  const rows = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT id
+    FROM "Challenge"
+    WHERE status = ${ChallengeStatus.Scheduled}::"ChallengeStatus"
+    AND source = ${ChallengeSource.User}::"ChallengeSource"
+    AND "scanStatus" = ${ChallengeScanStatus.Blocked}::"ChallengeScanStatus"
+    AND "startsAt" <= now()
+    ORDER BY "startsAt" ASC
+  `;
+  return rows.map((row) => row.id);
 }
 
 /**
