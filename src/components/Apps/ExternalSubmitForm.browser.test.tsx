@@ -94,7 +94,11 @@ describe('ExternalSubmitForm — wizard', () => {
     await page.getByRole('textbox', { name: /Link URL/ }).fill('http://example.com');
     await page.getByRole('button', { name: 'Next' }).click();
     // The "Use https://" fix-it error surfaces inline; we stay on the URL step.
-    await expect.element(page.getByText(/https/i)).toBeInTheDocument();
+    // Assert the exact validator error string — a loose /https/i also matches the
+    // page + field descriptions (both mention https), tripping strict-mode.
+    await expect
+      .element(page.getByText('Use https:// (or omit the scheme)'))
+      .toBeInTheDocument();
     expect(page.getByRole('button', { name: 'Create draft' }).elements()).toHaveLength(0);
   });
 
