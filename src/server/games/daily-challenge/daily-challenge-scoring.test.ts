@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   calculateCategoryScore,
   calculateWeightedScore,
+  calculateWeightedCategoryScore,
   SCORE_WEIGHTS,
   THEME_DISQUALIFY_THRESHOLD,
   THEME_GATE_THRESHOLD,
@@ -84,5 +85,27 @@ describe('calculateCategoryScore (user-defined categories)', () => {
 
   it('returns null when there are no categories', () => {
     expect(calculateCategoryScore({})).toBeNull();
+  });
+});
+
+describe('calculateWeightedCategoryScore', () => {
+  const cats = [
+    { key: 'theme', label: 'Theme', weight: 50 },
+    { key: 'humor', label: 'Humor', weight: 50 },
+  ];
+  it('weights by percentage', () => {
+    expect(calculateWeightedCategoryScore({ Theme: 8, Humor: 4 }, cats)).toBeCloseTo(6);
+  });
+  it('disqualifies (null) when theme < 2 (matches daily rubric)', () => {
+    expect(calculateWeightedCategoryScore({ Theme: 1, Humor: 10 }, cats)).toBeNull();
+  });
+  it('does NOT disqualify at exactly theme 2 (but caps at 5)', () => {
+    expect(calculateWeightedCategoryScore({ Theme: 2, Humor: 10 }, cats)).toBe(5);
+  });
+  it('caps at 5 when theme < 4', () => {
+    expect(calculateWeightedCategoryScore({ Theme: 3, Humor: 10 }, cats)).toBe(5);
+  });
+  it('clamps out-of-range category scores to 0-10', () => {
+    expect(calculateWeightedCategoryScore({ Theme: 20, Humor: -5 }, cats)).toBeCloseTo(5);
   });
 });

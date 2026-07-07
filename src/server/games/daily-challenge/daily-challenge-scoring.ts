@@ -64,3 +64,22 @@ export function calculateCategoryScore(scores: Record<string, number>): number |
   const clamped = values.map((v) => Math.min(10, Math.max(0, v)));
   return clamped.reduce((a, b) => a + b, 0) / clamped.length;
 }
+
+/**
+ * Ranking score for user-created challenges with weighted, creator-defined categories.
+ * Scores are keyed by category LABEL (the key the AI review schema emits). Theme is mandatory,
+ * so its gate rules always apply: theme <= disqualify → null; theme < gate → cap.
+ */
+export function calculateWeightedCategoryScore(
+  scores: Record<string, number>,
+  categories: { key: string; label: string; weight: number }[]
+): number | null {
+  const clamp = (v: number) => Math.min(10, Math.max(0, Number(v) || 0));
+  const theme = categories.find((c) => c.key === 'theme');
+  const themeScore = theme ? clamp(scores[theme.label]) : undefined;
+  if (themeScore !== undefined && themeScore < THEME_DISQUALIFY_THRESHOLD) return null;
+  const weighted = categories.reduce((sum, c) => sum + clamp(scores[c.label]) * (c.weight / 100), 0);
+  if (themeScore !== undefined && themeScore < THEME_GATE_THRESHOLD)
+    return Math.min(weighted, THEME_GATE_MAX_SCORE);
+  return weighted;
+}
