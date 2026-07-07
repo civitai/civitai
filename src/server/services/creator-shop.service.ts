@@ -143,6 +143,11 @@ export const submitCreatorShopItem = async ({
   availableQuantity,
   buzzType,
 }: SubmitCreatorShopItemInput & { userId: number }) => {
+  // The Creator Shop is a Creator Program member benefit.
+  const { validMembership } = await getCreatorRequirements(userId);
+  if (!validMembership)
+    throw throwAuthorizationError('The Creator Shop is available to Creator Program members only');
+
   // Validate the artwork server-side BEFORE charging anything.
   const { checks, imageMeta, allPassed } = await validateArtwork(imageUrl, cosmeticType);
   if (!allPassed)
