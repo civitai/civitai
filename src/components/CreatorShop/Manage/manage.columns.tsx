@@ -5,7 +5,7 @@ import { useMemo } from 'react';
 import { CreatorShopSubmitModal } from '~/components/CreatorShop/CreatorShopSubmitModal';
 import type { CreatorShopManageItem } from '~/components/CreatorShop/creator-shop.util';
 import { useMutateCreatorShop } from '~/components/CreatorShop/creator-shop.util';
-import { CosmeticThumb } from '~/components/CreatorShop/Manage/CosmeticThumb';
+import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
 import { statusMeta } from '~/components/CreatorShop/Manage/manage.constants';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';

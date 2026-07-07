@@ -48,7 +48,7 @@ export async function validateCosmeticImage(
   maxSize: number
 ): Promise<CosmeticImageValidation> {
   const req = cosmeticImageRequirements(type);
-  const isPng = file.type === 'image/png';
+  const validFormat = file.type === 'image/png' || file.type === 'image/webp';
 
   let width = 0;
   let height = 0;
@@ -58,7 +58,7 @@ export async function validateCosmeticImage(
     const img = await loadImage(objectUrl);
     width = img.naturalWidth;
     height = img.naturalHeight;
-    if (isPng) hasTransparency = detectTransparency(img, width, height);
+    if (validFormat) hasTransparency = detectTransparency(img, width, height);
   } catch {
     // couldn't decode — checks below will report it via dimensions=0
   } finally {
@@ -66,7 +66,7 @@ export async function validateCosmeticImage(
   }
 
   const checks: AutoCheck[] = [
-    { key: 'format', label: 'PNG format', passed: isPng },
+    { key: 'format', label: 'PNG or WebP', passed: validFormat },
     {
       key: 'dimensions',
       label: req.exact ? `${req.width}×${req.height}px` : `At least ${req.width}×${req.height}px`,

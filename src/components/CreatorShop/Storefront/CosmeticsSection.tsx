@@ -50,7 +50,8 @@ export function CosmeticsSection({
             <Title order={4}>Cosmetics</Title>
           </Group>
           <Text size="xs" c="dimmed">
-            Badges, profile backgrounds &amp; avatar decorations that can be purchased and used on your profile.
+            Badges, profile backgrounds &amp; avatar decorations that can be purchased and used on
+            your profile.
           </Text>
         </div>
         <Group gap="xs" wrap="nowrap">

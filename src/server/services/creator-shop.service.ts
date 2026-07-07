@@ -107,7 +107,12 @@ const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
     : width >= req.width && height >= req.height;
 
   const checks: AutoCheck[] = [
-    { key: 'format', label: 'PNG format', passed: format === 'png', detail: format },
+    {
+      key: 'format',
+      label: 'PNG or WebP',
+      passed: format === 'png' || format === 'webp',
+      detail: format,
+    },
     {
       key: 'dimensions',
       label: req.exact ? `${req.width}×${req.height}px` : `At least ${req.width}×${req.height}px`,

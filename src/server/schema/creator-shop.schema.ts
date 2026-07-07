@@ -41,7 +41,7 @@ export const cosmeticImageRequirements = (type: CosmeticType): CosmeticImageRequ
       return { width: 256, height: 256, exact: false, requireTransparency: true };
     case CosmeticType.Badge:
     default:
-      return { width: 512, height: 512, exact: false, requireTransparency: true };
+      return { width: 144, height: 144, exact: false, requireTransparency: true };
   }
 };
 

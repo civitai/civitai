@@ -20,8 +20,6 @@ import {
   IconAlertTriangle,
   IconBolt,
   IconCheck,
-  IconCircleCheck,
-  IconCircleX,
   IconCopyright,
   IconEyeOff,
   IconPhotoOff,
@@ -40,6 +38,9 @@ import {
   useMutateCreatorShop,
   useQueryCreatorShopReviewQueue,
 } from '~/components/CreatorShop/creator-shop.util';
+import { CheckRow, ChecksCard } from '~/components/CreatorShop/ChecksCard';
+import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
+import { CREATOR_SHOP_BORDER } from '~/components/CreatorShop/creator-shop.constants';
 import { CosmeticPreview } from '~/components/CosmeticShop/CosmeticPreview';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -74,26 +75,6 @@ const flagConcerns = [
 ];
 
 const artUrl = (data: unknown) => (data as { url?: string } | null)?.url ?? null;
-const border = '1px solid var(--mantine-color-default-border)';
-
-function QueueThumb({ data, name }: { data: unknown; name: string }) {
-  const url = artUrl(data);
-  return (
-    <div
-      className="flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-md"
-      style={{ border, background: 'var(--mantine-color-default)' }}
-    >
-      {url ? (
-        <EdgeMedia
-          src={url}
-          width={44}
-          alt={name}
-          className="h-auto max-h-full w-auto max-w-full object-contain"
-        />
-      ) : null}
-    </div>
-  );
-}
 
 function MoneyTile({
   label,
@@ -194,7 +175,7 @@ function CreatorShopReviewPage() {
         align="center"
         px="xl"
         py="md"
-        style={{ borderBottom: border }}
+        style={{ borderBottom: CREATOR_SHOP_BORDER }}
       >
         <Group gap={10} align="center">
           <IconShieldCheck size={20} color="var(--mantine-color-blue-4)" />
@@ -245,7 +226,7 @@ function CreatorShopReviewPage() {
       ) : (
         <Group gap={0} align="stretch" wrap="nowrap" style={{ minHeight: 'calc(100vh - 160px)' }}>
           {/* Queue */}
-          <div className="shrink-0" style={{ width: 380, borderRight: border }}>
+          <div className="shrink-0" style={{ width: 380, borderRight: CREATOR_SHOP_BORDER }}>
             <ScrollArea.Autosize mah="calc(100vh - 160px)">
               <Stack gap={0}>
                 {items.map((item) => {
@@ -260,7 +241,7 @@ function CreatorShopReviewPage() {
                       className="w-full"
                       style={{
                         padding: '12px 14px',
-                        borderBottom: border,
+                        borderBottom: CREATOR_SHOP_BORDER,
                         borderLeft: active
                           ? '2px solid var(--mantine-color-blue-6)'
                           : '2px solid transparent',
@@ -268,7 +249,7 @@ function CreatorShopReviewPage() {
                       }}
                     >
                       <Group gap={10} wrap="nowrap" align="center">
-                        <QueueThumb data={item.cosmetic.data} name={item.title} />
+                        <CosmeticThumb data={item.cosmetic.data} name={item.title} />
                         <Stack gap={2} className="min-w-0" style={{ flex: 1 }}>
                           <Text size="sm" fw={600} lineClamp={1}>
                             {item.title}
@@ -321,7 +302,7 @@ function CreatorShopReviewPage() {
                       style={{
                         height: 280,
                         borderRadius: 8,
-                        border,
+                        border: CREATOR_SHOP_BORDER,
                         background: 'linear-gradient(135deg, #1A1B1E, #101113)',
                       }}
                     >
@@ -375,47 +356,19 @@ function CreatorShopReviewPage() {
                       />
                     </SimpleGrid>
 
-                    <Paper withBorder radius="md" className="overflow-hidden">
-                      <Group
-                        gap={6}
-                        px="md"
-                        py="xs"
-                        align="center"
-                        style={{
-                          borderBottom: border,
-                          background: 'var(--mantine-color-default-hover)',
-                        }}
-                      >
-                        <IconScan size={15} color="var(--mantine-color-dimmed)" />
-                        <Text size="sm" fw={600}>
-                          Automated checks
-                        </Text>
-                      </Group>
+                    <ChecksCard
+                      icon={<IconScan size={15} color="var(--mantine-color-dimmed)" />}
+                      title="Automated checks"
+                    >
                       {checks.length ? (
                         checks.map((c, i) => (
-                          <Group
+                          <CheckRow
                             key={c.key}
-                            gap={9}
-                            px="md"
-                            py={9}
-                            wrap="nowrap"
-                            align="center"
-                            style={{ borderBottom: i < checks.length - 1 ? border : undefined }}
-                          >
-                            {c.passed ? (
-                              <IconCircleCheck size={16} color="var(--mantine-color-green-5)" />
-                            ) : (
-                              <IconCircleX size={16} color="var(--mantine-color-red-5)" />
-                            )}
-                            <Text size="sm" style={{ flex: 1 }}>
-                              {c.label}
-                            </Text>
-                            {c.detail && (
-                              <Text size="xs" c={c.passed ? 'dimmed' : 'red'}>
-                                {c.detail}
-                              </Text>
-                            )}
-                          </Group>
+                            state={c.passed ? 'pass' : 'fail'}
+                            label={c.label}
+                            detail={c.detail}
+                            withBorder={i < checks.length - 1}
+                          />
                         ))
                       ) : (
                         <Group gap={9} px="md" py={9} align="center">
@@ -425,7 +378,7 @@ function CreatorShopReviewPage() {
                           </Text>
                         </Group>
                       )}
-                    </Paper>
+                    </ChecksCard>
 
                     {!!selected.description && (
                       <Text size="sm" c="dimmed">
@@ -461,7 +414,7 @@ function CreatorShopReviewPage() {
                   wrap="nowrap"
                   pt="md"
                   gap="md"
-                  style={{ borderTop: border }}
+                  style={{ borderTop: CREATOR_SHOP_BORDER }}
                   className="max-md:flex-wrap"
                 >
                   <TextInput
