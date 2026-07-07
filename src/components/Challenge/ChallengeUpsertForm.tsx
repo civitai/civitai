@@ -46,6 +46,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import {
   challengeJudgingCategorySchema,
+  challengeJudgingCategoriesSchema,
   upsertChallengeBaseSchema,
   type Prize,
 } from '~/server/schema/challenge.schema';
@@ -188,7 +189,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
       modelVersionIds: challenge?.modelVersionIds ?? [],
       nsfwLevel: challenge?.nsfwLevel ?? 1,
       allowedNsfwLevel: challenge?.allowedNsfwLevel ?? sfwBrowsingLevelsFlag,
-      judgeId: challenge?.judgeId ? String(challenge.judgeId) : '1',
+      judgeId: challenge?.judgeId ? String(challenge.judgeId) : isUser ? '' : '1',
       eventId: challenge?.eventId ? String(challenge.eventId) : null,
       judgingPrompt: challenge?.judgingPrompt ?? '',
       reviewPercentage: challenge?.reviewPercentage ?? 100,
@@ -266,6 +267,15 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
       const distTotal = (data.dist1 ?? 0) + (data.dist2 ?? 0) + (data.dist3 ?? 0);
       if (distTotal !== 100) {
         form.setError('dist1', { message: 'Distribution must sum to 100%' });
+        return;
+      }
+
+      const categoriesResult = challengeJudgingCategoriesSchema.safeParse(data.judgingCategories);
+      if (!categoriesResult.success) {
+        showErrorNotification({
+          title: 'Invalid judging categories',
+          error: new Error(categoriesResult.error.issues[0]?.message ?? 'Invalid judging categories'),
+        });
         return;
       }
 

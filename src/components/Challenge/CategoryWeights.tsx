@@ -66,6 +66,9 @@ export default function CategoryWeights() {
   }, [rows, setValue]);
 
   const total = rows.reduce((sum, row) => sum + (row.weight || 0), 0);
+  const hasInvalidRow = rows.some(
+    (row) => row.weight < 1 || (row.key === 'custom' && !row.label.trim())
+  );
   const canAdd = rows.length < MAX_CATEGORIES;
 
   const updateRow = (id: number, patch: Partial<CategoryWeightRow>) => {
@@ -117,7 +120,7 @@ export default function CategoryWeights() {
               />
               <NumberInput
                 label="Weight"
-                min={0}
+                min={1}
                 max={100}
                 step={1}
                 allowDecimal={false}
@@ -181,8 +184,9 @@ export default function CategoryWeights() {
         >
           Add category
         </Button>
-        <Text size="sm" fw={500} c={total === 100 ? 'dimmed' : 'red'}>
+        <Text size="sm" fw={500} c={total === 100 && !hasInvalidRow ? 'dimmed' : 'red'}>
           Total weight: {total}%{total !== 100 ? ' (must equal 100%)' : ''}
+          {total === 100 && hasInvalidRow ? ' (each category needs a label and weight ≥ 1)' : ''}
         </Text>
       </Group>
     </Stack>

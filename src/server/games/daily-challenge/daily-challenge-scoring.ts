@@ -1,3 +1,5 @@
+import { sanitizeCategoryLabel } from '~/shared/constants/challenge.constants';
+
 /**
  * Pure scoring utilities for daily challenges.
  * This module has NO server dependencies (no Redis, Prisma, etc.)
@@ -75,10 +77,20 @@ export function calculateWeightedCategoryScore(
   categories: { key: string; label: string; weight: number }[]
 ): number | null {
   const clamp = (v: number) => Math.min(10, Math.max(0, Number(v) || 0));
+  // The AI review echoes category labels back as JSON keys; normalize both sides so minor
+  // case/whitespace drift from the LLM doesn't silently read back as a 0 (which would
+  // disqualify every entry via the theme gate below).
+  const normalizedScores: Record<string, number> = {};
+  for (const [key, value] of Object.entries(scores)) {
+    normalizedScores[sanitizeCategoryLabel(key).toLowerCase()] = value;
+  }
+  const scoreFor = (label: string) =>
+    clamp(normalizedScores[sanitizeCategoryLabel(label).toLowerCase()]);
+
   const theme = categories.find((c) => c.key === 'theme');
-  const themeScore = theme ? clamp(scores[theme.label]) : undefined;
+  const themeScore = theme ? scoreFor(theme.label) : undefined;
   if (themeScore !== undefined && themeScore < THEME_DISQUALIFY_THRESHOLD) return null;
-  const weighted = categories.reduce((sum, c) => sum + clamp(scores[c.label]) * (c.weight / 100), 0);
+  const weighted = categories.reduce((sum, c) => sum + scoreFor(c.label) * (c.weight / 100), 0);
   if (themeScore !== undefined && themeScore < THEME_GATE_THRESHOLD)
     return Math.min(weighted, THEME_GATE_MAX_SCORE);
   return weighted;

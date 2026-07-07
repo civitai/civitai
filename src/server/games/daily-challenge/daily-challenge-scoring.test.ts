@@ -108,4 +108,7 @@ describe('calculateWeightedCategoryScore', () => {
   it('clamps out-of-range category scores to 0-10', () => {
     expect(calculateWeightedCategoryScore({ Theme: 20, Humor: -5 }, cats)).toBeCloseTo(5);
   });
+  it('matches score keys tolerant of case/whitespace drift from the LLM', () => {
+    expect(calculateWeightedCategoryScore({ theme: 8, humor: 4 }, cats)).toBeCloseTo(6);
+  });
 });
