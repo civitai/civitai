@@ -17,6 +17,7 @@ import type {
   UpsertCosmeticShopItemInput,
   UpsertCosmeticShopSectionInput,
 } from '~/server/schema/cosmetic-shop.schema';
+import { CREATOR_SHOP_CREATOR_SHARE } from '~/server/schema/creator-shop.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
 import { imageSelect } from '~/server/selectors/image.selector';
@@ -36,6 +37,7 @@ import { withRetries } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import {
   CollectionType,
+  CosmeticShopItemStatus,
   CosmeticType,
   MediaType,
   MetricTimeframe,
@@ -485,6 +487,7 @@ export const purchaseCosmeticShopItem = async ({
     where: { id: shopItemId },
     select: {
       id: true,
+      status: true,
       cosmeticId: true,
       availableQuantity: true,
       availableFrom: true,
@@ -495,6 +498,7 @@ export const purchaseCosmeticShopItem = async ({
       cosmetic: {
         select: {
           type: true,
+          createdById: true,
         },
       },
       _count: {
@@ -509,6 +513,12 @@ export const purchaseCosmeticShopItem = async ({
 
   if (!shopItem) {
     throw new Error('Cosmetic not found');
+  }
+
+  // Creator-submitted items share this table; only Published items are sellable.
+  // Guards against buying Draft/PendingReview/Rejected/Archived items by id.
+  if (shopItem.status !== CosmeticShopItemStatus.Published) {
+    throw new Error('Cosmetic is not available');
   }
 
   if (
@@ -618,29 +628,35 @@ export const purchaseCosmeticShopItem = async ({
       await withRetries(async () => {
         // We do this last mainly because we don't want to fail the purchase if this fails.
         // We can divide the funds later if needed.
-        const paidToUsers: number[] = meta?.paidToUserIds ?? [];
-        if (paidToUsers.length > 0) {
-          // distribute the buzz to these users:
-          const amountPerUser = Math.floor(shopItem.unitAmount / paidToUsers.length);
+        // Creator Shop items pay the cosmetic's creator (cosmetic.createdById)
+        // their 70% share directly. Official items keep the legacy
+        // meta.paidToUserIds distribution (100%, split across recipients).
+        const creatorId = shopItem.cosmetic.createdById;
+        const recipients: { userId: number; amount: number }[] = creatorId
+          ? [
+              {
+                userId: creatorId,
+                amount: Math.floor(shopItem.unitAmount * CREATOR_SHOP_CREATOR_SHARE),
+              },
+            ]
+          : (meta?.paidToUserIds ?? []).map((uid) => ({
+              userId: uid,
+              amount: Math.floor(shopItem.unitAmount / (meta?.paidToUserIds?.length ?? 1)),
+            }));
 
-          await Promise.all(
-            paidToUsers.map((paidToUserId) =>
-              // TODO.RedSplit: In the future, we might (?) want to use a different type of transaction here.
-              createBuzzTransaction({
-                fromAccountId: 0,
-                toAccountId: paidToUserId,
-                amount: amountPerUser,
-                type: TransactionType.Sell,
-                description: `A user has purchased your cosmetic - ${shopItem.title}`,
-                externalTransactionId: transactionId,
-                details: {
-                  purchasedBy: userId,
-                  originalAmount: shopItem.unitAmount,
-                },
-              })
-            )
-          );
-        }
+        await Promise.all(
+          recipients.map((r) =>
+            createBuzzTransaction({
+              fromAccountId: 0,
+              toAccountId: r.userId,
+              amount: r.amount,
+              type: TransactionType.Sell,
+              description: `A user has purchased your cosmetic - ${shopItem.title}`,
+              externalTransactionId: transactionId,
+              details: { purchasedBy: userId, originalAmount: shopItem.unitAmount },
+            })
+          )
+        );
       }, 3);
     } catch (e) {
       // We will NOT stop the user interaction for this.

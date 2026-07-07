@@ -19,6 +19,27 @@ export type CosmeticShopItemMeta = z.infer<typeof cosmeticShopItemMeta>;
 export const cosmeticShopItemMeta = z.object({
   paidToUserIds: z.array(z.number()).optional(),
   purchases: z.number().default(0),
+  // Creator Shop: id of the creator who submitted this item (also drives payout),
+  // the Buzz submission-fee transaction, and the last moderator-approved price
+  // used to decide whether a price edit (>±25%) requires re-review.
+  creatorId: z.number().optional(),
+  submissionTxId: z.string().optional(),
+  lastApprovedAmount: z.number().optional(),
+  // Pre-submit artwork validation + image info, surfaced to moderators in the
+  // Creator Shop review queue.
+  autoChecks: z
+    .array(
+      z.object({
+        key: z.string(),
+        label: z.string(),
+        passed: z.boolean(),
+        detail: z.string().optional(),
+      })
+    )
+    .optional(),
+  imageMeta: z
+    .object({ width: z.number(), height: z.number(), hasTransparency: z.boolean() })
+    .optional(),
 });
 
 export type UpsertCosmeticInput = z.infer<typeof upsertCosmeticInput>;

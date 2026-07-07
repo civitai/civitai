@@ -60,6 +60,7 @@ import type {
   DomainColor,
   CosmeticType,
   CosmeticSource,
+  CosmeticShopItemStatus,
   CosmeticEntity,
   BuzzAccountType,
   ArticleStatus,
@@ -1768,6 +1769,7 @@ export type Cosmetic = {
   productId: string | null;
   leaderboardId: string | null;
   leaderboardPosition: number | null;
+  createdById: number | null;
 };
 export type CosmeticShopItem = {
   id: Generated<number>;
@@ -1782,6 +1784,10 @@ export type CosmeticShopItem = {
   title: string;
   description: string | null;
   archivedAt: Timestamp | null;
+  status: Generated<CosmeticShopItemStatus>;
+  reviewedById: number | null;
+  reviewedAt: Timestamp | null;
+  rejectionReason: string | null;
 };
 export type CosmeticShopSection = {
   id: Generated<number>;

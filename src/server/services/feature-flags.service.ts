@@ -170,6 +170,7 @@ const featureFlags = createFeatureFlags({
   draftMode: ['public'],
   membershipsV2: ['public'],
   cosmeticShop: ['public'],
+  creatorShop: ['public'],
   impersonation: isDev ? ['mod'] : ['granted'],
   donationGoals: ['public'],
   creatorComp: ['public'],

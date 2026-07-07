@@ -520,6 +520,7 @@ model User {
   addedCosmeticShopSections  CosmeticShopSection[]
   addedCosmeticShopItems     CosmeticShopItem[]
   purchasedCosmetics         UserCosmeticShopPurchases[]
+  createdCosmetics           Cosmetic[]                  @relation("CosmeticCreator")
   donationGoals              DonationGoal[]
   donations                  Donation[]
   collaboratingOn            EntityCollaborator[]           @relation("entityCollaboratorParticipant")
@@ -3486,6 +3487,14 @@ enum CosmeticSource {
   Claim
 }
 
+enum CosmeticShopItemStatus {
+  Draft
+  PendingReview
+  Published
+  Rejected
+  Archived
+}
+
 model Cosmetic {
   id                  Int                         @id @default(autoincrement())
   name                String
@@ -3503,9 +3512,13 @@ model Cosmetic {
   productId           String?
   leaderboardId       String?
   leaderboardPosition Int?
+  createdById         Int?
+  creator             User?                       @relation("CosmeticCreator", fields: [createdById], references: [id], onDelete: SetNull)
   UserCosmetic        UserCosmetic[]
   purchases           UserCosmeticShopPurchases[]
   cosmeticShopItems   CosmeticShopItem[]
+
+  @@index([createdById])
 }
 
 enum CosmeticEntity {
@@ -3562,6 +3575,10 @@ model CosmeticShopItem {
   title             String
   description       String?
   archivedAt        DateTime?
+  status            CosmeticShopItemStatus @default(Published)
+  reviewedById      Int?
+  reviewedAt        DateTime?
+  rejectionReason   String?
 
   purchases UserCosmeticShopPurchases[]
   sections  CosmeticShopSectionItem[]

@@ -536,6 +536,16 @@ export const CosmeticSource = {
 
 export type CosmeticSource = (typeof CosmeticSource)[keyof typeof CosmeticSource];
 
+export const CosmeticShopItemStatus = {
+  Draft: 'Draft',
+  PendingReview: 'PendingReview',
+  Published: 'Published',
+  Rejected: 'Rejected',
+  Archived: 'Archived',
+} as const;
+
+export type CosmeticShopItemStatus = (typeof CosmeticShopItemStatus)[keyof typeof CosmeticShopItemStatus];
+
 export const CosmeticEntity = {
   Model: 'Model',
   Image: 'Image',

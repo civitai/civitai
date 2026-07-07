@@ -8,6 +8,7 @@ import {
   IconLayoutList,
   IconPencilMinus,
   IconPhoto,
+  IconShoppingBag,
   IconVideo,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -91,6 +92,12 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       icon: (props) => <IconBookmark {...props} />,
       count: userOverview?.collectionCount ?? 0,
       disabled: !!user?.bannedAt,
+    },
+    shop: {
+      url: `${baseUrl}/shop`,
+      icon: (props) => <IconShoppingBag {...props} />,
+      label: 'Shop',
+      disabled: !features.creatorShop || !!user?.bannedAt,
     },
   };
 
