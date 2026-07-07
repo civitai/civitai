@@ -2,22 +2,37 @@ import {
   Badge,
   Button,
   Center,
-  Container,
   Group,
   Loader,
   Paper,
   ScrollArea,
-  SegmentedControl,
+  Select,
+  SimpleGrid,
   Stack,
   Text,
-  Textarea,
   TextInput,
+  ThemeIcon,
   Title,
   UnstyledButton,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { IconCheck, IconCircleCheck, IconCircleX, IconSearch, IconX } from '@tabler/icons-react';
-import type { ComponentProps } from 'react';
+import {
+  IconAlertTriangle,
+  IconBolt,
+  IconCheck,
+  IconCircleCheck,
+  IconCircleX,
+  IconCopyright,
+  IconEyeOff,
+  IconPhotoOff,
+  IconScan,
+  IconSearch,
+  IconShieldCheck,
+  IconTag,
+  IconTrendingUp,
+  IconX,
+} from '@tabler/icons-react';
+import type { ComponentProps, ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
@@ -26,26 +41,85 @@ import {
   useQueryCreatorShopReviewQueue,
 } from '~/components/CreatorShop/creator-shop.util';
 import { CosmeticPreview } from '~/components/CosmeticShop/CosmeticPreview';
-import { CosmeticSample } from '~/components/Shop/CosmeticSample';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
+import {
+  CREATOR_SHOP_CREATOR_SHARE,
+  CREATOR_SHOP_SUBMISSION_FEE,
+} from '~/server/schema/creator-shop.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
+import { daysFromNow } from '~/utils/date-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 
 type StatusFilter = CosmeticShopItemStatus | 'all';
+type PreviewCosmetic = ComponentProps<typeof CosmeticPreview>['cosmetic'];
 
 const statusFilterOptions: { label: string; value: StatusFilter }[] = [
-  { label: 'Pending Review', value: CosmeticShopItemStatus.PendingReview },
+  { label: 'Pending review', value: CosmeticShopItemStatus.PendingReview },
   { label: 'Published', value: CosmeticShopItemStatus.Published },
   { label: 'Rejected', value: CosmeticShopItemStatus.Rejected },
-  { label: 'All', value: 'all' },
+  { label: 'All types', value: 'all' },
 ];
 
-type SampleCosmetic = ComponentProps<typeof CosmeticSample>['cosmetic'];
-type PreviewCosmetic = ComponentProps<typeof CosmeticPreview>['cosmetic'];
+// Quick-insert reasons a moderator can append to their note.
+const flagConcerns = [
+  { label: 'Copyright / IP', icon: IconCopyright },
+  { label: 'Pricing', icon: IconTag },
+  { label: 'Visual quality', icon: IconPhotoOff },
+  { label: 'NSFW', icon: IconEyeOff },
+];
+
+const artUrl = (data: unknown) => (data as { url?: string } | null)?.url ?? null;
+const border = '1px solid var(--mantine-color-default-border)';
+
+function QueueThumb({ data, name }: { data: unknown; name: string }) {
+  const url = artUrl(data);
+  return (
+    <div
+      className="flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-md"
+      style={{ border, background: 'var(--mantine-color-default)' }}
+    >
+      {url ? (
+        <EdgeMedia
+          src={url}
+          width={44}
+          alt={name}
+          className="h-auto max-h-full w-auto max-w-full object-contain"
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function MoneyTile({
+  label,
+  value,
+  icon,
+  iconColor,
+}: {
+  label: string;
+  value: string;
+  icon: ReactNode;
+  iconColor: string;
+}) {
+  return (
+    <Paper withBorder radius="md" p="sm">
+      <Group gap={6} align="center">
+        <span style={{ color: iconColor, display: 'flex' }}>{icon}</span>
+        <Text size="xs" c="dimmed">
+          {label}
+        </Text>
+      </Group>
+      <Text fw={700} className="whitespace-nowrap">
+        {value}
+      </Text>
+    </Paper>
+  );
+}
 
 export const getServerSideProps = createServerSideProps({
   useSSG: false,
@@ -74,113 +148,137 @@ function CreatorShopReviewPage() {
   const [reason, setReason] = useState('');
 
   useEffect(() => {
-    if (selectedId == null && items.length) setSelectedId(items[0].id);
-  }, [items, selectedId]);
+    setSelectedId((cur) => (cur && items.some((i) => i.id === cur) ? cur : items[0]?.id ?? null));
+  }, [items]);
 
   const selected = items.find((i) => i.id === selectedId) ?? null;
   const selectedMeta = (selected?.meta ?? {}) as CosmeticShopItemMeta;
+  const checks = selectedMeta.autoChecks ?? [];
+  const dims = selectedMeta.imageMeta;
 
   if (currentUser && !currentUser.isModerator) return <NotFound />;
+
+  const appendFlag = (label: string) =>
+    setReason((prev) => (prev.trim() ? `${prev.replace(/\s*$/, '')} ${label}` : label));
 
   const handleApprove = async () => {
     if (!selected) return;
     await reviewItem.mutateAsync({ id: selected.id, action: 'approve' });
-    setSelectedId(null);
     setReason('');
   };
 
+  // "Request changes" and "Reject" both move the item to Rejected (the creator
+  // can then edit & resubmit); the note distinguishes intent for the creator.
   const handleReject = async () => {
     if (!selected) return;
     if (!reason.trim())
       return showErrorNotification({
-        title: 'Reason required',
-        error: new Error('Enter a rejection reason'),
+        title: 'A note is required',
+        error: new Error('Add a note so the creator knows what to change.'),
       });
     await reviewItem.mutateAsync({
       id: selected.id,
       action: 'reject',
       rejectionReason: reason.trim(),
     });
-    setSelectedId(null);
     setReason('');
   };
 
-  return (
-    <Container size="xl" py="md">
-      <Group gap="sm" mb="md">
-        <Title order={3}>Creator Shop · Review Queue</Title>
-        <Badge color="yellow" variant="light">
-          {items.length} {statusFilter === 'all' ? 'items' : getDisplayName(statusFilter)}
-        </Badge>
-      </Group>
+  const pendingCount = statusFilter === CosmeticShopItemStatus.PendingReview ? items.length : null;
 
-      <Group gap="md" mb="md" align="flex-end" wrap="wrap">
-        <SegmentedControl
-          value={statusFilter}
-          onChange={(value) => {
-            setStatusFilter(value as StatusFilter);
-            setSelectedId(null);
-          }}
-          data={statusFilterOptions}
-        />
-        <TextInput
-          label="Filter by creator"
-          placeholder="username"
-          value={usernameInput}
-          onChange={(e) => {
-            setUsernameInput(e.currentTarget.value);
-            setSelectedId(null);
-          }}
-          leftSection={<IconSearch size={16} />}
-          w={240}
-        />
+  return (
+    <Stack gap={0} className="w-full">
+      {/* Topbar */}
+      <Group
+        justify="space-between"
+        align="center"
+        px="xl"
+        py="md"
+        style={{ borderBottom: border }}
+      >
+        <Group gap={10} align="center">
+          <IconShieldCheck size={20} color="var(--mantine-color-blue-4)" />
+          <Title order={4}>Creator Shop · Review Queue</Title>
+          {pendingCount != null && (
+            <Badge color="yellow" variant="light" radius="xl">
+              {pendingCount} pending
+            </Badge>
+          )}
+        </Group>
+        <Group gap="sm" align="center">
+          <Select
+            size="sm"
+            w={170}
+            value={statusFilter}
+            onChange={(v) => setStatusFilter((v as StatusFilter) ?? 'all')}
+            data={statusFilterOptions}
+            allowDeselect={false}
+            comboboxProps={{ withinPortal: true }}
+          />
+          <TextInput
+            size="sm"
+            w={220}
+            placeholder="Filter by creator"
+            value={usernameInput}
+            onChange={(e) => setUsernameInput(e.currentTarget.value)}
+            leftSection={<IconSearch size={16} />}
+          />
+        </Group>
       </Group>
 
       {isLoading ? (
-        <Center py="xl">
+        <Center py={80}>
           <Loader />
         </Center>
       ) : items.length === 0 ? (
-        <Paper withBorder radius="md" p="xl">
-          <Text ta="center" c="dimmed">
-            Nothing to review right now.
-          </Text>
-        </Paper>
+        <Center py={80}>
+          <Stack align="center" gap={4}>
+            <ThemeIcon size={48} radius="xl" variant="light" color="gray">
+              <IconShieldCheck size={26} />
+            </ThemeIcon>
+            <Text fw={600}>Nothing to review</Text>
+            <Text size="sm" c="dimmed">
+              No items match the current filter.
+            </Text>
+          </Stack>
+        </Center>
       ) : (
-        <Group align="flex-start" gap="md" grow={false} wrap="nowrap">
+        <Group gap={0} align="stretch" wrap="nowrap" style={{ minHeight: 'calc(100vh - 160px)' }}>
           {/* Queue */}
-          <Paper withBorder radius="md" w={340} style={{ flex: 'none' }}>
-            <ScrollArea.Autosize mah={640}>
+          <div className="shrink-0" style={{ width: 380, borderRight: border }}>
+            <ScrollArea.Autosize mah="calc(100vh - 160px)">
               <Stack gap={0}>
                 {items.map((item) => {
                   const active = item.id === selectedId;
                   return (
                     <UnstyledButton
                       key={item.id}
-                      onClick={() => setSelectedId(item.id)}
-                      p="sm"
+                      onClick={() => {
+                        setSelectedId(item.id);
+                        setReason('');
+                      }}
+                      className="w-full"
                       style={{
-                        borderBottom: '1px solid var(--mantine-color-dark-4)',
-                        background: active ? 'var(--mantine-color-dark-6)' : undefined,
+                        padding: '12px 14px',
+                        borderBottom: border,
+                        borderLeft: active
+                          ? '2px solid var(--mantine-color-blue-6)'
+                          : '2px solid transparent',
+                        background: active ? 'var(--mantine-color-blue-light)' : undefined,
                       }}
                     >
-                      <Group gap="sm" wrap="nowrap">
-                        <div style={{ width: 40, height: 40 }}>
-                          <CosmeticSample
-                            cosmetic={item.cosmetic as unknown as SampleCosmetic}
-                            size="sm"
-                          />
-                        </div>
-                        <Stack gap={0} style={{ flex: 1 }}>
+                      <Group gap={10} wrap="nowrap" align="center">
+                        <QueueThumb data={item.cosmetic.data} name={item.title} />
+                        <Stack gap={2} className="min-w-0" style={{ flex: 1 }}>
                           <Text size="sm" fw={600} lineClamp={1}>
                             {item.title}
                           </Text>
-                          <Text size="xs" c="dimmed">
+                          <Text size="xs" c="dimmed" lineClamp={1}>
                             @{item.cosmetic.creator?.username ?? 'unknown'} ·{' '}
                             {getDisplayName(item.cosmetic.type)}
                           </Text>
                         </Stack>
-                        <Text size="xs" fw={600}>
+                        <Text size="xs" fw={700} className="whitespace-nowrap">
                           {numberWithCommas(item.unitAmount)}
                         </Text>
                       </Group>
@@ -189,114 +287,224 @@ function CreatorShopReviewPage() {
                 })}
               </Stack>
             </ScrollArea.Autosize>
-          </Paper>
+          </div>
 
           {/* Detail */}
-          {selected && (
-            <Paper withBorder radius="md" p="lg" style={{ flex: 1 }}>
-              <Stack>
-                <Group gap="sm" align="center">
-                  <Title order={4}>{selected.title}</Title>
-                  <Badge variant="light">{getDisplayName(selected.cosmetic.type)}</Badge>
-                </Group>
-                <Text size="sm" c="dimmed">
-                  Submitted by @{selected.cosmetic.creator?.username ?? 'unknown'}
-                </Text>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {selected ? (
+              <Stack gap="lg" p="xl">
+                <Stack gap={6}>
+                  <Group gap={10} align="center" wrap="wrap">
+                    <Title order={3}>{selected.title}</Title>
+                    <Badge variant="light" color="gray" radius="xl">
+                      Cosmetic · {getDisplayName(selected.cosmetic.type)}
+                    </Badge>
+                  </Group>
+                  <Group gap={6} align="center">
+                    <Text size="sm" c="dimmed">
+                      Submitted by
+                    </Text>
+                    <Text size="sm" fw={600} c="blue">
+                      @{selected.cosmetic.creator?.username ?? 'unknown'}
+                    </Text>
+                    <Text size="sm" c="dimmed">
+                      · {daysFromNow(selected.createdAt)}
+                    </Text>
+                  </Group>
+                </Stack>
 
-                <Group align="flex-start" gap="lg">
-                  <Stack gap="md" style={{ width: 300, flexShrink: 0 }}>
-                    <Center
+                <Group align="flex-start" gap="xl" wrap="nowrap" className="max-md:flex-wrap">
+                  {/* Preview */}
+                  <Stack gap={10} style={{ width: 340, flexShrink: 0 }} className="max-md:w-full">
+                    <div
+                      className="flex items-center justify-center overflow-hidden"
                       style={{
-                        height: 220,
-                        background: 'var(--mantine-color-dark-8)',
+                        height: 280,
                         borderRadius: 8,
+                        border,
+                        background: 'linear-gradient(135deg, #1A1B1E, #101113)',
                       }}
                     >
-                      <CosmeticSample
-                        cosmetic={selected.cosmetic as unknown as SampleCosmetic}
-                        size="lg"
-                      />
-                    </Center>
-                    <Stack gap={4}>
-                      <Text size="xs" fw={600} c="dimmed">
-                        Preview in context
+                      {artUrl(selected.cosmetic.data) ? (
+                        <EdgeMedia
+                          src={artUrl(selected.cosmetic.data)!}
+                          width={240}
+                          alt={selected.title}
+                          className="max-h-[240px] max-w-[85%] object-contain"
+                        />
+                      ) : (
+                        <Text size="sm" c="dimmed">
+                          No artwork
+                        </Text>
+                      )}
+                    </div>
+                    <Text size="xs" c="dimmed" ta="center">
+                      Submitted artwork
+                      {dims ? ` · ${dims.width}×${dims.height} PNG` : ''}
+                    </Text>
+                    <div>
+                      <Text size="xs" fw={600} c="dimmed" mb={4}>
+                        In-context preview
                       </Text>
                       <CosmeticPreview cosmetic={selected.cosmetic as unknown as PreviewCosmetic} />
-                    </Stack>
+                    </div>
                   </Stack>
-                  <Stack gap="sm" style={{ flex: 1 }}>
-                    <Group gap="xl">
-                      <Stack gap={0}>
-                        <Text size="xs" c="dimmed">
-                          List price
-                        </Text>
-                        <Text fw={700}>{numberWithCommas(selected.unitAmount)} Buzz</Text>
-                      </Stack>
-                      <Stack gap={0}>
-                        <Text size="xs" c="dimmed">
-                          Creator earns (70%)
-                        </Text>
-                        <Text fw={700} c="green">
-                          {numberWithCommas(Math.floor(selected.unitAmount * 0.7))} Buzz
-                        </Text>
-                      </Stack>
-                    </Group>
-                    {!!selectedMeta.autoChecks?.length && (
-                      <Stack gap={4}>
-                        <Text size="xs" fw={600}>
+
+                  {/* Meta */}
+                  <Stack gap="md" style={{ flex: 1, minWidth: 0 }}>
+                    <SimpleGrid cols={{ base: 1, xs: 3 }} spacing="sm">
+                      <MoneyTile
+                        label="List price"
+                        value={`${numberWithCommas(selected.unitAmount)} Buzz`}
+                        icon={<IconBolt size={14} />}
+                        iconColor="var(--mantine-color-yellow-5)"
+                      />
+                      <MoneyTile
+                        label="Creator earns"
+                        value={`${numberWithCommas(
+                          Math.floor(selected.unitAmount * CREATOR_SHOP_CREATOR_SHARE)
+                        )} Buzz`}
+                        icon={<IconTrendingUp size={14} />}
+                        iconColor="var(--mantine-color-green-5)"
+                      />
+                      <MoneyTile
+                        label="Submission fee"
+                        value={`${numberWithCommas(CREATOR_SHOP_SUBMISSION_FEE)} · Paid`}
+                        icon={<IconCheck size={14} />}
+                        iconColor="var(--mantine-color-blue-5)"
+                      />
+                    </SimpleGrid>
+
+                    <Paper withBorder radius="md" className="overflow-hidden">
+                      <Group
+                        gap={6}
+                        px="md"
+                        py="xs"
+                        align="center"
+                        style={{
+                          borderBottom: border,
+                          background: 'var(--mantine-color-default-hover)',
+                        }}
+                      >
+                        <IconScan size={15} color="var(--mantine-color-dimmed)" />
+                        <Text size="sm" fw={600}>
                           Automated checks
                         </Text>
-                        {selectedMeta.autoChecks.map((c) => (
-                          <Group key={c.key} gap={6} wrap="nowrap">
+                      </Group>
+                      {checks.length ? (
+                        checks.map((c, i) => (
+                          <Group
+                            key={c.key}
+                            gap={9}
+                            px="md"
+                            py={9}
+                            wrap="nowrap"
+                            align="center"
+                            style={{ borderBottom: i < checks.length - 1 ? border : undefined }}
+                          >
                             {c.passed ? (
                               <IconCircleCheck size={16} color="var(--mantine-color-green-5)" />
                             ) : (
                               <IconCircleX size={16} color="var(--mantine-color-red-5)" />
                             )}
-                            <Text size="xs" c={c.passed ? undefined : 'red'}>
+                            <Text size="sm" style={{ flex: 1 }}>
                               {c.label}
-                              {c.detail ? ` · ${c.detail}` : ''}
                             </Text>
+                            {c.detail && (
+                              <Text size="xs" c={c.passed ? 'dimmed' : 'red'}>
+                                {c.detail}
+                              </Text>
+                            )}
                           </Group>
-                        ))}
-                      </Stack>
+                        ))
+                      ) : (
+                        <Group gap={9} px="md" py={9} align="center">
+                          <IconAlertTriangle size={16} color="var(--mantine-color-yellow-5)" />
+                          <Text size="sm" c="dimmed">
+                            No automated checks were recorded for this submission.
+                          </Text>
+                        </Group>
+                      )}
+                    </Paper>
+
+                    {!!selected.description && (
+                      <Text size="sm" c="dimmed">
+                        {selected.description}
+                      </Text>
                     )}
-                    {selected.description && <Text size="sm">{selected.description}</Text>}
-                    <Textarea
-                      label="Rejection reason (required to reject)"
-                      value={reason}
-                      onChange={(e) => setReason(e.currentTarget.value)}
-                      autosize
-                      minRows={2}
-                    />
+
+                    <Stack gap={8}>
+                      <Text size="sm" fw={600}>
+                        Flag concerns
+                      </Text>
+                      <Group gap={8}>
+                        {flagConcerns.map(({ label, icon: Icon }) => (
+                          <Button
+                            key={label}
+                            variant="default"
+                            size="xs"
+                            radius="xl"
+                            leftSection={<Icon size={14} />}
+                            onClick={() => appendFlag(label)}
+                          >
+                            {label}
+                          </Button>
+                        ))}
+                      </Group>
+                    </Stack>
                   </Stack>
                 </Group>
 
-                <Group justify="flex-end">
-                  <Button
-                    color="red"
-                    variant="light"
-                    leftSection={<IconX size={16} />}
-                    loading={reviewItem.isPending}
-                    onClick={handleReject}
-                  >
-                    Reject
-                  </Button>
-                  <Button
-                    color="green"
-                    leftSection={<IconCheck size={16} />}
-                    loading={reviewItem.isPending}
-                    onClick={handleApprove}
-                  >
-                    Approve &amp; Publish
-                  </Button>
+                {/* Actions */}
+                <Group
+                  justify="space-between"
+                  wrap="nowrap"
+                  pt="md"
+                  gap="md"
+                  style={{ borderTop: border }}
+                  className="max-md:flex-wrap"
+                >
+                  <TextInput
+                    placeholder="Add a note (required to reject or request changes)"
+                    value={reason}
+                    onChange={(e) => setReason(e.currentTarget.value)}
+                    maxLength={1000}
+                    style={{ flex: 1 }}
+                    className="max-md:w-full"
+                  />
+                  <Group gap="sm" wrap="nowrap">
+                    <Button variant="default" loading={reviewItem.isPending} onClick={handleReject}>
+                      Request changes
+                    </Button>
+                    <Button
+                      color="red"
+                      variant="light"
+                      leftSection={<IconX size={16} />}
+                      loading={reviewItem.isPending}
+                      onClick={handleReject}
+                    >
+                      Reject
+                    </Button>
+                    <Button
+                      color="green"
+                      leftSection={<IconCheck size={16} />}
+                      loading={reviewItem.isPending}
+                      onClick={handleApprove}
+                    >
+                      Approve &amp; Publish
+                    </Button>
+                  </Group>
                 </Group>
               </Stack>
-            </Paper>
-          )}
+            ) : (
+              <Center h="100%" py={80}>
+                <Text c="dimmed">Select an item to review.</Text>
+              </Center>
+            )}
+          </div>
         </Group>
       )}
-    </Container>
+    </Stack>
   );
 }
 
