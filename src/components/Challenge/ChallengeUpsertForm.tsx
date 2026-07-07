@@ -44,11 +44,22 @@ import {
   PrizeMode,
   PoolTrigger,
 } from '~/shared/utils/prisma/enums';
-import { upsertChallengeBaseSchema, type Prize } from '~/server/schema/challenge.schema';
+import {
+  challengeJudgingCategorySchema,
+  upsertChallengeBaseSchema,
+  type Prize,
+} from '~/server/schema/challenge.schema';
 import { computeDynamicPool } from '~/server/games/daily-challenge/challenge-pool';
-import type { GetActiveJudgesItem } from '~/types/router';
-import { IconCheck } from '@tabler/icons-react';
+import { IconCheck, IconInfoCircle } from '@tabler/icons-react';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import CategoryWeights from '~/components/Challenge/CategoryWeights';
+import {
+  CHALLENGE_ENTRY_HOUSE_CUT,
+  CHALLENGE_MAX_ENTRY_FEE,
+  CHALLENGE_MAX_INITIAL_PRIZE,
+  CHALLENGE_MIN_ENTRY_FEE,
+  getEntryPoolContribution,
+} from '~/shared/constants/challenge.constants';
 
 // Wrapped custom components for form integration
 const InputModelVersionMultiSelect = withController(ModelVersionMultiSelect);
@@ -85,6 +96,11 @@ const schema = upsertChallengeBaseSchema
     dist1: z.number().min(0).max(100).default(50),
     dist2: z.number().min(0).max(100).default(30),
     dist3: z.number().min(0).max(100).default(20),
+    // User-variant-only fields (unused by the moderator submit path)
+    entryFee: z.number().int().min(CHALLENGE_MIN_ENTRY_FEE).max(CHALLENGE_MAX_ENTRY_FEE).default(CHALLENGE_MIN_ENTRY_FEE),
+    initialPrizeBuzz: z.number().int().min(0).max(CHALLENGE_MAX_INITIAL_PRIZE).default(0),
+    maxParticipants: z.number().int().min(1).max(100_000).optional(),
+    judgingCategories: z.array(challengeJudgingCategorySchema).default([]),
   });
 
 type ChallengeForEdit = {
@@ -125,9 +141,11 @@ type ChallengeForEdit = {
 
 type Props = {
   challenge?: ChallengeForEdit;
+  variant?: 'moderator' | 'user';
 };
 
-export function ChallengeUpsertForm({ challenge }: Props) {
+export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props) {
+  const isUser = variant === 'user';
   const router = useRouter();
   const queryUtils = trpc.useUtils();
   const isEditing = !!challenge;
@@ -137,9 +155,17 @@ export function ChallengeUpsertForm({ challenge }: Props) {
     challenge?.status === ChallengeStatus.Completed ||
     challenge?.status === ChallengeStatus.Cancelled;
 
-  // Fetch available judges and events for dropdowns
-  const { data: judges = [] } = trpc.challenge.getJudges.useQuery();
-  const { data: events = [] } = trpc.challenge.getEvents.useQuery({ activeOnly: false });
+  // Fetch available judges and events for dropdowns (mod queries only run for the moderator
+  // variant; the user variant gets its own restricted judge list from getJudgeOptions)
+  const { data: judges = [] } = trpc.challenge.getJudges.useQuery(undefined, { enabled: !isUser });
+  const { data: userJudgeOptions = [] } = trpc.challenge.getJudgeOptions.useQuery(undefined, {
+    enabled: isUser,
+  });
+  const judgeItems = isUser ? userJudgeOptions : judges;
+  const { data: events = [] } = trpc.challenge.getEvents.useQuery(
+    { activeOnly: false },
+    { enabled: !isUser }
+  );
 
   // Default dates (in UTC, shifted for display)
   const defaultStartsAt = toDisplayUTC(dayjs.utc().add(1, 'day').startOf('day').toDate());
@@ -166,7 +192,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       eventId: challenge?.eventId ? String(challenge.eventId) : null,
       judgingPrompt: challenge?.judgingPrompt ?? '',
       reviewPercentage: challenge?.reviewPercentage ?? 100,
-      maxEntriesPerUser: challenge?.maxEntriesPerUser ?? 20,
+      maxEntriesPerUser: challenge?.maxEntriesPerUser ?? (isUser ? 5 : 20),
       entryPrizeRequirement: challenge?.entryPrizeRequirement ?? 10,
       prizePool: challenge?.prizePool ?? 0,
       operationBudget: challenge?.operationBudget ?? 0,
@@ -188,6 +214,10 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       dist1: challenge?.prizeDistribution?.[0] ?? 50,
       dist2: challenge?.prizeDistribution?.[1] ?? 30,
       dist3: challenge?.prizeDistribution?.[2] ?? 20,
+      entryFee: CHALLENGE_MIN_ENTRY_FEE,
+      initialPrizeBuzz: 0,
+      maxParticipants: undefined,
+      judgingCategories: [],
     },
   });
 
@@ -205,6 +235,20 @@ export function ChallengeUpsertForm({ challenge }: Props) {
     },
   });
 
+  const upsertUserMutation = trpc.challenge.upsertUserChallenge.useMutation({
+    onSuccess: async (result) => {
+      showSuccessNotification({
+        title: 'Challenge submitted',
+        message: 'Your challenge is being reviewed and will go live once it passes moderation.',
+      });
+      await queryUtils.challenge.getInfinite.invalidate();
+      await router.push(`/challenges/${result.id}`);
+    },
+    onError: (error) => {
+      showErrorNotification({ title: 'Unable to create challenge', error: new Error(error.message) });
+    },
+  });
+
   const handleSubmit = (data: z.infer<typeof schema>) => {
     // Convert display dates back to real UTC and snap to exact hours
     const startsAt = dayjs.utc(fromDisplayUTC(data.startsAt)).startOf('hour').toDate();
@@ -214,6 +258,35 @@ export function ChallengeUpsertForm({ challenge }: Props) {
     // Cross-field date validation (can't use .refine() because useForm accesses .shape)
     if (endsAt <= startsAt) {
       form.setError('endsAt', { message: 'End date must be after start date' });
+      return;
+    }
+
+    if (isUser) {
+      // Validate distribution sums to 100 (mirrors the mod Dynamic-mode check below)
+      const distTotal = (data.dist1 ?? 0) + (data.dist2 ?? 0) + (data.dist3 ?? 0);
+      if (distTotal !== 100) {
+        form.setError('dist1', { message: 'Distribution must sum to 100%' });
+        return;
+      }
+
+      upsertUserMutation.mutate({
+        id: challenge?.id,
+        title: data.title,
+        description: data.description || undefined,
+        theme: data.theme,
+        coverImage: data.coverImage,
+        allowedNsfwLevel: sfwBrowsingLevelsFlag,
+        modelVersionIds: [],
+        judgeId: Number(data.judgeId ?? 0),
+        judgingCategories: data.judgingCategories,
+        entryFee: data.entryFee,
+        initialPrizeBuzz: data.initialPrizeBuzz,
+        prizeDistribution: [data.dist1, data.dist2, data.dist3],
+        maxParticipants: data.maxParticipants,
+        maxEntriesPerUser: data.maxEntriesPerUser,
+        startsAt,
+        endsAt,
+      });
       return;
     }
 
@@ -314,6 +387,10 @@ export function ChallengeUpsertForm({ challenge }: Props) {
 
   const reviewCostType = form.watch('reviewCostType') ?? ChallengeReviewCostType.None;
 
+  // User-variant entry-fee pool preview
+  const entryFeeWatch = form.watch('entryFee') ?? CHALLENGE_MIN_ENTRY_FEE;
+  const perEntryToPool = getEntryPoolContribution(entryFeeWatch);
+
   // Watch prize values for total calculation
   const [prize1, prize2, prize3] = form.watch(['prize1Buzz', 'prize2Buzz', 'prize3Buzz']);
   const prizeMode = form.watch('prizeMode') ?? PrizeMode.Fixed;
@@ -334,11 +411,19 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       <Stack gap="md">
         {/* Header */}
         <Group wrap="wrap">
-          <BackButton url="/moderator/challenges" />
+          <BackButton url={isUser ? '/challenges' : '/moderator/challenges'} />
           <Title order={2} size="h3" className="sm:text-2xl">
-            {isEditing ? 'Edit Challenge' : 'Create Challenge'}
+            {isEditing ? 'Edit Challenge' : isUser ? 'Create a Challenge' : 'Create Challenge'}
           </Title>
         </Group>
+
+        {isUser && (
+          <Alert icon={<IconInfoCircle size={16} />} color="blue">
+            Your challenge is funded by entry fees. Each entry pays the entry fee;{' '}
+            {CHALLENGE_ENTRY_HOUSE_CUT} Buzz per entry covers AI judging and the rest grows the prize
+            pool. A moderation scan runs before your challenge becomes visible.
+          </Alert>
+        )}
 
         {isTerminal && (
           <Alert color="red" title="Challenge is read-only">
@@ -421,15 +506,17 @@ export function ChallengeUpsertForm({ challenge }: Props) {
           </Stack>
         </Paper>
 
-        {/* Model Version Selection */}
-        <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
-          <InputModelVersionMultiSelect
-            name="modelVersionIds"
-            label="Eligible Models"
-            description="Specify which models are allowed for this challenge. Entries must use at least one of the selected models (OR condition, not all). Leave empty to allow any model."
-            disabled={isActive || isTerminal}
-          />
-        </Paper>
+        {/* Model Version Selection (moderator-only; user challenges allow any model) */}
+        {!isUser && (
+          <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
+            <InputModelVersionMultiSelect
+              name="modelVersionIds"
+              label="Eligible Models"
+              description="Specify which models are allowed for this challenge. Entries must use at least one of the selected models (OR condition, not all). Leave empty to allow any model."
+              disabled={isActive || isTerminal}
+            />
+          </Paper>
+        )}
 
         {/* Timing */}
         <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
@@ -492,9 +579,50 @@ export function ChallengeUpsertForm({ challenge }: Props) {
           </Stack>
         </Paper>
 
-        {/* Prizes */}
+        {/* Prizes: moderator gets Fixed/Dynamic prize pools; user is entry-fee-funded only */}
         <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
           <Stack gap="md">
+            {isUser && (
+              <>
+                <Title order={4}>Entry Fee &amp; Prizes</Title>
+                <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                  <InputNumberWrapper
+                    name="entryFee"
+                    label="Entry Fee"
+                    leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                    currency={Currency.BUZZ}
+                    min={CHALLENGE_MIN_ENTRY_FEE}
+                    max={CHALLENGE_MAX_ENTRY_FEE}
+                    step={10}
+                    description={`Min ${CHALLENGE_MIN_ENTRY_FEE}. ${perEntryToPool} Buzz of each entry goes to the prize pool.`}
+                    disabled={isTerminal}
+                  />
+                  <InputNumberWrapper
+                    name="initialPrizeBuzz"
+                    label="Initial Prize (optional)"
+                    leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                    currency={Currency.BUZZ}
+                    min={0}
+                    step={100}
+                    description="Buzz you seed the pool with (charged to you on creation)."
+                    disabled={isTerminal}
+                  />
+                </SimpleGrid>
+                <Divider label="Prize split (must total 100%)" />
+                <SimpleGrid cols={3}>
+                  <InputNumber name="dist1" label="1st Place %" min={0} max={100} disabled={isTerminal} />
+                  <InputNumber name="dist2" label="2nd Place %" min={0} max={100} disabled={isTerminal} />
+                  <InputNumber name="dist3" label="3rd Place %" min={0} max={100} disabled={isTerminal} />
+                </SimpleGrid>
+                <Text size="sm" c={totalPct === 100 ? 'teal' : 'red'}>
+                  {dist1 || 0} + {dist2 || 0} + {dist3 || 0} = {totalPct}%
+                  {totalPct === 100 ? ' ✓' : ' (must equal 100%)'}
+                </Text>
+              </>
+            )}
+
+            {!isUser && (
+              <>
             <Group justify="space-between" wrap="wrap">
               <Title order={4}>Prizes</Title>
               <CurrencyBadge currency={Currency.BUZZ} unitAmount={totalPrizePool} size="lg" />
@@ -645,6 +773,8 @@ export function ChallengeUpsertForm({ challenge }: Props) {
               step={10}
               disabled={isTerminal}
             />
+              </>
+            )}
           </Stack>
         </Paper>
 
@@ -653,10 +783,13 @@ export function ChallengeUpsertForm({ challenge }: Props) {
           <Stack gap="md">
             <Title order={4}>Entry Requirements</Title>
 
-            {/* Content Rating Selection */}
-            <InputContentRatingSelect name="allowedNsfwLevel" disabled={isActive || isTerminal} />
-
-            <Divider />
+            {/* Content Rating Selection (moderator-only; user challenges are forced SFW) */}
+            {!isUser && (
+              <>
+                <InputContentRatingSelect name="allowedNsfwLevel" disabled={isActive || isTerminal} />
+                <Divider />
+              </>
+            )}
 
             {/* Entry Limits */}
             <SimpleGrid cols={{ base: 1, sm: 2 }}>
@@ -669,37 +802,53 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 disabled={isActive || isTerminal}
               />
 
-              <InputNumber
-                name="entryPrizeRequirement"
-                label="Entry Prize Requirement"
-                description="Min entries to qualify for participation prize"
-                min={1}
-                max={100}
-                disabled={isActive || isTerminal}
-              />
+              {!isUser && (
+                <InputNumber
+                  name="entryPrizeRequirement"
+                  label="Entry Prize Requirement"
+                  description="Min entries to qualify for participation prize"
+                  min={1}
+                  max={100}
+                  disabled={isActive || isTerminal}
+                />
+              )}
+
+              {isUser && (
+                <InputNumber
+                  name="maxParticipants"
+                  label="Max Participants (optional)"
+                  description="Caps total entries — bounds your judging cost."
+                  min={1}
+                  max={100_000}
+                  disabled={isActive || isTerminal}
+                />
+              )}
             </SimpleGrid>
 
-            <Divider />
-
-            {/* Paid Review */}
-            <InputSelect
-              label="Paid Reviews"
-              name="reviewCostType"
-              description="Allow users to pay Buzz to guarantee their entries get judged."
-              onChange={(val) => {
-                const type = (val as ChallengeReviewCostType) ?? ChallengeReviewCostType.None;
-                if (type === ChallengeReviewCostType.None) {
-                  form.setValue('reviewCost', 0);
-                }
-              }}
-              data={[
-                { value: ChallengeReviewCostType.None, label: 'None' },
-                { value: ChallengeReviewCostType.PerEntry, label: 'Per Entry' },
-                { value: ChallengeReviewCostType.Flat, label: 'Flat Rate (all entries)' },
-              ]}
-              disabled={isTerminal}
-            />
-            {reviewCostType === ChallengeReviewCostType.PerEntry && (
+            {/* Paid Review (moderator-only; user challenges have no per-entry review cost) */}
+            {!isUser && (
+              <>
+                <Divider />
+                <InputSelect
+                  label="Paid Reviews"
+                  name="reviewCostType"
+                  description="Allow users to pay Buzz to guarantee their entries get judged."
+                  onChange={(val) => {
+                    const type = (val as ChallengeReviewCostType) ?? ChallengeReviewCostType.None;
+                    if (type === ChallengeReviewCostType.None) {
+                      form.setValue('reviewCost', 0);
+                    }
+                  }}
+                  data={[
+                    { value: ChallengeReviewCostType.None, label: 'None' },
+                    { value: ChallengeReviewCostType.PerEntry, label: 'Per Entry' },
+                    { value: ChallengeReviewCostType.Flat, label: 'Flat Rate (all entries)' },
+                  ]}
+                  disabled={isTerminal}
+                />
+              </>
+            )}
+            {!isUser && reviewCostType === ChallengeReviewCostType.PerEntry && (
               <InputNumberWrapper
                 name="reviewCost"
                 label="Cost Per Entry"
@@ -711,7 +860,7 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 disabled={isTerminal}
               />
             )}
-            {reviewCostType === ChallengeReviewCostType.Flat && (
+            {!isUser && reviewCostType === ChallengeReviewCostType.Flat && (
               <InputNumberWrapper
                 name="reviewCost"
                 label="Flat Rate"
@@ -735,10 +884,15 @@ export function ChallengeUpsertForm({ challenge }: Props) {
               name="judgeId"
               label="Assigned Judge"
               placeholder="Select a judge persona"
-              description="Select a judge persona for this challenge. Leave empty for default judging."
-              data={judges.map((j) => ({ value: String(j.id), label: j.name })) ?? []}
-              renderOption={(item) => renderJudgeOption({ ...item, judges })}
+              description={
+                isUser
+                  ? 'Select the AI judge for this challenge.'
+                  : 'Select a judge persona for this challenge. Leave empty for default judging.'
+              }
+              data={judgeItems.map((j) => ({ value: String(j.id), label: j.name }))}
+              renderOption={(item) => renderJudgeOption({ ...item, judges: judgeItems })}
               onChange={(value) => {
+                if (isUser) return;
                 const selectedJudge = judges.find((j) => String(j.id) === value);
                 if (selectedJudge?.reviewPrompt) {
                   form.setValue('judgingPrompt', selectedJudge.reviewPrompt);
@@ -747,63 +901,84 @@ export function ChallengeUpsertForm({ challenge }: Props) {
                 }
               }}
               allowDeselect={false}
+              withAsterisk={isUser}
               disabled={isActive || isTerminal}
             />
-            <InputTextArea
-              name="judgingPrompt"
-              label="Judging Prompt Override"
-              description="Custom prompt for this challenge's AI judge. Overrides the judge persona's default prompts. Leave empty to use defaults."
-              placeholder="e.g., For this holiday challenge, focus on festive themes and seasonal creativity..."
-              autosize
-              minRows={3}
-              maxRows={8}
-              disabled={isActive || isTerminal}
-            />
+            {!isUser && (
+              <InputTextArea
+                name="judgingPrompt"
+                label="Judging Prompt Override"
+                description="Custom prompt for this challenge's AI judge. Overrides the judge persona's default prompts. Leave empty to use defaults."
+                placeholder="e.g., For this holiday challenge, focus on festive themes and seasonal creativity..."
+                autosize
+                minRows={3}
+                maxRows={8}
+                disabled={isActive || isTerminal}
+              />
+            )}
           </Stack>
         </Paper>
 
-        {/* Event */}
-        <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
-          <Stack gap="md">
-            <Title order={4}>Event</Title>
-            <InputSelect
-              name="eventId"
-              label="Challenge Event"
-              placeholder="None (standalone challenge)"
-              description="Assign this challenge to a featured event. Event challenges appear in the featured section on the challenges page."
-              data={events.map((e) => ({
-                value: String(e.id),
-                label: `${e.title} (${e._count.challenges} challenges)`,
-              }))}
-              clearable
-              disabled={isTerminal}
-            />
-          </Stack>
-        </Paper>
+        {/* Judging Categories (user-only; moderator judging uses judgingPrompt instead) */}
+        {isUser && (
+          <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
+            <Stack gap="md">
+              <Title order={4}>Judging Categories</Title>
+              <Text size="sm" c="dimmed">
+                These categories and how they&apos;re scored are shown publicly so entrants know
+                exactly how they&apos;ll be judged.
+              </Text>
+              <CategoryWeights />
+            </Stack>
+          </Paper>
+        )}
 
-        {/* Source */}
-        <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
-          <Stack gap="md">
-            <Title order={4}>Source</Title>
+        {/* Event (moderator-only) */}
+        {!isUser && (
+          <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
+            <Stack gap="md">
+              <Title order={4}>Event</Title>
+              <InputSelect
+                name="eventId"
+                label="Challenge Event"
+                placeholder="None (standalone challenge)"
+                description="Assign this challenge to a featured event. Event challenges appear in the featured section on the challenges page."
+                data={events.map((e) => ({
+                  value: String(e.id),
+                  label: `${e.title} (${e._count.challenges} challenges)`,
+                }))}
+                clearable
+                disabled={isTerminal}
+              />
+            </Stack>
+          </Paper>
+        )}
 
-            <InputSelect
-              name="source"
-              label="Challenge Source"
-              data={[
-                { value: ChallengeSource.System, label: 'System (Auto-generated)' },
-                { value: ChallengeSource.Mod, label: 'Moderator' },
-                { value: ChallengeSource.User, label: 'User' },
-              ]}
-              disabled={isActive || isTerminal}
-            />
-          </Stack>
-        </Paper>
+        {/* Source (moderator-only; user challenges are always ChallengeSource.User) */}
+        {!isUser && (
+          <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
+            <Stack gap="md">
+              <Title order={4}>Source</Title>
+
+              <InputSelect
+                name="source"
+                label="Challenge Source"
+                data={[
+                  { value: ChallengeSource.System, label: 'System (Auto-generated)' },
+                  { value: ChallengeSource.Mod, label: 'Moderator' },
+                  { value: ChallengeSource.User, label: 'User' },
+                ]}
+                disabled={isActive || isTerminal}
+              />
+            </Stack>
+          </Paper>
+        )}
 
         {/* Actions */}
         <Group justify="flex-end" wrap="wrap">
           <Button
             variant="default"
-            onClick={() => router.push('/moderator/challenges')}
+            onClick={() => router.push(isUser ? '/challenges' : '/moderator/challenges')}
             fullWidth
             className="sm:w-auto"
           >
@@ -811,12 +986,12 @@ export function ChallengeUpsertForm({ challenge }: Props) {
           </Button>
           <Button
             type="submit"
-            loading={form.formState.isSubmitting || upsertMutation.isPending}
+            loading={form.formState.isSubmitting || upsertMutation.isPending || upsertUserMutation.isPending}
             disabled={isTerminal}
             fullWidth
             className="sm:w-auto"
           >
-            {isEditing ? 'Update Challenge' : 'Create Challenge'}
+            {isEditing ? 'Update Challenge' : isUser ? 'Submit Challenge' : 'Create Challenge'}
           </Button>
         </Group>
       </Stack>
@@ -824,11 +999,13 @@ export function ChallengeUpsertForm({ challenge }: Props) {
   );
 }
 
+type JudgeOptionItem = { id: number; name: string; bio?: string | null };
+
 const renderJudgeOption = ({
   option,
   checked,
   judges,
-}: Parameters<NonNullable<SelectProps['renderOption']>>[0] & { judges: GetActiveJudgesItem[] }) => {
+}: Parameters<NonNullable<SelectProps['renderOption']>>[0] & { judges: JudgeOptionItem[] }) => {
   const judge = judges.find((j) => String(j.id) === option.value);
 
   return (
