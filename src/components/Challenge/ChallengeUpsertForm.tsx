@@ -286,7 +286,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
         theme: data.theme,
         coverImage: data.coverImage,
         allowedNsfwLevel: data.allowedNsfwLevel,
-        modelVersionIds: [],
+        modelVersionIds: data.modelVersionIds,
         judgeId: Number(data.judgeId ?? 0),
         judgingCategories: data.judgingCategories,
         entryFee: data.entryFee,
@@ -516,17 +516,15 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
           </Stack>
         </Paper>
 
-        {/* Model Version Selection (moderator-only; user challenges allow any model) */}
-        {!isUser && (
-          <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
-            <InputModelVersionMultiSelect
-              name="modelVersionIds"
-              label="Eligible Models"
-              description="Specify which models are allowed for this challenge. Entries must use at least one of the selected models (OR condition, not all). Leave empty to allow any model."
-              disabled={isActive || isTerminal}
-            />
-          </Paper>
-        )}
+        {/* Eligible Models — optional for both variants (empty = any model allowed) */}
+        <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
+          <InputModelVersionMultiSelect
+            name="modelVersionIds"
+            label="Eligible Models"
+            description="Specify which models are allowed for this challenge. Entries must use at least one of the selected models (OR condition, not all). Leave empty to allow any model."
+            disabled={isActive || isTerminal}
+          />
+        </Paper>
 
         {/* Timing */}
         <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
