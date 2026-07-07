@@ -40,6 +40,10 @@ export function getEntryPoolContribution(entryFee: number): number {
   return Math.max(0, entryFee - CHALLENGE_ENTRY_HOUSE_CUT);
 }
 
+// The label a category is scored under becomes a JSON key in the AI review schema; it must be
+// stable across the write, the AI prompt, and the ranking lookup. Normalize once at write time.
+export const sanitizeCategoryLabel = (s: string) => s.replace(/"/g, "'").replace(/\s+/g, ' ').trim();
+
 export const CHALLENGE_CATEGORY_KEYS = ['theme', 'humor', 'wittiness', 'aesthetic', 'custom'] as const;
 export type ChallengeCategoryKey = (typeof CHALLENGE_CATEGORY_KEYS)[number];
 

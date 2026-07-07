@@ -14,6 +14,7 @@ import {
   CHALLENGE_MAX_ENTRY_FEE,
   CHALLENGE_MAX_INITIAL_PRIZE,
   CHALLENGE_MIN_ENTRY_FEE,
+  sanitizeCategoryLabel,
 } from '~/shared/constants/challenge.constants';
 import { infiniteQuerySchema } from './base.schema';
 import { imageSchema } from './image.schema';
@@ -359,7 +360,7 @@ export type UpsertChallengeInput = z.infer<typeof upsertChallengeSchema>;
 // The judge must be an existing active judge (validated server-side).
 export const challengeJudgingCategorySchema = z.object({
   key: z.enum(CHALLENGE_CATEGORY_KEYS),
-  label: z.string().trim().min(1).max(50),
+  label: z.string().trim().min(1).max(50).transform(sanitizeCategoryLabel),
   criteria: z.string().trim().min(1).max(500),
   weight: z.number().int().min(1).max(100),
 });

@@ -9,6 +9,7 @@ import { civitaiLLM } from '~/server/services/ai/civitai-llm';
 import { openrouter, AI_MODELS, type AIModel } from '~/server/services/ai/openrouter';
 import type { SimpleMessage } from '~/server/services/ai/openrouter';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
+import { sanitizeCategoryLabel } from '~/shared/constants/challenge.constants';
 import { findLastIndex } from '~/utils/array-helpers';
 import { markdownToHtml } from '~/utils/markdown-helpers';
 import { stripLeadingWhitespace } from '~/utils/string-helpers';
@@ -251,9 +252,9 @@ const RESPONSE_SCHEMA = `{
 export function buildCategoryReviewSchema(
   categories: { name: string; criteria: string }[]
 ): string {
-  const sanitize = (s: string) => s.replace(/"/g, "'").replace(/\s+/g, ' ').trim();
+  const sanitizeCriteria = (s: string) => s.replace(/"/g, "'").replace(/\s+/g, ' ').trim();
   const scoreLines = categories
-    .map((c) => `    "${sanitize(c.name)}": number // 0-10, ${sanitize(c.criteria)}`)
+    .map((c) => `    "${sanitizeCategoryLabel(c.name)}": number // 0-10, ${sanitizeCriteria(c.criteria)}`)
     .join('\n');
   return `{
   "score": {

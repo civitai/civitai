@@ -40,4 +40,34 @@ describe('challengeJudgingCategoriesSchema', () => {
     ];
     expect(challengeJudgingCategoriesSchema.safeParse(cats).success).toBe(false);
   });
+
+  it('normalizes quotes in a custom category label', () => {
+    const cats = [
+      { key: 'theme', label: 'Theme', criteria: 'fit', weight: 70 },
+      { key: 'custom', label: 'Say "wow"', criteria: 'x', weight: 30 },
+    ];
+    const result = challengeJudgingCategoriesSchema.safeParse(cats);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data[1].label).toBe("Say 'wow'");
+  });
+
+  it('collapses double spaces in a custom category label', () => {
+    const cats = [
+      { key: 'theme', label: 'Theme', criteria: 'fit', weight: 70 },
+      { key: 'custom', label: 'Cool  Vibes', criteria: 'x', weight: 30 },
+    ];
+    const result = challengeJudgingCategoriesSchema.safeParse(cats);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data[1].label).toBe('Cool Vibes');
+  });
+
+  it('is idempotent: an already-normalized label is returned unchanged', () => {
+    const cats = [
+      { key: 'theme', label: 'Theme', criteria: 'fit', weight: 70 },
+      { key: 'custom', label: "Say 'wow'", criteria: 'x', weight: 30 },
+    ];
+    const result = challengeJudgingCategoriesSchema.safeParse(cats);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data[1].label).toBe("Say 'wow'");
+  });
 });
