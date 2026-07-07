@@ -1,9 +1,12 @@
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
+import superjson from 'superjson';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   __getTrpcBatchingEnabled,
   CACHEABLE_PROCEDURES,
+  isLargeQuery,
+  isTooLargeToBatch,
   queryRetry,
   setTrpcBatchingEnabled,
   shouldBatch,
@@ -119,7 +122,7 @@ describe('shouldBatch', () => {
   it('does NOT batch large queries (they go out as POST methodOverride, body-carried)', () => {
     setTrpcBatchingEnabled(true);
     setWindowAuthed(true);
-    // input serializes to > MAX_QUERY_INPUT_LENGTH (2500 chars) => large => unbatched
+    // input encodes to > URL_INPUT_BUDGET => large => unbatched
     expect(shouldBatch(op({ input: { q: 'x'.repeat(3000) } }))).toBe(false);
   });
 
@@ -127,6 +130,140 @@ describe('shouldBatch', () => {
     setTrpcBatchingEnabled(true);
     setWindowAuthed(true);
     expect(shouldBatch(op({ input: { q: 'x'.repeat(100) } }))).toBe(true);
+  });
+});
+
+/**
+ * Regression guard for the batched-GET URL overflow (#2962). The batch link caps the whole
+ * request URL at `maxURLLength: 2083` and tRPC throws "Input is too big for a single
+ * dispatch" if ONE operation alone exceeds it. `shouldBatch` must therefore NEVER keep a
+ * query batched whose single-op batched URL would cross 2083 — otherwise a power user
+ * stacking LoRAs on the generator's `whatIf` cost query crashes.
+ *
+ * The original fix used a raw-JSON-char threshold with a ~1.4× encoding assumption; the
+ * real ratio is ~1.75–1.9× for punctuation-dense JSON, which left a ~12–14-resource crash
+ * band still batched-but-overflowing. `isTooLargeToBatch` (the batch-exclusion gate) now
+ * measures the ACTUAL encoded wire cost, so we assert the end-to-end invariant against a
+ * tRPC-faithful URL model — raising the budget too high would fail this test.
+ */
+describe('shouldBatch never keeps a URL-overflowing query batched (#2962)', () => {
+  const BATCH_MAX_URL_LENGTH = 2083; // must match `maxURLLength` on httpBatchStreamLink
+  const whatIfPath = 'orchestrator.whatIfFromGraph';
+
+  // The single-op batched GET URL tRPC builds: `/api/trpc/<path>?batch=1&input=<enc {0: serialized}>`.
+  const batchedUrlLength = (path: string, input: unknown) =>
+    `/api/trpc/${path}?batch=1&input=`.length +
+    encodeURIComponent(JSON.stringify({ 0: superjson.serialize(input) })).length;
+
+  // A whatIf-shaped payload: a checkpoint + N LoRA resources (minimal post-filter shape,
+  // i.e. trainedWords already stripped by `filterSnapshotForSubmit`).
+  const whatIfInput = (loraCount: number) => ({
+    resources: [
+      { id: 1288280, baseModel: 'Illustrious', model: { type: 'Checkpoint' }, strength: 1 },
+      ...Array.from({ length: loraCount }, (_, i) => ({
+        id: 1200000 + i,
+        baseModel: 'Illustrious',
+        model: { type: 'LORA' },
+        strength: 1,
+      })),
+    ],
+  });
+
+  beforeEach(() => {
+    setTrpcBatchingEnabled(true);
+    setWindowAuthed(true);
+  });
+
+  it('whatIf path is not edge-cacheable (so batching is otherwise eligible)', () => {
+    // Guards the premise: if this ever became cacheable, shouldBatch would return false for
+    // an unrelated reason and the invariant below would pass vacuously.
+    expect(CACHEABLE_PROCEDURES.has(whatIfPath)).toBe(false);
+  });
+
+  it('diverts the exact crash-band payload to POST instead of overflowing the batch URL', () => {
+    // 14 LoRAs is the regression point: under the old raw-1400 threshold this stayed batched
+    // (raw JSON ~1335 ≤ 1400) yet its encoded URL was ~2101 > 2083 → the #2962 crash. The
+    // encoded-budget check must now classify it large → unbatched → POST. (Fails on the
+    // pre-fix raw-char threshold, which is what makes this a real regression guard.)
+    const crashBand = { type: 'query', path: whatIfPath, input: whatIfInput(14), context: {} };
+    expect(batchedUrlLength(whatIfPath, whatIfInput(14))).toBeGreaterThan(BATCH_MAX_URL_LENGTH);
+    expect(shouldBatch(crashBand)).toBe(false);
+    // And a small stack still batches (the win isn't thrown away for the common case).
+    const small = { type: 'query', path: whatIfPath, input: whatIfInput(3), context: {} };
+    expect(shouldBatch(small)).toBe(true);
+  });
+
+  it('holds the invariant across a resource-count sweep: batched ⇒ URL < 2083', () => {
+    for (let n = 0; n <= 40; n++) {
+      const input = whatIfInput(n);
+      const operation = { type: 'query', path: whatIfPath, input, context: {} };
+      if (shouldBatch(operation)) {
+        expect(batchedUrlLength(whatIfPath, input)).toBeLessThan(BATCH_MAX_URL_LENGTH);
+      }
+    }
+  });
+});
+
+/**
+ * The two size gates serve two different URL limits and must NOT be conflated (audit #1):
+ *  - `isTooLargeToBatch` (tight, encoded) keeps a query off the batch link (hard 2083 cap).
+ *  - `isLargeQuery` (coarse, raw 2500) decides GET→POST on the NON-batched path, whose only
+ *    ceiling is HTTP 431 (~4000 chars). It governs the path EVERY query takes while batching
+ *    is off, so it must stay at the pre-batching 2500 — otherwise mid-size cacheable GETs
+ *    flip to uncacheable POST for 100% of live traffic on deploy. This guards that split.
+ */
+describe('batch-size gate is distinct from the non-batch GET→POST gate (#1)', () => {
+  const q = (input: unknown) => ({ type: 'query', input });
+
+  it('a mid-size query is excluded from batching but STILL sent as a (cacheable) GET', () => {
+    // ~2000 raw chars: encoded > 1800 (too big for the 2083 batch cap) but raw ≤ 2500 (a
+    // single GET is well under the 431 limit). Must be off the batch link YET stay a GET —
+    // this is the edge-cacheability that a shared tight gate would have destroyed.
+    const mid = q({ filter: 'x'.repeat(2000) });
+    expect(isTooLargeToBatch(mid)).toBe(true); //   → not batched
+    expect(isLargeQuery(mid)).toBe(false); //        → stays GET (not forced to POST)
+  });
+
+  it('a genuinely huge query goes POST on the non-batch path too', () => {
+    const huge = q({ filter: 'x'.repeat(3000) }); // raw > 2500
+    expect(isTooLargeToBatch(huge)).toBe(true);
+    expect(isLargeQuery(huge)).toBe(true); //        → POST (body-carried)
+  });
+
+  it('a small query trips neither gate', () => {
+    const small = q({ limit: 5 });
+    expect(isTooLargeToBatch(small)).toBe(false);
+    expect(isLargeQuery(small)).toBe(false);
+  });
+
+  it('the non-batch GET→POST threshold is the pre-batching 2500 raw chars (unchanged)', () => {
+    expect(isLargeQuery(q({ s: 'x'.repeat(2600) }))).toBe(true); // just over 2500 raw → POST
+    expect(isLargeQuery(q({ s: 'x'.repeat(2000) }))).toBe(false); // under → GET
+  });
+
+  it('neither gate fires on mutations (they keep the native POST path)', () => {
+    expect(isTooLargeToBatch({ type: 'mutation', input: { s: 'x'.repeat(3000) } })).toBe(false);
+    expect(isLargeQuery({ type: 'mutation', input: { s: 'x'.repeat(3000) } })).toBe(false);
+  });
+
+  it('isTooLargeToBatch sizes the SERIALIZED input, not raw JSON (superjson can expand)', () => {
+    // Regression: superjson.serialize expands special types (Set/Map/Date) into a larger
+    // {json,meta} shape. This input is tiny as raw JSON (~190 chars) but serializes+encodes to
+    // >2083 — a raw-length fast-path would wave it through as "small" and it would overflow the
+    // batch URL (the original "Input is too big for a single dispatch" crash). Must be excluded.
+    const expandingInput = { items: Array.from({ length: 60 }, () => new Set()) };
+    expect(JSON.stringify(expandingInput).length).toBeLessThan(500); // raw looks tiny…
+    expect(isTooLargeToBatch(q(expandingInput))).toBe(true); // …but serialized is too big to batch
+  });
+
+  it('isTooLargeToBatch measures ENCODED length, not char count (non-ASCII expands >3x)', () => {
+    // Regression: `encodeURIComponent` expands one non-ASCII UTF-16 unit to up to 9 chars
+    // (中 → %E4%B8%AD), so a char-count×3 short-circuit under-counts a CJK-dense input and would
+    // wave it onto the batch link → 2083 overflow. 300 CJK chars: ~320 serialized chars but the
+    // batched URL is ~2790 > 2083. Must be excluded from batching.
+    const cjk = q({ q: '中'.repeat(300) });
+    expect(JSON.stringify('中'.repeat(300)).length).toBeLessThan(320); // char count looks modest…
+    expect(isTooLargeToBatch(cjk)).toBe(true); // …but the ENCODED URL overflows → must not batch
   });
 });
 
