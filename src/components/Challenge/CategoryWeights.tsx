@@ -94,7 +94,7 @@ export default function CategoryWeights() {
   };
 
   return (
-    <Stack gap="sm">
+    <Stack gap="md">
       {rows.map((row) => {
         const isTheme = row.key === 'theme';
         const isCustom = row.key === 'custom';
@@ -110,7 +110,7 @@ export default function CategoryWeights() {
         ];
 
         return (
-          <Stack key={row.id} gap={4} className="rounded-md border border-gray-3 p-3 dark:border-dark-4">
+          <Stack key={row.id} gap={4}>
             <Group align="flex-end" wrap="nowrap" gap="sm">
               <Select
                 label="Category"
