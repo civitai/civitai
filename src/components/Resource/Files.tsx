@@ -4,10 +4,12 @@ import {
   Divider,
   getPrimaryShade,
   Group,
+  Popover,
   Progress,
   Select,
   Stack,
   Text,
+  TextInput,
   ThemeIcon,
   Tooltip,
   useComputedColorScheme,
@@ -24,6 +26,7 @@ import {
   IconCircleCheck,
   IconCloudUpload,
   IconLink,
+  IconPencil,
   IconPlus,
   IconRefresh,
   IconTrash,
@@ -44,7 +47,7 @@ import { useS3UploadStore } from '~/store/s3-upload.store';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatBytes, formatKBytes, formatSeconds } from '~/utils/number-helpers';
-import { getDisplayName, getFileExtension } from '~/utils/string-helpers';
+import { getDisplayName, getFileExtension, sanitizeDownloadFilename } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { comfyFileTypeLabels, filterFileTypeByExtension } from '~/utils/file-display-helpers';
 import classes from './Files.module.scss';
@@ -136,7 +139,7 @@ function modelTypeToComponentType(modelType: ModelType): ModelFileComponentType 
 }
 
 // TODO.Briant - compare file extension when checking for duplicate files
-export function Files() {
+export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean } = {}) {
   const {
     files,
     linkedComponents,
@@ -304,6 +307,7 @@ export function Files() {
                   data={file}
                   index={files.indexOf(file)}
                   fileTypes={primaryTypes}
+                  showRename={showRenameOnPrimary}
                 />
               ))}
               <InlineDropzone
@@ -578,14 +582,18 @@ function FileCard({
   data: versionFile,
   index,
   showRequiredToggle,
+  showRename,
   fileTypes: fileTypesProp,
 }: {
   data: FileFromContextProps;
   index: number;
   showRequiredToggle?: boolean;
+  showRename?: boolean;
   fileTypes?: ModelFileType[];
 }) {
   const { removeFile, updateFile, dropzoneConfig, modelId, errors } = useFilesContext();
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
   const allFileTypes = [
     ...dropzoneConfig.primary.fileTypes,
     ...dropzoneConfig.additional.fileTypes,
@@ -622,6 +630,32 @@ function FileCard({
     else if (uuid) removeFile(uuid);
   };
 
+  const renameFileMutation = trpc.modelFile.update.useMutation({
+    async onSuccess(_, variables) {
+      updateFile(versionFile.uuid, { overrideName: variables.overrideName ?? null });
+      await queryUtils.modelVersion.getByIdForEdit.invalidate({
+        id: versionFile.versionId,
+        withFiles: true,
+      });
+      setRenameOpen(false);
+    },
+    onError() {
+      showErrorNotification({ error: new Error('Could not rename file, please try again') });
+    },
+  });
+
+  const handleRenameOpen = () => {
+    setRenameValue(versionFile.overrideName ?? versionFile.name);
+    setRenameOpen(true);
+  };
+
+  const handleRenameSave = () => {
+    if (!versionFile.id) return;
+    const originalExt = `.${getFileExtension(versionFile.name)}`;
+    const next = renameValue.trim() ? sanitizeDownloadFilename(renameValue, originalExt) : null;
+    renameFileMutation.mutate({ id: versionFile.id, overrideName: next });
+  };
+
   const iconConfig = getFileIconConfig(versionFile.name, {
     format: versionFile.format,
   });
@@ -651,7 +685,7 @@ function FileCard({
         <div style={{ flex: 1, minWidth: 0 }}>
           <Group gap={6} wrap="nowrap">
             <Text size="sm" fw={500} c={failedUpload ? 'red' : 'white'} truncate>
-              {versionFile.name}
+              {versionFile.overrideName ?? versionFile.name}
             </Text>
             {isMissingRequiredInfo(versionFile) && (
               <Badge color="yellow" variant="light" size="xs">
@@ -679,6 +713,50 @@ function FileCard({
             filesRef. */}
         <Group gap="xs" wrap="nowrap" align="flex-end">
           <FileEditForm file={versionFile} fileTypes={fileTypes} index={index} />
+          {!versionFile.isUploading && showRename && versionFile.id && !trackedFile && (
+            <Popover
+              opened={renameOpen}
+              onClose={() => setRenameOpen(false)}
+              width={300}
+              position="top-end"
+              withArrow
+              withinPortal
+            >
+              <Popover.Target>
+                <LegacyActionIcon
+                  onClick={handleRenameOpen}
+                  style={{ marginTop: 18 }}
+                  title="Rename download file"
+                >
+                  <IconPencil size={16} />
+                </LegacyActionIcon>
+              </Popover.Target>
+              <Popover.Dropdown>
+                <Stack gap="xs">
+                  <TextInput
+                    label="Download filename"
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.currentTarget.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleRenameSave()}
+                    size="xs"
+                    autoFocus
+                  />
+                  <Group justify="flex-end" gap="xs">
+                    <Button size="xs" variant="default" onClick={() => setRenameOpen(false)}>
+                      Cancel
+                    </Button>
+                    <Button
+                      size="xs"
+                      onClick={handleRenameSave}
+                      loading={renameFileMutation.isPending}
+                    >
+                      Save
+                    </Button>
+                  </Group>
+                </Stack>
+              </Popover.Dropdown>
+            </Popover>
+          )}
           {!trackedFile && (
             <LegacyActionIcon
               color="red"
@@ -920,7 +998,12 @@ function FileEditForm({
     });
   };
 
-  const canManualSave = !!versionFile.id && !isEqual(versionFile, initialFile);
+  const canManualSave =
+    !!versionFile.id &&
+    !isEqual(
+      { ...versionFile, overrideName: undefined },
+      { ...initialFile, overrideName: undefined }
+    );
 
   const isCheckpoint = versionFile.type === 'Model' && versionFile.modelType === 'Checkpoint';
   const isComponentFileByType =

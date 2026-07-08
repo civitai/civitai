@@ -121,6 +121,7 @@ export const modelFileSchema = z.object({
 export type ModelFileCreateInput = z.infer<typeof modelFileCreateSchema>;
 export const modelFileCreateSchema = z.object({
   name: z.string(),
+  overrideName: z.string().optional(),
   url: z.url().min(1, 'You must select a file'),
   sizeKB: z.number(),
   type: z.enum(constants.modelFileTypes),
@@ -135,6 +136,7 @@ export type ModelFileUpdateInput = z.infer<typeof modelFileUpdateSchema>;
 export const modelFileUpdateSchema = z.object({
   id: z.number(),
   name: z.string().optional(),
+  overrideName: z.string().nullish(),
   url: z.url().min(1, 'You must select a file').optional(),
   sizeKB: z.number().optional(),
   type: z.enum(constants.modelFileTypes).optional(),
