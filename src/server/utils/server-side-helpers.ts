@@ -62,6 +62,23 @@ type SSGHelpers = Awaited<ReturnType<typeof getServerProxySSGHelpers>>;
  * `chat.getUserSettings` are already seeded there; re-prefetching them would be
  * a duplicate backend call for no gain.
  *
+ * GATE (2) — an SSR-prefetch target MUST be FAST + READ-ONLY + local-store,
+ * because this runs on the `getServerSideProps` first-byte critical path. A
+ * target that writes, or that fans out to another service, adds its failure mode
+ * and latency to TTFB for every authed render. The ONLY remaining target,
+ * `buzz.getUserMultipliers`, is Redis-cached parallel reads with no writes and no
+ * cross-service call — gate-(2) clean. Two earlier targets were REMOVED for
+ * failing gate (2) — DO NOT re-add them here:
+ *   - `user.checkNotifications` → `getUserNotificationCount` →
+ *     `notifications.countNotifications` (the `@civitai/notifications` client) is
+ *     a CROSS-SERVICE call to the separate notifications service with its own
+ *     failure mode — a flaky external dependency on the SSR first-byte path.
+ *   - `user.getBookmarkCollections` → `getUserBookmarkCollections`
+ *     (`src/server/services/user.service.ts`) does `dbWrite.collection.create` to
+ *     lazily create default bookmark collections — a WRITE on the SSR render path.
+ * Both now fall back to their normal async client fetch (the pre-#2990
+ * behavior), which is correct and cheap.
+ *
  * All targets are input-less protected reads (session-gated on the client), so
  * they are prefetched ONLY for authenticated sessions. `buzz.getUserMultipliers`
  * additionally requires the `buzz` feature flag (its `buzzProcedure` throws
@@ -118,9 +135,8 @@ export async function prefetchAppShellQueries(
 
   if (session?.user) {
     // Input-less, protected, static-at-load; `staleTime: Infinity` on the client
-    // so the hydrated value sticks (round-trip truly saved).
-    tasks.push(ssg.user.checkNotifications.prefetch());
-    tasks.push(ssg.user.getBookmarkCollections.prefetch());
+    // so the hydrated value sticks (round-trip truly saved). Gate (2): the only
+    // shell target is this Redis-cached, read-only, no-cross-service query.
     // buzzProcedure = protected + `isFlagProtected('buzz')`: throws unless the
     // `buzz` flag is on, so only prefetch when it is (allSettled would swallow
     // the throw anyway, but skipping avoids a guaranteed-failed backend call).
