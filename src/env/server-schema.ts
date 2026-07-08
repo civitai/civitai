@@ -429,7 +429,9 @@ export const serverSchema = z
     SIGNALS_ENDPOINT: isProd ? z.url() : z.url().optional(),
     // The in-repo notifications app (apps/notifications) — the monolith creates/reads/marks notifications
     // through it via @civitai/notifications rather than touching the notification DB directly.
-    NOTIFICATIONS_ENDPOINT: isProd ? z.url() : z.url().optional(),
+    NOTIFICATIONS_ENDPOINT: isProd
+      ? z.url()
+      : z.preprocess((v) => v || undefined, z.url().optional()),
     // Prod-required + non-empty: the app disables its auth gate on an empty token, so a blank value here
     // would produce an unauthenticated producer API. Fail-fast at monolith boot instead.
     NOTIFICATIONS_TOKEN: isProd ? z.string().min(1) : z.string().optional(),
