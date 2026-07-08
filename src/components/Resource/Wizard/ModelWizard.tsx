@@ -15,6 +15,7 @@ import TrainingSelectFile from '~/components/Resource/Forms/TrainingSelectFile';
 import { useIsChangingLocation } from '~/components/RouterTransition/RouterTransition';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ModelUploadType, ModelUsageControl, TrainingStatus } from '~/shared/utils/prisma/enums';
+import { showErrorNotification } from '~/utils/notifications';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import type { ModelById } from '~/types/router';
 import { QS } from '~/utils/qs';
@@ -247,7 +248,14 @@ const TrainSteps = ({
       const next = fileName.trim() ? sanitizeDownloadFilename(fileName) : null;
       const current = modelFile.overrideName ?? null;
       if (next !== current) {
-        await updateFileMutation.mutateAsync({ id: modelFile.id, overrideName: next });
+        try {
+          await updateFileMutation.mutateAsync({ id: modelFile.id, overrideName: next });
+        } catch {
+          showErrorNotification({
+            error: new Error('Could not save the download filename, please try again'),
+          });
+          return;
+        }
       }
     }
     goNext();
