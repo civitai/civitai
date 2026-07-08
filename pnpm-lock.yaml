@@ -860,6 +860,9 @@ importers:
       '@civitai/auth':
         specifier: workspace:*
         version: link:../../packages/civitai-auth
+      '@civitai/axiom':
+        specifier: workspace:*
+        version: link:../../packages/civitai-axiom
       '@civitai/brand':
         specifier: workspace:*
         version: link:../../packages/civitai-brand
