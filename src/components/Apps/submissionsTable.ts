@@ -258,10 +258,17 @@ export function statusBucket(status: string): StatusBucket {
 export type BucketedGroups<T> = Record<StatusBucket, SubmissionGroup<T>[]>;
 
 /**
- * Partition already-grouped submissions into the four status sections by each
- * group's `latest` submission status (see {@link statusBucket}). Preserves the
- * incoming group order within each bucket (so a pre-applied sort is retained).
+ * Partition already-grouped submissions into the four status sections. Preserves
+ * the incoming group order within each bucket (so a pre-applied sort is retained).
  * PURE — never mutates the input.
+ *
+ * A group that has ANY approved (currently-published) version buckets to **live**,
+ * EVEN IF its `latest` submission is an in-flight pending/rejected/withdrawn UPDATE.
+ * This keeps a live app in the always-expanded Live section (its "live" badge lives
+ * on the published version within the group) instead of burying it in the
+ * default-collapsed Rejected/Withdrawn section — reachable normally when a live app
+ * gets an update that's then rejected or withdrawn. Only groups that have NEVER been
+ * approved bucket by their `latest` submission's status (see {@link statusBucket}).
  */
 export function bucketGroupsByStatus<T>(
   groups: readonly SubmissionGroup<T>[],
@@ -269,7 +276,11 @@ export function bucketGroupsByStatus<T>(
 ): BucketedGroups<T> {
   const result: BucketedGroups<T> = { live: [], pending: [], rejected: [], withdrawn: [] };
   for (const group of groups) {
-    result[statusBucket(statusOf(group.latest))].push(group);
+    const hasPublishedVersion = [group.latest, ...group.older].some(
+      (v) => statusOf(v) === 'approved'
+    );
+    const bucket = hasPublishedVersion ? 'live' : statusBucket(statusOf(group.latest));
+    result[bucket].push(group);
   }
   return result;
 }
