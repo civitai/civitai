@@ -101,6 +101,17 @@ const featureFlags = createFeatureFlags({
   // prefetch degrades to client fetch, never breaks the generator SSR), so
   // flipping the flag off is an instant, safe rollback.
   ssrPrefetchGenerator: { availability: ['mod'], fliptKey: 'ssr-prefetch-generator' },
+  // Feed-page CLS fix. Reserves vertical space for the above-feed announcements
+  // banner during the pre-hydration window so the isClient-gated / dynamically
+  // imported carousel mount doesn't shove the (very tall) masonry feed down — the
+  // shift production RUM attributes to `MasonryContainer .queries`, which is the
+  // DISPLACED VICTIM (largest moved element), not the cause. Default OFF (mods
+  // only = the Flipt-DOWN fallback, mirrors `ssrPrefetchShell`); ramp a % of ALL
+  // users via Flipt (`feed-reserve-cls`) as a THRESHOLD rollout — CLS is an
+  // all-user route metric, so a mod cohort can't move the aggregate. Purely
+  // cosmetic space reservation (worst case = a little dead space, never a
+  // functional break), so flipping the flag off is an instant, safe rollback.
+  feedReserveCls: { availability: ['mod'], fliptKey: 'feed-reserve-cls' },
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },
