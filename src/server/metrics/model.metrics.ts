@@ -220,6 +220,13 @@ async function bulkInsertMetrics<T extends readonly string[]>(
     .map((key) => `COALESCE(d."${key}", im."${key}", 0) as "${key}"`)
     .join(',\n');
   const metricOverrides = metrics.map((key) => `"${key}" = EXCLUDED."${key}"`).join(',\n');
+  // Only bump the row when a value actually moved. `updatedAt` gates the
+  // search-index enqueue (getVersionAggregationTasks → ctx.affected), so a
+  // re-SUM that returns the same count must stay a no-op — otherwise every
+  // still-active-today version re-queues to Meili each run and the write
+  // volume ramps through the UTC day.
+  const targetTuple = metrics.map((key) => `"${table}"."${key}"`).join(', ');
+  const excludedTuple = metrics.map((key) => `EXCLUDED."${key}"`).join(', ');
 
   const PG_INT_MAX = 2147483647;
   const PG_INT_MIN = -2147483648;
@@ -266,6 +273,7 @@ async function bulkInsertMetrics<T extends readonly string[]>(
           SET
             ${metricOverrides},
             "updatedAt" = NOW()
+          WHERE (${targetTuple}) IS DISTINCT FROM (${excludedTuple})
       `;
     } catch (err) {
       const ids = (batch as any[]).map((r) => r[idColumn]);
@@ -364,20 +372,24 @@ async function getDownloadTasks(ctx: ModelMetricContext) {
 const injectedVersionIds = allInjectableResourceIds;
 
 async function getGenerationTasks(ctx: ModelMetricContext) {
-  // Pull versions touched since lastUpdate from `orchestration.jobs` directly.
-  // The `daily_resource_generation_counts` MV is bucketed by Date, so filtering
-  // it by `toDate(lastUpdate)` returned every version generated since 00:00 UTC
-  // — growing linearly through the day and resetting at midnight UTC. That
-  // produced a daily ramp of search-index update volume into Meili.
+  // Flag every version generated so far today (createdDate >= toDate(lastUpdate),
+  // i.e. since 00:00 UTC), then re-SUM its all-time count from the MV below.
+  // `daily_resource_generation_counts` is built asynchronously from
+  // `orchestration.jobs`, so a job's contribution lands in the MV after the job
+  // row exists. Flagging by `jobs.createdAt >= lastUpdate` (a 1-minute window)
+  // therefore re-SUMs before the new counts settle and never revisits the
+  // version once it goes quiet, freezing the metric at an undercount. Re-summing
+  // all of today's active versions every minute reconciles that tail. The Meili
+  // write-volume ramp this breadth used to cause no longer forms: bulkInsertMetrics
+  // only bumps updatedAt on an actual value change, so a re-SUM returning the same
+  // count is a no-op and never re-queues the version to the search index.
   const generated = await ctx.ch.$query<{ modelVersionId: number }>`
     SELECT DISTINCT modelVersionId
-    FROM (
-      SELECT arrayJoin(resourcesUsed) AS modelVersionId
-      FROM orchestration.jobs
-      WHERE createdAt >= ${ctx.lastUpdate}
-        AND length(resourcesUsed) > 0
-    )
-    WHERE modelVersionId > 0
+    FROM orchestration.daily_resource_generation_counts
+    WHERE createdDate >= toDate(${ctx.lastUpdate})
+      AND createdDate <= today()
+      AND modelVersionId > 0
+      AND count <= 2147483647
   `;
   const affected = generated
     .map((x) => x.modelVersionId)
