@@ -18,6 +18,7 @@ import {
   CosmeticSource,
   CosmeticType,
   MediaType,
+  ModelStatus,
 } from '~/shared/utils/prisma/enums';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
@@ -383,7 +384,18 @@ export const getCreatorShop = async ({
     .map((fid) => cosmetics.find((c) => c.id === fid))
     .filter((x): x is (typeof cosmetics)[number] => !!x);
 
-  return { cosmetics, featured, settings };
+  // Drives the Models section visibility — the storefront only lists the
+  // creator's currently-Early-Access models (paid tiers come later).
+  const earlyAccessModelCount = await dbRead.model.count({
+    where: {
+      userId,
+      status: ModelStatus.Published,
+      deletedAt: null,
+      earlyAccessDeadline: { gte: now },
+    },
+  });
+
+  return { cosmetics, featured, settings, earlyAccessModelCount };
 };
 
 // ---------------------------------------------------------------------------

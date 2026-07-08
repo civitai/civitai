@@ -15,14 +15,14 @@ export function StorefrontSections({
   shop,
   ownedCosmeticIds,
   displayName,
+  username,
   baseUrl,
-  modelCount,
 }: {
   shop: CreatorShopData;
   ownedCosmeticIds: Set<number>;
   displayName: string;
+  username: string;
   baseUrl: string;
-  modelCount: number;
 }) {
   const sectionOrder = useMemo<CreatorShopSectionKey[]>(() => {
     const configured = shop.settings.sections;
@@ -37,14 +37,7 @@ export function StorefrontSections({
     ),
     cosmetics: <CosmeticsSection items={shop.cosmetics} ownedCosmeticIds={ownedCosmeticIds} />,
     merch: <MerchSection />,
-    models: (
-      <ModelsSection
-        shop={shop}
-        modelCount={modelCount}
-        displayName={displayName}
-        baseUrl={baseUrl}
-      />
-    ),
+    models: <ModelsSection shop={shop} displayName={displayName} username={username} />,
   };
 
   return (

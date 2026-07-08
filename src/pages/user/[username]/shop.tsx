@@ -40,10 +40,6 @@ function UserShopPage() {
   const currentUser = useCurrentUser();
   const username = (router.query.username as string) ?? '';
   const { data: user } = trpc.userProfile.get.useQuery({ username }, { enabled: !!username });
-  const { data: overview } = trpc.userProfile.overview.useQuery(
-    { username },
-    { enabled: !!username }
-  );
   const { shop, isLoading, isError } = useQueryCreatorShop(user?.id);
   const { updateSettings } = useMutateCreatorShop();
   const ownedCosmeticIds = useOwnedCosmeticIds();
@@ -57,7 +53,6 @@ function UserShopPage() {
 
   const baseUrl = `/user/${username}`;
   const displayName = user?.username ?? username;
-  const modelCount = overview?.modelCount ?? 0;
   const isEmpty = !isLoading && (shop?.cosmetics.length ?? 0) === 0;
 
   return (
@@ -87,8 +82,8 @@ function UserShopPage() {
           shop={shop}
           ownedCosmeticIds={ownedCosmeticIds}
           displayName={displayName}
+          username={username}
           baseUrl={baseUrl}
-          modelCount={modelCount}
         />
       )}
     </Stack>
