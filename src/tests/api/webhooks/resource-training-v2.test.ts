@@ -43,8 +43,21 @@ vi.mock('@civitai/client', () => ({
   },
 }));
 
-const { mockUpdate, mockGetWorkflow, MockTrainingRecordNotFoundError } = vi.hoisted(() => {
-  class MockTrainingRecordNotFoundError extends Error {
+const {
+  mockUpdate,
+  mockGetWorkflow,
+  MockPermanentTrainingWebhookError,
+  MockTrainingRecordNotFoundError,
+} = vi.hoisted(() => {
+  class MockPermanentTrainingWebhookError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = 'PermanentTrainingWebhookError';
+    }
+  }
+  // Mirror the real subclass relationship so the handler's
+  // `e instanceof PermanentTrainingWebhookError` matches the not-found subtype too.
+  class MockTrainingRecordNotFoundError extends MockPermanentTrainingWebhookError {
     constructor(message: string) {
       super(message);
       this.name = 'TrainingRecordNotFoundError';
@@ -53,12 +66,14 @@ const { mockUpdate, mockGetWorkflow, MockTrainingRecordNotFoundError } = vi.hois
   return {
     mockUpdate: vi.fn(),
     mockGetWorkflow: vi.fn(),
+    MockPermanentTrainingWebhookError,
     MockTrainingRecordNotFoundError,
   };
 });
 
 vi.mock('~/server/services/training.service', () => ({
   updateTrainingWorkflowRecords: mockUpdate,
+  PermanentTrainingWebhookError: MockPermanentTrainingWebhookError,
   TrainingRecordNotFoundError: MockTrainingRecordNotFoundError,
 }));
 
@@ -173,15 +188,32 @@ describe('/api/webhooks/resource-training-v2/[modelVersionId] — orphaned train
 
     expect(res._getStatusCode()).toBe(200);
     expect(res._getStatusCode()).not.toBe(500);
-    expect(res._getJSONData()).toEqual({ ok: true, skipped: 'record-not-found' });
+    expect(res._getJSONData()).toEqual({ ok: true, skipped: 'permanent-condition' });
     // Still logged (as a warning) for visibility.
     expect(mockLogToAxiom).toHaveBeenCalledTimes(1);
     expect(mockLogToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'resource-training-v2-webhook',
         type: 'warning',
-        message: 'Training record gone — acking to stop orchestrator retries',
+        message: 'Permanent training-webhook condition — acking to stop orchestrator retries',
       }),
+      'webhooks'
+    );
+  });
+
+  it('any PermanentTrainingWebhookError (base type: malformed workflow) → 200 ACK, not 500', async () => {
+    // Sibling permanent throws (Missing step data / Missing modelFileId /
+    // Unsupported step type) surface as the base type — the handler must ack
+    // them too, else a differently-orphaned workflow storms the same way.
+    mockUpdate.mockRejectedValue(new MockPermanentTrainingWebhookError('Missing modelFileId'));
+    const { req, res } = createMocks();
+
+    await handler(req, res);
+
+    expect(res._getStatusCode()).toBe(200);
+    expect(res._getJSONData()).toEqual({ ok: true, skipped: 'permanent-condition' });
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'warning' }),
       'webhooks'
     );
   });
