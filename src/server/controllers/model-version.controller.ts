@@ -77,6 +77,8 @@ import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { updateTrainingWorkflowRecords } from '~/server/services/training.service';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { Flags } from '~/shared/utils/flags';
+import { ModelVersionFlag } from '~/shared/constants/model-version-flags.constants';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -129,6 +131,7 @@ const loadModelVersion = async ({
         licensingFee: true,
         licensingFeeType: true,
         licensingFeeSettlementCurrency: true,
+        licensingSourceVersionId: true,
         meta: true,
         model: {
           select: {
@@ -416,6 +419,20 @@ export const upsertModelVersionHandler = async ({
       if (!input.licensingFeeType) input.licensingFeeType = LicensingFeeType.PerImageBuzz;
       if (!input.licensingFeeSettlementCurrency)
         input.licensingFeeSettlementCurrency = LicensingFeeSettlementCurrency.Buzz;
+    }
+
+    // Licensing lineage: the chosen source must be a LicensingRoot for the same
+    // base model. Guards against pointing at an arbitrary (or zero-fee) version
+    // to dodge the base-model rule.
+    if (input.licensingSourceVersionId != null) {
+      const source = await dbRead.modelVersion.findUnique({
+        where: { id: input.licensingSourceVersionId },
+        select: { flags: true, baseModel: true },
+      });
+      if (!source || !Flags.hasFlag(source.flags, ModelVersionFlag.LicensingRoot))
+        throw throwBadRequestError('Invalid licensing source: not a licensing lineage root.');
+      if (source.baseModel !== input.baseModel)
+        throw throwBadRequestError('Licensing source must share the same base model.');
     }
 
     const version = await upsertModelVersion({

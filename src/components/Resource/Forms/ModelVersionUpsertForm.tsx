@@ -7,6 +7,7 @@ import {
   Input,
   Popover,
   SegmentedControl,
+  Select,
   Stack,
   Switch,
   Text,
@@ -209,6 +210,7 @@ export function ModelVersionUpsertForm({
     licensingFee: version?.licensingFee ?? 0,
     licensingFeeType: version?.licensingFeeType ?? null,
     licensingFeeSettlementCurrency: version?.licensingFeeSettlementCurrency ?? null,
+    licensingSourceVersionId: version?.licensingSourceVersionId ?? null,
     requireAuth: version?.requireAuth ?? true,
     recommendedResources: version?.recommendedResources ?? [],
     // Being extra safe here and ensuring this value exists.
@@ -249,6 +251,12 @@ export function ModelVersionUpsertForm({
   const showLicensingFeeSettlementCurrency =
     existingSettlementCurrency === LicensingFeeSettlementCurrency.Cash ||
     !!currentUser?.isModerator;
+
+  const licensingSourceVersionId = form.watch('licensingSourceVersionId') ?? null;
+  const { data: licensingRoots = [] } = trpc.modelVersion.getLicensingRoots.useQuery(
+    { baseModel },
+    { enabled: !!baseModel }
+  );
 
   // handle mismatched baseModels in training data
   useEffect(() => {
@@ -799,6 +807,30 @@ export function ModelVersionUpsertForm({
                 </Text>
               )}
               <Divider my="md" />
+            </Stack>
+          )}
+          {licensingRoots.length > 0 && (
+            <Stack gap="xs">
+              <Select
+                label="Licensing base"
+                description="If this model is built on a specific base, pick it so generations inherit that base's licensing fee. Leave as default to use the base model's standard fee."
+                placeholder="Default (base model standard fee)"
+                clearable
+                value={licensingSourceVersionId ? String(licensingSourceVersionId) : null}
+                onChange={(val) =>
+                  form.setValue('licensingSourceVersionId', val ? Number(val) : null, {
+                    shouldDirty: true,
+                  })
+                }
+                data={licensingRoots.map((r) => ({
+                  value: String(r.id),
+                  label: `${r.modelName} — ${r.versionName} (${r.licensingFee} Buzz${
+                    r.licensingFeeSettlementCurrency === LicensingFeeSettlementCurrency.Cash
+                      ? ', cash'
+                      : ''
+                  })`,
+                }))}
+              />
             </Stack>
           )}
           {showLicensingFeeBlock && (

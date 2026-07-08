@@ -418,12 +418,20 @@ export const modelVersionUpsertSchema2 = z.object({
   licensingFee: z.number().int().min(0).max(MAX_LICENSING_FEE).nullish(),
   licensingFeeType: z.enum(LicensingFeeType).nullish(),
   licensingFeeSettlementCurrency: z.enum(LicensingFeeSettlementCurrency).nullish(),
+  // Inherit another version's licensing fee (a LicensingRoot for this baseModel).
+  // Null falls back to the (baseModel, modelType) rule.
+  licensingSourceVersionId: z.number().nullish(),
 });
 
 export type GetModelVersionSchema = z.infer<typeof getModelVersionSchema>;
 export const getModelVersionSchema = z.object({
   id: z.number(),
   withFiles: z.boolean().optional(),
+});
+
+export type GetLicensingRootsSchema = z.infer<typeof getLicensingRootsSchema>;
+export const getLicensingRootsSchema = z.object({
+  baseModel: z.string(),
 });
 
 export type UpsertExplorationPromptInput = z.infer<typeof upsertExplorationPromptSchema>;

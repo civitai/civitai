@@ -2575,6 +2575,7 @@ export type ModelVersion = {
   licensingFee: number | null;
   licensingFeeType: Generated<LicensingFeeType | null>;
   licensingFeeSettlementCurrency: Generated<LicensingFeeSettlementCurrency | null>;
+  licensingSourceVersionId: number | null;
 };
 export type ModelVersionEngagement = {
   userId: number;
