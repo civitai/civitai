@@ -328,7 +328,7 @@ export async function restoreReplacedFile({ id }: { id: number }) {
 
   await dbWrite.modelFile.update({
     where: { id },
-    data: { replacedAt: null, visibility: priorVisibility, metadata: restMetadata },
+    data: { replacedAt: null, visibility: priorVisibility, metadata: restMetadata as Prisma.InputJsonValue },
   });
 
   await deleteFilesForModelVersionCache(file.modelVersionId);
