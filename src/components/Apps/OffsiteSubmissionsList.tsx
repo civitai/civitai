@@ -1,12 +1,12 @@
 import { Anchor, Badge, Button, Card, Code, Group, Stack, Table, Text } from '@mantine/core';
-import { IconExternalLink } from '@tabler/icons-react';
+import { IconExternalLink, IconPencil } from '@tabler/icons-react';
+import Link from 'next/link';
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import {
   isEditableOffsiteStatus,
   isWithdrawableOffsiteStatus,
   offsiteStatusChip,
 } from '~/components/Apps/offsiteSubmissionStatus';
-import { OffsiteEditModal } from '~/components/Apps/OffsiteEditModal';
 import { validateExternalUrl } from '~/server/schema/blocks/external-app.schema';
 import { ReviewerNotesButton } from '~/components/Apps/MySubmissionsList';
 import {
@@ -153,7 +153,18 @@ function OffsiteRow({
     }
     return (
       <Group gap={6} wrap="nowrap">
-        {canEdit && <OffsiteEditModal submission={s} />}
+        {canEdit && s.appListingId && (
+          <Button
+            size="xs"
+            variant="default"
+            component={Link}
+            href={`/apps/submit?edit=${encodeURIComponent(s.appListingId)}`}
+            leftSection={<IconPencil size={12} />}
+            data-testid={`apps-offsite-edit-${s.slug}`}
+          >
+            Edit
+          </Button>
+        )}
         {canWithdraw && (
           <Button
             size="xs"

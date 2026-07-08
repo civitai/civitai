@@ -22,6 +22,7 @@ import {
 import {
   approveExternalRequestSchema,
   beginListingRevisionSchema,
+  getMyListingForEditSchema,
   listMySubmissionsSchema,
   listOffsiteRequestsSchema,
   persistListingAssetImageSchema,
@@ -29,6 +30,7 @@ import {
   submitExternalListingSchema,
   submitListingRevisionSchema,
   updateListingSchema,
+  updateRevisionDraftSchema,
   withdrawExternalRequestSchema,
 } from '~/server/schema/blocks/offsite-listing.schema';
 import {
@@ -346,6 +348,60 @@ export const appListingsRouter = router({
       try {
         return await updateListing({
           listingId: input.listingId,
+          patch: input.patch,
+          userId: ctx.user.id,
+        });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
+   * AUTHOR: owner-gated prefill read for the dual-mode edit wizard
+   * (`/apps/submit?edit=<listingId>`). Returns the listing's scalars + current
+   * assets (edge-resolved) + status + hasPendingRevision, resolving an approved
+   * parent's in-progress shadow so a resumed revision prefills its edited state.
+   * Owner-bound in the service (NOT_OWNED→FORBIDDEN, NOT_FOUND, rejected→
+   * MUST_RESUBMIT/BAD_REQUEST, removed→FORBIDDEN). Typed failures via `mapOffsiteError`.
+   */
+  getMyListingForEdit: appDeveloperProcedure
+    .input(getMyListingForEditSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { getMyListingForEdit } = await import(
+        '~/server/services/blocks/offsite-listing.service'
+      );
+      try {
+        return await getMyListingForEdit({ listingId: input.listingId, userId: ctx.user.id });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
+   * AUTHOR: write a scalar patch to an owned DRAFT shadow revision (the approved
+   * edit flow's "direct once shadow exists" scalar write, symmetric with the asset
+   * procs that already mutate an owned shadow). Owner-bound in the service; asserts
+   * the target is a draft shadow so it can never edit a live top-level listing.
+   * Typed failures map via `mapOffsiteError`.
+   */
+  updateRevisionDraft: appDeveloperProcedure
+    .use(
+      rateLimit({
+        limit: 30,
+        period: 3600,
+        errorMessage: 'Too many edits — slow down.',
+      })
+    )
+    .input(updateRevisionDraftSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { updateRevisionDraft } = await import(
+        '~/server/services/blocks/offsite-listing.service'
+      );
+      try {
+        return await updateRevisionDraft({
+          shadowId: input.shadowId,
           patch: input.patch,
           userId: ctx.user.id,
         });
