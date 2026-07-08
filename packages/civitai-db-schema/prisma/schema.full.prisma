@@ -3148,8 +3148,18 @@ model BlockScopeInvocation {
   id               BigInt   @id @default(autoincrement())
   userId           Int      @map("user_id")
   user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  appBlockId       String   @map("app_block_id")
-  appBlock         AppBlock @relation(fields: [appBlockId], references: [id], onDelete: Cascade)
+  /// NULLABLE (App Dev Tunnel Phase 2): a PRE-APPROVAL dev-tunnel spend has NO
+  /// AppBlock row (approval is what creates it), so the token carries a SYNTHETIC
+  /// `ephemeral-<slug>` appBlockId that can never FK-resolve. For that case this
+  /// column is NULL and the synthetic ref is captured in `syntheticAppId`, so the
+  /// durable per-spend audit row persists instead of FK-failing + being swallowed
+  /// (the "only a log line" gap). An APPROVED app still sets this (real FK).
+  appBlockId       String?  @map("app_block_id")
+  appBlock         AppBlock? @relation(fields: [appBlockId], references: [id], onDelete: Cascade)
+  /// The synthetic, non-resolving dev-app reference (`ephemeral-<slug>` /
+  /// `local-<slug>` / `pending-<pubreqId>`) for a PRE-APPROVAL dev-tunnel spend —
+  /// the forensic anchor when `appBlockId` is NULL. NULL for every approved-app row.
+  syntheticAppId   String?  @map("synthetic_app_id")
   blockInstanceId  String   @map("block_instance_id")
   scope            String
   endpoint         String
@@ -3158,6 +3168,7 @@ model BlockScopeInvocation {
 
   @@index([userId, invokedAt(sort: Desc), id(sort: Desc)], map: "bsi_user_invoked_idx")
   @@index([appBlockId, invokedAt(sort: Desc)], map: "bsi_app_block_invoked_idx")
+  @@index([syntheticAppId, invokedAt(sort: Desc)], map: "bsi_synthetic_app_invoked_idx")
   @@map("block_scope_invocations")
 }
 

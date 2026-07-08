@@ -805,6 +805,10 @@ export function withBlockScope(
             scope: opts.requiredScope ?? '(any-token)',
               endpoint: endpointForLog,
               statusCode: res.statusCode,
+              // Phase 2: a dev token MAY carry a synthetic non-FK appBlockId (a
+              // pre-approval dev-tunnel app) — let the audit write persist it via
+              // the nullable-appBlockId path instead of FK-failing + swallowing.
+              dev: claims.dev === true,
             })
           )
           .catch(() => {

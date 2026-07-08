@@ -2923,6 +2923,12 @@ export const blocksRouter = router({
           // Snapshot status is 'pending' / 'failed' / etc — map to an HTTP-
           // ish code so the existing UI badge colors are coherent.
           statusCode: snapshot.status === 'failed' ? 500 : 200,
+          // Phase 2 — App Dev Tunnel: a PRE-APPROVAL dev-tunnel spend carries a
+          // synthetic, non-FK appBlockId (`ephemeral-<slug>`). This is the durable
+          // per-spend audit row for that case (recordSpendAttribution below is
+          // inert for a synthetic appId, by design). `dev` routes it to the
+          // nullable-appBlockId path so the row persists instead of FK-failing.
+          dev: claims.dev === true,
         });
       })().catch(() => {
         /* swallowed inside helper */

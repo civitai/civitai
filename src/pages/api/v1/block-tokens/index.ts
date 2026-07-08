@@ -39,6 +39,14 @@ import {
   partitionByConsent,
   consentGatedScopes,
 } from '~/server/services/blocks/scope-grant.service';
+import {
+  clampDevScopes,
+  FORCED_SFW_CEILING,
+  resolveDevBuzzBudget,
+  signDevScopedPageToken,
+  TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
+} from '~/server/services/blocks/dev-scoped-mint.service';
+import type { SessionUser } from '~/types/session';
 
 /**
  * POST /api/v1/block-tokens
@@ -98,11 +106,28 @@ const slotContextSchema = z.union([pageSlotContextSchema, modelSlotContextSchema
 const requestSchema = z.object({
   blockInstanceId: z.string().min(1).max(64),
   slotContext: slotContextSchema,
+  // PHASE 2 (App Dev Tunnel) — self-declared scopes for a BRAND-NEW (unsubmitted)
+  // ephemeral app the AUTHOR owns, sent by the dev host. IGNORED on every
+  // non-dev-tunnel path (an approved mint sources scopes from the approved
+  // manifest snapshot). When the app has an OWNED pending submission the server
+  // reads the pending manifest.scopes instead; these body scopes only ever
+  // NARROW / seed within the identical audited dev clamp belt (dev-scoped-mint
+  // .service), never widen past the tunnel allowlist.
+  devScopes: z.array(z.string().min(1).max(64)).max(32).optional(),
 });
 
 // W10 — synthetic block-instance id prefix for a stateless full-page app. The
 // id is `page_<appBlockId>`; there is no install row (Decision 2).
 const PAGE_INSTANCE_PREFIX = 'page_';
+
+// PHASE 2 (App Dev Tunnel) — the synthetic appBlockId namespace a PRE-APPROVAL
+// app carries (built by BlockRegistry.resolveEphemeralDevPageBlock as
+// `ephemeral-<slug>`). It can NEVER equal a real AppBlock.id (`apb_<ulid>`) nor an
+// OauthClient.id (UUIDv4 / `appblk-<slug>`), so recordSpendAttribution's
+// `oauthClient.findUnique` MISSES (no forged attribution) and the durable
+// per-spend audit row lands in the nullable-appBlockId path. The dev instance id
+// is therefore `page_ephemeral-<slug>`.
+const EPHEMERAL_APP_ID_PREFIX = 'ephemeral-';
 
 const BUZZ_BUDGET_DEFAULT = 10;
 const BUZZ_BUDGET_CAP = 1000;
@@ -288,6 +313,151 @@ function resolveBuzzBudget(
   return Math.min(candidate, BUZZ_BUDGET_CAP);
 }
 
+/**
+ * PHASE 2 — App Dev Tunnel author-own SCOPED mint.
+ *
+ * `resolvePageBlock` only resolves APPROVED page apps; a PRE-APPROVAL (ephemeral)
+ * app the AUTHOR is iterating on inside the dev tunnel (`/apps/dev/<blockId>`)
+ * misses it and would 404, so scoped features (real Buzz-spend generation) can
+ * never work pre-approval (Phase 1). This branch mints a SCOPED, forced-SFW,
+ * self-bound, budget-capped dev token for that case — reusing the SAME audited
+ * clamp+sign belt as `/api/v1/blocks/dev-token` (dev-scoped-mint.service), MINUS
+ * `apps:storage:*` (Decision 1: App Storage stays 403 until approval).
+ *
+ * CONTAINMENT (every gate server-side + fail-closed):
+ *   - COOKIE-authed author only: `isAppBlocksAuthorEnabled` on the SESSION user
+ *     PLUS the `app-blocks-dev-tunnel` kill-switch (defense-in-depth over the SSR
+ *     dev host, which already gates both). Banned/deleted account → refused.
+ *   - OWNERSHIP + ANTI-SHADOW: `resolveDevPageBlockForAuthor(slug, userId)` — a
+ *     foreign / already-claimed / structurally-invalid slug returns the SAME bare
+ *     null → the caller-facing 404 (no ownership/existence oracle beyond the
+ *     pre-existing, tolerated claimed-vs-unclaimed signal). Must resolve to
+ *     `status:'ephemeral'` (a just-approved app self-corrects on client reload via
+ *     the prod path).
+ *   - SPEND CONTAINMENT: the token is self-bound (`sub` = the session user), so at
+ *     RUNTIME `submitWorkflow` spends the AUTHOR's OWN Buzz, gated by
+ *     `assertViewerIsAppDeveloper(sub)` + the per-call (DEV_BUZZ_BUDGET_CAP) /
+ *     per-session / per-day caps. There is NO bearer credential here, so the
+ *     dev-token 7f AIServicesWrite ceiling doesn't map → `keyCanSpend: true`; the
+ *     runtime author-flag re-check is the substitute spend gate.
+ *   - SCOPE SOURCE (mirrors dev-token pending / no-row): the caller's OWN pending
+ *     submission's SERVER-READ `manifest.scopes`, else the SELF-DECLARED body
+ *     `devScopes`. Both pass the identical clamp (TUNNEL allowlist, no OAuth
+ *     ceiling — no client exists).
+ *
+ * Returns 'handled' iff it wrote a 200 token response; 'continue' on ANY
+ * non-match / refusal so the caller falls through to the uniform bare 404 (no
+ * oracle). An empty scope source mints a valid READ-only token (no spend) — a
+ * strict improvement over the Phase-1 404.
+ */
+async function tryDevTunnelScopedMint(args: {
+  res: NextApiResponse;
+  appBlockId: string;
+  blockInstanceId: string;
+  slotId: string;
+  sessionUser: SessionUser | undefined;
+  userId: number | null;
+  devScopes: string[] | undefined;
+}): Promise<'handled' | 'continue'> {
+  const { res, appBlockId, blockInstanceId, slotId, sessionUser, userId, devScopes } = args;
+
+  // Cookie-authed author only; only the ephemeral synthetic namespace is a
+  // pre-approval dev mint. Anything else → not our branch.
+  if (userId == null || !sessionUser) return 'continue';
+  if (!appBlockId.startsWith(EPHEMERAL_APP_ID_PREFIX)) return 'continue';
+  // The instance id is `page_<appBlockId>` by construction; a mismatch is not a
+  // legitimate dev mint.
+  if (blockInstanceId !== `${PAGE_INSTANCE_PREFIX}${appBlockId}`) return 'continue';
+  if (sessionUser.bannedAt) return 'continue';
+
+  // Author capability + dev-tunnel kill-switch (fail-closed, both must pass).
+  // Dynamic import so the flag module (Flipt/redis transitive deps) isn't eager-
+  // loaded on the prod-mint import path — mirrors blocks.router's startDevTunnel.
+  const { isAppBlocksAuthorEnabled, isAppBlocksDevTunnelEnabled } = await import(
+    '~/server/services/app-blocks-flag'
+  );
+  if (!(await isAppBlocksAuthorEnabled({ user: sessionUser }))) return 'continue';
+  if (!(await isAppBlocksDevTunnelEnabled({ user: sessionUser }))) return 'continue';
+
+  // Soft-delete gate (M1 parity with the prod path). A session that survived a
+  // soft-delete must not mint.
+  const userRow = await dbWrite.user.findUnique({
+    where: { id: userId },
+    select: { deletedAt: true, bannedAt: true },
+  });
+  if (!userRow || userRow.deletedAt || userRow.bannedAt) return 'continue';
+
+  // OWNERSHIP + ANTI-SHADOW resolve (any refusal → the same bare null → 404).
+  const slug = appBlockId.slice(EPHEMERAL_APP_ID_PREFIX.length);
+  const app = await BlockRegistry.resolveDevPageBlockForAuthor(slug, userId, { db: 'write' });
+  // Only a genuinely pre-approval (ephemeral) resolution mints here. A resolved
+  // approved/owned row (real appBlockId) would never carry an `ephemeral-` id, so
+  // this also fails closed if the app was approved mid-session.
+  if (!app || app.status !== 'ephemeral') return 'continue';
+
+  // Belt-and-suspenders: the page slot must be a real page slot (the caller
+  // already validated this, but the dev branch re-asserts before signing).
+  if (!isPageSlot(slotId)) return 'continue';
+
+  // SCOPE SOURCE: the caller's OWN pending submission's SERVER-READ manifest.scopes
+  // (the "submitted-pending" case), else the SELF-DECLARED body devScopes (the
+  // "brand-new" case). Ownership is enforced in the query (submittedByUserId).
+  const pending = await dbWrite.appBlockPublishRequest.findFirst({
+    where: { slug, status: 'pending', submittedByUserId: userId },
+    orderBy: { submittedAt: 'desc' },
+    select: { manifest: true },
+  });
+  let scopeSource: string[];
+  if (pending) {
+    const manifest = (pending.manifest ?? {}) as { scopes?: unknown };
+    scopeSource = Array.isArray(manifest.scopes)
+      ? manifest.scopes.filter((s): s is string => typeof s === 'string')
+      : [];
+  } else {
+    // Brand-new (no pending row): the client-supplied body scopes ARE the source.
+    scopeSource = devScopes ?? [];
+  }
+
+  // CLAMP — the IDENTICAL audited belt: TUNNEL allowlist (no apps:storage:*), no
+  // OAuth ceiling (`oauthAllowed: null` — a pre-approval app has no OauthClient),
+  // keyCanSpend=true (spend is gated at RUNTIME, not by a bearer here). devScopes
+  // narrows (pending) / is the source (brand-new) inside the same belt.
+  const granted = clampDevScopes({
+    scopeSource,
+    oauthAllowed: null,
+    requestedScopes: devScopes,
+    keyCanSpend: true,
+    allowlist: TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
+  });
+  const buzzBudget = resolveDevBuzzBudget(granted);
+
+  // SIGN — synthetic, non-resolving ids (`ephemeral-<slug>`), the client's page
+  // instance id, self-bound sub, forced-SFW, dev-capped budget, dev:true (4h).
+  const result = await signDevScopedPageToken({
+    userId,
+    signBlockId: app.blockId,
+    signAppId: app.appId,
+    signAppBlockId: app.appBlockId,
+    blockInstanceId,
+    granted,
+    buzzBudget,
+  });
+
+  res.setHeader('Cache-Control', 'no-store');
+  res.status(200).json({
+    token: result.token,
+    expiresAt: result.expiresAt,
+    // Dev tokens are self-bound + mod/author-gated; there is no per-user consent
+    // ledger for a synthetic pre-approval app, so no consent signal is surfaced.
+    needsConsent: false,
+    missingScopes: [],
+    // Forced-SFW: the dev mint never reads the request host.
+    domain: null,
+    maxBrowsingLevel: FORCED_SFW_CEILING,
+  });
+  return 'handled';
+}
+
 export default withAxiom(async function handler(req: NextApiRequest, res: NextApiResponse) {
   const cors = setSameOriginCors(req, res);
   if (cors === 'handled') return;
@@ -422,6 +592,19 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     const appBlockId = blockInstanceId.slice(PAGE_INSTANCE_PREFIX.length);
     const page = await BlockRegistry.resolvePageBlock(appBlockId, { db: 'write' });
     if (!page) {
+      // PHASE 2 — before the bare 404, try the App Dev Tunnel author-own SCOPED
+      // mint (pre-approval ephemeral app the caller OWNS). Any non-match / refusal
+      // returns 'continue' → the SAME bare 404 (no ownership/existence oracle).
+      const devMint = await tryDevTunnelScopedMint({
+        res,
+        appBlockId,
+        blockInstanceId,
+        slotId: slotContext.slotId,
+        sessionUser: session?.user,
+        userId,
+        devScopes: parsed.data.devScopes,
+      });
+      if (devMint === 'handled') return;
       // Missing / not-approved / not-a-page app → 404 (never leaks which).
       res.status(404).json({ error: 'Page app not found' });
       return;
