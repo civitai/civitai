@@ -15,6 +15,7 @@ import { getClientIp } from '$lib/server/auth/request';
 import { trackLoginRedirect } from '$lib/server/tracking';
 import { userExistsByEmail } from '$lib/server/auth/users';
 import { emailLoginFailuresTotal } from '$lib/server/metrics';
+import { logAxiomError } from '$lib/server/axiom';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -122,7 +123,7 @@ export const actions: Actions = {
     } catch (e) {
       // Don't let a token/email failure bubble up to SvelteKit's full-page 500.
       // Return it as form state so the page can show an inline error instead.
-      console.error('email login action failed', e);
+      void logAxiomError(e, { event: 'email login action failed' });
       emailLoginFailuresTotal.inc();
       return fail(500, { email, serverError: true });
     }
