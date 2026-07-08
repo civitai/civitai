@@ -138,6 +138,9 @@
     w.onAuthCaptcha = (token) => {
       captchaToken = token ?? '';
       captchaUnavailable = false;
+      // An invisible token arrived (possibly LATE, after the fallback already showed) — submit via the invisible
+      // path so we don't POST captchaMode=managed with an empty managed token and eat a wasted rejection.
+      captchaMode = 'invisible';
     };
     w.onAuthCaptchaExpired = () => {
       // Token is single-use / TTL-bound; clear it. The invisible widget auto-renews.
