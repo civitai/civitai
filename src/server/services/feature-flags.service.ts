@@ -101,6 +101,35 @@ const featureFlags = createFeatureFlags({
   // prefetch degrades to client fetch, never breaks the generator SSR), so
   // flipping the flag off is an instant, safe rollback.
   ssrPrefetchGenerator: { availability: ['mod'], fliptKey: 'ssr-prefetch-generator' },
+  // High-traffic-feed variant: when on, the `/images` page SSR-prefetches the
+  // INITIAL `image.getInfinite` feed query (the page's first, heaviest client
+  // fetch) so it hydrates from the page HTML instead of firing a
+  // client→CF→origin round-trip on mount (client `staleTime: Infinity` makes the
+  // hydrated value stick, so the round-trip is truly saved). SEPARATE flag so it
+  // ramps / rolls back independently of the shell/generator prefetches.
+  //
+  // 🔴 SCOPE — ANONYMOUS ONLY. The initial feed input is a large derived object
+  // (localStorage filters + a 3-provider browsingLevel chain + DB-resolved
+  // browsing-settings-addons). Only the ANON path is deterministically
+  // reproducible server-side (browsingLevel is forced to `publicBrowsingLevelsFlag`
+  // on every domain, filters are the FiltersProvider schema defaults), so the
+  // react-query key matches with 100% confidence and no client-code drift risk.
+  // Authed users get NO prefetch here (their localStorage filters + saved
+  // browsing level can diverge from any server guess → a WASTED heavy query),
+  // so they fall through to the unchanged client fetch. `image.getInfinite` is a
+  // `heavyProcedure` (bulkhead-slotted) — a mismatched prefetch is not just
+  // wasted work, it consumes a scarce slot, so the anon-only + exact-key scoping
+  // is load-bearing, not conservatism.
+  //
+  // Default OFF (mods only via the availability fallback) so the added per-SSR
+  // heavy backend call is dark until ramped via Flipt (`ssr-prefetch-images-feed`).
+  // NOTE: mods are always authed, so the dark (mod-only) phase never fires the
+  // anon-scoped prefetch — MEASUREMENT requires ramping Flipt to PUBLIC traffic
+  // (watch `/d/civitai-dp-prod-api-net-phases` + SSR-pool/Meili load). The whole
+  // behavior is best-effort (a failing / >300ms-slow prefetch degrades to the
+  // client fetch, never breaks or slows the `/images` SSR), so flipping the flag
+  // off is an instant, safe rollback.
+  ssrPrefetchImagesFeed: { availability: ['mod'], fliptKey: 'ssr-prefetch-images-feed' },
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },

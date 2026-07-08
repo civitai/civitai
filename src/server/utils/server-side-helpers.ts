@@ -10,7 +10,16 @@ import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
+import {
+  ChallengeSource,
+  ChallengeStatus,
+  MediaType,
+  MetricTimeframe,
+} from '~/shared/utils/prisma/enums';
+import { ImageSort } from '~/server/common/enums';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
+import type { ImageInclude } from '~/server/schema/image.schema';
 
 export const getServerProxySSGHelpers = async (
   ctx: GetServerSidePropsContext,
@@ -204,6 +213,109 @@ export async function prefetchGeneratorQueries(
     tasks.push(ssg.challenge.getInfinite.prefetch({ ...GENERATOR_ACTIVE_CHALLENGES_INPUT }));
 
   await settlePrefetchWithDeadline(tasks, GENERATOR_PREFETCH_TIMEOUT_MS);
+}
+
+/**
+ * SSR-prefetch the `/images` feed page's INITIAL `image.getInfinite` query so it
+ * hydrates from the dehydrated `trpcState` instead of firing a client→CF→origin
+ * round-trip on mount (~188ms network floor). Unlike the shell/generator
+ * prefetches (cheap, input-less reads), this targets a `heavyProcedure`
+ * (bulkhead-slotted) feed query — the page's first and most expensive fetch — so
+ * a mismatched prefetch is not just wasted, it burns a scarce heavy slot. That
+ * makes the EXACT react-query key match the whole game.
+ *
+ * 🔴 ANON-ONLY. The client's initial input (`ImagesInfinite` → `useQueryImages`)
+ * is derived from three client-only sources: (1) the FiltersProvider store
+ * (localStorage, NOT server-readable), (2) a 3-provider `browsingLevel` chain,
+ * and (3) DB-resolved browsing-settings-addons. For an ANONYMOUS request all of
+ * these collapse to deterministic, server-reproducible values:
+ *   - `browsingLevel` → `publicBrowsingLevelsFlag` on EVERY domain: anon has no
+ *     user, so `BrowsingLevelProvider`'s `domainForcedLevel` forces public, and
+ *     the green-domain `capToPublic` intersection with the same flag is
+ *     idempotent. (`useBrowsingLevelDebounced` returns it verbatim, non-zero.)
+ *   - filters → the FiltersProvider `imageFilterSchema` defaults (empty anon
+ *     localStorage parses to these): `{ period: Week, sort: MostReactions,
+ *     types: [image], withMeta: false }`. `removeEmpty` keeps `withMeta: false`
+ *     (not nil) and the non-empty `types` array, so both are in the key.
+ *   - `excludedTagIds` / `disablePoi` / `disableMinor` → `resolveBrowsingSettingsAddons`
+ *     run against the SAME addon data the client sees (its provider `initialData`
+ *     comes from `getBrowsingSettingAddons()` in `_app.getInitialProps`), at
+ *     `publicBrowsingLevelsFlag`, `isModerator: false`. At PG this yields
+ *     `disablePoi: true`, `disableMinor: false`, and the real-person tag list —
+ *     reproduced verbatim (array ORDER matters for the react-query hash).
+ * `include: ['cosmetics']` is the constant `ImagesInfinite` passes. `limit`/`cursor`
+ * are NOT in the client's raw infinite-query key (server zod defaults them for the
+ * handler only), so they are omitted here — `prefetchInfinite` builds the same key.
+ *
+ * Authed requests are intentionally NOT prefetched: their localStorage filters +
+ * saved browsing level can diverge from any server guess, and a mismatch on a
+ * heavy query is pure cost. They fall through to the unchanged client fetch.
+ *
+ * WHY THE WIN LANDS: the shared QueryClient runs `staleTime: Infinity`
+ * (`src/utils/trpc.ts`) and this call-site sets no lower `staleTime`, so once the
+ * dehydrated infinite entry hydrates it is never stale → no refetch on mount.
+ *
+ * ROBUSTNESS + DEADLINE — best-effort via `settlePrefetchWithDeadline`: a failing
+ * or >300ms-slow feed query degrades to the normal client fetch and can NEVER
+ * reject out of SSR or drag it past the cap. If the addon fetch fails we skip the
+ * prefetch entirely (prefetching with the wrong `excludedTagIds` would miss the
+ * key AND waste a heavy slot — worse than not prefetching).
+ */
+// Reproduces the FiltersProvider `imageFilterSchema` defaults (client storeFilters
+// for a default anon) verbatim — the values `useImageFilters('images')` yields
+// before merge. Kept as an explicit literal (the schema isn't exported) so the
+// react-query key match is auditable against `src/providers/FiltersProvider.tsx`.
+const IMAGES_FEED_DEFAULT_FILTERS = {
+  period: MetricTimeframe.Week,
+  sort: ImageSort.MostReactions,
+  types: [MediaType.image],
+  withMeta: false,
+};
+
+const IMAGES_FEED_PREFETCH_TIMEOUT_MS = 300;
+
+export async function prefetchImagesFeedQueries(
+  ssg: SSGHelpers,
+  session: Session | null
+): Promise<void> {
+  // ANON-ONLY: authed inputs are not server-reproducible (see doc above).
+  if (session?.user) return;
+
+  // Deterministic anon browsing level on every domain.
+  const browsingLevel = publicBrowsingLevelsFlag;
+
+  // Resolve the browsing-settings addons against the SAME data the client sees.
+  // Lazy import so the server-only system-cache (redis) module isn't pulled at
+  // top-level (keeps the module importable in isolation / other prefetch tests).
+  // Best-effort: on any failure, skip the prefetch rather than fire it with a
+  // wrong `excludedTagIds` that would miss the key and waste a heavy slot.
+  let addons;
+  try {
+    const { getBrowsingSettingAddons } = await import('~/server/services/system-cache');
+    const data = await getBrowsingSettingAddons();
+    addons = resolveBrowsingSettingsAddons(data, browsingLevel, { isModerator: false });
+  } catch {
+    return;
+  }
+
+  // Reproduce EXACTLY the input `useQueryImages` builds for a default anon:
+  //   { ...filters, browsingLevel, include: ['cosmetics'], excludedTagIds,
+  //     disablePoi, disableMinor }
+  // (anon: filters.excludedTagIds/disablePoi/disableMinor are unset, so they come
+  //  solely from the resolved addons; isOwnImages is false so addon tags apply.)
+  const input = {
+    ...IMAGES_FEED_DEFAULT_FILTERS,
+    browsingLevel,
+    include: ['cosmetics'] as ImageInclude[],
+    excludedTagIds: addons.excludedTagIds,
+    disablePoi: addons.disablePoi,
+    disableMinor: addons.disableMinor,
+  };
+
+  await settlePrefetchWithDeadline(
+    [ssg.image.getInfinite.prefetchInfinite(input as any)],
+    IMAGES_FEED_PREFETCH_TIMEOUT_MS
+  );
 }
 
 export function createServerSideProps<P>({
