@@ -112,7 +112,7 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
   - Schemas: `image.schema.ts` (`imageReviewQueueInputSchema`), `tag.schema.ts` (`moderateTagsSchema`)
   - Infra: **Postgres** + tracking
 
-- [ ] **`/moderator/image-rating-review`** — `src/pages/moderator/image-rating-review.tsx` — flag: none
+- [x] **`/moderator/image-rating-review`** — `src/pages/moderator/image-rating-review.tsx` — flag: none — **Migrated.** Deferred: VotableTags (needs the tag-voting slice, shared with image-tags), `imageMetadataCache.refresh` (Wave 3 Redis), `queueModel3DForThumbnailImage` (Wave 5). Main-app `getImageRatingRequests`/`updateImageNsfwLevel` left in place (image.service migrates with the image cluster; `updateImageNsfwLevel` still backs downleveled-review + user voting).
   - Procedures: `image.getImageRatingRequests` (query); `image.updateImageNsfwLevel` (mutation)
   - Services: `image.service.ts` → `getImageRatingRequests`, `updateImageNsfwLevel`, `updatePendingImageRatings`
   - Schemas: `image.schema.ts` (`imageRatingReviewInput`, `updateImageNsfwLevelSchema`)

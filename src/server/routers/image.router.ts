@@ -17,7 +17,6 @@ import {
   getDownleveledImages,
   getImageDetail,
   getImageGenerationData,
-  getImageRatingRequests,
   getImagesByUserIdForModeration,
   getImagesForModelVersionCache,
   getModeratorPOITags,
@@ -64,7 +63,6 @@ import {
   getInfiniteImagesSchema,
   getMyImagesInput,
   imageModerationSchema,
-  imageRatingReviewInput,
   imageReviewQueueInputSchema,
   removeImageResourceSchema,
   reportCsamImagesSchema,
@@ -168,9 +166,6 @@ export const imageRouter = router({
     .meta({ requiredScope: TokenScope.Full })
     .input(updateImageNsfwLevelSchema)
     .mutation(handleUpdateImageNsfwLevel),
-  getImageRatingRequests: moderatorProcedure
-    .input(imageRatingReviewInput)
-    .query(({ input, ctx }) => getImageRatingRequests({ ...input, user: ctx.user })),
   getDownleveledImages: moderatorProcedure
     .input(downleveledReviewInput)
     .query(({ input, ctx }) => getDownleveledImages({ ...input, user: ctx.user })),

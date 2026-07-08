@@ -454,16 +454,6 @@ export const updateImageNsfwLevelSchema = z.object({
   reason: z.string().optional(),
 });
 
-export const getImageRatingRequestsSchema = paginationSchema.extend({
-  status: z.enum(ReportStatus).array().optional(),
-});
-
-export type ImageRatingReviewOutput = z.infer<typeof imageRatingReviewInput>;
-export const imageRatingReviewInput = z.object({
-  limit: z.number(),
-  cursor: z.number().optional(),
-});
-
 export type DownleveledReviewOutput = z.infer<typeof downleveledReviewInput>;
 export const downleveledReviewInput = z.object({
   limit: z.number(),

@@ -106,7 +106,6 @@ import type {
   ImageModerationBlockSchema,
   ImageModerationSchema,
   ImageModerationUnblockSchema,
-  ImageRatingReviewOutput,
   ImageReviewQueueInput,
   ImageSchema,
   ImageUploadProps,
@@ -164,7 +163,6 @@ import {
 } from '~/server/services/nsfwLevels.service';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
 import { bulkSetReportStatus, resolveEntityAppeal } from '~/server/services/report.service';
-import { getVotableTags2 } from '~/server/services/tag.service';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import {
   getBasicDataForUsers,
@@ -6817,183 +6815,8 @@ export async function updateImageNsfwLevel({
   return nsfwLevel;
 }
 
-type ImageRatingRequestResponse = {
-  id: number;
-  votes: Record<number, number>;
-  url: string;
-  nsfwLevel: number;
-  nsfwLevelLocked: boolean;
-  width: number | null;
-  height: number | null;
-  type: MediaType;
-  total: number;
-  createdAt: Date;
-};
-
-export async function getImageRatingRequests({
-  cursor,
-  limit,
-  user,
-}: ImageRatingReviewOutput & { user: SessionUser }) {
-  // const results = await dbRead.$queryRaw<ImageRatingRequestResponse[]>`
-  //   WITH CTE_Requests AS (
-  //     SELECT
-  //       DISTINCT ON (irr."imageId") irr."imageId" as id,
-  //       MIN(irr."createdAt") as "createdAt",
-  //       COUNT(CASE WHEN i."nsfwLevel" != irr."nsfwLevel" THEN i.id END)::INT "total",
-  //       SUM(CASE WHEN irr."userId" = i."userId" THEN irr."nsfwLevel" ELSE 0 END)::INT "ownerVote",
-  //       i.url,
-  //       i."nsfwLevel",
-  //       i."nsfwLevelLocked",
-  //       i.type,
-  //       i.height,
-  //       i.width,
-  //       jsonb_build_object(
-  //         ${NsfwLevel.PG}, count(irr."nsfwLevel")
-  //           FILTER (where irr."nsfwLevel" = ${NsfwLevel.PG}),
-  //         ${NsfwLevel.PG13}, count(irr."nsfwLevel")
-  //           FILTER (where irr."nsfwLevel" = ${NsfwLevel.PG13}),
-  //         ${NsfwLevel.R}, count(irr."nsfwLevel")
-  //           FILTER (where irr."nsfwLevel" = ${NsfwLevel.R}),
-  //         ${NsfwLevel.X}, count(irr."nsfwLevel")
-  //           FILTER (where irr."nsfwLevel" = ${NsfwLevel.X}),
-  //         ${NsfwLevel.XXX}, count(irr."nsfwLevel")
-  //           FILTER (where irr."nsfwLevel" = ${NsfwLevel.XXX})
-  //       ) "votes"
-  //       FROM "ImageRatingRequest" irr
-  //       JOIN "Image" i on i.id = irr."imageId"
-  //       WHERE irr.status = ${ReportStatus.Pending}::"ReportStatus"
-  //         AND i."nsfwLevel" != ${NsfwLevel.Blocked}
-  //       GROUP BY irr."imageId", i.id
-  //   )
-  //   SELECT
-  //     r.*
-  //   FROM CTE_Requests r
-  //   WHERE (r.total >= 3 OR (r."ownerVote" != 0 AND r."ownerVote" != r."nsfwLevel"))
-  //   ${!!cursor ? Prisma.sql` AND r."createdAt" >= ${new Date(cursor)}` : Prisma.sql``}
-  //   ORDER BY r."createdAt"
-  //   LIMIT ${limit + 1}
-  // `;
-
-  // const results = await dbRead.$queryRaw<ImageRatingRequestResponse[]>`
-  // WITH image_rating_requests AS (
-  //     SELECT
-  //       irr.*,
-  //       i."userId"  "imageUserId",
-  //       i."nsfwLevel"  "imageNsfwLevel"
-  //     FROM "ImageRatingRequest" irr
-  //     JOIN "Image" i ON i.id = irr."imageId"
-  //     WHERE irr.status = ${ReportStatus.Pending}::"ReportStatus"
-  //     AND irr."nsfwLevel" != ${NsfwLevel.Blocked}
-  //     ORDER BY irr."createdAt"
-  //   ),
-  //   requests AS (
-  //     SELECT
-  //       "imageId" id,
-  //       MIN("createdAt") as "createdAt",
-  //       COUNT(CASE WHEN "nsfwLevel" != "imageNsfwLevel" THEN "imageId" END)::INT "total",
-  //       COALESCE(bit_or(CASE WHEN "userId" = "imageUserId" THEN "nsfwLevel" ELSE 0 END))::INT "ownerVote",
-  //       jsonb_build_object(
-  //           ${NsfwLevel.PG}, count("nsfwLevel")
-  //             FILTER (where "nsfwLevel" = ${NsfwLevel.PG}),
-  //           ${NsfwLevel.PG13}, count("nsfwLevel")
-  //             FILTER (where "nsfwLevel" = ${NsfwLevel.PG13}),
-  //           ${NsfwLevel.R}, count("nsfwLevel")
-  //             FILTER (where "nsfwLevel" = ${NsfwLevel.R}),
-  //           ${NsfwLevel.X}, count("nsfwLevel")
-  //             FILTER (where "nsfwLevel" = ${NsfwLevel.X}),
-  //           ${NsfwLevel.XXX}, count("nsfwLevel")
-  //             FILTER (where "nsfwLevel" = ${NsfwLevel.XXX})
-  //         ) "votes"
-  //     FROM image_rating_requests
-  //     GROUP BY "imageId"
-  //   )
-  //   SELECT
-  //     i.url,
-  //     i."nsfwLevel",
-  //     i."nsfwLevelLocked",
-  //     i."userId",
-  //     i.type,
-  //     i.width,
-  //     i.height,
-  //     r.*
-  //   FROM requests r
-  //   JOIN "Image" i ON i.id = r."id"
-  //   WHERE (r.total >= 3 OR (r."ownerVote" != 0 AND r."ownerVote" != i."nsfwLevel"))
-  //   AND i."blockedFor" IS NULL
-  //   ${!!cursor ? Prisma.sql` AND r."createdAt" >= ${new Date(cursor)}` : Prisma.sql``}
-  //   ORDER BY r."createdAt"
-  //   LIMIT ${limit + 1}
-  // `;
-
-  const query = Prisma.sql`
-      WITH image_rating_requests AS (
-        SELECT
-          "imageId",
-          COALESCE(SUM(weight), 0) total,
-          MIN("createdAt") "createdAt",
-          jsonb_build_object(
-            1, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 1),0),
-            2, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 2),0),
-            4, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 4),0),
-            8, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 8),0),
-            16, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 16),0)
-          ) "votes"
-        FROM "ImageRatingRequest"
-        WHERE status = 'Pending'
-        GROUP BY "imageId"
-      )
-      SELECT
-        i.id,
-        irr.votes,
-        irr.total::int,
-        i.url,
-        i."nsfwLevel",
-        i."nsfwLevelLocked",
-        i.width,
-        i.height,
-        i.type,
-        i."createdAt"
-      FROM image_rating_requests irr
-      JOIN "Image" i ON i.id = irr."imageId"
-      WHERE irr.total >= 3
-        AND i."blockedFor" IS NULL
-        AND i."nsfwLevelLocked" = FALSE
-        AND i.ingestion != 'PendingManualAssignment'::"ImageIngestionStatus"
-        AND i."nsfwLevel" < ${NsfwLevel.Blocked}
-        ${!!cursor ? Prisma.sql` AND i."id" >= ${cursor}` : Prisma.empty}
-      ORDER BY i."id" ASC
-      LIMIT ${limit + 1}
-  `;
-
-  const results = await dbRead.$queryRaw<ImageRatingRequestResponse[]>`${query}`;
-
-  let nextCursor: number | undefined;
-  if (limit && results.length > limit) {
-    const nextItem = results.pop();
-    nextCursor = nextItem?.id || undefined;
-  }
-
-  const imageIds = results.map((x) => x.id);
-  const tags = await getVotableTags2({
-    ids: imageIds,
-    user,
-    type: 'image',
-    nsfwLevel: Flags.arrayToInstance([
-      NsfwLevel.PG13,
-      NsfwLevel.R,
-      NsfwLevel.X,
-      NsfwLevel.XXX,
-      NsfwLevel.Blocked,
-    ]),
-  });
-
-  return {
-    nextCursor,
-    items: results.map((item) => ({ ...item, tags: tags.filter((x) => x.imageId === item.id) })),
-  };
-}
-
+// NOTE(moderator-migration): getImageRatingRequests (the image-rating-review queue) now lives in the spoke
+// app (apps/moderator). updateImageNsfwLevel STAYS — it backs downleveled-review + user voting + mod APIs.
 // NOTE(moderator-migration): getIngestionErrorImages + resolveIngestionError (the ingestion-error-review
 // queue + its nsfwLevel setter) now live in the spoke app (apps/moderator, Kysely).
 

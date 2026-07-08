@@ -137,7 +137,15 @@
     <header class="flex h-12 shrink-0 items-center gap-2 px-4">
       <SidebarTrigger />
     </header>
-    <div class={page.data.fullBleed ? 'min-h-0 flex-1' : 'mx-auto w-full max-w-6xl px-6 pb-10'}>
+    <!-- fullBleed: edge-to-edge, self-managed height (scanner focused review). wide: full content width
+         (no cap) for image-heavy grids. default: readable text width. -->
+    <div
+      class={page.data.fullBleed
+        ? 'min-h-0 flex-1'
+        : page.data.wide
+          ? 'w-full px-6 pb-10'
+          : 'mx-auto w-full max-w-6xl px-6 pb-10'}
+    >
       {@render children()}
     </div>
   </SidebarInset>
