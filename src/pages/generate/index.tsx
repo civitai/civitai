@@ -14,10 +14,7 @@ import {
 import { Meta } from '~/components/Meta/Meta';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import {
-  createServerSideProps,
-  prefetchGeneratorQueries,
-} from '~/server/utils/server-side-helpers';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -28,13 +25,7 @@ import { getLoginLink } from '~/utils/login-helpers';
  */
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  // Enable the SSG helper so `trpcState` is dehydrated into the page props — the
-  // vehicle the flag-gated generator prefetch (below) hydrates from. On full SSR
-  // this also lets the shared `ssrPrefetchShell` prefetch run; on a client-nav
-  // `/_next/data` fetch no `ssg` is built (`prefetch: 'once'`), so neither the
-  // shell nor the generator prefetch fires — same skip contract as #2990.
-  useSSG: true,
-  resolver: async ({ session, features, ssg, ctx }) => {
+  resolver: async ({ session, features, ctx }) => {
     if (!session)
       return {
         redirect: {
@@ -44,14 +35,6 @@ export const getServerSideProps = createServerSideProps({
       };
 
     if (!features?.imageGeneration) return { notFound: true };
-
-    // Flag-gated, best-effort SSR-prefetch of the generator's static init queries
-    // so they hydrate instead of round-tripping on mount. Only runs on full SSR
-    // (where `ssg` exists) for authed users with the flag on; never throws / hangs
-    // (bounded, `allSettled`) so it can't slow or break this money-path render.
-    if (ssg && features?.ssrPrefetchGenerator) {
-      await prefetchGeneratorQueries(ssg, session, features);
-    }
   },
 });
 
