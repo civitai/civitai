@@ -93,7 +93,13 @@ import type {
   ModelVersionEngagementType,
   TrainingStatus,
 } from '~/shared/utils/prisma/enums';
-import { Availability, CommercialUse, ModelStatus } from '~/shared/utils/prisma/enums';
+import {
+  Availability,
+  CommercialUse,
+  LicensingFeeSettlementCurrency,
+  LicensingFeeType,
+  ModelStatus,
+} from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
 import { markFileReplaced, filesForModelVersionCache } from './model-file.service';
@@ -260,6 +266,43 @@ export const getUserEarlyAccessModelVersions = async ({ userId }: { userId: numb
     },
     select: { id: true },
   });
+};
+
+// Licensing lineage roots selectable for a given base model — the versions
+// flagged LicensingRoot that define a fee others can inherit (e.g. an
+// ecosystem's Base / Turbo checkpoints). Feeds the version-form picker.
+export const getLicensingRoots = async ({ baseModel }: { baseModel: string }) => {
+  return dbRead.$queryRaw<
+    Array<{
+      id: number;
+      modelId: number;
+      modelName: string;
+      versionName: string;
+      licensingFee: number | null;
+      licensingFeeType: LicensingFeeType | null;
+      licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
+    }>
+  >`
+    SELECT
+      mv.id,
+      mv."modelId",
+      m.name AS "modelName",
+      mv.name AS "versionName",
+      mv."licensingFee",
+      mv."licensingFeeType",
+      mv."licensingFeeSettlementCurrency"
+    FROM "ModelVersion" mv
+    JOIN "Model" m ON m.id = mv."modelId"
+    WHERE mv."baseModel" = ${baseModel}
+      AND (mv.flags & ${ModelVersionFlag.LicensingRoot}) = ${ModelVersionFlag.LicensingRoot}
+      AND mv.status = ${ModelStatus.Published}::"ModelStatus"
+      AND mv."licensingFee" IS NOT NULL
+      AND mv."licensingFee" > 0
+      AND m.status = ${ModelStatus.Published}::"ModelStatus"
+      AND m.availability = ${Availability.Public}::"Availability"
+      AND m."deletedAt" IS NULL
+    ORDER BY m.name, mv.index
+  `;
 };
 
 export const upsertModelVersion = async ({

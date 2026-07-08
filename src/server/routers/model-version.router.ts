@@ -24,6 +24,7 @@ import {
   mergeVersionsSchema,
   deleteExplorationPromptSchema,
   earlyAccessModelVersionsOnTimeframeSchema,
+  getLicensingRootsSchema,
   getModelVersionByModelTypeSchema,
   getModelVersionPopularityInput,
   getModelVersionSchema,
@@ -44,6 +45,7 @@ import {
   deleteExplorationPrompt,
   getExplorationPromptsById,
   getModelVersionPopularity,
+  getLicensingRoots,
   getModelVersionsByModelType,
   getModelVersionsPopularity,
   getVersionById,
@@ -125,6 +127,10 @@ export const modelVersionRouter = router({
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getModelVersionsByIdsInput)
     .query(({ input }) => getVersionsByIds(input)),
+  getLicensingRoots: publicProcedure
+    .meta({ requiredScope: TokenScope.ModelsRead })
+    .input(getLicensingRootsSchema)
+    .query(({ input }) => getLicensingRoots(input)),
   getExplorationPromptsById: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getByIdSchema)
