@@ -21,12 +21,14 @@ async function counterValue(labels: Record<string, string>): Promise<number | un
 beforeEach(() => h.logToAxiom.mockReset());
 
 describe('logOAuthEvent', () => {
-  it('dual-writes the audit event (event:"oauth-audit" + the event fields) to the auth datastream', () => {
+  it('dual-writes the audit event (event:"oauth-audit" + the event fields), letting the wrapper civitai-prod default apply', () => {
     logOAuthEvent({ type: 'token.issued', userId: 7, clientId: 'abc', ip: '1.2.3.4' });
 
     expect(h.logToAxiom).toHaveBeenCalledTimes(1);
     const [payload, datastream] = h.logToAxiom.mock.calls[0];
-    expect(datastream).toBe('auth');
+    // The seam forwards no explicit datastream, so the real wrapper's `civitai-prod` default applies
+    // (asserted directly in axiom.test.ts). This test mocks the wrapper, so it sees the raw call args.
+    expect(datastream).toBeUndefined();
     expect(payload.event).toBe('oauth-audit');
     expect(payload.type).toBe('token.issued');
     expect(payload.userId).toBe(7);

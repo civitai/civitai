@@ -44,11 +44,11 @@ describe('auth axiom binding', () => {
     expect(h.logToAxiom).toHaveBeenCalledWith({ event: 'oauth-audit' }, 'auth');
   });
 
-  it('logAxiomError routes to the auth datastream with type:error, the event marker, and safeError fields', async () => {
+  it('logAxiomError routes to the civitai-prod datastream with type:error, the event marker, and safeError fields', async () => {
     await logAxiomError(new Error('boom'), { event: 'unhandled server error', clientId: 'abc' });
     expect(h.logToAxiom).toHaveBeenCalledTimes(1);
     const [payload, datastream] = h.logToAxiom.mock.calls[0];
-    expect(datastream).toBe('auth');
+    expect(datastream).toBe('civitai-prod');
     expect(payload.type).toBe('error');
     expect(payload.event).toBe('unhandled server error');
     expect(payload.clientId).toBe('abc'); // extra context is merged

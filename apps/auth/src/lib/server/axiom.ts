@@ -11,15 +11,16 @@ export function logToAxiom(data: Record<string, unknown>, datastream = 'civitai-
   return logger.logToAxiom(data, datastream);
 }
 
-// Fire-and-forget error logger for the hub's catch paths. Mirrors apps/notifications' logAxiomError, but
-// routes to the `auth` datastream and accepts an optional `extra` object so callers can attach the exact
-// human label the Loki alerts match on (e.g. { event: 'unhandled server error' }). Order matters: `extra`
-// spreads BEFORE safeError so the marker survives, and safeError's name/message/stack land last. The
-// serialized JSON line (→ Alloy → Loki) MUST keep those literal substrings — the datapacket-talos alerts
+// Fire-and-forget error logger for the hub's catch paths. Mirrors apps/notifications' logAxiomError, and
+// routes to the default `civitai-prod` datastream (shared with the main app + the existing captcha path).
+// Accepts an optional `extra` object so callers can attach the exact human label the Loki alerts match on
+// (e.g. { event: 'unhandled server error' }). Order matters: `extra` spreads BEFORE safeError so the marker
+// survives, and safeError's name/message/stack land last. The serialized JSON line (→ Alloy → Loki) MUST
+// keep those literal substrings — the datapacket-talos alerts
 // `{namespace="civitai-auth"} |~ "(?i)(unhandled server error|handler error|action failed|…)" != "invalid_grant"`
 // key off them. Swallows its own failure so logging can never break the request.
 export function logAxiomError(error: unknown, extra?: Record<string, unknown>) {
-  return logToAxiom({ type: 'error', ...extra, ...safeError(error) }, 'auth').catch(() => {});
+  return logToAxiom({ type: 'error', ...extra, ...safeError(error) }).catch(() => {});
 }
 
 export { safeError };
