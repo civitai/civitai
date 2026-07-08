@@ -369,7 +369,7 @@ const MATERIAL_PATCH_FIELDS = ['externalUrl', 'name', 'contentRating'] as const;
  * (an omitted field is left untouched; an explicit `null` clears a nullable one).
  * `externalUrl` is normalized to the validator's canonical form.
  */
-function buildListingPatchData(patch: UpdateListingPatch): Prisma.AppListingUpdateInput {
+export function buildListingPatchData(patch: UpdateListingPatch): Prisma.AppListingUpdateInput {
   const data: Prisma.AppListingUpdateInput = {};
   if (patch.externalUrl !== undefined) {
     const url = validateExternalUrl(patch.externalUrl);
@@ -790,6 +790,268 @@ export async function submitListingRevision(opts: {
     },
   });
   return { publishRequestId, shadowId, slug: shadow.revisionOf.slug };
+}
+
+// ---------------------------------------------------------------------------
+// getMyListingForEdit / updateRevisionDraft (author) — the DUAL-MODE edit wizard
+// glue. `getMyListingForEdit` is the owner-gated PREFILL read for
+// `/apps/submit?edit=<listingId>` (scalars + current assets + status +
+// hasPendingRevision, resolving an approved parent's in-progress shadow so a
+// resumed revision prefills from the shadow's edited state). `updateRevisionDraft`
+// is the symmetric scalar-write to an owned draft shadow (the asset procs already
+// write to a shadow; this is the "direct once shadow exists" scalar path so the
+// approved flow can put ALL scalar edits on the shadow before submitting it for
+// re-review — never leaving a trivial edit on the live parent that the shadow
+// would revert on approval).
+// ---------------------------------------------------------------------------
+
+export type ListingEditScalars = {
+  name: string;
+  tagline: string | null;
+  description: string | null;
+  category: string | null;
+  contentRating: string | null;
+  externalUrl: string | null;
+};
+
+export type ListingEditAsset = { imageId: number | null; url: string | null };
+export type ListingEditScreenshot = {
+  id: string;
+  imageId: number | null;
+  url: string | null;
+  caption: string | null;
+  order: number;
+};
+
+export type GetMyListingForEditResult = {
+  /** The LIVE (parent) listing id — always the caller's edit target identity. */
+  parentId: string;
+  /** The parent's PUBLIC slug — immutable in edit mode (identity/URL). */
+  slug: string;
+  /** The parent's status (draft | pending | approved). */
+  status: string;
+  /** True when an in-flight shadow revision is already under review. */
+  hasPendingRevision: boolean;
+  /**
+   * The existing shadow id for an approved parent whose revision is in progress
+   * (else null). The client still calls `beginListingRevision` on entering edit
+   * for an approved listing (idempotent — returns this same shadow), so this is
+   * only a hint that the prefill below came from the shadow, not the parent.
+   */
+  shadowId: string | null;
+  /**
+   * Prefill scalars from the EFFECTIVE source: the in-progress shadow when one
+   * exists (resume the revision), else the parent. `slug` above always stays the
+   * public parent slug regardless.
+   */
+  scalars: ListingEditScalars;
+  /** Prefill assets (icon/cover/screenshots) from the effective source, edge-resolved. */
+  assets: {
+    icon: ListingEditAsset;
+    cover: ListingEditAsset;
+    screenshots: ListingEditScreenshot[];
+  };
+};
+
+/** Load a listing's scalars + current assets (edge-resolved URLs) for edit prefill. */
+async function loadListingEditView(listingId: string): Promise<{
+  scalars: ListingEditScalars;
+  assets: GetMyListingForEditResult['assets'];
+}> {
+  const { getEdgeUrl } = await import('~/client-utils/cf-images-utils');
+  const row = (await dbRead.appListing.findUnique({
+    where: { id: listingId },
+    select: {
+      name: true,
+      tagline: true,
+      description: true,
+      category: true,
+      contentRating: true,
+      externalUrl: true,
+      iconId: true,
+      coverId: true,
+      icon: { select: { url: true } },
+      cover: { select: { url: true } },
+      screenshots: {
+        select: {
+          id: true,
+          imageId: true,
+          order: true,
+          caption: true,
+          image: { select: { url: true } },
+        },
+        orderBy: { order: 'asc' },
+      },
+    },
+  })) as {
+    name: string;
+    tagline: string | null;
+    description: string | null;
+    category: string | null;
+    contentRating: string | null;
+    externalUrl: string | null;
+    iconId: number | null;
+    coverId: number | null;
+    icon: { url: string | null } | null;
+    cover: { url: string | null } | null;
+    screenshots: {
+      id: string;
+      imageId: number | null;
+      order: number;
+      caption: string | null;
+      image: { url: string | null } | null;
+    }[];
+  } | null;
+  if (!row) {
+    throw new OffsiteRequestError('NOT_FOUND', `listing ${listingId} not found`);
+  }
+  return {
+    scalars: {
+      name: row.name,
+      tagline: row.tagline,
+      description: row.description,
+      category: row.category,
+      contentRating: row.contentRating,
+      externalUrl: row.externalUrl,
+    },
+    assets: {
+      icon: {
+        imageId: row.iconId,
+        url: row.icon?.url ? getEdgeUrl(row.icon.url, { width: 256 }) : null,
+      },
+      cover: {
+        imageId: row.coverId,
+        url: row.cover?.url ? getEdgeUrl(row.cover.url, { width: 1200 }) : null,
+      },
+      screenshots: row.screenshots.map((s) => ({
+        id: s.id,
+        imageId: s.imageId,
+        url: s.image?.url ? getEdgeUrl(s.image.url, { width: 1200 }) : null,
+        caption: s.caption,
+        order: s.order,
+      })),
+    },
+  };
+}
+
+/**
+ * AUTHOR: owner-gated prefill read for the dual-mode edit wizard. Loads the
+ * caller's OWN listing (NOT_OWNED / NOT_FOUND), asserts it is EDITABLE
+ * (draft/pending/approved; rejected → MUST_RESUBMIT, removed → FORBIDDEN,
+ * an internal shadow → INVALID_REVISION), and returns the prefill scalars +
+ * current assets from the EFFECTIVE source: an approved parent's in-progress
+ * shadow when one exists (so a resumed revision prefills its edited state), else
+ * the listing itself. `slug` + `status` + `parentId` always describe the live
+ * parent; `shadowId` hints whether the prefill came from a shadow.
+ */
+export async function getMyListingForEdit(opts: {
+  listingId: string;
+  userId: number;
+}): Promise<GetMyListingForEditResult> {
+  const { listingId, userId } = opts;
+  const listing = await loadOwnedEditableListing(listingId, userId);
+
+  if (listing.revisionOfId != null) {
+    throw new OffsiteRequestError(
+      'INVALID_REVISION',
+      'this listing is an internal revision draft and cannot be edited directly'
+    );
+  }
+  switch (listing.status) {
+    case 'removed':
+      throw new OffsiteRequestError(
+        'FORBIDDEN',
+        'this listing has been removed by a moderator and can no longer be edited'
+      );
+    case 'rejected':
+      throw new OffsiteRequestError(
+        'MUST_RESUBMIT',
+        'this listing was rejected; submit a new listing instead of editing it'
+      );
+    case 'draft':
+    case 'pending':
+    case 'approved':
+      break;
+    default:
+      throw new OffsiteRequestError(
+        'INVALID_REVISION',
+        `cannot edit a listing in status ${listing.status}`
+      );
+  }
+
+  // For an approved parent, resolve the shadow SERVER-SIDE (idempotent: reuses an
+  // in-flight shadow, else clones the parent's scalars+assets into a fresh one) and
+  // prefill from IT, returning `effectiveId = shadowId` + the SHADOW's asset rows.
+  //
+  // 🔴 SECURITY (do not weaken): the edit UI mutates the EFFECTIVE listing's asset
+  // ROWS (add/remove screenshot, set icon/cover). For an approved listing those MUST
+  // be the shadow's rows — NEVER the live parent's. If the prefill returned the
+  // parent's `AppListingScreenshot` ids (as it did when the shadow was only begun
+  // client-side after mount), a "remove screenshot" on the first edit would delete
+  // the row from the LIVE served listing, bypassing moderator review. Resolving the
+  // shadow here — before any row id reaches the client — closes that window. (This
+  // is a query that performs an idempotent write; acceptable — begin is safe to
+  // repeat.) A pending revision REQUEST (not mere shadow existence) drives the badge.
+  let effectiveId = listingId;
+  let shadowId: string | null = null;
+  let hasPendingRevision = false;
+  if (listing.status === 'approved') {
+    const begun = await beginListingRevision({ listingId, userId });
+    shadowId = begun.shadowId;
+    effectiveId = begun.shadowId;
+    const pendingRevisionReq = await dbRead.appListingPublishRequest.findFirst({
+      where: {
+        status: 'pending',
+        kind: 'offsite',
+        appListing: { revisionOfId: listingId },
+      },
+      select: { id: true },
+    });
+    hasPendingRevision = !!pendingRevisionReq;
+  }
+
+  const view = await loadListingEditView(effectiveId);
+  return {
+    parentId: listingId,
+    slug: listing.slug,
+    status: listing.status,
+    hasPendingRevision,
+    shadowId,
+    scalars: view.scalars,
+    assets: view.assets,
+  };
+}
+
+/**
+ * AUTHOR: write a scalar patch to an owned DRAFT shadow revision (the "direct once
+ * shadow exists" scalar write for the approved edit flow). Symmetric with the
+ * asset procs, which already mutate a shadow the caller owns. Owner-bound; asserts
+ * the target is a draft shadow (revisionOfId set) so this can NEVER edit a live
+ * top-level listing — that path stays `updateListing` (state-routed). Validation
+ * mirrors the in-place path (`buildListingPatchData`).
+ */
+export async function updateRevisionDraft(opts: {
+  shadowId: string;
+  patch: UpdateListingPatch;
+  userId: number;
+}): Promise<{ shadowId: string }> {
+  const { shadowId, patch, userId } = opts;
+  const shadow = await loadOwnedEditableListing(shadowId, userId);
+  if (shadow.revisionOfId == null) {
+    throw new OffsiteRequestError(
+      'INVALID_REVISION',
+      'updateRevisionDraft targets a shadow revision draft, not a top-level listing'
+    );
+  }
+  if (shadow.status !== 'draft') {
+    throw new OffsiteRequestError(
+      'INVALID_REVISION',
+      `a revision draft can only be edited while draft (status is ${shadow.status})`
+    );
+  }
+  const data = buildListingPatchData(patch);
+  await dbWrite.appListing.update({ where: { id: shadowId }, data });
+  return { shadowId };
 }
 
 // ---------------------------------------------------------------------------
