@@ -94,14 +94,14 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
 
 > Most of this cluster funnels through **`image.service.ts`** (~7.9K lines) and **`report.service.ts`** — port those shared services once (see [Shared backend services](#shared-backend-services)).
 
-- [ ] **`/moderator/images`** — `src/pages/moderator/images.tsx` — flags: `csamReports` (CSAM view), `appealReports` (Appeals view)
+- [ ] **`/moderator/images`** — `src/pages/moderator/images.tsx` — flags: `csamReports` (CSAM view), `appealReports` (Appeals view) — **NOT migrated.** A WIP stub route exists at `apps/moderator/src/routes/images/` (placeholder `+page.svelte`); the real 1158-line page is still live in the main app and not redirected.
   - Procedures: `image.getModeratorReviewQueue`, `image.getModeratorReviewQueueCounts`, `image.getModeratorPOITags` (queries); `image.moderate`, `report.bulkUpdateStatus`, `report.resolveAppeal` (mutations)
   - Services: `image.service.ts` (`getImageModerationReviewQueue`, `getImageModerationCounts`, `moderateImages` → `handleBlockImages`/`handleUnblockImages`, `getModeratorPOITags`); `report.service.ts` (`bulkSetReportStatus`, `resolveEntityAppeal`)
   - Schemas: `image.schema.ts` (`imageReviewQueueInputSchema`, `imageModerationSchema`), `report.schema.ts` (`bulkUpdateReportStatusSchema`, `resolveAppealSchema`)
   - Infra: **Postgres + Meilisearch + Redis + S3 (pHash blocks) + Cloudflare (cache purge) + email + comic-project re-queue**
   - Notes: **heaviest page.** `moderateImages` has complex transaction logic (tagging, NSFW level, search-index queue, pHash block); comics re-queue on state change; appeals auto-resolve when appeal images approved.
 
-- [ ] **`/moderator/images/to-ingest`** — `src/pages/moderator/images/to-ingest.tsx` — flag: none
+- [x] **`/moderator/images/to-ingest`** — `src/pages/moderator/images/to-ingest.tsx` — flag: none — **Migrated** (commit e087b20f7, ingestion pages cutover).
   - Procedures: `image.getAllImagesPendingIngestion` (query)
   - Services: `image.service.ts` → `getImagesPendingIngestion`
   - Infra: **Postgres only.** Simplest of the image pages.
@@ -112,7 +112,7 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
   - Schemas: `image.schema.ts` (`imageReviewQueueInputSchema`), `tag.schema.ts` (`moderateTagsSchema`)
   - Infra: **Postgres** + tracking
 
-- [x] **`/moderator/image-rating-review`** — `src/pages/moderator/image-rating-review.tsx` — flag: none — **Migrated.** Deferred: VotableTags (needs the tag-voting slice, shared with image-tags), `imageMetadataCache.refresh` (Wave 3 Redis), `queueModel3DForThumbnailImage` (Wave 5). Main-app `getImageRatingRequests`/`updateImageNsfwLevel` left in place (image.service migrates with the image cluster; `updateImageNsfwLevel` still backs downleveled-review + user voting).
+- [x] **`/moderator/image-rating-review`** — `src/pages/moderator/image-rating-review.tsx` — flag: none — **Migrated.** Deferred: VotableTags (needs the tag-voting slice, shared with image-tags), `imageMetadataCache.refresh` (Wave 3 Redis). Model3D nsfwLevel sync is no longer a deferral — the main app now derives it from the thumbnail via the connected-entity cascade (`docs/model3d-thumbnail-nsfw-propagation.md` in the main repo), so the spoke's direct `nsfwLevel` write drives it automatically. Main-app `getImageRatingRequests`/`updateImageNsfwLevel` left in place (image.service migrates with the image cluster; `updateImageNsfwLevel` still backs downleveled-review + user voting).
   - Procedures: `image.getImageRatingRequests` (query); `image.updateImageNsfwLevel` (mutation)
   - Services: `image.service.ts` → `getImageRatingRequests`, `updateImageNsfwLevel`, `updatePendingImageRatings`
   - Schemas: `image.schema.ts` (`imageRatingReviewInput`, `updateImageNsfwLevelSchema`)
@@ -125,7 +125,7 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
   - Schemas: `image.schema.ts` (`downleveledReviewInput`, `updateImageNsfwLevelSchema`)
   - Infra: **Postgres + Redis + Knights of New Order**
 
-- [ ] **`/moderator/ingestion-error-review`** — `src/pages/moderator/ingestion-error-review.tsx` — flag: none
+- [x] **`/moderator/ingestion-error-review`** — `src/pages/moderator/ingestion-error-review.tsx` — flag: none — **Migrated** (commit e087b20f7, ingestion pages cutover).
   - Procedures: `image.getIngestionErrorImages` (query); `image.resolveIngestionError` (mutation)
   - Services: `image.service.ts` → `getIngestionErrorImages`, `resolveIngestionError`
   - Schemas: `image.schema.ts` (`ingestionErrorReviewInput`, `resolveIngestionErrorInput`)
@@ -165,13 +165,13 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
   - Schemas: `base.schema.ts` (`getByIdSchema`) + `csam.schema.ts`
   - Infra: page itself **Postgres only**, but `csam.createReport` pulls the full CSAM chain (S3/NCMEC/ClickHouse/orchestrator)
 
-- [ ] **`/moderator/articles`** — `src/pages/moderator/articles.tsx` — flag: none (`isModerator` check)
+- [x] **`/moderator/articles`** — `src/pages/moderator/articles.tsx` — flag: none (`isModerator` check) — **Migrated** (commit 22fb33e6d; restore/delete owned by spoke).
   - Procedures: `moderator.articles.query` (query)
   - Services: `article.service.ts` → `getModeratorArticles`
   - Schemas: `article.schema.ts` (`getModeratorArticlesSchema` extends `infiniteQuerySchema`)
   - Infra: **Postgres only.** `ArticleContextMenu` may issue extra mutations — verify.
 
-- [ ] **`/moderator/article-rating-review`** — `src/pages/moderator/article-rating-review.tsx` — flag: `articleRatingDispute`
+- [x] **`/moderator/article-rating-review`** — `src/pages/moderator/article-rating-review.tsx` — flag: `articleRatingDispute` — **Migrated** (commit 1603e46e0; spoke owns mutations, optimistic resolve).
   - Procedures: `article.getRatingReviews`, `article.getRatingReviewCounts` (queries)
   - Services: `article.service.ts` → `getArticleRatingReviews`, `getArticleRatingReviewCounts`
   - Schemas: `article.schema.ts` (`getArticleRatingReviewsSchema`) + `ReportStatus` enum
@@ -232,7 +232,7 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
 
 > Only **grant** is Tier 1. The cosmetic *store-management* pages are [Tier 2](#cosmetic-store).
 
-- [ ] **`/moderator/cosmetics/grant`** — `cosmetics/grant.tsx` — flag: none
+- [x] **`/moderator/cosmetics/grant`** — `cosmetics/grant.tsx` — flag: none — **Migrated** (commit ef3023543, full cutover to spoke).
   - Procedures: `cosmetic.getPaged`, `user.getAll` (queries); `cosmetic.grantToUsers` (mutation)
   - Services: `cosmetic.service.ts` (`getPaginatedCosmetics`, `grantCosmeticsToUsers`, `grantCosmetics`); `user.controller.ts` user search
   - Schemas: `cosmetic.schema.ts` (`getPaginatedCosmeticsSchema`, `grantCosmeticsToUsersSchema`), `user.schema.ts` (`getAllUsersInput`)
