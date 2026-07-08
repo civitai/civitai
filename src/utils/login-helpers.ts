@@ -29,6 +29,8 @@ export const loginRedirectReasons = {
   'image-gen':
     'Before you can generate, you need to create an account. Choose your preferred sign-in method below.',
   'blur-toggle': 'Displaying NSFW content requires you to be logged in',
+  'create-club': 'You need to be logged in to create a club',
+  'join-club': 'You need to be logged in to join a club',
   'civitai-vault': 'You need to be logged in to access your Civitai Vault',
   'favorite-model': 'You need to be logged in to favorite a model',
   rater: 'You need to be logged in to play the rating game',

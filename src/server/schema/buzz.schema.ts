@@ -176,6 +176,13 @@ export const getBuzzAccountTransactionsSchema =
   getUserBuzzTransactionsSchema.merge(getBuzzAccountSchema);
 export type GetBuzzAccountTransactionsSchema = z.infer<typeof getBuzzAccountTransactionsSchema>;
 
+export const clubTransactionSchema = z.object({
+  clubId: z.number(),
+  amount: z.number(),
+});
+
+export type ClubTransactionSchema = z.infer<typeof clubTransactionSchema>;
+
 export const compensationSources = ['compensation', 'licenseFee'] as const;
 export type CompensationSource = (typeof compensationSources)[number];
 

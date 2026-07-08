@@ -1,0 +1,24 @@
+.feedContainer {
+  background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6));
+  border-radius: var(--mantine-radius-lg);
+  padding: var(--mantine-spacing-md);
+}
+
+.clubPost {
+  max-width: 700px;
+  width: 100%;
+}
+
+.feedContainerWithCover {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  padding: 0;
+}
+
+.title {
+  overflow-wrap: break-word;
+
+  @container (max-width: theme('screens.sm')) {
+    font-size: 24px;
+  }
+}

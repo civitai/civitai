@@ -208,6 +208,8 @@ const featureFlags = createFeatureFlags({
   csamReports: isDev ? ['mod'] : ['granted'],
   appealReports: isDev ? ['mod'] : ['granted'],
   reviewTrainingData: isDev ? ['mod'] : ['granted'],
+  clubs: ['mod'],
+  createClubs: ['mod', 'granted'],
   moderateTags: ['granted'],
   chat: {
     toggleable: true,

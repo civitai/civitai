@@ -50,6 +50,7 @@ import {
   baseModelSupportsClipSkip,
   getActiveBaseModels,
 } from '~/shared/constants/basemodel.constants';
+import type { ClubResourceSchema } from '~/server/schema/club.schema';
 import type { GenerationResourceSchema } from '~/server/schema/generation.schema';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
 import type {
@@ -1037,6 +1038,7 @@ type VersionInput = Omit<ModelVersionUpsertInput, 'recommendedResources'> & {
     'strength' | 'minStrength' | 'maxStrength'
   > &
     RecommendedSettingsSchema)[];
+  clubs?: ClubResourceSchema[];
   earlyAccessEndsAt: Date | null;
   earlyAccessConfig: ModelVersionEarlyAccessConfig | null;
 };

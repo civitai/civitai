@@ -40,7 +40,7 @@ export const buzzPriceMetadataSchema = z.object({
 
 const buzzPurchaseMetadataSchema = z
   .object({
-    type: z.enum(['buzzPurchase']),
+    type: z.enum(['buzzPurchase', 'clubMembershipPayment']),
     buzzAmount: z.coerce.number().positive(),
     unitAmount: z.coerce.number().positive(),
     userId: z.coerce.number().positive(),

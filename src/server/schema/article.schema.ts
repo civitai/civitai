@@ -70,6 +70,7 @@ export const articleWhereSchema = baseQuerySchema.extend({
   ids: commaDelimitedNumberArray().optional(),
   collectionId: z.number().optional(),
   followed: z.boolean().optional(),
+  clubId: z.number().optional(),
   pending: z.boolean().optional(),
 });
 

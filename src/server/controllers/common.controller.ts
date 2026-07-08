@@ -7,7 +7,13 @@ import type {
   SupportedAvailabilityResources,
 } from '~/server/schema/base.schema';
 import { supportedAvailabilityResources } from '~/server/schema/base.schema';
-import { entityAvailabilityUpdate, hasEntityAccess } from '~/server/services/common.service';
+import type { SupportedClubEntities } from '~/server/schema/club.schema';
+import { supportedClubEntities } from '~/server/schema/club.schema';
+import {
+  entityAvailabilityUpdate,
+  entityRequiresClub,
+  hasEntityAccess,
+} from '~/server/services/common.service';
 import { throwBadRequestError, throwDbError } from '~/server/utils/errorHandling';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { dbRead, dbWrite } from '../db/client';
@@ -48,6 +54,28 @@ export const getEntityAccessHandler = async ({
   }
 };
 
+export const getEntityClubRequirementHandler = async ({
+  input: { entityType, entityId },
+}: {
+  ctx: Context;
+  input: GetByEntityInput;
+}) => {
+  try {
+    if (!supportedClubEntities.some((e) => (e as string) === entityType)) {
+      throw throwBadRequestError(`Unsupported entity type: ${entityType}`);
+    }
+
+    const clubRequirement = await entityRequiresClub({
+      entityIds: entityId,
+      entityType: entityType as SupportedClubEntities,
+    });
+
+    return clubRequirement;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
 export const updateEntityAvailabilityHandler = async ({
   input: { availability, entityId, entityType },
 }: {
@@ -66,10 +94,7 @@ export const updateEntityAvailabilityHandler = async ({
       case 'ModelVersion':
         const findArgs = { where: { id: entityId } } as const;
         const modelVersion = await dbRead.modelVersion.findUniqueOrThrow(findArgs).catch(() => {
-          dbReadFallbackCounter.inc({
-            entity: 'modelVersion',
-            caller: 'updateEntityAvailabilityHandler',
-          });
+          dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'updateEntityAvailabilityHandler' });
           return dbWrite.modelVersion.findUniqueOrThrow(findArgs);
         });
 

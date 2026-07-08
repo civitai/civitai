@@ -280,6 +280,7 @@ export const getModelsRaw = async ({
     needsReview,
     collectionId,
     fileFormats,
+    clubId,
     modelVersionIds,
     browsingLevel,
     excludedUserIds,
@@ -398,7 +399,9 @@ export const getModelsRaw = async ({
     AND.push(Prisma.sql`mm."modelId" IN (${Prisma.join(searchModelIds, ',')})`);
   }
 
-  const hidePrivateModels = !ids && !username && !user && !followed && !collectionId;
+  // TODO.clubs: This is temporary until we are fine with displaying club stuff in public feeds.
+  // At that point, we should be relying more on unlisted status which is set by the owner.
+  const hidePrivateModels = !ids && !clubId && !username && !user && !followed && !collectionId;
 
   if (!archived) {
     AND.push(
@@ -724,7 +727,31 @@ export const getModelsRaw = async ({
     AND.push(browsingLevelQuery);
   }
 
-  const queryWith = Prisma.sql``;
+  const WITH: Prisma.Sql[] = [];
+  if (clubId) {
+    WITH.push(Prisma.sql`
+      "clubModels" AS (
+        SELECT
+          mv."modelId" "modelId",
+          MAX(mv."id") "modelVersionId"
+        FROM "EntityAccess" ea
+        JOIN "ModelVersion" mv ON mv."id" = ea."accessToId"
+        LEFT JOIN "ClubTier" ct ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = ct."id" AND ct."clubId" = ${clubId}
+        WHERE (
+            (
+             ea."accessorType" = 'Club' AND ea."accessorId" = ${clubId}
+            )
+            OR (
+              ea."accessorType" = 'ClubTier' AND ct."clubId" = ${clubId}
+            )
+          )
+          AND ea."accessToType" = 'ModelVersion'
+        GROUP BY mv."modelId"
+      )
+    `);
+  }
+
+  const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
 
   // Build dynamic FROM clause based on query path
   // Four paths:
@@ -815,7 +842,8 @@ export const getModelsRaw = async ({
       mm."userId",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"`;
 
-  const fromAndJoin = fromClause;
+  const fromAndJoin = Prisma.sql`${fromClause}
+      ${clubId ? Prisma.sql`JOIN "clubModels" cm ON cm."modelId" = m."id"` : Prisma.sql``}`;
 
   const limitValue = (take ?? 100) + 1;
   const orderByRaw = Prisma.raw(orderBy);
@@ -1050,6 +1078,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     collectionId,
     fileFormats,
     browsingLevel,
+    clubId,
   } = input;
 
   const AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];

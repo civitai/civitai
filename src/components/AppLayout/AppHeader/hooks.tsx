@@ -10,6 +10,7 @@ import {
   IconCloudLock,
   IconCode,
   IconCube,
+  // IconClubs,
   IconCrown,
   IconGift,
   IconGavel,
@@ -125,6 +126,14 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'My Bounties',
         },
+        // {
+        //   href: '/clubs?engagement=engaged',
+        //   as: '/clubs',
+        //   visible: features.clubs,
+        //   icon: IconClubs,
+        //   color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
+        //   label: 'My Clubs',
+        // },
         {
           href: '/user/buzz-dashboard',
           visible: features.buzz,
@@ -355,6 +364,15 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       label: 'Create a Bounty',
       currency: true,
     },
+    // {
+    //   href: '/clubs/create',
+    //   visible: !isMuted && canCreate && features.clubs,
+    //   redirectReason: 'create-club',
+    //   rel: 'nofollow',
+    //   icon: IconClubs,
+    //   color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
+    //   label: 'Create a Club',
+    // },
   ];
 }
 

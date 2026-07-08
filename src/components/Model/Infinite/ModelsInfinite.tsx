@@ -52,7 +52,7 @@ export function ModelsInfinite({
 
   return (
     <ModelCardContextProvider
-      useModelVersionRedirect={(filters?.baseModels ?? []).length > 0}
+      useModelVersionRedirect={(filters?.baseModels ?? []).length > 0 || !!filters?.clubId}
       activeBaseModels={filters?.baseModels}
     >
       {!models.length && isFetching ? (

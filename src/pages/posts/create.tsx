@@ -60,6 +60,7 @@ export default Page(
       model3dId,
       tag: tagId,
       video: postingVideo,
+      clubId,
       reviewing,
       collections: collectionIds,
       collectionId,
@@ -100,6 +101,7 @@ export default Page(
 
     if (model3dId) backButtonUrl = `/3d-models/${model3dId}`;
     if (tagId) backButtonUrl = `/posts?tags=${tagId}&view=feed`;
+    if (clubId) backButtonUrl = `/clubs/${clubId}`;
     if (collectionIds?.length)
       backButtonUrl =
         collectionIds.length > 1 ? `/collections` : `/collections/${collectionIds[0]}`;

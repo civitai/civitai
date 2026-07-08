@@ -63,13 +63,13 @@ const getAccountTypeDescription = (accountType: BuzzSpendType): string => {
 const getAccountTypeUsages = (accountType: BuzzSpendType): string[] => {
   switch (accountType) {
     case 'yellow':
-      return ['Generation (including NSFW)', 'Training', 'Tips', 'Bounties'];
+      return ['Generation (including NSFW)', 'Training', 'Tips', 'Creator Club', 'Bounties'];
     case 'blue':
       return ['Generation', 'Training'];
     case 'green':
-      return ['Generation (SFW only)', 'Training (SFW only)', 'Tips'];
+      return ['Generation (SFW only)', 'Training (SFW only)', 'Tips', 'Creator Club'];
     // case 'red': // temporarily disabled
-    //   return ['Generation (including NSFW)', 'Training', 'Tips', 'Bounties'];
+    //   return ['Generation (including NSFW)', 'Training', 'Tips', 'Creator Club', 'Bounties'];
     default:
       return [];
   }
@@ -297,14 +297,7 @@ export const BuzzDashboardOverview = ({
               {isLoadingReport ? (
                 <Skeleton height={413} mt="sm" radius="sm" />
               ) : report.length > 0 ? (
-                <div
-                  style={{
-                    position: 'relative',
-                    overflow: 'hidden',
-                    width: '100%',
-                    minHeight: 300,
-                  }}
-                >
+                <div style={{ position: 'relative', overflow: 'hidden', width: '100%', minHeight: 300 }}>
                   <Text
                     c={buzzConfig.color}
                     size="xs"

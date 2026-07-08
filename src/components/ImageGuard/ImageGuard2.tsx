@@ -42,6 +42,7 @@ export type ConnectType =
   | 'collection'
   | 'bounty'
   | 'bountyEntry'
+  | 'club'
   | 'article'
   | 'comicChapter'
   | 'model3d';
@@ -346,13 +347,11 @@ function BlurToggle({
     >
       <span className="inline-flex items-center gap-1">
         {alwaysVisible && (
-          <span className="font-bold leading-none">{getBrowsingLevelLabel(browsingLevel)}</span>
+          <span className="font-bold leading-none">
+            {getBrowsingLevelLabel(browsingLevel)}
+          </span>
         )}
-        {show ? (
-          <IconEyeOff size={14} strokeWidth={2.5} />
-        ) : (
-          <IconEye size={14} strokeWidth={2.5} />
-        )}
+        {show ? <IconEyeOff size={14} strokeWidth={2.5} /> : <IconEye size={14} strokeWidth={2.5} />}
       </span>
     </Badge>
   );

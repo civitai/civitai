@@ -136,8 +136,8 @@ const StripePaymentMethods = () => {
             Are you sure you want to delete this payment method? This action is destructive.
           </Text>
           <Text size="xs" c="dimmed">
-            If you delete all your payment methods, your subscriptions and recurring payments will
-            be unable to be charged and you will lose access to those benefits.
+            If you have delete all your payment methods, your club memberships will be unable to be
+            charged and you will lose access to those assets.
           </Text>
         </Stack>
       ),

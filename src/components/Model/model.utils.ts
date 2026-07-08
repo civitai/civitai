@@ -55,6 +55,7 @@ const modelQueryParamSchema = z
       (val) => (Array.isArray(val) ? val : [val]),
       z.array(z.enum(baseModels))
     ),
+    clubId: z.coerce.number().optional(),
     collectionTagId: z.coerce.number().optional(),
     earlyAccess: booleanString().optional(),
     types: z

@@ -22,6 +22,7 @@ type ImageGuardConnect = {
     | 'collection'
     | 'bounty'
     | 'bountyEntry'
+    | 'club'
     | 'article';
   entityId: string | number;
 };

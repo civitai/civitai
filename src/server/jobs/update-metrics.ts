@@ -8,6 +8,9 @@ const metricSets = {
   basemodels: [metrics.baseModelMetrics],
   users: [metrics.userMetrics],
   bounties: [metrics.bountyEntryMetrics, metrics.bountyMetrics],
+  // clubs: [
+  //   metrics.clubPostMetrics, metrics.clubMetrics // disable clubs
+  // ],
   posts: [metrics.postMetrics],
   tags: [metrics.tagMetrics],
   collections: [metrics.collectionMetrics],
