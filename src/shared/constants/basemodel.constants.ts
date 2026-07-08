@@ -806,6 +806,11 @@ export const ecosystemByKey = new Map(ecosystems.map((e) => [e.key, e]));
  */
 export const MODEL3D_ECOSYSTEM_IDS = new Set<number>([ECO.PolyGen, ECO.Tripo, ECO.Hunyuan3D]);
 
+/** Ecosystem keys for the 3D-model ecosystems (`model3d` output). */
+export const MODEL3D_ECOSYSTEM_KEYS = new Set<string>(
+  [...MODEL3D_ECOSYSTEM_IDS].map((id) => ecosystemById.get(id)?.key).filter((k): k is string => !!k)
+);
+
 /**
  * Ecosystem keys whose generation routes to Civitai-hosted GPUs/workers rather
  * than an external provider. Single source of truth for the self-hosted
