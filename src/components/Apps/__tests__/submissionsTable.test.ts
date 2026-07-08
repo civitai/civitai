@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ariaSortFor,
+  bucketGroupsByStatus,
   compareDate,
   compareStatus,
   compareText,
@@ -10,7 +11,9 @@ import {
   matchesQuery,
   nextSortState,
   sortGroups,
+  statusBucket,
   statusRank,
+  STATUS_SECTION_ORDER,
   toDate,
   type SortState,
   type SubmissionAccessors,
@@ -338,6 +341,98 @@ describe('currentlyPublishedVersionId — newest approved version is the live on
 
   it('an empty list → null', () => {
     expect(currentlyPublishedVersionId([])).toBeNull();
+  });
+});
+
+describe('statusBucket / bucketGroupsByStatus — status sections', () => {
+  it('maps each known status to its section', () => {
+    expect(statusBucket('approved')).toBe('live');
+    expect(statusBucket('pending')).toBe('pending');
+    expect(statusBucket('rejected')).toBe('rejected');
+    expect(statusBucket('withdrawn')).toBe('withdrawn');
+  });
+
+  it('maps an unknown/other status to the (closed) withdrawn section as a safe default', () => {
+    expect(statusBucket('archived')).toBe('withdrawn');
+    expect(statusBucket('')).toBe('withdrawn');
+  });
+
+  it('the section order is Live → Pending → Rejected → Withdrawn', () => {
+    expect(STATUS_SECTION_ORDER).toEqual(['live', 'pending', 'rejected', 'withdrawn']);
+  });
+
+  it('buckets a never-approved group by its LATEST submission status', () => {
+    // No approved version anywhere → the section follows the current (latest) version.
+    const groups = groupSubmissionsByApp(
+      [
+        row({ id: 'v1', identity: 'app', status: 'pending', submittedAt: '2026-01-01' }),
+        row({ id: 'v2', identity: 'app', status: 'rejected', submittedAt: '2026-02-01' }),
+      ],
+      A.identity,
+      A.submittedAt
+    );
+    const buckets = bucketGroupsByStatus(groups, A.status);
+    expect(buckets.rejected.map((g) => g.identity)).toEqual(['app']);
+    expect(buckets.live).toEqual([]);
+  });
+
+  it('keeps a currently-LIVE app in Live even when its latest update is rejected/withdrawn/pending', () => {
+    // 🟡#1 regression guard: an app with an approved (published) version whose NEWEST
+    // submission is an in-flight update must stay in the always-expanded Live section,
+    // never buried in the default-collapsed Rejected/Withdrawn section.
+    for (const latestStatus of ['rejected', 'withdrawn', 'pending'] as const) {
+      const groups = groupSubmissionsByApp(
+        [
+          row({ id: 'v1', identity: 'app', status: 'approved', submittedAt: '2026-01-01' }),
+          row({ id: 'v2', identity: 'app', status: latestStatus, submittedAt: '2026-02-01' }),
+        ],
+        A.identity,
+        A.submittedAt
+      );
+      const buckets = bucketGroupsByStatus(groups, A.status);
+      expect(buckets.live.map((g) => g.identity)).toEqual(['app']);
+      expect(buckets.pending).toEqual([]);
+      expect(buckets.rejected).toEqual([]);
+      expect(buckets.withdrawn).toEqual([]);
+    }
+  });
+
+  it('partitions distinct apps into their four sections', () => {
+    const groups = groupSubmissionsByApp(
+      [
+        row({ id: 'a', identity: 'live-app', status: 'approved' }),
+        row({ id: 'b', identity: 'pending-app', status: 'pending' }),
+        row({ id: 'c', identity: 'rejected-app', status: 'rejected' }),
+        row({ id: 'd', identity: 'withdrawn-app', status: 'withdrawn' }),
+        row({ id: 'e', identity: 'weird-app', status: 'archived' }),
+      ],
+      A.identity,
+      A.submittedAt
+    );
+    const buckets = bucketGroupsByStatus(groups, A.status);
+    expect(buckets.live.map((g) => g.identity)).toEqual(['live-app']);
+    expect(buckets.pending.map((g) => g.identity)).toEqual(['pending-app']);
+    expect(buckets.rejected.map((g) => g.identity)).toEqual(['rejected-app']);
+    // Unknown status ('archived') falls back into the closed Withdrawn section.
+    expect(buckets.withdrawn.map((g) => g.identity)).toEqual(['withdrawn-app', 'weird-app']);
+  });
+
+  it('preserves the incoming group order within a bucket (a pre-applied sort is kept)', () => {
+    const groups = groupSubmissionsByApp(
+      [
+        row({ id: 'p1', identity: 'p1', status: 'pending', submittedAt: '2026-03-01' }),
+        row({ id: 'p2', identity: 'p2', status: 'pending', submittedAt: '2026-01-01' }),
+      ],
+      A.identity,
+      A.submittedAt
+    );
+    const buckets = bucketGroupsByStatus(groups, A.status);
+    expect(buckets.pending.map((g) => g.identity)).toEqual(['p1', 'p2']);
+  });
+
+  it('yields four empty buckets for no groups', () => {
+    const buckets = bucketGroupsByStatus([], A.status);
+    expect(buckets).toEqual({ live: [], pending: [], rejected: [], withdrawn: [] });
   });
 });
 

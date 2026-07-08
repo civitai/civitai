@@ -10,16 +10,15 @@ import { OffsiteEditModal } from '~/components/Apps/OffsiteEditModal';
 import { validateExternalUrl } from '~/server/schema/blocks/external-app.schema';
 import { ReviewerNotesButton } from '~/components/Apps/MySubmissionsList';
 import {
+  bucketGroupsByStatus,
   filterGroups,
   groupSubmissionsByApp,
-  nextSortState,
   sortGroups,
   toDate,
-  type SortColumn,
-  type SortState,
   type SubmissionAccessors,
+  type SubmissionGroup,
 } from '~/components/Apps/submissionsTable';
-import { SortableTh, SubmissionSearch, VersionToggle } from '~/components/Apps/submissionsTableUi';
+import { StatusSections, SubmissionSearch, VersionToggle } from '~/components/Apps/submissionsTableUi';
 
 /**
  * /apps/my-submissions — the author's OFF-SITE (external-link) submissions, shown
@@ -233,19 +232,32 @@ export function OffsiteSubmissionsList({
   withdrawing: boolean;
 }) {
   const [query, setQuery] = useState('');
-  const [sort, setSort] = useState<SortState>({ column: 'submitted', direction: 'desc' });
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  const groups = useMemo(() => {
+  // Group → filter → sort newest-first → partition into status SECTIONS. Status is
+  // now the section (Live / Pending / Rejected / Withdrawn), so the header column is
+  // no longer sortable; a plain submittedAt-desc sort orders rows within a section.
+  const buckets = useMemo(() => {
     const grouped = groupSubmissionsByApp(
       submissions,
       OFFSITE_ACCESSORS.identity,
       OFFSITE_ACCESSORS.submittedAt
     );
-    return sortGroups(filterGroups(grouped, query, OFFSITE_ACCESSORS), sort, OFFSITE_ACCESSORS);
-  }, [submissions, query, sort]);
+    const filtered = filterGroups(grouped, query, OFFSITE_ACCESSORS);
+    const sorted = sortGroups(
+      filtered,
+      { column: 'submitted', direction: 'desc' },
+      OFFSITE_ACCESSORS
+    );
+    return bucketGroupsByStatus(sorted, OFFSITE_ACCESSORS.status);
+  }, [submissions, query]);
 
-  const onSort = (column: SortColumn) => setSort((prev) => nextSortState(prev, column));
+  const totalGroups =
+    buckets.live.length +
+    buckets.pending.length +
+    buckets.rejected.length +
+    buckets.withdrawn.length;
+
   const toggle = (identity: string) =>
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -254,72 +266,78 @@ export function OffsiteSubmissionsList({
       return next;
     });
 
+  const renderTable = (groups: SubmissionGroup<OffsiteSubmission>[]) => (
+    <Card withBorder p={0}>
+      <Table verticalSpacing="md" horizontalSpacing="md">
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>App</Table.Th>
+            <Table.Th>Link</Table.Th>
+            <Table.Th>Status</Table.Th>
+            <Table.Th>Submitted</Table.Th>
+            <Table.Th>Reviewed</Table.Th>
+            <Table.Th />
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {groups.map((g) => {
+            const isExpanded = expanded.has(g.identity);
+            return (
+              <Fragment key={g.identity}>
+                <OffsiteRow
+                  submission={g.latest}
+                  nested={false}
+                  onWithdraw={onWithdraw}
+                  withdrawing={withdrawing}
+                  toggle={
+                    g.older.length > 0 ? (
+                      <VersionToggle
+                        expanded={isExpanded}
+                        count={g.versionCount}
+                        onToggle={() => toggle(g.identity)}
+                        testId={`apps-offsite-versions-${g.identity}`}
+                      />
+                    ) : undefined
+                  }
+                />
+                {isExpanded &&
+                  g.older.map((older) => (
+                    <OffsiteRow
+                      key={older.id}
+                      submission={older}
+                      nested
+                      onWithdraw={onWithdraw}
+                      withdrawing={withdrawing}
+                    />
+                  ))}
+              </Fragment>
+            );
+          })}
+        </Table.Tbody>
+      </Table>
+    </Card>
+  );
+
   return (
-    <Stack gap="xs">
+    <Stack gap="md">
       <SubmissionSearch
         value={query}
         onChange={setQuery}
         testId="apps-offsite-submissions-filter"
       />
-      <Card withBorder p={0}>
-        <Table verticalSpacing="md" horizontalSpacing="md">
-          <Table.Thead>
-            <Table.Tr>
-              <SortableTh label="App" column="app" sort={sort} onSort={onSort} />
-              <Table.Th>Link</Table.Th>
-              <SortableTh label="Status" column="status" sort={sort} onSort={onSort} />
-              <SortableTh label="Submitted" column="submitted" sort={sort} onSort={onSort} />
-              <SortableTh label="Reviewed" column="reviewed" sort={sort} onSort={onSort} />
-              <Table.Th />
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {groups.length === 0 ? (
-              <Table.Tr>
-                <Table.Td colSpan={6}>
-                  <Text size="sm" c="dimmed" ta="center" py="sm">
-                    No submissions match “{query}”.
-                  </Text>
-                </Table.Td>
-              </Table.Tr>
-            ) : (
-              groups.map((g) => {
-                const isExpanded = expanded.has(g.identity);
-                return (
-                  <Fragment key={g.identity}>
-                    <OffsiteRow
-                      submission={g.latest}
-                      nested={false}
-                      onWithdraw={onWithdraw}
-                      withdrawing={withdrawing}
-                      toggle={
-                        g.older.length > 0 ? (
-                          <VersionToggle
-                            expanded={isExpanded}
-                            count={g.versionCount}
-                            onToggle={() => toggle(g.identity)}
-                            testId={`apps-offsite-versions-${g.identity}`}
-                          />
-                        ) : undefined
-                      }
-                    />
-                    {isExpanded &&
-                      g.older.map((older) => (
-                        <OffsiteRow
-                          key={older.id}
-                          submission={older}
-                          nested
-                          onWithdraw={onWithdraw}
-                          withdrawing={withdrawing}
-                        />
-                      ))}
-                  </Fragment>
-                );
-              })
-            )}
-          </Table.Tbody>
-        </Table>
-      </Card>
+      {totalGroups === 0 ? (
+        <Card withBorder p="md">
+          <Text size="sm" c="dimmed" ta="center" py="sm">
+            No submissions match “{query}”.
+          </Text>
+        </Card>
+      ) : (
+        <StatusSections
+          buckets={buckets}
+          testIdPrefix="apps-offsite-submissions-section"
+          renderTable={renderTable}
+        />
+      )}
     </Stack>
   );
 }

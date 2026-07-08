@@ -214,3 +214,73 @@ export function ariaSortFor(
   if (sort.column !== column) return 'none';
   return sort.direction === 'asc' ? 'ascending' : 'descending';
 }
+
+// ── status sections (UX pass) ──────────────────────────────────────────────────
+
+/**
+ * The four status SECTIONS the /apps/my-submissions lists render, in display order.
+ * A group is bucketed by its `latest` submission's status:
+ *   - `approved` → **Live** (the row badge still distinguishes the onsite deploy
+ *     sub-state building/deploying/live/failed — we DON'T split approved by it),
+ *   - `pending` → **Pending**,
+ *   - `rejected` → **Rejected** (its own default-collapsed section),
+ *   - `withdrawn` → **Withdrawn** (default-collapsed),
+ *   - any other/unknown status → **Withdrawn** (a safe closed default so a future
+ *     status degrades gracefully rather than vanishing).
+ */
+export type StatusBucket = 'live' | 'pending' | 'rejected' | 'withdrawn';
+
+/** The section render order (Live → Pending → Rejected → Withdrawn). */
+export const STATUS_SECTION_ORDER: readonly StatusBucket[] = [
+  'live',
+  'pending',
+  'rejected',
+  'withdrawn',
+];
+
+/** Map a raw submission status → its display section. Unknown → `withdrawn`. */
+export function statusBucket(status: string): StatusBucket {
+  switch (status) {
+    case 'approved':
+      return 'live';
+    case 'pending':
+      return 'pending';
+    case 'rejected':
+      return 'rejected';
+    case 'withdrawn':
+      return 'withdrawn';
+    default:
+      return 'withdrawn';
+  }
+}
+
+/** Groups partitioned into the four status sections (by each group's `latest`). */
+export type BucketedGroups<T> = Record<StatusBucket, SubmissionGroup<T>[]>;
+
+/**
+ * Partition already-grouped submissions into the four status sections. Preserves
+ * the incoming group order within each bucket (so a pre-applied sort is retained).
+ * PURE — never mutates the input.
+ *
+ * A group that has ANY approved (currently-published) version buckets to **live**,
+ * EVEN IF its `latest` submission is an in-flight pending/rejected/withdrawn UPDATE.
+ * This keeps a live app in the always-expanded Live section (its "live" badge lives
+ * on the published version within the group) instead of burying it in the
+ * default-collapsed Rejected/Withdrawn section — reachable normally when a live app
+ * gets an update that's then rejected or withdrawn. Only groups that have NEVER been
+ * approved bucket by their `latest` submission's status (see {@link statusBucket}).
+ */
+export function bucketGroupsByStatus<T>(
+  groups: readonly SubmissionGroup<T>[],
+  statusOf: (row: T) => string
+): BucketedGroups<T> {
+  const result: BucketedGroups<T> = { live: [], pending: [], rejected: [], withdrawn: [] };
+  for (const group of groups) {
+    const hasPublishedVersion = [group.latest, ...group.older].some(
+      (v) => statusOf(v) === 'approved'
+    );
+    const bucket = hasPublishedVersion ? 'live' : statusBucket(statusOf(group.latest));
+    result[bucket].push(group);
+  }
+  return result;
+}

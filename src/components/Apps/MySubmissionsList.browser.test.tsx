@@ -156,6 +156,8 @@ describe('MySubmissionsList', () => {
         withdrawing={false}
       />
     );
+    // A rejected row now lives in the default-collapsed Rejected section — expand it.
+    await page.getByTestId('apps-submissions-section-rejected-toggle').click();
     const btn = page.getByRole('button', { name: /see reviewer notes/i });
     await expect.element(btn).toBeInTheDocument();
     // Reason not inline.
@@ -305,24 +307,6 @@ describe('MySubmissionsList — UX pass: filter / sort / version-collapse', () =
     expect(page.getByText('alpha-app', { exact: false }).elements()).toHaveLength(0);
   });
 
-  test('clicking the App header sorts and exposes aria-sort', async () => {
-    renderWithProviders(
-      <MySubmissionsList
-        submissions={[
-          makeSubmission({ id: 'b', slug: 'bravo-app', appBlockId: 'block-b' }),
-          makeSubmission({ id: 'a', slug: 'alpha-app', appBlockId: 'block-a' }),
-        ]}
-        onWithdraw={vi.fn()}
-        withdrawing={false}
-      />
-    );
-    const appHeader = page.getByRole('button', { name: /sort by app/i });
-    await appHeader.click();
-    // The header's <th> reflects the active sort for screen readers.
-    const th = appHeader.element().closest('th');
-    expect(th?.getAttribute('aria-sort')).toBe('ascending');
-  });
-
   test('multiple versions of one app collapse; the toggle reveals older versions', async () => {
     renderWithProviders(
       <MySubmissionsList
@@ -389,6 +373,94 @@ describe('MySubmissionsList — UX pass: filter / sort / version-collapse', () =
     expect(page.getByText('1.0.0', { exact: true }).elements()).toHaveLength(0);
     await toggle.click();
     await expect.element(page.getByText('1.0.0', { exact: true })).toBeInTheDocument();
+  });
+});
+
+describe('MySubmissionsList — status sections', () => {
+  const oneOfEach = () => [
+    makeSubmission({ id: 'a', slug: 'live-app', appBlockId: 'block-a', status: 'approved' }),
+    makeSubmission({
+      id: 'b',
+      slug: 'pending-app',
+      appBlockId: 'block-b',
+      status: 'pending',
+      deployState: null,
+      reviewedAt: null,
+    }),
+    makeSubmission({
+      id: 'c',
+      slug: 'rejected-app',
+      appBlockId: 'block-c',
+      status: 'rejected',
+      deployState: null,
+      rejectionReason: null,
+    }),
+    makeSubmission({
+      id: 'd',
+      slug: 'withdrawn-app',
+      appBlockId: 'block-d',
+      status: 'withdrawn',
+      deployState: null,
+    }),
+  ];
+
+  test('groups submissions into Live/Pending/Rejected/Withdrawn sections', async () => {
+    renderWithProviders(
+      <MySubmissionsList submissions={oneOfEach()} onWithdraw={vi.fn()} withdrawing={false} />
+    );
+    await expect.element(page.getByTestId('apps-submissions-section-live')).toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-submissions-section-pending'))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-submissions-section-rejected'))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-submissions-section-withdrawn'))
+      .toBeInTheDocument();
+
+    // Live + Pending are expanded → their rows are visible up-front.
+    await expect.element(page.getByText('live-app', { exact: false })).toBeInTheDocument();
+    await expect.element(page.getByText('pending-app', { exact: false })).toBeInTheDocument();
+  });
+
+  test('Live + Pending render expanded; Rejected + Withdrawn are collapsed by default', async () => {
+    renderWithProviders(
+      <MySubmissionsList submissions={oneOfEach()} onWithdraw={vi.fn()} withdrawing={false} />
+    );
+    // Expanded sections: rows present.
+    await expect.element(page.getByText('live-app', { exact: false })).toBeInTheDocument();
+    await expect.element(page.getByText('pending-app', { exact: false })).toBeInTheDocument();
+    // Collapsed sections: their rows are NOT in the DOM until toggled.
+    expect(page.getByText('rejected-app', { exact: false }).elements()).toHaveLength(0);
+    expect(page.getByText('withdrawn-app', { exact: false }).elements()).toHaveLength(0);
+
+    // The collapse toggles carry aria-expanded=false initially.
+    const rejectedToggle = page.getByTestId('apps-submissions-section-rejected-toggle');
+    expect(rejectedToggle.element().getAttribute('aria-expanded')).toBe('false');
+
+    // Clicking a collapsed section's toggle reveals its rows.
+    await rejectedToggle.click();
+    await expect.element(page.getByText('rejected-app', { exact: false })).toBeInTheDocument();
+    expect(rejectedToggle.element().getAttribute('aria-expanded')).toBe('true');
+    // The Withdrawn section is still collapsed (independent toggle).
+    expect(page.getByText('withdrawn-app', { exact: false }).elements()).toHaveLength(0);
+  });
+
+  test('empty sections are not rendered (only-approved submissions → no other sections)', async () => {
+    renderWithProviders(
+      <MySubmissionsList
+        submissions={[
+          makeSubmission({ id: 'a', slug: 'live-app', appBlockId: 'block-a', status: 'approved' }),
+        ]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    await expect.element(page.getByTestId('apps-submissions-section-live')).toBeInTheDocument();
+    expect(page.getByTestId('apps-submissions-section-pending').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-submissions-section-rejected').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-submissions-section-withdrawn').elements()).toHaveLength(0);
   });
 });
 
