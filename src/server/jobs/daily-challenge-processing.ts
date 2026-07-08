@@ -1248,7 +1248,7 @@ export async function pickWinnersForChallenge(
             userId: entry.userId,
             imageId: entry.imageId,
             position: i + 1,
-            prize: currentChallenge.prizes[i].buzz,
+            prize: currentChallenge.prizes[i]?.buzz ?? 0,
             reason: winner.reason,
           };
         })
@@ -1262,7 +1262,7 @@ export async function pickWinnersForChallenge(
           imageId: entry.imageId!, // always non-null on fresh winner path
           place: entry.position,
           buzzAwarded: entry.prize,
-          pointsAwarded: currentChallenge.prizes[entry.position - 1].points,
+          pointsAwarded: currentChallenge.prizes[entry.position - 1]?.points ?? 0,
           reason: entry.reason ?? undefined,
         });
       }
@@ -1276,7 +1276,7 @@ export async function pickWinnersForChallenge(
           type: TransactionType.Reward,
           toAccountId: entry.userId,
           fromAccountId: 0, // central bank
-          amount: currentChallenge.prizes[i].buzz,
+          amount: currentChallenge.prizes[i]?.buzz ?? 0,
           description: `Challenge Winner Prize #${entry.position}: ${currentChallenge.title}`,
           externalTransactionId: `challenge-winner-prize-${currentChallenge.challengeId}-${entry.userId}-place-${entry.position}`,
           toAccountType: 'yellow',
