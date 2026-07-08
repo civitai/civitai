@@ -12,6 +12,10 @@ import {
 } from '~/server/services/blocks/checkpoint.service';
 import { validateBlockSettings } from '~/server/services/blocks/settings-validator.service';
 import {
+  clampDevScopes,
+  TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
+} from '~/server/services/blocks/dev-scoped-mint.service';
+import {
   newBlockInstanceId,
   newBlockUserSubscriptionId,
 } from '~/server/utils/app-block-ids';
@@ -1989,9 +1993,34 @@ export class BlockRegistry {
     // pending row per slug (partial unique index). The caller's own pending is OK.
     const pending = await db.appBlockPublishRequest.findFirst({
       where: { slug: blockId, status: 'pending' },
-      select: { submittedByUserId: true },
+      select: { submittedByUserId: true, manifest: true },
     });
     if (pending && pending.submittedByUserId !== userId) return null;
+    // SCOPE SOURCE — the declared scopes the dev-page host surfaces to the block as
+    // `declaredScopes` (→ the block's `granted` UI state). For the SUBMITTED-PENDING
+    // case (the caller owns `pending`) mirror the block-token Phase-2 mint EXACTLY:
+    // clamp the pending submission's un-reviewed `manifest.scopes` through the SAME
+    // audited belt (`clampDevScopes` + `TUNNEL_HOST_MINT_SCOPE_ALLOWLIST`, no OAuth
+    // ceiling, keyCanSpend=true). This ALIGNS the host's declared set with the scopes
+    // the mint actually stamps on the JWT — without it (the pre-Phase-2 hardcoded
+    // `[]`) the block's Generate gate reads an empty granted set and hangs on
+    // "Grant access to generate" while the JWT it holds already carries the budgeted
+    // spend scope. NO new authority: the mint re-clamps + the runtime author-flag and
+    // per-call/session/day Buzz caps remain the actual spend gates. The BRAND-NEW
+    // (no-`pending`) case stays `[]` — those apps self-declare via the mint body.
+    let ephemeralScopes: string[] = [];
+    if (pending) {
+      const pendingManifest = (pending.manifest ?? {}) as { scopes?: unknown };
+      const declared = Array.isArray(pendingManifest.scopes)
+        ? pendingManifest.scopes.filter((s): s is string => typeof s === 'string')
+        : [];
+      ephemeralScopes = clampDevScopes({
+        scopeSource: declared,
+        oauthAllowed: null,
+        keyCanSpend: true,
+        allowlist: TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
+      });
+    }
     // ALLOWED — truly-unclaimed slug, or the caller owns the pending request.
     return {
       // Synthetic, non-resolving ids (`ephemeral-<slug>`): the render path never
@@ -2008,9 +2037,10 @@ export class BlockRegistry {
       // Minimal safe sandbox for an unverified tier (client intersectSandbox
       // re-clamps to the allowlist ∪ MINIMAL_SANDBOX regardless).
       sandbox: 'allow-scripts allow-forms',
-      // EMPTY — scoped features (Buzz / App Storage) require an approved,
-      // mod-reviewed scope grant; the block-token mint stays 403 until approval.
-      scopes: [],
+      // The caller's-own-pending declared scopes, clamped to the tunnel belt (see
+      // above); `[]` for a truly-unclaimed brand-new slug. Aligned with the Phase-2
+      // block-token mint so the dev-page block's Generate gate is not falsely empty.
+      scopes: ephemeralScopes,
       // SFW default — no reviewed content rating exists pre-submit.
       contentRating: null,
     };
