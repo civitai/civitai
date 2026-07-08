@@ -17,6 +17,7 @@ import { dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
 
 import { logToAxiom } from '~/server/logging/client';
+import { instrumentB2Client, recordB2PresignIssued } from '~/server/prom/b2-put.metrics';
 
 const missingEnvs = (): string[] => {
   const keys = [];
@@ -29,19 +30,33 @@ const missingEnvs = (): string[] => {
 
 export type UploadBackend = 'default' | 'b2';
 
+// B2 bucket names — used to gate browser-direct presign issuance counting so the
+// generic presign helpers (which also serve the R2 default backend) only bump
+// `b2_presign_issued_total` when the target is actually B2.
+const B2_BUCKET_NAMES: ReadonlySet<string> = new Set(
+  [
+    env.S3_UPLOAD_B2_BUCKET ?? 'civitai-modelfiles',
+    env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads',
+  ].filter((b): b is string => typeof b === 'string' && b.length > 0)
+);
+
 export function getB2S3Client() {
   if (!env.S3_UPLOAD_B2_ACCESS_KEY || !env.S3_UPLOAD_B2_SECRET_KEY || !env.S3_UPLOAD_B2_ENDPOINT) {
     throw new Error('B2 upload credentials not configured');
   }
-  return new S3Client({
-    credentials: {
-      accessKeyId: env.S3_UPLOAD_B2_ACCESS_KEY,
-      secretAccessKey: env.S3_UPLOAD_B2_SECRET_KEY,
-    },
-    region: env.S3_UPLOAD_B2_REGION ?? 'us-west-004',
-    endpoint: env.S3_UPLOAD_B2_ENDPOINT,
-    forcePathStyle: true,
-  });
+  // Wrap with the additive B2 PUT-metrics middleware (counts server-side .send()s;
+  // presigned uploads never hit this path). Behavior-neutral.
+  return instrumentB2Client(
+    new S3Client({
+      credentials: {
+        accessKeyId: env.S3_UPLOAD_B2_ACCESS_KEY,
+        secretAccessKey: env.S3_UPLOAD_B2_SECRET_KEY,
+      },
+      region: env.S3_UPLOAD_B2_REGION ?? 'us-west-004',
+      endpoint: env.S3_UPLOAD_B2_ENDPOINT,
+      forcePathStyle: true,
+    })
+  );
 }
 
 export function getUploadS3Client(backend: UploadBackend = 'default') {
@@ -62,15 +77,18 @@ export function getB2ImageS3Client(): S3Client {
     throw new Error('B2 image upload credentials not configured');
   }
   if (!_b2ImageS3Client) {
-    _b2ImageS3Client = new S3Client({
-      credentials: {
-        accessKeyId: env.S3_IMAGE_B2_ACCESS_KEY,
-        secretAccessKey: env.S3_IMAGE_B2_SECRET_KEY,
-      },
-      region: env.S3_IMAGE_B2_REGION ?? 'us-west-004',
-      endpoint: env.S3_IMAGE_B2_ENDPOINT,
-      forcePathStyle: true,
-    });
+    // Additive B2 PUT-metrics middleware (server-side .send()s only). Behavior-neutral.
+    _b2ImageS3Client = instrumentB2Client(
+      new S3Client({
+        credentials: {
+          accessKeyId: env.S3_IMAGE_B2_ACCESS_KEY,
+          secretAccessKey: env.S3_IMAGE_B2_SECRET_KEY,
+        },
+        region: env.S3_IMAGE_B2_REGION ?? 'us-west-004',
+        endpoint: env.S3_IMAGE_B2_ENDPOINT,
+        forcePathStyle: true,
+      })
+    );
   }
   return _b2ImageS3Client;
 }
@@ -115,6 +133,8 @@ export async function getCustomPutUrl(bucket: string, key: string, s3: S3Client 
   const url = await getSignedUrl(s3, new PutObjectCommand({ Bucket: bucket, Key: key }), {
     expiresIn: UPLOAD_EXPIRATION,
   });
+  // Browser-direct B2 upload proxy: count issuance (the actual PUT is invisible pod-side).
+  if (B2_BUCKET_NAMES.has(bucket)) recordB2PresignIssued(bucket);
   return { url, bucket, key };
 }
 
@@ -438,6 +458,12 @@ export async function getMultipartPutUrl(
     );
   }
   const urls = await Promise.all(promises);
+
+  // Browser-direct B2 upload proxy: count ONE issuance per multipart upload (not
+  // per part). The CreateMultipartUpload above is a real pod-side send already
+  // counted by the client middleware (op=multipart); the UploadPart URLs here are
+  // browser-direct and invisible pod-side.
+  if (bucket && B2_BUCKET_NAMES.has(bucket)) recordB2PresignIssued(bucket);
 
   return { urls, bucket, key, uploadId: UploadId };
 }

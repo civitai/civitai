@@ -1,6 +1,14 @@
 import { dev } from '$app/environment';
 import { env } from '$env/dynamic/private';
 import { captchaVerificationsTotal } from '$lib/server/metrics';
+import { logToAxiom } from '$lib/server/axiom';
+
+// Fire-and-forget Axiom line for a captcha rejection, so the failure BREAKDOWN (which reason dominates) is
+// queryable outside the cluster: `['civitai-prod'] | where name == 'captcha-reject' | summarize count() by
+// reason`. A `no_token` majority confirms the client submits with no token (invisible widget failed for the
+// user) rather than a config/hostname problem (ClickUp 868k9gug8). Never logs the token or secret.
+const logRejectAxiom = (fields: Record<string, unknown>) =>
+  logToAxiom({ name: 'captcha-reject', ...fields }).catch(() => undefined);
 
 // Cloudflare Turnstile verification, mirroring the main app's verifyCaptchaToken (recaptcha/client.ts).
 // Uses the INVISIBLE widget (CF dashboard widget-mode = Invisible):
@@ -57,6 +65,7 @@ export async function verifyCaptchaToken(token: string | undefined, ip?: string)
   if (!isCaptchaEnabled()) return true;
   if (!token) {
     captchaVerificationsTotal.inc({ result: 'no_token' });
+    logRejectAxiom({ reason: 'no_token', ip });
     return false;
   }
   try {
@@ -68,6 +77,7 @@ export async function verifyCaptchaToken(token: string | undefined, ip?: string)
     if (!res.ok) {
       console.error('captcha verify rejected', { reason: 'siteverify-http', status: res.status });
       captchaVerificationsTotal.inc({ result: 'http_error' });
+      logRejectAxiom({ reason: 'http_error', status: res.status, ip });
       return false;
     }
     const outcome = (await res.json()) as {
@@ -88,6 +98,13 @@ export async function verifyCaptchaToken(token: string | undefined, ip?: string)
       // Mirror the reject reason to the counter (dash→underscore for a valid label value:
       // siteverify-failed→siteverify_failed, hostname-mismatch→hostname_mismatch, …).
       captchaVerificationsTotal.inc({ result: reason.replace(/-/g, '_') });
+      logRejectAxiom({
+        reason,
+        hostname: outcome.hostname,
+        action: outcome.action,
+        errorCodes: outcome['error-codes'],
+        ip,
+      });
     };
 
     if (!outcome.success) {

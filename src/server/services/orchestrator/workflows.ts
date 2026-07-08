@@ -329,7 +329,13 @@ export async function submitWorkflow({
   // `result.data` to defined for the `return` below.
   if (!result.data) {
     const { error, response } = result;
-    const { messages } = (typeof error !== 'string' ? error.errors ?? {} : {}) as {
+    // Null-guard `error`: on a status-less resolve the client can hand back
+    // `{ data: undefined, error: undefined, response: undefined }`, and a bare
+    // `error.errors` would then throw a TypeError ("Cannot read properties of
+    // undefined") BEFORE the `!response` 503 guard below — surfacing as a raw 500
+    // (the exact metric this targets). The `&& error` lets that shape fall through
+    // to the 503 mapping instead of crashing.
+    const { messages } = (typeof error !== 'string' && error ? error.errors ?? {} : {}) as {
       messages?: string[];
     };
     let message = messages?.length ? messages.join(',\n') : handleError(error);
@@ -376,20 +382,44 @@ export async function submitWorkflow({
         // BAD_REQUEST), so the client can back off AND the tRPC onError Axiom-skip
         // for TOO_MANY_REQUESTS keeps a 429 storm off the event loop.
         throw throwRateLimitError(message);
-      case 500:
-        throw throwInternalServerError(message);
       default:
-        if (message?.startsWith('<!DOCTYPE'))
-          throw throwInternalServerError('Generation services down');
         // An unhandled 4xx from the orchestrator is a client/validation fault
         // (e.g. "<resource> is not enabled for generation. Please contact …"),
         // not a server error. Surface it as a 4xx instead of re-throwing a raw
         // error that tRPC maps to INTERNAL_SERVER_ERROR (500) — that misclassified
-        // generate/whatIf validation rejections as the app's own 500s. Genuine
-        // upstream 5xx / status-less failures still fall through to a server error.
+        // generate/whatIf validation rejections as the app's own 500s.
         if (typeof response.status === 'number' && response.status >= 400 && response.status < 500)
           throw throwBadRequestError(message);
-        throw error;
+        // A genuine upstream 5xx — an orchestrator HTTP 500, or a gateway/LB HTML
+        // error page (which arrives as a 5xx body starting with `<!DOCTYPE`) — is a
+        // TRANSIENT dependency outage, NOT this app's own fault. Mirror the read
+        // paths (queryWorkflows/getWorkflow, above): map it to a retry-able 503
+        // SERVICE_UNAVAILABLE, guarded on the SAME `isUpstreamServerOrNetworkError`
+        // predicate, with the ORIGINAL client error preserved as `cause`.
+        //
+        // Before this the submit switch had NO 503 branch: the old `case 500` and
+        // the 5xx `default` both threw `throwInternalServerError(<string>)`, which
+        // (a) counted a transient orchestrator blip against our 500 SLO and (b)
+        // dropped the structured client error — only a derived STRING survived as
+        // `cause`, which `buildServerFaultErrorLog` renders EMPTY. That is the
+        // causeless-generic-500 signature seen on orchestrator.whatIfFromGraph /
+        // generateFromGraph; this is its submit-path fix and the read-path analogue.
+        if (isUpstreamServerOrNetworkError({ clientError: { status: response.status }, thrown: error }))
+          throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, error);
+        // Anything else (a non-4xx/5xx anomaly with no `data` — e.g. a malformed
+        // "success", a genuine bug) stays a 500 so real problems remain visible, but
+        // carry the ORIGINAL client error as `cause` (not a bare string) so
+        // `buildServerFaultErrorLog` can un-mask the real message/stack. We do NOT
+        // blanket-convert to 503 — only recognized transient upstream failures above.
+        // When `error` is nullish here (a 2xx/empty-body anomaly: `!data` +
+        // truthy `response` + `status < 400` + no `error`), synthesize a defined
+        // Error so `throwInternalServerError`'s `(error as any).message` read
+        // (errorHandling.ts) can't itself throw a spurious TypeError — the very
+        // causeless-500 shape this PR exists to kill. A non-nullish `error` flows
+        // through unchanged, cause preserved (Item B).
+        throw throwInternalServerError(
+          error ?? new Error('orchestrator returned no data', { cause: error })
+        );
     }
   }
 

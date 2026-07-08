@@ -400,6 +400,11 @@ describe('listAvailableListings — query building + pagination', () => {
     expect(capturedSql()).toMatch(/al\.status\s*=\s*'approved'/);
   });
 
+  it('SQL excludes SHADOW revision drafts (revision_of_id IS NULL) — defense in depth', async () => {
+    await listAvailableListings({ kind: 'all', sort: 'newest', limit: 20 });
+    expect(capturedSql()).toMatch(/al\.revision_of_id\s+IS\s+NULL/i);
+  });
+
   it('kind filter binds the requested kind (onsite)', async () => {
     await listAvailableListings({ kind: 'onsite', sort: 'newest', limit: 20 });
     expect(capturedSql()).toMatch(/al\.kind\s*=/);
@@ -642,7 +647,8 @@ describe('getListingDetail — approved-only + maturity gate', () => {
     // Looked up by slug.
     const where = (mockDbRead.appListing.findFirst.mock.calls.at(-1)?.[0] as { where?: unknown })
       ?.where;
-    expect(where).toEqual({ slug: 'cool-app' });
+    // Includes the shadow-exclusion guard (defense-in-depth).
+    expect(where).toEqual({ slug: 'cool-app', revisionOfId: null });
   });
 
   it('looks up by id when id is provided', async () => {
@@ -650,7 +656,14 @@ describe('getListingDetail — approved-only + maturity gate', () => {
     await getListingDetail({ id: 'apl_1' });
     const where = (mockDbRead.appListing.findFirst.mock.calls.at(-1)?.[0] as { where?: unknown })
       ?.where;
-    expect(where).toEqual({ id: 'apl_1' });
+    expect(where).toEqual({ id: 'apl_1', revisionOfId: null });
+  });
+
+  it('the WHERE excludes SHADOW revision drafts (revisionOfId: null) for BOTH selectors', async () => {
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...hydratedRow(), status: 'approved' });
+    await getListingDetail({ slug: 'cool-app' });
+    const bySlug = (mockDbRead.appListing.findFirst.mock.calls.at(-1)?.[0] as { where?: { revisionOfId?: unknown } })?.where;
+    expect(bySlug?.revisionOfId).toBeNull();
   });
 
   it('returns null for a missing listing', async () => {

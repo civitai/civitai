@@ -429,7 +429,9 @@ export const serverSchema = z
     SIGNALS_ENDPOINT: isProd ? z.url() : z.url().optional(),
     // The in-repo notifications app (apps/notifications) — the monolith creates/reads/marks notifications
     // through it via @civitai/notifications rather than touching the notification DB directly.
-    NOTIFICATIONS_ENDPOINT: isProd ? z.url() : z.url().optional(),
+    NOTIFICATIONS_ENDPOINT: isProd
+      ? z.url()
+      : z.preprocess((v) => v || undefined, z.url().optional()),
     // Prod-required + non-empty: the app disables its auth gate on an empty token, so a blank value here
     // would produce an unauthenticated producer API. Fail-fast at monolith boot instead.
     NOTIFICATIONS_TOKEN: isProd ? z.string().min(1) : z.string().optional(),
@@ -598,6 +600,7 @@ export const serverSchema = z
     NOW_PAYMENTS_PASSWORD: z.string().optional(),
     NOW_PAYMENTS_PAYOUT_ADDRESS: z.string().optional(),
     NOWPAYMENTS_IPN_URL: z.string().optional(), // Override IPN callback URL (e.g., webhook.site for dev)
+    NOWPAYMENTS_SUPPORT_EMAIL: z.string().optional(), // NP support inbox for stuck-deposit tickets; unset disables the notifier
 
     // Coinbase Related:
     COINBASE_API_URL: z.string().optional(),
@@ -793,7 +796,22 @@ export const serverSchema = z
     //   P0 sish Service.
     APPS_DEV_TUNNEL_SISH_BACKEND: z
       .string()
-      .default('http://sish-http.apps-dev-tunnel.svc.cluster.local:8080'),
+      // Port 80 = the sish-http SERVICE port (targetPort 8080 on the pod). A Traefik
+      // IngressRoute service ref must match a Service port, not the pod targetPort.
+      .default('http://sish-http.apps-dev-tunnel.svc.cluster.local:80'),
+    // APPS_DEV_TUNNEL_INGRESS_TARGET   the Traefik LB IP the ephemeral
+    //   `dev-<hex>.<APPS_DOMAIN>` DNS record points at. Set PER-ENVIRONMENT (e.g. the
+    //   dp-prod SOPS env) — intentionally NO default so the origin IP is not committed
+    //   to the repo. When set, the dev-tunnel IngressRoute carries external-dns
+    //   annotations and the host resolves (CF-proxied); when unset, no record is
+    //   created (the tunnel host is NXDOMAIN). external-dns runs source=traefik-proxy,
+    //   domain civit.ai.
+    APPS_DEV_TUNNEL_INGRESS_TARGET: z.string().optional(),
+    // APPS_DEV_TUNNEL_ROUTE_NAMESPACE   the namespace the ephemeral dev-tunnel
+    //   IngressRoute + forwardAuth Middleware are created in. MUST match the sish
+    //   backend's namespace (apps-dev-tunnel) — Traefik rejects a cross-namespace
+    //   service reference. The apply Job still runs in APPS_KUBE_NAMESPACE.
+    APPS_DEV_TUNNEL_ROUTE_NAMESPACE: z.string().default('apps-dev-tunnel'),
     // APPS_DEV_TUNNEL_SSH_HOST_PUBKEY   the sish server's SSH HOST public key, as a
     //   NON-SECRET OpenSSH line (`ssh-ed25519 AAAA...`). Returned by
     //   startDevTunnel so the CLI can PIN it on the `ssh -R` hop (R1 — closes the
@@ -801,6 +819,18 @@ export const serverSchema = z
     //   an empty string and the CLI must fail closed (refuse to connect without a
     //   pin) rather than fall back to InsecureIgnoreHostKey.
     APPS_DEV_TUNNEL_SSH_HOST_PUBKEY: z.string().optional(),
+    // APPS_DEV_TUNNEL_CF_API_TOKEN   Cloudflare API token (DNS:Edit on the civit.ai
+    //   zone) used to DELETE the ephemeral `dev-<hex>.civit.ai` DNS records when a
+    //   dev-tunnel is torn down or reaped. external-dns runs `policy: upsert-only`, so
+    //   it NEVER removes a record on route deletion — the A record + its external-dns
+    //   ownership TXT records would otherwise accumulate forever (a CF zone record-cap
+    //   risk at scale). OPT-IN: unset ⇒ orphan-DNS GC is skipped (records linger exactly
+    //   as today). MUST be set on dp-prod for the cleanup to activate.
+    APPS_DEV_TUNNEL_CF_API_TOKEN: z.string().optional(),
+    // APPS_DEV_TUNNEL_CF_ZONE_ID   the civit.ai Cloudflare zone id. When set it is used
+    //   directly; when unset (but the token IS set) the zone is looked up by name
+    //   (GET /zones?name=civit.ai) and cached in-process. Optional.
+    APPS_DEV_TUNNEL_CF_ZONE_ID: z.string().optional(),
   })
   .superRefine((env, ctx) => {
     // Sentinel-mode for the system Redis client requires an explicit master group

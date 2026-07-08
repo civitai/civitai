@@ -41,6 +41,11 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('~/utils/trpc', () => ({
+  // FeatureFlagsProvider (in PageBlockHost's real render graph) statically imports
+  // `setTrpcBatchingEnabled` from this module (#2946). vi.mock replaces the module
+  // wholesale, so the factory must re-declare it or the ESM link fails and the whole
+  // test file fails to import.
+  setTrpcBatchingEnabled: vi.fn(),
   trpc: {
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: mocks.submit }) },

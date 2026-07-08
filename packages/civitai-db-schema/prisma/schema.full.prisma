@@ -352,10 +352,11 @@ model CryptoDeposit {
   serviceFee    Float?
   feeCurrency   String?
   paidFiat      Float?
-  chain         String?
-  retryCount    Int      @default(0)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  chain           String?
+  retryCount      Int       @default(0)
+  stuckNotifiedAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   @@index([userId, createdAt(sort: Desc)])
   @@index([status])
@@ -582,6 +583,9 @@ model User {
   appListingReviews                  AppListingReview[]
   appListingPublishRequestsSubmitted AppListingPublishRequest[] @relation("AppListingPublishRequestSubmitter")
   appListingPublishRequestsReviewed  AppListingPublishRequest[] @relation("AppListingPublishRequestReviewer")
+  appListingReportsReported          AppListingReport[]         @relation("AppListingReportReporter")
+  appListingReportsResolved          AppListingReport[]         @relation("AppListingReportResolver")
+  appListingModerationEvents         AppListingModerationEvent[] @relation("AppListingModEventActor")
 
   @@index([deletedAt])
 }
@@ -2494,7 +2498,10 @@ model AppListing {
   // Free-text marketplace category (taxonomy = MARKETPLACE_CATEGORIES const, so
   // adding a category needs no migration — mirrors AppBlock.category).
   category        String?
-  // Store lifecycle. Validated in the service + a DB CHECK.
+  // Store lifecycle: draft|pending|approved|rejected|removed. Validated in the
+  // service + a DB CHECK (the CHECK lives ONLY in the migration .sql — Prisma
+  // can't express it; canonical code set = APP_LISTING_STATUSES). P3b adds
+  // 'removed' (the mod delist target); see app-blocks-p3b-delist-claim-scope.
   status          String       @default("draft")
   // Maturity rating. For on-site listings this MIRRORS AppBlock.content_rating
   // (single source — the listing must NOT override the runtime .red/.com serving
@@ -2511,6 +2518,19 @@ model AppListing {
   // Only a natively-created off-site listing (no backing AppBlock) leaves it NULL.
   appBlockId      String?      @unique @map("app_block_id")
   appBlock        AppBlock?    @relation(fields: [appBlockId], references: [id], onDelete: SetNull)
+  // Edit-without-withdraw (shadow-draft revision): a hidden DRAFT clone of an
+  // APPROVED parent listing points here at its parent. On mod re-approve the
+  // shadow's contents are copied onto the parent (which keeps its id/slug/
+  // app_block_id/metrics/reports) and the shadow is deleted; on reject/withdraw
+  // the shadow is deleted and the parent is untouched. NULL for a normal (top-
+  // level) listing. CASCADE so deleting a parent removes its in-flight shadow.
+  // A request is a REVISION iff its listing's revisionOfId != null (no extra
+  // column on the request — it is inferred). The read path filters
+  // revisionOfId != null out (shadows are draft, so already hidden — this is
+  // defense-in-depth).
+  revisionOfId    String?      @map("revision_of_id")
+  revisionOf      AppListing?  @relation("AppListingRevision", fields: [revisionOfId], references: [id], onDelete: Cascade)
+  revisions       AppListing[] @relation("AppListingRevision")
   // Curation rail (mirrors AppBlock.featured / featured_order).
   featured        Boolean      @default(false)
   featuredOrder   Int?         @map("featured_order")
@@ -2524,6 +2544,9 @@ model AppListing {
   reviews         AppListingReview[]
   metric          AppListingMetric?
   publishRequests AppListingPublishRequest[]
+  // P3b off-site moderation: user reports + the append-only mod audit trail.
+  reports          AppListingReport[]
+  moderationEvents AppListingModerationEvent[]
 
   // Marketplace read-path indexes (future P2 read path).
   @@index([status, kind], map: "app_listings_status_kind_idx")
@@ -2534,6 +2557,14 @@ model AppListing {
   // P1 populates icon/cover (Postgres does NOT auto-index a FK). Free now (empty).
   @@index([iconId], map: "app_listings_icon_idx")
   @@index([coverId], map: "app_listings_cover_idx")
+  // Shadow-lookup (WHERE revisionOfId = parent) + the parent-delete cascade scan.
+  // NB: the migration creates this as a PARTIAL UNIQUE index (UNIQUE on
+  // revisionOfId WHERE revisionOfId IS NOT NULL) so a parent has at most ONE
+  // in-flight shadow at the DB level. Prisma can't express a partial-unique
+  // index, so this stays a plain @@index in the schema; the real one-shadow
+  // guard is the migration's partial-unique index + the app-level P2002 →
+  // idempotent-reuse handling in beginListingRevision.
+  @@index([revisionOfId], map: "app_listings_revision_of_id_key")
   @@map("app_listings")
 }
 
@@ -2614,7 +2645,7 @@ model AppListingMetric {
 /// on-site Tekton build queue clean. STRUCTURE ONLY in P0; wired in P3.
 model AppListingPublishRequest {
   id                String      @id // alpr_<ULID>
-  appListingId      String?     @map("app_listing_id") // NULL while first request pending; FK on approve
+  appListingId      String?     @map("app_listing_id") // Off-site (B1): set at SUBMIT to the draft AppListing. On-site: NULL until approve. Nullable (SetNull on listing delete).
   appListing        AppListing? @relation(fields: [appListingId], references: [id], onDelete: SetNull)
   kind              String // 'onsite' | 'offsite'
   slug              String
@@ -2637,6 +2668,107 @@ model AppListingPublishRequest {
   @@index([submittedByUserId, status], map: "app_listing_publish_requests_my_submissions_idx")
   @@index([slug, status], map: "app_listing_publish_requests_slug_idx")
   @@map("app_listing_publish_requests")
+}
+
+/// App Store Listings (W13) — P3b OFF-SITE moderation report.
+///
+/// A user-facing report affordance for an approved off-site AppListing (e.g. it
+/// impersonates a real app, links malware, is broken). Feeds a mod queue that
+/// arbitrates a delist / claim. DEDICATED table (NOT the shared site `Report`
+/// hub) to keep the off-site path isolated from the shared moderation blast
+/// radius — see app-blocks-p3b-delist-claim-scope-2026-07-06.md.
+///
+/// DARK/INERT in PR1: no proc reads or writes this table yet.
+/// DB-only extras (NOT expressible in Prisma; live in the migration .sql):
+///   - reason  CHECK IN (impersonation, phishing-malware, broken, inappropriate, spam, other)
+///   - status  CHECK IN (pending, resolved, dismissed)
+///   - a PARTIAL-UNIQUE index (app_listing_id, reporter_user_id) WHERE status='pending'
+///     (one OPEN report per reporter per listing — DB-layer anti-spam dedup).
+///     Prisma can't express partial-unique, so the schema below carries only a
+///     plain composite @@index; the partial-unique lives ONLY in the .sql.
+model AppListingReport {
+  id               String     @id // alrp_<ULID>
+  appListingId     String     @map("app_listing_id")
+  appListing       AppListing @relation(fields: [appListingId], references: [id], onDelete: Cascade)
+  // The reporter. CASCADE on GDPR user-delete.
+  reporterUserId   Int        @map("reporter_user_id")
+  reporter         User       @relation("AppListingReportReporter", fields: [reporterUserId], references: [id], onDelete: Cascade)
+  // Report reason (CHECK-constrained in the .sql).
+  reason           String
+  // Free-text elaboration (bounded in the schema layer when the proc lands).
+  details          String?
+  // Lifecycle: pending|resolved|dismissed (CHECK-constrained in the .sql).
+  status           String     @default("pending")
+  resolvedByUserId Int?       @map("resolved_by_user_id")
+  resolvedBy       User?      @relation("AppListingReportResolver", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+  resolvedAt       DateTime?  @map("resolved_at") @db.Timestamptz(6)
+  createdAt        DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  // Mod events this report triggered (SetNull back-relation — see below).
+  moderationEvents AppListingModerationEvent[]
+
+  // FIFO mod queue (open reports first).
+  @@index([status, createdAt(sort: Desc)], map: "app_listing_reports_queue_idx")
+  // Per-listing history.
+  @@index([appListingId], map: "app_listing_reports_listing_idx")
+  // Dedup support: the .sql upgrades this pair to a partial-unique WHERE pending.
+  @@index([appListingId, reporterUserId], map: "app_listing_reports_dedup_idx")
+  @@map("app_listing_reports")
+}
+
+/// App Store Listings (W13) — P3b OFF-SITE moderation audit trail.
+///
+/// An immutable, append-only record of every moderator action on an off-site
+/// listing (delist / relist / claim / purge / report-resolve / report-dismiss).
+/// Written in the SAME transaction as its mutation so a crash can't split the
+/// mutation from its audit record. DEDICATED table (do NOT overload
+/// AppListingPublishRequest) — see the P3b scope doc.
+///
+/// The listing FK, the actor FK, and the report FK are all nullable + SetNull so
+/// an event SURVIVES a later hard-delete (purge) of the listing, a moderator
+/// account delete, or a report delete — an append-only audit trail must outlive
+/// the things it references. The denormalized `slug` snapshot keeps the event
+/// self-describing even once the listing row is gone. `before`/`after` carry the
+/// structured state change (e.g. status approved->removed, or userId reassign).
+///
+/// DARK/INERT in PR1: no proc writes this table yet.
+/// DB-only extra (in the migration .sql): action CHECK IN
+///   (delist, relist, claim, purge, report-resolve, report-dismiss).
+model AppListingModerationEvent {
+  id           String      @id // alme_<ULID>
+  // Nullable + SetNull so the audit event outlives a listing purge.
+  appListingId String?     @map("app_listing_id")
+  appListing   AppListing? @relation(fields: [appListingId], references: [id], onDelete: SetNull)
+  // Denormalized snapshot so the event is self-describing after a purge.
+  slug         String
+  // The acting moderator. NULLABLE + SetNull so the audit trail SURVIVES a
+  // moderator-account delete (consistent with the report's resolvedBy) — the
+  // whole point of an append-only audit log is that it outlives the actor.
+  actorUserId  Int?        @map("actor_user_id")
+  actor        User?       @relation("AppListingModEventActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  // The report that triggered this event (if any). Nullable + SetNull: not every
+  // event comes from a report (e.g. a proactive delist), and the event outlives
+  // the report. Lets PR3 correlate a mod-event to its originating report.
+  reportId     String?     @map("report_id")
+  report       AppListingReport? @relation(fields: [reportId], references: [id], onDelete: SetNull)
+  // Mod action (CHECK-constrained in the .sql).
+  action       String
+  // Mod-supplied rationale / ownership-verification note.
+  reason       String?
+  // Extra human-readable detail.
+  detail       String?
+  // Structured before/after state, e.g. {"status":"approved"} / {"userId":123}.
+  before       Json?
+  after        Json?
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Per-listing moderation history.
+  @@index([appListingId, createdAt(sort: Desc)], map: "app_listing_mod_events_listing_idx")
+  // Per-moderator activity.
+  @@index([actorUserId, createdAt(sort: Desc)], map: "app_listing_mod_events_actor_idx")
+  // Correlate events back to the report that triggered them.
+  @@index([reportId], map: "app_listing_mod_events_report_idx")
+  @@map("app_listing_moderation_events")
 }
 
 /// Per-block-instance, per-user settings (viewer preferences).
@@ -3017,8 +3149,18 @@ model BlockScopeInvocation {
   id               BigInt   @id @default(autoincrement())
   userId           Int      @map("user_id")
   user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  appBlockId       String   @map("app_block_id")
-  appBlock         AppBlock @relation(fields: [appBlockId], references: [id], onDelete: Cascade)
+  /// NULLABLE (App Dev Tunnel Phase 2): a PRE-APPROVAL dev-tunnel spend has NO
+  /// AppBlock row (approval is what creates it), so the token carries a SYNTHETIC
+  /// `ephemeral-<slug>` appBlockId that can never FK-resolve. For that case this
+  /// column is NULL and the synthetic ref is captured in `syntheticAppId`, so the
+  /// durable per-spend audit row persists instead of FK-failing + being swallowed
+  /// (the "only a log line" gap). An APPROVED app still sets this (real FK).
+  appBlockId       String?  @map("app_block_id")
+  appBlock         AppBlock? @relation(fields: [appBlockId], references: [id], onDelete: Cascade)
+  /// The synthetic, non-resolving dev-app reference (`ephemeral-<slug>` /
+  /// `local-<slug>` / `pending-<pubreqId>`) for a PRE-APPROVAL dev-tunnel spend —
+  /// the forensic anchor when `appBlockId` is NULL. NULL for every approved-app row.
+  syntheticAppId   String?  @map("synthetic_app_id")
   blockInstanceId  String   @map("block_instance_id")
   scope            String
   endpoint         String
@@ -3027,6 +3169,7 @@ model BlockScopeInvocation {
 
   @@index([userId, invokedAt(sort: Desc), id(sort: Desc)], map: "bsi_user_invoked_idx")
   @@index([appBlockId, invokedAt(sort: Desc)], map: "bsi_app_block_invoked_idx")
+  @@index([syntheticAppId, invokedAt(sort: Desc)], map: "bsi_synthetic_app_invoked_idx")
   @@map("block_scope_invocations")
 }
 

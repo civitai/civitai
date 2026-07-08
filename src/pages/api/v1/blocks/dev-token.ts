@@ -8,13 +8,13 @@ import { dbWrite } from '~/server/db/client';
 import { sysRedis, REDIS_SYS_KEYS, withSysReadDeadline } from '~/server/redis/client';
 import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
 import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
-import { BlockTokenService } from '~/server/services/block-token.service';
 import {
-  isKnownBlockScope,
-  validateBlockScopesAgainstOauthClient,
-} from '~/shared/constants/block-scope.constants';
-import { domainBrowsingCeiling } from '~/shared/constants/browsingLevel.constants';
-import { isPageSlot, PAGE_FORBIDDEN_SCOPES, PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
+  clampDevScopes,
+  DEV_TOKEN_SCOPE_ALLOWLIST,
+  FORCED_SFW_CEILING,
+  resolveDevBuzzBudget,
+  signDevScopedPageToken,
+} from '~/server/services/blocks/dev-scoped-mint.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { Flags } from '~/shared/utils/flags';
 
@@ -226,16 +226,10 @@ export const config = {
   },
 };
 
-// A LOWER dev budget cap than the prod 1000 (scope doc §4.1). The dev spends
-// their OWN Buzz and the per-user daily cumulative cap is untouched; this just
-// bounds a single submit's reservation.
-const DEV_BUZZ_BUDGET_CAP = 250;
-const DEV_BUZZ_BUDGET_DEFAULT = 50;
-
-// Forced SFW — the dev endpoint NEVER reads the request host. localhost has no
-// color domain, and even a color-localhost dev config must not widen maturity.
-const FORCED_SFW_CEILING = domainBrowsingCeiling(null);
-
+// The DEV budget caps, forced-SFW ceiling, and the DEV_TOKEN_SCOPE_ALLOWLIST
+// (read/catalog + page spend + per-app storage; EXCLUDES social:tip:self +
+// block:settings:*) now live in dev-scoped-mint.service so the Phase-2 cookie
+// host-mint reuses the identical belt. Imported above.
 const RATE_LIMIT = { max: 30, windowSeconds: 60 } as const;
 
 const PAGE_INSTANCE_PREFIX = 'page_';
@@ -246,28 +240,6 @@ const PAGE_INSTANCE_PREFIX = 'page_';
 // recordSpendAttribution's `oauthClient.findUnique({ id })` — guaranteeing the
 // attribution write is skipped (audit S1 parity with the pending path).
 const LOCAL_APP_ID_PREFIX = 'local-';
-
-/**
- * The DEV scope allowlist (scope doc §4.1): read/catalog scopes + the page
- * spend scope + per-app storage. DELIBERATELY EXCLUDES:
- *   - `social:tip:self` — real money OUT to third parties; no test value, real
- *     abuse value.
- *   - `block:settings:read` / `block:settings:write` — installer-only, and
- *     meaningless against a local instance with no real install row.
- *
- * A requested/approved scope outside this set is STRIPPED from the minted token
- * (defense-in-depth on top of the approved-snapshot pin). `social:tip:self` and
- * `buzz:read:self` are ALSO in PAGE_FORBIDDEN_SCOPES, so the page hard rule
- * below rejects them too — this allowlist is the explicit dev-side belt.
- */
-const DEV_TOKEN_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
-  'models:read:self',
-  'media:read:owned',
-  'user:read:self',
-  'ai:write:budgeted',
-  'apps:storage:read',
-  'apps:storage:write',
-]);
 
 const requestSchema = z
   .object({
@@ -714,107 +686,46 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     return;
   }
 
-  // 7. SCOPE CLAMP. Start from the resolved scope SOURCE — the app's APPROVED
+  // 7. SCOPE CLAMP + 8. BUDGET CAP — the AUDITED belt, now factored into the
+  // shared `dev-scoped-mint.service` so the Phase-2 cookie-authed host-mint branch
+  // (`/api/v1/block-tokens`) reuses the IDENTICAL logic instead of a parallel
+  // re-implementation. Start from the resolved scope SOURCE — the app's APPROVED
   // snapshot (existing-app) OR the OWNED pending request's un-reviewed
   // manifest.scopes (pending local-manifest, §4 R1) OR the CLIENT-SUPPLIED body
   // scopes (no-row local-manifest, §4 R1) — then apply the IDENTICAL belt:
   //   a) keep only KNOWN block scopes,
   //   b) keep only scopes within the DEV_TOKEN_SCOPE_ALLOWLIST (excludes
-  //      social:tip:self + block:settings:*),
+  //      social:tip:self + block:settings:*; INCLUDES apps:storage:* for THIS
+  //      bearer path — the tunnel path uses TUNNEL_HOST_MINT_SCOPE_ALLOWLIST which
+  //      strips storage, Decision 1),
   //   c) keep only scopes within the app's OAuth ceiling (allowedScopes) — ONLY
-  //      for the approved path. BOTH local-manifest paths (pending + no-row)
-  //      have NO OauthClient (`oauthAllowed === null`) → this step is OMITTED;
-  //      7f is the spend gate.
+  //      for the approved path (`oauthAllowed !== null`); OMITTED for both
+  //      local-manifest paths (no OauthClient),
   //   d) drop the PAGE_FORBIDDEN money/spend scopes (the page hard rule),
-  //   e) if the body requested a subset, intersect with it (on the no-row path
-  //      the source IS the body, so this is an identity no-op).
-  // Every step is a STRIP (no error) so a partially-disallowed request still
-  // mints a usable, safely-clamped token. The clamp belt is byte-identical
-  // across all three paths bar the OAuth-ceiling substitution — an un-reviewed
-  // manifest (server-side pending OR client-side local) can never escalate past
-  // the allowlist, the page-forbidden set, or the dev's own credential (7f).
-  const forbidden = new Set<string>(PAGE_FORBIDDEN_SCOPES);
-
-  let granted: string[] = resolved.scopeSource
-    .filter((s) => isKnownBlockScope(s))
-    .filter((s) => DEV_TOKEN_SCOPE_ALLOWLIST.has(s))
-    .filter((s) => !forbidden.has(s));
-
-  // OAuth-ceiling clamp (approved path ONLY) — drop any scope the app's
-  // OauthClient bitmask doesn't allow. validateBlockScopesAgainstOauthClient
-  // treats SKIP_OAUTH_CHECK scopes (apps:storage:*) as always-allowed, so
-  // per-scope re-validation keeps those. SKIPPED when oauthAllowed is null (the
-  // pending path — no client; passing 0 would wrongly strip every non-skip scope).
-  if (resolved.oauthAllowed !== null) {
-    const ceiling = resolved.oauthAllowed;
-    granted = granted.filter(
-      (s: string) => validateBlockScopesAgainstOauthClient([s], ceiling).valid
-    );
-  }
-
-  // Body narrowing — the dev may request a subset of the above.
-  if (requestedScopes && requestedScopes.length > 0) {
-    const want = new Set(requestedScopes);
-    granted = granted.filter((s: string) => want.has(s));
-  }
-
-  //   f) BEARER-CREDENTIAL SPEND CEILING (UNIFORM across personal key AND OAuth).
-  //      The minted block token's spend capability must be a SUBSET of what the
-  //      bearer credential itself authorizes — a credential lacking AIServicesWrite
-  //      (a read-only personal key, OR an OAuth consent that didn't grant
-  //      AIServicesWrite) cannot mint a Buzz-spending dev token. `session.tokenScope`
-  //      is the resolved bitmask for BOTH shapes (personal-key ApiKey.tokenScope,
-  //      or the OAuth-issued token's scope). Mirrors the /api/v1/me tokenScope
-  //      posture (me.ts:24). Read/catalog/storage scopes are unaffected; only the
-  //      budgeted-spend scope is gated. This is DELIBERATELY uniform —
-  //      `AppBlocksSubmit` is the MINT gate (step 1b), `AIServicesWrite` is the
-  //      SPEND gate, and the two are never conflated. Personal keys default to
-  //      Full (carries AIServicesWrite), so this is a no-op for a normal key and a
-  //      tightening only for a narrow key or an OAuth consent without AI Services.
-  //      Strip (no error), consistent with every other clamp step.
+  //   e) if the body requested a subset, intersect with it,
+  //   f) BEARER-CREDENTIAL SPEND CEILING (`keyCanSpend`): strip `ai:write:budgeted`
+  //      unless the bearer credential (personal key OR OAuth consent) carries
+  //      AIServicesWrite. `session.tokenScope` is the resolved bitmask for BOTH
+  //      shapes. `AppBlocksSubmit` is the MINT gate (step 1b), `AIServicesWrite`
+  //      the SPEND gate — never conflated.
+  //   g) force-grant `user:read:self` (self-bound read of the dev's OWN identity;
+  //      `/blocks/me` for the harness viewer). SAFE: the token `sub` is ALWAYS the
+  //      authenticated caller (never the body), so it can only return the caller's
+  //      own profile — no third-party data, no write, no spend.
+  // Every step is a STRIP (no error) so a partially-disallowed request still mints
+  // a usable, safely-clamped token. This bearer path is UNCHANGED by the
+  // extraction (a parity test locks it).
   const keyCanSpend = Flags.hasFlag(session.tokenScope ?? 0, TokenScope.AIServicesWrite);
-  if (!keyCanSpend) {
-    granted = granted.filter((s: string) => s !== 'ai:write:budgeted');
-  }
+  const granted = clampDevScopes({
+    scopeSource: resolved.scopeSource,
+    oauthAllowed: resolved.oauthAllowed,
+    requestedScopes,
+    keyCanSpend,
+    allowlist: DEV_TOKEN_SCOPE_ALLOWLIST,
+  });
 
-  //   g) FORCE-GRANT `user:read:self` (UNCONDITIONAL, post-clamp). The local
-  //      harness's `dev:live` mode resolves the dev's OWN viewer identity by
-  //      calling `GET /api/v1/blocks/me`, which is gated on `user:read:self`.
-  //      That scope is only minted if it survives the app-manifest/approved-
-  //      snapshot + OAuth-bitmask clamp above — and the page-money scaffold
-  //      manifest declares ONLY `ai:write:budgeted`, so `user:read:self` is
-  //      never in `approvedScopes` and never minted → /blocks/me 403s → the
-  //      harness falls back to an anonymous viewer. This bypasses that clamp
-  //      for this ONE read scope so `dev:live` can resolve the viewer.
-  //
-  //      SAFE because:
-  //        - `user:read:self` is a READ scope that returns ONLY the self-bound
-  //          caller's own profile — no third-party data, no write, no spend. The
-  //          `/blocks/me` handler resolves `userId` from `claims.sub` and reads
-  //          exactly that user (me.ts), and `enforceContextBinding` rejects
-  //          `user:read:self` on an `anon` sub (block-scope.middleware.ts). The
-  //          dev token's `sub` is ALWAYS `user:<callerId>` (self-bound, set from
-  //          the authenticated caller at sign time below — never from the body),
-  //          so this can only ever return the CALLER's own identity.
-  //        - it's already a member of `DEV_TOKEN_SCOPE_ALLOWLIST` — an intended,
-  //          vetted dev scope (it was simply being clamped OUT by the per-app
-  //          approved-scopes pin, which the page-money manifest doesn't list).
-  //        - this endpoint is mod-gated (step 2) and self-bound, so the net
-  //          effect is "a dev reads their OWN identity via their OWN token" —
-  //          zero escalation, no new data surface.
-  //      Post-clamp + uniform across BOTH the personal-key and OAuth paths (the
-  //      grant runs after every clamp belt, so neither path can suppress it).
-  //      This does NOT touch the prod mint (`/api/v1/block-tokens`).
-  granted.push('user:read:self');
-
-  // Dedup, deterministic order.
-  granted = Array.from(new Set(granted)).sort();
-
-  // 8. BUDGET CAP — only meaningful when ai:write:budgeted is granted. Clamp the
-  // dev-requested budget (or the default) to the LOWER dev cap.
-  const buzzBudget = granted.includes('ai:write:budgeted')
-    ? Math.min(requestedBudget ?? DEV_BUZZ_BUDGET_DEFAULT, DEV_BUZZ_BUDGET_CAP)
-    : undefined;
+  // 8. BUDGET CAP — only meaningful when ai:write:budgeted survived the clamp.
+  const buzzBudget = resolveDevBuzzBudget(granted, requestedBudget);
 
   // 8b. PENDING-PATH MINT AUDIT (FIX 🟡-1). The pending (local-manifest) path is
   // the ONLY mint without durable, queryable audit rows: recordSpendAttribution
@@ -860,54 +771,26 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // All are BlockRevocation-checkable; the harness token-handling is identical.
   const blockInstanceId = resolved.blockInstanceId;
 
-  // 10. PAGE ctx (entity=none, no model binding) — byte-identical shape to the
-  // prod page mint, so a dev page token can NEVER satisfy a model-bound check.
-  const ctx: Record<string, unknown> = {
-    slotId: PAGE_SLOT_ID,
-    entityType: 'none',
-  };
-  // Defense-in-depth: PAGE_SLOT_ID is a page slot by construction; assert it.
-  if (!isPageSlot(PAGE_SLOT_ID)) {
-    res.status(500).json({ message: 'page slot misconfigured' });
-    return;
-  }
-
-  // 11. SIGN — reuse BlockTokenService.sign VERBATIM. Self-bound sub (userId),
-  // forced-SFW ceiling, dev-capped budget, page ctx. domain is null (no host
-  // read) — advisory only; the AUTHORITATIVE ceiling is maxBrowsingLevel.
+  // 10–11. SIGN — the shared belt builds the PAGE ctx (entity=none, no model
+  // binding — byte-identical to the prod page mint) and reuses
+  // BlockTokenService.sign VERBATIM: self-bound sub (userId), forced-SFW ceiling,
+  // dev-capped budget, `dev: true` (4h lifetime + `dev` claim; the verifier keys
+  // the 4h max-age cap off it, leaving every PRODUCTION token at 15min).
   //
-  // dev: true → a 4h lifetime + a `dev:true` claim (block-token.service.ts).
-  // The longer TTL lets a developer paste one token and iterate without
-  // re-minting every 15min; the verifier (block-scope.middleware.ts) keys the
-  // 4h max-age cap off the signed `dev` claim, leaving every PRODUCTION token
-  // at 15min.
-  //
-  // BLAST RADIUS of the 4h lifetime — the token carries NO mod claim, so step 2
-  // (the mint-TIME moderator check) does NOT bound it. What actually bounds the
+  // BLAST RADIUS of the 4h lifetime — the token carries NO mod claim, so the
+  // mint-TIME moderator check (step 2) does NOT bound it. What bounds the
   // money/settings paths is the LIVE per-request moderator re-check
   // (`assertViewerIsModerator` in apps.router / blocks.router): a demoted/banned
   // mod's 4h token is rejected there as soon as the demotion lands. The token is
-  // further self-bound (`sub` from the authenticated caller, never the body),
-  // per-call budget capped (step 8), and forced-SFW — all unchanged.
-  //
-  // ONE REAL RESIDUAL: the read-only catalog/`me` surfaces
-  // (`/api/v1/blocks/{models,images,me}`) authorize on token validity + the
-  // forced-SFW clamp, NOT a live mod re-check. So a demoted/banned mod holding a
-  // 4h dev token keeps read access to SFW-clamped PUBLIC catalog data for up to
-  // 4h. Low impact: public, SFW-clamped, self-bound `sub`, no money/settings
-  // scopes — accepted for the dev:live harness.
-  const result = await BlockTokenService.sign({
+  // further self-bound, per-call budget capped, and forced-SFW.
+  const result = await signDevScopedPageToken({
     userId: user.id,
-    blockId: resolved.signBlockId,
-    appId: resolved.signAppId,
-    appBlockId: resolved.signAppBlockId,
+    signBlockId: resolved.signBlockId,
+    signAppId: resolved.signAppId,
+    signAppBlockId: resolved.signAppBlockId,
     blockInstanceId,
-    scopes: granted,
-    ctx,
+    granted,
     buzzBudget,
-    domain: null,
-    maxBrowsingLevel: FORCED_SFW_CEILING,
-    dev: true,
   });
 
   // The body carries a bearer JWT — never let an intermediary cache it.

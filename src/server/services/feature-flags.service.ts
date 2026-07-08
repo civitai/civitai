@@ -72,6 +72,17 @@ const featureFlags = createFeatureFlags({
   // is the Flipt-DOWN fallback (mirrors `faro`); Flipt is authoritative when the flag
   // exists — ramp by bumping its % rollout, never all-at-once. See `src/utils/trpc.ts`.
   trpcBatching: { availability: ['mod'], fliptKey: 'trpc-batching' },
+  // Feed-page CLS fix. Reserves vertical space for the above-feed announcements
+  // banner during the pre-hydration window so the isClient-gated / dynamically
+  // imported carousel mount doesn't shove the (very tall) masonry feed down — the
+  // shift production RUM attributes to `MasonryContainer .queries`, which is the
+  // DISPLACED VICTIM (largest moved element), not the cause. Default OFF (mods
+  // only = the Flipt-DOWN fallback); ramp a % of ALL
+  // users via Flipt (`feed-reserve-cls`) as a THRESHOLD rollout — CLS is an
+  // all-user route metric, so a mod cohort can't move the aggregate. Purely
+  // cosmetic space reservation (worst case = a little dead space, never a
+  // functional break), so flipping the flag off is an instant, safe rollback.
+  feedReserveCls: { availability: ['mod'], fliptKey: 'feed-reserve-cls' },
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },
@@ -179,8 +190,6 @@ const featureFlags = createFeatureFlags({
   csamReports: isDev ? ['mod'] : ['granted'],
   appealReports: isDev ? ['mod'] : ['granted'],
   reviewTrainingData: isDev ? ['mod'] : ['granted'],
-  clubs: ['mod'],
-  createClubs: ['mod', 'granted'],
   moderateTags: ['granted'],
   chat: {
     toggleable: true,
@@ -262,6 +271,16 @@ const featureFlags = createFeatureFlags({
   // default until we ship publisher install UX + moderator approval workflow.
   // When off, BlockSlot renders nothing and no token-issuance traffic fires.
   appBlocks: { availability: ['mod'], fliptKey: 'app-blocks-enabled' },
+  // App Blocks W13 — dedicated App Store VISIBILITY flag, decoupled from
+  // `app-blocks-enabled` (which doubles as the block-runtime kill-switch) so the
+  // store catalog can widen to public INDEPENDENTLY of the held block-runtime GA.
+  // Store-visibility surfaces gate on `appListings || appBlocks` (client) /
+  // `isAppListingsEnabled()` which falls back to `isAppBlocksEnabled()` (server),
+  // so while the `app-listings` Flipt flag does not yet exist this resolves via
+  // the `availability: ['mod']` Flipt-down fallback (mods only) + the OR-fallback
+  // to `app-blocks-enabled` — i.e. ZERO behavior change today (the currently
+  // mod+app-dev-testers cohort keeps identical store access).
+  appListings: { availability: ['mod'], fliptKey: 'app-listings' },
   // App Blocks W10 — full-page apps (`/apps/run/<slug>`). A SEPARATE dark flag
   // so the page surface enables independently of the master `app-blocks-enabled`
   // gate. The page route + page-token mint require BOTH `appBlocks` AND

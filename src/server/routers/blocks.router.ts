@@ -49,7 +49,6 @@ import {
   teardownPreviewSchema,
   withdrawRequestSchema,
 } from '~/server/schema/blocks/publish-request.schema';
-import { registerExternalAppSchema } from '~/server/schema/blocks/external-app.schema';
 import { blockWorkflowBodySchema } from '~/server/schema/blocks/workflow.schema';
 import {
   allowMatureContentForCeiling,
@@ -579,6 +578,38 @@ async function refundBlockBuzzSpend(
   });
 }
 
+// EPHEMERAL DEV-TUNNEL rate limit (Phase 1 pre-submit). Per-user fixed window,
+// bounding how many EPHEMERAL (no-owned-AppBlock) dev-tunnel starts a single
+// author can trigger — blunts host-pool enumeration / DoS across many unclaimed
+// slugs. Applies ONLY to the ephemeral branch; the approved/owned path never
+// increments this counter.
+const EPHEMERAL_DEV_TUNNEL_RATE_LIMIT = { max: 20, windowSeconds: 3600 } as const;
+
+/**
+ * Atomically counts one ephemeral dev-tunnel start against this user's fixed
+ * window and returns whether the call is ALLOWED. Same `INCR` + first-hit `EX`
+ * (with a ttl<0 self-heal) shape as reserveBlockBuzzSpend / the dev-token
+ * limiter. Fails CLOSED (returns false) on a Redis error — an ephemeral tunnel
+ * start is not latency-critical, and failing closed here can never block the
+ * approved/owned path (which does not call this).
+ */
+async function checkEphemeralDevTunnelRateLimit(userId: number): Promise<boolean> {
+  const key = `${REDIS_SYS_KEYS.BLOCKS.DEV_TUNNEL_EPHEMERAL_RATE_LIMIT}:${userId}` as const;
+  try {
+    const count = await sysRedis.incrBy(key, 1);
+    if (count === 1) {
+      await sysRedis.expire(key, EPHEMERAL_DEV_TUNNEL_RATE_LIMIT.windowSeconds);
+    } else {
+      const ttl = await sysRedis.ttl(key);
+      if (ttl < 0) await sysRedis.expire(key, EPHEMERAL_DEV_TUNNEL_RATE_LIMIT.windowSeconds);
+    }
+    return count <= EPHEMERAL_DEV_TUNNEL_RATE_LIMIT.max;
+  } catch {
+    // Fail closed — never silently bypass the ephemeral enumeration limiter.
+    return false;
+  }
+}
+
 // Free-form slot strings are a cache-busting surface for anon callers. Bound
 // to the explicit model-slot set; the canonical source is now the slot registry
 // (src/shared/constants/slot-registry.ts) — re-exported under the SAME name so
@@ -980,6 +1011,13 @@ export const blocksRouter = router({
         // determined caller can't push parse pressure; a real ed25519/rsa pubkey
         // is well under 2kb.
         sshPublicKey: z.string().min(1).max(4096),
+        // App Dev Tunnel — the caller's local `block.manifest.json` scopes, sent by
+        // the CLI. Stored (clamped) on the session so an UNSUBMITTED (no-pending-row)
+        // app can mint a dev token carrying them. NOT an authz input: the proc has
+        // already gated author + ownership + flags; these are clamped to the tunnel
+        // allowlist at write + re-gated (incl. the dedicated unsubmitted-spend flag)
+        // at the mint. Bounded to blunt parse pressure; absent → read-only.
+        declaredScopes: z.array(z.string().min(1).max(64)).max(32).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -994,6 +1032,35 @@ export const blocksRouter = router({
         db: 'write',
       });
       if (!app) throw throwNotFoundError('App not found');
+      // EPHEMERAL PRE-SUBMIT PATH (Phase 1): the caller owns no AppBlock row for
+      // this slug yet (resolveEphemeralDevPageBlock returned a synthetic
+      // `status:'ephemeral'` resolution — already anti-shadow-guarded so the slug
+      // is unclaimed / the caller's own pending / canonical). Rate-limit these
+      // host-pool allocations per-user to blunt enumeration / DoS across unclaimed
+      // slugs. The approved/owned path skips this entirely.
+      //
+      // HONEST SECURITY NOTE (not a full "no existence oracle"): a claimed slug
+      // returns the bare NOT_FOUND above (consuming NO rate-limit budget) while an
+      // unclaimed slug reaches this branch (consuming budget / allocating a host),
+      // so a claimed-vs-unclaimed signal is INHERENT — and once a caller exhausts
+      // their 20/hr budget, claimed→NOT_FOUND vs unclaimed→429 becomes freely
+      // distinguishable. What the guard DOES guarantee: it never distinguishes
+      // AMONG the claimed cases (foreign-approved / foreign-pending / foreign-
+      // suspended all return the identical bare NOT_FOUND). Approved slugs are
+      // already public (they render at `<slug>.civit.ai`), so the only residual
+      // leak is the existence of a PENDING/SUSPENDED slug — and only to another
+      // author-flagged (trusted-cohort) caller. The 429 message is kept (not
+      // suppressed to NOT_FOUND): actionable rate-limit feedback is better UX for
+      // that trusted cohort, and it exposes nothing an exhausted-budget probe
+      // couldn't already infer.
+      if (app.status === 'ephemeral') {
+        if (!(await checkEphemeralDevTunnelRateLimit(ctx.user.id))) {
+          throw new TRPCError({
+            code: 'TOO_MANY_REQUESTS',
+            message: 'Too many dev tunnel starts for unsubmitted apps; please retry shortly',
+          });
+        }
+      }
       const { startDevTunnel } = await import('~/server/services/blocks/dev-tunnel.service');
       try {
         return await startDevTunnel({
@@ -1004,6 +1071,10 @@ export const blocksRouter = router({
           // value makes that independent of input normalization.
           blockId: app.blockId,
           sshPublicKey: input.sshPublicKey,
+          // Self-declared local-manifest scopes (bounded above). Clamped to the
+          // tunnel allowlist at write; the mint re-gates spend behind the dedicated
+          // unsubmitted-spend flag. An old CLI omits this → read-only session.
+          declaredScopes: input.declaredScopes,
         });
       } catch (err) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
@@ -1319,43 +1390,6 @@ export const blocksRouter = router({
           publishRequestId: input.publishRequestId,
           reviewerUserId: ctx.user.id,
           approvalNotes: input.approvalNotes,
-        });
-      } catch (err) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: (err as Error).message,
-        });
-      }
-    }),
-
-  /**
-   * Register an off-site (external-link) app — PURE EXTERNAL LINK model.
-   *
-   * MOD-ONLY, single-step (no bundle / Forgejo / approve pipeline): inserts an
-   * `status='approved'` app_blocks row with `external_url` set so the
-   * marketplace renders a listing that opens the URL in a new tab. The app has
-   * NO install, NO scopes, NO block token, NO subscription, and NO on-platform
-   * hosting. The service validates the https:// URL + the
-   * external-vs-on-platform mutual exclusivity.
-   */
-  registerExternalApp: moderatorProcedure
-    .use(enforceAppBlocksFlag)
-    .input(registerExternalAppSchema)
-    .mutation(async ({ ctx, input }) => {
-      const { registerExternalApp } = await import(
-        '~/server/services/blocks/external-app.service'
-      );
-      if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('Registering external apps is restricted to civitai team');
-      }
-      try {
-        return await registerExternalApp({
-          slug: input.slug,
-          name: input.name,
-          description: input.description,
-          externalUrl: input.externalUrl,
-          category: input.category,
-          reviewerUserId: ctx.user.id,
         });
       } catch (err) {
         throw new TRPCError({
@@ -2900,6 +2934,12 @@ export const blocksRouter = router({
           // Snapshot status is 'pending' / 'failed' / etc — map to an HTTP-
           // ish code so the existing UI badge colors are coherent.
           statusCode: snapshot.status === 'failed' ? 500 : 200,
+          // Phase 2 — App Dev Tunnel: a PRE-APPROVAL dev-tunnel spend carries a
+          // synthetic, non-FK appBlockId (`ephemeral-<slug>`). This is the durable
+          // per-spend audit row for that case (recordSpendAttribution below is
+          // inert for a synthetic appId, by design). `dev` routes it to the
+          // nullable-appBlockId path so the row persists instead of FK-failing.
+          dev: claims.dev === true,
         });
       })().catch(() => {
         /* swallowed inside helper */

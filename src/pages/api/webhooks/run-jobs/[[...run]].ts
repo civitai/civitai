@@ -25,6 +25,7 @@ import { bulkPayoutBlockAttributions } from '~/server/jobs/bulk-payout-block-att
 import { reapDevTunnelsJob } from '~/server/jobs/reap-dev-tunnels';
 import { custodySweepJob } from '~/server/jobs/custody-sweep';
 import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
+import { notifyStuckCryptoDepositsJob } from '~/server/jobs/notify-stuck-crypto-deposits';
 import { countReviewImages } from '~/server/jobs/count-review-images';
 import { creatorProgramJobs } from '~/server/jobs/creators-program-jobs';
 import { challengeActivationJob } from '~/server/jobs/challenge-activation';
@@ -61,7 +62,6 @@ import { nextauthCleanup } from '~/server/jobs/next-auth-cleanup';
 import { syncEmailBlocklist } from '~/server/jobs/sync-email-blocklist';
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
 import { leaderboardJobs } from '~/server/jobs/prepare-leaderboard';
-// import { processClubMembershipRecurringPayments } from '~/server/jobs/process-club-membership-recurring-payments';
 // import { processCreatorProgramImageGenerationRewards } from '~/server/jobs/process-creator-program-image-generation-rewards';
 import { csamJobs } from '~/server/jobs/process-csam';
 import { processingEngingEarlyAccess } from '~/server/jobs/process-ending-early-access';
@@ -142,7 +142,6 @@ export const jobs: Job[] = [
   ...bountyJobs,
   eventEngineDailyReset,
   eventEngineLeaderboardUpdate,
-  // processClubMembershipRecurringPayments,
   ...csamJobs,
   resourceGenerationAvailability,
   cacheCleanup,
@@ -199,6 +198,7 @@ export const jobs: Job[] = [
   processTimedUnmutesJob,
   custodySweepJob,
   reconcileNowpaymentsJob,
+  notifyStuckCryptoDepositsJob,
   processEnqueuedComicPanelsJob,
   auditRemixSourcesJob,
   dedupeOfficialUploadsJob,

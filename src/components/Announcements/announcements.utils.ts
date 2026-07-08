@@ -116,5 +116,11 @@ export function useGetAnnouncements(type: AnnouncementType = 'site') {
     [typed, dismissed, isClient]
   );
 
-  return { data: announcements, ...rest };
+  // `seededCount` is the SSR-seeded, dismissed-independent count of this type's
+  // announcements. Unlike `data` (which the `isClient` gate zeroes on the server
+  // + first client render to avoid a dismissed-flash), it is stable across the
+  // SSR→hydration boundary, so a consumer can reserve layout space at first paint
+  // when the seed indicates an announcement WILL surface post-hydration. `isClient`
+  // lets the consumer scope that reserve to the pre-hydration window only.
+  return { data: announcements, seededCount: typed.length, isClient, ...rest };
 }

@@ -175,7 +175,7 @@ type EcosystemGraphOutput = Extract<GenerationGraphOutput, { ecosystem: string }
  * A Map that throws an error when getting a value that doesn't exist.
  * Used for AIR lookups where a missing value indicates a data problem.
  */
-class StrictAirMap extends Map<number, string> {
+export class StrictAirMap extends Map<number, string> {
   /**
    * Gets the AIR string for a resource ID.
    * @throws Error if the resource ID is not found in the map.
@@ -183,7 +183,15 @@ class StrictAirMap extends Map<number, string> {
   getOrThrow(resourceId: number): string {
     const air = this.get(resourceId);
     if (!air) {
-      throw new Error(
+      // A missing AIR means the submitted form data references a resource that did
+      // NOT enrich (a deleted/unavailable resource, or a form↔enrichment mismatch)
+      // — a CLIENT/DATA fault, not a server failure. Throw a BAD_REQUEST TRPCError
+      // (via throwBadRequestError) so `classifyErrorFault` treats it as a client
+      // fault → logged at info, surfaced as HTTP 400 — instead of a plain Error that
+      // tRPC wraps into a generic INTERNAL_SERVER_ERROR (500). This was ~10% of the
+      // orchestrator.whatIfFromGraph / generateFromGraph 500s (the loudest single
+      // instance being the dead resource 3005242). Message preserved verbatim.
+      throw throwBadRequestError(
         `AIR not found for resource ID ${resourceId}. ` +
           `This indicates a mismatch between form data and enriched resources.`
       );
@@ -695,6 +703,9 @@ async function createImagePreprocessInput(
 const STEP_TYPES_WITHOUT_IMAGE_METADATA: readonly string[] = [
   'promptEnhancement',
   'chatCompletion',
+  // Renders a 2D preview of a prior polyGen mesh — its input has no image to
+  // tag, so injecting imageMetadata would only pollute the request payload.
+  'model3DPreview',
 ];
 
 function withImageMetadata(input: object, type: string, imageMetadata: string): object {
@@ -1089,7 +1100,12 @@ export async function createWorkflowStepsFromGraph({
         $type: step.$type,
         input: {
           ...(step.input as object),
-          outputFormat: data.outputFormat,
+          // A handler-set outputFormat wins (e.g. model3DPreview pins 'png');
+          // otherwise inherit the workflow's image outputFormat choice. For
+          // non-image workflows `data.outputFormat` is undefined, so this also
+          // avoids clobbering an intermediate step's own format with undefined.
+          outputFormat:
+            (step.input as { outputFormat?: string }).outputFormat ?? data.outputFormat,
         },
         priority: data.priority,
         timeout,
@@ -1966,6 +1982,10 @@ function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] {
       return output.blobs?.map((blob) => ({ ...blob, type: 'image' as const })) ?? [];
     case 'imageGen':
     case 'textToImage':
+    // model3DPreview renders 2D preview image(s) of a prior polyGen mesh; its
+    // output shape mirrors an image step. The queue card reads these as the
+    // 3D thumbnail (the step is suppressOutput, so they don't render as cards).
+    case 'model3DPreview':
       return output.images?.map((img) => ({ ...img, type: 'image' as const })) ?? [];
     case 'imageUpscaler':
     case 'preprocessImage':

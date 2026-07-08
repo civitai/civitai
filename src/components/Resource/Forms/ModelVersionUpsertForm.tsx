@@ -50,7 +50,6 @@ import {
   baseModelSupportsClipSkip,
   getActiveBaseModels,
 } from '~/shared/constants/basemodel.constants';
-import type { ClubResourceSchema } from '~/server/schema/club.schema';
 import type { GenerationResourceSchema } from '~/server/schema/generation.schema';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
 import type {
@@ -147,7 +146,14 @@ const querySchema = z.object({
   bountyId: z.coerce.number().optional(),
 });
 
-export function ModelVersionUpsertForm({ id, model, version, children, onSubmit }: Props) {
+export function ModelVersionUpsertForm({
+  id,
+  model,
+  version,
+  children,
+  onSubmit,
+  afterName,
+}: Props) {
   const features = useFeatureFlags();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
@@ -432,6 +438,7 @@ export function ModelVersionUpsertForm({ id, model, version, children, onSubmit 
             withAsterisk
             maxLength={25}
           />
+          {afterName}
 
           {features.generationOnlyModels && (!isPrivateModel || currentUser?.isModerator) && (
             <>
@@ -1038,7 +1045,6 @@ type VersionInput = Omit<ModelVersionUpsertInput, 'recommendedResources'> & {
     'strength' | 'minStrength' | 'maxStrength'
   > &
     RecommendedSettingsSchema)[];
-  clubs?: ClubResourceSchema[];
   earlyAccessEndsAt: Date | null;
   earlyAccessConfig: ModelVersionEarlyAccessConfig | null;
 };
@@ -1048,4 +1054,5 @@ type Props = {
   children: (data: { loading: boolean; canSave: boolean }) => React.ReactNode;
   model?: Partial<ModelUpsertInput & { publishedAt: Date | null }>;
   version?: Partial<VersionInput>;
+  afterName?: React.ReactNode;
 };
