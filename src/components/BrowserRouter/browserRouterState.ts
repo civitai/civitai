@@ -25,6 +25,12 @@ export type BrowserRouterState = {
  *  - `asPath`  ← `eventState.as`  else `location.pathname + location.search`
  *  - `query`   ← parsed from `eventState.url` / `history.state.url` else location
  *  - `state`   ← `history.state.state` else `{}`
+ *
+ * NOTE: the `location` fallback is pathname-level, NOT fully asPath-equivalent.
+ * It drops the URL hash (e.g. `#comments`) and any dynamic-route params Next
+ * interpolates into `history.state.url` (e.g. `/models/[id]?id=123` → `{id:'123'}`
+ * becomes `{}`). This is an accepted degradation on a path that previously
+ * HARD-CRASHED — reaching this branch means the populated state was unavailable.
  */
 export function resolveLocationChangeState(
   eventState: any,
