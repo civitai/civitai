@@ -8,7 +8,7 @@ import { readReturnUrl, readSync, buildPostLoginRedirect } from '$lib/server/aut
 import { buildPostLoginOriginCheck } from '$lib/server/oauth/first-party';
 import { createVerificationToken } from '$lib/server/auth/email-tokens';
 import { sendVerificationEmail } from '$lib/server/email/verification.email';
-import { captchaSiteKey, verifyCaptchaToken } from '$lib/server/auth/captcha';
+import { captchaSiteKey, captchaManagedSiteKey, verifyCaptchaToken } from '$lib/server/auth/captcha';
 import { getBlockedEmailDomains } from '$lib/server/auth/blocklist';
 import { checkRateLimit } from '$lib/server/auth/rate-limit';
 import { getClientIp } from '$lib/server/auth/request';
@@ -60,9 +60,11 @@ export const load: PageServerLoad = async ({ url, locals, request }) => {
     error,
     prompt,
     addAccount,
-    // Public Turnstile site key (delivered via SSR data, not a PUBLIC_ env var). The page renders
-    // the widget only when it's set; the email action verifies the token server-side.
+    // Public Turnstile site keys (delivered via SSR data, not PUBLIC_ env vars). The invisible widget is the
+    // ~99% path; the managed key is rendered by the client ONLY as a fallback when the invisible one fails —
+    // null when unprovisioned, so the fallback never appears (behavior == pre-fallback).
     turnstileSiteKey: captchaSiteKey() ?? null,
+    turnstileManagedSiteKey: captchaManagedSiteKey() ?? null,
     user: locals.user ? { username: locals.user.username, id: locals.user.id } : null,
   };
 };
@@ -91,10 +93,16 @@ export const actions: Actions = {
       return fail(429, { email, rateLimited: true });
     }
 
-    // 2. Turnstile — the widget injects `cf-turnstile-response` into the form. Passes through when
-    //    captcha is disabled (dev / no secret).
-    const captchaToken = data.get('cf-turnstile-response')?.toString();
-    if (!(await verifyCaptchaToken(captchaToken, ip ?? undefined))) {
+    // 2. Turnstile. The invisible widget auto-injects `cf-turnstile-response`; the interactive fallback rides
+    //    `managed-turnstile-response` + `captchaMode=managed`, verified against the managed secret. On a
+    //    tokenless submit the client tags WHY (widget-error / timeout / fallback-error) so the no_token reject
+    //    can be split. Passes through when captcha is disabled (dev / no secret).
+    const mode = data.get('captchaMode')?.toString() === 'managed' ? 'managed' : 'invisible';
+    const captchaToken = (
+      mode === 'managed' ? data.get('managed-turnstile-response') : data.get('cf-turnstile-response')
+    )?.toString();
+    const failReason = data.get('captchaFailReason')?.toString() || undefined;
+    if (!(await verifyCaptchaToken(captchaToken, ip ?? undefined, { mode, failReason }))) {
       return fail(400, { email, captcha: true });
     }
 
