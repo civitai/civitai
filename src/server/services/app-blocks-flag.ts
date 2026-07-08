@@ -419,6 +419,18 @@ export async function isAppBlocksDevTunnelEnabled(opts?: {
  * to `isAppBlocksDevTunnelEnabled`. Fail-closed: absent flag / Flipt-down → `false`
  * → no unsubmitted spend for anyone (mods included), so the as-merged posture is
  * dark until the flag is created in Flipt.
+ *
+ * SCOPE OF THE KILL (by design — kills NEW grants, not in-flight tokens): this is
+ * checked at MINT time (block-token mint + `/apps/dev` SSR), NOT re-checked per
+ * spend at `submitWorkflow`. A dev token minted while this flag was ON therefore
+ * retains `ai:write:budgeted` for its ≤4h `dev` TTL after a flip to OFF. That window
+ * is bounded by the self-bound spend (author's OWN Buzz only) + the per-call
+ * (DEV_BUZZ_BUDGET_CAP) / per-session (DEV_TUNNEL_SESSION_BUZZ_CAP) / per-user-daily
+ * caps, and `app-blocks-author` provides a RUNTIME full-kill for a bad actor (its
+ * re-check runs at submit). If instant SURGICAL revocation of just this surface is
+ * ever needed, add a per-spend re-check here in the `claims.dev` branch of
+ * `submitWorkflow` (gated on a brand-new discriminator so pending/approved spend is
+ * untouched). Accepted trade at ship: the caps + 4h TTL + author-flag kill suffice.
  */
 export const APP_BLOCKS_DEV_TUNNEL_UNSUBMITTED_SPEND_FLAG =
   'app-blocks-dev-tunnel-unsubmitted-spend';
