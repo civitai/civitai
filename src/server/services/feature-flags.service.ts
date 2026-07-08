@@ -83,6 +83,17 @@ const featureFlags = createFeatureFlags({
   // cosmetic space reservation (worst case = a little dead space, never a
   // functional break), so flipping the flag off is an instant, safe rollback.
   feedReserveCls: { availability: ['mod'], fliptKey: 'feed-reserve-cls' },
+  // LCP image prioritisation on the homepage home blocks. Marks the first N
+  // above-the-fold cards of the first home block with `fetchpriority="high"` +
+  // `loading="eager"` so the largest-contentful-paint image jumps ahead of the
+  // many sibling card images it contends with once rendered. Faro RUM attributes
+  // homepage poor-LCP (p75 ~3s; 30% of mobile "poor") to `AspectRatioImageCard
+  // image` with a ~2.3s `resource_load_delay`. Default OFF (mods only = the
+  // Flipt-DOWN fallback); ramp a % of ALL users via Flipt (`lcp-image-priority`)
+  // as a THRESHOLD rollout — LCP is an all-user route metric, so a mod-only
+  // cohort can't move the aggregate. Flag-OFF render is byte-identical (no img
+  // attributes emitted), so flipping it off is an instant, safe rollback.
+  lcpImagePriority: { availability: ['mod'], fliptKey: 'lcp-image-priority' },
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },

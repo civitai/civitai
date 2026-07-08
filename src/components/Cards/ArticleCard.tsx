@@ -24,11 +24,11 @@ const articleStatusBadge: Partial<Record<ArticleStatus, { label: string; color: 
   [ArticleStatus.UnpublishedViolation]: { label: 'Violation', color: 'red' },
 };
 
-export const ArticleCard = memo(function ArticleCard({ data, aspectRatio }: Props) {
-  return <ArticleCardContent data={data} aspectRatio={aspectRatio} />;
+export const ArticleCard = memo(function ArticleCard({ data, aspectRatio, priority }: Props) {
+  return <ArticleCardContent data={data} aspectRatio={aspectRatio} priority={priority} />;
 });
 
-function ArticleCardContent({ data, aspectRatio }: Props) {
+function ArticleCardContent({ data, aspectRatio, priority }: Props) {
   const { id, title, coverImage, publishedAt, user, tags, status, nsfwLevel } = data;
   // Show the article's aggregate nsfwLevel on the card (badge + blur), not just
   // the cover image's own level. Content images or a moderator/user override can
@@ -45,6 +45,7 @@ function ArticleCardContent({ data, aspectRatio }: Props) {
   return (
     <AspectRatioImageCard
       href={`/articles/${id}/${slugit(title)}`}
+      priority={priority}
       alt={title}
       aspectRatio={aspectRatio}
       contentType="article"
@@ -166,4 +167,5 @@ function ArticleStats({ data }: { data: ArticleGetAllRecord }) {
 type Props = {
   data: ArticleGetAllRecord;
   aspectRatio?: 'landscape' | 'portrait' | 'square';
+  priority?: boolean;
 };

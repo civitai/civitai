@@ -34,6 +34,12 @@ export type EdgeMediaProps = EdgeUrlProps &
     imageProps?: React.HTMLAttributes<HTMLImageElement>;
     /** Database image ID — forwarded to EdgeImage for drag-and-drop metadata lookup */
     imageId?: number;
+    /**
+     * Mark this as the LCP / above-the-fold image. Forwarded to EdgeImage, which
+     * emits `loading="eager"` + `fetchpriority="high"`. Only applies to the image
+     * branch (no effect on video). Off (default) = byte-identical render.
+     */
+    priority?: boolean;
   };
 
 export function EdgeMedia({
@@ -71,6 +77,7 @@ export function EdgeMedia({
   imageProps,
   optimized,
   imageId,
+  priority,
   ...imgProps
 }: EdgeMediaProps) {
   const imgRef = useRef<HTMLImageElement>(null);
@@ -109,6 +116,7 @@ export function EdgeMedia({
           className={className}
           style={style}
           imageId={imageId}
+          priority={priority}
           {...imgProps}
           {...imageProps}
         />

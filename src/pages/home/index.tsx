@@ -67,12 +67,17 @@ export function Home() {
               return (
                 <React.Fragment key={homeBlock.id}>
                   {homeBlock.type === HomeBlockType.Collection && (
-                    <CollectionHomeBlock homeBlockId={homeBlock.id} metadata={homeBlock.metadata} />
+                    <CollectionHomeBlock
+                      homeBlockId={homeBlock.id}
+                      metadata={homeBlock.metadata}
+                      index={i}
+                    />
                   )}
                   {homeBlock.type === HomeBlockType.FeaturedCollections && (
                     <FeaturedCollectionsHomeBlock
                       homeBlockId={homeBlock.id}
                       metadata={homeBlock.metadata}
+                      index={i}
                     />
                   )}
                   {/* {homeBlock.type === HomeBlockType.Announcement && (

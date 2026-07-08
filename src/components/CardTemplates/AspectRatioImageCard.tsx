@@ -69,6 +69,14 @@ export type AspectRatioImageCardProps<T extends DialogKey> = {
   alwaysVisibleBadge?: boolean;
   /** Accessible fallback alt text when the image itself has no name (e.g. the card's title). */
   alt?: string;
+  /**
+   * Mark this card's media as the LCP / above-the-fold image so the browser
+   * fetches it eagerly at high priority (`loading="eager"` + `fetchpriority="high"`).
+   * Threaded into the underlying EdgeMedia. Reserve for the first N cards of the
+   * first above-the-fold row — priority on everything is priority on nothing.
+   * Off (default) is byte-identical to the previous render.
+   */
+  priority?: boolean;
 } & ContentTypeProps;
 
 const IMAGE_CARD_WIDTH = 450;
@@ -92,6 +100,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
   explain,
   alwaysVisibleBadge,
   alt,
+  priority,
 }: AspectRatioImageCardProps<T>) {
   const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
 
@@ -176,6 +185,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                         })}
                         wrapperProps={{ className: 'flex-1 h-full' }}
                         width={IMAGE_CARD_WIDTH}
+                        priority={priority}
                         contain
                       />
                     )
@@ -198,6 +208,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                           ? IMAGE_CARD_WIDTH * originalAspectRatio
                           : IMAGE_CARD_WIDTH
                       }
+                      priority={priority}
                       skip={
                         image.type === 'video'
                           ? getSkipValue({

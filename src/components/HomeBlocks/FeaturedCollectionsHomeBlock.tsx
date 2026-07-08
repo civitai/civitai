@@ -16,12 +16,19 @@ import type { PickedFeaturedCollection } from '~/server/services/home-block.serv
 import { CollectionMode } from '~/shared/utils/prisma/enums';
 import { shuffle } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { shouldPrioritizeLcpImage } from '~/components/HomeBlocks/lcpImagePriority';
 
 const ITEMS_PER_ROW = 7;
 
-type Props = { homeBlockId: number; metadata: HomeBlockMetaSchema };
+type Props = {
+  homeBlockId: number;
+  metadata: HomeBlockMetaSchema;
+  /** Position of this block in the homepage stack; block 0 holds the above-the-fold LCP image. */
+  index?: number;
+};
 
-export const FeaturedCollectionsHomeBlock = ({ homeBlockId }: Props) => {
+export const FeaturedCollectionsHomeBlock = ({ homeBlockId, index }: Props) => {
   const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery(
     { id: homeBlockId },
     { trpc: { context: { skipBatch: true } } }
@@ -44,10 +51,11 @@ export const FeaturedCollectionsHomeBlock = ({ homeBlockId }: Props) => {
 
   return (
     <>
-      {picks.map((pick) =>
+      {picks.map((pick, pickIndex) =>
         pick.collection ? (
           <HomeBlockWrapper key={pick.collection.id} py={32}>
-            <FeaturedCollectionSection pick={pick} />
+            {/* Only the first section of the first home block is above the fold. */}
+            <FeaturedCollectionSection pick={pick} aboveFold={index === 0 && pickIndex === 0} />
           </HomeBlockWrapper>
         ) : null
       )}
@@ -55,16 +63,18 @@ export const FeaturedCollectionsHomeBlock = ({ homeBlockId }: Props) => {
   );
 };
 
-type SectionProps =
+type SectionProps = { aboveFold?: boolean } & (
   | { pick: PickedFeaturedCollection; isLoading?: false }
   | {
       pick: { collection: null; items: []; rows: number; limit: number };
       isLoading: true;
-    };
+    }
+);
 
-function FeaturedCollectionSection({ pick, isLoading }: SectionProps) {
+function FeaturedCollectionSection({ pick, isLoading, aboveFold }: SectionProps) {
   const { collection, items: rawItems } = pick;
   const rows = pick.rows;
+  const features = useFeatureFlags();
 
   const shuffled = useMemo(() => shuffle(rawItems ?? []), [rawItems]);
   const shuffledData = useMemo(() => shuffled.map((x: { data: unknown }) => x.data), [shuffled]);
@@ -112,14 +122,23 @@ function FeaturedCollectionSection({ pick, isLoading }: SectionProps) {
                 hideReactions: collection ? contestCollectionReactionsHidden(collection) : false,
               }}
             >
-              {(items as any[]).map((item: any, idx: number) => (
-                <div key={item.id ?? idx} className="p-2">
-                  {type === 'model' && <ModelCard data={item} forceInView />}
-                  {type === 'image' && <ImageCard data={item} />}
-                  {type === 'post' && <PostCard data={item} />}
-                  {type === 'article' && <ArticleCard data={item} />}
-                </div>
-              ))}
+              {(items as any[]).map((item: any, idx: number) => {
+                const priority = shouldPrioritizeLcpImage({
+                  enabled: features.lcpImagePriority,
+                  isFirstBlock: !!aboveFold,
+                  index: idx,
+                });
+                return (
+                  <div key={item.id ?? idx} className="p-2">
+                    {type === 'model' && (
+                      <ModelCard data={item} forceInView priority={priority} />
+                    )}
+                    {type === 'image' && <ImageCard data={item} priority={priority} />}
+                    {type === 'post' && <PostCard data={item} priority={priority} />}
+                    {type === 'article' && <ArticleCard data={item} priority={priority} />}
+                  </div>
+                );
+              })}
             </ReactionSettingsProvider>
           </ImagesProvider>
         </div>

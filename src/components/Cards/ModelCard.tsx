@@ -52,11 +52,11 @@ function ModFlagBadge({ labels }: { labels: string[] }) {
   );
 }
 
-export const ModelCard = memo(function ModelCard({ data }: Props) {
-  return <ModelCardContent data={data} />;
+export const ModelCard = memo(function ModelCard({ data, priority }: Props) {
+  return <ModelCardContent data={data} priority={priority} />;
 });
 
-function ModelCardContent({ data }: Props) {
+function ModelCardContent({ data, priority }: Props) {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
 
@@ -119,6 +119,7 @@ function ModelCardContent({ data }: Props) {
   return (
     <AspectRatioImageCard
       href={href}
+      priority={priority}
       cosmetic={data.cosmetic?.data}
       contentType="model"
       contentId={data.id}
@@ -312,4 +313,4 @@ function ModelCardStats({ data }: { data: Props['data'] }) {
   );
 }
 
-type Props = { data: UseQueryModelReturn[number]; forceInView?: boolean };
+type Props = { data: UseQueryModelReturn[number]; forceInView?: boolean; priority?: boolean };

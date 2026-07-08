@@ -12,7 +12,7 @@ import { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 
-export function PostCard({ data }: Props) {
+export function PostCard({ data, priority }: Props) {
   const currentUser = useCurrentUser();
 
   const image = data.images[0];
@@ -22,6 +22,7 @@ export function PostCard({ data }: Props) {
   return (
     <AspectRatioImageCard
       href={`/posts/${data.id}`}
+      priority={priority}
       alt={data.title || 'View post'}
       aspectRatio="square"
       cosmetic={data.cosmetic?.data}
@@ -73,4 +74,4 @@ export function PostCard({ data }: Props) {
   );
 }
 
-type Props = { data: PostsInfiniteModel };
+type Props = { data: PostsInfiniteModel; priority?: boolean };

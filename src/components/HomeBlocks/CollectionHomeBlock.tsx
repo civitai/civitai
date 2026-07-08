@@ -38,6 +38,7 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { shouldPrioritizeLcpImage } from '~/components/HomeBlocks/lcpImagePriority';
 import clsx from 'clsx';
 
 const icons = {
@@ -60,13 +61,16 @@ export const CollectionHomeBlock = ({ showAds, ...props }: Props) => {
 };
 
 const ITEMS_PER_ROW = 7;
-const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
+const CollectionHomeBlockContent = ({ homeBlockId, metadata, index: blockIndex }: Props) => {
   const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery(
     { id: homeBlockId },
     { trpc: { context: { skipBatch: true } } }
   );
 
   const rows = metadata.collection?.rows ?? 2;
+
+  const features = useFeatureFlags();
+  const isFirstBlock = blockIndex === 0;
 
   const currentUser = useCurrentUser();
 
@@ -261,14 +265,23 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
               }}
             >
               {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
-              {items.map((item) => (
-                <div key={item.id} className="p-2">
-                  {type === 'model' && <ModelCard data={item as any} forceInView />}
-                  {type === 'image' && <ImageCard data={item as any} />}
-                  {type === 'post' && <PostCard data={item as any} />}
-                  {type === 'article' && <ArticleCard data={item as any} />}
-                </div>
-              ))}
+              {items.map((item, itemIndex) => {
+                const priority = shouldPrioritizeLcpImage({
+                  enabled: features.lcpImagePriority,
+                  isFirstBlock,
+                  index: itemIndex,
+                });
+                return (
+                  <div key={item.id} className="p-2">
+                    {type === 'model' && (
+                      <ModelCard data={item as any} forceInView priority={priority} />
+                    )}
+                    {type === 'image' && <ImageCard data={item as any} priority={priority} />}
+                    {type === 'post' && <PostCard data={item as any} priority={priority} />}
+                    {type === 'article' && <ArticleCard data={item as any} priority={priority} />}
+                  </div>
+                );
+              })}
             </ReactionSettingsProvider>
           </ImagesProvider>
         </div>
@@ -287,4 +300,10 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
   );
 };
 
-type Props = { homeBlockId: number; metadata: HomeBlockMetaSchema; showAds?: boolean };
+type Props = {
+  homeBlockId: number;
+  metadata: HomeBlockMetaSchema;
+  showAds?: boolean;
+  /** Position of this block in the homepage stack; block 0 holds the above-the-fold LCP image. */
+  index?: number;
+};

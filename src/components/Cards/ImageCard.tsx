@@ -11,12 +11,13 @@ import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { ThemeIcon } from '@mantine/core';
 
-export function ImageCard({ data }: Props) {
+export function ImageCard({ data, priority }: Props) {
   const { getImages, ...context } = useImagesContext();
 
   return (
     <AspectRatioImageCard
       image={data}
+      priority={priority}
       cosmetic={data.cosmetic?.data}
       routedDialog={{
         name: 'imageDetail',
@@ -67,4 +68,4 @@ export function ImageCard({ data }: Props) {
   );
 }
 
-type Props = { data: ImagesInfiniteModel };
+type Props = { data: ImagesInfiniteModel; priority?: boolean };
