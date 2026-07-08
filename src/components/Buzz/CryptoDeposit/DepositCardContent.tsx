@@ -343,7 +343,8 @@ export function DepositCardContent({ depositAddress, error, loading, onRetry, ch
                   <Group gap="xs" wrap="nowrap" align="flex-start">
                     <IconAlertTriangle size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />
                     <Text size="xs" c="dimmed">
-                      Send BTC on the <Text span fw={600} c="yellow">Bitcoin network</Text> only.
+                      Send BTC on the <Text span fw={600} c="yellow">Bitcoin network</Text>{' '}
+                      only.
                       Coinbase users: select &quot;Bitcoin&quot; as the network, not Base or
                       other networks. cbBTC (wrapped Bitcoin) is not supported.
                     </Text>
@@ -353,7 +354,8 @@ export function DepositCardContent({ depositAddress, error, loading, onRetry, ch
                   <Group gap="xs" wrap="nowrap" align="flex-start">
                     <IconAlertTriangle size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />
                     <Text size="xs" c="dimmed">
-                      Send LTC on the <Text span fw={600} c="yellow">Litecoin network</Text> only.
+                      Send LTC on the <Text span fw={600} c="yellow">Litecoin network</Text>{' '}
+                      only.
                       Coinbase users: select &quot;Litecoin&quot; as the network, not Base or
                       other networks. cbLTC (wrapped Litecoin) is not supported.
                     </Text>
@@ -363,7 +365,8 @@ export function DepositCardContent({ depositAddress, error, loading, onRetry, ch
                   <Group gap="xs" wrap="nowrap" align="flex-start">
                     <IconAlertTriangle size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />
                     <Text size="xs" c="dimmed">
-                      Send DOGE on the <Text span fw={600} c="yellow">Dogecoin network</Text> only.
+                      Send DOGE on the <Text span fw={600} c="yellow">Dogecoin network</Text>{' '}
+                      only.
                       Coinbase users: select &quot;Dogecoin&quot; as the network, not Base or
                       other networks. cbDOGE (wrapped Dogecoin) is not supported.
                     </Text>
@@ -373,7 +376,8 @@ export function DepositCardContent({ depositAddress, error, loading, onRetry, ch
                   <Group gap="xs" wrap="nowrap" align="flex-start">
                     <IconAlertTriangle size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />
                     <Text size="xs" c="dimmed">
-                      Send SOL on the <Text span fw={600} c="yellow">Solana network</Text> only.
+                      Send SOL on the <Text span fw={600} c="yellow">Solana network</Text>{' '}
+                      only.
                       Coinbase users: select &quot;Solana&quot; as the network, not Base. SOL
                       sent via Base is not supported.
                     </Text>

@@ -13,6 +13,7 @@ import { trpcProcedureDuration } from '~/server/prom/client';
 import { maybeLogTrpcSlow } from '~/server/logging/trpc-slow-log';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
@@ -105,9 +106,10 @@ async function needsUpdate(req?: NextApiRequest) {
     logSysRedisFailOpen('read-degraded', 'needsUpdate', err);
     return false;
   }
-  if (client.version) {
+  const clientVersion = decodeRedisString(client.version);
+  if (clientVersion) {
     if (!version || version === 'unknown') return true;
-    return semver.lt(version, client.version);
+    return semver.lt(version, clientVersion);
   }
   if (client.date) {
     if (!date) return true;
@@ -407,7 +409,7 @@ const hasAppBlocksAuthor = t.middleware(({ ctx, next }) => {
   if (!features.appBlocksAuthor)
     throw new TRPCError({
       code: 'FORBIDDEN',
-      message: 'You do not have access to App Blocks authoring',
+      message: 'You do not have access to Apps authoring',
     });
   return next();
 });

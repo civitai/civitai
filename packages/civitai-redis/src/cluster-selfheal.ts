@@ -12,10 +12,17 @@
  *
  * TWO TRIGGERS (either forces a reconnect, subject to the shared cooldown + single-flight):
  *
- *   TRIGGER 1 — DEADLINE-HIT RATE (the real-wave signal, sawtooth-immune): N cluster
- *   command-deadline TIMEOUTS within a sliding window. A healthy client hits the 15s deadline
- *   ZERO times; a half-open client hits it on ~every command. This is the trigger that
- *   actually fires during a real fleet wave (see the bug below).
+ *   TRIGGER 1 — SLOW-SETTLE RATE (the real-wave signal, sawtooth-immune): N cluster command
+ *   SLOW-SETTLES within a sliding window. A "slow settle" = a cluster command whose observed
+ *   wall-clock duration reached the slow threshold (recordClusterCommandSettle, sourced from
+ *   instrumentCommands' done() — the SAME settle-time observation as the redis_command_duration
+ *   histogram). A healthy client settles ZERO commands slowly (p99 ≈ 23ms); a half-open client
+ *   settles ~every command slowly. This is the trigger that actually fires during a real fleet
+ *   wave (see the bug below). NOTE: the signal was originally sourced from withCommandDeadline's
+ *   onTimeout (the deadline REAP), which is silent when slow commands settle on their own past the
+ *   deadline — the 2026-07-06 fleet wedge (human recycle, selfheal 0-fire). It is now sourced at
+ *   SETTLE time so it can never diverge from the histogram that proves the wedge. (The config
+ *   field is still named `deadlineHitThreshold`/`deadlineHitWindowMs` for continuity.)
  *
  *   TRIGGER 2 — SUSTAINED INFLIGHT (legacy continuous-breach): `redis_commands_inflight`
  *   pinned above a threshold CONTINUOUSLY for the sustained window. Kept as a backstop for
@@ -97,10 +104,10 @@ export interface ClusterSelfHealDeps {
   /** Reads the current in-process cluster inflight count (same source as the gauge). */
   getInflight: () => number;
   /**
-   * Reads the number of cluster command-deadline timeouts within the last `deadlineHitWindowMs`
-   * (the sawtooth-immune wedge signal). Receives the window so the recorder owns the windowing.
-   * Optional so existing callers/tests that only drive the inflight path can omit it (treated
-   * as 0 → deadline trigger inert).
+   * Reads the number of cluster command SLOW-SETTLES within the last `deadlineHitWindowMs`
+   * (the sawtooth-immune wedge signal — see TRIGGER 1). Receives the window so the recorder owns
+   * the windowing. Optional so existing callers/tests that only drive the inflight path can omit
+   * it (treated as 0 → slow-settle trigger inert).
    */
   getDeadlineHits?: (windowMs: number) => number;
   /**

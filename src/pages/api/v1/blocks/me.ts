@@ -81,7 +81,7 @@ const baseHandler = withAxiom(async function handler(
   // mod-gated, but a token minted just before a demotion is valid for ~15min;
   // re-assert the resolved viewer is a moderator as defense-in-depth.
   if (!user.isModerator) {
-    res.status(403).json({ error: 'App Blocks is restricted to the civitai team' });
+    res.status(403).json({ error: 'Apps are restricted to the Civitai team' });
     return;
   }
   // M1+M6: a banned user with a still-valid session must NOT be surfaced

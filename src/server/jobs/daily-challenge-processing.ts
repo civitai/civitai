@@ -804,6 +804,15 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   const scoredCountMap = new Map(userScoredCounts.map((r) => [r.userId, Number(r.count)]));
   log('Users with scored entries:', scoredCountMap.size);
 
+  // Durable "already reviewed" gate: the judged tag lives in the mutable
+  // CollectionItem.tagId, which resets when an entry is removed and re-added — letting
+  // users re-roll their score. The judge's comment survives that collection churn.
+  const notYetReviewedByJudge = Prisma.sql`NOT EXISTS (
+    SELECT 1 FROM "Thread" th
+    JOIN "CommentV2" cm ON cm."threadId" = th.id
+    WHERE th."imageId" = ci."imageId" AND cm."userId" = ${judgingConfig.userId}
+  )`;
+
   // Get entries approved since last reviewed
   const recentEntries = await dbWrite.$queryRaw<RecentEntry[]>`
     SELECT
@@ -818,6 +827,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     AND ci.status = 'ACCEPTED'
     AND ci."tagId" IS NULL
     AND ci."reviewedAt" >= ${lastReviewedAt}
+    AND ${notYetReviewedByJudge}
   `;
   log('Recent entries:', recentEntries.length);
 
@@ -851,6 +861,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     WHERE ci."collectionId" = ${currentChallenge.collectionId}
     AND ci.status = 'ACCEPTED'
     AND ci."tagId" = ${config.reviewMeTagId}
+    AND ${notYetReviewedByJudge}
   `;
   log('Requested review:', requestReview.length);
   // Paid review entries bypass per-user cap — users paid for guaranteed review
@@ -862,6 +873,23 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   const tasks = toReview.map((entry) => async () => {
     try {
       log('Reviewing entry:', entry);
+
+      // Defense-in-depth for the selection-time gate: an overlapping job run (lock
+      // expires before the 10-min cron interval) could have selected this same entry.
+      // Re-check on dbWrite right before spending an LLM call so concurrent runs can't
+      // double-comment.
+      const [alreadyReviewed] = await dbWrite.$queryRaw<[{ exists: boolean }?]>`
+        SELECT EXISTS (
+          SELECT 1 FROM "Thread" th
+          JOIN "CommentV2" cm ON cm."threadId" = th.id
+          WHERE th."imageId" = ${entry.imageId} AND cm."userId" = ${judgingConfig.userId}
+        ) AS "exists"
+      `;
+      if (alreadyReviewed?.exists) {
+        log('Skipping already-reviewed entry', entry.imageId);
+        return;
+      }
+
       const review = await generateReview({
         theme: currentChallenge.theme,
         themeElements,

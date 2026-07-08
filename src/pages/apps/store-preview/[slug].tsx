@@ -40,12 +40,16 @@ export default function AppStoreListingDetailPage() {
   // Anon-capable public read path — fires only behind the appBlocks flag (mods
   // today) with a slug. Returns ONLY the ListingDetail allowlist; a missing /
   // non-approved slug 404s server-side. retry:false so it settles into NotFound.
+  // W13 (PR-W1a/D8): store-visibility gate = dedicated `appListings` OR-falling-
+  // back to `appBlocks`. Zero behavior change today (the `app-listings` flag
+  // doesn't exist yet, so this resolves to today's mods+app-dev-testers cohort).
+  const canSeeStore = features.appListings || features.appBlocks;
   const { data, isLoading, error } = trpc.appListings.getAppDetail.useQuery(
     { slug },
-    { enabled: !!features.appBlocks && !!slug, retry: false }
+    { enabled: !!canSeeStore && !!slug, retry: false }
   );
 
-  if (!features.appBlocks) return <NotFound />;
+  if (!canSeeStore) return <NotFound />;
   if (error) return <NotFound />;
 
   const detail = data as ListingDetail | undefined;

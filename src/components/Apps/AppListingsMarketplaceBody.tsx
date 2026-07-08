@@ -105,7 +105,11 @@ export function AppListingsMarketplaceBody() {
       limit: 24,
     },
     {
-      enabled: !!features.appBlocks,
+      // W13 (PR-W1a/D8): store-visibility gate = dedicated `appListings`
+      // OR-falling-back to `appBlocks`. Mirrors the server read gate
+      // (`enforceAppListingsReadFlag` → `isAppListingsEnabled`). Zero behavior
+      // change today (the `app-listings` flag doesn't exist yet).
+      enabled: !!(features.appListings || features.appBlocks),
       getNextPageParam: (lastPage) => lastPage.nextCursor,
     }
   );

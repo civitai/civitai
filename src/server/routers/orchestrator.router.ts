@@ -70,7 +70,8 @@ import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
 import type { SessionUser } from '~/types/session';
 import { reviewConsumerStrikes } from '../http/orchestrator/flagged-consumers';
 import semver from 'semver';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { getAllowedAccountTypes } from '../utils/buzz-helpers';
 import { getVideoMetadata } from '~/server/services/orchestrator/videoEnhancement';
@@ -133,15 +134,19 @@ const enforceGenerationVersion = middleware(async ({ ctx, next }) => {
   // the rest of the generation-path fail-open coverage in this PR.
   let genClient: Record<string, string>;
   try {
-    genClient = await sysRedis.hGetAll(REDIS_SYS_KEYS.GENERATION.CLIENT);
+    // Wall-clock deadline so a silent sysRedis half-open can't park every gen
+    // tRPC call ~11min (a fast DOWN already rejects into the catch below).
+    genClient = await withSysReadDeadline(sysRedis.hGetAll(REDIS_SYS_KEYS.GENERATION.CLIENT));
   } catch (err) {
     logSysRedisFailOpen('read-degraded', 'enforceGenerationVersion', err);
     return result;
   }
 
-  if (genClient.version && semver.lt(version, genClient.version)) {
-    ctx.res?.setHeader('x-generation-update-required', genClient.version);
-    if (genClient.notes) ctx.res?.setHeader('x-generation-update-notes', genClient.notes);
+  const genVersion = decodeRedisString(genClient.version);
+  if (genVersion && semver.lt(version, genVersion)) {
+    ctx.res?.setHeader('x-generation-update-required', genVersion);
+    if (genClient.notes)
+      ctx.res?.setHeader('x-generation-update-notes', decodeRedisString(genClient.notes));
   }
 
   return result;

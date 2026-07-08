@@ -183,6 +183,17 @@ export function getModelUrl({
 }
 
 /**
+ * Build a canonical 3D-model detail URL. The `/3d-models/[id]/[[...slug]]`
+ * route ignores the slug segment (id is the source of truth), so this just
+ * appends the slugified name for pretty, index-friendly URLs. Falls back to
+ * the bare id path when the name is missing/empty.
+ */
+export function getModel3DUrl({ id, name }: { id: number; name?: string | null }): string {
+  const slug = name ? slugit(name) : null;
+  return slug ? `/3d-models/${id}/${slug}` : `/3d-models/${id}`;
+}
+
+/**
  * @see https://www.geeksforgeeks.org/how-to-strip-out-html-tags-from-a-string-using-javascript/
  */
 export function removeTags(str: string) {

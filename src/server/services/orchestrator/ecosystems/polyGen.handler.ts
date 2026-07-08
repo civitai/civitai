@@ -61,6 +61,13 @@ export type HandlePolyGenResultArgs = {
   sourceImageId?: number;
   /** Optional Model3DLicense id; falls back to the seed default if omitted. */
   licenseId?: number;
+  /**
+   * Preferred thumbnail source — the chained `model3DPreview` step's rendered
+   * image. When present it's ingested instead of the polyGen-emitted
+   * `output.thumbnail` (an uncontrollable, off-angle auto-render), so the saved
+   * Model3D's thumbnail matches the centered preview the user saw in the queue.
+   */
+  thumbnailOverride?: ImageBlob;
 };
 
 export type PolyGenResult = {
@@ -153,11 +160,13 @@ export async function handlePolyGenWorkflowResult(
   }
 
   // ---------------------------------------------------------------------------
-  // 3. Ingest the thumbnail image (if any) into the standard Image pipeline
+  // 3. Ingest the thumbnail image (if any) into the standard Image pipeline.
+  //    Prefer the model3DPreview render over the polyGen auto-thumbnail.
   // ---------------------------------------------------------------------------
+  const thumbnailSource = args.thumbnailOverride ?? output.thumbnail;
   let thumbnailImageId: number | undefined;
-  if (output.thumbnail) {
-    thumbnailImageId = await ingestThumbnailImage(output.thumbnail, userId, workflowId);
+  if (thumbnailSource) {
+    thumbnailImageId = await ingestThumbnailImage(thumbnailSource, userId, workflowId);
   }
 
   // ---------------------------------------------------------------------------

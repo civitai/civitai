@@ -44,7 +44,7 @@ async function assertViewerIsAppDeveloper(userId: number): Promise<void> {
   if (!(await isAppBlocksAuthorEnabled({ user: user ?? undefined }))) {
     throw new TRPCError({
       code: 'FORBIDDEN',
-      message: 'App Blocks authoring is not enabled for this account',
+      message: 'Apps authoring is not enabled for this account',
     });
   }
 }
@@ -74,9 +74,9 @@ const enforceAppBlocksFlag = middleware(async ({ ctx, next, type }) => {
   // gives the block a misleading-success path. The block already gates
   // its own UI on host signals, so a clean UNAUTHORIZED is fine.
   if (type === 'query') {
-    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
   }
-  throw new TRPCError({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
+  throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
 });
 
 /**

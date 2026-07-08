@@ -5,7 +5,6 @@ import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { executeRefresh, getAffected } from '~/server/metrics/metric-helpers';
 import type { Task } from '~/server/utils/concurrency-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { getImageMetricsObject } from '~/server/services/image.service';
 import { createLogger } from '~/utils/logging';
 
 const log = createLogger('metrics:model3d');
@@ -22,13 +21,12 @@ const metricKeys = [
   'tippedAmountCount',
   'ratingCount',
   'recommendedCount',
-  'reactionCount',
+  'downloadCount',
   'earnedAmount',
-  // NOTE: `downloadCount` is intentionally absent. The plan (§6.16 / §3
-  // touch list) sources downloads from ClickHouse events; that's a follow-up
-  // outside workstream E. The column defaults to 0 in the schema and the
-  // upsert below preserves whatever's there, so adding the ClickHouse path
-  // later is purely additive.
+  // NOTE: `reactionCount` was dropped — it was copied from the thumbnail
+  // image's ImageMetric (nothing feeds a Model3D-native reaction), so it
+  // was always ~0 and no longer backs any sort. The DB column stays for
+  // back-compat; we just no longer compute it.
 ] as const;
 
 type MetricKey = (typeof metricKeys)[number];
@@ -52,9 +50,10 @@ export const model3dMetrics = createMetricProcessor({
       getReviewTasks(ctx),
       getCollectionTasks(ctx),
       getBuzzTasks(ctx),
-      getReactionTasks(ctx),
+      getDownloadTasks(ctx),
       getImageTasks(ctx),
       getEarnedTasks(ctx),
+      getEnsureMetricRowTasks(ctx),
     ]).then((x) => x.flat())) as Task[];
     log('model3dMetrics update', fetchTasks.length, 'tasks');
     await limitConcurrency(fetchTasks, 5);
@@ -270,57 +269,38 @@ async function getBuzzTasks(ctx: MetricContext) {
 }
 
 // ---------------------------------------------------------------------------
-// Reactions — the thumbnail Image's rolled-up reaction total.
-// Reactions ride on the thumbnail Image (no dedicated Model3DReaction table).
-// The legacy PG `ImageMetric` table this used to read was retired; we now read
-// the count from ClickHouse (the image feed's source of truth) and copy it onto
-// Model3DMetric so feed sorts can read it locally.
+// Downloads — from the ClickHouse `files` table (type='Download',
+// entityType='Model3D'), the same event stream the AI-model download path
+// writes to. `model3d.trackDownload` emits the event; here we roll it up into
+// Model3DMetric.downloadCount so the "Most Downloaded" sort works.
 // ---------------------------------------------------------------------------
-async function getReactionTasks(ctx: MetricContext) {
-  const affected = await getAffected(ctx)`
-    -- Model3Ds whose thumbnail Image was reacted to recently.
-    SELECT DISTINCT m3d.id
-    FROM "Model3D" m3d
-    JOIN "ImageReaction" ir ON ir."imageId" = m3d."thumbnailImageId"
-    WHERE m3d."thumbnailImageId" IS NOT NULL
-      AND ir."createdAt" > ${ctx.lastUpdate}
+async function getDownloadTasks(ctx: MetricContext) {
+  const recent = await ctx.ch.$query<{ entityId: number }>`
+    SELECT DISTINCT entityId
+    FROM files
+    WHERE type = 'Download'
+      AND entityType = 'Model3D'
+      AND time >= ${ctx.lastUpdate}
   `;
+  const affected = recent.map((x) => Number(x.entityId));
 
   const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
-    log('getReactionTasks', i + 1, 'of', tasks.length);
-
-    // Map each Model3D to its thumbnail image id (PG)...
-    const thumbQuery = await ctx.pg.cancellableQuery<{
-      model3dId: number;
-      thumbnailImageId: number | null;
-    }>(
-      `SELECT id AS "model3dId", "thumbnailImageId"
-       FROM "Model3D"
-       WHERE id = ANY($1::int[]) AND "thumbnailImageId" IS NOT NULL`,
-      [ids]
-    );
-    ctx.jobContext.on('cancel', thumbQuery.cancel);
-    const thumbs = await thumbQuery.result();
-    if (!thumbs.length) return;
-
-    // ...then read the thumbnails' reaction totals from ClickHouse.
-    const imageIds = thumbs
-      .map((t) => t.thumbnailImageId)
-      .filter((id): id is number => id != null);
-    const metrics = await getImageMetricsObject(imageIds.map((id) => ({ id })));
-
-    for (const { model3dId, thumbnailImageId } of thumbs) {
-      const m = thumbnailImageId != null ? metrics[thumbnailImageId] : undefined;
-      const reactionCount =
-        (m?.reactionLike ?? 0) +
-        (m?.reactionHeart ?? 0) +
-        (m?.reactionLaugh ?? 0) +
-        (m?.reactionCry ?? 0);
-      ctx.updates[model3dId] ??= { [ctx.idKey]: model3dId };
-      ctx.updates[model3dId].reactionCount = reactionCount;
+    log('getDownloadTasks', i + 1, 'of', tasks.length);
+    const rows = await ctx.ch.$query<{ entityId: number; downloadCount: number }>`
+      SELECT entityId, count() AS downloadCount
+      FROM files
+      WHERE type = 'Download'
+        AND entityType = 'Model3D'
+        AND entityId IN (${ids})
+      GROUP BY entityId
+    `;
+    for (const row of rows) {
+      const id = Number(row.entityId);
+      ctx.updates[id] ??= { [ctx.idKey]: id };
+      ctx.updates[id].downloadCount = Number(row.downloadCount);
     }
-    log('getReactionTasks', i + 1, 'of', tasks.length, 'done');
+    log('getDownloadTasks', i + 1, 'of', tasks.length, 'done');
   });
 
   return tasks;
@@ -405,6 +385,39 @@ async function getEarnedTasks(ctx: MetricContext) {
       GROUP BY bt."entityId"
     `;
     log('getEarnedTasks', i + 1, 'of', tasks.length, 'done');
+  });
+
+  return tasks;
+}
+
+// ---------------------------------------------------------------------------
+// Ensure a metric row exists for every published Model3D.
+//
+// Feed sorts order by the related Model3DMetric (e.g. recommendedCount desc).
+// A model with NO metric row joins as NULL, and Postgres sorts NULLs FIRST on
+// a DESC order — so every zero-engagement model (no row yet) sorts ABOVE a
+// genuinely-liked one, burying it. Seeding a real 0-row fixes the ordering.
+//
+// Targets only published models currently missing a row, so once seeded it's a
+// no-op. The shared UPSERT fills counts via COALESCE(..., 0), which is correct:
+// a model that has ever been reviewed/commented/etc. already got a row when
+// that event fired, so the rows we create here are genuinely zero-engagement.
+// ---------------------------------------------------------------------------
+async function getEnsureMetricRowTasks(ctx: MetricContext) {
+  const missing = await getAffected(ctx)`
+    -- published Model3Ds with no Model3DMetric row yet
+    SELECT m.id
+    FROM "Model3D" m
+    LEFT JOIN "Model3DMetric" mm ON mm."model3dId" = m.id
+    WHERE m.status = 'Published' AND mm."model3dId" IS NULL
+  `;
+
+  const tasks = chunk(missing, BATCH_SIZE).map((ids, i) => async () => {
+    ctx.jobContext.checkIfCanceled();
+    log('getEnsureMetricRowTasks', i + 1, 'of', tasks.length);
+    // No counts to fetch — a bare entry makes the shared UPSERT create the row.
+    for (const id of ids) ctx.updates[id] ??= { [ctx.idKey]: id };
+    log('getEnsureMetricRowTasks', i + 1, 'of', tasks.length, 'done');
   });
 
   return tasks;

@@ -21,7 +21,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { preventModelVersionLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { dataForModelsCache } from '~/server/redis/caches';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
@@ -271,7 +271,12 @@ export async function getTrainingServiceStatus() {
   // touched the sites that did string-typed ops (=== 'true', .split, etc.).
   let raw: string | null | undefined;
   try {
-    raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.TRAINING.STATUS);
+    // Wall-clock deadline: symmetric with the getGenerationStatus wrap in STEP 6.
+    // The try/catch only covers a fast DOWN reject — a silent sysRedis half-open
+    // would park this awaited hGet ~11min on the training status/submit path.
+    raw = await withSysReadDeadline(
+      sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.TRAINING.STATUS)
+    );
   } catch (err) {
     logSysRedisFailOpen('defaults-firing', 'getTrainingServiceStatus', err);
     raw = undefined;

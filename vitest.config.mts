@@ -7,7 +7,19 @@ import path from 'path';
 // node_modules) resolves them the same way the app build does. `@civitai/auth` is omitted —
 // it IS symlinked in node_modules and resolves via its own exports map. Subpath regex must come
 // before the bare entry so `@civitai/redis/client` doesn't get caught by the bare `@civitai/redis`.
-const civitaiWorkspacePkgs = ['db-schema', 'db', 'redis', 'clickhouse', 'axiom', 'telemetry', 'brand'];
+const civitaiWorkspacePkgs = [
+  'db-schema',
+  'db',
+  'redis',
+  'clickhouse',
+  'axiom',
+  'telemetry',
+  'brand',
+  // `@civitai/notifications` (packages/civitai-notifications) is re-exported by
+  // src/server/common/enums.ts; without this alias Vitest can't resolve it and
+  // the whole server suite cascades (enums.ts → BlockRegistry undefined → …).
+  'notifications',
+];
 const civitaiAlias = civitaiWorkspacePkgs.flatMap((p) => {
   const src = path.resolve(__dirname, `packages/civitai-${p}/src`).replace(/\\/g, '/');
   return [

@@ -26,6 +26,7 @@ import {
   IconClock,
   IconCode,
   IconExternalLink,
+  IconFlag,
   IconKey,
   IconLayoutGrid,
   IconShieldLock,
@@ -36,6 +37,7 @@ import { useRouter } from 'next/router';
 import type { MouseEvent } from 'react';
 import { useMemo, useRef, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { OffsiteReportsQueue, OffsiteReviewQueue } from '~/components/Apps/OffsiteReviewQueue';
 import { pickReviewIframeSrc } from '~/components/Apps/reviewIframeSrc';
 import { Meta } from '~/components/Meta/Meta';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
@@ -143,10 +145,10 @@ type RejectedRequest = ReviewedRequestCommon & {
 
 type AnyRequest = PendingRequest | ApprovedRequest | RejectedRequest;
 
-type TabValue = 'pending' | 'approved' | 'rejected';
+type TabValue = 'pending' | 'approved' | 'rejected' | 'reports';
 
 function isTabValue(v: unknown): v is TabValue {
-  return v === 'pending' || v === 'approved' || v === 'rejected';
+  return v === 'pending' || v === 'approved' || v === 'rejected' || v === 'reports';
 }
 
 function formatBytes(s: string): string {
@@ -233,12 +235,19 @@ export default function ReviewQueuePage() {
             <Tabs.Tab value="rejected" leftSection={<IconX size={14} />}>
               Rejected
             </Tabs.Tab>
+            <Tabs.Tab value="reports" leftSection={<IconFlag size={14} />}>
+              Reports
+            </Tabs.Tab>
           </Tabs.List>
 
           <Tabs.Panel value="pending" pt="md">
+            {/* On-site (App Block) queue — deep code review (byte-unchanged). */}
             <PendingTab
               onSelect={(r) => setSelected({ request: r, mode: 'pending' })}
             />
+            {/* Off-site (external-link) queue — lighter content-only review (W13
+                P3a). Kind-aware: its own table + modal + approve/reject procs. */}
+            <OffsiteReviewQueue />
           </Tabs.Panel>
 
           <Tabs.Panel value="approved" pt="md">
@@ -247,6 +256,12 @@ export default function ReviewQueuePage() {
 
           <Tabs.Panel value="rejected" pt="md">
             <RejectedTab onSelect={(r) => setSelected({ request: r, mode: 'rejected' })} />
+          </Tabs.Panel>
+
+          <Tabs.Panel value="reports" pt="md">
+            {/* Off-site listing REPORT queue + mod takedown actions (W13 P3b PR3).
+                Dark + mod-only; read via appListings.listListingReports. */}
+            <OffsiteReportsQueue />
           </Tabs.Panel>
         </Tabs>
       </AppsPageLayout>

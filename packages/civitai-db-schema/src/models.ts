@@ -434,6 +434,7 @@ export interface CryptoDeposit {
   paidFiat: number | null;
   chain: string | null;
   retryCount: number;
+  stuckNotifiedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
