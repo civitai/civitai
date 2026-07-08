@@ -10,6 +10,7 @@ import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
 
 export const getServerProxySSGHelpers = async (
   ctx: GetServerSidePropsContext,
@@ -81,6 +82,33 @@ type SSGHelpers = Awaited<ReturnType<typeof getServerProxySSGHelpers>>;
 // slowdown from becoming a fleet-wide authed-SSR TTFB regression.
 const APP_SHELL_PREFETCH_TIMEOUT_MS = 300;
 
+/**
+ * Best-effort settle of a batch of SSR prefetch tasks bounded by a deadline.
+ *
+ * `allSettled` never rejects and keeps handling each task even after the race
+ * resolves on timeout, so a late rejection can't surface as an unhandled
+ * rejection. We race it against a RESOLVING deadline (not a rejecting one) so a
+ * slow backend can't drag SSR past the cap — on timeout we resolve (never throw)
+ * and the un-prefetched queries fall back to their normal client fetch, the same
+ * graceful-degradation contract as a failed prefetch. This is the single shared
+ * safety primitive behind every SSR prefetch batch (app-shell + generator).
+ */
+async function settlePrefetchWithDeadline(
+  tasks: Promise<unknown>[],
+  timeoutMs: number
+): Promise<void> {
+  if (!tasks.length) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, timeoutMs);
+  });
+  try {
+    await Promise.race([Promise.allSettled(tasks), deadline]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export async function prefetchAppShellQueries(
   ssg: SSGHelpers,
   session: Session | null,
@@ -99,21 +127,83 @@ export async function prefetchAppShellQueries(
     if (features.buzz) tasks.push(ssg.buzz.getUserMultipliers.prefetch());
   }
 
-  if (!tasks.length) return;
+  await settlePrefetchWithDeadline(tasks, APP_SHELL_PREFETCH_TIMEOUT_MS);
+}
 
-  // `allSettled` never rejects and keeps handling each task even after the race
-  // resolves on timeout, so a late rejection can't surface as an unhandled
-  // rejection. We race it against a resolving deadline (not a rejecting one) so
-  // a slow backend can't drag SSR past the cap.
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<void>((resolve) => {
-    timer = setTimeout(resolve, APP_SHELL_PREFETCH_TIMEOUT_MS);
-  });
-  try {
-    await Promise.race([Promise.allSettled(tasks), deadline]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
+/**
+ * SSR-prefetch the generator page's (`/generate`) static-at-load init queries so
+ * they hydrate from the dehydrated `trpcState` instead of each firing a
+ * client→CF→origin round-trip on mount (~188ms network floor per query). These
+ * are fired by the generation sidebar (`GenerationTabs`), which is force-open on
+ * `/generate` (`GenerationSidebar`: `isGeneratePage ⇒ opened`), so unlike the
+ * universal shell queries they only fire on this page — hence a page-scoped
+ * prefetch in the generator GSSP resolver rather than the shared shell path.
+ *
+ * WHY THE WIN LANDS (hydration mechanics): the shared QueryClient runs with
+ * `defaultOptions.queries.staleTime: Infinity` (`src/utils/trpc.ts`) and none of
+ * these call-sites override `staleTime` lower, so once React Query hydrates the
+ * dehydrated entry it is never stale → NO background refetch on mount. Each
+ * prefetch input is reproduced to EXACTLY match the client `useQuery` key.
+ *
+ * TARGETS (verified against the current call-sites):
+ *  - `user.userRewardDetails` — input-less protected read (`useDailyBoostReward`
+ *    in `generation_v2/GenerationLayout`, `useQuery(undefined)`); session-gated.
+ *  - `generationPreset.getOwn` — input-less protected read (`PresetHeaderButton`,
+ *    `useQuery(undefined)`), rendered only when `features.generationPresets` is on
+ *    (`GenerationTabs`), so gated on that flag.
+ *  - `challenge.getInfinite` — `publicProcedure` `useQuery` with the STATIC input
+ *    below (`useGetActiveChallenges` → `ChallengeIndicator`), rendered only when
+ *    `features.challengePlatform` is on, so gated on that flag. The input must be
+ *    the exact object the client passes or the react-query key won't match and
+ *    the round-trip isn't saved.
+ *
+ * EXCLUDED — `orchestrator.whatIfFromGraph`: its input depends on client-side
+ * generation-graph state (selected resources / params) that does not exist
+ * server-side, so prefetching it would compute a wrong/irrelevant cost estimate.
+ * It stays client-side. Also excluded: the `Challenge/` `useInfiniteQuery` variant
+ * of `challenge.getInfinite` (different key + `browsingLevel` client state) — it
+ * is NOT the generator call-site.
+ *
+ * ROBUSTNESS + DEADLINE — best-effort via `settlePrefetchWithDeadline`: a failing
+ * or slow query degrades to the normal client fetch and can NEVER reject out of
+ * SSR or drag it past `GENERATOR_PREFETCH_TIMEOUT_MS`. The generator is a money
+ * path — the flag-OFF path adds ZERO cost and the flag-ON path is pure best-effort
+ * hydration that can neither block, slow, nor error the page render.
+ */
+// The static input the generator's active-challenges widget (`useGetActiveChallenges`,
+// `src/components/Challenges/challenge.utils.ts`) passes to `challenge.getInfinite`.
+// Reproduced verbatim so the SSR prefetch key matches the client `useQuery` key.
+// Not `as const`: the client passes a plain object literal (mutable arrays), and
+// `.prefetch()` requires the same mutable-array input type. Runtime values are
+// identical either way — the react-query key match is by value, not TS type.
+const GENERATOR_ACTIVE_CHALLENGES_INPUT = {
+  status: [ChallengeStatus.Active],
+  source: [ChallengeSource.System],
+  excludeEventChallenges: true,
+  limit: 2,
+};
+
+const GENERATOR_PREFETCH_TIMEOUT_MS = 300;
+
+export async function prefetchGeneratorQueries(
+  ssg: SSGHelpers,
+  session: Session | null,
+  features: FeatureAccess
+): Promise<void> {
+  // All targets are session-scoped (the page redirects anon users anyway).
+  if (!session?.user) return;
+
+  const tasks: Promise<unknown>[] = [];
+
+  // Input-less protected read, fires for every authed generator load.
+  tasks.push(ssg.user.userRewardDetails.prefetch());
+  // Input-less protected read; the trigger renders only under this flag.
+  if (features.generationPresets) tasks.push(ssg.generationPreset.getOwn.prefetch());
+  // publicProcedure with a static input; the widget renders only under this flag.
+  if (features.challengePlatform)
+    tasks.push(ssg.challenge.getInfinite.prefetch({ ...GENERATOR_ACTIVE_CHALLENGES_INPUT }));
+
+  await settlePrefetchWithDeadline(tasks, GENERATOR_PREFETCH_TIMEOUT_MS);
 }
 
 export function createServerSideProps<P>({
