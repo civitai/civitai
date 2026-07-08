@@ -43,11 +43,17 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('~/utils/trpc', () => ({
+  // FeatureFlagsProvider (in PageBlockHost's real render graph) statically imports
+  // `setTrpcBatchingEnabled` from this module (#2946). vi.mock replaces the module
+  // wholesale, so the factory must re-declare it or the ESM link fails and the whole
+  // test file fails to import.
+  setTrpcBatchingEnabled: vi.fn(),
   trpc: {
     // PageBlockHost also wires the workflow bridge at render (inert here —
     // exercised in PageBlockHostWorkflow.browser.test.tsx); stub so it mounts.
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getMyBuzzBalance: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       estimateWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       pollWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },

@@ -1,7 +1,7 @@
 import type { IncomingMessage } from 'http';
 import { camelCase } from 'lodash-es';
 import type { NextApiRequest } from 'next';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import { isDev } from '~/env/other';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
@@ -52,6 +52,37 @@ const featureFlags = createFeatureFlags({
   apiKeys: ['public'],
   apiKeyBuzzLimit: { availability: ['mod'], fliptKey: 'api-key-buzz-limit' },
   oauthApps: { availability: ['mod'], fliptKey: 'oauth-apps' },
+  // Faro RUM frontend observability. Default OFF (mods only); widen the cohort via
+  // Flipt (`faro`). Runtime kill-switch for the Faro Web SDK — the FaroProvider only
+  // initialises when this flag is on AND the NEXT_PUBLIC_FARO_* build-args are set.
+  faro: { availability: ['mod'], fliptKey: 'faro' },
+  // Cohort-ramp gate for the Faro resource_timing decomposition. SEPARATE from `faro` so the
+  // network-phase measurements can be ramped by % of users at runtime (via Flipt) independently
+  // of the main RUM signals — the FaroProvider includes ResourceTimingInstrumentation only when
+  // this flag is on AND the NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED build-arg is set.
+  // availability ['mod'] is the Flipt-DOWN fallback (mirrors `faro`); Flipt is authoritative
+  // when the flag exists — ramp by bumping its % rollout, never all-at-once.
+  faroResourceTiming: { availability: ['mod'], fliptKey: 'faro-resource-timing' },
+  // Cohort-ramp gate for tRPC request batching (httpBatchStreamLink). Default OFF
+  // (mods only) so batching is dark until ramped via Flipt (`trpc-batching`). Batching
+  // is applied ONLY to AUTHENTICATED-browser queries — anonymous tRPC GETs stay
+  // unbatched so they remain CF edge-cacheable (verified: anon `model.getAll` GET
+  // returns cf-cache-status HIT with s-maxage=60; authed requests have edgeTTL forced
+  // to 0 in createContext, so batching them loses no edge cache). availability ['mod']
+  // is the Flipt-DOWN fallback (mirrors `faro`); Flipt is authoritative when the flag
+  // exists — ramp by bumping its % rollout, never all-at-once. See `src/utils/trpc.ts`.
+  trpcBatching: { availability: ['mod'], fliptKey: 'trpc-batching' },
+  // Feed-page CLS fix. Reserves vertical space for the above-feed announcements
+  // banner during the pre-hydration window so the isClient-gated / dynamically
+  // imported carousel mount doesn't shove the (very tall) masonry feed down — the
+  // shift production RUM attributes to `MasonryContainer .queries`, which is the
+  // DISPLACED VICTIM (largest moved element), not the cause. Default OFF (mods
+  // only = the Flipt-DOWN fallback); ramp a % of ALL
+  // users via Flipt (`feed-reserve-cls`) as a THRESHOLD rollout — CLS is an
+  // all-user route metric, so a mod cohort can't move the aggregate. Purely
+  // cosmetic space reservation (worst case = a little dead space, never a
+  // functional break), so flipping the flag off is an instant, safe rollback.
+  feedReserveCls: { availability: ['mod'], fliptKey: 'feed-reserve-cls' },
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },
@@ -97,6 +128,11 @@ const featureFlags = createFeatureFlags({
     availability: ['public'],
     fliptKey: 'enhanced-compatibility-sdcpp',
   },
+  // Anima ControlNet kill-switch. Default ON (public + fail-open when Flipt is
+  // down); the `anima-controlnet` Flipt flag is the lever — flip it OFF to hide
+  // the Anima ControlNet input (and strip controlNets server-side) without a
+  // deploy if the orchestrator side misbehaves.
+  animaControlnet: { availability: ['public'], fliptKey: 'anima-controlnet' },
   questions: ['dev', 'mod'],
   imageGeneration: ['public'],
   largerGenerationImages: {
@@ -154,8 +190,6 @@ const featureFlags = createFeatureFlags({
   csamReports: isDev ? ['mod'] : ['granted'],
   appealReports: isDev ? ['mod'] : ['granted'],
   reviewTrainingData: isDev ? ['mod'] : ['granted'],
-  clubs: ['mod'],
-  createClubs: ['mod', 'granted'],
   moderateTags: ['granted'],
   chat: {
     toggleable: true,
@@ -237,11 +271,42 @@ const featureFlags = createFeatureFlags({
   // default until we ship publisher install UX + moderator approval workflow.
   // When off, BlockSlot renders nothing and no token-issuance traffic fires.
   appBlocks: { availability: ['mod'], fliptKey: 'app-blocks-enabled' },
+  // App Blocks W13 — dedicated App Store VISIBILITY flag, decoupled from
+  // `app-blocks-enabled` (which doubles as the block-runtime kill-switch) so the
+  // store catalog can widen to public INDEPENDENTLY of the held block-runtime GA.
+  // Store-visibility surfaces gate on `appListings || appBlocks` (client) /
+  // `isAppListingsEnabled()` which falls back to `isAppBlocksEnabled()` (server),
+  // so while the `app-listings` Flipt flag does not yet exist this resolves via
+  // the `availability: ['mod']` Flipt-down fallback (mods only) + the OR-fallback
+  // to `app-blocks-enabled` — i.e. ZERO behavior change today (the currently
+  // mod+app-dev-testers cohort keeps identical store access).
+  appListings: { availability: ['mod'], fliptKey: 'app-listings' },
   // App Blocks W10 — full-page apps (`/apps/run/<slug>`). A SEPARATE dark flag
   // so the page surface enables independently of the master `app-blocks-enabled`
   // gate. The page route + page-token mint require BOTH `appBlocks` AND
   // `appBlocksPages`. Mod-only today; widened (Flipt segment) at W10 launch.
   appBlocksPages: { availability: ['mod'], fliptKey: 'app-blocks-pages-enabled' },
+  // App Blocks — "App builders" get-started landing page (`/apps/get-started`).
+  // Scope A soft launch: a single marketing/funnel page that explains the
+  // platform to would-be app developers. INDEPENDENT of the mod-only `appBlocks`
+  // gate — this flag controls ONLY the get-started page + its nav entry, NOT
+  // any other `/apps/*` surface (those stay gated on `appBlocks`). Staged
+  // mod-only today (like `appBlocks` / `appBlocksPages`) so it deploys dark-to-
+  // public and mods can review the page live on prod; widened to `['public']`
+  // (a one-line flag change) when launch copy + the real Request-access link
+  // land. The Flipt key stays the kill-switch / future-widen lever (flip it off
+  // to drop the page + nav entry without a deploy).
+  appBlocksGetStarted: { availability: ['mod'], fliptKey: 'app-blocks-get-started' },
+  // App Blocks — AUTHOR capability (developer soft-launch, Phase B). Grants the
+  // right to SUBMIT apps + use `dev:live` (the author surfaces + the runtime
+  // spend gate on a block-token subject). INDEPENDENT of the mod-only
+  // marketplace-visibility `appBlocks` flag ON PURPOSE: `appBlocks` widens to
+  // `public` at GA, but authoring must stay gated, so the author authz decision
+  // keys off THIS flag, never `appBlocks`. Mirrors `appBlocks` shape — staged
+  // mod-only today (`['mod']` = the Flipt-down / flag-absent fallback), widened
+  // to mods + a curated cohort via the Flipt `app-blocks-author` flag (created
+  // AFTER this merges: absent → static mod-only, identical to today).
+  appBlocksAuthor: { availability: ['mod'], fliptKey: 'app-blocks-author' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

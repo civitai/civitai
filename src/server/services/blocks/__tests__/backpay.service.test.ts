@@ -101,6 +101,7 @@ type SpendRow = {
   grossValueCents: number;
   appBlockId: string;
   appOwnerUserId: number;
+  buzzType: string;
 };
 
 function subRow(over: Partial<SubRow> = {}): SubRow {
@@ -119,6 +120,9 @@ function spendRow(over: Partial<SpendRow> = {}): SpendRow {
     grossValueCents: 1000,
     appBlockId: 'apb_1',
     appOwnerUserId: 42,
+    // Default to the payout-eligible currency (matches the DB column default
+    // 'yellow' that pre-parity rows carry). Payout-safety tests override this.
+    buzzType: 'yellow',
     ...over,
   };
 }
@@ -267,6 +271,69 @@ describe('happy path (gate forced open)', () => {
     expect(call.data.appOwnerShareCents).toBe(100);
     expect(call.data.appOwnerShareCents).toBeLessThanOrEqual(1000);
     expect(call.data.confirmedAt).toBeInstanceOf(Date);
+  });
+});
+
+/**
+ * PAYOUT-SAFETY at the payout boundary (App Blocks Sybil / payout review).
+ * Block currencies were widened to on-site parity (blue/green/yellow); the
+ * backpay rail MUST exclude the FREE type (blue) from the author bounty so the
+ * widening can never become platform-funded farming. PAID Buzz (green + yellow)
+ * is eligible. The gate lives in computeSpendShare (via isPayoutEligibleBuzz)
+ * and is threaded the row's buzzType here.
+ */
+describe('payout-safety — the free currency (blue) is excluded from the bounty', () => {
+  beforeEach(() => {
+    mockFlag.mockResolvedValue(true);
+    signOff();
+  });
+
+  it('a green (paid) spend row confirms WITH the bounty', async () => {
+    mockDbRead.blockSpendAttribution.findMany.mockResolvedValue([
+      spendRow({ id: 'bsa_green', grossValueCents: 1000, appOwnerUserId: 7, buzzType: 'green' }),
+    ]);
+
+    const out = await backpayTrackedAttributions();
+
+    // green is PAID → pays the bounty (1000 @ 10%).
+    expect(out.confirmedShareCents).toBe(100);
+    const call = mockDbWrite.blockSpendAttribution.updateMany.mock.calls[0][0];
+    expect(call.data.status).toBe('confirmed');
+    expect(call.data.spendSharePct).toBe(10);
+    expect(call.data.appOwnerShareCents).toBe(100);
+  });
+
+  it('a blue (free generation) spend row confirms with ZERO bounty', async () => {
+    mockDbRead.blockSpendAttribution.findMany.mockResolvedValue([
+      spendRow({ id: 'bsa_blue', grossValueCents: 1000, appOwnerUserId: 7, buzzType: 'blue' }),
+    ]);
+
+    const out = await backpayTrackedAttributions();
+
+    expect(out.confirmedShareCents).toBe(0);
+    const call = mockDbWrite.blockSpendAttribution.updateMany.mock.calls[0][0];
+    expect(call.data.appOwnerShareCents).toBe(0);
+    expect(call.data.spendSharePct).toBe(0);
+  });
+
+  it('a yellow (purchased/earned) spend row still pays the bounty (control)', async () => {
+    mockDbRead.blockSpendAttribution.findMany.mockResolvedValue([
+      spendRow({ id: 'bsa_yellow', grossValueCents: 1000, appOwnerUserId: 7, buzzType: 'yellow' }),
+    ]);
+
+    const out = await backpayTrackedAttributions();
+
+    expect(out.confirmedShareCents).toBe(100); // 1000 @ 10%
+    const call = mockDbWrite.blockSpendAttribution.updateMany.mock.calls[0][0];
+    expect(call.data.appOwnerShareCents).toBe(100);
+  });
+
+  it('selects buzzType from the row so the gate has the currency to discriminate', async () => {
+    mockDbRead.blockSpendAttribution.findMany.mockResolvedValue([]);
+    await backpayTrackedAttributions();
+    expect(mockDbRead.blockSpendAttribution.findMany.mock.calls[0][0].select).toMatchObject({
+      buzzType: true,
+    });
   });
 });
 

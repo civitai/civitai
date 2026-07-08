@@ -86,9 +86,9 @@ vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
 vi.mock('~/server/services/user.service', () => ({
   getUserById: (...a: unknown[]) => mockGetUserById(...a),
 }));
-// The NEW dependency under test: the gate now resolves the full SessionUser.
-vi.mock('~/server/auth/session-user', () => ({
-  getSessionUser: (...a: unknown[]) => mockGetSessionUser(...a),
+// The NEW dependency under test: the gate now resolves the full SessionUser via the hub-backed sessionClient.
+vi.mock('~/server/auth/session-client', () => ({
+  sessionClient: { getSessionUserById: (...a: unknown[]) => mockGetSessionUser(...a) },
 }));
 // REAL app-blocks-flag + REAL buildFliptContext run; only the Flipt edge is
 // stubbed so we can CAPTURE the context the gate built.
@@ -99,12 +99,10 @@ vi.mock('~/server/db/client', () => ({
   dbRead: mockDbRead,
   dbWrite: { modelBlockInstall: { findUnique: vi.fn() }, model: { findUnique: vi.fn() } },
 }));
-vi.mock('~/server/redis/client', () => ({
-  redis: mockRedis,
-  sysRedis: mockSysRedis,
-  REDIS_KEYS: { BLOCKS: { POPULAR_CHECKPOINT: 'blocks:popular-checkpoint' } },
-  REDIS_SYS_KEYS: { BLOCKS: { BUZZ_CAP: 'system:blocks:buzz-cap' } },
-}));
+vi.mock('~/server/redis/client', async () => {
+  const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
+  return { ...actual, redis: mockRedis, sysRedis: mockSysRedis };
+});
 vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
   dailyBoostReward: { apply: vi.fn(), getUserRewardDetails: vi.fn() },
 }));
@@ -209,7 +207,7 @@ describe('assertAppBlocksEnabledForTokenUser — Flipt context is hydrated from 
     await caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' });
 
     // The gate resolved the full SessionUser for the TOKEN subject (42), not ctx.user.
-    expect(mockGetSessionUser).toHaveBeenCalledWith({ userId: 42 });
+    expect(mockGetSessionUser).toHaveBeenCalledWith(42);
 
     // Find the app-blocks-enabled Flipt eval and assert its context is faithful.
     const appBlocksCall = mockIsFlipt.mock.calls.find((c) => c[0] === 'app-blocks-enabled');
@@ -251,7 +249,7 @@ describe('assertAppBlocksEnabledForTokenUser — Flipt context is hydrated from 
     const caller = blocksRouter.createCaller(fakeCtx() as never);
     await expect(
       caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
-    ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
 
     // Global eval: with no user, isAppBlocksEnabled takes the no-user branch and
     // calls isFlipt(flag) with NO entityId/context (buildFliptContext is never

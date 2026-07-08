@@ -171,7 +171,6 @@ export const getArticles = async ({
   ids,
   collectionId,
   followed,
-  clubId,
   pending,
   browsingLevel,
   include,
@@ -188,20 +187,10 @@ export const getArticles = async ({
     const isOwnerRequest =
       !!sessionUser?.username &&
       postgresSlugify(sessionUser.username) === postgresSlugify(username);
-    // TODO.clubs: This is temporary until we are fine with displaying club stuff in public feeds.
-    // At that point, we should be relying more on unlisted status which is set by the owner.
     const hidePrivateArticles =
-      !ids &&
-      !clubId &&
-      !username &&
-      !collectionId &&
-      !followed &&
-      !hidden &&
-      !favorites &&
-      !userIds;
+      !ids && !username && !collectionId && !followed && !hidden && !favorites && !userIds;
 
     const AND: Prisma.Sql[] = [];
-    const WITH: Prisma.Sql[] = [];
 
     if (query) {
       AND.push(Prisma.raw(`a."title" ILIKE '%${query}%'`));
@@ -407,35 +396,13 @@ export const getArticles = async ({
       )`);
     }
 
-    if (clubId) {
-      WITH.push(Prisma.sql`
-      "clubArticles" AS (
-        SELECT DISTINCT ON (a."id") a."id" as "articleId"
-        FROM "EntityAccess" ea
-        JOIN "Article" a ON a."id" = ea."accessToId"
-        LEFT JOIN "ClubTier" ct ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = ct."id" AND ct."clubId" = ${clubId}
-        WHERE (
-            (
-             ea."accessorType" = 'Club' AND ea."accessorId" = ${clubId}
-            )
-            OR (
-              ea."accessorType" = 'ClubTier' AND ct."clubId" = ${clubId}
-            )
-          )
-          AND ea."accessToType" = 'Article'
-      )
-    `);
-    }
-    const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
     const queryFrom = Prisma.sql`
       FROM "Article" a
       LEFT JOIN "User" u ON a."userId" = u.id
       LEFT JOIN "ArticleRank" rank ON rank."articleId" = a.id
-      ${clubId ? Prisma.sql`JOIN "clubArticles" ca ON ca."articleId" = a."id"` : Prisma.sql``}
       WHERE ${Prisma.join(AND, ' AND ')}
     `;
     const articles = await dbRead.$queryRaw<(ArticleRaw & { cursorV: number })[]>`
-      ${queryWith}
       SELECT
         a.id,
         a.cover,
@@ -2764,174 +2731,127 @@ export async function getArticleRatingReviewCounts() {
 export async function resolveArticleRatingReview({
   reviewId,
   moderatorId,
-  status,
   appliedLevel,
   modComment,
 }: ResolveArticleRatingReviewInput & {
   moderatorId: number;
 }) {
-  // Validate the Actioned input up front before opening any transaction.
-  if (status === 'Actioned') {
-    if (appliedLevel == null) {
-      throw throwBadRequestError('appliedLevel is required when actioning a review');
-    }
-    if (!VALID_NSFW_LEVELS.has(appliedLevel)) {
-      throw throwBadRequestError(
-        `Invalid applied NSFW level. Must be one of: ${[...VALID_NSFW_LEVELS].join(', ')}`
-      );
-    }
+  // Single-action resolution: every resolve pins the article at `appliedLevel`
+  // (override). Validate the level up front before opening the transaction.
+  if (!VALID_NSFW_LEVELS.has(appliedLevel)) {
+    throw throwBadRequestError(
+      `Invalid applied NSFW level. Must be one of: ${[...VALID_NSFW_LEVELS].join(', ')}`
+    );
   }
 
-  // Resolution paths return:
+  // Resolution returns:
   //   articleId  - for downstream notify / tracker
-  //   userId     - the owner who filed the review (for notify)
-  //   articleTitle / articleNsfwLevel - pulled from the transactional update
-  //                                      (Actioned) or a single read (Unactioned)
-  //   previousLevel - snapshot at submission time, for notify copy
+  //   ownerUserId - the owner who filed the review (for notify)
+  //   articleTitle - pulled from the transactional update
+  //   previousLevel - content-derived snapshot at submission time, for notify copy
+  // The derived status (granted vs overrode-differently) is computed inside the
+  // transaction from the review's `suggestedLevel` vs `appliedLevel`.
   let articleId: number;
   let ownerUserId: number;
   let articleTitle: string;
-  let articleNsfwLevel: number;
   let previousLevel: number;
 
-  if (status === 'Actioned' && appliedLevel != null) {
-    // All reads + writes go through one transaction so two mods clicking
-    // Resolve simultaneously can't both pass the Pending check. The review
-    // row is updated with a status guard (updateMany + count === 1) so the
-    // loser of the race throws NOT_FOUND rather than double-notifying.
-    const result = await dbWrite.$transaction(async (tx) => {
-      const reviewRow = await tx.articleRatingReview.findFirst({
-        where: { id: reviewId, status: ReportStatus.Pending },
-        select: {
-          id: true,
-          articleId: true,
-          userId: true,
-          currentLevel: true,
-        },
-      });
-      if (!reviewRow) {
-        throw throwNotFoundError('Review already resolved');
-      }
+  // All reads + writes go through one transaction so two mods clicking Resolve
+  // simultaneously can't both pass the Pending check. The review row is updated
+  // with a status guard (updateMany + count === 1) so the loser of the race
+  // throws NOT_FOUND rather than double-notifying.
+  //
+  // `status` is no longer a caller input — the dashboard's Approved/Rejected
+  // buckets now mean "was the owner's suggestion granted?". We derive it from
+  // `appliedLevel === suggestedLevel`. Both branches pin the override either
+  // way (see spec: 2026-06-25-article-rating-review-single-action-design.md).
+  const result = await dbWrite.$transaction(async (tx) => {
+    const reviewRow = await tx.articleRatingReview.findFirst({
+      where: { id: reviewId, status: ReportStatus.Pending },
+      select: {
+        id: true,
+        articleId: true,
+        userId: true,
+        currentLevel: true,
+        suggestedLevel: true,
+      },
+    });
+    if (!reviewRow) {
+      throw throwNotFoundError('Review already resolved');
+    }
 
-      const claim = await tx.articleRatingReview.updateMany({
-        where: { id: reviewId, status: ReportStatus.Pending },
-        data: {
-          status: ReportStatus.Actioned,
-          resolvedAt: new Date(),
-          resolvedBy: moderatorId,
-          appliedLevel,
-          modComment,
-        },
-      });
-      if (claim.count !== 1) {
-        throw throwNotFoundError('Review already resolved');
-      }
+    const derivedStatus =
+      appliedLevel === reviewRow.suggestedLevel ? ReportStatus.Actioned : ReportStatus.Unactioned;
 
-      // Mirror the existing override-lock pattern in upsertArticle (see
-      // article.service.ts:1015-1022): when an override is active, pin
-      // `userNsfwLevel` so a subsequent owner save can't drift it.
-      const current = await tx.article.findUnique({
-        where: { id: reviewRow.articleId },
-        select: { lockedProperties: true },
-      });
-      const lockedSet = new Set<string>(current?.lockedProperties ?? []);
-      lockedSet.add('userNsfwLevel');
+    const claim = await tx.articleRatingReview.updateMany({
+      where: { id: reviewId, status: ReportStatus.Pending },
+      data: {
+        status: derivedStatus,
+        resolvedAt: new Date(),
+        resolvedBy: moderatorId,
+        appliedLevel,
+        modComment,
+      },
+    });
+    if (claim.count !== 1) {
+      throw throwNotFoundError('Review already resolved');
+    }
 
-      // Snapshot the content-derived level at the moment this override is set,
-      // so a later down-direction dispute can only auto-clear it if the content
-      // genuinely drops below this basis (see evaluateAutoApproveGate gate #6).
-      // A mod actioning above the images encodes judgment the scanners can't
-      // reproduce; the basis is what keeps that from being auto-erased.
-      const moderatorNsfwLevelBasis = (await computeArticleDerivedNsfwLevel(reviewRow.articleId)) ?? 0;
+    // Mirror the existing override-lock pattern in upsertArticle (see
+    // article.service.ts:1015-1022): when an override is active, pin
+    // `userNsfwLevel` so a subsequent owner save can't drift it.
+    const current = await tx.article.findUnique({
+      where: { id: reviewRow.articleId },
+      select: { lockedProperties: true },
+    });
+    const lockedSet = new Set<string>(current?.lockedProperties ?? []);
+    lockedSet.add('userNsfwLevel');
 
-      // Write `moderatorNsfwLevel` (override signal), `nsfwLevel` (effective
-      // level) and the basis snapshot in a single update. The CTE in
-      // `updateArticleNsfwLevels` resolves to COALESCE(moderatorNsfwLevel,
-      // GREATEST(...)) — so when an override is set, the effective level is
-      // always identical to the override. Writing it directly skips the
-      // full CTE recompute for the Actioned path. We still queue a search
-      // index update below for downstream consistency.
-      const updated = await tx.article.update({
-        where: { id: reviewRow.articleId },
-        data: {
-          moderatorNsfwLevel: appliedLevel,
-          moderatorNsfwLevelBasis,
-          nsfwLevel: appliedLevel,
-          lockedProperties: Array.from(lockedSet),
-        },
-        select: { id: true, title: true, nsfwLevel: true },
-      });
+    // Snapshot the content-derived level at the moment this override is set,
+    // so a later down-direction dispute can only auto-clear it if the content
+    // genuinely drops below this basis (see evaluateAutoApproveGate gate #6).
+    // A mod actioning above the images encodes judgment the scanners can't
+    // reproduce; the basis is what keeps that from being auto-erased.
+    const moderatorNsfwLevelBasis =
+      (await computeArticleDerivedNsfwLevel(reviewRow.articleId)) ?? 0;
 
-      return {
-        articleId: reviewRow.articleId,
-        ownerUserId: reviewRow.userId,
-        previousLevel: reviewRow.currentLevel,
-        title: updated.title,
-        nsfwLevel: updated.nsfwLevel,
-      };
+    // Write `moderatorNsfwLevel` (override signal), `nsfwLevel` (effective
+    // level) and the basis snapshot in a single update. The CTE in
+    // `updateArticleNsfwLevels` resolves to COALESCE(moderatorNsfwLevel,
+    // GREATEST(...)) — so when an override is set, the effective level is
+    // always identical to the override. Writing it directly skips the
+    // full CTE recompute. We still queue a search index update below for
+    // downstream consistency.
+    const updated = await tx.article.update({
+      where: { id: reviewRow.articleId },
+      data: {
+        moderatorNsfwLevel: appliedLevel,
+        moderatorNsfwLevelBasis,
+        nsfwLevel: appliedLevel,
+        lockedProperties: Array.from(lockedSet),
+      },
+      select: { id: true, title: true },
     });
 
-    articleId = result.articleId;
-    ownerUserId = result.ownerUserId;
-    previousLevel = result.previousLevel;
-    articleTitle = result.title ?? 'your article';
-    articleNsfwLevel = result.nsfwLevel;
+    return {
+      articleId: reviewRow.articleId,
+      ownerUserId: reviewRow.userId,
+      previousLevel: reviewRow.currentLevel,
+      derivedStatus,
+      title: updated.title,
+    };
+  });
 
-    // Defense-in-depth: keep the search index in sync. Cheap and idempotent.
-    await articlesSearchIndex
-      .queueUpdate([{ id: articleId, action: SearchIndexUpdateQueueAction.Update }])
-      .catch((e) =>
-        handleLogError(e, 'article-rating-review-search-index', { articleId, reviewId })
-      );
-  } else {
-    // Unactioned: identical race-guard pattern. No article mutation.
-    const result = await dbWrite.$transaction(async (tx) => {
-      const reviewRow = await tx.articleRatingReview.findFirst({
-        where: { id: reviewId, status: ReportStatus.Pending },
-        select: {
-          id: true,
-          articleId: true,
-          userId: true,
-          currentLevel: true,
-        },
-      });
-      if (!reviewRow) {
-        throw throwNotFoundError('Review already resolved');
-      }
+  articleId = result.articleId;
+  ownerUserId = result.ownerUserId;
+  previousLevel = result.previousLevel;
+  articleTitle = result.title ?? 'your article';
+  const status = result.derivedStatus;
 
-      const claim = await tx.articleRatingReview.updateMany({
-        where: { id: reviewId, status: ReportStatus.Pending },
-        data: {
-          status: ReportStatus.Unactioned,
-          resolvedAt: new Date(),
-          resolvedBy: moderatorId,
-          modComment,
-        },
-      });
-      if (claim.count !== 1) {
-        throw throwNotFoundError('Review already resolved');
-      }
-
-      const article = await tx.article.findUnique({
-        where: { id: reviewRow.articleId },
-        select: { title: true, nsfwLevel: true },
-      });
-
-      return {
-        articleId: reviewRow.articleId,
-        ownerUserId: reviewRow.userId,
-        previousLevel: reviewRow.currentLevel,
-        title: article?.title ?? null,
-        nsfwLevel: article?.nsfwLevel ?? reviewRow.currentLevel,
-      };
-    });
-
-    articleId = result.articleId;
-    ownerUserId = result.ownerUserId;
-    previousLevel = result.previousLevel;
-    articleTitle = result.title ?? 'your article';
-    articleNsfwLevel = result.nsfwLevel;
-  }
+  // Defense-in-depth: keep the search index in sync. Cheap and idempotent.
+  await articlesSearchIndex
+    .queueUpdate([{ id: articleId, action: SearchIndexUpdateQueueAction.Update }])
+    .catch((e) => handleLogError(e, 'article-rating-review-search-index', { articleId, reviewId }));
 
   // Audit trail.
   await trackModActivity(moderatorId, {
@@ -2947,9 +2867,10 @@ export async function resolveArticleRatingReview({
 
   // --- Notify the owner ---
   const previousLevelLabel = getBrowsingLevelLabel(previousLevel);
+  const appliedLevelLabel = getBrowsingLevelLabel(appliedLevel);
 
-  if (status === 'Actioned' && appliedLevel != null) {
-    const newLevelLabel = getBrowsingLevelLabel(appliedLevel);
+  if (status === ReportStatus.Actioned) {
+    // Granted: applied level matches the owner's suggestion.
     await createNotification({
       userId: ownerUserId,
       type: 'article-rating-review-approved',
@@ -2959,7 +2880,7 @@ export async function resolveArticleRatingReview({
         articleId,
         articleTitle,
         previousLevel: previousLevelLabel,
-        newLevel: newLevelLabel,
+        newLevel: appliedLevelLabel,
         modComment: modComment ?? null,
       },
     }).catch((e) =>
@@ -2968,8 +2889,9 @@ export async function resolveArticleRatingReview({
         reviewId,
       })
     );
-  } else if (status === 'Unactioned') {
-    const currentLevelLabel = getBrowsingLevelLabel(articleNsfwLevel);
+  } else {
+    // Overrode differently: the owner's suggestion was not granted, but a level
+    // was still applied (the mod's ruling). Copy reflects the applied level.
     await createNotification({
       userId: ownerUserId,
       type: 'article-rating-review-rejected',
@@ -2978,7 +2900,7 @@ export async function resolveArticleRatingReview({
       details: {
         articleId,
         articleTitle,
-        currentLevel: currentLevelLabel,
+        appliedLevel: appliedLevelLabel,
         modComment: modComment ?? null,
       },
     }).catch((e) =>
@@ -2993,8 +2915,6 @@ export async function resolveArticleRatingReview({
     reviewId,
     status,
     articleId,
-    // null (not 0) when no level was applied — 0 collides with real bitwise
-    // slots and pollutes ClickHouse approval metrics.
-    appliedLevel: status === 'Actioned' ? appliedLevel ?? null : null,
+    appliedLevel,
   };
 }

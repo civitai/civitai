@@ -25,7 +25,6 @@ import type { OutputType } from './types';
 import {
   happyHorseVersionIds,
   klingVersionIds,
-  nanoBananaVersionIds,
   viduVersionIds,
 } from '~/shared/data-graph/generation/version-ids';
 import {
@@ -249,7 +248,7 @@ export const workflowConfigs: WorkflowConfigs = {
     showBackButton: true,
     // ControlNets are disabled for now, so the preprocessor — which only produces
     // input for a ControlNet — is hidden from the picker too.
-    hidden: true,
+    // hidden: true,
     ecosystemIds: [],
     isNew: true,
   },
@@ -731,120 +730,6 @@ export function getWorkflowLabelForEcosystem(
     if (match) return match.label;
   }
   return workflowConfigByKey.get(graphKey)?.label ?? graphKey;
-}
-
-// =============================================================================
-// Legacy Form Support
-// =============================================================================
-
-/**
- * Rules for workflow/ecosystem/model combinations ONLY available in the new generation form.
- * The legacy form does not support these combinations.
- *
- * Entry types:
- * - `true` — the entire workflow has no legacy equivalent
- * - `(ecosystemId, modelId?) => boolean` — predicate for fine-grained checks
- *   (e.g. a specific model version within an ecosystem)
- *
- * When adding new workflows or ecosystem/model support only to the new form, add them here.
- */
-type NewFormOnlyRule = true | ((ecosystemId: number, modelId?: number) => boolean);
-
-const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
-  // Upscale workflow — legacy form has no upscaler node
-  ['img2img:upscale', true],
-
-  // Preprocess workflow — new form only (no legacy equivalent)
-  ['img2img:preprocess', true],
-
-  // Kling V3 and Vidu Q3 on standard video workflows (legacy doesn't support these versions)
-  [
-    'txt2vid',
-    (ecoId, modelId) =>
-      (ecoId === ECO.Kling && modelId === klingVersionIds.v3) ||
-      (ecoId === ECO.Vidu && modelId === viduVersionIds.q3) ||
-      ecoId === ECO.Grok ||
-      ecoId === ECO.WanVideo27 ||
-      ecoId === ECO.Seedance ||
-      ecoId === ECO.HappyHorse,
-  ],
-  [
-    'img2vid',
-    (ecoId, modelId) =>
-      (ecoId === ECO.Kling && modelId === klingVersionIds.v3) ||
-      (ecoId === ECO.Vidu && modelId === viduVersionIds.q3) ||
-      ecoId === ECO.Grok ||
-      ecoId === ECO.WanVideo27 ||
-      ecoId === ECO.Seedance ||
-      ecoId === ECO.HappyHorse,
-  ],
-
-  // ref2vid: legacy forms for Kling, Veo3, and Vidu don't support this workflow
-  [
-    'img2vid:ref2vid',
-    (ecoId) =>
-      ecoId === ECO.Kling ||
-      ecoId === ECO.Veo3 ||
-      ecoId === ECO.Vidu ||
-      ecoId === ECO.WanVideo27 ||
-      ecoId === ECO.HappyHorse,
-  ],
-
-  // NanoBanana V2 - only available in new form
-  [
-    'txt2img',
-    (ecoId, modelId) =>
-      (ecoId === ECO.NanoBanana && modelId === nanoBananaVersionIds.v2) ||
-      ecoId === ECO.Anima ||
-      ecoId === ECO.Grok ||
-      ecoId === ECO.Qwen2 ||
-      ecoId === ECO.WanImage27 ||
-      ecoId === ECO.Ernie ||
-      ecoId === ECO.HiDreamO1 ||
-      ecoId === ECO.Lens ||
-      ecoId === ECO.Krea2 ||
-      ecoId === ECO.MAI ||
-      ecoId === ECO.Boogu,
-  ],
-  [
-    'img2img:edit',
-    (ecoId, modelId) =>
-      (ecoId === ECO.NanoBanana && modelId === nanoBananaVersionIds.v2) ||
-      ecoId === ECO.Grok ||
-      ecoId === ECO.Qwen2 ||
-      ecoId === ECO.WanImage27 ||
-      ecoId === ECO.HiDreamO1 ||
-      ecoId === ECO.Boogu,
-  ],
-
-  // Grok/LTXV23 vid2vid:edit - no legacy equivalent
-  ['vid2vid:edit', true],
-
-  // vid2vid:extend - no legacy equivalent
-  ['vid2vid:extend', true],
-
-  // Audio workflows - no legacy equivalent
-  ['txt2music', true],
-
-  // 3D Model workflows - no legacy equivalent
-  ['txt2model3d', true],
-  ['img2model3d', true],
-]);
-
-/**
- * Check if a workflow+ecosystem+model combination is only available in the new generation form.
- * Returns true if the legacy form does NOT support this combination.
- */
-export function isNewFormOnly(
-  workflowKey: string,
-  ecosystemId?: number,
-  modelId?: number
-): boolean {
-  const entry = NEW_FORM_ONLY.get(workflowKey);
-  if (entry === undefined) return false;
-  if (entry === true) return true;
-  if (ecosystemId === undefined) return false;
-  return entry(ecosystemId, modelId);
 }
 
 // =============================================================================

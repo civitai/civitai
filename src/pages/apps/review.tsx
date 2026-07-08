@@ -26,6 +26,7 @@ import {
   IconClock,
   IconCode,
   IconExternalLink,
+  IconFlag,
   IconKey,
   IconLayoutGrid,
   IconShieldLock,
@@ -34,8 +35,10 @@ import {
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import type { MouseEvent } from 'react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { OffsiteReportsQueue, OffsiteReviewQueue } from '~/components/Apps/OffsiteReviewQueue';
+import { pickReviewIframeSrc } from '~/components/Apps/reviewIframeSrc';
 import { Meta } from '~/components/Meta/Meta';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -142,10 +145,10 @@ type RejectedRequest = ReviewedRequestCommon & {
 
 type AnyRequest = PendingRequest | ApprovedRequest | RejectedRequest;
 
-type TabValue = 'pending' | 'approved' | 'rejected';
+type TabValue = 'pending' | 'approved' | 'rejected' | 'reports';
 
 function isTabValue(v: unknown): v is TabValue {
-  return v === 'pending' || v === 'approved' || v === 'rejected';
+  return v === 'pending' || v === 'approved' || v === 'rejected' || v === 'reports';
 }
 
 function formatBytes(s: string): string {
@@ -160,6 +163,22 @@ function formatDate(d: string | Date | null | undefined): string {
   if (!d) return '—';
   const date = typeof d === 'string' ? new Date(d) : d;
   return date.toLocaleString();
+}
+
+// Compact relative age ("just now" / "5m" / "2h" / "3d") for the active-preview
+// panel — the exact timestamp isn't useful there, freshness is.
+function formatAge(d: string | Date | null | undefined): string {
+  if (!d) return '—';
+  const date = typeof d === 'string' ? new Date(d) : d;
+  const ms = Date.now() - date.getTime();
+  if (!Number.isFinite(ms) || ms < 0) return '—';
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
 }
 
 export default function ReviewQueuePage() {
@@ -197,6 +216,8 @@ export default function ReviewQueuePage() {
         title="App publish-request queue"
         subtitle="Moderator review for Apps. Pending queue is oldest-first; history tabs are newest-first."
       >
+        <ActivePreviewsPanel />
+
         <Tabs
           value={tab}
           onChange={(v) => {
@@ -214,12 +235,19 @@ export default function ReviewQueuePage() {
             <Tabs.Tab value="rejected" leftSection={<IconX size={14} />}>
               Rejected
             </Tabs.Tab>
+            <Tabs.Tab value="reports" leftSection={<IconFlag size={14} />}>
+              Reports
+            </Tabs.Tab>
           </Tabs.List>
 
           <Tabs.Panel value="pending" pt="md">
+            {/* On-site (App Block) queue — deep code review (byte-unchanged). */}
             <PendingTab
               onSelect={(r) => setSelected({ request: r, mode: 'pending' })}
             />
+            {/* Off-site (external-link) queue — lighter content-only review (W13
+                P3a). Kind-aware: its own table + modal + approve/reject procs. */}
+            <OffsiteReviewQueue />
           </Tabs.Panel>
 
           <Tabs.Panel value="approved" pt="md">
@@ -229,6 +257,12 @@ export default function ReviewQueuePage() {
           <Tabs.Panel value="rejected" pt="md">
             <RejectedTab onSelect={(r) => setSelected({ request: r, mode: 'rejected' })} />
           </Tabs.Panel>
+
+          <Tabs.Panel value="reports" pt="md">
+            {/* Off-site listing REPORT queue + mod takedown actions (W13 P3b PR3).
+                Dark + mod-only; read via appListings.listListingReports. */}
+            <OffsiteReportsQueue />
+          </Tabs.Panel>
         </Tabs>
       </AppsPageLayout>
 
@@ -237,6 +271,123 @@ export default function ReviewQueuePage() {
         onClose={() => setSelected(null)}
       />
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// MOD REVIEW SANDBOX — global "Active previews (N / cap)" panel. Review previews
+// are capped globally across all mods (each holds a review Deployment + Service
+// + IngressRoute), so this surfaces every active preview + a per-row Tear down
+// so a mod can free a slot. Polls every 30s so the count stays fresh. Dark
+// behind the same mod-only review-sandbox flag as the per-request panel: when
+// off, listActivePreviews throws UNAUTHORIZED and this renders nothing.
+// ---------------------------------------------------------------------------
+
+function ActivePreviewsPanel() {
+  const features = useFeatureFlags();
+  const utils = trpc.useUtils();
+
+  const query = trpc.blocks.listActivePreviews.useQuery(undefined, {
+    enabled: !!features?.appBlocks,
+    retry: false,
+    // Poll every 30s to keep the count fresh WHILE it's working, but stop once the
+    // query errors — when the review-sandbox flag is off (appBlocks on, sandbox
+    // flag off) the server throws UNAUTHORIZED, and a fixed interval would re-fire
+    // that guaranteed-dead request forever. (react-query v5: the callback gets the
+    // Query; teardown mutations still invalidate → refetch, so a resume path exists.)
+    refetchInterval: (q) => (q.state.error ? false : 30000),
+  });
+
+  const teardownMut = trpc.blocks.teardownPreview.useMutation({
+    onSuccess: async (_res, vars) => {
+      showSuccessNotification({ message: 'Review preview torn down.' });
+      await Promise.all([
+        utils.blocks.listActivePreviews.invalidate(),
+        utils.blocks.getReviewStatus.invalidate({ publishRequestId: vars.publishRequestId }),
+      ]);
+    },
+    onError: (e) => {
+      showErrorNotification({ title: 'Could not tear down preview', error: new Error(e.message) });
+    },
+  });
+
+  // Flag off / not enabled (query errors) or nothing active → render nothing so
+  // the panel stays unobtrusive when the sandbox isn't in use.
+  const cap = query.data?.cap ?? 0;
+  const active = query.data?.active ?? [];
+  if (query.error || active.length === 0) return null;
+
+  const atCap = cap > 0 && active.length >= cap;
+
+  return (
+    <Card withBorder p="md" mb="md">
+      <Group gap={6} mb="xs">
+        <IconWindow size={16} />
+        <Text size="sm" fw={600}>
+          Active previews
+        </Text>
+        <Badge size="sm" variant="light" color={atCap ? 'red' : 'blue'}>
+          {active.length} / {cap}
+        </Badge>
+        {atCap && (
+          <Text size="xs" c="red">
+            Cap reached — tear one down to start another.
+          </Text>
+        )}
+      </Group>
+      <Table verticalSpacing="xs" horizontalSpacing="md">
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>App</Table.Th>
+            <Table.Th>Version</Table.Th>
+            <Table.Th>State</Table.Th>
+            <Table.Th>Age</Table.Th>
+            <Table.Th />
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {active.map((p) => (
+            <Table.Tr key={p.publishRequestId}>
+              <Table.Td>
+                <Code>{p.slug}</Code>
+              </Table.Td>
+              <Table.Td>
+                <Code>{p.version}</Code>
+              </Table.Td>
+              <Table.Td>
+                <Badge
+                  size="sm"
+                  variant="light"
+                  color={p.state === 'preview-live' ? 'green' : 'blue'}
+                >
+                  {p.state.replace('preview-', '')}
+                </Badge>
+              </Table.Td>
+              <Table.Td>
+                <Text size="xs" c="dimmed">
+                  {formatAge(p.updatedAt)}
+                </Text>
+              </Table.Td>
+              <Table.Td>
+                <Button
+                  size="xs"
+                  variant="light"
+                  color="red"
+                  leftSection={<IconX size={12} />}
+                  loading={
+                    teardownMut.isPending &&
+                    teardownMut.variables?.publishRequestId === p.publishRequestId
+                  }
+                  onClick={() => teardownMut.mutate({ publishRequestId: p.publishRequestId })}
+                >
+                  Tear down
+                </Button>
+              </Table.Td>
+            </Table.Tr>
+          ))}
+        </Table.Tbody>
+      </Table>
+    </Card>
   );
 }
 
@@ -764,6 +915,11 @@ function ReviewModal({
             : 'View code in Forgejo'}
         </Button>
 
+        {/* MOD REVIEW SANDBOX (#2831) — run the PENDING version in a temporary,
+            mod-gated preview before approving. Pending requests only; dark
+            unless the mod-only review-sandbox flag is enabled. */}
+        {mode === 'pending' && <ReviewPreviewPanel publishRequestId={request.id} slug={request.slug} />}
+
         {/* F-E E5 — publisher screenshot gallery review. Publisher-supplied
             images are an abuse vector → the mod sees them (here, derived from
             the submitted bundle) before approving. Renders for every mode so an
@@ -802,6 +958,14 @@ function ReviewModal({
           {mds.kind === 'update' && (
             <FileListPreview added={fs.added} removed={fs.removed} changed={fs.changed} />
           )}
+          {/* Line-level code diff — lazy (only fetched when the mod toggles it
+              open) so the modal stays light by default. Bounded server-side;
+              binary / oversized / huge-diff files fall back to the Forgejo link
+              above. */}
+          <CodeDiffPanel
+            publishRequestId={request.id}
+            forgejoUrl={request.pushCommitUrl ?? request.reviewRepoUrl}
+          />
         </Stack>
 
         <Stack gap={4}>
@@ -909,6 +1073,216 @@ function ReviewModal({
 // URLs returned by the mod-only blocks.getPublishRequestScreenshots query (the
 // pending app has no public screenshot URL yet — it isn't approved).
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// MOD REVIEW SANDBOX (#2831) — run a PENDING version in a temporary, mod-gated
+// preview before approving. The Preview button starts a review build via
+// blocks.previewRequest, then polls blocks.getReviewStatus (preview-building →
+// deploying → live | failed) and, once live, embeds the review host in an
+// iframe + offers a deep-link. The whole feature is dark behind the mod-only
+// `app-blocks-review-sandbox` flag — when it's off, previewRequest throws
+// UNAUTHORIZED and the panel surfaces a "not enabled" message instead.
+// ---------------------------------------------------------------------------
+
+function ReviewPreviewPanel({
+  publishRequestId,
+  slug,
+}: {
+  publishRequestId: string;
+  slug: string;
+}) {
+  const features = useFeatureFlags();
+  const utils = trpc.useUtils();
+
+  // Poll the review status. Enabled on mount (not gated on a client "started"
+  // flag) so a preview already live on the row is picked up after a page reload
+  // / modal re-open — getReviewStatus returns the PERSISTED deploy_state, so we
+  // derive the button + live iframe from the server, not from ephemeral React
+  // state (which reset to "Start preview" on reload). building/deploying poll
+  // fast, live polls slow, none/failed do a single fetch then stop (see
+  // refetchInterval).
+  const statusQuery = trpc.blocks.getReviewStatus.useQuery(
+    { publishRequestId },
+    {
+      enabled: !!features?.appBlocks,
+      retry: false,
+      refetchInterval: (query) => {
+        // react-query v5: the callback receives the Query; the data is at
+        // query.state.data (matches the my-submissions.tsx idiom).
+        const s = query.state.data?.state;
+        if (s === 'preview-building' || s === 'preview-deploying') return 3000;
+        // Keep a SLOW poll alive while the preview is live — it detects
+        // approve/reject/teardown state changes. getReviewStatus mints a fresh
+        // `?mr=<token>` previewUrl (120s TTL) on every poll, but the IFRAME src is
+        // DECOUPLED from the poll via pickReviewIframeSrc (see `stableIframeSrc`
+        // below): the iframe keeps its src until the embedded token nears expiry,
+        // then swaps ONCE — so the live preview doesn't hard-reload every minute
+        // (which would wipe in-progress interaction). A 60s poll < 120s TTL still
+        // guarantees a fresh token is always available when a swap is due.
+        if (s === 'preview-live') return 60000;
+        return false; // failed or none → stop polling
+      },
+    }
+  );
+
+  const previewMut = trpc.blocks.previewRequest.useMutation({
+    onSuccess: async () => {
+      showSuccessNotification({ message: `Review build started for ${slug}.` });
+      await utils.blocks.getReviewStatus.invalidate({ publishRequestId });
+    },
+    onError: (e) => {
+      showErrorNotification({ title: 'Could not start preview', error: new Error(e.message) });
+    },
+  });
+
+  const teardownMut = trpc.blocks.teardownPreview.useMutation({
+    onSuccess: async () => {
+      showSuccessNotification({ message: `Review preview torn down for ${slug}.` });
+      // Clears the DB preview state → getReviewStatus returns state:null and the
+      // panel reverts to "Start preview". Also refresh the global panel's count.
+      await Promise.all([
+        utils.blocks.getReviewStatus.invalidate({ publishRequestId }),
+        utils.blocks.listActivePreviews.invalidate(),
+      ]);
+    },
+    onError: (e) => {
+      showErrorNotification({ title: 'Could not tear down preview', error: new Error(e.message) });
+    },
+  });
+
+  const state = statusQuery.data?.state ?? null;
+  const detail = statusQuery.data?.detail;
+  // Prefer the FRESH, mod-bound, short-TTL tokened URL (`?mr=<token>`) the server
+  // mints on every poll when the preview is live — that token is the cross-origin
+  // access bridge the `*.civit.ai` mod-gate forwardAuth verifies on the iframe's
+  // entry document request. Read from the latest query data each render so the
+  // iframe never mounts with an expired token. Fall back to the bare host URL
+  // (e.g. while building) only for display.
+  const url = statusQuery.data?.previewUrl ?? detail?.url;
+  const inProgress = state === 'preview-building' || state === 'preview-deploying';
+  const isLive = state === 'preview-live';
+  const isFailed = state === 'preview-failed';
+
+  // Stabilize the IFRAME src so it does NOT change on every poll. getReviewStatus
+  // mints a fresh `?mr=<token>` previewUrl every 60s poll; binding the iframe
+  // straight to `url` would hard-reload it each minute, wiping in-progress
+  // interaction in the previewed block. pickReviewIframeSrc keeps the embedded
+  // src until its token nears expiry (TTL 120s), then swaps once. The Open-host
+  // button + the `url` display still use the freshest token. Held in a ref so the
+  // chosen src survives re-renders; recomputed each render via the pure helper.
+  const iframeSrcRef = useRef<string | undefined>(undefined);
+  const stableIframeSrc = isLive
+    ? pickReviewIframeSrc(iframeSrcRef.current, url, Date.now())
+    : undefined;
+  // Persist the choice so the next render compares against the embedded token,
+  // not the latest poll's. Clear when the preview leaves the live state.
+  iframeSrcRef.current = stableIframeSrc || undefined;
+
+  return (
+    <Stack gap={4}>
+      <Group gap={6}>
+        <IconWindow size={14} />
+        <Text size="sm" fw={600}>
+          Review preview
+        </Text>
+        {state && (
+          <Badge
+            size="sm"
+            variant="light"
+            color={isLive ? 'green' : isFailed ? 'red' : 'blue'}
+          >
+            {state.replace('preview-', '')}
+          </Badge>
+        )}
+      </Group>
+      <Text size="xs" c="dimmed">
+        Run this pending version in a temporary, mod-only preview before approving.
+        Torn down automatically when you approve or reject.
+      </Text>
+
+      <Group gap="xs">
+        <Button
+          size="xs"
+          variant="light"
+          leftSection={<IconWindow size={14} />}
+          loading={previewMut.isPending}
+          disabled={previewMut.isPending || inProgress}
+          onClick={() => previewMut.mutate({ publishRequestId })}
+        >
+          {state ? 'Rebuild preview' : 'Start preview'}
+        </Button>
+        {isLive && url && (
+          <Button
+            size="xs"
+            variant="default"
+            component="a"
+            href={url}
+            target="_blank"
+            rel="noopener"
+            rightSection={<IconExternalLink size={12} />}
+          >
+            Open review host
+          </Button>
+        )}
+        {state && (
+          // Shown for every non-null preview state INCLUDING preview-failed:
+          // teardownPreview clears any deploy_state that starts with `preview-`
+          // back to null, so a FAILED preview can be dismissed to "Start preview"
+          // (not just rebuilt). Label reflects that a failed row has nothing live
+          // to tear down — it's a dismiss.
+          <Button
+            size="xs"
+            variant="light"
+            color="red"
+            leftSection={<IconX size={12} />}
+            loading={teardownMut.isPending}
+            disabled={teardownMut.isPending}
+            onClick={() => teardownMut.mutate({ publishRequestId })}
+          >
+            {isFailed ? 'Dismiss failed preview' : 'Tear down preview'}
+          </Button>
+        )}
+      </Group>
+
+      {inProgress && (
+        <Text size="xs" c="dimmed">
+          Building + deploying the review preview…
+          {detail?.sha ? ` (sha ${detail.sha.slice(0, 12)})` : ''}
+        </Text>
+      )}
+      {isFailed && (
+        <Alert color="red" variant="light" icon={<IconX size={14} />}>
+          {detail?.error ?? 'Review preview failed.'}
+        </Alert>
+      )}
+      {isLive && stableIframeSrc && (
+        <iframe
+          title={`Review preview for ${slug}`}
+          src={stableIframeSrc}
+          // no-referrer: the `?mr=<token>` entry-token URL must NOT leak via the
+          // `Referer` header to assets the previewed (untrusted) block loads.
+          // (We deliberately do NOT bind the token to a publishRequestId: that
+          // binding isn't statelessly verifiable at the mod-gate without a DB
+          // lookup, which the stateless forwardAuth gate intentionally avoids.
+          // Host + mod + short TTL + no-referrer is the chosen containment.)
+          referrerPolicy="no-referrer"
+          style={{
+            width: '100%',
+            height: 420,
+            border: '1px solid var(--mantine-color-default-border)',
+            borderRadius: 6,
+          }}
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+        />
+      )}
+      {statusQuery.error && (
+        <Text size="xs" c="dimmed">
+          {statusQuery.error.message}
+        </Text>
+      )}
+    </Stack>
+  );
+}
 
 function ScreenshotsReviewPanel({ publishRequestId }: { publishRequestId: string }) {
   const features = useFeatureFlags();
@@ -1144,6 +1518,226 @@ function FileListPreview({
         ))}
       </Stack>
     </ScrollArea.Autosize>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Line-level code diff — expands the file-level summary with the actual unified
+// line diff per changed/added text file. Lazy: the query only fires once the mod
+// toggles "Show code diff" on, so the modal default stays light. Bounded
+// server-side (text-only, byte/line/file caps); elided files render a "view in
+// Forgejo" fallback rather than inlining unbounded content.
+// ---------------------------------------------------------------------------
+
+type FileLineDiff = {
+  path: string;
+  changeKind: 'added' | 'changed';
+  hunks: Array<{
+    oldStart: number;
+    oldLines: number;
+    newStart: number;
+    newLines: number;
+    lines: string[];
+  }>;
+  skipReason: 'binary' | 'too-large' | 'diff-too-large' | 'file-cap' | null;
+  added: number;
+  removed: number;
+};
+
+const SKIP_LABEL: Record<NonNullable<FileLineDiff['skipReason']>, string> = {
+  binary: 'Binary file — view in Forgejo',
+  'too-large': 'File too large to diff — view in Forgejo',
+  'diff-too-large': 'Diff too large to display — view in Forgejo',
+  'file-cap': 'Too many changed files — view this one in Forgejo',
+};
+
+function CodeDiffPanel({
+  publishRequestId,
+  forgejoUrl,
+}: {
+  publishRequestId: string;
+  forgejoUrl: string;
+}) {
+  const features = useFeatureFlags();
+  const [show, setShow] = useState(false);
+
+  const { data, isLoading, error } = trpc.blocks.getPublishRequestDiff.useQuery(
+    { publishRequestId },
+    // Only fetch once toggled on (lazy). retry:false keeps a failed fetch from
+    // hammering MinIO/Forgejo for a request with no diffable artifact.
+    { enabled: !!features?.appBlocks && show, retry: false }
+  );
+
+  const files = (data?.files ?? []) as FileLineDiff[];
+
+  return (
+    <Stack gap={4}>
+      <Group gap={8}>
+        <Switch
+          size="sm"
+          label="Show code diff"
+          checked={show}
+          onChange={(e) => setShow(e.currentTarget.checked)}
+        />
+        {show && !isLoading && !error && (
+          <Text size="xs" c="dimmed">
+            {files.length} file{files.length === 1 ? '' : 's'} changed
+            {data?.truncated ? ' (some elided — view in Forgejo)' : ''}
+          </Text>
+        )}
+      </Group>
+
+      {show &&
+        (isLoading ? (
+          <Text size="xs" c="dimmed">
+            Computing line diff from the submitted bundle…
+          </Text>
+        ) : error ? (
+          <Text size="xs" c="red">
+            Could not load code diff: {error.message}
+          </Text>
+        ) : files.length === 0 ? (
+          <Text size="xs" c="dimmed">
+            No textual file changes to show.
+          </Text>
+        ) : (
+          <Stack gap={6}>
+            {files.map((f) => (
+              <FileDiffEntry key={f.path} file={f} forgejoUrl={forgejoUrl} />
+            ))}
+          </Stack>
+        ))}
+    </Stack>
+  );
+}
+
+function FileDiffEntry({ file, forgejoUrl }: { file: FileLineDiff; forgejoUrl: string }) {
+  const [open, setOpen] = useState(false);
+  const elided = file.skipReason !== null;
+
+  return (
+    <Card withBorder p={0}>
+      <Group
+        justify="space-between"
+        wrap="nowrap"
+        p={8}
+        style={{ cursor: elided ? 'default' : 'pointer' }}
+        onClick={() => {
+          if (!elided) setOpen((v) => !v);
+        }}
+      >
+        <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
+          <Badge
+            size="xs"
+            color={file.changeKind === 'added' ? 'green' : 'yellow'}
+            variant="light"
+          >
+            {file.changeKind === 'added' ? 'added' : 'changed'}
+          </Badge>
+          <Code style={{ fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {file.path}
+          </Code>
+        </Group>
+        <Group gap={6} wrap="nowrap">
+          {!elided && file.added > 0 && (
+            <Text size="xs" c="green" fw={700}>
+              +{file.added}
+            </Text>
+          )}
+          {!elided && file.removed > 0 && (
+            <Text size="xs" c="red" fw={700}>
+              −{file.removed}
+            </Text>
+          )}
+          {elided && (
+            <Text size="xs" c="dimmed" fs="italic">
+              {SKIP_LABEL[file.skipReason!]}
+            </Text>
+          )}
+          {!elided && (
+            <Text size="xs" c="blue">
+              {open ? 'hide' : 'show'}
+            </Text>
+          )}
+        </Group>
+      </Group>
+
+      {elided && (
+        <Group p={8} pt={0}>
+          <Button
+            component="a"
+            href={forgejoUrl}
+            target="_blank"
+            rel="noopener"
+            size="compact-xs"
+            variant="subtle"
+            leftSection={<IconCode size={12} />}
+            rightSection={<IconExternalLink size={10} />}
+          >
+            View in Forgejo
+          </Button>
+        </Group>
+      )}
+
+      {open && !elided && (
+        <ScrollArea.Autosize mah={320} style={{ background: 'var(--mantine-color-gray-0)' }}>
+          <Stack gap={0} p={6} style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11 }}>
+            {file.hunks.length === 0 ? (
+              <Text size="xs" c="dimmed">
+                No textual change (whitespace/metadata only).
+              </Text>
+            ) : (
+              file.hunks.map((h, hi) => <DiffHunkView key={hi} hunk={h} />)
+            )}
+          </Stack>
+        </ScrollArea.Autosize>
+      )}
+    </Card>
+  );
+}
+
+function DiffHunkView({
+  hunk,
+}: {
+  hunk: {
+    oldStart: number;
+    oldLines: number;
+    newStart: number;
+    newLines: number;
+    lines: string[];
+  };
+}) {
+  return (
+    <>
+      <Text size="xs" c="cyan" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+        {`@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`}
+      </Text>
+      {hunk.lines.map((line, i) => {
+        const sigil = line[0];
+        const color = sigil === '+' ? 'green' : sigil === '-' ? 'red' : undefined;
+        const bg =
+          sigil === '+'
+            ? 'var(--mantine-color-green-0)'
+            : sigil === '-'
+            ? 'var(--mantine-color-red-0)'
+            : undefined;
+        return (
+          <Text
+            key={i}
+            size="xs"
+            c={color}
+            style={{
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-all',
+              background: bg,
+              paddingLeft: 4,
+            }}
+          >
+            {line.length === 0 ? ' ' : line}
+          </Text>
+        );
+      })}
+    </>
   );
 }
 

@@ -46,7 +46,13 @@ import {
 } from '~/server/services/generation/generation.service';
 import { applicableRulesFor } from '~/shared/data-graph/generation/gates';
 import type { GenerationResource } from '~/shared/types/generation.types';
-import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import {
+  redis,
+  REDIS_KEYS,
+  REDIS_SYS_KEYS,
+  sysRedis,
+  withSysReadDeadline,
+} from '~/server/redis/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
@@ -169,7 +175,7 @@ type EcosystemGraphOutput = Extract<GenerationGraphOutput, { ecosystem: string }
  * A Map that throws an error when getting a value that doesn't exist.
  * Used for AIR lookups where a missing value indicates a data problem.
  */
-class StrictAirMap extends Map<number, string> {
+export class StrictAirMap extends Map<number, string> {
   /**
    * Gets the AIR string for a resource ID.
    * @throws Error if the resource ID is not found in the map.
@@ -177,7 +183,15 @@ class StrictAirMap extends Map<number, string> {
   getOrThrow(resourceId: number): string {
     const air = this.get(resourceId);
     if (!air) {
-      throw new Error(
+      // A missing AIR means the submitted form data references a resource that did
+      // NOT enrich (a deleted/unavailable resource, or a form↔enrichment mismatch)
+      // — a CLIENT/DATA fault, not a server failure. Throw a BAD_REQUEST TRPCError
+      // (via throwBadRequestError) so `classifyErrorFault` treats it as a client
+      // fault → logged at info, surfaced as HTTP 400 — instead of a plain Error that
+      // tRPC wraps into a generic INTERNAL_SERVER_ERROR (500). This was ~10% of the
+      // orchestrator.whatIfFromGraph / generateFromGraph 500s (the loudest single
+      // instance being the dead resource 3005242). Message preserved verbatim.
+      throw throwBadRequestError(
         `AIR not found for resource ID ${resourceId}. ` +
           `This indicates a mismatch between form data and enriched resources.`
       );
@@ -230,7 +244,11 @@ async function getGenerationStatus(): Promise<GenerationStatus> {
   // Fail open: a sysRedis outage shouldn't crash generation context build.
   let raw: string | null | undefined;
   try {
-    raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS);
+    // Wall-clock deadline so a silent sysRedis half-open can't park this read
+    // (runs while building the generation context) ~11min.
+    raw = await withSysReadDeadline(
+      sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS)
+    );
   } catch (err) {
     logSysRedisFailOpen('defaults-firing', 'getGenerationStatus orchestration-new', err);
     raw = undefined;
@@ -685,6 +703,9 @@ async function createImagePreprocessInput(
 const STEP_TYPES_WITHOUT_IMAGE_METADATA: readonly string[] = [
   'promptEnhancement',
   'chatCompletion',
+  // Renders a 2D preview of a prior polyGen mesh — its input has no image to
+  // tag, so injecting imageMetadata would only pollute the request payload.
+  'model3DPreview',
 ];
 
 function withImageMetadata(input: object, type: string, imageMetadata: string): object {
@@ -1079,7 +1100,12 @@ export async function createWorkflowStepsFromGraph({
         $type: step.$type,
         input: {
           ...(step.input as object),
-          outputFormat: data.outputFormat,
+          // A handler-set outputFormat wins (e.g. model3DPreview pins 'png');
+          // otherwise inherit the workflow's image outputFormat choice. For
+          // non-image workflows `data.outputFormat` is undefined, so this also
+          // avoids clobbering an intermediate step's own format with undefined.
+          outputFormat:
+            (step.input as { outputFormat?: string }).outputFormat ?? data.outputFormat,
         },
         priority: data.priority,
         timeout,
@@ -1164,16 +1190,22 @@ export async function createWorkflowStepsFromGraphInput({
   user?: { id?: number; isModerator?: boolean };
   isWhatIf?: boolean;
   isGreen?: boolean;
-}): Promise<WorkflowStepTemplate[]> {
+}): Promise<{ steps: WorkflowStepTemplate[]; workflowMetadata?: Record<string, unknown> }> {
   const { data, computedKeys } = validateInput(input, externalCtx);
-  const { steps } = await createWorkflowStepsFromGraph({
+  // `workflowMetadata` carries `{ params, resources, remixOfId, isPrivateGeneration }`
+  // (built by `createWorkflowStepsFromGraph`, run through `removeEmpty`) and is
+  // what the queue/remix view reads via `WorkflowData.params/resources/remixOfId`.
+  // It is intentionally `undefined` on whatIf — the caller must only attach it to
+  // the REAL submit body, mirroring `generateFromGraph` (see below). Return it so
+  // the App-Blocks submit path can carry it; the normal path bakes it in directly.
+  const { steps, workflowMetadata } = await createWorkflowStepsFromGraph({
     data,
     computedKeys,
     user,
     isWhatIf,
     isGreen,
   });
-  return steps;
+  return { steps, workflowMetadata };
 }
 
 type SnippetsPayloadShape = {
@@ -1559,7 +1591,7 @@ import type {
   WorkflowStep,
   WorkflowStepJobQueuePosition,
 } from '@civitai/client';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import type * as z from 'zod';
 import type { workflowQuerySchema } from '~/server/schema/orchestrator/workflows.schema';
 import { queryWorkflows } from './workflows';
@@ -1950,6 +1982,10 @@ function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] {
       return output.blobs?.map((blob) => ({ ...blob, type: 'image' as const })) ?? [];
     case 'imageGen':
     case 'textToImage':
+    // model3DPreview renders 2D preview image(s) of a prior polyGen mesh; its
+    // output shape mirrors an image step. The queue card reads these as the
+    // 3D thumbnail (the step is suppressOutput, so they don't render as cards).
+    case 'model3DPreview':
       return output.images?.map((img) => ({ ...img, type: 'image' as const })) ?? [];
     case 'imageUpscaler':
     case 'preprocessImage':
@@ -2664,9 +2700,19 @@ export async function queryGeneratedImageWorkflows2({
   cache?: boolean;
 }) {
   const fetchAndFormat = async () => {
-    const { nextCursor, items } = await queryWorkflows(props);
+    // The queryGeneratedImages feed has a latency tail (slow >5s events). It splits
+    // into two awaits — the orchestrator HTTP read (`queryWorkflows`) and the
+    // resource-enrichment mapping (`formatGenerationResponse2`) — and we don't yet
+    // know which dominates. Wrap each in its own span (transparent withSpan, same
+    // pattern as the `gen:createSteps:*` spans above) to localize the tail for a
+    // follow-up optimization. Both the cached and uncached paths run through here.
+    const { nextCursor, items } = await withSpan('gen:queryGI:queryWorkflows', () =>
+      queryWorkflows(props)
+    );
     return {
-      items: await formatGenerationResponse2(items as Workflow[], user),
+      items: await withSpan('gen:queryGI:format', () =>
+        formatGenerationResponse2(items as Workflow[], user)
+      ),
       nextCursor,
     };
   };

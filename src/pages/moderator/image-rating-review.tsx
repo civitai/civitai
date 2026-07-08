@@ -11,12 +11,15 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { NsfwLevel } from '~/server/common/enums';
 import type { getImageRatingRequests } from '~/server/services/image.service';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { browsingLevels, getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
 import { ReportStatus } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 const limitsData = [10, 25, 50, 100].map((num) => ({ value: String(num), label: `${num} items` }));
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default function ImageRatingReview() {
   const [limit, setLimit] = useState<string>('50');

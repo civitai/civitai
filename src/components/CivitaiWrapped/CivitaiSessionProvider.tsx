@@ -1,6 +1,6 @@
-import type { Session, SessionUser } from 'next-auth';
-import { signIn, useSession } from 'next-auth/react';
-import { createContext, useContext, useEffect, useMemo } from 'react';
+import type { Session, SessionUser } from '~/types/session';
+import { useSession } from '~/providers/SessionProvider';
+import { createContext, useContext, useMemo } from 'react';
 import { useDomainSync } from '~/hooks/useDomainSync';
 import { useAppContext } from '~/providers/AppProvider';
 import type { UserMeta } from '~/server/schema/user.schema';
@@ -28,7 +28,7 @@ export function CivitaiSessionProvider({
   const user = data?.user;
   const { allowMatureContent, region, verifiedBot } = useAppContext();
   const isRestricted = isRegionRestricted(region) && !user?.isModerator;
-  useDomainSync(data?.user as SessionUser, status);
+  useDomainSync();
   const { data: settings } = trpc.user.getSettings.useQuery(undefined, {
     enabled: !!user,
   });
@@ -99,10 +99,6 @@ export function CivitaiSessionProvider({
     settingsAutoplayGifs,
     verifiedBot,
   ]);
-
-  useEffect(() => {
-    if (data?.error === 'RefreshAccessTokenError') signIn();
-  }, [data?.error]);
 
   if (typeof window !== 'undefined') {
     window.isAuthed = sessionUser.type === 'authed';

@@ -17,6 +17,8 @@ const {
   mockGetQuota,
   mockLogToAxiom,
   mockGetUserById,
+  mockGetSessionUser,
+  mockIsAppBlocksAuthorEnabled,
 } = vi.hoisted(() => {
   const mockClient = {
     query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
@@ -38,6 +40,8 @@ const {
     mockGetQuota: vi.fn(),
     mockLogToAxiom: vi.fn(async () => undefined),
     mockGetUserById: vi.fn(),
+    mockGetSessionUser: vi.fn(),
+    mockIsAppBlocksAuthorEnabled: vi.fn(),
   };
 });
 
@@ -51,6 +55,10 @@ vi.mock('~/server/db/client', () => ({
 }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
+  isAppBlocksAuthorEnabled: mockIsAppBlocksAuthorEnabled,
+}));
+vi.mock('~/server/auth/session-client', () => ({
+  sessionClient: { getSessionUserById: (...args: unknown[]) => mockGetSessionUser(...args) },
 }));
 vi.mock('~/server/db/appsDb', () => ({
   requireAppsDb: () => mockPool,
@@ -116,13 +124,21 @@ beforeEach(() => {
   mockGetQuota.mockReset();
   mockLogToAxiom.mockReset();
   mockGetUserById.mockReset();
+  mockGetSessionUser.mockReset();
+  mockIsAppBlocksAuthorEnabled.mockReset();
 
   // Sane defaults the happy-path tests inherit.
   mockIsAppBlocksEnabled.mockImplementation(async () => true);
   mockParseSubjectUserId.mockImplementation((sub: string) => (sub === 'anon' ? null : 42));
-  // Phase 2: App Blocks is moderator-only; the storage resolver re-asserts the
-  // resolved viewer is a mod. Default the happy path to a moderator subject.
+  // The storage resolver re-asserts the resolved viewer is an app AUTHOR
+  // (assertViewerIsAppDeveloper → getSessionUserById + isAppBlocksAuthorEnabled).
+  // Default the happy path to a moderator subject; the author capability defaults
+  // to the mod-floor (mirrors the flag absent → mods pass, non-mods don't).
   mockGetUserById.mockResolvedValue({ id: 42, isModerator: true });
+  mockGetSessionUser.mockResolvedValue({ id: 42, isModerator: true });
+  mockIsAppBlocksAuthorEnabled.mockImplementation(
+    async (opts?: { user?: { isModerator?: boolean } }) => !!opts?.user?.isModerator
+  );
   mockDbRead.appBlock.findUnique.mockResolvedValue({
     id: 'apb_test',
     status: 'approved',
@@ -182,12 +198,12 @@ describe('apps.storage shared gates', () => {
     ).rejects.toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
   });
 
-  // Phase 2: App Blocks is moderator-only until GA. A block token whose
-  // subject resolves to a non-mod user is rejected with FORBIDDEN by the
-  // shared resolveStorageContext gate — across every storage op.
+  // App Blocks authoring is mod OR the app-dev-testers cohort. A block token
+  // whose subject resolves to a non-author (non-mod, no cohort grant) is rejected
+  // with FORBIDDEN by the shared resolveStorageContext gate — across every op.
   it('rejects a non-mod resolved viewer with FORBIDDEN (get)', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-    mockGetUserById.mockResolvedValueOnce({ id: 42, isModerator: false });
+    mockGetSessionUser.mockResolvedValueOnce({ id: 42, isModerator: false });
     const caller = appsRouter.createCaller(fakeCtx() as never);
     await expect(
       caller.storage.get({ blockToken: 't', key: 'k' })
@@ -198,7 +214,7 @@ describe('apps.storage shared gates', () => {
 
   it('rejects a non-mod resolved viewer with FORBIDDEN (set)', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-    mockGetUserById.mockResolvedValueOnce({ id: 42, isModerator: false });
+    mockGetSessionUser.mockResolvedValueOnce({ id: 42, isModerator: false });
     const caller = appsRouter.createCaller(fakeCtx() as never);
     await expect(
       caller.storage.set({ blockToken: 't', key: 'k', value: { a: 1 } })
@@ -206,13 +222,24 @@ describe('apps.storage shared gates', () => {
     expect(mockClient.query).not.toHaveBeenCalled();
   });
 
-  it('rejects a vanished resolved viewer with FORBIDDEN (getUserById → null)', async () => {
+  it('rejects a vanished resolved viewer with FORBIDDEN (getSessionUserById → null)', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-    mockGetUserById.mockResolvedValueOnce(null);
+    mockGetSessionUser.mockResolvedValueOnce(null);
     const caller = appsRouter.createCaller(fakeCtx() as never);
     await expect(
       caller.storage.get({ blockToken: 't', key: 'k' })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('accepts an author-capable NON-MOD subject (cohort widening): reaches the data pool', async () => {
+    // A curated non-mod author (granted app-blocks-author) whose block declares
+    // apps:storage:* must NOT be blocked at the storage gate — the KV op proceeds.
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockGetSessionUser.mockResolvedValueOnce({ id: 42, isModerator: false });
+    mockIsAppBlocksAuthorEnabled.mockResolvedValueOnce(true);
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await caller.storage.get({ blockToken: 't', key: 'k' });
+    expect(mockPool.query).toHaveBeenCalled();
   });
 
   // Fix 3 / audit A5 (design-gaps H4): storage is a DECLARED, approved scope —

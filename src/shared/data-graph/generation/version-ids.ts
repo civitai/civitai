@@ -19,6 +19,7 @@ export const nanoBananaVersionIds = {
   standard: 2154472,
   pro: 2436219,
   v2: 2725610,
+  v2lite: 3086021,
 } as const;
 
 export const viduVersionIds = {

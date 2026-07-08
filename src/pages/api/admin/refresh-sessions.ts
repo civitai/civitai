@@ -1,20 +1,10 @@
-import * as z from 'zod';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { invalidateAllSessions } from '~/server/auth/session-invalidation';
 
-const refreshSessionsSchema = z.object({
-  asOf: z.preprocess((v) => (v ? new Date(String(v)) : undefined), z.date().optional()).optional(),
-});
-
-export default WebhookEndpoint(async (req, res) => {
-  const result = refreshSessionsSchema.safeParse(req.query);
-  if (!result.success) {
-    res.status(400).json({ ok: false, error: result.error });
-    return;
-  }
-
-  const { asOf } = result.data;
-  await invalidateAllSessions(asOf);
-
-  res.status(200).json({ ok: true, asOf });
+// Force a global session refresh: sets the hub's SESSION.ALL revocation cutoff to now, so every token signed
+// before this call is revoked (clients re-auth / refresh). The cutoff is always "now" — there's no custom
+// `asOf` (mass invalidation is "revoke everything currently outstanding").
+export default WebhookEndpoint(async (_req, res) => {
+  await invalidateAllSessions();
+  res.status(200).json({ ok: true });
 });

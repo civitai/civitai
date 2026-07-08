@@ -51,6 +51,7 @@ import { constants } from '~/server/common/constants';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
 export const getServerSideProps = createServerSideProps({
+  requireModerator: true,
   useSession: true,
   resolver: async ({ session }) => {
     if (!session || !session?.user?.isModerator)

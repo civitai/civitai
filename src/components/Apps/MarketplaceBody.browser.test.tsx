@@ -36,9 +36,11 @@ function makeBlock(id: string, name: string): AvailableBlock {
     manifest: { name, description: 'desc', targets: [{ slotId: 'model.sidebar_top' }], hasPage: false },
     installCount: 0,
     category: null,
+    externalUrl: null,
     scopesSummary: [],
     avgRating: null,
     reviewCount: 0,
+    coverUrl: null,
   };
 }
 
@@ -56,9 +58,11 @@ function makePageBlock(id: string, name: string): AvailableBlock {
     manifest: { name, description: 'desc', targets: [{ slotId: 'app.page' }], hasPage: true },
     installCount: 0,
     category: null,
+    externalUrl: null,
     scopesSummary: [],
     avgRating: null,
     reviewCount: 0,
+    coverUrl: null,
   };
 }
 

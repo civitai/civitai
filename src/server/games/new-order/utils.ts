@@ -4,6 +4,7 @@ import { CacheTTL } from '~/server/common/constants';
 import { NewOrderImageRatingStatus } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { hSetWithTTL, zAddWithTTL } from '~/server/redis/atomic';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { logToAxiom } from '~/server/logging/client';
@@ -95,7 +96,18 @@ function createCounter<TId extends number | string = number | string>({
         LIMIT: limit ? { offset, count: limit } : undefined,
       });
 
-      return withCount ? data : data.map((x) => x.value);
+      // The HA/Sentinel sysRedis client hands back BLOB_STRING replies (zset
+      // members) as Buffers, which have no string methods. `checkWeightedConsensus`
+      // does `vote.value.split('-')` on these → `value.split is not a function`,
+      // which was swallowed and returned undefined for EVERY image that reached
+      // consensus → mass Inconclusive purges + earnings collapse. Decode members to
+      // utf8 so callers get the string they're typed to receive (same coercion as
+      // redis/queues.ts getBucketNames).
+      const rows = data.map((x) => ({
+        value: Buffer.isBuffer(x.value) ? x.value.toString('utf8') : x.value,
+        score: x.score,
+      }));
+      return withCount ? rows : rows.map((x) => x.value);
     }
 
     const data = await sysRedis.hGetAll(key);
@@ -220,6 +232,10 @@ function createCounter<TId extends number | string = number | string>({
 
     const ids = Array.isArray(id) ? id : [id];
     const stringIds = ids.map(String);
+
+    // Redis errors with "wrong number of arguments" if ZREM/HDEL is called with
+    // no members. Empty id arrays are a valid no-op (nothing to remove).
+    if (stringIds.length === 0) return 0;
 
     return ordered ? sysRedis.zRem(key, stringIds) : sysRedis.hDel(key, stringIds);
   }
@@ -706,8 +722,8 @@ export async function getActiveSlot(
   if (!sysRedis) return 'a'; // Default fallback
 
   const key = `${REDIS_SYS_KEYS.NEW_ORDER.ACTIVE_SLOT}:${rank}:${purpose}` as const;
-  const slot = await sysRedis.get(key);
-  return (slot as NewOrderSlot) || 'a'; // Default to 'a' if not set
+  const slot = decodeRedisString(await sysRedis.get(key));
+  return (slot || 'a') as NewOrderSlot; // Default to 'a' if not set
 }
 
 /**

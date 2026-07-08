@@ -50,6 +50,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { BuzzWithdrawalRequestSort } from '~/server/common/enums';
 import type { GetPaginatedBuzzWithdrawalRequestSchema } from '~/server/schema/buzz-withdrawal-request.schema';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import {
   BuzzWithdrawalRequestStatus,
   Currency,
@@ -541,3 +542,5 @@ export default function ModeratorBuzzWithdrawalRequests() {
     </Container>
   );
 }
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });

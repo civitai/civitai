@@ -1,7 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { CacheTTL } from '~/server/common/constants';
+import { CacheTTL, constants, KEY_VALUE_KEYS } from '~/server/common/constants';
+import { purgeCache } from '~/server/cloudflare/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { dbKV } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -344,3 +346,83 @@ export const getRecentTrainingData = async ({
     else throw throwDbError(error);
   }
 };
+
+// Mod-managed model file precision + quant-type lists (KeyValue: modelFileOptions).
+export type ModelFileOptions = { precisions: string[]; quantTypes: string[] };
+
+// Edge-cache tag shared by the public `modelFile.getOptions` procedure (edgeCacheIt) and the
+// purge below, so a mod write busts the CDN immediately instead of waiting out the TTL.
+export const MODEL_FILE_OPTIONS_EDGE_TAG = 'model-file-options';
+
+const modelFileOptionDefaults: ModelFileOptions = {
+  precisions: [...constants.modelFileFp],
+  quantTypes: [...constants.modelFileQuantTypes],
+};
+
+function dedupeOptions(values: string[]) {
+  return [...new Set(values.map((v) => v.trim()).filter(Boolean))];
+}
+
+function normalizeModelFileOptions(value: unknown): ModelFileOptions {
+  const v = (value ?? {}) as Partial<Record<keyof ModelFileOptions, unknown>>;
+  const pick = (input: unknown, fallback: string[]) => {
+    const list = Array.isArray(input) ? input.filter((x): x is string => typeof x === 'string') : [];
+    const cleaned = dedupeOptions(list);
+    return cleaned.length ? cleaned : fallback;
+  };
+  return {
+    precisions: pick(v.precisions, modelFileOptionDefaults.precisions),
+    quantTypes: pick(v.quantTypes, modelFileOptionDefaults.quantTypes),
+  };
+}
+
+// DB row (mod-managed) overrides the hardcoded constants; constants are the durable fallback
+// when the KeyValue row is absent. Caching lives at the edge — the public tRPC procedure is
+// wrapped in edgeCacheIt — so this just reads through dbKV (the primary, so writes are
+// immediately self-consistent on the next read).
+export async function getModelFileOptions() {
+  return normalizeModelFileOptions(await dbKV.get(KEY_VALUE_KEYS.MODEL_FILE_OPTIONS));
+}
+
+// Read-before-write (dbKV reads the primary) so a partial mutation can't clobber the preserved
+// list. `merge` returns the replacement for a given list; an absent input key is a no-op.
+async function mutateModelFileOptions(
+  input: Partial<ModelFileOptions>,
+  merge: (current: string[], next: string[]) => string[]
+) {
+  const current = normalizeModelFileOptions(await dbKV.get(KEY_VALUE_KEYS.MODEL_FILE_OPTIONS));
+  const next: ModelFileOptions = {
+    precisions: input.precisions ? merge(current.precisions, input.precisions) : current.precisions,
+    quantTypes: input.quantTypes ? merge(current.quantTypes, input.quantTypes) : current.quantTypes,
+  };
+  await dbKV.set(KEY_VALUE_KEYS.MODEL_FILE_OPTIONS, next);
+  // Best-effort: the DB write is the source of truth, so a purge failure must not fail the
+  // caller — worst case the CDN serves stale until its TTL expires.
+  purgeCache({ tags: [MODEL_FILE_OPTIONS_EDGE_TAG] }).catch((error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'purge-model-file-options-cache',
+      message: (error as Error).message,
+      error,
+    })
+  );
+  return next;
+}
+
+// PUT: replace the provided list(s) wholesale.
+export function setModelFileOptions(input: Partial<ModelFileOptions>) {
+  return mutateModelFileOptions(input, (_current, next) => dedupeOptions(next));
+}
+
+// POST: append the provided value(s) to the existing list(s).
+export function addModelFileOptions(input: Partial<ModelFileOptions>) {
+  return mutateModelFileOptions(input, (current, next) => dedupeOptions([...current, ...next]));
+}
+
+// DELETE: remove the provided value(s) from the existing list(s).
+export function removeModelFileOptions(input: Partial<ModelFileOptions>) {
+  return mutateModelFileOptions(input, (current, next) => {
+    const removal = new Set(dedupeOptions(next));
+    return current.filter((x) => !removal.has(x));
+  });
+}

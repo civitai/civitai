@@ -166,10 +166,11 @@ export function MarketplaceBody() {
   // marketplace cards owned by the viewer. Visible only to the owner;
   // the trPC procedure is guarded so other users get nothing back.
   const { data: myAppsRaw } = trpc.blocks.getMyApps.useQuery(undefined, {
-    // getMyApps is a moderatorProcedure — gate on the same developer predicate as
-    // the rest of the funnel so a non-developer never fires it (today: mod-only;
-    // post-W11-widen: only app developers, not every logged-in marketplace viewer).
-    enabled: !!features.appBlocks && isAppDeveloper(currentUser),
+    // getMyApps is an appDeveloperProcedure — gate on the same developer predicate
+    // as the rest of the funnel so a non-developer never fires it. Threads the
+    // `appBlocksAuthor` capability so the curated non-mod author cohort (not every
+    // logged-in marketplace viewer) fires it too.
+    enabled: !!features.appBlocks && isAppDeveloper(currentUser, { appBlocksAuthor: features.appBlocksAuthor }),
   });
   const earningsByAppBlockId = useMemo(() => {
     type AppRow = { id: string; lifetimeShareCents: number };
@@ -325,7 +326,7 @@ export function MarketplaceBody() {
           probeLoading={probeLoading && hasActiveFilters}
           hasActiveFilters={hasActiveFilters}
           onClearFilters={clearFilters}
-          canSubmit={isAppDeveloper(currentUser)}
+          canSubmit={isAppDeveloper(currentUser, { appBlocksAuthor: features.appBlocksAuthor })}
         />
       ) : (
         <>

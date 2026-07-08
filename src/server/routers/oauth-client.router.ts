@@ -29,7 +29,7 @@ function rejectAppBlockClient(clientId: string): void {
   if (isAppBlockOauthClientId(clientId)) {
     throw new TRPCError({
       code: 'FORBIDDEN',
-      message: 'App Block clients are managed by the App Blocks platform and cannot be modified here',
+      message: 'App clients are managed by the Civitai Apps platform and cannot be modified here',
     });
   }
 }

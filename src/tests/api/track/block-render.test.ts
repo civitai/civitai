@@ -4,7 +4,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 /**
  * Coverage for POST /api/track/block-render — the lightweight beacon that
  * replaces the track.blockRender tRPC mutation for the App Blocks hosts
- * (PageBlockHost / IframeHost). Mirrors src/tests/api/track/view.test.ts.
+ * (PageBlockHost / IframeHost). Mirrors src/tests/api/internal/pulse.test.ts.
  *
  * Verifies the security-critical contract:
  *  - same-origin guard (origin/referer host must equal request host),

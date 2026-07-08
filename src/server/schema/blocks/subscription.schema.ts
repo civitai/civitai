@@ -159,6 +159,12 @@ export const PUBLIC_MANIFEST_FIELDS = ['name', 'description', 'targets', 'hasPag
  *                       `scopes`. These are plain scope identifier strings
  *                       describing what the app can do (the whole point of the
  *                       disclosure) — never the raw manifest declaration.
+ *   - `coverUrl`      — the FIRST publisher-supplied screenshot's PUBLIC display
+ *                       URL (`toPublicScreenshots(id, screenshots)[0]?.url`),
+ *                       surfaced as the card's cover image. NULL when the app
+ *                       shipped no `screenshots/` dir. Same opaque, gated app
+ *                       route (`/api/blocks/screenshot/<id>/<index>.<ext>`) the
+ *                       detail page uses — the raw MinIO key is NEVER exposed.
  */
 export type AvailableBlock = {
   id: string;
@@ -169,11 +175,26 @@ export type AvailableBlock = {
   installCount: number;
   category: string | null;
   scopesSummary: string[];
+  // Off-site (external-link) app — PURE EXTERNAL LINK. When non-null, this
+  // listing opens an external URL in a new tab (NO install / scopes / token /
+  // subscription). The card uses this as the "open" target instead of the
+  // computed `https://<slug>.<APPS_DOMAIN>` liveUrl, hides Install + scopes, and
+  // flags the app as off-site. NULL = a normal on-platform app. Always https://.
+  externalUrl: string | null;
   // Marketplace reviews (F-E "marketplace" cluster). avgRating is NULL when the
   // app has no aggregate-eligible reviews (0-review apps); reviewCount excludes
   // mod-excluded + self-reviews. Both display-safe (aggregate numbers only).
   avgRating: number | null;
   reviewCount: number;
+  // Card cover image: the FIRST publisher-supplied screenshot's PUBLIC display
+  // URL, or NULL when the app shipped no screenshots. Built via the SAME
+  // `toPublicScreenshots` projection the detail page uses (opaque gated route,
+  // never the raw MinIO key) — display-only. OPTIONAL: both producers
+  // (listAvailable/getFeaturedBlocks) always set it to `string | null`, but a
+  // nullable display field is left optional so test fixtures built via
+  // `Partial<AvailableBlock>` spread (which widens to `| undefined`) typecheck;
+  // the card treats absent the same as null (renders the placeholder).
+  coverUrl?: string | null;
 };
 
 /**
@@ -433,4 +454,9 @@ export type PublicAppDetail = {
   reviewCount: number;
   liveUrl: string;
   screenshots: PublicScreenshot[];
+  // Off-site (external-link) app — PURE EXTERNAL LINK. When non-null, the detail
+  // surfaces this as the primary CTA (open in a new tab) and hides install /
+  // scopes / iframe-preview. NULL = a normal on-platform app (liveUrl is the
+  // canonical standalone origin as before). Always https://.
+  externalUrl: string | null;
 };

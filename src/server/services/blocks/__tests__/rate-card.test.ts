@@ -412,6 +412,98 @@ describe('computeSpendShare', () => {
     expect(RATE_CARD_V2.spendSharePct).toBe(0);
     expect(RATE_CARD_V3.spendSharePct).toBe(0);
   });
+
+  // ---------------------------------------------------------------
+  // PAYOUT-SAFETY GATE (App Blocks Sybil / payout review). Block currencies
+  // were widened to on-site parity (blue/green/yellow); the bounty must only
+  // accrue on PAID Buzz (green + yellow), never on the free type (blue), so the
+  // widening can never become platform-funded farming. (green is PAID — product
+  // confirmed 2026-06-30: "green buzz is paid, only blue is free".)
+  // ---------------------------------------------------------------
+  describe('payout-eligibility by buzzType', () => {
+    it('defaults to yellow (legacy/pre-parity) → pays the bounty (behavior-preserving)', () => {
+      const res = computeSpendShare({
+        rateCard: fixedCard,
+        grossValueCents: 1000,
+        isSelfSpend: false,
+        appOwnerUserId: 1,
+        // buzzType omitted → defaults to 'yellow'
+      });
+      expect(res.spendSharePct).toBe(10);
+      expect(res.appOwnerShareCents).toBe(100);
+    });
+
+    it('yellow (purchased/earned) → pays the bounty', () => {
+      const res = computeSpendShare({
+        rateCard: fixedCard,
+        grossValueCents: 1000,
+        isSelfSpend: false,
+        appOwnerUserId: 1,
+        buzzType: 'yellow',
+      });
+      expect(res.spendSharePct).toBe(10);
+      expect(res.appOwnerShareCents).toBe(100);
+    });
+
+    it('blue (free generation Buzz) → ZERO bounty (excluded)', () => {
+      const res = computeSpendShare({
+        rateCard: fixedCard,
+        grossValueCents: 1000,
+        isSelfSpend: false,
+        appOwnerUserId: 1,
+        buzzType: 'blue',
+      });
+      expect(res.spendSharePct).toBe(0);
+      expect(res.appOwnerShareCents).toBe(0);
+    });
+
+    it('green (paid/purchasable) → pays the bounty', () => {
+      const res = computeSpendShare({
+        rateCard: fixedCard,
+        grossValueCents: 1000,
+        isSelfSpend: false,
+        appOwnerUserId: 1,
+        buzzType: 'green',
+      });
+      expect(res.spendSharePct).toBe(10);
+      expect(res.appOwnerShareCents).toBe(100);
+    });
+
+    it('unknown / garbage buzzType → ZERO bounty (fail-closed)', () => {
+      const res = computeSpendShare({
+        rateCard: fixedCard,
+        grossValueCents: 1000,
+        isSelfSpend: false,
+        appOwnerUserId: 1,
+        buzzType: 'totally-bogus',
+      });
+      expect(res.spendSharePct).toBe(0);
+      expect(res.appOwnerShareCents).toBe(0);
+    });
+
+    it('the gate is independent of self-spend / internal (any one zeroes the bounty)', () => {
+      // yellow + self-spend still 0 (self-spend wash dominates).
+      expect(
+        computeSpendShare({
+          rateCard: fixedCard,
+          grossValueCents: 1000,
+          isSelfSpend: true,
+          appOwnerUserId: 1,
+          buzzType: 'yellow',
+        }).appOwnerShareCents
+      ).toBe(0);
+      // blue + non-self / non-internal still 0 (payout-gate dominates).
+      expect(
+        computeSpendShare({
+          rateCard: fixedCard,
+          grossValueCents: 1000,
+          isSelfSpend: false,
+          appOwnerUserId: 1,
+          buzzType: 'blue',
+        }).appOwnerShareCents
+      ).toBe(0);
+    });
+  });
 });
 
 /**

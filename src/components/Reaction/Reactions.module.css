@@ -5,7 +5,7 @@
     /* // The color and background are dynamic based on the `color` prop and theme.
     // Set these via a style prop or utility class if needed.
     // For gray (not reacted): */
-    color: var(--mantine-color-gray-6);
+    color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-gray-3));
     background: transparent !important;
   }
 

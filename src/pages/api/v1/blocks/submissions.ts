@@ -1,12 +1,12 @@
 import type { Logger } from '@civitai/next-axiom';
 import { withAxiom } from '@civitai/next-axiom';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
 import { dbRead } from '~/server/db/client';
 import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
-import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
+import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { Flags } from '~/shared/utils/flags';
 
@@ -196,23 +196,28 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     if (!Flags.hasFlag(session.tokenScope, TokenScope.AppBlocksSubmit)) {
       res.status(403).json({
         message:
-          'App Blocks status requires a personal API key or an OAuth token with the App Blocks submit scope',
+          'App status requires a personal API key or an OAuth token with the Apps submit scope',
       });
       return;
     }
   }
 
-  // 2. Moderator gate — App Blocks is mod-only pre-GA (parity with
-  // submit-version + dev-token).
-  if (!user.isModerator || user.bannedAt) {
-    res.status(403).json({ message: 'App Blocks is restricted to the civitai team' });
+  // 2. Author gate — App Blocks AUTHORING is mod OR the app-dev-testers cohort
+  // (parity with submit-version + withdraw + dev-token). AUTHZ; the
+  // isAppBlocksEnabled kill-switch below is separate.
+  if (user.bannedAt) {
+    res.status(403).json({ message: 'Apps are restricted to the Civitai team' });
+    return;
+  }
+  if (!(await isAppBlocksAuthorEnabled({ user }))) {
+    res.status(403).json({ message: 'Apps are restricted to the Civitai team' });
     return;
   }
 
   // 3. Feature flag for THIS user (mirrors submit-version + the prod mint).
   // 503 (dark) when off.
   if (!(await isAppBlocksEnabled({ user }))) {
-    res.status(503).json({ message: 'App Blocks is not enabled' });
+    res.status(503).json({ message: 'Apps are not enabled' });
     return;
   }
 

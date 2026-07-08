@@ -24,6 +24,13 @@ type Model3DVariantViewerProps = {
   /** Forwarded to the underlying Model3DViewer — fills its parent container instead of imposing min-h-[480px]. */
   compact?: boolean;
   className?: string;
+  /**
+   * z-index for the variant picker's portal'd dropdown. Needed when the
+   * viewer lives inside a high-z container (e.g. the full-screen lightbox
+   * Modal at z-400) so the dropdown isn't rendered behind it. Defaults to
+   * Mantine's combobox z-index, which is correct for the inline queue card.
+   */
+  comboboxZIndex?: number;
 };
 
 // Dynamic, ssr-disabled import — three.js needs WebGL. Matches the import
@@ -50,6 +57,7 @@ export function Model3DVariantViewer({
   initialKey,
   compact,
   className,
+  comboboxZIndex,
 }: Model3DVariantViewerProps) {
   const [selectedKey, setSelectedKey] = useState<string | null>(
     initialKey ?? variants[0]?.key ?? null
@@ -99,7 +107,7 @@ export function Model3DVariantViewer({
             size="xs"
             allowDeselect={false}
             withCheckIcon={false}
-            comboboxProps={{ withinPortal: true }}
+            comboboxProps={{ withinPortal: true, zIndex: comboboxZIndex }}
             styles={{
               input: {
                 backgroundColor: 'rgba(20, 20, 20, 0.75)',

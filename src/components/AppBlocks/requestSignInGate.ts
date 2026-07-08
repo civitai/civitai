@@ -9,15 +9,15 @@
  * iframe postMessage harness (same pattern as resolveBuzzPurchaseRequest):
  *
  *   1. status === 'ready' — only honor the request once BLOCK_READY has landed,
- *      so a pre-handshake block can't pop a login modal before any interaction.
+ *      so a pre-handshake block can't pop a login popup before any interaction.
  *   2. returnUrl sanitisation — a block-supplied returnUrl is honored ONLY when
  *      it is an in-app, same-origin path (begins with a single '/'). Absolute
  *      URLs and protocol-relative ('//evil.com') values are dropped so a block
  *      can't bounce the user off-site through the post-login redirect; the
- *      caller then lets LoginModal default returnUrl to the current page.
+ *      caller then defaults returnUrl to the current page.
  *
  * Returns `null` when the request must be ignored (status not ready), or the
- * resolved login intent (`{ returnUrl?: string }`) when the modal should open.
+ * resolved login intent (`{ returnUrl?: string }`) when the login popup should open.
  */
 import type { HostStatus } from './openBuzzPurchaseGate';
 

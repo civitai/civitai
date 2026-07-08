@@ -53,6 +53,7 @@ export const constants = {
   modelFileTypes: [
     'Model',
     'Text Encoder',
+    'Vision Encoder',
     'Pruned Model',
     'Negative',
     'Training Data',
@@ -108,6 +109,8 @@ export const constants = {
     'UNet',
     'DiffusionModel',
     'CLIPVision',
+    'CLIP',
+    'VisionLanguage',
     'ControlNet',
     'Upscaler',
     'Workflow',
@@ -127,6 +130,7 @@ export const constants = {
     'Training Data': 2,
     Config: 3,
     'Text Encoder': 4,
+    'Vision Encoder': 16,
     VAE: 5,
     Negative: 6,
     Archive: 7,
@@ -144,7 +148,6 @@ export const constants = {
     image: 320,
     articles: 320,
     bounty: 320,
-    club: 320,
   },
   modPublishOnlyStatuses: [ModelStatus.UnpublishedViolation, ModelStatus.Deleted] as ModelStatus[],
   cacheTime: {
@@ -307,20 +310,6 @@ export const constants = {
     messageMaxLength: 1200,
     locationMaxLength: 30,
   },
-  clubs: {
-    tierMaxMemberLimit: 9999,
-    tierImageAspectRatio: 1 / 1,
-    tierImageDisplayWidth: 124,
-    tierImageSidebarDisplayWidth: 84,
-    avatarDisplayWidth: 124,
-    minMonthlyBuzz: 5,
-    minStripeCharge: 3000, // 3000 Buzz = $3.00 USD
-    headerImageAspectRatio: 1 / 4,
-    postCoverImageAspectRatio: 1 / 4,
-    engagementTypes: ['engaged'],
-    coverImageHeight: 400,
-    coverImageWidth: 1600,
-  },
   article: {
     coverImageHeight: 400,
     coverImageWidth: 850,
@@ -466,6 +455,7 @@ export const modelFileComponentTypes = constants.modelFileComponentTypes;
 export const componentFileTypes = [
   'VAE',
   'Text Encoder',
+  'Vision Encoder',
   'UNet',
   'Diffusion Model',
   'CLIPVision',
@@ -1460,6 +1450,10 @@ export const generation = {
   },
 } as const;
 export const maxRandomSeed = 2147483647;
+// Postgres INT4 (integer) column bounds — the ceiling any value written to an
+// `integer` column (e.g. metric counts) must fit under.
+export const PG_INT4_MAX = 2_147_483_647;
+export const PG_INT4_MIN = -2_147_483_648;
 export const maxUpscaleSize = 3840;
 export const minDownscaleSize = 320;
 export const minUploadSize = 300;
@@ -1736,4 +1730,5 @@ export const EARLY_ACCESS_CONFIG: {
 
 export const KEY_VALUE_KEYS = {
   REDEEM_CODE_GIFT_NOTICES: 'redeemCodeGiftNotices',
+  MODEL_FILE_OPTIONS: 'modelFileOptions',
 } as const;

@@ -73,12 +73,14 @@ vi.mock('~/server/db/client', () => ({
   dbRead: { appBlock: { findUnique: vi.fn() } },
   dbWrite: { modelBlockInstall: { findUnique: vi.fn() }, model: { findUnique: vi.fn() } },
 }));
-vi.mock('~/server/redis/client', () => ({
-  redis: { get: vi.fn(), set: vi.fn() },
-  sysRedis: { get: vi.fn(), incrBy: vi.fn(), expire: vi.fn(), ttl: vi.fn() },
-  REDIS_KEYS: { BLOCKS: { POPULAR_CHECKPOINT: 'blocks:popular-checkpoint' } },
-  REDIS_SYS_KEYS: { BLOCKS: { BUZZ_CAP: 'system:blocks:buzz-cap' } },
-}));
+vi.mock('~/server/redis/client', async () => {
+  const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
+  return {
+    ...actual,
+    redis: { get: vi.fn(), set: vi.fn() },
+    sysRedis: { get: vi.fn(), incrBy: vi.fn(), expire: vi.fn(), ttl: vi.fn() },
+  };
+});
 vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
   dailyBoostReward: { apply: vi.fn(), getUserRewardDetails: vi.fn() },
 }));
@@ -253,7 +255,8 @@ describe('blocks.getFeaturedBlocks — anon-capable, dark behind the flag (F-E E
     expect(result).toEqual({ items: featured });
     // PAGE-ONLY LAUNCH GATE (#2622): a non-mod/anon caller passes launchOnly=true
     // so the featured rail carries launch (page) apps only.
-    expect(mockGetFeaturedBlocks).toHaveBeenCalledWith(12, true);
+    // 3rd arg = redCapable (NSFW-app-red-only; no host header → false).
+    expect(mockGetFeaturedBlocks).toHaveBeenCalledWith(12, true, false);
   });
 
   it('moderator (the live state today): served — sees ALL featured apps (launchOnly=false)', async () => {
@@ -261,6 +264,8 @@ describe('blocks.getFeaturedBlocks — anon-capable, dark behind the flag (F-E E
     await caller.getFeaturedBlocks({ limit: 12 });
     expect(mockGetFeaturedBlocks).toHaveBeenCalledTimes(1);
     // Mods bypass the page-only launch gate → launchOnly=false (all apps).
-    expect(mockGetFeaturedBlocks).toHaveBeenCalledWith(12, false);
+    // 3rd arg = redCapable (no host → false). Maturity is a host property, not a
+    // privilege — even a mod on .com does not see mature apps here.
+    expect(mockGetFeaturedBlocks).toHaveBeenCalledWith(12, false, false);
   });
 });

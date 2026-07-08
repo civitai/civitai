@@ -538,10 +538,10 @@ export const mergeVersionsSchema = z.object({
         type: z.enum(constants.modelFileTypes).optional(),
         metadata: z
           .object({
-            fp: z.enum(constants.modelFileFp).nullish(),
+            fp: z.string().max(64).nullish(),
             size: z.enum(constants.modelFileSizes).nullish(),
             format: z.enum(constants.modelFileFormats).nullish(),
-            quantType: z.enum(constants.modelFileQuantTypes).nullish(),
+            quantType: z.string().max(64).nullish(),
             isRequired: z.boolean().nullish(),
           })
           .optional(),

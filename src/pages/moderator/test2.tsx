@@ -1,6 +1,7 @@
 import { CloseButton } from '@mantine/core';
 import React, { useState } from 'react';
 import createSlots from '~/libs/slots/create-slots';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 // ---------------------------------------------------------------------------
 // Setup: create a slot system with 'header' and 'footer' named slots
@@ -184,5 +185,7 @@ function Test2() {
     </div>
   );
 }
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default Test2;

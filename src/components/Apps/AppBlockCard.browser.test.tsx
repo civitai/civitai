@@ -87,9 +87,11 @@ function makeBlock(
     },
     installCount: 3,
     category: null,
+    externalUrl: null,
     scopesSummary: [],
     avgRating: null,
     reviewCount: 0,
+    coverUrl: null,
     ...overrides,
   };
 }
@@ -646,5 +648,71 @@ describe('AppBlockCard — round-2 card cleanup (slot badge + author dropped, Vi
     const viewDetails = page.getByRole('button', { name: /view details/i });
     await expect.element(viewDetails).toBeInTheDocument();
     expect(viewDetails.element().getAttribute('data-variant')).toBe('subtle');
+  });
+});
+
+describe('AppBlockCard — cover image (first screenshot) + placeholder fallback', () => {
+  // The cover surfaces the app's FIRST publisher screenshot (block.coverUrl,
+  // already projected server-side via toPublicScreenshots). When the app shipped
+  // no screenshot (coverUrl null) the card renders a tasteful category-glyph
+  // PLACEHOLDER — never a broken/empty <img>.
+
+  test('renders an <img> cover (with the screenshot src) when coverUrl is present', async () => {
+    const url = '/api/blocks/screenshot/app-1/0.png';
+    renderWithProviders(
+      <AppBlockCard
+        block={makeBlock({ name: 'Covered App' }, { coverUrl: url })}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+      />
+    );
+
+    // The cover renders a real <img> pointing at the gated screenshot route.
+    const cover = page.getByRole('img', { name: /Covered App listing image/i });
+    await expect.element(cover).toBeInTheDocument();
+    expect(cover.element().getAttribute('src')).toBe(url);
+    // The rest of the card still renders (cover doesn't break the layout).
+    await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
+  });
+
+  test('renders a PLACEHOLDER (no img) when coverUrl is null — no broken image', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={makeBlock({ name: 'Bare App' }, { coverUrl: null, category: null })}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+      />
+    );
+
+    // No cover <img> renders for a no-screenshot app…
+    expect(page.getByRole('img', { name: /Bare App listing image/i }).query()).toBeNull();
+    // …and the placeholder box (aria-hidden, carries an svg glyph) is present, so
+    // the cover area is never empty. The card body still renders.
+    await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
+    const card = page.getByRole('button', { name: /view details/i }).element().closest('.mantine-Card-root');
+    expect(card).not.toBeNull();
+    const placeholder = card!.querySelector('[aria-hidden]');
+    expect(placeholder).not.toBeNull();
+    // The placeholder carries a decorative glyph (the generic apps icon).
+    expect(placeholder!.querySelector('svg')).not.toBeNull();
+  });
+
+  test('placeholder uses the category glyph when a category is set (still no img)', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={makeBlock({ name: 'Util App' }, { coverUrl: null, category: 'utility' })}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+      />
+    );
+
+    // Wait for the card to render before synchronously querying the DOM.
+    await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
+    // Still no real cover img (no screenshot) — placeholder path.
+    expect(page.getByRole('img', { name: /Util App listing image/i }).query()).toBeNull();
+    const card = page.getByRole('button', { name: /view details/i }).element().closest('.mantine-Card-root');
+    const placeholder = card!.querySelector('[aria-hidden]');
+    expect(placeholder).not.toBeNull();
+    expect(placeholder!.querySelector('svg')).not.toBeNull();
   });
 });

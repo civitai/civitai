@@ -27,6 +27,7 @@ import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 type QuickSearchUserType = SearchIndexDataMap['users'][number];
 
@@ -230,3 +231,5 @@ export default function ContestsBans() {
     </>
   );
 }
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });

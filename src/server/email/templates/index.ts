@@ -1,4 +1,3 @@
-export { verificationEmail } from './verification.email';
 export { trainingCompleteEmail } from './trainingComplete.email';
 export { trainingFailEmail } from './trainingFail.email';
 export { bountyExpiredEmail } from './bounties/bountyExpired.email';
@@ -9,4 +8,6 @@ export { paddleCancellationEmail } from './paddleCancellation.email';
 export { strikeIssuedEmail } from './strikeIssued.email';
 export { moderationActionEmail } from './moderation/moderationAction.email';
 export { tipaltiTaxFormRequiredEmail } from './tipaltiTaxFormRequired.email';
+export { merchClaimInviteEmail } from './merchClaimInvite.email';
+export { merchBuzzCreditedEmail } from './merchBuzzCredited.email';
 export type { Email } from './base.email';

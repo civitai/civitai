@@ -416,28 +416,6 @@ export const upsertModelVersionHandler = async ({
       if (!input.licensingFeeType) input.licensingFeeType = LicensingFeeType.PerImageBuzz;
       if (!input.licensingFeeSettlementCurrency)
         input.licensingFeeSettlementCurrency = LicensingFeeSettlementCurrency.Buzz;
-
-      // TODO: handle the case where both a base-model rule and a per-version fee
-      // exist (split payouts, additive fees, derivative opt-out, etc.). For now,
-      // a base-model rule fully owns the fee for its (baseModel, modelType) and
-      // child versions can't set their own.
-      const model = await dbRead.model.findUnique({
-        where: { id: input.modelId },
-        select: { type: true },
-      });
-      if (model) {
-        const baseRule = await dbRead.baseModelLicensingFee.findUnique({
-          where: {
-            baseModel_modelType: { baseModel: input.baseModel, modelType: model.type },
-          },
-          select: { modelVersionId: true },
-        });
-        if (baseRule && baseRule.modelVersionId !== input.id) {
-          throw throwBadRequestError(
-            'This base model already has a licensing fee. You cannot set a per-version fee on a derivative.'
-          );
-        }
-      }
     }
 
     const version = await upsertModelVersion({
@@ -862,7 +840,11 @@ export const modelVersionDonationGoalsHandler = async ({
   ctx: Context;
 }) => {
   try {
-    return modelVersionDonationGoals({
+    // `await` is load-bearing: without it the rejected promise escapes this
+    // try/catch (so a Prisma error bypassed the P2025→NOT_FOUND mapping in
+    // throwDbError and surfaced as INTERNAL_SERVER_ERROR). The service now also
+    // throws NOT_FOUND at the source, so this is belt-and-suspenders.
+    return await modelVersionDonationGoals({
       ...input,
       userId: ctx.user?.id,
       isModerator: ctx.user?.isModerator,
@@ -1083,10 +1065,19 @@ export async function publishPrivateModelVersionHandler({
   }
 
   if (!version.posts.length) {
-    await createModelVersionPostFromTraining({
+    const post = await createModelVersionPostFromTraining({
       modelVersionId: version.id,
       user: ctx.user,
     });
+    // createPost (service) doesn't emit the post-create ClickHouse event, so do it
+    // here, tagged 'training' to mark the origin. nsfw is hardcoded false rather
+    // than derived from nsfwLevel (as other track.post calls do): the sample
+    // images were just uploaded and aren't scanned yet, so the post's nsfwLevel
+    // is still 0 and !getIsSafeBrowsingLevel(0) would flag every training post as
+    // NSFW. The scan pipeline sets the real level later.
+    if (post) {
+      await ctx.track.post({ type: 'Create', postId: post.id, nsfw: false, tags: ['training'] });
+    }
   }
 
   const modelVersion = await updateModelVersionById({

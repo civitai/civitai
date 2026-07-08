@@ -71,29 +71,16 @@ vi.mock('~/server/db/client', () => ({
 // Mock the heavy peer modules the router imports so the import graph
 // stays cheap and we don't accidentally hit live deps.
 // blocks.router transitively pulls in many redis-cache modules (resource-data.redis,
-// caches.ts, ...) that each read `REDIS_KEYS.<GROUP>.<KEY>` AT IMPORT TIME. The
-// real keys live in redis/client (which connects on import, so we can't
-// importActual it). A hand-trimmed REDIS_KEYS is whack-a-mole: it flakily threw on
-// whichever key the current load order happened to reach first (RESOURCE_DATA, then
-// CACHES.TAG_IDS_FOR_IMAGES, ...). `completeKeys` wraps the few values the tests
-// assert on with an auto-vivifying Proxy so ANY other key resolves to a
-// deterministic placeholder string instead of `undefined.X` — ending the flake.
-const { completeKeys } = vi.hoisted(() => {
-  const group = (explicit: Record<string, string>, name: string): Record<string, string> =>
-    new Proxy(explicit, {
-      get: (t, k) => (k in t ? (t as any)[k] : typeof k === 'string' ? `mock:${name}:${k}` : (t as any)[k]),
-    });
-  const completeKeys = (explicit: Record<string, Record<string, string>>) =>
-    new Proxy(explicit, {
-      get: (t, g) => (g in t ? group((t as any)[g], g as string) : typeof g === 'string' ? group({}, g) : (t as any)[g]),
-    });
-  return { completeKeys };
+// caches.ts, ...) that read REDIS_KEYS/REDIS_SYS_KEYS.<GROUP>.<KEY> AT IMPORT TIME.
+// importActual the @civitai/redis PACKAGE — it's side-effect-free (only exports the
+// key constants + factory; connections happen when createRedisClients() is CALLED,
+// which only the ~/server/redis/client shim does at import) → the COMPLETE real key
+// tree, so no hand-trimmed subset can go stale. (Replaces the old completeKeys Proxy,
+// which covered REDIS_KEYS but not REDIS_SYS_KEYS.)
+vi.mock('~/server/redis/client', async () => {
+  const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
+  return { ...actual, redis: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) } };
 });
-
-vi.mock('~/server/redis/client', () => ({
-  redis: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
-  REDIS_KEYS: completeKeys({ BLOCKS: {} }),
-}));
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   verifyBlockToken: vi.fn(),
   parseSubjectUserId: vi.fn(),
@@ -244,6 +231,8 @@ describe('blocks.listAvailable (public)', () => {
     // everything).
     expect(mockListAvailable).toHaveBeenCalledWith(
       expect.objectContaining({ query: 'generate', slotId: 'model.sidebar_top', limit: 5 }),
+      false,
+      // 3rd arg = redCapable (NSFW-app-red-only; no host header → false).
       false
     );
   });
@@ -257,7 +246,9 @@ describe('blocks.listAvailable (public)', () => {
     await caller.listAvailable({ limit: 20 });
     expect(mockListAvailable).toHaveBeenCalledWith(
       expect.objectContaining({ limit: 20 }),
-      true
+      true,
+      // 3rd arg = redCapable (no host → false).
+      false
     );
   });
 
@@ -442,32 +433,38 @@ describe('blocks.deleteSubscription (guarded)', () => {
  * upsertSubscription/deleteSubscription/installOnModel were previously asserted
  * as FORBIDDEN-for-non-mod here (the old Phase-2 mod gate). That belt is gone by
  * design for these own-data procs; the coverage now lives in the
- * 'Layer 1 — install procs widened to protectedProcedure' describe below. The
- * procedures kept in THIS block (mod-review queue + revenue/apps developer reads)
- * remain mod-gated.
+ * 'Layer 1 — install procs widened to protectedProcedure' describe below.
+ *
+ * Developer soft-launch (Phase B): the own-data DEVELOPER reads getMyRevenue /
+ * getMyApps moved `moderatorProcedure → appDeveloperProcedure` (the
+ * `appBlocksAuthor` capability). A plain non-mod with no cohort grant still
+ * resolves the capability OFF (static mod-only fallback) → FORBIDDEN, so the
+ * assertions below are unchanged. The mod-REVIEW queue procs
+ * (listPendingRequests / approveRequest) STAY `moderatorProcedure` — the guard
+ * that a non-mod can never review/curate others' apps.
  */
-describe('Phase 2 — mod-only procedures reject non-mod verified users (FORBIDDEN)', () => {
+describe('soft-launch — developer + mod-review procs reject a plain non-mod (FORBIDDEN)', () => {
   function nonMod() {
     return blocksRouter.createCaller(authedCtx(42, false) as never);
   }
 
-  it('listPendingRequests (mod queue) → FORBIDDEN', async () => {
+  it('listPendingRequests (mod queue, stays mod-only) → FORBIDDEN', async () => {
     await expect(nonMod().listPendingRequests({ limit: 20 })).rejects.toMatchObject({
       code: 'FORBIDDEN',
     });
   });
 
-  it('approveRequest → FORBIDDEN', async () => {
+  it('approveRequest (mod-only review/curation, unchanged) → FORBIDDEN', async () => {
     await expect(
       nonMod().approveRequest({ publishRequestId: 'pubreq_x' })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
-  it('getMyRevenue → FORBIDDEN', async () => {
+  it('getMyRevenue (author-gated) → FORBIDDEN for a non-cohort non-mod', async () => {
     await expect(nonMod().getMyRevenue({})).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
-  it('getMyApps → FORBIDDEN', async () => {
+  it('getMyApps (author-gated) → FORBIDDEN for a non-cohort non-mod', async () => {
     await expect(nonMod().getMyApps()).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 });

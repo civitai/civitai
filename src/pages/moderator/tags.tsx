@@ -17,6 +17,7 @@ import { useMemo, useState } from 'react';
 
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -35,6 +36,8 @@ const tagColor: Record<TagsOnTagsType, MantineColor> = {
   Replace: 'pink',
   Append: 'green',
 };
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default function Tags() {
   const queryUtils = trpc.useUtils();

@@ -124,10 +124,14 @@ vi.mock('~/server/db/client', () => ({
 vi.mock('~/server/services/block-manifest-validator.service', () => ({
   BlockManifestValidator: { validate: mockValidate },
 }));
+// listRepoTreeAtRef + getBlobContent included to avoid this partial factory leaking into a co-resident
+// file (push-diff-enrichment) whose REAL publish-request.service reaches them — see build-callback.test.ts.
 vi.mock('~/server/services/blocks/forgejo.service', () => ({
   FORGEJO_ORG: 'civitai-apps',
   getRawFile: mockGetRawFile,
   setCommitStatus: mockSetCommitStatus,
+  listRepoTreeAtRef: vi.fn(),
+  getBlobContent: vi.fn(),
 }));
 vi.mock('~/server/utils/app-block-ids', () => ({ newUlid: mockNewUlid }));
 vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({

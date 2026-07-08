@@ -102,6 +102,9 @@ function rawRow(over: Partial<Record<string, unknown>> = {}) {
     approved_scopes: ['ai:write:budgeted', 'models:read:self', 'buzz:read:self', 'social:tip:self'],
     avg_rating: 4.2,
     review_count: 8n,
+    // Publisher screenshots jsonb (the cover comes from the first one). Default
+    // null = an app that shipped no screenshots → coverUrl null.
+    screenshots: null,
     sort_key: '00000000000000000005',
     manifest: {
       name: 'Cool Block',
@@ -178,6 +181,8 @@ describe('BlockRegistry.listAvailable — anon-exposure protections (F-E E1)', (
         'blockId',
         // F-E E3 additions — both public/display-safe.
         'category',
+        // Off-site (external-link) app target — display/navigation-only.
+        'externalUrl',
         'id',
         'installCount',
         'manifest',
@@ -185,6 +190,8 @@ describe('BlockRegistry.listAvailable — anon-exposure protections (F-E E1)', (
         // F-E marketplace reviews — display-safe aggregates.
         'avgRating',
         'reviewCount',
+        // Card cover image — first public screenshot URL (or null).
+        'coverUrl',
       ].sort()
     );
     // status is a DB-internal field; it must never appear on the wire shape.
@@ -422,6 +429,8 @@ describe('BlockRegistry.listAvailable — anon-exposure protections (F-E E1)', (
         'avgRating',
         'blockId',
         'category',
+        'coverUrl',
+        'externalUrl',
         'id',
         'installCount',
         'manifest',
@@ -431,5 +440,42 @@ describe('BlockRegistry.listAvailable — anon-exposure protections (F-E E1)', (
     );
     expect(items[0]).not.toHaveProperty('status');
     expect(items[0]).not.toHaveProperty('approved_scopes');
+  });
+
+  // ---------------------------------------------------------------------------
+  // Card cover image — the FIRST public screenshot URL (or null), projected via
+  // the SAME toPublicScreenshots helper the detail page uses (opaque gated
+  // route, never the raw MinIO key).
+  // ---------------------------------------------------------------------------
+
+  it('coverUrl = the FIRST public screenshot URL when the app shipped screenshots', async () => {
+    mockDbRead.$queryRaw.mockResolvedValueOnce([
+      rawRow({
+        id: 'ab_cover',
+        screenshots: [
+          // Out-of-order on purpose — toPublicScreenshots sorts by index, so the
+          // cover is index 0 regardless of array order.
+          { key: 'blocks/ab_cover/1.webp', index: 1, ext: 'webp', contentType: 'image/webp' },
+          { key: 'blocks/ab_cover/0.png', index: 0, ext: 'png', contentType: 'image/png' },
+        ],
+      }),
+    ]);
+    const { BlockRegistry } = await import('../block-registry.service');
+    const { items } = await BlockRegistry.listAvailable({ limit: 20, sort: 'popular' });
+    // Opaque gated app route built server-side from id+index+ext — NOT the key.
+    expect(items[0].coverUrl).toBe('/api/blocks/screenshot/ab_cover/0.png');
+    // The raw MinIO key must never appear on the wire.
+    expect(JSON.stringify(items)).not.toContain('blocks/ab_cover/0.png');
+  });
+
+  it('coverUrl is null when the app shipped no screenshots (empty / NULL column)', async () => {
+    mockDbRead.$queryRaw.mockResolvedValueOnce([
+      rawRow({ id: 'ab_empty', screenshots: [] }),
+      rawRow({ id: 'ab_null', screenshots: null }),
+    ]);
+    const { BlockRegistry } = await import('../block-registry.service');
+    const { items } = await BlockRegistry.listAvailable({ limit: 20, sort: 'popular' });
+    expect(items[0].coverUrl).toBeNull();
+    expect(items[1].coverUrl).toBeNull();
   });
 });

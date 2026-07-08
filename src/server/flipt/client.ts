@@ -37,6 +37,7 @@ export enum FLIPT_FEATURE_FLAGS {
   COMIC_CREATOR = 'comic-creator',
   GENERATION_PRESETS = 'generation-presets',
   GENERATION_TESTING = 'generation-testing',
+  GENERATION_EXPERIMENTAL = 'generation-experimental',
   AI_TOOLKIT_DEFAULT_SD = 'ai-toolkit-default-sd',
   WAN22_MULTI_STEP = 'wan22-multi-step',
   ENHANCED_COMPATIBILITY_SDCPP = 'enhanced-compatibility-sdcpp',

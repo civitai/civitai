@@ -92,8 +92,8 @@ export type ModelFileMetadata = z.infer<typeof modelFileMetadataSchema>;
 export const modelFileMetadataSchema = z.object({
   format: z.enum(constants.modelFileFormats).nullish(),
   size: z.enum(constants.modelFileSizes).nullish(),
-  fp: z.enum(constants.modelFileFp).nullish(),
-  quantType: z.enum(constants.modelFileQuantTypes).nullish(),
+  fp: z.string().max(64).nullish(),
+  quantType: z.string().max(64).nullish(),
   isRequired: z.boolean().nullish(),
   labelType: z.enum(constants.autoLabel.labelTypes).nullish(),
   ownRights: z.boolean().nullish(),

@@ -76,7 +76,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   // Also gated on CIPA consent: in regions where consent is required, the Snigel
   // loader (and the prebid/ad-tech cascade behind it) cannot fire until accepted.
   const adsEnabled = isDev
-    ? false
+    ? true
     : !browserBlocked &&
       consentAllowed &&
       (allowAds || !isMember) &&

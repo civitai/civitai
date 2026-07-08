@@ -60,7 +60,7 @@ export const useCFImageUpload: UseCFImageUpload = () => {
   // eslint-disable-next-line @typescript-eslint/no-shadow
   const uploadToCF: UploadToCF = async (file, metadata = {}) => {
     const imageData = await getDataFromFile(file, { allowAnimatedWebP: currentUser?.isModerator });
-    if (!imageData) throw new Error();
+    if (!imageData) throw new Error('Failed to process file before upload');
 
     const filename = encodeURIComponent(file.name);
     const res = await fetch('/api/v1/image-upload', {
@@ -75,7 +75,7 @@ export const useCFImageUpload: UseCFImageUpload = () => {
 
     if ('error' in data) {
       console.error(data.error);
-      throw data.error;
+      throw new Error(typeof data.error === 'string' ? data.error : 'image-upload API error');
     }
 
     const { id, uploadURL: url } = data;
@@ -139,11 +139,11 @@ export const useCFImageUpload: UseCFImageUpload = () => {
       });
       xhr.addEventListener('error', () => {
         updateFile({ status: 'error' });
-        reject(false);
+        reject(new Error(`Upload failed (status ${xhr.status})`));
       });
       xhr.addEventListener('abort', () => {
         updateFile({ status: 'aborted' });
-        reject(false);
+        reject(new Error('Upload canceled'));
       });
       xhr.open('PUT', url);
       xhr.send(file);

@@ -1,5 +1,7 @@
-import { Anchor, Badge, Button, Card, Group, Stack, Text, Title } from '@mantine/core';
+import { Anchor, Badge, Box, Button, Card, Group, Image, Stack, Text, Title } from '@mantine/core';
 import {
+  IconApps,
+  IconExternalLink,
   IconPlugConnected,
   IconSettings,
   IconStarFilled,
@@ -82,6 +84,59 @@ function categoryIcon(category: string): Icon {
   return isMarketplaceCategory(category) ? CATEGORY_ICONS[category] : FALLBACK_CATEGORY_ICON;
 }
 
+/**
+ * The card's cover image — the app's FIRST publisher-supplied screenshot
+ * (`block.coverUrl`, projected server-side via `toPublicScreenshots`). Sits in
+ * a fixed-height box at the top of the card so every card is the same height and
+ * the grid/featured-rail/recently-opened layouts stay aligned.
+ *
+ * When the app shipped no screenshot (`coverUrl` null), render a tasteful
+ * PLACEHOLDER instead of a broken/empty `<img>`: a neutral gradient with the
+ * app's category glyph (or a generic apps glyph when no category is set). Never
+ * an empty box — the cover is always SOMETHING.
+ *
+ * `coverUrl` is optional on the prop so existing callers / fixtures that predate
+ * the field don't break — `undefined` is treated as "no cover" (placeholder).
+ */
+function AppCover({
+  coverUrl,
+  category,
+  name,
+}: {
+  coverUrl: string | null | undefined;
+  category: string | null;
+  name: string;
+}) {
+  // Fixed-height cover box. `Card.Section` makes the cover bleed to the card
+  // edges (above the padded body) — the standard Mantine card-cover pattern.
+  if (coverUrl) {
+    return (
+      <Card.Section>
+        <Image src={coverUrl} alt={`${name} listing image`} h={140} fit="cover" />
+      </Card.Section>
+    );
+  }
+  // Placeholder: neutral gradient + the category glyph (generic apps glyph when
+  // no category). Marked aria-hidden — it carries no information the card text
+  // doesn't already convey (title/category chip), so it's decorative.
+  const PlaceholderIcon = category ? categoryIcon(category) : IconApps;
+  return (
+    <Card.Section>
+      <Box
+        aria-hidden
+        h={140}
+        className="flex items-center justify-center"
+        style={{
+          background:
+            'linear-gradient(135deg, var(--mantine-color-dark-5) 0%, var(--mantine-color-dark-7) 100%)',
+        }}
+      >
+        <PlaceholderIcon size={44} className="opacity-40" />
+      </Box>
+    </Card.Section>
+  );
+}
+
 export function AppBlockCard({
   block,
   alreadySubscribed,
@@ -98,6 +153,12 @@ export function AppBlockCard({
   };
   const [busy] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  // Off-site (external-link) app — PURE EXTERNAL LINK. When `externalUrl` is set
+  // the card renders an "Open ↗" link to the off-site URL (new tab) and HIDES
+  // the Install button + (already-card-hidden) scopes, since an external app has
+  // no install / scopes / token. The off-site nature is flagged with a small
+  // "Off-site" badge. Everything else (View details) is unchanged.
+  const isExternal = Boolean(block.externalUrl);
   // Show Install ONLY for an app that installs into a model/in-context slot.
   // A page app (target slot `app.page`) is STATELESS — installModel `'none'` in
   // the slot registry — so it has no `block_user_subscriptions` install row and
@@ -108,11 +169,13 @@ export function AppBlockCard({
   // empty-slotId manifests, not just index `[0]`. Keyed on the APP's slot, not
   // the viewer — so a model-slot app still shows Install for the grandfathered
   // mod audience.
-  const showInstall = hasInstallSlot(manifest);
+  // An external-link app NEVER installs (no install slot, no subscription) — so
+  // suppress Install even if a stray manifest target slipped through.
+  const showInstall = !isExternal && hasInstallSlot(manifest);
   // The live "Open app" run is only available for a real page app that the
   // viewer's `appBlocksPages` flag has unlocked (dark today / launch-flip
-  // window).
-  const canOpenApp = Boolean(manifest.hasPage && canOpenPage);
+  // window). Never for an external app (it hosts no on-platform page).
+  const canOpenApp = !isExternal && Boolean(manifest.hasPage && canOpenPage);
   // INVARIANT (never-empty card): "View details" is the UNIVERSAL details
   // affordance — it is rendered on EVERY card (page app, model app, flag on or
   // off), so the card can never be actionless. It supersedes the #2747
@@ -122,7 +185,14 @@ export function AppBlockCard({
   // user. "Open app" / Install remain the RUN/INSTALL affordances on top of it.
   return (
     <Card shadow="sm" padding="md" radius="md" withBorder className="h-full">
-      <Stack gap="sm" h="100%">
+      {/* Cover image (first publisher screenshot) above the card body, or a
+          tasteful category-glyph placeholder when the app shipped none. */}
+      <AppCover
+        coverUrl={block.coverUrl}
+        category={block.category}
+        name={manifest.name ?? block.blockId}
+      />
+      <Stack gap="sm" h="100%" pt="sm">
         <Group justify="space-between" align="flex-start" wrap="nowrap">
           <Stack gap={2}>
             {/*
@@ -144,6 +214,19 @@ export function AppBlockCard({
             </Anchor>
           </Stack>
           <Stack gap={4} align="flex-end">
+            {/* Off-site (external-link) app badge — makes it visually clear the
+                card opens an external, off-platform site rather than an
+                installable/in-page app. */}
+            {isExternal && (
+              <Badge
+                variant="light"
+                color="blue"
+                size="sm"
+                leftSection={<IconExternalLink size={12} />}
+              >
+                Off-site
+              </Badge>
+            )}
             {/* Mod-assigned marketplace category (+ its icon). NULL until a mod
                 sets one → no chip. The icon comes from CATEGORY_ICONS (generic
                 tag fallback for an unknown/legacy value). */}
@@ -222,6 +305,27 @@ export function AppBlockCard({
             <Button size="xs" variant="subtle" onClick={() => setDetailsOpen(true)}>
               View details
             </Button>
+            {/* Off-site (external-link) app: an "Open ↗" link that opens the
+                external URL in a NEW TAB. Replaces the Install/Open-app run
+                affordances entirely for an external app (which has no install /
+                on-platform page). target=_blank + rel=noopener noreferrer. */}
+            {isExternal && block.externalUrl && (
+              <Button
+                component="a"
+                href={block.externalUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                size="xs"
+                variant="light"
+                rightSection={<IconExternalLink size={14} />}
+                // Recording an off-site open as a "recent" is reasonable, but
+                // fire-and-navigate semantics differ for a new tab — keep parity
+                // with the route links above.
+                onClick={() => onRecentOpen?.(block)}
+              >
+                Open
+              </Button>
+            )}
             {/* W10 — "Open app" link to the full-page route, shown only when the
                 app declares a page AND the viewer has the appBlocksPages flag
                 (dark today). The route itself 404s without the flag, so this is

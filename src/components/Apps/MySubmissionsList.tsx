@@ -1,41 +1,32 @@
-import {
-  Alert,
-  Anchor,
-  Badge,
-  Button,
-  Card,
-  Code,
-  Group,
-  Modal,
-  Stack,
-  Table,
-  Text,
-} from '@mantine/core';
+import { Alert, Badge, Button, Card, Code, Group, Modal, Stack, Table, Text } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import {
   IconAlertTriangle,
   IconArrowRight,
   IconBox,
-  IconBrandGit,
   IconCheck,
-  IconChevronDown,
-  IconChevronRight,
   IconClock,
   IconExternalLink,
   IconMessage,
-  IconTerminal2,
   IconUsers,
   IconX,
 } from '@tabler/icons-react';
 import Link from 'next/link';
-import { Fragment, useState } from 'react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { AppAnalyticsInline } from '~/components/Apps/AppAnalyticsInline';
-import { AuthorViaGit } from '~/components/Apps/AuthorViaGit';
 import { isStaleDeploy } from '~/components/Apps/deploy-status';
-
-/** Civitai CLI repo — the recommended author + submit path (replaces the raw
- *  git-clone affordance as the PRIMARY way to author/update an app). */
-export const CIVITAI_CLI_URL = 'https://github.com/civitai/cli';
+import {
+  bucketGroupsByStatus,
+  currentlyPublishedVersionId,
+  filterGroups,
+  groupSubmissionsByApp,
+  sortGroups,
+  toDate,
+  type SubmissionAccessors,
+  type SubmissionGroup,
+} from '~/components/Apps/submissionsTable';
+import { StatusSections, SubmissionSearch, VersionToggle } from '~/components/Apps/submissionsTableUi';
+import { formatDate } from '~/utils/date-helpers';
 
 export type FileSummary = {
   files?: Array<{ path: string; sha256: string; sizeBytes: number }>;
@@ -77,13 +68,19 @@ export type Submission = {
   userSubscriptionCount: number | null;
 };
 
-function formatDate(d: string | Date): string {
-  const date = typeof d === 'string' ? new Date(d) : d;
-  return date.toLocaleString();
+/** "Month D, YYYY" (e.g. `June 7, 2026`) — the whole-day form used for the
+ *  submitted / reviewed timestamps (no hour/minute; those aren't decision-useful
+ *  to a submitter). Uses the shared repo date util. */
+export function formatSubmissionDate(d: string | Date): string {
+  return formatDate(d, 'MMMM D, YYYY');
 }
 
 export function statusBadge(
-  submission: Pick<Submission, 'status' | 'deployState' | 'deployUpdatedAt'>
+  submission: Pick<Submission, 'status' | 'deployState' | 'deployUpdatedAt'>,
+  /** The "live" green badge is reserved for the CURRENTLY-PUBLISHED version (the
+   *  newest approved one). A previous approved version — even one whose deploy is
+   *  still marked 'live' — shows a plain "approved" badge instead. */
+  isCurrentlyPublished: boolean
 ) {
   const { status } = submission;
   // For an approved request, show the real build/deploy lifecycle rather than a
@@ -120,9 +117,11 @@ export function statusBadge(
           </Badge>
         );
       case 'live':
+        // Only the currently-published version wears the "live" badge; an older
+        // approved version that once deployed shows a plain "approved" instead.
         return (
           <Badge color="green" leftSection={<IconCheck size={12} />}>
-            live
+            {isCurrentlyPublished ? 'live' : 'approved'}
           </Badge>
         );
       default:
@@ -207,20 +206,136 @@ export function ReviewerNotesButton({
  * rows with an app block).
  */
 
-function StatusCell({ submission }: { submission: Submission }) {
+function StatusCell({
+  submission,
+  isCurrentlyPublished,
+}: {
+  submission: Submission;
+  isCurrentlyPublished: boolean;
+}) {
   const { status, rejectionReason, approvalNotes } = submission;
   const notes =
-    status === 'rejected'
-      ? rejectionReason
-      : status === 'approved'
-      ? approvalNotes
-      : null;
+    status === 'rejected' ? rejectionReason : status === 'approved' ? approvalNotes : null;
   const variant = status === 'rejected' ? 'rejected' : 'approved';
   return (
     <Stack gap={6} align="flex-start">
-      {statusBadge(submission)}
+      {statusBadge(submission, isCurrentlyPublished)}
       {notes && <ReviewerNotesButton notes={notes} variant={variant} />}
     </Stack>
+  );
+}
+
+/** Field adapters for the shared filter/sort/group helpers. Collapse identity =
+ *  the app block id when present (set on first approval), else the slug — so an
+ *  app's pre-approval versions (null block id) still group by their shared slug.
+ *  Onsite has no display name, so the app label is the slug. */
+const ONSITE_ACCESSORS: SubmissionAccessors<Submission> = {
+  identity: (s) => s.appBlockId ?? s.slug,
+  name: (s) => s.slug,
+  slug: (s) => s.slug,
+  status: (s) => s.status,
+  submittedAt: (s) => toDate(s.submittedAt),
+  reviewedAt: (s) => toDate(s.reviewedAt),
+};
+
+/** One submission's rows: the main row + (approved) a deploy-failed alert.
+ *  `nested` demotes an older (expanded) version row; `isCurrentlyPublished` marks
+ *  THIS version as the live one (drives the "live" badge + the "Open live" button
+ *  — see {@link currentlyPublishedVersionId}). The "N versions" toggle renders
+ *  BELOW the slug, not inline beside it. */
+function OnsiteRow({
+  s,
+  nested,
+  isCurrentlyPublished,
+  onWithdraw,
+  withdrawing,
+  toggle,
+}: {
+  s: Submission;
+  nested: boolean;
+  isCurrentlyPublished: boolean;
+  onWithdraw: (id: string) => void;
+  withdrawing: boolean;
+  toggle?: ReactNode;
+}) {
+  const isApproved = s.status === 'approved';
+  return (
+    <>
+      <Table.Tr>
+        <Table.Td>
+          <Stack gap={4} align="flex-start">
+            <Group gap={6} pl={nested ? 'lg' : undefined}>
+              {nested && (
+                <Text size="xs" c="dimmed">
+                  ·
+                </Text>
+              )}
+              <Code>{s.slug}</Code>
+            </Group>
+            {toggle}
+          </Stack>
+        </Table.Td>
+        <Table.Td>
+          <Code>{s.version}</Code>
+        </Table.Td>
+        <Table.Td>
+          <StatusCell submission={s} isCurrentlyPublished={isCurrentlyPublished} />
+        </Table.Td>
+        <Table.Td>
+          <Text size="xs">{formatSubmissionDate(s.submittedAt)}</Text>
+        </Table.Td>
+        <Table.Td>
+          {s.reviewedAt ? (
+            <Text size="xs">{formatSubmissionDate(s.reviewedAt)}</Text>
+          ) : (
+            <Text size="xs" c="dimmed">
+              —
+            </Text>
+          )}
+        </Table.Td>
+        <Table.Td>
+          <InstallCountCell
+            modelInstalls={s.modelInstallCount}
+            subscriptions={s.userSubscriptionCount}
+          />
+        </Table.Td>
+        <Table.Td>
+          {isApproved && s.appBlockId ? (
+            <AppAnalyticsInline appBlockId={s.appBlockId} appLabel={s.slug} />
+          ) : (
+            <Text size="xs" c="dimmed">
+              —
+            </Text>
+          )}
+        </Table.Td>
+        <Table.Td>
+          <SubmissionActions
+            submission={s}
+            isCurrentlyPublished={isCurrentlyPublished}
+            onWithdraw={() => onWithdraw(s.id)}
+            busy={withdrawing}
+          />
+        </Table.Td>
+      </Table.Tr>
+      {s.status === 'approved' && s.deployState === 'failed' && (
+        <Table.Tr>
+          <Table.Td colSpan={8} p={0}>
+            <Alert
+              color="red"
+              variant="light"
+              radius={0}
+              icon={<IconAlertTriangle size={16} />}
+              title="Build / deploy failed"
+            >
+              <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
+                {s.deployDetail ??
+                  'The build or deploy failed. Fix the issue and resubmit a new version.'}
+              </Text>
+            </Alert>
+          </Table.Td>
+        </Table.Tr>
+      )}
+    </>
   );
 }
 
@@ -233,7 +348,43 @@ export function MySubmissionsList({
   onWithdraw: (id: string) => void;
   withdrawing: boolean;
 }) {
-  return (
+  const [query, setQuery] = useState('');
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  // Group by app, apply the text filter, sort newest-first, then partition into
+  // status SECTIONS (Live / Pending / Rejected / Withdrawn). Status is now the
+  // section, so the column header is no longer sortable — a plain submittedAt-desc
+  // sort within each section keeps the newest request on top.
+  const buckets = useMemo(() => {
+    const grouped = groupSubmissionsByApp(
+      submissions,
+      ONSITE_ACCESSORS.identity,
+      ONSITE_ACCESSORS.submittedAt
+    );
+    const filtered = filterGroups(grouped, query, ONSITE_ACCESSORS);
+    const sorted = sortGroups(
+      filtered,
+      { column: 'submitted', direction: 'desc' },
+      ONSITE_ACCESSORS
+    );
+    return bucketGroupsByStatus(sorted, ONSITE_ACCESSORS.status);
+  }, [submissions, query]);
+
+  const totalGroups =
+    buckets.live.length +
+    buckets.pending.length +
+    buckets.rejected.length +
+    buckets.withdrawn.length;
+
+  const toggle = (identity: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(identity)) next.delete(identity);
+      else next.add(identity);
+      return next;
+    });
+
+  const renderTable = (groups: SubmissionGroup<Submission>[]) => (
     <Card withBorder p={0}>
       <Table verticalSpacing="md" horizontalSpacing="md">
         <Table.Thead>
@@ -249,93 +400,42 @@ export function MySubmissionsList({
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
-          {submissions.map((s) => {
-            const mds = (s.manifestDiffSummary ?? {}) as ManifestDiffSummary;
-            const isFirst = mds.kind === 'first-version';
-            const isApproved = s.status === 'approved';
+          {groups.map((g) => {
+            const isExpanded = expanded.has(g.identity);
+            // Single source of truth for the "live" badge + "Open live" button:
+            // the newest approved version across this listing's history.
+            const publishedId = currentlyPublishedVersionId([g.latest, ...g.older]);
             return (
-              <Fragment key={s.id}>
-                <Table.Tr>
-                  <Table.Td>
-                    <Group gap={6}>
-                      <Code>{s.slug}</Code>
-                      {isFirst && (
-                        <Badge color="violet" size="xs">
-                          first version
-                        </Badge>
-                      )}
-                    </Group>
-                  </Table.Td>
-                  <Table.Td>
-                    <Code>{s.version}</Code>
-                  </Table.Td>
-                  <Table.Td>
-                    <StatusCell submission={s} />
-                  </Table.Td>
-                  <Table.Td>
-                    <Text size="xs">{formatDate(s.submittedAt)}</Text>
-                  </Table.Td>
-                  <Table.Td>
-                    {s.reviewedAt ? (
-                      <Text size="xs">{formatDate(s.reviewedAt)}</Text>
-                    ) : (
-                      <Text size="xs" c="dimmed">
-                        —
-                      </Text>
-                    )}
-                  </Table.Td>
-                  <Table.Td>
-                    <InstallCountCell
-                      modelInstalls={s.modelInstallCount}
-                      subscriptions={s.userSubscriptionCount}
+              <Fragment key={g.identity}>
+                <OnsiteRow
+                  s={g.latest}
+                  nested={false}
+                  isCurrentlyPublished={g.latest.id === publishedId}
+                  onWithdraw={onWithdraw}
+                  withdrawing={withdrawing}
+                  toggle={
+                    g.older.length > 0 ? (
+                      <VersionToggle
+                        expanded={isExpanded}
+                        count={g.versionCount}
+                        onToggle={() => toggle(g.identity)}
+                        variant="subtle"
+                        testId={`apps-submissions-versions-${g.identity}`}
+                      />
+                    ) : undefined
+                  }
+                />
+                {isExpanded &&
+                  g.older.map((older) => (
+                    <OnsiteRow
+                      key={older.id}
+                      s={older}
+                      nested
+                      isCurrentlyPublished={older.id === publishedId}
+                      onWithdraw={onWithdraw}
+                      withdrawing={withdrawing}
                     />
-                  </Table.Td>
-                  <Table.Td>
-                    {isApproved && s.appBlockId ? (
-                      <AppAnalyticsInline appBlockId={s.appBlockId} appLabel={s.slug} />
-                    ) : (
-                      <Text size="xs" c="dimmed">
-                        —
-                      </Text>
-                    )}
-                  </Table.Td>
-                  <Table.Td>
-                    <SubmissionActions
-                      submission={s}
-                      isFirstVersion={isFirst}
-                      onWithdraw={() => onWithdraw(s.id)}
-                      busy={withdrawing}
-                    />
-                  </Table.Td>
-                </Table.Tr>
-                {s.status === 'approved' && s.deployState === 'failed' && (
-                  <Table.Tr>
-                    <Table.Td colSpan={8} p={0}>
-                      <Alert
-                        color="red"
-                        variant="light"
-                        radius={0}
-                        icon={<IconAlertTriangle size={16} />}
-                        title="Build / deploy failed"
-                      >
-                        <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
-                          {s.deployDetail ??
-                            'The build or deploy failed. Fix the issue and resubmit a new version.'}
-                        </Text>
-                      </Alert>
-                    </Table.Td>
-                  </Table.Tr>
-                )}
-                {/* Authoring updates: the CLI is the recommended path; git is a
-                    collapsed advanced footnote. Only approved rows with an app
-                    block (FK set on approve) can author updates. */}
-                {s.status === 'approved' && s.appBlockId && (
-                  <Table.Tr>
-                    <Table.Td colSpan={8}>
-                      <AuthorAffordance appBlockId={s.appBlockId} />
-                    </Table.Td>
-                  </Table.Tr>
-                )}
+                  ))}
               </Fragment>
             );
           })}
@@ -343,59 +443,35 @@ export function MySubmissionsList({
       </Table>
     </Card>
   );
-}
 
-/**
- * Authoring guidance for an approved app. Leads with the Civitai CLI (the
- * recommended `author + submit` path); the raw git clone-URL flow is demoted to
- * a collapsed "Advanced: author via git" footnote so it isn't a confusing
- * primary option. The git provisioning side-effect (getMyAppRepo) still only
- * fires when the footnote is expanded AND the user clicks within AuthorViaGit.
- */
-export function AuthorAffordance({ appBlockId }: { appBlockId: string }) {
-  const [showGit, setShowGit] = useState(false);
   return (
-    <Stack gap="xs">
-      <Group gap={6}>
-        <IconTerminal2 size={16} />
-        <Text size="sm">
-          Author and submit updates with the{' '}
-          <Anchor href={CIVITAI_CLI_URL} target="_blank" rel="noopener noreferrer">
-            <Code>civitai</Code> CLI
-          </Anchor>
-          . Install it, then run <Code>civitai app submit</Code> to publish a new
-          version for review.
-        </Text>
-      </Group>
-      <Group>
-        <Button
-          size="compact-xs"
-          variant="subtle"
-          color="gray"
-          leftSection={
-            showGit ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />
-          }
-          onClick={() => setShowGit((v) => !v)}
-        >
-          <Group gap={4}>
-            <IconBrandGit size={14} />
-            <Text size="xs">Advanced: author via git</Text>
-          </Group>
-        </Button>
-      </Group>
-      {showGit && <AuthorViaGit appBlockId={appBlockId} />}
+    <Stack gap="md">
+      <SubmissionSearch value={query} onChange={setQuery} testId="apps-submissions-filter" />
+      {totalGroups === 0 ? (
+        <Card withBorder p="md">
+          <Text size="sm" c="dimmed" ta="center" py="sm">
+            No submissions match “{query}”.
+          </Text>
+        </Card>
+      ) : (
+        <StatusSections
+          buckets={buckets}
+          testIdPrefix="apps-submissions-section"
+          renderTable={renderTable}
+        />
+      )}
     </Stack>
   );
 }
 
 function SubmissionActions({
   submission,
-  isFirstVersion,
+  isCurrentlyPublished,
   onWithdraw,
   busy,
 }: {
   submission: Submission;
-  isFirstVersion: boolean;
+  isCurrentlyPublished: boolean;
   onWithdraw: () => void;
   busy: boolean;
 }) {
@@ -414,8 +490,13 @@ function SubmissionActions({
     );
   }
   if (submission.status === 'approved') {
-    const live = submission.deployState === 'live' || submission.deployState == null;
-    if (!live && isFirstVersion) {
+    // "Open live" belongs ONLY on the currently-published version AND only when
+    // it is actually serving — an older approved version links to nothing live,
+    // and a published version still building / with a failed deploy would link to
+    // a slug that 404s (and disagree with its "deploy failed"/"building" badge).
+    // `null` deployState = legacy/untracked → treated as live (pre-UX-pass behavior).
+    const isLiveNow = submission.deployState === 'live' || submission.deployState == null;
+    if (!isCurrentlyPublished || !isLiveNow) {
       return (
         <Text size="xs" c="dimmed">
           —

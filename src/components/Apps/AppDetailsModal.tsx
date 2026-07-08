@@ -111,6 +111,12 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
   const description = detail?.manifest.description ?? block.manifest.description ?? '';
   const screenshots = detail?.screenshots ?? [];
   const scopes = detail?.scopes ?? [];
+  // Off-site (external-link) app — PURE EXTERNAL LINK. Prefer the listing row's
+  // `externalUrl` (renders immediately) and fall back to the resolved detail.
+  // When set, the modal surfaces the external URL as the primary CTA and HIDES
+  // the scopes disclosure (an external app has none).
+  const externalUrl = block.externalUrl ?? detail?.externalUrl ?? null;
+  const isExternal = Boolean(externalUrl);
   // L2: once the detail resolved, the aggregate is authoritative — prefer it
   // DIRECTLY (a legit `null` means "no rating", not "fall back to the stale
   // listing value"). Only use the listing `block` aggregate WHILE loading
@@ -126,18 +132,30 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
           <Text c="dimmed" size="sm">
             by {author}
           </Text>
-          {detail?.liveUrl && (
-            <Anchor
-              href={detail.liveUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              size="xs"
-            >
+          {/* Off-site (external-link) app: the external URL is the PRIMARY CTA
+              (open in a new tab). For an on-platform app keep the standalone
+              "Open live" affordance. */}
+          {isExternal ? (
+            <Anchor href={externalUrl!} target="_blank" rel="noopener noreferrer" size="xs">
               <Group gap={4}>
                 <IconExternalLink size={12} />
-                Open live
+                Open external site
               </Group>
             </Anchor>
+          ) : (
+            detail?.liveUrl && (
+              <Anchor
+                href={detail.liveUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                size="xs"
+              >
+                <Group gap={4}>
+                  <IconExternalLink size={12} />
+                  Open live
+                </Group>
+              </Anchor>
+            )
           )}
         </Stack>
 
@@ -199,11 +217,14 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
           </Center>
         )}
 
-        <Divider />
+        {/* Off-site (external-link) app: NO scopes disclosure — an external app
+            requests no permissions and runs entirely off-platform. The whole
+            scopes section (and its divider) is suppressed. */}
+        {!isExternal && <Divider />}
 
         {/* Scopes — the permission disclosure, MOVED off the card face into the
             modal (2026-06 UX pass). Sourced from the app's APPROVED scopes
-            (PublicAppDetail.scopes).
+            (PublicAppDetail.scopes). Hidden entirely for an external app.
 
             DISCLOSURE CORRECTNESS (audit M1): the definitive "does not request
             any permissions" copy renders ONLY when the detail genuinely RESOLVED
@@ -212,6 +233,7 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
             the reassuring "no permissions" line, which would be a misleading
             security-relevant claim about an app whose scopes we never actually
             read. */}
+        {!isExternal && (
         <Stack gap="xs">
           <Group gap="xs">
             <ThemeIcon variant="light" color="blue" size="sm" radius="xl">
@@ -256,6 +278,7 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
             </List>
           )}
         </Stack>
+        )}
 
         <Divider />
 

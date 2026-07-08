@@ -13,10 +13,16 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   triggerBuild: vi.fn(),
 }));
 vi.mock('~/server/flipt/client', () => ({ isFlipt: vi.fn(async () => true) }));
+// Include listRepoTreeAtRef + getBlobContent even though git-push.ts doesn't use them: under a
+// saturated worker pool this partial factory could leak into a co-resident file whose graph DOES
+// reach them (publish-request.service → reconstructBundleFromForgejo), surfacing as
+// "No 'listRepoTreeAtRef' export is defined on the mock". Completing the surface removes that leak.
 vi.mock('~/server/services/blocks/forgejo.service', () => ({
   FORGEJO_ORG: 'civitai-apps',
   getRawFile: vi.fn(),
   setCommitStatus: vi.fn(),
+  listRepoTreeAtRef: vi.fn(),
+  getBlobContent: vi.fn(),
 }));
 vi.mock('~/server/services/block-manifest-validator.service', () => ({
   BlockManifestValidator: { validate: vi.fn(() => ({ valid: true, errors: [] })) },

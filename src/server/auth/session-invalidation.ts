@@ -1,11 +1,11 @@
 import { SignalMessages } from '~/server/common/enums';
-import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { hSetMultiWithTTL } from '~/server/redis/atomic';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
-import { clearCacheByPattern } from '~/server/utils/cache-helpers';
 import { createLogger } from '~/utils/logging';
 import { signalClient } from '~/utils/signal-client';
 import { clearSessionCache } from './session-cache';
+import { sessionClient } from './session-client';
 
 const DEFAULT_EXPIRATION = 60 * 60 * 24 * 30; // 30 days
 const log = createLogger('session-invalidation', 'green');
@@ -14,7 +14,23 @@ async function updateSessionState(userId: number, type: 'refresh' | 'invalid') {
   const key = `${REDIS_KEYS.SESSION.USER_TOKENS}:${userId}`;
 
   // Get all tokens from hash (expired fields are automatically removed by Redis)
-  const tokenHash = await sysRedis.hGetAll(key as any);
+  let tokenHash: Record<string, string> = {};
+  try {
+    // Wall-clock deadline + fail-open: this read is on the user-facing
+    // logout / ban / session-refresh path. A fast sysRedis DOWN would 500
+    // the request; a silent half-open would park the awaited hGetAll ~11min.
+    // On DOWN/SLOW we fail open to an empty token hash — symmetric with the
+    // already-fail-open write below and the documented invalidateSession
+    // posture: the invalidation doesn't take effect during the outage (retry
+    // after recovery), but the request never 500s or parks.
+    tokenHash = await withSysReadDeadline(sysRedis.hGetAll(key as any));
+  } catch (err) {
+    logSysRedisFailOpen('read-degraded', 'session-invalidation.updateSessionState read', err, {
+      userId,
+      type,
+    });
+    tokenHash = {};
+  }
   const userTokens = Object.keys(tokenHash);
   const userTokensObj = userTokens.reduce<Record<string, string>>(
     (acc, token) => ({ ...acc, [token]: type }),
@@ -44,12 +60,11 @@ async function updateSessionState(userId: number, type: 'refresh' | 'invalid') {
         DEFAULT_EXPIRATION * 1000
       );
     } catch (err) {
-      logSysRedisFailOpen(
-        'write-degraded',
-        'session-invalidation.updateSessionState',
-        err,
-        { userId, type, tokenCount: userTokens.length }
-      );
+      logSysRedisFailOpen('write-degraded', 'session-invalidation.updateSessionState', err, {
+        userId,
+        type,
+        tokenCount: userTokens.length,
+      });
     }
   }
   return userTokens;
@@ -75,28 +90,6 @@ export async function refreshSession(userId: number, { sendSignal = true } = {})
   }
 
   log(`Refreshed session for user ${userId} - ${userTokens.length} token(s) marked for refresh`);
-  // Temporary: capture caller stack so we can surface it via response header.
-  // Skips the internal JWT 'update' callback path (next-auth-options.ts) which
-  // re-marks tokens by design and clears its own marker immediately after.
-  const stack = new Error().stack ?? '';
-  if (!stack.includes('next-auth-options')) {
-    console.warn(`[refreshSession] userId=${userId} sendSignal=${sendSignal}\n${stack}`);
-    try {
-      // Compact the stack into a single-line, header-safe string and stash in
-      // Redis. The session callback will read this and surface it to the
-      // client via x-session-refresh-cause.
-      const compact = stack
-        .split('\n')
-        .slice(1, 8)
-        .map((s) => s.trim())
-        .join(' | ')
-        .replace(/[^\x20-\x7E]/g, ' ')
-        .slice(0, 1500);
-      await sysRedis.set(`${REDIS_SYS_KEYS.SESSION.REFRESH_CAUSE}:${userId}`, compact, {
-        EX: 60 * 60,
-      });
-    } catch {}
-  }
 }
 
 /**
@@ -104,12 +97,16 @@ export async function refreshSession(userId: number, { sendSignal = true } = {})
  * to log out.
  *
  * SECURITY/IR NOTE: this path is fail-open on sysRedis unreachability
- * (PR #2332 round-3 audit fix). The write swallows the error and emits
- * a `sysredis-fail-open` Loki/Axiom event with subtype `write-degraded`
- * — see `updateSessionState` above. During a sysRedis outage the
- * invalidation does NOT take effect; callers that need guaranteed
- * invalidation (stolen-token reports, account-takeover response) MUST
- * retry after sysRedis recovery. This is symmetric with the read path:
+ * on BOTH the read and the write (PR #2332 round-3 audit fix for the
+ * write; STEP-4 soft-dependency sweep for the read). The read (hGetAll)
+ * is wrapped in `withSysReadDeadline` + try/catch and fails open to an
+ * empty token hash — subtype `read-degraded`; the write (hSetMultiWithTTL)
+ * swallows its error — subtype `write-degraded`. Both emit a
+ * `sysredis-fail-open` Loki/Axiom event; see `updateSessionState` above.
+ * During a sysRedis outage the invalidation does NOT take effect; callers
+ * that need guaranteed invalidation (stolen-token reports, account-takeover
+ * response) MUST retry after sysRedis recovery. This is symmetric with the
+ * downstream read path too:
  * the refreshToken pipeline in token-refresh.ts is already fail-open on
  * read errors, so `tokenState === 'invalid'` is never observed during
  * the outage window even if a prior successful call wrote it — the
@@ -124,10 +121,10 @@ export async function invalidateSession(userId: number) {
   log(`Invalidated session for user ${userId} and ${userTokens.length} token(s)`);
 }
 
-export async function invalidateAllSessions(asOf: Date | undefined = new Date()) {
-  await sysRedis.set(REDIS_SYS_KEYS.SESSION.ALL, asOf.toISOString(), {
-    EX: DEFAULT_EXPIRATION, // 30 days
-  });
-  await clearCacheByPattern(`${REDIS_KEYS.USER.SESSION}:*`);
+export async function invalidateAllSessions() {
+  // Mass invalidation is hub-owned: set the global revocation cutoff (the shared SESSION.ALL marker the hub
+  // registry owns) through the hub rather than writing it directly — revokes every token signed before now.
+  // The shared session:data2 cache is NOT wiped — its 4h TTL bounds data staleness (see the hub handler).
+  await sessionClient.invalidateAll();
   log(`Scheduling session refresh for all users`);
 }

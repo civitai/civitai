@@ -980,8 +980,8 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.Ernie, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.Ernie, supportType: 'training', modelTypes: loraOnly },
 
-  // Krea 2 - checkpoint only generation (locked, no LoRA support); LoRA training via AI-Toolkit
-  { ecosystemId: ECO.Krea2, supportType: 'generation', modelTypes: checkpointOnly },
+  // Krea 2 - checkpoint locked, but base/turbo comfy variants support LoRA (medium/large FAL tiers do not); LoRA training via AI-Toolkit
+  { ecosystemId: ECO.Krea2, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.Krea2, supportType: 'training', modelTypes: loraOnly },
 
   // MAI - checkpoint only (Microsoft MAI-Image-2.5, locked, no LoRA support)
@@ -1364,7 +1364,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.Seedream,
     defaults: {
-      model: { id: 2208278 },
+      model: { id: 3110984 },
       modelLocked: true,
     },
   },

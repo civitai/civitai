@@ -1,19 +1,20 @@
 import type { Logger } from '@civitai/next-axiom';
 import { withAxiom } from '@civitai/next-axiom';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
 import { dbWrite } from '~/server/db/client';
-import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
-import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
-import { BlockTokenService } from '~/server/services/block-token.service';
+import { sysRedis, REDIS_SYS_KEYS, withSysReadDeadline } from '~/server/redis/client';
+import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
+import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import {
-  isKnownBlockScope,
-  validateBlockScopesAgainstOauthClient,
-} from '~/shared/constants/block-scope.constants';
-import { domainBrowsingCeiling } from '~/shared/constants/browsingLevel.constants';
-import { isPageSlot, PAGE_FORBIDDEN_SCOPES, PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
+  clampDevScopes,
+  DEV_TOKEN_SCOPE_ALLOWLIST,
+  FORCED_SFW_CEILING,
+  resolveDevBuzzBudget,
+  signDevScopedPageToken,
+} from '~/server/services/blocks/dev-scoped-mint.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { Flags } from '~/shared/utils/flags';
 
@@ -35,22 +36,22 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  * protocol to real endpoints) is the larger half and is EXPLICITLY OUT OF SCOPE
  * — documented follow-up (scope doc §5.2, Phase 2).
  *
- * ## Two resolution modes (scope doc §3.3, §4, Phase 4)
+ * ## Three resolution modes (scope doc §3.3, §4, Phase 4)
  *
  * 1. "Existing-app" mode — the dev names an app they OWN (by `appBlockId` or
  *    `slug`) that has an APPROVED `AppBlock` row. Scopes/budget are pinned to
  *    that approved snapshot + its app's OAuth ceiling, so the blast radius ≈
  *    prod and there is no escalation via an un-reviewed local manifest.
  *
- * 2. "Local-manifest" mode (NOW IMPLEMENTED — the documented Phase 4 work) —
- *    reached ONLY when no owned APPROVED row exists AND the caller passed a
- *    `slug` that matches a `AppBlockPublishRequest` with `status='pending'`
- *    that THEY submitted (`submittedByUserId === user.id`). This unblocks the
- *    `dev:live` real-Buzz path for a BRAND-NEW (pending) app — before today
- *    that 404'd because the mint required an approved row. The scope SOURCE is
- *    the pending request's UN-REVIEWED `manifest.scopes` (developer-controlled,
- *    NOT moderator-approved) — the §4 R1 escalation surface — so it is clamped
- *    by the IDENTICAL belt as the approved path WITH ONE SUBSTITUTION:
+ * 2. "Pending-app local-manifest" mode (Phase 4) — reached ONLY when no owned
+ *    APPROVED row exists AND the caller passed a `slug` that matches a
+ *    `AppBlockPublishRequest` with `status='pending'` that THEY submitted
+ *    (`submittedByUserId === user.id`). This unblocks the `dev:live` real-Buzz
+ *    path for a SUBMITTED-but-not-yet-approved app — before today that 404'd
+ *    because the mint required an approved row. The scope SOURCE is the pending
+ *    request's UN-REVIEWED `manifest.scopes` (developer-controlled, NOT
+ *    moderator-approved) — the §4 R1 escalation surface — so it is clamped by
+ *    the IDENTICAL belt as the approved path WITH ONE SUBSTITUTION:
  *      - a pending app has NO OauthClient → there is no OAuth-bitmask ceiling
  *        (step 7c). Passing `oauthAllowed: 0` into
  *        validateBlockScopesAgainstOauthClient would WRONGLY STRIP every
@@ -108,6 +109,63 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  *    row at all — returns the SAME bare `404 { message: 'App not found' }` as
  *    the approved path (never an existence/ownership/state oracle). Only a row
  *    the caller demonstrably owns surfaces an actionable message.
+ *
+ * 3. "No-row local-manifest" mode (Phase 4 — the deliberately-deferred mode,
+ *    NOW IMPLEMENTED) — reached ONLY when the caller passed a `slug`, NO
+ *    APPROVED `AppBlock` exists for that slug AT ALL (`block == null`), AND no
+ *    caller-owned pending request exists. This unblocks `dev:live` for a
+ *    BRAND-NEW app the dev has NOT yet submitted/registered — there is no server
+ *    row of any kind, so the scope SOURCE is the CLIENT-SUPPLIED request body
+ *    `scopes` (the dev's LOCAL `block.manifest.json`, sent by the CLI; entirely
+ *    un-reviewed, developer-controlled — the strongest §4 R1 escalation
+ *    surface). It is clamped by the IDENTICAL belt as the pending path: there is
+ *    NO OauthClient (OAuth-ceiling clamp OMITTED), so the §4 R1 / step-7f
+ *    bearer-credential `AIServicesWrite` SPEND CEILING is the AUTHORITATIVE
+ *    spend gate (`ai:write:budgeted` survives only if the dev's OWN key carries
+ *    AIServicesWrite). Every OTHER clamp (isKnownBlockScope, DEV_TOKEN_SCOPE_-
+ *    ALLOWLIST, PAGE_FORBIDDEN_SCOPES, force-grant `user:read:self`) and EVERY
+ *    hard cap (DEV_BUZZ_BUDGET_CAP + default, forced SFW, self-bound `sub`,
+ *    short TTL, rate limit, mod-only pre-GA) applies IDENTICALLY — it relaxes
+ *    NOTHING. Page-only by construction (dev-token mints page tokens only; no
+ *    server manifest to inspect). An empty/absent body `scopes` mints a
+ *    read-only token (no spend) — not a 404.
+ *
+ *    GUARD (NO-SHADOW — the critical new check): this mode fires ONLY when
+ *    `block == null` (no approved AppBlock for the slug exists at all). If an
+ *    APPROVED `AppBlock` for the slug EXISTS but is owned by someone else
+ *    (`block` non-null, `block.app.userId !== user.id`), the no-row path does
+ *    NOT fire — control returns the bare `404 { message: 'App not found' }`
+ *    (no ownership oracle, same as the approved/pending miss). Rationale: a dev
+ *    must NEVER mint a "local" token for a slug a real published app owns
+ *    (no shadowing / attribution confusion). A foreign-owned approved row falls
+ *    through to the pending(caller) miss → 404, and is gated OUT of the no-row
+ *    path by the `block == null` condition.
+ *
+ *    SYNTHETIC, NON-RESOLVING appId (audit S1 parity): the no-row path mints
+ *    `appId = local-<slug>`, NOT the deterministic `appblk-<slug>` an approved
+ *    app would hold. Real `OauthClient.id`s are either UUIDv4 (user-created,
+ *    oauth-client.router.ts) or `appblk-<slug>` (App-Blocks provisioned) — a
+ *    `local-` prefix can NEVER match either, so recordSpendAttribution's
+ *    `oauthClient.findUnique({ id })` MISSES → the inert skip-write path → no
+ *    forged `blockSpendAttribution` row (identical S1 protection to the
+ *    pending path's `pending-<pubreqId>`). `appBlockId` claim / `blockInstanceId`
+ *    use a synthetic `page_local_<slug>` (string-validated only; no FK resolves).
+ *
+ *    AUDIT TRAIL: as with the pending path, the no-row path has NO durable
+ *    AppBlock-backed audit rows (the synthetic appId/appBlockId don't resolve),
+ *    so the ONLY forensic trail is the structured `blocks.dev-token.local-mint`
+ *    log event (userId/slug/scopes/spendGranted), queryable in Axiom/Loki.
+ *    Same GA-gate as the pending path: durable per-spend audit rows are required
+ *    before no-row dev spend is widened past the mod-only pre-GA posture.
+ *
+ *    ENUMERATION ORACLE (audit 🟡-2 — GA-gate, no code change pre-GA): the no-row
+ *    path returns a 200 read-only mint for an UNREGISTERED slug but a bare 404 for
+ *    a slug owned by a *different* account's APPROVED app (the `block == null`
+ *    guard sends a foreign-owned approved row to the bare 404, not the no-row
+ *    branch). That 200-vs-404 difference is a mod-only existence oracle for
+ *    approved-slug occupancy. Acceptable pre-GA (this endpoint is mod-gated and
+ *    approved-app slugs are already semi-public at `<slug>.civit.ai`), but
+ *    re-confirm this is tolerable before widening dev-token past moderators.
  *
  * ## Auth — Bearer, resolved via the same `getSessionFromBearerToken` path the
  * `/api/v1/*` REST routes use. TWO credential shapes accepted:
@@ -168,49 +226,50 @@ export const config = {
   },
 };
 
-// A LOWER dev budget cap than the prod 1000 (scope doc §4.1). The dev spends
-// their OWN Buzz and the per-user daily cumulative cap is untouched; this just
-// bounds a single submit's reservation.
-const DEV_BUZZ_BUDGET_CAP = 250;
-const DEV_BUZZ_BUDGET_DEFAULT = 50;
-
-// Forced SFW — the dev endpoint NEVER reads the request host. localhost has no
-// color domain, and even a color-localhost dev config must not widen maturity.
-const FORCED_SFW_CEILING = domainBrowsingCeiling(null);
-
+// The DEV budget caps, forced-SFW ceiling, and the DEV_TOKEN_SCOPE_ALLOWLIST
+// (read/catalog + page spend + per-app storage; EXCLUDES social:tip:self +
+// block:settings:*) now live in dev-scoped-mint.service so the Phase-2 cookie
+// host-mint reuses the identical belt. Imported above.
 const RATE_LIMIT = { max: 30, windowSeconds: 60 } as const;
 
 const PAGE_INSTANCE_PREFIX = 'page_';
 
-/**
- * The DEV scope allowlist (scope doc §4.1): read/catalog scopes + the page
- * spend scope + per-app storage. DELIBERATELY EXCLUDES:
- *   - `social:tip:self` — real money OUT to third parties; no test value, real
- *     abuse value.
- *   - `block:settings:read` / `block:settings:write` — installer-only, and
- *     meaningless against a local instance with no real install row.
- *
- * A requested/approved scope outside this set is STRIPPED from the minted token
- * (defense-in-depth on top of the approved-snapshot pin). `social:tip:self` and
- * `buzz:read:self` are ALSO in PAGE_FORBIDDEN_SCOPES, so the page hard rule
- * below rejects them too — this allowlist is the explicit dev-side belt.
- */
-const DEV_TOKEN_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
-  'models:read:self',
-  'media:read:owned',
-  'user:read:self',
-  'ai:write:budgeted',
-  'apps:storage:read',
-  'apps:storage:write',
-]);
+// No-row (local-manifest) appId prefix. Real OauthClient.ids are either UUIDv4
+// (user-created, oauth-client.router.ts) or `appblk-<slug>` (App-Blocks
+// provisioned), so a `local-<slug>` appId can NEVER resolve in
+// recordSpendAttribution's `oauthClient.findUnique({ id })` — guaranteeing the
+// attribution write is skipped (audit S1 parity with the pending path).
+const LOCAL_APP_ID_PREFIX = 'local-';
 
 const requestSchema = z
   .object({
     appBlockId: z.string().min(1).max(128).optional(),
-    slug: z.string().min(1).max(128).optional(),
-    // OPTIONAL narrowing: a subset of the app's approved scopes the dev wants
-    // for this token. Omitted → all of the app's approved scopes (minus the
-    // dev-excluded ones).
+    // SLUG_REGEX + canonical app-slug BOUNDS (audit N1 + 🟡-1): the no-row path
+    // builds synthetic `local-<slug>` / `page_local_<slug>` ids from this value,
+    // so a malformed slug must 400 BEFORE any lookup or synthetic-id construction.
+    // This makes the "`local-<slug>` can never collide with a real OauthClient.id"
+    // guarantee airtight BY CONSTRUCTION (only lowercase alnum+hyphen slugs
+    // reach the constructor) rather than resting on prefix-collision reasoning.
+    //
+    // The bounds MATCH the canonical platform app-slug schema (publish-request
+    // .schema.ts submitVersionSchema/getMyPendingForSlugSchema/backfill —
+    // `min(3).max(40).regex(SLUG_REGEX)`), NOT a looser `min(1).max(128)`. A real
+    // approved/pending app slug is min(3).max(40) BY CONSTRUCTION (validated at
+    // submit/create time), so every legitimate slug already conforms and no
+    // approved/pending path regresses — but the lax bound would have let dev-token
+    // mint a synthetic id for a 2-char / >40-char slug NO real app could ever
+    // hold. Aligning the bounds removes that two-definitions-of-valid-slug split
+    // on this money-path endpoint. (There is no exported shared slugSchema /
+    // SLUG_MIN_LENGTH constant to reuse — publish-request.schema.ts inlines these
+    // same bounds at lines 70/116; matched inline here to mirror it.)
+    slug: z.string().min(3).max(40).regex(SLUG_REGEX).optional(),
+    // DUAL ROLE:
+    //  - approved / pending paths: OPTIONAL narrowing — a subset of the app's
+    //    approved (or pending-manifest) scopes the dev wants for this token.
+    //    Omitted → all of the app's scopes (minus the dev-excluded ones).
+    //  - NO-ROW (local-manifest) path: the SCOPE SOURCE itself (the dev's local
+    //    `block.manifest.json` scopes, sent by the CLI). Clamped by the same
+    //    belt; absent/empty → a read-only token (no spend).
     scopes: z.array(z.string().min(1).max(64)).max(32).optional(),
     // OPTIONAL dev-requested per-call Buzz budget; clamped to DEV_BUZZ_BUDGET_CAP.
     buzzBudget: z.number().int().positive().optional(),
@@ -287,23 +346,30 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
         message:
           'dev-token needs a personal API key (full scope, create at ' +
           'civitai.com/user/account) OR an OAuth login whose token carries the ' +
-          'App Blocks submit scope; real Buzz spend additionally needs AI Services scope',
+          'Apps submit scope; real Buzz spend additionally needs AI Services scope',
       });
       return;
     }
   }
 
-  // 2. MOD gate — App Blocks is mod-only pre-GA. The runtime spend belt already
-  // asserts moderator, but we keep the MINT mod-gated too (scope doc §4 / §6 R2).
-  if (!user.isModerator || user.bannedAt) {
-    res.status(403).json({ message: 'App Blocks is restricted to the civitai team' });
+  // 2. Author gate — App Blocks authoring is capability-gated on the dedicated
+  // `app-blocks-author` flag (static fallback mod-only), so a curated non-mod
+  // cohort can mint a dev token for `dev:live`. A BANNED account is always
+  // rejected. The runtime spend belt re-checks the author capability against the
+  // token SUBJECT; we keep the MINT author-gated too (scope doc §4 / §6 R2).
+  if (user.bannedAt) {
+    res.status(403).json({ message: 'Apps are restricted to the Civitai team' });
+    return;
+  }
+  if (!(await isAppBlocksAuthorEnabled({ user }))) {
+    res.status(403).json({ message: 'Apps are restricted to the Civitai team' });
     return;
   }
 
   // 3. Feature flag for THIS user (mirrors submit-version + the prod mint's
   // per-user `appBlocks` gate). 503 (dark) when off.
   if (!(await isAppBlocksEnabled({ user }))) {
-    res.status(503).json({ message: 'App Blocks is not enabled' });
+    res.status(503).json({ message: 'Apps are not enabled' });
     return;
   }
 
@@ -322,14 +388,23 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   const rateKey = `${REDIS_SYS_KEYS.BLOCKS.DEV_TOKEN_RATE_LIMIT}:${rateSubject}` as const;
   let count: number;
   try {
-    const multiResult = await sysRedis
-      .multi()
-      .set(rateKey, '0', { NX: true, EX: RATE_LIMIT.windowSeconds })
-      .incr(rateKey)
-      .exec();
+    // withSysReadDeadline (#28): the raw sysRedis MULTI runs on the request's
+    // critical path. On a SILENT half-open the written command parks in node-redis's
+    // reply queue until OS TCP keepalive (~11min) — a HANG, not a throw, so the
+    // try/catch alone can't unpark it. Racing the `.exec()` against the sys read
+    // deadline (default REDIS_SYS_READ_TIMEOUT_MS=2000) turns that open-ended hang
+    // into a clean rejection caught here → fail closed (503) instead of parking.
+    const multiResult = await withSysReadDeadline(
+      sysRedis
+        .multi()
+        .set(rateKey, '0', { NX: true, EX: RATE_LIMIT.windowSeconds })
+        .incr(rateKey)
+        .exec()
+    );
     count = Number(multiResult?.[1]);
   } catch (err) {
-    // A Redis incident must NEVER silently bypass the mint — fail closed.
+    // A Redis incident (a throw OR a deadline-bounded hang) must NEVER silently
+    // bypass the mint — fail closed.
     req.log?.warn('blocks/dev-token: rate limiter threw; failing closed', { rateSubject });
     res.status(503).json({ message: 'Rate limiter unavailable; please retry' });
     return;
@@ -347,11 +422,24 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // footgun). Re-arm only when the TTL is actually missing, so we never extend an
   // active window. Best-effort — mirrors block-token.service.ts:274-275.
   if (count > 1) {
-    const ttl = await sysRedis.ttl(rateKey).catch(() => -1);
-    if (ttl < 0) await sysRedis.expire(rateKey, RATE_LIMIT.windowSeconds).catch(() => {});
+    // Bound the self-heal TTL read too (#28): a hung sysRedis.ttl would park the
+    // mint just past the limiter. The deadline reject folds into the existing -1
+    // fallback (treat as "no TTL" → best-effort re-arm), never a hang.
+    const ttl = await withSysReadDeadline(sysRedis.ttl(rateKey)).catch(() => -1);
+    // Fire-and-forget the self-heal re-arm (#28 audit 🟡): this is a best-effort
+    // sysRedis WRITE and withSysReadDeadline deliberately does NOT race sys writes
+    // (the #2556/#2586 wedge). Awaiting it would re-open the exact park this PR
+    // closes — on a client that half-opens AFTER exec() resolved, the awaited
+    // expire on the dead socket parks the mint ~11min. `void` lets the response
+    // proceed; the .catch keeps the orphaned promise from surfacing as unhandled.
+    if (ttl < 0) void sysRedis.expire(rateKey, RATE_LIMIT.windowSeconds).catch(() => {});
   }
   if (count > RATE_LIMIT.max) {
-    const retryAfter = await sysRedis.ttl(rateKey);
+    // Bound the 429-path TTL read (#28) so a hung sysRedis.ttl can't park the
+    // over-limit response. On a deadline/throw fall back to the full window.
+    const retryAfter = await withSysReadDeadline(sysRedis.ttl(rateKey)).catch(
+      () => RATE_LIMIT.windowSeconds
+    );
     res.setHeader('Retry-After', String(Math.max(retryAfter, 1)));
     res.status(429).json({
       message: 'Rate limit exceeded',
@@ -410,6 +498,11 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // AppBlock-backed audit rows (recordSpendAttribution throws+swallows on the
   // synthetic appId; recordScopeInvocation FK-fails on the synthetic appBlockId).
   let pendingPublishRequestId: string | null = null;
+  // Set ONLY on the no-row (local-manifest, no server row) path so its structured
+  // mint-audit log (`blocks.dev-token.local-mint`) can fire — like the pending
+  // path it has NO durable AppBlock-backed audit rows (the synthetic appId /
+  // appBlockId don't resolve), so the log is the only forensic trail.
+  let localManifestSlug: string | null = null;
 
   if (block && block.app && block.app.userId === user.id) {
     // Owned approved row → existing-app mode. But an OWNED-yet-not-approved row
@@ -448,6 +541,14 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       signAppId: block.appId,
       signAppBlockId: block.id,
       // Synthetic, revocable PAGE instance id — same shape as the prod page mint.
+      // NOTE (revocation-wiring caveat): dev page tokens share the
+      // `page_<appBlockId>` instanceId shape with PRODUCTION page mints. The
+      // revocation WRITE path (block-revocation.service.ts revokeInstance /
+      // clearInstance) is currently UNWIRED (no callers). If it is ever wired,
+      // dev instance ids on THIS path must be namespaced distinctly (e.g.
+      // `devpage_`) and/or the revocation marker TTL must cover the 4h dev token
+      // lifetime — otherwise a dev revocation (or a 4h marker) would bleed into
+      // production page tokens for the SAME app (collision on `page_<appBlockId>`).
       blockInstanceId: `${PAGE_INSTANCE_PREFIX}${block.id}`,
     };
   } else if (slug) {
@@ -527,6 +628,52 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
         // publish-request id (no AppBlock.id to key on).
         blockInstanceId: `${PAGE_INSTANCE_PREFIX}pubreq_${pending.id}`,
       };
+    } else if (block == null) {
+      // 6c. NO-ROW (local-manifest) path (Phase 4 — deferred mode). Reached ONLY
+      // when: a `slug` was passed, NO approved AppBlock exists for it AT ALL
+      // (`block == null`), AND no caller-owned pending request was found. This
+      // mints a `dev:live` token for a BRAND-NEW app the dev has NOT submitted —
+      // there is no server row of any kind, so the scope SOURCE is the
+      // CLIENT-SUPPLIED body `scopes` (the dev's local manifest, sent by the CLI).
+      //
+      // GUARD (NO-SHADOW): the `block == null` condition is load-bearing. A
+      // foreign-owned APPROVED row (`block` non-null, owner !== caller) does NOT
+      // enter this branch — it falls through to the bare 404 below, so a dev can
+      // never mint a "local" token for a slug a real published app owns (no
+      // shadowing / attribution confusion). Only the genuine no-such-row case
+      // reaches here.
+      //
+      // The body scopes ARE the source (un-reviewed, developer-controlled — the
+      // strongest §4 R1 surface), clamped by the IDENTICAL belt below minus the
+      // OAuth ceiling (no OauthClient → `oauthAllowed: null`; 7f is the spend
+      // gate). Page-only by construction (no server manifest to inspect; dev-token
+      // mints page tokens only). An empty/absent body `scopes` → an empty source →
+      // a read-only token after the force-grant (not a 404).
+      localManifestSlug = slug;
+      resolved = {
+        // SCOPE SOURCE = the client-supplied body scopes. The body-narrowing step
+        // (7e) intersects `granted` with `requestedScopes`; since here the source
+        // IS `requestedScopes`, that intersection is an identity no-op (it cannot
+        // empty the set beyond what the belt already strips). Use the same array.
+        scopeSource: requestedScopes ?? [],
+        // No OauthClient → SKIP the OAuth-ceiling clamp (passing 0 would wrongly
+        // strip every non-skip scope). 7f (AIServicesWrite) is the spend gate.
+        oauthAllowed: null,
+        signBlockId: slug,
+        // SYNTHETIC, NON-RESOLVING appId (audit S1 parity). `local-<slug>` can
+        // NEVER equal a UUIDv4 user-created OauthClient.id NOR an `appblk-<slug>`
+        // App-Blocks client id, so recordSpendAttribution's
+        // `oauthClient.findUnique({ id })` MISSES → the inert skip-write path →
+        // no forged blockSpendAttribution row.
+        signAppId: `${LOCAL_APP_ID_PREFIX}${slug}`,
+        // No AppBlock.id exists — synthetic `page_local_<slug>` (string-validated
+        // only by the middleware; the best-effort BlockScopeInvocation audit-log
+        // write FK-fails on it and is silently swallowed — documented residual,
+        // identical to the pending path).
+        signAppBlockId: `page_local_${slug}`,
+        // Stable, BlockRevocation-checkable synthetic instance id.
+        blockInstanceId: `${PAGE_INSTANCE_PREFIX}local_${slug}`,
+      };
     }
   }
 
@@ -539,104 +686,46 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     return;
   }
 
-  // 7. SCOPE CLAMP. Start from the resolved scope SOURCE — the app's APPROVED
+  // 7. SCOPE CLAMP + 8. BUDGET CAP — the AUDITED belt, now factored into the
+  // shared `dev-scoped-mint.service` so the Phase-2 cookie-authed host-mint branch
+  // (`/api/v1/block-tokens`) reuses the IDENTICAL logic instead of a parallel
+  // re-implementation. Start from the resolved scope SOURCE — the app's APPROVED
   // snapshot (existing-app) OR the OWNED pending request's un-reviewed
-  // manifest.scopes (local-manifest, §4 R1) — then apply the IDENTICAL belt:
+  // manifest.scopes (pending local-manifest, §4 R1) OR the CLIENT-SUPPLIED body
+  // scopes (no-row local-manifest, §4 R1) — then apply the IDENTICAL belt:
   //   a) keep only KNOWN block scopes,
   //   b) keep only scopes within the DEV_TOKEN_SCOPE_ALLOWLIST (excludes
-  //      social:tip:self + block:settings:*),
+  //      social:tip:self + block:settings:*; INCLUDES apps:storage:* for THIS
+  //      bearer path — the tunnel path uses TUNNEL_HOST_MINT_SCOPE_ALLOWLIST which
+  //      strips storage, Decision 1),
   //   c) keep only scopes within the app's OAuth ceiling (allowedScopes) — ONLY
-  //      for the approved path. The pending path has NO OauthClient
-  //      (`oauthAllowed === null`) → this step is OMITTED; 7f is the spend gate.
+  //      for the approved path (`oauthAllowed !== null`); OMITTED for both
+  //      local-manifest paths (no OauthClient),
   //   d) drop the PAGE_FORBIDDEN money/spend scopes (the page hard rule),
-  //   e) if the body requested a subset, intersect with it.
-  // Every step is a STRIP (no error) so a partially-disallowed request still
-  // mints a usable, safely-clamped token. The clamp belt is byte-identical
-  // across both paths bar the OAuth-ceiling substitution — an un-reviewed
-  // manifest can never escalate past the allowlist, the page-forbidden set, or
-  // the dev's own credential (7f).
-  const forbidden = new Set<string>(PAGE_FORBIDDEN_SCOPES);
-
-  let granted: string[] = resolved.scopeSource
-    .filter((s) => isKnownBlockScope(s))
-    .filter((s) => DEV_TOKEN_SCOPE_ALLOWLIST.has(s))
-    .filter((s) => !forbidden.has(s));
-
-  // OAuth-ceiling clamp (approved path ONLY) — drop any scope the app's
-  // OauthClient bitmask doesn't allow. validateBlockScopesAgainstOauthClient
-  // treats SKIP_OAUTH_CHECK scopes (apps:storage:*) as always-allowed, so
-  // per-scope re-validation keeps those. SKIPPED when oauthAllowed is null (the
-  // pending path — no client; passing 0 would wrongly strip every non-skip scope).
-  if (resolved.oauthAllowed !== null) {
-    const ceiling = resolved.oauthAllowed;
-    granted = granted.filter(
-      (s: string) => validateBlockScopesAgainstOauthClient([s], ceiling).valid
-    );
-  }
-
-  // Body narrowing — the dev may request a subset of the above.
-  if (requestedScopes && requestedScopes.length > 0) {
-    const want = new Set(requestedScopes);
-    granted = granted.filter((s: string) => want.has(s));
-  }
-
-  //   f) BEARER-CREDENTIAL SPEND CEILING (UNIFORM across personal key AND OAuth).
-  //      The minted block token's spend capability must be a SUBSET of what the
-  //      bearer credential itself authorizes — a credential lacking AIServicesWrite
-  //      (a read-only personal key, OR an OAuth consent that didn't grant
-  //      AIServicesWrite) cannot mint a Buzz-spending dev token. `session.tokenScope`
-  //      is the resolved bitmask for BOTH shapes (personal-key ApiKey.tokenScope,
-  //      or the OAuth-issued token's scope). Mirrors the /api/v1/me tokenScope
-  //      posture (me.ts:24). Read/catalog/storage scopes are unaffected; only the
-  //      budgeted-spend scope is gated. This is DELIBERATELY uniform —
-  //      `AppBlocksSubmit` is the MINT gate (step 1b), `AIServicesWrite` is the
-  //      SPEND gate, and the two are never conflated. Personal keys default to
-  //      Full (carries AIServicesWrite), so this is a no-op for a normal key and a
-  //      tightening only for a narrow key or an OAuth consent without AI Services.
-  //      Strip (no error), consistent with every other clamp step.
+  //   e) if the body requested a subset, intersect with it,
+  //   f) BEARER-CREDENTIAL SPEND CEILING (`keyCanSpend`): strip `ai:write:budgeted`
+  //      unless the bearer credential (personal key OR OAuth consent) carries
+  //      AIServicesWrite. `session.tokenScope` is the resolved bitmask for BOTH
+  //      shapes. `AppBlocksSubmit` is the MINT gate (step 1b), `AIServicesWrite`
+  //      the SPEND gate — never conflated.
+  //   g) force-grant `user:read:self` (self-bound read of the dev's OWN identity;
+  //      `/blocks/me` for the harness viewer). SAFE: the token `sub` is ALWAYS the
+  //      authenticated caller (never the body), so it can only return the caller's
+  //      own profile — no third-party data, no write, no spend.
+  // Every step is a STRIP (no error) so a partially-disallowed request still mints
+  // a usable, safely-clamped token. This bearer path is UNCHANGED by the
+  // extraction (a parity test locks it).
   const keyCanSpend = Flags.hasFlag(session.tokenScope ?? 0, TokenScope.AIServicesWrite);
-  if (!keyCanSpend) {
-    granted = granted.filter((s: string) => s !== 'ai:write:budgeted');
-  }
+  const granted = clampDevScopes({
+    scopeSource: resolved.scopeSource,
+    oauthAllowed: resolved.oauthAllowed,
+    requestedScopes,
+    keyCanSpend,
+    allowlist: DEV_TOKEN_SCOPE_ALLOWLIST,
+  });
 
-  //   g) FORCE-GRANT `user:read:self` (UNCONDITIONAL, post-clamp). The local
-  //      harness's `dev:live` mode resolves the dev's OWN viewer identity by
-  //      calling `GET /api/v1/blocks/me`, which is gated on `user:read:self`.
-  //      That scope is only minted if it survives the app-manifest/approved-
-  //      snapshot + OAuth-bitmask clamp above — and the page-money scaffold
-  //      manifest declares ONLY `ai:write:budgeted`, so `user:read:self` is
-  //      never in `approvedScopes` and never minted → /blocks/me 403s → the
-  //      harness falls back to an anonymous viewer. This bypasses that clamp
-  //      for this ONE read scope so `dev:live` can resolve the viewer.
-  //
-  //      SAFE because:
-  //        - `user:read:self` is a READ scope that returns ONLY the self-bound
-  //          caller's own profile — no third-party data, no write, no spend. The
-  //          `/blocks/me` handler resolves `userId` from `claims.sub` and reads
-  //          exactly that user (me.ts), and `enforceContextBinding` rejects
-  //          `user:read:self` on an `anon` sub (block-scope.middleware.ts). The
-  //          dev token's `sub` is ALWAYS `user:<callerId>` (self-bound, set from
-  //          the authenticated caller at sign time below — never from the body),
-  //          so this can only ever return the CALLER's own identity.
-  //        - it's already a member of `DEV_TOKEN_SCOPE_ALLOWLIST` — an intended,
-  //          vetted dev scope (it was simply being clamped OUT by the per-app
-  //          approved-scopes pin, which the page-money manifest doesn't list).
-  //        - this endpoint is mod-gated (step 2) and self-bound, so the net
-  //          effect is "a dev reads their OWN identity via their OWN token" —
-  //          zero escalation, no new data surface.
-  //      Post-clamp + uniform across BOTH the personal-key and OAuth paths (the
-  //      grant runs after every clamp belt, so neither path can suppress it).
-  //      This does NOT touch the prod mint (`/api/v1/block-tokens`).
-  granted.push('user:read:self');
-
-  // Dedup, deterministic order.
-  granted = Array.from(new Set(granted)).sort();
-
-  // 8. BUDGET CAP — only meaningful when ai:write:budgeted is granted. Clamp the
-  // dev-requested budget (or the default) to the LOWER dev cap.
-  const buzzBudget = granted.includes('ai:write:budgeted')
-    ? Math.min(requestedBudget ?? DEV_BUZZ_BUDGET_DEFAULT, DEV_BUZZ_BUDGET_CAP)
-    : undefined;
+  // 8. BUDGET CAP — only meaningful when ai:write:budgeted survived the clamp.
+  const buzzBudget = resolveDevBuzzBudget(granted, requestedBudget);
 
   // 8b. PENDING-PATH MINT AUDIT (FIX 🟡-1). The pending (local-manifest) path is
   // the ONLY mint without durable, queryable audit rows: recordSpendAttribution
@@ -659,40 +748,49 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       scopes: granted,
       spendGranted: granted.includes('ai:write:budgeted'),
     });
+  } else if (localManifestSlug) {
+    // NO-ROW (local-manifest) MINT AUDIT. Same rationale as the pending path:
+    // the synthetic `local-<slug>` appId / `page_local_<slug>` appBlockId don't
+    // resolve, so there are NO durable AppBlock-backed audit rows — this
+    // structured event (Axiom/Loki-queryable, NEVER the token/secret) is the only
+    // forensic trail for a no-row mint. Placed after the final clamp + budget so
+    // `scopes`/`spendGranted` reflect the actual minted outcome (7f included).
+    req.log?.info('blocks.dev-token.local-mint', {
+      mode: 'local',
+      userId: user.id,
+      slug: localManifestSlug,
+      scopes: granted,
+      spendGranted: granted.includes('ai:write:budgeted'),
+    });
   }
 
   // 9. The synthetic, revocable PAGE instance id was resolved in step 6:
   //    - approved path:  `page_<appBlockId>` (same shape as the prod page mint),
-  //    - pending path:   `page_pubreq_<publishRequestId>` (stable, unique).
-  // Both are BlockRevocation-checkable; the harness token-handling is identical.
+  //    - pending path:   `page_pubreq_<publishRequestId>` (stable, unique),
+  //    - no-row path:    `page_local_<slug>` (stable, unique per slug).
+  // All are BlockRevocation-checkable; the harness token-handling is identical.
   const blockInstanceId = resolved.blockInstanceId;
 
-  // 10. PAGE ctx (entity=none, no model binding) — byte-identical shape to the
-  // prod page mint, so a dev page token can NEVER satisfy a model-bound check.
-  const ctx: Record<string, unknown> = {
-    slotId: PAGE_SLOT_ID,
-    entityType: 'none',
-  };
-  // Defense-in-depth: PAGE_SLOT_ID is a page slot by construction; assert it.
-  if (!isPageSlot(PAGE_SLOT_ID)) {
-    res.status(500).json({ message: 'page slot misconfigured' });
-    return;
-  }
-
-  // 11. SIGN — reuse BlockTokenService.sign VERBATIM. Self-bound sub (userId),
-  // forced-SFW ceiling, dev-capped budget, page ctx. domain is null (no host
-  // read) — advisory only; the AUTHORITATIVE ceiling is maxBrowsingLevel.
-  const result = await BlockTokenService.sign({
+  // 10–11. SIGN — the shared belt builds the PAGE ctx (entity=none, no model
+  // binding — byte-identical to the prod page mint) and reuses
+  // BlockTokenService.sign VERBATIM: self-bound sub (userId), forced-SFW ceiling,
+  // dev-capped budget, `dev: true` (4h lifetime + `dev` claim; the verifier keys
+  // the 4h max-age cap off it, leaving every PRODUCTION token at 15min).
+  //
+  // BLAST RADIUS of the 4h lifetime — the token carries NO mod claim, so the
+  // mint-TIME moderator check (step 2) does NOT bound it. What bounds the
+  // money/settings paths is the LIVE per-request moderator re-check
+  // (`assertViewerIsModerator` in apps.router / blocks.router): a demoted/banned
+  // mod's 4h token is rejected there as soon as the demotion lands. The token is
+  // further self-bound, per-call budget capped, and forced-SFW.
+  const result = await signDevScopedPageToken({
     userId: user.id,
-    blockId: resolved.signBlockId,
-    appId: resolved.signAppId,
-    appBlockId: resolved.signAppBlockId,
+    signBlockId: resolved.signBlockId,
+    signAppId: resolved.signAppId,
+    signAppBlockId: resolved.signAppBlockId,
     blockInstanceId,
-    scopes: granted,
-    ctx,
+    granted,
     buzzBudget,
-    domain: null,
-    maxBrowsingLevel: FORCED_SFW_CEILING,
   });
 
   // The body carries a bearer JWT — never let an intermediary cache it.

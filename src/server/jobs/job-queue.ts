@@ -11,7 +11,8 @@ import {
 } from '~/server/services/nsfwLevels.service';
 import { limitConcurrency, Limiter } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
-import { enqueueJobs } from '~/server/services/job-queue.service';
+// TEMP: unused while collection enqueue is disabled below. REVERT.
+// import { enqueueJobs } from '~/server/services/job-queue.service';
 import { createJob } from './job';
 import { logToAxiom } from '~/server/logging/client';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
@@ -87,20 +88,23 @@ const updateNsfwLevelJob = createJob('update-nsfw-levels', '*/1 * * * *', async 
       ...relatedEntities.modelVersionIds,
     ]);
     const modelIds = uniq([...jobQueueIds.modelIds, ...relatedEntities.modelIds]);
-    const collectionIds = uniq([
-      ...jobQueueIds.collectionIds,
-      ...relatedEntities.collectionIds,
-    ]);
 
-    if (collectionIds.length > 0) {
-      await enqueueJobs(
-        collectionIds.map((entityId) => ({
-          entityId,
-          entityType: EntityType.Collection,
-          type: JobQueueType.UpdateNsfwLevel,
-        }))
-      );
-    }
+    // TEMP: collection discovery/enqueue disabled to drain the stuck Image/Post
+    // backlog locally without the 708k-collection fan-out failing the run. REVERT.
+    // const collectionIds = uniq([
+    //   ...jobQueueIds.collectionIds,
+    //   ...relatedEntities.collectionIds,
+    // ]);
+
+    // if (collectionIds.length > 0) {
+    //   await enqueueJobs(
+    //     collectionIds.map((entityId) => ({
+    //       entityId,
+    //       entityType: EntityType.Collection,
+    //       type: JobQueueType.UpdateNsfwLevel,
+    //     }))
+    //   );
+    // }
 
     const comicProjectIds = relatedEntities.comicProjectIds;
     // Model3D rows enqueue directly via JobQueue (no derived discovery yet — the

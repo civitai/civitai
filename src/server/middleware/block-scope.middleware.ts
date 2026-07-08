@@ -6,6 +6,7 @@ import { BlockRevocation } from '~/server/services/block-revocation.service';
 import {
   BLOCK_TOKEN_AUDIENCE,
   BLOCK_TOKEN_ISSUER,
+  DEV_TOKEN_LIFETIME_SECONDS,
   getBlockTokenVerificationKeysByKid,
 } from '~/server/services/block-token.service';
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
@@ -54,6 +55,17 @@ export interface BlockTokenClaims {
   maxBrowsingLevel?: number;
   /** Advisory: the color domain the token was minted on (`green`|`blue`|`red`). */
   domain?: string;
+  /**
+   * DEV-TOKEN marker — present (true) ONLY on tokens minted by the mod-gated
+   * dev-token endpoint (`/api/v1/blocks/dev-token`) for the `dev:live` localhost
+   * harness. It selects the per-token-type max-age cap in `verifyBlockToken`
+   * (4h for dev, 15min for every other token). The claim is only trustworthy
+   * BECAUSE the signature (RS256, our kid) is verified before it's read — a
+   * forged `dev:true` can't pass the signature gate. The claim is optional and
+   * MUST be a boolean if present; an absent OR non-boolean `dev` fails safe to
+   * the SHORTER 15min cap (and a non-boolean is rejected outright).
+   */
+  dev?: boolean;
 }
 
 export type BlockScopedNextApiRequest = NextApiRequest & {
@@ -340,6 +352,19 @@ function isBlockJwt(token: string): boolean {
   }
 }
 
+// Per-token-type belt-and-suspenders age caps (replaces the old global
+// `maxTokenAge: '15m'` on jwtVerify). `exp` (the real lifetime, enforced by
+// jwtVerify) is the primary control; THIS is the redundant defence that catches
+// a signer bug emitting a too-long `exp` — applied PER TYPE so a 4h dev token is
+// allowed while every other token type stays capped at 15min. The 30s slack
+// matches the prior `clockTolerance: '30s'`.
+const MAX_TOKEN_AGE_DEFAULT_SECONDS = 15 * 60; // 15min — production/all non-dev tokens
+// 4h — dev:live tokens (dev:true claim). Imported from the SIGNER
+// (block-token.service.ts DEV_TOKEN_LIFETIME_SECONDS) so the verify cap can
+// never silently desync from the lifetime the signer actually stamps.
+const MAX_TOKEN_AGE_DEV_SECONDS = DEV_TOKEN_LIFETIME_SECONDS;
+const MAX_TOKEN_AGE_CLOCK_TOLERANCE_SECONDS = 30;
+
 export async function verifyBlockToken(token: string): Promise<BlockTokenClaims | null> {
   // L-VERIFY: require a kid and verify against exactly that one key. The
   // signer (BlockTokenService.sign) has stamped a `kid` (sha256 of the key
@@ -377,10 +402,13 @@ export async function verifyBlockToken(token: string): Promise<BlockTokenClaims 
         // sporadic 401s right at issuance time when verifier and signer
         // clocks drift even slightly (~1s is common in containerized envs).
         clockTolerance: '30s',
-        // B6: belt-and-suspenders cap. exp already enforces this since the
-        // signer sets it to iat+900s, but maxTokenAge defends against a
-        // future change that quietly extends the lifetime.
-        maxTokenAge: '15m',
+        // B6 (per-type, replaces the old global maxTokenAge: '15m'): the
+        // belt-and-suspenders age cap is enforced BELOW, after the claims are
+        // verified, so it can differ by token type (4h for dev:live tokens,
+        // 15min for everything else). jwtVerify STILL enforces `exp` here — the
+        // real lifetime — so removing maxTokenAge does NOT remove lifetime
+        // enforcement; it only lifts the single global age ceiling that would
+        // otherwise reject a legitimate 4h dev token. See MAX_TOKEN_AGE_* below.
       });
       const claims = payload as unknown as BlockTokenClaims;
       // B6: strict scalar-type assertions on every claim we trust. jose's
@@ -422,6 +450,28 @@ export async function verifyBlockToken(token: string): Promise<BlockTokenClaims 
         return null;
       }
       if (claims.domain !== undefined && typeof claims.domain !== 'string') {
+        return null;
+      }
+      // DEV-marker shape guard. The claim is optional (absent on every
+      // non-dev token), but if PRESENT it MUST be a boolean — a forged/garbage
+      // `dev` (string, number, object) is rejected outright so the max-age cap
+      // below can trust it. A signature-valid `dev:true` is only producible by
+      // our own signer (jwtVerify already checked the RS256 signature against
+      // our keys above), so the flag is trustworthy at this point.
+      if (claims.dev !== undefined && typeof claims.dev !== 'boolean') {
+        return null;
+      }
+      // Per-token-type max-age belt (replaces the global maxTokenAge). `exp`
+      // already enforced the real lifetime in jwtVerify; this re-checks the age
+      // against the type-specific cap so a signer bug emitting a too-long `exp`
+      // is still caught. FAIL-SAFE TO THE SHORTER CAP: only an explicit
+      // `dev === true` (validated boolean above) gets the 4h cap; absent /
+      // false / anything-else → the 15min cap.
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      const ageSeconds = nowSeconds - claims.iat;
+      const ageCapSeconds =
+        claims.dev === true ? MAX_TOKEN_AGE_DEV_SECONDS : MAX_TOKEN_AGE_DEFAULT_SECONDS;
+      if (ageSeconds > ageCapSeconds + MAX_TOKEN_AGE_CLOCK_TOLERANCE_SECONDS) {
         return null;
       }
       return claims;
@@ -755,6 +805,10 @@ export function withBlockScope(
             scope: opts.requiredScope ?? '(any-token)',
               endpoint: endpointForLog,
               statusCode: res.statusCode,
+              // Phase 2: a dev token MAY carry a synthetic non-FK appBlockId (a
+              // pre-approval dev-tunnel app) — let the audit write persist it via
+              // the nullable-appBlockId path instead of FK-failing + swallowing.
+              dev: claims.dev === true,
             })
           )
           .catch(() => {

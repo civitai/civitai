@@ -628,3 +628,21 @@ export async function ensureReviewRepo(slug: string): Promise<void> {
     throw new Error(`Forgejo review repo create ${repoRes.status}: ${body.slice(0, 240)}`);
   }
 }
+
+/**
+ * MOD REVIEW SANDBOX (#2831) — current HEAD commit sha of the in-review repo
+ * `civitai-apps-review/<slug>` on `main`. submitVersion pushes the pending
+ * bundle to this repo (replaceAllFiles=true) and only one pending request exists
+ * per slug, so HEAD is exactly the pending version's source — the sha the review
+ * build clones + tags. Full 40-hex sha (the build pipeline requires it).
+ */
+export async function getReviewRepoHeadSha(slug: string): Promise<string> {
+  const res = await fjFetch(
+    `/api/v1/repos/${FORGEJO_REVIEW_ORG}/${slug}/branches/${encodeURIComponent('main')}`
+  );
+  const branch = await unwrap<{ commit: { id: string } }>(res);
+  if (!branch?.commit?.id) {
+    throw new Error(`in-review repo ${FORGEJO_REVIEW_ORG}/${slug} has no main HEAD`);
+  }
+  return branch.commit.id;
+}

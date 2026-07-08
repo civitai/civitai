@@ -83,6 +83,9 @@ const nameOverrides: Record<string, string> = {
   optimism: 'Optimism',
   UNet: 'UNet',
   CLIPVision: 'CLIP Vision',
+  VisionLanguage: 'VLM',
+  CLIP: 'CLIP',
+  LLM: 'LLM',
   ControlNet: 'ControlNet',
   // ReportEntity enum value `'model3d'` would otherwise auto-split to
   // "model 3 d" / "3 D Models". Same story for the review variant.
@@ -193,13 +196,25 @@ export function getModelUrl({
 }
 
 /**
+ * Build a canonical 3D-model detail URL. The `/3d-models/[id]/[[...slug]]`
+ * route ignores the slug segment (id is the source of truth), so this just
+ * appends the slugified name for pretty, index-friendly URLs. Falls back to
+ * the bare id path when the name is missing/empty.
+ */
+export function getModel3DUrl({ id, name }: { id: number; name?: string | null }): string {
+  const slug = name ? slugit(name) : null;
+  return slug ? `/3d-models/${id}/${slug}` : `/3d-models/${id}`;
+}
+
+/**
  * @see https://www.geeksforgeeks.org/how-to-strip-out-html-tags-from-a-string-using-javascript/
  */
 export function removeTags(str: string) {
   if (!str) return '';
 
-  // Replace all HTML tags with a single space
-  const stringWithoutTags = str.replace(/<[^>]*>/g, ' ');
+  // Replace all HTML tags with a single space. `[^<>]` (not `[^>]`) so an unterminated run of
+  // `<` can't force quadratic backtracking (ReDoS) — a `<` always starts a fresh potential tag.
+  const stringWithoutTags = str.replace(/<[^<>]*>/g, ' ');
 
   // Replace multiple spaces with a single space
   const stringWithoutExtraSpaces = stringWithoutTags.replace(/\s+/g, ' ');

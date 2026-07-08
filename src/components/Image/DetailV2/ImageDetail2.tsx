@@ -249,37 +249,71 @@ export function ImageDetail2() {
     </>
   );
 
-  const title = `${image?.type === 'video' ? 'Video' : 'Image'} posted ${
+  const isVideo = image?.type === 'video';
+  const title = `${isVideo ? 'Video' : 'Image'} posted ${
     image.user.username ? `by ${image.user.username}` : 'to civitai'
   }`;
 
-  const imageSchema = {
-    '@context': 'https://schema.org',
-    '@type': 'ImageObject',
-    contentUrl: getEdgeUrl(image.url),
-    thumbnailUrl: getEdgeUrl(image.url, { width: 450 }),
-    caption: image.user.username ? `Image by ${image.user.username}` : 'Image on Civitai',
-    width: image.width ?? undefined,
-    height: image.height ?? undefined,
-    creator:
-      image.user.username && !image.user.deletedAt
-        ? {
-            '@type': 'Person',
-            name: image.user.username,
-            url: env.NEXT_PUBLIC_BASE_URL
-              ? `${env.NEXT_PUBLIC_BASE_URL}/user/${image.user.username}`
-              : undefined,
-          }
-        : undefined,
-    creditText: image.user.username && !image.user.deletedAt ? image.user.username : undefined,
-    copyrightNotice:
-      image.user.username && !image.user.deletedAt ? `© ${image.user.username}` : undefined,
-    acquireLicensePage: env.NEXT_PUBLIC_BASE_URL
-      ? `${env.NEXT_PUBLIC_BASE_URL}/images/${image.id}`
-      : undefined,
-    uploadDate: image.createdAt,
-    datePublished: image.createdAt,
-  };
+  const creator =
+    image.user.username && !image.user.deletedAt
+      ? {
+          '@type': 'Person',
+          name: image.user.username,
+          url: env.NEXT_PUBLIC_BASE_URL
+            ? `${env.NEXT_PUBLIC_BASE_URL}/user/${image.user.username}`
+            : undefined,
+        }
+      : undefined;
+  const creditText = image.user.username && !image.user.deletedAt ? image.user.username : undefined;
+  const copyrightNotice =
+    image.user.username && !image.user.deletedAt ? `© ${image.user.username}` : undefined;
+
+  // Poster/thumbnail params mirror EdgeVideo's poster generation (anim=false,
+  // transcode=true) so Google fetches the same static frame we render.
+  const mediaSchema = isVideo
+    ? {
+        '@context': 'https://schema.org',
+        '@type': 'VideoObject',
+        name: title,
+        description: title,
+        contentUrl: getEdgeUrl(image.url, {
+          type: 'video',
+          width: 450,
+          transcode: true,
+          optimized: true,
+          anim: true,
+        }),
+        thumbnailUrl: getEdgeUrl(image.url, {
+          width: 450,
+          anim: false,
+          transcode: true,
+          optimized: true,
+          original: false,
+        }),
+        width: image.width ?? undefined,
+        height: image.height ?? undefined,
+        creator,
+        creditText,
+        copyrightNotice,
+        uploadDate: image.createdAt,
+      }
+    : {
+        '@context': 'https://schema.org',
+        '@type': 'ImageObject',
+        contentUrl: getEdgeUrl(image.url),
+        thumbnailUrl: getEdgeUrl(image.url, { width: 450 }),
+        caption: image.user.username ? `Image by ${image.user.username}` : 'Image on Civitai',
+        width: image.width ?? undefined,
+        height: image.height ?? undefined,
+        creator,
+        creditText,
+        copyrightNotice,
+        acquireLicensePage: env.NEXT_PUBLIC_BASE_URL
+          ? `${env.NEXT_PUBLIC_BASE_URL}/images/${image.id}`
+          : undefined,
+        uploadDate: image.createdAt,
+        datePublished: image.createdAt,
+      };
 
   return (
     <Gated
@@ -290,11 +324,14 @@ export function ImageDetail2() {
         images: image,
         ogEndpoint: `/api/og?type=image&id=${image.id}`,
         canonical: `/images/${image.id}`,
-        schema: imageSchema,
+        schema: mediaSchema,
         // Per-image HTML pages are thin/duplicative and drive negligible search
-        // traffic; Google Images still surfaces images via the ImageObject schema.
-        // See docs/seo-thin-page-deindexing-plan.md.
-        deIndex: true,
+        // traffic, so plain images stay deindexed (Google Images still surfaces
+        // them via the ImageObject schema). Videos are the exception: a single-
+        // video page is a legitimate "watch page", so we index safe-rated videos
+        // and back them with VideoObject schema. NSFW videos stay deindexed to
+        // avoid the content/meta mismatch on the green domain (see docs/seo-audit.md).
+        deIndex: !isVideo || nsfw,
       }}
     >
       <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />

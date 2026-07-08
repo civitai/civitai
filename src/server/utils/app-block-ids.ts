@@ -106,3 +106,25 @@ export function newBlockSubscriptionAttributionId(): string {
 export function newAppUserScopeGrantId(): string {
   return `augr_${newUlid()}`;
 }
+
+// App Store Listings (W13).
+export function newAppListingId(): string {
+  return `apl_${newUlid()}`;
+}
+
+export function newAppListingScreenshotId(): string {
+  return `apls_${newUlid()}`;
+}
+
+export function newAppListingPublishRequestId(): string {
+  return `alpr_${newUlid()}`;
+}
+
+// App Store Listings (W13) — P3b off-site moderation (report / delist / claim).
+export function newAppListingReportId(): string {
+  return `alrp_${newUlid()}`;
+}
+
+export function newAppListingModerationEventId(): string {
+  return `alme_${newUlid()}`;
+}

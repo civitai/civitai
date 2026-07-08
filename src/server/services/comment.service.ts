@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import { v4 as uuid } from 'uuid';
 import { NotificationCategory } from '~/server/common/enums';
 import { reportAcceptedReward } from '~/server/rewards';

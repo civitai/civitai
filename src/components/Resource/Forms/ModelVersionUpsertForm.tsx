@@ -50,7 +50,6 @@ import {
   baseModelSupportsClipSkip,
   getActiveBaseModels,
 } from '~/shared/constants/basemodel.constants';
-import type { ClubResourceSchema } from '~/server/schema/club.schema';
 import type { GenerationResourceSchema } from '~/server/schema/generation.schema';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
 import type {
@@ -147,7 +146,14 @@ const querySchema = z.object({
   bountyId: z.coerce.number().optional(),
 });
 
-export function ModelVersionUpsertForm({ model, version, children, onSubmit, afterName }: Props) {
+export function ModelVersionUpsertForm({
+  id,
+  model,
+  version,
+  children,
+  onSubmit,
+  afterName,
+}: Props) {
   const features = useFeatureFlags();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
@@ -423,7 +429,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit, aft
 
   return (
     <>
-      <Form form={form} onSubmit={handleSubmit}>
+      <Form id={id} form={form} onSubmit={handleSubmit}>
         <Stack>
           <InputText
             name="name"
@@ -800,7 +806,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit, aft
               <InputNumber
                 name="licensingFee"
                 label="License Fee per Image"
-                description={`Charge a per-image fee for generations using this version. Set to 0 to disable. Max ${MAX_LICENSING_FEE} Buzz per image.`}
+                description={`Charge a per-image fee for generations using this version. If this is a derivative of a base model that already charges a licensing fee, your fee is added on top of it. Set to 0 to disable. Max ${MAX_LICENSING_FEE} Buzz per image.`}
                 min={0}
                 max={MAX_LICENSING_FEE}
                 step={1}
@@ -1039,11 +1045,11 @@ type VersionInput = Omit<ModelVersionUpsertInput, 'recommendedResources'> & {
     'strength' | 'minStrength' | 'maxStrength'
   > &
     RecommendedSettingsSchema)[];
-  clubs?: ClubResourceSchema[];
   earlyAccessEndsAt: Date | null;
   earlyAccessConfig: ModelVersionEarlyAccessConfig | null;
 };
 type Props = {
+  id?: string;
   onSubmit: (version?: ModelVersionUpsertInput) => void;
   children: (data: { loading: boolean; canSave: boolean }) => React.ReactNode;
   model?: Partial<ModelUpsertInput & { publishedAt: Date | null }>;

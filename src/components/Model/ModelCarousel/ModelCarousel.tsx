@@ -88,7 +88,7 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
       withControls={hasMultipleSlides ? true : false}
       controlSize={mobile ? 32 : 56}
       loop
-      initialHeight={mobile ? 300 : 600}
+      // initialHeight={mobile ? 300 : 600}
     >
       <Embla.Viewport>
         <Embla.Container
@@ -102,102 +102,116 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                 index={index}
                 className="flex flex-[0_0_100%] items-center justify-center pl-3 @md:flex-[0_0_50%] @md:pl-6"
               >
-                <div className="relative w-full">
-                  <ImageGuard2 image={image} connectType="model" connectId={modelId}>
-                    {(safe) => (
-                      <>
-                        <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
-                        <Stack gap="xs" align="flex-end" className="absolute right-2 top-2 z-10">
-                          <ImageContextMenu image={image} />
-                          {features.imageGeneration &&
-                            (image.hasPositivePrompt ?? image.hasMeta) && (
-                              <HoverActionButton
-                                label="Remix"
-                                size={30}
-                                color="white"
-                                variant="filled"
-                                data-activity="remix:model-carousel"
-                                data-tour="model:remix"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
+                {({ inView }) => (
+                  <div
+                    className="relative w-full"
+                    style={{ aspectRatio: `${image.width ?? 1} / ${image.height ?? 1}` }}
+                  >
+                    {inView && (
+                      <ImageGuard2 image={image} connectType="model" connectId={modelId}>
+                        {(safe) => (
+                          <>
+                            <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                            <Stack
+                              gap="xs"
+                              align="flex-end"
+                              className="absolute right-2 top-2 z-10"
+                            >
+                              <ImageContextMenu image={image} />
+                              {features.imageGeneration &&
+                                (image.hasPositivePrompt ?? image.hasMeta) && (
+                                  <HoverActionButton
+                                    label="Remix"
+                                    size={30}
+                                    color="white"
+                                    variant="filled"
+                                    data-activity="remix:model-carousel"
+                                    data-tour="model:remix"
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
 
-                                  trackAction({
-                                    type: 'Image_Remix_Click',
-                                    details: {
-                                      imageId: image.id,
-                                      imageType: image.type,
-                                      sourceModelVersionId: modelVersionId,
-                                      source: 'remix:model-carousel',
-                                    },
-                                  }).catch(() => undefined);
+                                      trackAction({
+                                        type: 'Image_Remix_Click',
+                                        details: {
+                                          imageId: image.id,
+                                          imageType: image.type,
+                                          sourceModelVersionId: modelVersionId,
+                                          source: 'remix:model-carousel',
+                                        },
+                                      }).catch(() => undefined);
 
-                                  generationGraphPanel.open({
-                                    type: image.type,
-                                    id: image.id,
-                                  });
+                                      generationGraphPanel.open({
+                                        type: image.type,
+                                        id: image.id,
+                                      });
 
-                                  if (running) helpers?.next();
-                                }}
+                                      if (running) helpers?.next();
+                                    }}
+                                  >
+                                    <IconBrush stroke={2.5} size={16} />
+                                  </HoverActionButton>
+                                )}
+                            </Stack>
+                            <RoutedDialogLink
+                              name="imageDetail"
+                              state={{ imageId: image.id, images }}
+                            >
+                              <Indicator
+                                label="From Community"
+                                radius="sm"
+                                position="top-center"
+                                size={24}
+                                disabled={!fromCommunity}
+                                withBorder
                               >
-                                <IconBrush stroke={2.5} size={16} />
-                              </HoverActionButton>
-                            )}
-                        </Stack>
-                        <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
-                          <Indicator
-                            label="From Community"
-                            radius="sm"
-                            position="top-center"
-                            size={24}
-                            disabled={!fromCommunity}
-                            withBorder
-                          >
-                            <ImagePreview
-                              image={image}
-                              edgeImageProps={{ width: 450 }}
-                              aspectRatio={(image.width ?? 1) / (image.height ?? 1)}
-                              // radius="md"
-                              style={{ width: '100%' }}
-                              nsfw={!safe}
-                            />
-                          </Indicator>
-                        </RoutedDialogLink>
-                        <Reactions
-                          entityId={image.id}
-                          entityType="image"
-                          reactions={image.reactions}
-                          metrics={{
-                            likeCount: image.stats?.likeCountAllTime,
-                            dislikeCount: image.stats?.dislikeCountAllTime,
-                            heartCount: image.stats?.heartCountAllTime,
-                            laughCount: image.stats?.laughCountAllTime,
-                            cryCount: image.stats?.cryCountAllTime,
-                          }}
-                          readonly={!safe}
-                          className={classes.reactions}
-                          targetUserId={image.user.id}
-                          disableBuzzTip={image.poi}
-                        />
-                        {image.hasMeta && (
-                          <div className="absolute bottom-0.5 right-0.5 z-10">
-                            <ImageMetaPopover2 imageId={image.id} type={image.type}>
-                              <LegacyActionIcon component="div" variant="transparent" size="lg">
-                                <IconInfoCircle
-                                  color="white"
-                                  filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                                  opacity={0.8}
-                                  strokeWidth={2.5}
-                                  size={26}
+                                <ImagePreview
+                                  image={image}
+                                  edgeImageProps={{ width: 450 }}
+                                  aspectRatio={(image.width ?? 1) / (image.height ?? 1)}
+                                  // radius="md"
+                                  style={{ width: '100%' }}
+                                  nsfw={!safe}
                                 />
-                              </LegacyActionIcon>
-                            </ImageMetaPopover2>
-                          </div>
+                              </Indicator>
+                            </RoutedDialogLink>
+                            <Reactions
+                              entityId={image.id}
+                              entityType="image"
+                              reactions={image.reactions}
+                              metrics={{
+                                likeCount: image.stats?.likeCountAllTime,
+                                dislikeCount: image.stats?.dislikeCountAllTime,
+                                heartCount: image.stats?.heartCountAllTime,
+                                laughCount: image.stats?.laughCountAllTime,
+                                cryCount: image.stats?.cryCountAllTime,
+                              }}
+                              readonly={!safe}
+                              className={classes.reactions}
+                              targetUserId={image.user.id}
+                              disableBuzzTip={image.poi}
+                            />
+                            {image.hasMeta && (
+                              <div className="absolute bottom-0.5 right-0.5 z-10">
+                                <ImageMetaPopover2 imageId={image.id} type={image.type}>
+                                  <LegacyActionIcon component="div" variant="transparent" size="lg">
+                                    <IconInfoCircle
+                                      color="white"
+                                      filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                                      opacity={0.8}
+                                      strokeWidth={2.5}
+                                      size={26}
+                                    />
+                                  </LegacyActionIcon>
+                                </ImageMetaPopover2>
+                              </div>
+                            )}
+                          </>
                         )}
-                      </>
+                      </ImageGuard2>
                     )}
-                  </ImageGuard2>
-                </div>
+                  </div>
+                )}
               </Embla.Slide>
             );
           })}

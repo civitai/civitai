@@ -647,9 +647,9 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                     />
                   ) : null}
                   {/* Action icon buttons row */}
-                  <Group gap={8} wrap="nowrap" justify="center" grow>
+                  <div className="flex gap-2">
                     <Tooltip label="Share" position="top" withArrow>
-                      <div style={{ flex: 1 }}>
+                      <div className="flex-1">
                         <ShareButton
                           url={router.asPath}
                           title={model.name}
@@ -668,7 +668,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                     </Tooltip>
                     {onFavoriteClick && (
                       <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
-                        <div style={{ flex: 1 }} data-tour="model:like">
+                        <div className="flex-1" data-tour="model:like">
                           <LoginRedirect reason="favorite-model">
                             <Button
                               onClick={() =>
@@ -697,6 +697,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                             withArrow
                           >
                             <Button
+                              className="flex-1"
                               color={isInVault ? 'green' : 'gray'}
                               onClick={toggleVaultItem}
                               disabled={isLoading}
@@ -730,6 +731,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                           <Tooltip label={label}>
                             <Button
                               ref={ref}
+                              className="flex-1"
                               color={color}
                               onClick={onClick}
                               disabled={!primaryFile}
@@ -753,7 +755,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       position="top"
                       withArrow
                     >
-                      <div style={{ flex: 1 }}>
+                      <div className="flex-1">
                         <LoginRedirect reason="notify-model">
                           <Button
                             color={isNotificationOn ? 'green' : 'gray'}
@@ -782,7 +784,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       </div>
                     </Tooltip>
                     <Tooltip label="Add to collection" position="top" withArrow>
-                      <div style={{ flex: 1 }}>
+                      <div className="flex-1">
                         <LoginRedirect reason="add-to-collection">
                           <Button
                             color="gray"
@@ -817,12 +819,12 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                           style: { paddingLeft: 0, paddingRight: 0 },
                           children: <IconGavel size={18} />,
                         }}
-                        divProps={{ style: { flex: 1 } }}
+                        divProps={{ className: 'flex-1' }}
                       />
                     )}
                     {(!user || !isOwner || user.isModerator) && (
                       <Tooltip label="Report" position="top" withArrow>
-                        <div style={{ flex: 1 }}>
+                        <div className="flex-1">
                           <LoginRedirect reason="report-model">
                             <Button
                               color="gray"
@@ -842,7 +844,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         </div>
                       </Tooltip>
                     )}
-                  </Group>
+                  </div>
                 </Stack>
               </Card>
               {/* Component-only model message */}
@@ -1580,6 +1582,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         type={model.type}
                         modelId={model.id}
                         modelVersionId={version.id}
+                        fileType={primaryFile?.type}
                       />
                     </Group>
                   )}

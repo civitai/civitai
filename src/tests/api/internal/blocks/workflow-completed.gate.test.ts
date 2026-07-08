@@ -113,7 +113,7 @@ describe('workflow-completed webhook — pipeline flag gate (Decision 1)', () =>
     const res = makeRes();
     await invoke(makeReq(), res);
     expect(res._status).toBe(503);
-    expect(res._body).toMatchObject({ error: 'App Blocks not enabled' });
+    expect(res._body).toMatchObject({ error: 'Apps are not enabled' });
     expect(mockFindUnique).not.toHaveBeenCalled();
     expect(mockIncrBy).not.toHaveBeenCalled();
   });

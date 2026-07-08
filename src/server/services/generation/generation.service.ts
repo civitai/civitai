@@ -1,12 +1,12 @@
 import { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
 import { z } from 'zod';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import { EntityAccessPermission, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { getDbWithoutLag, getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
 import { wanBaseModelGroupIdMap } from '~/server/services/orchestrator/ecosystems/wan.handler';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
@@ -275,7 +275,11 @@ export async function getGenerationStatus() {
   // Fail open: a sysRedis outage shouldn't crash generation API calls.
   let raw: string | null | undefined;
   try {
-    raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS);
+    // Wall-clock deadline so a silent sysRedis half-open can't park this read
+    // (runs in getGenerationConfig's Promise.all on every gen submit) ~11min.
+    raw = await withSysReadDeadline(
+      sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS)
+    );
   } catch (err) {
     logSysRedisFailOpen('defaults-firing', 'getGenerationStatus generation.service', err);
     raw = undefined;
@@ -785,10 +789,17 @@ const getModelVersionGenerationData = async ({
 };
 
 export async function getUnstableResources() {
-  const cachedData = await sysRedis
-    .hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:unstable-resources')
+  // Wall-clock deadline: this runs in getGenerationConfig's Promise.all on
+  // every gen submit, so a silent sysRedis half-open would park the whole submit.
+  const cachedData = await withSysReadDeadline(
+    sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:unstable-resources')
+  )
     .then((data) => (data ? fromJson<number[]>(data) : ([] as number[])))
-    .catch(() => [] as number[]); // fallback to empty array if redis fails
+    .catch((err) => {
+      // fallback to empty array if redis fails (DOWN or SLOW/deadline)
+      logSysRedisFailOpen('read-degraded', 'getUnstableResources', err);
+      return [] as number[];
+    });
 
   return cachedData ?? [];
 }
@@ -807,10 +818,17 @@ export async function getGenerationEcosystemConfig(
   user: { id?: number; isModerator?: boolean } = {}
 ): Promise<GenerationEcosystemContext> {
   const [cached, hasTestingAccess] = await Promise.all([
-    sysRedis
-      .hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:ecosystem-config')
+    // Wall-clock deadline: runs in getGenerationConfig's Promise.all on every
+    // gen submit — a silent sysRedis half-open would park the whole submit.
+    withSysReadDeadline(
+      sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:ecosystem-config')
+    )
       .then((data) => (data ? fromJson<Partial<GenerationEcosystemConfig>>(data) : null))
-      .catch(() => null), // fallback to default if redis fails
+      .catch((err) => {
+        // fallback to default if redis fails (DOWN or SLOW/deadline)
+        logSysRedisFailOpen('read-degraded', 'getGenerationEcosystemConfig', err);
+        return null;
+      }),
     resolveTestingAccess(user),
   ]);
 
@@ -855,10 +873,16 @@ const gateRulesArraySchema = z.array(gateRuleSchema);
  * Fail-open to `[]` so a bad/missing value never blocks generation.
  */
 export async function getGateRules(): Promise<GateRule[]> {
-  const cached = await sysRedis
-    .hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:gate-rules')
+  // Wall-clock deadline: getGateRules runs in getGenerationConfig's
+  // Promise.all on every gen submit — a silent sysRedis half-open would park it.
+  const cached = await withSysReadDeadline(
+    sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:gate-rules')
+  )
     .then((data) => (data ? fromJson<GateRule[]>(data) : null))
-    .catch(() => null);
+    .catch((err) => {
+      logSysRedisFailOpen('read-degraded', 'getGateRules', err);
+      return null;
+    });
   const parsed = gateRulesArraySchema.safeParse(cached ?? []);
   return parsed.success ? parsed.data : [];
 }
@@ -957,10 +981,17 @@ export async function getGenerationConfig(
 }
 
 export async function getUnavailableResources() {
-  const cachedData = await sysRedis
-    .hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:unavailable-resources')
+  // Wall-clock deadline: getUnavailableResources gates the gen submit path — a
+  // silent sysRedis half-open would park generation ~11min instead of failing open.
+  const cachedData = await withSysReadDeadline(
+    sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:unavailable-resources')
+  )
     .then((data) => (data ? fromJson<number[]>(data) : ([] as number[])))
-    .catch(() => [] as number[]); // fallback to empty array if redis fails
+    .catch((err) => {
+      // fallback to empty array if redis fails (DOWN or SLOW/deadline)
+      logSysRedisFailOpen('read-degraded', 'getUnavailableResources', err);
+      return [] as number[];
+    });
 
   return [...new Set(cachedData ?? [])];
 }
@@ -1390,6 +1421,7 @@ export async function getResourceData(
       fileSizeKB: fileSizeKB ? Math.round(fileSizeKB) : undefined,
       additionalResourceCost,
       epochDetails,
+      primaryFileType: primaryFile?.type,
     };
   }
 
@@ -1397,7 +1429,7 @@ export async function getResourceData(
     resource: ReturnType<typeof transformGenerationData>,
     modelFiles: ModelFileCached[]
   ) {
-    const { fileSizeKB, additionalResourceCost, epochDetails } = getModelFileProps(
+    const { fileSizeKB, additionalResourceCost, epochDetails, primaryFileType } = getModelFileProps(
       resource,
       modelFiles
     );
@@ -1406,6 +1438,9 @@ export async function getResourceData(
       type: resource.model.type,
       modelId: epochDetails ? epochDetails.jobId : resource.model.id,
       id: epochDetails ? epochDetails.fileName : resource.id,
+      // epoch resources resolve to an orchestrator-hosted file, not the version's
+      // primary model file, so only forward the file type for civitai sources.
+      fileType: epochDetails ? undefined : primaryFileType,
       source: epochDetails ? 'orchestrator' : 'civitai',
     });
 

@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>First-Party SSO — Current vs Proposed (Wire Diagrams)</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #171a23;
+    --panel-2: #1e222e;
+    --ink: #e6e8ee;
+    --muted: #9aa3b2;
+    --line: #2c3140;
+    --green: #3fb950;
+    --blue: #58a6ff;
+    --amber: #d29922;
+    --red: #f85149;
+    --accent: #bc8cff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0 0 80px;
+    background: var(--bg); color: var(--ink);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  header {
+    padding: 40px 24px 28px; border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, #131722, var(--bg));
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+  h1 { margin: 0 0 6px; font-size: 28px; letter-spacing: -0.01em; }
+  h2 {
+    margin: 56px 0 6px; font-size: 21px; letter-spacing: -0.01em;
+    padding-bottom: 8px; border-bottom: 1px solid var(--line);
+  }
+  .sub { color: var(--muted); font-size: 14px; }
+  .lead { color: var(--ink); background: var(--panel); border: 1px solid var(--line);
+    border-left: 3px solid var(--accent); border-radius: 8px; padding: 16px 18px; margin: 22px 0; }
+  .lead b { color: var(--accent); }
+  .tag {
+    display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px;
+    vertical-align: middle; margin-left: 8px;
+  }
+  .tag.same { background: rgba(63,185,80,.15); color: var(--green); border: 1px solid rgba(63,185,80,.4); }
+  .tag.diff { background: rgba(210,153,34,.15); color: var(--amber); border: 1px solid rgba(210,153,34,.4); }
+  .diagram {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 20px; margin: 18px 0; overflow-x: auto;
+  }
+  .note { color: var(--muted); font-size: 14px; margin: 10px 2px 0; }
+  .note code, p code, td code {
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px;
+    padding: 1px 6px; font-size: 13px; color: #cdd3df;
+  }
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 14px 0 0; font-size: 13px; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .swatch { width: 14px; height: 14px; border-radius: 3px; display: inline-block; }
+  table { width: 100%; border-collapse: collapse; margin: 18px 0; font-size: 14.5px; }
+  th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
+  thead th:nth-child(2) { color: var(--amber); }
+  thead th:nth-child(3) { color: var(--blue); }
+  tr td:first-child { color: var(--ink); font-weight: 500; width: 26%; }
+  .pill { font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
+  .pill.same { background: rgba(63,185,80,.15); color: var(--green); }
+  .pill.warn { background: rgba(248,81,73,.13); color: var(--red); }
+  .pill.std { background: rgba(88,166,255,.15); color: var(--blue); }
+  .foot { margin-top: 50px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 18px; }
+  a { color: var(--blue); }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap" style="padding:0;">
+    <h1>First-Party SSO — Current vs Proposed</h1>
+    <div class="sub">Wire diagrams &middot; companion to <code>first-party-sso-vs-oauth-analysis.md</code> &amp; <code>auth-hub-cutover-review-2026-06-17.md</code> &middot; 2026-06-17</div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="lead">
+    The proposal is <b>narrow</b>, not a rewrite. The shared-domain cookie for the <code>*.civitai.com</code>
+    family and the per-request session lookup are <b>identical in both designs</b>. The <b>only</b> place they
+    diverge is how a <b>cross-root domain (<code>civitai.red</code>) gets bootstrapped</b>: today's hand-rolled
+    swap-token bridge vs. a standard OIDC authorization-code bridge. Read the diagrams in that light.
+  </div>
+
+  <div class="legend">
+    <span><span class="swatch" style="background:#1f6f30;border:1px solid var(--green)"></span> unchanged / zero per-app work</span>
+    <span><span class="swatch" style="background:#5a4410;border:1px solid var(--amber)"></span> bespoke (current)</span>
+    <span><span class="swatch" style="background:#1e466e;border:1px solid var(--blue)"></span> standard protocol (proposed)</span>
+    <span><span class="swatch" style="background:#5a1f1c;border:1px solid var(--red)"></span> known risk</span>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2>Diagram 0 — Per-request session lookup <span class="tag same">IDENTICAL in both</span></h2>
+  <p class="note">How any spoke turns the thin cookie into a full user. The cookie carries only
+    <code>{ sub, jti, signedAt }</code> — the rich <code>SessionUser</code> is looked up by <code>userId</code>
+    in shared Redis, which every domain reads (so session <em>data</em> is centralized even though the cookie can't cross eTLD+1).</p>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TD
+    R["Spoke request<br/>(carries civ-token cookie)"] --> V["Verify ES256 signature via hub JWKS<br/>check exp / iss / aud<br/><i>local, no network</i>"]
+    V --> REV{"isRevoked?<br/>reads shared TOKEN_STATE by jti"}
+    REV -->|"revoked or logged out or banned"| X["Reject, no session"]
+    REV -->|"ok"| C{"Shared Redis user cache<br/>session:data2 by userId"}
+    C -->|"HIT warm path"| OK["Return SessionUser"]
+    C -->|"MISS cold"| H["GET hub /api/auth/identity<br/><b>SOLE PRODUCER</b>, only this touches Postgres<br/>caches result, returns it"]
+    H --> OK
+    class R,V,C,OK,H same
+    class REV same
+    class X warn
+    classDef same fill:#11261a,stroke:#3fb950,color:#e6e8ee
+    classDef warn fill:#2a1413,stroke:#f85149,color:#e6e8ee
+    </pre>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2>Diagram 1 — CURRENT solution <span class="tag diff">hybrid: 2 bootstrap mechanisms</span></h2>
+  <p class="note">Hub mints the thin token <em>and</em> sets a <code>Domain=.civitai.com</code> cookie that every
+    subdomain inherits for free. A separate, <b>hand-rolled swap-token bridge</b> handles the cross-root
+    <code>civitai.red</code>.</p>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TD
+    L["User logs in at the hub"] --> HUB["auth.civitai.com (HUB)<br/>• mints thin ES256 civ-token<br/>• SETS cookie Domain=.civitai.com"]
+    HUB -->|"cookie auto-visible to subdomains"| COM["civitai.com"]
+    HUB -->|"inherits free"| MOD["mod.civitai.com"]
+    HUB -->|"inherits free"| APP["app.civitai.com (any new subdomain)"]
+
+    subgraph BRIDGE[cross-root BESPOKE swap-token bridge]
+      direction TB
+      RED0["civitai.red, no cookie (different eTLD+1)"] -->|"1. bounce browser to hub /api/auth/sync"| HUB2["Hub sees its .civitai.com cookie<br/>user is logged in"]
+      HUB2 -->|"2. mint SWAP token (single-use 60s), 302 back to .red with swap in URL"| RED1["civitai.red /sync (server)"]
+      RED1 -->|"3. POST hub /api/auth/exchange, set own .red cookie"| DONE["civitai.red logged in"]
+    end
+
+    RISK["⚠ hand-rolled risks: open-redirect B1,<br/>swap not bound to redeemer B4, token-in-URL replay"] -.-> BRIDGE
+
+    class HUB,COM,MOD,APP same
+    class HUB2,RED0,RED1,DONE bespoke
+    class RISK warn
+    classDef same fill:#11261a,stroke:#3fb950,color:#e6e8ee
+    classDef bespoke fill:#2b2207,stroke:#d29922,color:#e6e8ee
+    classDef warn fill:#2a1413,stroke:#f85149,color:#f0b3b0
+    style BRIDGE fill:#1a1606,stroke:#5a4410,color:#d29922
+    </pre>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2>Diagram 2 — PROPOSED solution <span class="tag same">same cookie · standard bridge</span></h2>
+  <p class="note">The <code>*.civitai.com</code> path is <b>unchanged</b>. Only the cross-root bridge swaps the
+    bespoke flow for a <b>standard OIDC authorization-code + PKCE</b> handshake — and it still ends in the
+    <em>same thin cookie</em>. <code>civitai.red</code> is just a registered <b>trusted client</b> (consent skipped).</p>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TD
+    L["User logs in at the hub"] --> HUB["auth.civitai.com (HUB)<br/>• mints thin ES256 civ-token<br/>• SETS cookie Domain=.civitai.com<br/>• keeps its OWN IdP session"]
+    HUB -->|"cookie auto-visible to subdomains"| COM["civitai.com"]
+    HUB -->|"inherits free"| MOD["mod.civitai.com"]
+    HUB -->|"inherits free"| APP["*.civitai.com (any new subdomain)"]
+
+    subgraph BRIDGE[cross-root STANDARD OIDC authorization-code bridge]
+      direction TB
+      RED0["civitai.red, registered TRUSTED client"] -->|"1. redirect to hub /authorize with PKCE and state"| HUB2["Hub sees its IdP session<br/>logged in"]
+      HUB2 -->|"2. trusted client, skip consent, 302 back with code and state"| RED1["civitai.red /cb (server)"]
+      RED1 -->|"3. verify state, POST hub /token, set own .red cookie"| DONE["civitai.red logged in"]
+    end
+
+    WIN["✓ state / nonce / PKCE / exact redirect_uri are standard, so B1 and B4 dissolve<br/>✓ reuses the OAuth provider you are building anyway, one hardened login path"] -.-> BRIDGE
+
+    class HUB,COM,MOD,APP same
+    class HUB2,RED0,RED1,DONE std
+    class WIN good
+    classDef same fill:#11261a,stroke:#3fb950,color:#e6e8ee
+    classDef std fill:#0d2741,stroke:#58a6ff,color:#e6e8ee
+    classDef good fill:#11261a,stroke:#3fb950,color:#b8f0c2
+    style BRIDGE fill:#0a1a2b,stroke:#1e466e,color:#58a6ff
+    </pre>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2>What actually changes</h2>
+  <table>
+    <thead>
+      <tr><th>Aspect</th><th>Current</th><th>Proposed</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>*.civitai.com</code> family cookie</td>
+        <td>Hub sets <code>.civitai.com</code>; subdomains inherit free</td>
+        <td><span class="pill same">identical — kept</span></td>
+      </tr>
+      <tr>
+        <td>Per-request session lookup</td>
+        <td>Thin token → shared Redis → hub identity on miss</td>
+        <td><span class="pill same">identical — kept</span></td>
+      </tr>
+      <tr>
+        <td>New subdomain app effort</td>
+        <td>Read cookie + verify via SDK</td>
+        <td><span class="pill same">identical</span></td>
+      </tr>
+      <tr>
+        <td>Cross-root (<code>.red</code>) bootstrap</td>
+        <td><span class="pill warn">bespoke swap-token</span> mint → <code>?swap=</code> redirect → <code>/exchange</code></td>
+        <td><span class="pill std">standard OIDC auth-code + PKCE</span></td>
+      </tr>
+      <tr>
+        <td>Who sets the <code>.red</code> cookie</td>
+        <td><code>.red</code> server, after swap exchange</td>
+        <td><code>.red</code> server, after <code>/token</code> exchange (same actor)</td>
+      </tr>
+      <tr>
+        <td>Cross-root security properties</td>
+        <td><span class="pill warn">hand-rolled</span> open-redirect (B1), binding (B4), replay</td>
+        <td><span class="pill std">inherited from OIDC</span> state / nonce / PKCE / redirect_uri</td>
+      </tr>
+      <tr>
+        <td>New cross-root brand effort</td>
+        <td>Wire a bespoke swap bridge</td>
+        <td>Register a <code>redirect_uri</code> (config, not code)</td>
+      </tr>
+      <tr>
+        <td>Code to maintain</td>
+        <td><code>swap</code> + <code>exchange</code> + <code>sync</code> endpoints</td>
+        <td>Folded into the OAuth provider you're already building</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="lead" style="border-left-color:var(--blue)">
+    <b>Bottom line:</b> keep the cheap shared-domain cookie and the thin-token lookup; replace only the
+    hand-rolled <code>.red</code> bridge with the standard authorization-code flow. The swap-token flow stops
+    being "the SSO mechanism" and is correctly understood as "the cross-root adapter" — which OIDC already
+    does, hardened, for free.
+  </div>
+
+  <div class="foot">
+    Generated as a reading aid. Diagrams render via Mermaid (CDN). If they don't render (offline), the source
+    flowcharts are in the page <code>&lt;pre class="mermaid"&gt;</code> blocks and the prose equivalents live in
+    <code>first-party-sso-vs-oauth-analysis.md</code>.
+  </div>
+
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    flowchart: { curve: 'basis', nodeSpacing: 45, rankSpacing: 55, useMaxWidth: true },
+    themeVariables: { fontSize: '14px', fontFamily: 'ui-sans-serif, system-ui, sans-serif' }
+  });
+</script>
+</body>
+</html>

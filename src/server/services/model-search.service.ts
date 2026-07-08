@@ -1,5 +1,5 @@
 import type { SearchResponse } from 'meilisearch';
-import type { Session } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
@@ -72,7 +72,7 @@ export type RunModelSearchContext = {
    */
   nsfwImagePassthrough: boolean;
   /** The viewer (session user) — undefined for anon. */
-  user?: Session['user'];
+  user?: SessionUser;
   /** Absolute origin used to build download URLs (from getNextPage's baseUrl). */
   baseUrlOrigin: string;
 };
@@ -244,7 +244,7 @@ export async function runModelSearch(
           // be widened by a client nsfw flag.
           images: includeImages
             ? images
-                .filter((x) => nsfwImagePassthrough || Flags.hasFlag(x.nsfwLevel, browsingLevel))
+                .filter((x) => nsfwImagePassthrough || Flags.intersects(x.nsfwLevel, browsingLevel))
                 .map(({ url, id, ...image }) => ({
                   id,
                   url: getEdgeUrl(url, {

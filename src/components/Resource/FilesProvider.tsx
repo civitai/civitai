@@ -764,7 +764,11 @@ function inferFileType(fileName: string, modelType?: ModelType | null): ModelFil
     case 'gguf':
     case 'sft':
     case 'onnx':
-      return 'Model';
+      // CLIP weights aren't a single "Model" file — they're a text or vision
+      // encoder. Default to Text Encoder (a CLIP primary type) so the dropped
+      // file lands in the primary section; the user switches to Vision Encoder
+      // when appropriate.
+      return modelType === ModelType.CLIP ? 'Text Encoder' : 'Model';
     case 'zip':
       return modelType && archivePrimaryModelTypes.includes(modelType) ? 'Archive' : undefined;
     case 'yaml':
@@ -822,12 +826,16 @@ const ggufExts = [...modelExts, '.gguf'];
 const configExts = ['.yaml', '.yml', '.json', '.txt'];
 const archiveExts = ['.zip'];
 
+// Primary-file cap for weights-bearing types — room for multiple fp precisions
+// (fp16/fp32/fp8/bf16) plus gguf quant variants (Q2_K…Q8_0) of the same model.
+const mainModelMaxFiles = 20;
+
 const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
   Checkpoint: {
     primary: {
       extensions: [...ggufExts, '.onnx'],
       fileTypes: [...primaryFileTypesByModelType.Checkpoint],
-      maxFiles: 8,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...configExts, ...archiveExts, ...ggufExts],
@@ -850,7 +858,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: ggufExts,
       fileTypes: [...primaryFileTypesByModelType.LORA],
-      maxFiles: 3,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...modelExts, ...configExts, ...archiveExts],
@@ -871,7 +879,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: ggufExts,
       fileTypes: [...primaryFileTypesByModelType.DoRA],
-      maxFiles: 3,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...modelExts, ...configExts, ...archiveExts],
@@ -892,7 +900,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: ggufExts,
       fileTypes: [...primaryFileTypesByModelType.LoCon],
-      maxFiles: 3,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...modelExts, ...configExts, ...archiveExts],
@@ -913,7 +921,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: modelExts,
       fileTypes: [...primaryFileTypesByModelType.TextualInversion],
-      maxFiles: 2,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...archiveExts, ...configExts],
@@ -925,7 +933,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: modelExts,
       fileTypes: [...primaryFileTypesByModelType.Hypernetwork],
-      maxFiles: 1,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...archiveExts, ...configExts, ...modelExts],
@@ -937,7 +945,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: modelExts,
       fileTypes: [...primaryFileTypesByModelType.AestheticGradient],
-      maxFiles: 1,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...archiveExts, ...configExts, ...modelExts],
@@ -949,7 +957,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: ggufExts,
       fileTypes: [...primaryFileTypesByModelType.Controlnet],
-      maxFiles: 2,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...configExts, ...archiveExts],
@@ -961,7 +969,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: [...modelExts, '.onnx'],
       fileTypes: [...primaryFileTypesByModelType.MotionModule],
-      maxFiles: 2,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...configExts, ...archiveExts],
@@ -973,7 +981,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: ['.pt', '.safetensors'],
       fileTypes: [...primaryFileTypesByModelType.Detection],
-      maxFiles: 4,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...configExts, ...archiveExts],
@@ -985,7 +993,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: ggufExts,
       fileTypes: [...primaryFileTypesByModelType.Upscaler],
-      maxFiles: 1,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...configExts, ...archiveExts],
@@ -997,7 +1005,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: ggufExts,
       fileTypes: [...primaryFileTypesByModelType.VAE],
-      maxFiles: 1,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...configExts, ...archiveExts],
@@ -1009,7 +1017,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: ggufExts,
       fileTypes: [...primaryFileTypesByModelType.TextEncoder],
-      maxFiles: 1,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...configExts, ...archiveExts],
@@ -1021,7 +1029,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: ggufExts,
       fileTypes: [...primaryFileTypesByModelType.UNet],
-      maxFiles: 1,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...configExts, ...archiveExts],
@@ -1033,12 +1041,48 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: ggufExts,
       fileTypes: [...primaryFileTypesByModelType.CLIPVision],
-      maxFiles: 1,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...configExts, ...archiveExts],
       fileTypes: ['Config', 'Archive', 'Other'],
       maxFiles: 1,
+    },
+  },
+  VisionLanguage: {
+    primary: {
+      extensions: [...ggufExts, '.onnx'],
+      fileTypes: [...primaryFileTypesByModelType.VisionLanguage],
+      maxFiles: mainModelMaxFiles,
+    },
+    additional: {
+      extensions: [...configExts, ...archiveExts, ...ggufExts],
+      fileTypes: ['VAE', 'Config', 'Training Data', 'CLIPVision', 'Text Encoder', 'Other'],
+      maxFiles: 6,
+    },
+  },
+  CLIP: {
+    primary: {
+      extensions: ggufExts,
+      fileTypes: [...primaryFileTypesByModelType.CLIP],
+      maxFiles: mainModelMaxFiles,
+    },
+    additional: {
+      extensions: [...configExts, ...archiveExts],
+      fileTypes: ['Config', 'Archive', 'Other'],
+      maxFiles: 2,
+    },
+  },
+  LLM: {
+    primary: {
+      extensions: ggufExts,
+      fileTypes: [...primaryFileTypesByModelType.LLM],
+      maxFiles: mainModelMaxFiles,
+    },
+    additional: {
+      extensions: [...configExts, ...archiveExts],
+      fileTypes: ['Config', 'Archive', 'Other'],
+      maxFiles: 2,
     },
   },
   Poses: {
@@ -1081,7 +1125,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: [...archiveExts, ...configExts, ...ggufExts],
       fileTypes: [...primaryFileTypesByModelType.Other],
-      maxFiles: 1,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...configExts, ...archiveExts],
