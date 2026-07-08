@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * APP DEV TUNNEL — `/apps/dev/[blockId]` SSR resolver.
@@ -30,11 +30,13 @@ vi.mock('~/server/utils/server-side-helpers', () => ({
   },
 }));
 
-const { mockResolveDev, mockResolvePageBySlug, mockGetActiveTunnel } = vi.hoisted(() => ({
-  mockResolveDev: vi.fn<(...a: any[]) => Promise<any>>(),
-  mockResolvePageBySlug: vi.fn<(...a: any[]) => Promise<any>>(),
-  mockGetActiveTunnel: vi.fn<(...a: any[]) => Promise<any>>(),
-}));
+const { mockResolveDev, mockResolvePageBySlug, mockGetActiveTunnel, mockUnsubmittedSpend } =
+  vi.hoisted(() => ({
+    mockResolveDev: vi.fn<(...a: any[]) => Promise<any>>(),
+    mockResolvePageBySlug: vi.fn<(...a: any[]) => Promise<any>>(),
+    mockGetActiveTunnel: vi.fn<(...a: any[]) => Promise<any>>(),
+    mockUnsubmittedSpend: vi.fn<(...a: any[]) => Promise<boolean>>(async () => true),
+  }));
 vi.mock('~/server/services/block-registry.service', () => ({
   BlockRegistry: {
     resolveDevPageBlockForAuthor: mockResolveDev,
@@ -43,6 +45,8 @@ vi.mock('~/server/services/block-registry.service', () => ({
 }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksDevTunnelEnabled: vi.fn(async () => true),
+  isAppBlocksDevTunnelUnsubmittedSpendEnabled: (...a: unknown[]) =>
+    mockUnsubmittedSpend(...(a as [])),
 }));
 vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
   getActiveDevTunnel: (...a: unknown[]) => mockGetActiveTunnel(...(a as [])),
@@ -112,6 +116,11 @@ describe('/apps/dev/[blockId] SSR resolver', () => {
     process.env.NEXTAUTH_SECRET = SECRET;
     mockResolveDev.mockReset();
     mockGetActiveTunnel.mockReset();
+    mockUnsubmittedSpend.mockReset();
+    mockUnsubmittedSpend.mockResolvedValue(true);
+  });
+  afterAll(() => {
+    process.env.NEXTAUTH_SECRET = prev;
   });
 
   it('author + owner + active tunnel → iframeSrc set (server-derived host) + route-scoped CSP', async () => {
@@ -165,6 +174,68 @@ describe('/apps/dev/[blockId] SSR resolver', () => {
     const res = await resolver(makeCtx({ user: AUTHOR, setHeader: (k, v) => (headers[k] = v) }));
     expect(res.props.iframeSrc).toBeNull();
     expect(headers['Content-Security-Policy']).toBeUndefined();
+  });
+
+  it('BRAND-NEW: passes the session grantedScopes + unsubmitted-spend flag into the resolver, and surfaces its scopes as declaredScopes', async () => {
+    const resolver = await loadDevResolver();
+    // The resolver (mocked) is the single scope authority — SSR just forwards the
+    // session scopes + flag and reflects the returned `scopes` into the prop.
+    mockResolveDev.mockResolvedValue({
+      ...DEV_APP,
+      status: 'ephemeral',
+      scopes: ['ai:write:budgeted', 'user:read:self'],
+      ephemeralSource: 'brand-new',
+    });
+    mockGetActiveTunnel.mockResolvedValue({
+      sessionId: 'bki_s',
+      userId: 555,
+      blockId: 'my-app',
+      host: 'dev-0123456789abcdef.civit.ai',
+      hardExpiresAt: 9e9,
+      spendCapBuzz: 5000,
+      grantedScopes: ['ai:write:budgeted', 'user:read:self'],
+    });
+    mockUnsubmittedSpend.mockResolvedValue(true);
+    const res = await resolver(makeCtx({ user: AUTHOR, setHeader: () => {} }));
+    // Resolver received the SESSION scopes (never a browser body) + the flag result.
+    expect(mockResolveDev).toHaveBeenCalledWith(
+      'my-app',
+      555,
+      expect.objectContaining({
+        sessionGrantedScopes: ['ai:write:budgeted', 'user:read:self'],
+        unsubmittedSpendAllowed: true,
+      })
+    );
+    // The advertised declaredScopes prop == the resolver's returned scopes (so the
+    // block's Generate gate matches what the mint will grant).
+    expect(res.props.scopes).toEqual(['ai:write:budgeted', 'user:read:self']);
+  });
+
+  it('BRAND-NEW with the unsubmitted-spend flag OFF → forwards unsubmittedSpendAllowed:false', async () => {
+    const resolver = await loadDevResolver();
+    mockUnsubmittedSpend.mockResolvedValue(false);
+    mockResolveDev.mockResolvedValue({
+      ...DEV_APP,
+      status: 'ephemeral',
+      scopes: ['user:read:self'],
+      ephemeralSource: 'brand-new',
+    });
+    mockGetActiveTunnel.mockResolvedValue({
+      sessionId: 'bki_s',
+      userId: 555,
+      blockId: 'my-app',
+      host: 'dev-0123456789abcdef.civit.ai',
+      hardExpiresAt: 9e9,
+      spendCapBuzz: 5000,
+      grantedScopes: ['ai:write:budgeted', 'user:read:self'],
+    });
+    const res = await resolver(makeCtx({ user: AUTHOR, setHeader: () => {} }));
+    expect(mockResolveDev).toHaveBeenCalledWith(
+      'my-app',
+      555,
+      expect.objectContaining({ unsubmittedSpendAllowed: false })
+    );
+    expect(res.props.scopes).toEqual(['user:read:self']);
   });
 
   it('unauthenticated → redirect to login', async () => {

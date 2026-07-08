@@ -6,13 +6,16 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  *
  * When `resolvePageBlock` misses (a PRE-APPROVAL ephemeral app), the cookie-authed
  * AUTHOR who OWNS the app mints a SCOPED, forced-SFW, self-bound, budget-capped dev
- * token so real Buzz-spend generation works pre-approval. Asserts:
- *   - OWN pending submission → scope source = server-read manifest.scopes,
- *   - OWN brand-new (no pending) → scope source = self-declared body devScopes,
- *   - App Storage scope is STRIPPED (Decision 1),
+ * token so real Buzz-spend generation works pre-approval. The RESOLVER is the single
+ * scope authority (`app.scopes`); the mint re-clamps + signs it. Asserts:
+ *   - grant = clampTunnelDeclaredScopes(resolver scopes); App Storage STRIPPED,
+ *   - the BRAND-NEW scope decision comes from the SESSION + the unsubmitted-spend
+ *     flag (passed to the resolver) — NEVER a request body,
+ *   - the unsubmitted-spend flag OFF → read-only (no spend),
+ *   - the app-blocks.dev-tunnel.mint audit event fires (never the token),
  *   - the synthetic non-resolving ids + forced-SFW + dev:true are signed,
  *   - foreign / approved-elsewhere (resolver → null) → the SAME bare 404, no token,
- *   - the dev-tunnel kill-switch OFF → 404 (no mint),
+ *   - the dev-tunnel kill-switch OFF → 404 (no mint, before any session/scope read),
  *   - a resolved non-ephemeral status → 404 (fail-closed).
  */
 
@@ -24,6 +27,7 @@ const {
   mockBlockRegistry,
   mockFlags,
   mockAppBlocksFlag,
+  mockDevTunnelService,
 } = vi.hoisted(() => {
   const dbWrite = {
     user: {
@@ -65,6 +69,15 @@ const {
   const appBlocksFlag = {
     isAppBlocksAuthorEnabled: vi.fn(async () => true),
     isAppBlocksDevTunnelEnabled: vi.fn(async () => true),
+    isAppBlocksDevTunnelUnsubmittedSpendEnabled: vi.fn(async () => true),
+  };
+  // The mint reads the caller's dev-tunnel session (server-stored, CLI-declared) as
+  // the BRAND-NEW scope source — never a browser body.
+  const devTunnelService = {
+    getActiveDevTunnel: vi.fn<(...args: any[]) => Promise<any>>(async () => ({
+      sessionId: 'bki_testsession',
+      grantedScopes: ['ai:write:budgeted', 'user:read:self'],
+    })),
   };
   return {
     mockDbWrite: dbWrite,
@@ -74,6 +87,7 @@ const {
     mockBlockRegistry: blockRegistry,
     mockFlags: flags,
     mockAppBlocksFlag: appBlocksFlag,
+    mockDevTunnelService: devTunnelService,
   };
 });
 
@@ -104,6 +118,7 @@ vi.mock('~/server/utils/server-domain', () => ({
 }));
 vi.mock('~/server/services/feature-flags.service', () => mockFlags);
 vi.mock('~/server/services/app-blocks-flag', () => mockAppBlocksFlag);
+vi.mock('~/server/services/blocks/dev-tunnel.service', () => mockDevTunnelService);
 
 function makeReq(body: unknown): NextApiRequest {
   return {
@@ -146,7 +161,9 @@ function makeRes() {
 const MOD = { user: { id: 4242, isModerator: true, bannedAt: null } };
 
 // The ephemeral resolution BlockRegistry.resolveDevPageBlockForAuthor returns for
-// an OWNED pre-approval app (synthetic, non-resolving ids; empty display scopes).
+// an OWNED pre-approval app. The resolver is the SINGLE scope authority — `scopes`
+// is the clamped granted set (pending manifest OR session-declared). The mint
+// re-clamps `app.scopes` and signs it; there is NO body scope source.
 const EPHEMERAL_RESOLUTION = {
   appBlockId: 'ephemeral-my-app',
   appId: 'ephemeral-my-app',
@@ -156,7 +173,8 @@ const EPHEMERAL_RESOLUTION = {
   name: 'my-app',
   pageTitle: 'my-app',
   sandbox: 'allow-scripts allow-forms',
-  scopes: [],
+  scopes: ['ai:write:budgeted', 'user:read:self'],
+  ephemeralSource: 'brand-new',
   contentRating: null,
 };
 
@@ -204,21 +222,28 @@ describe('POST /api/v1/block-tokens — Phase 2 dev-tunnel author-own mint', () 
     mockBlockRegistry.resolvePageBlock.mockResolvedValue(null); // pre-approval miss
     mockBlockRegistry.resolveDevPageBlockForAuthor.mockResolvedValue(EPHEMERAL_RESOLUTION);
     mockDbWrite.user.findUnique.mockResolvedValue({ deletedAt: null, bannedAt: null });
-    mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValue(null);
     mockAppBlocksFlag.isAppBlocksAuthorEnabled.mockResolvedValue(true);
     mockAppBlocksFlag.isAppBlocksDevTunnelEnabled.mockResolvedValue(true);
+    mockAppBlocksFlag.isAppBlocksDevTunnelUnsubmittedSpendEnabled.mockResolvedValue(true);
+    mockDevTunnelService.getActiveDevTunnel.mockResolvedValue({
+      sessionId: 'bki_testsession',
+      grantedScopes: ['ai:write:budgeted', 'user:read:self'],
+    });
   });
 
-  it('OWN pending submission → mints a scoped token from the SERVER-READ manifest scopes (App Storage STRIPPED)', async () => {
-    mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValue({
-      manifest: { scopes: ['ai:write:budgeted', 'apps:storage:read', 'apps:storage:write'] },
+  it('mints a scoped token by RE-CLAMPING the resolver-supplied scopes (App Storage stripped, self-read added)', async () => {
+    // The resolver is the single scope authority; the mint re-clamps `app.scopes`
+    // as defense-in-depth. A resolution carrying storage/junk → clamp strips it.
+    mockBlockRegistry.resolveDevPageBlockForAuthor.mockResolvedValue({
+      ...EPHEMERAL_RESOLUTION,
+      scopes: ['ai:write:budgeted', 'apps:storage:read', 'apps:storage:write'],
+      ephemeralSource: 'pending',
     });
     const res = await invoke(DEV_BODY());
     expect(res._status).toBe(200);
     expect(res._body.token).toBe('jwt.dev.signed');
     expect(mockTokenService.sign).toHaveBeenCalledTimes(1);
     const arg = mockTokenService.sign.mock.calls[0][0] as any;
-    // spend scope granted + user:read:self force-grant; App Storage stripped.
     expect(arg.scopes).toEqual(['ai:write:budgeted', 'user:read:self']);
     expect(arg.scopes).not.toContain('apps:storage:read');
     expect(arg.scopes).not.toContain('apps:storage:write');
@@ -230,55 +255,118 @@ describe('POST /api/v1/block-tokens — Phase 2 dev-tunnel author-own mint', () 
     expect(arg.appBlockId).toBe('ephemeral-my-app');
     expect(arg.blockInstanceId).toBe('page_ephemeral-my-app');
     expect(typeof arg.buzzBudget).toBe('number'); // budget set (spend granted)
-    // The pending lookup was ownership-scoped.
-    expect(mockDbWrite.appBlockPublishRequest.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { slug: 'my-app', status: 'pending', submittedByUserId: MOD.user.id },
-      })
-    );
-    // Ownership resolved on the slug (not the raw appBlockId).
+  });
+
+  it('sources the BRAND-NEW scope decision from the SESSION + the flag (never the body): passes both to the resolver', async () => {
+    mockDevTunnelService.getActiveDevTunnel.mockResolvedValue({
+      sessionId: 'bki_testsession',
+      grantedScopes: ['ai:write:budgeted', 'user:read:self'],
+    });
+    mockAppBlocksFlag.isAppBlocksDevTunnelUnsubmittedSpendEnabled.mockResolvedValue(true);
+    // Junk body scopes MUST be ignored — there is no body scope source anymore.
+    const res = await invoke(DEV_BODY({ devScopes: ['apps:storage:write', 'social:tip:self'] }));
+    expect(res._status).toBe(200);
+    // The resolver was called with the SESSION's grantedScopes + the flag result —
+    // NOT anything from the request body.
     expect(mockBlockRegistry.resolveDevPageBlockForAuthor).toHaveBeenCalledWith(
       'my-app',
       MOD.user.id,
-      { db: 'write' }
+      expect.objectContaining({
+        db: 'write',
+        sessionGrantedScopes: ['ai:write:budgeted', 'user:read:self'],
+        unsubmittedSpendAllowed: true,
+      })
     );
-  });
-
-  it('OWN brand-new (no pending) → mints from SELF-DECLARED body devScopes', async () => {
-    mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValue(null);
-    const res = await invoke(DEV_BODY({ devScopes: ['ai:write:budgeted', 'social:tip:self'] }));
-    expect(res._status).toBe(200);
+    // Grant == clamp(resolver scopes); the body's storage/tip never appear.
     const arg = mockTokenService.sign.mock.calls[0][0] as any;
-    // social:tip:self is out-of-allowlist + forbidden → stripped; spend kept.
     expect(arg.scopes).toEqual(['ai:write:budgeted', 'user:read:self']);
+    expect(arg.scopes).not.toContain('apps:storage:write');
+    expect(arg.scopes).not.toContain('social:tip:self');
   });
 
-  it('OWN brand-new with NO scopes → a valid READ-ONLY token (no spend), still 200', async () => {
+  it('unsubmitted-spend FLAG OFF → the mint passes unsubmittedSpendAllowed:false; a read-only resolution mints no spend', async () => {
+    mockAppBlocksFlag.isAppBlocksDevTunnelUnsubmittedSpendEnabled.mockResolvedValue(false);
+    // With the flag off the resolver returns the stripped (read-only) set.
+    mockBlockRegistry.resolveDevPageBlockForAuthor.mockResolvedValue({
+      ...EPHEMERAL_RESOLUTION,
+      scopes: ['user:read:self'],
+      ephemeralSource: 'brand-new',
+    });
+    const res = await invoke(DEV_BODY());
+    expect(res._status).toBe(200);
+    expect(mockBlockRegistry.resolveDevPageBlockForAuthor).toHaveBeenCalledWith(
+      'my-app',
+      MOD.user.id,
+      expect.objectContaining({ unsubmittedSpendAllowed: false })
+    );
+    const arg = mockTokenService.sign.mock.calls[0][0] as any;
+    expect(arg.scopes).toEqual(['user:read:self']);
+    expect(arg.scopes).not.toContain('ai:write:budgeted');
+    expect(arg.buzzBudget).toBeUndefined(); // no spend granted → no budget
+  });
+
+  it('a resolver with NO scopes → a valid READ-ONLY token (no spend), still 200', async () => {
+    mockBlockRegistry.resolveDevPageBlockForAuthor.mockResolvedValue({
+      ...EPHEMERAL_RESOLUTION,
+      scopes: [],
+    });
     const res = await invoke(DEV_BODY());
     expect(res._status).toBe(200);
     const arg = mockTokenService.sign.mock.calls[0][0] as any;
-    expect(arg.scopes).toEqual(['user:read:self']);
+    expect(arg.scopes).toEqual(['user:read:self']); // clamp force-adds self-read
     expect(arg.buzzBudget).toBeUndefined();
+  });
+
+  it('emits the app-blocks.dev-tunnel.mint audit event (spendGranted reflects the grant), NEVER the token', async () => {
+    mockBlockRegistry.resolveDevPageBlockForAuthor.mockResolvedValue({
+      ...EPHEMERAL_RESOLUTION,
+      scopes: ['ai:write:budgeted', 'user:read:self'],
+      ephemeralSource: 'brand-new',
+    });
+    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const req = makeReq(DEV_BODY()) as any;
+    req.log = log;
+    const res = makeRes();
+    await handler(req, res);
+    expect(res._status).toBe(200);
+    expect(log.info).toHaveBeenCalledWith(
+      'app-blocks.dev-tunnel.mint',
+      expect.objectContaining({
+        mode: 'brand-new',
+        userId: MOD.user.id,
+        slug: 'my-app',
+        sessionId: 'bki_testsession',
+        scopes: ['ai:write:budgeted', 'user:read:self'],
+        spendGranted: true,
+      })
+    );
+    // The audit payload must NOT carry the signed token/secret.
+    const payload = log.info.mock.calls.find((c: any[]) => c[0] === 'app-blocks.dev-tunnel.mint')![1];
+    expect(JSON.stringify(payload)).not.toContain('jwt.dev.signed');
   });
 
   it('foreign / already-claimed / absent app (resolver → null) → the SAME bare 404, NO token', async () => {
     mockBlockRegistry.resolveDevPageBlockForAuthor.mockResolvedValue(null);
-    const res = await invoke(DEV_BODY({ devScopes: ['ai:write:budgeted'] }));
+    const res = await invoke(DEV_BODY());
     expect(res._status).toBe(404);
     expect(res._body).toEqual({ error: 'Page app not found' });
     expect(mockTokenService.sign).not.toHaveBeenCalled();
   });
 
-  it('dev-tunnel kill-switch OFF → 404, NO token (defense-in-depth over the SSR gate)', async () => {
+  it('dev-tunnel kill-switch OFF → 404, NO token (before any session/scope read)', async () => {
     mockAppBlocksFlag.isAppBlocksDevTunnelEnabled.mockResolvedValue(false);
-    const res = await invoke(DEV_BODY({ devScopes: ['ai:write:budgeted'] }));
+    const res = await invoke(DEV_BODY());
     expect(res._status).toBe(404);
     expect(mockTokenService.sign).not.toHaveBeenCalled();
+    // fail-closed BEFORE reading the tunnel session / resolving.
+    expect(mockDevTunnelService.getActiveDevTunnel).not.toHaveBeenCalled();
+    expect(mockBlockRegistry.resolveDevPageBlockForAuthor).not.toHaveBeenCalled();
   });
 
   it('author capability OFF → 404, NO token', async () => {
     mockAppBlocksFlag.isAppBlocksAuthorEnabled.mockResolvedValue(false);
-    const res = await invoke(DEV_BODY({ devScopes: ['ai:write:budgeted'] }));
+    const res = await invoke(DEV_BODY());
     expect(res._status).toBe(404);
     expect(mockTokenService.sign).not.toHaveBeenCalled();
   });
@@ -290,14 +378,14 @@ describe('POST /api/v1/block-tokens — Phase 2 dev-tunnel author-own mint', () 
       appBlockId: 'apb_real',
       appId: 'appblk-my-app',
     });
-    const res = await invoke(DEV_BODY({ devScopes: ['ai:write:budgeted'] }));
+    const res = await invoke(DEV_BODY());
     expect(res._status).toBe(404);
     expect(mockTokenService.sign).not.toHaveBeenCalled();
   });
 
   it('a soft-deleted account never mints (M1 parity)', async () => {
     mockDbWrite.user.findUnique.mockResolvedValue({ deletedAt: new Date(), bannedAt: null });
-    const res = await invoke(DEV_BODY({ devScopes: ['ai:write:budgeted'] }));
+    const res = await invoke(DEV_BODY());
     expect(res._status).toBe(404);
     expect(mockTokenService.sign).not.toHaveBeenCalled();
   });
@@ -306,7 +394,7 @@ describe('POST /api/v1/block-tokens — Phase 2 dev-tunnel author-own mint', () 
     // setSameOriginCors (handler entry) rejects the request before the dev-tunnel
     // branch runs — the CSRF gate must fire ahead of any ownership/mint work, so a
     // forged cross-origin POST can neither mint a token nor touch the resolver.
-    const res = await invokeOrigin(DEV_BODY({ devScopes: ['ai:write:budgeted'] }), 'https://evil.example');
+    const res = await invokeOrigin(DEV_BODY(), 'https://evil.example');
     expect(res._status).toBe(403);
     expect(res._body).toEqual({ error: 'cross-origin POST rejected' });
     // Never reached the dev branch: no resolve, no sign, no ACAO for the bad origin.
@@ -316,7 +404,7 @@ describe('POST /api/v1/block-tokens — Phase 2 dev-tunnel author-own mint', () 
   });
 
   it('a null/absent-Origin POST is likewise 403 before the dev mint', async () => {
-    const res = await invokeOrigin(DEV_BODY({ devScopes: ['ai:write:budgeted'] }), null);
+    const res = await invokeOrigin(DEV_BODY(), null);
     expect(res._status).toBe(403);
     expect(res._body).toEqual({ error: 'cross-origin POST rejected' });
     expect(mockBlockRegistry.resolveDevPageBlockForAuthor).not.toHaveBeenCalled();

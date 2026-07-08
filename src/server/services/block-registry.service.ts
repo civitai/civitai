@@ -11,10 +11,7 @@ import {
   validateBlockCheckpoint,
 } from '~/server/services/blocks/checkpoint.service';
 import { validateBlockSettings } from '~/server/services/blocks/settings-validator.service';
-import {
-  clampDevScopes,
-  TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
-} from '~/server/services/blocks/dev-scoped-mint.service';
+import { clampTunnelDeclaredScopes } from '~/server/services/blocks/dev-scoped-mint.service';
 import {
   newBlockInstanceId,
   newBlockUserSubscriptionId,
@@ -453,6 +450,11 @@ export interface DevPageBlockResolution {
   sandbox: string;
   scopes: string[];
   contentRating: string | null;
+  /** For an `ephemeral` resolution only: which scope source produced `scopes` —
+   *  `'pending'` (the caller's own submitted-but-unapproved manifest) or
+   *  `'brand-new'` (a truly-unclaimed slug, scopes from the dev-tunnel session).
+   *  Undefined for the owned-approved path. Used for the mint-time audit log. */
+  ephemeralSource?: 'pending' | 'brand-new';
 }
 
 interface UninstallOpts {
@@ -1865,7 +1867,18 @@ export class BlockRegistry {
   static async resolveDevPageBlockForAuthor(
     blockId: string,
     userId: number,
-    opts?: { db?: 'read' | 'write' }
+    opts?: {
+      db?: 'read' | 'write';
+      /** BRAND-NEW (no pending row) scope source: the caller's dev-tunnel session's
+       *  clamped `grantedScopes` (from their local `block.manifest.json`, sent by the
+       *  CLI at tunnel start). Ignored for the pending (own submission → server-read
+       *  manifest) and owned-approved paths. Absent → brand-new resolves read-only. */
+      sessionGrantedScopes?: string[];
+      /** Whether the dedicated `app-blocks-dev-tunnel-unsubmitted-spend` flag is ON
+       *  for the caller. When false, the BRAND-NEW branch strips `ai:write:budgeted`
+       *  (renders read-only). Fail-closed default (false). No effect on pending. */
+      unsubmittedSpendAllowed?: boolean;
+    }
   ): Promise<DevPageBlockResolution | null> {
     if (!blockId || !userId) return null;
     const db = opts?.db === 'write' ? dbWrite : dbRead;
@@ -1887,7 +1900,11 @@ export class BlockRegistry {
     // No OWNED AppBlock row → try the ephemeral pre-submit resolution (Phase 1).
     // resolveEphemeralDevPageBlock returns null (→ same bare NOT_FOUND, no oracle)
     // for a slug claimed by anyone else, so a foreign-owned app is never leaked.
-    if (!ab) return this.resolveEphemeralDevPageBlock(blockId, userId, db);
+    if (!ab)
+      return this.resolveEphemeralDevPageBlock(blockId, userId, db, {
+        sessionGrantedScopes: opts?.sessionGrantedScopes,
+        unsubmittedSpendAllowed: opts?.unsubmittedSpendAllowed,
+      });
     const manifest = (ab.manifest ?? {}) as Record<string, unknown>;
     const iframe = (manifest.iframe ?? {}) as { sandbox?: unknown };
     const page = (manifest.page ?? {}) as { title?: unknown };
@@ -1969,7 +1986,8 @@ export class BlockRegistry {
   private static async resolveEphemeralDevPageBlock(
     blockId: string,
     userId: number,
-    db: typeof dbRead | typeof dbWrite
+    db: typeof dbRead | typeof dbWrite,
+    opts?: { sessionGrantedScopes?: string[]; unsubmittedSpendAllowed?: boolean }
   ): Promise<DevPageBlockResolution | null> {
     // Guard (C): reject a non-CANONICAL slug BEFORE any DB read (same bare null,
     // no oracle). Canonical = the exact constraint submit enforces on
@@ -1997,29 +2015,37 @@ export class BlockRegistry {
     });
     if (pending && pending.submittedByUserId !== userId) return null;
     // SCOPE SOURCE — the declared scopes the dev-page host surfaces to the block as
-    // `declaredScopes` (→ the block's `granted` UI state). For the SUBMITTED-PENDING
-    // case (the caller owns `pending`) mirror the block-token Phase-2 mint EXACTLY:
-    // clamp the pending submission's un-reviewed `manifest.scopes` through the SAME
-    // audited belt (`clampDevScopes` + `TUNNEL_HOST_MINT_SCOPE_ALLOWLIST`, no OAuth
-    // ceiling, keyCanSpend=true). This ALIGNS the host's declared set with the scopes
-    // the mint actually stamps on the JWT — without it (the pre-Phase-2 hardcoded
-    // `[]`) the block's Generate gate reads an empty granted set and hangs on
-    // "Grant access to generate" while the JWT it holds already carries the budgeted
-    // spend scope. NO new authority: the mint re-clamps + the runtime author-flag and
-    // per-call/session/day Buzz caps remain the actual spend gates. The BRAND-NEW
-    // (no-`pending`) case stays `[]` — those apps self-declare via the mint body.
+    // `declaredScopes` (→ the block's `granted` UI state) AND the block-token mint
+    // uses as the JWT's granted set (both consume the SAME `clampTunnelDeclaredScopes`
+    // so they can NEVER diverge). Two ephemeral cases:
+    //
+    //   • SUBMITTED-PENDING (the caller owns `pending`): clamp the pending
+    //     submission's SERVER-READ, un-reviewed `manifest.scopes`. Without this the
+    //     block's Generate gate reads empty and hangs on "Grant access" while the JWT
+    //     already carries the budgeted scope (the pre-#2992 bug). NOT gated by the
+    //     unsubmitted-spend flag — the app IS submitted.
+    //   • BRAND-NEW (no pending row, truly-unclaimed slug the caller owns): the scope
+    //     source is the AUTHENTICATED CLI's dev-tunnel session (`sessionGrantedScopes`,
+    //     already clamped at write) — NEVER a browser body. When the dedicated
+    //     `app-blocks-dev-tunnel-unsubmitted-spend` flag is OFF for the caller, strip
+    //     `ai:write:budgeted` so a never-reviewed app renders READ-ONLY (fail-closed).
+    //
+    // NO new authority either way: the belt (TUNNEL allowlist, no OAuth ceiling,
+    // keyCanSpend=true) is identical; the runtime author-flag re-check + per-call /
+    // per-session / per-day Buzz caps remain the actual spend gates.
     let ephemeralScopes: string[] = [];
+    const ephemeralSource: 'pending' | 'brand-new' = pending ? 'pending' : 'brand-new';
     if (pending) {
       const pendingManifest = (pending.manifest ?? {}) as { scopes?: unknown };
       const declared = Array.isArray(pendingManifest.scopes)
         ? pendingManifest.scopes.filter((s): s is string => typeof s === 'string')
         : [];
-      ephemeralScopes = clampDevScopes({
-        scopeSource: declared,
-        oauthAllowed: null,
-        keyCanSpend: true,
-        allowlist: TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
-      });
+      ephemeralScopes = clampTunnelDeclaredScopes(declared);
+    } else {
+      ephemeralScopes = clampTunnelDeclaredScopes(opts?.sessionGrantedScopes ?? []);
+      if (!opts?.unsubmittedSpendAllowed) {
+        ephemeralScopes = ephemeralScopes.filter((s) => s !== 'ai:write:budgeted');
+      }
     }
     // ALLOWED — truly-unclaimed slug, or the caller owns the pending request.
     return {
@@ -2037,10 +2063,11 @@ export class BlockRegistry {
       // Minimal safe sandbox for an unverified tier (client intersectSandbox
       // re-clamps to the allowlist ∪ MINIMAL_SANDBOX regardless).
       sandbox: 'allow-scripts allow-forms',
-      // The caller's-own-pending declared scopes, clamped to the tunnel belt (see
-      // above); `[]` for a truly-unclaimed brand-new slug. Aligned with the Phase-2
+      // Clamped tunnel scopes: the own-pending server-read manifest (pending) or the
+      // CLI-declared session scopes (brand-new, flag-gated). Aligned with the
       // block-token mint so the dev-page block's Generate gate is not falsely empty.
       scopes: ephemeralScopes,
+      ephemeralSource,
       // SFW default — no reviewed content rating exists pre-submit.
       contentRating: null,
     };

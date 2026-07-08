@@ -293,6 +293,67 @@ describe('startDevTunnel', () => {
     expect(mockK8sFetch).not.toHaveBeenCalled();
     expect(sysRedis.set).not.toHaveBeenCalled();
   });
+
+  const readSession = () =>
+    JSON.parse(sysRedis._store.get('system:blocks:dev-tunnel:session:bki_testsession')!);
+
+  it('stores the CLI-declared scopes RAW (forensics) + a CLAMPED grantedScopes on the session', async () => {
+    await startDevTunnel({
+      userId: 555,
+      blockId: 'my-app',
+      sshPublicKey: PUBKEY,
+      // apps:storage:* is NOT in the tunnel allowlist — the clamp must strip it from
+      // grantedScopes, but the raw declaredScopes keeps it for "what did the dev ask".
+      declaredScopes: ['ai:write:budgeted', 'apps:storage:write'],
+    });
+    const s = readSession();
+    expect(s.declaredScopes).toEqual(['ai:write:budgeted', 'apps:storage:write']);
+    // grantedScopes = clampTunnelDeclaredScopes → storage stripped, self-read added, sorted.
+    expect(s.grantedScopes).toEqual(['ai:write:budgeted', 'user:read:self']);
+  });
+
+  it('absent declaredScopes → empty raw declared + read-only granted (user:read:self)', async () => {
+    await startDevTunnel({ userId: 555, blockId: 'my-app', sshPublicKey: PUBKEY });
+    const s = readSession();
+    expect(s.declaredScopes).toEqual([]);
+    expect(s.grantedScopes).toEqual(['user:read:self']);
+  });
+
+  it('SANITIZES declaredScopes: drops non-strings + empties + over-64-char, trims, dedupes', async () => {
+    await startDevTunnel({
+      userId: 555,
+      blockId: 'my-app',
+      sshPublicKey: PUBKEY,
+      declaredScopes: [
+        '  ai:write:budgeted  ', // trimmed
+        'ai:write:budgeted', // duplicate → collapsed
+        '', // empty → dropped
+        'x'.repeat(80), // over 64 chars → dropped
+        123 as unknown as string, // non-string → dropped
+        null as unknown as string, // non-string → dropped
+      ],
+    });
+    const s = readSession();
+    expect(s.declaredScopes).toEqual(['ai:write:budgeted']); // trimmed, deduped, junk removed
+    expect(s.declaredScopes.every((x: unknown) => typeof x === 'string' && (x as string).length <= 64)).toBe(
+      true
+    );
+    expect(s.grantedScopes).toEqual(['ai:write:budgeted', 'user:read:self']);
+  });
+
+  it('CAPS declaredScopes at 32 distinct entries', async () => {
+    const forty = Array.from({ length: 40 }, (_, i) => `zz-scope-${i}`);
+    await startDevTunnel({
+      userId: 555,
+      blockId: 'my-app',
+      sshPublicKey: PUBKEY,
+      declaredScopes: forty,
+    });
+    const s = readSession();
+    expect(s.declaredScopes.length).toBe(32);
+    // All are unknown scopes → clamp strips them → only the force-added self-read.
+    expect(s.grantedScopes).toEqual(['user:read:self']);
+  });
 });
 
 describe('buildDevTunnelApplyJob (F1 — renders via the scoped apps-applier SA)', () => {

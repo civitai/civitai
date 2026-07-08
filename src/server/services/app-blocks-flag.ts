@@ -406,6 +406,48 @@ export async function isAppBlocksDevTunnelEnabled(opts?: {
 }
 
 /**
+ * DEDICATED kill-switch for the HIGHEST-risk dev-tunnel surface: granting REAL
+ * (self-capped) Buzz-spend (`ai:write:budgeted`) to an UNSUBMITTED app — one that
+ * has NEVER been through review (no publish request). Deliberately SEPARATE from
+ * `app-blocks-dev-tunnel` so ops can kill "real Buzz on an unreviewed app" WITHOUT
+ * disabling all tunnel dev (render/HMR/pending-app testing stay up). When OFF, the
+ * brand-new (no-pending-row) dev-tunnel mint + SSR strip `ai:write:budgeted` from
+ * the granted set → the app resolves READ-ONLY (still renders, just can't spend).
+ * The PENDING (submitted-but-unapproved) and APPROVED tunnel paths are unaffected.
+ *
+ * Evaluated WITH the caller's context (mod/cohort segments), identical eval shape
+ * to `isAppBlocksDevTunnelEnabled`. Fail-closed: absent flag / Flipt-down → `false`
+ * → no unsubmitted spend for anyone (mods included), so the as-merged posture is
+ * dark until the flag is created in Flipt.
+ *
+ * SCOPE OF THE KILL (by design — kills NEW grants, not in-flight tokens): this is
+ * checked at MINT time (block-token mint + `/apps/dev` SSR), NOT re-checked per
+ * spend at `submitWorkflow`. A dev token minted while this flag was ON therefore
+ * retains `ai:write:budgeted` for its ≤4h `dev` TTL after a flip to OFF. That window
+ * is bounded by the self-bound spend (author's OWN Buzz only) + the per-call
+ * (DEV_BUZZ_BUDGET_CAP) / per-session (DEV_TUNNEL_SESSION_BUZZ_CAP) / per-user-daily
+ * caps, and `app-blocks-author` provides a RUNTIME full-kill for a bad actor (its
+ * re-check runs at submit). If instant SURGICAL revocation of just this surface is
+ * ever needed, add a per-spend re-check here in the `claims.dev` branch of
+ * `submitWorkflow` (gated on a brand-new discriminator so pending/approved spend is
+ * untouched). Accepted trade at ship: the caps + 4h TTL + author-flag kill suffice.
+ */
+export const APP_BLOCKS_DEV_TUNNEL_UNSUBMITTED_SPEND_FLAG =
+  'app-blocks-dev-tunnel-unsubmitted-spend';
+
+export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
+  user?: SessionUser;
+}): Promise<boolean> {
+  if (!opts?.user) return isFlipt(APP_BLOCKS_DEV_TUNNEL_UNSUBMITTED_SPEND_FLAG);
+  const user = opts.user;
+  return isFlipt(
+    APP_BLOCKS_DEV_TUNNEL_UNSUBMITTED_SPEND_FLAG,
+    String(user.id),
+    buildFliptContext(user)
+  );
+}
+
+/**
  * Dedicated GLOBAL fail-closed flag for the attribution BACKPAY reader
  * (W3 attribution back-half — Slice 4 read leg, see backpay.service.ts).
  *
