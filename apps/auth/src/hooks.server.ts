@@ -4,6 +4,7 @@ import { verifier } from '$lib/server/auth/verifier';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import { allowedCorsOrigin } from '$lib/server/cors';
 import { unhandledErrorsTotal } from '$lib/server/metrics';
+import { logAxiomError } from '$lib/server/axiom';
 
 // CORS preflight headers — credentialed, so Allow-Origin MUST echo the exact origin (never `*`).
 const preflightHeaders = (origin: string) => ({
@@ -56,6 +57,6 @@ export const handle: Handle = async ({ event, resolve }) => {
 // response so a metrics hiccup can't change what the client sees.
 export const handleError: HandleServerError = ({ error }) => {
   unhandledErrorsTotal.inc();
-  console.error('unhandled server error', error);
+  logAxiomError(error, { event: 'unhandled server error' });
   return { message: 'Internal Error' };
 };
