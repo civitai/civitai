@@ -1,7 +1,7 @@
 import { Center, Container, Text } from '@mantine/core';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Meta } from '~/components/Meta/Meta';
-import { UserChallengeUpsertForm } from '~/components/Challenge/UserChallengeUpsertForm';
+import { ChallengeUpsertForm } from '~/components/Challenge/ChallengeUpsertForm';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -26,7 +26,7 @@ export default function CreateUserChallengePage() {
     <>
       <Meta title="Create a Challenge" deIndex />
       <Container size="lg" py="md">
-        <UserChallengeUpsertForm />
+        <ChallengeUpsertForm variant="user" />
       </Container>
     </>
   );
