@@ -4,6 +4,7 @@ import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { dbWrite, dbRead } from '~/server/db/client';
 import requestIp from 'request-ip';
 import { isClientAbortError } from '~/server/utils/errorHandling';
+import { logToAxiom, safeError } from '~/server/logging/client';
 
 export default async function downloadTrainingData(req: NextApiRequest, res: NextApiResponse) {
   // Get ip so that we can block exploits we catch
@@ -51,27 +52,46 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
       if (err.statusCode === 400)
         return res.status(400).json({ error: 'Invalid download key' });
 
-      console.error(
-        `Delivery worker error resolving key "${key}" (status ${err.statusCode}): ${err.message}`
-      );
+      // Server-fault: a real delivery-worker/storage failure. Error-log to Axiom
+      // (mirrors file.service.ts `resolve-download-url-failed`) — safeError sets
+      // `name: 'Error'`, so spread it BEFORE our literal `name`. Client-fault
+      // 404/410/400 above are intentionally NOT logged (expected, would be noise).
+      logToAxiom({
+        type: 'error',
+        ...safeError(err),
+        name: 'resolve-download-url-failed',
+        key,
+        status: 503,
+        workerStatus: err.statusCode,
+      }).catch(() => undefined);
       res.setHeader('Retry-After', '2');
       return res.status(503).json({ error: 'Download temporarily unavailable' });
     }
 
     // Not a DeliveryWorkerError → a fetch transport reject / JSON-parse / other
     // unexpected failure. Cause is unknown, so keep it a hard 500 (do not claim
-    // not-found and do not claim retryable).
-    console.error(
-      `Unexpected error resolving download key "${key}": ${(err as Error)?.message ?? String(err)}`
-    );
+    // not-found and do not claim retryable). Server-fault → Axiom.
+    logToAxiom({
+      type: 'error',
+      ...safeError(err),
+      name: 'resolve-download-url-failed',
+      key,
+      status: 500,
+    }).catch(() => undefined);
     return res.status(500).json({ error: 'Error resolving download' });
   }
 
   if (!url) {
     // Delivery worker returned OK but no URL — a backend contract violation, not
     // a client error. Surface as 5xx rather than redirecting to `undefined`
-    // (which would itself throw a raw 500).
-    console.error(`Delivery worker returned no url for key "${key}"`);
+    // (which would itself throw a raw 500). Server-fault → Axiom.
+    logToAxiom({
+      type: 'error',
+      name: 'resolve-download-url-failed',
+      message: 'delivery worker returned no url',
+      key,
+      status: 502,
+    }).catch(() => undefined);
     return res.status(502).json({ error: 'Download temporarily unavailable' });
   }
 
