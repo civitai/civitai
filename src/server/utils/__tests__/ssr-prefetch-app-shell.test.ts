@@ -9,12 +9,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * `trpcState` and hydrates on the client (which runs `staleTime: Infinity`, so
  * the hydrated value sticks and the ~188ms client→origin round-trip is saved)
  * instead of firing on mount. This pins the safety contract:
- *   - the SAFE session queries are prefetched on full SSR when the flag is on,
+ *   - the SAFE session query is prefetched on full SSR when the flag is on,
  *   - nothing is prefetched on a client-nav `/_next/data` fetch (no `ssg`),
  *   - the flag OFF prefetches nothing (but SSG/`trpcState` is unaffected),
  *   - anon sessions get no user-scoped prefetch,
  *   - `buzz.getUserMultipliers` is gated on the `buzz` flag,
  *   - a failing shell query degrades to client-fetch — it never 500s SSR.
+ *
+ * GATE (2) guard: the shell prefetch is intentionally limited to fast,
+ * read-only, local-store queries. `user.checkNotifications` (cross-service
+ * `@civitai/notifications` call) and `user.getBookmarkCollections` (WRITEs default
+ * bookmark collections via `dbWrite.collection.create`) were REMOVED for failing
+ * gate (2); these tests assert they are NO LONGER prefetched so nobody re-adds
+ * them to the SSR first-byte path.
  *
  * server-side-helpers.ts pulls the whole app router + clickhouse + auth graph at
  * module load; stub those so the module imports in isolation and the tRPC SSG
@@ -88,16 +95,17 @@ beforeEach(() => {
 });
 
 describe('createServerSideProps — SSR app-shell prefetch', () => {
-  it('prefetches the SAFE session shell queries on full SSR when the flag is on', async () => {
+  it('prefetches the SAFE session shell query on full SSR when the flag is on', async () => {
     const gssp = createServerSideProps({ useSSG: true, resolver: okResolver });
     const res: any = await gssp(makeContext('/models'));
 
-    expect(h.checkNotifications).toHaveBeenCalledTimes(1);
-    expect(h.getBookmarkCollections).toHaveBeenCalledTimes(1);
     expect(h.getUserMultipliers).toHaveBeenCalledTimes(1);
     // input-less: prefetch called with no argument so the dehydrated key matches
     // the client `useQuery(undefined)` exactly.
-    expect(h.checkNotifications).toHaveBeenCalledWith();
+    expect(h.getUserMultipliers).toHaveBeenCalledWith();
+    // GATE (2) guard: the two gate-failing targets are NOT prefetched.
+    expect(h.checkNotifications).not.toHaveBeenCalled();
+    expect(h.getBookmarkCollections).not.toHaveBeenCalled();
     // hydrated cache rides down in trpcState.
     expect(res.props.trpcState).toEqual({ mock: 'trpcState' });
   });
@@ -140,21 +148,21 @@ describe('createServerSideProps — SSR app-shell prefetch', () => {
     const gssp = createServerSideProps({ useSSG: true, resolver: okResolver });
     await gssp(makeContext('/models'));
 
-    expect(h.checkNotifications).toHaveBeenCalledTimes(1);
-    expect(h.getBookmarkCollections).toHaveBeenCalledTimes(1);
+    // buzz off → the single shell target is skipped, so nothing is prefetched.
     expect(h.getUserMultipliers).not.toHaveBeenCalled();
+    expect(h.checkNotifications).not.toHaveBeenCalled();
+    expect(h.getBookmarkCollections).not.toHaveBeenCalled();
   });
 
   it('degrades gracefully — a failing shell prefetch never rejects out of SSR', async () => {
-    h.checkNotifications.mockRejectedValueOnce(new Error('backend 500'));
+    h.getUserMultipliers.mockRejectedValueOnce(new Error('backend 500'));
     const gssp = createServerSideProps({ useSSG: true, resolver: okResolver });
 
     const res: any = await gssp(makeContext('/models'));
 
-    // SSR still resolves with a normal props payload (no throw / 500).
+    // SSR still resolves with a normal props payload (no throw / 500) even though
+    // the sole shell prefetch rejected — it degrades to the client fetch.
     expect(res.props.trpcState).toEqual({ mock: 'trpcState' });
-    // the other shell queries were still attempted (allSettled, not fail-fast).
-    expect(h.getBookmarkCollections).toHaveBeenCalledTimes(1);
     expect(h.getUserMultipliers).toHaveBeenCalledTimes(1);
   });
 
@@ -176,7 +184,7 @@ describe('createServerSideProps — SSR app-shell prefetch', () => {
     try {
       // A shell task that never settles → the batch can only complete via its
       // 300ms deadline. In serial code the resolver could not run until then.
-      h.checkNotifications.mockImplementationOnce(() => new Promise<undefined>(() => {}));
+      h.getUserMultipliers.mockImplementationOnce(() => new Promise<undefined>(() => {}));
       const resolver = vi.fn(async () => ({ props: {} } as any));
       const gssp = createServerSideProps({ useSSG: true, resolver });
       const pending = gssp(makeContext('/models'));
@@ -187,7 +195,7 @@ describe('createServerSideProps — SSR app-shell prefetch', () => {
       // blocked on its (un-elapsed) deadline. Serial code would not have run it.
       expect(resolver).toHaveBeenCalledTimes(1);
       // …the shell task WAS kicked off (it's in-flight, just not awaited yet).
-      expect(h.checkNotifications).toHaveBeenCalledTimes(1);
+      expect(h.getUserMultipliers).toHaveBeenCalledTimes(1);
 
       // The render path still awaits the shell prefetch before dehydrate; it
       // resolves at the 300ms deadline.
@@ -203,7 +211,7 @@ describe('createServerSideProps — SSR app-shell prefetch', () => {
     vi.useFakeTimers();
     try {
       // Shell task hangs forever; if the redirect path awaited it, this would hang.
-      h.checkNotifications.mockImplementationOnce(() => new Promise<undefined>(() => {}));
+      h.getUserMultipliers.mockImplementationOnce(() => new Promise<undefined>(() => {}));
       const resolver = vi.fn(async () => ({
         redirect: { destination: '/login', permanent: false },
       } as any));
@@ -222,11 +230,12 @@ describe('createServerSideProps — SSR app-shell prefetch', () => {
 });
 
 describe('prefetchAppShellQueries — unit', () => {
-  it('prefetches all three SAFE queries for an authed session with buzz on', async () => {
+  it('prefetches only the SAFE gate-(2) query for an authed session with buzz on', async () => {
     await prefetchAppShellQueries(h.fakeSsg as any, authedSession, features());
-    expect(h.checkNotifications).toHaveBeenCalledTimes(1);
-    expect(h.getBookmarkCollections).toHaveBeenCalledTimes(1);
     expect(h.getUserMultipliers).toHaveBeenCalledTimes(1);
+    // GATE (2) guard: the cross-service / render-path-write targets stay OUT.
+    expect(h.checkNotifications).not.toHaveBeenCalled();
+    expect(h.getBookmarkCollections).not.toHaveBeenCalled();
   });
 
   it('prefetches nothing for an anonymous session', async () => {
@@ -237,7 +246,7 @@ describe('prefetchAppShellQueries — unit', () => {
   });
 
   it('resolves (never throws) when a prefetch rejects', async () => {
-    h.getBookmarkCollections.mockRejectedValueOnce(new Error('db down'));
+    h.getUserMultipliers.mockRejectedValueOnce(new Error('db down'));
     await expect(
       prefetchAppShellQueries(h.fakeSsg as any, authedSession, features())
     ).resolves.toBeUndefined();
@@ -247,7 +256,7 @@ describe('prefetchAppShellQueries — unit', () => {
     vi.useFakeTimers();
     try {
       // A prefetch that hangs forever — without the deadline this would block SSR.
-      h.checkNotifications.mockImplementationOnce(() => new Promise<undefined>(() => {}));
+      h.getUserMultipliers.mockImplementationOnce(() => new Promise<undefined>(() => {}));
 
       const pending = prefetchAppShellQueries(h.fakeSsg as any, authedSession, features());
       let settled = false;
