@@ -435,6 +435,18 @@ export function createServerSideProps<P>({
     // Real controller backing the SSG procedure `ctx.signal`, so a page prefetch
     // can cancel its in-flight query on a deadline (see the images-feed prefetch).
     // Created only when we build an SSG helper; exposed to the resolver below.
+    //
+    // ⚠️ SHARED signal: this ONE controller backs `ctx.signal` for EVERY prefetch
+    // on this `ssg` helper (the app-shell batch below AND any page-scoped prefetch,
+    // e.g. images). So a page prefetch that fires `.abort()` on its deadline also
+    // aborts the shell queries' signal. Benign today: `shellPrefetch` starts before
+    // the resolver and the only aborting caller (images) awaits an addon fetch
+    // first, so its abort fires strictly AFTER the shell's own 300ms dehydration
+    // window — any shell query still in flight has already missed hydration, so
+    // cancelling it only frees resources (graceful client-refetch, never an error).
+    // If a future page pairs a heavy `onDeadline` abort with the shell on the same
+    // signal, or shell queries gain longer deadlines, give each prefetch its OWN
+    // controller to fully decouple them.
     const ssgAbortController = new AbortController();
     const ssg =
       useSSG && (prefetch === 'always' || !isClient)
