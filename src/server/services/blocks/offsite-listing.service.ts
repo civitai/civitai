@@ -979,21 +979,26 @@ export async function getMyListingForEdit(opts: {
       );
   }
 
-  // For an approved parent, prefill from an EXISTING in-progress shadow if one
-  // exists (resume its edits), else from the parent. A pending revision REQUEST
-  // (not mere shadow existence) drives the `hasPendingRevision` badge.
+  // For an approved parent, resolve the shadow SERVER-SIDE (idempotent: reuses an
+  // in-flight shadow, else clones the parent's scalars+assets into a fresh one) and
+  // prefill from IT, returning `effectiveId = shadowId` + the SHADOW's asset rows.
+  //
+  // 🔴 SECURITY (do not weaken): the edit UI mutates the EFFECTIVE listing's asset
+  // ROWS (add/remove screenshot, set icon/cover). For an approved listing those MUST
+  // be the shadow's rows — NEVER the live parent's. If the prefill returned the
+  // parent's `AppListingScreenshot` ids (as it did when the shadow was only begun
+  // client-side after mount), a "remove screenshot" on the first edit would delete
+  // the row from the LIVE served listing, bypassing moderator review. Resolving the
+  // shadow here — before any row id reaches the client — closes that window. (This
+  // is a query that performs an idempotent write; acceptable — begin is safe to
+  // repeat.) A pending revision REQUEST (not mere shadow existence) drives the badge.
   let effectiveId = listingId;
   let shadowId: string | null = null;
   let hasPendingRevision = false;
   if (listing.status === 'approved') {
-    const existingShadow = await dbRead.appListing.findFirst({
-      where: { revisionOfId: listingId },
-      select: { id: true },
-    });
-    if (existingShadow) {
-      shadowId = existingShadow.id;
-      effectiveId = existingShadow.id;
-    }
+    const begun = await beginListingRevision({ listingId, userId });
+    shadowId = begun.shadowId;
+    effectiveId = begun.shadowId;
     const pendingRevisionReq = await dbRead.appListingPublishRequest.findFirst({
       where: {
         status: 'pending',

@@ -8,24 +8,37 @@ import type { ListingEditContext } from './offsiteEditConfig';
  * W13 — `/apps/submit?edit=` EDIT mode of the External wizard (dual-mode
  * `ExternalSubmitForm`). Browser-mode surface test: prefills fields + existing
  * assets; a DRAFT edit applies IN PLACE (updateListing on the listing's own id, no
- * revision submit); an APPROVED edit begins a SHADOW (beginListingRevision on
- * mount), targets it for the scalar write (updateRevisionDraft) + submits it
- * (submitListingRevision), shows the approved-notice; slug is read-only; the OG
- * auto-pull re-fire is non-destructive. The pure prefill/diff logic is unit-tested
- * in `__tests__/offsiteEditConfig.test.ts`.
+ * revision submit); an APPROVED edit targets the SERVER-resolved SHADOW for the
+ * scalar write (updateRevisionDraft) + submits it (submitListingRevision), shows the
+ * approved-notice; slug is read-only; the OG auto-pull re-fire is non-destructive.
+ *
+ * 🔴 REGRESSION GUARD (audit #3010): removing a prefilled screenshot while editing
+ * an APPROVED listing must target the SHADOW's row id (the id `getMyListingForEdit`
+ * returns — it resolves the shadow server-side), NEVER the live parent's row —
+ * otherwise the delete hits the served listing, bypassing review. The service test
+ * `offsite-listing.edit-consolidate.service.test.ts` proves the server returns
+ * shadow-owned rows; this proves the client removes by exactly that row id.
  */
 
 const mocks = vi.hoisted(() => ({
   meta: { data: undefined as unknown, isFetching: false, isSuccess: false },
-  begin: vi.fn(),
   updateListing: vi.fn(),
   updateRevision: vi.fn(),
   submitRevision: vi.fn(),
+  removeScreenshot: vi.fn(),
   invalidate: vi.fn(),
 }));
 
 vi.mock('~/utils/trpc', () => {
   const noopMutation = () => ({ mutate: vi.fn(), mutateAsync: vi.fn().mockResolvedValue({}), isPending: false });
+  const recording = (fn: (v: unknown) => void, result: unknown = {}) => () => ({
+    mutate: vi.fn(),
+    mutateAsync: (vars: unknown) => {
+      fn(vars);
+      return Promise.resolve(result);
+    },
+    isPending: false,
+  });
   return {
     setTrpcBatchingEnabled: vi.fn(),
     trpc: {
@@ -37,54 +50,16 @@ vi.mock('~/utils/trpc', () => {
       }),
       appListings: {
         fetchListingMetaFromUrl: { useQuery: () => mocks.meta },
-        // begin: on mount for an approved edit → resolve the shadow via onSuccess.
-        beginListingRevision: {
-          useMutation: (opts?: { onSuccess?: (r: { shadowId: string }) => void }) => ({
-            mutate: (vars: unknown) => {
-              mocks.begin(vars);
-              opts?.onSuccess?.({ shadowId: 'shadow-1' });
-            },
-            mutateAsync: vi.fn(),
-            isPending: false,
-          }),
-        },
-        updateListing: {
-          useMutation: () => ({
-            mutate: vi.fn(),
-            mutateAsync: (vars: unknown) => {
-              mocks.updateListing(vars);
-              return Promise.resolve({});
-            },
-            isPending: false,
-          }),
-        },
-        updateRevisionDraft: {
-          useMutation: () => ({
-            mutate: vi.fn(),
-            mutateAsync: (vars: unknown) => {
-              mocks.updateRevision(vars);
-              return Promise.resolve({});
-            },
-            isPending: false,
-          }),
-        },
-        submitListingRevision: {
-          useMutation: () => ({
-            mutate: vi.fn(),
-            mutateAsync: (vars: unknown) => {
-              mocks.submitRevision(vars);
-              return Promise.resolve({});
-            },
-            isPending: false,
-          }),
-        },
-        // ListingAssetStep procs — not exercised here.
+        updateListing: { useMutation: recording(mocks.updateListing) },
+        updateRevisionDraft: { useMutation: recording(mocks.updateRevision) },
+        submitListingRevision: { useMutation: recording(mocks.submitRevision) },
+        removeScreenshot: { useMutation: recording(mocks.removeScreenshot) },
+        // ListingAssetStep procs not otherwise exercised.
         persistAssetImage: { useMutation: noopMutation },
         ingestAssetFromUrl: { useMutation: noopMutation },
         setIcon: { useMutation: noopMutation },
         setCover: { useMutation: noopMutation },
         addScreenshot: { useMutation: noopMutation },
-        removeScreenshot: { useMutation: noopMutation },
       },
     },
   };
@@ -119,18 +94,38 @@ function makeCtx(overrides: Partial<ListingEditContext> = {}): ListingEditContex
     assets: {
       icon: { imageId: 10, url: 'https://cdn/icon.png' },
       cover: { imageId: 20, url: 'https://cdn/cover.png' },
-      screenshots: [{ id: 'ss_1', imageId: 30, url: 'https://cdn/s1.png', caption: null, order: 0 }],
+      screenshots: [{ id: 'ss_row', imageId: 30, url: 'https://cdn/s1.png', caption: null, order: 0 }],
     },
     ...overrides,
   };
 }
 
+/**
+ * An APPROVED edit context as `getMyListingForEdit` returns it: `shadowId` is set
+ * and every asset row id is the SHADOW's copy (server-resolved). `shadow-ss-1` is
+ * the SHADOW screenshot row — a removal must target it, not any parent row.
+ */
+function makeApprovedCtx(overrides: Partial<ListingEditContext> = {}): ListingEditContext {
+  return makeCtx({
+    status: 'approved',
+    shadowId: 'shadow-1',
+    assets: {
+      icon: { imageId: 11, url: 'https://cdn/shadow-icon.png' },
+      cover: { imageId: 21, url: 'https://cdn/shadow-cover.png' },
+      screenshots: [
+        { id: 'shadow-ss-1', imageId: 31, url: 'https://cdn/shadow-s1.png', caption: null, order: 0 },
+      ],
+    },
+    ...overrides,
+  });
+}
+
 beforeEach(() => {
   mocks.meta = { data: undefined, isFetching: false, isSuccess: false };
-  mocks.begin.mockClear();
   mocks.updateListing.mockClear();
   mocks.updateRevision.mockClear();
   mocks.submitRevision.mockClear();
+  mocks.removeScreenshot.mockClear();
   mocks.invalidate.mockClear();
 });
 
@@ -170,19 +165,16 @@ describe('ExternalSubmitForm — edit mode', () => {
     expect(mocks.updateListing).toHaveBeenCalledWith(
       expect.objectContaining({ listingId: 'apl_parent', patch: { name: 'Vitrine Renamed' } })
     );
-    // No shadow / revision for a draft in-place edit.
-    expect(mocks.begin).not.toHaveBeenCalled();
+    // No revision for a draft in-place edit.
     expect(mocks.submitRevision).not.toHaveBeenCalled();
   });
 
-  test('an APPROVED edit begins a shadow, writes the scalar patch to it, and submits the revision', async () => {
-    renderWithProviders(<ExternalSubmitForm edit={makeCtx({ status: 'approved' })} />);
+  test('an APPROVED edit writes the scalar patch to the SHADOW and submits the revision', async () => {
+    renderWithProviders(<ExternalSubmitForm edit={makeApprovedCtx()} />);
     // The approved-notice renders.
     await expect
       .element(page.getByTestId('apps-offsite-edit-approved-notice'))
       .toBeInTheDocument();
-    // beginListingRevision fired on mount (resolving the shadow target).
-    await vi.waitFor(() => expect(mocks.begin).toHaveBeenCalledWith({ listingId: 'apl_parent' }));
 
     await page.getByRole('button', { name: 'Next' }).click();
     await page.getByRole('textbox', { name: /^Name/ }).fill('Vitrine Live Edit');
@@ -194,6 +186,18 @@ describe('ExternalSubmitForm — edit mode', () => {
       expect.objectContaining({ shadowId: 'shadow-1', patch: { name: 'Vitrine Live Edit' } })
     );
     expect(mocks.updateListing).not.toHaveBeenCalled();
+  });
+
+  test('🔴 removing a prefilled screenshot on an APPROVED edit targets the SHADOW row id (not the parent)', async () => {
+    renderWithProviders(<ExternalSubmitForm edit={makeApprovedCtx()} />);
+    // URL → Details → Assets.
+    await page.getByRole('button', { name: 'Next' }).click();
+    await page.getByRole('button', { name: 'Next' }).click();
+    // The prefilled shadow screenshot renders with a Remove control.
+    await page.getByTestId('apps-offsite-screenshot-remove-0').click();
+    await vi.waitFor(() => expect(mocks.removeScreenshot).toHaveBeenCalledTimes(1));
+    // Removal MUST key off the SHADOW's row id — never a live parent row.
+    expect(mocks.removeScreenshot).toHaveBeenCalledWith({ screenshotId: 'shadow-ss-1' });
   });
 
   test('the OG auto-pull re-fire is non-destructive (a prefilled name is not clobbered)', async () => {

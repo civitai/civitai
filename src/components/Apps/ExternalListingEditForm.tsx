@@ -81,9 +81,13 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
   const [assetsDirty, setAssetsDirty] = useState(false);
 
   // Effective asset/detail target. draft/pending → the listing itself; approved →
-  // a shadow revision (begun on entering edit, idempotent). Until an approved
-  // shadow resolves, the asset step waits.
-  const [shadowId, setShadowId] = useState<string | null>(edit.shadowId);
+  // the SHADOW revision. 🔴 The shadow is resolved SERVER-SIDE by `getMyListingForEdit`
+  // (it begins the revision and returns `shadowId` + the SHADOW's asset rows in
+  // `edit.assets`), so every asset row id the UI can mutate is a shadow row — never
+  // the live parent's. There is deliberately NO client-side "begin on mount": that
+  // left a window where the FIRST edit of an approved listing seeded parent row ids
+  // and a screenshot removal deleted from the live served listing.
+  const shadowId = edit.shadowId;
   const effectiveId = approved ? shadowId : edit.parentId;
 
   // OG metadata auto-pull (same SSRF-safe path as create) — re-fires on a URL
@@ -107,19 +111,6 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
     }));
     setSuggestions({ coverImageUrl: data.coverImageUrl, iconImageUrl: data.iconImageUrl });
   }, [metaQuery.data, metaUrl]);
-
-  const beginMutation = trpc.appListings.beginListingRevision.useMutation({
-    onSuccess: (r: { shadowId: string }) => setShadowId(r.shadowId),
-    onError: (e: { message: string }) => setServerError(e.message),
-  });
-
-  // Enter edit for an approved listing → resolve the shadow target (idempotent).
-  // Skipped when the prefill already carried an in-flight shadow id.
-  useEffect(() => {
-    if (!approved || shadowId) return;
-    beginMutation.mutate({ listingId: edit.parentId });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const updateListingMutation = trpc.appListings.updateListing.useMutation();
   const updateRevisionMutation = trpc.appListings.updateRevisionDraft.useMutation();

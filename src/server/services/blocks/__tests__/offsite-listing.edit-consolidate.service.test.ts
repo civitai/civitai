@@ -8,29 +8,49 @@ import {
 
 /**
  * W13 — dual-mode edit CONSOLIDATION service tests: `getMyListingForEdit` (the
- * owner-gated prefill read: scalars + assets + status + hasPendingRevision,
- * resolving an approved parent's in-progress shadow) and `updateRevisionDraft`
- * (the scalar write to an owned draft shadow). All DB deps mocked — no real Prisma;
- * `getEdgeUrl` is stubbed so asset URLs are deterministic.
+ * owner-gated prefill read: scalars + assets + status + hasPendingRevision) and
+ * `updateRevisionDraft` (the scalar write to an owned draft shadow).
+ *
+ * 🔴 SECURITY (audit #3010): for an APPROVED listing, `getMyListingForEdit` resolves
+ * the SHADOW server-side (idempotent `beginListingRevision`) and returns
+ * `effectiveId = shadowId` + the SHADOW's asset rows — NEVER the live parent's row
+ * ids. These tests pin BOTH the reuse (existing shadow) and the create (no prior
+ * shadow — the removal-bypass bug case) paths, asserting the edit-view read targets
+ * the shadow and the returned screenshot rows are the shadow's. All DB deps mocked;
+ * `getEdgeUrl` + the id gens are stubbed.
  */
 
-const { mockRead, mockWrite } = vi.hoisted(() => {
+const { mockRead, mockWrite, seq } = vi.hoisted(() => {
   const makeClient = () => ({
     appListing: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      create: vi.fn(async (args: { data: unknown }) => args.data),
       update: vi.fn(async (args: { data: unknown }) => args.data),
+    },
+    appListingScreenshot: {
+      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+      createMany: vi.fn(async (..._a: unknown[]) => ({ count: 0 })),
     },
     appListingPublishRequest: {
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
     },
   });
-  return { mockRead: makeClient(), mockWrite: makeClient() };
+  const mockRead = makeClient();
+  const mockWrite = makeClient() as ReturnType<typeof makeClient> & {
+    $transaction: ReturnType<typeof vi.fn>;
+  };
+  mockWrite.$transaction = vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => cb(mockWrite));
+  return { mockRead, mockWrite, seq: { n: 0 } };
 });
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
-vi.mock('~/client-utils/cf-images-utils', () => ({
-  getEdgeUrl: (url: string) => `edge:${url}`,
+vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (url: string) => `edge:${url}` }));
+vi.mock('~/server/utils/app-block-ids', () => ({
+  newAppListingId: () => `apl_new_${++seq.n}`,
+  newAppListingPublishRequestId: () => `alpr_new_${++seq.n}`,
+  newAppListingScreenshotId: () => `apls_new_${++seq.n}`,
+  newUlid: () => `ULID${++seq.n}`,
 }));
 
 /** The `editableListingSelect` shape (owner check + state). */
@@ -55,8 +75,9 @@ function ownedRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
-/** The `loadListingEditView` shape (scalars + assets w/ image urls). */
-function editViewRow(overrides: Record<string, unknown> = {}) {
+/** The `loadListingEditView` shape (scalars + assets w/ image urls). `ssRowId` marks
+ *  which listing's screenshot rows these are (parent vs shadow) so tests can assert. */
+function editViewRow(ssRowId: string, overrides: Record<string, unknown> = {}) {
   return {
     name: 'Vitrine',
     tagline: 'A gallery',
@@ -68,36 +89,38 @@ function editViewRow(overrides: Record<string, unknown> = {}) {
     coverId: 20,
     icon: { url: 'icon-key' },
     cover: { url: 'cover-key' },
-    screenshots: [
-      { id: 'ss_1', imageId: 30, order: 0, caption: 'cap', image: { url: 'shot-key' } },
-    ],
+    screenshots: [{ id: ssRowId, imageId: 30, order: 0, caption: 'cap', image: { url: 'shot-key' } }],
     ...overrides,
   };
 }
 
 /**
- * Route the two distinct `appListing.findUnique` reads by their `select` shape:
- * the owner check (`revisionOfId` + `userId`) vs the edit-view (`icon`).
+ * Route `appListing.findUnique` by `select` shape (owner check vs edit-view) and, for
+ * the edit-view, by `where.id` so the shadow's view carries shadow row ids.
  */
-function wireFindUnique(owned: unknown, view: unknown) {
+function wireFindUnique(owned: unknown, viewByListingId: Record<string, unknown>) {
   mockRead.appListing.findUnique.mockImplementation(async (args: unknown) => {
-    const select = (args as { select?: Record<string, unknown> }).select ?? {};
-    if ('icon' in select) return view;
+    const a = args as { select?: Record<string, unknown>; where?: { id?: string } };
+    if ('icon' in (a.select ?? {})) return viewByListingId[a.where?.id ?? ''] ?? null;
     return owned;
   });
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  seq.n = 0;
   mockRead.appListing.findUnique.mockResolvedValue(null);
   mockRead.appListing.findFirst.mockResolvedValue(null);
+  mockRead.appListingScreenshot.findMany.mockResolvedValue([]);
   mockRead.appListingPublishRequest.findFirst.mockResolvedValue(null);
+  mockWrite.appListing.findFirst.mockResolvedValue(null);
   mockWrite.appListing.update.mockImplementation(async (args: { data: unknown }) => args.data);
+  mockWrite.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(mockWrite));
 });
 
 describe('getMyListingForEdit', () => {
-  it('returns parent scalars + edge-resolved assets for a DRAFT listing (no shadow)', async () => {
-    wireFindUnique(ownedRow({ status: 'draft' }), editViewRow());
+  it('returns parent scalars + edge-resolved assets for a DRAFT listing (no shadow, no begin)', async () => {
+    wireFindUnique(ownedRow({ status: 'draft' }), { apl_parent: editViewRow('ss_parent') });
     const res = await getMyListingForEdit({ listingId: 'apl_parent', userId: 7 });
 
     expect(res.parentId).toBe('apl_parent');
@@ -107,62 +130,85 @@ describe('getMyListingForEdit', () => {
     expect(res.hasPendingRevision).toBe(false);
     expect(res.scalars.name).toBe('Vitrine');
     expect(res.assets.icon).toEqual({ imageId: 10, url: 'edge:icon-key' });
-    expect(res.assets.cover).toEqual({ imageId: 20, url: 'edge:cover-key' });
-    expect(res.assets.screenshots).toEqual([
-      { id: 'ss_1', imageId: 30, url: 'edge:shot-key', caption: 'cap', order: 0 },
-    ]);
-    // A draft never resolves a shadow.
+    expect(res.assets.screenshots[0].id).toBe('ss_parent');
+    // A draft never touches the revision machinery.
     expect(mockRead.appListing.findFirst).not.toHaveBeenCalled();
+    expect(mockWrite.appListing.create).not.toHaveBeenCalled();
   });
 
-  it('resolves an APPROVED parent to its in-progress shadow + flags hasPendingRevision', async () => {
-    wireFindUnique(ownedRow({ status: 'approved' }), editViewRow({ name: 'Vitrine (edited)' }));
-    mockRead.appListing.findFirst.mockResolvedValue({ id: 'apl_shadow' }); // existing shadow
+  it('APPROVED with an existing shadow → reuses it; prefill + row ids come from the SHADOW', async () => {
+    wireFindUnique(ownedRow({ status: 'approved' }), {
+      apl_shadow_existing: editViewRow('ss_shadow', { name: 'Vitrine (edited)' }),
+    });
+    // beginListingRevision reuses the existing shadow (dbRead.findFirst hit → early return).
+    mockRead.appListing.findFirst.mockResolvedValue({ id: 'apl_shadow_existing' });
     mockRead.appListingPublishRequest.findFirst.mockResolvedValue({ id: 'req_pending' });
 
     const res = await getMyListingForEdit({ listingId: 'apl_parent', userId: 7 });
     expect(res.status).toBe('approved');
-    expect(res.shadowId).toBe('apl_shadow');
+    expect(res.shadowId).toBe('apl_shadow_existing');
     expect(res.hasPendingRevision).toBe(true);
-    // Prefill came from the shadow's edited state.
     expect(res.scalars.name).toBe('Vitrine (edited)');
-    // The edit-view read targeted the shadow, not the parent.
+    // 🔴 the edit-view read targeted the SHADOW, and the screenshot rows are the shadow's.
     const viewCall = mockRead.appListing.findUnique.mock.calls.find(
       (c) => 'icon' in ((c[0] as { select?: object }).select ?? {})
     );
-    expect((viewCall?.[0] as { where: { id: string } }).where.id).toBe('apl_shadow');
-    // slug stays the PUBLIC parent slug regardless of the shadow's synthetic slug.
+    expect((viewCall?.[0] as { where: { id: string } }).where.id).toBe('apl_shadow_existing');
+    expect(res.assets.screenshots[0].id).toBe('ss_shadow');
+    // slug stays the PUBLIC parent slug.
     expect(res.slug).toBe('vitrine');
+    // Reuse path never creates a new shadow.
+    expect(mockWrite.appListing.create).not.toHaveBeenCalled();
   });
 
-  it('APPROVED with no shadow yet → prefills from the parent, shadowId null', async () => {
-    wireFindUnique(ownedRow({ status: 'approved' }), editViewRow());
-    mockRead.appListing.findFirst.mockResolvedValue(null); // no shadow
+  it('🔴 APPROVED with NO prior shadow → CREATES one server-side; prefill row ids are the SHADOW copies (never the parent)', async () => {
+    wireFindUnique(ownedRow({ status: 'approved' }), {
+      apl_shadow_created: editViewRow('ss_shadow_new'),
+    });
+    // No existing shadow → begin creates. `dbWrite.appListing.findFirst` is used
+    // twice: the IN-TX race check (must be null so create runs) then the post-tx
+    // winner re-read (returns the created shadow).
+    mockRead.appListing.findFirst.mockResolvedValue(null);
+    mockWrite.appListing.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ id: 'apl_shadow_created' });
+    // The parent has a screenshot to clone onto the shadow (exercises the copy path).
+    mockWrite.appListingScreenshot.findMany.mockResolvedValue([
+      { imageId: 30, order: 0, caption: 'cap' },
+    ]);
+
     const res = await getMyListingForEdit({ listingId: 'apl_parent', userId: 7 });
-    expect(res.shadowId).toBeNull();
-    expect(res.hasPendingRevision).toBe(false);
-    expect(res.scalars.name).toBe('Vitrine');
+    expect(res.shadowId).toBe('apl_shadow_created');
+    // A shadow was actually created (begin ran its tx create).
+    expect(mockWrite.appListing.create).toHaveBeenCalled();
+    // 🔴 the returned asset rows are the SHADOW's copies — a removal would target these,
+    // never the live parent's row ids.
+    const viewCall = mockRead.appListing.findUnique.mock.calls.find(
+      (c) => 'icon' in ((c[0] as { select?: object }).select ?? {})
+    );
+    expect((viewCall?.[0] as { where: { id: string } }).where.id).toBe('apl_shadow_created');
+    expect(res.assets.screenshots[0].id).toBe('ss_shadow_new');
   });
 
   it('rejects a non-owner (NOT_OWNED)', async () => {
-    wireFindUnique(ownedRow({ userId: 999 }), editViewRow());
+    wireFindUnique(ownedRow({ userId: 999 }), { apl_parent: editViewRow('ss_parent') });
     await expect(getMyListingForEdit({ listingId: 'apl_parent', userId: 7 })).rejects.toMatchObject({
       code: 'NOT_OWNED',
     });
   });
 
   it('rejected → MUST_RESUBMIT; removed → FORBIDDEN; a shadow → INVALID_REVISION', async () => {
-    wireFindUnique(ownedRow({ status: 'rejected' }), editViewRow());
+    wireFindUnique(ownedRow({ status: 'rejected' }), {});
     await expect(getMyListingForEdit({ listingId: 'apl_parent', userId: 7 })).rejects.toMatchObject({
       code: 'MUST_RESUBMIT',
     });
 
-    wireFindUnique(ownedRow({ status: 'removed' }), editViewRow());
+    wireFindUnique(ownedRow({ status: 'removed' }), {});
     await expect(getMyListingForEdit({ listingId: 'apl_parent', userId: 7 })).rejects.toMatchObject({
       code: 'FORBIDDEN',
     });
 
-    wireFindUnique(ownedRow({ revisionOfId: 'apl_parent2' }), editViewRow());
+    wireFindUnique(ownedRow({ revisionOfId: 'apl_parent2' }), {});
     await expect(getMyListingForEdit({ listingId: 'apl_parent', userId: 7 })).rejects.toMatchObject({
       code: 'INVALID_REVISION',
     });

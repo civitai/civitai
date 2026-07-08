@@ -401,6 +401,63 @@ describe('screenshot CRUD', () => {
     ]);
   });
 
+  // -------------------------------------------------------------------------
+  // 🔴 Owner asset-edit guard (audit #3010): a LIVE approved, non-shadow listing
+  // must NOT have its assets mutated directly by its owner — that would bypass mod
+  // review. Edits route through a shadow revision (revisionOfId != null). Mods bypass.
+  // -------------------------------------------------------------------------
+
+  it('removeScreenshot REFUSES a live approved (non-shadow) listing for a non-mod owner', async () => {
+    mockDb.appListingScreenshot.findUnique.mockResolvedValue({
+      id: 'b',
+      appListingId: 'apl_live',
+      appListing: { userId: 42, status: 'approved', revisionOfId: null },
+    });
+    const { removeListingScreenshot } = await import('../app-listing-assets.service');
+    await expect(removeListingScreenshot({ screenshotId: 'b' }, owner)).rejects.toThrow(
+      /live; edit its assets through a revision/
+    );
+    expect(mockDb.appListingScreenshot.delete).not.toHaveBeenCalled();
+  });
+
+  it('removeScreenshot ALLOWS removal on a SHADOW revision draft (revisionOfId set)', async () => {
+    mockDb.appListingScreenshot.findUnique.mockResolvedValue({
+      id: 'b',
+      appListingId: 'apl_shadow',
+      appListing: { userId: 42, status: 'draft', revisionOfId: 'apl_parent' },
+    });
+    mockDb.appListingScreenshot.findMany.mockResolvedValue([]);
+    const { removeListingScreenshot } = await import('../app-listing-assets.service');
+    const res = await removeListingScreenshot({ screenshotId: 'b' }, owner);
+    expect(res.removed).toBe('b');
+    expect(mockDb.appListingScreenshot.delete).toHaveBeenCalledWith({ where: { id: 'b' } });
+  });
+
+  it('a MODERATOR bypasses the guard (may curate a live approved listing)', async () => {
+    mockDb.appListingScreenshot.findUnique.mockResolvedValue({
+      id: 'b',
+      appListingId: 'apl_live',
+      appListing: { userId: 42, status: 'approved', revisionOfId: null },
+    });
+    mockDb.appListingScreenshot.findMany.mockResolvedValue([]);
+    const { removeListingScreenshot } = await import('../app-listing-assets.service');
+    const res = await removeListingScreenshot({ screenshotId: 'b' }, mod);
+    expect(res.removed).toBe('b');
+  });
+
+  it('setIcon REFUSES a live approved (non-shadow) listing for a non-mod owner (no write)', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue({
+      ...listingRow,
+      status: 'approved',
+      revisionOfId: null,
+    });
+    const { setListingIcon } = await import('../app-listing-assets.service');
+    await expect(setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner)).rejects.toThrow(
+      /live; edit its assets through a revision/
+    );
+    expect(mockDb.appListing.update).not.toHaveBeenCalled();
+  });
+
   it('setIcon rejects an Image owned by a DIFFERENT user (confused-deputy IDOR)', async () => {
     // Caller owns the LISTING but attaches an Image belonging to someone else.
     mockDb.appListing.findUnique.mockResolvedValue(listingRow);
