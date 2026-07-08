@@ -72,6 +72,7 @@ via JWKS. See the architecture spec and actual-flows first if you're new to it.
 | [auth-review-synthesis.md](./auth-review-synthesis.md) | Synthesis of two independent subagent reviews of the hub↔spoke work. (2026-06-15) |
 | [auth-cross-domain-review.md](./auth-cross-domain-review.md) | Review of the cross-domain swap-token exchange specifically. (2026-06-15) |
 | [plans/auth-prelaunch-action-checklist.md](./auth-prelaunch-action-checklist.md) | **Consolidated to-do list** derived from all the docs — blockers, operational gaps, package boundary, doc hygiene, deferred work — with source locations. (2026-06-17) |
+| [login-lockouts-flavors-3-4.md](./login-lockouts-flavors-3-4.md) | Post-cutover production lockout investigation (ClickUp 868k9gug8): disconnect-Google / no-email-fallback / CAPTCHA (flavor 3) + full lockouts — email-less accounts, .red trust-registry gate, provider takeover (flavor 4). Root causes + fixes. (2026-07-08) |
 
 ## OAuth2/OIDC provider migration (deferred — see Current state)
 
