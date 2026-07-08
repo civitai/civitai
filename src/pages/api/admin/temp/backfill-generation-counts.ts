@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { chunk } from 'lodash-es';
 import * as z from 'zod';
 import { clickhouse } from '~/server/clickhouse/client';
+import { PG_INT4_MAX } from '~/server/common/constants';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { modelsSearchIndex } from '~/server/search-index';
@@ -69,9 +70,9 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       WHERE createdDate >= toDate('${sinceDate}') AND modelVersionId > 0
     )
       AND createdDate <= today()
-      AND count <= 2147483647
+      AND count <= ${PG_INT4_MAX}
     GROUP BY modelVersionId
-    HAVING generationCount BETWEEN 0 AND 2147483647
+    HAVING generationCount BETWEEN 0 AND ${PG_INT4_MAX}
   `);
 
   const affectedModelIds = new Set<number>();
@@ -162,7 +163,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
         FROM (
           -- LEAST guards the INT4 target: a model summing past 2^31-1 across its
           -- versions would otherwise error the whole batch.
-          SELECT mv."modelId", LEAST(SUM(mvm."generationCount"), 2147483647)::int AS total
+          SELECT mv."modelId", LEAST(SUM(mvm."generationCount"), ${PG_INT4_MAX})::int AS total
           FROM "ModelVersionMetric" mvm
           JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
           WHERE mv."modelId" = ANY($1::int[])

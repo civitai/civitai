@@ -1450,6 +1450,10 @@ export const generation = {
   },
 } as const;
 export const maxRandomSeed = 2147483647;
+// Postgres INT4 (integer) column bounds — the ceiling any value written to an
+// `integer` column (e.g. metric counts) must fit under.
+export const PG_INT4_MAX = 2_147_483_647;
+export const PG_INT4_MIN = -2_147_483_648;
 export const maxUpscaleSize = 3840;
 export const minDownscaleSize = 320;
 export const minUploadSize = 300;

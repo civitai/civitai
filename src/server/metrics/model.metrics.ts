@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import dayjs from '~/shared/utils/dayjs';
 import { chunk } from 'lodash-es';
+import { PG_INT4_MAX, PG_INT4_MIN } from '~/server/common/constants';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { templateHandler } from '~/server/db/db-helpers';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
@@ -228,9 +229,6 @@ async function bulkInsertMetrics<T extends readonly string[]>(
   const targetTuple = metrics.map((key) => `"${table}"."${key}"`).join(', ');
   const excludedTuple = metrics.map((key) => `EXCLUDED."${key}"`).join(', ');
 
-  const PG_INT_MAX = 2147483647;
-  const PG_INT_MIN = -2147483648;
-
   const tasks = chunk(updates, 100).map((batch, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log(`insert ${options.logName}`, i + 1, 'of', tasks.length);
@@ -243,8 +241,8 @@ async function bulkInsertMetrics<T extends readonly string[]>(
         if (
           typeof value !== 'number' ||
           !Number.isFinite(value) ||
-          value > PG_INT_MAX ||
-          value < PG_INT_MIN
+          value > PG_INT4_MAX ||
+          value < PG_INT4_MIN
         ) {
           offenders.push({ id: row[idColumn], key, value });
         }
@@ -391,7 +389,7 @@ async function getGenerationTasks(ctx: ModelMetricContext) {
     WHERE createdDate >= toDate(${ctx.lastUpdate})
       AND createdDate <= today()
       AND modelVersionId > 0
-      AND count <= 2147483647
+      AND count <= ${PG_INT4_MAX}
   `;
   const affected = generated
     .map((x) => x.modelVersionId)
@@ -407,7 +405,7 @@ async function getGenerationTasks(ctx: ModelMetricContext) {
       FROM orchestration.daily_resource_generation_counts
       WHERE modelVersionId IN (${ids})
         AND createdDate <= today()
-        AND count <= 2147483647
+        AND count <= ${PG_INT4_MAX}
       GROUP BY modelVersionId;
     `;
 
