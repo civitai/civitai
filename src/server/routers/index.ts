@@ -111,7 +111,6 @@ export const appRouter = router({
   ),
   games: lazy(() => import('~/server/routers/games.router').then((m) => m.gamesRouter)),
   paddle: lazy(() => import('~/server/routers/paddle.router').then((m) => m.paddleRouter)),
-  blocklist: lazy(() => import('~/server/routers/blocklist.router').then((m) => m.blocklistRouter)),
   challenge: lazy(() => import('~/server/routers/challenge.router').then((m) => m.challengeRouter)),
   dailyChallenge: lazy(() =>
     import('~/server/routers/daily-challenge.router').then((m) => m.dailyChallengeRouter)

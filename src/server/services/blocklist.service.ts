@@ -3,11 +3,7 @@ import { BlocklistType } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import type {
-  RemoveBlocklistItemSchema,
-  UpsertBlocklistSchema,
-} from '~/server/schema/blocklist.schema';
-import { throwNotFoundError } from '~/server/utils/errorHandling';
+import type { UpsertBlocklistSchema } from '~/server/schema/blocklist.schema';
 
 export type BlocklistDTO = {
   id?: number;
@@ -68,24 +64,8 @@ export async function getBlocklistData(type: BlocklistType) {
   return await getBlocklistDTO({ type }).then((blocklist) => blocklist.data);
 }
 
-export async function removeBlocklistItems({ id, items }: RemoveBlocklistItemSchema) {
-  const result = await dbWrite.blocklist.findUnique({
-    where: { id },
-    select: { type: true, data: true },
-  });
-  if (!result) throw throwNotFoundError();
-  const lowerCaseItems = items.map((x) => x.toLowerCase());
-
-  const blocklist = result.data.filter((item) => !lowerCaseItems.includes(item));
-
-  const updateResult = await dbWrite.blocklist.update({
-    where: { id },
-    data: { data: blocklist },
-    select: { id: true, type: true, data: true },
-  });
-
-  await setCache({ type: updateResult.type, data: updateResult });
-}
+// The moderator remove-items path now lives in the spoke app (apps/moderator, Kysely + shared cache).
+// upsertBlocklist stays here — the sync-email-blocklist cron uses it; the getters back the validators below.
 
 // #region [blocked links]
 export async function throwOnBlockedLinkDomain(value: string) {

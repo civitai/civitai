@@ -14,6 +14,7 @@ const MIGRATED_ROUTES: Record<string, string> = {
   'cosmetics/grant': 'cosmetics/grant',
   'images/to-ingest': 'images/to-ingest',
   'ingestion-error-review': 'ingestion-error-review',
+  blocklists: 'blocklists',
 };
 
 // Whole subtrees that migrated (dynamic sub-routes). Any `/moderator/<prefix>/...` path redirects to the

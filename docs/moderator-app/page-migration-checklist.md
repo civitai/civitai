@@ -55,7 +55,7 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
   - Infra: **Postgres** + moderator activity/IP tracking
   - Notes: heavy entity polymorphism (Model/Image/Comment/Article/Post/User/Collection/Bounty/CommentV2/ComicProject/Model3D/Chat). Shared `report.service` also powers image appeals — port once.
 
-- [ ] **`/moderator/blocklists`** — `src/pages/moderator/blocklists.tsx` — flag: `blocklists`
+- [x] **`/moderator/blocklists`** — `src/pages/moderator/blocklists.tsx` — flag: `blocklists` — **Migrated** (first Redis page; spoke writes the same `system:blocklist:${type}` cache the main-app validators + cron read — no callback)
   - Procedures: `blocklist.getBlocklist` (query); `blocklist.upsertBlocklist`, `blocklist.removeItems` (mutations)
   - Services (`src/server/services/blocklist.service.ts`): `getBlocklistDTO`, `getBlocklistData`, `upsertBlocklist`, `removeBlocklistItems` (+ utilities `throwOnBlockedLinkDomain`, `throwOnBlockedMessagePattern`, `getBlockedEmailDomains`)
   - Schemas: `blocklist.schema.ts` + `BlocklistType` enum (`server/common/enums.ts`)
