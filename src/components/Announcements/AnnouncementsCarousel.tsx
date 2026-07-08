@@ -9,14 +9,9 @@ import type { AnnouncementType } from '~/server/schema/announcement.schema';
 export default function AnnouncementsCarousel({
   className,
   type = 'site',
-  minHeight,
 }: {
   className?: string;
   type?: AnnouncementType;
-  // Optional floor (px) so the carousel holds the space previously reserved by
-  // the pre-hydration placeholder (feed-CLS reserve) — keeps the swap from the
-  // placeholder to the real carousel from reflowing the feed below it.
-  minHeight?: number;
 }) {
   const autoplayRef = useRef(autoplay({ delay: 10000 }));
   const { data } = useGetAnnouncements(type);
@@ -28,7 +23,7 @@ export default function AnnouncementsCarousel({
   return (
     // Required custom class to apply certain styles based on peer elements
     // eslint-disable-next-line tailwindcss/no-custom-classname
-    <div className={clsx('announcements peer container', className)} style={{ minHeight }}>
+    <div className={clsx('announcements peer container', className)}>
       <Embla plugins={[autoplayRef.current]} loop withIndicators={announcements.length > 1}>
         <Embla.Viewport>
           <Embla.Container className="-ml-4 flex">
