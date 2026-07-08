@@ -107,6 +107,7 @@ vi.mock('~/server/services/feature-flags.service', () => mockFlags);
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksAuthorEnabled: vi.fn(async () => false),
   isAppBlocksDevTunnelEnabled: vi.fn(async () => false),
+  isAppBlocksDevTunnelUnsubmittedSpendEnabled: vi.fn(async () => false),
 }));
 
 function makeReq(opts: {

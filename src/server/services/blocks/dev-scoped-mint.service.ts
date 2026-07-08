@@ -152,6 +152,28 @@ export function clampDevScopes(opts: {
 }
 
 /**
+ * App Dev Tunnel — the SINGLE clamp for a dev-tunnel session's self-declared
+ * (`block.manifest.json`) scopes: the fixed TUNNEL belt (no OAuth ceiling — a
+ * pre-approval app has no OauthClient; `keyCanSpend: true` — spend is gated at
+ * RUNTIME by the author-flag re-check + the dev/session/day Buzz caps, not a bearer
+ * here). Used by BOTH the SSR `declaredScopes` surface (block-registry) AND the
+ * on-site block-token mint, so the block's advertised `granted` set and the JWT's
+ * actual scopes derive from ONE function and can NEVER drift apart. Idempotent —
+ * safe to re-apply to an already-clamped stored set (defense-in-depth over the
+ * clamp-at-write in `startDevTunnel`). NO `requestedScopes` narrowing: the tunnel
+ * scope source is the AUTHENTICATED CLI's session, never a browser body, so there
+ * is no legitimate browser-side narrowing input (and thus no body→source foot-gun).
+ */
+export function clampTunnelDeclaredScopes(scopeSource: string[]): string[] {
+  return clampDevScopes({
+    scopeSource,
+    oauthAllowed: null,
+    keyCanSpend: true,
+    allowlist: TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
+  });
+}
+
+/**
  * BUDGET CAP (dev-token.ts step 8). Only meaningful when `ai:write:budgeted`
  * survived the clamp. Clamp the requested budget (or the default) to the LOWER dev
  * cap; `undefined` when no spend scope was granted.

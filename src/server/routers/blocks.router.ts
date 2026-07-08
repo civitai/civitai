@@ -1011,6 +1011,13 @@ export const blocksRouter = router({
         // determined caller can't push parse pressure; a real ed25519/rsa pubkey
         // is well under 2kb.
         sshPublicKey: z.string().min(1).max(4096),
+        // App Dev Tunnel — the caller's local `block.manifest.json` scopes, sent by
+        // the CLI. Stored (clamped) on the session so an UNSUBMITTED (no-pending-row)
+        // app can mint a dev token carrying them. NOT an authz input: the proc has
+        // already gated author + ownership + flags; these are clamped to the tunnel
+        // allowlist at write + re-gated (incl. the dedicated unsubmitted-spend flag)
+        // at the mint. Bounded to blunt parse pressure; absent → read-only.
+        declaredScopes: z.array(z.string().min(1).max(64)).max(32).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -1064,6 +1071,10 @@ export const blocksRouter = router({
           // value makes that independent of input normalization.
           blockId: app.blockId,
           sshPublicKey: input.sshPublicKey,
+          // Self-declared local-manifest scopes (bounded above). Clamped to the
+          // tunnel allowlist at write; the mint re-gates spend behind the dedicated
+          // unsubmitted-spend flag. An old CLI omits this → read-only session.
+          declaredScopes: input.declaredScopes,
         });
       } catch (err) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });

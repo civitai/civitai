@@ -63,7 +63,9 @@ export const getServerSideProps = createServerSideProps<DevTunnelProps>({
         },
       };
     }
-    const { isAppBlocksDevTunnelEnabled } = await import('~/server/services/app-blocks-flag');
+    const { isAppBlocksDevTunnelEnabled, isAppBlocksDevTunnelUnsubmittedSpendEnabled } = await import(
+      '~/server/services/app-blocks-flag'
+    );
     if (!(await isAppBlocksDevTunnelEnabled({ user }))) {
       return { notFound: true };
     }
@@ -73,12 +75,11 @@ export const getServerSideProps = createServerSideProps<DevTunnelProps>({
       typeof rawBlockId === 'string' ? rawBlockId : Array.isArray(rawBlockId) ? rawBlockId[0] : '';
     if (!blockId) return { notFound: true };
 
-    // Ownership-scoped resolve (any status). null for a foreign/absent app → the
-    // SAME notFound (no oracle). This can NEVER resolve a deployed bundle host.
-    const app = await BlockRegistry.resolveDevPageBlockForAuthor(blockId, user.id);
-    if (!app) return { notFound: true };
-
-    // Resolve the caller's active tunnel for this block (started by the CLI).
+    // Resolve the caller's active tunnel FIRST — a BRAND-NEW (unsubmitted) app's
+    // `declaredScopes` come from the session's CLI-declared `grantedScopes`, gated by
+    // the dedicated unsubmitted-spend flag. Passing both into the resolver keeps the
+    // block's advertised `declaredScopes` byte-identical to what the block-token mint
+    // will grant (both derive from `resolveDevPageBlockForAuthor`).
     const { getActiveDevTunnel } = await import('~/server/services/blocks/dev-tunnel.service');
     const { signDevTunnelAccessToken, isValidDevHost } = await import(
       '~/server/services/blocks/dev-tunnel-session'
@@ -86,6 +87,15 @@ export const getServerSideProps = createServerSideProps<DevTunnelProps>({
     const { env } = await import('~/env/server');
 
     const tunnel = await getActiveDevTunnel(user.id, blockId);
+    const unsubmittedSpendAllowed = await isAppBlocksDevTunnelUnsubmittedSpendEnabled({ user });
+
+    // Ownership-scoped resolve (any status). null for a foreign/absent app → the
+    // SAME notFound (no oracle). This can NEVER resolve a deployed bundle host.
+    const app = await BlockRegistry.resolveDevPageBlockForAuthor(blockId, user.id, {
+      sessionGrantedScopes: tunnel?.grantedScopes,
+      unsubmittedSpendAllowed,
+    });
+    if (!app) return { notFound: true };
 
     let iframeSrc: string | null = null;
     let host: string | null = null;

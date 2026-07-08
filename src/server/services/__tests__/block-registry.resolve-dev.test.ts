@@ -90,7 +90,10 @@ describe('BlockRegistry.resolveDevPageBlockForAuthor', () => {
     expect(res).not.toBeNull();
     expect(res?.status).toBe('ephemeral');
     expect(res?.trustTier).toBe('unverified');
-    expect(res?.scopes).toEqual([]); // brand-new (no pending row) declares scopes via the mint body
+    // Brand-new with NO tunnel session (opts omitted) → clampTunnelDeclaredScopes([])
+    // force-adds only the self-bound read scope; no spend without a declared session.
+    expect(res?.scopes).toEqual(['user:read:self']);
+    expect(res?.ephemeralSource).toBe('brand-new');
     expect(res?.contentRating).toBeNull(); // SFW default
     expect(res?.sandbox).toBe('allow-scripts allow-forms');
     expect(res?.blockId).toBe('brand-new');
@@ -161,6 +164,86 @@ describe('BlockRegistry.resolveDevPageBlockForAuthor', () => {
     // Clamp = TUNNEL allowlist − PAGE_FORBIDDEN, + force-granted user:read:self, sorted.
     // buzz:read:self / social:tip:self are page-forbidden; not:a:scope is unknown.
     expect(res?.scopes).toEqual(['ai:write:budgeted', 'user:read:self']);
+    expect(res?.ephemeralSource).toBe('pending');
+  });
+
+  it('(f) BRAND-NEW + session grantedScopes + unsubmittedSpendAllowed → surfaces the budgeted scope', async () => {
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockDbRead.appBlock.findUnique.mockResolvedValue(null);
+    mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
+    const res = await BlockRegistry.resolveDevPageBlockForAuthor('brand-new', 555, {
+      sessionGrantedScopes: ['ai:write:budgeted'],
+      unsubmittedSpendAllowed: true,
+    });
+    expect(res?.scopes).toEqual(['ai:write:budgeted', 'user:read:self']);
+    expect(res?.ephemeralSource).toBe('brand-new');
+  });
+
+  it('(g) BRAND-NEW + session scopes but the unsubmitted-spend FLAG OFF → strips ai:write:budgeted (read-only)', async () => {
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockDbRead.appBlock.findUnique.mockResolvedValue(null);
+    mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
+    const res = await BlockRegistry.resolveDevPageBlockForAuthor('brand-new', 555, {
+      sessionGrantedScopes: ['ai:write:budgeted'],
+      unsubmittedSpendAllowed: false,
+    });
+    expect(res?.scopes).toEqual(['user:read:self']);
+    expect(res?.scopes).not.toContain('ai:write:budgeted');
+    expect(res?.ephemeralSource).toBe('brand-new');
+  });
+
+  it('(h) BRAND-NEW clamps forbidden / non-allowlisted / unknown scopes out of the session set', async () => {
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockDbRead.appBlock.findUnique.mockResolvedValue(null);
+    mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
+    const res = await BlockRegistry.resolveDevPageBlockForAuthor('brand-new', 555, {
+      sessionGrantedScopes: ['ai:write:budgeted', 'apps:storage:write', 'social:tip:self', 'not:a:scope'],
+      unsubmittedSpendAllowed: true,
+    });
+    // apps:storage:* not in the tunnel allowlist; social:tip:self page-forbidden;
+    // not:a:scope unknown — all stripped, self-read force-added.
+    expect(res?.scopes).toEqual(['ai:write:budgeted', 'user:read:self']);
+  });
+
+  it('(i) SECURITY: a FOREIGN CLAIMED slug returns null EVEN WITH session spend scopes (ownership precedes scopes)', async () => {
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockDbRead.appBlock.findUnique.mockResolvedValue({ id: 'apb_someone_else' });
+    const res = await BlockRegistry.resolveDevPageBlockForAuthor('their-app', 555, {
+      sessionGrantedScopes: ['ai:write:budgeted'],
+      unsubmittedSpendAllowed: true,
+    });
+    expect(res).toBeNull();
+    // Refused at guard (A) — session scopes can NEVER cause a foreign slug to resolve.
+    expect(mockDbRead.appBlockPublishRequest.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('(j) SECURITY: a FOREIGN PENDING slug returns null even with session spend scopes', async () => {
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockDbRead.appBlock.findUnique.mockResolvedValue(null);
+    mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue({ submittedByUserId: 999 });
+    const res = await BlockRegistry.resolveDevPageBlockForAuthor('someone-pending', 555, {
+      sessionGrantedScopes: ['ai:write:budgeted'],
+      unsubmittedSpendAllowed: true,
+    });
+    expect(res).toBeNull();
+  });
+
+  it('(k) a PENDING app IGNORES the session scopes AND the unsubmitted-spend flag (grants from its OWN manifest)', async () => {
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockDbRead.appBlock.findUnique.mockResolvedValue(null);
+    mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue({
+      submittedByUserId: 555,
+      manifest: { scopes: ['ai:write:budgeted'] },
+    });
+    const res = await BlockRegistry.resolveDevPageBlockForAuthor('my-pending', 555, {
+      // Both IGNORED for the pending path — an app that IS submitted is not gated by
+      // the unsubmitted-spend flag, and its scope source is the pending manifest.
+      sessionGrantedScopes: ['models:read:self'],
+      unsubmittedSpendAllowed: false,
+    });
+    expect(res?.scopes).toEqual(['ai:write:budgeted', 'user:read:self']);
+    expect(res?.scopes).not.toContain('models:read:self');
+    expect(res?.ephemeralSource).toBe('pending');
   });
 
   it('(d3) an owned-pending app that declares NO money scope stays read-only (no over-grant)', async () => {

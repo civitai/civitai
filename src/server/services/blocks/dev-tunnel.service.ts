@@ -18,6 +18,13 @@ import {
   recordDevTunnelTeardown,
   type DevTunnelTeardownReason,
 } from '~/server/prom/dev-tunnel.metrics';
+import { clampTunnelDeclaredScopes } from '~/server/services/blocks/dev-scoped-mint.service';
+
+/** App Dev Tunnel — bounds on the self-declared scope list stored on a session
+ *  (defense-in-depth over the tRPC zod input bound; mirrors `block-tokens`'
+ *  `z.array(z.string().min(1).max(64)).max(32)`). */
+const DEV_TUNNEL_SCOPE_MAX_LEN = 64;
+const DEV_TUNNEL_SCOPE_MAX_COUNT = 32;
 
 /**
  * APP DEV TUNNEL — control-plane state + ephemeral Traefik route lifecycle.
@@ -85,6 +92,18 @@ export type DevTunnelSessionRecord = {
   createdAt: number; // unix seconds
   hardExpiresAt: number; // unix seconds
   spendCapBuzz: number;
+  /** App Dev Tunnel — the self-declared scopes the CLI sent from the local
+   *  `block.manifest.json` at tunnel start (raw-but-bounded; kept for forensics /
+   *  "what did the dev declare"). NOT authoritative on its own — readers consume
+   *  `grantedScopes`. ABSENT on an old-CLI session → treated as `[]`. */
+  declaredScopes?: string[];
+  /** App Dev Tunnel — `clampTunnelDeclaredScopes(declaredScopes)`, clamped ONCE at
+   *  WRITE so an allowlist change can never retroactively widen a live session.
+   *  The AUTHORITATIVE scope source for an UNSUBMITTED (no-pending-row) app's dev
+   *  SSR `declaredScopes` + on-site mint. Readers re-clamp idempotently as
+   *  defense-in-depth. ABSENT on an old-CLI session → treated as `[]` (read-only,
+   *  no spend). */
+  grantedScopes?: string[];
   /** Last browser-activity marker (unix seconds), refreshed by the forwardAuth
    *  gate on each successful ENTRY-document hit (F3). The reaper reaps a session
    *  idle past DEV_TUNNEL_IDLE_SECONDS. ABSENT on a never-visited tunnel → the
@@ -700,6 +719,13 @@ export type StartDevTunnelParams = {
   blockId: string;
   /** The CLI's ephemeral SSH public key (raw OpenSSH line). */
   sshPublicKey: string;
+  /** App Dev Tunnel — the self-declared scopes from the caller's local
+   *  `block.manifest.json` (already zod-bounded by the tRPC input; sanitized again
+   *  here). Stored raw + clamped on the session so an UNSUBMITTED app can mint a
+   *  dev token carrying them. The caller (tRPC proc) has ALREADY gated author +
+   *  ownership + flags; these scopes are NOT an authz input — they are clamped to
+   *  the tunnel allowlist and re-gated at the mint. Omitted/absent → read-only. */
+  declaredScopes?: string[];
 };
 
 export type StartDevTunnelResult = {
@@ -739,6 +765,23 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
   const created = nowSec();
   const hardExpiresAt = created + DEV_TUNNEL_HARD_SECONDS;
 
+  // App Dev Tunnel — sanitize the self-declared scopes (defense-in-depth over the
+  // tRPC zod bound): strings only, trimmed, deduped, capped. Then clamp ONCE at
+  // WRITE (`clampTunnelDeclaredScopes`) so the stored `grantedScopes` is what every
+  // reader grants — an allowlist change can never retroactively widen a live
+  // session, and a reader that forgets to re-clamp still gets an already-safe set.
+  const declaredScopes = Array.isArray(params.declaredScopes)
+    ? Array.from(
+        new Set(
+          params.declaredScopes
+            .filter((s): s is string => typeof s === 'string')
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0 && s.length <= DEV_TUNNEL_SCOPE_MAX_LEN)
+        )
+      ).slice(0, DEV_TUNNEL_SCOPE_MAX_COUNT)
+    : [];
+  const grantedScopes = clampTunnelDeclaredScopes(declaredScopes);
+
   const session: DevTunnelSessionRecord = {
     sessionId,
     userId: params.userId,
@@ -748,6 +791,8 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
     createdAt: created,
     hardExpiresAt,
     spendCapBuzz: DEV_TUNNEL_SESSION_BUZZ_CAP,
+    declaredScopes,
+    grantedScopes,
     // Seed the idle marker at mint so a never-visited tunnel still idle-reaps
     // (createdAt fallback in the reaper covers an absent field too).
     lastActivityAt: created,
@@ -938,11 +983,13 @@ export type ReserveDevSessionBuzzResult = { allowed: boolean; total: number };
  * DEV_BUZZ_BUDGET_CAP + the per-user daily cap; the author still spends only
  * their OWN Buzz.
  *
- * ⚠️ NOT WIRED in P1 — dev-session Buzz is NOT capped yet. This tested primitive
- * has NO live call site: it is enforced at workflow-submit in P3 once the block
- * token carries a dev-session id. Real dev spend TODAY rides the existing
- * `/api/v1/blocks/dev-token` real-Buzz clamp (DEV_BUZZ_BUDGET_CAP + the per-user
- * daily cap), NOT this per-session ceiling. Do NOT assume this backstop is active.
+ * WIRED (P3): enforced at workflow-submit in `blocks.router.ts` — the submit path
+ * resolves the caller's active tunnel via `getActiveDevTunnel(userId, blockId)` and
+ * calls this with the session's `spendCapBuzz` (no dev-session id needs to ride the
+ * JWT — the server re-derives it from (userId, blockId)). So this per-session
+ * ceiling IS active for on-site dev-tunnel spend, stacking under the block-token
+ * `DEV_BUZZ_BUDGET_CAP` (per call) + the per-user daily cap. The author still spends
+ * only their OWN Buzz.
  */
 export async function reserveDevSessionBuzz(
   sessionId: string,
