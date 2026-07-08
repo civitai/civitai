@@ -53,7 +53,10 @@ import {
 import { computeDynamicPool } from '~/server/games/daily-challenge/challenge-pool';
 import { IconCheck, IconInfoCircle } from '@tabler/icons-react';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import CategoryWeights from '~/components/Challenge/CategoryWeights';
+import CategoryWeights, {
+  DEFAULT_CATEGORY_ROWS,
+  type CategoryWeightRow,
+} from '~/components/Challenge/CategoryWeights';
 import {
   CHALLENGE_ENTRY_HOUSE_CUT,
   CHALLENGE_MAX_ENTRY_FEE,
@@ -138,6 +141,9 @@ type ChallengeForEdit = {
   maxPrizePool: number | null;
   prizeDistribution: number[] | null;
   themeElements: string[] | null;
+  // Not populated by any loader today (moderator edit only fetches ChallengeDetailForEdit, which
+  // has no category-weight data); present so a future user-challenge edit flow can seed real values.
+  judgingCategories?: CategoryWeightRow[];
 };
 
 type Props = {
@@ -218,7 +224,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
       entryFee: CHALLENGE_MIN_ENTRY_FEE,
       initialPrizeBuzz: 0,
       maxParticipants: undefined,
-      judgingCategories: [],
+      judgingCategories: challenge?.judgingCategories ?? DEFAULT_CATEGORY_ROWS,
     },
   });
 
