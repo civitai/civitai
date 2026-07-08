@@ -14,7 +14,6 @@ import {
   addImageTechniques,
   addImageTools,
   get404Images,
-  getDownleveledImages,
   getImageDetail,
   getImageGenerationData,
   getImagesByUserIdForModeration,
@@ -57,7 +56,6 @@ import { cacheIt, edgeCacheIt } from './../middleware.trpc';
 import {
   addOrRemoveImageTechniquesSchema,
   addOrRemoveImageToolsSchema,
-  downleveledReviewInput,
   getEntitiesCoverImage,
   getImageSchema,
   getInfiniteImagesSchema,
@@ -166,9 +164,6 @@ export const imageRouter = router({
     .meta({ requiredScope: TokenScope.Full })
     .input(updateImageNsfwLevelSchema)
     .mutation(handleUpdateImageNsfwLevel),
-  getDownleveledImages: moderatorProcedure
-    .input(downleveledReviewInput)
-    .query(({ input, ctx }) => getDownleveledImages({ ...input, user: ctx.user })),
   getGenerationData: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)

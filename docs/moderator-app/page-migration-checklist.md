@@ -119,7 +119,7 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
   - Infra: **Postgres + Redis (thumbnail cache) + Knights of New Order** queue
   - Notes: `updateImageNsfwLevel` calls raw SQL `update_nsfw_levels_new` and updates KoNO pending votes — shared with downleveled-review
 
-- [ ] **`/moderator/downleveled-review`** — `src/pages/moderator/downleveled-review.tsx` — flag: none
+- [x] **`/moderator/downleveled-review`** — `src/pages/moderator/downleveled-review.tsx` — flag: none — **Migrated.** ClickHouse `knights_new_order_downleveled` queue + Kysely image enrichment; shares `updateImageNsfwLevel` (now `$lib/server/image-nsfw-level.ts`) with image-rating-review. Same card/grid styling; markers = set (teal) + original (rose).
   - Procedures: `image.getDownleveledImages` (query); `image.updateImageNsfwLevel` (mutation, reused)
   - Services: `image.service.ts` → `getDownleveledImages` (+ `updateImageNsfwLevel`)
   - Schemas: `image.schema.ts` (`downleveledReviewInput`, `updateImageNsfwLevelSchema`)

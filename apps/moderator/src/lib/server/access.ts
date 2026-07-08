@@ -16,6 +16,7 @@ export const ROLE_HIERARCHY: { role: string; navigation: NavLink[] }[] = [
       { path: '/images/to-ingest', label: 'Images to Ingest' },
       { path: '/ingestion-error-review', label: 'Ingestion Errors' },
       { path: '/image-rating-review', label: 'Image Ratings' },
+      { path: '/downleveled-review', label: 'Downleveled' },
       { path: '/articles', label: 'Articles' },
       { path: '/article-rating-review', label: 'Article Ratings' },
       { path: '/cosmetics/grant', label: 'Grant Cosmetics' },

@@ -1,10 +1,7 @@
 import { sql } from '@civitai/db/kysely';
-import { dbRead, dbWrite } from './db';
-import { recordModActivity } from './mod-activity';
+import { dbRead } from './db';
 import { NsfwLevel } from '$lib/browsing-levels';
 import type { MediaType } from '$lib/media/edge-url';
-
-type ReportStatus = 'Pending' | 'Processing' | 'Actioned' | 'Unactioned';
 
 export type ImageRatingItem = {
   id: number;
@@ -76,37 +73,4 @@ export async function getImageRatingRequests({
   if (limit && rows.length > limit) nextCursor = rows.pop()?.id;
 
   return { items: rows, nextCursor };
-}
-
-// Moderator sets an image's nsfwLevel (locks it), resolves its pending rating requests, records the mod
-// activity. Two main-app side effects are deferred to their waves:
-//   TODO(moderator-migration): imageMetadataCache.refresh(id) (Wave 3, Redis) +
-//   queueModel3DForThumbnailImage(id) (Wave 5, parent Model3D nsfwLevel recompute).
-export async function updateImageNsfwLevel({
-  id,
-  nsfwLevel,
-  status,
-  userId,
-}: {
-  id: number;
-  nsfwLevel: number;
-  status?: ReportStatus;
-  userId: number;
-}): Promise<void> {
-  await dbWrite
-    .updateTable('Image')
-    .set({ nsfwLevel, nsfwLevelLocked: true })
-    .where('id', '=', id)
-    .execute();
-
-  if (status) {
-    await dbWrite
-      .updateTable('ImageRatingRequest')
-      .set({ status })
-      .where('imageId', '=', id)
-      .where('status', '=', 'Pending')
-      .execute();
-  }
-
-  await recordModActivity({ userId, entityType: 'image', entityId: id, activity: 'setNsfwLevel' });
 }
