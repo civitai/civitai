@@ -93,6 +93,8 @@ export async function processDedupePairs(pairs: DedupePair[], concurrency: numbe
     byVersion.set(p.hostVersionId, list);
   }
 
+  let linked = 0;
+  let failed = 0;
   const groups = [...byVersion.values()].map((group) => async () => {
     for (const pair of group) {
       const componentType = inferComponentType(pair.hostType);
@@ -111,13 +113,16 @@ export async function processDedupePairs(pairs: DedupePair[], concurrency: numbe
           userId: OFFICIAL_USER_ID,
           isModerator: true,
         });
+        linked++;
       } catch (e) {
+        failed++;
         logToAxiom(
           {
             type: 'warning',
             name: 'dedupe-official-uploads',
             message: (e as Error).message,
             hostFileId: pair.hostFileId,
+            canonicalFileId: pair.canonicalFileId,
           },
           'webhooks'
         ).catch(() => null);
@@ -126,6 +131,7 @@ export async function processDedupePairs(pairs: DedupePair[], concurrency: numbe
   });
 
   await limitConcurrency(groups, concurrency);
+  return { linked, failed };
 }
 
 const MAX_ITERATIONS = 50;
@@ -138,12 +144,16 @@ export const dedupeOfficialUploadsJob = createJob(
     const [lastRun, setLastRun] = await getJobDate('dedupe-official-uploads');
     const since = new Date(lastRun.getTime() - 60 * 60 * 1000);
 
-    let total = 0;
+    let found = 0;
+    let linked = 0;
+    let failed = 0;
     for (let i = 0; i < MAX_ITERATIONS; i++) {
       const pairs = await findOfficialDedupePairs(since, BATCH_LIMIT);
       if (pairs.length === 0) break;
-      await processDedupePairs(pairs, CONCURRENCY);
-      total += pairs.length;
+      const result = await processDedupePairs(pairs, CONCURRENCY);
+      found += pairs.length;
+      linked += result.linked;
+      failed += result.failed;
       if (pairs.length < BATCH_LIMIT) break;
       // Each processed pair creates a RecommendedResource pointer, so it won't
       // appear in the next query. If we exhaust MAX_ITERATIONS the remaining
@@ -156,7 +166,24 @@ export const dedupeOfficialUploadsJob = createJob(
       }
     }
 
+    // Surface systemic failures (e.g. a broken addLinkedComponent path) as an
+    // error, not just scattered per-pair warnings, so a run where nothing links
+    // is obvious in Axiom instead of looking like a clean no-op.
+    if (failed > 0) {
+      logToAxiom(
+        {
+          type: 'error',
+          name: 'dedupe-official-uploads',
+          message: 'dedupe run had link failures',
+          found,
+          linked,
+          failed,
+        },
+        'webhooks'
+      ).catch(() => null);
+    }
+
     await setLastRun();
-    return { pairs: total };
+    return { found, linked, failed };
   }
 );
