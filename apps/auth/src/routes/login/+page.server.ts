@@ -123,7 +123,7 @@ export const actions: Actions = {
     } catch (e) {
       // Don't let a token/email failure bubble up to SvelteKit's full-page 500.
       // Return it as form state so the page can show an inline error instead.
-      logAxiomError(e, { event: 'email login action failed' });
+      void logAxiomError(e, { event: 'email login action failed' });
       emailLoginFailuresTotal.inc();
       return fail(500, { email, serverError: true });
     }

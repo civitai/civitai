@@ -167,7 +167,7 @@ export const POST: RequestHandler = async ({ request }) => {
       // No CORS on a rejected origin — the browser surfaces a network error to the offending page.
       return json({ error: 'origin_not_allowed', error_description: err.message }, { status: 403 });
     }
-    logAxiomError(err, { event: '[oauth/token] handler error' });
+    void logAxiomError(err, { event: '[oauth/token] handler error' });
     setWildcardCors(respHeaders);
     const e = err as { code?: number; statusCode?: number; name?: string; message?: string };
     const status =

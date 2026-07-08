@@ -57,6 +57,6 @@ export const handle: Handle = async ({ event, resolve }) => {
 // response so a metrics hiccup can't change what the client sees.
 export const handleError: HandleServerError = ({ error }) => {
   unhandledErrorsTotal.inc();
-  logAxiomError(error, { event: 'unhandled server error' });
+  void logAxiomError(error, { event: 'unhandled server error' });
   return { message: 'Internal Error' };
 };
