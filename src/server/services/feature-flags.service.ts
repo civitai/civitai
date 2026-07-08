@@ -77,7 +77,7 @@ const featureFlags = createFeatureFlags({
   // imported carousel mount doesn't shove the (very tall) masonry feed down — the
   // shift production RUM attributes to `MasonryContainer .queries`, which is the
   // DISPLACED VICTIM (largest moved element), not the cause. Default OFF (mods
-  // only = the Flipt-DOWN fallback, mirrors `ssrPrefetchShell`); ramp a % of ALL
+  // only = the Flipt-DOWN fallback); ramp a % of ALL
   // users via Flipt (`feed-reserve-cls`) as a THRESHOLD rollout — CLS is an
   // all-user route metric, so a mod cohort can't move the aggregate. Purely
   // cosmetic space reservation (worst case = a little dead space, never a
