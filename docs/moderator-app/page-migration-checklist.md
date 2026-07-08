@@ -48,7 +48,7 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
   - Infra: **Postgres** (heavy raw SQL aggregations) + notification service + email + session refresh; ClickHouse for user scores
   - Notes: optional entity linking, expiration, rate-limit (`shouldRateLimitStrike`), integrates with muting + session invalidation
 
-- [ ] **`/moderator/reports`** — `src/pages/moderator/reports.tsx` — flag: none
+- [x] **`/moderator/reports`** — `src/pages/moderator/reports.tsx` — flag: none — **Migrated.**
   - Procedures: `report.getAll` (query); `report.setStatus`, `report.update` (mutations)
   - Services (`src/server/services/report.service.ts`): `getReports`, `updateReportById`, `bulkSetReportStatus`
   - Schemas: `report.schema.ts` (report-reason schemas, `getReportsSchema`, `setReportStatusSchema`, `updateReportSchema`) + status/reason color constants

@@ -9,6 +9,7 @@ import { env } from '~/env/server';
 //
 // Key = path under `/moderator` (no leading slash); value = the corresponding path on the moderator app.
 const MIGRATED_ROUTES: Record<string, string> = {
+  reports: 'reports',
   articles: 'articles',
   'article-rating-review': 'article-rating-review',
   'cosmetics/grant': 'cosmetics/grant',
