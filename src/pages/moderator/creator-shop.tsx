@@ -19,6 +19,7 @@ import { useDebouncedValue } from '@mantine/hooks';
 import {
   IconAlertTriangle,
   IconBolt,
+  IconBox,
   IconCheck,
   IconCopyright,
   IconEyeOff,
@@ -26,6 +27,7 @@ import {
   IconScan,
   IconSearch,
   IconShieldCheck,
+  IconSparkles,
   IconTag,
   IconTrendingUp,
   IconX,
@@ -136,6 +138,7 @@ function CreatorShopReviewPage() {
   const selectedMeta = (selected?.meta ?? {}) as CosmeticShopItemMeta;
   const checks = selectedMeta.autoChecks ?? [];
   const dims = selectedMeta.imageMeta;
+  const isAnimated = !!(selected?.cosmetic.data as { animated?: boolean } | null)?.animated;
 
   if (currentUser && !currentUser.isModerator) return <NotFound />;
 
@@ -353,6 +356,31 @@ function CreatorShopReviewPage() {
                         value={`${numberWithCommas(CREATOR_SHOP_SUBMISSION_FEE)} · Paid`}
                         icon={<IconCheck size={14} />}
                         iconColor="var(--mantine-color-blue-5)"
+                      />
+                    </SimpleGrid>
+
+                    <SimpleGrid cols={{ base: 1, xs: 3 }} spacing="sm">
+                      <MoneyTile
+                        label="Quantity"
+                        value={
+                          selected.availableQuantity
+                            ? `${numberWithCommas(selected.availableQuantity)} available`
+                            : 'Unlimited'
+                        }
+                        icon={<IconBox size={14} />}
+                        iconColor="var(--mantine-color-grape-5)"
+                      />
+                      <MoneyTile
+                        label="Animated"
+                        value={isAnimated ? 'Yes' : 'No'}
+                        icon={<IconSparkles size={14} />}
+                        iconColor="var(--mantine-color-pink-5)"
+                      />
+                      <MoneyTile
+                        label="Type"
+                        value={getDisplayName(selected.cosmetic.type)}
+                        icon={<IconTag size={14} />}
+                        iconColor="var(--mantine-color-cyan-5)"
                       />
                     </SimpleGrid>
 
