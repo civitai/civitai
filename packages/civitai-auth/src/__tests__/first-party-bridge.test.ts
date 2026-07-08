@@ -139,7 +139,7 @@ describe('completeFirstPartyCallback', () => {
     expect(headers['content-type']).toBe('application/json');
   });
 
-  it('rejects a state mismatch (CSRF) without calling the hub', async () => {
+  it('rejects a state mismatch (CSRF) without calling the hub — detail: state_mismatch', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
     const result = await completeFirstPartyCallback({
@@ -147,8 +147,18 @@ describe('completeFirstPartyCallback', () => {
       query: { code: 'abc', state: 'WRONG' },
       bridgeCookieValue: stashCookie('verif', 'st8'),
     });
-    expect(result).toEqual({ error: 'oauth_state', returnUrl: '/dash' });
+    // A concurrent/stale login clobbered the single bridge cookie — a distinct cause from a missing cookie.
+    expect(result).toEqual({ error: 'oauth_state', returnUrl: '/dash', detail: 'state_mismatch' });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('flags a missing code/state as detail: no_code (hub-side, not the cookie)', async () => {
+    const result = await completeFirstPartyCallback({
+      selfOrigin: SELF,
+      query: { code: 'abc' }, // no state echoed back
+      bridgeCookieValue: stashCookie('verif', 'st8'),
+    });
+    expect(result).toEqual({ error: 'oauth_state', returnUrl: '/dash', detail: 'no_code' });
   });
 
   it('surfaces the hub error param', async () => {
@@ -160,7 +170,7 @@ describe('completeFirstPartyCallback', () => {
     expect(result).toEqual({ error: 'access_denied', returnUrl: '/dash' });
   });
 
-  it('returns oauth_exchange when the hub declines the code', async () => {
+  it('returns oauth_exchange (detail: declined) when the hub rejects the code', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => ({ ok: false, json: async () => ({}) }))
@@ -170,16 +180,31 @@ describe('completeFirstPartyCallback', () => {
       query: { code: 'abc', state: 'st8' },
       bridgeCookieValue: stashCookie('verif', 'st8'),
     });
-    expect(result).toEqual({ error: 'oauth_exchange', returnUrl: '/dash' });
+    expect(result).toEqual({ error: 'oauth_exchange', returnUrl: '/dash', detail: 'declined' });
   });
 
-  it('treats a malformed/missing bridge cookie as a state failure', async () => {
+  it('returns oauth_exchange (detail: network) when the hub fetch throws', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('hub unreachable');
+      })
+    );
+    const result = await completeFirstPartyCallback({
+      selfOrigin: SELF,
+      query: { code: 'abc', state: 'st8' },
+      bridgeCookieValue: stashCookie('verif', 'st8'),
+    });
+    expect(result).toEqual({ error: 'oauth_exchange', returnUrl: '/dash', detail: 'network' });
+  });
+
+  it('treats a malformed/missing bridge cookie as detail: no_cookie (cross-site delivery failure)', async () => {
     const result = await completeFirstPartyCallback({
       selfOrigin: SELF,
       query: { code: 'abc', state: 'st8' },
       bridgeCookieValue: 'not json',
     });
-    expect(result).toEqual({ error: 'oauth_state', returnUrl: '/' });
+    expect(result).toEqual({ error: 'oauth_state', returnUrl: '/', detail: 'no_cookie' });
   });
 });
 
