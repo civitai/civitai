@@ -70,6 +70,35 @@ describe('recordScopeInvocation — synthetic pre-approval dev spend', () => {
     expect(mockLog).toHaveBeenCalledTimes(1);
   });
 
+  it('DEV token + REAL apb_ id that FK-fails (app deleted between mint & spend) does NOT retry — never mislabelled synthetic', async () => {
+    // The prefix gate is load-bearing here: `dev && P2003` alone would wrongly
+    // relabel this real, deleted app as `synthetic_app_id = apb_...`. It must
+    // instead keep the historical "log, no row" path.
+    mockDbWrite.blockScopeInvocation.create.mockRejectedValueOnce(fkError());
+    await recordScopeInvocation({ ...BASE, appBlockId: 'apb_deleted_real', dev: true });
+    expect(mockDbWrite.blockScopeInvocation.create).toHaveBeenCalledTimes(1);
+    // No synthetic retry write happened.
+    expect(mockDbWrite.blockScopeInvocation.create.mock.calls[0][0].data.appBlockId).toBe(
+      'apb_deleted_real'
+    );
+    expect(mockLog).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['page_local_my-app', 'dev-token.ts no-row local-manifest path'],
+    ['pubreq_01HZY0000000000000000000', 'dev-token.ts pending path (AppBlockPublishRequest.id)'],
+  ])('dev token + synthetic %s FK-fails → RETRIES with syntheticAppId (row persists)', async (id) => {
+    mockDbWrite.blockScopeInvocation.create
+      .mockRejectedValueOnce(fkError())
+      .mockResolvedValueOnce({});
+    await recordScopeInvocation({ ...BASE, appBlockId: id, dev: true });
+    expect(mockDbWrite.blockScopeInvocation.create).toHaveBeenCalledTimes(2);
+    const retry = mockDbWrite.blockScopeInvocation.create.mock.calls[1][0].data;
+    expect(retry.appBlockId).toBeNull();
+    expect(retry.syntheticAppId).toBe(id);
+    expect(mockLog).not.toHaveBeenCalled();
+  });
+
   it('dev token whose synthetic RETRY also fails → best-effort log, never throws', async () => {
     mockDbWrite.blockScopeInvocation.create
       .mockRejectedValueOnce(fkError())

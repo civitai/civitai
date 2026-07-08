@@ -16,6 +16,28 @@
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 
+/**
+ * The SYNTHETIC (non-FK-resolving) `appBlockId` claim namespaces a PRE-APPROVAL
+ * dev-tunnel mint stamps on a `dev:live` token. A REAL AppBlock.id is ALWAYS
+ * `apb_<26 ULID>`, so none of these can ever collide with one — gating the
+ * synthetic-retry on this prefix set means a deleted REAL app (`apb_…`) whose
+ * FK-fails is NEVER relabelled `synthetic_app_id = <real id>`; it keeps the
+ * historical "log, no row" behaviour. Values verified against the mints:
+ *   - `ephemeral-<slug>`   block-tokens dev-tunnel scoped mint (Phase 2 — this PR)
+ *                          → `resolveDevPageBlockForAuthor` (status 'ephemeral')
+ *   - `page_local_<slug>`  dev-token.ts no-row local-manifest path (`signAppBlockId`)
+ *   - `pubreq_<ULID>`      dev-token.ts pending path (`signAppBlockId: pending.id`,
+ *                          AppBlockPublishRequest.id = `pubreq_<ULID>`)
+ * (NB: the conceptual *appId* names are `local-`/`pending-`; the *appBlockId*
+ * claim these paths actually carry — the value recordScopeInvocation sees — is
+ * `page_local_`/`pubreq_`.)
+ */
+const SYNTHETIC_APP_BLOCK_ID_PREFIXES = ['ephemeral-', 'page_local_', 'pubreq_'] as const;
+
+function isSyntheticAppBlockId(appBlockId: string): boolean {
+  return SYNTHETIC_APP_BLOCK_ID_PREFIXES.some((prefix) => appBlockId.startsWith(prefix));
+}
+
 export type ScopeGrantSurface = {
   appBlockId: string;
   slug: string;
@@ -412,12 +434,15 @@ export async function recordScopeInvocation(opts: {
   /**
    * App Dev Tunnel Phase 2 — set when the token is a DEV token (`claims.dev`).
    * A dev token MAY carry a SYNTHETIC, non-FK-resolving `appBlockId` (a
-   * PRE-APPROVAL app has no AppBlock row: `ephemeral-<slug>` / `local-<slug>` /
-   * `pubreq_<id>`). When the direct INSERT FK-fails for such a token we retry with
-   * `appBlockId: null` + `syntheticAppId` so the durable per-spend audit row
+   * PRE-APPROVAL app has no AppBlock row: `ephemeral-<slug>` / `page_local_<slug>`
+   * / `pubreq_<ULID>` — see SYNTHETIC_APP_BLOCK_ID_PREFIXES). When the direct
+   * INSERT FK-fails for such a token AND the id is synthetic-prefixed we retry
+   * with `appBlockId: null` + `syntheticAppId` so the durable per-spend audit row
    * PERSISTS instead of being swallowed. The APPROVED dev-token path carries a
-   * REAL appBlockId and writes on the first attempt (no retry). Absent/false →
-   * the historical behaviour (a real FK orphan just logs, no row).
+   * REAL `apb_<ulid>` appBlockId and writes on the first attempt (no retry); a
+   * REAL app deleted between mint and spend also FK-fails but is NOT synthetic —
+   * it keeps the historical "log, no row" behaviour. Absent/false `dev` → the
+   * historical behaviour (a real FK orphan just logs, no row).
    */
   dev?: boolean;
 }): Promise<void> {
@@ -445,7 +470,12 @@ export async function recordScopeInvocation(opts: {
       typeof err === 'object' &&
       err !== null &&
       (err as { code?: unknown }).code === 'P2003';
-    if (opts.dev && isFkViolation) {
+    // Gate the synthetic path on a SYNTHETIC-id PREFIX, not merely `dev && P2003`.
+    // A dev token can carry a REAL `apb_<ulid>` appBlockId whose AppBlock row was
+    // deleted between mint and spend — that FK-fails too, but it is NOT synthetic,
+    // so it must keep the historical "log, no row" behaviour (never mislabelled
+    // `synthetic_app_id = <real id>`). Only a genuine synthetic namespace retries.
+    if (opts.dev && isFkViolation && isSyntheticAppBlockId(opts.appBlockId)) {
       try {
         // `appBlockId: null` + `syntheticAppId` require the schema change in this
         // PR (BlockScopeInvocation.appBlockId → nullable, + synthetic_app_id).

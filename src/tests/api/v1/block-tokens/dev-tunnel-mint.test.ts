@@ -173,6 +173,27 @@ async function invoke(body: unknown) {
   return res;
 }
 
+// A POST whose Origin header is `origin` (pass `null` to omit it entirely — a
+// `null`/absent Origin, e.g. a sandboxed-iframe or non-browser POST).
+function makeReqOrigin(body: unknown, origin: string | null): NextApiRequest {
+  const headers: Record<string, string> = {};
+  if (origin !== null) headers.origin = origin;
+  return {
+    method: 'POST',
+    headers,
+    body,
+    socket: { remoteAddress: '127.0.0.1' },
+    query: {},
+  } as unknown as NextApiRequest;
+}
+
+async function invokeOrigin(body: unknown, origin: string | null) {
+  const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+  const res = makeRes();
+  await handler(makeReqOrigin(body, origin), res);
+  return res;
+}
+
 describe('POST /api/v1/block-tokens — Phase 2 dev-tunnel author-own mint', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -278,6 +299,27 @@ describe('POST /api/v1/block-tokens — Phase 2 dev-tunnel author-own mint', () 
     mockDbWrite.user.findUnique.mockResolvedValue({ deletedAt: new Date(), bannedAt: null });
     const res = await invoke(DEV_BODY({ devScopes: ['ai:write:budgeted'] }));
     expect(res._status).toBe(404);
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
+  });
+
+  it('CROSS-ORIGIN POST (Origin not in the allowlist) is 403 by setSameOriginCors BEFORE the dev mint', async () => {
+    // setSameOriginCors (handler entry) rejects the request before the dev-tunnel
+    // branch runs — the CSRF gate must fire ahead of any ownership/mint work, so a
+    // forged cross-origin POST can neither mint a token nor touch the resolver.
+    const res = await invokeOrigin(DEV_BODY({ devScopes: ['ai:write:budgeted'] }), 'https://evil.example');
+    expect(res._status).toBe(403);
+    expect(res._body).toEqual({ error: 'cross-origin POST rejected' });
+    // Never reached the dev branch: no resolve, no sign, no ACAO for the bad origin.
+    expect(mockBlockRegistry.resolveDevPageBlockForAuthor).not.toHaveBeenCalled();
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
+    expect(res._headers['access-control-allow-origin']).toBeUndefined();
+  });
+
+  it('a null/absent-Origin POST is likewise 403 before the dev mint', async () => {
+    const res = await invokeOrigin(DEV_BODY({ devScopes: ['ai:write:budgeted'] }), null);
+    expect(res._status).toBe(403);
+    expect(res._body).toEqual({ error: 'cross-origin POST rejected' });
+    expect(mockBlockRegistry.resolveDevPageBlockForAuthor).not.toHaveBeenCalled();
     expect(mockTokenService.sign).not.toHaveBeenCalled();
   });
 });

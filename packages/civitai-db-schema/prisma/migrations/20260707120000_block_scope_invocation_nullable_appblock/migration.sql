@@ -22,5 +22,6 @@ ALTER TABLE "block_scope_invocations"
 ALTER TABLE "block_scope_invocations"
   ADD COLUMN IF NOT EXISTS "synthetic_app_id" TEXT;
 
-CREATE INDEX IF NOT EXISTS "bsi_synthetic_app_invoked_idx"
-  ON "block_scope_invocations" ("synthetic_app_id", "invoked_at" DESC);
+-- Applied MANUALLY per civitai rule #8. Run this statement OUTSIDE a transaction (psql without --single-transaction): CONCURRENTLY cannot run in a txn. The two ALTERs above are metadata-only and safe in or out of a txn.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "bsi_synthetic_app_invoked_idx"
+  ON "block_scope_invocations" ("synthetic_app_id", "invoked_at" DESC) WHERE "synthetic_app_id" IS NOT NULL;
