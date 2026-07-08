@@ -101,7 +101,7 @@ import type {
   PrizeMode,
   PoolTrigger,
   ChallengeReviewCostType,
-  ChallengeScanStatus,
+  ChallengeIngestionStatus,
   EntityMetric_EntityType_Type,
   EntityMetric_MetricType_Type,
   ComicProjectStatus,
@@ -1271,7 +1271,7 @@ export type Challenge = {
   source: Generated<ChallengeSource>;
   judgeId: number | null;
   status: Generated<ChallengeStatus>;
-  scanStatus: Generated<ChallengeScanStatus>;
+  ingestion: Generated<ChallengeIngestionStatus>;
   scannedAt: Timestamp | null;
   metadata: unknown | null;
   createdAt: Generated<Timestamp>;

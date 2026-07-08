@@ -753,13 +753,14 @@ export const ChallengeReviewCostType = {
 } as const;
 export type ChallengeReviewCostType =
   (typeof ChallengeReviewCostType)[keyof typeof ChallengeReviewCostType];
-export const ChallengeScanStatus = {
+export const ChallengeIngestionStatus = {
   Pending: 'Pending',
   Scanned: 'Scanned',
   Blocked: 'Blocked',
   Error: 'Error',
 } as const;
-export type ChallengeScanStatus = (typeof ChallengeScanStatus)[keyof typeof ChallengeScanStatus];
+export type ChallengeIngestionStatus =
+  (typeof ChallengeIngestionStatus)[keyof typeof ChallengeIngestionStatus];
 export const EntityMetric_EntityType_Type = {
   Image: 'Image',
 } as const;

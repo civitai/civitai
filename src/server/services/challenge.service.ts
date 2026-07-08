@@ -44,7 +44,7 @@ import {
 } from '~/server/schema/challenge.schema';
 import {
   ChallengeReviewCostType,
-  ChallengeScanStatus,
+  ChallengeIngestionStatus,
   ChallengeSource,
   ChallengeStatus,
   CollectionItemStatus,
@@ -210,8 +210,8 @@ export async function getInfiniteChallenges(
   // default to Scanned, so they're unaffected.
   conditions.push(
     currentUserId
-      ? Prisma.sql`(c."scanStatus" = 'Scanned'::"ChallengeScanStatus" OR c."createdById" = ${currentUserId})`
-      : Prisma.sql`c."scanStatus" = 'Scanned'::"ChallengeScanStatus"`
+      ? Prisma.sql`(c."ingestion" = 'Scanned'::"ChallengeIngestionStatus" OR c."createdById" = ${currentUserId})`
+      : Prisma.sql`c."ingestion" = 'Scanned'::"ChallengeIngestionStatus"`
   );
 
   // Status filter (parameterized)
@@ -773,7 +773,7 @@ export async function getChallengeDetail(
   // still see their own pending/blocked challenge; everyone else (incl. anonymous) cannot.
   if (
     challenge.source === ChallengeSource.User &&
-    challenge.scanStatus !== ChallengeScanStatus.Scanned &&
+    challenge.ingestion !== ChallengeIngestionStatus.Scanned &&
     challenge.createdById !== viewerId
   ) {
     return null;
@@ -1252,7 +1252,7 @@ export async function upsertUserChallenge({
           basePrizePool: existing.basePrizePool,
           prizePool: existing.basePrizePool,
           // Any content edit requires a fresh scan before the challenge is public again.
-          scanStatus: ChallengeScanStatus.Pending,
+          ingestion: ChallengeIngestionStatus.Pending,
           scannedAt: null,
           ...(themeEls && { metadata: { themeElements: themeEls } }),
         },
@@ -1314,8 +1314,8 @@ export async function upsertUserChallenge({
         createdById: userId,
         source: ChallengeSource.User,
         status: ChallengeStatus.Scheduled,
-        scanStatus: ChallengeScanStatus.Pending,
-        // Appears in the Upcoming feed once scanned (scanStatus gate hides it until then).
+        ingestion: ChallengeIngestionStatus.Pending,
+        // Appears in the Upcoming feed once scanned (ingestion gate hides it until then).
         visibleAt: new Date(),
         ...(themeEls && { metadata: { themeElements: themeEls } }),
       },
@@ -1365,7 +1365,7 @@ export async function upsertUserChallenge({
 }
 
 // Moderation scan for a user challenge's author-supplied text (title/theme/invitation/
-// description). Flips scanStatus Pending → Scanned, or → Blocked when the external
+// description). Flips ingestion Pending → Scanned, or → Blocked when the external
 // moderator flags hate/CSAM/etc. Fail-soft: on error we mark Error (retryable) rather than
 // auto-approving — the scan gate keeps the challenge hidden until it reaches Scanned.
 export async function scanUserChallenge(challengeId: number): Promise<void> {
@@ -1384,7 +1384,7 @@ export async function scanUserChallenge(challengeId: number): Promise<void> {
     await dbWrite.challenge.update({
       where: { id: challengeId },
       data: {
-        scanStatus: flagged ? ChallengeScanStatus.Blocked : ChallengeScanStatus.Scanned,
+        ingestion: flagged ? ChallengeIngestionStatus.Blocked : ChallengeIngestionStatus.Scanned,
         scannedAt: new Date(),
       },
     });
@@ -1399,7 +1399,7 @@ export async function scanUserChallenge(challengeId: number): Promise<void> {
       challengeId,
     });
     await dbWrite.challenge
-      .update({ where: { id: challengeId }, data: { scanStatus: ChallengeScanStatus.Error } })
+      .update({ where: { id: challengeId }, data: { ingestion: ChallengeIngestionStatus.Error } })
       .catch(() => undefined);
   }
 }

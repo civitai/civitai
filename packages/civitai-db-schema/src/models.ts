@@ -192,7 +192,7 @@ export type PoolTrigger = "Entry" | "User";
 
 export type ChallengeReviewCostType = "None" | "PerEntry" | "Flat";
 
-export type ChallengeScanStatus = "Pending" | "Scanned" | "Blocked" | "Error";
+export type ChallengeIngestionStatus = "Pending" | "Scanned" | "Blocked" | "Error";
 
 export type EntityMetric_EntityType_Type = "Image";
 
@@ -3569,7 +3569,7 @@ export interface Challenge {
   judgeId: number | null;
   judge?: ChallengeJudge | null;
   status: ChallengeStatus;
-  scanStatus: ChallengeScanStatus;
+  ingestion: ChallengeIngestionStatus;
   scannedAt: Date | null;
   metadata: JsonValue | null;
   createdAt: Date;

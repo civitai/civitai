@@ -5028,7 +5028,7 @@ enum ChallengeReviewCostType {
   Flat     // Single flat rate for all entries
 }
 
-enum ChallengeScanStatus {
+enum ChallengeIngestionStatus {
   Pending // Awaiting text+cover scan; hidden from public feeds
   Scanned // Passed scan, nsfwLevel assigned, publicly visible
   Blocked // Hard-blocked (hate/CSAM/etc.); never shown
@@ -5100,9 +5100,10 @@ model Challenge {
   status ChallengeStatus @default(Scheduled)
 
   // Moderation / scan gating (user challenges hidden until Scanned). Default Scanned so
-  // existing + system/mod challenges stay visible without a backfill blackout.
-  scanStatus ChallengeScanStatus @default(Scanned)
-  scannedAt  DateTime?
+  // existing + system/mod challenges stay visible without a backfill blackout. Named `ingestion`
+  // to match the other scanned entities (Image.ingestion, Article.ingestion).
+  ingestion ChallengeIngestionStatus @default(Scanned)
+  scannedAt DateTime?
 
   // Metadata
   metadata  Json?
@@ -5122,7 +5123,7 @@ model Challenge {
   @@index([status, endsAt]) // "Ending Soon" feed
   @@index([status, startsAt]) // "Just Started" feed
   @@index([status, visibleAt]) // "Upcoming" feed
-  @@index([status, scanStatus]) // public feed excludes non-Scanned challenges
+  @@index([status, ingestion]) // public feed excludes non-Scanned challenges
   @@index([createdById, status]) // User's challenges by status
   @@index([judgeId])
   @@index([eventId])

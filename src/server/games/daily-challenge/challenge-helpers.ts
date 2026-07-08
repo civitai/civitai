@@ -6,7 +6,7 @@ import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constant
 import type { PoolTrigger } from '~/shared/utils/prisma/enums';
 import {
   ChallengeReviewCostType,
-  ChallengeScanStatus,
+  ChallengeIngestionStatus,
   ChallengeSource,
   ChallengeStatus,
   CollectionMode,
@@ -69,7 +69,7 @@ export type ChallengeDetails = {
   createdById: number | null; // nullable: creator account deletion sets this NULL (FK ON DELETE SET NULL)
   source: ChallengeSource;
   status: ChallengeStatus;
-  scanStatus: ChallengeScanStatus;
+  ingestion: ChallengeIngestionStatus;
   scannedAt: Date | null;
   entryFee: number;
   maxParticipants: number | null;
@@ -146,7 +146,7 @@ export async function getChallengeById(challengeId: number): Promise<ChallengeDe
       c."createdById",
       c.source,
       c.status,
-      c."scanStatus",
+      c."ingestion",
       c."scannedAt",
       c."entryFee",
       c."maxParticipants",
@@ -252,7 +252,7 @@ export async function getScheduledChallengesReadyToStart(): Promise<ChallengeDet
     FROM "Challenge"
     WHERE status = ${ChallengeStatus.Scheduled}::"ChallengeStatus"
     AND "startsAt" <= now()
-    AND ("source" != 'User' OR "scanStatus" = 'Scanned')
+    AND ("source" != 'User' OR "ingestion" = 'Scanned')
     ORDER BY "startsAt" ASC
   `;
   const challenges = await Promise.all(rows.map((row) => getChallengeById(row.id)));
@@ -271,7 +271,7 @@ export async function getBlockedUserChallengesPastStart(): Promise<number[]> {
     FROM "Challenge"
     WHERE status = ${ChallengeStatus.Scheduled}::"ChallengeStatus"
     AND source = ${ChallengeSource.User}::"ChallengeSource"
-    AND "scanStatus" = ${ChallengeScanStatus.Blocked}::"ChallengeScanStatus"
+    AND "ingestion" = ${ChallengeIngestionStatus.Blocked}::"ChallengeIngestionStatus"
     AND "startsAt" <= now()
     ORDER BY "startsAt" ASC
   `;
