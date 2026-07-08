@@ -182,19 +182,6 @@ export enum CollectionReviewSort {
   Oldest = 'Oldest',
 }
 
-export enum ClubMembershipSort {
-  MostRecent = 'MostRecent',
-  NextBillingDate = 'NextBillingDate',
-  MostExpensive = 'MostExpensive',
-}
-
-export enum ClubSort {
-  Newest = 'Newest',
-  MostResources = 'Most Resources',
-  MostPosts = 'Most Club Posts',
-  MostMembers = 'Most Members',
-}
-
 export enum BlockedReason {
   TOS = 'tos',
   Moderated = 'moderated',
