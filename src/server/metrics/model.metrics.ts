@@ -372,8 +372,10 @@ async function getDownloadTasks(ctx: ModelMetricContext) {
 const injectedVersionIds = allInjectableResourceIds;
 
 async function getGenerationTasks(ctx: ModelMetricContext) {
-  // Flag every version generated so far today (createdDate >= toDate(lastUpdate),
-  // i.e. since 00:00 UTC), then re-SUM its all-time count from the MV below.
+  // Flag every version generated since the start of the day containing
+  // lastUpdate (createdDate >= toDate(lastUpdate)) — normally today, but wider
+  // on the first run past UTC midnight or after an outage, which usefully
+  // re-reconciles the prior day's tail. Then re-SUM its all-time count below.
   // `daily_resource_generation_counts` is built asynchronously from
   // `orchestration.jobs`, so a job's contribution lands in the MV after the job
   // row exists. Flagging by `jobs.createdAt >= lastUpdate` (a 1-minute window)

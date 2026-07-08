@@ -150,6 +150,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   }
 
   const modelIds = [...affectedModelIds];
+  const updatedModelIds: number[] = [];
 
   // 3. Roll the corrected version metrics up to ModelMetric.generationCount.
   if (!dryRun && modelIds.length) {
@@ -159,7 +160,9 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
         UPDATE "ModelMetric" mm
         SET "generationCount" = agg.total, "updatedAt" = NOW()
         FROM (
-          SELECT mv."modelId", SUM(mvm."generationCount")::int AS total
+          -- LEAST guards the INT4 target: a model summing past 2^31-1 across its
+          -- versions would otherwise error the whole batch.
+          SELECT mv."modelId", LEAST(SUM(mvm."generationCount"), 2147483647)::int AS total
           FROM "ModelVersionMetric" mvm
           JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
           WHERE mv."modelId" = ANY($1::int[])
@@ -171,12 +174,13 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
         `,
         [idBatch]
       );
-      modelsUpdated += (await q.result()).length;
+      updatedModelIds.push(...(await q.result()).map((r) => r.modelId));
     }
+    modelsUpdated = updatedModelIds.length;
 
-    // 4. Re-queue corrected models so feed/search cards refresh.
+    // 4. Re-queue only the models whose rollup actually changed.
     if (reindex) {
-      for (const slice of chunk(modelIds, 5000)) {
+      for (const slice of chunk(updatedModelIds, 5000)) {
         await modelsSearchIndex.queueUpdate(
           slice.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
         );
@@ -193,7 +197,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     versionsChanged,
     modelsAffected: modelIds.length,
     modelsUpdated: dryRun ? undefined : modelsUpdated,
-    reindexed: !dryRun && reindex ? modelIds.length : 0,
+    reindexed: !dryRun && reindex ? updatedModelIds.length : 0,
     topGaps: topGaps.slice(0, 25),
   });
 });
