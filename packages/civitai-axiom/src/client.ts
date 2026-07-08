@@ -1,6 +1,11 @@
 import { Client } from '@axiomhq/axiom-node';
 import { loadAxiomEnv, type AxiomConfig } from './env';
 
+// Package-local alias (not a `declare global`) so a consumer transpiling this package doesn't need the main
+// app's ambient MixedObject global in scope. Same shape, so main-app callers are unaffected.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type MixedObject = Record<string, any>;
+
 /**
  * Extract only safe primitive fields from an error for logging.
  *
@@ -41,9 +46,7 @@ export function createAxiomLogger(overrides: Partial<AxiomConfig> = {}): AxiomLo
   const config = { ...loadAxiomEnv(), ...overrides };
 
   const axiom =
-    config.token && config.orgId
-      ? new Client({ token: config.token, orgId: config.orgId })
-      : null;
+    config.token && config.orgId ? new Client({ token: config.token, orgId: config.orgId }) : null;
 
   async function logToAxiom(data: MixedObject, datastream?: string) {
     const sendData = { pod: config.podName, ...data };
