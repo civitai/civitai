@@ -1,5 +1,6 @@
 import { AdUnitAdhesive } from '~/components/Ads/AdUnit';
 import { useState } from 'react';
+import { IconX } from '@tabler/icons-react';
 import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { NextLink } from '~/components/NextLink/NextLink';
@@ -15,8 +16,10 @@ function AdhesiveAdContent({
 }) {
   const isMobile = isMobileDevice();
   const tracked = AdUnitAdhesive.useImpressionTracked();
-  const canClose = tracked && !isMobile;
   const { adsBlocked } = useAdsContext();
+  // The blocked placeholder never fires an impression, so gate its close button
+  // on adsBlocked instead of tracking; real ads still wait for tracking (desktop only).
+  const canClose = adsBlocked || (tracked && !isMobile);
 
   return (
     // No hideOnBlocked: when ads are blocked we render a CSS/text placeholder
@@ -27,8 +30,8 @@ function AdhesiveAdContent({
         {adsBlocked ? (
           <NextLink
             href="/pricing"
-            className="flex w-full items-center justify-center px-10 text-center text-sm text-gray-7 dark:text-dark-1"
-            style={{ minHeight: isMobile ? 50 : 90 }}
+            className="flex w-full items-center justify-center px-12 text-center text-xs leading-tight text-gray-7 dark:text-dark-1 sm:text-sm"
+            style={{ height: isMobile ? 50 : 90 }}
           >
             Civitai memberships — more features, fewer limits.
           </NextLink>
@@ -39,8 +42,13 @@ function AdhesiveAdContent({
           <button
             className="absolute inset-y-0 right-0 flex w-9 items-center justify-center bg-gray-0/50 dark:bg-dark-6/50"
             onClick={onClose}
+            aria-label="Close ad"
           >
-            <div className="inline-block -rotate-90 text-nowrap">Close Ad</div>
+            {isMobile ? (
+              <IconX size={18} />
+            ) : (
+              <div className="inline-block -rotate-90 text-nowrap">Close Ad</div>
+            )}
           </button>
         )}
       </div>
