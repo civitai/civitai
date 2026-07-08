@@ -295,6 +295,9 @@ export const getLicensingRoots = async ({ baseModel }: { baseModel: string }) =>
       AND mv.status = ${ModelStatus.Published}::"ModelStatus"
       AND mv."licensingFee" IS NOT NULL
       AND mv."licensingFee" > 0
+      AND m.status = ${ModelStatus.Published}::"ModelStatus"
+      AND m.availability = ${Availability.Public}::"Availability"
+      AND m."deletedAt" IS NULL
     ORDER BY m.name, mv.index
   `;
 };

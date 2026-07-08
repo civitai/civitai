@@ -18,7 +18,7 @@ import { IconAlertTriangle, IconInfoCircle } from '@tabler/icons-react';
 import { getQueryKey } from '@trpc/react-query';
 import { isEqual, uniq } from 'lodash-es';
 import { useRouter } from 'next/router';
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import * as z from 'zod';
 
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
@@ -253,10 +253,25 @@ export function ModelVersionUpsertForm({
     !!currentUser?.isModerator;
 
   const licensingSourceVersionId = form.watch('licensingSourceVersionId') ?? null;
-  const { data: licensingRoots = [] } = trpc.modelVersion.getLicensingRoots.useQuery(
+  const { data: licensingRootsData = [] } = trpc.modelVersion.getLicensingRoots.useQuery(
     { baseModel },
     { enabled: !!baseModel }
   );
+  // Exclude the version being edited — a root defines its own fee and must not
+  // point at itself. The picker always carries an implicit "Default (base model
+  // standard fee)" option, so a single remaining root is still a real choice
+  // (default vs that lineage); we only hide it when there are no roots at all.
+  const licensingRoots = licensingRootsData.filter((r) => r.id !== version?.id);
+
+  // A licensing lineage root is scoped to a base model, so a base-model change
+  // invalidates any selected source. Skip the initial value (edit pre-fill).
+  const prevBaseModelRef = useRef(baseModel);
+  useEffect(() => {
+    if (prevBaseModelRef.current === baseModel) return;
+    prevBaseModelRef.current = baseModel;
+    if (form.getValues('licensingSourceVersionId') != null)
+      form.setValue('licensingSourceVersionId', null, { shouldDirty: true });
+  }, [baseModel]);
 
   // handle mismatched baseModels in training data
   useEffect(() => {
@@ -809,7 +824,7 @@ export function ModelVersionUpsertForm({
               <Divider my="md" />
             </Stack>
           )}
-          {licensingRoots.length > 0 && (
+          {(showLicensingFeeBlock || !!currentUser?.isModerator) && licensingRoots.length > 0 && (
             <Stack gap="xs">
               <Select
                 label="Licensing base"
