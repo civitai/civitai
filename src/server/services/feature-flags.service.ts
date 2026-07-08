@@ -88,6 +88,19 @@ const featureFlags = createFeatureFlags({
   // behavior is best-effort (a failing shell prefetch degrades to client fetch,
   // never breaks SSR), so flipping the flag off is an instant, safe rollback.
   ssrPrefetchShell: { availability: ['mod'], fliptKey: 'ssr-prefetch-shell' },
+  // Money-path variant of the above, scoped to the generator page's GSSP: when on,
+  // the `/generate` page SSR-prefetches the static-at-load init queries fired by
+  // the always-open generation sidebar (`user.userRewardDetails`, and — behind
+  // their own render flags — `generationPreset.getOwn` + `challenge.getInfinite`)
+  // so they hydrate from the page HTML instead of each firing a client→CF→origin
+  // round-trip on mount (client `staleTime: Infinity` makes the hydrated value
+  // stick, so the round-trip is truly saved). SEPARATE from `ssrPrefetchShell` so
+  // this money-path prefetch ramps / rolls back independently. Default OFF (mods
+  // only) so the added per-SSR backend calls are dark until ramped via Flipt
+  // (`ssr-prefetch-generator`); the whole behavior is best-effort (a failing
+  // prefetch degrades to client fetch, never breaks the generator SSR), so
+  // flipping the flag off is an instant, safe rollback.
+  ssrPrefetchGenerator: { availability: ['mod'], fliptKey: 'ssr-prefetch-generator' },
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },

@@ -166,6 +166,59 @@ describe('createServerSideProps — SSR app-shell prefetch', () => {
     expect(h.checkNotifications).not.toHaveBeenCalled();
     expect(res.props.trpcState).toBeUndefined();
   });
+
+  // Overlap contract (perf): the shell prefetch is kicked off but NOT awaited
+  // before the resolver, so it runs CONCURRENTLY with the resolver (and any
+  // page-scoped prefetch inside it) — worst-case added TTFB is ~max(300, resolver)
+  // rather than shell(300) + resolver serially.
+  it('kicks off the shell prefetch WITHOUT awaiting it before the resolver runs', async () => {
+    vi.useFakeTimers();
+    try {
+      // A shell task that never settles → the batch can only complete via its
+      // 300ms deadline. In serial code the resolver could not run until then.
+      h.checkNotifications.mockImplementationOnce(() => new Promise<undefined>(() => {}));
+      const resolver = vi.fn(async () => ({ props: {} } as any));
+      const gssp = createServerSideProps({ useSSG: true, resolver });
+      const pending = gssp(makeContext('/models'));
+
+      // Flush microtasks without firing the 300ms shell deadline.
+      await vi.advanceTimersByTimeAsync(299);
+      // Concurrent: the resolver already ran even though the shell batch is still
+      // blocked on its (un-elapsed) deadline. Serial code would not have run it.
+      expect(resolver).toHaveBeenCalledTimes(1);
+      // …the shell task WAS kicked off (it's in-flight, just not awaited yet).
+      expect(h.checkNotifications).toHaveBeenCalledTimes(1);
+
+      // The render path still awaits the shell prefetch before dehydrate; it
+      // resolves at the 300ms deadline.
+      await vi.advanceTimersByTimeAsync(1);
+      const res: any = await pending;
+      expect(res.props.trpcState).toEqual({ mock: 'trpcState' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a redirect resolver returns WITHOUT blocking on the shell prefetch', async () => {
+    vi.useFakeTimers();
+    try {
+      // Shell task hangs forever; if the redirect path awaited it, this would hang.
+      h.checkNotifications.mockImplementationOnce(() => new Promise<undefined>(() => {}));
+      const resolver = vi.fn(async () => ({
+        redirect: { destination: '/login', permanent: false },
+      } as any));
+      const gssp = createServerSideProps({ useSSG: true, resolver });
+
+      // No timer advance: the early-return must resolve on its own (past the
+      // resolver, before the `await shellPrefetch` at the dehydrate point).
+      const res: any = await gssp(makeContext('/models'));
+      expect(res.redirect).toEqual({ destination: '/login', permanent: false });
+      // dehydrate is never reached on a redirect.
+      expect(h.dehydrate).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('prefetchAppShellQueries — unit', () => {
