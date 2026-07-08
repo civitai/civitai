@@ -34,7 +34,12 @@ vi.mock('~/server/db/client', () => ({
   dbWrite: {},
 }));
 
-import { getDownloadUrl, resolveDownloadUrl, safeDecodeURIComponent } from '../delivery-worker';
+import {
+  DeliveryWorkerError,
+  getDownloadUrl,
+  resolveDownloadUrl,
+  safeDecodeURIComponent,
+} from '../delivery-worker';
 
 describe('safeDecodeURIComponent', () => {
   it('decodes a well-formed encoded value', () => {
@@ -94,11 +99,55 @@ describe('getDownloadUrl — malformed file.url / filename no longer 500s', () =
   });
 
   it('throws (→ caller treats as not-found) when the delivery worker rejects every key', async () => {
-    fetchMock.mockResolvedValue({ ok: false, statusText: 'Not Found' } as unknown as Response);
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 404,
+      statusText: 'Not Found',
+    } as unknown as Response);
 
     await expect(
       getDownloadUrl('https://abcd1234.r2.cloudflarestorage.com/civitai/files/x.safetensors')
     ).rejects.toThrow(/Delivery worker error/);
+  });
+
+  it('throws a DeliveryWorkerError carrying the upstream 404 status (not-found → caller can 404)', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 404,
+      statusText: 'Not Found',
+    } as unknown as Response);
+
+    await getDownloadUrl(
+      'https://abcd1234.r2.cloudflarestorage.com/civitai/files/x.safetensors'
+    ).then(
+      () => {
+        throw new Error('expected getDownloadUrl to reject');
+      },
+      (err) => {
+        expect(err).toBeInstanceOf(DeliveryWorkerError);
+        expect((err as DeliveryWorkerError).statusCode).toBe(404);
+      }
+    );
+  });
+
+  it('throws a DeliveryWorkerError carrying an upstream 5xx status (transient → caller keeps 5xx)', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 503,
+      statusText: 'Service Unavailable',
+    } as unknown as Response);
+
+    await getDownloadUrl(
+      'https://abcd1234.r2.cloudflarestorage.com/civitai/files/x.safetensors'
+    ).then(
+      () => {
+        throw new Error('expected getDownloadUrl to reject');
+      },
+      (err) => {
+        expect(err).toBeInstanceOf(DeliveryWorkerError);
+        expect((err as DeliveryWorkerError).statusCode).toBe(503);
+      }
+    );
   });
 });
 
