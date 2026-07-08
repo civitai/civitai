@@ -170,7 +170,8 @@ const featureFlags = createFeatureFlags({
   draftMode: ['public'],
   membershipsV2: ['public'],
   cosmeticShop: ['public'],
-  creatorShop: ['public'],
+  // Mods get it by default; unlock testers via the `creator-shop` Flipt flag.
+  creatorShop: { availability: ['mod'], fliptKey: 'creator-shop' },
   impersonation: isDev ? ['mod'] : ['granted'],
   donationGoals: ['public'],
   creatorComp: ['public'],

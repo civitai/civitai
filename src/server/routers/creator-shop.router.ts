@@ -28,10 +28,11 @@ import {
 } from '~/server/trpc';
 
 // Every Creator Shop endpoint is gated on the `creatorShop` feature flag
-// server-side (the flag also hides the UI). While the flag resolves to `['mod']`
-// this contains the whole feature to moderators. When it rolls out more broadly,
-// the creator mutations still need a Creator-Program eligibility check added here
-// (see getCreatorRequirements) — the flag gate alone is not sufficient at GA.
+// server-side (the flag also hides the UI). The flag falls back to `['mod']` but
+// is Flipt-controllable (`creator-shop`), so testers can be unlocked without a
+// deploy. Creator mutations additionally enforce Creator-Program eligibility
+// (submitCreatorShopItem → getCreatorRequirements) — the flag alone is not
+// sufficient at GA.
 const creatorShopProcedure = protectedProcedure.use(isFlagProtected('creatorShop'));
 
 export const creatorShopRouter = router({
