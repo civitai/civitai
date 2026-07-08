@@ -90,7 +90,7 @@ describe('BlockRegistry.resolveDevPageBlockForAuthor', () => {
     expect(res).not.toBeNull();
     expect(res?.status).toBe('ephemeral');
     expect(res?.trustTier).toBe('unverified');
-    expect(res?.scopes).toEqual([]); // scoped mint stays 403 until approval
+    expect(res?.scopes).toEqual([]); // brand-new (no pending row) declares scopes via the mint body
     expect(res?.contentRating).toBeNull(); // SFW default
     expect(res?.sandbox).toBe('allow-scripts allow-forms');
     expect(res?.blockId).toBe('brand-new');
@@ -128,11 +128,52 @@ describe('BlockRegistry.resolveDevPageBlockForAuthor', () => {
   it('(d) ALLOWS an ephemeral resolution when the caller OWNS the pending publish request', async () => {
     mockDbRead.appBlock.findFirst.mockResolvedValue(null);
     mockDbRead.appBlock.findUnique.mockResolvedValue(null);
-    mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue({ submittedByUserId: 555 });
+    mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue({
+      submittedByUserId: 555,
+      manifest: { scopes: ['ai:write:budgeted'] },
+    });
     const res = await BlockRegistry.resolveDevPageBlockForAuthor('my-pending', 555);
     expect(res).not.toBeNull();
     expect(res?.status).toBe('ephemeral');
     expect(res?.blockId).toBe('my-pending');
+    // The pending select must pull the manifest (the scope source).
+    expect(mockDbRead.appBlockPublishRequest.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ select: { submittedByUserId: true, manifest: true } })
+    );
+  });
+
+  it('(d2) THE FIX: an owned-pending money app surfaces its budgeted scope (not the stale []) so the dev-page Generate gate is not falsely empty', async () => {
+    // Regression guard for the "Grant access to generate" hang: pre-Phase-2 this
+    // resolver hardcoded scopes:[], so the dev-page host told the block it had NO
+    // scopes (declaredScopes → grantedScopes empty) and Generate hung — while the
+    // block-token mint's JWT already carried ai:write:budgeted. The resolver now
+    // mirrors the mint's clamp exactly, so the declared set matches the JWT.
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockDbRead.appBlock.findUnique.mockResolvedValue(null);
+    mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue({
+      submittedByUserId: 555,
+      // Includes page-forbidden + non-allowlisted scopes — the clamp must strip them.
+      manifest: {
+        scopes: ['ai:write:budgeted', 'buzz:read:self', 'social:tip:self', 'not:a:scope'],
+      },
+    });
+    const res = await BlockRegistry.resolveDevPageBlockForAuthor('money-pending', 555);
+    // Clamp = TUNNEL allowlist − PAGE_FORBIDDEN, + force-granted user:read:self, sorted.
+    // buzz:read:self / social:tip:self are page-forbidden; not:a:scope is unknown.
+    expect(res?.scopes).toEqual(['ai:write:budgeted', 'user:read:self']);
+  });
+
+  it('(d3) an owned-pending app that declares NO money scope stays read-only (no over-grant)', async () => {
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockDbRead.appBlock.findUnique.mockResolvedValue(null);
+    mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue({
+      submittedByUserId: 555,
+      manifest: { scopes: ['models:read:self'] },
+    });
+    const res = await BlockRegistry.resolveDevPageBlockForAuthor('read-pending', 555);
+    // No ai:write:budgeted (not declared) — only the declared read scope + self-read.
+    expect(res?.scopes).toEqual(['models:read:self', 'user:read:self']);
+    expect(res?.scopes).not.toContain('ai:write:budgeted');
   });
 
   it.each([
