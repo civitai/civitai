@@ -72,6 +72,35 @@ const featureFlags = createFeatureFlags({
   // is the Flipt-DOWN fallback (mirrors `faro`); Flipt is authoritative when the flag
   // exists — ramp by bumping its % rollout, never all-at-once. See `src/utils/trpc.ts`.
   trpcBatching: { availability: ['mod'], fliptKey: 'trpc-batching' },
+  // Cohort-ramp gate for SSR-prefetch of the universal app-shell tRPC queries
+  // (see `createServerSideProps` / `prefetchAppShellQueries` in
+  // `src/server/utils/server-side-helpers.ts`). When ON, pages that use
+  // `createServerSideProps({ useSSG: true })` also prefetch the session's
+  // input-less shell queries (`user.checkNotifications`,
+  // `user.getBookmarkCollections`, and — when `buzz` is on — `buzz.getUserMultipliers`)
+  // server-side, so they hydrate from the page HTML instead of each firing a
+  // client→CF→origin round-trip on mount (client `staleTime: Infinity` makes the
+  // hydrated value stick, so the round-trip is truly saved, not just deferred).
+  // Default OFF (mods only) so the added per-SSR backend calls are dark until
+  // ramped via Flipt (`ssr-prefetch-shell`); availability ['mod'] is the
+  // Flipt-DOWN fallback (mirrors `trpc-batching`). This is a per-request server
+  // behavior gate — `features` is already resolved in that path — and the whole
+  // behavior is best-effort (a failing shell prefetch degrades to client fetch,
+  // never breaks SSR), so flipping the flag off is an instant, safe rollback.
+  ssrPrefetchShell: { availability: ['mod'], fliptKey: 'ssr-prefetch-shell' },
+  // Money-path variant of the above, scoped to the generator page's GSSP: when on,
+  // the `/generate` page SSR-prefetches the static-at-load init queries fired by
+  // the always-open generation sidebar (`user.userRewardDetails`, and — behind
+  // their own render flags — `generationPreset.getOwn` + `challenge.getInfinite`)
+  // so they hydrate from the page HTML instead of each firing a client→CF→origin
+  // round-trip on mount (client `staleTime: Infinity` makes the hydrated value
+  // stick, so the round-trip is truly saved). SEPARATE from `ssrPrefetchShell` so
+  // this money-path prefetch ramps / rolls back independently. Default OFF (mods
+  // only) so the added per-SSR backend calls are dark until ramped via Flipt
+  // (`ssr-prefetch-generator`); the whole behavior is best-effort (a failing
+  // prefetch degrades to client fetch, never breaks the generator SSR), so
+  // flipping the flag off is an instant, safe rollback.
+  ssrPrefetchGenerator: { availability: ['mod'], fliptKey: 'ssr-prefetch-generator' },
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },
@@ -179,8 +208,6 @@ const featureFlags = createFeatureFlags({
   csamReports: isDev ? ['mod'] : ['granted'],
   appealReports: isDev ? ['mod'] : ['granted'],
   reviewTrainingData: isDev ? ['mod'] : ['granted'],
-  clubs: ['mod'],
-  createClubs: ['mod', 'granted'],
   moderateTags: ['granted'],
   chat: {
     toggleable: true,
@@ -268,6 +295,16 @@ const featureFlags = createFeatureFlags({
   // default until we ship publisher install UX + moderator approval workflow.
   // When off, BlockSlot renders nothing and no token-issuance traffic fires.
   appBlocks: { availability: ['mod'], fliptKey: 'app-blocks-enabled' },
+  // App Blocks W13 — dedicated App Store VISIBILITY flag, decoupled from
+  // `app-blocks-enabled` (which doubles as the block-runtime kill-switch) so the
+  // store catalog can widen to public INDEPENDENTLY of the held block-runtime GA.
+  // Store-visibility surfaces gate on `appListings || appBlocks` (client) /
+  // `isAppListingsEnabled()` which falls back to `isAppBlocksEnabled()` (server),
+  // so while the `app-listings` Flipt flag does not yet exist this resolves via
+  // the `availability: ['mod']` Flipt-down fallback (mods only) + the OR-fallback
+  // to `app-blocks-enabled` — i.e. ZERO behavior change today (the currently
+  // mod+app-dev-testers cohort keeps identical store access).
+  appListings: { availability: ['mod'], fliptKey: 'app-listings' },
   // App Blocks W10 — full-page apps (`/apps/run/<slug>`). A SEPARATE dark flag
   // so the page surface enables independently of the master `app-blocks-enabled`
   // gate. The page route + page-token mint require BOTH `appBlocks` AND

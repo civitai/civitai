@@ -454,6 +454,9 @@ export async function listAvailableListings(
     FROM app_listings al
     LEFT JOIN app_listing_metrics m ON m.app_listing_id = al.id
     WHERE al.status = 'approved'
+      -- Never surface a SHADOW revision draft. Shadows are status='draft' so the
+      -- approved-only filter already hides them; this is defense-in-depth.
+      AND al.revision_of_id IS NULL
       AND (${kindParam}::text IS NULL OR al.kind = ${kindParam}::text)
       AND (${categoryParam}::text IS NULL OR al.category = ${categoryParam}::text)
       AND ${listingMatureFilter(redCapable)}
@@ -507,9 +510,12 @@ export async function getListingDetail(
   // undefined })` would return an ARBITRARY approved row (enumeration footgun);
   // both → ambiguous. Fail closed to null in either case.
   if (!input.id === !input.slug) return null;
+  // `revisionOfId: null` is defense-in-depth: a shadow is status='draft' (already
+  // excluded by the approved-only check below), but never let a crafted id reach a
+  // shadow's data through this public read.
   const where: Prisma.AppListingWhereInput = input.id
-    ? { id: input.id }
-    : { slug: input.slug };
+    ? { id: input.id, revisionOfId: null }
+    : { slug: input.slug, revisionOfId: null };
 
   const row = await dbRead.appListing.findFirst({
     where,

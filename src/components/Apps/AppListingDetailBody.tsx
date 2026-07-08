@@ -33,6 +33,9 @@ import {
   type ListingBadgeKind,
 } from '~/components/Apps/appListingCardView';
 import { getDetailPrimaryAction } from '~/components/Apps/appListingDetailView';
+import { ReportListingButton } from '~/components/Apps/ReportListingButton';
+import { ReviewListingButton } from '~/components/Apps/ReviewListingButton';
+import { AppListingReviews } from '~/components/Apps/AppListingReviews';
 import {
   CATEGORY_ICONS,
   FALLBACK_CATEGORY_ICON,
@@ -346,7 +349,16 @@ export function AppListingDetailBody({ detail, canOpenPage = false }: AppListing
           </Stack>
         </Group>
         <Box style={{ flexShrink: 0 }}>
-          <PrimaryAction detail={detail} canOpenPage={canOpenPage} />
+          <Stack gap="xs" align="flex-end">
+            <PrimaryAction detail={detail} canOpenPage={canOpenPage} />
+            {/* Review affordance (thumbs/recommend) — hidden for the owner + signed-out
+                viewers; the write proc is protected + flag-gated + self-review-blocked
+                server-side. Feeds the recommend metric below SYNCHRONOUSLY. */}
+            <ReviewListingButton appListingId={detail.id} ownerUserId={detail.creator?.id ?? null} />
+            {/* Report affordance — dark behind the mod-only store surface; the
+                proc is protected + rate-limited + reporter-bound server-side. */}
+            <ReportListingButton appListingId={detail.id} />
+          </Stack>
         </Box>
       </Group>
 
@@ -365,6 +377,9 @@ export function AppListingDetailBody({ detail, canOpenPage = false }: AppListing
           </Text>
         )}
       </Group>
+
+      {/* Recent reviews — thumbs/recommend list (mod-filtered, escaped plain text). */}
+      <AppListingReviews appListingId={detail.id} />
 
       <ScreenshotGallery screenshots={detail.screenshots} name={detail.name} />
 

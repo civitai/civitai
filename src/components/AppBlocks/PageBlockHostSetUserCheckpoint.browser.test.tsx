@@ -34,6 +34,11 @@ import { renderWithProviders } from '../../../test/component-setup';
  */
 
 vi.mock('~/utils/trpc', () => ({
+  // FeatureFlagsProvider (in PageBlockHost's real render graph) statically imports
+  // `setTrpcBatchingEnabled` from this module (#2946). vi.mock replaces the module
+  // wholesale, so the factory must re-declare it or the ESM link fails and the whole
+  // test file fails to import.
+  setTrpcBatchingEnabled: vi.fn(),
   trpc: {
     // PageBlockHost wires the workflow + storage bridges at render; stub so it
     // mounts network-free. SET_USER_CHECKPOINT makes NO tRPC call on a page (it

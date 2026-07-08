@@ -883,7 +883,19 @@ export async function getPoolParticipantsV2(month?: Date, includeNegativeAmounts
     limit: 10000,
     all: true,
   });
-  const participants = data[`${monthAccount}`];
+  // A creator who banked from more than one source account type (e.g. green + yellow) is returned
+  // as one contributor row per source type. Sum them per userId so each creator is a single
+  // participant and receives a single compensation grant — otherwise the distribute loop emits two
+  // grants sharing one externalTransactionId and the second is silently dropped as a conflict,
+  // paying the creator for only one buzz type. A Map preserves the upstream contributor order that
+  // the distribute loop's pool-depletion cutoff depends on (Object.values would reorder by userId).
+  const summed = new Map<number, { userId: number; amount: number }>();
+  for (const p of data[`${monthAccount}`] ?? []) {
+    const existing = summed.get(p.userId);
+    if (existing) existing.amount += p.amount;
+    else summed.set(p.userId, { userId: p.userId, amount: p.amount });
+  }
+  const participants = [...summed.values()];
   let bannedParticipants: { userId: number }[] = [];
 
   if (participants.length > 0) {

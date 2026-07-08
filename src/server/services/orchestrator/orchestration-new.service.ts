@@ -175,7 +175,7 @@ type EcosystemGraphOutput = Extract<GenerationGraphOutput, { ecosystem: string }
  * A Map that throws an error when getting a value that doesn't exist.
  * Used for AIR lookups where a missing value indicates a data problem.
  */
-class StrictAirMap extends Map<number, string> {
+export class StrictAirMap extends Map<number, string> {
   /**
    * Gets the AIR string for a resource ID.
    * @throws Error if the resource ID is not found in the map.
@@ -183,7 +183,15 @@ class StrictAirMap extends Map<number, string> {
   getOrThrow(resourceId: number): string {
     const air = this.get(resourceId);
     if (!air) {
-      throw new Error(
+      // A missing AIR means the submitted form data references a resource that did
+      // NOT enrich (a deleted/unavailable resource, or a form↔enrichment mismatch)
+      // — a CLIENT/DATA fault, not a server failure. Throw a BAD_REQUEST TRPCError
+      // (via throwBadRequestError) so `classifyErrorFault` treats it as a client
+      // fault → logged at info, surfaced as HTTP 400 — instead of a plain Error that
+      // tRPC wraps into a generic INTERNAL_SERVER_ERROR (500). This was ~10% of the
+      // orchestrator.whatIfFromGraph / generateFromGraph 500s (the loudest single
+      // instance being the dead resource 3005242). Message preserved verbatim.
+      throw throwBadRequestError(
         `AIR not found for resource ID ${resourceId}. ` +
           `This indicates a mismatch between form data and enriched resources.`
       );

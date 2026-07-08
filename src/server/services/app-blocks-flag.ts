@@ -5,6 +5,24 @@ import { buildFliptContext } from '~/server/services/feature-flags.service';
 const APP_BLOCKS_FLAG = 'app-blocks-enabled';
 
 /**
+ * Dedicated App Store VISIBILITY flag (W13 — PR-W1a / D8).
+ *
+ * DECOUPLES the App Store *catalog visibility* from `app-blocks-enabled`, which
+ * doubles as the BLOCK-RUNTIME kill-switch. The store-visibility surfaces (the
+ * `/apps` store SSR gate + landing, the store DETAIL page, the store grid query,
+ * and the PUBLIC store read procs) key off THIS flag so the catalog can widen to
+ * `public` INDEPENDENTLY of the deliberately-held block-runtime GA — a future
+ * true-public flip widens ONLY `app-listings`, while `app-blocks-enabled` (the
+ * runtime gate) stays mod-segmented.
+ *
+ * Mirrors the `appListings` entry in feature-flags.service.ts
+ * (`availability: ['mod']`, `fliptKey: 'app-listings'`). The flag does NOT exist
+ * in Flipt at merge time — it is created AFTER (a companion `flipt-state` PR)
+ * with the SAME mods + `app-dev-testers` segment `app-blocks-enabled` uses.
+ */
+export const APP_LISTINGS_FLAG = 'app-listings';
+
+/**
  * Dedicated flag for the App Blocks AUTHOR capability (developer soft-launch,
  * Phase B). Grants the right to SUBMIT apps + use `dev:live` (mint a dev token,
  * generate/spend from your own block) to a curated cohort — INDEPENDENT of the
@@ -179,6 +197,59 @@ export async function isAppBlocksEnabled(opts?: { user?: SessionUser }): Promise
 }
 
 /**
+ * Server-side check for the App Store VISIBILITY flag (W13 — PR-W1a / D8).
+ *
+ * Gates the STORE-VISIBILITY surfaces only — the public store read procs
+ * (`appListings.listAvailable` / `getAppDetail`), reached via the
+ * `enforceAppListingsReadFlag` middleware. This DECOUPLES store catalog
+ * visibility from `app-blocks-enabled`, which doubles as the block-runtime
+ * kill-switch, so the catalog can widen to public independently of the held
+ * block-runtime GA.
+ *
+ * ## Eval shape mirrors `isAppBlocksEnabled`, WITH an OR-fallback (load-bearing)
+ *
+ * Same per-user Flipt eval as `isAppBlocksEnabled` (entityId = user id, context
+ * from `buildFliptContext`) against the dedicated `app-listings` flag. The ONE
+ * difference: if `app-listings` resolves `false`, this FALLS BACK to
+ * `isAppBlocksEnabled(opts)`. That fallback is the whole point of the dark
+ * decoupling:
+ *   - The `app-listings` flag does NOT exist in Flipt at merge time (created
+ *     AFTER, as a companion `flipt-state` PR). A bare eval of an absent flag
+ *     resolves `false` for EVERYONE — which would REGRESS the currently-visible
+ *     cohort (mods + the `app-dev-testers` segment of `app-blocks-enabled`) the
+ *     instant this merges. The OR-fallback to `app-blocks-enabled` preserves
+ *     their store access verbatim through the transition window.
+ *   - Because `app-blocks-enabled` already grants the mods + app-dev-testers
+ *     cohort today, `isAppListingsEnabled` grants EXACTLY that same set until the
+ *     `app-listings` flag is created and later widened — so the as-merged change
+ *     is a NO-OP on visibility (zero behavior change today).
+ *
+ * Remove the `|| isAppBlocksEnabled` fallback ONLY after the store widens past
+ * the `app-blocks-enabled` cohort (i.e. once `app-listings` is the sole, wider
+ * source of truth); until then the fallback is what keeps existing viewers in.
+ *
+ * No user → preserve a global eval of `app-listings` that can never match a
+ * segment, then fall through to the no-arg `isAppBlocksEnabled()` global eval —
+ * fail-closed, identical to today's no-arg store-read behaviour.
+ */
+export async function isAppListingsEnabled(opts?: { user?: SessionUser }): Promise<boolean> {
+  const user = opts?.user;
+  // Per-user eval of the dedicated visibility flag — same entityId + context
+  // shape as isAppBlocksEnabled, so the `app-listings` segment resolves
+  // identically to the client/hasFeature gate. No user → global eval (never
+  // matches a segment).
+  const listingsOn = user
+    ? await isFlipt(APP_LISTINGS_FLAG, String(user.id), buildFliptContext(user))
+    : await isFlipt(APP_LISTINGS_FLAG);
+  if (listingsOn) return true;
+  // OR-fallback: the `app-listings` flag doesn't exist yet (dark window) / hasn't
+  // been widened, so defer to `app-blocks-enabled` to keep the existing
+  // mods + app-dev-testers cohort's store access intact. Same opts (per-user or
+  // no-user global) so the fallback eval matches the primary eval's shape.
+  return isAppBlocksEnabled(opts);
+}
+
+/**
  * AUTHZ check for the App Blocks AUTHOR capability (developer soft-launch).
  *
  * Governs who may SUBMIT apps + use `dev:live` (mint a dev token, generate +
@@ -332,6 +403,48 @@ export async function isAppBlocksDevTunnelEnabled(opts?: {
   if (!opts?.user) return isFlipt(APP_BLOCKS_DEV_TUNNEL_FLAG);
   const user = opts.user;
   return isFlipt(APP_BLOCKS_DEV_TUNNEL_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
+ * DEDICATED kill-switch for the HIGHEST-risk dev-tunnel surface: granting REAL
+ * (self-capped) Buzz-spend (`ai:write:budgeted`) to an UNSUBMITTED app — one that
+ * has NEVER been through review (no publish request). Deliberately SEPARATE from
+ * `app-blocks-dev-tunnel` so ops can kill "real Buzz on an unreviewed app" WITHOUT
+ * disabling all tunnel dev (render/HMR/pending-app testing stay up). When OFF, the
+ * brand-new (no-pending-row) dev-tunnel mint + SSR strip `ai:write:budgeted` from
+ * the granted set → the app resolves READ-ONLY (still renders, just can't spend).
+ * The PENDING (submitted-but-unapproved) and APPROVED tunnel paths are unaffected.
+ *
+ * Evaluated WITH the caller's context (mod/cohort segments), identical eval shape
+ * to `isAppBlocksDevTunnelEnabled`. Fail-closed: absent flag / Flipt-down → `false`
+ * → no unsubmitted spend for anyone (mods included), so the as-merged posture is
+ * dark until the flag is created in Flipt.
+ *
+ * SCOPE OF THE KILL (by design — kills NEW grants, not in-flight tokens): this is
+ * checked at MINT time (block-token mint + `/apps/dev` SSR), NOT re-checked per
+ * spend at `submitWorkflow`. A dev token minted while this flag was ON therefore
+ * retains `ai:write:budgeted` for its ≤4h `dev` TTL after a flip to OFF. That window
+ * is bounded by the self-bound spend (author's OWN Buzz only) + the per-call
+ * (DEV_BUZZ_BUDGET_CAP) / per-session (DEV_TUNNEL_SESSION_BUZZ_CAP) / per-user-daily
+ * caps, and `app-blocks-author` provides a RUNTIME full-kill for a bad actor (its
+ * re-check runs at submit). If instant SURGICAL revocation of just this surface is
+ * ever needed, add a per-spend re-check here in the `claims.dev` branch of
+ * `submitWorkflow` (gated on a brand-new discriminator so pending/approved spend is
+ * untouched). Accepted trade at ship: the caps + 4h TTL + author-flag kill suffice.
+ */
+export const APP_BLOCKS_DEV_TUNNEL_UNSUBMITTED_SPEND_FLAG =
+  'app-blocks-dev-tunnel-unsubmitted-spend';
+
+export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
+  user?: SessionUser;
+}): Promise<boolean> {
+  if (!opts?.user) return isFlipt(APP_BLOCKS_DEV_TUNNEL_UNSUBMITTED_SPEND_FLAG);
+  const user = opts.user;
+  return isFlipt(
+    APP_BLOCKS_DEV_TUNNEL_UNSUBMITTED_SPEND_FLAG,
+    String(user.id),
+    buildFliptContext(user)
+  );
 }
 
 /**

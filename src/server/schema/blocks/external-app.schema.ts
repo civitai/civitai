@@ -1,6 +1,3 @@
-import * as z from 'zod';
-import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
-
 /**
  * App Blocks — off-site (external-link) apps.
  *
@@ -27,8 +24,13 @@ export type ExternalUrlValidation =
   | { ok: false; error: string };
 
 /**
- * Validate a candidate external-link URL. Returns the canonical (parsed, no
- * trailing whitespace) https:// URL on success, or a human-readable error.
+ * Validate a candidate external-link URL. Returns the parsed (whitespace-trimmed)
+ * https:// URL string on success, or a human-readable error.
+ *
+ * NOTE: the returned `url` is the WHATWG-parsed serialization of the input, NOT a
+ * sanitized/canonicalized safe URL — it is only guaranteed to be an https URL with
+ * a host and NO embedded credentials. It is NOT DNS-resolved and NOT SSRF-checked;
+ * a server-side fetch of it must still go through the hardened `safeFetch`.
  *
  * Rules (deterministic, no heuristics):
  *   - parses as an absolute URL,
@@ -36,6 +38,9 @@ export type ExternalUrlValidation =
  *     rejected — a marketplace card link opens in the user's browser, so a
  *     non-https or non-http scheme is a phishing / XSS vector),
  *   - has a host,
+ *   - carries NO userinfo (`user:pass@host`) — `https://example.com@evil.com`
+ *     displays as `example.com` but resolves to `evil.com`, a display-vs-real-host
+ *     phishing vector; reject it outright,
  *   - within the length bound.
  */
 export function validateExternalUrl(raw: unknown): ExternalUrlValidation {
@@ -57,6 +62,11 @@ export function validateExternalUrl(raw: unknown): ExternalUrlValidation {
   }
   if (!parsed.host) {
     return { ok: false, error: 'externalUrl must include a host' };
+  }
+  // Reject embedded credentials — `https://example.com@evil.com` renders the
+  // trusted-looking `example.com` but the REAL host is `evil.com`.
+  if (parsed.username || parsed.password) {
+    return { ok: false, error: 'externalUrl must not contain credentials (user:pass@host)' };
   }
   return { ok: true, url: parsed.toString() };
 }
@@ -108,21 +118,3 @@ export function assertNoOnPlatformSurface(manifest: ExternalAppManifestInput): E
   }
   return { ok: true };
 }
-
-/**
- * Mod-only registration input for a pure external-link app. The slug + display
- * name + (optional) description are the only authored fields; `externalUrl` is
- * the off-site target. No bundle, no scopes, no version.
- */
-export const registerExternalAppSchema = z.object({
-  slug: z.string().min(3).max(40).regex(SLUG_REGEX),
-  name: z.string().min(1).max(120),
-  description: z.string().max(2000).optional(),
-  externalUrl: z.string().min(1).max(MAX_EXTERNAL_URL_LENGTH),
-  // Optional mod-assigned marketplace category (free-text, validated against the
-  // taxonomy const at the service layer — kept loose here so adding a category
-  // needs no schema change).
-  category: z.string().max(64).optional(),
-});
-
-export type RegisterExternalAppInput = z.infer<typeof registerExternalAppSchema>;

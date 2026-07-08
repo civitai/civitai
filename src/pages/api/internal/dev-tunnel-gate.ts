@@ -29,6 +29,26 @@ import { verifyDevTunnelAccessToken } from '~/server/services/blocks/dev-tunnel-
  * Authorizes ONLY the ENTRY document/iframe request (the one that can carry the
  * `dev` token) and ALLOWS subresources through, per the tradeoff above.
  *
+ *   - WEBSOCKET HANDSHAKE (e.g. the Vite HMR socket `wss://dev-<hex>/?token=…`):
+ *     200 (allow). A ws handshake is structurally a subresource — it can NEVER be
+ *     a top-level document navigation — so allowing it does not weaken the naked-
+ *     entry-document 401 property (the ws still only reaches the AUTHOR'S OWN
+ *     localhost, host-secrecy protected — same tradeoff as every other
+ *     subresource, no token required). Keyed PRIMARILY on `Sec-WebSocket-Key`, the
+ *     RFC-6455-MANDATORY handshake request header: the browser ALWAYS sends it on
+ *     a ws upgrade AND Traefik FORWARDS it to the forwardAuth subrequest (it is
+ *     NOT hop-by-hop, and this middleware sets no `authRequestHeaders` allowlist,
+ *     so every non-hop-by-hop header passes). `Upgrade` — the other definitional
+ *     handshake header (RFC 6455) — is a hop-by-hop header (RFC 7230 §6.1) that
+ *     Traefik STRIPS from the auth subrequest, so it can NOT be the sole signal
+ *     and the `upgrade === 'websocket'` branch never fires in production; it is
+ *     kept only as belt-and-suspenders for any path that DOES preserve it. We do
+ *     NOT rely on `Sec-Fetch-Dest: websocket` either — a real Chrome HMR handshake
+ *     arrives with NO usable `Sec-Fetch-Dest`, so it would fall into the ENTRY
+ *     branch and 401 the socket. A request bearing `Sec-WebSocket-Key` can never
+ *     be a top-level document navigation, so allowing it keeps the IDENTICAL
+ *     security posture (host-secrecy, no token) as every other subresource.
+ *     Deterministic + structural, not heuristic.
  *   - ENTRY (Sec-Fetch-Dest document/iframe/frame/nested-document, OR ABSENT →
  *     treated as entry, fail-safe): require a valid `dev` token bound to
  *     X-Forwarded-Host → 200 + X-Dev-User-Id, else 401.
@@ -65,6 +85,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   // Fail-closed: without the dev host we can't bind/verify anything.
   if (!forwardedHost) {
     res.status(401).json({ error: 'Missing dev host' });
+    return;
+  }
+
+  // WEBSOCKET HANDSHAKE → allow (e.g. the Vite HMR socket `wss://dev-<hex>/?token=…`
+  // so live-reload flows over the tunnel). A ws handshake is structurally a
+  // subresource and can never be a top-level document navigation, so this does
+  // NOT weaken the naked-entry-document 401 property (and the ws still only
+  // reaches the AUTHOR'S OWN localhost, host-secrecy protected — same tradeoff as
+  // every other subresource). Keyed PRIMARILY on `Sec-WebSocket-Key`, the RFC-
+  // 6455-MANDATORY handshake header the browser ALWAYS sends and — unlike the
+  // hop-by-hop `Upgrade` header (RFC 7230 §6.1) which Traefik STRIPS from the auth
+  // subrequest — Traefik FORWARDS it (no `authRequestHeaders` allowlist on this
+  // middleware). The `Upgrade` check is kept only as belt-and-suspenders for any
+  // path that DOES preserve it; in production it never fires. Deterministic +
+  // structural (a request bearing `Sec-WebSocket-Key` is definitionally a ws
+  // handshake, never a document navigation).
+  const wsKey = firstHeader(req.headers['sec-websocket-key']);
+  const upgrade = firstHeader(req.headers['upgrade']);
+  if (wsKey || (upgrade && upgrade.toLowerCase() === 'websocket')) {
+    res.status(200).json({ ok: true, via: 'websocket' });
     return;
   }
 
