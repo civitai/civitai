@@ -247,10 +247,19 @@ export function createServerSideProps<P>({
     // instead of round-tripping on mount. Runs only when the `ssg` helper exists
     // (i.e. full SSR, or `prefetch: 'always'` — never a bare client-nav
     // `/_next/data` fetch) and the `ssrPrefetchShell` flag is on for this user.
-    // Best-effort: never throws (see `prefetchAppShellQueries`).
-    if (ssg && features.ssrPrefetchShell) {
-      await prefetchAppShellQueries(ssg, session, features);
-    }
+    //
+    // Kicked off WITHOUT awaiting so it overlaps the resolver (which may itself
+    // run a page-scoped prefetch, e.g. the generator's — DISJOINT keys, no race):
+    // two best-effort 300ms-capped batches run CONCURRENTLY instead of serially,
+    // so worst-case added TTFB is ~max(300, resolver) rather than shell+resolver.
+    // We `await` it only right before `dehydrate()` (past the redirect/notFound
+    // early-returns), so a redirect/notFound path never blocks on it. Best-effort:
+    // `prefetchAppShellQueries` never rejects (allSettled + deadline), so an
+    // abandoned promise on an early-return can't surface as an unhandled rejection.
+    const shellPrefetch =
+      ssg && features.ssrPrefetchShell
+        ? prefetchAppShellQueries(ssg, session, features)
+        : undefined;
 
     const result = ((await resolver?.({
       ctx: context,
@@ -268,6 +277,11 @@ export function createServerSideProps<P>({
       typeof result.props === 'object' && 'then' in result.props
         ? await result.props
         : result.props;
+
+    // Ensure the in-flight shell prefetch has settled (or hit its 300ms deadline)
+    // before we snapshot the cache — it overlapped the resolver, so this rarely
+    // adds wall-time. Only on the render path (past the early-returns above).
+    if (shellPrefetch) await shellPrefetch;
 
     return {
       props: {
