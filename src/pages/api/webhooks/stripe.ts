@@ -15,7 +15,6 @@ import type { Readable } from 'node:stream';
 import { paymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { completeStripeBuzzTransaction } from '~/server/services/buzz.service';
 import { STRIPE_PROCESSING_AWAIT_TIME } from '~/server/common/constants';
-import { completeClubMembershipCharge } from '~/server/services/clubMembership.service';
 import { notifyAir } from '~/server/services/integration.service';
 import { isDev } from '~/env/other';
 import { trackWebhookEvent } from '~/server/clickhouse/client';
@@ -197,7 +196,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             // carry our `type` discriminator. Bail before schema validation so we don't 400
             // Stripe into a retry loop for payments we were never going to process here.
             const metadataType = paymentIntent.metadata?.type;
-            if (metadataType !== 'buzzPurchase' && metadataType !== 'clubMembershipPayment') {
+            if (metadataType !== 'buzzPurchase') {
               break;
             }
             // Stripe serializes all PaymentIntent.metadata values as strings, so a raw cast
@@ -329,21 +328,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                   }
                 }
               }
-            }
-
-            if (metadata.type === 'clubMembershipPayment') {
-              // First, grant the user their buzz. We need this to keep a realisitc
-              // transaction history. We purchase buzz from Civit,then we pay the club.
-              await completeStripeBuzzTransaction({
-                amount: metadata.buzzAmount,
-                stripePaymentIntentId: paymentIntent.id,
-                details: metadata,
-                userId: metadata.userId,
-              });
-
-              await completeClubMembershipCharge({
-                stripePaymentIntentId: paymentIntent.id,
-              });
             }
 
             break;

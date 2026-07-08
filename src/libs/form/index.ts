@@ -16,7 +16,6 @@ import { DatePickerInput, TimeInput, DateTimePicker } from '@mantine/dates';
 import { TagsInput } from '~/components/Tags/TagsInput';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
 import { BrowsingLevelsInput } from '~/components/BrowsingLevel/BrowsingLevelInput';
-import { ClubResourceManagementInput } from '~/components/Club/ClubResourceManagementInput';
 import { ImageUpload } from '~/components/ImageUpload/ImageUpload';
 import { InlineSocialLinkInput } from '~/components/Profile/InlineSocialLinkInput';
 import { ProfileImageUpload } from '~/components/ProfileImageUpload/ProfileImageUpload';
@@ -72,7 +71,6 @@ export const InputTags = withController(TagsInput);
 export const InputTime = withController(TimeInput);
 export const InputNumberSlider = withController(NumberSlider);
 export const InputInlineSocialLinkInput = withController(InlineSocialLinkInput);
-export const InputClubResourceManagementInput = withController(ClubResourceManagementInput);
 export const InputDateTimePicker = withController(DateTimePicker);
 
 export const InputSwitch = withController(Switch, ({ field }) => ({
