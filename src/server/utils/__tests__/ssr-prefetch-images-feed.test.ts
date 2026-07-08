@@ -84,7 +84,11 @@ vi.mock('~/server/services/system-cache', () => ({
   getBrowsingSettingAddons: h.getBrowsingSettingAddons,
 }));
 
-import { createServerSideProps, prefetchImagesFeedQueries } from '../server-side-helpers';
+import {
+  createServerSideProps,
+  hasImagesFeedQueryParams,
+  prefetchImagesFeedQueries,
+} from '../server-side-helpers';
 
 type AnyContext = Parameters<ReturnType<typeof createServerSideProps>>[0];
 
@@ -128,21 +132,21 @@ function expectedAnonInput(addons: BrowsingSettingsAddon[]) {
   };
 }
 
-function makeContext(url: string): AnyContext {
+function makeContext(url: string, query: Record<string, unknown> = {}): AnyContext {
   return {
     req: { url, headers: { host: 'civitai.com' } },
     res: { setHeader: vi.fn() },
     resolvedUrl: url,
-    query: {},
+    query,
   } as any;
 }
 
-// Mirrors the `/images` GSSP wiring: flag-gated, anon-only, runs only when the
-// SSG helper exists (full SSR), never on client-nav.
+// Mirrors the `/images` GSSP wiring: flag-gated, anon-only, gates on feed query
+// params, runs only when the SSG helper exists (full SSR), never on client-nav.
 function imagesResolver() {
-  return async ({ session, features, ssg }: any) => {
+  return async ({ session, features, ssg, ctx, ssgAbortController }: any) => {
     if (ssg && features?.ssrPrefetchImagesFeed) {
-      await prefetchImagesFeedQueries(ssg, session ?? null);
+      await prefetchImagesFeedQueries(ssg, session ?? null, ctx.query, ssgAbortController);
     }
     return { props: {} } as any;
   };
@@ -217,17 +221,41 @@ describe('createServerSideProps — images feed SSR prefetch (integration)', () 
     expect(res.props.trpcState).toEqual({ mock: 'trpcState' });
     expect(h.getInfinitePrefetch).toHaveBeenCalledTimes(1);
   });
+
+  it('does NOT prefetch a FILTERED feed (?period=Month) — client key differs, no burned heavy slot', async () => {
+    const gssp = createServerSideProps({ useSSG: true, resolver: imagesResolver() });
+    const res: any = await gssp(makeContext('/images?period=Month', { period: 'Month' }));
+
+    // A feed-affecting query param → the client builds a different key → skip.
+    expect(h.getInfinitePrefetch).not.toHaveBeenCalled();
+    expect(h.getBrowsingSettingAddons).not.toHaveBeenCalled();
+    // The page still renders / dehydrates normally.
+    expect(res.props.trpcState).toEqual({ mock: 'trpcState' });
+  });
+
+  it('still prefetches the bare default feed when only non-feed params are present (utm_*)', async () => {
+    const gssp = createServerSideProps({ useSSG: true, resolver: imagesResolver() });
+    // utm_source is stripped by the client zod parse → the key is unchanged, so a
+    // referral-link default feed still hydrates.
+    const res: any = await gssp(
+      makeContext('/images?utm_source=twitter', { utm_source: 'twitter' })
+    );
+
+    expect(h.getInfinitePrefetch).toHaveBeenCalledTimes(1);
+    expect(h.getInfinitePrefetch).toHaveBeenCalledWith(expectedAnonInput(ADDONS));
+    expect(res.props.trpcState).toEqual({ mock: 'trpcState' });
+  });
 });
 
 describe('prefetchImagesFeedQueries — unit', () => {
   it('prefetches the initial feed query for an anon session with the exact reproduced input', async () => {
-    await prefetchImagesFeedQueries(h.fakeSsg as any, null);
+    await prefetchImagesFeedQueries(h.fakeSsg as any, null, {});
     expect(h.getInfinitePrefetch).toHaveBeenCalledTimes(1);
     expect(h.getInfinitePrefetch).toHaveBeenCalledWith(expectedAnonInput(ADDONS));
   });
 
   it('resolves the addon-derived fields (non-empty excludedTagIds + disablePoi) at the anon PG level', async () => {
-    await prefetchImagesFeedQueries(h.fakeSsg as any, null);
+    await prefetchImagesFeedQueries(h.fakeSsg as any, null, {});
     const input = h.getInfinitePrefetch.mock.calls[0][0] as any;
     // Only the PG-applicable addon contributes; order is preserved for the hash.
     expect(input.excludedTagIds).toEqual([5161, 5162, 5188]);
@@ -238,20 +266,20 @@ describe('prefetchImagesFeedQueries — unit', () => {
   });
 
   it('prefetches nothing for an authed session (anon-only scope)', async () => {
-    await prefetchImagesFeedQueries(h.fakeSsg as any, authedSession);
+    await prefetchImagesFeedQueries(h.fakeSsg as any, authedSession, {});
     expect(h.getInfinitePrefetch).not.toHaveBeenCalled();
     expect(h.getBrowsingSettingAddons).not.toHaveBeenCalled();
   });
 
   it('skips the prefetch (never fires a wrong-key heavy query) when the addon fetch fails', async () => {
     h.getBrowsingSettingAddons.mockRejectedValueOnce(new Error('redis down'));
-    await expect(prefetchImagesFeedQueries(h.fakeSsg as any, null)).resolves.toBeUndefined();
+    await expect(prefetchImagesFeedQueries(h.fakeSsg as any, null, {})).resolves.toBeUndefined();
     expect(h.getInfinitePrefetch).not.toHaveBeenCalled();
   });
 
   it('resolves (never throws) when the feed prefetch rejects', async () => {
     h.getInfinitePrefetch.mockRejectedValueOnce(new Error('meili down'));
-    await expect(prefetchImagesFeedQueries(h.fakeSsg as any, null)).resolves.toBeUndefined();
+    await expect(prefetchImagesFeedQueries(h.fakeSsg as any, null, {})).resolves.toBeUndefined();
   });
 
   it('resolves via the deadline (never hangs SSR) when the feed prefetch never settles', async () => {
@@ -259,7 +287,7 @@ describe('prefetchImagesFeedQueries — unit', () => {
     try {
       h.getInfinitePrefetch.mockImplementationOnce(() => new Promise<undefined>(() => {}));
 
-      const pending = prefetchImagesFeedQueries(h.fakeSsg as any, null);
+      const pending = prefetchImagesFeedQueries(h.fakeSsg as any, null, {});
       let settled = false;
       const tracked = pending.then(() => {
         settled = true;
@@ -278,6 +306,76 @@ describe('prefetchImagesFeedQueries — unit', () => {
       expect(settled).toBe(true);
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it('aborts the SSG signal on the deadline so the heavy bulkhead slot frees early', async () => {
+    vi.useFakeTimers();
+    try {
+      h.getInfinitePrefetch.mockImplementationOnce(() => new Promise<undefined>(() => {}));
+      const abortController = new AbortController();
+
+      const pending = prefetchImagesFeedQueries(h.fakeSsg as any, null, {}, abortController);
+      let settled = false;
+      const tracked = pending.then(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(0); // flush the addon-fetch microtask
+      await vi.advanceTimersByTimeAsync(299);
+      // Before the deadline: not aborted, not settled.
+      expect(abortController.signal.aborted).toBe(false);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await tracked;
+      // The deadline fired abort() → cancels the in-flight query → releases the slot.
+      expect(abortController.signal.aborted).toBe(true);
+      expect(settled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does NOT abort when the prefetch settles before the deadline', async () => {
+    const abortController = new AbortController();
+    await prefetchImagesFeedQueries(h.fakeSsg as any, null, {}, abortController);
+    expect(h.getInfinitePrefetch).toHaveBeenCalledTimes(1);
+    // Fast happy path → the deadline never fires → the signal is untouched.
+    expect(abortController.signal.aborted).toBe(false);
+  });
+
+  it('skips the prefetch when a feed-affecting query param is present', async () => {
+    await prefetchImagesFeedQueries(h.fakeSsg as any, null, { sort: 'Newest' });
+    expect(h.getInfinitePrefetch).not.toHaveBeenCalled();
+    expect(h.getBrowsingSettingAddons).not.toHaveBeenCalled();
+  });
+});
+
+describe('hasImagesFeedQueryParams', () => {
+  it('is false for the bare default feed (no query) and for only non-feed params', () => {
+    expect(hasImagesFeedQueryParams(undefined)).toBe(false);
+    expect(hasImagesFeedQueryParams({})).toBe(false);
+    // Params the client zod-strips (don't change the key) do not block the prefetch.
+    expect(hasImagesFeedQueryParams({ utm_source: 'x', fbclid: 'y', ref: 'z' })).toBe(false);
+  });
+
+  it('is true for each feed-affecting param the client merges into the input', () => {
+    for (const key of [
+      'period',
+      'sort',
+      'types',
+      'tags',
+      'withMeta',
+      'baseModels',
+      'view',
+      'section',
+      'tools',
+      'techniques',
+      'followed',
+      'hidden',
+    ]) {
+      expect(hasImagesFeedQueryParams({ [key]: 'anything' })).toBe(true);
     }
   });
 });

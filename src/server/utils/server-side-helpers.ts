@@ -24,7 +24,14 @@ import type { ImageInclude } from '~/server/schema/image.schema';
 export const getServerProxySSGHelpers = async (
   ctx: GetServerSidePropsContext,
   session: Session | null,
-  features: FeatureAccess
+  features: FeatureAccess,
+  // Optional real AbortController whose `.signal` becomes the SSG procedure ctx
+  // signal. Threaded in so a prefetch can be cancelled on a deadline (see the
+  // images-feed prefetch, which fires `abort()` on timeout to release the heavy
+  // bulkhead slot early). When omitted, a fresh never-fired controller is used —
+  // byte-compatible with the prior behavior for the shell/generator callers,
+  // which never abort.
+  abortController: AbortController = new AbortController()
 ) => {
   const domain = getRequestDomainColor(ctx.req) ?? 'blue';
   const ssg = createServerSideHelpers({
@@ -39,7 +46,7 @@ export const getServerProxySSGHelpers = async (
       cache: null as any,
       req: ctx.req as any,
       domain,
-      signal: new AbortController().signal,
+      signal: abortController.signal,
       tokenScope: TokenScope.Full,
       apiKeyId: undefined,
       subject: undefined,
@@ -100,21 +107,40 @@ const APP_SHELL_PREFETCH_TIMEOUT_MS = 300;
  * slow backend can't drag SSR past the cap — on timeout we resolve (never throw)
  * and the un-prefetched queries fall back to their normal client fetch, the same
  * graceful-degradation contract as a failed prefetch. This is the single shared
- * safety primitive behind every SSR prefetch batch (app-shell + generator).
+ * safety primitive behind every SSR prefetch batch (app-shell + generator + images).
+ *
+ * `onDeadline` (optional): fired ONCE if — and only if — the deadline wins the
+ * race (the tasks had not all settled in time). Omitted by the shell/generator
+ * callers (their tasks are cheap in-process reads that need no cancellation), so
+ * their behavior is unchanged. The images-feed caller passes it to `abort()` the
+ * SSG signal on timeout, which cancels the in-flight heavy `image.getInfinite`
+ * Meili query and releases its per-pod bulkhead slot early (the handler honors
+ * `ctx.signal`; the `withBulkhead` middleware releases the slot in a `finally`
+ * on handler settle) instead of holding the slot for the query's full duration.
+ * `allSettled` still captures the resulting late rejection, so no unhandled
+ * rejection escapes.
  */
 async function settlePrefetchWithDeadline(
   tasks: Promise<unknown>[],
-  timeoutMs: number
+  timeoutMs: number,
+  onDeadline?: () => void
 ): Promise<void> {
   if (!tasks.length) return;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
   const deadline = new Promise<void>((resolve) => {
-    timer = setTimeout(resolve, timeoutMs);
+    timer = setTimeout(() => {
+      timedOut = true;
+      resolve();
+    }, timeoutMs);
   });
   try {
     await Promise.race([Promise.allSettled(tasks), deadline]);
   } finally {
     if (timer) clearTimeout(timer);
+    // Fire the cancellation hook only when the deadline actually elapsed (tasks
+    // still pending) — never when the tasks settled first.
+    if (timedOut) onDeadline?.();
   }
 }
 
@@ -255,11 +281,24 @@ export async function prefetchGeneratorQueries(
  * (`src/utils/trpc.ts`) and this call-site sets no lower `staleTime`, so once the
  * dehydrated infinite entry hydrates it is never stale → no refetch on mount.
  *
+ * QUERY-PARAM GUARD — the reproduced input above is ONLY the client's key for
+ * the BARE default feed. `/images?period=Month` / `?tags=…` / `?sort=…` / etc.
+ * make the client's `useImageFilters('images')` merge those URL params into the
+ * feed input → a DIFFERENT infinite-query key → a guaranteed key miss + a burned
+ * heavy slot. So we skip the prefetch when the request carries ANY feed-affecting
+ * query param (the `imagesQueryParamSchema` set). Unrecognized params (utm_*,
+ * fbclid, …) are stripped by the client's zod parse and don't change the key, so
+ * they do NOT block the prefetch — a default feed opened from a shared/referral
+ * link (a high-value anon cohort) still hydrates.
+ *
  * ROBUSTNESS + DEADLINE — best-effort via `settlePrefetchWithDeadline`: a failing
  * or >300ms-slow feed query degrades to the normal client fetch and can NEVER
- * reject out of SSR or drag it past the cap. If the addon fetch fails we skip the
- * prefetch entirely (prefetching with the wrong `excludedTagIds` would miss the
- * key AND waste a heavy slot — worse than not prefetching).
+ * reject out of SSR or drag it past the cap. On the deadline we `abort()` the SSG
+ * signal (Fix, wired via the `abortController`), which cancels the in-flight heavy
+ * `image.getInfinite` Meili query and releases its per-pod bulkhead slot early
+ * rather than holding it for the full query duration. If the addon fetch fails we
+ * skip the prefetch entirely (prefetching with the wrong `excludedTagIds` would
+ * miss the key AND waste a heavy slot — worse than not prefetching).
  */
 // Reproduces the FiltersProvider `imageFilterSchema` defaults (client storeFilters
 // for a default anon) verbatim — the values `useImageFilters('images')` yields
@@ -272,16 +311,56 @@ const IMAGES_FEED_DEFAULT_FILTERS = {
   withMeta: false,
 };
 
+// The URL query params the images feed reads into its infinite-query input.
+// MUST mirror `imagesQueryParamSchema` in `src/components/Image/image.utils.ts`
+// (that module is client-heavy — mantine/trpc/react — so we enumerate the keys
+// here rather than import it into this server module). If a key is added to that
+// schema, add it here too; over-listing is safe (skipping is free), under-listing
+// risks a wasted heavy prefetch on a non-default feed. `view`/`section` are
+// UI-ish but still flow into the client's raw feed input, so they gate too.
+const IMAGES_FEED_QUERY_PARAM_KEYS = new Set<string>([
+  'baseModels', 'collectionId', 'collectionTagId', 'hideAutoResources',
+  'hideManualResources', 'followed', 'fromPlatform', 'hidden', 'includeBaseModel',
+  'limit', 'modelId', 'modelVersionId', 'notPublished', 'publishedOnly',
+  'pendingReviewOnly', 'period', 'periodMode', 'postId', 'prioritizedUserIds',
+  'reactions', 'scheduled', 'section', 'sort', 'tags', 'techniques', 'tools',
+  'types', 'userId', 'username', 'view', 'withMeta', 'requiringMeta', 'remixOfId',
+  'includePG13', 'poiOnly', 'minorOnly', 'disablePoi', 'disableMinor',
+  'remixesOnly', 'nonRemixesOnly',
+]);
+
+/** True when the request URL carries any feed-affecting param (→ a non-default key). */
+export function hasImagesFeedQueryParams(query: Record<string, unknown> | undefined): boolean {
+  if (!query) return false;
+  for (const key of Object.keys(query)) {
+    if (IMAGES_FEED_QUERY_PARAM_KEYS.has(key)) return true;
+  }
+  return false;
+}
+
 const IMAGES_FEED_PREFETCH_TIMEOUT_MS = 300;
 
 export async function prefetchImagesFeedQueries(
   ssg: SSGHelpers,
-  session: Session | null
+  session: Session | null,
+  query: Record<string, unknown> | undefined,
+  // Real controller backing the SSG `ctx.signal` (from `getServerProxySSGHelpers`
+  // via `createServerSideProps`). Aborted on the deadline to release the heavy
+  // bulkhead slot early. Optional so the helper is unit-testable in isolation.
+  abortController?: AbortController
 ): Promise<void> {
   // ANON-ONLY: authed inputs are not server-reproducible (see doc above).
   if (session?.user) return;
+  // Only the BARE default feed's key is reproducible — skip any filtered variant.
+  if (hasImagesFeedQueryParams(query)) return;
 
-  // Deterministic anon browsing level on every domain.
+  // Deterministic anon browsing level on every domain. This MIRRORS
+  // `BrowsingLevelProvider`'s anon path (src/components/BrowsingLevel/…): with no
+  // `currentUser`, `domainForcedLevel` forces `publicBrowsingLevelsFlag` on green
+  // AND blue/red, and the green `capToPublic` intersection with the same flag is
+  // idempotent — so it is domain-independent. 🔴 If that anon rule ever becomes
+  // domain-dependent, this constant silently breaks the key match; re-derive it
+  // from the request domain here at that point.
   const browsingLevel = publicBrowsingLevelsFlag;
 
   // Resolve the browsing-settings addons against the SAME data the client sees.
@@ -314,7 +393,11 @@ export async function prefetchImagesFeedQueries(
 
   await settlePrefetchWithDeadline(
     [ssg.image.getInfinite.prefetchInfinite(input as any)],
-    IMAGES_FEED_PREFETCH_TIMEOUT_MS
+    IMAGES_FEED_PREFETCH_TIMEOUT_MS,
+    // On timeout, cancel the in-flight heavy query so its bulkhead slot frees now
+    // instead of at the query's natural completion (the deadline already gave up
+    // on hydrating it, so aborting loses nothing hydratable — pure slot savings).
+    () => abortController?.abort()
   );
 }
 
@@ -349,9 +432,13 @@ export function createServerSideProps<P>({
 
     const features = await getFeatureFlagsAsync({ user: session?.user, req: context.req });
 
+    // Real controller backing the SSG procedure `ctx.signal`, so a page prefetch
+    // can cancel its in-flight query on a deadline (see the images-feed prefetch).
+    // Created only when we build an SSG helper; exposed to the resolver below.
+    const ssgAbortController = new AbortController();
     const ssg =
       useSSG && (prefetch === 'always' || !isClient)
-        ? await getServerProxySSGHelpers(context, session, features)
+        ? await getServerProxySSGHelpers(context, session, features, ssgAbortController)
         : undefined;
 
     // Flag-gated SSR-prefetch of the universal app-shell queries into the shared
@@ -379,6 +466,9 @@ export function createServerSideProps<P>({
       ssg,
       session,
       features,
+      // Only meaningful when `ssg` exists; a page prefetch fires `.abort()` on its
+      // deadline to release a heavy bulkhead slot early.
+      ssgAbortController: ssg ? ssgAbortController : undefined,
     })) ?? { props: {} }) as GetPropsFnResult<NonNullable<P>>;
 
     if (result.redirect) return { redirect: result.redirect };
@@ -429,5 +519,7 @@ type CustomGetServerSidePropsContext = {
   ssg?: AsyncReturnType<typeof getServerProxySSGHelpers>;
   session?: Session | null;
   features?: FeatureAccess;
+  /** Backs the SSG `ctx.signal`; a page prefetch aborts it on its deadline to free a heavy slot early. */
+  ssgAbortController?: AbortController;
   // browsingLevel: number;
 };

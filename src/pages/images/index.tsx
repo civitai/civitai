@@ -24,12 +24,15 @@ import {
 // (the same cost the homepage already pays). Flux/CDN cache-control is unchanged.
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  resolver: async ({ ssg, session, features }) => {
+  resolver: async ({ ssg, session, features, ctx, ssgAbortController }) => {
     // `ssg` exists only on full SSR (never a client-nav `/_next/data` fetch), and
     // the prefetch is gated on the dark, independently-ramped flag. Flag OFF (the
     // default) → zero added backend work; the page render / props are unaffected.
+    // `ctx.query` gates out filtered feeds (`?period=…` etc.) whose client key
+    // differs; `ssgAbortController` lets the prefetch release its heavy bulkhead
+    // slot on the deadline.
     if (ssg && features?.ssrPrefetchImagesFeed) {
-      await prefetchImagesFeedQueries(ssg, session ?? null);
+      await prefetchImagesFeedQueries(ssg, session ?? null, ctx.query, ssgAbortController);
     }
   },
 });
