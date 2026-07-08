@@ -8,6 +8,7 @@ import { logToAxiom } from '~/server/logging/client';
 import type { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import {
+  TrainingRecordNotFoundError,
   updateTrainingWorkflowRecords,
   type CustomImageResourceTrainingStep,
   type CustomTrainingStep,
@@ -134,6 +135,24 @@ export default WebhookEndpoint(async (req, res) => {
         }
       } catch (e: unknown) {
         const err = e as Error | undefined;
+        // A permanently-missing training record (deleted / orphaned ModelFile)
+        // will NEVER succeed on retry. The orchestrator delivers this webhook via
+        // its workflow-callback HttpClient, which uses Polly's
+        // StandardResilienceHandler — it retries on 5xx / 408 / 429 / network
+        // errors but NOT on a 2xx. Returning 500 here therefore turned a single
+        // orphaned training into a retry-amplified 500 storm (observed: 184
+        // 500s/hr for one training id). ACK it once (200) — with a warn log kept
+        // for visibility — so the orchestrator stops retrying.
+        if (e instanceof TrainingRecordNotFoundError) {
+          logWebhook({
+            type: 'warning',
+            message: 'Training record gone — acking to stop orchestrator retries',
+            data: { error: err?.message, status, workflowId },
+          });
+          return res.status(200).json({ ok: true, skipped: 'record-not-found' });
+        }
+        // Genuine transient / unexpected failures stay 5xx so the orchestrator's
+        // retry can legitimately recover them.
         logWebhook({
           message: 'Failed to update record',
           data: { error: err?.message, cause: err?.cause, stack: err?.stack, status, workflowId },

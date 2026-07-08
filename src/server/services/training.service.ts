@@ -482,6 +482,21 @@ export type TrainingWorkflowUpdateResult = {
 };
 
 /**
+ * Thrown when the training's backing ModelFile no longer exists (deleted or
+ * orphaned training). This condition is PERMANENT — retrying the workflow
+ * webhook will never succeed — so the webhook handler catches this specific
+ * type and acks (200) instead of returning 500, stopping the orchestrator's
+ * retry storm. A genuine transient failure (DB error, timeout) throws a plain
+ * Error and stays a 5xx so the orchestrator's retry can legitimately recover it.
+ */
+export class TrainingRecordNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TrainingRecordNotFoundError';
+  }
+}
+
+/**
  * Updates the model file metadata and model version training status based on workflow data.
  * Returns data needed for notifications (signals, emails, webhooks) which should be handled by the caller.
  */
@@ -578,7 +593,7 @@ export async function updateTrainingWorkflowRecords(
       },
     },
   });
-  if (!modelFile) throw new Error(`ModelFile not found: "${modelFileId}"`);
+  if (!modelFile) throw new TrainingRecordNotFoundError(`ModelFile not found: "${modelFileId}"`);
 
   const { modelVersion } = modelFile;
   const { model } = modelVersion;
