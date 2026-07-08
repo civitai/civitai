@@ -344,6 +344,7 @@ export type AppListing = {
   external_url: string | null;
   connect_client_id: string | null;
   app_block_id: string | null;
+  revision_of_id: string | null;
   featured: Generated<boolean>;
   featured_order: number | null;
   user_id: number;
@@ -362,6 +363,19 @@ export type AppListingMetric = {
   tipped_amount_count: Generated<number>;
   updated_at: Generated<Timestamp>;
 };
+export type AppListingModerationEvent = {
+  id: string;
+  app_listing_id: string | null;
+  slug: string;
+  actor_user_id: number | null;
+  report_id: string | null;
+  action: string;
+  reason: string | null;
+  detail: string | null;
+  before: unknown | null;
+  after: unknown | null;
+  created_at: Generated<Timestamp>;
+};
 export type AppListingPublishRequest = {
   id: string;
   app_listing_id: string | null;
@@ -375,6 +389,18 @@ export type AppListingPublishRequest = {
   rejection_reason: string | null;
   approval_notes: string | null;
   changelog: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+};
+export type AppListingReport = {
+  id: string;
+  app_listing_id: string;
+  reporter_user_id: number;
+  reason: string;
+  details: string | null;
+  status: Generated<string>;
+  resolved_by_user_id: number | null;
+  resolved_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };
@@ -738,7 +764,21 @@ export type Blocklist = {
 export type BlockScopeInvocation = {
   id: Generated<string>;
   user_id: number;
-  app_block_id: string;
+  /**
+   * NULLABLE (App Dev Tunnel Phase 2): a PRE-APPROVAL dev-tunnel spend has NO
+   * AppBlock row (approval is what creates it), so the token carries a SYNTHETIC
+   * `ephemeral-<slug>` appBlockId that can never FK-resolve. For that case this
+   * column is NULL and the synthetic ref is captured in `syntheticAppId`, so the
+   * durable per-spend audit row persists instead of FK-failing + being swallowed
+   * (the "only a log line" gap). An APPROVED app still sets this (real FK).
+   */
+  app_block_id: string | null;
+  /**
+   * The synthetic, non-resolving dev-app reference (`ephemeral-<slug>` /
+   * `local-<slug>` / `pending-<pubreqId>`) for a PRE-APPROVAL dev-tunnel spend —
+   * the forensic anchor when `appBlockId` is NULL. NULL for every approved-app row.
+   */
+  synthetic_app_id: string | null;
   block_instance_id: string;
   scope: string;
   endpoint: string;
@@ -3717,7 +3757,9 @@ export type DB = {
   app_blocks: AppBlock;
   app_dev_forgejo_identity: AppDevForgejoIdentity;
   app_listing_metrics: AppListingMetric;
+  app_listing_moderation_events: AppListingModerationEvent;
   app_listing_publish_requests: AppListingPublishRequest;
+  app_listing_reports: AppListingReport;
   app_listing_reviews: AppListingReview;
   app_listing_screenshots: AppListingScreenshot;
   app_listings: AppListing;
