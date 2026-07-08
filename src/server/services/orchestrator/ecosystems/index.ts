@@ -56,6 +56,8 @@ import { createAceAudioInput } from './ace-audio.handler';
 
 // 3D model ecosystem handlers
 import { createPolyGenInput } from './polygen-graph.handler';
+import { createTripoInput } from './tripo-graph.handler';
+import { createHunyuan3dInput } from './hunyuan3d-graph.handler';
 
 // Video ecosystem handlers
 import { createWanSteps } from './wan.handler';
@@ -238,6 +240,8 @@ export { createAceAudioInput } from './ace-audio.handler';
 
 // 3D model ecosystems
 export { createPolyGenInput } from './polygen-graph.handler';
+export { createTripoInput } from './tripo-graph.handler';
+export { createHunyuan3dInput } from './hunyuan3d-graph.handler';
 
 // Video ecosystems
 export { createWanSteps } from './wan.handler';
@@ -487,6 +491,12 @@ async function createEcosystemStep(
 
     case 'PolyGen':
       return createPolyGenInput(normalizedData, handlerCtx);
+
+    case 'Tripo':
+      return createTripoInput(normalizedData, handlerCtx);
+
+    case 'Hunyuan3D':
+      return createHunyuan3dInput(normalizedData, handlerCtx);
 
     default:
       throw new Error(`Unknown ecosystem: ${ecosystem}`);

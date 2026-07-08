@@ -73,6 +73,8 @@ import { seedanceGraph } from './seedance-graph';
 import { happyHorseGraph } from './happy-horse-graph';
 import { aceAudioGraph } from './ace-audio-graph';
 import { polyGenGraph } from './polygen-graph';
+import { tripoGraph } from './tripo-graph';
+import { hunyuan3dGraph } from './hunyuan3d-graph';
 
 // =============================================================================
 // Helper Functions
@@ -399,6 +401,11 @@ export const ecosystemGraph = new DataGraph<
     // PolyGen graph lives in `GenerationForm.tsx`, auto-hidden via Controller
     // when the active ecosystem isn't PolyGen (same pattern as ACE audio).
     { values: ['PolyGen'] as const, graph: polyGenGraph },
+    // Tripo (via Fal) + Hunyuan3D (via Comfy) — image-to-3D only. Field
+    // rendering lives in `GenerationForm.tsx`, auto-hidden via Controller when
+    // the active ecosystem isn't the matching one (same pattern as PolyGen).
+    { values: ['Tripo'] as const, graph: tripoGraph },
+    { values: ['Hunyuan3D'] as const, graph: hunyuan3dGraph },
   ])
   // Enhanced compatibility mode - txt2img only, supported ecosystems, hidden for Flux Ultra
   .node(
