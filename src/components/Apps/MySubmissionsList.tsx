@@ -16,17 +16,16 @@ import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { AppAnalyticsInline } from '~/components/Apps/AppAnalyticsInline';
 import { isStaleDeploy } from '~/components/Apps/deploy-status';
 import {
+  bucketGroupsByStatus,
   currentlyPublishedVersionId,
   filterGroups,
   groupSubmissionsByApp,
-  nextSortState,
   sortGroups,
   toDate,
-  type SortColumn,
-  type SortState,
   type SubmissionAccessors,
+  type SubmissionGroup,
 } from '~/components/Apps/submissionsTable';
-import { SortableTh, SubmissionSearch, VersionToggle } from '~/components/Apps/submissionsTableUi';
+import { StatusSections, SubmissionSearch, VersionToggle } from '~/components/Apps/submissionsTableUi';
 import { formatDate } from '~/utils/date-helpers';
 
 export type FileSummary = {
@@ -350,19 +349,33 @@ export function MySubmissionsList({
   withdrawing: boolean;
 }) {
   const [query, setQuery] = useState('');
-  const [sort, setSort] = useState<SortState>({ column: 'submitted', direction: 'desc' });
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  const groups = useMemo(() => {
+  // Group by app, apply the text filter, sort newest-first, then partition into
+  // status SECTIONS (Live / Pending / Rejected / Withdrawn). Status is now the
+  // section, so the column header is no longer sortable — a plain submittedAt-desc
+  // sort within each section keeps the newest request on top.
+  const buckets = useMemo(() => {
     const grouped = groupSubmissionsByApp(
       submissions,
       ONSITE_ACCESSORS.identity,
       ONSITE_ACCESSORS.submittedAt
     );
-    return sortGroups(filterGroups(grouped, query, ONSITE_ACCESSORS), sort, ONSITE_ACCESSORS);
-  }, [submissions, query, sort]);
+    const filtered = filterGroups(grouped, query, ONSITE_ACCESSORS);
+    const sorted = sortGroups(
+      filtered,
+      { column: 'submitted', direction: 'desc' },
+      ONSITE_ACCESSORS
+    );
+    return bucketGroupsByStatus(sorted, ONSITE_ACCESSORS.status);
+  }, [submissions, query]);
 
-  const onSort = (column: SortColumn) => setSort((prev) => nextSortState(prev, column));
+  const totalGroups =
+    buckets.live.length +
+    buckets.pending.length +
+    buckets.rejected.length +
+    buckets.withdrawn.length;
+
   const toggle = (identity: string) =>
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -371,76 +384,82 @@ export function MySubmissionsList({
       return next;
     });
 
-  return (
-    <Stack gap="xs">
-      <SubmissionSearch value={query} onChange={setQuery} testId="apps-submissions-filter" />
-      <Card withBorder p={0}>
-        <Table verticalSpacing="md" horizontalSpacing="md">
-          <Table.Thead>
-            <Table.Tr>
-              <SortableTh label="App" column="app" sort={sort} onSort={onSort} />
-              <Table.Th>Version</Table.Th>
-              <SortableTh label="Status" column="status" sort={sort} onSort={onSort} />
-              <SortableTh label="Submitted" column="submitted" sort={sort} onSort={onSort} />
-              <SortableTh label="Reviewed" column="reviewed" sort={sort} onSort={onSort} />
-              <Table.Th>Installs</Table.Th>
-              <Table.Th>Usage (30d)</Table.Th>
-              <Table.Th />
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {groups.length === 0 ? (
-              <Table.Tr>
-                <Table.Td colSpan={8}>
-                  <Text size="sm" c="dimmed" ta="center" py="sm">
-                    No submissions match “{query}”.
-                  </Text>
-                </Table.Td>
-              </Table.Tr>
-            ) : (
-              groups.map((g) => {
-                const isExpanded = expanded.has(g.identity);
-                // Single source of truth for the "live" badge + "Open live" button:
-                // the newest approved version across this listing's history.
-                const publishedId = currentlyPublishedVersionId([g.latest, ...g.older]);
-                return (
-                  <Fragment key={g.identity}>
+  const renderTable = (groups: SubmissionGroup<Submission>[]) => (
+    <Card withBorder p={0}>
+      <Table verticalSpacing="md" horizontalSpacing="md">
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>App</Table.Th>
+            <Table.Th>Version</Table.Th>
+            <Table.Th>Status</Table.Th>
+            <Table.Th>Submitted</Table.Th>
+            <Table.Th>Reviewed</Table.Th>
+            <Table.Th>Installs</Table.Th>
+            <Table.Th>Usage (30d)</Table.Th>
+            <Table.Th />
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {groups.map((g) => {
+            const isExpanded = expanded.has(g.identity);
+            // Single source of truth for the "live" badge + "Open live" button:
+            // the newest approved version across this listing's history.
+            const publishedId = currentlyPublishedVersionId([g.latest, ...g.older]);
+            return (
+              <Fragment key={g.identity}>
+                <OnsiteRow
+                  s={g.latest}
+                  nested={false}
+                  isCurrentlyPublished={g.latest.id === publishedId}
+                  onWithdraw={onWithdraw}
+                  withdrawing={withdrawing}
+                  toggle={
+                    g.older.length > 0 ? (
+                      <VersionToggle
+                        expanded={isExpanded}
+                        count={g.versionCount}
+                        onToggle={() => toggle(g.identity)}
+                        variant="subtle"
+                        testId={`apps-submissions-versions-${g.identity}`}
+                      />
+                    ) : undefined
+                  }
+                />
+                {isExpanded &&
+                  g.older.map((older) => (
                     <OnsiteRow
-                      s={g.latest}
-                      nested={false}
-                      isCurrentlyPublished={g.latest.id === publishedId}
+                      key={older.id}
+                      s={older}
+                      nested
+                      isCurrentlyPublished={older.id === publishedId}
                       onWithdraw={onWithdraw}
                       withdrawing={withdrawing}
-                      toggle={
-                        g.older.length > 0 ? (
-                          <VersionToggle
-                            expanded={isExpanded}
-                            count={g.versionCount}
-                            onToggle={() => toggle(g.identity)}
-                            variant="subtle"
-                            testId={`apps-submissions-versions-${g.identity}`}
-                          />
-                        ) : undefined
-                      }
                     />
-                    {isExpanded &&
-                      g.older.map((older) => (
-                        <OnsiteRow
-                          key={older.id}
-                          s={older}
-                          nested
-                          isCurrentlyPublished={older.id === publishedId}
-                          onWithdraw={onWithdraw}
-                          withdrawing={withdrawing}
-                        />
-                      ))}
-                  </Fragment>
-                );
-              })
-            )}
-          </Table.Tbody>
-        </Table>
-      </Card>
+                  ))}
+              </Fragment>
+            );
+          })}
+        </Table.Tbody>
+      </Table>
+    </Card>
+  );
+
+  return (
+    <Stack gap="md">
+      <SubmissionSearch value={query} onChange={setQuery} testId="apps-submissions-filter" />
+      {totalGroups === 0 ? (
+        <Card withBorder p="md">
+          <Text size="sm" c="dimmed" ta="center" py="sm">
+            No submissions match “{query}”.
+          </Text>
+        </Card>
+      ) : (
+        <StatusSections
+          buckets={buckets}
+          testIdPrefix="apps-submissions-section"
+          renderTable={renderTable}
+        />
+      )}
     </Stack>
   );
 }

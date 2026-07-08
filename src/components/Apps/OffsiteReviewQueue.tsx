@@ -43,6 +43,7 @@ import {
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
 import { validateExternalUrl } from '~/server/schema/blocks/external-app.schema';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { formatDate as formatDateHelper } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -78,6 +79,19 @@ function formatDate(d: string | Date | null | undefined): string {
   if (!d) return '—';
   const date = typeof d === 'string' ? new Date(d) : d;
   return date.toLocaleString();
+}
+
+/**
+ * Friendly whole-day "Month D, YYYY" form (e.g. "June 7, 2026") for the external-
+ * review SUBMITTED timestamps — the modal's submitted line + the review queue's
+ * "Submitted" column. A mod deciding on a submission cares about the calendar day,
+ * not the minute. Audit-trail timestamps (report "Reported", moderation history)
+ * keep the full local formatter above where time-of-day matters. Matches
+ * `MySubmissionsList.formatSubmissionDate`.
+ */
+function formatSubmittedDate(d: string | Date | null | undefined): string {
+  if (!d) return '—';
+  return formatDateHelper(d, 'MMMM D, YYYY');
 }
 
 export function OffsiteReviewQueue() {
@@ -163,7 +177,7 @@ export function OffsiteReviewQueue() {
                   <Table.Td onClick={() => setSelected(r)}>
                     <Group gap={4}>
                       <IconClock size={14} />
-                      <Text size="xs">{formatDate(r.submittedAt)}</Text>
+                      <Text size="xs">{formatSubmittedDate(r.submittedAt)}</Text>
                     </Group>
                   </Table.Td>
                   <Table.Td>
@@ -200,7 +214,10 @@ function OffsiteReviewModal({
   const features = useFeatureFlags();
   const [rejectionReason, setRejectionReason] = useState('');
   const [approvalNotes, setApprovalNotes] = useState('');
-  const [actionMode, setActionMode] = useState<'view' | 'reject'>('view');
+  // 'view' shows only the two entry buttons; 'reject' / 'approve' each reveal their
+  // own notes textarea + confirm (approve gated behind an explicit "Approve…" click,
+  // mirroring reject — so a stray click can't approve with un-reviewed notes).
+  const [actionMode, setActionMode] = useState<'view' | 'reject' | 'approve'>('view');
 
   // Asset presence for the content checklist (author/mod-gated; a mod passes the
   // author floor). Only enabled once a row with a draft listing is open.
@@ -286,7 +303,7 @@ function OffsiteReviewModal({
           </Text>
           <Text size="xs">{request.submittedBy?.username ?? `#${request.submittedBy?.id ?? '?'}`}</Text>
           <Text size="xs" c="dimmed">
-            · {formatDate(request.submittedAt)}
+            · {formatSubmittedDate(request.submittedAt)}
           </Text>
         </Group>
 
@@ -323,16 +340,26 @@ function OffsiteReviewModal({
                 )}
               </Group>
             )}
-            <Group gap={12}>
+            <Group gap={24}>
               {request.appListing?.category && (
-                <Badge size="sm" variant="light">
-                  {request.appListing.category}
-                </Badge>
+                <Group gap={6}>
+                  <Text size="xs" c="dimmed">
+                    Category
+                  </Text>
+                  <Badge size="sm" variant="light">
+                    {request.appListing.category}
+                  </Badge>
+                </Group>
               )}
               {request.appListing?.contentRating && (
-                <Badge size="sm" color="gray" variant="light">
-                  {request.appListing.contentRating}
-                </Badge>
+                <Group gap={6}>
+                  <Text size="xs" c="dimmed">
+                    Content rating
+                  </Text>
+                  <Badge size="sm" color="gray" variant="light">
+                    {request.appListing.contentRating}
+                  </Badge>
+                </Group>
               )}
             </Group>
             {request.changelog && (
@@ -427,10 +454,12 @@ function OffsiteReviewModal({
               </Button>
             </Group>
           </Stack>
-        ) : (
+        ) : actionMode === 'approve' ? (
           <Stack gap="xs">
+            <Text size="sm" fw={600}>
+              Approval notes (optional)
+            </Text>
             <Textarea
-              label="Approval notes (optional)"
               autosize
               minRows={2}
               maxRows={6}
@@ -438,17 +467,11 @@ function OffsiteReviewModal({
               value={approvalNotes}
               onChange={(e) => setApprovalNotes(e.currentTarget.value)}
               disabled={busy}
+              data-testid="apps-offsite-approve-notes"
             />
             <Group justify="flex-end" gap="xs">
-              <Button
-                color="red"
-                variant="default"
-                leftSection={<IconX size={14} />}
-                onClick={() => setActionMode('reject')}
-                disabled={busy}
-                data-testid="apps-offsite-reject-open"
-              >
-                Reject…
+              <Button variant="default" onClick={() => setActionMode('view')} disabled={busy}>
+                Cancel
               </Button>
               <Button
                 color="green"
@@ -461,11 +484,34 @@ function OffsiteReviewModal({
                 }
                 disabled={busy}
                 loading={approveMut.isPending}
+                data-testid="apps-offsite-approve-confirm"
               >
                 Approve
               </Button>
             </Group>
           </Stack>
+        ) : (
+          <Group justify="flex-end" gap="xs">
+            <Button
+              color="red"
+              variant="default"
+              leftSection={<IconX size={14} />}
+              onClick={() => setActionMode('reject')}
+              disabled={busy}
+              data-testid="apps-offsite-reject-open"
+            >
+              Reject…
+            </Button>
+            <Button
+              color="green"
+              leftSection={<IconCheck size={14} />}
+              onClick={() => setActionMode('approve')}
+              disabled={busy}
+              data-testid="apps-offsite-approve-open"
+            >
+              Approve…
+            </Button>
+          </Group>
         )}
       </Stack>
     </Modal>

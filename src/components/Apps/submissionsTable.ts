@@ -214,3 +214,62 @@ export function ariaSortFor(
   if (sort.column !== column) return 'none';
   return sort.direction === 'asc' ? 'ascending' : 'descending';
 }
+
+// ── status sections (UX pass) ──────────────────────────────────────────────────
+
+/**
+ * The four status SECTIONS the /apps/my-submissions lists render, in display order.
+ * A group is bucketed by its `latest` submission's status:
+ *   - `approved` → **Live** (the row badge still distinguishes the onsite deploy
+ *     sub-state building/deploying/live/failed — we DON'T split approved by it),
+ *   - `pending` → **Pending**,
+ *   - `rejected` → **Rejected** (its own default-collapsed section),
+ *   - `withdrawn` → **Withdrawn** (default-collapsed),
+ *   - any other/unknown status → **Withdrawn** (a safe closed default so a future
+ *     status degrades gracefully rather than vanishing).
+ */
+export type StatusBucket = 'live' | 'pending' | 'rejected' | 'withdrawn';
+
+/** The section render order (Live → Pending → Rejected → Withdrawn). */
+export const STATUS_SECTION_ORDER: readonly StatusBucket[] = [
+  'live',
+  'pending',
+  'rejected',
+  'withdrawn',
+];
+
+/** Map a raw submission status → its display section. Unknown → `withdrawn`. */
+export function statusBucket(status: string): StatusBucket {
+  switch (status) {
+    case 'approved':
+      return 'live';
+    case 'pending':
+      return 'pending';
+    case 'rejected':
+      return 'rejected';
+    case 'withdrawn':
+      return 'withdrawn';
+    default:
+      return 'withdrawn';
+  }
+}
+
+/** Groups partitioned into the four status sections (by each group's `latest`). */
+export type BucketedGroups<T> = Record<StatusBucket, SubmissionGroup<T>[]>;
+
+/**
+ * Partition already-grouped submissions into the four status sections by each
+ * group's `latest` submission status (see {@link statusBucket}). Preserves the
+ * incoming group order within each bucket (so a pre-applied sort is retained).
+ * PURE — never mutates the input.
+ */
+export function bucketGroupsByStatus<T>(
+  groups: readonly SubmissionGroup<T>[],
+  statusOf: (row: T) => string
+): BucketedGroups<T> {
+  const result: BucketedGroups<T> = { live: [], pending: [], rejected: [], withdrawn: [] };
+  for (const group of groups) {
+    result[statusBucket(statusOf(group.latest))].push(group);
+  }
+  return result;
+}
