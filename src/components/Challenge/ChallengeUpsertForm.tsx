@@ -31,7 +31,6 @@ import {
   InputTextArea,
   useForm,
 } from '~/libs/form';
-import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { withController } from '~/libs/form/hoc/withController';
 import { toDisplayUTC, fromDisplayUTC } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
@@ -68,7 +67,6 @@ import {
 // Wrapped custom components for form integration
 const InputModelVersionMultiSelect = withController(ModelVersionMultiSelect);
 const InputContentRatingSelect = withController(ContentRatingSelect);
-const InputNumberWrapper = withController(NumberInputWrapper);
 
 // Form schema - extends server schema with flattened prize fields for UI
 // judgeId is overridden to string|null because Mantine Select uses string values
@@ -578,7 +576,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
               <>
                 <Title order={4}>Entry Fee &amp; Prizes</Title>
                 <SimpleGrid cols={{ base: 1, sm: 2 }}>
-                  <InputNumberWrapper
+                  <InputNumber
                     name="entryFee"
                     label="Entry Fee"
                     leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
@@ -589,7 +587,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                     description={`Min ${CHALLENGE_MIN_ENTRY_FEE}. ${perEntryToPool} Buzz of each entry goes to the prize pool.`}
                     disabled={isTerminal}
                   />
-                  <InputNumberWrapper
+                  <InputNumber
                     name="initialPrizeBuzz"
                     label="Initial Prize (optional)"
                     leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
@@ -632,7 +630,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
 
             <div className={prizeMode === PrizeMode.Fixed ? '' : 'hidden'}>
               <SimpleGrid cols={{ base: 1, xs: 3 }}>
-                <InputNumberWrapper
+                <InputNumber
                   name="prize1Buzz"
                   label="1st Place"
                   leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
@@ -641,7 +639,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   step={100}
                   disabled={isTerminal}
                 />
-                <InputNumberWrapper
+                <InputNumber
                   name="prize2Buzz"
                   label="2nd Place"
                   leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
@@ -650,7 +648,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   step={100}
                   disabled={isTerminal}
                 />
-                <InputNumberWrapper
+                <InputNumber
                   name="prize3Buzz"
                   label="3rd Place"
                   leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
@@ -665,7 +663,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
             <div className={prizeMode === PrizeMode.Dynamic ? '' : 'hidden'}>
               <Stack gap="md">
                 {/* Base Prize Pool */}
-                <InputNumberWrapper
+                <InputNumber
                   name="basePrizePool"
                   label="Base Prize Pool"
                   leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
@@ -677,7 +675,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
 
                 {/* Growth Rule */}
                 <SimpleGrid cols={{ base: 1, sm: 2 }}>
-                  <InputNumberWrapper
+                  <InputNumber
                     name="buzzPerAction"
                     label="Buzz Per Trigger"
                     leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
@@ -698,7 +696,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                 </SimpleGrid>
 
                 {/* Pool Cap */}
-                <InputNumberWrapper
+                <InputNumber
                   name="maxPrizePool"
                   label="Max Prize Pool (optional)"
                   description="Leave empty for unlimited growth"
@@ -755,7 +753,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
             <Divider />
 
             {/* Participation Prize - both modes */}
-            <InputNumberWrapper
+            <InputNumber
               name="entryPrizeBuzz"
               label="Participation Prize (per valid entry)"
               description="Optional buzz reward for all valid entries"
@@ -837,7 +835,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
               </>
             )}
             {!isUser && reviewCostType === ChallengeReviewCostType.PerEntry && (
-              <InputNumberWrapper
+              <InputNumber
                 name="reviewCost"
                 label="Cost Per Entry"
                 description="Buzz charged for each entry the user wants reviewed."
@@ -849,7 +847,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
               />
             )}
             {!isUser && reviewCostType === ChallengeReviewCostType.Flat && (
-              <InputNumberWrapper
+              <InputNumber
                 name="reviewCost"
                 label="Flat Rate"
                 description="One-time Buzz charge to review all of the user's entries."
