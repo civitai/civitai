@@ -6,6 +6,7 @@ import {
   IconRefresh,
   IconTrash,
   IconUpload,
+  IconX,
 } from '@tabler/icons-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
@@ -61,6 +62,19 @@ export const emptyAsset: AssetState = { status: 'idle', imageId: null, message: 
 function assetFromInitial(a: EditAsset | undefined): AssetState {
   if (!a || a.imageId == null) return emptyAsset;
   return { status: 'attached', imageId: a.imageId, message: null, previewUrl: a.url };
+}
+
+/**
+ * Merge a next icon/cover AssetState onto the previous one, PRESERVING the live
+ * preview thumbnail across lifecycle transitions. The lifecycle helpers (drive,
+ * retryAttach) apply state objects that don't carry a `previewUrl`; without this
+ * the freshly-uploaded thumbnail would vanish the instant the scan lands. A
+ * `previewUrl` of `undefined` means "leave the preview alone"; an explicit value
+ * (a string, or `null` to clear on cancel) replaces it.
+ */
+function mergePreview(prev: AssetState, next: AssetState): AssetState {
+  if (next.previewUrl !== undefined) return next;
+  return { ...next, previewUrl: prev.previewUrl };
 }
 
 /** Read the intrinsic pixel dimensions of an image File (the attach proc rejects zero/unknown). */
@@ -132,6 +146,29 @@ export function ListingAssetStep({
   // Slot key → the AppListingScreenshot row id returned by addScreenshot (so a
   // freshly-added screenshot is also removable). Prefilled rows use screenshotMeta.
   const rowIdRef = useRef<Map<string, string>>(new Map());
+  // Slot key → the LOCAL object URL (URL.createObjectURL) we minted so the user
+  // sees the image they uploaded THROUGH the scan. ONLY object URLs live here
+  // (prefill/suggestion URLs never do), so revoking any value here is always safe
+  // and never touches a non-object URL. Revoked on replace/remove/cancel/unmount.
+  const objectUrlsRef = useRef<Map<string, string>>(new Map());
+
+  // Adopt a fresh object URL for a key, revoking any prior object URL it held (a
+  // REPLACE must not leak the previous blob).
+  function setObjectUrl(key: string, url: string) {
+    const prev = objectUrlsRef.current.get(key);
+    if (prev && prev !== url) URL.revokeObjectURL(prev);
+    objectUrlsRef.current.set(key, url);
+  }
+  function revokeObjectUrl(key: string) {
+    const prev = objectUrlsRef.current.get(key);
+    if (prev) URL.revokeObjectURL(prev);
+    objectUrlsRef.current.delete(key);
+  }
+
+  // Preserving appliers for icon/cover: keep the live preview thumbnail across the
+  // working→scanning→attached transitions (see mergePreview).
+  const applyIcon = (s: AssetState) => setIcon((prev) => mergePreview(prev, s));
+  const applyCover = (s: AssetState) => setCover((prev) => mergePreview(prev, s));
 
   function clearTimer(key: string) {
     const t = timersRef.current.get(key);
@@ -151,9 +188,12 @@ export function ListingAssetStep({
 
   useEffect(() => {
     const timers = timersRef.current;
+    const urls = objectUrlsRef.current;
     return () => {
       for (const t of timers.values()) clearTimeout(t);
       timers.clear();
+      for (const u of urls.values()) URL.revokeObjectURL(u);
+      urls.clear();
     };
   }, []);
 
@@ -246,7 +286,20 @@ export function ListingAssetStep({
     if (!file) return;
     clearTimer(key);
     const epoch = bumpEpoch(key);
-    apply({ status: 'working', imageId: null, message: null });
+    // Seed a LOCAL preview immediately so the user SEES the image they uploaded
+    // while it scans (whole working→scanning→attached lifecycle, not just attached).
+    // setObjectUrl revokes any prior blob for this key (a replace mid-scan).
+    const previewUrl = URL.createObjectURL(file);
+    setObjectUrl(key, previewUrl);
+    if (kind === 'screenshot') {
+      setScreenshotMeta((prev) => ({
+        ...prev,
+        [key]: { rowId: prev[key]?.rowId ?? null, previewUrl },
+      }));
+      apply({ status: 'working', imageId: null, message: null });
+    } else {
+      apply({ status: 'working', imageId: null, message: null, previewUrl });
+    }
     try {
       const imageId = await uploadAndPersist(file);
       if (!isCurrentEpoch(key, epoch)) return;
@@ -267,7 +320,10 @@ export function ListingAssetStep({
   ) {
     clearTimer(key);
     const epoch = bumpEpoch(key);
-    apply({ status: 'working', imageId: null, message: null });
+    // The suggestion URL is itself a usable preview — show it through the scan.
+    // It's NOT an object URL, so drop any prior blob for this key (never track it).
+    revokeObjectUrl(key);
+    apply({ status: 'working', imageId: null, message: null, previewUrl: url });
     try {
       const { imageId } = await ingestMutation.mutateAsync({ url, kind });
       if (!isCurrentEpoch(key, epoch)) return;
@@ -310,6 +366,17 @@ export function ListingAssetStep({
     );
   }
 
+  function dropScreenshotSlot(id: string) {
+    setScreenshots((prev) => prev.filter((s) => s.id !== id));
+    setScreenshotMeta((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    rowIdRef.current.delete(id);
+    revokeObjectUrl(id);
+  }
+
   async function removeScreenshot(id: string) {
     const rowId = screenshotMeta[id]?.rowId ?? rowIdRef.current.get(id) ?? null;
     // Optimistically drop the slot; if the server delete fails, surface it and
@@ -323,14 +390,30 @@ export function ListingAssetStep({
         return;
       }
     }
-    setScreenshots((prev) => prev.filter((s) => s.id !== id));
-    setScreenshotMeta((prev) => {
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-    rowIdRef.current.delete(id);
+    dropScreenshotSlot(id);
     onAssetMutated?.();
+  }
+
+  /**
+   * Cancel a screenshot that never attached (working/scanning/error/timeout — no
+   * server row). Invalidate any in-flight poll (clearTimer + bumpEpoch so the
+   * isCurrentEpoch guard drops a resolving drive), drop the slot, and revoke its
+   * blob. NO server call: nothing was attached; a persisted-but-unattached Image
+   * row is a harmless orphan. Always allowed — cancelling your own in-flight upload
+   * is never gated by allowRemove.
+   */
+  function cancelScreenshot(id: string) {
+    clearTimer(id);
+    bumpEpoch(id);
+    dropScreenshotSlot(id);
+  }
+
+  /** Reset an icon/cover row to idle (the wrong-upload escape hatch mid-scan). */
+  function cancelAsset(key: string, apply: (s: AssetState) => void) {
+    clearTimer(key);
+    bumpEpoch(key);
+    revokeObjectUrl(key);
+    apply({ status: 'idle', imageId: null, message: null, previewUrl: null });
   }
 
   const attachedScreenshots = screenshots.filter((s) => s.status === 'attached').length;
@@ -346,14 +429,15 @@ export function ListingAssetStep({
         label="Icon"
         description="Square-ish, ≥128px, png/jpeg/webp."
         state={icon}
-        onFile={(f) => void startAttach('icon', 'icon', f, setIcon)}
+        onFile={(f) => void startAttach('icon', 'icon', f, applyIcon)}
         onRetry={() => {
-          if (icon.imageId != null) void retryAttach('icon', 'icon', icon.imageId, setIcon);
+          if (icon.imageId != null) void retryAttach('icon', 'icon', icon.imageId, applyIcon);
         }}
+        onCancel={() => cancelAsset('icon', applyIcon)}
         suggestionUrl={suggestions.iconImageUrl}
         onAcceptSuggestion={() => {
           if (suggestions.iconImageUrl)
-            void acceptSuggestion('icon', 'icon', suggestions.iconImageUrl, setIcon);
+            void acceptSuggestion('icon', 'icon', suggestions.iconImageUrl, applyIcon);
         }}
       />
       <AssetRow
@@ -361,14 +445,15 @@ export function ListingAssetStep({
         label="Cover"
         description="Landscape, ≥640px wide, png/jpeg/webp."
         state={cover}
-        onFile={(f) => void startAttach('cover', 'cover', f, setCover)}
+        onFile={(f) => void startAttach('cover', 'cover', f, applyCover)}
         onRetry={() => {
-          if (cover.imageId != null) void retryAttach('cover', 'cover', cover.imageId, setCover);
+          if (cover.imageId != null) void retryAttach('cover', 'cover', cover.imageId, applyCover);
         }}
+        onCancel={() => cancelAsset('cover', applyCover)}
         suggestionUrl={suggestions.coverImageUrl}
         onAcceptSuggestion={() => {
           if (suggestions.coverImageUrl)
-            void acceptSuggestion('cover', 'cover', suggestions.coverImageUrl, setCover);
+            void acceptSuggestion('cover', 'cover', suggestions.coverImageUrl, applyCover);
         }}
       />
 
@@ -397,13 +482,26 @@ export function ListingAssetStep({
             <Stack gap={4}>
               {screenshots.map((s, i) => {
                 const previewUrl = screenshotMeta[s.id]?.previewUrl ?? null;
-                const removable =
-                  allowRemove && (screenshotMeta[s.id]?.rowId != null || rowIdRef.current.has(s.id));
+                const rowId = screenshotMeta[s.id]?.rowId ?? rowIdRef.current.get(s.id) ?? null;
+                // Attached (has a server row) → server-side delete, gated by
+                // allowRemove (edit mode). Otherwise (in-progress / error / timeout,
+                // no row) → a LOCAL cancel, ALWAYS allowed — cancelling your own
+                // in-flight upload is never gated by allowRemove.
+                const attached = s.status === 'attached' && rowId != null;
+                const showControl = attached ? allowRemove : true;
                 return (
                   <Group key={s.id} gap={8} justify="space-between">
                     <Group gap={8}>
                       {previewUrl && (
-                        <Image src={previewUrl} w={40} h={28} radius="sm" fit="cover" alt="" />
+                        <Image
+                          src={previewUrl}
+                          w={40}
+                          h={28}
+                          radius="sm"
+                          fit="cover"
+                          alt=""
+                          data-testid={`apps-offsite-screenshot-preview-${i}`}
+                        />
                       )}
                       <Text size="xs">Screenshot {i + 1}</Text>
                     </Group>
@@ -419,18 +517,30 @@ export function ListingAssetStep({
                           Retry
                         </Button>
                       )}
-                      {removable && (
-                        <Button
-                          size="compact-xs"
-                          variant="subtle"
-                          color="red"
-                          leftSection={<IconTrash size={12} />}
-                          onClick={() => void removeScreenshot(s.id)}
-                          data-testid={`apps-offsite-screenshot-remove-${i}`}
-                        >
-                          Remove
-                        </Button>
-                      )}
+                      {showControl &&
+                        (attached ? (
+                          <Button
+                            size="compact-xs"
+                            variant="subtle"
+                            color="red"
+                            leftSection={<IconTrash size={12} />}
+                            onClick={() => void removeScreenshot(s.id)}
+                            data-testid={`apps-offsite-screenshot-remove-${i}`}
+                          >
+                            Remove
+                          </Button>
+                        ) : (
+                          <Button
+                            size="compact-xs"
+                            variant="subtle"
+                            color="red"
+                            leftSection={<IconX size={12} />}
+                            onClick={() => cancelScreenshot(s.id)}
+                            data-testid={`apps-offsite-screenshot-cancel-${i}`}
+                          >
+                            Cancel
+                          </Button>
+                        ))}
                     </Group>
                   </Group>
                 );
@@ -464,6 +574,7 @@ function AssetRow({
   state,
   onFile,
   onRetry,
+  onCancel,
   suggestionUrl,
   onAcceptSuggestion,
 }: {
@@ -473,11 +584,22 @@ function AssetRow({
   state: AssetState;
   onFile: (file: File | null) => void;
   onRetry: () => void;
+  onCancel?: () => void;
   suggestionUrl?: string;
   onAcceptSuggestion?: () => void;
 }) {
   const showSuggestion = state.status === 'idle' && !!suggestionUrl && !!onAcceptSuggestion;
-  const showPreview = state.status === 'attached' && !!state.previewUrl;
+  // Show the preview thumbnail through the WHOLE upload lifecycle (working →
+  // scanning → attached), not just once attached — so the user sees what they
+  // uploaded while it scans.
+  const showPreview = state.status !== 'idle' && !!state.previewUrl;
+  // A wrong upload mustn't trap the user: offer Cancel while in-progress/errored.
+  const showCancel =
+    !!onCancel &&
+    (state.status === 'working' ||
+      state.status === 'scanning' ||
+      state.status === 'error' ||
+      state.status === 'timeout');
   return (
     <Card withBorder p="sm">
       <Stack gap="xs">
@@ -498,6 +620,18 @@ function AssetRow({
                 onClick={onRetry}
               >
                 Retry
+              </Button>
+            )}
+            {showCancel && (
+              <Button
+                size="compact-xs"
+                variant="subtle"
+                color="red"
+                leftSection={<IconX size={12} />}
+                onClick={onCancel}
+                data-testid={`apps-offsite-cancel-${kind}`}
+              >
+                Cancel
               </Button>
             )}
           </Group>
@@ -547,7 +681,9 @@ function AssetRow({
         )}
         <FileInput
           label={
-            showPreview
+            // "Replace" only once a committed asset is attached; while a preview is
+            // merely scanning/errored the author is still on their FIRST upload.
+            state.status === 'attached'
               ? `Replace ${kind}`
               : showSuggestion
               ? `Or upload your own ${kind}`
@@ -560,7 +696,6 @@ function AssetRow({
           leftSection={<IconUpload size={16} />}
           value={null}
           onChange={onFile}
-          disabled={state.status === 'working' || state.status === 'scanning'}
         />
         {state.message && (
           <Text size="xs" c={state.status === 'error' ? 'red' : 'dimmed'}>
