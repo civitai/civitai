@@ -28,6 +28,8 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
   'block:settings:write': "Update this block's per-install settings",
   'apps:storage:read': "Read this app's private per-install data store",
   'apps:storage:write': "Write to this app's private per-install data store",
+  'apps:storage:shared:read': "Read this app's shared, community-wide data (e.g. everyone's posts + vote counts)",
+  'apps:storage:shared:write': "Post + vote in this app's shared, community-wide data — visible to all users of the app",
 };
 
 export const SLOT_DESCRIPTIONS: Record<string, string> = {
