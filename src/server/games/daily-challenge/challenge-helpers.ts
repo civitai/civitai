@@ -1,8 +1,17 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  challengeJudgingCategoriesSchema,
+  type ChallengeJudgingCategory,
+} from '~/server/schema/challenge.schema';
+import {
+  getIsSafeBrowsingLevel,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
+import type { ChallengeCategoryKey } from '~/shared/constants/challenge.constants';
 import type { PoolTrigger } from '~/shared/utils/prisma/enums';
 import {
   ChallengeReviewCostType,
@@ -748,4 +757,36 @@ export async function resolveEventContext(eventId: number | null): Promise<Event
     winnerCooldownDays = eventRow?.winnerCooldownDays ?? null;
   }
   return { eventId, winnerCooldownDays };
+}
+
+/**
+ * Resolve the `categories` + `nsfw` inputs generateReview() needs for judging a challenge entry.
+ * User-source challenges always carry creator-defined judging categories (JSONB); other sources
+ * leave this null unless DYNAMIC_JUDGING_CATEGORIES is enabled. Parse defensively — a
+ * malformed/corrupt value falls back to the fixed theme/wittiness/humor/aesthetic scoring
+ * schema instead of failing the review. Mirrors the gate in reviewEntriesForChallenge
+ * (~/server/jobs/daily-challenge-processing.ts).
+ */
+export async function resolveChallengeReviewInputs(challenge: {
+  source: ChallengeSource;
+  judgingCategories: unknown;
+  allowedNsfwLevel: number;
+}): Promise<{
+  categories: { key: ChallengeCategoryKey; name: string; criteria: string }[] | undefined;
+  nsfw: boolean;
+}> {
+  const useCategories =
+    challenge.source === ChallengeSource.User ||
+    (await isFlipt(FLIPT_FEATURE_FLAGS.DYNAMIC_JUDGING_CATEGORIES));
+  const userJudgingCategories = useCategories
+    ? challengeJudgingCategoriesSchema.safeParse(challenge.judgingCategories)
+    : undefined;
+  const userCategories: ChallengeJudgingCategory[] | undefined = userJudgingCategories?.success
+    ? userJudgingCategories.data
+    : undefined;
+
+  return {
+    categories: userCategories?.map((c) => ({ key: c.key, name: c.label, criteria: c.criteria })),
+    nsfw: !getIsSafeBrowsingLevel(challenge.allowedNsfwLevel),
+  };
 }
