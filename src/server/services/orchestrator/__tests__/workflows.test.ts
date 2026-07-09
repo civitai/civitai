@@ -9,6 +9,12 @@ vi.mock('~/server/utils/errorHandling', () => ({
   throwInternalServerError: vi.fn().mockImplementation((msg) => new Error(msg)),
 }));
 
+// The global setup mock only provides logToAxiom; the blob-refresh error path also uses safeError.
+vi.mock('~/server/logging/client', () => ({
+  logToAxiom: vi.fn().mockResolvedValue(undefined),
+  safeError: vi.fn((e) => e),
+}));
+
 // Mock @civitai/client
 vi.mock('@civitai/client', () => ({
   addWorkflowTag: vi.fn(),
@@ -37,7 +43,7 @@ vi.mock('@civitai/client', () => ({
 
 import {
   shouldRefreshBlobUrl,
-  findBlobUrls,
+  collectBlobRefs,
   refreshBlobUrlsInBody,
   submitWorkflow,
 } from '../workflows';
@@ -46,14 +52,24 @@ import { refreshBlob, submitWorkflow as clientSubmitWorkflow } from '@civitai/cl
 
 describe('shouldRefreshBlobUrl', () => {
   it('should return false for standard non-blob URLs', () => {
-    expect(shouldRefreshBlobUrl('https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/abc.jpeg')).toBe(false);
+    expect(shouldRefreshBlobUrl('https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/abc.jpeg')).toBe(
+      false
+    );
     expect(shouldRefreshBlobUrl('https://google.com')).toBe(false);
   });
 
   it('should return true if signature or expiry is missing from consumer blob URL', () => {
-    expect(shouldRefreshBlobUrl('https://orchestration.civitai.com/v2/consumer/blobs/abc.jpeg')).toBe(true);
-    expect(shouldRefreshBlobUrl('https://orchestration.civitai.com/v2/consumer/blobs/abc.jpeg?sig=123')).toBe(true);
-    expect(shouldRefreshBlobUrl('https://orchestration.civitai.com/v2/consumer/blobs/abc.jpeg?exp=2026-06-07T10:00:00Z')).toBe(true);
+    expect(
+      shouldRefreshBlobUrl('https://orchestration.civitai.com/v2/consumer/blobs/abc.jpeg')
+    ).toBe(true);
+    expect(
+      shouldRefreshBlobUrl('https://orchestration.civitai.com/v2/consumer/blobs/abc.jpeg?sig=123')
+    ).toBe(true);
+    expect(
+      shouldRefreshBlobUrl(
+        'https://orchestration.civitai.com/v2/consumer/blobs/abc.jpeg?exp=2026-06-07T10:00:00Z'
+      )
+    ).toBe(true);
   });
 
   it('should return true if exp param is not a valid date', () => {
@@ -90,8 +106,8 @@ describe('shouldRefreshBlobUrl', () => {
   });
 });
 
-describe('findBlobUrls', () => {
-  it('should extract blob URLs and return correct paths in simple and nested structures', () => {
+describe('collectBlobRefs', () => {
+  it('collects a ref per stale blob URL, skips CDN URLs, and writes back via apply()', () => {
     const expiredTime = new Date(Date.now() - 60 * 1000).toISOString();
     const data = {
       prompt: 'a prompt',
@@ -110,19 +126,17 @@ describe('findBlobUrls', () => {
       },
     };
 
-    const result = findBlobUrls(data);
-    expect(result).toHaveLength(2);
-    expect(result).toContainEqual({
-      path: ['images', '0', 'url'],
-      blobId: 'BLOB-1_id.jpeg',
-    });
-    expect(result).toContainEqual({
-      path: ['sourceImage', 'url'],
-      blobId: 'BLOB_2-id.png',
-    });
+    const refs = collectBlobRefs(data);
+    expect(refs.map((r) => r.blobId).sort()).toEqual(['BLOB-1_id.jpeg', 'BLOB_2-id.png']);
+
+    // apply() writes the fresh URL back at the exact spot it was found
+    for (const ref of refs) ref.apply(`refreshed-${ref.blobId}`);
+    expect(data.images[0].url).toBe('refreshed-BLOB-1_id.jpeg');
+    expect(data.sourceImage.url).toBe('refreshed-BLOB_2-id.png');
+    expect(data.images[1].url).toBe('https://image.civitai.com/valid-cdn/abc.jpeg'); // untouched
   });
 
-  it('should stop traversing beyond a depth of 20 levels to prevent stack overflow', () => {
+  it('should stop traversing beyond a depth of 20 levels', () => {
     const expiredTime = new Date(Date.now() - 60 * 1000).toISOString();
     const deepObj: any = {};
     let current = deepObj;
@@ -133,8 +147,8 @@ describe('findBlobUrls', () => {
     }
     current.url = `https://orchestration.civitai.com/v2/consumer/blobs/DEEPBLOB?sig=123&exp=${expiredTime}`;
 
-    const result = findBlobUrls(deepObj);
-    expect(result).toHaveLength(0); // Exceeded maxDepth guard of 20, should be skipped
+    const refs = collectBlobRefs(deepObj);
+    expect(refs).toHaveLength(0); // Exceeded maxDepth guard of 20, should be skipped
   });
 });
 
@@ -172,6 +186,24 @@ describe('refreshBlobUrlsInBody', () => {
     expect(stepInput.images[0]).toBe(
       'https://orchestration.civitai.com/v2/consumer/blobs/BLOB1.jpeg?sig=new-sig&exp=2030-01-01T00:00:00.000Z'
     );
+  });
+
+  it('refreshes each distinct blob once even when it appears multiple times', async () => {
+    const expiredTime = new Date(Date.now() - 60 * 1000).toISOString();
+    const url = `https://orchestration.civitai.com/v2/consumer/blobs/DUPBLOB.jpeg?sig=123&exp=${expiredTime}`;
+    const body: WorkflowTemplate = {
+      steps: [{ $type: 'imageGen', input: { source: url, reference: url } }] as any,
+    };
+
+    const client = {
+      getConfig: () => ({ baseUrl: 'https://orchestration.civitai.com' }),
+    } as any;
+    await refreshBlobUrlsInBody(body, client);
+
+    expect(refreshBlob).toHaveBeenCalledTimes(1);
+    const input = body.steps[0].input as any;
+    expect(input.source).toContain('sig=new-sig');
+    expect(input.reference).toContain('sig=new-sig');
   });
 
   it('should propagate and raise throwBadRequestError if refreshing fails', async () => {
