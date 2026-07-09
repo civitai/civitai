@@ -10,6 +10,7 @@ import { openrouter, AI_MODELS, type AIModel } from '~/server/services/ai/openro
 import type { SimpleMessage } from '~/server/services/ai/openrouter';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import {
+  DEFAULT_CATEGORY_ROWS,
   sanitizeCategoryLabel,
   type ChallengeCategoryKey,
 } from '~/shared/constants/challenge.constants';
@@ -383,12 +384,16 @@ export function injectRubrics(
 export function buildFallbackMessages(input: GenerateReviewInput): SimpleMessage[] {
   const themeElementsLine = formatThemeElementsLine(input.themeElements);
   const userText = `Theme: ${input.theme}${themeElementsLine}\nCreator: ${input.creator}`;
+  // Response schema keys on the REAL categories: a null/empty-category challenge keeps the fixed
+  // RESPONSE_SCHEMA (lowercase theme/wittiness/humor/aesthetic). Rubric injection, however, always
+  // resolves the sentinel — falling back to DEFAULT_CATEGORY_ROWS so a migrated prompt with no
+  // categories still gets the canonical default blocks instead of a literal {{SCORING_RUBRICS}}.
+  // injectRubrics is a no-op when the sentinel is absent, so unmigrated prompts stay byte-identical.
   const responseSchema = input.categories?.length
     ? buildCategoryReviewSchema(input.categories)
     : RESPONSE_SCHEMA;
-  const reviewText = input.categories?.length
-    ? injectRubrics(input.config.prompts.review, input.categories, input.nsfw)
-    : input.config.prompts.review;
+  const effectiveCategories = input.categories?.length ? input.categories : DEFAULT_CATEGORY_ROWS;
+  const reviewText = injectRubrics(input.config.prompts.review, effectiveCategories, input.nsfw);
 
   return [
     prepareSystemMessage(input.config, 'review', responseSchema, reviewText),

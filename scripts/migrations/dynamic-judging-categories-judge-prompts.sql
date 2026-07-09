@@ -35,11 +35,16 @@
 --      a graceful no-op, and NOT limited to a short transition window: `createUpcomingChallenge`
 --      / `createChallengesBatch` do not set `judgingCategories` on newly-created daily
 --      challenges, so this keeps happening for every new daily challenge indefinitely, not just
---      until Task 8's one-off historical backfill runs. Before applying this file, confirm with
---      the team either (a) new daily/mod challenges are seeded with `judgingCategories` at
---      creation time (not just backfilled once), or (b) `buildFallbackMessages`/`injectRubrics`
---      gains a default-categories fallback for the "sentinel present, categories absent" case.
---      See .superpowers/sdd/task-7-report.md for the full analysis.
+--      until Task 8's one-off historical backfill runs.
+--      *** RESOLVED (Task 9) ***: `buildFallbackMessages` now ALWAYS resolves the sentinel —
+--      when `input.categories` is null/empty it injects the rubric blocks for
+--      `DEFAULT_CATEGORY_ROWS` (theme/wittiness/humor/aesthetic) via `injectRubrics`, reproducing
+--      the exact canonical blocks this file removes, while KEEPING the fixed `RESPONSE_SCHEMA`
+--      (lowercase keys). So a null/empty-category challenge with a migrated prompt no longer sends
+--      a literal `{{SCORING_RUBRICS}}` — it renders the pre-migration prompt equivalent. This is
+--      the code-side prerequisite (point 3 option (b)); it has LANDED, so this file is now safe to
+--      apply regardless of whether challenges carry `judgingCategories`. See
+--      .superpowers/sdd/task-9-report.md (and task-7-report.md for the original analysis).
 --   4. The Flipt flag `dynamic-judging-categories` (Task 4) and Task 8's backfill are additional
 --      prerequisites layered on top of point 3 above, not substitutes for it.
 --

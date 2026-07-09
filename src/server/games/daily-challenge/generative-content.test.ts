@@ -123,6 +123,50 @@ describe('buildFallbackMessages — rubric injection', () => {
   });
 });
 
+describe('buildFallbackMessages — default-rubric fallback for the sentinel (Task 9)', () => {
+  // A migrated judge prompt carries the sentinel, but a null/empty-category challenge (all current
+  // daily/mod challenges) must still resolve it — to the canonical default blocks — while KEEPING the
+  // fixed RESPONSE_SCHEMA (lowercase keys). It must NOT switch to the category schema.
+  const DEFAULT_KEYS = ['theme', 'wittiness', 'humor', 'aesthetic'] as const;
+  const defaultBlock = DEFAULT_KEYS.map((k) => getCategoryRubric(k)).join('\n\n');
+
+  it.each<[string, ReviewCategory[] | undefined]>([
+    ['null categories', undefined],
+    ['empty categories', []],
+  ])(
+    'sentinel present + %s → default rubric blocks injected, fixed RESPONSE_SCHEMA, no unresolved sentinel',
+    (_label, categories) => {
+      const review = 'Judge the image below.\n\n{{SCORING_RUBRICS}}\n\nBe strict.';
+      const config = makeConfig(review);
+      const messages = buildFallbackMessages(makeInput(config, categories));
+      const text = systemText(messages);
+
+      // Sentinel fully resolved — the whole point of Task 9.
+      expect(text).not.toContain('{{SCORING_RUBRICS}}');
+
+      // The four canonical default rubric blocks are present.
+      expect(text).toContain('THEME SCORING');
+      expect(text).toContain('WITTINESS SCORING');
+      expect(text).toContain('HUMOR SCORING');
+      expect(text).toContain('AESTHETIC SCORING');
+
+      // Injected prompt is byte-exact: sentinel → joined default blocks (theme/wittiness/humor/aesthetic).
+      const injected = `Judge the image below.\n\n${defaultBlock}\n\nBe strict.`;
+      expect(
+        text.startsWith(
+          `${config.prompts.systemMessage}\n\n${stripLeadingWhitespace(injected)}\n\nReply with json\n\n`
+        )
+      ).toBe(true);
+
+      // Schema stays the FIXED RESPONSE_SCHEMA (lowercase keys) — NOT the category schema.
+      expect(text).toContain('"theme": number');
+      expect(text).toContain('"wittiness": number');
+      expect(text).toContain('"humor": number');
+      expect(text).toContain('"aesthetic": number');
+    }
+  );
+});
+
 describe('buildCategoryReviewSchema', () => {
   it('includes the optional aestheticFlaws field', () => {
     const schema = buildCategoryReviewSchema([{ name: 'Theme', criteria: 'fits' }]);
