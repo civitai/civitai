@@ -27,12 +27,15 @@ RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
 ##### build — vite build → apps/creator-studio/build (adapter-node output) #################
 FROM deps AS build
 WORKDIR /app
-# Build-only placeholder: db.ts builds its pg.Pool at module load (new URL(env.DATABASE_URL)),
-# so SvelteKit's `analyse` postbuild step — which imports the server modules — throws
-# ERR_INVALID_URL when DATABASE_URL is unset. The pool never connects during build; this dummy
-# only satisfies the URL parse. It lives ONLY in this stage and is NOT carried into `runtime`
-# (separate FROM), so the real value comes from the k8s secret at run time.
+# Build-only placeholders: db.ts (src/lib/server/db.ts) calls createKyselyClients with
+# required('DATABASE_URL') AND required('DATABASE_REPLICA_URL') at module load, so once any
+# server route imports dbRead/dbWrite, SvelteKit's `analyse` postbuild step — which imports the
+# server modules — throws "DATABASE_REPLICA_URL is not configured" if either is unset. The pools
+# never connect during build; these dummies only satisfy the required() guard. They live ONLY in
+# this stage and are NOT carried into `runtime` (separate FROM), so the real values come from the
+# k8s secret at run time. Both are set so the build stays green as the app wires up its DB reads.
 ENV DATABASE_URL=postgres://build:build@localhost:5432/build
+ENV DATABASE_REPLICA_URL=postgres://build:build@localhost:5432/build
 COPY packages ./packages
 COPY apps/creator-studio ./apps/creator-studio
 RUN pnpm --filter @civitai/creator-studio-app build
