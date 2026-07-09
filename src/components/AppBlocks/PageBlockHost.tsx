@@ -970,6 +970,214 @@ export function PageBlockHost({
     return off;
   }, [onMessage, send, token, trpcUtils]);
 
+  // ── App Blocks SHARED (cross-user / app-global) storage bridge (Phase 2b) ──
+  //
+  // The public-write sibling of the per-user KV bridge above. A page block
+  // (e.g. a community "requests"/voting app, entity=none) drives the shared
+  // datastore via the @civitai/app-sdk shared-storage hook, which posts
+  // SHARED_LIST / GET_COUNT / GET_COUNTS / APPEND / VOTE / UNVOTE / WITHDRAW and
+  // AWAITS the matching SHARED_*_RESULT. Unhandled ⇒ the block hangs to the SDK
+  // 30s timeout (the gotcha-#73 "spins forever" class). We mirror the APP_STORAGE
+  // handlers EXACTLY: the HOST injects the block `token` prop it already holds as
+  // `blockToken` (NEVER trusts a token from the message), reads go through
+  // trpc.useUtils().apps.shared.*.fetch, writes through the useMutation hooks, and
+  // every reply comes back with the SAME requestId on BOTH the success path and
+  // the error path (`error: <string>`, never thrown upward) so the block-side
+  // hook rejects cleanly instead of stranding the bridge.
+  //
+  // NO client-side scope/flag gate here (mirrors APP_STORAGE): the block token
+  // must carry `apps:storage:shared:*` and the dedicated fail-closed Flipt flag +
+  // trust gate are enforced SERVER-side (resolveSharedContext). The only client
+  // precondition is the same non-null `token` the storage handlers use — a null
+  // token means the block never rendered a usable surface, so the request is
+  // dropped without replying (the mint path surfaces no_token/error above).
+  const sharedAppendMutation = trpc.apps.shared.append.useMutation();
+  const sharedVoteMutation = trpc.apps.shared.vote.useMutation();
+  const sharedUnvoteMutation = trpc.apps.shared.unvote.useMutation();
+  const sharedWithdrawMutation = trpc.apps.shared.withdraw.useMutation();
+
+  // SHARED_LIST → apps.shared.list → SHARED_LIST_RESULT (query).
+  useEffect(() => {
+    const off = onMessage<
+      | {
+          requestId?: unknown;
+          prefix?: unknown;
+          limit?: unknown;
+          cursor?: unknown;
+        }
+      | undefined
+    >('SHARED_LIST', async (raw) => {
+      if (!raw || typeof raw.requestId !== 'string' || !token) return;
+      const requestId = raw.requestId;
+      try {
+        const prefix = typeof raw.prefix === 'string' ? raw.prefix : undefined;
+        // Server caps `limit` at 100; clamp client-side to match (mirrors the
+        // APP_STORAGE_LIST 200-clamp against its own server max).
+        const limit =
+          typeof raw.limit === 'number' && Number.isFinite(raw.limit)
+            ? Math.min(Math.max(Math.floor(raw.limit), 1), 100)
+            : 50;
+        const cursor = typeof raw.cursor === 'string' ? raw.cursor : undefined;
+        const result = await trpcUtils.apps.shared.list.fetch({
+          blockToken: token,
+          prefix,
+          limit,
+          cursor,
+        });
+        send('SHARED_LIST_RESULT', {
+          requestId,
+          items: result.items.map((it) => ({
+            key: it.key,
+            authorUserId: it.authorUserId,
+            value: it.value,
+            count: it.count,
+            createdAt:
+              it.createdAt instanceof Date ? it.createdAt.toISOString() : String(it.createdAt),
+            updatedAt:
+              it.updatedAt instanceof Date ? it.updatedAt.toISOString() : String(it.updatedAt),
+          })),
+          nextCursor: result.nextCursor,
+        });
+      } catch (err) {
+        send('SHARED_LIST_RESULT', { requestId, error: storageErrorMessage(err) });
+      }
+    });
+    return off;
+  }, [onMessage, send, token, trpcUtils]);
+
+  // SHARED_GET_COUNT → apps.shared.getCount → SHARED_GET_COUNT_RESULT (query).
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
+      'SHARED_GET_COUNT',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+          return;
+        const requestId = raw.requestId;
+        try {
+          const result = await trpcUtils.apps.shared.getCount.fetch({
+            blockToken: token,
+            key: raw.key,
+          });
+          send('SHARED_GET_COUNT_RESULT', { requestId, count: result.count });
+        } catch (err) {
+          send('SHARED_GET_COUNT_RESULT', { requestId, error: storageErrorMessage(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, trpcUtils]);
+
+  // SHARED_GET_COUNTS → apps.shared.getCounts → SHARED_GET_COUNTS_RESULT (query).
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; keys?: unknown } | undefined>(
+      'SHARED_GET_COUNTS',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || !Array.isArray(raw.keys) || !token) return;
+        const requestId = raw.requestId;
+        try {
+          const result = await trpcUtils.apps.shared.getCounts.fetch({
+            blockToken: token,
+            keys: raw.keys as string[],
+          });
+          send('SHARED_GET_COUNTS_RESULT', { requestId, counts: result.counts });
+        } catch (err) {
+          send('SHARED_GET_COUNTS_RESULT', { requestId, error: storageErrorMessage(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, trpcUtils]);
+
+  // SHARED_APPEND → apps.shared.append → SHARED_APPEND_RESULT (mutation).
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; value?: unknown } | undefined>(
+      'SHARED_APPEND',
+      async (raw) => {
+        if (
+          !raw ||
+          typeof raw.requestId !== 'string' ||
+          typeof raw.value !== 'object' ||
+          raw.value === null ||
+          !token
+        )
+          return;
+        const requestId = raw.requestId;
+        try {
+          // Server zod-validates {title, body?}; a malformed value rejects
+          // BAD_REQUEST → the error path below (never a hang).
+          const result = await sharedAppendMutation.mutateAsync({
+            blockToken: token,
+            value: raw.value as { title: string; body?: string },
+          });
+          send('SHARED_APPEND_RESULT', { requestId, key: result.key });
+        } catch (err) {
+          send('SHARED_APPEND_RESULT', { requestId, error: storageErrorMessage(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, sharedAppendMutation]);
+
+  // SHARED_VOTE → apps.shared.vote → SHARED_VOTE_RESULT (mutation).
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
+      'SHARED_VOTE',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+          return;
+        const requestId = raw.requestId;
+        try {
+          const result = await sharedVoteMutation.mutateAsync({ blockToken: token, key: raw.key });
+          send('SHARED_VOTE_RESULT', { requestId, count: result.count });
+        } catch (err) {
+          send('SHARED_VOTE_RESULT', { requestId, error: storageErrorMessage(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, sharedVoteMutation]);
+
+  // SHARED_UNVOTE → apps.shared.unvote → SHARED_UNVOTE_RESULT (mutation).
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
+      'SHARED_UNVOTE',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+          return;
+        const requestId = raw.requestId;
+        try {
+          const result = await sharedUnvoteMutation.mutateAsync({ blockToken: token, key: raw.key });
+          send('SHARED_UNVOTE_RESULT', { requestId, count: result.count });
+        } catch (err) {
+          send('SHARED_UNVOTE_RESULT', { requestId, error: storageErrorMessage(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, sharedUnvoteMutation]);
+
+  // SHARED_WITHDRAW → apps.shared.withdraw → SHARED_WITHDRAW_RESULT (mutation).
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
+      'SHARED_WITHDRAW',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+          return;
+        const requestId = raw.requestId;
+        try {
+          const result = await sharedWithdrawMutation.mutateAsync({
+            blockToken: token,
+            key: raw.key,
+          });
+          send('SHARED_WITHDRAW_RESULT', { requestId, ok: result.ok, deleted: result.deleted });
+        } catch (err) {
+          send('SHARED_WITHDRAW_RESULT', { requestId, error: storageErrorMessage(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, sharedWithdrawMutation]);
+
   // ── OPEN_RESOURCE_PICKER → RESOURCE_PICKER_RESULT (Design 1 host-chrome) ────
   //
   // Generalizes the model-slot OPEN_CHECKPOINT_PICKER (IframeHost) to the page
