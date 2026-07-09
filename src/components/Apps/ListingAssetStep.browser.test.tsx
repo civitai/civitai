@@ -285,7 +285,7 @@ describe('ListingAssetStep — uploaded-asset preview + cancel mid-scan', () => 
   const prefill = {
     icon: { imageId: 1, url: 'https://edge/icon.png' },
     cover: { imageId: 2, url: 'https://edge/cover.png' },
-    screenshots: [{ id: 'row-9', imageId: 3, url: 'https://edge/shot.png' }],
+    screenshots: [{ id: 'row-9', imageId: 3, url: 'https://edge/shot.png', caption: null, order: 0 }],
   };
 
   test('an attached prefilled screenshot offers NO remove/cancel when allowRemove=false', async () => {
