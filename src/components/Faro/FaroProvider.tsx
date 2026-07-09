@@ -147,13 +147,22 @@ function scrubBeacon(item: TransportItem): TransportItem | null {
 function processBeacon(item: TransportItem): TransportItem | null {
   if (item.type !== TransportItemType.EXCEPTION) return scrubBeacon(item);
 
-  const classification = classifyException(item.payload as ClassifiableException);
-  if (classification.drop) return null; // known-benign noise → never sent
+  // Classification FAILS OPEN: only redaction (scrubBeacon) may drop a beacon. A classifier
+  // bug / odd payload shape must NEVER swallow a real exception — on any throw, fall through to
+  // KEEPING it tagged `real` (the exact default-keep path). Redaction stays fail-closed below.
+  let category = 'real';
+  try {
+    const classification = classifyException(item.payload as ClassifiableException);
+    if (classification.drop) return null; // known-benign noise → never sent
+    category = classification.category;
+  } catch {
+    // keep with category 'real'
+  }
 
   const scrubbed = scrubBeacon(item);
   if (!scrubbed) return null; // redaction failed closed
   const payload = scrubbed.payload as { context?: Record<string, string> };
-  payload.context = { ...(payload.context ?? {}), error_category: classification.category };
+  payload.context = { ...(payload.context ?? {}), error_category: category };
   return scrubbed;
 }
 

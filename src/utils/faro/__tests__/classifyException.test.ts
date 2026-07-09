@@ -211,4 +211,36 @@ describe('classifyException — conservative allowlist (NEVER drop a real bug)',
     expect(r.drop).toBe(false);
     expect(r.category).toBe('real');
   });
+
+  // Audit finding: the abort DROP was the only unanchored rule with no app-frame guard, so a
+  // genuine app error whose message merely CONTAINS an abort phrase (with a real app frame) was
+  // being dropped. It must now be KEPT as `real`.
+  it('does NOT drop a real app error that CONTAINS "The operation was aborted" but has an app frame', () => {
+    const r = classifyException(
+      exc('Error', 'The operation was aborted while writing user settings', {
+        frames: [
+          { filename: 'turbopack://[project]/src/store/user.ts', function: 'save', lineno: 88, colno: 12 },
+        ],
+      })
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // Audit finding: a malformed (non-array) `frames` must not throw and must not force a DROP.
+  // Classification FAILS OPEN — an odd payload shape is KEPT as `real`.
+  it('does NOT throw or drop on a malformed non-array stacktrace.frames', () => {
+    const malformed = {
+      type: 'TypeError',
+      value: "Cannot read properties of undefined (reading 'id')",
+      // Deliberately malformed: `frames` is an object, not an array.
+      stacktrace: { frames: {} as unknown as [] },
+    };
+    let r!: ReturnType<typeof classifyException>;
+    expect(() => {
+      r = classifyException(malformed);
+    }).not.toThrow();
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
 });

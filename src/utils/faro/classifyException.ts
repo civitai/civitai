@@ -148,7 +148,9 @@ function anyMatch(res: RegExp[], text: string): boolean {
  */
 function isInjectedOnlyStack(exc: ClassifiableException): boolean {
   const frames = exc.stacktrace?.frames;
-  if (!frames || frames.length === 0) return false;
+  // Guard against a malformed (non-array) `frames` — treat as "not injected-only" so an odd
+  // payload shape can never force a DROP. Classification must FAIL OPEN (keep), never closed.
+  if (!Array.isArray(frames) || frames.length === 0) return false;
   return frames.every((f) => isInjectedFrame(f));
 }
 
@@ -182,11 +184,16 @@ export function classifyException(exc: ClassifiableException | null | undefined)
   // message form still fires. We keep matching CONSERVATIVE (explicit patterns only).
   const typed = type ? `${type}: ${value}` : value;
 
-  // 1) DROP — request aborts (AbortError family + route-change aborts).
-  if (anyMatch(ABORT_VALUE_RES, value) || anyMatch(ABORT_VALUE_RES, typed)) return DROP('abort');
-  if (anyMatch(ROUTECHANGE_ABORT_RES, value) || anyMatch(ROUTECHANGE_ABORT_RES, typed)) {
-    return DROP('abort');
-  }
+  // 1) DROP — request aborts (AbortError family + route-change aborts). Gated on the ABSENCE of a
+  //    project-source stack frame (same guard the network DROP uses): the abort phrases are the
+  //    only unanchored substring matches, so a genuine app error whose message merely CONTAINS
+  //    "The operation was aborted" but carries a `turbopack://` app frame must be KEPT, not dropped.
+  const abortMatch =
+    anyMatch(ABORT_VALUE_RES, value) ||
+    anyMatch(ABORT_VALUE_RES, typed) ||
+    anyMatch(ROUTECHANGE_ABORT_RES, value) ||
+    anyMatch(ROUTECHANGE_ABORT_RES, typed);
+  if (abortMatch && !hasProjectSourceFrame(exc)) return DROP('abort');
 
   // 2) DROP — ad-blocker / third-party script-load failures. Require BOTH the "Failed to load
   //    script" shape AND a known ad-network host/global, so a real "Failed to load script" for a
@@ -243,7 +250,11 @@ export function classifyException(exc: ClassifiableException | null | undefined)
  */
 function hasProjectSourceFrame(exc: ClassifiableException): boolean {
   const frames = exc.stacktrace?.frames;
-  if (!frames || frames.length === 0) return false;
+  // Guard against a malformed (non-array) `frames`. This is used to PROTECT real errors from a
+  // DROP, so on an unknown shape we return `false` (no known project frame) — but because the
+  // DROP rules that consult it also require an anchored/known message match, an odd shape can
+  // still never manufacture a drop on its own. Fails open at the classifyException level too.
+  if (!Array.isArray(frames) || frames.length === 0) return false;
   return frames.some((f) => {
     if (isInjectedFrame(f)) return false;
     const filename = (f.filename ?? '').trim();
