@@ -51,7 +51,7 @@ export function useApplyHiddenPreferences<
 
   // We need to stringify the hidden preferences to trigger a re-render when they change.
   const stringified = JSON.stringify([...hiddenImages, ...hiddenUsers, ...hiddenTags]);
-  const { items, hidden } = useMemo(() => {
+  const { items, hidden, feedDrop } = useMemo(() => {
     const preferences = { ...hiddenPreferences };
     if (hiddenImages.length > 0)
       preferences.hiddenImages = new Map([
@@ -70,7 +70,7 @@ export function useApplyHiddenPreferences<
       ]);
     }
 
-    const { items, hidden } = filterPreferences({
+    const result = filterPreferences({
       type,
       data,
       showHidden,
@@ -86,11 +86,35 @@ export function useApplyHiddenPreferences<
     });
 
     return {
-      items,
-      hidden,
+      items: result.items,
+      hidden: result.hidden,
+      // `filterPreferences` is now PURE — it returns the browsing-level feed-drop metadata
+      // for the `case 'models'` path instead of emitting telemetry during render. The emit
+      // happens in the effect below (once per commit), not here. Only the models branch
+      // carries `feedDrop`; every other branch leaves it undefined.
+      feedDrop: 'feedDrop' in result ? result.feedDrop : undefined,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, hiddenPreferences, stringified, showHidden, disabled, browsingLevel]);
+
+  // Emit the SILENT browsing-level feed-drop telemetry from a COMMIT effect, not from the
+  // render-phase memo above — emitting during render violates React purity (double-fires under
+  // StrictMode, fires on discarded concurrent renders). Keyed on the primitive drop-metadata so
+  // it fires once per commit when the drop changes, not on every render and never per-model.
+  // Gating (`droppedNoImages > 0`), the 0.05 sampling, the event shape, and the never-throws all
+  // still live in `emitFeedNoImagesDrop` (feedDrop.ts) — unchanged; only the call site moved.
+  const feedDropCount = feedDrop?.droppedNoImages ?? 0;
+  const feedDropTotal = feedDrop?.total ?? 0;
+  const feedDropBrowsingLevel = feedDrop?.browsingLevel ?? 0;
+  useEffect(() => {
+    if (feedDropCount > 0) {
+      emitFeedNoImagesDrop({
+        droppedNoImages: feedDropCount,
+        total: feedDropTotal,
+        browsingLevel: feedDropBrowsingLevel,
+      });
+    }
+  }, [feedDropCount, feedDropTotal, feedDropBrowsingLevel]);
 
   // Store current items as previous when not refetching
   // This avoids state updates and potential infinite loops
@@ -276,19 +300,21 @@ export function filterPreferences<
         })
         .filter(isDefined);
 
-      // Aggregate telemetry for the SILENT browsing-level feed-drop: one event per filter
-      // call (NOT per dropped model) carrying the per-page drop count, sampled + gated on
-      // `noImages > 0`. `hidden.noImages` is excluded from `hiddenCount`, so this is the only
-      // way the drop rate is measurable. Best-effort — never throws. See feedDrop.ts for what
-      // it measures, its limitation (can't isolate the getAll cap's contribution), the
-      // sampling, and the Loki watch query.
-      emitFeedNoImagesDrop({
-        droppedNoImages: hidden.noImages,
-        total: value.length,
-        browsingLevel,
-      });
-
-      return { items: models, hidden };
+      // PURE: return the aggregate browsing-level feed-drop metadata for the caller's commit
+      // effect to emit — one event per commit (NOT per dropped model), carrying the per-page
+      // drop count, gated + sampled downstream in `emitFeedNoImagesDrop`. `hidden.noImages` is
+      // excluded from `hiddenCount`, so this is the only way the drop rate is measurable. See
+      // feedDrop.ts for what it measures, its limitation (can't isolate the getAll cap's
+      // contribution), the sampling, and the Loki watch query.
+      return {
+        items: models,
+        hidden,
+        feedDrop: {
+          droppedNoImages: hidden.noImages,
+          total: value.length,
+          browsingLevel,
+        },
+      };
     case 'images':
       const images = value.filter((image) => {
         const userId = image.userId ?? image.user?.id;

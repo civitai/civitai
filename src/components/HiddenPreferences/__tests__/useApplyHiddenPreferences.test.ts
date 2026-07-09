@@ -1,17 +1,58 @@
+// @vitest-environment happy-dom
+import { act } from 'react';
+import { createElement } from 'react';
+import { createRoot } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Mock the telemetry sink so the filter's aggregate emit is observable without touching Faro.
+// Mock the telemetry sink so the emit is observable without touching Faro. After the
+// render-purity fix the emit no longer fires from `filterPreferences` (render phase) — it
+// fires from the hook's commit `useEffect`. These tests pin both halves of that contract.
 vi.mock('~/utils/faro/feedDrop', () => ({ emitFeedNoImagesDrop: vi.fn() }));
 
-import { filterPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+// The hook pulls its inputs from five React contexts. Stub them so the hook can render in
+// isolation (node + happy-dom) — `filterPreferences` itself takes everything as explicit args
+// and needs none of these mocks. browsingLevel = 1 (a single-bit "SFW" level) mirrors the
+// pure-filter setup below.
+vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', () => ({
+  useBrowsingLevelDebounced: () => 1,
+}));
+vi.mock('~/components/HiddenPreferences/HiddenPreferencesProvider', () => ({
+  useHiddenPreferencesContext: () => ({
+    hiddenUsers: new Map(),
+    hiddenTags: new Map(),
+    hiddenModels: new Map(),
+    hiddenModel3Ds: new Map(),
+    hiddenImages: new Map(),
+    hiddenLoading: false,
+    moderatedTags: [],
+    systemHiddenTags: new Map(),
+  }),
+}));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+vi.mock('~/providers/BrowsingSettingsAddonsProvider', () => ({
+  useBrowsingSettingsAddons: () => ({ settings: { disablePoi: false, disableMinor: false } }),
+}));
+vi.mock('~/providers/FeatureFlagsProvider', () => ({
+  useFeatureFlags: () => ({ canViewNsfw: true }),
+}));
+
+import {
+  filterPreferences,
+  useApplyHiddenPreferences,
+} from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import type { HiddenPreferencesState } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { emitFeedNoImagesDrop } from '~/utils/faro/feedDrop';
 
 /**
- * Covers the browsing-level feed-drop instrumentation wired into the `case 'models'` branch:
- * the filter emits exactly ONE aggregate telemetry event per call (never per dropped model),
- * carrying the per-page `{ droppedNoImages, total, browsingLevel }` counts. The emit/sampling/
- * shape contract itself is covered in `~/utils/faro/__tests__/feedDrop.test.ts`.
+ * Covers the browsing-level feed-drop instrumentation for the `case 'models'` branch AND the
+ * render-purity fix (fast-follow to #3037): the emit was moved out of the render-phase memo
+ * into a commit `useEffect`.
+ *
+ *  - `filterPreferences` is now PURE: it RETURNS the aggregate `{ droppedNoImages, total,
+ *    browsingLevel }` drop-metadata for the models page and NEVER calls the telemetry sink.
+ *  - `useApplyHiddenPreferences` emits exactly ONE aggregate event per commit (never per
+ *    dropped model) from an effect, gated on a real drop. The emit/sampling/shape contract
+ *    itself is covered in `~/utils/faro/__tests__/feedDrop.test.ts`.
  *
  * Setup: browsingLevel = 1 (a single-bit "SFW" level). A model row with `nsfwLevel: 1` passes
  * the row gate; its images are then kept iff `nsfwLevel & 1 !== 0`. So an image of `nsfwLevel: 2`
@@ -52,13 +93,31 @@ const runModels = (models: ReturnType<typeof makeModel>[]) =>
     canViewNsfw: true,
   });
 
-describe('filterPreferences — models browsing-level drop instrumentation', () => {
-  beforeEach(() => {
-    vi.mocked(emitFeedNoImagesDrop).mockClear();
-    nextId = 1;
+// Minimal renderHook (no @testing-library/react in this repo): render a null component that
+// calls the hook, driven under React 18 `act` so commit effects flush. happy-dom supplies the
+// DOM `createRoot` needs.
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+function renderHook<T>(useHook: () => T) {
+  const result = { current: undefined as T };
+  const container = document.createElement('div');
+  const root = createRoot(container);
+  function Probe() {
+    result.current = useHook();
+    return null;
+  }
+  act(() => {
+    root.render(createElement(Probe));
   });
+  return { result, unmount: () => act(() => root.unmount()) };
+}
 
-  it('emits ONE aggregate event with droppedNoImages=M, total=N (not one per dropped model)', () => {
+beforeEach(() => {
+  vi.mocked(emitFeedNoImagesDrop).mockClear();
+  nextId = 1;
+});
+
+describe('filterPreferences — models drop metadata is PURE (no telemetry side-effect)', () => {
+  it('returns aggregate feedDrop { droppedNoImages=M, total=N } and does NOT call the sink', () => {
     // 5 models in, 2 drop for noImages, 3 survive.
     const models = [
       makeModel('keep'),
@@ -68,32 +127,62 @@ describe('filterPreferences — models browsing-level drop instrumentation', () 
       makeModel('keep'),
     ];
 
-    const { items, hidden } = runModels(models);
+    const { items, hidden, feedDrop } = runModels(models);
 
     // sanity: the filter itself dropped 2 and kept 3
     expect(hidden.noImages).toBe(2);
     expect(items).toHaveLength(3);
 
-    // exactly ONE emit for the whole page — proves it is aggregate, not per dropped model
+    // the drop-metadata is RETURNED (aggregate, per page — not per dropped model)…
+    expect(feedDrop).toEqual({
+      droppedNoImages: 2,
+      total: 5,
+      browsingLevel: BROWSING_LEVEL,
+    });
+    // …and the side-effect is GONE from render: the filter never touches the sink.
+    expect(emitFeedNoImagesDrop).not.toHaveBeenCalled();
+  });
+
+  it('still returns feedDrop (droppedNoImages=0) when nothing drops — the M=0 gate lives downstream', () => {
+    const { hidden, feedDrop } = runModels([makeModel('keep'), makeModel('keep')]);
+
+    expect(hidden.noImages).toBe(0);
+    expect(feedDrop).toEqual({ droppedNoImages: 0, total: 2, browsingLevel: BROWSING_LEVEL });
+    expect(emitFeedNoImagesDrop).not.toHaveBeenCalled();
+  });
+});
+
+describe('useApplyHiddenPreferences — feed-drop emit fires from the commit effect', () => {
+  it('emits exactly ONE aggregate event when a page drops M>0 models', () => {
+    const models = [
+      makeModel('keep'),
+      makeModel('drop'),
+      makeModel('keep'),
+      makeModel('drop'),
+      makeModel('keep'),
+    ];
+
+    const { unmount } = renderHook(() =>
+      useApplyHiddenPreferences({ type: 'models', data: models })
+    );
+
     expect(emitFeedNoImagesDrop).toHaveBeenCalledTimes(1);
     expect(emitFeedNoImagesDrop).toHaveBeenCalledWith({
       droppedNoImages: 2,
       total: 5,
       browsingLevel: BROWSING_LEVEL,
     });
+
+    unmount();
   });
 
-  it('still emits exactly once (droppedNoImages=0) when nothing drops — gating is delegated to the sink', () => {
-    // The M===0 "stay silent" decision lives in emitFeedNoImagesDrop (mocked here); the filter
-    // always makes exactly one aggregate call, so there is no per-model emit path to regress.
-    const { hidden } = runModels([makeModel('keep'), makeModel('keep')]);
+  it('is silent when M=0 (no page drop → the effect never calls the sink)', () => {
+    const { unmount } = renderHook(() =>
+      useApplyHiddenPreferences({ type: 'models', data: [makeModel('keep'), makeModel('keep')] })
+    );
 
-    expect(hidden.noImages).toBe(0);
-    expect(emitFeedNoImagesDrop).toHaveBeenCalledTimes(1);
-    expect(emitFeedNoImagesDrop).toHaveBeenCalledWith({
-      droppedNoImages: 0,
-      total: 2,
-      browsingLevel: BROWSING_LEVEL,
-    });
+    expect(emitFeedNoImagesDrop).not.toHaveBeenCalled();
+
+    unmount();
   });
 });
