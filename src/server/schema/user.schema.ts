@@ -145,6 +145,13 @@ export type ToggleFavoriteInput = z.infer<typeof toggleFavoriteInput>;
 export const toggleModelEngagementInput = z.object({
   modelId: z.number(),
   type: z.enum(ModelEngagementType).optional(),
+  // Explicit toggle direction. When provided, the server sets the engagement to
+  // exactly this state (subscribe vs unsubscribe) instead of blind-toggling off
+  // the current row — so a caller acting on a stale/errored/fabricated client
+  // view can never fire the OPPOSITE of the user's intent (e.g. silently DELETE
+  // a genuinely-ON Notify because the client briefly read it as off). Optional
+  // for backward-compat: absent → legacy blind toggle.
+  setTo: z.boolean().optional(),
 });
 export type ToggleModelEngagementInput = z.infer<typeof toggleModelEngagementInput>;
 
