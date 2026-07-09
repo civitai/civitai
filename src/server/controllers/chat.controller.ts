@@ -13,10 +13,12 @@ import type {
   GetMessageByIdInput,
   IsTypingInput,
   isTypingOutput,
+  MarkChatReadInput,
   ModifyUserInput,
   UpdateMessageInput,
   UserSettingsChat,
 } from '~/server/schema/chat.schema';
+import { resolveChatSettings } from '~/server/schema/chat.schema';
 import { latestChat, singleChatSelect } from '~/server/selectors/chat.selector';
 import { profileImageSelect } from '~/server/selectors/image.selector';
 import { createMessage, maxUsersPerChat, upsertChat } from '~/server/services/chat.service';
@@ -38,10 +40,10 @@ import type { ChatCreateChat } from '~/types/router';
 export const getUserSettingsHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
   try {
     const { id: userId } = ctx.user;
-    const { chat = { muteSounds: false, replaceBadWords: false, acknowledged: false } } =
-      await getUserSettings(userId);
-
-    return chat;
+    const { chat } = await getUserSettings(userId);
+    // Shared resolve helper guarantees the SSR seed (_app) and this resolver
+    // produce byte-identical output when `chat` is absent (#2471).
+    return resolveChatSettings(chat);
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -229,7 +231,16 @@ export const addUsersHandler = async ({
 
     const dedupedUserIds = uniq(input.userIds);
     const existingChatMemberIds = existing.chatMembers.map((cm) => cm.userId);
-    const usersToAdd = dedupedUserIds.filter((uid) => !existingChatMemberIds.includes(uid));
+    let usersToAdd = dedupedUserIds.filter((uid) => !existingChatMemberIds.includes(uid));
+
+    // don't pull users who have disabled chat into a chat (mods bypass)
+    if (!ctx.user.isModerator && usersToAdd.length) {
+      const settings = await Promise.all(usersToAdd.map((id) => getUserSettings(id)));
+      usersToAdd = usersToAdd.filter((_, i) => settings[i]?.features?.chat !== false);
+      if (!usersToAdd.length) {
+        throw throwBadRequestError('The requested users are not accepting chat requests');
+      }
+    }
 
     const mergedUsers = [...existingChatMemberIds, ...usersToAdd];
     if (mergedUsers.length >= maxUsersPerChat) {
@@ -441,6 +452,52 @@ export const markAllAsReadHandler = async ({ ctx }: { ctx: ProtectedContext }) =
 };
 
 /**
+ * Mark a single chat as read for the calling user. Resolves the caller's
+ * chatMember + the chat's latest message id server-side, then advances
+ * lastViewedMessageId. Gives per-chat read precision for headless/agent (MCP)
+ * callers (the website only exposes blanket markAllAsRead).
+ */
+export const markChatReadHandler = async ({
+  input,
+  ctx,
+}: {
+  input: MarkChatReadInput;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+    const { chatId } = input;
+
+    const member = await dbWrite.chatMember.findFirst({
+      where: { chatId, userId, status: ChatMemberStatus.Joined },
+      select: { id: true, lastViewedMessageId: true },
+    });
+    if (!member) throw throwNotFoundError(`You are not a member of this chat`);
+
+    const latestMessage = await dbWrite.chatMessage.findFirst({
+      where: { chatId },
+      orderBy: { id: 'desc' },
+      select: { id: true },
+    });
+
+    // No messages yet, or already up to date — nothing to advance.
+    if (!latestMessage || member.lastViewedMessageId === latestMessage.id) {
+      return { chatId, lastViewedMessageId: member.lastViewedMessageId ?? null };
+    }
+
+    await dbWrite.chatMember.update({
+      where: { id: member.id },
+      data: { lastViewedMessageId: latestMessage.id },
+    });
+
+    return { chatId, lastViewedMessageId: latestMessage.id };
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+/**
  * Get messages for a chat, intended for infinite loading
  */
 export const getInfiniteMessagesHandler = async ({
@@ -488,7 +545,7 @@ export const getInfiniteMessagesHandler = async ({
       where: { chatId: input.chatId, ...dateLimit },
       take: input.limit + 1,
       cursor: input.cursor ? { id: input.cursor } : undefined,
-      orderBy: [{ id: input.direction }],
+      orderBy: [{ id: input.sortDirection }],
     });
 
     let nextCursor: number | undefined;
@@ -498,7 +555,7 @@ export const getInfiniteMessagesHandler = async ({
       nextCursor = nextItem?.id;
     }
 
-    if (input.direction === 'desc') {
+    if (input.sortDirection === 'desc') {
       items.reverse();
     }
 

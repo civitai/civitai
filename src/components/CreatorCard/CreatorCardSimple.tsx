@@ -17,7 +17,7 @@ import { UserAvatar, UserProfileLink } from '~/components/UserAvatar/UserAvatar'
 import { constants, creatorCardStatsDefaults } from '~/server/common/constants';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { formatDate } from '~/utils/date-helpers';
-import { sortDomainLinks } from '~/utils/domain-link';
+import { getDomainLinkLabel, sortDomainLinks } from '~/utils/domain-link';
 import { trpc } from '~/utils/trpc';
 import type { UserStats } from '../UserStatBadges/UserStatBadges';
 import { UserStatBadgesV2 } from '../UserStatBadges/UserStatBadges';
@@ -113,11 +113,24 @@ const CreatorCardSimpleContent = ({
   return (
     <ElementInView component={Card} p="md" withBorder {...cardProps}>
       <Card.Section style={{ position: 'relative' }}>
-        {backgroundImage && backgroundImage.data.url ? (
+        {/* Default background as a base layer so the card always shows an image
+            (no blank flash) while a custom cosmetic loads on top of it. */}
+        <Image
+          src="/images/civitai-default-account-bg.png"
+          alt="default creator card background decoration"
+          pos="absolute"
+          top={0}
+          left={0}
+          w="100%"
+          h="100%"
+          styles={{
+            root: { objectFit: 'cover', height: '100% !important' },
+          }}
+        />
+        {backgroundImage && backgroundImage.data.url && (
           <EdgeMedia2
             src={backgroundImage.data.url}
             type={backgroundImage.data.type ?? 'image'}
-            // transcode={isVideo}
             anim={true}
             width={450}
             wrapperProps={{
@@ -142,19 +155,6 @@ const CreatorCardSimpleContent = ({
                     objectFit: 'cover',
                   }
             }
-          />
-        ) : (
-          <Image
-            src="/images/civitai-default-account-bg.png"
-            alt="default creator card background decoration"
-            pos="absolute"
-            top={0}
-            left={0}
-            w="100%"
-            h="100%"
-            styles={{
-              root: { objectFit: 'cover', height: '100% !important' },
-            }}
           />
         )}
         <Stack p="md">
@@ -237,6 +237,7 @@ const CreatorCardSimpleContent = ({
                 target="_blank"
                 rel="nofollow noreferrer"
                 size={32}
+                aria-label={getDomainLinkLabel(link)}
               >
                 <DomainIcon domain={link.domain} size={20} />
               </LegacyActionIcon>

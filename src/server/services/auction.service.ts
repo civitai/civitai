@@ -5,7 +5,10 @@ import { getModelTypesForAuction, miscAuctionName } from '~/components/Auction/a
 import { NotificationCategory, SignalMessages, SignalTopic } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import type { DetailsCanceledBid } from '~/server/notifications/auction.notifications';
+import type {
+  DetailsCanceledBid,
+  DetailsDroppedOutAuction,
+} from '~/server/notifications/auction.notifications';
 import type {
   CreateBidInput,
   DeleteBidInput,
@@ -427,8 +430,7 @@ export const createBid = async ({
     if (mv.availability === Availability.Private)
       throw throwBadRequestError('Invalid model version.');
 
-    if (mv.status !== ModelStatus.Published)
-      throw throwBadRequestError('Invalid model version.');
+    if (mv.status !== ModelStatus.Published) throw throwBadRequestError('Invalid model version.');
 
     if (mv.model.status !== ModelStatus.Published)
       throw throwBadRequestError('Invalid model version.');
@@ -487,16 +489,40 @@ export const createBid = async ({
 
   const transactionIds = createdTransactions.transactionIds.map((t) => t.transactionId);
 
-  // For notifications...
-  // const previousBidsSorted = prepareBids(auctionData).filter(
-  //   (w) => w.totalAmount >= auctionData.minPrice
-  // );
-  // const previousWinners = previousBidsSorted.map((pb) => {
-  //   const matchUserIds = auctionData.bids
-  //     .filter((b) => b.entityId === pb.entityId)
-  //     .map((b) => b.userId);
-  //   return { ...pb, userIds: matchUserIds };
-  // });
+  // Snapshot the winning set *before* this bid so we can notify anyone that this
+  // bid knocks out of a winning position. Note: `auctionData.bids` is scoped to
+  // the current user+entity (see the query above), so we must fetch the full set
+  // of bids for the auction to compute winners. This is best-effort and must never
+  // break the bid itself, so failures degrade to "no drop-out notifications".
+  const getWinningEntityIds = (bids: { entityId: number; amount: number }[]) =>
+    new Set(
+      prepareBids({
+        bids: bids.map((b) => ({ ...b, deleted: false, auctionId, createdAt: now })),
+        quantity: auctionData.quantity,
+      })
+        .filter((b) => b.totalAmount >= auctionData.minPrice)
+        .map((b) => b.entityId)
+    );
+
+  let allBidsBefore: { entityId: number; userId: number; amount: number }[] = [];
+  let previousWinnerEntityIds = new Set<number>();
+  try {
+    allBidsBefore = await dbWrite.bid.findMany({
+      where: { auctionId, deleted: false },
+      select: { entityId: true, userId: true, amount: true },
+    });
+    previousWinnerEntityIds = getWinningEntityIds(allBidsBefore);
+  } catch (e) {
+    const err = e as Error;
+    logToAxiom({
+      name: 'auction-dropped-out',
+      type: 'warning',
+      message: 'Failed to snapshot pre-bid winners',
+      details: { auctionId, entityId, userId },
+      stack: err.stack,
+      cause: err.cause,
+    }).catch();
+  }
 
   if (auctionData.bids?.length > 0) {
     // if there already exists a bid, either add to it or remove the deleted status
@@ -593,29 +619,52 @@ export const createBid = async ({
     })
     .catch();
 
-  // TODO fetch the entity that was knocked out (if any)
-  //  get all the bids userIds
+  // Notify anyone this bid knocked out of a winning position (best-effort).
+  // The new bid only raises this entity's total, so we can derive the post-bid
+  // winning set in-memory by appending the delta rather than re-querying.
+  try {
+    if (previousWinnerEntityIds.size > 0) {
+      const currentWinnerEntityIds = getWinningEntityIds([
+        ...allBidsBefore,
+        { entityId, userId, amount },
+      ]);
+      const droppedEntityIds = [...previousWinnerEntityIds].filter(
+        (id) => !currentWinnerEntityIds.has(id)
+      );
 
-  // const currentBidsSorted = prepareBids(signalData);
-  // const currentWinners = currentBidsSorted.map((pb) => {
-  //   const matchUserIds = auctionData.bids
-  //     .filter((b) => b.entityId === pb.entityId)
-  //     .map((b) => b.userId);
-  //   return { ...pb, userIds: matchUserIds };
-  // });
-  // const losers = previousWinners.filter((w) => !currentWinners.find((pw) => pw.entityId === w.entityId));
+      for (const droppedId of droppedEntityIds) {
+        const userIds = uniq(
+          allBidsBefore.filter((b) => b.entityId === droppedId).map((b) => b.userId)
+        );
+        if (userIds.length === 0) continue;
 
-  // await createNotification({
-  //   userIds: loser.userIds,
-  //   category: NotificationCategory.System,
-  //   type: 'dropped-out-auction',
-  //   key: `dropped-out-auction:${auctionId}:${loser.entityId}`,
-  //   details: {
-  //     name: loser.entityName,
-  //   } as DetailsDroppedOutAuction,
-  // });
+        const details: DetailsDroppedOutAuction = {
+          name:
+            signalData.bids.find((b) => b.entityId === droppedId)?.entityData?.model?.name ?? null,
+        };
+        // Keyed per entity per auction (auctionId is unique to the day) so a bidder
+        // gets at most one drop-out notification per entity per day.
+        await createNotification({
+          userIds,
+          category: NotificationCategory.System,
+          type: 'dropped-out-auction',
+          key: `dropped-out-auction:${auctionId}:${droppedId}`,
+          details,
+        });
+      }
+    }
+  } catch (e) {
+    const err = e as Error;
+    logToAxiom({
+      name: 'auction-dropped-out',
+      type: 'warning',
+      message: 'Failed to send drop-out notifications',
+      details: { auctionId, entityId, userId },
+      stack: err.stack,
+      cause: err.cause,
+    }).catch();
+  }
 
-  // improve return?
   return {
     slug: auctionData.auctionBase.slug,
   };

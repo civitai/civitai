@@ -9,6 +9,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { NsfwLevel } from '~/server/common/enums';
 import type { getDownleveledImages } from '~/server/services/image.service';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { browsingLevels, getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
 import { ReportStatus } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
@@ -24,6 +25,8 @@ const levelOptions = [
   })),
   { value: String(NsfwLevel.Blocked), label: getBrowsingLevelLabel(NsfwLevel.Blocked) },
 ];
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default function DownleveledReview() {
   const [limit, setLimit] = useState<string>('50');

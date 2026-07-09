@@ -27,10 +27,15 @@ export function TagScroller({
     }
   };
 
-  if (!data?.length) return null;
+  // Reserve the row height even while empty/loading. `useCategoryTags` resolves
+  // client-side, so returning null here lets the chip row pop in (26px = the
+  // compact-sm button height) and shove the feed below it down — the dominant
+  // feed-page CLS source (~0.65). Keeping both states at the same min-height
+  // holds the feed's position from first paint.
+  if (!data?.length) return <div className="min-h-[26px]" />;
 
   return (
-    <TwScrollX className="flex gap-1">
+    <TwScrollX className="flex min-h-[26px] gap-1">
       {data.map((tag) => {
         const active = value.includes(tag.id);
         return (

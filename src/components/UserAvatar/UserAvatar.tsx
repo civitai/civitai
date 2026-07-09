@@ -33,6 +33,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { isBlobUrl } from '~/utils/type-guards';
 
 const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSize: MantineSize }> =
   {
@@ -106,7 +107,7 @@ export function UserAvatar({
 
   const { data: fallbackUser, isInitialLoading } = trpc.user.getById.useQuery(
     { id: userId as number },
-    { enabled: !user && !!userId && userId > -1, cacheTime: Infinity, staleTime: Infinity }
+    { enabled: !user && !!userId && userId > -1, gcTime: Infinity, staleTime: Infinity }
   );
 
   const avatarUser = user ?? { ...fallbackUser, cosmetics: [] };
@@ -148,6 +149,9 @@ export function UserAvatar({
   const avatarBgColor = colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)';
 
   const image = avatarUser.profilePicture;
+  // A stored `blob:` url is a dead client-only handle (legacy upload bug); treat it
+  // as no picture so we fall back to user.image below instead of rendering a broken img.
+  const hasValidProfilePicture = !!image?.id && !isBlobUrl(image?.url);
   const decoration =
     withDecorations && avatarUser && !avatarUser.deletedAt
       ? (avatarUser.cosmetics?.find((c) => c.cosmetic?.type === 'ProfileDecoration')
@@ -185,6 +189,9 @@ export function UserAvatar({
                 src={decoration.data.url}
                 type="image"
                 name="user avatar decoration"
+                alt=""
+                width={imageSize * 2}
+                original={false}
                 style={{
                   position: 'absolute',
                   top: '50%',
@@ -199,7 +206,7 @@ export function UserAvatar({
                 }}
               />
             )}
-            {avatarUser.profilePicture?.id && !blockedProfilePicture && !userDeleted ? (
+            {hasValidProfilePicture && !blockedProfilePicture && !userDeleted ? (
               <Paper
                 w={imageSize}
                 h={imageSize}
@@ -230,9 +237,7 @@ export function UserAvatar({
             ) : (
               <Avatar
                 src={
-                  avatarUser.image && !avatarUser.profilePicture?.id && !userDeleted
-                    ? imageUrl
-                    : undefined
+                  avatarUser.image && !hasValidProfilePicture && !userDeleted ? imageUrl : undefined
                 }
                 alt={
                   avatarUser.username && !userDeleted

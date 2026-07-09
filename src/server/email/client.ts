@@ -26,11 +26,13 @@ const client = shouldConnect
 
 export async function sendEmail({
   to,
+  cc,
   from,
   text,
   ...data
 }: {
   to: string | string[] | null;
+  cc?: string | string[] | null;
   from?: string;
   subject: string;
   text?: string;
@@ -39,6 +41,7 @@ export async function sendEmail({
   if (!client || !to) return;
   const info = await client.sendMail({
     to: Array.isArray(to) ? to.join(', ') : to,
+    ...(cc ? { cc: Array.isArray(cc) ? cc.join(', ') : cc } : {}),
     from: from ?? env.EMAIL_FROM,
     text: text ?? removeTags(data.html),
     ...data,

@@ -1,9 +1,12 @@
 import { Badge } from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { TwCard } from '~/components/TwCard/TwCard';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default function ImagesToIngest() {
   const { data, isLoading } = trpc.image.getAllImagesPendingIngestion.useQuery();

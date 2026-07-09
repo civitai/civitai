@@ -68,7 +68,10 @@ export function ensureRegisterFeedImageExistenceCheckMetrics(
     'images_search_request_duration_seconds',
     'Request duration in seconds',
     ['route'],
-    [0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 3, 5]
+    // Tail buckets (8-60s) added so the heavy-route pin window (the /api/v1/images
+    // REST handler + Meili search routinely block 8-23s under load) lands in real
+    // buckets instead of saturating +Inf, which made histogram_quantile blind above 5s.
+    [0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 3, 5, 8, 10, 15, 20, 30, 60]
   );
 
   /** Total number of IDs dropped after existence checks */

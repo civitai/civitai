@@ -126,7 +126,7 @@ export function useGetTextToImageRequests(
       excludeFailed: filters.excludeFailed,
     },
     {
-      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
+      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : undefined),
       enabled: !!currentUser && options?.enabled,
     }
   );
@@ -276,7 +276,7 @@ export type UpdateImageStepMetadataArgs = {
 
 export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void }) {
   const queryKey = getQueryKey(trpc.orchestrator.queryGeneratedImages);
-  const { mutate, isLoading } = trpc.orchestrator.patch.useMutation({
+  const { mutate, isPending: isLoading } = trpc.orchestrator.patch.useMutation({
     onError: async (error) => {
       // Rollback optimistic update by refetching from server
       await queryClient.invalidateQueries({ queryKey, exact: false });
@@ -392,9 +392,25 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
           mergedPatched[id] = { ...mergedPatched[id], ...patchedOutput[id] };
         }
 
-        // first check if the workflow should be deleted
-        const hiddenCount = Object.values(mergedPatched).filter((x) => x.hidden).length;
-        if (step.output.length === hiddenCount) {
+        // Only remove the workflow once every user-visible step is fully hidden.
+        // Checking just this step would delete a whole batch upscale (one step per
+        // source image) on the first per-image delete. suppressOutput steps aren't
+        // viewable and can't be hidden, so they must not gate deletion.
+        const countStepHidden = (stepMeta: Record<string, unknown>) => {
+          const out = (stepMeta.output ?? {}) as Record<string, TextToImageStepImageMetadata>;
+          const leg = (stepMeta.images ?? {}) as Record<string, TextToImageStepImageMetadata>;
+          return Object.values({ ...leg, ...out }).filter((x) => x.hidden).length;
+        };
+        const workflowEmpty = (workflow.steps as unknown as NormalizedStep[])
+          .filter((s) => !s.metadata?.suppressOutput)
+          .every((s) => {
+            const hiddenCount =
+              s.name === stepName
+                ? Object.values(mergedPatched).filter((x) => x.hidden).length
+                : countStepHidden((s.metadata ?? {}) as Record<string, unknown>);
+            return s.output.length === hiddenCount;
+          });
+        if (workflowEmpty) {
           toDelete.push(workflow.id);
         } else {
           const images = removeEmpty(patchedOutput);
@@ -500,7 +516,7 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
 }
 
 export function usePatchTags() {
-  const { mutate, isLoading } = trpc.orchestrator.patch.useMutation();
+  const { mutate, isPending: isLoading } = trpc.orchestrator.patch.useMutation();
   function patchTags(tags: TagsPatchSchema[]) {
     mutate({ tags });
   }

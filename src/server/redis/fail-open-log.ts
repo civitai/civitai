@@ -27,13 +27,24 @@ import { logToAxiom, safeError } from '~/server/logging/client';
  *
  * - `write-degraded`         Any other best-effort writeback that
  *                            swallowed a sysRedis error.
+ *
+ * - `rate-limit-write-degraded`  middleware.trpc.recordAttempt failed to
+ *                            persist the rate-limit attempt counter. The
+ *                            current request still completes; the user's
+ *                            sliding-window quota under-counts this
+ *                            attempt until the next successful write.
+ *                            Distinguished from generic write-degraded so
+ *                            ops can dashboard a rate-limit-specific
+ *                            fail-open volume (a sustained spike means
+ *                            abuse-prevention is effectively disabled).
  */
 export type SysRedisFailOpenSubtype =
   | 'defaults-firing'
   | 'tracking-write-cliff'
   | 'token-mint-amplification'
   | 'read-degraded'
-  | 'write-degraded';
+  | 'write-degraded'
+  | 'rate-limit-write-degraded';
 
 /**
  * Emit a structured fail-open warning. Fire-and-forget — never blocks

@@ -57,7 +57,7 @@ export function OnboardingBuzz() {
       : Math.random().toString(36).slice(2)
   );
 
-  const { mutate, isLoading } = useOnboardingStepCompleteMutation();
+  const { mutate, isPending: isLoading } = useOnboardingStepCompleteMutation();
   const handleStepComplete = () => {
     if (captchaState.status !== 'success')
       return showErrorNotification({

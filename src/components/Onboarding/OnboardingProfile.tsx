@@ -24,7 +24,7 @@ const schema = z.object({
 export function OnboardingProfile() {
   const currentUser = useCurrentUser();
   const { next } = useOnboardingContext();
-  const { mutate, isLoading, error } = useOnboardingStepCompleteMutation();
+  const { mutate, isPending: isLoading, error } = useOnboardingStepCompleteMutation();
 
   const debouncer = useDebouncer(500);
   const [username, setUsername] = useState('');

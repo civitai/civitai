@@ -1,190 +1,148 @@
-import { auctionRouter } from '~/server/routers/auction.router';
-import { blocklistRouter } from '~/server/routers/blocklist.router';
-import { bugRouter } from '~/server/routers/bug.router';
-import { changelogRouter } from '~/server/routers/changelog.router';
-import { clubRouter } from '~/server/routers/club.router';
-import { clubMembershipRouter } from '~/server/routers/clubMembership.router';
-import { clubPostRouter } from '~/server/routers/clubPost.router';
-import { commonRouter } from '~/server/routers/common.router';
-import { cosmeticShopRouter } from '~/server/routers/cosmetic-shop.router';
-import { cosmeticRouter } from '~/server/routers/cosmetic.router';
-import { creatorProgramRouter } from '~/server/routers/creator-program.router';
-import { csamRouter } from '~/server/routers/csam.router';
-import { challengeRouter } from '~/server/routers/challenge.router';
-import { dailyChallengeRouter } from '~/server/routers/daily-challenge.router';
-import { donationGoalRouter } from '~/server/routers/donation-goal.router';
-import { entityCollaboratorRouter } from '~/server/routers/entity-collaborator.router';
-import { eventRouter } from '~/server/routers/event.router';
-import { gamesRouter } from '~/server/routers/games.router';
-import { modRouter } from '~/server/routers/moderator';
-import { orchestratorRouter } from '~/server/routers/orchestrator.router';
-import { paddleRouter } from '~/server/routers/paddle.router';
-import { productBadgeRouter } from '~/server/routers/product-badge.router';
-import { redeemableCodeRouter } from '~/server/routers/redeemableCode.router';
-import { researchRouter } from '~/server/routers/research.router';
-import { subscriptionsRouter } from '~/server/routers/subscriptions.router';
-import { techniqueRouter } from '~/server/routers/technique.router';
-import { toolRouter } from '~/server/routers/tool.router';
-import { userRestrictionRouter } from '~/server/routers/user-restriction.router';
-import { userProfileRouter } from '~/server/routers/user-profile.router';
-import { userReferralCodeRouter } from '~/server/routers/user-referral-code.router';
-import { referralRouter } from '~/server/routers/referral.router';
-import { vimeoRouter } from '~/server/routers/vimeo.router';
-import { scannerPoliciesRouter } from '~/server/routers/scanner-policies.router';
-import { scannerReviewRouter } from '~/server/routers/scanner-review.router';
+import { lazy } from '@trpc/server';
 import { router } from '~/server/trpc';
-import { accountRouter } from './account.router';
-import { announcementRouter } from './announcement.router';
-import { answerRouter } from './answer.router';
-import { apiKeyRouter } from './apiKey.router';
-import { articleRouter } from './article.router';
-import { authRouter } from './auth.router';
-import { bountyRouter } from './bounty.router';
-import { bountyEntryRouter } from './bountyEntry.router';
-import { buildGuideRouter } from './build-guide.router';
-import { buzzWithdrawalRequestRouter } from './buzz-withdrawal-request.router';
-import { buzzRouter } from './buzz.router';
-import { chatRouter } from './chat.router';
-import { clubAdminRouter } from './clubAdmin.router';
-import { collectionRouter } from './collection.router';
-import { commentRouter } from './comment.router';
-import { commentv2Router } from './commentv2.router';
-import { contentRouter } from './content.router';
-import { downloadRouter } from './download.router';
-import { generationRouter } from './generation.router';
-import { generationPresetRouter } from './generation-preset.router';
-import { wildcardSetRouter } from './wildcard-set.router';
-import { hiddenPreferencesRouter } from './hidden-preferences.router';
-import { homeBlockRouter } from './home-block.router';
-import { imageRouter } from './image.router';
-import { integrationRouter } from './integration.router';
-import { leaderboardRouter } from './leaderboard.router';
-import { modelFileRouter } from './model-file.router';
-import { modelVersionRouter } from './model-version.router';
-import { modelRouter } from './model.router';
-import { newsletterRouter } from './newsletter.router';
-import { notificationRouter } from './notification.router';
-import { partnerRouter } from './partner.router';
-import { paypalRouter } from './paypal.router';
-import { postRouter } from './post.router';
-import { purchasableRewardRouter } from './purchasable-reward.router';
-import { questionRouter } from './question.router';
-import { reactionRouter } from './reaction.router';
-import { recommendersRouter } from './recommenders.router';
-import { reportRouter } from './report.router';
-import { resourceReviewRouter } from './resourceReview.router';
-import { signalsRouter } from './signals.router';
-import { stripeRouter } from './stripe.router';
-import { systemRouter } from './system.router';
-import { tagRouter } from './tag.router';
-import { trackRouter } from './track.router';
-import { trainingRouter } from './training.router';
-import { userLinkRouter } from './user-link.router';
-import { userPaymentConfigurationRouter } from './user-payment-configuration.router';
-import { userRouter } from './user.router';
-import { vaultRouter } from './vault.router';
-import { nowPaymentsRouter } from './nowpayments.router';
-import { coinbaseRouter } from './coinbase.router';
-import { emerchantpayRouter } from './emerchantpay.router';
-import { comicsRouter } from './comics.router';
-import { strikeRouter } from '~/server/routers/strike.router';
-import { rewardsBonusEventRouter } from './rewards-bonus-event.router';
-import { oauthClientRouter } from '~/server/routers/oauth-client.router';
-import { oauthConsentRouter } from '~/server/routers/oauth-consent.router';
 
+// Routers are lazy-loaded so editing a service only rebuilds its own chunk in dev,
+// instead of recompiling the entire /api/trpc/[trpc] route. See
+// docs/trpc-router-dev-recompile-and-v11-notes.md.
 export const appRouter = router({
-  account: accountRouter,
-  announcement: announcementRouter,
-  answer: answerRouter,
-  apiKey: apiKeyRouter,
-  article: articleRouter,
-  auth: authRouter,
-  bounty: bountyRouter,
-  bountyEntry: bountyEntryRouter,
-  buzz: buzzRouter,
-  chat: chatRouter,
-  club: clubRouter,
-  clubPost: clubPostRouter,
-  clubMembership: clubMembershipRouter,
-  clubAdmin: clubAdminRouter,
-  collection: collectionRouter,
-  comment: commentRouter,
-  commentv2: commentv2Router,
-  common: commonRouter,
-  content: contentRouter,
-  download: downloadRouter,
-  homeBlock: homeBlockRouter,
-  image: imageRouter,
-  model: modelRouter,
-  modelFile: modelFileRouter,
-  modelVersion: modelVersionRouter,
-  notification: notificationRouter,
-  partner: partnerRouter,
-  post: postRouter,
-  question: questionRouter,
-  reaction: reactionRouter,
-  recommenders: recommendersRouter,
-  report: reportRouter,
-  resourceReview: resourceReviewRouter,
-  signals: signalsRouter,
-  stripe: stripeRouter,
-  subscriptions: subscriptionsRouter,
-  tag: tagRouter,
-  track: trackRouter,
-  training: trainingRouter,
-  user: userRouter,
-  userRestriction: userRestrictionRouter,
-  userLink: userLinkRouter,
-  leaderboard: leaderboardRouter,
-  generation: generationRouter,
-  generationPreset: generationPresetRouter,
-  wildcardSet: wildcardSetRouter,
-  newsletter: newsletterRouter,
-  system: systemRouter,
-  hiddenPreferences: hiddenPreferencesRouter,
-  userReferralCode: userReferralCodeRouter,
-  referral: referralRouter,
-  userProfile: userProfileRouter,
-  cosmetic: cosmeticRouter,
-  event: eventRouter,
-  csam: csamRouter,
-  userPaymentConfiguration: userPaymentConfigurationRouter,
-  buzzWithdrawalRequest: buzzWithdrawalRequestRouter,
-  integration: integrationRouter,
-  paypal: paypalRouter,
-  buildGuide: buildGuideRouter,
-  purchasableReward: purchasableRewardRouter,
-  vault: vaultRouter,
-  research: researchRouter,
-  redeemableCode: redeemableCodeRouter,
-  tool: toolRouter,
-  cosmeticShop: cosmeticShopRouter,
-  productBadge: productBadgeRouter,
-  technique: techniqueRouter,
-  donationGoal: donationGoalRouter,
-  orchestrator: orchestratorRouter,
-  moderator: modRouter,
-  entityCollaborator: entityCollaboratorRouter,
-  games: gamesRouter,
-  paddle: paddleRouter,
-  blocklist: blocklistRouter,
-  challenge: challengeRouter,
-  dailyChallenge: dailyChallengeRouter,
-  vimeo: vimeoRouter,
-  creatorProgram: creatorProgramRouter,
-  auction: auctionRouter,
-  changelog: changelogRouter,
-  bug: bugRouter,
-  nowPayments: nowPaymentsRouter,
-  coinbase: coinbaseRouter,
-  emerchantpay: emerchantpayRouter,
-  comics: comicsRouter,
-  strike: strikeRouter,
-  rewardsBonusEvent: rewardsBonusEventRouter,
-  oauthClient: oauthClientRouter,
-  oauthConsent: oauthConsentRouter,
-  scannerReview: scannerReviewRouter,
-  scannerPolicies: scannerPoliciesRouter,
+  blocks: lazy(() => import('~/server/routers/blocks.router').then((m) => m.blocksRouter)),
+  apps: lazy(() => import('~/server/routers/apps.router').then((m) => m.appsRouter)),
+  appListings: lazy(() =>
+    import('~/server/routers/app-listings.router').then((m) => m.appListingsRouter)
+  ),
+  account: lazy(() => import('./account.router').then((m) => m.accountRouter)),
+  announcement: lazy(() => import('./announcement.router').then((m) => m.announcementRouter)),
+  answer: lazy(() => import('./answer.router').then((m) => m.answerRouter)),
+  apiKey: lazy(() => import('./apiKey.router').then((m) => m.apiKeyRouter)),
+  article: lazy(() => import('./article.router').then((m) => m.articleRouter)),
+  auth: lazy(() => import('./auth.router').then((m) => m.authRouter)),
+  bounty: lazy(() => import('./bounty.router').then((m) => m.bountyRouter)),
+  bountyEntry: lazy(() => import('./bountyEntry.router').then((m) => m.bountyEntryRouter)),
+  buzz: lazy(() => import('./buzz.router').then((m) => m.buzzRouter)),
+  chat: lazy(() => import('./chat.router').then((m) => m.chatRouter)),
+  collection: lazy(() => import('./collection.router').then((m) => m.collectionRouter)),
+  comment: lazy(() => import('./comment.router').then((m) => m.commentRouter)),
+  commentv2: lazy(() => import('./commentv2.router').then((m) => m.commentv2Router)),
+  common: lazy(() => import('~/server/routers/common.router').then((m) => m.commonRouter)),
+  content: lazy(() => import('./content.router').then((m) => m.contentRouter)),
+  download: lazy(() => import('./download.router').then((m) => m.downloadRouter)),
+  homeBlock: lazy(() => import('./home-block.router').then((m) => m.homeBlockRouter)),
+  image: lazy(() => import('./image.router').then((m) => m.imageRouter)),
+  merch: lazy(() => import('./merch.router').then((m) => m.merchRouter)),
+  model: lazy(() => import('./model.router').then((m) => m.modelRouter)),
+  model3d: lazy(() => import('./model3d.router').then((m) => m.model3dRouter)),
+  modelFile: lazy(() => import('./model-file.router').then((m) => m.modelFileRouter)),
+  modelVersion: lazy(() => import('./model-version.router').then((m) => m.modelVersionRouter)),
+  notification: lazy(() => import('./notification.router').then((m) => m.notificationRouter)),
+  partner: lazy(() => import('./partner.router').then((m) => m.partnerRouter)),
+  post: lazy(() => import('./post.router').then((m) => m.postRouter)),
+  question: lazy(() => import('./question.router').then((m) => m.questionRouter)),
+  reaction: lazy(() => import('./reaction.router').then((m) => m.reactionRouter)),
+  report: lazy(() => import('./report.router').then((m) => m.reportRouter)),
+  resourceReview: lazy(() => import('./resourceReview.router').then((m) => m.resourceReviewRouter)),
+  signals: lazy(() => import('./signals.router').then((m) => m.signalsRouter)),
+  stripe: lazy(() => import('./stripe.router').then((m) => m.stripeRouter)),
+  subscriptions: lazy(() =>
+    import('~/server/routers/subscriptions.router').then((m) => m.subscriptionsRouter)
+  ),
+  tag: lazy(() => import('./tag.router').then((m) => m.tagRouter)),
+  track: lazy(() => import('./track.router').then((m) => m.trackRouter)),
+  training: lazy(() => import('./training.router').then((m) => m.trainingRouter)),
+  user: lazy(() => import('./user.router').then((m) => m.userRouter)),
+  userRestriction: lazy(() =>
+    import('~/server/routers/user-restriction.router').then((m) => m.userRestrictionRouter)
+  ),
+  userLink: lazy(() => import('./user-link.router').then((m) => m.userLinkRouter)),
+  leaderboard: lazy(() => import('./leaderboard.router').then((m) => m.leaderboardRouter)),
+  generation: lazy(() => import('./generation.router').then((m) => m.generationRouter)),
+  generationPreset: lazy(() =>
+    import('./generation-preset.router').then((m) => m.generationPresetRouter)
+  ),
+  wildcardSet: lazy(() => import('./wildcard-set.router').then((m) => m.wildcardSetRouter)),
+  newsletter: lazy(() => import('./newsletter.router').then((m) => m.newsletterRouter)),
+  system: lazy(() => import('./system.router').then((m) => m.systemRouter)),
+  hiddenPreferences: lazy(() =>
+    import('./hidden-preferences.router').then((m) => m.hiddenPreferencesRouter)
+  ),
+  userReferralCode: lazy(() =>
+    import('~/server/routers/user-referral-code.router').then((m) => m.userReferralCodeRouter)
+  ),
+  referral: lazy(() => import('~/server/routers/referral.router').then((m) => m.referralRouter)),
+  userProfile: lazy(() =>
+    import('~/server/routers/user-profile.router').then((m) => m.userProfileRouter)
+  ),
+  cosmetic: lazy(() => import('~/server/routers/cosmetic.router').then((m) => m.cosmeticRouter)),
+  event: lazy(() => import('~/server/routers/event.router').then((m) => m.eventRouter)),
+  csam: lazy(() => import('~/server/routers/csam.router').then((m) => m.csamRouter)),
+  userPaymentConfiguration: lazy(() =>
+    import('./user-payment-configuration.router').then((m) => m.userPaymentConfigurationRouter)
+  ),
+  buzzWithdrawalRequest: lazy(() =>
+    import('./buzz-withdrawal-request.router').then((m) => m.buzzWithdrawalRequestRouter)
+  ),
+  integration: lazy(() => import('./integration.router').then((m) => m.integrationRouter)),
+  paypal: lazy(() => import('./paypal.router').then((m) => m.paypalRouter)),
+  buildGuide: lazy(() => import('./build-guide.router').then((m) => m.buildGuideRouter)),
+  purchasableReward: lazy(() =>
+    import('./purchasable-reward.router').then((m) => m.purchasableRewardRouter)
+  ),
+  vault: lazy(() => import('./vault.router').then((m) => m.vaultRouter)),
+  research: lazy(() => import('~/server/routers/research.router').then((m) => m.researchRouter)),
+  redeemableCode: lazy(() =>
+    import('~/server/routers/redeemableCode.router').then((m) => m.redeemableCodeRouter)
+  ),
+  tool: lazy(() => import('~/server/routers/tool.router').then((m) => m.toolRouter)),
+  cosmeticShop: lazy(() =>
+    import('~/server/routers/cosmetic-shop.router').then((m) => m.cosmeticShopRouter)
+  ),
+  productBadge: lazy(() =>
+    import('~/server/routers/product-badge.router').then((m) => m.productBadgeRouter)
+  ),
+  technique: lazy(() => import('~/server/routers/technique.router').then((m) => m.techniqueRouter)),
+  donationGoal: lazy(() =>
+    import('~/server/routers/donation-goal.router').then((m) => m.donationGoalRouter)
+  ),
+  orchestrator: lazy(() =>
+    import('~/server/routers/orchestrator.router').then((m) => m.orchestratorRouter)
+  ),
+  moderator: lazy(() => import('~/server/routers/moderator').then((m) => m.modRouter)),
+  entityCollaborator: lazy(() =>
+    import('~/server/routers/entity-collaborator.router').then((m) => m.entityCollaboratorRouter)
+  ),
+  games: lazy(() => import('~/server/routers/games.router').then((m) => m.gamesRouter)),
+  paddle: lazy(() => import('~/server/routers/paddle.router').then((m) => m.paddleRouter)),
+  blocklist: lazy(() => import('~/server/routers/blocklist.router').then((m) => m.blocklistRouter)),
+  challenge: lazy(() => import('~/server/routers/challenge.router').then((m) => m.challengeRouter)),
+  dailyChallenge: lazy(() =>
+    import('~/server/routers/daily-challenge.router').then((m) => m.dailyChallengeRouter)
+  ),
+  vimeo: lazy(() => import('~/server/routers/vimeo.router').then((m) => m.vimeoRouter)),
+  creatorProgram: lazy(() =>
+    import('~/server/routers/creator-program.router').then((m) => m.creatorProgramRouter)
+  ),
+  auction: lazy(() => import('~/server/routers/auction.router').then((m) => m.auctionRouter)),
+  changelog: lazy(() => import('~/server/routers/changelog.router').then((m) => m.changelogRouter)),
+  bug: lazy(() => import('~/server/routers/bug.router').then((m) => m.bugRouter)),
+  nowPayments: lazy(() => import('./nowpayments.router').then((m) => m.nowPaymentsRouter)),
+  coinbase: lazy(() => import('./coinbase.router').then((m) => m.coinbaseRouter)),
+  emerchantpay: lazy(() => import('./emerchantpay.router').then((m) => m.emerchantpayRouter)),
+  comics: lazy(() => import('./comics.router').then((m) => m.comicsRouter)),
+  strike: lazy(() => import('~/server/routers/strike.router').then((m) => m.strikeRouter)),
+  rewardsBonusEvent: lazy(() =>
+    import('./rewards-bonus-event.router').then((m) => m.rewardsBonusEventRouter)
+  ),
+  oauthClient: lazy(() =>
+    import('~/server/routers/oauth-client.router').then((m) => m.oauthClientRouter)
+  ),
+  oauthConsent: lazy(() =>
+    import('~/server/routers/oauth-consent.router').then((m) => m.oauthConsentRouter)
+  ),
+  scannerReview: lazy(() =>
+    import('~/server/routers/scanner-review.router').then((m) => m.scannerReviewRouter)
+  ),
+  scannerPolicies: lazy(() =>
+    import('~/server/routers/scanner-policies.router').then((m) => m.scannerPoliciesRouter)
+  ),
 });
 
 // export type definition of API

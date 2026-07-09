@@ -1,9 +1,0 @@
-export declare const card: string;
-export declare const earnBuzzCard: string;
-export declare const getPaidCard: string;
-export declare const highlightCard: string;
-export declare const highlightCardBackgroundIcon: string;
-export declare const highlightColor: string;
-export declare const mantineTitleRoot: string;
-export declare const newPerksCard: string;
-export declare const section: string;

@@ -22,7 +22,7 @@ export function useToggleImageFlag() {
         title: `Toggle Image '${flag}' value`,
         message: 'Are you sure you want to update this value?',
         labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
-        confirmProps: { color: 'red', loading: toggleImageFlagMutation.isLoading },
+        confirmProps: { color: 'red', loading: toggleImageFlagMutation.isPending },
         onConfirm: async () => await toggleImageFlagMutation.mutateAsync({ id, flag }),
       },
     });

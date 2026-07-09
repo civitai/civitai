@@ -51,12 +51,18 @@ import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
-import { Controller, useGraph, useGraphValues, MultiController } from '~/libs/data-graph/react';
+import {
+  Controller,
+  useGraph,
+  useGraphSubscriptions,
+  MultiController,
+} from '~/libs/data-graph/react';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useGenerationContextStore } from '~/components/ImageGeneration/GenerationProvider';
+import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useGenerationFormStore } from '~/store/generation-form.store';
 import { showWarningNotification } from '~/utils/notifications';
 import { useTipStore } from '~/store/tip.store';
@@ -78,6 +84,11 @@ import {
   isWorkflowAvailable,
 } from '~/shared/data-graph/generation/config/workflows';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
+import {
+  pickStrongerGate,
+  rulesToStates,
+  type GateResolution,
+} from '~/shared/data-graph/generation/gates';
 import {
   LTXV23_MAX_QUANTITY,
   SDCPP_EXCLUDED_MODEL_IDS,
@@ -301,6 +312,135 @@ function ConnectedBuzzTypeSelector() {
   const cost = useTotalGenerationCost();
   return (
     <BuzzTypeSelector cost={cost} loading={isLoading} error={isError} onRetry={() => refetch()} />
+  );
+}
+
+// =============================================================================
+// Self-Hosted Blocked Alert
+// =============================================================================
+
+/**
+ * Detects whether the SELECTED ecosystem is shown-but-disabled for the current
+ * user, merging every gate source — the self-hosted toggle and the rules model
+ * — into one resolution (the picker already filtered out hidden ones, so a
+ * selected value is at worst `disabled`/`memberOnly`). Returns the blocked
+ * ecosystem key (or undefined) plus its state + optional rule message. Consumed
+ * by `GenerationLayout`, which renders `SelfHostedBlockedAlert` in the same slot
+ * as `MembershipUpsell` and hides the form controls while blocked.
+ */
+export function useSelfHostedBlock() {
+  const { selfHostedMode, selfHostedDisabledEcosystems, gateRules } = useGenerationConfig();
+  const graph = useGraph<GenerationGraphTypes>();
+  // Subscribe to only `ecosystem` — not the whole graph — so prompt/seed/etc.
+  // edits (which fire the global watcher) don't needlessly re-render this.
+  const { ecosystem: selectedEcosystem } = useGraphSubscriptions(graph, ['ecosystem'] as const) as {
+    ecosystem?: string;
+  };
+  if (!selectedEcosystem)
+    return { blockedEcosystem: undefined, state: undefined, message: undefined };
+
+  let resolution: GateResolution | undefined;
+  if (selfHostedDisabledEcosystems.includes(selectedEcosystem))
+    resolution = pickStrongerGate(resolution, {
+      state: selfHostedMode === 'memberOnly' ? 'memberOnly' : 'disabled',
+    });
+  const ruleRes = rulesToStates(gateRules).ecosystems.get(selectedEcosystem);
+  if (ruleRes) resolution = pickStrongerGate(resolution, ruleRes);
+
+  // A selected ecosystem is never 'hidden' (filtered from the picker); fold any
+  // stray hidden into the disabled alert defensively.
+  const state = resolution
+    ? resolution.state === 'memberOnly'
+      ? 'memberOnly'
+      : 'disabled'
+    : undefined;
+  return {
+    blockedEcosystem: resolution ? selectedEcosystem : undefined,
+    state,
+    message: resolution?.message,
+  };
+}
+
+/**
+ * Footer-spanning alert shown when the selected ecosystem can't be generated
+ * (self-hosted toggle or a gate rule). Styled like `MembershipUpsell`
+ * (edge-to-edge, bigger title, filled CTA). `memberOnly` → membership upsell
+ * with a "Become a member" button; `disabled` → temporarily unavailable. A
+ * rule's `message` overrides only the body copy, layered on the same
+ * badge/title/CTA. Renders null when not blocked.
+ */
+export function SelfHostedBlockedAlert() {
+  const { blockedEcosystem, state, message } = useSelfHostedBlock();
+  const serverDomains = useServerDomains();
+
+  if (!blockedEcosystem) return null;
+
+  const displayName = ecosystemByKey.get(blockedEcosystem)?.displayName ?? blockedEcosystem;
+
+  if (state === 'memberOnly') {
+    return (
+      <Alert color="yellow" className="-m-2 rounded-none rounded-t-xl">
+        <Text
+          size="sm"
+          fw={700}
+          c="var(--mantine-color-yellow-light-color)"
+          className="flex items-center gap-1.5"
+        >
+          <IconAlertTriangle size={16} />
+          {displayName} is temporarily members-only
+        </Text>
+        <Text size="xs" mt={4}>
+          {message ?? (
+            <>
+              We&apos;re in the middle of a GPU crunch, so {displayName} is limited to members at
+              the moment. Become a member to generate with it now, or pick a different base model.{' '}
+              <Text
+                span
+                c="var(--mantine-color-yellow-light-color)"
+                td="underline"
+                className="cursor-pointer"
+                component="a"
+                href="/articles/30980/a-gpu-crunch-and-bumpy-days-ahead"
+                target="_blank"
+                rel="noreferrer nofollow"
+              >
+                Read what&apos;s going on
+              </Text>
+            </>
+          )}
+        </Text>
+        <div className="mt-3 flex items-center gap-3">
+          <Button
+            component="a"
+            href={syncAccount(`//${serverDomains.green}/pricing`)}
+            target="_blank"
+            rel="noreferrer nofollow"
+            variant="filled"
+            className="flex-1"
+          >
+            Become a member
+          </Button>
+        </div>
+      </Alert>
+    );
+  }
+
+  return (
+    <Alert color="red" className="-m-2 rounded-none rounded-t-xl">
+      <Text
+        size="sm"
+        fw={700}
+        c="var(--mantine-color-red-light-color)"
+        className="flex items-center gap-1.5"
+      >
+        <IconAlertTriangle size={16} />
+        {displayName} is currently unavailable
+      </Text>
+      <Text size="xs" mt={4}>
+        {message ??
+          `${displayName} generation is temporarily disabled. Choose a different base model or try again later.`}
+      </Text>
+    </Alert>
   );
 }
 
@@ -585,8 +725,10 @@ function CostBreakdown() {
  */
 function QuantityField() {
   const graph = useGraph<GenerationGraphTypes>();
-  const values = useGraphValues<GenerationGraphTypes>();
-  const ecosystem = (values as { ecosystem?: string }).ecosystem;
+  // Subscribe to only `ecosystem` so prompt edits don't re-render this field.
+  const { ecosystem } = useGraphSubscriptions(graph, ['ecosystem'] as const) as {
+    ecosystem?: string;
+  };
   const isLtxv23 = ecosystem === 'LTXV23';
 
   const [upsellOpened, setUpsellOpened] = useState(false);
@@ -978,7 +1120,16 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
     // Happy path — validation + rate-limit both clear. Emit Generator_Submit
     // BEFORE the buzz-transaction prompt so click-and-abandon (cancel at
     // confirm / insufficient-buzz) is still captured.
+    //
+    // externalId is shared between this emit AND the mutateAsync input below.
+    // Failure-path emits (validation, rate-limit) above omit it because no
+    // orchestrator workflow exists for those rows. Generated inside the try
+    // so a crypto.randomUUID() throw (non-secure-context fallback) can't
+    // break the submit — externalId stays undefined and the path degrades
+    // to pre-PR behavior (no idempotency, no exact-join).
+    let externalId: string | undefined;
     try {
+      externalId = crypto.randomUUID();
       const submitSnapshot = graph.getSnapshot() as ResourceSnapshot;
       trackAction({
         type: 'Generator_Submit',
@@ -988,6 +1139,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
           hasRemixOfId: !!remixOfId,
           formVersion: 'new',
           isValid: true,
+          externalId,
         },
       }).catch(() => undefined);
     } catch {
@@ -1068,6 +1220,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         buzzType: selectedBuzzType,
         ...(sourceMetadata ? { sourceMetadata } : {}),
         ...(sourceMetadataMap ? { sourceMetadataMap } : {}),
+        externalId,
       });
 
       if (hasEarlyAccess) {
@@ -1182,7 +1335,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
           <QuantityField />
           <Button.Group className="flex-1">
             <SubmitButton
-              isLoading={generateMutation.isLoading || isMinLoading}
+              isLoading={generateMutation.isPending || isMinLoading}
               onSubmit={handleSubmit}
             />
             {currentUser && <ConnectedBuzzTypeSelector />}

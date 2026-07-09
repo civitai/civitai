@@ -63,7 +63,7 @@ export function ModelVersionMenu({
     enqueuNsfwLevelUpdateMutation.mutate({ id: modelVersionId });
   }
 
-  const { toggle, isLoading } = useToggleCheckpointCoverageMutation();
+  const { toggle, isPending: isLoading } = useToggleCheckpointCoverageMutation();
   const handleToggleCoverage = async ({
     modelId,
     versionId,
@@ -124,7 +124,7 @@ export function ModelVersionMenu({
         message:
           'Are you sure you want to delete this version? This action is destructive and cannot be reverted.',
         labels: { cancel: `No, don't delete it`, confirm: 'Delete Version' },
-        confirmProps: { color: 'red', loading: deleteVersionMutation.isLoading },
+        confirmProps: { color: 'red', loading: deleteVersionMutation.isPending },
         onConfirm: () => deleteVersionMutation.mutate({ id: modelVersionId }),
       },
     });

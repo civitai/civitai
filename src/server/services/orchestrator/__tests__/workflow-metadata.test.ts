@@ -145,138 +145,13 @@ describe('two-layer metadata model', () => {
     expect(getStepResources(step, workflow)).toEqual([{ id: 123 }]);
   });
 
-  it('enhancement step: step has own params, workflow has form input', () => {
-    // Enhancement steps always have their own params (the enhancement action)
+  it('enhancement step: complete step params are used verbatim, no workflow leak', () => {
+    // Enhancement steps (upscale, remove-bg) store the SOURCE generation's complete params on
+    // the step; workflow.metadata holds the enhancement form input. Either/or returns the step
+    // params verbatim, so the upscale form's images/upscaler/workflow key never leak into a
+    // remix of the original. Mirrors the real EXIF-sourced case where the source params carry
+    // no `workflow` key, so a merge would have leaked `img2img:upscale`.
     const step = makeStep({
-      params: { upscaler: '4x-ultrasharp', creativity: 0.5 },
-      resources: [],
-    });
-    const workflow = makeWorkflow({
-      params: { upscaler: '4x-ultrasharp', creativity: 0.5, workflow: 'img2img:upscale' },
-      resources: [],
-    });
-
-    // getStepParams returns step's own params (not falling through)
-    expect(getStepParams(step, workflow)).toEqual({
-      upscaler: '4x-ultrasharp',
-      creativity: 0.5,
-    });
-  });
-
-  it('isPrivateGeneration lives on workflow metadata', () => {
-    const workflow = makeWorkflow({
-      params: { prompt: 'a cat' },
-      resources: [],
-      isPrivateGeneration: true,
-    });
-
-    expect(workflow.metadata?.isPrivateGeneration).toBe(true);
-  });
-});
-
-// =============================================================================
-// WorkflowData class
-// =============================================================================
-
-describe('WorkflowData', () => {
-  it('resolves params from workflow metadata', () => {
-    const workflow = makeWorkflow({
-      params: { prompt: 'a cat', steps: 30 },
-      resources: [],
-    });
-    const wf = new WorkflowData(workflow, defaultOptions);
-
-    expect(wf.params).toEqual({ prompt: 'a cat', steps: 30 });
-  });
-
-  it('resolves resources from workflow metadata', () => {
-    const workflow = makeWorkflow({
-      params: {},
-      resources: [{ id: 1, modelName: 'SD 1.5' }] as any,
-    });
-    const wf = new WorkflowData(workflow, defaultOptions);
-
-    expect(wf.resources).toEqual([{ id: 1, modelName: 'SD 1.5' }]);
-  });
-
-  it('resolves remixOfId from workflow metadata', () => {
-    const workflow = makeWorkflow({
-      params: {},
-      resources: [],
-      remixOfId: 42,
-    });
-    const wf = new WorkflowData(workflow, defaultOptions);
-
-    expect(wf.remixOfId).toBe(42);
-  });
-
-  it('returns defaults when workflow metadata is undefined', () => {
-    const workflow = makeWorkflow(undefined);
-    const wf = new WorkflowData(workflow, defaultOptions);
-
-    expect(wf.params).toEqual({});
-    expect(wf.resources).toEqual([]);
-    expect(wf.remixOfId).toBeUndefined();
-  });
-
-  it('step() creates StepData bound to workflow metadata', () => {
-    const workflow = makeWorkflow({
-      params: { prompt: 'wf prompt' },
-      resources: [{ id: 1 }] as any,
-      remixOfId: 42,
-    });
-    const step = makeStep({});
-    const wf = new WorkflowData(workflow, defaultOptions);
-    const sd = wf.step(step);
-
-    expect(sd.params).toEqual({ prompt: 'wf prompt' });
-    expect(sd.resources).toEqual([{ id: 1 }]);
-    expect(sd.remixOfId).toBe(42);
-  });
-
-  it('exposes underlying NormalizedWorkflow properties directly', () => {
-    const workflow = makeWorkflow({
-      params: { prompt: 'a cat' },
-      resources: [],
-    });
-    const wf = new WorkflowData(workflow, defaultOptions);
-
-    expect(wf.id).toBe('wf-1');
-    expect(wf.status).toBe('succeeded');
-    expect(wf.tags).toEqual([]);
-  });
-});
-
-// =============================================================================
-// StepData class
-// =============================================================================
-
-describe('StepData', () => {
-  it('returns step params when present', () => {
-    const step = makeStep({ params: { prompt: 'step prompt' } });
-    const wf = makeWorkflowData({ params: { prompt: 'wf prompt' }, resources: [] });
-    const sd = new StepData(step, wf);
-
-    expect(sd.params).toEqual({ prompt: 'step prompt' });
-  });
-
-  it('falls back to workflow metadata when step has no params', () => {
-    const step = makeStep({});
-    const wf = makeWorkflowData({ params: { prompt: 'wf prompt', steps: 20 }, resources: [] });
-    const sd = new StepData(step, wf);
-
-    expect(sd.params).toEqual({ prompt: 'wf prompt', steps: 20 });
-  });
-
-  it('enhancement step (sourceLineage): does NOT leak workflow form fields into source params', () => {
-    // Enhancement steps are flagged `sourceLineage: true` by the server and store the
-    // SOURCE generation's complete params; the workflow-level metadata is the upscale form
-    // input. The two must NOT merge â€” otherwise a remix of the upscaled output picks up the
-    // upscale form's `images`/`upscaler`/`workflow` and behaves like the enhancement
-    // workflow. Mirrors the real EXIF-sourced case where the source params carry no
-    // `workflow` key, so a merge would leak `img2img:upscale`.
-    const step = makeStep({
-      sourceLineage: true,
       params: { prompt: 'a cat', seed: 123, baseModel: 'SDXL' },
     });
     const wf = makeWorkflowData({
@@ -292,21 +167,20 @@ describe('StepData', () => {
     });
     const sd = new StepData(step, wf);
 
-    // Pure source params â€” none of the upscale form fields (incl. the workflow key) leak.
     expect(sd.params).toEqual({ prompt: 'a cat', seed: 123, baseModel: 'SDXL' });
   });
 
-  it('wildcard/snippet step (no sourceLineage): MERGES partial delta over workflow params', () => {
-    // Snippet variants store ONLY the substituted prompt fields on the step and rely on
-    // workflow.metadata.params for the full settings snapshot. Without sourceLineage the
-    // step delta must merge over the workflow params (step wins per-field).
+  it('partialParams (wildcard/snippet variant): spreads the params delta over workflow params', () => {
+    // Snippet variants store a small DELTA in `params` and set `partialParams: true`. The client
+    // spreads that delta over the workflow form snapshot (the server sends only the delta).
     const step = makeStep({
+      partialParams: true,
       params: { prompt: 'a substituted cat', negativePrompt: 'blurry' },
     });
     const wf = makeWorkflowData({
       params: {
         workflow: 'txt2img',
-        prompt: 'a #animal', // template prompt â€” overridden by the substituted step prompt
+        prompt: 'a #animal', // template prompt — overridden by the substituted delta prompt
         negativePrompt: 'lowres', // overridden too
         steps: 30,
         cfgScale: 7,
@@ -317,7 +191,6 @@ describe('StepData', () => {
     });
     const sd = new StepData(step, wf);
 
-    // Step delta wins on prompt/negativePrompt; all other settings come from workflow.
     expect(sd.params).toEqual({
       workflow: 'txt2img',
       prompt: 'a substituted cat',
@@ -327,6 +200,19 @@ describe('StepData', () => {
       sampler: 'Euler a',
       seed: 999,
     });
+  });
+
+  it('without partialParams, a step with params is used verbatim (no spread)', () => {
+    // Same shapes as above but no flag — the step params are treated as a complete snapshot and
+    // returned verbatim; the workflow settings are NOT merged in.
+    const step = makeStep({ params: { prompt: 'a substituted cat', negativePrompt: 'blurry' } });
+    const wf = makeWorkflowData({
+      params: { workflow: 'txt2img', steps: 30, cfgScale: 7 } as any,
+      resources: [],
+    });
+    const sd = new StepData(step, wf);
+
+    expect(sd.params).toEqual({ prompt: 'a substituted cat', negativePrompt: 'blurry' });
   });
 
   it('returns step resources when present', () => {

@@ -15,7 +15,7 @@ import { IconPencilMinus, IconInfoSquareRounded, IconMail } from '@tabler/icons-
 import { useDisclosure } from '@mantine/hooks';
 import * as z from 'zod';
 
-import { useSession } from 'next-auth/react';
+import { useSession } from '~/providers/SessionProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputText, useForm } from '~/libs/form';
 import { usernameInputSchema } from '~/server/schema/user.schema';
@@ -40,7 +40,7 @@ export function ProfileCard() {
 
   const currentUser = data?.user;
 
-  const { mutate, isLoading, error } = trpc.user.update.useMutation({
+  const { mutate, isPending: isLoading, error } = trpc.user.update.useMutation({
     async onSuccess(user) {
       showSuccessNotification({ message: 'Your profile has been saved' });
       await queryUtils.user.getById.invalidate({ id: user.id });
@@ -51,7 +51,7 @@ export function ProfileCard() {
 
   const {
     mutate: requestEmailChange,
-    isLoading: isEmailChangeLoading,
+    isPending: isEmailChangeLoading,
     error: emailChangeError,
   } = trpc.user.requestEmailChange.useMutation({
     onSuccess: () => {

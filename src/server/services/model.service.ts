@@ -4,7 +4,7 @@ import type { ManipulateType } from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
 import type { SearchParams, SearchResponse } from 'meilisearch';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import { env } from '~/env/server';
 import { clickhouse, Tracker } from '~/server/clickhouse/client';
 import type { BaseModelType } from '~/server/common/constants';
@@ -96,6 +96,7 @@ import {
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import {
   bustMvCache,
+  bustPublicModelResponseCache,
   createModelVersionPostFromTraining,
   publishModelVersionsWithEarlyAccess,
 } from '~/server/services/model-version.service';
@@ -279,7 +280,6 @@ export const getModelsRaw = async ({
     needsReview,
     collectionId,
     fileFormats,
-    clubId,
     modelVersionIds,
     browsingLevel,
     excludedUserIds,
@@ -322,7 +322,7 @@ export const getModelsRaw = async ({
     } catch (err) {
       if (err instanceof MeiliCallTimeoutError) {
         throw new TRPCError({
-          code: 'TIMEOUT',
+          code: 'SERVICE_UNAVAILABLE',
           message: 'Model search is temporarily overloaded — please retry.',
           cause: err,
         });
@@ -398,9 +398,7 @@ export const getModelsRaw = async ({
     AND.push(Prisma.sql`mm."modelId" IN (${Prisma.join(searchModelIds, ',')})`);
   }
 
-  // TODO.clubs: This is temporary until we are fine with displaying club stuff in public feeds.
-  // At that point, we should be relying more on unlisted status which is set by the owner.
-  const hidePrivateModels = !ids && !clubId && !username && !user && !followed && !collectionId;
+  const hidePrivateModels = !ids && !username && !user && !followed && !collectionId;
 
   if (!archived) {
     AND.push(
@@ -468,7 +466,7 @@ export const getModelsRaw = async ({
     const targetUser =
       (await dbRead.user.findUnique(userFindArgs)) ?? (await dbWrite.user.findUnique(userFindArgs));
 
-    if (!targetUser) throw new Error('User not found');
+    if (!targetUser) throw throwNotFoundError('User not found');
 
     AND.push(Prisma.sql`mm."userId" = ${targetUser.id}`);
   }
@@ -726,31 +724,7 @@ export const getModelsRaw = async ({
     AND.push(browsingLevelQuery);
   }
 
-  const WITH: Prisma.Sql[] = [];
-  if (clubId) {
-    WITH.push(Prisma.sql`
-      "clubModels" AS (
-        SELECT
-          mv."modelId" "modelId",
-          MAX(mv."id") "modelVersionId"
-        FROM "EntityAccess" ea
-        JOIN "ModelVersion" mv ON mv."id" = ea."accessToId"
-        LEFT JOIN "ClubTier" ct ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = ct."id" AND ct."clubId" = ${clubId}
-        WHERE (
-            (
-             ea."accessorType" = 'Club' AND ea."accessorId" = ${clubId}
-            )
-            OR (
-              ea."accessorType" = 'ClubTier' AND ct."clubId" = ${clubId}
-            )
-          )
-          AND ea."accessToType" = 'ModelVersion'
-        GROUP BY mv."modelId"
-      )
-    `);
-  }
-
-  const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
+  const queryWith = Prisma.sql``;
 
   // Build dynamic FROM clause based on query path
   // Four paths:
@@ -841,8 +815,7 @@ export const getModelsRaw = async ({
       mm."userId",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"`;
 
-  const fromAndJoin = Prisma.sql`${fromClause}
-      ${clubId ? Prisma.sql`JOIN "clubModels" cm ON cm."modelId" = m."id"` : Prisma.sql``}`;
+  const fromAndJoin = fromClause;
 
   const limitValue = (take ?? 100) + 1;
   const orderByRaw = Prisma.raw(orderBy);
@@ -943,17 +916,10 @@ export const getModelsRaw = async ({
 
           let modelVersions = data.versions;
 
-          // Apply version filters
+          // Visibility filters first, so the badge's base-model list reflects only
+          // versions the viewer can actually see (no Private/license-restricted leaks).
           if (!sessionUser?.isModerator || !status?.length) {
             modelVersions = modelVersions.filter((mv) => mv.status === ModelStatus.Published);
-          }
-
-          if (baseModels) {
-            modelVersions = modelVersions.filter((mv) => baseModels.includes(mv.baseModel));
-          }
-
-          if (!!modelVersionIds?.length) {
-            modelVersions = modelVersions.filter((mv) => modelVersionIds.includes(mv.id));
           }
 
           // Filter out NSFW versions for license-restricted base models
@@ -972,6 +938,21 @@ export const getModelsRaw = async ({
             modelVersions = modelVersions.filter(
               (mv) => mv.availability === 'Public' || mv.availability === 'EarlyAccess'
             );
+          }
+
+          // Distinct base models across the visible versions — surfaced to the card
+          // badge for multi-base support and matched-first ordering. Computed before
+          // the selection filters below so it covers all of the model's visible bases,
+          // not just the one matched by an active base-model filter.
+          const allBaseModels = [...new Set(modelVersions.map((mv) => mv.baseModel))];
+
+          // Selection filters — narrow to the versions matching the active query.
+          if (baseModels) {
+            modelVersions = modelVersions.filter((mv) => baseModels.includes(mv.baseModel));
+          }
+
+          if (!!modelVersionIds?.length) {
+            modelVersions = modelVersions.filter((mv) => modelVersionIds.includes(mv.id));
           }
 
           // eject if no versions
@@ -999,6 +980,7 @@ export const getModelsRaw = async ({
               [`tippedAmountCount${input.period}`]: rank.tippedAmountCount,
             },
             modelVersions,
+            baseModels: allBaseModels,
             hashes: data.hashes,
             tagsOnModels: data.tags,
             user: {
@@ -1068,7 +1050,6 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     collectionId,
     fileFormats,
     browsingLevel,
-    clubId,
   } = input;
 
   const AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
@@ -1430,6 +1411,31 @@ export const updateModelById = async ({
   });
 
   await userModelCountCache.refresh(model.userId);
+  // Flag replica-lag on the model BEFORE busting so a concurrent edge-miss read
+  // routes the LAG-AWARE parts of the rebuild to primary during the replication
+  // window instead of repopulating the just-busted response cache with pre-takedown
+  // state. Mirrors the publish/unpublish paths.
+  //
+  // SCOPE (important — do not overstate): this flag only covers the data that flows
+  // through dataForModelsCache.lookupFn -> getDbWithoutLagBatch('model', ids) — i.e.
+  // the VERSION-level fields (status/availability/covered). It does NOT cover the
+  // base Model row read by getModelsRaw, which uses pgDbRead unconditionally
+  // (model.service.ts ~910) and is never lag-aware. That base row carries
+  // `model.mode` — the field that gates images/downloadUrl in the cached body
+  // ([id].ts: includeImages/includeDownloadUrl). So a takedown's `mode` can still be
+  // read stale from a lagging replica and repopulate the origin cache for up to the
+  // origin TTL (CacheTTL.sm, 180s). That residual is bounded by — and ⊆ — the
+  // pre-existing Cloudflare edge window (s-maxage=300s), which this Redis-only bust
+  // does NOT purge anyway; so this does not widen takedown exposure beyond the edge.
+  // (To fully close the origin half, getModelsRaw's base read would need to honor
+  // the 'model' lag flag — deliberately not done here to avoid touching that shared
+  // hot path for an origin window already inside the edge window.)
+  await preventModelVersionLagBatch(id, []);
+  // Drop the origin-side public GET /api/v1/models/[id] response cache (Redis only;
+  // not the CF edge). Takedown/archive (changeModelModifierHandler sets `mode`) flows
+  // through here, and the cached body's images/files/downloadUrl depend on
+  // `model.mode` — without this the origin keeps serving a stale 200 for up to the TTL.
+  await bustPublicModelResponseCache(id);
 
   return model;
 };
@@ -1505,27 +1511,63 @@ export const deleteModelById = async ({
     await userModelCountCache.refresh(deletedModel.userId);
   }
   await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+  // Flag replica-lag BEFORE busting so a concurrent edge-miss read routes the
+  // lag-aware version data (dataForModelsCache.lookupFn) to primary instead of
+  // repopulating the just-busted cache with pre-delete state. Mirrors publish/
+  // unpublish; version ids are in scope here from the delete transaction. (Same
+  // scope caveat as updateModelById: the getModelsRaw base row is not lag-aware —
+  // but for a delete the model row is gone, so a fresh read rebuilds to null→404,
+  // never cached, so the base-row gap is benign on this path.)
+  const deletedVersionIds = deletedModel?.modelVersions.map((v) => v.id) ?? [];
+  await preventModelVersionLagBatch(id, deletedVersionIds);
+  // Drop the origin-side public GET /api/v1/models/[id] response cache so a
+  // deleted model stops serving a stale 200 (it would 404 on rebuild).
+  await bustPublicModelResponseCache(id);
   await deleteBidsForModel({ modelId: id });
 
   return deletedModel;
 };
 
 export const restoreModelById = async ({ id }: GetByIdInput) => {
-  const model = await dbWrite.model.update({
-    where: { id },
-    data: {
-      deletedAt: null,
-      status: 'Draft',
-      deletedBy: null,
-      modelVersions: {
-        updateMany: { where: { status: 'Deleted' }, data: { status: 'Draft' } },
-      },
-    },
+  // Derive restored status from publishedAt so a previously-public model
+  // returns to Unpublished (was public -> hidden) rather than Draft. Blanket
+  // Draft would let the next publish reset publishedAt under the legacy gate
+  // (the anti-bump SQL guard now blocks that, but mismatched status was its
+  // own UX bug — restored work shouldn't pretend it was never published).
+  //   publishedAt IS NULL    -> Draft
+  //   publishedAt >  NOW()   -> Scheduled (future publish was queued)
+  //   publishedAt <= NOW()   -> Unpublished
+  const result = await dbWrite.$transaction(async (tx) => {
+    const rows = await tx.$queryRaw<{ userId: number }[]>`
+      UPDATE "Model"
+      SET "deletedAt" = NULL,
+          "deletedBy" = NULL,
+          "status" = CASE
+            WHEN "publishedAt" IS NULL      THEN 'Draft'::"ModelStatus"
+            WHEN "publishedAt" >  NOW()     THEN 'Scheduled'::"ModelStatus"
+            ELSE 'Unpublished'::"ModelStatus"
+          END
+      WHERE id = ${id}
+        AND "status" = 'Deleted'::"ModelStatus"
+      RETURNING "userId"
+    `;
+    await tx.$executeRaw`
+      UPDATE "ModelVersion"
+      SET "status" = CASE
+        WHEN "publishedAt" IS NULL  THEN 'Draft'::"ModelStatus"
+        WHEN "publishedAt" >  NOW() THEN 'Scheduled'::"ModelStatus"
+        ELSE 'Unpublished'::"ModelStatus"
+      END
+      WHERE "modelId" = ${id}
+        AND "status" = 'Deleted'::"ModelStatus"
+    `;
+    return rows[0] ?? null;
   });
 
-  await userModelCountCache.refresh(model.userId);
+  if (!result) return null;
+  await userModelCountCache.refresh(result.userId);
 
-  return model;
+  return { id, userId: result.userId };
 };
 
 export const permaDeleteModelById = async ({
@@ -2007,6 +2049,14 @@ export const upsertModel = async (
       }
     }
 
+    // Drop the origin-side public GET /api/v1/models/[id] response cache so an
+    // owner/mod edit (name/description/nsfw/tags/gallery — all carried in the
+    // cached body) stops serving a stale 200 on an edge-miss for up to the cache
+    // TTL. preventReplicationLag('model', id) above already guards the rebuild
+    // read against the replication window. Fail-open (the helper swallows Redis
+    // errors); the only post-commit write left in this branch.
+    await bustPublicModelResponseCache(result.id);
+
     return result;
   }
 };
@@ -2035,7 +2085,6 @@ export const publishModelById = async ({
         where: { id },
         data: {
           status,
-          publishedAt: !republishing ? publishedAt : undefined,
           meta: isEmpty(meta) ? Prisma.JsonNull : meta,
           deletedAt: null,
         },
@@ -2053,6 +2102,17 @@ export const publishModelById = async ({
           status: true,
         },
       });
+
+      // Anti-bump guard: publishedAt is immutable once a model has gone
+      // public. Allowed transitions: NULL (Draft) -> set, or future
+      // (Scheduled) -> reschedule. Republish of an already-public model is a
+      // no-op for this column. Mirrors the Post guard below.
+      await tx.$executeRaw`
+        UPDATE "Model"
+        SET "publishedAt" = ${publishedAt}
+        WHERE id = ${id}
+        AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+      `;
 
       // Validate NSFW + restricted base model combination
       if (model.nsfw) {
@@ -2088,19 +2148,27 @@ export const publishModelById = async ({
 
       if (includeVersions) {
         if (status === ModelStatus.Published) {
-          // Publish model versions with early access check:
+          // Publish model versions with early access check. Anti-bump guard
+          // for ModelVersion.publishedAt lives inside this call.
           await publishModelVersionsWithEarlyAccess({
             modelVersionIds: versionIds,
-            publishedAt: !republishing ? publishedAt : undefined,
+            publishedAt,
             tx,
-            republishing,
           });
         } else if (status === ModelStatus.Scheduled) {
-          // Schedule model versions:
+          // Schedule model versions. Status flips unconditionally, but
+          // publishedAt only flips while the row is mutable (Draft or
+          // future-Scheduled) — anti-bump guard via raw SQL.
           await tx.modelVersion.updateMany({
             where: { id: { in: versionIds } },
-            data: { status, publishedAt: !republishing ? publishedAt : undefined },
+            data: { status },
           });
+          await tx.$executeRaw`
+            UPDATE "ModelVersion"
+            SET "publishedAt" = ${publishedAt}
+            WHERE id IN (${Prisma.join(versionIds, ',')})
+            AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+          `;
         }
 
         // Restore posts that were unpublished alongside the model, and re-target
@@ -2298,6 +2366,8 @@ export const unpublishModelById = async ({
 export const getVaeFiles = async ({ vaeIds }: { vaeIds: number[] }) => {
   const files = (
     await dbRead.modelFile.findMany({
+      // No replacedAt/visibility filter needed: only primary `Model` files are read here,
+      // and primary files are never quarantined (linked-component replace rejects them).
       where: {
         modelVersionId: { in: vaeIds },
         type: 'Model',
@@ -2385,6 +2455,11 @@ export const getTrainingModelsByUserId = async <TSelect extends Prisma.ModelVers
 
   // Build where clause with filters
   const where: Prisma.ModelVersionFindManyArgs['where'] = {
+    // Only in-flight trainings. A model that was published then swept (post
+    // emptied/deleted -> requirements cron) now comes back as Draft (the cron
+    // resets trained versions to Draft, and the one-time backfill did the same
+    // for already-swept ones), so it reappears here without surfacing
+    // Unpublished — which would otherwise also pull in ToS/moderation removals.
     status: { in: [ModelStatus.Draft, ModelStatus.Training] },
     uploadType: ModelUploadType.Trained,
     model: {
@@ -2464,6 +2539,13 @@ export const getRecentlyManuallyAdded = async ({
     where: {
       detected: false,
       image: { userId },
+      // ImageResourceNew.modelVersion is a required relation, but orphaned rows
+      // exist in prod (modelVersionId pointing at a hard-deleted ModelVersion).
+      // Selecting the required relation on such a row makes Prisma throw
+      // "Inconsistent query result: Field modelVersion is required ... got null"
+      // → HTTP 500. Filtering on relation existence excludes the orphans so the
+      // query degrades gracefully (returns the resolvable rows) instead.
+      modelVersion: { is: {} },
     },
     orderBy: { image: { createdAt: 'desc' } },
     take,
@@ -2604,9 +2686,7 @@ export async function bumpModel({ id }: { id: number }) {
 
   await Promise.all([
     dataForModelsCache.refresh([id]),
-    modelsSearchIndex.queueUpdate([
-      { id, action: SearchIndexUpdateQueueAction.Update },
-    ]),
+    modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]),
     userModelCountCache.refresh(updated.userId),
   ]);
 
@@ -3149,7 +3229,6 @@ export async function copyGallerySettingsToAllModelsByUser({
       WHERE
         "userId" = ${userId}
     `;
-
   });
 
   // Count-cache refresh hits Redis — run after commit, off the txn budget.
@@ -3506,7 +3585,12 @@ export async function bustModelModRulesCache() {
 
 export const getPrivateModelCount = async ({ userId }: { userId: number }) => {
   return await dbRead.model.count({
-    where: { userId, availability: Availability.Private },
+    where: {
+      userId,
+      availability: Availability.Private,
+      status: { not: ModelStatus.Deleted },
+      deletedAt: null,
+    },
   });
 };
 
@@ -3690,40 +3774,113 @@ export const publishPrivateModel = async ({
   const versionIds = versions.map((v) => v.id);
   const now = new Date();
 
-  await dbWrite.$transaction([
-    dbWrite.post.updateMany({
+  // Going public requires a showcase post on each version. A privately-published
+  // trained LoRA can be postless (its auto-created post may have been emptied by
+  // sample-image moderation, then deleted by clean-if-empty). Without this guard
+  // it would go public with no post and the nightly requirements cron would
+  // immediately re-unpublish it. Block instead, directing the user to add images.
+  if (publishVersions) {
+    // Read from primary: this gates the write transaction below, and a user who
+    // just added the showcase post then immediately publishes could otherwise
+    // hit replica lag → false "missing post" → incorrect hard block.
+    const versionsWithPost = await dbWrite.post.findMany({
+      where: { modelVersionId: { in: versionIds }, userId: model.userId },
+      select: { modelVersionId: true },
+      distinct: ['modelVersionId'],
+    });
+    const havePost = new Set(versionsWithPost.map((p) => p.modelVersionId));
+    const missingPost = versionIds.filter((id) => !havePost.has(id));
+    if (missingPost.length) {
+      throw throwBadRequestError(
+        'Add example images before making this model public. Each version must include a showcase post.'
+      );
+    }
+  }
+
+  await dbWrite.$transaction(async (tx) => {
+    // Availability + demotion to null flip unconditionally; the publish
+    // bump to `now` is routed through the anti-bump SQL guard below so an
+    // already-public post (e.g. a Public→Private→Public flip) keeps its
+    // original publishedAt. Same invariant as publishModelById:2154-2167.
+    await tx.post.updateMany({
       where: {
         modelVersionId: { in: versionIds },
       },
       data: {
-        publishedAt: publishVersions ? now : null,
+        publishedAt: publishVersions ? undefined : null,
         availability: Availability.Public,
       },
-    }),
-    dbWrite.modelVersion.updateMany({
+    });
+    if (publishVersions) {
+      // Write-once-on-republish: honor the prevPublishedAt stash if it
+      // exists (e.g. post was previously public, unpublished via parent,
+      // then the model went through a Private cycle). Strips the stash on
+      // success. Mirrors the CASE pattern used by publishModelVersionById
+      // and publishModelById.
+      await tx.$executeRaw`
+        UPDATE "Post"
+        SET
+          "publishedAt" = CASE
+            WHEN "metadata"->>'prevPublishedAt' IS NOT NULL
+            THEN ("metadata"->>'prevPublishedAt')::timestamptz
+            ELSE ${now}
+          END,
+          "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
+        WHERE "modelVersionId" IN (${Prisma.join(versionIds, ',')})
+        AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+      `;
+    }
+
+    await tx.modelVersion.updateMany({
       where: { id: { in: versionIds } },
       data: {
         availability: Availability.Public,
         status: publishVersions ? ModelStatus.Published : ModelStatus.Draft,
-        publishedAt: publishVersions ? now : null,
+        // Private->Public flip: status flips unconditionally; publishedAt is
+        // handled separately under the anti-bump SQL guard below so legacy
+        // rows with NULL publishedAt still get a first-publish timestamp,
+        // while already-public rows keep their original date. Demotion
+        // writes null so a follow-up publish can transition cleanly.
+        publishedAt: publishVersions ? undefined : null,
       },
-    }),
-    dbWrite.model.update({
+    });
+
+    await tx.model.update({
       where: {
         id: modelId,
       },
       data: {
         availability: Availability.Public,
         status: publishVersions ? ModelStatus.Published : ModelStatus.Unpublished,
-        publishedAt: publishVersions ? now : null,
+        // Same rationale as the ModelVersion write above.
+        publishedAt: publishVersions ? undefined : null,
         meta: {
           ...((model.meta ?? {}) as ModelMeta),
           cannotPromote: false,
         },
       },
       select: { id: true },
-    }),
-  ]);
+    });
+
+    if (publishVersions) {
+      // Anti-bump guard: set publishedAt = NOW() only on rows that are
+      // currently NULL (never published) or scheduled in the future. Rows
+      // already public keep their original publishedAt — same invariant as
+      // publishModelById / publishModelVersionById.
+      await tx.$executeRaw`
+        UPDATE "ModelVersion"
+        SET "publishedAt" = ${now}
+        WHERE id IN (${Prisma.join(versionIds, ',')})
+        AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+      `;
+      await tx.$executeRaw`
+        UPDATE "Model"
+        SET "publishedAt" = ${now}
+        WHERE id = ${modelId}
+        AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+      `;
+    }
+  });
 
   const updatedImageIds = await dbRead.image.findMany({
     where: {

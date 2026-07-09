@@ -1,3 +1,4 @@
+import { keepPreviousData } from '@tanstack/react-query';
 import { ActionIcon, Button, Container, Group, Stack, Text, Title } from '@mantine/core';
 import { IconPlus, IconTrash } from '@tabler/icons-react';
 import type { MRT_ColumnDef, MRT_PaginationState } from 'mantine-react-table';
@@ -13,6 +14,7 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({
+  requireModerator: true,
   useSession: true,
   resolver: async ({ session }) => {
     if (!session || !session.user?.isModerator)
@@ -31,7 +33,7 @@ export default function GenerationPage() {
   const { unavailableResources, toggleUnavailableResource } = useUnsupportedResources();
   const { data, isInitialLoading, isFetching } = trpc.generation.getResources.useQuery(
     { ids: unavailableResources, page: pagination.pageIndex + 1, limit: pagination.pageSize },
-    { enabled: unavailableResources.length > 0, keepPreviousData: true }
+    { enabled: unavailableResources.length > 0, placeholderData: keepPreviousData }
   );
 
   const handleAddResource = async (resourceId: number) => {

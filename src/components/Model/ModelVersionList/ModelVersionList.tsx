@@ -47,6 +47,7 @@ export function ModelVersionList({
   const colorScheme = useComputedColorScheme('dark');
 
   const viewportRef = useRef<HTMLDivElement>(null);
+  const selectedRef = useRef<HTMLButtonElement>(null);
   const [state, setState] = useState<State>({
     scrollPosition: { x: 0, y: 0 },
     atStart: true,
@@ -65,6 +66,24 @@ export function ModelVersionList({
         setState((state) => ({ ...state, largerThanViewport: newValue }));
     }
   }, [state.largerThanViewport]);
+
+  // Align the selected version near the start of the list (e.g. when deep-linked to a
+  // non-primary version) so it's obvious instead of landing at the right edge. The
+  // startPad clears the left scroll arrow; the first version clamps back to 0.
+  // rAF lets layout settle before measuring.
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      const el = selectedRef.current;
+      const viewport = viewportRef.current;
+      if (!el || !viewport) return;
+
+      const startPad = 40;
+      const delta = el.getBoundingClientRect().left - viewport.getBoundingClientRect().left - startPad;
+      if (delta !== 0) viewport.scrollBy({ left: delta, behavior: 'smooth' });
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [selected, versions.length]);
 
   return (
     <ScrollArea
@@ -93,6 +112,7 @@ export function ModelVersionList({
           variant="transparent"
           radius="xl"
           onClick={scrollLeft}
+          aria-label="Scroll versions left"
         >
           <IconChevronLeft />
         </LegacyActionIcon>
@@ -138,6 +158,7 @@ export function ModelVersionList({
           const versionButton = (
             <Button
               key={version.id}
+              ref={active ? selectedRef : undefined}
               miw={40}
               ta="center"
               className="relative"
@@ -242,6 +263,7 @@ export function ModelVersionList({
           variant="transparent"
           radius="xl"
           onClick={scrollRight}
+          aria-label="Scroll versions right"
         >
           <IconChevronRight />
         </LegacyActionIcon>

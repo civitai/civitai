@@ -143,7 +143,7 @@ const Wrapper = ({
 
 function RemoveResource({ imageId, modelVersionId }: { imageId: number; modelVersionId: number }) {
   const queryUtils = trpc.useUtils();
-  const { mutate, isLoading } = trpc.image.removeResource.useMutation();
+  const { mutate, isPending: isLoading } = trpc.image.removeResource.useMutation();
   const handleRemoveResource = () => {
     openConfirmModal({
       centered: true,

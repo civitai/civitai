@@ -34,7 +34,7 @@ import { nanoBananaVersionIds } from './version-ids';
 // =============================================================================
 
 /** Nano Banana mode type */
-export type NanoBananaMode = 'standard' | 'pro' | 'v2';
+export type NanoBananaMode = 'standard' | 'pro' | 'v2' | 'v2lite';
 
 /** Map from version ID to mode name */
 const versionIdToMode = new Map<number, NanoBananaMode>(
@@ -46,6 +46,7 @@ const nanoBananaModeVersionOptions = [
   { label: 'Standard', value: nanoBananaVersionIds.standard },
   { label: 'Pro', value: nanoBananaVersionIds.pro },
   { label: 'V2', value: nanoBananaVersionIds.v2 },
+  { label: 'V2 Lite', value: nanoBananaVersionIds.v2lite },
 ];
 
 // =============================================================================
@@ -164,6 +165,22 @@ const v2ModeGraph = new DataGraph<NanoBananaModeCtx, GenerationCtx>()
   })
   .node('seed', seedNode());
 
+/**
+ * V2 Lite mode subgraph: aspectRatio, seed.
+ * `nano-banana-2-lite` has no resolution or web-search controls, so the
+ * aspect ratios stay at their 1K dimensions.
+ */
+const v2liteModeGraph = new DataGraph<NanoBananaModeCtx, GenerationCtx>()
+  .node(
+    'aspectRatio',
+    aspectRatioNode({
+      options: nanoBananaBaseAspectRatios,
+      defaultValue: '1:1',
+      priorityOptions: nanoBananaPriorityRatios,
+    })
+  )
+  .node('seed', seedNode());
+
 // =============================================================================
 // Nano Banana Graph V2
 // =============================================================================
@@ -217,6 +234,7 @@ export const nanoBananaGraph = new DataGraph<
     standard: standardModeGraph,
     pro: proModeGraph,
     v2: v2ModeGraph,
+    v2lite: v2liteModeGraph,
   })
   // Prompt + triggerWords are common to all variants. Placed at the parent
   // (after the discriminator) so model from the active branch is in ctx.

@@ -25,7 +25,7 @@ function StripeSubscribeButton({ children, priceId, onSuccess, disabled }: Props
   const featureFlags = useFeatureFlags();
   const { code: refCode } = useReferralsContext();
 
-  const { mutate: stripeCreateSubscriptionSession, isLoading } =
+  const { mutate: stripeCreateSubscriptionSession, isPending: isLoading } =
     trpc.stripe.createSubscriptionSession.useMutation({
       async onSuccess({ sessionId, url }) {
         await currentUser?.refresh();

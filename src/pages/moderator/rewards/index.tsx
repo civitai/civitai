@@ -22,11 +22,14 @@ import { useQueryPurchasableRewardsModerator } from '~/components/PurchasableRew
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { PurchasableRewardModeratorViewMode } from '~/server/common/enums';
 import type { GetPaginatedPurchasableRewardsModeratorSchema } from '~/server/schema/purchasable-reward.schema';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default function Rewards() {
   const [filters, setFilters] = useState<

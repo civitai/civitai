@@ -36,12 +36,17 @@ const bugSelect = Prisma.validator<Prisma.BugSelect>()({
 type BugRow = Prisma.BugGetPayload<{ select: typeof bugSelect }>;
 export type Bug = BugRow & { reportCount: number };
 
+// Button counter: distinct reporters in the last 24h (rolling). The 1h TTL trims
+// the trailing edge as reports age out; incrementBy keeps it live between refreshes.
+// (The mod-only chart in getBugReportStats stays all-time.)
 export const bugReportCounter = cachedCounter<number>(
   REDIS_KEYS.COUNTERS.BUG_REPORTS,
   async (bugId) => {
     if (!clickhouse) return 0;
     const rows = await clickhouse.$query<{ total: number }>`
-      SELECT count() AS total FROM bugReports WHERE bugId = ${bugId}
+      SELECT uniqExact(userId) AS total
+      FROM bugReports
+      WHERE bugId = ${bugId} AND createdAt >= now() - INTERVAL 24 HOUR
     `;
     return rows?.[0]?.total ?? 0;
   },

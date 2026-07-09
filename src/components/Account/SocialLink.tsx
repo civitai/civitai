@@ -15,7 +15,7 @@ export function SocialLink({
 }) {
   const utils = trpc.useUtils();
 
-  const { mutate, isLoading } = trpc.userLink.delete.useMutation({
+  const { mutate, isPending: isLoading } = trpc.userLink.delete.useMutation({
     onSuccess: () => {
       utils.userLink.invalidate();
     },

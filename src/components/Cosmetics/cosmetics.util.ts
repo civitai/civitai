@@ -1,5 +1,6 @@
+import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import type { TRPCClientErrorBase } from '@trpc/client';
-import type { DefaultErrorShape } from '@trpc/server';
+import type { TRPCDefaultErrorShape } from '@trpc/server';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
@@ -20,7 +21,7 @@ export const useQueryCosmeticsPaged = (
       ...filters,
     },
     {
-      ...options,
+      ...withPlaceholderData(options),
       enabled: (options?.enabled ?? true) && currentUser?.isModerator,
     }
   );
@@ -70,7 +71,7 @@ export const useEquipProfileDecoration = () => {
         });
       }
     },
-    onError(error: TRPCClientErrorBase<DefaultErrorShape>) {
+    onError(error: TRPCClientErrorBase<TRPCDefaultErrorShape>) {
       try {
         // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
         const parsedError = JSON.parse(error.message);
@@ -94,7 +95,7 @@ export const useEquipProfileDecoration = () => {
 
   return {
     equip: handleEquipMutation,
-    isLoading: equipMutation.isLoading,
+    isLoading: equipMutation.isPending,
   };
 };
 
@@ -122,7 +123,7 @@ export const useEquipContentDecoration = () => {
           break;
       }
     },
-    onError(error: TRPCClientErrorBase<DefaultErrorShape>) {
+    onError(error: TRPCClientErrorBase<TRPCDefaultErrorShape>) {
       try {
         // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
         const parsedError = JSON.parse(error.message);
@@ -154,6 +155,6 @@ export const useEquipContentDecoration = () => {
   return {
     equip: handleEquipContentDecoration,
     unequip: handleUnequipContentDecoration,
-    isLoading: equipMutation.isLoading || unequipMutation.isLoading,
+    isLoading: equipMutation.isPending || unequipMutation.isPending,
   };
 };

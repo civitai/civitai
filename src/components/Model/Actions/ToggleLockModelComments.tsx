@@ -10,7 +10,7 @@ export function ToggleLockModelComments({
   children: (args: { onClick: () => void; isLoading: boolean }) => React.ReactElement;
 }) {
   const queryUtils = trpc.useUtils();
-  const { mutate, isLoading } = trpc.model.toggleLockComments.useMutation({
+  const { mutate, isPending: isLoading } = trpc.model.toggleLockComments.useMutation({
     onSuccess: (response, request) => {
       queryUtils.model.getById.setData({ id: modelId }, (old) => {
         if (!old) return old;

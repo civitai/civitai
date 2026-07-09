@@ -5,6 +5,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { submitWildcardSetAudit } from '~/server/services/wildcard-category-audit.service';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import { WILDCARD_CATEGORY_NAME } from '~/utils/prompt-helpers';
 
 // `Wildcards` is the model-type enum value used elsewhere (see ModelType in
 // prisma/schema.full.prisma and TrainedWords.tsx). We intentionally hold it
@@ -15,12 +16,12 @@ const WILDCARD_MODEL_TYPE = 'Wildcards' as const;
 
 // Matches Dynamic Prompts nested references including path-like names so a
 // ref such as `__uds_wildcards/personmaker/adultage__` (used by packs that
-// ship a top-level folder as a namespace) gets normalized to its `#…` form
-// at import. Allowed chars after the leading letter: word chars, `/`, `.`,
-// and `-`. Whitespace, `:`, and other separators stay literal — we only
-// claim the conservative path-like subset that matches our category-name
-// storage convention.
-const NESTED_REFERENCE_PATTERN = /__([a-zA-Z][\w./-]*)__/g;
+// ship a top-level folder as a namespace) gets normalized to its `#…` form at
+// import. Whitespace, `:`, and other separators stay literal — we only claim the
+// conservative path-like subset that matches our category-name storage convention.
+// The name charset is shared (WILDCARD_CATEGORY_NAME) so it can't drift from the
+// prompt `#ref` parser or the save-schema validator.
+const NESTED_REFERENCE_PATTERN = new RegExp(`__(${WILDCARD_CATEGORY_NAME})__`, 'g');
 
 const RECONCILE_BATCH_SIZE = 100;
 

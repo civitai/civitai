@@ -66,6 +66,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({
+  requireModerator: true,
   useSession: true,
   resolver: async ({ session }) => {
     if (!session || !session.user?.isModerator)
@@ -358,9 +359,7 @@ export default function ScannerPoliciesPage() {
 
   // Sort: active first (so they cluster at the top), then alphabetical by name.
   const sortCandidates = (list: ScannerPolicyCandidate[]) =>
-    [...list].sort(
-      (a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name)
-    );
+    [...list].sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
 
   const candidatesInTab = sortCandidates(
     candidates.filter((c) => (candidateTab === 'archived' ? c.archived : !c.archived))
@@ -511,7 +510,7 @@ export default function ScannerPoliciesPage() {
                   size="xs"
                   onClick={() => setSystemPromptM.mutate({ mode, body: systemPromptDraft })}
                   disabled={systemPromptDraft === (systemPromptQ.data ?? '')}
-                  loading={setSystemPromptM.isLoading}
+                  loading={setSystemPromptM.isPending}
                 >
                   Save override
                 </Button>
@@ -587,7 +586,7 @@ export default function ScannerPoliciesPage() {
                     size="xs"
                     leftSection={<IconPlus size={14} />}
                     onClick={handleAddLabel}
-                    disabled={!newLabelName.trim() || upsertM.isLoading}
+                    disabled={!newLabelName.trim() || upsertM.isPending}
                   >
                     Add
                   </Button>
@@ -630,7 +629,7 @@ export default function ScannerPoliciesPage() {
                             variant="subtle"
                             leftSection={<IconTrash size={14} />}
                             onClick={() => deleteLabelM.mutate({ mode, label: selectedLabel })}
-                            loading={deleteLabelM.isLoading}
+                            loading={deleteLabelM.isPending}
                           >
                             Delete empty label
                           </Button>
@@ -884,7 +883,7 @@ export default function ScannerPoliciesPage() {
                           <Button
                             onClick={handleSaveCandidate}
                             disabled={!draftCandidate.name.trim() || !draftCandidate.policy.trim()}
-                            loading={upsertM.isLoading}
+                            loading={upsertM.isPending}
                           >
                             {editingCandidate ? 'Save changes' : 'Create candidate'}
                           </Button>
@@ -1034,7 +1033,7 @@ export default function ScannerPoliciesPage() {
                                       }
                                     }}
                                     loading={
-                                      deleteExportM.isLoading &&
+                                      deleteExportM.isPending &&
                                       deleteExportM.variables?.exportId === d.id
                                     }
                                   >
@@ -1085,4 +1084,3 @@ export default function ScannerPoliciesPage() {
     </>
   );
 }
-

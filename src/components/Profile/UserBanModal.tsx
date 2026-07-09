@@ -113,7 +113,7 @@ export default function UserBanModal({ username, userId, onSuccess }: Props) {
         />
 
         <Stack gap="xs">
-          <Button color="red" onClick={handleBan} loading={toggleBanMutation.isLoading}>
+          <Button color="red" onClick={handleBan} loading={toggleBanMutation.isPending}>
             Ban this user
           </Button>
           <Button color="gray" onClick={dialog.onClose}>

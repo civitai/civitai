@@ -27,6 +27,7 @@ import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 type QuickSearchUserType = SearchIndexDataMap['users'][number];
 
@@ -99,7 +100,7 @@ function ContestBanUserModal() {
           color="red"
           leftSection={<IconBan size={14} />}
           disabled={!selectedUser || !banReason}
-          loading={toggleBanMutation.isLoading}
+          loading={toggleBanMutation.isPending}
           onClick={onToggleBanUser}
         >
           Ban this user
@@ -210,7 +211,7 @@ export default function ContestsBans() {
                           onClick={() => {
                             onToggleBanUser(user.id);
                           }}
-                          loading={toggleBanMutation.isLoading}
+                          loading={toggleBanMutation.isPending}
                         >
                           <Tooltip label="Unban">
                             <IconTrashOff size={16} />
@@ -230,3 +231,5 @@ export default function ContestsBans() {
     </>
   );
 }
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });

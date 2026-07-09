@@ -75,6 +75,11 @@ export function OutputFormatInput({
       <Tooltip label="Output Format" position="top" withArrow>
         <Menu.Target>
           <UnstyledButton
+            // Name the control AND keep the selected value in the accessible
+            // name (WCAG 2.5.3 — the visible label must be contained in it).
+            // Without an aria-label the SR name is just the value ("PNG"); a
+            // bare "Output Format" would drop the value. Include both.
+            aria-label={`Output Format: ${selected?.label ?? 'JPEG'}`}
             className={clsx(
               'flex items-center gap-1.5 rounded-md px-2 py-1 text-sm',
               'bg-gray-1 hover:bg-gray-2',

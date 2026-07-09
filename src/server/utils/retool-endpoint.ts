@@ -1,7 +1,7 @@
 import type { Logger } from '@civitai/next-axiom';
 import { withAxiom } from '@civitai/next-axiom';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { Tracker } from '~/server/clickhouse/client';
 import { getSessionFromBearerToken } from '~/server/auth/bearer-token';

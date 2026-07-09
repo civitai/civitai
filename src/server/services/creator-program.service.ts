@@ -10,6 +10,7 @@ import {
 } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { decodeRedisString } from '~/server/redis/buffer-decode';
 import type { BuzzCreatorProgramType, BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType, buzzBankTypes } from '~/shared/constants/buzz.constants';
 import type {
@@ -379,7 +380,7 @@ export async function bustCompensationPoolCache() {
 }
 
 async function getFlippedPhaseStatus() {
-  return await sysRedis.get(REDIS_SYS_KEYS.CREATOR_PROGRAM.FLIP_PHASES);
+  return decodeRedisString(await sysRedis.get(REDIS_SYS_KEYS.CREATOR_PROGRAM.FLIP_PHASES));
 }
 
 export async function bankBuzz(userId: number, amount: number, buzzType: BuzzSpendType) {
@@ -882,7 +883,19 @@ export async function getPoolParticipantsV2(month?: Date, includeNegativeAmounts
     limit: 10000,
     all: true,
   });
-  const participants = data[`${monthAccount}`];
+  // A creator who banked from more than one source account type (e.g. green + yellow) is returned
+  // as one contributor row per source type. Sum them per userId so each creator is a single
+  // participant and receives a single compensation grant — otherwise the distribute loop emits two
+  // grants sharing one externalTransactionId and the second is silently dropped as a conflict,
+  // paying the creator for only one buzz type. A Map preserves the upstream contributor order that
+  // the distribute loop's pool-depletion cutoff depends on (Object.values would reorder by userId).
+  const summed = new Map<number, { userId: number; amount: number }>();
+  for (const p of data[`${monthAccount}`] ?? []) {
+    const existing = summed.get(p.userId);
+    if (existing) existing.amount += p.amount;
+    else summed.set(p.userId, { userId: p.userId, amount: p.amount });
+  }
+  const participants = [...summed.values()];
   let bannedParticipants: { userId: number }[] = [];
 
   if (participants.length > 0) {

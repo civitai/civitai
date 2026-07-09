@@ -5,7 +5,7 @@
     /* // The color and background are dynamic based on the `color` prop and theme.
     // Set these via a style prop or utility class if needed.
     // For gray (not reacted): */
-    color: var(--mantine-color-gray-6);
+    color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-gray-3));
     background: transparent !important;
   }
 
@@ -13,6 +13,12 @@
   &[data-disabled].hasReacted {
     color: var(--mantine-color-blue-6);
     /* // background-color can be set via a style prop if needed */
+  }
+
+  /* // Reacted (highlighted) state */
+  &.hasReacted {
+    color: var(--mantine-color-blue-4);
+    background: alpha(var(--mantine-color-blue-6), 0.2);
   }
 
   /* // Hover state */
@@ -25,5 +31,10 @@
     );
     /* // For gray:
     // background: alpha(var(--mantine-color-gray-6), 0.4); */
+  }
+
+  /* // Reacted + hover hints that clicking will un-react */
+  &.hasReacted:hover {
+    background: alpha(var(--mantine-color-blue-6), 0.32);
   }
 }

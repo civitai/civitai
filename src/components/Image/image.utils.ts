@@ -1,3 +1,4 @@
+import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { closeModal, openConfirmModal } from '@mantine/modals';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { isEqual } from 'lodash-es';
@@ -63,6 +64,7 @@ export const imagesQueryParamSchema = z
     modelVersionId: numericString(),
     notPublished: booleanString(),
     publishedOnly: booleanString(),
+    pendingReviewOnly: booleanString(),
     period: z.enum(MetricTimeframe),
     periodMode: z.enum(['stats', 'published']).optional(),
     postId: numericString(),
@@ -81,7 +83,6 @@ export const imagesQueryParamSchema = z
       .union([z.array(z.enum(MediaType)), z.enum(MediaType)])
       .transform((val) => (Array.isArray(val) ? val : [val]))
       .optional(),
-    useIndex: booleanString().nullish(),
     userId: numericString(),
     username: z.coerce.string().transform(postgresSlugify),
     view: z.enum(['categories', 'feed']),
@@ -128,13 +129,16 @@ export const useQueryImages = (
   filters ??= {};
   const browsingSettingsAddons = useBrowsingSettingsAddons();
 
+  // `!!currentUser` guards against `filters.userId === currentUser?.id` being
+  // `undefined === undefined` for anonymous users, which treats them as the owner.
+  const isOwnImages =
+    !!currentUser &&
+    ((!!filters.username &&
+      filters.username.toLowerCase() === currentUser.username?.toLowerCase()) ||
+      filters.userId === currentUser.id);
   const excludedTagIds = [
     ...(filters.excludedTagIds ?? []),
-    ...((filters.username &&
-      filters.username.toLowerCase() === currentUser?.username?.toLowerCase()) ||
-    filters.userId === currentUser?.id
-      ? []
-      : browsingSettingsAddons.settings.excludedTagIds ?? []),
+    ...(isOwnImages ? [] : browsingSettingsAddons.settings.excludedTagIds ?? []),
   ].filter(isDefined);
 
   const { data, isLoading, ...rest } = trpc.image.getInfinite.useInfiniteQuery(
@@ -160,7 +164,7 @@ export const useQueryImages = (
       // every attempt. Otherwise the user sees nothing for the first failure,
       // then the banner appears belatedly.
       retry: 0,
-      ...queryOptions,
+      ...withPlaceholderData(queryOptions),
     }
   );
 
@@ -285,7 +289,7 @@ export function useReportCsamImages(
       children: `Are you sure you want to report this as CSAM?`,
       centered: true,
       labels: { confirm: 'Yes', cancel: 'Cancel' },
-      confirmProps: { color: 'red', loading: reportCsamImage.isLoading },
+      confirmProps: { color: 'red', loading: reportCsamImage.isPending },
       closeOnConfirm: false,
       onConfirm: () => reportCsamImage.mutate(args),
     });

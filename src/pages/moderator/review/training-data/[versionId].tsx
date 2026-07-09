@@ -27,6 +27,7 @@ import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { showSuccessNotification } from '~/utils/notifications';
 import { getModelUrl } from '~/utils/string-helpers';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 function ReviewTrainingData() {
   const router = useRouter();
@@ -160,6 +161,8 @@ function ReviewTrainingData() {
   );
 }
 
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
+
 export default Page(ReviewTrainingData, {
   scrollable: false,
   features: (features) => !!features.reviewTrainingData,
@@ -183,7 +186,7 @@ function ReviewImages({
 }) {
   const approve = trpc.moderator.trainingData.approve.useMutation({ onSuccess });
   const deny = trpc.moderator.trainingData.deny.useMutation({ onSuccess });
-  const disabled = approve.isLoading || deny.isLoading;
+  const disabled = approve.isPending || deny.isPending;
 
   function handleApprove() {
     approve.mutate({ id: versionId });

@@ -1206,6 +1206,12 @@ function ProjectWorkspace() {
   // page already handles the no-renderable-panels case.
   const hasReadyPanelsWithImages = totalPanelCount > 0;
 
+  // Hero banner (the wide overview-page banner). Surfaced in the workspace
+  // header so the author can see at a glance whether it's set — previously
+  // it was only visible/editable from the Settings modal.
+  const heroImage = (project as any).heroImage as { id: number; url: string } | null | undefined;
+  const heroImagePosition = ((project as any).heroImagePosition as number | undefined) ?? 50;
+
   // Detail drawer is opened from the active chapter's panel grid, so we
   // only need to look there. Chapters other than the active one don't have
   // their panels loaded into the cache.
@@ -1307,6 +1313,42 @@ function ProjectWorkspace() {
               </Alert>
             );
           })()}
+
+          {/* ── Hero banner ─────────────────────────── */}
+          {/* The overview-page banner, shown here so the author can tell at
+              a glance whether it's set. Click anywhere to edit it (and the
+              cover) in Settings. */}
+          <div
+            className={clsx(styles.heroBanner, !heroImage && styles.heroBannerEmpty)}
+            onClick={() => openSettings()}
+            role="button"
+            tabIndex={0}
+          >
+            {heroImage?.url ? (
+              <>
+                <img
+                  src={getEdgeUrl(heroImage.url, { width: 1200 })}
+                  alt={`${project.name} hero banner`}
+                  className={styles.heroBannerImg}
+                  style={{ objectPosition: `center ${heroImagePosition}%` }}
+                />
+                <span className={styles.heroBannerEdit}>
+                  <IconSettings size={14} />
+                  Edit in settings
+                </span>
+              </>
+            ) : (
+              <Stack gap={2} align="center" className={styles.heroBannerPlaceholder}>
+                <IconPhoto size={22} style={{ color: '#909296' }} />
+                <Text size="sm" fw={600}>
+                  No hero banner set
+                </Text>
+                <Text size="xs" c="dimmed" ta="center">
+                  Add one in Settings — it headlines your comic&apos;s overview page
+                </Text>
+              </Stack>
+            )}
+          </div>
 
           {/* ── Header card ─────────────────────────── */}
           <div className={clsx(styles.headerCard, styles.gradientTopBorder)}>
@@ -1548,12 +1590,12 @@ function ProjectWorkspace() {
                         chapter.earlyAccessEndsAt != null &&
                         new Date(chapter.earlyAccessEndsAt) > new Date();
                       const isDeleting =
-                        deleteChapterMutation.isLoading &&
+                        deleteChapterMutation.isPending &&
                         deleteChapterMutation.variables?.chapterPosition === chapter.position;
                       const isUpdating =
-                        (updateChapterMutation.isLoading &&
+                        (updateChapterMutation.isPending &&
                           updateChapterMutation.variables?.chapterPosition === chapter.position) ||
-                        (updateChapterEaMutation.isLoading &&
+                        (updateChapterEaMutation.isPending &&
                           updateChapterEaMutation.variables?.chapterPosition === chapter.position);
                       const isBusy = isDeleting || isUpdating;
 
@@ -1754,10 +1796,10 @@ function ProjectWorkspace() {
                 <button
                   className={styles.chapterAddBtn}
                   onClick={() => createChapterMutation.mutate({ projectId })}
-                  disabled={createChapterMutation.isLoading}
+                  disabled={createChapterMutation.isPending}
                 >
-                  {createChapterMutation.isLoading ? <Loader size={14} /> : <IconPlus size={14} />}
-                  {createChapterMutation.isLoading ? 'Adding...' : 'Add Chapter'}
+                  {createChapterMutation.isPending ? <Loader size={14} /> : <IconPlus size={14} />}
+                  {createChapterMutation.isPending ? 'Adding...' : 'Add Chapter'}
                 </button>
 
                 {activeReferences.length > 0 && (
@@ -1788,10 +1830,10 @@ function ProjectWorkspace() {
                     activeChapter.earlyAccessEndsAt != null &&
                     new Date(activeChapter.earlyAccessEndsAt) > new Date();
                   const isPublishing =
-                    (publishChapterMutation.isLoading &&
+                    (publishChapterMutation.isPending &&
                       publishChapterMutation.variables?.chapterPosition ===
                         activeChapter.position) ||
-                    (unpublishChapterMutation.isLoading &&
+                    (unpublishChapterMutation.isPending &&
                       unpublishChapterMutation.variables?.chapterPosition ===
                         activeChapter.position);
                   const isDraft = activeChapter.status === ComicChapterStatus.Draft;
@@ -2119,15 +2161,15 @@ function ProjectWorkspace() {
         canDelete={project.chapters.length > 1}
         onSave={handleSaveChapterSettings}
         onDelete={handleDeleteChapter}
-        isSaving={updateChapterMutation.isLoading || updateChapterEaMutation.isLoading}
-        isDeleting={deleteChapterMutation.isLoading}
+        isSaving={updateChapterMutation.isPending || updateChapterEaMutation.isPending}
+        isDeleting={deleteChapterMutation.isPending}
       />
 
       <PublishModal
         opened={publishModalOpened}
         onClose={closePublishModal}
         onPublish={handleConfirmPublish}
-        isLoading={publishChapterMutation.isLoading}
+        isLoading={publishChapterMutation.isPending}
       />
 
       <ProjectSettingsModal
@@ -2147,7 +2189,7 @@ function ProjectWorkspace() {
           updateProjectMutation.mutate({ id: projectId, ...data, baseModel: data.baseModel as any })
         }
         onDeleteProject={() => deleteProjectMutation.mutate({ id: projectId })}
-        isSaving={updateProjectMutation.isLoading}
+        isSaving={updateProjectMutation.isPending}
       />
     </>
   );

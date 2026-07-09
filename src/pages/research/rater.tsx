@@ -191,7 +191,7 @@ function Rater() {
   //     { level: level!, cursor },
   //     {
   //       enabled: !isLoading && isSane && !!level && pendingImages.length < 5,
-  //       cacheTime: 0,
+  //       gcTime: 0,
   //     }
   //   );
   //   useEffect(() => {

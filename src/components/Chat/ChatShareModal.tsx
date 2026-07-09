@@ -84,9 +84,10 @@ export default function ChatShareModal(props: { message: string }) {
         produce((old) => {
           if (!old) return old;
 
-          const lastPage = old.pages[old.pages.length - 1];
-
-          lastPage.items.push(data);
+          // The backend returns messages grouped in chunks (pages). 
+          // `old.pages[0]` contains the newest chunk of messages.
+          const newestPage = old.pages[0];
+          newestPage.items.push(data);
         })
       );
 

@@ -1,3 +1,4 @@
+import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type {
   PurchasableRewardUpsert,
@@ -63,9 +64,9 @@ export const useMutatePurchasableReward = () => {
 
   return {
     upsertPurchasableReward: handleUpsertPurchasableReward,
-    upsertingPurchasableReward: upsertPurchasableReward.isLoading,
+    upsertingPurchasableReward: upsertPurchasableReward.isPending,
     purchasePurchasableReward: handlePurchasePurchasableReward,
-    purchasingPurchasableReward: purchasePurchasableReward.isLoading,
+    purchasingPurchasableReward: purchasePurchasableReward.isPending,
   };
 };
 
@@ -80,7 +81,7 @@ export const useQueryPurchasableRewards = (
     },
     {
       enabled: !!currentUser,
-      ...options,
+      ...withPlaceholderData(options),
     }
   );
 
@@ -103,7 +104,7 @@ export const useQueryPurchasableRewardsModerator = (
     },
     {
       enabled: !!currentUser,
-      ...options,
+      ...withPlaceholderData(options),
     }
   );
 

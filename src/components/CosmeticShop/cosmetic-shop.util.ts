@@ -1,3 +1,4 @@
+import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -29,7 +30,7 @@ export const useQueryCosmeticShopItemsPaged = (
       ...filters,
     },
     {
-      ...options,
+      ...withPlaceholderData(options),
       enabled: (options?.enabled ?? true) && currentUser?.isModerator,
     }
   );
@@ -250,19 +251,19 @@ export const useMutateCosmeticShop = () => {
 
   return {
     upsertShopItem: handleUpsertShopItem,
-    upsertingShopItem: upsertShopItemMutation.isLoading,
+    upsertingShopItem: upsertShopItemMutation.isPending,
     upsertShopSection: handleUpsertShopSection,
-    upsertingShopSection: upsertShopSectionMutation.isLoading,
+    upsertingShopSection: upsertShopSectionMutation.isPending,
     deleteShopSection: handleDeleteShopSection,
-    deletingShopSection: deleteShopSectionMutation.isLoading,
+    deletingShopSection: deleteShopSectionMutation.isPending,
     updateShopSectionsOrder: handleUpdateShopSectionsOrderMutation,
-    updatingShopSectionsOrder: updateShopSectionsOrderMutation.isLoading,
+    updatingShopSectionsOrder: updateShopSectionsOrderMutation.isPending,
     deleteShopItem: handleDeleteShopItemMutation,
-    deletingShopItem: deleteShopItemMutation.isLoading,
+    deletingShopItem: deleteShopItemMutation.isPending,
     purchaseShopItem: handlePurchaseShopItemMutation,
-    purchasingShopItem: purchaseShopItemMutation.isLoading,
+    purchasingShopItem: purchaseShopItemMutation.isPending,
     upsertCosmetic: handleUpsertCosmetic,
-    upsertingCosmetic: upsertCosmeticMutation.isLoading,
+    upsertingCosmetic: upsertCosmeticMutation.isPending,
   };
 };
 
@@ -272,7 +273,7 @@ export const useQueryShop = (
 ) => {
   const { data = [], ...rest } = trpc.cosmeticShop.getShop.useQuery(
     { ...filters },
-    { ...options, enabled: options?.enabled ?? true }
+    { ...withPlaceholderData(options), enabled: options?.enabled ?? true }
   );
 
   return { cosmeticShopSections: data, ...rest };
@@ -295,7 +296,7 @@ export const useShopLastViewed = () => {
   });
 
   const updateLastViewed = async () => {
-    if (!currentUser || updateUserSettings.isLoading || updateUserSettings.isSuccess) {
+    if (!currentUser || updateUserSettings.isPending || updateUserSettings.isSuccess) {
       return;
     }
 

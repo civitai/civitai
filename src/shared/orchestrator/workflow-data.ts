@@ -7,6 +7,9 @@ import type {
   NormalizedImageOutput,
   NormalizedVideoOutput,
   NormalizedAudioOutput,
+  NormalizedModel3DAsset,
+  NormalizedModel3DFile,
+  NormalizedModel3DOutput,
 } from '~/server/services/orchestrator/orchestration-new.service';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { isPrivateMature, isMature } from '~/shared/constants/orchestrator.constants';
@@ -119,7 +122,7 @@ export class WorkflowData {
  * getters that fall back to workflow metadata when step metadata is empty.
  */
 export interface StepData extends NormalizedStep {
-  output: Array<ImageBlob | VideoBlob | AudioBlob>;
+  output: Array<ImageBlob | VideoBlob | AudioBlob | Model3DBlob>;
 }
 export class StepData {
   #workflow: WorkflowData;
@@ -137,7 +140,7 @@ export class StepData {
     if (blobOptions) {
       this.output = (this.output ?? ([] as any[])).map((item: any, index: number) =>
         item instanceof BlobData
-          ? (item as ImageBlob | VideoBlob | AudioBlob)
+          ? (item as ImageBlob | VideoBlob | AudioBlob | Model3DBlob)
           : BlobData.from(item, { step: this, index, ...blobOptions })
       );
     }
@@ -156,27 +159,24 @@ export class StepData {
     const stepParams = this.metadata.params;
     const wfParams = this.#workflow.metadata?.params;
 
-    // `step.metadata.params` is overloaded with two opposite meanings, told apart by the
-    // server-set `sourceLineage` flag (a per-step fact `formatStep` derives from the raw
-    // step's lineage marker):
+    // The server flags whether `step.metadata.params` is a partial DELTA vs a complete snapshot,
+    // so this getter never has to *decide* — it just applies the directive:
     //
-    // 1. sourceLineage === true (enhancement steps — upscale, remove-bg):
-    //    params is a COMPLETE, self-contained snapshot of the *source* generation. Use it
-    //    verbatim. Merging in workflow.metadata.params (the enhancement form input) would
-    //    leak fields the source doesn't override — e.g. `images:[sourceUrl]`, `upscaler`,
-    //    or the `img2img:upscale` workflow key — into a remix of the original, making the
-    //    remix behave like the enhancement workflow.
+    // - `partialParams` set (wildcard/snippet variant): `params` is a small overlay (e.g. the
+    //   substituted prompt). Spread it over the workflow-level form snapshot to reconstruct the
+    //   variant's effective params. The server sends only the delta — we complete it here, which
+    //   keeps the API payload small (no full params duplicated per variant).
+    // - otherwise: either/or. A complete snapshot (enhancement steps store the *source*
+    //   generation here) is used verbatim; an absent one falls back to workflow params. We must
+    //   NOT spread in this case, or the enhancement form's fields (`images`, `upscaler`, the
+    //   `img2img:*` workflow key) would leak into a remix of the original.
     //
-    // 2. sourceLineage falsy (wildcard/snippet variants):
-    //    params is a partial DELTA (only the substituted `prompt`/`negativePrompt`). It
-    //    MUST merge over workflow.metadata.params, which holds the full template + settings
-    //    snapshot (steps, cfgScale, sampler, seed, resources, workflow key).
-    //
-    // Empty/absent step params (standard new-format gen) fall back to workflow params.
-    if (this.metadata.sourceLineage && stepParams && Object.keys(stepParams).length > 0) {
-      return stepParams;
+    // See docs/generation-metadata-architecture.md.
+    if (this.metadata.partialParams && stepParams && Object.keys(stepParams).length > 0) {
+      return { ...wfParams, ...stepParams };
     }
-    return { ...wfParams, ...stepParams };
+    if (stepParams && Object.keys(stepParams).length > 0) return stepParams;
+    return wfParams ?? {};
   }
   get resources(): NormalizedWorkflowMetadata['resources'] {
     if (this.metadata.resources?.length) return this.metadata.resources;
@@ -217,12 +217,12 @@ export class StepData {
   }
 
   /** Outputs that have landed, not blocked, and not hidden. */
-  get succeededOutput(): Array<ImageBlob | VideoBlob | AudioBlob> {
+  get succeededOutput(): Array<ImageBlob | VideoBlob | AudioBlob | Model3DBlob> {
     if (this.suppressOutput) return [];
     return this.output.filter((x) => x.available && !x.blockedReason && !x.hidden);
   }
   /** Outputs suitable for display — not hidden, not hard-blocked (upgradeable + errored items included). */
-  get displayOutput(): Array<ImageBlob | VideoBlob | AudioBlob> {
+  get displayOutput(): Array<ImageBlob | VideoBlob | AudioBlob | Model3DBlob> {
     if (this.suppressOutput) return [];
     return this.output.filter((x) => x.displayable);
   }
@@ -257,9 +257,10 @@ type BlobConstructorArgs = {
 
 /**
  * Abstract base for workflow output blobs. Concrete subclasses:
- * - ImageBlob  (type: 'image')
- * - VideoBlob  (type: 'video')
- * - AudioBlob  (type: 'audio')
+ * - ImageBlob   (type: 'image')
+ * - VideoBlob   (type: 'video')
+ * - AudioBlob   (type: 'audio')
+ * - Model3DBlob (type: 'model3d')
  *
  * Subclasses carry no normalization logic — everything is pre-shaped by
  * `formatStepOutputs` before the raw payload reaches here. The base handles:
@@ -268,7 +269,7 @@ type BlobConstructorArgs = {
  * - Parent-step ref and resolved metadata accessors (params/resources/remixOfId)
  */
 export abstract class BlobData {
-  abstract readonly type: 'image' | 'video' | 'audio';
+  abstract readonly type: 'image' | 'video' | 'audio' | 'model3d';
 
   url!: string;
   seed?: number | null;
@@ -318,7 +319,7 @@ export abstract class BlobData {
   static from(
     data: NormalizedWorkflowStepOutput,
     opts: Omit<BlobConstructorArgs, 'data'>
-  ): ImageBlob | VideoBlob | AudioBlob {
+  ): ImageBlob | VideoBlob | AudioBlob | Model3DBlob {
     const args = { data, ...opts } as BlobConstructorArgs;
     switch (data.type) {
       case 'image':
@@ -327,6 +328,8 @@ export abstract class BlobData {
         return new VideoBlob(args as BlobConstructorArgs & { data: NormalizedVideoOutput });
       case 'audio':
         return new AudioBlob(args as BlobConstructorArgs & { data: NormalizedAudioOutput });
+      case 'model3d':
+        return new Model3DBlob(args as BlobConstructorArgs & { data: NormalizedModel3DOutput });
       default: {
         const _exhaustive: never = data;
         void _exhaustive;
@@ -455,11 +458,14 @@ export abstract class BlobData {
 
 export class ImageBlob extends BlobData {
   readonly type = 'image' as const;
-  width!: number;
-  height!: number;
-  aspect!: number;
-  previewUrl?: string | null;
-  previewUrlExpiresAt?: string | null;
+  // `declare` — these are populated by `BlobData`'s `Object.assign(this, data)`. Without it,
+  // under `useDefineForClassFields` (SWC/Next default) the field declarations would re-run
+  // after `super()` and reset the assigned values to `undefined`.
+  declare width: number;
+  declare height: number;
+  declare aspect: number;
+  declare previewUrl?: string | null;
+  declare previewUrlExpiresAt?: string | null;
   constructor(args: BlobConstructorArgs & { data: NormalizedImageOutput }) {
     super(args);
   }
@@ -467,9 +473,10 @@ export class ImageBlob extends BlobData {
 
 export class VideoBlob extends BlobData {
   readonly type = 'video' as const;
-  width!: number;
-  height!: number;
-  aspect!: number;
+  // `declare` — see ImageBlob; assigned by the base, must not be re-initialized here.
+  declare width: number;
+  declare height: number;
+  declare aspect: number;
   constructor(args: BlobConstructorArgs & { data: NormalizedVideoOutput }) {
     super(args);
   }
@@ -481,8 +488,54 @@ export class AudioBlob extends BlobData {
   /** Audio has no intrinsic dimensions — these defaults size the card layout uniformly with image/video. */
   readonly width = 512;
   readonly height = 512;
-  duration?: number | null;
+  // `declare` — assigned by the base `Object.assign`; see ImageBlob.
+  declare duration?: number | null;
   constructor(args: BlobConstructorArgs & { data: NormalizedAudioOutput }) {
     super(args);
   }
 }
+
+/**
+ * 3D model output (PolyGen). `url` is the primary mesh (GLB); `variants`
+ * carries alternate-format exports (FBX, etc.); `thumbnailUrl` is the 2D
+ * preview shown on queue/grid cards. The 3D viewer itself only mounts on
+ * detail pages — see Model3DCard / Model3DQueueCardOutputs.
+ */
+export class Model3DBlob extends BlobData {
+  readonly type = 'model3d' as const;
+  /** Square placeholder dims so the card sizes consistently with image/video. */
+  readonly aspect = 1;
+  readonly width = 512;
+  readonly height = 512;
+  // `declare` — see ImageBlob. These are populated by `BlobData`'s
+  // `Object.assign(this, data)` in the base ctor. Without `declare`, under
+  // `useDefineForClassFields` (SWC/Next default for modern targets) the
+  // subclass field declarations re-fire after `super()` returns and reset
+  // the values to `undefined` — which is exactly what was making the
+  // QueueItem render "No preview available": format/variants/thumbnailUrl
+  // were being nuked on every Model3DBlob construction.
+  declare format: string;
+  declare variants?: Array<{
+    id: string;
+    format: string;
+    url: string;
+    available: boolean;
+    urlExpiresAt?: string | null;
+  }>;
+  declare thumbnailId?: string | null;
+  declare thumbnailUrl?: string | null;
+  declare thumbnailUrlExpiresAt?: string | null;
+  declare thumbnailNsfwLevel?: NsfwLevel;
+  // Sibling meshes from the PolyGen workflow. All `declare`-d for the
+  // same Object.assign-survival reason as the rest of this class.
+  declare rigged?: Model3DAsset;
+  declare animated?: Model3DAsset;
+  declare basicAnimations?: { walking?: Model3DAsset; running?: Model3DAsset };
+  constructor(args: BlobConstructorArgs & { data: NormalizedModel3DOutput }) {
+    super(args);
+  }
+}
+
+/** Re-export of the asset shape used by Model3DBlob's sibling-mesh fields. */
+export type Model3DFile = NormalizedModel3DFile;
+export type Model3DAsset = NormalizedModel3DAsset;

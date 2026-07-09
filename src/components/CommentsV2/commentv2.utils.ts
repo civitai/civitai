@@ -24,7 +24,7 @@ export const useMutateComment = () => {
   });
 
   const handleToggleHide = (payload: ToggleHideCommentInput) => {
-    if (toggleHideCommentMutation.isLoading) return;
+    if (toggleHideCommentMutation.isPending) return;
     return toggleHideCommentMutation.mutateAsync(payload);
   };
 

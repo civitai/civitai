@@ -1,5 +1,6 @@
 import { useCallback, useRef } from 'react';
-import { signOut, useSession } from 'next-auth/react';
+import { useSession } from '~/providers/SessionProvider';
+import { handleSignOut } from '~/utils/auth-helpers';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages } from '~/server/common/enums';
 
@@ -17,7 +18,7 @@ export const useSessionRefreshSignal = () => {
     // update() would re-issue a fresh JWT cookie and clear the Redis 'invalid' marker,
     // leaving the user logged in. Force a signOut instead.
     if (data?.type === 'invalid') {
-      signOut();
+      handleSignOut();
       return;
     }
     // 'refresh' (or unknown): pull fresh session data into the client cookie.

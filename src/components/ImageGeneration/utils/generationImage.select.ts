@@ -1,77 +1,26 @@
-import { useCallback } from 'react';
-import { create } from 'zustand';
-import { devtools } from 'zustand/middleware';
+import { createSelectionContext, createSelectionStore } from '~/store/createSelectionStore';
 import type { BlobData } from '~/shared/orchestrator/workflow-data';
 
-// =============================================================================
-// Key helpers
-// =============================================================================
+const getKey = (image: BlobData) => `${image.workflowId}:${image.stepName}:${image.id}`;
 
-const makeKey = (image: { workflowId: string; stepName: string; id: string }) =>
-  `${image.workflowId}:${image.stepName}:${image.id}`;
+/**
+ * The default generated-image selection store instance. Provided to the Queue/Feed
+ * subtree via the exported {@link SelectionProvider}, and also used as the context's
+ * default so portaled consumers (the lightbox dialog, rendered outside the provider)
+ * resolve to the same instance. Exported for imperative/non-React access via
+ * `generatedImageSelectStore.actions`.
+ */
+export const generatedImageSelectStore = createSelectionStore<BlobData>({
+  getKey,
+  name: 'generated-image-select',
+});
 
-// =============================================================================
-// Store (plain zustand — no immer, BlobData has private fields)
-// =============================================================================
-
-interface OrchestratorImageSelectState {
-  selected: Record<string, BlobData>;
-}
-
-const initialState: OrchestratorImageSelectState = {
-  selected: {},
-};
-
-const useStore = create<OrchestratorImageSelectState>()(
-  devtools(() => initialState, { name: 'generated-image-select' })
-);
-
-// =============================================================================
-// Public API
-// =============================================================================
-
-export const orchestratorImageSelect = {
-  // ---------------------------------------------------------------------------
-  // Selection
-  // ---------------------------------------------------------------------------
-
-  useSelection: (): BlobData[] => {
-    const selected = useStore((state) => state.selected);
-    return Object.values(selected);
-  },
-
-  useIsSelected: (image: { workflowId: string; stepName: string; id: string }): boolean => {
-    const key = makeKey(image);
-    return useStore(useCallback((state) => !!state.selected[key], [key]));
-  },
-
-  useIsSelecting: (): boolean => {
-    return useStore((state) => Object.keys(state.selected).length > 0);
-  },
-
-  setSelected: (images: BlobData[]) => {
-    useStore.setState({
-      selected: Object.fromEntries(images.map((img) => [makeKey(img), img])),
-    });
-  },
-
-  toggle: (image: BlobData, value?: boolean) => {
-    const state = useStore.getState();
-    const key = makeKey(image);
-    const isSelected = !!state.selected[key];
-    const newValue = value ?? !isSelected;
-
-    if (newValue === isSelected) return;
-
-    if (newValue) {
-      useStore.setState({ selected: { ...state.selected, [key]: image } });
-    } else {
-      const { [key]: _, ...rest } = state.selected;
-      useStore.setState({ selected: rest });
-    }
-  },
-
-  getSelected: (): BlobData[] => {
-    return Object.values(useStore.getState().selected);
-  },
-};
+export const {
+  SelectionProvider,
+  useActions,
+  useSelection,
+  useIsSelected,
+  useIsSelecting,
+  useSelectedCount,
+  useRegisterOrder,
+} = createSelectionContext<BlobData>(generatedImageSelectStore);

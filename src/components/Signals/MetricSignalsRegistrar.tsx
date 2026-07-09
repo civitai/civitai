@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SignalMessages } from '~/server/common/enums';
 import { useMetricSignalsStore } from '~/store/metric-signals.store';
 import type { MetricEntityType, MetricType, MetricUpdatePayload } from './metric-signals.types';
@@ -31,15 +32,29 @@ function normalizeMetricPayload(raw: Record<string, number>): MetricUpdatePayloa
  */
 export function useMetricSignalsListener() {
   const applyDelta = useMetricSignalsStore((state) => state.applyDelta);
+  const currentUser = useCurrentUser();
+  const currentUserId = currentUser?.id;
 
   const handleMetricUpdate = useCallback(
-    (payload: Record<string, any> & { entityType?: MetricEntityType; entityId?: number }) => {
+    (
+      payload: Record<string, any> & {
+        entityType?: MetricEntityType;
+        entityId?: number;
+        userId?: number;
+      }
+    ) => {
       if (!payload.entityType || !payload.entityId) {
         console.warn('MetricSignalsRegistrar: missing entityType or entityId in payload', payload);
         return;
       }
 
-      const { entityType, entityId, ...rawUpdates } = payload;
+      // Echo-suppression: skip deltas the current user originated. The optimistic
+      // reaction store (ReactionButton) already accounts for the user's own
+      // action, so applying the signal echo on top would double-count it.
+      if (payload.userId != null && payload.userId === currentUserId) return;
+
+      // Pull `userId` out so it isn't mistaken for a metric by normalizeMetricPayload.
+      const { entityType, entityId, userId: _userId, ...rawUpdates } = payload;
       const updates = normalizeMetricPayload(rawUpdates);
       // Skip empty/no-op payloads — the server sometimes emits topic-only
       // notifications with no metric values, and applyDelta would otherwise
@@ -49,7 +64,7 @@ export function useMetricSignalsListener() {
       if (!hasChange) return;
       applyDelta(entityType, entityId, updates);
     },
-    [applyDelta]
+    [applyDelta, currentUserId]
   );
 
   useSignalConnection(SignalMessages.MetricUpdate, handleMetricUpdate);

@@ -19,7 +19,7 @@ export function ModelDiscussionV2({ modelId, modelUserId, limit: initialLimit = 
   const { data, isLoading, isFetchingNextPage, fetchNextPage, hasNextPage, isRefetching } =
     trpc.comment.getAll.useInfiniteQuery(filters, {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
-      keepPreviousData: false,
+      placeholderData: undefined,
     });
   const comments = useMemo(() => data?.pages.flatMap((x) => x.comments) ?? [], [data?.pages]);
   const hasItems = comments.length > 0;

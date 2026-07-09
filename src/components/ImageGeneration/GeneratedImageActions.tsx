@@ -2,11 +2,14 @@ import { Button, Checkbox, Menu, Tooltip } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { IconDownload, IconTrash, IconWand } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import pLimit from 'p-limit';
 import { useMemo, useState } from 'react';
 import { SortFilter } from '~/components/Filters';
 import { MarkerFiltersDropdown } from '~/components/ImageGeneration/MarkerFiltersDropdown';
-import { orchestratorImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
+import {
+  useActions,
+  useSelection,
+} from '~/components/ImageGeneration/utils/generationImage.select';
+import { downloadGeneratedImages } from '~/components/ImageGeneration/utils/downloadGeneratedImages';
 import type { UpdateImageStepMetadataArgs } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import {
   useGetTextToImageRequests,
@@ -15,8 +18,6 @@ import {
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
-import { fetchBlob } from '~/utils/file-utils';
-import { getJSZip } from '~/utils/lazy';
 import { showErrorNotification, showWarningNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
@@ -31,7 +32,6 @@ import {
   applyBulkWorkflow,
 } from '~/components/generation_v2/hooks/useGeneratedItemWorkflows';
 
-const limit = pLimit(10);
 export function GeneratedImageActions({
   actionIconSize = 'lg',
   iconSize = 20,
@@ -43,8 +43,9 @@ export function GeneratedImageActions({
   const { data } = useGetTextToImageRequests();
   const { running, helpers, returnUrl } = useTourContext();
   const selectableImages = useMemo(() => data.flatMap((wf) => wf.succeededOutput), [data]);
-  const selected = orchestratorImageSelect.useSelection();
-  const deselect = () => orchestratorImageSelect.setSelected([]);
+  const selected = useSelection();
+  const { setSelected } = useActions();
+  const deselect = () => setSelected([]);
   const [zipping, setZipping] = useState(false);
 
   const { updateImages, isLoading } = useUpdateImageStepMetadata({
@@ -80,7 +81,7 @@ export function GeneratedImageActions({
     });
   };
 
-  const isMutating = isLoading || createPostMutation.isLoading;
+  const isMutating = isLoading || createPostMutation.isPending;
 
   const postSelectedImages = async () => {
     // Audio outputs aren't supported by the post system — filter them out.
@@ -142,50 +143,13 @@ export function GeneratedImageActions({
 
   async function downloadSelected() {
     setZipping(true);
-    const zip = await getJSZip();
-    await Promise.all(
-      selected.map((image, index) =>
-        limit(async () => {
-          if (!image.url) return;
-          const blob = await fetchBlob(image.url);
-          if (!blob) return;
-          let name = image.id;
-          const createdAt = image.workflow.createdAt;
-          if (createdAt) {
-            const dateString = createdAt.toISOString().replaceAll(':', '.').split('.');
-            dateString.pop();
-            name = `${dateString.join('.')}_${index + 1}`;
-          }
-
-          const file = new File([blob], name);
-          const ext = blob.type.split('/')[1]?.replace('jpeg', 'jpg') || 'jpg';
-          zip.file(`${name}.${ext}`, file);
-        })
-      )
-    );
-
-    zip
-      .generateAsync({ type: 'blob' })
-      .then(async (blob) => {
-        const createdAt = new Date().getTime();
-        const blobFile = new File([blob], `images_${createdAt}.zip`, {
-          type: 'application/zip',
-        });
-
-        const a = document.createElement('a');
-        const href = URL.createObjectURL(blobFile);
-        a.href = href;
-        a.download = `images_${createdAt}.zip`;
-        a.target = '_blank ';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(href);
-        setZipping(false);
-      })
-      .catch(() => {
-        setZipping(false);
-      });
+    try {
+      await downloadGeneratedImages(selected);
+    } catch (e) {
+      showErrorNotification({ title: 'Failed to download images', error: e as Error });
+    } finally {
+      setZipping(false);
+    }
   }
 
   const imagesCount = selectableImages.length;
@@ -195,8 +159,8 @@ export function GeneratedImageActions({
   const indeterminate = selectedCount > 0 && !allChecked;
 
   const handleCheckboxClick = (checked: boolean) => {
-    if (!checked) orchestratorImageSelect.setSelected([]);
-    else orchestratorImageSelect.setSelected(selectableImages);
+    if (!checked) setSelected([]);
+    else setSelected(selectableImages);
   };
 
   const hasSelected = !!selectedCount;
@@ -276,6 +240,8 @@ function BulkWorkflowMenu({
   actionIconSize: MantineSpacing;
   iconSize: number;
 }) {
+  const { setSelected } = useActions();
+
   // Split selected by media type
   const selectedImages = useMemo(() => selected.filter((s) => s.type === 'image'), [selected]);
   const selectedVideos = useMemo(() => selected.filter((s) => s.type === 'video'), [selected]);
@@ -307,7 +273,7 @@ function BulkWorkflowMenu({
     const remaining = selected.filter(
       (img) => !consumedKeys.has(`${img.workflowId}:${img.stepName}:${img.id}`)
     );
-    orchestratorImageSelect.setSelected(remaining);
+    setSelected(remaining);
   };
 
   const hasImageWorkflows = selectedImages.length > 0 && bulkImageWorkflows.length > 0;

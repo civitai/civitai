@@ -1,0 +1,8 @@
+{
+  "name": "Civitai",
+  "short_name": "Civitai",
+  "icons": [{ "src": "/favicon.svg", "type": "image/svg+xml", "sizes": "any" }],
+  "theme_color": "#000",
+  "background_color": "#000",
+  "display": "standalone"
+}

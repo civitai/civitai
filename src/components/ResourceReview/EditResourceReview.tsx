@@ -51,7 +51,7 @@ export function EditResourceReview({
   const [rating, setRating] = useState(initialRating ?? 0);
   const [recommended, setRecommended] = useState(initialRecommended ?? null);
   const [details, setDetails] = useState<string | undefined>(initialDetails ?? '');
-  const { mutate, isLoading } = trpc.resourceReview.upsert.useMutation();
+  const { mutate, isPending: isLoading } = trpc.resourceReview.upsert.useMutation();
 
   const [editDetail, setEditDetail] = useState(initialEditing);
   const toggleEditDetail = () => {

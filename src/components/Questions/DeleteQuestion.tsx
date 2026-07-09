@@ -8,7 +8,7 @@ import { Text } from '@mantine/core';
 export function DeleteQuestion({ children, id }: { children: React.ReactElement; id: number }) {
   const router = useRouter();
 
-  const { mutate, isLoading } = trpc.question.delete.useMutation({
+  const { mutate, isPending: isLoading } = trpc.question.delete.useMutation({
     onSuccess() {
       showSuccessNotification({
         title: 'Your question has been deleted',

@@ -66,7 +66,7 @@ export function CommentDiscussionMenu({
       ),
       centered: true,
       labels: { confirm: 'Delete Comment', cancel: "No, don't delete it" },
-      confirmProps: { color: 'red', loading: deleteMutation.isLoading },
+      confirmProps: { color: 'red', loading: deleteMutation.isPending },
       closeOnConfirm: false,
       onConfirm: () => {
         deleteMutation.mutate({ id: comment.id });
@@ -121,7 +121,7 @@ export function CommentDiscussionMenu({
       children: `Are you sure you want to report this comment as a Terms of Service violation?`,
       centered: true,
       labels: { confirm: 'Yes', cancel: 'Cancel' },
-      confirmProps: { color: 'red', disabled: tosViolationMutation.isLoading },
+      confirmProps: { color: 'red', disabled: tosViolationMutation.isPending },
       closeOnConfirm: false,
       onConfirm: () => tosViolationMutation.mutate({ id: comment.id }),
     });

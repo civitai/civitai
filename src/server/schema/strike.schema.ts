@@ -9,6 +9,22 @@ export const strikeStatusColorScheme: Record<string, MantineColor> = {
   Voided: 'yellow',
 };
 
+/**
+ * Sanitized, user-facing label per StrikeReason. Mirrors `publicBanReasonLabel`
+ * in `banReasonDetails`: this is the only reason text emailed to the user (the
+ * free-text `UserStrike.description` is kept for in-app/Retool but never sent in
+ * the strike email). Keep these neutral and non-explicit.
+ */
+export const strikeReasonPublicLabel: Record<StrikeReason, string> = {
+  [StrikeReason.BlockedContent]: 'Content violated our Terms of Service',
+  [StrikeReason.RealisticMinorContent]: 'Content violated our Terms of Service',
+  [StrikeReason.CSAMContent]: 'Content violated our Terms of Service',
+  [StrikeReason.TOSViolation]: 'Content violated our Terms of Service',
+  [StrikeReason.HarassmentContent]: 'Community Abuse',
+  [StrikeReason.ProhibitedContent]: 'Content violated our Terms of Service',
+  [StrikeReason.ManualModAction]: 'Content violated our Terms of Service',
+};
+
 export const createStrikeSchema = z.object({
   userId: z.number(),
   reason: z.enum(StrikeReason),

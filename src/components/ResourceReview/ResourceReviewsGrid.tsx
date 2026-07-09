@@ -21,8 +21,8 @@ export function ResourceReviewGrid({
     trpc.resourceReview.getInfinite.useInfiniteQuery(
       { modelId, limit },
       {
-        getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-        getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
+        getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : undefined),
+        getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : undefined),
       }
     );
 

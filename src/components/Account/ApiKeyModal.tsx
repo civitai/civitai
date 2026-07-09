@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import type { ModalProps } from '@mantine/core';
 import {
+  Alert,
+  Anchor,
   Box,
   Button,
   Checkbox,
@@ -50,10 +52,13 @@ const periodOptions = [
   { value: 'month', label: 'Per 30 days' },
 ];
 
-export function ApiKeyModal({ ...props }: Props) {
+export function ApiKeyModal({ initialName, initialTokenScope, ...props }: Props) {
   const features = useFeatureFlags();
-  const [tokenScope, setTokenScope] = useState<number>(TokenScope.Full);
-  const [preset, setPreset] = useState<string | null>('Full');
+  // Optional deeplink prefill (e.g. the App Blocks CLI scaffold link). These are
+  // read once at mount; ApiKeysCard remounts the modal (via `key`) to apply them.
+  const startScope = initialTokenScope ?? TokenScope.Full;
+  const [tokenScope, setTokenScope] = useState<number>(startScope);
+  const [preset, setPreset] = useState<string | null>(getPresetKey(startScope));
   const [limitEnabled, setLimitEnabled] = useState(false);
   const [limitAmount, setLimitAmount] = useState<number | ''>(5000);
   const [limitPeriod, setLimitPeriod] = useState<'day' | 'week' | 'month'>('day');
@@ -63,15 +68,15 @@ export function ApiKeyModal({ ...props }: Props) {
     mode: 'onChange',
     shouldUnregister: false,
     defaultValues: {
-      name: '',
-      tokenScope: TokenScope.Full,
+      name: initialName ?? '',
+      tokenScope: startScope,
     },
   });
   const queryUtils = trpc.useUtils();
 
   const {
     data: apiKey,
-    isLoading: mutating,
+    isPending: mutating,
     mutate,
     reset,
   } = trpc.apiKey.add.useMutation({
@@ -161,6 +166,17 @@ export function ApiKeyModal({ ...props }: Props) {
           <Text size="xs" c="dimmed">
             {`Be sure to save this, you won't be able to see it again.`}
           </Text>
+          <Alert color="yellow" mt="sm" p="sm">
+            <Text size="xs">
+              You are responsible for everything done with this key. Anything generated, posted, or
+              published with it (including by automated agents or scripts) counts as your own action
+              under the{' '}
+              <Anchor href="/content/tos" target="_blank" rel="noopener noreferrer">
+                Terms of Service
+              </Anchor>
+              .
+            </Text>
+          </Alert>
         </Stack>
       ) : (
         <Form form={form} onSubmit={handleSaveApiKey}>
@@ -295,4 +311,9 @@ export function ApiKeyModal({ ...props }: Props) {
   );
 }
 
-type Props = ModalProps;
+type Props = ModalProps & {
+  /** Deeplink prefill — initial key name (defaults to empty). */
+  initialName?: string;
+  /** Deeplink prefill — initial tokenScope bitmask (defaults to TokenScope.Full). */
+  initialTokenScope?: number;
+};

@@ -1,20 +1,18 @@
 import { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
-import type { SessionUser } from 'next-auth';
+import { z } from 'zod';
+import type { SessionUser } from '~/types/session';
 import { EntityAccessPermission, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { getDbWithoutLag, getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
-import {
-  getWanVersion,
-  wan21BaseModelMap,
-  wanGeneralBaseModelMap,
-} from '~/server/orchestrator/wan/wan.schema';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { wanBaseModelGroupIdMap } from '~/server/services/orchestrator/ecosystems/wan.handler';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   CheckResourcesCoverageSchema,
   GenerationStatus,
+  GenerationStatusMode,
   GetGenerationDataSchema,
   GetGenerationResourcesInput,
   ResolveImageMetaInput,
@@ -37,36 +35,45 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getPrimaryFile, getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
+import { withSpan } from '~/server/utils/otel-helpers';
 import { getPagedData } from '~/server/utils/pagination-helpers';
 import {
   fluxKreaAir,
   fluxUltraAir,
   getBaseModelFromResources,
-  getBaseModelFromResourcesWithDefault,
   ponyV7Air,
 } from '~/shared/constants/generation.constants';
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import type { GenerationResource } from '~/shared/types/generation.types';
 
+import {
+  applicableRulesFor,
+  gateRuleSchema,
+  rulesToStates,
+  type GateRule,
+} from '~/shared/data-graph/generation/gates';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { removeNulls } from '~/utils/object-helpers';
 import { parseAIR, stringifyAIR } from '~/shared/utils/air';
 import { Flags } from '~/shared/utils/flags';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { isDefined } from '~/utils/type-guards';
-import { getVeo3ProcessFromAir } from '~/server/orchestrator/veo3/veo3.schema';
 import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import {
   baseModelByName,
   ecosystemById,
   isBaseModelGenerationSupported,
+  SELF_HOSTED_ECOSYSTEM_KEYS,
 } from '~/shared/constants/basemodel.constants';
 import { getVisibleSystemWildcardSetIdsByVersionId } from '~/server/services/generation/version-generation-state.service';
 import type {
   GenerationEcosystemConfig,
   GenerationEcosystemContext,
-} from '~/server/common/constants';
-import { DEFAULT_GENERATION_ECOSYSTEM_CONFIG } from '~/server/common/constants';
+} from '~/server/schema/generation.schema';
+import {
+  DEFAULT_GENERATION_ECOSYSTEM_CONFIG,
+  generationEcosystemConfigSchema,
+} from '~/server/schema/generation.schema';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   getBaseModelEngine,
@@ -76,8 +83,8 @@ import {
   hasGenerationSupport,
   getResourceGenerationSupport,
 } from '~/shared/constants/basemodel.constants';
-import { getMetaResources, normalizeMeta } from '~/server/services/normalize-meta.service';
 import { mapDataToGraphInput } from '~/server/services/orchestrator/legacy-metadata-mapper';
+import { cleanPrompt } from '~/utils/metadata/audit';
 
 type GenerationResourceSimple = {
   id: number;
@@ -95,6 +102,38 @@ type GenerationResourceSimple = {
   fileSizeKB: number;
   available: boolean;
 };
+
+type MetaCivitaiResource = { type?: string; weight?: number; modelVersionId: number };
+
+/**
+ * Build the initial resource list from image metadata: maps `civitaiResources`
+ * to `{ modelVersionId, strength }` and adds the Wan checkpoint implied by the
+ * baseModel. Relocated from the removed `normalize-meta.service` (the rest of
+ * that service's normalization is now handled by `mapDataToGraphInput` + the
+ * generation graph).
+ */
+function getMetaResources({
+  baseModel,
+  civitaiResources,
+}: {
+  baseModel?: string;
+  civitaiResources?: MetaCivitaiResource[];
+}) {
+  const resources =
+    civitaiResources?.map(({ weight, modelVersionId }) => ({
+      modelVersionId: Number(modelVersionId),
+      strength: weight,
+    })) ?? [];
+
+  // add missing resource by baseModel
+  const modelVersionId = baseModel
+    ? wanBaseModelGroupIdMap[baseModel as BaseModelGroup]
+    : undefined;
+  if (modelVersionId && !resources.find((x) => x.modelVersionId === modelVersionId)) {
+    resources.push({ modelVersionId, strength: undefined });
+  }
+  return resources;
+}
 
 // const baseModelSetsArray = Object.values(baseModelSets);
 /** @deprecated using search index instead... */
@@ -236,7 +275,11 @@ export async function getGenerationStatus() {
   // Fail open: a sysRedis outage shouldn't crash generation API calls.
   let raw: string | null | undefined;
   try {
-    raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS);
+    // Wall-clock deadline so a silent sysRedis half-open can't park this read
+    // (runs in getGenerationConfig's Promise.all on every gen submit) ~11min.
+    raw = await withSysReadDeadline(
+      sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS)
+    );
   } catch (err) {
     logSysRedisFailOpen('defaults-firing', 'getGenerationStatus generation.service', err);
     raw = undefined;
@@ -246,7 +289,11 @@ export async function getGenerationStatus() {
   return status as GenerationStatus;
 }
 
-export async function setGenerationStatus(input: { available: boolean; message?: string | null }) {
+export async function setGenerationStatus(input: {
+  mode: GenerationStatusMode;
+  message?: string | null;
+  updatedBy: { id: number; username: string };
+}) {
   // Read raw and throw on sysRedis error. We MUST NOT use the fail-open
   // getGenerationStatus() here: if its read failed open to '{}' and the
   // subsequent hSet succeeded, schema defaults (charge: true, limits:
@@ -255,17 +302,72 @@ export async function setGenerationStatus(input: { available: boolean; message?:
   // retries after sysRedis recovers.
   const raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS);
   const current = generationStatusSchema.parse(JSON.parse(raw ?? '{}'));
-  const next: GenerationStatus = {
-    ...current,
-    available: input.available,
-    message: input.message ?? null,
+  const stamp = {
+    id: input.updatedBy.id,
+    username: input.updatedBy.username,
+    at: new Date().toISOString(),
+  };
+  // Record the moderator when generation moves INTO a restricted mode
+  // (memberOnly/disabled). Returning to 'enabled' preserves the prior stamp —
+  // we don't care who re-enables.
+  const restricting = input.mode !== 'enabled' && input.mode !== current.mode;
+  const persisted = {
+    mode: input.mode,
+    // Persist the message independently of the mode: `undefined` (a mode-only
+    // save) keeps the stored message; `null`/string is an explicit edit.
+    message: input.message === undefined ? current.message : input.message,
+    updatedBy: restricting ? stamp : current.updatedBy,
+    // The self-hosted toggle is independent — carry it over untouched so a
+    // global-mode write doesn't reset it (this object is persisted verbatim,
+    // there's no spread of `current`).
+    selfHostedMode: current.selfHostedMode,
+    selfHostedUpdatedBy: current.selfHostedUpdatedBy,
+    limits: current.limits,
+    charge: current.charge,
   };
   await sysRedis.hSet(
     REDIS_SYS_KEYS.SYSTEM.FEATURES,
     REDIS_SYS_KEYS.GENERATION.STATUS,
-    JSON.stringify(next)
+    JSON.stringify(persisted)
   );
-  return next;
+  return generationStatusSchema.parse(persisted);
+}
+
+/**
+ * Self-hosted-toggle sibling of `setGenerationStatus`. Updates only the
+ * `selfHostedMode` (+ audit stamp) and carries the global fields over
+ * untouched. Same fail-loud rationale as `setGenerationStatus` (no fail-open
+ * read). The self-hosted toggle has no message of its own.
+ */
+export async function setSelfHostedGenerationStatus(input: {
+  mode: GenerationStatusMode;
+  updatedBy: { id: number; username: string };
+}) {
+  const raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS);
+  const current = generationStatusSchema.parse(JSON.parse(raw ?? '{}'));
+  const stamp = {
+    id: input.updatedBy.id,
+    username: input.updatedBy.username,
+    at: new Date().toISOString(),
+  };
+  const restricting = input.mode !== 'enabled' && input.mode !== current.selfHostedMode;
+  const persisted = {
+    // Preserve the global generation status untouched.
+    mode: current.mode,
+    message: current.message,
+    updatedBy: current.updatedBy,
+    // Update the self-hosted toggle.
+    selfHostedMode: input.mode,
+    selfHostedUpdatedBy: restricting ? stamp : current.selfHostedUpdatedBy,
+    limits: current.limits,
+    charge: current.charge,
+  };
+  await sysRedis.hSet(
+    REDIS_SYS_KEYS.SYSTEM.FEATURES,
+    REDIS_SYS_KEYS.GENERATION.STATUS,
+    JSON.stringify(persisted)
+  );
+  return generationStatusSchema.parse(persisted);
 }
 
 export type RemixOfProps = {
@@ -365,6 +467,78 @@ async function swapGenerationAliases(
   return uniqBy(swapped, 'id');
 }
 
+/**
+ * Shared pre-normalization for the remix / generate-from-image paths
+ * (`getMediaGenerationData` + `resolveImageMeta`):
+ * - clean prompts (the mapper passes prompt/negativePrompt through raw)
+ * - derive `process` from the legacy `type` field (the mapper keys workflow off `process`)
+ * - resolve the ecosystem from baseModel, falling back to the checkpoint resource
+ * - filter resources to the resolved ecosystem
+ * - map the result to generation-graph params
+ *
+ * The mapper + generation graph handle everything else (workflow, images,
+ * aspectRatio, and per-ecosystem version resolution — incl. Wan).
+ */
+function resolveGraphParamsFromImageMeta({
+  initialMeta,
+  baseModel,
+  engine,
+  allResources,
+  width,
+  height,
+}: {
+  initialMeta: ImageMetaProps;
+  baseModel: string | undefined;
+  engine: string | undefined;
+  allResources: GenerationResource[];
+  width: number;
+  height: number;
+}): { resources: GenerationResource[]; params: Record<string, unknown> } {
+  const metaRecord = initialMeta as Record<string, unknown>;
+  const cleanedPrompts = cleanPrompt({
+    prompt: initialMeta.prompt,
+    negativePrompt: initialMeta.negativePrompt,
+  });
+  const process =
+    typeof metaRecord.type === 'string'
+      ? (metaRecord.type as string)
+      : (metaRecord.process as string | undefined);
+
+  // If the ecosystem is 'other' or missing, try to infer from the checkpoint resource
+  let ecosystem =
+    (metaRecord.ecosystem as string | undefined) ??
+    (baseModel ? getEcosystem(baseModel)?.key : undefined);
+  if (!ecosystem || ecosystem === 'Other') {
+    const checkpoint = allResources.find((x) => x.model.type === 'Checkpoint');
+    if (checkpoint) {
+      ecosystem = getEcosystem(checkpoint.baseModel)?.key;
+    }
+  }
+
+  const resources = !ecosystem
+    ? allResources
+    : allResources.filter(
+        (x) => !!getResourceGenerationSupport(ecosystem!, x.baseModel, x.model.type)
+      );
+
+  // Drop raw resource fields (handled separately via `resources`) and the legacy
+  // `type` (consumed into `process`); the mapper strips the rest.
+  const { civitaiResources: _cr, resources: _res, type: _t, ...restMeta } = metaRecord;
+  const meta = {
+    ...restMeta,
+    ...cleanedPrompts,
+    baseModel,
+    engine,
+    ecosystem,
+    process,
+  } as Record<string, unknown>;
+  // Handle legacy 'Clip skip' field name (old image meta uses space-separated key)
+  const clipSkip = meta.clipSkip ?? meta['Clip skip'] ?? undefined;
+  const params = mapDataToGraphInput({ ...meta, width, height, clipSkip, engine }, resources);
+
+  return { resources, params };
+}
+
 async function getMediaGenerationData({
   id,
   user,
@@ -402,7 +576,6 @@ async function getMediaGenerationData({
     createdAt: media.createdAt,
   };
 
-  // const { resources: imageResources, ...meta } = normalizeMeta(media.meta as ImageMetaProps);
   const initialMeta = (media.meta ?? {}) as ImageMetaProps;
   const imageResources = getMetaResources(initialMeta);
 
@@ -446,29 +619,15 @@ async function getMediaGenerationData({
 
   const type = baseModel ? getBaseModelMediaType(baseModel) ?? media.type : media.type;
   const engine = initialMeta.engine ?? (baseModel ? getBaseModelEngine(baseModel) : undefined);
-  const normalized = normalizeMeta({ ...initialMeta, baseModel, engine });
 
-  // If the ecosystem is 'other' or missing, try to infer from the checkpoint resource
-  let ecosystem = normalized.ecosystem;
-  if (!ecosystem || ecosystem === 'Other') {
-    const checkpoint = allResources.find((x) => x.model.type === 'Checkpoint');
-    if (checkpoint) {
-      ecosystem = getEcosystem(checkpoint.baseModel)?.key;
-    }
-  }
-
-  const resources = !ecosystem
-    ? allResources
-    : allResources.filter(
-        (x) => !!getResourceGenerationSupport(ecosystem!, x.baseModel, x.model.type)
-      );
-
-  // Delegate param mapping to shared function (handles workflow, baseModel, aspectRatio, etc.)
-  // Cast to Record for loose field access (normalizeMeta returns a union type)
-  const meta = normalized as Record<string, unknown>;
-  // Handle legacy 'Clip skip' field name (old image meta uses space-separated key)
-  const clipSkip = meta.clipSkip ?? meta['Clip skip'] ?? undefined;
-  const params = mapDataToGraphInput({ ...meta, width, height, clipSkip, engine }, resources);
+  const { resources, params } = resolveGraphParamsFromImageMeta({
+    initialMeta,
+    baseModel,
+    engine,
+    allResources,
+    width,
+    height,
+  });
 
   if (type === 'audio') throw new Error('not implemented');
 
@@ -630,43 +789,55 @@ const getModelVersionGenerationData = async ({
 };
 
 export async function getUnstableResources() {
-  const cachedData = await sysRedis
-    .hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:unstable-resources')
+  // Wall-clock deadline: this runs in getGenerationConfig's Promise.all on
+  // every gen submit, so a silent sysRedis half-open would park the whole submit.
+  const cachedData = await withSysReadDeadline(
+    sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:unstable-resources')
+  )
     .then((data) => (data ? fromJson<number[]>(data) : ([] as number[])))
-    .catch(() => [] as number[]); // fallback to empty array if redis fails
+    .catch((err) => {
+      // fallback to empty array if redis fails (DOWN or SLOW/deadline)
+      logSysRedisFailOpen('read-degraded', 'getUnstableResources', err);
+      return [] as number[];
+    });
 
   return cachedData ?? [];
 }
 
 /**
- * Loads the operator-set ecosystem gating config from Redis and resolves
- * the `generation-testing` Flipt flag for the given user in parallel,
- * returning the combined context that gets passed to `getResourceCanGenerate`.
+ * Loads the operator-set ecosystem config (now just `experimentalEcosystems` —
+ * an alert flag, not a gate) from Redis and resolves the `generation-testing`
+ * Flipt flag for the given user in parallel. `hasTestingAccess` is still needed
+ * to resolve the `testers` tier of the gate rules.
  *
  * Mods are always treated as having testing access. Pass an empty user
  * object for unauthenticated/anonymous calls — `hasTestingAccess` will be
  * `false`.
  */
 export async function getGenerationEcosystemConfig(
-  user: { id?: number; isModerator?: boolean } = {},
-  opts: { isGreen?: boolean } = {}
+  user: { id?: number; isModerator?: boolean } = {}
 ): Promise<GenerationEcosystemContext> {
   const [cached, hasTestingAccess] = await Promise.all([
-    sysRedis
-      .hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:ecosystem-config')
+    // Wall-clock deadline: runs in getGenerationConfig's Promise.all on every
+    // gen submit — a silent sysRedis half-open would park the whole submit.
+    withSysReadDeadline(
+      sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:ecosystem-config')
+    )
       .then((data) => (data ? fromJson<Partial<GenerationEcosystemConfig>>(data) : null))
-      .catch(() => null), // fallback to default if redis fails
+      .catch((err) => {
+        // fallback to default if redis fails (DOWN or SLOW/deadline)
+        logSysRedisFailOpen('read-degraded', 'getGenerationEcosystemConfig', err);
+        return null;
+      }),
     resolveTestingAccess(user),
   ]);
 
-  // Spread defaults so legacy Redis values without the new fields stay valid.
-  // `isGreen` is left undefined when omitted so the NSFW gate is skipped for
-  // callers that aren't surfacing resources through the user-facing generator.
+  // Parse fills any missing fields with their schema defaults; on a corrupt
+  // value fall back to the default (fail-open).
+  const parsed = generationEcosystemConfigSchema.safeParse(cached ?? {});
   return {
-    ...DEFAULT_GENERATION_ECOSYSTEM_CONFIG,
-    ...(cached ?? {}),
+    ...(parsed.success ? parsed.data : DEFAULT_GENERATION_ECOSYSTEM_CONFIG),
     hasTestingAccess,
-    isGreen: opts.isGreen,
   };
 }
 
@@ -693,6 +864,36 @@ export async function setGenerationEcosystemConfig(input: GenerationEcosystemCon
   return input;
 }
 
+const gateRulesArraySchema = z.array(gateRuleSchema);
+
+/**
+ * The operator-authored gate rules (the normalized "rules" model). Stored as a
+ * single JSON array under `generation:gate-rules`; starts empty and coexists
+ * with the legacy `generation:ecosystem-config` lists + self-hosted toggle.
+ * Fail-open to `[]` so a bad/missing value never blocks generation.
+ */
+export async function getGateRules(): Promise<GateRule[]> {
+  // Wall-clock deadline: getGateRules runs in getGenerationConfig's
+  // Promise.all on every gen submit — a silent sysRedis half-open would park it.
+  const cached = await withSysReadDeadline(
+    sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:gate-rules')
+  )
+    .then((data) => (data ? fromJson<GateRule[]>(data) : null))
+    .catch((err) => {
+      logSysRedisFailOpen('read-degraded', 'getGateRules', err);
+      return null;
+    });
+  const parsed = gateRulesArraySchema.safeParse(cached ?? []);
+  return parsed.success ? parsed.data : [];
+}
+
+/** Persists the full gate-rules array. The mod UI is the single source of truth. */
+export async function setGateRules(rules: GateRule[]): Promise<GateRule[]> {
+  const parsed = gateRulesArraySchema.parse(rules);
+  await sysRedis.hSet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:gate-rules', toJson(parsed));
+  return parsed;
+}
+
 export type GenerationConfig = {
   unstableResources: number[];
   /**
@@ -702,78 +903,95 @@ export type GenerationConfig = {
    */
   experimentalEcosystems: string[];
   /**
-   * Ecosystem keys hidden from the current user — already filtered to what
-   * this user shouldn't see (`disabledEcosystems` for everyone, plus
-   * `modOnlyEcosystems` for non-mods and `testingEcosystems` for users
-   * without testing access). Server-resolved so the granular lists and the
-   * Flipt evaluation never leave the server.
+   * Self-hosted ecosystem keys disabled FOR THIS USER, resolved against the
+   * `selfHostedMode` toggle + the user's membership/mod status. Shown-but-disabled
+   * in the picker. Empty when self-hosted generation is enabled for the user.
    */
-  gatedEcosystems: string[];
+  selfHostedDisabledEcosystems: string[];
   /**
-   * Model version IDs hidden from the current user — same per-user
-   * resolution as `gatedEcosystems`, but for ID-level overrides which take
-   * precedence over ecosystem-level rules. Server still enforces the same
-   * gate in `getResourceCanGenerate`.
+   * The raw self-hosted toggle state, surfaced so the client can pick the
+   * right badge/alert copy ('memberOnly' → upsell, 'disabled' → unavailable).
    */
-  gatedVersionIds: number[];
+  selfHostedMode: GenerationStatusMode;
+  /**
+   * The gate rules that apply to THIS user (already audience-filtered server
+   * side). Ride into `GenerationCtx` so the graph nodes resolve them to per-item
+   * `hidden`/`disabled`/`memberOnly` states — the audience logic never leaves
+   * the server.
+   */
+  gateRules: GateRule[];
 };
 
 /**
- * Resolves the operator-controlled gating to per-user lists. Folds in the
- * `hasTestingAccess` Flipt evaluation so callers (the public API endpoint
- * and `buildGenerationContext`) get a single source of truth and clients
- * never see the granular `modOnly*` / `testing*` lists.
+ * Pure resolver for the self-hosted toggle. Returns the ecosystem keys the
+ * given user can't use right now. Shared by `getGenerationConfig` (client UI)
+ * and `buildGenerationContext` (server-side graph validation) so both agree.
+ *
+ *  - moderators always bypass → `[]`
+ *  - `disabled` → the full self-hosted set (off for everyone)
+ *  - `memberOnly` → the full set for non-members, `[]` for members
+ *  - `enabled` → `[]`
  */
-export async function getGatedListsForUser(
-  user: { id?: number; isModerator?: boolean } = {},
-  opts: { isGreen?: boolean } = {}
-): Promise<{ gatedEcosystems: string[]; gatedVersionIds: number[] }> {
-  const config = await getGenerationEcosystemConfig(user, opts);
-  const isModerator = !!user.isModerator;
-
-  const gatedEcosystems = [...config.disabledEcosystems];
-  if (!isModerator) gatedEcosystems.push(...config.modOnlyEcosystems);
-  if (!config.hasTestingAccess) gatedEcosystems.push(...config.testingEcosystems);
-
-  const gatedVersionIds = [...config.disabledIds];
-  if (!isModerator) gatedVersionIds.push(...config.modOnlyIds);
-  if (!config.hasTestingAccess) gatedVersionIds.push(...config.testingIds);
-  // Only gate NSFW IDs when the caller explicitly signaled isGreen. Omitted
-  // means "not in a green-domain UI context" — leave nsfwIds available.
-  if (config.isGreen === true) gatedVersionIds.push(...config.nsfwIds);
-
-  return { gatedEcosystems, gatedVersionIds };
+export function getSelfHostedDisabledEcosystems({
+  selfHostedMode,
+  isMember,
+  isModerator,
+}: {
+  selfHostedMode: GenerationStatusMode;
+  isMember: boolean;
+  isModerator?: boolean;
+}): string[] {
+  if (isModerator) return [];
+  const blocked = selfHostedMode === 'disabled' || (selfHostedMode === 'memberOnly' && !isMember);
+  return blocked ? [...SELF_HOSTED_ECOSYSTEM_KEYS] : [];
 }
 
 /**
- * Composed config returned to clients in a single round-trip. Bundles
- * unstable resources (set programmatically by the
- * `resource-gen-availability` cron) with the per-user resolved gating
- * lists, so the generator only needs one query to get everything it
- * needs to filter the UI.
+ * Composed config returned to clients in a single round-trip. Bundles unstable
+ * resources (set by the `resource-gen-availability` cron), the experimental-
+ * ecosystem alert list, the self-hosted toggle state, and the user's applicable
+ * gate rules — everything the generator UI needs in one query.
  */
 export async function getGenerationConfig(
-  user: { id?: number; isModerator?: boolean } = {},
-  opts: { isGreen?: boolean } = {}
+  user: { id?: number; isModerator?: boolean; tier?: string } = {}
 ): Promise<GenerationConfig> {
-  const [unstableResources, ecosystemConfig, gated] = await Promise.all([
+  const [unstableResources, ecosystemConfig, status, gateRules] = await Promise.all([
     getUnstableResources(),
-    getGenerationEcosystemConfig(user, opts),
-    getGatedListsForUser(user, opts),
+    getGenerationEcosystemConfig(user),
+    getGenerationStatus(),
+    getGateRules(),
   ]);
+  const selfHostedMode = status.selfHostedMode;
+  const isMember = (user.tier ?? 'free') !== 'free';
   return {
     unstableResources,
     experimentalEcosystems: ecosystemConfig.experimentalEcosystems,
-    gatedEcosystems: gated.gatedEcosystems,
-    gatedVersionIds: gated.gatedVersionIds,
+    selfHostedMode,
+    selfHostedDisabledEcosystems: getSelfHostedDisabledEcosystems({
+      selfHostedMode,
+      isMember,
+      isModerator: user.isModerator,
+    }),
+    gateRules: applicableRulesFor(gateRules, {
+      isModerator: !!user.isModerator,
+      isMember,
+      hasTestingAccess: ecosystemConfig.hasTestingAccess,
+    }),
   };
 }
 
 export async function getUnavailableResources() {
-  const cachedData = await sysRedis
-    .hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:unavailable-resources')
+  // Wall-clock deadline: getUnavailableResources gates the gen submit path — a
+  // silent sysRedis half-open would park generation ~11min instead of failing open.
+  const cachedData = await withSysReadDeadline(
+    sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:unavailable-resources')
+  )
     .then((data) => (data ? fromJson<number[]>(data) : ([] as number[])))
-    .catch(() => [] as number[]); // fallback to empty array if redis fails
+    .catch((err) => {
+      // fallback to empty array if redis fails (DOWN or SLOW/deadline)
+      logSysRedisFailOpen('read-degraded', 'getUnavailableResources', err);
+      return [] as number[];
+    });
 
   return [...new Set(cachedData ?? [])];
 }
@@ -837,36 +1055,34 @@ export async function getShouldChargeForResources(
 const explicitCoveredModelAirs = [fluxUltraAir, ponyV7Air];
 const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);
 
+/** The `hidden` gate targets for the site-wide `canGenerate` check. */
+export type CanGenerateHiddenGates = { ecosystems: Set<string>; versionIds: Set<number> };
+
 /**
- * Resolves the gating state for a resource: `disabled`, `modOnly`,
- * `testing`, or `enabled`. Model version ID rules override ecosystem-level
- * rules so a single version can be flipped without changing the ecosystem.
- *
- * Returned `enabled` does not necessarily mean the user can generate — the
- * caller still applies coverage / status / private checks separately.
+ * Resolve the ecosystems / version IDs the gate rules HIDE for this user — the
+ * only state that hard-blocks `canGenerate` (disabled / members-only are
+ * generator-UI affordances, not a site-wide block). Membership is intentionally
+ * ignored here (no tier lookup): `isMember: true` drops member-restricted rules,
+ * leaving the moderator / tester / kill-switch / hidden rules, which need only
+ * the (already-resolved) testing-access flag + mod status.
  */
-function getResourceGatingState({
-  resourceId,
-  ecosystemKey,
-  ecosystemConfig,
-}: {
-  resourceId: number;
-  ecosystemKey: string | undefined;
-  ecosystemConfig: GenerationEcosystemConfig;
-}): 'disabled' | 'modOnly' | 'testing' | 'nsfw' | 'enabled' {
-  // ID-level rules override ecosystem-level rules.
-  if (ecosystemConfig.disabledIds.includes(resourceId)) return 'disabled';
-  if (ecosystemConfig.modOnlyIds.includes(resourceId)) return 'modOnly';
-  if (ecosystemConfig.testingIds.includes(resourceId)) return 'testing';
-  if (ecosystemConfig.nsfwIds.includes(resourceId)) return 'nsfw';
-
-  if (ecosystemKey) {
-    if (ecosystemConfig.disabledEcosystems.includes(ecosystemKey)) return 'disabled';
-    if (ecosystemConfig.modOnlyEcosystems.includes(ecosystemKey)) return 'modOnly';
-    if (ecosystemConfig.testingEcosystems.includes(ecosystemKey)) return 'testing';
-  }
-
-  return 'enabled';
+export async function getCanGenerateHiddenGates(user: {
+  id?: number;
+  isModerator?: boolean;
+}): Promise<CanGenerateHiddenGates> {
+  const [rules, hasTestingAccess] = await Promise.all([getGateRules(), resolveTestingAccess(user)]);
+  const states = rulesToStates(
+    applicableRulesFor(rules, {
+      isModerator: !!user.isModerator,
+      isMember: true,
+      hasTestingAccess,
+    })
+  );
+  const ecosystems = new Set<string>();
+  for (const [key, r] of states.ecosystems) if (r.state === 'hidden') ecosystems.add(key);
+  const versionIds = new Set<number>();
+  for (const [id, r] of states.modelVersionIds) if (r.state === 'hidden') versionIds.add(id);
+  return { ecosystems, versionIds };
 }
 
 /**
@@ -878,7 +1094,7 @@ export function getResourceCanGenerate({
   resource,
   user,
   unavailableResources,
-  ecosystemConfig,
+  hiddenGates,
 }: {
   resource: {
     id: number;
@@ -891,7 +1107,7 @@ export function getResourceCanGenerate({
   };
   user: { id?: number; isModerator?: boolean };
   unavailableResources: number[];
-  ecosystemConfig: GenerationEcosystemContext;
+  hiddenGates: CanGenerateHiddenGates;
 }): boolean {
   const isUnavailable = unavailableResources.includes(resource.id);
   const isOwnedByUser = !!user.id && user.id === resource.modelUserId;
@@ -916,19 +1132,10 @@ export function getResourceCanGenerate({
   if (canGenerate) {
     const baseModel = baseModelByName.get(resource.baseModel);
     const ecosystemKey = baseModel ? ecosystemById.get(baseModel.ecosystemId)?.key : undefined;
-    const state = getResourceGatingState({
-      resourceId: resource.id,
-      ecosystemKey,
-      ecosystemConfig,
-    });
-
-    if (state === 'disabled') {
-      canGenerate = false;
-    } else if (state === 'modOnly' && !user.isModerator) {
-      canGenerate = false;
-    } else if (state === 'testing' && !ecosystemConfig.hasTestingAccess) {
-      canGenerate = false;
-    } else if (state === 'nsfw' && ecosystemConfig.isGreen === true) {
+    if (
+      hiddenGates.versionIds.has(resource.id) ||
+      (ecosystemKey && hiddenGates.ecosystems.has(ecosystemKey))
+    ) {
       canGenerate = false;
     }
   }
@@ -991,14 +1198,13 @@ export async function resolveCanGenerateForVersions(
     : [];
 
   const needsStandardGate = versions.some((v) => v.modelType !== 'Wildcards');
-  const [visibleWildcardSetIdByVersionId, unavailableResources, ecosystemConfig] =
-    await Promise.all([
-      getVisibleSystemWildcardSetIdsByVersionId(wildcardVersionIds, { sfwOnly: ctx.sfwOnly }),
-      needsStandardGate ? getUnavailableResources() : Promise.resolve<number[]>([]),
-      needsStandardGate
-        ? getGenerationEcosystemConfig(ctx.user, { isGreen: ctx.sfwOnly })
-        : Promise.resolve<GenerationEcosystemContext | null>(null),
-    ]);
+  const [visibleWildcardSetIdByVersionId, unavailableResources, hiddenGates] = await Promise.all([
+    getVisibleSystemWildcardSetIdsByVersionId(wildcardVersionIds, { sfwOnly: ctx.sfwOnly }),
+    needsStandardGate ? getUnavailableResources() : Promise.resolve<number[]>([]),
+    needsStandardGate
+      ? getCanGenerateHiddenGates(ctx.user)
+      : Promise.resolve<CanGenerateHiddenGates>({ ecosystems: new Set(), versionIds: new Set() }),
+  ]);
 
   // Generation alias (Option B): evaluate a cover version using its target's
   // gate fields while keeping the result keyed to the cover id, so the Create
@@ -1034,7 +1240,7 @@ export async function resolveCanGenerateForVersions(
           },
           user: ctx.user,
           unavailableResources,
-          ecosystemConfig: ecosystemConfig as GenerationEcosystemContext,
+          hiddenGates,
         }) && isBaseModelGenerationSupported(gate.baseModel, gate.modelType);
       result.set(key, { canGenerate });
     }
@@ -1062,11 +1268,15 @@ export async function getResourceData(
     typeof versionIds[0] === 'number' ? versionIds.map((id) => ({ id })) : versionIds
   ) as { id: number; epoch?: number }[];
 
-  const unavailableResources = await getUnavailableResources();
-  const featuredModels = await getFeaturedModels();
-  // sfwOnly is set upstream from ctx.features.isGreen, so reuse it as the
-  // isGreen signal for the nsfwIds gate inside getResourceCanGenerate.
-  const ecosystemConfig = await getGenerationEcosystemConfig(user, { isGreen: sfwOnly });
+  // Spans localize the gen-path park: getResourceData does these as SEQUENTIAL
+  // awaits, so wrapping each shows which prelim lookup dominates.
+  const unavailableResources = await withSpan('gen:getResourceData:unavailable', () =>
+    getUnavailableResources()
+  );
+  const featuredModels = await withSpan('gen:getResourceData:featured', () => getFeaturedModels());
+  const hiddenGates = await withSpan('gen:getResourceData:hiddenGates', () =>
+    getCanGenerateHiddenGates(user)
+  );
 
   function transformGenerationData(
     { settings, ...item }: GenerationResourceDataModel,
@@ -1089,7 +1299,7 @@ export async function getResourceData(
       },
       user,
       unavailableResources,
-      ecosystemConfig,
+      hiddenGates,
     });
 
     if (!canGenerate) {
@@ -1211,6 +1421,7 @@ export async function getResourceData(
       fileSizeKB: fileSizeKB ? Math.round(fileSizeKB) : undefined,
       additionalResourceCost,
       epochDetails,
+      primaryFileType: primaryFile?.type,
     };
   }
 
@@ -1218,7 +1429,7 @@ export async function getResourceData(
     resource: ReturnType<typeof transformGenerationData>,
     modelFiles: ModelFileCached[]
   ) {
-    const { fileSizeKB, additionalResourceCost, epochDetails } = getModelFileProps(
+    const { fileSizeKB, additionalResourceCost, epochDetails, primaryFileType } = getModelFileProps(
       resource,
       modelFiles
     );
@@ -1227,6 +1438,9 @@ export async function getResourceData(
       type: resource.model.type,
       modelId: epochDetails ? epochDetails.jobId : resource.model.id,
       id: epochDetails ? epochDetails.fileName : resource.id,
+      // epoch resources resolve to an orchestrator-hosted file, not the version's
+      // primary model file, so only forward the file type for civitai sources.
+      fileType: epochDetails ? undefined : primaryFileType,
       source: epochDetails ? 'orchestrator' : 'civitai',
     });
 
@@ -1249,41 +1463,47 @@ export async function getResourceData(
   // The cache deduplicates by model version ID, but different epochs of the same
   // model version need separate entries with their own epochDetails.
   const uniqueIds = [...new Set(args.map((x) => x.id))];
-  const resources = await resourceDataCache
-    .fetch(uniqueIds)
-    .then((cachedResources) => {
-      const resourceById = new Map(cachedResources.map((r) => [r.id, r]));
-      return args
-        .map((arg) => {
-          const cached = resourceById.get(arg.id);
-          if (!cached) return null;
-          return transformGenerationData(cached, arg.epoch);
-        })
-        .filter(isDefined);
-    })
-    .then(async (resources) => {
-      const substitutes = await getResourceDataSubstitutes(resources);
-      const entityAccess = await getEntityAccess([...resources, ...substitutes]);
+  // Span localizes the gen-path park: this is the main resource-data fetch
+  // (cache/DB lookup + substitutes + entity access + model files) — the
+  // dominant work in getResourceData. Wrapping the whole .fetch().then().then()
+  // chain so its total time shows as one sub-step.
+  const resources = await withSpan('gen:getResourceData:fetch', () =>
+    resourceDataCache
+      .fetch(uniqueIds)
+      .then((cachedResources) => {
+        const resourceById = new Map(cachedResources.map((r) => [r.id, r]));
+        return args
+          .map((arg) => {
+            const cached = resourceById.get(arg.id);
+            if (!cached) return null;
+            return transformGenerationData(cached, arg.epoch);
+          })
+          .filter(isDefined);
+      })
+      .then(async (resources) => {
+        const substitutes = await getResourceDataSubstitutes(resources);
+        const entityAccess = await getEntityAccess([...resources, ...substitutes]);
 
-      for (const resource of [...resources, ...substitutes]) {
-        if (!resource.hasAccess) {
-          // TODO - get the number of remaining early access downloads if early access allows limited number of free generations
-          resource.hasAccess = !!(
-            entityAccess.find((e) => e.entityId === resource.id)?.hasAccess ||
-            !!resource.earlyAccessConfig?.generationTrialLimit
-          );
-          resource.canGenerate = resource.hasAccess && resource.canGenerate;
+        for (const resource of [...resources, ...substitutes]) {
+          if (!resource.hasAccess) {
+            // TODO - get the number of remaining early access downloads if early access allows limited number of free generations
+            resource.hasAccess = !!(
+              entityAccess.find((e) => e.entityId === resource.id)?.hasAccess ||
+              !!resource.earlyAccessConfig?.generationTrialLimit
+            );
+            resource.canGenerate = resource.hasAccess && resource.canGenerate;
+          }
         }
-      }
 
-      const modelFilesCached = await getModelFiles([...resources, ...substitutes]);
+        const modelFilesCached = await getModelFiles([...resources, ...substitutes]);
 
-      return resources.map((resource) => {
-        const modelFiles = modelFilesCached[resource.id]?.files ?? [];
-        const substitute = getSubstituteData(resource, substitutes, modelFiles);
-        return removeNulls({ ...bringItAllTogether(resource, modelFiles), substitute });
-      });
-    });
+        return resources.map((resource) => {
+          const modelFiles = modelFilesCached[resource.id]?.files ?? [];
+          const substitute = getSubstituteData(resource, substitutes, modelFiles);
+          return removeNulls({ ...bringItAllTogether(resource, modelFiles), substitute });
+        });
+      })
+  );
 
   if (withPreview) {
     const imageCache = await imagesForModelVersionsCache.fetch(resources.map((r) => r.id));
@@ -1427,7 +1647,7 @@ function extractHashCandidates(
  * Resolve resources from raw image EXIF metadata and transform to graph-compatible params.
  *
  * Mirrors the logic of get_image_resources.sql for resource resolution, then applies
- * the same normalizeMeta → mapDataToGraphInput pipeline as getMediaGenerationData.
+ * the same pre-normalize → mapDataToGraphInput pipeline as getMediaGenerationData.
  *
  * Returns { resources, params } where params are ready for the generation graph.
  */
@@ -1545,21 +1765,16 @@ export async function resolveImageMeta({
     allResources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
   );
   const engine = initialMeta.engine ?? (baseModel ? getBaseModelEngine(baseModel) : undefined);
-  const normalized = normalizeMeta({ ...initialMeta, baseModel, engine });
 
-  // Filter resources by ecosystem compatibility
-  const resources = !normalized.ecosystem
-    ? allResources
-    : allResources.filter(
-        (x) => !!getResourceGenerationSupport(normalized.ecosystem!, x.baseModel, x.model.type)
-      );
-
-  // Map to graph-compatible params
-  const meta = normalized as Record<string, unknown>;
-  const clipSkip = meta.clipSkip ?? meta['Clip skip'] ?? undefined;
-  const width = (meta.width as number) ?? 0;
-  const height = (meta.height as number) ?? 0;
-  const params = mapDataToGraphInput({ ...meta, width, height, clipSkip, engine }, resources);
+  const metaRecord = initialMeta as Record<string, unknown>;
+  const { resources, params } = resolveGraphParamsFromImageMeta({
+    initialMeta,
+    baseModel,
+    engine,
+    allResources,
+    width: (metaRecord.width as number) ?? 0,
+    height: (metaRecord.height as number) ?? 0,
+  });
 
   return { resources, params };
 }

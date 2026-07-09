@@ -16,7 +16,7 @@ import {
   createEntityImages,
   invalidateManyImageExistence,
   updateEntityImages,
-  ingestImage,
+  enqueueImageIngestion,
 } from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { dbRead, dbWrite } from '../db/client';
@@ -25,6 +25,7 @@ import type { GetByIdInput } from '../schema/base.schema';
 import { userBountyEntryCountCache } from '~/server/redis/caches';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { logToAxiom } from '~/server/logging/client';
+import type { IngestImageInput } from '~/server/schema/image.schema';
 
 export const getEntryById = <TSelect extends Prisma.BountyEntrySelect>({
   input,
@@ -114,7 +115,7 @@ export const upsertBountyEntry = async ({
 }: UpsertBountyEntryInput & { userId: number }) => {
   if (description) await throwOnBlockedLinkDomain(description);
 
-  let imagesToIngest: { id: number; url: string }[] = [];
+  let imagesToIngest: IngestImageInput[] = [];
 
   const result = await dbWrite.$transaction(async (tx) => {
     if (id) {
@@ -189,19 +190,11 @@ export const upsertBountyEntry = async ({
     await userBountyEntryCountCache.refresh(result.userId);
   }
 
-  if (imagesToIngest.length > 0) {
-    for (const img of imagesToIngest) {
-      ingestImage({ image: img }).catch((error) => {
-        logToAxiom({
-          name: 'bounty-entry-image-ingest',
-          type: 'error',
-          userId,
-          imageId: img.id,
-          message: error instanceof Error ? error.message : String(error),
-        }).catch(() => {});
-      });
-    }
-  }
+  enqueueImageIngestion({
+    images: imagesToIngest,
+    name: 'bounty-entry-image-ingest',
+    userId,
+  });
 
   return result;
 };
@@ -551,12 +544,10 @@ export const getBountyEntryFilteredFiles = async ({
       bountyId: true,
     },
   } as const;
-  const bountyEntry = await dbRead.bountyEntry
-    .findUniqueOrThrow(bountyEntryFindArgs)
-    .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'bountyEntry', caller: 'getBountyEntryFilteredFiles' });
-      return dbWrite.bountyEntry.findUniqueOrThrow(bountyEntryFindArgs);
-    });
+  const bountyEntry = await dbRead.bountyEntry.findUniqueOrThrow(bountyEntryFindArgs).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'bountyEntry', caller: 'getBountyEntryFilteredFiles' });
+    return dbWrite.bountyEntry.findUniqueOrThrow(bountyEntryFindArgs);
+  });
 
   const files = await getFilesByEntity({ id: bountyEntry.id, type: 'BountyEntry' });
 
@@ -624,12 +615,10 @@ export const deleteBountyEntry = async ({
       },
     },
   } as const;
-  const entry = await dbRead.bountyEntry
-    .findUniqueOrThrow(entryFindArgs)
-    .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'bountyEntry', caller: 'deleteBountyEntry' });
-      return dbWrite.bountyEntry.findUniqueOrThrow(entryFindArgs);
-    });
+  const entry = await dbRead.bountyEntry.findUniqueOrThrow(entryFindArgs).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'bountyEntry', caller: 'deleteBountyEntry' });
+    return dbWrite.bountyEntry.findUniqueOrThrow(entryFindArgs);
+  });
 
   if (!entry) {
     throw throwBadRequestError('Bounty entry does not exist');

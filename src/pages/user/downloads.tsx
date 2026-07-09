@@ -30,7 +30,7 @@ export default function Downloads() {
   const { filters, setFilters, clearFilters, hasActiveFilters } = useDownloadFilters();
 
   const { data, isLoading } = trpc.download.getAllByUser.useQuery(undefined, {
-    cacheTime: 0,
+    gcTime: 0,
   });
 
   const downloads = data?.items ?? [];

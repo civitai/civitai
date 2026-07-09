@@ -45,7 +45,7 @@ export default function ArticleUnpublishModal({ articleId }: { articleId: number
     return unpublishArticleMutation.mutate({ id: articleId, reason, customMessage });
   };
 
-  const loading = unpublishArticleMutation.isLoading;
+  const loading = unpublishArticleMutation.isPending;
 
   return (
     <Modal {...dialog} title="Unpublish as Violation">

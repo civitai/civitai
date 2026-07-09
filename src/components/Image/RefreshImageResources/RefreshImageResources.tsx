@@ -10,7 +10,7 @@ export function RefreshImageResources({
   imageId: number;
   onSuccess?: (imageResources: ImageResourceHelper[]) => void;
 }) {
-  const { mutate, isLoading } = trpc.image.refreshImageResources.useMutation({
+  const { mutate, isPending: isLoading } = trpc.image.refreshImageResources.useMutation({
     onSuccess: (data) => onSuccess?.(data),
   });
 

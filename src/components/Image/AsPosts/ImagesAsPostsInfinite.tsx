@@ -1,3 +1,4 @@
+import { keepPreviousData } from '@tanstack/react-query';
 import {
   Anchor,
   Button,
@@ -27,9 +28,15 @@ import { useContainerSmallerThan } from '~/components/ContainerProvider/useConta
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { SortFilter } from '~/components/Filters';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
-import { useGallerySettings } from '~/components/Image/AsPosts/gallery.utils';
+import {
+  useGallerySettings,
+  useModel3DGallerySettings,
+} from '~/components/Image/AsPosts/gallery.utils';
 import { ImagesAsPostsCard } from '~/components/Image/AsPosts/ImagesAsPostsCard';
-import { ImagesAsPostsInfiniteProvider } from '~/components/Image/AsPosts/ImagesAsPostsInfiniteProvider';
+import {
+  ImagesAsPostsInfiniteProvider,
+  type ImagesAsPostsSource,
+} from '~/components/Image/AsPosts/ImagesAsPostsInfiniteProvider';
 import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
 import { useImageFilters } from '~/components/Image/image.utils';
@@ -43,7 +50,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
-import type { ModelById } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
 import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
@@ -53,8 +59,19 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 type ModelVersionsProps = { id: number; name: string; modelId: number };
 
 export type ImagesAsPostsInfiniteProps = {
+  /**
+   * Discriminated entity binding. Today the two modes are:
+   *   - `model`   — regular Model gallery: versions, resource reviews,
+   *                 gallery moderation settings, pinned posts.
+   *   - `model3d` — Model3D gallery: no versions, no resource reviews,
+   *                 server-side post pre-resolution via Post.model3dId.
+   *
+   * Driving the entity through a single union (rather than parallel
+   * nullable fields) lets the gallery body — and every consumer that reads
+   * from the provider — narrow once instead of juggling guards.
+   */
+  source: ImagesAsPostsSource;
   selectedVersionId?: number;
-  model: ModelById;
   username?: string;
   modelVersions?: ModelVersionsProps[];
   showModerationOptions?: boolean;
@@ -64,7 +81,7 @@ export type ImagesAsPostsInfiniteProps = {
 
 const LIMIT = 50;
 export function ImagesAsPostsInfinite({
-  model,
+  source,
   username,
   modelVersions,
   selectedVersionId,
@@ -80,18 +97,19 @@ export function ImagesAsPostsInfinite({
   const [showHidden, setShowHidden] = useState(false);
 
   const imageFilters = useImageFilters('modelImages');
-  const filters = useMemo(
-    () =>
-      removeEmpty({
-        ...imageFilters,
-        modelVersionId: selectedVersionId,
-        modelId: model.id,
-        username,
-        hidden: showHidden, // override global hidden filter
-        // types: [MediaType.image, MediaType.video], // override global types image filter
-      }),
-    [imageFilters, selectedVersionId, model.id, username, showHidden]
-  );
+  const filters = useMemo(() => {
+    const entityFilter =
+      source.kind === 'model'
+        ? { modelId: source.model.id, modelVersionId: selectedVersionId }
+        : { model3dId: source.id };
+    return removeEmpty({
+      ...imageFilters,
+      ...entityFilter,
+      username,
+      hidden: showHidden, // override global hidden filter
+      // types: [MediaType.image, MediaType.video], // override global types image filter
+    });
+  }, [imageFilters, source, selectedVersionId, username, showHidden]);
 
   const rawBrowsingLevel = useBrowsingLevelDebounced();
   const domainColor = useDomainColor();
@@ -103,40 +121,65 @@ export function ImagesAsPostsInfinite({
   const browsingLevel = capToPublic
     ? Flags.intersection(rawBrowsingLevel, publicBrowsingLevelsFlag)
     : rawBrowsingLevel;
-  const { gallerySettings } = useGallerySettings({ modelId: model.id });
+  // model.getGallerySettings is Model-only; pass undefined on other sources
+  // so the underlying query is disabled cleanly. The parallel Model3D hook
+  // covers `source.kind === 'model3d'` with a flat hidden-image list.
+  const settingsModelId = source.kind === 'model' ? source.model.id : undefined;
+  const settingsModel3DId = source.kind === 'model3d' ? source.id : undefined;
+  const { gallerySettings } = useGallerySettings({ modelId: settingsModelId });
+  const { gallerySettings: model3dGallerySettings } = useModel3DGallerySettings({
+    model3dId: settingsModel3DId,
+  });
   let intersection = browsingLevel;
   if (gallerySettings?.level) {
     intersection = Flags.intersection(browsingLevel, gallerySettings.level);
   }
-  const enabled = !!gallerySettings && intersection > 0;
+  // Both Model + Model3D galleries gate on the settings response (so
+  // hidden ids/level are applied before the first page request); other
+  // sources can start fetching immediately.
+  const enabled =
+    intersection > 0 &&
+    (source.kind === 'model'
+      ? !!gallerySettings
+      : source.kind === 'model3d'
+      ? !!model3dGallerySettings
+      : true);
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
     trpc.image.getImagesAsPostsInfinite.useInfiniteQuery(
       { ...filters, limit, browsingLevel: intersection },
       {
         getNextPageParam: (lastPage) => lastPage.nextCursor,
         trpc: { context: { skipBatch: true } },
-        keepPreviousData: true,
+        placeholderData: keepPreviousData,
         enabled,
         // enabled: inView,
       }
     );
 
   const hiddenUsers = useMemo(
-    () => gallerySettings?.hiddenUsers.map((x) => x.id),
-    [gallerySettings?.hiddenUsers]
+    () =>
+      source.kind === 'model3d'
+        ? model3dGallerySettings?.hiddenUsers.map((x) => x.id)
+        : gallerySettings?.hiddenUsers.map((x) => x.id),
+    [source.kind, gallerySettings?.hiddenUsers, model3dGallerySettings?.hiddenUsers]
   );
   const hiddenTags = useMemo(
-    () => gallerySettings?.hiddenTags.map((x) => x.id),
-    [gallerySettings?.hiddenTags]
+    () =>
+      source.kind === 'model3d'
+        ? model3dGallerySettings?.hiddenTags.map((x) => x.id)
+        : gallerySettings?.hiddenTags.map((x) => x.id),
+    [source.kind, gallerySettings?.hiddenTags, model3dGallerySettings?.hiddenTags]
   );
 
-  const hiddenImageIds = useMemo(
-    () =>
-      selectedVersionId && gallerySettings
-        ? gallerySettings.hiddenImages?.[selectedVersionId] ?? []
-        : [],
-    [selectedVersionId, gallerySettings]
-  );
+  // Model: hidden images are keyed by modelVersionId. Model3D: flat list
+  // (no version dimension). Both collapse to a `number[]` for the
+  // `useApplyHiddenPreferences` consumer below.
+  const hiddenImageIds = useMemo(() => {
+    if (source.kind === 'model3d') return model3dGallerySettings?.hiddenImages ?? [];
+    return selectedVersionId && gallerySettings
+      ? gallerySettings.hiddenImages?.[selectedVersionId] ?? []
+      : [];
+  }, [source.kind, selectedVersionId, gallerySettings, model3dGallerySettings]);
 
   const flatData = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
   const { items } = useApplyHiddenPreferences({
@@ -149,12 +192,16 @@ export function ImagesAsPostsInfinite({
   });
 
   const handleAddPostClick = (opts?: { reviewing?: boolean }) => {
-    const queryString = QS.stringify({
-      modelId: model.id,
-      modelVersionId: selectedVersionId,
-      returnUrl: router.asPath,
-      reviewing: opts?.reviewing,
-    });
+    const queryString = QS.stringify(
+      source.kind === 'model'
+        ? {
+            modelId: source.model.id,
+            modelVersionId: selectedVersionId,
+            returnUrl: router.asPath,
+            reviewing: opts?.reviewing,
+          }
+        : { model3dId: source.id, returnUrl: router.asPath }
+    );
 
     router.push(`/posts/create?${queryString}`);
   };
@@ -165,13 +212,17 @@ export function ImagesAsPostsInfinite({
 
   const isMuted = currentUser?.muted ?? false;
   const hasModerationPreferences =
-    !!hiddenImageIds.length ||
-    !!gallerySettings?.hiddenUsers.length ||
-    !!gallerySettings?.hiddenTags.length;
+    source.kind === 'model3d'
+      ? !!hiddenImageIds.length ||
+        !!model3dGallerySettings?.hiddenUsers.length ||
+        !!model3dGallerySettings?.hiddenTags.length
+      : !!hiddenImageIds.length ||
+        !!gallerySettings?.hiddenUsers.length ||
+        !!gallerySettings?.hiddenTags.length;
 
   const providerValue = useMemo(
-    () => ({ filters, modelVersions, showModerationOptions, model }),
-    [filters, modelVersions, showModerationOptions, model]
+    () => ({ filters, modelVersions, showModerationOptions, source }),
+    [filters, modelVersions, showModerationOptions, source]
   );
 
   return (
@@ -217,36 +268,45 @@ export function ImagesAsPostsInfinite({
               <Group ml="auto" gap={8}>
                 <SortFilter type="modelImages" />
                 <MediaFiltersDropdown filterType="modelImages" size="compact-sm" hideBaseModels />
-                {showModerationOptions && (
-                  <>
-                    {!!hiddenImageIds.length && (
-                      <ButtonTooltip label={`${showHidden ? 'Hide' : 'Show'} hidden images`}>
-                        <LegacyActionIcon
-                          variant="light"
-                          radius="xl"
-                          color="red"
-                          onClick={() => setShowHidden((h) => !h)}
+                {showModerationOptions &&
+                  (source.kind === 'model' || source.kind === 'model3d') && (
+                    <>
+                      {!!hiddenImageIds.length && (
+                        <ButtonTooltip
+                          label={`${showHidden ? 'Hide' : 'Show'} hidden images`}
                         >
-                          {showHidden ? <IconEye size={16} /> : <IconEyeOff size={16} />}
-                        </LegacyActionIcon>
-                      </ButtonTooltip>
-                    )}
-                    <ButtonTooltip label="Gallery Moderation Preferences">
-                      <LegacyActionIcon
-                        variant="filled"
-                        radius="xl"
-                        onClick={() =>
-                          dialogStore.trigger({
-                            component: GalleryModerationModal,
-                            props: { modelId: model.id },
-                          })
-                        }
-                      >
-                        <IconSettings size={16} />
-                      </LegacyActionIcon>
-                    </ButtonTooltip>
-                  </>
-                )}
+                          <LegacyActionIcon
+                            variant="light"
+                            radius="xl"
+                            color="red"
+                            onClick={() => setShowHidden((h) => !h)}
+                          >
+                            {showHidden ? <IconEye size={16} /> : <IconEyeOff size={16} />}
+                          </LegacyActionIcon>
+                        </ButtonTooltip>
+                      )}
+                      {/* GalleryModerationModal (browsing-level + tag/user
+                          pickers) is Model-only — it pivots on Model
+                          versions. For Model3D we surface only the
+                          per-image hide via the post card context menu. */}
+                      {source.kind === 'model' && (
+                        <ButtonTooltip label="Gallery Moderation Preferences">
+                          <LegacyActionIcon
+                            variant="filled"
+                            radius="xl"
+                            onClick={() =>
+                              dialogStore.trigger({
+                                component: GalleryModerationModal,
+                                props: { modelId: source.model.id },
+                              })
+                            }
+                          >
+                            <IconSettings size={16} />
+                          </LegacyActionIcon>
+                        </ButtonTooltip>
+                      )}
+                    </>
+                  )}
               </Group>
             </Group>
             {showPOIWarning && (

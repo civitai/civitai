@@ -23,7 +23,7 @@ export function DeletePostButton({
   const returnUrl = (router.query.returnUrl as string) ?? '/';
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
-  const { mutate, isLoading } = trpc.post.delete.useMutation({
+  const { mutate, isPending: isLoading } = trpc.post.delete.useMutation({
     async onSuccess(_, { id }) {
       // router.push('/posts');
       showSuccessNotification({

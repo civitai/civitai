@@ -18,9 +18,12 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { CollectionSort } from '~/server/common/enums';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { CollectionMode } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default function Contests() {
   const {

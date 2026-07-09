@@ -1410,7 +1410,7 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
                 onPerformTransaction={() =>
                   purchaseAccessMutation.mutate({ chapterId: activeChapter.id })
                 }
-                loading={purchaseAccessMutation.isLoading}
+                loading={purchaseAccessMutation.isPending}
                 error={purchaseAccessMutation.error?.message}
                 size="lg"
               />

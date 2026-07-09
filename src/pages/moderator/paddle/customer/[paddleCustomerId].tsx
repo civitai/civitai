@@ -10,6 +10,7 @@ const querySchema = z.object({
 });
 
 export const getServerSideProps = createServerSideProps({
+  requireModerator: true,
   useSSG: true,
   resolver: async ({ session, ctx }) => {
     if (!session?.user?.isModerator) {

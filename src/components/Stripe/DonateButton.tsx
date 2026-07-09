@@ -5,7 +5,7 @@ import Router from 'next/router';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 
 export function DonateButton({ children }: { children: React.ReactElement }) {
-  const { mutate, isLoading } = trpc.stripe.createDonateSession.useMutation({
+  const { mutate, isPending: isLoading } = trpc.stripe.createDonateSession.useMutation({
     async onSuccess({ sessionId, url }) {
       if (url) Router.push(url);
       else {

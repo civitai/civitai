@@ -5,6 +5,7 @@ import type { AugmentedPool } from '~/server/db/db-helpers';
 import { parameterizedTemplateHandler, templateHandler } from '~/server/db/db-helpers';
 import type { JobContext } from '~/server/jobs/job';
 import { createLogger } from '~/utils/logging';
+import { buildEntityMetricPerDaySource } from '~/server/flipt/client';
 
 const log = createLogger('metric-helpers');
 
@@ -215,23 +216,18 @@ export function getEntityMetricTasks(ctx: EntityMetricContext) {
       ctx.jobContext.checkIfCanceled();
       log(`getEntityMetricTasks(${entityType}, ${metricType})`, i + 1, 'of', tasks.length);
 
-      const metrics = await ctx.ch.$query<{ entityId: number; value: number }>`
+      const perDaySource = buildEntityMetricPerDaySource(
+        `WHERE entityType = '${entityType}'
+            AND metricType = '${metricType}'
+            AND entityId IN (${ids.join(',')})`
+      );
+      const metrics = await ctx.ch.$query<{ entityId: number; value: number }>(`
         SELECT
           entityId,
           sum(total) AS value
-        FROM (
-          SELECT
-            entityId,
-            day,
-            argMax(total, refreshedAt) AS total
-          FROM entityMetricDailyAgg_new
-          WHERE entityType = '${entityType}'
-            AND metricType = '${metricType}'
-            AND entityId IN (${ids})
-          GROUP BY entityId, day
-        )
+        FROM ${perDaySource}
         GROUP BY entityId
-      `;
+      `);
 
       ctx.jobContext.checkIfCanceled();
 

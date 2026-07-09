@@ -32,7 +32,7 @@ export function UserReferralCodesCard() {
     includeCount: true,
   });
   const queryUtils = trpc.useUtils();
-  const { mutate: upsertUserReferralCode, isLoading: upsertingCode } =
+  const { mutate: upsertUserReferralCode, isPending: upsertingCode } =
     trpc.userReferralCode.upsert.useMutation({
       onSuccess: async (_, req) => {
         showSuccessNotification({
@@ -44,7 +44,7 @@ export function UserReferralCodesCard() {
         await queryUtils.userReferralCode.getAll.invalidate();
       },
     });
-  const { mutate: deleteUserReferralCode, isLoading: deletingCode } =
+  const { mutate: deleteUserReferralCode, isPending: deletingCode } =
     trpc.userReferralCode.delete.useMutation({
       onSuccess: async () => {
         showSuccessNotification({

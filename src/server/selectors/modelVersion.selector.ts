@@ -34,6 +34,7 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
   },
   files: {
     select: modelFileSelect,
+    where: { replacedAt: null },
   },
 });
 

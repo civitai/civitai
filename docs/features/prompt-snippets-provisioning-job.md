@@ -15,7 +15,7 @@
 > - **Persistent vs transient failures:** structural failures (corrupt zip, malformed yaml, no `.txt`/`.yaml` content, no primary file) create a stub `WildcardSet` with `isInvalidated=true` so the reconcile cron skips them next time. Transport failures (URL resolve, HTTP fetch, DB transaction) stay on the `failed` path and continue to retry.
 > - **macOS resource forks (`__MACOSX/`, `._*` AppleDouble files) are filtered** in zip walks.
 > - **Transaction timeout** is bumped to 60 s (Prisma default 5 s blew through on packs with 200+ categories).
-> - **Nested-reference regex** is `[a-zA-Z][\w./-]*` (allows path-style names), not the narrower `[a-zA-Z][a-zA-Z0-9_]*` shown in the sketch.
+> - **Nested-reference regex** uses the shared `WILDCARD_CATEGORY_NAME` charset `[A-Za-z0-9][\w./-]*` (allows path-style names and a leading digit, e.g. `80s`), not the narrower `[a-zA-Z][a-zA-Z0-9_]*` shown in the sketch.
 
 ---
 
@@ -162,7 +162,7 @@ function normalizeNestedRefs(line: string): string {
   // (folders preserved as namespace), so refs like
   // `__uds_wildcards/personmaker/adultage__` are valid and resolve to a
   // category of the same name in the same set.
-  return line.replace(/__([a-zA-Z][\w./-]*)__/g, '#$1');
+  return line.replace(new RegExp(`__(${WILDCARD_CATEGORY_NAME})__`, 'g'), '#$1'); // shared charset
 }
 ```
 

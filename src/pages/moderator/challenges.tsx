@@ -49,6 +49,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 const statusOptions = [
   { value: 'all', label: 'All Statuses' },
@@ -249,9 +250,9 @@ export default function ModeratorChallengesPage() {
   });
 
   const isActioning =
-    endAndPickWinnersMutation.isLoading ||
-    voidChallengeMutation.isLoading ||
-    deleteMutation.isLoading;
+    endAndPickWinnersMutation.isPending ||
+    voidChallengeMutation.isPending ||
+    deleteMutation.isPending;
 
   const challenges = data?.pages.flatMap((page) => page.items) ?? [];
 
@@ -608,3 +609,5 @@ export default function ModeratorChallengesPage() {
     </>
   );
 }
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });

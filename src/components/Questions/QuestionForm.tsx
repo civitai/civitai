@@ -22,7 +22,7 @@ import { upsertQuestionSchema } from '~/server/schema/question.schema';
 import { trpc } from '~/utils/trpc';
 import * as z from 'zod';
 import type { TRPCClientErrorBase } from '@trpc/client';
-import type { DefaultErrorShape } from '@trpc/server';
+import type { TRPCDefaultErrorShape } from '@trpc/server';
 import { showNotification } from '@mantine/notifications';
 import { IconArrowLeft, IconCheck, IconLock, IconX } from '@tabler/icons-react';
 import { slugit } from '~/utils/string-helpers';
@@ -48,7 +48,7 @@ export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
 
   const { data: { items: tags } = { items: [] } } = trpc.tag.getAll.useQuery(
     { limit: 0, entityType: [TagTarget.Question] },
-    { cacheTime: Infinity, staleTime: Infinity }
+    { gcTime: Infinity, staleTime: Infinity }
   );
   const questionTags = form.watch('tags');
   const tagsData = useMemo(
@@ -56,7 +56,7 @@ export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
     [questionTags, tags]
   );
 
-  const { mutate, isLoading } = trpc.question.upsert.useMutation({
+  const { mutate, isPending: isLoading } = trpc.question.upsert.useMutation({
     async onSuccess(results, input) {
       const questionLink = `/questions/${results.id}/${slugit(results.title ?? '')}`;
 
@@ -74,7 +74,7 @@ export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
         shallow: !!input.id,
       });
     },
-    onError(error: TRPCClientErrorBase<DefaultErrorShape>) {
+    onError(error: TRPCClientErrorBase<TRPCDefaultErrorShape>) {
       const message = error.message;
 
       showNotification({

@@ -44,12 +44,15 @@ import {
   IconShare3,
 } from '@tabler/icons-react';
 import type { TRPCClientErrorBase } from '@trpc/client';
-import type { DefaultErrorShape } from '@trpc/server';
+import type { TRPCDefaultErrorShape } from '@trpc/server';
 import clsx from 'clsx';
 import { useRouter } from 'next/router';
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { BlockSlot } from '~/components/AppBlocks/BlockSlot';
+import { PublisherSubscriptionBanner } from '~/components/Apps/PublisherSubscriptionBanner';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import {
   BidModelButton,
   getEntityDataForBidModelButton,
@@ -80,6 +83,7 @@ import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
 import { DownloadVariantDropdown } from '~/components/Model/ModelVersions/DownloadVariantDropdown';
+import { ModelTensorMetadata } from '~/components/Model/ModelVersions/ModelTensorMetadata';
 import { ModelVersionPopularity } from '~/components/Model/ModelVersions/ModelVersionPopularity';
 import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
 import { RequiredComponentsSection } from '~/components/Model/ModelVersions/RequiredComponentsSection';
@@ -111,7 +115,13 @@ import { ToggleVaultButton } from '~/components/Vault/ToggleVaultButton';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { baseModelLicenses, CAROUSEL_LIMIT, constants } from '~/server/common/constants';
+import {
+  baseModelLicenses,
+  CAROUSEL_LIMIT,
+  constants,
+  getEffectiveCommercialUse,
+  getRestrictedNsfwLevelsForBaseModel,
+} from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { ReportEntity } from '~/shared/utils/report-helpers';
@@ -146,6 +156,10 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const user = useCurrentUser();
+  // `showNsfw` lives on the browsing-settings store (BrowserSettingsProvider),
+  // not on CurrentUser — that field was removed from CurrentUser when the
+  // browsing-settings refactor moved viewer prefs into their own provider.
+  const viewerShowNsfw = useBrowsingSettings((x) => x.showNsfw);
   const { connected: civitaiLinked } = useCivitaiLink();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
@@ -224,6 +238,11 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
       ...groupedFiles.otherFormatVariants,
     ];
   }, [groupedFiles]);
+  const tensorMetadataEnabled = detailAccordions.includes('tensor-metadata');
+
+  // Shared active-file selection: the download variant picker drives it, and the
+  // Tensors panel follows it (instead of having its own file selector).
+  const [selectedFileId, setSelectedFileId] = useState<number | null>(null);
 
   // Check if this is a component-only model (no model files, only components)
   const isComponentOnlyModel =
@@ -366,7 +385,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
       await queryUtils.modelVersion.getById.invalidate({ id: version.id });
       await queryUtils.image.getInfinite.invalidate();
     } catch (e) {
-      const error = e as TRPCClientErrorBase<DefaultErrorShape>;
+      const error = e as TRPCClientErrorBase<TRPCDefaultErrorShape>;
       const reason = error?.message?.includes('Insufficient funds')
         ? 'You do not have enough funds to publish this model. You can remove early access or purchase more Buzz in order to publish.'
         : error.message ??
@@ -397,7 +416,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
       await queryUtils.model.getById.invalidate({ id: model.id });
       await queryUtils.modelVersion.getById.invalidate({ id: version.id });
     } catch (e) {
-      const error = e as TRPCClientErrorBase<DefaultErrorShape>;
+      const error = e as TRPCClientErrorBase<TRPCDefaultErrorShape>;
       showErrorNotification({
         error: new Error(error.message),
         title: 'Error requesting review',
@@ -426,7 +445,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
     version.status === ModelStatus.UnpublishedViolation;
   const scheduledPublishDate =
     version.status === ModelStatus.Scheduled ? version.publishedAt : undefined;
-  const publishing = publishModelMutation.isLoading || publishVersionMutation.isLoading;
+  const publishing = publishModelMutation.isPending || publishVersionMutation.isPending;
   // Show republish button for private models that are unpublished
   const showRepublishPrivateButton =
     isPrivateModel &&
@@ -452,6 +471,10 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
       ? unpublishReasons[unpublishedReason]?.notificationMessage
       : `Removal reason: ${version.meta?.customMessage || 'No reason provided.'}`;
   const license = baseModelLicenses[version.baseModel];
+  // Base model can restrict mature content (e.g. Ideogram) and/or commercial use.
+  // Both are derived per displayed version rather than stored on the model.
+  const baseModelRestrictsMature =
+    getRestrictedNsfwLevelsForBaseModel(version.baseModel).length > 0;
   const onSite = !!version.trainingStatus;
   const showAddendumLicense =
     constants.supportedBaseModelAddendums.includes(version.baseModel as 'SD 1.5' | 'SDXL 1.0') &&
@@ -468,6 +491,10 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
       <TrackView entityId={version.id} entityType="ModelVersion" type="ModelVersionView" />
       <ContainerGrid2.Col span={{ base: 12, sm: 5, md: 4 }} order={{ sm: 2 }} ref={adContainerRef}>
         <Stack>
+          {/* Owner-only banner: lists publisher_all_my_models subscriptions
+              that would render here so the model owner can opt out of any
+              specific subscription for this model. Hidden for non-owners. */}
+          {isOwner && <PublisherSubscriptionBanner modelId={model.id} modelType={model.type} />}
           {model.mode !== ModelModifier.TakenDown && mobile && (
             <ModelCarousel
               modelId={model.id}
@@ -477,11 +504,36 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               minor={model.minor}
             />
           )}
+          {/* App Blocks: model.sidebar_top slot. Renders publisher-installed and
+              platform-default blocks, capped at 3. Client-only — the server
+              emits a placeholder div.
+              Placed AFTER the mobile-only ModelCarousel above so that on small
+              screens (where the sidebar column stacks full-width) the block sits
+              BELOW the image carousel rather than pushing it down. On sm+ the
+              mobile carousel renders nothing, so the block keeps its sidebar-top
+              position (the gallery lives in the other grid column). */}
+          <BlockSlot
+            slotId="model.sidebar_top"
+            context={{
+              slotId: 'model.sidebar_top',
+              modelId: model.id,
+              modelVersionId: version.id,
+              modelName: model.name,
+              modelType: model.type,
+              modelNsfwLevel: model.nsfwLevel,
+              creatorUserId: model.user.id,
+              viewerUserId: user?.id ?? null,
+              viewerUsername: user?.username ?? null,
+              viewerStatus: user?.bannedAt ? 'banned' : user?.muted ? 'muted' : 'active',
+              viewerNsfwEnabled: viewerShowNsfw,
+              theme: colorScheme === 'dark' ? 'dark' : 'light',
+            }}
+          />
           {showRequestReview ? (
             <Button
               color="yellow"
               onClick={handleRequestReviewClick}
-              loading={requestReviewMutation.isLoading || requestVersionReviewMutation.isLoading}
+              loading={requestReviewMutation.isPending || requestVersionReviewMutation.isPending}
               disabled={!!(model.meta?.needsReview || version.meta?.needsReview)}
               fullWidth
             >
@@ -506,27 +558,44 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                   loading={publishing}
                   fullWidth
                 >
-                  Publish this version
+                  {isModelUnpublished || isVersionUnpublished
+                    ? 'Republish this version'
+                    : 'Publish this version'}
                 </Button>
-                <Tooltip label={scheduledPublishDate ? 'Reschedule' : 'Schedule publish'} withArrow>
-                  <Button
-                    color="green"
-                    variant="outline"
-                    loading={publishing}
-                    onClick={() =>
-                      dialogStore.trigger({
-                        component: SchedulePostModal,
-                        props: {
-                          onSubmit: handlePublishClick,
-                          publishedAt: version.publishedAt,
-                          publishingModel: true,
-                        },
-                      })
-                    }
+                {/*
+                  Hide the Schedule control once a model/version has been
+                  unpublished. The publish raw SQL guard
+                  (`publishedAt IS NULL OR publishedAt > NOW()`) restores
+                  the original publishedAt on republish, so any picked
+                  schedule date would silently be ignored — letting the
+                  user open a date picker that has no effect would be
+                  misleading. Same write-once-on-republish invariant we
+                  now enforce for Post.publishedAt via updatePost.
+                */}
+                {!isModelUnpublished && !isVersionUnpublished && (
+                  <Tooltip
+                    label={scheduledPublishDate ? 'Reschedule' : 'Schedule publish'}
+                    withArrow
                   >
-                    <IconClock size={20} />
-                  </Button>
-                </Tooltip>
+                    <Button
+                      color="green"
+                      variant="outline"
+                      loading={publishing}
+                      onClick={() =>
+                        dialogStore.trigger({
+                          component: SchedulePostModal,
+                          props: {
+                            onSubmit: handlePublishClick,
+                            publishedAt: version.publishedAt,
+                            publishingModel: true,
+                          },
+                        })
+                      }
+                    >
+                      <IconClock size={20} />
+                    </Button>
+                  </Tooltip>
+                )}
               </Button.Group>
 
               {scheduledPublishDate && isOwnerOrMod && (
@@ -578,9 +647,9 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                     />
                   ) : null}
                   {/* Action icon buttons row */}
-                  <Group gap={8} wrap="nowrap" justify="center" grow>
+                  <div className="flex gap-2">
                     <Tooltip label="Share" position="top" withArrow>
-                      <div style={{ flex: 1 }}>
+                      <div className="flex-1">
                         <ShareButton
                           url={router.asPath}
                           title={model.name}
@@ -590,6 +659,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                             color="gray"
                             fullWidth
                             style={{ paddingLeft: 0, paddingRight: 0 }}
+                            aria-label="Share"
                           >
                             <IconShare3 size={18} />
                           </Button>
@@ -598,7 +668,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                     </Tooltip>
                     {onFavoriteClick && (
                       <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
-                        <div style={{ flex: 1 }} data-tour="model:like">
+                        <div className="flex-1" data-tour="model:like">
                           <LoginRedirect reason="favorite-model">
                             <Button
                               onClick={() =>
@@ -610,6 +680,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                               color={isFavorite ? 'green' : 'gray'}
                               fullWidth
                               style={{ paddingLeft: 0, paddingRight: 0 }}
+                              aria-label={isFavorite ? 'Unlike' : 'Like'}
                             >
                               <ThumbsUpIcon color="#fff" filled={isFavorite} size={18} />
                             </Button>
@@ -626,12 +697,14 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                             withArrow
                           >
                             <Button
+                              className="flex-1"
                               color={isInVault ? 'green' : 'gray'}
                               onClick={toggleVaultItem}
                               disabled={isLoading}
                               variant={isInVault ? 'light' : undefined}
                               fullWidth
                               style={{ paddingLeft: 0, paddingRight: 0 }}
+                              aria-label={isInVault ? 'Remove from Vault' : 'Add to Vault'}
                             >
                               {isLoading ? (
                                 <Loader size="xs" />
@@ -658,12 +731,14 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                           <Tooltip label={label}>
                             <Button
                               ref={ref}
+                              className="flex-1"
                               color={color}
                               onClick={onClick}
                               disabled={!primaryFile}
                               variant="light"
                               fullWidth
                               style={{ paddingLeft: 0, paddingRight: 0 }}
+                              aria-label={label}
                             >
                               {icon}
                             </Button>
@@ -680,7 +755,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       position="top"
                       withArrow
                     >
-                      <div style={{ flex: 1 }}>
+                      <div className="flex-1">
                         <LoginRedirect reason="notify-model">
                           <Button
                             color={isNotificationOn ? 'green' : 'gray'}
@@ -690,9 +765,14 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                                 type: isNotificationOn ? ModelEngagementType.Mute : undefined,
                               })
                             }
-                            loading={toggleNotifyModelMutation.isLoading}
+                            loading={toggleNotifyModelMutation.isPending}
                             fullWidth
                             style={{ paddingLeft: 0, paddingRight: 0 }}
+                            aria-label={
+                              isNotificationOn
+                                ? 'Stop getting notifications for this model'
+                                : 'Get notifications for this model'
+                            }
                           >
                             {isNotificationOn ? (
                               <IconBellCheck size={18} />
@@ -704,7 +784,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       </div>
                     </Tooltip>
                     <Tooltip label="Add to collection" position="top" withArrow>
-                      <div style={{ flex: 1 }}>
+                      <div className="flex-1">
                         <LoginRedirect reason="add-to-collection">
                           <Button
                             color="gray"
@@ -718,6 +798,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                             }
                             fullWidth
                             style={{ paddingLeft: 0, paddingRight: 0 }}
+                            aria-label="Add to collection"
                           >
                             <IconBookmark size={18} />
                           </Button>
@@ -738,12 +819,12 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                           style: { paddingLeft: 0, paddingRight: 0 },
                           children: <IconGavel size={18} />,
                         }}
-                        divProps={{ style: { flex: 1 } }}
+                        divProps={{ className: 'flex-1' }}
                       />
                     )}
                     {(!user || !isOwner || user.isModerator) && (
                       <Tooltip label="Report" position="top" withArrow>
-                        <div style={{ flex: 1 }}>
+                        <div className="flex-1">
                           <LoginRedirect reason="report-model">
                             <Button
                               color="gray"
@@ -755,6 +836,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                               }
                               fullWidth
                               style={{ paddingLeft: 0, paddingRight: 0 }}
+                              aria-label="Report"
                             >
                               <IconFlag size={18} />
                             </Button>
@@ -762,7 +844,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         </div>
                       </Tooltip>
                     )}
-                  </Group>
+                  </div>
                 </Stack>
               </Card>
               {/* Component-only model message */}
@@ -806,6 +888,8 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       versionId={version.id}
                       modelType={model.type}
                       userPreferences={user?.filePreferences}
+                      selectedFileId={selectedFileId}
+                      onSelectFileId={setSelectedFileId}
                       canDownload={canDownload}
                       downloadPrice={
                         !hasDownloadPermissions &&
@@ -1110,6 +1194,11 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                                     size="md"
                                     radius="md"
                                     disabled={archived || isLoadingAccess}
+                                    aria-label={
+                                      canDownload
+                                        ? 'Download from source model'
+                                        : 'Purchase to download'
+                                    }
                                   >
                                     <IconDownload size={16} />
                                   </ActionIcon>
@@ -1493,12 +1582,21 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         type={model.type}
                         modelId={model.id}
                         modelVersionId={version.id}
+                        fileType={primaryFile?.type}
                       />
                     </Group>
                   )}
                 </Stack>
               </Accordion.Panel>
             </Accordion.Item>
+            {isDownloadable && modelFilesVisible.length > 0 && (
+              <ModelTensorMetadata
+                files={modelFilesVisible}
+                userPreferences={user?.filePreferences}
+                enabled={tensorMetadataEnabled}
+                selectedFileId={selectedFileId}
+              />
+            )}
             {version.recommendedResources && version.recommendedResources.length > 0 && (
               <Accordion.Item value="recommended-resources">
                 <Accordion.Control>Recommended Resources</Accordion.Control>
@@ -1678,7 +1776,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
           )}
 
           <Group justify="space-between" align="flex-start" wrap="nowrap">
-            {model.type === 'Checkpoint' && (
+            {(model.type === 'Checkpoint' || !!license || model.licenses.length > 0) && (
               <Stack gap={4} style={{ flex: 1, minWidth: 0 }}>
                 <Group gap={4} wrap="wrap" align="center">
                   <IconLicense size={16} />
@@ -1730,7 +1828,20 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                 ))}
               </Stack>
             )}
-            <PermissionIndicator permissions={model} ml="auto" />
+            <PermissionIndicator
+              permissions={{
+                ...model,
+                // Permissions are derived per displayed version from its base model:
+                // non-commercial base models (e.g. Ideogram) force commercial use off,
+                // and mature-restricted base models force SFW-only generation.
+                allowCommercialUse: getEffectiveCommercialUse(
+                  model.allowCommercialUse,
+                  version.baseModel
+                ),
+                sfwOnly: model.sfwOnly || baseModelRestrictsMature,
+              }}
+              ml="auto"
+            />
           </Group>
           {license?.notice && (
             <Text size="xs" c="dimmed">

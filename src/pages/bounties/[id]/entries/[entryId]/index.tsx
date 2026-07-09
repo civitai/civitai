@@ -127,7 +127,7 @@ export default function BountyEntryDetailsPage({
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === (bountyEntry?.user?.id || bounty?.user?.id));
 
-  const { mutate: deleteEntryMutation, isLoading: isLoadingDelete } =
+  const { mutate: deleteEntryMutation, isPending: isLoadingDelete } =
     trpc.bountyEntry.delete.useMutation({
       onSuccess: async () => {
         await queryUtils.bounty.getEntries.invalidate({ id: bounty?.id });
@@ -572,7 +572,7 @@ export function BountyEntryCarousel({
 
   const carouselNavigation = useCarouselNavigation({ items: images, onChange: onImageChange });
 
-  const isDeletingImage = !!useIsMutating(getQueryKey(trpc.image.delete));
+  const isDeletingImage = !!useIsMutating({ mutationKey: getQueryKey(trpc.image.delete) });
   useDidUpdate(() => {
     if (!isDeletingImage) queryUtils.bountyEntry.getById.invalidate({ id: bountyEntry?.id });
   }, [isDeletingImage]);

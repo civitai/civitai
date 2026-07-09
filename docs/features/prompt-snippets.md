@@ -52,7 +52,7 @@ Two new tables — no DB join table for "loaded sets." There is no separate `Pro
 
 **Trigger character:** `#category`. The behavior of the submission (cartesian fan-out vs random sampling) is governed by the `snippetMode` form toggle, not by the prompt syntax.
 
-**Grammar:** `#` + a path-like identifier matching `[A-Za-z][\w./-]*`. The charset mirrors the import pipeline's category-name convention — categories are stored as the full relative path inside their source zip (`uds_wildcards/personmaker/easyman`), so chip references must allow `/`, `.`, and `-`. Categories are matched case-insensitively (citext storage preserves original casing for display).
+**Grammar:** `#` + a path-like identifier matching `[A-Za-z0-9][\w./-]*` (the shared `WILDCARD_CATEGORY_NAME` charset — first char may be a letter or digit, e.g. `80s`). The charset mirrors the import pipeline's category-name convention — categories are stored as the full relative path inside their source zip (`uds_wildcards/personmaker/easyman`), so chip references must allow `/`, `.`, and `-`. Categories are matched case-insensitively (citext storage preserves original casing for display).
 
 **Reserved separator:** `::` is reserved for a future cross-set qualifier (`#core::hair_color`). Single colons collide with SD attention syntax (`(weight:1.2)`), so we deliberately avoid them. Single-`/` paths are intra-pack namespace, **not** a set qualifier — see the cross-set discussion in [prompt-snippets-nested-resolution.md](./prompt-snippets-nested-resolution.md#open-questions-for-review).
 
@@ -61,7 +61,8 @@ Two new tables — no DB join table for "loaded sets." There is no separate `Pro
 **Parser:** new helper in [src/utils/prompt-helpers.ts](../../src/utils/prompt-helpers.ts), co-located with the existing `parsePromptResources`.
 
 ```ts
-const snippetReferencePattern = /#([a-zA-Z][\w./-]*)/g;
+export const WILDCARD_CATEGORY_NAME = String.raw`[A-Za-z0-9][\w./-]*`; // shared charset
+const snippetReferencePattern = new RegExp(`#(${WILDCARD_CATEGORY_NAME})`, 'g');
 // Returns ordered list of references: [{ category, position }]
 ```
 

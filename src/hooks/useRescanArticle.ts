@@ -4,7 +4,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 export function useRescanArticle() {
   const queryUtils = trpc.useUtils();
 
-  const { mutateAsync, isLoading } = trpc.article.rescan.useMutation({
+  const { mutateAsync, isPending: isLoading } = trpc.article.rescan.useMutation({
     async onSuccess(_data, variables) {
       showSuccessNotification({ message: 'Article sent for rescan' });
       await queryUtils.article.getScanStatus.invalidate({ id: variables.id });

@@ -12,8 +12,12 @@ import {
   Anchor,
 } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
+import dynamic from 'next/dynamic';
 import {
   IconAlertTriangleFilled,
+  IconArrowsMaximize,
+  IconCube,
+  IconX,
   IconArrowsShuffle,
   IconBan,
   IconPlus,
@@ -49,11 +53,13 @@ import { TwCard } from '~/components/TwCard/TwCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import { type WorkflowData, type StepData } from '~/server/services/orchestrator';
-import { orchestratorPendingStatuses } from '~/shared/constants/generation.constants';
+import {
+  orchestratorCompletedStatuses,
+  orchestratorPendingStatuses,
+} from '~/shared/constants/generation.constants';
 import { getEcosystem } from '~/shared/constants/basemodel.constants';
 import { generationGraphPanel, generationGraphStore } from '~/store/generation-graph.store';
 import { formatDateMin } from '~/utils/date-helpers';
-import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { TransactionsPopover } from '~/components/ImageGeneration/GenerationForm/TransactionsPopover';
 import classes from './QueueItem.module.scss';
@@ -71,9 +77,21 @@ import {
   GENERATION_HANDOFF_PARAM,
 } from '~/components/generation_v2/utils/generation-url-handoff';
 import { getGenerationSnapshotCache } from '~/components/generation_v2/utils/generation-snapshot-cache';
-import type { BlobData } from '~/shared/orchestrator/workflow-data';
+import type {
+  AudioBlob,
+  BlobData,
+  ImageBlob,
+  VideoBlob,
+} from '~/shared/orchestrator/workflow-data';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getModelUrl } from '~/utils/string-helpers';
+import type { Model3DViewableVariant } from '~/components/Model3D/Viewer/Model3DVariantViewer';
+import {
+  getModel3DViewableVariants,
+  Model3DOutputActions,
+} from '~/components/Model3D/Viewer/Model3DOutputActions';
+import Model3DLightbox from '~/components/ImageGeneration/Model3DLightbox';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { workflowConfigs } from '~/shared/data-graph/generation/config/workflows';
 
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
@@ -109,6 +127,13 @@ export function QueueItem({
 
   const allImages = request.steps.flatMap((s) => s.output);
 
+  // PolyGen (3D) workflows are rendered as their own queue card variant —
+  // we deliberately do NOT spin up a WebGL viewer per queue card (5 queued
+  // generations would mean 5 WebGL contexts on the page). Show the
+  // thumbnail + a stub "Post from Generation" CTA; the full viewer lives
+  // on the detail page (workstream D + G).
+  const isPolyGen = request.steps.some((s) => s.$type === 'polyGen');
+
   const stepErrors = request.steps.flatMap((s) => s.errors ?? []);
   const failureReason = stepErrors.length
     ? stepErrors.join(',\n')
@@ -116,6 +141,7 @@ export function QueueItem({
 
   const processing = status === 'processing';
   const pending = orchestratorPendingStatuses.includes(status);
+  const canceled = status === 'canceled';
 
   const cancellable = PENDING_PROCESSING_STATUSES.includes(status);
 
@@ -161,14 +187,34 @@ export function QueueItem({
     // metadata for source-lineage cases.
     const replayParams = request.params;
     const isTxt2Img = replayParams?.workflow === 'txt2img';
+    // PolyGen (3D Models) has no model selector — pin the ecosystem so the
+    // form's discriminator activates the polyGen subgraph (auto-hiding the
+    // checkpoint picker via Controller's null return) and lands the user
+    // directly on the 3D Models segment with all params pre-filled.
+    const isPolyGenReplay = request.steps.some((s) => s.$type === 'polyGen');
+    const polyGenOverrides = isPolyGenReplay
+      ? {
+          ecosystem: 'PolyGen',
+          workflow:
+            (replayParams?.workflow as string | undefined) ??
+            (request.steps.some(
+              (s) => s.$type === 'polyGen' && (s.params as any)?.process === 'imageTo3D'
+            )
+              ? 'img2model3d'
+              : 'txt2model3d'),
+        }
+      : {};
     generationGraphStore.setData({
       params: {
         ...replayParams,
         seed: null,
         // Clear images for txt2img to avoid stale data
         ...(isTxt2Img ? { images: null } : {}),
+        ...polyGenOverrides,
       },
-      resources: request.resources,
+      // PolyGen has no checkpoint/LoRA resources — drop any inherited ones so
+      // the form provider doesn't push a `model` value onto the polyGen branch.
+      resources: isPolyGenReplay ? [] : request.resources,
       runType: 'replay',
       remixOfId: request.remixOfId,
     });
@@ -177,22 +223,46 @@ export function QueueItem({
   const { prompt, ...details } = params as { prompt: string };
 
   const hasUnstableResources = resources.some((x) => unstableResources.includes(x.id));
-  const overwriteStatusLabel =
-    hasUnstableResources && status === 'failed'
-      ? `${status} - Potentially caused by unstable resources`
-      : status === 'failed'
-      ? `${status} - Generations can error for any number of reasons, try regenerating or swapping what models/additional resources you're using.`
-      : status;
+  const overwriteStatusLabel = canceled
+    ? 'cancelled - This generation was cancelled. Any undelivered generations were refunded.'
+    : hasUnstableResources && status === 'failed'
+    ? `${status} - Potentially caused by unstable resources`
+    : status === 'failed'
+    ? `${status} - Generations can error for any number of reasons, try regenerating or swapping what models/additional resources you're using.`
+    : status;
 
   const completedCount = request.completedCount;
   const processingCount = request.processingCount;
 
+  // PolyGen (txt2model3d / img2model3d) workflows don't reliably carry
+  // `params.workflow` or `params.engine` — the orchestrator-side polyGen
+  // step is the source of truth (see `isPolyGen` above). Without the
+  // last clause the Remix button silently disappears on every PolyGen
+  // queue item even though the saved `workflowMetadata.params` carries
+  // everything the generator form needs to replay.
   const canRemix =
     (params.workflow &&
       !['img2img-upscale', 'img2img-background-removal'].includes(params.workflow as string)) ||
-    (!!params.engine && allImages.length > 0);
+    (!!params.engine && allImages.length > 0) ||
+    isPolyGen;
 
   const workflowDefinition = workflowConfigs[params.workflow as keyof typeof workflowConfigs];
+
+  // PolyGen workflows don't always carry `params.workflow` consistently
+  // (the orchestrator-side step is the source of truth), so derive the
+  // process label directly from the polyGen step input. Shown as its own
+  // chip in the card header so the user always sees "Image to 3D" /
+  // "Text to 3D" even when the workflowConfig lookup misses.
+  const polyGenStep = request.steps.find((s) => s.$type === 'polyGen');
+  const polyGenProcess = (polyGenStep?.params as { process?: string } | undefined)?.process;
+  const polyGenChipLabel =
+    polyGenProcess === 'imageTo3D'
+      ? 'Image to 3D'
+      : polyGenProcess === 'textTo3D'
+      ? 'Text to 3D'
+      : polyGenStep
+      ? '3D Model'
+      : null;
 
   const engine = params.engine as string | undefined;
   const version = params.version as string | undefined;
@@ -244,6 +314,16 @@ export function QueueItem({
                   {workflowDefinition.label}
                 </Badge>
               )}
+              {polyGenChipLabel && !workflowDefinition && (
+                <Badge
+                  radius="sm"
+                  color="violet"
+                  size="sm"
+                  classNames={{ label: 'overflow-hidden' }}
+                >
+                  {polyGenChipLabel}
+                </Badge>
+              )}
               {engine && (
                 <Badge
                   radius="sm"
@@ -290,7 +370,15 @@ export function QueueItem({
         </Card.Section>
       )}
 
-      {inView && (
+      {inView && isPolyGen && (
+        <div className="flex flex-col gap-3 py-3 @container">
+          {prompt && <LineClamp lh={1.3}>{prompt}</LineClamp>}
+          {failureReason && <Alert color="red">{failureReason}</Alert>}
+          <Model3DQueueCardOutputs request={request} pending={pending} processing={processing} />
+        </div>
+      )}
+
+      {inView && !isPolyGen && (
         <>
           <div className="flex flex-col gap-3 py-3 @container">
             {showDelayedMessage &&
@@ -323,8 +411,8 @@ export function QueueItem({
               </div>
             )}
 
-            {stepDisplay === 'inline' && failureReason && (
-              <Alert color="red">{failureReason}</Alert>
+            {stepDisplay === 'inline' && (
+              <WorkflowStatusAlert status={status} failureReason={failureReason} />
             )}
 
             {stepDisplay === 'separate' ? (
@@ -452,7 +540,12 @@ function StepOutputs({
 }) {
   const images = step ? step.output : request.steps.flatMap((s) => s.output);
   const allDisplayImages = step ? step.displayOutput : request.displayOutput;
-  const displayImages = allDisplayImages.filter((img) => matchesMarkerTags(img, markerTags));
+  // PolyGen workflows render through `Model3DQueueCardOutputs` (the `isPolyGen`
+  // branch above), so model3d blobs never reach this grid — narrow them out
+  // here so `GeneratedOutput` keeps its image/video/audio-only contract.
+  const displayImages = allDisplayImages
+    .filter((img): img is ImageBlob | VideoBlob | AudioBlob => img.type !== 'model3d')
+    .filter((img) => matchesMarkerTags(img, markerTags));
   const blockedReasons = step ? step.blockedReasons : request.blockedReasons;
 
   const stepFailure = step
@@ -462,7 +555,7 @@ function StepOutputs({
 
   return (
     <>
-      {stepFailure && <Alert color="red">{stepFailure}</Alert>}
+      {step && <WorkflowStatusAlert status={request.status} failureReason={stepFailure} />}
       <div
         className={clsx(classes.grid, {
           [classes.asSidebar]: !features.largerGenerationImages,
@@ -524,6 +617,28 @@ function StepOutputs({
   );
 }
 
+/**
+ * Status-specific alerts shown in place of the red failure alert. Statuses not in
+ * the map fall through to the `failureReason` red alert (see `WorkflowStatusAlert`).
+ */
+const workflowStatusAlertMap: Partial<Record<WorkflowStatus, { color: string; message: string }>> =
+  {
+    canceled: { color: 'gray', message: 'This generation was cancelled.' },
+  };
+
+function WorkflowStatusAlert({
+  status,
+  failureReason,
+}: {
+  status: WorkflowStatus;
+  failureReason?: string | null;
+}) {
+  const statusAlert = workflowStatusAlertMap[status];
+  if (statusAlert) return <Alert color={statusAlert.color}>{statusAlert.message}</Alert>;
+  if (failureReason) return <Alert color="red">{failureReason}</Alert>;
+  return null;
+}
+
 const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
   withinPortal: true,
   withArrow: true,
@@ -542,7 +657,7 @@ function CancelOrDeleteWorkflow({
   const [cancelling, setCancelling] = useState(false);
   const deleteMutation = useDeleteTextToImageRequest();
   const cancelMutation = useCancelTextToImageRequest();
-  const cancellingDeleting = deleteMutation.isLoading || cancelMutation.isLoading || cancelling;
+  const cancellingDeleting = deleteMutation.isPending || cancelMutation.isPending || cancelling;
 
   const handleDeleteQueueItem = () => {
     deleteMutation.mutate({ workflowId });
@@ -778,7 +893,7 @@ function CanUpgradeBlock({
   );
   const refundedLabel = refundedBuzzLabels.length === 1 ? `${refundedBuzzLabels[0]} Buzz` : 'Buzz';
 
-  const { mutate, isLoading } = useUpdateWorkflow();
+  const { mutate, isPending: isLoading } = useUpdateWorkflow();
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
     accountTypes: ['yellow'],
@@ -800,11 +915,11 @@ function CanUpgradeBlock({
   return (
     <>
       <Text align="center" size="sm">
-        Unlock this content with{' '}
+        Unlock with{' '}
         <Text component="span" c="yellow">
           yellow
         </Text>{' '}
-        Buzz!
+        Buzz
       </Text>
       <CurrencyBadge
         unitAmount={yellowBuzzRequired}
@@ -816,23 +931,244 @@ function CanUpgradeBlock({
         loading={isLoading}
       />
       <Text align="center" size="xs" c="dimmed">
-        The {refundedLabel} you used to generate this content will be refunded.
+        Your {refundedLabel} will be refunded.
+        {!isPaidMember && (
+          <>
+            {' '}
+            {features.isGreen ? (
+              <Anchor component={Link} href={pricingHref} size="xs">
+                Become a member
+              </Anchor>
+            ) : (
+              <Anchor href={pricingHref} target="_blank" rel="noreferrer nofollow" size="xs">
+                Become a member
+              </Anchor>
+            )}{' '}
+            to use Blue Buzz for mature content.
+          </>
+        )}
       </Text>
-      {!isPaidMember && (
-        <Text align="center" size="xs" c="dimmed">
-          Or{' '}
-          {features.isGreen ? (
-            <Anchor component={Link} href={pricingHref} size="xs">
-              become a member
-            </Anchor>
-          ) : (
-            <Anchor href={pricingHref} target="_blank" rel="noreferrer nofollow" size="xs">
-              become a member
-            </Anchor>
-          )}{' '}
-          to use Blue Buzz for mature content
-        </Text>
-      )}
     </>
+  );
+}
+
+// Lazy-mounted so the GLB loader bundle only ships for users who actually
+// toggle the inline preview on. The variant-aware wrapper handles
+// switching between Base / Rigged / Animated / Walking / Running on its
+// own; it falls through to Model3DViewer for the actual three.js mount.
+const Model3DVariantViewerDynamic = dynamic(
+  () =>
+    import('~/components/Model3D/Viewer/Model3DVariantViewer').then((m) => m.Model3DVariantViewer),
+  { ssr: false }
+);
+
+/**
+ * Queue card body for 3D Model (polyGen) workflows.
+ *
+ * Renders the generator-provided thumbnail (an `ImageBlob` carried on the
+ * polyGen step's output) and, on opt-in, an inline three.js viewer mounted
+ * on the GLB URL. The viewer only mounts when the user toggles it on, so
+ * the feed doesn't spin up N WebGL contexts unprompted.
+ *
+ * "Save 3D Model" lazily materializes a `Model3D` Draft from the workflow:
+ * the server copies the orchestrator's expiring GLB / FBX blobs into our
+ * S3 under `3d/`, ingests the thumbnail through the standard image
+ * pipeline (NSFW / CSAM scan, real `Image` row), and writes the Draft +
+ * `Model3DFile` rows — the same final write the moderator seed page uses.
+ * After that we land the owner in `/3d-models/{id}/edit` to set name +
+ * description (WYSIWYG) before publishing. No Image Post is created here;
+ * that's a separate optional flow off the published 3D model page.
+ */
+function Model3DQueueCardOutputs({
+  request,
+  pending,
+  processing,
+}: {
+  request: WorkflowData;
+  pending: boolean;
+  processing: boolean;
+}) {
+  const features = useFeatureFlags();
+  const [viewerOpen, setViewerOpen] = useState(false);
+
+  // PolyGen outputs flow through `formatStepOutputs` as `Model3DBlob`s —
+  // one per generated mesh, with the GLB at `url`. Take the first such blob
+  // across the workflow.
+  const model3dBlob = request.steps
+    .flatMap((s) => s.output)
+    .find((blob) => blob?.type === 'model3d');
+  const blob = model3dBlob?.type === 'model3d' ? model3dBlob : null;
+  const modelUrl = blob?.url ?? null;
+
+  // Prefer the chained `model3DPreview` step's render (a controllable-angle 2D
+  // preview). The preview step is `suppressOutput`, so its image only surfaces
+  // here as the 3D card thumbnail — never as its own output card.
+  const previewStep = request.steps.find((s) => s.$type === 'model3DPreview');
+  const previewImage = previewStep?.output.find(
+    (b): b is ImageBlob => b?.type === 'image' && b.available
+  );
+  // While the preview step exists but hasn't reached a terminal status, keep
+  // waiting on it — don't flash the lower-quality polyGen `thumbnail` and make
+  // the card look done. Only fall back to the polyGen thumbnail once the
+  // preview step is terminal (failed/expired/canceled/succeeded) or absent.
+  const previewPending =
+    !!previewStep &&
+    (!previewStep.status || !orchestratorCompletedStatuses.includes(previewStep.status));
+  const thumbnailUrl =
+    previewImage?.previewUrl ??
+    previewImage?.url ??
+    (previewPending ? null : blob?.thumbnailUrl) ??
+    null;
+
+  // GLB-only siblings the three.js viewer can mount; shared with the
+  // full-screen lightbox so both render the same variant taxonomy.
+  const viewableVariants: Model3DViewableVariant[] = blob ? getModel3DViewableVariants(blob) : [];
+
+  const showSpinner = pending || processing;
+  // Terminal failure states — workflow won't produce a thumbnail. The
+  // orchestrator auto-refunds spent buzz on these, so surface that to the
+  // user instead of the ambiguous "No preview available yet".
+  const isFailed =
+    request.status === 'failed' || request.status === 'expired' || request.status === 'canceled';
+  const failureLabel =
+    request.status === 'expired'
+      ? 'Generation expired'
+      : request.status === 'canceled'
+      ? 'Generation canceled'
+      : 'Generation failed';
+  const isComplete = !pending && !processing && !isFailed;
+
+  // Open the model full-screen. Local (non-routed) dialog, same pattern as
+  // the image lightbox; the heavy three.js viewer lives inside the dialog
+  // component so it only mounts when expanded.
+  const handleExpand = () => {
+    if (!blob) return;
+    dialogStore.trigger({
+      id: 'generated-model3d',
+      component: Model3DLightbox,
+      props: { blob },
+    });
+  };
+
+  return (
+    // Render inside the same responsive output grid as the image/video/audio
+    // results so the 3D card occupies a single tile and sizes identically at
+    // every breakpoint (and honors the largerGenerationImages sidebar layout).
+    <div
+      className={clsx(classes.grid, {
+        [classes.asSidebar]: !features.largerGenerationImages,
+      })}
+    >
+      <div className="flex w-full flex-col gap-2">
+        <TwCard
+          className="relative flex aspect-square items-center justify-center overflow-hidden border"
+          style={{ minHeight: 240 }}
+        >
+          {viewerOpen && viewableVariants.length ? (
+            <>
+              {/* Variant-aware viewer — switches between Base / Rigged /
+                Animated / Walking / Running via the wrapper's top-left
+                Select. Walking and Running auto-play their embedded
+                animations (AnimationMixer wired into Model3DViewer). The
+                `compact` switch makes the viewer fill its parent TwCard
+                instead of imposing min-h-[480px]. */}
+              <Model3DVariantViewerDynamic
+                variants={viewableVariants}
+                compact
+                className="size-full"
+              />
+              <Tooltip label="Expand to full screen" withinPortal position="left">
+                <LegacyActionIcon
+                  variant="filled"
+                  color="dark"
+                  radius="xl"
+                  size="sm"
+                  aria-label="Expand 3D viewer to full screen"
+                  onClick={handleExpand}
+                  style={{ position: 'absolute', top: 8, right: 44, zIndex: 2 }}
+                >
+                  <IconArrowsMaximize size={14} stroke={2} />
+                </LegacyActionIcon>
+              </Tooltip>
+              <Tooltip label="Close 3D preview" withinPortal position="left">
+                <LegacyActionIcon
+                  variant="filled"
+                  color="dark"
+                  radius="xl"
+                  size="sm"
+                  aria-label="Close 3D preview"
+                  onClick={() => setViewerOpen(false)}
+                  style={{ position: 'absolute', top: 8, right: 8, zIndex: 2 }}
+                >
+                  <IconX size={14} stroke={2} />
+                </LegacyActionIcon>
+              </Tooltip>
+            </>
+          ) : thumbnailUrl ? (
+            <>
+              {/* size-full so the thumbnail fills the aspect-square card.
+                The orchestrator-emitted thumbnail is square (1024×1024)
+                so object-cover matches object-contain visually but
+                guarantees full coverage on any future non-square sources. */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={thumbnailUrl} alt="3D model thumbnail" className="size-full object-cover" />
+              {modelUrl && (
+                <>
+                  <Tooltip label="Expand to full screen" withinPortal position="left">
+                    <LegacyActionIcon
+                      variant="filled"
+                      color="dark"
+                      radius="xl"
+                      size="sm"
+                      aria-label="Expand 3D viewer to full screen"
+                      onClick={handleExpand}
+                      style={{ position: 'absolute', top: 8, right: 44, zIndex: 2 }}
+                    >
+                      <IconArrowsMaximize size={14} stroke={2} />
+                    </LegacyActionIcon>
+                  </Tooltip>
+                  <Tooltip label="View in 3D" withinPortal position="left">
+                    <LegacyActionIcon
+                      variant="filled"
+                      color="dark"
+                      radius="xl"
+                      size="sm"
+                      aria-label="Open inline 3D viewer"
+                      onClick={() => setViewerOpen(true)}
+                      style={{ position: 'absolute', top: 8, right: 8, zIndex: 2 }}
+                    >
+                      <IconCube size={14} stroke={2} />
+                    </LegacyActionIcon>
+                  </Tooltip>
+                </>
+              )}
+            </>
+          ) : showSpinner ? (
+            <div className="flex flex-col items-center gap-2">
+              <Loader size={24} />
+              <Text c="dimmed" size="xs" align="center">
+                Generating 3D model…
+              </Text>
+            </div>
+          ) : isFailed ? (
+            <div className="flex flex-col items-center gap-2 px-4 text-center">
+              <IconAlertTriangleFilled size={24} className="text-red-5" />
+              <Text size="sm" fw={600} c="red.4">
+                {failureLabel}
+              </Text>
+              <Text size="xs" c="dimmed">
+                Your Buzz has been refunded.
+              </Text>
+            </div>
+          ) : (
+            <Text c="dimmed" size="xs" align="center">
+              No preview available yet
+            </Text>
+          )}
+        </TwCard>
+
+        <Model3DOutputActions blob={blob} workflowId={request.id} isComplete={isComplete} />
+      </div>
+    </div>
   );
 }

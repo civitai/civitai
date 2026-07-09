@@ -1,3 +1,4 @@
+import { keepPreviousData } from '@tanstack/react-query';
 import { useEffect, useMemo } from 'react';
 import type { SnippetCategoryItem } from './SnippetCategoryList';
 import { trpc } from '~/utils/trpc';
@@ -69,7 +70,7 @@ export function useSnippetCategories() {
   // per-set loading placeholder for the IDs not yet in the response.
   const setsQuery = trpc.wildcardSet.getMany.useQuery(
     { ids: allIds },
-    { enabled: allIds.length > 0, refetchOnWindowFocus: false, keepPreviousData: true }
+    { enabled: allIds.length > 0, refetchOnWindowFocus: false, placeholderData: keepPreviousData }
   );
 
   // Filter the (possibly stale) response down to IDs the user is *currently*
@@ -87,17 +88,17 @@ export function useSnippetCategories() {
   // and we're waiting on the refetch. Rendered as loading placeholders in
   // the snippet sources strip.
   //
-  // Once the current query key has resolved (`isPreviousData === false`),
+  // Once the current query key has resolved (`isPlaceholderData === false`),
   // any allIds missing from the response were silently dropped by the
   // server (unauthorized, deleted, never existed) — not loading. The
   // effect below prunes those out of the graph's `wildcardSetIds` so this
   // hook converges to `[]` instead of leaving permanent skeleton chips.
   const loadingSetIds = useMemo(() => {
     if (setsQuery.data === undefined) return allIds;
-    if (!setsQuery.isPreviousData) return [];
+    if (!setsQuery.isPlaceholderData) return [];
     const have = new Set(setsQuery.data.map((s) => s.id));
     return allIds.filter((id) => !have.has(id));
-  }, [setsQuery.data, setsQuery.isPreviousData, allIds]);
+  }, [setsQuery.data, setsQuery.isPlaceholderData, allIds]);
 
   // After the current query resolves (not previous-data), drop any
   // wildcardSetIds the server didn't return. They're either unauthorized,
@@ -107,7 +108,7 @@ export function useSnippetCategories() {
   // intentionally excluded from the prune — it's tracked separately via
   // `getMyUserSet` and isn't carried in `wildcardSetIds`.
   useEffect(() => {
-    if (setsQuery.data === undefined || setsQuery.isPreviousData) return;
+    if (setsQuery.data === undefined || setsQuery.isPlaceholderData) return;
     if (wildcardSetIds.length === 0) return;
     const returned = new Set(setsQuery.data.map((s) => s.id));
     const orphans = wildcardSetIds.filter((id) => !returned.has(id));
@@ -122,7 +123,7 @@ export function useSnippetCategories() {
         wildcardSetIds: current.wildcardSetIds.filter((id) => !orphanSet.has(id)),
       },
     } as Parameters<typeof graph.set>[0]);
-  }, [setsQuery.data, setsQuery.isPreviousData, wildcardSetIds, graph]);
+  }, [setsQuery.data, setsQuery.isPlaceholderData, wildcardSetIds, graph]);
 
   const categories = useMemo<SnippetCategoryItem[]>(() => {
     if (loadedSets.length === 0) return [];

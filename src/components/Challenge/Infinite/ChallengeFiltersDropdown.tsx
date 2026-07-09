@@ -1,20 +1,11 @@
-import {
-  Button,
-  Chip,
-  Divider,
-  Drawer,
-  Group,
-  Indicator,
-  Popover,
-  ScrollArea,
-  Stack,
-  useComputedColorScheme,
-} from '@mantine/core';
+import { Chip, Divider, Drawer, Group, Indicator, Popover, ScrollArea, Stack } from '@mantine/core';
 import { IconFilter } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import { FilterChip } from '~/components/Filters/FilterChip';
+import { StagedFiltersFooter } from '~/components/Filters/StagedFiltersFooter';
+import { useStagedFilters } from '~/components/Filters/useStagedFilters';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -53,38 +44,46 @@ export function parseParticipationQuery(
   return undefined;
 }
 
+type ChallengeFilterState = {
+  status: string[];
+  participation: ChallengeParticipation | undefined;
+};
+
 export function ChallengeFiltersDropdown() {
   const router = useRouter();
   const currentUser = useCurrentUser();
-  const colorScheme = useComputedColorScheme('dark');
   const mobile = useIsMobile();
-  const [opened, setOpened] = useState(false);
 
   const statusFilter = parseStatusQuery(router.query.status);
   const participationFilter = parseParticipationQuery(router.query.participation);
 
-  const handleStatusChange = (value: string[]) => {
-    // Prevent deselecting all options
-    if (value.length === 0) return;
-    router.replace(
-      { pathname: '/challenges', query: { ...router.query, status: value.join(',') } },
-      undefined,
-      { shallow: true }
-    );
-  };
+  const committedFilters = useMemo<ChallengeFilterState>(
+    () => ({ status: statusFilter, participation: participationFilter }),
+    [statusFilter, participationFilter]
+  );
 
-  const handleParticipationChange = (value: string | string[]) => {
-    const selected = Array.isArray(value) ? value[0] : value;
-    // Toggle: clicking the same chip deselects it
-    const newValue = selected === participationFilter ? undefined : selected;
-    router.replace(
-      { pathname: '/challenges', query: { ...router.query, participation: newValue || undefined } },
-      undefined,
-      { shallow: true }
-    );
-  };
+  const handleApply = useCallback(
+    (next: ChallengeFilterState) => {
+      // Prevent committing an empty status set — matches the legacy
+      // handleStatusChange guard that disallowed deselecting all options.
+      const status = next.status.length === 0 ? defaultStatus : next.status;
+      router.replace(
+        {
+          pathname: '/challenges',
+          query: {
+            ...router.query,
+            status: status.join(','),
+            participation: next.participation || undefined,
+          },
+        },
+        undefined,
+        { shallow: true }
+      );
+    },
+    [router]
+  );
 
-  const clearFilters = () => {
+  const handleClear = useCallback(() => {
     router.replace(
       {
         pathname: '/challenges',
@@ -93,13 +92,34 @@ export function ChallengeFiltersDropdown() {
       undefined,
       { shallow: true }
     );
+  }, [router]);
+
+  const { opened, toggle, close, mergedFilters, isDirty, patchPending, apply, reset, clearAndClose } =
+    useStagedFilters({
+      committed: committedFilters,
+      onApply: handleApply,
+      onClear: handleClear,
+    });
+
+  const handleStatusChange = (value: string[]) => {
+    // Mirror the legacy guard: never let the pending set go fully empty.
+    if (value.length === 0) return;
+    patchPending({ status: value });
   };
 
-  // Count active filters (excluding defaults)
+  const handleParticipationChange = (value: string | string[]) => {
+    const selected = Array.isArray(value) ? value[0] : value;
+    const newValue =
+      selected === mergedFilters.participation
+        ? undefined
+        : (selected as ChallengeParticipation | undefined);
+    patchPending({ participation: newValue });
+  };
+
   const hasStatusDefault =
-    statusFilter.length === defaultStatus.length &&
-    defaultStatus.every((s) => statusFilter.includes(s));
-  const hasParticipation = !!participationFilter;
+    mergedFilters.status.length === defaultStatus.length &&
+    defaultStatus.every((s) => mergedFilters.status.includes(s));
+  const hasParticipation = !!mergedFilters.participation;
   const filterLength = (hasStatusDefault ? 0 : 1) + (hasParticipation ? 1 : 0);
 
   const target = (
@@ -111,17 +131,17 @@ export function ChallengeFiltersDropdown() {
       disabled={!filterLength}
       inline
     >
-      <FilterButton icon={IconFilter} onClick={() => setOpened((o) => !o)} active={opened}>
+      <FilterButton icon={IconFilter} onClick={toggle} active={opened}>
         Filters
       </FilterButton>
     </Indicator>
   );
 
-  const dropdown = (
+  const dropdownBody = (
     <Stack gap={8} p="md">
       <Stack gap={0}>
         <Divider label="Status" className="text-sm font-bold" mb={4} />
-        <Chip.Group multiple value={statusFilter} onChange={handleStatusChange}>
+        <Chip.Group multiple value={mergedFilters.status} onChange={handleStatusChange}>
           <Group gap={8} mb={4}>
             {statusFilters.map((option) => (
               <FilterChip key={option.value} value={option.value}>
@@ -135,7 +155,10 @@ export function ChallengeFiltersDropdown() {
       {currentUser && (
         <Stack gap={0}>
           <Divider label="My Challenges" className="text-sm font-bold" mb={4} />
-          <Chip.Group value={participationFilter ?? ''} onChange={handleParticipationChange}>
+          <Chip.Group
+            value={mergedFilters.participation ?? ''}
+            onChange={handleParticipationChange}
+          >
             <Group gap={8} mb={4}>
               {participationFilters.map((option) => (
                 <FilterChip key={option.value} value={option.value}>
@@ -147,17 +170,17 @@ export function ChallengeFiltersDropdown() {
         </Stack>
       )}
 
-      {filterLength > 0 && (
-        <Button
-          color="gray"
-          variant={colorScheme === 'dark' ? 'filled' : 'light'}
-          onClick={clearFilters}
-          fullWidth
-        >
-          Clear all filters
-        </Button>
-      )}
     </Stack>
+  );
+
+  const dropdownFooter = (
+    <StagedFiltersFooter
+      isDirty={isDirty}
+      onApply={apply}
+      onReset={reset}
+      filterLength={filterLength}
+      onClear={clearAndClose}
+    />
   );
 
   if (mobile)
@@ -166,20 +189,29 @@ export function ChallengeFiltersDropdown() {
         {target}
         <Drawer
           opened={opened}
-          onClose={() => setOpened(false)}
+          onClose={close}
           size="90%"
           position="bottom"
           styles={{
             content: {
-              height: 'auto',
               maxHeight: 'calc(100dvh - var(--header-height))',
+              display: 'flex',
+              flexDirection: 'column',
             },
-            body: { padding: 0, overflowY: 'auto' },
+            body: {
+              padding: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              flex: 1,
+              minHeight: 0,
+            },
             header: { padding: '4px 8px' },
             close: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
           }}
         >
-          {dropdown}
+          <div className="min-h-0 flex-1 overflow-y-auto">{dropdownBody}</div>
+          {dropdownFooter}
         </Drawer>
       </IsClient>
     );
@@ -190,16 +222,18 @@ export function ChallengeFiltersDropdown() {
         zIndex={200}
         position="bottom-end"
         shadow="md"
-        onClose={() => setOpened(false)}
+        opened={opened}
+        onClose={close}
         middlewares={{ flip: true, shift: true }}
         withinPortal
         withArrow
       >
         <Popover.Target>{target}</Popover.Target>
         <Popover.Dropdown maw={468} p={0} w="100%">
-          <ScrollArea.Autosize mah="calc(90vh - var(--header-height) - 56px)" type="hover">
-            {dropdown}
+          <ScrollArea.Autosize mah="calc(90vh - var(--header-height) - 156px)" type="hover">
+            {dropdownBody}
           </ScrollArea.Autosize>
+          {dropdownFooter}
         </Popover.Dropdown>
       </Popover>
     </IsClient>

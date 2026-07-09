@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ActionIcon, Popover, TextInput, Button, Text, Stack, Group } from '@mantine/core';
 import { IconSearch, IconArrowsShuffle } from '@tabler/icons-react';
 import { Tooltip } from '@mantine/core';
@@ -17,14 +17,17 @@ export function WorkflowLookup() {
     {
       enabled: !!lookupId,
       retry: false,
-      onError(err) {
-        showErrorNotification({
-          title: 'Workflow lookup failed',
-          error: new Error(err.message),
-        });
-      },
     }
   );
+  // v5: query onError removed — surface lookup errors via effect.
+  useEffect(() => {
+    if (error) {
+      showErrorNotification({
+        title: 'Workflow lookup failed',
+        error: new Error(error.message),
+      });
+    }
+  }, [error]);
 
   function handleLookup() {
     const trimmed = workflowId.trim();

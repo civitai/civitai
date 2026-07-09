@@ -48,6 +48,6 @@ export const useMutateDonationGoal = () => {
 
   return {
     donate: handleDonate,
-    donating: donateMutation.isLoading,
+    donating: donateMutation.isPending,
   };
 };

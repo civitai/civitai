@@ -420,7 +420,7 @@ export function InteractiveTipBuzzButton({
               variant="transparent"
               color={status === 'confirmed' ? 'green' : buzzConfig.color}
               onClick={status === 'confirming' ? () => sendTip() : undefined}
-              loading={tipUserMutation.isLoading}
+              loading={tipUserMutation.isPending}
             >
               {status === 'confirmed' ? <IconCheck size={20} /> : <IconSend size={20} />}
             </LegacyActionIcon>

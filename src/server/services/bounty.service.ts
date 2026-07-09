@@ -17,7 +17,11 @@ import {
   getUserBuzzAccount,
   refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
-import { createEntityImages, updateEntityImages, ingestImage } from '~/server/services/image.service';
+import {
+  createEntityImages,
+  updateEntityImages,
+  enqueueImageIngestion,
+} from '~/server/services/image.service';
 import { decreaseDate, startOfDay } from '~/utils/date-helpers';
 import type { NsfwLevel } from '../common/enums';
 import { BountySort, BountyStatus } from '../common/enums';
@@ -43,6 +47,7 @@ import {
 } from '../utils/errorHandling';
 import { updateEntityFiles } from './file.service';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
+import type { IngestImageInput } from '~/server/schema/image.schema';
 import { userBountyCountCache } from '~/server/redis/caches';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { createProfanityFilter } from '~/libs/profanity-simple';
@@ -189,7 +194,7 @@ export const createBounty = async ({
   const startsAt = startOfDay(incomingStartsAt, { utc: true });
   const expiresAt = startOfDay(incomingExpiresAt, { utc: true });
 
-  let imagesToIngest: { id: number; url: string }[] = [];
+  let imagesToIngest: IngestImageInput[] = [];
 
   const bounty = await dbWrite.$transaction(
     async (tx) => {
@@ -283,19 +288,11 @@ export const createBounty = async ({
     { maxWait: 10000, timeout: 30000 }
   );
 
-  if (imagesToIngest.length > 0) {
-    for (const img of imagesToIngest) {
-      ingestImage({ image: img }).catch((error) => {
-        logToAxiom({
-          name: 'bounty-image-ingest',
-          type: 'error',
-          userId,
-          imageId: img.id,
-          message: error instanceof Error ? error.message : String(error),
-        }).catch(() => {});
-      });
-    }
-  }
+  enqueueImageIngestion({
+    images: imagesToIngest,
+    name: 'bounty-image-ingest',
+    userId,
+  });
 
   if (bounty.userId) {
     await userBountyCountCache.refresh(bounty.userId);
@@ -321,7 +318,7 @@ export const updateBountyById = async ({
   const startsAt = startOfDay(incomingStartsAt, { utc: true });
   const expiresAt = startOfDay(incomingExpiresAt, { utc: true });
 
-  let imagesToIngest: { id: number; url: string }[] = [];
+  let imagesToIngest: IngestImageInput[] = [];
 
   const bounty = await dbWrite.$transaction(
     async (tx) => {
@@ -410,19 +407,11 @@ export const updateBountyById = async ({
     { maxWait: 10000, timeout: 30000 }
   );
 
-  if (imagesToIngest.length > 0) {
-    for (const img of imagesToIngest) {
-      ingestImage({ image: img }).catch((error) => {
-        logToAxiom({
-          name: 'bounty-image-ingest',
-          type: 'error',
-          userId,
-          imageId: img.id,
-          message: error instanceof Error ? error.message : String(error),
-        }).catch(() => {});
-      });
-    }
-  }
+  enqueueImageIngestion({
+    images: imagesToIngest,
+    name: 'bounty-image-ingest',
+    userId,
+  });
 
   if (bounty?.userId) {
     await userBountyCountCache.refresh(bounty?.userId);
@@ -774,12 +763,10 @@ export const refundBounty = async ({
       user: { select: { id: true, email: true } },
     },
   } as const;
-  const bounty = await dbRead.bounty
-    .findUniqueOrThrow(bountyFindArgs)
-    .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'bounty', caller: 'refundBounty' });
-      return dbWrite.bounty.findUniqueOrThrow(bountyFindArgs);
-    });
+  const bounty = await dbRead.bounty.findUniqueOrThrow(bountyFindArgs).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'bounty', caller: 'refundBounty' });
+    return dbWrite.bounty.findUniqueOrThrow(bountyFindArgs);
+  });
 
   const { user } = bounty;
 

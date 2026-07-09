@@ -19,19 +19,22 @@ import {
 import { ModelStatus } from '~/shared/utils/prisma/enums';
 import { IconExternalLink } from '@tabler/icons-react';
 import type { TRPCClientErrorBase } from '@trpc/client';
-import type { DefaultErrorShape } from '@trpc/server';
+import type { TRPCDefaultErrorShape } from '@trpc/server';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
 import { FlaggedModelsList } from '~/components/Moderation/FlaggedModelsList';
 
 import { unpublishReasons } from '~/server/common/moderation-helpers';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { ModelGetAllPagedSimple } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 type State = {
   declineReason: string;
@@ -92,7 +95,7 @@ export default function ModeratorModels() {
       setState((s) => ({ ...s, opened: false, selectedModel: null }));
       await queryUtils.model.getAllPagedSimple.invalidate();
     } catch (e) {
-      const error = e as TRPCClientErrorBase<DefaultErrorShape>;
+      const error = e as TRPCClientErrorBase<TRPCDefaultErrorShape>;
       showErrorNotification({
         title: 'Error declining request',
         error: new Error(error.message),
@@ -245,7 +248,7 @@ export default function ModeratorModels() {
                       </Button>
                       <Button
                         onClick={handleDeclineRequest}
-                        loading={declineReviewMutation.isLoading}
+                        loading={declineReviewMutation.isPending}
                       >
                         Send
                       </Button>

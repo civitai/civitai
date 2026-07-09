@@ -62,7 +62,7 @@ function ManageHomeBlocks({ onClose }: Props) {
   const isLoading = isLoadingSystemHomeBlocks || isLoadingOwnedHomeBlocks;
   const [items, setItems] = useState<HomeBlockGetAll>(homeBlocks);
   const [activeAccordion, setActionAccordion] = useState<string | null>('system-home-blocks');
-  const { mutate: setHomeBlocksOrder, isLoading: isUpdating } =
+  const { mutate: setHomeBlocksOrder, isPending: isUpdating } =
     trpc.homeBlock.setHomeBlockOrder.useMutation({
       async onSuccess() {
         showSuccessNotification({

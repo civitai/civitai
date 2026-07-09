@@ -54,7 +54,7 @@ export function ImageToolsPopover({
     [tools, image, showSelected, value]
   );
 
-  const { mutate, isLoading } = trpc.image.addTools.useMutation();
+  const { mutate, isPending: isLoading } = trpc.image.addTools.useMutation();
   const handleAddTools = async (multiple?: boolean) => {
     const ids = multiple ? imageIds : [image.id ?? 0];
     const payload = ids.reduce<{ imageId: number; toolId: number }[]>(

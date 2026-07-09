@@ -287,5 +287,5 @@ const useSetThumbnailMutation = ({
     return setThumbnailMutation.mutateAsync({ imageId, frame, customThumbnail, postId });
   };
 
-  return { setThumbnail: handleSetThumbnail, loading: setThumbnailMutation.isLoading };
+  return { setThumbnail: handleSetThumbnail, loading: setThumbnailMutation.isPending };
 };

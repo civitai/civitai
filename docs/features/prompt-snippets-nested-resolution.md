@@ -374,7 +374,7 @@ function expandValue(
   //    followed by literal text. The regex below mirrors the parser's
   //    `NESTED_REFERENCE_PATTERN` so import-time normalization and resolver
   //    lookup never disagree on what counts as one ref.
-  let result = value.replace(/#([a-zA-Z][\w./-]*)/g, (match, name) => {
+  let result = value.replace(new RegExp(`#(${WILDCARD_CATEGORY_NAME})`, 'g'), (match, name) => {
     if (visited.has(name)) return match;  // cycle
     const category = lookupCategory(sourceSetId, name);
     if (!category || category.auditStatus !== 'Clean') return '';  // skip

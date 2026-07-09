@@ -1,4 +1,15 @@
-import { Badge, Button, Center, Container, Group, Pagination, Stack, Table, Text, Title } from '@mantine/core';
+import {
+  Badge,
+  Button,
+  Center,
+  Container,
+  Group,
+  Pagination,
+  Stack,
+  Table,
+  Text,
+  Title,
+} from '@mantine/core';
 import { IconPencil, IconPlus, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import * as z from 'zod';
@@ -9,8 +20,11 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { RewardsBonusEventEditModal } from '~/components/RewardsBonusEvent/RewardsBonusEventEditModal';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 const querySchema = z.object({ page: z.coerce.number().default(1) });
 
@@ -141,7 +155,11 @@ export default function RewardsBonusEventsPage() {
                       <Table.Td>
                         {event.articleId ? (
                           <Text size="xs">
-                            <a href={`/articles/${event.articleId}`} target="_blank" rel="noreferrer">
+                            <a
+                              href={`/articles/${event.articleId}`}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
                               #{event.articleId}
                             </a>
                           </Text>
@@ -160,7 +178,7 @@ export default function RewardsBonusEventsPage() {
                             onConfirm={() => deleteMutation.mutate({ id: event.id })}
                             withinPortal
                           >
-                            <LegacyActionIcon loading={deleteMutation.isLoading} color="red">
+                            <LegacyActionIcon loading={deleteMutation.isPending} color="red">
                               <IconTrash size={16} />
                             </LegacyActionIcon>
                           </PopConfirm>

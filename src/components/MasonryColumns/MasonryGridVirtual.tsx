@@ -12,6 +12,8 @@ import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { TwCard } from '~/components/TwCard/TwCard';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
 // Matches the aspectRatioMap in ~/components/CardTemplates/AspectRatioCard.tsx.
@@ -52,8 +54,11 @@ export function MasonryGridVirtual<TData>({
   const estimatedRowHeight = Math.round(columnWidth / cardAspectRatioMap[aspectRatio]);
 
   const { adsEnabled, useDirectAds } = useAdsContext();
+  const browsingLevel = useBrowsingLevelDebounced();
   const isMobile = useIsMobile();
-  const adsReallyAreEnabled = adsEnabled && !useDirectAds && isMobile && withAds;
+  // Programmatic ads (civitai.com) render on all devices; direct ads (civitai.red) are mobile-only.
+  const adsReallyAreEnabled =
+    adsEnabled && getIsSafeBrowsingLevel(browsingLevel) && withAds && (!useDirectAds || isMobile);
   const createAdFeed = useCreateAdFeed();
   // Only interleave ads when they'll actually render. Otherwise AdUnitRenderable
   // short-circuits to null and leaves visible empty cells in the pre-sliced rows

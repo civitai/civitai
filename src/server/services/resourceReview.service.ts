@@ -19,6 +19,7 @@ import {
   BlockedUsers,
   HiddenUsers,
 } from '~/server/services/user-preferences.service';
+import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import {
   amIBlockedByUser,
   getBasicDataForUsers,
@@ -127,7 +128,7 @@ export const getResourceReviewsInfinite = async ({
       (await dbRead.user.findUnique(userFindArgs)) ??
       (await dbWrite.user.findUnique(userFindArgs));
 
-    if (!targetUser) throw new Error('User not found');
+    if (!targetUser) throw throwNotFoundError('User not found');
 
     AND.push({
       userId: {
@@ -321,10 +322,23 @@ export const upsertResourceReview = async ({
 }: UpsertResourceReviewInput & { userId: number }) => {
   if (data.details) await throwOnBlockedLinkDomain(data.details);
   if (!data.id) {
-    const ret = await dbWrite.resourceReview.create({
-      data: { ...data, userId, thread: { create: {} } },
-      select: resourceReviewSelect,
-    });
+    const ret = await dbWrite.resourceReview
+      .create({
+        data: { ...data, userId, thread: { create: {} } },
+        select: resourceReviewSelect,
+      })
+      .catch(async (err) => {
+        // Concurrent create race: the (modelVersionId, userId) unique constraint
+        // trips (P2002). The review already exists — resolve idempotently by
+        // returning the existing row instead of bubbling a 500.
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+          return dbWrite.resourceReview.findUniqueOrThrow({
+            where: { modelVersionId_userId: { modelVersionId: data.modelVersionId, userId } },
+            select: resourceReviewSelect,
+          });
+        }
+        throw err;
+      });
     await createResourceReviewNotification({ ...ret, userId }).catch();
     await bustRatingTotalsCache({
       modelId: data.modelId,
@@ -398,7 +412,22 @@ export async function deleteResourceReviews({ ids }: { ids: number[] }) {
 export const createResourceReview = async (
   data: CreateResourceReviewInput & { userId: number }
 ) => {
-  const ret = await dbWrite.resourceReview.create({ data, select: resourceReviewSimpleSelect });
+  const ret = await dbWrite.resourceReview
+    .create({ data, select: resourceReviewSimpleSelect })
+    .catch(async (err) => {
+      // Concurrent create race: the (modelVersionId, userId) unique constraint
+      // trips (P2002). The review already exists — resolve idempotently by
+      // returning the existing row instead of bubbling a 500.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        return dbWrite.resourceReview.findUniqueOrThrow({
+          where: {
+            modelVersionId_userId: { modelVersionId: data.modelVersionId, userId: data.userId },
+          },
+          select: resourceReviewSimpleSelect,
+        });
+      }
+      throw err;
+    });
   await createResourceReviewNotification({ ...ret, userId: data.userId }).catch();
   await bustRatingTotalsCache({
     modelId: data.modelId,
@@ -462,7 +491,16 @@ export const getPagedResourceReviews = async ({
     BlockedByUsers.getCached({ userId }),
     BlockedUsers.getCached({ userId }),
   ]);
-  const excludedUserIds = [...new Set(excludedUsers.flat().map((user) => user.id))];
+  // [hidden, blockedBy, blocked] — bound + dedup so a heavily-blocked viewer's
+  // (unbounded) blockedBy list can't blow past Postgres's 32767 bind-param cap on
+  // the raw NOT IN below (P2029). Same fix + safety-priority order as the comment
+  // surfaces; see boundExcludedUserIds.
+  const [hiddenUsers, blockedByUsers, blockedUsers] = excludedUsers;
+  const excludedUserIds = boundExcludedUserIds(
+    hiddenUsers.map((u) => u.id),
+    blockedByUsers.map((u) => u.id),
+    blockedUsers.map((u) => u.id)
+  );
   if (excludedUserIds.length) {
     AND.push(Prisma.sql`rr."userId" != ALL(${excludedUserIds}::int[])`);
   }

@@ -55,18 +55,23 @@ export const parsePromptResources = (value: string) => {
   return [...assertions, ...textualInversions];
 };
 
-// Snippet reference syntax: `#name` where name matches the import-side
-// normalization charset (letters/digits/underscore plus `.`, `/`, `-`).
-// Mirrors the WildcardSetCategory.name regex in wildcard-set.schema.ts so a
-// chip the editor renders is always a name the storage layer can hold.
+// Character set for a wildcard category name — the SINGLE source of truth shared by:
+//   - the prompt `#ref` parser (here, `snippetReferencePattern`),
+//   - the import `__nested__` parser (`NESTED_REFERENCE_PATTERN` in wildcard-set-provisioning.service.ts),
+//   - the save-time validator (`categoryNameSchema` in wildcard-set.schema.ts).
+// Those three differ only in their delimiter (`#…`, `__…__`, `^…$`) — the charset MUST stay
+// identical across them, or a name becomes importable but unreferenceable (the `#80s` bug).
 //
-// Wider than the textual-inversion charset above (which forbids `/`) — this
-// is intentional: path-style refs like `#character/female` are unambiguously
-// snippets. Server-side, snippet expansion runs first; unmatched `#tokens`
-// then fall through to the TI parser. A `#name` that matches both regexes
-// resolves to the snippet when the user has a category named `name` and to
-// the TI when they don't (per the product doc's collision-resolution rule).
-export const snippetReferencePattern = /#([a-zA-Z][\w./-]*)/g;
+// Path-style names allow `/`, `.`, `-` (wider than the textual-inversion charset above, which
+// forbids `/`) so refs like `#character/female` are unambiguously snippets. The first char may be
+// any letter or DIGIT (e.g. `80s`); only leading `_`/`.`/`/`/`-` are excluded — a leading `_`
+// would make the `__…__` import delimiter ambiguous.
+export const WILDCARD_CATEGORY_NAME = String.raw`[A-Za-z0-9][\w./-]*`;
+
+// Server-side, snippet expansion runs first; unmatched `#tokens` then fall through to the TI
+// parser. A `#name` that matches both regexes resolves to the snippet when the user has a category
+// named `name` and to the TI when they don't (per the product doc's collision-resolution rule).
+export const snippetReferencePattern = new RegExp(`#(${WILDCARD_CATEGORY_NAME})`, 'g');
 
 export type SnippetReference = {
   /** The captured name without the leading `#`, e.g. `character` or `BoChars/female/modern`. */

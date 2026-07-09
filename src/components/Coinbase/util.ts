@@ -30,7 +30,7 @@ export const useMutateCoinbase = () => {
 
   return {
     createBuzzOrder: handleCreateBuzzOrder,
-    creatingBuzzOrder: createBuzzOrderMutation.isLoading,
+    creatingBuzzOrder: createBuzzOrderMutation.isPending,
   };
 };
 
@@ -57,6 +57,6 @@ export const useMutateCoinbaseCodeOrder = () => {
 
   return {
     createCodeOrder: handleCreateCodeOrder,
-    creatingCodeOrder: createCodeOrderMutation.isLoading,
+    creatingCodeOrder: createCodeOrderMutation.isPending,
   };
 };

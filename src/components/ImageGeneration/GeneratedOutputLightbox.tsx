@@ -13,6 +13,7 @@ import {
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 
 import { GeneratedOutput } from './GeneratedOutput';
+import type { AudioBlob, ImageBlob, VideoBlob } from '~/shared/orchestrator/workflow-data';
 
 export default function GeneratedOutputLightbox({
   imageId,
@@ -35,8 +36,12 @@ export default function GeneratedOutputLightbox({
 
   const images = useMemo(
     () =>
+      // Lightbox is 2D-only — PolyGen has its own queue card.
       (requests ?? []).flatMap((r) =>
-        r.succeededOutput.filter((img) => matchesMarkerTags(img, markerTags))
+        r.succeededOutput.filter(
+          (img): img is ImageBlob | VideoBlob | AudioBlob =>
+            img.type !== 'model3d' && matchesMarkerTags(img, markerTags)
+        )
       ),
     [requests, markerTags]
   );

@@ -28,7 +28,7 @@ export function EarlyAccessAlert({ modelId, versionId, modelType, deadline }: Pr
       { id: modelId },
       {
         enabled: !!currentUser && inEarlyAccess,
-        cacheTime: Infinity,
+        gcTime: Infinity,
         staleTime: Infinity,
       }
     );
@@ -101,11 +101,11 @@ export function EarlyAccessAlert({ modelId, versionId, modelType, deadline }: Pr
           <Text
             variant="link"
             onClick={
-              !toggleNotifyMutation.isLoading && features.canWrite ? handleNotifyMeClick : undefined
+              !toggleNotifyMutation.isPending && features.canWrite ? handleNotifyMeClick : undefined
             }
             style={{
               cursor:
-                toggleNotifyMutation.isLoading || !features.canWrite ? 'not-allowed' : 'pointer',
+                toggleNotifyMutation.isPending || !features.canWrite ? 'not-allowed' : 'pointer',
               lineHeight: 1,
             }}
             c="yellow"

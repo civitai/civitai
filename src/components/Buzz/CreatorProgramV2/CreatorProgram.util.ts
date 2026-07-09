@@ -210,13 +210,13 @@ export const useCreatorProgramMutate = () => {
 
   return {
     joinCreatorsProgram: handleJoinCreatorsProgram,
-    joiningCreatorsProgram: joinCreatorsProgramMutation.isLoading,
+    joiningCreatorsProgram: joinCreatorsProgramMutation.isPending,
     bankBuzz: handleBankBuzz,
-    bankingBuzz: bankBuzzMutation.isLoading,
+    bankingBuzz: bankBuzzMutation.isPending,
     withdrawCash: handleWithdrawCash,
-    withdrawingCash: withdrawCashMutation.isLoading,
+    withdrawingCash: withdrawCashMutation.isPending,
     extractBuzz: handleExtractBuzz,
-    extractingBuzz: extractBuzzMutation.isLoading,
+    extractingBuzz: extractBuzzMutation.isPending,
   };
 };
 

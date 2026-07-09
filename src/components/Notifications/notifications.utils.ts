@@ -1,5 +1,6 @@
+import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import type { InfiniteData } from '@tanstack/react-query';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueryClient , keepPreviousData} from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import { useCallback, useMemo } from 'react';
@@ -29,7 +30,7 @@ export const useQueryNotifications = (
 ) => {
   const { data, ...rest } = trpc.notification.getAllByUser.useInfiniteQuery(
     { limit: 100, ...filters },
-    { getNextPageParam: (lastPage) => lastPage.nextCursor, keepPreviousData: true, ...options }
+    { getNextPageParam: (lastPage) => lastPage.nextCursor, placeholderData: keepPreviousData, ...withPlaceholderData(options) }
   );
   const notifications = useMemo(
     () => data?.pages.flatMap((page) => page.items) ?? [],
@@ -75,7 +76,7 @@ export const useQueryNotificationsCount = () => {
   const currentUser = useCurrentUser();
   const { data, isLoading } = trpc.user.checkNotifications.useQuery(undefined, {
     enabled: !!currentUser,
-    cacheTime: Infinity,
+    gcTime: Infinity,
     staleTime: Infinity,
   });
 

@@ -22,6 +22,8 @@ import {
   Checkbox,
   Code,
   CopyButton,
+  Alert,
+  Anchor,
 } from '@mantine/core';
 import {
   IconPlus,
@@ -34,6 +36,7 @@ import {
   IconKey,
   IconHash,
   IconCopy,
+  IconInfoCircle,
 } from '@tabler/icons-react';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -46,6 +49,7 @@ import {
   tokenScopeGrid,
 } from '~/shared/constants/token-scope.constants';
 import { Flags } from '~/shared/utils/flags';
+import classes from './OAuthAppsCard.module.css';
 
 const presetOptions = (
   Object.keys(tokenScopePresetLabels) as (keyof typeof TokenScopePresets)[]
@@ -163,9 +167,12 @@ function SecretDisplay({
   clientSecret: string;
   onClose: () => void;
 }) {
+  const isPublic = !clientSecret;
   return (
     <Stack>
-      <Text fw={500}>Application registered successfully</Text>
+      <Text fw={500}>
+        {isPublic ? 'Application registered — you’re all set' : 'Application registered'}
+      </Text>
       <Box>
         <Text size="sm" fw={500} mb={4}>
           Client ID
@@ -187,30 +194,60 @@ function SecretDisplay({
           )}
         </CopyButton>
       </Box>
-      <Box>
-        <Text size="sm" fw={500} mb={4}>
-          Client Secret
-        </Text>
-        <CopyButton value={clientSecret}>
-          {({ copied, copy }) => (
-            <Box pos="relative" onClick={copy} style={{ cursor: 'pointer' }}>
-              <Code block color={copied ? 'green' : undefined}>
-                {copied ? 'Copied' : clientSecret}
-              </Code>
-              <LegacyActionIcon
-                className="absolute right-2 top-1/2 -translate-y-1/2"
-                variant="transparent"
-                color="gray"
+      {isPublic ? (
+        <Box>
+          <Text size="sm" fw={500} mb={4}>
+            Authentication
+          </Text>
+          <Alert
+            variant="light"
+            color="blue"
+            icon={<IconInfoCircle />}
+            title="No client secret to save"
+          >
+            <Text size="sm">
+              Browser and mobile apps can’t store a secret safely, so we don’t issue one. Your app
+              proves itself with PKCE — a one-time proof generated on each login — together with
+              your registered redirect URI. Just hold on to the Client ID above.{' '}
+              <Anchor
+                href="https://developer.civitai.com/site/oauth/#supported-flow"
+                target="_blank"
+                rel="noopener noreferrer"
               >
-                {copied ? <IconCheck /> : <IconClipboard />}
-              </LegacyActionIcon>
-            </Box>
-          )}
-        </CopyButton>
-      </Box>
-      <Text size="xs" fw={500} c="red.5">
-        Save the client secret now — you will not be able to see it again.
-      </Text>
+                Learn how the PKCE flow works
+              </Anchor>
+              .
+            </Text>
+          </Alert>
+        </Box>
+      ) : (
+        <>
+          <Box>
+            <Text size="sm" fw={500} mb={4}>
+              Client Secret
+            </Text>
+            <CopyButton value={clientSecret}>
+              {({ copied, copy }) => (
+                <Box pos="relative" onClick={copy} style={{ cursor: 'pointer' }}>
+                  <Code block color={copied ? 'green' : undefined}>
+                    {copied ? 'Copied' : clientSecret}
+                  </Code>
+                  <LegacyActionIcon
+                    className="absolute right-2 top-1/2 -translate-y-1/2"
+                    variant="transparent"
+                    color="gray"
+                  >
+                    {copied ? <IconCheck /> : <IconClipboard />}
+                  </LegacyActionIcon>
+                </Box>
+              )}
+            </CopyButton>
+          </Box>
+          <Text size="xs" fw={500} c="red.5">
+            Save the client secret now — you will not be able to see it again.
+          </Text>
+        </>
+      )}
       <Group justify="flex-end">
         <Button onClick={onClose}>Done</Button>
       </Group>
@@ -263,6 +300,67 @@ function deriveOriginsFromRedirectUrisClient(uris: string[]): string[] {
     }
   }
   return out;
+}
+
+const clientTypeOptions = [
+  {
+    value: 'confidential',
+    title: 'Server App',
+    term: 'confidential',
+    description:
+      'Runs on a backend you control, where code is never exposed to users. Gets a client secret to authenticate at the token endpoint.',
+    examples: 'Node, Python, Go, PHP — anything server-side.',
+  },
+  {
+    value: 'public',
+    title: 'Browser / Mobile App',
+    term: 'public',
+    description:
+      "Runs on the user's device, so it can't keep a secret hidden. Uses PKCE — a one-time proof generated each login — instead of a stored secret.",
+    examples: 'React/Vue SPAs, iOS, Android, desktop apps.',
+  },
+] as const;
+
+function ClientTypeSelector({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <Radio.Group label="App type" value={value} onChange={onChange} required>
+      <Stack gap="xs" mt="xs">
+        {clientTypeOptions.map((opt) => (
+          <Radio.Card
+            key={opt.value}
+            value={opt.value}
+            p="md"
+            radius="md"
+            className={classes.typeCard}
+          >
+            <Group wrap="nowrap" align="flex-start" gap="sm">
+              <Radio.Indicator mt={2} />
+              <div style={{ minWidth: 0 }}>
+                <Group gap="xs" wrap="nowrap">
+                  <Text fw={600} size="sm">
+                    {opt.title}
+                  </Text>
+                  <Code>{opt.term}</Code>
+                </Group>
+                <Text size="sm" c="dimmed" mt={2}>
+                  {opt.description}
+                </Text>
+                <Text size="xs" c="dimmed" mt={4} fs="italic">
+                  {opt.examples}
+                </Text>
+              </div>
+            </Group>
+          </Radio.Card>
+        ))}
+      </Stack>
+    </Radio.Group>
+  );
 }
 
 function RegisterAppModal({ opened, onClose }: { opened: boolean; onClose: () => void }) {
@@ -336,18 +434,22 @@ function RegisterAppModal({ opened, onClose }: { opened: boolean; onClose: () =>
     if (!uris) return;
     if (!name.trim()) return;
 
-    // Public clients require origins. If the user left the field blank, the
-    // server will backfill from redirectUris — mirror that here so the call
-    // site is the same in both branches.
-    const originsParsed = parseOriginList(allowedOriginsText);
-    if (originsParsed.error) {
-      setOriginError(originsParsed.error);
-      return;
+    // Origins only matter for public clients (Origin pinning at the token
+    // endpoint), so the field is hidden for server apps. Send an empty array
+    // there and let the server's redirectUris backfill handle it. For public
+    // clients, parse the field and fall back to deriving from redirectUris.
+    let allowedOrigins: string[] = [];
+    if (!isConfidential) {
+      const originsParsed = parseOriginList(allowedOriginsText);
+      if (originsParsed.error) {
+        setOriginError(originsParsed.error);
+        return;
+      }
+      allowedOrigins =
+        originsParsed.value.length > 0
+          ? originsParsed.value
+          : deriveOriginsFromRedirectUrisClient(uris);
     }
-    const allowedOrigins =
-      originsParsed.value.length > 0
-        ? originsParsed.value
-        : deriveOriginsFromRedirectUrisClient(uris);
 
     createMutation.mutate({
       name: name.trim(),
@@ -365,8 +467,8 @@ function RegisterAppModal({ opened, onClose }: { opened: boolean; onClose: () =>
       onClose={handleClose}
       title="Register OAuth Application"
       size="lg"
-      closeOnClickOutside={!createMutation.isLoading}
-      closeOnEscape={!createMutation.isLoading}
+      closeOnClickOutside={!createMutation.isPending}
+      closeOnEscape={!createMutation.isPending}
     >
       {result ? (
         <SecretDisplay
@@ -376,6 +478,10 @@ function RegisterAppModal({ opened, onClose }: { opened: boolean; onClose: () =>
         />
       ) : (
         <Stack>
+          <ClientTypeSelector
+            value={isConfidential ? 'confidential' : 'public'}
+            onChange={(val) => setIsConfidential(val === 'confidential')}
+          />
           <TextInput
             label="App name"
             placeholder="My Application"
@@ -404,40 +510,28 @@ function RegisterAppModal({ opened, onClose }: { opened: boolean; onClose: () =>
             }}
             error={uriError}
           />
-          <Textarea
-            label="Allowed origins"
-            description={
-              isConfidential
-                ? 'Optional. Used only if you later switch this app to a public client.'
-                : 'Required for public clients. One origin per line (e.g. https://app.example.com). Leave blank to derive from redirect URIs.'
-            }
-            placeholder={'https://app.example.com\nhttp://localhost:5173'}
-            minRows={2}
-            value={allowedOriginsText}
-            onChange={(e) => {
-              setAllowedOriginsText(e.currentTarget.value);
-              setOriginError(null);
-            }}
-            error={originError}
-          />
-          <Radio.Group
-            label="Client type"
-            value={isConfidential ? 'confidential' : 'public'}
-            onChange={(val) => setIsConfidential(val === 'confidential')}
-          >
-            <Stack gap="xs" mt="xs">
-              <Radio value="confidential" label="Confidential (server-side app)" />
-              <Radio value="public" label="Public (SPA / mobile)" />
-            </Stack>
-          </Radio.Group>
+          {!isConfidential && (
+            <Textarea
+              label="Allowed origins"
+              description="One origin per line (e.g. https://app.example.com). Leave blank to derive from redirect URIs."
+              placeholder={'https://app.example.com\nhttp://localhost:5173'}
+              minRows={2}
+              value={allowedOriginsText}
+              onChange={(e) => {
+                setAllowedOriginsText(e.currentTarget.value);
+                setOriginError(null);
+              }}
+              error={originError}
+            />
+          )}
           <ScopeSelector tokenScope={tokenScope} onChange={setTokenScope} />
           <Group justify="space-between">
-            <Button variant="default" onClick={handleClose} disabled={createMutation.isLoading}>
+            <Button variant="default" onClick={handleClose} disabled={createMutation.isPending}>
               Cancel
             </Button>
             <Button
               onClick={handleSubmit}
-              loading={createMutation.isLoading}
+              loading={createMutation.isPending}
               disabled={!name.trim()}
             >
               Register App
@@ -537,8 +631,8 @@ function EditAppModal({
       onClose={onClose}
       title="Edit OAuth Application"
       size="lg"
-      closeOnClickOutside={!updateMutation.isLoading}
-      closeOnEscape={!updateMutation.isLoading}
+      closeOnClickOutside={!updateMutation.isPending}
+      closeOnEscape={!updateMutation.isPending}
     >
       <Stack>
         <TextInput
@@ -583,10 +677,10 @@ function EditAppModal({
         />
         <ScopeSelector tokenScope={tokenScope} onChange={setTokenScope} />
         <Group justify="space-between">
-          <Button variant="default" onClick={onClose} disabled={updateMutation.isLoading}>
+          <Button variant="default" onClick={onClose} disabled={updateMutation.isPending}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit} loading={updateMutation.isLoading} disabled={!name.trim()}>
+          <Button onClick={handleSubmit} loading={updateMutation.isPending} disabled={!name.trim()}>
             Save Changes
           </Button>
         </Group>

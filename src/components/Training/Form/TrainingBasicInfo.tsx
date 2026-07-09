@@ -462,7 +462,7 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
         <Button
           type="submit"
           loading={
-            upsertModelMutation.isLoading || upsertVersionMutation.isLoading || awaitInvalidate
+            upsertModelMutation.isPending || upsertVersionMutation.isPending || awaitInvalidate
           }
           disabled={status && !status.available}
         >

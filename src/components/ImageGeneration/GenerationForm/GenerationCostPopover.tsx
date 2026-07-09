@@ -16,6 +16,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { useGenerationFormStore } from '~/store/generation-form.store';
+import { startCase } from 'lodash-es';
 
 const getEmojiByValue = (value: number) => {
   if (value === 0) return '😢';
@@ -88,6 +89,12 @@ export function GenerationCostPopover({
   );
 }
 
+  const fixedPricingDictionary = new Map<string, string>([
+    ['priority', 'Priority Pricing'],
+    ['format', 'Output Format'],
+    ['additionalNetworks', 'Additional Resource Cost'],
+  ]);
+
 function GenerationCostPopoverDetail({
   workflowCost,
   readOnly,
@@ -96,6 +103,8 @@ function GenerationCostPopoverDetail({
   hideCivitaiTip,
   buzzAccountType,
 }: Props) {
+
+
   const { creatorTip, civitaiTip } = useTipStore((state) => ({
     creatorTip: state.creatorTip * 100,
     civitaiTip: state.civitaiTip * 100,
@@ -179,50 +188,13 @@ function GenerationCostPopoverDetail({
       ),
       className: clsx(classes.tableCell, classes.baseCostCell),
     },
-    {
-      label: 'Additional Resource Cost',
-      value: (
-        <Group gap={4} justify="flex-end" wrap="nowrap">
-          {workflowCost.fixed?.additionalNetworks}
+    ...Object.entries(workflowCost.fixed ?? {}).map(([key, value]) => ({
+      label: fixedPricingDictionary.get(key) ?? startCase(key),
+      value:  (<Group gap={4} justify="flex-end" wrap="nowrap">
+          {value}
           <CurrencyIcon currency="BUZZ" size={16} type={buzzAccountType} />
-        </Group>
-      ),
-      visible: !!workflowCost.fixed?.additionalNetworks,
-      className: classes.tableCell,
-    },
-    {
-      label: 'License Fees',
-      value: (
-        <Group gap={4} justify="flex-end" wrap="nowrap">
-          {workflowCost.fixed?.licenseFees}
-          <CurrencyIcon currency="BUZZ" size={16} type={buzzAccountType} />
-        </Group>
-      ),
-      visible: !!workflowCost.fixed?.licenseFees,
-      className: classes.tableCell,
-    },
-    {
-      label: 'Priority Pricing',
-      value: (
-        <Group gap={4} justify="flex-end" wrap="nowrap">
-          {workflowCost.fixed?.priority}
-          <CurrencyIcon currency="BUZZ" size={16} type={buzzAccountType} />
-        </Group>
-      ),
-      visible: !!workflowCost.fixed?.priority,
-      className: classes.tableCell,
-    },
-    {
-      label: 'Output Format',
-      value: (
-        <Group gap={4} justify="flex-end" wrap="nowrap">
-          {workflowCost.fixed?.format}
-          <CurrencyIcon currency="BUZZ" size={16} type={buzzAccountType} />
-        </Group>
-      ),
-      visible: !!workflowCost.fixed?.format,
-      className: classes.tableCell,
-    },
+        </Group>)
+    })),
     {
       label: (
         <div className="flex items-center justify-between">
