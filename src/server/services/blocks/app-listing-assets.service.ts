@@ -348,11 +348,16 @@ async function loadValidatedImage(
   // Distinguish a TERMINAL ingestion failure (NotFound = the scanner couldn't
   // fetch the bytes; Blocked = the image was rejected) from the TRANSIENT
   // scanning states (Pending / Error-retry / PendingManualAssignment). The client
-  // polls this proc until the scan lands and treats "scan is not complete" as
-  // retriable — so a terminal failure MUST carry a DIFFERENT, non-retriable
-  // message, otherwise the author is stuck watching an eternal "still scanning"
-  // spinner with a useless Retry (that was the OG-image-import dead-end). The
-  // distinct message routes the client to a clear error + the manual-upload path.
+  // polls this proc until the scan lands.
+  //
+  // The retriable-vs-terminal signal is STRUCTURAL, not prose: the transient
+  // scanning state throws `CONFLICT` (the resource isn't in an attachable state
+  // YET → retry), while the terminal states throw `BAD_REQUEST`. The client keys
+  // its poll decision off the tRPC `code` (`error.data.code`), NEVER the message —
+  // so these human messages are free to change without breaking the poller.
+  // (Previously a terminal failure had to smuggle its non-retriability into a
+  // DIFFERENT message string, which the client regex-matched; that was the brittle
+  // OG-image-import dead-end this refactor removes.)
   if (image.ingestion === ImageIngestionStatus.NotFound) {
     throw new TRPCError({
       code: 'BAD_REQUEST',
@@ -367,7 +372,7 @@ async function loadValidatedImage(
   }
   if (image.ingestion !== ImageIngestionStatus.Scanned) {
     throw new TRPCError({
-      code: 'BAD_REQUEST',
+      code: 'CONFLICT',
       message: 'image is not approved for publishing (scan is not complete)',
     });
   }

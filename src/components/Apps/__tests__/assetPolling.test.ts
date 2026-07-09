@@ -15,23 +15,67 @@ import {
  */
 
 describe('classifyAttachResult', () => {
-  it('null message (resolved) → attached (terminal)', () => {
+  it('null (resolved) → attached (terminal)', () => {
     expect(classifyAttachResult(null)).toEqual({ kind: 'attached' });
   });
 
-  it('"scan is not complete" → scanning (retriable)', () => {
-    expect(classifyAttachResult('Image scan is not complete yet')).toEqual({ kind: 'scanning' });
+  it('CONFLICT code → scanning (retriable)', () => {
+    expect(
+      classifyAttachResult({
+        code: 'CONFLICT',
+        message: 'image is not approved for publishing (scan is not complete)',
+      })
+    ).toEqual({ kind: 'scanning' });
   });
 
-  it('matches the scan message case-insensitively', () => {
-    expect(classifyAttachResult('SCAN IS NOT COMPLETE').kind).toBe('scanning');
-  });
-
-  it('any other message → error (terminal) carrying the reason', () => {
-    expect(classifyAttachResult('Image was blocked (NSFW)')).toEqual({
+  it('BAD_REQUEST code → error (terminal) carrying the human message', () => {
+    expect(
+      classifyAttachResult({
+        code: 'BAD_REQUEST',
+        message: "that image couldn't be imported — upload it manually instead",
+      })
+    ).toEqual({
       kind: 'error',
-      message: 'Image was blocked (NSFW)',
+      message: "that image couldn't be imported — upload it manually instead",
     });
+  });
+
+  it('BAD_REQUEST (blocked) → error (terminal)', () => {
+    expect(
+      classifyAttachResult({
+        code: 'BAD_REQUEST',
+        message: 'that image was rejected during scanning — choose a different image',
+      }).kind
+    ).toBe('error');
+  });
+
+  it('an undefined / unknown code → error (terminal, fail-safe)', () => {
+    expect(
+      classifyAttachResult({ code: undefined, message: 'Image was blocked (NSFW)' })
+    ).toEqual({ kind: 'error', message: 'Image was blocked (NSFW)' });
+  });
+
+  // REGRESSION GUARD: prose no longer drives the decision. The decision reads the
+  // structural tRPC code, so a retriable response whose human message has been
+  // COMPLETELY REWORDED (no "scan is not complete" anywhere) still classifies as
+  // `scanning` — the old regex would have mis-classified this as a terminal error
+  // and stopped polling. Conversely a reworded message that HAPPENS to sound
+  // retriable does NOT flip a BAD_REQUEST into scanning.
+  it('a reworded message does not change the classification (code-driven, not prose)', () => {
+    // Reworded retriable message, still CONFLICT → scanning.
+    expect(
+      classifyAttachResult({
+        code: 'CONFLICT',
+        message: 'hang tight — your picture is still being checked',
+      }).kind
+    ).toBe('scanning');
+    // Reworded terminal message that sounds like "scanning", still BAD_REQUEST → error.
+    expect(
+      classifyAttachResult({
+        code: 'BAD_REQUEST',
+        message: 'scan is not complete (but this is terminal)',
+      }).kind
+    ).toBe('error');
   });
 });
 

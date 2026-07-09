@@ -186,7 +186,11 @@ export function ListingAssetStep({
       }
       return classifyAttachResult(null);
     } catch (err) {
-      return classifyAttachResult((err as Error).message);
+      // Decide retriable-vs-terminal off the STRUCTURAL tRPC error code
+      // (`error.data.code`), NOT the prose. The message is passed through for
+      // DISPLAY only. (See assetPolling.classifyAttachResult.)
+      const code = (err as { data?: { code?: string } })?.data?.code;
+      return classifyAttachResult({ code, message: (err as Error).message });
     }
   }
 

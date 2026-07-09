@@ -11,14 +11,26 @@ import { renderWithProviders } from '../../../test/component-setup';
  * Two behaviours are asserted (the client half of the OG-pull-ingest fix):
  *  1. A freshly-ingested image is NOT attached eagerly — the row shows a
  *     "Scanning image…" state while the attach proc keeps rejecting with the
- *     retriable "scan is not complete", and flips to "attached" only once the
- *     attach resolves (scan complete). (Poll logic proven pure in
+ *     RETRIABLE structural signal (tRPC code `CONFLICT` on `error.data.code`), and
+ *     flips to "attached" only once the attach resolves (scan complete). The
+ *     retriable rejection here uses a DELIBERATELY REWORDED human message (no
+ *     "scan is not complete" text) to prove the component keeps polling off the
+ *     STRUCTURAL code, not the prose. (Poll logic proven pure in
  *     `__tests__/assetPolling.test.ts`; this proves the component wiring.)
- *  2. A TERMINAL ingest failure — the attach proc rejecting with the distinct,
- *     non-retriable "couldn't be imported — upload it manually" message the server
- *     now returns for a `NotFound` image — surfaces a CLEAR error and leaves the
- *     manual-upload FileInput usable (never an eternal "still scanning" dead-end).
+ *  2. A TERMINAL ingest failure — the attach proc rejecting with the terminal
+ *     code (`BAD_REQUEST`) the server returns for a `NotFound` image — surfaces
+ *     the CLEAR human message and leaves the manual-upload FileInput usable (never
+ *     an eternal "still scanning" dead-end).
  */
+
+/**
+ * Build an error shaped like a tRPC CLIENT error: a real Error (so `.message` is
+ * the human display string) with the structural `data.code` the client reads to
+ * decide retriable-vs-terminal.
+ */
+function trpcAttachError(code: string, message: string): Error & { data: { code: string } } {
+  return Object.assign(new Error(message), { data: { code } });
+}
 
 const mocks = vi.hoisted(() => ({
   ingestAsync: vi.fn(),
@@ -103,11 +115,13 @@ describe('ListingAssetStep — OG-image auto-fill', () => {
 
   test('accepting a suggestion shows a scanning state, then attaches once the scan lands', async () => {
     mocks.ingestAsync.mockResolvedValue({ imageId: 777 });
-    // The attach proc rejects "scan is not complete" while the image is still
-    // scanning, then resolves once the scan lands — the polling drives to attached.
+    // The attach proc rejects with the RETRIABLE code (CONFLICT) while the image
+    // is still scanning, then resolves once the scan lands — the polling drives to
+    // attached. The message is deliberately REWORDED (no "scan is not complete"
+    // text) to prove the poll decision is structural (code), not prose-matched.
     mocks.setIconAsync
       .mockRejectedValueOnce(
-        new Error('image is not approved for publishing (scan is not complete)')
+        trpcAttachError('CONFLICT', 'hang tight — still checking your picture')
       )
       .mockResolvedValue({ ok: true });
 
@@ -132,11 +146,14 @@ describe('ListingAssetStep — OG-image auto-fill', () => {
 
   test('a terminal ingest (NotFound) surfaces a clear error and keeps manual upload usable', async () => {
     mocks.ingestAsync.mockResolvedValue({ imageId: 888 });
-    // The server now returns a DISTINCT, non-retriable message for a NotFound
-    // image (not the retriable "scan is not complete") — the client classifies it
-    // as a terminal error instead of polling forever.
+    // The server returns the TERMINAL code (BAD_REQUEST) for a NotFound image —
+    // the client classifies it as a terminal error instead of polling forever, and
+    // shows the human message for display.
     mocks.setIconAsync.mockRejectedValue(
-      new Error("that image couldn't be imported — upload it manually instead")
+      trpcAttachError(
+        'BAD_REQUEST',
+        "that image couldn't be imported — upload it manually instead"
+      )
     );
 
     renderStep();

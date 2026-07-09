@@ -23,8 +23,19 @@ export type AttachOutcome =
   /** The attach rejected for a non-scan reason (blocked / NSFW / bad dims). Terminal. */
   | { kind: 'error'; message: string };
 
-/** Matches the server's "scan is not complete" rejection (the only retriable one). */
-export const SCAN_INCOMPLETE = /scan is not complete/i;
+/**
+ * The STRUCTURAL fields of a rejected attach() — extracted from the tRPC client
+ * error, NOT parsed from its prose. `null` means the attach RESOLVED (success).
+ *
+ *   - `code`    — the tRPC error code (`error.data.code`): `CONFLICT` (retriable,
+ *                 scan not complete yet) vs anything else (terminal). tRPC ALWAYS
+ *                 surfaces this on `error.data`.
+ *   - `message` — the human message, for DISPLAY only.
+ */
+export type AttachError = {
+  code?: string;
+  message: string;
+};
 
 /**
  * Backoff schedule (ms) between successive attach re-tries while an image is
@@ -75,15 +86,19 @@ export function nextPollDelay(
 }
 
 /**
- * Classify an attach() result — either a resolved success or a caught error's
- * message — into an {@link AttachOutcome}. PURE. `errorMessage === null` means the
- * attach resolved (success). A "scan is not complete" message is retriable
- * (`scanning`); any other message is a terminal `error`.
+ * Classify an attach() result into an {@link AttachOutcome}. PURE. `error === null`
+ * means the attach RESOLVED (success → `attached`).
+ *
+ * The retriable-vs-terminal decision is STRUCTURAL — it reads the tRPC error
+ * `code`, NEVER the prose (rewording the server message can't change the outcome,
+ * which is the whole point of this contract): `CONFLICT` (scan not complete yet)
+ * is retriable → `scanning`; anything else is terminal → `error`. The human
+ * `message` is carried on the terminal `error` for DISPLAY only.
  */
-export function classifyAttachResult(errorMessage: string | null): AttachOutcome {
-  if (errorMessage === null) return { kind: 'attached' };
-  if (SCAN_INCOMPLETE.test(errorMessage)) return { kind: 'scanning' };
-  return { kind: 'error', message: errorMessage };
+export function classifyAttachResult(error: AttachError | null): AttachOutcome {
+  if (error === null) return { kind: 'attached' };
+  if (error.code === 'CONFLICT') return { kind: 'scanning' };
+  return { kind: 'error', message: error.message };
 }
 
 /**
