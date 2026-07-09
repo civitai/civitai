@@ -663,7 +663,7 @@ export const getModelsRaw = async ({
 
   // Exclude user content
   if (excludedUserIds?.length) {
-    AND.push(Prisma.sql`mm."userId" NOT IN (${Prisma.join(excludedUserIds, ',')})`);
+    AND.push(Prisma.sql`mm."userId" != ALL(${excludedUserIds}::int[])`);
   }
 
   // Build ORDER BY - use pAlias for per-base-model stats (downloadCount, thumbsUpCount, imageCount)

@@ -1631,7 +1631,7 @@ export const getAllImages = async (
   }
 
   if (excludedUserIds?.length) {
-    AND.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
+    AND.push(Prisma.sql`i."userId" != ALL(${excludedUserIds}::int[])`);
   }
 
   const isGallery = modelId || modelVersionId || model3dId || reviewId || userId;
@@ -5086,7 +5086,7 @@ export const getImagesForModelVersion = async ({
     imageWhere.push(Prisma.sql`i.id NOT IN (${Prisma.join(excludedIds)})`);
   }
   if (!!excludedUserIds?.length) {
-    imageWhere.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
+    imageWhere.push(Prisma.sql`i."userId" != ALL(${excludedUserIds}::int[])`);
   }
 
   if (browsingLevel) browsingLevel = onlySelectableLevels(browsingLevel);
