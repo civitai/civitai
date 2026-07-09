@@ -9,7 +9,8 @@ import { DEFAULT_CATEGORY_ROWS } from '~/shared/constants/challenge.constants';
  * Covers the D6-seed "Customize judging categories" toggle for mods: initial toggle state and
  * the submit-payload decision (off -> null, no sum-100 rejection; on -> validated array). The
  * surrounding RHF/Mantine render (Switch wiring, CategoryWeights show/hide, seed-on-toggle-on via
- * form.setValue) is exercised via the `component-preview` skill / manual verification, not here.
+ * form.setValue) is a real-browser interaction and is covered by
+ * `ChallengeUpsertForm.browser.test.tsx` (Vitest browser-mode `component` project), not here.
  */
 describe('resolveInitialCustomizeCategories', () => {
   it('is ON for the user variant regardless of editing/category state', () => {
