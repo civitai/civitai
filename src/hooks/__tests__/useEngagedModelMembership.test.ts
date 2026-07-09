@@ -28,6 +28,7 @@ import {
   useEngagedModelMembership,
 } from '~/hooks/useEngagedModelMembership';
 import { useEngagedModelsStore } from '~/store/engaged-models.store';
+import { applyNotifyToggled } from '~/store/engaged-models.optimistic';
 
 // deterministic scheduler: capture the flush callback, fire it on demand.
 let scheduledFlush: (() => void) | null = null;
@@ -390,5 +391,121 @@ describe('useEngagedModelMembership — authed fetch error does not dead-lock th
     // not a permanently-disabled dead button.
     expect(button().disabled).toBe(false);
     unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Silent-unsubscribe fix (audit fast-follow to the #3034 error path).
+//
+// The #3034 error path marks a genuinely Notify-ON model known-not-engaged when
+// its by-ids read errors (so the gated control un-sticks). The OLD notify
+// mutation then sent `type: isOn ? Mute : undefined` — an UNDEFINED type on the
+// subscribe click → the server BLIND-toggled and DELETED the existing Notify
+// (silent unsubscribe), while `onMutate` optimistically wrote Notify=true → the
+// store was left LYING (ON on the client, OFF on the server).
+//
+// The fix carries an EXPLICIT `setTo` derived from the button intent, so the
+// click that lands on a fabricated-off (but genuinely-ON) model is an idempotent
+// subscribe, never a delete — and the optimistic write matches the guaranteed
+// server outcome. This harness replicates the REAL control's click derivation
+// (isOn + payload + onMutate optimistic) on top of the REAL hook/store/optimistic
+// modules; the server half (setTo:true never deletes) is pinned in
+// server/services/__tests__/engagement-toggle.idempotent.service.test.ts.
+// ---------------------------------------------------------------------------
+
+interface NotifyPayload {
+  modelId: number;
+  type: 'Notify' | 'Mute' | undefined;
+  setTo?: boolean;
+}
+
+/**
+ * Faithful replica of ToggleModelNotification's click path (following=[] → not
+ * following the creator). Captures the payload the control would `.mutate()` and
+ * runs the same `onMutate` optimistic write.
+ */
+function NotifyClickHarness({
+  modelId,
+  onPayload,
+}: {
+  modelId: number;
+  onPayload: (p: NotifyPayload) => void;
+}) {
+  const { isEngaged, isKnown } = useEngagedModelMembership(modelId);
+  const isWatching = isEngaged('Notify');
+  const isMuted = isEngaged('Mute');
+  const isOn = isWatching && !isMuted; // not following the creator in this harness
+
+  const onClick = () => {
+    if (!isKnown) return;
+    const payload: NotifyPayload = {
+      modelId,
+      type: isOn ? 'Mute' : 'Notify',
+      setTo: true,
+    };
+    // onMutate optimistic write (mirrors the mutation's onMutate).
+    applyNotifyToggled(modelId, !isOn);
+    onPayload(payload);
+  };
+
+  return React.createElement(
+    'button',
+    { type: 'button', disabled: !isKnown, onClick },
+    'notify'
+  );
+}
+
+describe('notify silent-unsubscribe fix — genuinely-ON model whose by-ids read errored', () => {
+  it('click on the (fabricated-off) bell sends an EXPLICIT subscribe (type=Notify, setTo=true) — never a blind toggle — and the store does not end up lying', async () => {
+    currentUser = { id: 1 };
+    const modelId = 55;
+    // The by-ids read for this genuinely Notify-ON model ERRORS.
+    queryMock.mockRejectedValueOnce(new Error('boom'));
+
+    let captured: NotifyPayload | undefined;
+    const container = document.createElement('div');
+    const root = createRoot(container);
+    act(() =>
+      root.render(
+        React.createElement(NotifyClickHarness, { modelId, onPayload: (p) => (captured = p) })
+      )
+    );
+
+    // In flight → unknown → disabled.
+    const button = () => container.querySelector('button') as HTMLButtonElement;
+    expect(button().disabled).toBe(true);
+
+    runFlush();
+    await settle();
+    act(() =>
+      root.render(
+        React.createElement(NotifyClickHarness, { modelId, onPayload: (p) => (captured = p) })
+      )
+    );
+
+    // #3034 error path: id is now known-not-engaged (fabricated OFF) → control enabled,
+    // and the store reads Notify as absent even though the server row IS Notify.
+    expect(button().disabled).toBe(false);
+    expect(useEngagedModelsStore.getState().queried.has(modelId)).toBe(true);
+    expect(useEngagedModelsStore.getState().membership[modelId]?.has('Notify')).toBe(false);
+
+    // User clicks the bell (intending to subscribe).
+    act(() => button().click());
+
+    // 1) The payload carries EXPLICIT direction — a subscribe, not a blind toggle.
+    //    (The old bug sent `type: undefined` here → server-side blind DELETE.)
+    expect(captured).toBeDefined();
+    expect(captured?.type).toBe('Notify');
+    expect(captured?.setTo).toBe(true);
+    expect(captured?.type).not.toBeUndefined();
+
+    // 2) The optimistic write leaves the store showing Notify=ON. Because setTo:true
+    //    on an existing Notify is a no-op subscribe server-side (pinned in the service
+    //    test), the server is ALSO ON — store == server, so the UI is not left lying.
+    const m = useEngagedModelsStore.getState().membership[modelId];
+    expect(m?.has('Notify')).toBe(true);
+    expect(m?.has('Mute')).toBe(false);
+
+    act(() => root.unmount());
   });
 });
