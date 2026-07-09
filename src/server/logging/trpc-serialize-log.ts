@@ -38,28 +38,46 @@
  * dehydration) there is no scope → path is 'unknown', still with bytes+serializeMs.
  *
  * Design guarantees (mirrors trpc-slow-log.ts / eventloop-longtask.ts):
- *  - COMMON PATH IS A NUMERIC COMPARE. Every serialize pays two `performance.now()`
- *    reads; below `TRPC_SERIALIZE_SIZE_CHECK_FLOOR_MS` (default 50ms — a normal
- *    small response serializes in well under 1ms) it returns immediately with NO
- *    byte walk, NO allocation, NO log. We NEVER double-serialize the common path:
- *    the byte size is measured (one JSON.stringify of the already-superjson-reduced
- *    output) ONLY above the floor, i.e. only on responses already large/slow enough
- *    to matter.
- *  - DISARMED (`TRPC_SERIALIZE_LOG_ENABLED` off): `instrumentSerialize` returns the
- *    raw serialize with a single boolean branch and the ALS wrapper at the handler
- *    boundary is skipped — byte-for-byte the pre-instrumentation path.
+ *  - CHEAP COMMON PATH. Per serialize the enabled path pays: one kill-switch check,
+ *    one CACHED-config read (the env config is resolved once and refreshed on an
+ *    interval, NOT rebuilt per call — see getSerializeConfig), two `performance.now()`
+ *    reads and one numeric compare. Below `TRPC_SERIALIZE_SIZE_CHECK_FLOOR_MS`
+ *    (default 50ms — a normal small response serializes in well under 1ms) it returns
+ *    immediately with NO byte walk, NO per-call config allocation, NO log.
+ *  - THE BYTE WALK NEVER RUNS PER-OCCURRENCE ON THE INCIDENT PATH. `safeByteLength`
+ *    is a SECOND O(payload) JSON.stringify (a multi-MB string alloc for the monster
+ *    responses this exists to catch), so running it once per serialize during an
+ *    oversized-response WAVE would amplify the exact loop-block it measures. It is
+ *    ordered AFTER the trigger + rate gate: for the loop-blocking case
+ *    (serializeMs >= slowMs) DURATION ALONE decides, so the byte size is computed
+ *    only AFTER the gate allows an emit (≤ maxPerSec times/window, informational);
+ *    it is a decision INPUT only in the moderate band (floorMs <= serializeMs <
+ *    slowMs — the smaller payloads that didn't block long enough, since the 6MB
+ *    monsters take >250ms and hit the first branch). We NEVER double-serialize the
+ *    common (sub-floor) path.
+ *  - DISARMED (`TRPC_SERIALIZE_LOG_ENABLED` off): `instrumentSerialize` checks the
+ *    kill-switch FIRST and returns the raw serialize in a single boolean branch —
+ *    before any config is built — and the ALS wrapper at the handler boundary is
+ *    skipped, so it is byte-for-byte the pre-instrumentation path.
  *  - NEVER throws, NEVER delays the request path — all logging is best-effort and
- *    swallowed; a serialize failure/throw propagates unchanged (we time in finally).
+ *    swallowed; the serialize is timed INLINE (not in a finally), so a serialize
+ *    throw propagates unchanged and correctly skips timing + logging (there is no
+ *    output to size or attribute).
  *  - SELF-AMPLIFICATION GUARD: during a real wave many oversized responses cross at
  *    once; a per-pod PATH-DIVERSE token cap (`TRPC_SERIALIZE_LOG_MAX_PER_SEC`,
  *    default 50/s) bounds the stderr burst while still naming each distinct offender
- *    once/window. Suppressed lines are counted (`droppedSinceLastLog`), never
- *    silently dropped.
- *  - PRIVACY: logs ONLY the procedure path (a fixed dotted name), best-effort type,
- *    the serialized byte SIZE, and the duration. It does NOT log the payload or any
- *    field values, so no prompt / PII is ever captured.
+ *    once/window. Lines suppressed by the hard CEILING are counted and surfaced as
+ *    `droppedSinceLastLog` on the next emit; same-path repeats within a window are
+ *    deduped (they carry no new which-procedure signal) and intentionally NOT counted.
+ *  - PRIVACY: logs ONLY the procedure path, best-effort type, the serialized byte
+ *    SIZE, and the duration. It does NOT log the payload or any field values, so no
+ *    prompt / PII is ever captured. The `path` is the client-controlled `req.query.trpc`
+ *    URL segment (a caller can put arbitrary text there), which is safe because
+ *    `logToAxiom` JSON-encodes the value — it can't break the log structure — and it
+ *    carries no PII beyond the requested procedure path itself.
  *
- * Env knobs (read lazily per-call, tunable without a rebuild):
+ * Env knobs (resolved into a short-lived cache, refreshed on an interval — tunable
+ * without a rebuild; a change takes effect within one refresh interval):
  *  - TRPC_SERIALIZE_LOG_ENABLED (default true) — kill-switch; disabled ONLY by an
  *    explicit falsy token (false/0/no/off), so it can't be turned off by =yes/=on.
  *  - TRPC_SERIALIZE_SLOW_MS (default 250) — a single serialize taking >= this many
@@ -115,7 +133,7 @@ export interface SerializeLogConfig {
   maxPerSec: number;
 }
 
-/** Resolve the full config from env (lazy, per-call). Exported for tests. */
+/** Resolve the full config from env (fresh read — no cache). Exported for tests. */
 export function resolveSerializeConfig(): SerializeLogConfig {
   return {
     enabled: !envDisabled('TRPC_SERIALIZE_LOG_ENABLED'),
@@ -124,6 +142,29 @@ export function resolveSerializeConfig(): SerializeLogConfig {
     floorMs: envNumber('TRPC_SERIALIZE_SIZE_CHECK_FLOOR_MS', DEFAULT_SIZE_CHECK_FLOOR_MS, 0),
     maxPerSec: envNumber('TRPC_SERIALIZE_LOG_MAX_PER_SEC', DEFAULT_MAX_PER_SEC, 1),
   };
+}
+
+// Cached config so the hot path (several thousand serializes/sec) does NOT re-read
+// 5 env vars + allocate a fresh config object on every call. Resolved once and
+// refreshed on a fixed interval so env overrides still take effect without a rebuild
+// (within one CONFIG_TTL_MS window). Module-local, one cache per pod.
+const CONFIG_TTL_MS = 5000;
+let cachedConfig: SerializeLogConfig | undefined;
+let cachedConfigAt = 0;
+
+/** Cached config accessor — refreshes at most once per CONFIG_TTL_MS. */
+function getSerializeConfig(now: number = Date.now()): SerializeLogConfig {
+  if (cachedConfig === undefined || now - cachedConfigAt >= CONFIG_TTL_MS) {
+    cachedConfig = resolveSerializeConfig();
+    cachedConfigAt = now;
+  }
+  return cachedConfig;
+}
+
+/** TEST-ONLY: drop the cached config so an env change is picked up immediately. */
+export function __resetConfigCacheForTests(): void {
+  cachedConfig = undefined;
+  cachedConfigAt = 0;
 }
 
 /**
@@ -322,20 +363,33 @@ function emit(payload: SerializeLogPayload): void {
 // ---------------------------------------------------------------------------
 
 /**
- * Wrap the tRPC transformer's `serialize`. Times the serialize (always — two
- * timestamps), and ONLY when it crosses the cheap duration floor measures the
- * output byte size and, if slow OR oversized, emits ONE rate-limited structured
- * log naming the procedure path (from the request-scoped ALS ctx). Returns the
- * raw serialize result unchanged; a serialize throw propagates unchanged (timed
- * in `finally`, but a throw skips the size/log tail since there is no output).
+ * Wrap the tRPC transformer's `serialize`. Checks the kill-switch FIRST (disabled →
+ * a single boolean branch, no config built), then times the serialize INLINE (two
+ * timestamps). Below the cheap duration floor it returns immediately. Above the
+ * floor it decides whether to log WITHOUT paying the byte walk on the incident path:
+ *
+ *  - serializeMs >= slowMs (the loop-blocking case, e.g. the ~6s incident): duration
+ *    alone qualifies, so we hit the RATE GATE FIRST and only compute the byte size
+ *    (for the log payload) AFTER the gate allows an emit. On an oversized-response
+ *    WAVE this means `safeByteLength` — a second full JSON.stringify — runs at most
+ *    `maxPerSec` times/window on the already-blocked thread, not once per serialize.
+ *  - floorMs <= serializeMs < slowMs (the moderate band, smaller payloads by
+ *    definition): here the byte size is a decision INPUT for the oversized-SIZE
+ *    trigger, so it is computed to evaluate `bytes >= oversizedBytes` before gating.
+ *
+ * Returns the raw serialize result unchanged; a serialize throw propagates unchanged
+ * (timed inline — a throw skips timing + the size/log tail since there is no output).
  *
  * @param rawSerialize the real serialize (e.g. `() => superjson.serialize(data)`,
  *                      optionally wrapped in the existing withSpan). Its return
  *                      value is passed through verbatim.
  */
 export function instrumentSerialize<T>(rawSerialize: () => T): T {
-  const cfg = resolveSerializeConfig();
-  if (!cfg.enabled) return rawSerialize();
+  // FIRST: kill-switch. Disabled → a single boolean branch, before any config is
+  // built or allocated (mirrors runWithSerializeCtx's short-circuit).
+  if (envDisabled('TRPC_SERIALIZE_LOG_ENABLED')) return rawSerialize();
+
+  const cfg = getSerializeConfig(); // cached — not rebuilt per call
 
   const startedAt = performance.now();
   const result = rawSerialize();
@@ -346,23 +400,48 @@ export function instrumentSerialize<T>(rawSerialize: () => T): T {
   if (!(serializeMs >= cfg.floorMs)) return result;
 
   try {
-    const bytes = safeByteLength(result);
-    if (!shouldLogSerialize({ serializeMs, bytes: bytes ?? 0, slowMs: cfg.slowMs, oversizedBytes: cfg.oversizedBytes })) {
-      return result;
-    }
     const ctx = currentSerializeCtx();
+    // `path` is the client-controlled `req.query.trpc` URL segment (see the ALS
+    // seed in [trpc].ts). Safe to log: `logToAxiom` JSON-encodes it, and it carries
+    // no PII beyond the requested procedure path.
     const path = ctx?.path ?? 'unknown';
-    const dropped = rateGate(path, cfg.maxPerSec);
-    if (dropped < 0) return result; // suppressed (dup-this-window or ceiling)
-    emit({
-      path,
-      bytes,
-      serializeMs: Math.round(serializeMs * 100) / 100,
-      procedureType: ctx?.type,
-      slowMs: cfg.slowMs,
-      oversizedBytes: cfg.oversizedBytes,
-      droppedSinceLastLog: dropped,
-    });
+
+    if (serializeMs >= cfg.slowMs) {
+      // LOOP-BLOCKING: duration alone decides — gate BEFORE the byte walk so the
+      // second stringify is not paid per-occurrence during a slow+wave incident.
+      const dropped = rateGate(path, cfg.maxPerSec);
+      if (dropped < 0) return result; // suppressed (dup-this-window or ceiling)
+      const bytes = safeByteLength(result); // informational, only after the gate
+      emit({
+        path,
+        bytes,
+        serializeMs: Math.round(serializeMs * 100) / 100,
+        procedureType: ctx?.type,
+        slowMs: cfg.slowMs,
+        oversizedBytes: cfg.oversizedBytes,
+        droppedSinceLastLog: dropped,
+      });
+    } else {
+      // MODERATE band (floorMs <= serializeMs < slowMs): the oversized-SIZE trigger
+      // needs the byte size to decide. These are the smaller payloads (the 6MB
+      // monsters block > slowMs and took the branch above).
+      const bytes = safeByteLength(result);
+      // serializeMs < slowMs here, so shouldLogSerialize reduces to the size trigger.
+      if (!shouldLogSerialize({ serializeMs, bytes: bytes ?? 0, slowMs: cfg.slowMs, oversizedBytes: cfg.oversizedBytes })) {
+        return result;
+      }
+      const dropped = rateGate(path, cfg.maxPerSec);
+      if (dropped < 0) return result; // suppressed (dup-this-window or ceiling)
+      emit({
+        path,
+        bytes,
+        serializeMs: Math.round(serializeMs * 100) / 100,
+        procedureType: ctx?.type,
+        slowMs: cfg.slowMs,
+        oversizedBytes: cfg.oversizedBytes,
+        droppedSinceLastLog: dropped,
+      });
+    }
   } catch {
     // Instrumentation must never throw into the serialize path.
   }

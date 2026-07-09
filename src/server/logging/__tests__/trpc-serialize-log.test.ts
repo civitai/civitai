@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   __flushPendingEmitsForTest,
   __rateGateForTest,
+  __resetConfigCacheForTests,
   __resetRateLimitForTests,
   __setEmitSinkForTests,
   instrumentSerialize,
@@ -30,6 +31,7 @@ describe('trpc-serialize-log', () => {
     savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
     for (const k of ENV_KEYS) delete process.env[k];
     __resetRateLimitForTests();
+    __resetConfigCacheForTests(); // module-level config cache must not leak across tests
     __setEmitSinkForTests(undefined);
   });
 
@@ -39,6 +41,7 @@ describe('trpc-serialize-log', () => {
       else process.env[k] = savedEnv[k];
     }
     __setEmitSinkForTests(undefined);
+    vi.restoreAllMocks(); // undo any performance.now spy
   });
 
   describe('shouldLogSerialize (pure trigger decision)', () => {
@@ -200,6 +203,88 @@ describe('trpc-serialize-log', () => {
         })
       ).toThrow(boom);
       expect(captured).toHaveLength(0);
+    });
+
+    // FIX 1: on the loop-blocking (serializeMs >= slowMs) path, the second full
+    // JSON.stringify (safeByteLength) must NOT run per-occurrence — it is ordered
+    // AFTER the rate gate, so a slow+wave incident pays it at most maxPerSec/window,
+    // not once per serialize on the already-blocked thread.
+    it('does NOT run the byte walk per-occurrence when serializeMs >= slowMs under rate-limiting', async () => {
+      process.env.TRPC_SERIALIZE_SIZE_CHECK_FLOOR_MS = '0';
+      process.env.TRPC_SERIALIZE_SLOW_MS = '250';
+      process.env.TRPC_SERIALIZE_OVERSIZED_BYTES = '1'; // ensure size trigger would also fire — isolate the reorder
+      process.env.TRPC_SERIALIZE_LOG_MAX_PER_SEC = '50';
+      __resetConfigCacheForTests();
+
+      const captured: SerializeLogPayload[] = [];
+      __setEmitSinkForTests((p) => captured.push(p));
+
+      // Count byte walks: safeByteLength does JSON.stringify(result), which invokes
+      // the result's toJSON exactly once per call.
+      let byteWalks = 0;
+      const payload = {
+        json: { data: 'x'.repeat(64) },
+        meta: undefined,
+        toJSON() {
+          byteWalks++;
+          return { data: 'x'.repeat(64) };
+        },
+      };
+
+      // Deterministic slow serialize: mock performance.now so every call measures a
+      // 1000ms (>= slowMs 250) serialize without a real stall.
+      let nowVal = 0;
+      vi.spyOn(performance, 'now').mockImplementation(() => nowVal);
+
+      const N = 200; // distinct paths so the gate allows up to maxPerSec, then ceilings
+      for (let i = 0; i < N; i++) {
+        runWithSerializeCtx({ path: `proc.${i}`, type: 'query' }, () =>
+          instrumentSerialize(() => {
+            nowVal += 1000; // second performance.now() read → delta 1000ms
+            return payload;
+          })
+        );
+      }
+      await __flushPendingEmitsForTest();
+
+      // Gate caps distinct emits at maxPerSec=50; the byte walk runs ONLY on those,
+      // NOT once per serialize (which would be 200). This is the reorder's whole point.
+      expect(captured.length).toBe(50);
+      expect(byteWalks).toBe(50);
+      expect(byteWalks).toBeLessThanOrEqual(50); // <= maxPerSec
+      expect(byteWalks).toBeLessThan(N); // decisively not per-occurrence
+      // The emitted slow lines still carry the byte size (informational-after-gate).
+      expect(captured[0].bytes).toBeGreaterThan(0);
+    });
+
+    // FIX 1: the moderate band (floorMs <= serializeMs < slowMs) still uses bytes as
+    // the decision input for the oversized-SIZE trigger and logs when >= threshold.
+    it('still logs a moderate-duration (below slowMs) but oversized (> 1 MiB) serialize', async () => {
+      process.env.TRPC_SERIALIZE_SIZE_CHECK_FLOOR_MS = '50';
+      process.env.TRPC_SERIALIZE_SLOW_MS = '250';
+      process.env.TRPC_SERIALIZE_OVERSIZED_BYTES = String(1024 * 1024); // 1 MiB
+      __resetConfigCacheForTests();
+
+      const captured: SerializeLogPayload[] = [];
+      __setEmitSinkForTests((p) => captured.push(p));
+
+      // serializeMs = 100ms → in [floor 50, slow 250): the moderate band.
+      let nowVal = 0;
+      vi.spyOn(performance, 'now').mockImplementation(() => nowVal);
+
+      const bigPayload = { json: { data: 'y'.repeat(1024 * 1024 + 32) }, meta: undefined }; // > 1 MiB
+      runWithSerializeCtx({ path: 'image.getInfinite', type: 'query' }, () =>
+        instrumentSerialize(() => {
+          nowVal += 100; // moderate duration, below slowMs
+          return bigPayload;
+        })
+      );
+      await __flushPendingEmitsForTest();
+
+      expect(captured).toHaveLength(1);
+      expect(captured[0].path).toBe('image.getInfinite');
+      expect(captured[0].serializeMs).toBe(100);
+      expect(captured[0].bytes!).toBeGreaterThanOrEqual(1024 * 1024);
     });
   });
 });
