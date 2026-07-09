@@ -29,15 +29,16 @@ const ANNOUNCEMENT_RESERVE_CLASS = 'min-h-[203px] md:min-h-[162px]';
  * `useGetAnnouncements`) with #3000's anti-collapse mechanism (a PERSISTENT
  * min-height parent that stays mounted across the SSR→hydration handoff):
  *
- *   - `feedReserveCls` ON + `type === 'site'` + the SERVER saw a non-dismissed
- *     announcement (`serverExposedCount > 0`): render the REAL carousel inside a
- *     persistent `min-h` parent. The wrapper's existence is decided from the SSR
- *     seed (`exposeSSR` is a base/host-level flag held in `useState` — stable, NOT
- *     a laggy per-user overlay — and `serverExposedCount` rides the SSR snapshot),
- *     so it is IDENTICAL on the server render and the first client paint and never
- *     unmounts on a client transient. The `min-h` floor holds the space even if the
- *     inner carousel briefly renders null, so the feed never collapses. In steady
- *     state the carousel fills ~162px, so there is no dead space beyond the floor.
+ *   - `feedReserveCls` ON + `type === 'site'` + a non-dismissed announcement:
+ *     render the REAL carousel inside a persistent `min-h` parent. The wrapper is
+ *     gated on the seed (`serverExposedCount`) PRE-hydration — identical on the
+ *     server render and first client paint (`exposeSSR` is a base/host-level flag
+ *     held in `useState`, stable, NOT a laggy per-user overlay), so no hydration
+ *     mismatch and the space is held from frame 0 — and on the LIVE
+ *     `announcements.length` POST-hydration, so a live dismiss of the last
+ *     announcement collapses the reserve immediately (no dead space until reload).
+ *     In steady state the carousel fills ~162px, so there is no dead space beyond
+ *     the floor.
  *   - Flag OFF / non-`site` / server saw nothing (or saw it dismissed): NO wrapper.
  *     Byte-identical to today — the hook's `isClient` gate zeroes `data` on the
  *     server + first client paint, so this renders `null` there exactly as before,
@@ -48,11 +49,10 @@ const ANNOUNCEMENT_RESERVE_CLASS = 'min-h-[203px] md:min-h-[162px]';
  * bundle with the flag ON. The localStorage→cookie migration runs CLIENT-side only,
  * so on that first load there is no cookie server-side → the seed is empty →
  * `serverExposedCount > 0` → SSR + first client paint render the carousel inside the
- * reserve; post-hydration the just-migrated store filters it out and the inner goes
- * null — but the persistent `min-h` parent HOLDS the height, so there is no feed
- * shift (strictly better than the pre-fix double-shift). Not a hydration error
- * (first paint == SSR, both off the empty server seed); self-heals on the 2nd load
- * (the cookie now exists → `serverExposedCount` 0 → no wrapper, no dead space).
+ * reserve; post-hydration the just-migrated store empties `announcements` → the
+ * live-state gate drops the wrapper = one clean, self-healing collapse (no lingering
+ * dead space). Not a hydration error (first paint == SSR, both off the empty server
+ * seed); fully settled on the 2nd load (the cookie now exists → seed 0 → no wrapper).
  */
 export function Announcements({
   className,
@@ -61,28 +61,32 @@ export function Announcements({
   className?: string;
   type?: AnnouncementType;
 }) {
-  const { data, exposeSSR, serverExposedCount } = useGetAnnouncements(type);
+  const { data, exposeSSR, serverExposedCount, isClient } = useGetAnnouncements(type);
 
   const announcements = data.filter((x) => !x.dismissed);
 
-  // PERSISTENT reserve parent. Gated on a hydration-STABLE, seed-driven decision
-  // (`exposeSSR` base flag + `serverExposedCount` from the SSR snapshot) so this
-  // exact <div> — same element type, same tree position, no changing `key` —
-  // renders in the SSR HTML and STAYS mounted from server → hydration → steady
-  // state. Only the INNER content can swap (carousel ⇆ null), and the min-height
-  // lives on THIS parent, so the reserved space is held continuously with no
-  // collapse gap. Server + first client paint agree on both the wrapper and its
-  // contents (the hook exposes the same seed-driven `data`), so no hydration
-  // mismatch. `exposeSSR` already implies `type === 'site'`; the explicit check is
-  // defensive.
-  if (exposeSSR && type === 'site' && serverExposedCount > 0) {
+  // PERSISTENT reserve parent, gated so it MATCHES SSR pre-hydration but FOLLOWS
+  // live state after:
+  //   - pre-hydration (isClient=false, i.e. the server render AND the first client
+  //     paint): gate on the seed-driven `serverExposedCount` — identical on both,
+  //     so no hydration mismatch, and the space is held from frame 0.
+  //   - post-hydration (isClient=true): gate on the LIVE `announcements.length`, so
+  //     when the user dismisses the last announcement the wrapper is REMOVED and the
+  //     reserved space collapses immediately (no lingering dead space until reload).
+  //     That collapse is USER-INITIATED (the dismiss click) → excluded from CLS via
+  //     `hadRecentInput`, and is the expected UX. Dismissing one of several keeps the
+  //     reserve (length still > 0).
+  // Because the carousel is STATIC-imported, the inner is never transiently null
+  // while the wrapper shows (pre-hydration `serverExposedCount > 0` ⇒
+  // `announcements.length > 0`; post-hydration the gate IS `announcements.length`),
+  // so the min-height floor is belt-and-suspenders — the flash cannot return.
+  // `exposeSSR` already implies `type === 'site'`; the explicit check is defensive.
+  const showReserve =
+    exposeSSR && type === 'site' && (isClient ? announcements.length > 0 : serverExposedCount > 0);
+  if (showReserve) {
     return (
-      <div
-        className={clsx(className, ANNOUNCEMENT_RESERVE_CLASS)}
-        data-testid="announcements-cls-reserve"
-        aria-hidden={announcements.length ? undefined : true}
-      >
-        {announcements.length ? <AnnouncementsCarousel type={type} /> : null}
+      <div className={clsx(className, ANNOUNCEMENT_RESERVE_CLASS)} data-testid="announcements-cls-reserve">
+        <AnnouncementsCarousel type={type} />
       </div>
     );
   }

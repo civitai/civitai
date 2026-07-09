@@ -113,11 +113,31 @@ describe('Announcements — flag ON, persistent CLS reserve', () => {
     expect(wrapper?.querySelector('[data-testid="carousel"]')).not.toBe(null);
   });
 
-  test('inner carousel momentarily null (all data dismissed post-hydration) → the wrapper STILL holds the min-height (no collapse)', async () => {
-    // Models the migration-first-load transient: server exposed the carousel
-    // (serverExposedCount>0) so the wrapper is committed, but the just-migrated
-    // store now marks every announcement dismissed → the INNER goes null. The
-    // persistent parent must remain with its min-height so the feed never shifts.
+  test('post-hydration steady state (non-dismissed, isClient=true) → wrapper still present with the carousel', async () => {
+    // After hydration the gate follows LIVE state; with an active announcement the
+    // reserve stays put (no flicker).
+    mocks.hook = {
+      data: [{ id: 1, dismissed: false }],
+      seededCount: 1,
+      serverExposedCount: 1,
+      exposeSSR: true,
+      isClient: true,
+    };
+    renderWithProviders(<Announcements className="mb-3" />);
+    const carousel = page.getByTestId('carousel');
+    await expect.element(carousel).toBeInTheDocument();
+    const wrapper = document.querySelector(RESERVE);
+    expect(wrapper).not.toBe(null);
+    expect(wrapper?.className).toContain(RESERVE_MIN_H);
+    expect(wrapper?.querySelector('[data-testid="carousel"]')).not.toBe(null);
+  });
+
+  test('LIVE DISMISS of the last announcement (post-hydration, announcements now empty) → wrapper REMOVED, NO lingering dead space', async () => {
+    // The server exposed the carousel (serverExposedCount>0), but post-hydration
+    // (isClient=true) the user has dismissed the last announcement so the live
+    // `announcements` set is empty. The live-state gate must DROP the persistent
+    // min-height wrapper so the reserved space collapses immediately (rather than
+    // lingering until a reload) — a user-initiated collapse, excluded from CLS.
     mocks.hook = {
       data: [{ id: 1, dismissed: true }],
       seededCount: 1,
@@ -126,14 +146,28 @@ describe('Announcements — flag ON, persistent CLS reserve', () => {
       isClient: true,
     };
     renderWithProviders(<Announcements className="mb-3" />);
-    await expect.poll(() => document.querySelector(RESERVE)).not.toBe(null);
-    const wrapper = document.querySelector(RESERVE);
-    // Height floor held...
-    expect(wrapper?.className).toContain(RESERVE_MIN_H);
-    // ...but the inner carousel is gone (no dead visible banner), and the empty
-    // reserved box is hidden from assistive tech.
-    expect(wrapper?.querySelector('[data-testid="carousel"]')).toBe(null);
-    expect(wrapper?.getAttribute('aria-hidden')).toBe('true');
+    await expect.poll(() => document.querySelector(RESERVE)).toBe(null);
+    // No wrapper AND no carousel → the space is fully released.
+    expect(document.querySelector('[data-testid="carousel"]')).toBe(null);
+  });
+
+  test('LIVE DISMISS of ONE of several (post-hydration, one still visible) → wrapper KEPT', async () => {
+    // Dismissing one announcement when others remain must NOT collapse the reserve
+    // (live length still > 0).
+    mocks.hook = {
+      data: [
+        { id: 1, dismissed: true },
+        { id: 2, dismissed: false },
+      ],
+      seededCount: 2,
+      serverExposedCount: 2,
+      exposeSSR: true,
+      isClient: true,
+    };
+    renderWithProviders(<Announcements className="mb-3" />);
+    const carousel = page.getByTestId('carousel');
+    await expect.element(carousel).toBeInTheDocument();
+    expect(document.querySelector(RESERVE)).not.toBe(null);
   });
 
   test('server saw the announcement as DISMISSED (serverExposedCount 0) → NO wrapper, NO dead space', async () => {
