@@ -227,6 +227,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
     }
 
     const metadata: ImageMetaProps = {
+      engine: isCivitComfy ? 'Civitai' : 'ComfyUI',
       models,
       upscalers,
       vaes,
@@ -248,6 +249,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
         sampler,
         denoise,
         workflowId,
+        workflow: workflowKey,
         resources,
         ...extra
       } = exif.extraMetadata;
@@ -258,7 +260,10 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       metadata.seed = seed;
       metadata.sampler = sampler;
       metadata.denoise = denoise;
-      metadata.workflow = workflowId;
+      // Newer generations put the workflow key in `workflow`; older ones used `workflowId`.
+      // Store the full value (e.g. 'img2img:hires-fix') — post.service normalizes it to a
+      // technique name at lookup time.
+      metadata.workflow = workflowId ?? workflowKey;
       metadata.civitaiResources = resources.map((x: any) => {
         if (x.strength) {
           x.weight = x.strength;
