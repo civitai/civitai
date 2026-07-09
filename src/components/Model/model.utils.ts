@@ -1,6 +1,8 @@
+import { withPlaceholderData } from '~/hooks/trpcHelpers';
+import { keepPreviousData } from '@tanstack/react-query';
 import { isEqual } from 'lodash-es';
 import { useRouter } from 'next/router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import * as z from 'zod';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
@@ -53,7 +55,6 @@ const modelQueryParamSchema = z
       (val) => (Array.isArray(val) ? val : [val]),
       z.array(z.enum(baseModels))
     ),
-    clubId: z.coerce.number().optional(),
     collectionTagId: z.coerce.number().optional(),
     earlyAccess: booleanString().optional(),
     types: z
@@ -140,7 +141,7 @@ export const useQueryModels = (
   ];
   const queryUtils = trpc.useUtils();
   const browsingLevel = useBrowsingLevelDebounced();
-  const { data, isLoading, ...rest } = trpc.model.getAll.useInfiniteQuery(
+  const { data, isLoading, error, ...rest } = trpc.model.getAll.useInfiniteQuery(
     {
       ..._filters,
       browsingLevel,
@@ -155,23 +156,26 @@ export const useQueryModels = (
         : undefined,
     },
     {
-      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-      getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
+      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : undefined),
+      getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : undefined),
       trpc: { context: { skipBatch: true } },
-      keepPreviousData: true,
-      onError: (error) => {
-        queryUtils.model.getAll.setInfiniteData(
-          { ..._filters, browsingLevel },
-          (oldData) => oldData ?? data
-        );
-        showErrorNotification({
-          title: 'Failed to fetch data',
-          error: new Error(`Something went wrong: ${error.message}`),
-        });
-      },
-      ...options,
+      placeholderData: keepPreviousData,
+      ...withPlaceholderData(options),
     }
   );
+  // v5: query onError removed — preserve prior data and notify on fetch failure.
+  useEffect(() => {
+    if (!error) return;
+    queryUtils.model.getAll.setInfiniteData(
+      { ..._filters, browsingLevel },
+      // cast: v5 InfiniteData pageParams typing (bigint vs string|number) is stricter here.
+      (oldData) => oldData ?? (data as typeof oldData)
+    );
+    showErrorNotification({
+      title: 'Failed to fetch data',
+      error: new Error(`Something went wrong: ${error.message}`),
+    });
+  }, [error]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const flatData = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
   const { items, loadingPreferences } = useApplyHiddenPreferences({
@@ -263,6 +267,6 @@ export const useModelShowcaseCollection = ({ modelId }: { modelId: number }) => 
     items: models,
     isLoading: loadingCollection || loadingModels,
     setShowcaseCollection: handleSetShowcaseCollection,
-    settingShowcase: setShowcaseMutation.isLoading,
+    settingShowcase: setShowcaseMutation.isPending,
   };
 };

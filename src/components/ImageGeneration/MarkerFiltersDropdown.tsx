@@ -36,6 +36,8 @@ const allWorkflowOptions = workflowConfigsArray.filter((w) => !w.noSubmit);
 const workflowSelectData = (() => {
   const imageWorkflows = allWorkflowOptions.filter((w) => w.category === 'image');
   const videoWorkflows = allWorkflowOptions.filter((w) => w.category === 'video');
+  const audioWorkflows = allWorkflowOptions.filter((w) => w.category === 'audio');
+  const model3dWorkflows = allWorkflowOptions.filter((w) => w.category === 'model3d');
   const groups: { group: string; items: ComboboxItem[] }[] = [];
   if (imageWorkflows.length) {
     groups.push({
@@ -47,6 +49,18 @@ const workflowSelectData = (() => {
     groups.push({
       group: 'Video',
       items: videoWorkflows.map((w) => ({ value: w.key, label: w.label })),
+    });
+  }
+  if (audioWorkflows.length) {
+    groups.push({
+      group: 'Audio',
+      items: audioWorkflows.map((w) => ({ value: w.key, label: w.label })),
+    });
+  }
+  if (model3dWorkflows.length) {
+    groups.push({
+      group: '3D Models',
+      items: model3dWorkflows.map((w) => ({ value: w.key, label: w.label })),
     });
   }
   return groups;

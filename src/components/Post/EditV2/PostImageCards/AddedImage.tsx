@@ -43,10 +43,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { RefreshImageResources } from '~/components/Image/RefreshImageResources/RefreshImageResources';
 import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
-import {
-  isMadeOnSite,
-  useGenerationStatus,
-} from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { ResourceSelectMultiple } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
@@ -64,7 +61,7 @@ import { PostImageTool } from '~/components/Post/EditV2/Tools/PostImageTool';
 import { ImageToolsPopover } from '~/components/Post/EditV2/Tools/PostImageToolsPopover';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { useCurrentUserRequired } from '~/hooks/useCurrentUser';
-import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { DEFAULT_EDGE_IMAGE_WIDTH, MAX_RESOURCES_PER_IMAGE } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import { BlockedReason } from '~/server/common/enums';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
@@ -231,7 +228,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
           title: 'Delete image',
           message: 'Are you sure you want to delete this image?',
           labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
-          confirmProps: { color: 'red', loading: deleteImageMutation.isLoading },
+          confirmProps: { color: 'red', loading: deleteImageMutation.isPending },
           onConfirm: async () => await deleteImageMutation.mutateAsync({ id: image.id }),
         },
       });
@@ -305,9 +302,9 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         isMinor,
         onDelete: handleDelete,
         onEditMetaClick: handleEditMetaClick,
-        isDeleting: deleteImageMutation.isLoading,
-        isUpdating: updateImageMutation.isLoading,
-        isAddingResource: addResourceMutation.isLoading,
+        isDeleting: deleteImageMutation.isPending,
+        isUpdating: updateImageMutation.isPending,
+        isAddingResource: addResourceMutation.isPending,
         toggleHidePrompt,
         addResource,
         isPendingManualAssignment,
@@ -353,10 +350,9 @@ function Preview() {
 }
 
 const ResourceHeader = () => {
-  const status = useGenerationStatus();
   const { image, allowedResources, addResource, isAddingResource, canAdd } = useAddedImageContext();
 
-  const cantAdd = image.resourceHelper.length >= status.limits.resources;
+  const cantAdd = image.resourceHelper.length >= MAX_RESOURCES_PER_IMAGE;
 
   const [updateImage] = usePostEditStore((state) => [state.updateImage]);
 
@@ -402,7 +398,7 @@ const ResourceHeader = () => {
               </InfoPopover>
             </Box>
             <Tooltip
-              label={`Maximum resources reached (${status.limits.resources})`}
+              label={`Maximum resources reached (${MAX_RESOURCES_PER_IMAGE})`}
               disabled={!cantAdd}
             >
               <ResourceSelectMultiple
@@ -446,7 +442,6 @@ const ResourceHeader = () => {
 
 const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) => {
   const { image, canAdd, otherImages } = useAddedImageContext();
-  const status = useGenerationStatus();
   const [updateImage] = usePostEditStore((state) => [state.updateImage]);
 
   const { modelId, modelName, modelType, modelVersionId, modelVersionName, detected } = resource;
@@ -455,7 +450,7 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
     return otherImages
       .map((oi) => {
         // Skip if target image is at resource limit
-        if (oi.resourceHelper.length >= status.limits.resources) return null;
+        if (oi.resourceHelper.length >= MAX_RESOURCES_PER_IMAGE) return null;
         // Skip if target image already has this exact resource
         if (oi.resourceHelper.some((rh) => rh.modelVersionId === modelVersionId)) return null;
 
@@ -463,7 +458,7 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
         return oi.id;
       })
       .filter(isDefined);
-  }, [modelVersionId, otherImages, status.limits.resources]);
+  }, [modelVersionId, otherImages]);
 
   const copyResourceMutation = trpc.post.addResourceToImage.useMutation({
     onSuccess: (resp) => {
@@ -564,7 +559,7 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
             color="violet"
             size="sm"
             onClick={handleCopyResource}
-            loading={copyResourceMutation.isLoading}
+            loading={copyResourceMutation.isPending}
           >
             <IconCopyPlus size={16} />
           </LegacyActionIcon>
@@ -578,7 +573,7 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
             color="red"
             size="sm"
             onClick={handleRemoveResource}
-            loading={removeResourceMutation.isLoading}
+            loading={removeResourceMutation.isPending}
           >
             <IconTrash size={16} />
           </LegacyActionIcon>

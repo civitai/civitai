@@ -21,7 +21,10 @@ export const getBountyDetailsSelect = Prisma.validator<Prisma.BountySelect>()({
   availability: true,
   lockedProperties: true,
   user: { select: userWithCosmeticsSelect },
-  tags: { select: { tag: { select: { id: true, name: true } } } },
+  // where: { tag: { is: {} } } drops orphaned TagsOnBounty join rows (tagId → hard-deleted
+  // Tag); the required `tag` relation would otherwise throw "Inconsistent query result" →
+  // 500. Same class/fix as articleDetailSelect.
+  tags: { select: { tag: { select: { id: true, name: true } } }, where: { tag: { is: {} } } },
   _count: {
     select: {
       entries: true,

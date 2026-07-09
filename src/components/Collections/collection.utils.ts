@@ -1,6 +1,8 @@
+import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import type { Icon } from '@tabler/icons-react';
 import {
   IconCategory,
+  IconCube,
   IconEyeOff,
   IconFileText,
   IconLayoutList,
@@ -158,7 +160,7 @@ export const useQueryCollections = (
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       trpc: { context: { skipBatch: true } },
-      ...options,
+      ...withPlaceholderData(options),
     }
   );
 
@@ -252,6 +254,12 @@ export const collectionTypeData: Record<CollectionType, TypeData> = {
     label: 'Article',
     value: CollectionType.Article,
     color: 'orange',
+  },
+  [CollectionType.Model3D]: {
+    icon: IconCube,
+    label: '3D Model',
+    value: CollectionType.Model3D,
+    color: 'teal',
   },
 };
 
@@ -422,16 +430,16 @@ export const useMutateCollection = () => {
 
   return {
     removeCollectionItem: removeCollectionItemHandler,
-    removingCollectionItem: removeCollectionItemMutation.isLoading,
+    removingCollectionItem: removeCollectionItemMutation.isPending,
     updateCollectionItemNsfwLevel: updateCollectionItemNsfwLevelHandler,
-    updatingCollectionItemNsfwLevel: updateCollectionItemNsfwLevelMutation.isLoading,
+    updatingCollectionItemNsfwLevel: updateCollectionItemNsfwLevelMutation.isPending,
     updateCollectionItemNsfwLevelPayload: updateCollectionItemNsfwLevelMutation.variables,
     getYoutubeAuthUrl: getYoutubeAuthUrlHandler,
-    getYoutubeAuthUrlLoading: getYoutubeAuthUrlMutation.isLoading,
+    getYoutubeAuthUrlLoading: getYoutubeAuthUrlMutation.isPending,
     enableYoutubeSupport: enableYoutubeSupportHandler,
-    enableYoutubeSupportLoading: enableYoutubeSupportMutation.isLoading,
+    enableYoutubeSupportLoading: enableYoutubeSupportMutation.isPending,
     joinCollectionAsManager: joinCollectionAsManagerHandler,
-    joinCollectionAsManagerLoading: joinCollectionAsManagerMutation.isLoading,
+    joinCollectionAsManagerLoading: joinCollectionAsManagerMutation.isPending,
   };
 };
 
@@ -455,7 +463,7 @@ export const useSetCollectionItemScore = () => {
 
   return {
     setItemScore: setItemScoreHandler,
-    loading: setItemScoreMutation.isLoading,
+    loading: setItemScoreMutation.isPending,
   };
 };
 

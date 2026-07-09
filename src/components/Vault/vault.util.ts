@@ -1,3 +1,4 @@
+import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type {
@@ -72,11 +73,11 @@ export const useMutateVault = () => {
 
   return {
     toggleModelVersion: handleToggleModelVersion,
-    togglingModelVersion: toggleModelVersion.isLoading,
+    togglingModelVersion: toggleModelVersion.isPending,
     updateItemsNotes: handleUpdateItemsNotes,
-    updatingItemsNotes: updateItemsNotes.isLoading,
+    updatingItemsNotes: updateItemsNotes.isPending,
     removeItems: handleRemoveItems,
-    removingItems: removeItems.isLoading,
+    removingItems: removeItems.isPending,
   };
 };
 
@@ -100,7 +101,7 @@ export const useQueryVaultItems = (
     },
     {
       enabled: !!currentUser,
-      ...options,
+      ...withPlaceholderData(options),
     }
   );
 

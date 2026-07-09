@@ -1,5 +1,5 @@
 import type { Prisma } from '@prisma/client';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import { CacheTTL } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';

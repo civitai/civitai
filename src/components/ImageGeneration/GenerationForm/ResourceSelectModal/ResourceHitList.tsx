@@ -15,16 +15,14 @@ import { constants } from '~/server/common/constants';
 import type { GetFeaturedModels } from '~/server/services/model.service';
 import type { ResourceSelectOptions } from '../resource-select.types';
 import { ResourceSelectCard } from './ResourceSelectCard';
-import type { Tabs } from './useResourceSelectFilters';
+import { skipBaseModelForOwnTabs, type Tabs } from './useResourceSelectFilters';
 import { isDefined } from '~/utils/type-guards';
 import { NoContent } from '~/components/NoContent/NoContent';
 
 export function ResourceHitList({
-  likes,
   featured,
   selectedTab,
 }: ResourceSelectOptions & {
-  likes: number[] | undefined;
   featured: GetFeaturedModels | undefined;
   selectedTab?: Tabs;
 }) {
@@ -50,6 +48,9 @@ export function ResourceHitList({
 
   const filterVersions = useCallback(
     (model: SearchIndexDataMap['models'][number]) => {
+      // Mirror the Meili query's base-model relaxation so we don't strip every
+      // version client-side (e.g. linking a Flux VAE into a Boogu checkpoint).
+      const skipBaseModel = skipBaseModelForOwnTabs(selectedTab, selectSource);
       const modelBaseModels = resources
         .filter((x) => x.type === model.type)
         .flatMap((x) => x.baseModels);
@@ -57,12 +58,14 @@ export function ResourceHitList({
       return model.versions.filter((version) => {
         return (
           (canGenerate ? canGenerate === version.canGenerate : true) &&
-          (modelBaseModels.length > 0 ? modelBaseModels.includes(version.baseModel) : true) &&
+          (skipBaseModel ||
+            modelBaseModels.length === 0 ||
+            modelBaseModels.includes(version.baseModel)) &&
           !excludedIds.includes(version.id)
         );
       });
     },
-    [canGenerate, resources, excludedIds]
+    [canGenerate, resources, excludedIds, selectedTab, selectSource]
   );
 
   // Build podium items from raw items (bypassing hidden preferences) so
@@ -134,18 +137,11 @@ export function ResourceHitList({
     if (!startedRef.current && status !== 'idle') startedRef.current = true;
   }, [status]);
 
-  const likesSet = useMemo(() => new Set(likes ?? []), [likes]);
-
   const renderCard = useCallback(
     ({ data, height }: { data: SearchIndexDataMap['models'][number]; height: number }) => (
-      <ResourceSelectCard
-        data={data}
-        height={height}
-        isFavorite={likesSet.has(data.id)}
-        selectSource={selectSource}
-      />
+      <ResourceSelectCard data={data} height={height} selectSource={selectSource} />
     ),
-    [likesSet, selectSource]
+    [selectSource]
   );
 
   if (loading && !filtered.length)
@@ -198,28 +194,16 @@ export function ResourceHitList({
           )}
         >
           <div className={cardClasses.winnerFirst}>
-            <ResourceSelectCard
-              data={topItems[0]}
-              isFavorite={likesSet.has(topItems[0].id)}
-              selectSource={selectSource}
-            />
+            <ResourceSelectCard data={topItems[0]} selectSource={selectSource} />
           </div>
           {topItems.length > 1 && (
             <div className={cardClasses.winnerSecond}>
-              <ResourceSelectCard
-                data={topItems[1]}
-                isFavorite={likesSet.has(topItems[1].id)}
-                selectSource={selectSource}
-              />
+              <ResourceSelectCard data={topItems[1]} selectSource={selectSource} />
             </div>
           )}
           {topItems.length > 2 && (
             <div className={cardClasses.winnerThird}>
-              <ResourceSelectCard
-                data={topItems[2]}
-                isFavorite={likesSet.has(topItems[2].id)}
-                selectSource={selectSource}
-              />
+              <ResourceSelectCard data={topItems[2]} selectSource={selectSource} />
             </div>
           )}
         </div>

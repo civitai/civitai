@@ -118,7 +118,7 @@ function GrannyGrippersClaimBody() {
   }
 
   const artUuid = claimed ? REVEAL_ART_UUID : PLACEHOLDER_ART_UUID;
-  const claimInProgress = claimMutation.isLoading || isUnlocking;
+  const claimInProgress = claimMutation.isPending || isUnlocking;
 
   return (
     <Container size="xs" mb="lg">
@@ -216,7 +216,7 @@ function GrannyGrippersClaimBody() {
                   color="green"
                   size="lg"
                   w={300}
-                  loading={equipMutation.isLoading}
+                  loading={equipMutation.isPending}
                 >
                   Equip
                 </Button>

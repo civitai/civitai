@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import dayjs from '~/shared/utils/dayjs';
 
 import type { ProtectedContext } from '~/server/createContext';
+import { dbRead } from '~/server/db/client';
 import type {
   BulkUpdateReportStatusInput,
   CreateEntityAppealInput,
@@ -243,6 +244,33 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
             },
           },
         },
+        model3d: {
+          select: {
+            model3d: {
+              select: {
+                id: true,
+                name: true,
+                nsfw: true,
+                tosViolation: true,
+                thumbnailImage: { select: { id: true, url: true, name: true } },
+                user: { select: simpleUserSelect },
+              },
+            },
+          },
+        },
+        model3dReview: {
+          select: {
+            model3dReview: {
+              select: {
+                id: true,
+                model3dId: true,
+                nsfw: true,
+                tosViolation: true,
+                user: { select: simpleUserSelect },
+              },
+            },
+          },
+        },
       },
     });
     return {
@@ -261,6 +289,8 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
           bountyEntry: item.bountyEntry?.bountyEntry,
           chat: item.chat?.chat,
           comicProject: item.comicProject?.comicProject,
+          model3d: item.model3d?.model3d,
+          model3dReview: item.model3dReview?.model3dReview,
         };
       }),
       ...result,
@@ -299,6 +329,14 @@ export async function createEntityAppealHandler({
         if (!image) throw throwNotFoundError('Image not found');
         if (image.userId !== userId) throw throwAuthorizationError();
 
+        break;
+      case EntityType.Model3D:
+        const m3d = await dbRead.model3D.findUnique({
+          where: { id: input.entityId },
+          select: { userId: true },
+        });
+        if (!m3d) throw throwNotFoundError('3D model not found');
+        if (m3d.userId !== userId) throw throwAuthorizationError();
         break;
       default:
         throw throwDbCustomError('Entity type not supported for appeals');

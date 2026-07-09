@@ -6,7 +6,11 @@ import { useState } from 'react';
 
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useGeneratedItemStore } from '~/components/Generation/stores/generated-item.store';
-import { orchestratorImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
+import {
+  useActions,
+  useIsSelected,
+  useIsSelecting,
+} from '~/components/ImageGeneration/utils/generationImage.select';
 import { useUpdateImageStepMetadata } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -30,30 +34,25 @@ export function GeneratedOutputWrapper({
   image: ImageBlob | VideoBlob | AudioBlob;
   isLightbox?: boolean;
   isActiveSlide?: boolean;
-  children: (props: {
-    onClick: () => void;
-    onLoaded: () => void;
-    loaded: boolean;
-  }) => ReactNode;
+  children: (props: { onClick: () => void; onLoaded: () => void; loaded: boolean }) => ReactNode;
 }) {
   const step = image.step;
   const request = image.workflow;
   const [ref, inView] = useInViewDynamic({ id: image.id });
-  const selected = orchestratorImageSelect.useIsSelected(image);
-  const isSelecting = orchestratorImageSelect.useIsSelecting();
+  const selected = useIsSelected(image);
+  const isSelecting = useIsSelecting();
   const [loaded, setLoaded] = useState(image.mediaType === 'audio');
 
   const { updateImages } = useUpdateImageStepMetadata();
+  const { select } = useActions();
   const { running, helpers } = useTourContext();
   const available = image.available;
 
-  const toggleSelect = (checked?: boolean) => orchestratorImageSelect.toggle(image, checked);
-
-  const handleClick = () => {
+  const handleClick = (e?: { shiftKey?: boolean }) => {
     if (!image || !available || isLightbox) return;
 
     if (isSelecting) {
-      handleToggleSelect();
+      handleToggleSelect(!selected, e?.shiftKey ?? false);
     } else {
       // Lazy import to avoid circular dependency
       import('./GeneratedOutputLightbox').then(({ default: GeneratedOutputLightbox }) => {
@@ -126,8 +125,8 @@ export function GeneratedOutputWrapper({
     );
   }
 
-  function handleToggleSelect(value = !selected) {
-    toggleSelect(value);
+  function handleToggleSelect(value = !selected, shiftKey = false) {
+    select(image, { checked: value, shiftKey });
     if (running && value) helpers?.next();
   }
 
@@ -173,25 +172,26 @@ export function GeneratedOutputWrapper({
               isLightbox ? 'max-h-[calc(100vh-76px)]' : 'max-h-full',
               isLightbox && !loaded && 'min-h-32 min-w-32'
             )}
-            style={
-              isLightbox && image.mediaType !== 'audio' ? undefined : { aspectRatio }
-            }
+            style={isLightbox && image.mediaType !== 'audio' ? undefined : { aspectRatio }}
           >
             {children({
               onClick: handleClick,
               onLoaded: () => setLoaded(true),
               loaded,
             })}
-            {isLightbox && !loaded && (
-              <Loader className="absolute inset-0 m-auto" size="lg" />
-            )}
+            {isLightbox && !loaded && <Loader className="absolute inset-0 m-auto" size="lg" />}
 
             {!isLightbox && !image.blockedReason && (
               <label className="absolute left-3 top-3" data-tour="gen:select">
                 <Checkbox
                   className={classes.checkbox}
                   checked={selected}
-                  onChange={(e) => handleToggleSelect(e.target.checked)}
+                  onChange={(e) =>
+                    handleToggleSelect(
+                      e.target.checked,
+                      (e.nativeEvent as MouseEvent).shiftKey ?? false
+                    )
+                  }
                 />
               </label>
             )}

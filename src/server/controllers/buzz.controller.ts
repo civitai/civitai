@@ -6,7 +6,6 @@ import type { ProtectedContext } from '~/server/createContext';
 import { dbWrite } from '~/server/db/client';
 import { dailyBoostReward } from '~/server/rewards/active/dailyBoost.reward';
 import type {
-  ClubTransactionSchema,
   CompleteStripeBuzzPurchaseTransactionInput,
   GetBuzzAccountSchema,
   GetBuzzAccountTransactionsSchema,
@@ -19,7 +18,6 @@ import type {
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
   completeStripeBuzzTransaction,
-  createBuzzTransaction,
   createBuzzTransactionMany,
   getDailyCompensationRewardByUser,
   getMultipliersForUser,
@@ -34,12 +32,10 @@ import { getImageById } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
-import { ClubAdminPermission, EntityType } from '~/shared/utils/prisma/enums';
+import { EntityType } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
-import { userContributingClubs } from '../services/club.service';
 import {
   handleLogError,
-  throwAuthorizationError,
   throwBadRequestError,
   throwInsufficientFundsError,
 } from '../utils/errorHandling';
@@ -286,81 +282,6 @@ export async function getBuzzAccountTransactionsHandler({
 
     const result = await getUserBuzzTransactions({ ...input });
     return result;
-  } catch (error) {
-    throw getTRPCErrorFromUnknown(error);
-  }
-}
-
-export async function withdrawClubFundsHandler({
-  input,
-  ctx,
-}: {
-  input: ClubTransactionSchema;
-  ctx: ProtectedContext;
-}) {
-  try {
-    const { id } = ctx.user;
-
-    const [userClub] = await userContributingClubs({ userId: id, clubIds: [input.clubId] });
-
-    if (!userClub)
-      throw throwAuthorizationError('You do not have permission to withdraw funds from this club');
-
-    if (
-      userClub.userId !== id &&
-      !(userClub.admin?.permissions ?? []).includes(ClubAdminPermission.WithdrawRevenue)
-    ) {
-      throw throwAuthorizationError('You do not have permission to withdraw funds from this club');
-    }
-
-    const club = await dbWrite.club.findUniqueOrThrow({ where: { id: input.clubId } });
-
-    return createBuzzTransaction({
-      toAccountId: id,
-      toAccountType: 'yellow',
-      fromAccountId: input.clubId,
-      // fromAccountType: 'club',
-      amount: input.amount,
-      type: TransactionType.ClubWithdrawal,
-      description: `Club withdrawal from ${club.name}`,
-      details: { clubId: club.id, clubName: club.name, createdAt: new Date(), userId: id },
-    });
-  } catch (error) {
-    throw getTRPCErrorFromUnknown(error);
-  }
-}
-
-export async function depositClubFundsHandler({
-  input,
-  ctx,
-}: {
-  input: ClubTransactionSchema;
-  ctx: ProtectedContext;
-}) {
-  try {
-    const { id } = ctx.user;
-
-    const [userClub] = await userContributingClubs({ userId: id, clubIds: [input.clubId] });
-
-    if (!userClub)
-      throw throwAuthorizationError('You do not have permission to withdraw funds from this club');
-
-    if (userClub.userId !== id) {
-      throw throwAuthorizationError('You do not have permission to deposit funds on this club');
-    }
-
-    const club = await dbWrite.club.findUniqueOrThrow({ where: { id: input.clubId } });
-
-    return createBuzzTransaction({
-      fromAccountId: id,
-      fromAccountType: 'yellow',
-      toAccountId: input.clubId,
-      // toAccountType: 'club',
-      amount: input.amount,
-      type: TransactionType.ClubDeposit,
-      description: `Club deposit on ${club.name}`,
-      details: { clubId: club.id, clubName: club.name, createdAt: new Date(), userId: id },
-    });
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

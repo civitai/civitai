@@ -92,8 +92,8 @@ export type ModelFileMetadata = z.infer<typeof modelFileMetadataSchema>;
 export const modelFileMetadataSchema = z.object({
   format: z.enum(constants.modelFileFormats).nullish(),
   size: z.enum(constants.modelFileSizes).nullish(),
-  fp: z.enum(constants.modelFileFp).nullish(),
-  quantType: z.enum(constants.modelFileQuantTypes).nullish(),
+  fp: z.string().max(64).nullish(),
+  quantType: z.string().max(64).nullish(),
   isRequired: z.boolean().nullish(),
   labelType: z.enum(constants.autoLabel.labelTypes).nullish(),
   ownRights: z.boolean().nullish(),
@@ -121,6 +121,7 @@ export const modelFileSchema = z.object({
 export type ModelFileCreateInput = z.infer<typeof modelFileCreateSchema>;
 export const modelFileCreateSchema = z.object({
   name: z.string(),
+  overrideName: z.string().optional(),
   url: z.url().min(1, 'You must select a file'),
   sizeKB: z.number(),
   type: z.enum(constants.modelFileTypes),
@@ -135,6 +136,7 @@ export type ModelFileUpdateInput = z.infer<typeof modelFileUpdateSchema>;
 export const modelFileUpdateSchema = z.object({
   id: z.number(),
   name: z.string().optional(),
+  overrideName: z.string().nullish(),
   url: z.url().min(1, 'You must select a file').optional(),
   sizeKB: z.number().optional(),
   type: z.enum(constants.modelFileTypes).optional(),
@@ -171,6 +173,11 @@ export type LinkedComponent = {
 
 export type RecentTrainingDataInput = z.infer<typeof recentTrainingDataSchema>;
 export const recentTrainingDataSchema = infiniteQuerySchema.merge(imageSelectTrainingFilterSchema);
+
+export const hasOfficialFileOfSizeSchema = z.object({
+  size: z.number().int().positive(), // bytes (client file.size)
+});
+export type HasOfficialFileOfSizeInput = z.infer<typeof hasOfficialFileOfSizeSchema>;
 
 /**
  * Pick the most complete training file from a list.

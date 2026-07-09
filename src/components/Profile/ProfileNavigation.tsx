@@ -2,11 +2,12 @@ import React from 'react';
 import {
   IconAssembly,
   IconBook,
+  IconBookmark,
   IconCategory,
+  IconCube,
   IconLayoutList,
   IconPencilMinus,
   IconPhoto,
-  IconBookmark,
   IconVideo,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -14,6 +15,7 @@ import { trpc } from '~/utils/trpc';
 import type { DataItem } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
 import { HomeStyleSegmentedControl } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { getDisplayName } from '~/utils/string-helpers';
 
 type ProfileNavigationProps = {
   username: string;
@@ -64,6 +66,13 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       icon: (props) => <IconVideo {...props} />,
       count: userOverview?.videoCount ?? 0,
       disabled: !!user?.bannedAt,
+    },
+    '3d-models': {
+      url: `${baseUrl}/3d-models`,
+      icon: (props) => <IconCube {...props} />,
+      label: getDisplayName('3d-models'),
+      count: userOverview?.model3dCount ?? 0,
+      disabled: !features.model3dFeed || !!user?.bannedAt,
     },
     articles: {
       url: `${baseUrl}/articles`,

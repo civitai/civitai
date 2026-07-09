@@ -1,38 +1,54 @@
 /**
  * Moderator UI for generator-related runtime config (Redis-backed).
  *
- * Currently hosts the ecosystem-config form (six gating arrays consumed by
- * `getResourceCanGenerate`). Future generator config sections — unrelated
- * to ecosystem gating — should be added as additional sections on this
- * page rather than spawning new pages.
+ * All generation gating lives in the **Gate rules** section (the normalized
+ * rules model). The self-hosted toggle is a separate card. `Experimental
+ * ecosystems` is an alert flag, not a gate. Future generator config sections
+ * should be added here rather than spawning new pages.
  *
- * Testing scopes (ecosystems & IDs) are gated behind the `generation-testing`
- * Flipt flag — assign users to that flag in Flipt to grant testing access.
+ * The `testers` rule tier resolves via the `generation-testing` Flipt flag —
+ * assign users to that flag in Flipt to grant testing access.
  */
 
 import {
+  ActionIcon,
   Alert,
   Button,
+  Card,
   Container,
   Divider,
   Group,
   Loader,
+  MultiSelect,
+  Select,
   Stack,
   TagsInput,
   Text,
+  Textarea,
+  TextInput,
   Title,
 } from '@mantine/core';
-import { IconDeviceFloppy, IconInfoCircle } from '@tabler/icons-react';
+import { IconDeviceFloppy, IconInfoCircle, IconPlus, IconTrash } from '@tabler/icons-react';
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { Meta } from '~/components/Meta/Meta';
 import { Page } from '~/components/AppLayout/Page';
-import { GenerationStatusCard } from '~/components/Moderation/GenerationStatusCard';
+import {
+  GenerationStatusCard,
+  SelfHostedGenerationStatusCard,
+} from '~/components/Moderation/GenerationStatusCard';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ecosystemByKey, ecosystems } from '~/shared/constants/basemodel.constants';
+import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workflows';
+import type {
+  GateAvailableTo,
+  GatePresentation,
+  GateRule,
+} from '~/shared/data-graph/generation/gates';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({
+  requireModerator: true,
   useSession: true,
   resolver: async ({ session }) => {
     if (!session || !session.user?.isModerator)
@@ -40,28 +56,6 @@ export const getServerSideProps = createServerSideProps({
     return { props: {} };
   },
 });
-
-type EcosystemConfigForm = {
-  modOnlyEcosystems: string[];
-  disabledEcosystems: string[];
-  testingEcosystems: string[];
-  experimentalEcosystems: string[];
-  modOnlyIds: string[];
-  disabledIds: string[];
-  testingIds: string[];
-  nsfwIds: string[];
-};
-
-const EMPTY_FORM: EcosystemConfigForm = {
-  modOnlyEcosystems: [],
-  disabledEcosystems: [],
-  testingEcosystems: [],
-  experimentalEcosystems: [],
-  modOnlyIds: [],
-  disabledIds: [],
-  testingIds: [],
-  nsfwIds: [],
-};
 
 /** Parse a TagsInput value (strings) into positive integers; returns the bad entries separately. */
 function parseIds(values: string[] | undefined): { ids: number[]; invalid: string[] } {
@@ -84,63 +78,43 @@ function normalizeKeys(values: string[] | undefined): string[] {
   );
 }
 
-function EcosystemConfigSection() {
+function ExperimentalEcosystemsSection() {
   const queryUtils = trpc.useUtils();
   const { data, isLoading } = trpc.generation.getEcosystemConfig.useQuery();
 
-  const [form, setForm] = useState<EcosystemConfigForm>(EMPTY_FORM);
-
-  // Hydrate the form once the query resolves. Each field gets `?? []` so a
-  // legacy Redis value (or a stale client-side cache) that's missing a newer
-  // key still produces a usable empty array instead of `undefined`.
+  const [experimentalEcosystems, setExperimentalEcosystems] = useState<string[]>([]);
   useEffect(() => {
     if (!data) return;
-    setForm({
-      modOnlyEcosystems: data.modOnlyEcosystems ?? [],
-      disabledEcosystems: data.disabledEcosystems ?? [],
-      testingEcosystems: data.testingEcosystems ?? [],
-      experimentalEcosystems: data.experimentalEcosystems ?? [],
-      modOnlyIds: (data.modOnlyIds ?? []).map(String),
-      disabledIds: (data.disabledIds ?? []).map(String),
-      testingIds: (data.testingIds ?? []).map(String),
-      nsfwIds: (data.nsfwIds ?? []).map(String),
-    });
+    setExperimentalEcosystems(data.experimentalEcosystems ?? []);
   }, [data]);
 
-  // Suggestion list for the ecosystem TagsInputs. Mantine's TagsInput stores
-  // the picked string verbatim (it uses the option's `label`, which must
-  // equal `value` — see TagsInput.mjs#onOptionSubmit), so we pass plain
-  // ecosystem keys here. The dropdown is then dressed up via `renderOption`
-  // below to show "<displayName> (<key>)". Free-form entries are also
-  // accepted, so any key not in this list still works.
+  // Plain ecosystem keys for the TagsInput; the dropdown is dressed up via
+  // `renderOption`. Free-form entries are accepted, so any key works.
   const ecosystemSuggestions = useMemo(
     () => [...ecosystems].sort((a, b) => a.sortOrder - b.sortOrder).map((e) => e.key),
     []
   );
 
-  const renderEcosystemOption = useCallback(
-    ({ option }: { option: { value: string } }) => {
-      const eco = ecosystemByKey.get(option.value);
-      if (!eco) return option.value;
-      return (
-        <span>
-          <Text span fw={500}>
-            {eco.displayName}
-          </Text>{' '}
-          <Text span c="dimmed" size="xs">
-            ({option.value})
-          </Text>
-        </span>
-      );
-    },
-    []
-  );
+  const renderEcosystemOption = useCallback(({ option }: { option: { value: string } }) => {
+    const eco = ecosystemByKey.get(option.value);
+    if (!eco) return option.value;
+    return (
+      <span>
+        <Text span fw={500}>
+          {eco.displayName}
+        </Text>{' '}
+        <Text span c="dimmed" size="xs">
+          ({option.value})
+        </Text>
+      </span>
+    );
+  }, []);
 
   const setMutation = trpc.generation.setEcosystemConfig.useMutation({
     onSuccess: () => {
       showSuccessNotification({
         title: 'Saved',
-        message: 'Ecosystem config updated. Changes propagate as caches refresh.',
+        message: 'Experimental ecosystems updated. Changes propagate as caches refresh.',
       });
       queryUtils.generation.getEcosystemConfig.invalidate();
       queryUtils.generation.getGenerationConfig.invalidate();
@@ -149,18 +123,185 @@ function EcosystemConfigSection() {
       showErrorNotification({ title: 'Save failed', error: new Error(err.message) }),
   });
 
-  const handleSave = () => {
-    const modOnlyParsed = parseIds(form.modOnlyIds);
-    const disabledParsed = parseIds(form.disabledIds);
-    const testingParsed = parseIds(form.testingIds);
-    const nsfwParsed = parseIds(form.nsfwIds);
+  if (isLoading) {
+    return (
+      <Group justify="center" py="xl">
+        <Loader />
+      </Group>
+    );
+  }
 
-    const allInvalid = [
-      ...modOnlyParsed.invalid,
-      ...disabledParsed.invalid,
-      ...testingParsed.invalid,
-      ...nsfwParsed.invalid,
-    ];
+  return (
+    <Stack gap="lg">
+      <Stack gap={4}>
+        <Title order={3}>Experimental ecosystems</Title>
+        <Text c="dimmed" size="sm">
+          Shows the &ldquo;experimental build&rdquo; alert in the generator UI. This is{' '}
+          <b>not a gate</b> — it doesn&apos;t restrict access. All gating now lives in{' '}
+          <b>Gate rules</b> below.
+        </Text>
+      </Stack>
+
+      <TagsInput
+        label="Experimental ecosystems"
+        description="Unioned with the static experimental flag baked into base-model records."
+        placeholder="Pick or type an ecosystem key…"
+        data={ecosystemSuggestions}
+        renderOption={renderEcosystemOption}
+        value={experimentalEcosystems}
+        onChange={setExperimentalEcosystems}
+        splitChars={[',', ' ']}
+        acceptValueOnBlur
+        clearable
+      />
+
+      <Group justify="flex-end">
+        <Button
+          leftSection={<IconDeviceFloppy size={16} />}
+          onClick={() =>
+            setMutation.mutate({ experimentalEcosystems: normalizeKeys(experimentalEcosystems) })
+          }
+          loading={setMutation.isPending}
+        >
+          Save experimental ecosystems
+        </Button>
+      </Group>
+    </Stack>
+  );
+}
+
+// =============================================================================
+// Gate rules (the normalized rules model)
+// =============================================================================
+
+// Editing shape: `modelVersionIds` are strings here (TagsInput) and parsed to
+// numbers on save, mirroring the ecosystem-config ID handling.
+type RuleForm = {
+  id: string;
+  name: string;
+  availableTo: GateAvailableTo;
+  presentation: GatePresentation;
+  message: string;
+  ecosystems: string[];
+  workflows: string[];
+  modelVersionIds: string[];
+};
+
+// Positive "available to" framing: the named tier keeps access, everyone else is
+// gated. "Available to testers, hidden" === the legacy "testers enabled, others
+// hidden by default".
+const AVAILABLE_TO_OPTIONS: { value: GateAvailableTo; label: string }[] = [
+  { value: 'moderators', label: 'Moderators only' },
+  { value: 'testers', label: 'Testers (generation-testing flag) + mods' },
+  { value: 'members', label: 'Members + mods' },
+  { value: 'nobody', label: 'Nobody (kill-switch — off for everyone, mods included)' },
+];
+
+const PRESENTATION_OPTIONS: { value: GatePresentation; label: string }[] = [
+  { value: 'disabled', label: 'Disabled — shown but greyed out' },
+  { value: 'hidden', label: 'Hidden — removed entirely' },
+];
+
+const newRuleId = () =>
+  typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `rule-${Date.now()}`;
+
+const emptyRule = (): RuleForm => ({
+  id: newRuleId(),
+  name: '',
+  availableTo: 'members',
+  presentation: 'disabled',
+  message: '',
+  ecosystems: [],
+  workflows: [],
+  modelVersionIds: [],
+});
+
+function GateRulesSection() {
+  const queryUtils = trpc.useUtils();
+  const { data, isLoading } = trpc.generation.getGateRules.useQuery();
+  const [rules, setRules] = useState<RuleForm[]>([]);
+
+  useEffect(() => {
+    if (!data) return;
+    setRules(
+      data.map((r) => ({
+        id: r.id,
+        name: r.name,
+        availableTo: r.availableTo,
+        presentation: r.presentation,
+        message: r.message ?? '',
+        ecosystems: r.ecosystems,
+        workflows: r.workflows,
+        modelVersionIds: r.modelVersionIds.map(String),
+      }))
+    );
+  }, [data]);
+
+  const ecosystemSuggestions = useMemo(
+    () => [...ecosystems].sort((a, b) => a.sortOrder - b.sortOrder).map((e) => e.key),
+    []
+  );
+
+  // Workflow options by name (stored by key). Include any key already on a rule
+  // that's no longer in the config so it stays visible/removable.
+  const workflowOptions = useMemo(() => {
+    const labelByKey = new Map<string, string>();
+    for (const [key, config] of workflowConfigByKey) labelByKey.set(key, config.label ?? key);
+    for (const rule of rules)
+      for (const key of rule.workflows) if (!labelByKey.has(key)) labelByKey.set(key, key);
+    return [...labelByKey.entries()]
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [rules]);
+
+  const renderEcosystemOption = useCallback(({ option }: { option: { value: string } }) => {
+    const eco = ecosystemByKey.get(option.value);
+    if (!eco) return option.value;
+    return (
+      <span>
+        <Text span fw={500}>
+          {eco.displayName}
+        </Text>{' '}
+        <Text span c="dimmed" size="xs">
+          ({option.value})
+        </Text>
+      </span>
+    );
+  }, []);
+
+  const updateRule = (id: string, patch: Partial<RuleForm>) =>
+    setRules((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+
+  const setMutation = trpc.generation.setGateRules.useMutation({
+    onSuccess: () => {
+      showSuccessNotification({
+        title: 'Saved',
+        message: 'Gate rules updated. Changes propagate as caches refresh.',
+      });
+      queryUtils.generation.getGateRules.invalidate();
+      queryUtils.generation.getGenerationConfig.invalidate();
+    },
+    onError: (err) =>
+      showErrorNotification({ title: 'Save failed', error: new Error(err.message) }),
+  });
+
+  const handleSave = () => {
+    const allInvalid: string[] = [];
+    const payload: GateRule[] = rules.map((r) => {
+      const { ids, invalid } = parseIds(r.modelVersionIds);
+      allInvalid.push(...invalid);
+      return {
+        id: r.id,
+        name: r.name.trim(),
+        availableTo: r.availableTo,
+        presentation: r.presentation,
+        message: r.message.trim() || undefined,
+        ecosystems: normalizeKeys(r.ecosystems),
+        workflows: normalizeKeys(r.workflows),
+        modelVersionIds: ids,
+      };
+    });
+
     if (allInvalid.length) {
       showErrorNotification({
         title: 'Invalid model version IDs',
@@ -169,16 +310,7 @@ function EcosystemConfigSection() {
       return;
     }
 
-    setMutation.mutate({
-      modOnlyEcosystems: normalizeKeys(form.modOnlyEcosystems),
-      disabledEcosystems: normalizeKeys(form.disabledEcosystems),
-      testingEcosystems: normalizeKeys(form.testingEcosystems),
-      experimentalEcosystems: normalizeKeys(form.experimentalEcosystems),
-      modOnlyIds: modOnlyParsed.ids,
-      disabledIds: disabledParsed.ids,
-      testingIds: testingParsed.ids,
-      nsfwIds: nsfwParsed.ids,
-    });
+    setMutation.mutate(payload);
   };
 
   if (isLoading) {
@@ -192,128 +324,135 @@ function EcosystemConfigSection() {
   return (
     <Stack gap="lg">
       <Stack gap={4}>
-        <Title order={3}>Ecosystem gates</Title>
+        <Title order={3}>Gate rules</Title>
         <Text c="dimmed" size="sm">
-          Operator-controlled gating for the generator. Ecosystem-level rules apply to every version
-          in that ecosystem; ID-level rules override the ecosystem rule for a single model version.
+          The normalized gating model: each rule names <b>who keeps access</b> (available to) and{' '}
+          <b>how it appears to everyone else</b> (presentation), then attaches any mix of
+          ecosystems, workflows, and model version IDs. &ldquo;Available to testers, hidden&rdquo;
+          is the old &ldquo;testers enabled, others hidden&rdquo;. The most restrictive state wins
+          (hidden &gt; disabled &gt; members-only).
         </Text>
         <Text c="dimmed" size="sm">
-          <b>Disabled</b> = off for everyone (kill-switch, mods included). <b>Mod-only</b> = visible
-          to mods only. <b>Testing</b> = visible to mods plus users with the{' '}
-          <code>generation-testing</code> Flipt flag. <b>NSFW</b> = hidden on green (SFW-only)
-          domains; available on red/blue. <b>Experimental</b> shows the &ldquo;experimental
-          build&rdquo; alert in the generator UI but does not gate access.
+          <b>Available to members + Disabled</b> renders as the members-only upsell (you can become
+          a member). Other tiers just grey out. The optional message is extra copy shown on top of
+          the standard badge/alert — it never replaces it.
         </Text>
       </Stack>
 
-      <Stack gap="md">
-        <Title order={5}>Ecosystems</Title>
-        <Text c="dimmed" size="xs">
-          Pick from the suggestions or type a custom ecosystem key (e.g. an experimental key not yet
-          in the dropdown). Press Enter, comma, or space to add.
-        </Text>
-        <TagsInput
-          label="Disabled ecosystems"
-          description="Off for everyone, including moderators."
-          placeholder="Pick or type an ecosystem key…"
-          data={ecosystemSuggestions}
-          renderOption={renderEcosystemOption}
-          value={form.disabledEcosystems}
-          onChange={(v) => setForm((f) => ({ ...f, disabledEcosystems: v }))}
-          splitChars={[',', ' ']}
-          acceptValueOnBlur
-          clearable
-        />
-        <TagsInput
-          label="Mod-only ecosystems"
-          description="Hidden from non-moderator users."
-          placeholder="Pick or type an ecosystem key…"
-          data={ecosystemSuggestions}
-          renderOption={renderEcosystemOption}
-          value={form.modOnlyEcosystems}
-          onChange={(v) => setForm((f) => ({ ...f, modOnlyEcosystems: v }))}
-          splitChars={[',', ' ']}
-          acceptValueOnBlur
-          clearable
-        />
-        <TagsInput
-          label="Testing ecosystems"
-          description="Visible to mods and users with the generation-testing Flipt flag."
-          placeholder="Pick or type an ecosystem key…"
-          data={ecosystemSuggestions}
-          renderOption={renderEcosystemOption}
-          value={form.testingEcosystems}
-          onChange={(v) => setForm((f) => ({ ...f, testingEcosystems: v }))}
-          splitChars={[',', ' ']}
-          acceptValueOnBlur
-          clearable
-        />
-        <TagsInput
-          label="Experimental ecosystems"
-          description="Shows the experimental-build alert in the generator UI. Not a gate. Unioned with the static experimental flag baked into base-model records."
-          placeholder="Pick or type an ecosystem key…"
-          data={ecosystemSuggestions}
-          renderOption={renderEcosystemOption}
-          value={form.experimentalEcosystems}
-          onChange={(v) => setForm((f) => ({ ...f, experimentalEcosystems: v }))}
-          splitChars={[',', ' ']}
-          acceptValueOnBlur
-          clearable
-        />
-      </Stack>
-
-      <Stack gap="md">
-        <Title order={5}>Model version IDs</Title>
+      {rules.length === 0 && (
         <Alert icon={<IconInfoCircle size={16} />} color="blue" variant="light">
-          ID-level rules override ecosystem-level rules. Use these to flip a single version while
-          leaving its ecosystem otherwise enabled. Type or paste numeric model version IDs and press
-          Enter (or comma).
+          No gate rules yet. Add one to gate ecosystems / workflows / versions without touching the
+          legacy lists above.
         </Alert>
-        <TagsInput
-          label="Disabled IDs"
-          description="Off for everyone, including moderators."
-          placeholder="e.g. 12345"
-          value={form.disabledIds}
-          onChange={(v) => setForm((f) => ({ ...f, disabledIds: v }))}
-          splitChars={[',', ' ']}
-          clearable
-        />
-        <TagsInput
-          label="Mod-only IDs"
-          description="Hidden from non-moderator users."
-          placeholder="e.g. 12345"
-          value={form.modOnlyIds}
-          onChange={(v) => setForm((f) => ({ ...f, modOnlyIds: v }))}
-          splitChars={[',', ' ']}
-          clearable
-        />
-        <TagsInput
-          label="Testing IDs"
-          description="Visible to mods and users with the generation-testing Flipt flag."
-          placeholder="e.g. 12345"
-          value={form.testingIds}
-          onChange={(v) => setForm((f) => ({ ...f, testingIds: v }))}
-          splitChars={[',', ' ']}
-          clearable
-        />
-        <TagsInput
-          label="NSFW IDs"
-          description="Hidden on green (SFW-only) domains. Use for NSFW models that should remain available on red/blue."
-          placeholder="e.g. 12345"
-          value={form.nsfwIds}
-          onChange={(v) => setForm((f) => ({ ...f, nsfwIds: v }))}
-          splitChars={[',', ' ']}
-          clearable
-        />
+      )}
+
+      <Stack gap="md">
+        {rules.map((rule) => {
+          const isUpsell = rule.presentation === 'disabled' && rule.availableTo === 'members';
+          return (
+            <Card key={rule.id} withBorder padding="md">
+              <Stack gap="sm">
+                <Group align="flex-end" wrap="nowrap">
+                  <TextInput
+                    label="Name"
+                    placeholder="e.g. Maintenance window"
+                    value={rule.name}
+                    onChange={(e) => updateRule(rule.id, { name: e.currentTarget.value })}
+                    className="flex-1"
+                  />
+                  <ActionIcon
+                    color="red"
+                    variant="subtle"
+                    size="lg"
+                    aria-label="Remove rule"
+                    onClick={() => setRules((rs) => rs.filter((r) => r.id !== rule.id))}
+                  >
+                    <IconTrash size={18} />
+                  </ActionIcon>
+                </Group>
+                <Group grow align="flex-start">
+                  <Select
+                    label="Available to"
+                    data={AVAILABLE_TO_OPTIONS}
+                    value={rule.availableTo}
+                    onChange={(v) =>
+                      v && updateRule(rule.id, { availableTo: v as GateAvailableTo })
+                    }
+                    allowDeselect={false}
+                  />
+                  <Select
+                    label="Presentation"
+                    data={PRESENTATION_OPTIONS}
+                    value={rule.presentation}
+                    onChange={(v) =>
+                      v && updateRule(rule.id, { presentation: v as GatePresentation })
+                    }
+                    allowDeselect={false}
+                  />
+                </Group>
+                {isUpsell && (
+                  <Text size="xs" c="yellow.7">
+                    Resolves to the members-only upsell (Become-a-member CTA).
+                  </Text>
+                )}
+                <Textarea
+                  label="Message (optional)"
+                  description="Extra copy layered on the standard badge/alert for disabled & members-only."
+                  placeholder="Leave blank to use the default copy."
+                  autosize
+                  minRows={1}
+                  value={rule.message}
+                  onChange={(e) => updateRule(rule.id, { message: e.currentTarget.value })}
+                />
+                <TagsInput
+                  label="Ecosystems"
+                  placeholder="Pick or type an ecosystem key…"
+                  data={ecosystemSuggestions}
+                  renderOption={renderEcosystemOption}
+                  value={rule.ecosystems}
+                  onChange={(v) => updateRule(rule.id, { ecosystems: v })}
+                  splitChars={[',', ' ']}
+                  acceptValueOnBlur
+                  clearable
+                />
+                <MultiSelect
+                  label="Workflows"
+                  placeholder="Pick a workflow…"
+                  data={workflowOptions}
+                  value={rule.workflows}
+                  onChange={(v) => updateRule(rule.id, { workflows: v })}
+                  searchable
+                  clearable
+                />
+                <TagsInput
+                  label="Model version IDs"
+                  description="Numeric model version IDs. Version pickers can't show-disable, so any gated version is hidden."
+                  placeholder="e.g. 12345"
+                  value={rule.modelVersionIds}
+                  onChange={(v) => updateRule(rule.id, { modelVersionIds: v })}
+                  splitChars={[',', ' ']}
+                  clearable
+                />
+              </Stack>
+            </Card>
+          );
+        })}
       </Stack>
 
-      <Group justify="flex-end">
+      <Group justify="space-between">
+        <Button
+          variant="default"
+          leftSection={<IconPlus size={16} />}
+          onClick={() => setRules((rs) => [...rs, emptyRule()])}
+        >
+          Add rule
+        </Button>
         <Button
           leftSection={<IconDeviceFloppy size={16} />}
           onClick={handleSave}
-          loading={setMutation.isLoading}
+          loading={setMutation.isPending}
         >
-          Save ecosystem gates
+          Save gate rules
         </Button>
       </Group>
     </Stack>
@@ -337,7 +476,15 @@ function GenerationConfigPage() {
 
           <Divider />
 
-          <EcosystemConfigSection />
+          <SelfHostedGenerationStatusCard />
+
+          <Divider />
+
+          <GateRulesSection />
+
+          <Divider />
+
+          <ExperimentalEcosystemsSection />
         </Stack>
       </Container>
     </>

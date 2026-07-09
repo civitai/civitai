@@ -11,16 +11,8 @@ import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 import type { GetGenerationDataInput } from '~/server/schema/generation.schema';
 import type { GenerationData } from '~/server/services/generation/generation.service';
-import {
-  getOutputTypeForWorkflow,
-  isNewFormOnly,
-} from '~/shared/data-graph/generation/config/workflows';
-import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
-import { getEngineFromEcosystem } from '~/shared/utils/engine.utils';
 import type { GenerationResource } from '~/shared/types/generation.types';
-import type { OrchestratorEngine2 } from '~/server/orchestrator/generation/generation.config';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
-import { generationFormStore } from '~/store/generation-form.store';
 import { remixStore } from '~/store/remix.store';
 import { trpcVanilla } from '~/utils/trpc';
 
@@ -162,37 +154,6 @@ function toEntryAction(runType: RunType): GeneratorEntryAction {
 // =============================================================================
 // Helpers
 // =============================================================================
-
-/**
- * TEMPORARY: Sync legacy form store when graph data changes.
- * Sets the correct media type and video engine so the legacy form
- * shows the right UI. Remove when legacy generator is removed.
- * See docs/legacy-generator-files.md
- */
-function syncLegacyFormStore(params: Record<string, unknown>, resources?: GenerationResource[]) {
-  const workflow = params.workflow as string | undefined;
-  const ecosystem = params.ecosystem as string | undefined;
-
-  // Skip sync for new-form-only data — the legacy form provider will show
-  // the switch-to-new-form modal instead.
-  if (workflow) {
-    const ecosystemId = ecosystem ? ecosystemByKey.get(ecosystem)?.id : undefined;
-    const checkpointModelId = resources?.find((r) => r.model.type === 'Checkpoint')?.id;
-    if (isNewFormOnly(workflow, ecosystemId, checkpointModelId)) return;
-  }
-
-  if (workflow) {
-    const outputType = getOutputTypeForWorkflow(workflow);
-    generationFormStore.setType(outputType);
-
-    if (outputType === 'video' && ecosystem) {
-      const engine = getEngineFromEcosystem(ecosystem) as OrchestratorEngine2 | undefined;
-      if (engine) {
-        generationFormStore.setEngine(engine);
-      }
-    }
-  }
-}
 
 /** Apply resource substitutions (use substitute if original can't generate) */
 function substituteResource(item: GenerationResource): GenerationResource {
@@ -351,9 +312,6 @@ export const useGenerationGraphStore = create<GenerationGraphState>()(
               }
             }
 
-            // TEMPORARY: Sync legacy form store (remove with legacy generator)
-            syncLegacyFormStore(result.params, resources);
-
             // Update remix store for similarity tracking
             if (isMedia && result.remixOfId) {
               remixStore.setRemix(result.remixOfId, result.params);
@@ -440,9 +398,6 @@ export const useGenerationGraphStore = create<GenerationGraphState>()(
       },
 
       setData: ({ params, resources, runType = 'replay', remixOfId }) => {
-        // TEMPORARY: Sync legacy form store (remove with legacy generator)
-        syncLegacyFormStore(params, resources);
-
         if (typeof window !== 'undefined' && !location.pathname.startsWith('/generate'))
           useGenerationPanelStore.setState({ view: 'generate' });
 

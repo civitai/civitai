@@ -110,6 +110,7 @@ import { FilterButton } from '~/components/Buttons/FilterButton';
 import { FilterChip } from '~/components/Filters/FilterChip';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { useDomainColor } from '~/hooks/useDomainColor';
 import {
   getBorder,
   getBackground,
@@ -179,7 +180,12 @@ export const getServerSideProps = createServerSideProps({
       if (challenge) {
         const correctSlug = slugit(challenge.title);
         const currentSlug = result.data.slug?.join('/');
-        if (currentSlug !== correctSlug) {
+        // Skip the redirect when the canonical slug is empty — slugit() strips
+        // all non-Latin-alphanumeric chars (strict mode), so CJK/Cyrillic/emoji/
+        // dots-only titles slugify to ''. Redirecting to /challenges/<id>/ (empty
+        // slug) gets trailing-slash-normalized back to /challenges/<id>, which
+        // never matches '' and loops forever (ERR_TOO_MANY_REDIRECTS).
+        if (correctSlug && currentSlug !== correctSlug) {
           const queryString = buildPassthroughQuery(ctx.query);
           return {
             redirect: {
@@ -1413,15 +1419,27 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
   const colorScheme = useComputedColorScheme('dark');
   const currentUser = useCurrentUser();
   const mobile = useIsMobile();
+  const isModerator = currentUser?.isModerator ?? false;
+  const domainColor = useDomainColor();
+  // On green (SFW) the domain caps entries to PG. Logged-in users can opt into
+  // PG-13, mirroring the images feed filter. Anonymous users are hard-capped by
+  // the domain rule, so the toggle would be a no-op for them.
+  const showPG13Toggle = domainColor === 'green' && !!currentUser;
 
   const [judgeReviewedOnly, setJudgeReviewedOnly] = useState(false);
   const [myEntriesOnly, setMyEntriesOnly] = useState(false);
+  const [pendingReviewOnly, setPendingReviewOnly] = useState(false);
+  const [includePG13, setIncludePG13] = useState(false);
   const [opened, setOpened] = useState(false);
   const isActive = challenge.status === ChallengeStatus.Active;
   const hasCollection = !!challenge.collectionId;
   const displaySubmitAction = isActive && hasCollection && !currentUser?.muted;
 
-  const filterCount = (judgeReviewedOnly ? 1 : 0) + (myEntriesOnly ? 1 : 0);
+  const filterCount =
+    (judgeReviewedOnly ? 1 : 0) +
+    (myEntriesOnly ? 1 : 0) +
+    (isModerator && pendingReviewOnly ? 1 : 0) +
+    (showPG13Toggle && includePG13 ? 1 : 0);
 
   const judgeInfo = useMemo(
     () =>
@@ -1466,12 +1484,25 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
       <Stack gap={0}>
         <Divider label="Modifiers" className="text-sm font-bold" mb={4} />
         <Group gap={8} mb={4}>
+          {showPG13Toggle && (
+            <FilterChip checked={includePG13} onChange={() => setIncludePG13((v) => !v)}>
+              <span>Include PG-13</span>
+            </FilterChip>
+          )}
           <FilterChip checked={judgeReviewedOnly} onChange={() => setJudgeReviewedOnly((v) => !v)}>
             <span>Judge Reviewed</span>
           </FilterChip>
           <FilterChip checked={myEntriesOnly} onChange={() => setMyEntriesOnly((v) => !v)}>
             <span>My Entries</span>
           </FilterChip>
+          {isModerator && (
+            <FilterChip
+              checked={pendingReviewOnly}
+              onChange={() => setPendingReviewOnly((v) => !v)}
+            >
+              <span>Pending Review</span>
+            </FilterChip>
+          )}
         </Group>
       </Stack>
 
@@ -1482,6 +1513,8 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
           onClick={() => {
             setJudgeReviewedOnly(false);
             setMyEntriesOnly(false);
+            setPendingReviewOnly(false);
+            setIncludePG13(false);
           }}
           fullWidth
         >
@@ -1597,6 +1630,8 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
                     ? challenge.judgedTagId ?? undefined
                     : undefined,
                   userId: myEntriesOnly ? currentUser?.id : undefined,
+                  pendingReviewOnly: isModerator && pendingReviewOnly ? true : undefined,
+                  includePG13: showPG13Toggle && includePG13 ? true : undefined,
                   period: 'AllTime',
                   sort: ImageSort.Random,
                 }}

@@ -68,18 +68,49 @@ export const MultiFileInputUpload = forwardRef<HTMLDivElement, Props>(
         }
       }
 
-      const uploadedFiles = await Promise.all(
+      // Upload each file independently so a single failure doesn't reject the
+      // whole batch (Promise.all short-circuits and swallows the error, which
+      // makes the dropzone look like nothing happened).
+      const uploadResults = await Promise.allSettled(
         droppedFiles.map((file) => uploadToS3(file, 'default'))
       );
-      const successUploads = uploadedFiles
-        .filter(({ url }) => !!url)
-        .map((upload) => ({
+
+      const successUploads = uploadResults
+        .filter(
+          (result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof uploadToS3>>> =>
+            result.status === 'fulfilled' && !!result.value.url
+        )
+        .map(({ value: upload }) => ({
           url: upload.url as string,
           name: upload.name ?? '',
           sizeKB: upload.size ? bytesToKB(upload.size) : 0,
           metadata: {},
         }));
-      filesHandlers.append(...successUploads);
+
+      if (successUploads.length) filesHandlers.append(...successUploads);
+
+      // Surface any upload failures instead of silently dropping the files.
+      const failedCount = uploadResults.length - successUploads.length;
+      if (failedCount > 0) {
+        const rejected = uploadResults.find(
+          (result): result is PromiseRejectedResult => result.status === 'rejected'
+        );
+        const reason =
+          rejected && typeof rejected.reason === 'string'
+            ? rejected.reason
+            : rejected?.reason instanceof Error
+            ? rejected.reason.message
+            : undefined;
+        const message =
+          failedCount === droppedFiles.length
+            ? `Failed to upload ${failedCount === 1 ? 'file' : 'files'}${
+                reason ? `: ${reason}` : '. Please try again.'
+              }`
+            : `Failed to upload ${failedCount} of ${droppedFiles.length} files${
+                reason ? `: ${reason}` : '. Please try again.'
+              }`;
+        setErrors([message]);
+      }
     };
 
     const handleRemove = (index: number) => {

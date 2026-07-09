@@ -259,7 +259,7 @@ export function PanelCard({
       const result = (await utils.comics.pollPanelStatus.fetch(
         { panelId: panel.id },
         {
-          cacheTime: 0,
+          gcTime: 0,
         }
       )) as any;
       // New shape: per-candidate slots (clean OR locked, in stable order).

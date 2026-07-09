@@ -26,7 +26,7 @@ export function UnblockImage({
   onUnblock?: (imageId: number) => void;
 }) {
   const currentUser = useCurrentUser();
-  const { mutate, isLoading } = trpc.image.moderate.useMutation({
+  const { mutate, isPending: isLoading } = trpc.image.moderate.useMutation({
     async onSuccess(_, { ids: [id] }) {
       imageStore.setImage(imageId, { ingestion: 'Scanned', blockedFor: undefined });
       await onSuccess?.(id);

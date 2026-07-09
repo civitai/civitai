@@ -5,18 +5,13 @@ import { resolveHref } from 'next/dist/client/resolve-href';
 import { QS } from '~/utils/qs';
 import { create } from 'zustand';
 import { useDidUpdate } from '@mantine/hooks';
+import {
+  resolveLocationChangeState,
+  type BrowserRouterState,
+  type HistoryState,
+} from '~/components/BrowserRouter/browserRouterState';
 
 type Url = UrlObject | string;
-
-type HistoryState = {
-  prev?: { asPath: string };
-} & Record<string, any>;
-
-type BrowserRouterState = {
-  asPath: string;
-  query: Record<string, any>;
-  state?: HistoryState;
-};
 
 const BrowserRouterContext = createContext<{
   asPath: string;
@@ -36,12 +31,6 @@ export const useBrowserRouter = () => {
 export function BrowserRouterProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const stateRef = useRef<BrowserRouterState>();
-
-  const parseQuery = (state?: any) => {
-    if (!state && typeof window === 'undefined') return {};
-    const [path, queryString] = (state?.url ?? history.state.url).split('?');
-    return QS.parse(queryString) as Record<string, any>;
-  };
 
   const {
     asPath = router.asPath,
@@ -63,12 +52,8 @@ export function BrowserRouterProvider({ children }: { children: React.ReactNode 
     const locationChangeFn = (e: Event) => {
       const event = e as CustomEvent;
       if (event.detail) {
-        const state = event.detail[0];
-        stateRef.current = {
-          asPath: state.as,
-          query: parseQuery(state),
-          state: history.state.state,
-        };
+        const eventState = event.detail[0];
+        stateRef.current = resolveLocationChangeState(eventState, history.state, window.location);
         if (!usingNextRouter) useBrowserRouterState.setState(stateRef.current);
       }
     };
@@ -83,7 +68,7 @@ export function BrowserRouterProvider({ children }: { children: React.ReactNode 
 
   useEffect(() => {
     const handleRouteChangeComplete = () => {
-      if (stateRef.current && stateRef.current?.asPath === history.state.as)
+      if (stateRef.current && stateRef.current?.asPath === history.state?.as)
         useBrowserRouterState.setState(stateRef.current);
 
       setUsingNextRouter(false);
@@ -109,7 +94,7 @@ function goto(type: 'replace' | 'push', url: Url, as?: Url, state?: HistoryState
 
   const historyState = {
     ...history.state,
-    state: { ...history.state.state, ...state },
+    state: { ...(history.state?.state ?? {}), ...state },
     // key: uuidv4(),
     url: _url,
     as: _as,
@@ -118,7 +103,7 @@ function goto(type: 'replace' | 'push', url: Url, as?: Url, state?: HistoryState
   if (type === 'replace') {
     history.replaceState(historyState, '', _as);
   } else {
-    const { as } = history.state;
+    const { as } = history.state ?? {};
     historyState.state.prev = { asPath: as };
     history.pushState(historyState, '', _as);
   }

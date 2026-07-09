@@ -1,12 +1,20 @@
 import { useGetAnnouncements } from '~/components/Announcements/announcements.utils';
+import clsx from 'clsx';
 import React, { useRef } from 'react';
 import { Announcement } from '~/components/Announcements/Announcement';
 import autoplay from 'embla-carousel-autoplay';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
+import type { AnnouncementType } from '~/server/schema/announcement.schema';
 
-export default function AnnouncementsCarousel() {
+export default function AnnouncementsCarousel({
+  className,
+  type = 'site',
+}: {
+  className?: string;
+  type?: AnnouncementType;
+}) {
   const autoplayRef = useRef(autoplay({ delay: 10000 }));
-  const { data } = useGetAnnouncements();
+  const { data } = useGetAnnouncements(type);
 
   const announcements = data.filter((x) => !x.dismissed);
 
@@ -15,7 +23,7 @@ export default function AnnouncementsCarousel() {
   return (
     // Required custom class to apply certain styles based on peer elements
     // eslint-disable-next-line tailwindcss/no-custom-classname
-    <div className="announcements peer container mb-3">
+    <div className={clsx('announcements peer container', className)}>
       <Embla plugins={[autoplayRef.current]} loop withIndicators={announcements.length > 1}>
         <Embla.Viewport>
           <Embla.Container className="-ml-4 flex">

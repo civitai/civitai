@@ -12,9 +12,13 @@ import {
   deleteBountyEntryHandler,
   getBountyEntryFilteredFilesHandler,
   getBountyEntryHandler,
+  submitBountyEntryHandler,
   upsertBountyEntryHandler,
 } from '~/server/controllers/bountyEntry.controller';
-import { upsertBountyEntryInputSchema } from '~/server/schema/bounty-entry.schema';
+import {
+  submitBountyEntryInputSchema,
+  upsertBountyEntryInputSchema,
+} from '~/server/schema/bounty-entry.schema';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { dbWrite } from '~/server/db/client';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -58,6 +62,11 @@ export const bountyEntryRouter = router({
     .input(upsertBountyEntryInputSchema)
     .use(isFlagProtected('bounties'))
     .mutation(upsertBountyEntryHandler),
+  submit: guardedProcedure
+    .meta({ requiredScope: TokenScope.BountiesWrite })
+    .input(submitBountyEntryInputSchema)
+    .use(isFlagProtected('bounties'))
+    .mutation(submitBountyEntryHandler),
   award: protectedProcedure
     .meta({ requiredScope: TokenScope.BountiesWrite })
     .input(getByIdSchema)

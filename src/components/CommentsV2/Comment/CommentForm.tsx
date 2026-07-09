@@ -79,7 +79,7 @@ export const CommentForm = ({
   );
 
   const queryUtils = trpc.useUtils();
-  const { mutate, isLoading } = trpc.commentv2.upsert.useMutation({
+  const { mutate, isPending: isLoading } = trpc.commentv2.upsert.useMutation({
     async onSuccess(response, request) {
       form.reset();
       // if it has an id, just set the data with state

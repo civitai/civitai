@@ -28,12 +28,12 @@ export default function MigrateModelToCollection({ modelId }: { modelId: number 
     e.stopPropagation();
     e.preventDefault();
 
-    if (migrateMutation.isLoading) return;
+    if (migrateMutation.isPending) return;
     migrateMutation.mutate({ id: modelId, collectionName });
   };
 
   const handleClose = () => {
-    if (migrateMutation.isLoading) return;
+    if (migrateMutation.isPending) return;
 
     setCollectionName('');
     dialog.onClose();
@@ -44,15 +44,15 @@ export default function MigrateModelToCollection({ modelId }: { modelId: number 
       {...dialog}
       title="Migrate to Collection"
       onClose={handleClose}
-      closeOnClickOutside={!migrateMutation.isLoading}
-      closeOnEscape={!migrateMutation.isLoading}
-      withCloseButton={!migrateMutation.isLoading}
+      closeOnClickOutside={!migrateMutation.isPending}
+      closeOnEscape={!migrateMutation.isPending}
+      withCloseButton={!migrateMutation.isPending}
       closeButtonProps={{
         'aria-label': 'Close migrate to collection modal',
       }}
       withinPortal
     >
-      {migrateMutation.isLoading ? (
+      {migrateMutation.isPending ? (
         <div className="flex flex-col items-center justify-center gap-4 p-8">
           <Loader size={64} />
           <div className="text-center">

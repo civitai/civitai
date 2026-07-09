@@ -6,10 +6,12 @@ import {
   deleteUserPaymentMethodHandler,
   dismissAlertHandler,
   restoreAlertHandler,
+  restoreUserHandler,
   getAllUsersHandler,
   getCreatorsHandler,
   getLeaderboardHandler,
   getNotificationSettingsHandler,
+  getSelfStatusHandler,
   getUserBookmarkCollectionsHandler,
   getUserByIdHandler,
   getUserCosmeticsHandler,
@@ -46,6 +48,7 @@ import {
   deleteUserSchema,
   dismissAlertSchema,
   restoreAlertSchema,
+  restoreUserSchema,
   getAllUsersInput,
   getByUsernameSchema,
   getUserByUsernameSchema,
@@ -135,6 +138,9 @@ export const userRouter = router({
     .meta({ requiredScope: TokenScope.UserRead })
     .input(getByIdSchema)
     .query(getUserByIdHandler),
+  getSelfStatus: protectedProcedure
+    .meta({ requiredScope: TokenScope.UserRead })
+    .query(getSelfStatusHandler),
   getEngagedModels: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .query(getUserEngagedModelsHandler),
@@ -238,6 +244,7 @@ export const userRouter = router({
     .mutation(toggleFollowUserHandler),
   toggleMute: moderatorProcedure.input(getByIdSchema).mutation(toggleMuteHandler),
   toggleBan: moderatorProcedure.input(toggleBanUserSchema).mutation(toggleBanHandler),
+  restoreAccount: moderatorProcedure.input(restoreUserSchema).mutation(restoreUserHandler),
   getToken: protectedProcedure
     .meta({ requiredScope: TokenScope.Full })
     .query(({ ctx }) => ({ token: createToken(ctx.user.id) })),

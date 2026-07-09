@@ -52,7 +52,7 @@ function GenerationSettingsOption({
   onSuccess?: VoidFunction;
 }) {
   const { generation = {} } = useCurrentUserSettings();
-  const { mutate, isLoading } = useMutateUserSettings({ onSuccess });
+  const { mutate, isPending: isLoading } = useMutateUserSettings({ onSuccess });
 
   function toggleSetting(key: GenerationKeys, value: boolean) {
     mutate({ generation: { ...generation, [key]: value } });

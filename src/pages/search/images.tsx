@@ -111,11 +111,12 @@ function RenderFilters() {
         operator="and"
         searchable
       />
-      <ChipRefinementList
+      <SearchableMultiSelectRefinementList
         title="Filter by Base Model"
         sortBy={['name']}
         attribute="baseModel"
         limit={100}
+        searchable
       />
     </>
   );

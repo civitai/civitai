@@ -108,7 +108,7 @@ export function NewsletterDialog() {
               style={{ flex: 1 }}
             />
             <InputText name="subscribed" type="hidden" style={{ display: 'none' }} hidden />
-            <Button type="submit" loading={updateNewsletterSubscriptionMutation.isLoading}>
+            <Button type="submit" loading={updateNewsletterSubscriptionMutation.isPending}>
               Subscribe
             </Button>
           </Group>

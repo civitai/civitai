@@ -172,7 +172,7 @@ export function FlaggedModelsList() {
           <Button
             ml="auto"
             onClick={() => handleResolveSelectedModels(table)}
-            loading={resolveFlaggedModelMutation.isLoading}
+            loading={resolveFlaggedModelMutation.isPending}
             size="compact-sm"
           >
             Resolve Selected
@@ -331,7 +331,7 @@ function DetailsModal({ model, details }: { model: z.infer<typeof schema>; detai
             </Paper>
             <Button
               type="submit"
-              loading={resolveFlaggedModelMutation.isLoading || upsertModelMutation.isLoading}
+              loading={resolveFlaggedModelMutation.isPending || upsertModelMutation.isPending}
             >
               Save & Resolve
             </Button>

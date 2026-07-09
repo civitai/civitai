@@ -47,7 +47,7 @@ export function AssociateModels({
   const [associatedResources, setAssociatedResources] = useState<State>(data);
   const [searchMode, setSearchMode] = useState<'me' | 'all'>('all');
 
-  const { mutate, isLoading: isSaving } = trpc.model.setAssociatedResources.useMutation({
+  const { mutate, isPending: isSaving } = trpc.model.setAssociatedResources.useMutation({
     onSuccess: async () => {
       queryUtils.model.getAssociatedResourcesSimple.setData(
         { fromId, type, browsingLevel: allBrowsingLevelsFlag },

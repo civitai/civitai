@@ -42,7 +42,7 @@ export function PostImageDropzone({
   ]);
   const params = usePostEditParams();
   const currentUser = useCurrentUser();
-  const { src, modelVersionId, tag, collectionId } = params;
+  const { src, modelVersionId, model3dId, tag, collectionId } = params;
   // #endregion
 
   // #region [mutations]
@@ -120,10 +120,15 @@ export function PostImageDropzone({
     if (post) upload(fileData);
     else {
       createPostMutation.mutate(
-        { modelVersionId, tag, collectionId },
+        { modelVersionId, model3dId, tag, collectionId },
         {
           onSuccess: async (data) => {
             queryUtils.post.getEdit.setData({ id: data.id }, () => data);
+            // Refresh the version's post list so re-entering the post step (e.g. via
+            // the wizard's back/next) reuses this post instead of creating a new one.
+            if (modelVersionId) {
+              await queryUtils.modelVersion.getById.invalidate({ id: modelVersionId, withFiles: true });
+            }
             await onCreatePost?.(data);
             upload(fileData, { postId: data.id });
           },
@@ -207,7 +212,7 @@ export function PostImageDropzone({
           accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
           disabled={!canAdd}
           error={error}
-          loading={createPostMutation.isLoading || loading}
+          loading={createPostMutation.isPending || loading}
           className="rounded-lg"
         />
       </div>

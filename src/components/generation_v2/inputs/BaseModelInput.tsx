@@ -8,6 +8,7 @@
  */
 
 import {
+  Badge,
   Group,
   Modal,
   Popover,
@@ -33,7 +34,18 @@ import {
   type EcosystemDisplayItem,
 } from '~/shared/constants/basemodel.constants';
 import { getWorkflowsForEcosystem } from '~/shared/data-graph/generation/config/workflows';
+import type { GateItemState } from '~/shared/data-graph/generation/gates';
 import { useEcosystemGroupPreferencesStore } from '~/store/ecosystem-group-preferences.store';
+
+// Badge + default tooltip per shown-but-disabled state. A rule's `message`
+// (when present) overrides only the tooltip copy, layered on the same badge.
+const GATE_BADGE: Record<
+  GateItemState['state'],
+  { label: string; color: string; tooltip: string }
+> = {
+  memberOnly: { label: 'Members only', color: 'yellow', tooltip: 'Members-only generation' },
+  disabled: { label: 'Disabled', color: 'gray', tooltip: 'Temporarily unavailable' },
+};
 
 // =============================================================================
 // Types
@@ -46,8 +58,16 @@ export interface BaseModelInputProps {
   label?: string;
   /** Compatible ecosystems for the selected workflow (ecosystem keys) */
   compatibleEcosystems?: string[];
-  /** Ecosystem keys to exclude from the list entirely (e.g. gated by feature flag) */
+  /** Ecosystem keys to exclude from the list entirely (gated/hidden upstream). */
   excludeEcosystems?: string[];
+  /**
+   * Ecosystem keys shown but disabled (not selectable), each with its own
+   * state (`disabled`/`memberOnly`) + optional message — resolved by the
+   * ecosystem node from the unified gate sources (self-hosted toggle + rules).
+   * Rendered greyed with a per-state badge, unlike `excludeEcosystems` which
+   * removes them entirely.
+   */
+  ecosystemStates?: GateItemState[];
   /** Whether the input is disabled */
   disabled?: boolean;
   /** Check if an ecosystem is compatible with the current workflow */
@@ -55,7 +75,7 @@ export interface BaseModelInputProps {
   /** Get the target workflow label for an incompatible ecosystem */
   getTargetWorkflow?: (ecosystemKey: string) => string;
   /** Current output type - only ecosystems supporting this type will be shown */
-  outputType?: 'image' | 'video' | 'audio';
+  outputType?: 'image' | 'video' | 'audio' | 'model3d';
 }
 
 type FamilyGroup = {
@@ -128,6 +148,8 @@ interface BaseModelListContentProps {
   /** Get the target workflow label for an incompatible ecosystem */
   getTargetWorkflow?: (ecosystemKey: string) => string;
   onSelect: (key: string) => void;
+  /** Ecosystem key → its shown-but-disabled state (badge/tooltip per state). */
+  disabledStateMap?: Map<string, GateItemState>;
   /** Whether there are any incompatible items */
   hasIncompatibleItems?: boolean;
   /** Current tab */
@@ -150,6 +172,7 @@ function BaseModelListContent({
   allGroupedByFamily,
   getTargetWorkflow,
   onSelect,
+  disabledStateMap,
   hasIncompatibleItems,
   activeTab,
   onTabChange,
@@ -278,13 +301,101 @@ function BaseModelListContent({
     } else if (e.key === 'Enter' && activeIndex >= 0) {
       e.preventDefault();
       const item = flatItems[activeIndex];
-      if (item) onSelect(item.key);
+      if (item && !disabledStateMap?.has(item.key)) onSelect(item.key);
     }
   };
 
   // Check if search has no results
   const hasNoResults =
     isSearching && filteredGroups.length === 0 && filteredRecentItems.length === 0;
+
+  // Shared per-item renderer for the recent + grouped lists. Handles the
+  // selected / keyboard-active / incompatible states plus the self-hosted
+  // "disabled" state (greyed, non-selectable, badge + tooltip).
+  const renderItem = (item: EcosystemDisplayItem) => {
+    const isSelected = value === item.key;
+    const isActive = item.key === activeItemKey;
+    // Group items carry a group id as `key`; selection resolves to the group's
+    // default ecosystem (see `handleSelect`). The disabled set holds ecosystem
+    // keys, so resolve group → default ecosystem key before checking — mirrors
+    // the `applyExcludeFilter` resolution used for gated items.
+    const disabledCheckKey =
+      item.type === 'group' && item.defaultEcosystemId
+        ? ecosystemById.get(item.defaultEcosystemId)?.key ?? item.key
+        : item.key;
+    const gateState = disabledStateMap?.get(disabledCheckKey);
+    const isDisabled = !!gateState;
+    const badge = gateState ? GATE_BADGE[gateState.state] : undefined;
+    const button = (
+      <UnstyledButton
+        key={item.key}
+        data-keyboard-active={isActive ? 'true' : undefined}
+        onClick={() => {
+          if (isDisabled) return;
+          onSelect(item.key);
+        }}
+        className={clsx(
+          'flex w-full items-center justify-between rounded px-3 py-2 transition-colors',
+          isDisabled
+            ? 'cursor-not-allowed opacity-50'
+            : isSelected
+            ? 'bg-blue-0 dark:bg-blue-9/20'
+            : isActive
+            ? 'bg-gray-1 dark:bg-dark-5'
+            : 'hover:bg-gray-1 dark:hover:bg-dark-5',
+          !isDisabled && !item.compatible && 'opacity-60'
+        )}
+      >
+        <div className="flex-1">
+          <Text size="sm" fw={isSelected ? 600 : 400}>
+            {item.name}
+          </Text>
+        </div>
+        {badge ? (
+          <Badge size="xs" color={badge.color} variant="light">
+            {badge.label}
+          </Badge>
+        ) : (
+          <>
+            {isSelected && <IconCheck size={16} className="text-blue-6" />}
+            {!item.compatible && !isSelected && (
+              <IconArrowRight size={14} className="text-gray-5" />
+            )}
+          </>
+        )}
+      </UnstyledButton>
+    );
+
+    if (gateState && badge) {
+      return (
+        <Tooltip
+          key={item.key}
+          label={gateState.message ?? badge.tooltip}
+          position="right"
+          withArrow
+          openDelay={300}
+        >
+          {button}
+        </Tooltip>
+      );
+    }
+
+    if (!item.compatible && getTargetWorkflow) {
+      return (
+        <Tooltip
+          key={item.key}
+          label={`Will switch to ${getTargetWorkflow(item.key)}`}
+          position="right"
+          withArrow
+          openDelay={300}
+        >
+          {button}
+        </Tooltip>
+      );
+    }
+
+    return button;
+  };
 
   return (
     <Stack gap="md">
@@ -337,54 +448,7 @@ function BaseModelListContent({
       <div ref={listRef}>
         {/* Recent tab content - hidden while searching since grouped results cover all items */}
         {activeTab === 'recent' && !isSearching && filteredRecentItems.length > 0 && (
-          <Stack gap={0}>
-            {filteredRecentItems.map((item) => {
-              const isSelected = value === item.key;
-              const isActive = item.key === activeItemKey;
-              const button = (
-                <UnstyledButton
-                  key={item.key}
-                  data-keyboard-active={isActive ? 'true' : undefined}
-                  onClick={() => onSelect(item.key)}
-                  className={clsx(
-                    'flex w-full items-center justify-between rounded px-3 py-2 transition-colors',
-                    isSelected
-                      ? 'bg-blue-0 dark:bg-blue-9/20'
-                      : isActive
-                      ? 'bg-gray-1 dark:bg-dark-5'
-                      : 'hover:bg-gray-1 dark:hover:bg-dark-5',
-                    !item.compatible && 'opacity-60'
-                  )}
-                >
-                  <div className="flex-1">
-                    <Text size="sm" fw={isSelected ? 600 : 400}>
-                      {item.name}
-                    </Text>
-                  </div>
-                  {isSelected && <IconCheck size={16} className="text-blue-6" />}
-                  {!item.compatible && !isSelected && (
-                    <IconArrowRight size={14} className="text-gray-5" />
-                  )}
-                </UnstyledButton>
-              );
-
-              if (!item.compatible && getTargetWorkflow) {
-                return (
-                  <Tooltip
-                    key={item.key}
-                    label={`Will switch to ${getTargetWorkflow(item.key)}`}
-                    position="right"
-                    withArrow
-                    openDelay={300}
-                  >
-                    {button}
-                  </Tooltip>
-                );
-              }
-
-              return button;
-            })}
-          </Stack>
+          <Stack gap={0}>{filteredRecentItems.map(renderItem)}</Stack>
         )}
 
         {/* Grouped models (for compatible and all tabs) */}
@@ -393,54 +457,7 @@ function BaseModelListContent({
             <Text size="xs" c="dimmed" fw={600} tt="uppercase" className="mb-2">
               {familyGroup.familyName ?? 'Other'}
             </Text>
-            <Stack gap={0}>
-              {familyGroup.items.map((item) => {
-                const isSelected = value === item.key;
-                const isActive = item.key === activeItemKey;
-                const button = (
-                  <UnstyledButton
-                    key={item.key}
-                    data-keyboard-active={isActive ? 'true' : undefined}
-                    onClick={() => onSelect(item.key)}
-                    className={clsx(
-                      'flex w-full items-center justify-between rounded px-3 py-2 transition-colors',
-                      isSelected
-                        ? 'bg-blue-0 dark:bg-blue-9/20'
-                        : isActive
-                        ? 'bg-gray-1 dark:bg-dark-5'
-                        : 'hover:bg-gray-1 dark:hover:bg-dark-5',
-                      !item.compatible && 'opacity-60'
-                    )}
-                  >
-                    <div className="flex-1">
-                      <Text size="sm" fw={isSelected ? 600 : 400}>
-                        {item.name}
-                      </Text>
-                    </div>
-                    {isSelected && <IconCheck size={16} className="text-blue-6" />}
-                    {!item.compatible && !isSelected && (
-                      <IconArrowRight size={14} className="text-gray-5" />
-                    )}
-                  </UnstyledButton>
-                );
-
-                if (!item.compatible && getTargetWorkflow) {
-                  return (
-                    <Tooltip
-                      key={item.key}
-                      label={`Will switch to ${getTargetWorkflow(item.key)}`}
-                      position="right"
-                      withArrow
-                      openDelay={300}
-                    >
-                      {button}
-                    </Tooltip>
-                  );
-                }
-
-                return button;
-              })}
-            </Stack>
+            <Stack gap={0}>{familyGroup.items.map(renderItem)}</Stack>
           </div>
         ))}
       </div>
@@ -460,6 +477,7 @@ interface BaseModelSelectModalProps {
   /** Get the target workflow label for an incompatible ecosystem */
   getTargetWorkflow?: (ecosystemKey: string) => string;
   onSelect: (key: string) => void;
+  disabledStateMap?: Map<string, GateItemState>;
   hasIncompatibleItems?: boolean;
   activeTab: TabValue;
   onTabChange: (tab: TabValue) => void;
@@ -473,6 +491,7 @@ function BaseModelSelectModal({
   allGroupedByFamily,
   getTargetWorkflow,
   onSelect,
+  disabledStateMap,
   hasIncompatibleItems,
   activeTab: initialTab,
   onTabChange,
@@ -513,6 +532,7 @@ function BaseModelSelectModal({
           allGroupedByFamily={allGroupedByFamily}
           getTargetWorkflow={getTargetWorkflow}
           onSelect={handleSelect}
+          disabledStateMap={disabledStateMap}
           hasIncompatibleItems={hasIncompatibleItems}
           activeTab={localTab}
           onTabChange={handleTabChange}
@@ -579,6 +599,7 @@ export function BaseModelInput({
   onChange,
   compatibleEcosystems,
   excludeEcosystems,
+  ecosystemStates,
   disabled,
   isCompatible,
   getTargetWorkflow,
@@ -587,6 +608,10 @@ export function BaseModelInput({
   const excludeSet = useMemo(
     () => (excludeEcosystems?.length ? new Set(excludeEcosystems) : null),
     [excludeEcosystems]
+  );
+  const disabledStateMap = useMemo(
+    () => (ecosystemStates?.length ? new Map(ecosystemStates.map((e) => [e.key, e])) : undefined),
+    [ecosystemStates]
   );
   const isMobile = useMediaQuery('(max-width: 768px)');
   const [popoverOpened, { close: closePopover, open: openPopover }] = useDisclosure(false);
@@ -790,6 +815,7 @@ export function BaseModelInput({
         groupedByFamily,
         allGroupedByFamily,
         getTargetWorkflow,
+        disabledStateMap,
         hasIncompatibleItems,
         activeTab,
         onTabChange: handleTabChange,
@@ -849,6 +875,7 @@ export function BaseModelInput({
           allGroupedByFamily={allGroupedByFamily}
           getTargetWorkflow={getTargetWorkflow}
           onSelect={handleSelect}
+          disabledStateMap={disabledStateMap}
           hasIncompatibleItems={hasIncompatibleItems}
           activeTab={activeTab}
           onTabChange={handleTabChange}

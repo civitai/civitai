@@ -1,3 +1,4 @@
+import { keepPreviousData } from '@tanstack/react-query';
 import { Title } from '@mantine/core';
 import { IconMessages } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -80,7 +81,7 @@ function IteratePage() {
       sourceImage: costParams.sourceImage ?? undefined,
       referenceImages: costParams.referenceImages,
     },
-    { staleTime: 30_000, keepPreviousData: true }
+    { staleTime: 30_000, placeholderData: keepPreviousData }
   );
 
   const handleSettingsChange = useCallback((params: CostEstimateParams) => {

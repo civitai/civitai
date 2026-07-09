@@ -71,7 +71,7 @@ export function ResourceReviewMenu({
       ),
       centered: true,
       labels: { confirm: 'Delete Review', cancel: "No, don't delete it" },
-      confirmProps: { color: 'red', loading: deleteMutation.isLoading },
+      confirmProps: { color: 'red', loading: deleteMutation.isPending },
       closeOnConfirm: false,
       onConfirm: () => {
         deleteMutation.mutate({ id: reviewId });
@@ -102,7 +102,7 @@ export function ResourceReviewMenu({
       ),
       centered: true,
       labels: { confirm: 'Exclude Review', cancel: "No, don't exclude it" },
-      confirmProps: { color: 'red', loading: deleteMutation.isLoading },
+      confirmProps: { color: 'red', loading: deleteMutation.isPending },
       closeOnConfirm: false,
       onConfirm: () => {
         excludeMutation.mutate({ id: review.id });

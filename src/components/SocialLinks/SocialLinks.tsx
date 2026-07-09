@@ -48,6 +48,17 @@ const SocialIcons: Record<
   twitch: IconBrandTwitch,
 };
 
+const SocialLabels: Record<SocialOption, string> = {
+  github: 'Civitai on GitHub',
+  discord: 'Civitai on Discord',
+  twitter: 'Civitai on X',
+  instagram: 'Civitai on Instagram',
+  tiktok: 'Civitai on TikTok',
+  reddit: 'Civitai on Reddit',
+  youtube: 'Civitai on YouTube',
+  twitch: 'Civitai on Twitch',
+};
+
 export function SocialLinks({ iconSize = 20, include, ...props }: Props) {
   include ??= [
     'discord',
@@ -80,6 +91,7 @@ export function SocialLinks({ iconSize = 20, include, ...props }: Props) {
             href={`/${option}`}
             target="_blank"
             rel="nofollow noreferrer"
+            aria-label={SocialLabels[option]}
             {...defaultProps}
             {...props}
             {...optionProps}

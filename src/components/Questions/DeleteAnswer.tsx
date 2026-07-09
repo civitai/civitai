@@ -5,7 +5,7 @@ import { trpc } from '~/utils/trpc';
 import { Text } from '@mantine/core';
 
 export function DeleteAnswer({ children, id }: { children: React.ReactElement; id: number }) {
-  const { mutate, isLoading } = trpc.answer.delete.useMutation({
+  const { mutate, isPending: isLoading } = trpc.answer.delete.useMutation({
     onSuccess() {
       showSuccessNotification({
         title: 'Your answer has been deleted',

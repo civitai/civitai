@@ -48,7 +48,7 @@ export function GiftNoticeEditModal({
     },
   });
 
-  const { mutate, isLoading } = trpc.redeemableCode.upsertGiftNotice.useMutation({
+  const { mutate, isPending: isLoading } = trpc.redeemableCode.upsertGiftNotice.useMutation({
     onSuccess: () => {
       dialog.onClose();
       queryUtils.redeemableCode.getAllGiftNotices.invalidate();

@@ -118,12 +118,12 @@ export function AppealDialog({ entityId, entityType }: Props) {
                 buzzAmount={100}
                 label="Submit"
                 accountTypes={[mainBuzzType]}
-                loading={createAppealMutation.isLoading}
+                loading={createAppealMutation.isPending}
                 onPerformTransaction={handleSubmit}
                 showPurchaseModal
               />
             ) : (
-              <Button onClick={handleSubmit} loading={createAppealMutation.isLoading}>
+              <Button onClick={handleSubmit} loading={createAppealMutation.isPending}>
                 Submit
               </Button>
             )}

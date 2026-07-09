@@ -5,6 +5,7 @@ import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.schema';
 import { getModeratedTags } from '~/server/services/system-cache';
+import { isPrismaUniqueViolation } from '~/server/utils/errorHandling';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { TagEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
 
@@ -17,6 +18,16 @@ function getHiddenCacheExpiry() {
 }
 // const log = createLogger('user-preferences', 'green');
 
+// All of a user's hidden-preference caches are stored as FIELDS of ONE per-user
+// hash (`packed:user:<id>:hidden-prefs`), so getAllHiddenForUsersCached can read
+// them in a single HGETALL instead of N individual GETs — the largest Redis
+// contributor on the feed path. The hash field name is the per-pref `key`, so
+// the individual consumers (getCached/refreshCache, used across ~10 services)
+// keep working — they just operate on their field via HGET/HDEL.
+const HIDDEN_PREFS_HASH = 'hidden-prefs';
+const getUserPrefsHashKey = (userId = -1) =>
+  `${REDIS_KEYS.USER.CACHE}:${userId}:${HIDDEN_PREFS_HASH}` as RedisKeyTemplateCache;
+
 function createUserCache<T, TArgs extends { userId?: number }>({
   key,
   callback,
@@ -24,43 +35,46 @@ function createUserCache<T, TArgs extends { userId?: number }>({
   key: string;
   callback: (args: TArgs) => Promise<T>;
 }) {
-  const getKey = ({ userId = -1 }: { userId?: number }) =>
-    `${REDIS_KEYS.USER.CACHE}:${userId}:${key}` as RedisKeyTemplateCache;
+  const field = key;
+  // Fetch from source (DB) and write the field into the per-user hash. The TTL
+  // is set with `NX` (only when the hash has none), so the whole hash ages out
+  // ~maxExpiry after its FIRST population rather than having its expiry bumped
+  // on every field write. This preserves the self-healing backstop the old
+  // per-key TTLs gave: if an invalidation is ever missed, the field can't go
+  // stale indefinitely — the hash expires and is rebuilt. (Jitter on first
+  // population still staggers expiry across users to avoid a herd.)
+  const get = async ({ userId = -1, ...rest }: TArgs) => {
+    const data = await callback({ userId, ...rest } as TArgs);
+    const hashKey = getUserPrefsHashKey(userId);
+    await redis.packed.hSet(hashKey, field, data);
+    await redis.expire(hashKey, getHiddenCacheExpiry(), 'NX');
+    return data;
+  };
 
   const getCached = async ({
     userId = -1, // Default to civitai account
     refreshCache,
     ...rest
   }: TArgs & { refreshCache?: boolean }) => {
-    const cachedTags = await redis.packed.get<T>(getKey({ userId }));
-    if (cachedTags && !refreshCache) return cachedTags;
-    if (refreshCache) await redis.del(getKey({ userId }));
-
+    if (refreshCache) {
+      await refresh({ userId });
+      return await get({ userId, ...rest } as TArgs);
+    }
+    const cached = await redis.packed.hGet<T>(getUserPrefsHashKey(userId), field);
+    if (cached != null) return cached;
     return await get({ userId, ...rest } as TArgs);
   };
 
-  const get = async ({ userId = -1, ...rest }: TArgs) => {
-    // console.time(key);
-    const data = await callback({ userId, ...rest } as TArgs);
-    // console.timeEnd(key);
-
-    await redis.packed.set(getKey({ userId }), data, {
-      EX: getHiddenCacheExpiry(),
-    });
-
-    return data;
-  };
-
-  const refreshCache = async ({ userId }: { userId: number }) => {
-    // log(`refreshing ${logLabel} for user`, userId);
-    await redis.del(getKey({ userId }));
+  // Invalidate: drop the hash field so the next read repopulates from source.
+  const refresh = async ({ userId = -1 }: { userId?: number }) => {
+    await redis.hDel(getUserPrefsHashKey(userId), field);
   };
 
   return {
     get,
     getCached,
-    getKey,
-    refreshCache,
+    field,
+    refreshCache: refresh,
   };
 }
 
@@ -165,6 +179,20 @@ export const HiddenModels = createUserCache({
     ).map((x) => x.modelId),
 });
 
+// Per-user `Hide` engagements on Model3D rows. Mirrors HiddenModels but
+// against the `Model3DEngagement` table (`Model3DEngagementType.Hide` is
+// already in the prisma enum, no migration required).
+export const HiddenModel3Ds = createUserCache({
+  key: 'hidden-model3ds-1',
+  callback: async ({ userId }) =>
+    (
+      await dbRead.model3DEngagement.findMany({
+        where: { userId, type: 'Hide' },
+        select: { model3dId: true },
+      })
+    ).map((x) => x.model3dId),
+});
+
 export const HiddenUsers = createUserCache({
   key: 'hidden-users-4',
   callback: async ({ userId }) =>
@@ -230,6 +258,11 @@ interface HiddenModel extends HiddenPreferenceBase {
   hidden: boolean;
 }
 
+interface HiddenModel3D extends HiddenPreferenceBase {
+  id: number;
+  hidden: boolean;
+}
+
 interface HiddenImage extends HiddenPreferenceBase {
   id: number;
   /** the presence of a tagId indicates that this image is hidden due to a user's tag vote */
@@ -240,6 +273,7 @@ interface HiddenImage extends HiddenPreferenceBase {
 type HiddenPreferencesKind =
   | ({ kind: 'tag' } & HiddenTag)
   | ({ kind: 'model' } & HiddenModel)
+  | ({ kind: 'model3d' } & HiddenModel3D)
   | ({ kind: 'image' } & HiddenImage)
   | ({ kind: 'user' } & HiddenUser)
   | ({ kind: 'blockedUser' } & HiddenUser);
@@ -253,6 +287,7 @@ export type HiddenPreferenceTypes = {
   hiddenTags: HiddenTag[];
   hiddenUsers: HiddenUser[];
   hiddenModels: HiddenModel[];
+  hiddenModel3Ds: HiddenModel3D[];
   hiddenImages: HiddenImage[];
   blockedUsers: HiddenUser[];
   blockedByUsers: HiddenUser[];
@@ -263,63 +298,44 @@ const getAllHiddenForUsersCached = async ({
 }: {
   userId?: number;
 }) => {
-  // Batch the 8 cache reads through the documented `packed.mGet` API instead
-  // of 8 individual `redis.packed.get()` calls in `Promise.all`, and wrap in
-  // a span so spanmetrics can attribute the actual fan-out latency vs.
-  // post-processing / cache-miss DB fallbacks.
-  //
-  // Why mGet (not pipeline / cluster MULTI):
-  //   This is a Redis CLUSTER. The 7 user-preference keys do NOT share a hash
-  //   tag, and the 8th (SYSTEM.MODERATED_TAGS) is on a different shard, so a
-  //   real Redis MGET or cluster MULTI(routing) across them would CROSSSLOT
-  //   or require cross-shard coordination. `redis.packed.mGet` is the
-  //   cluster-safe wrapper (see redis/client.ts): it issues per-key GETs
-  //   internally and benefits from node-redis' per-shard cork/uncork TCP
-  //   pipelining. Functionally equivalent to the prior Promise.all, but
-  //   centralises future per-shard slot-grouping optimizations on one path.
-  const cacheKeys: RedisKeyTemplateCache[] = [
-    REDIS_KEYS.SYSTEM.MODERATED_TAGS,
-    HiddenTags.getKey({ userId }),
-    HiddenImages.getKey({ userId }),
-    HiddenModels.getKey({ userId }),
-    HiddenUsers.getKey({ userId }),
-    ImplicitHiddenImages.getKey({ userId }),
-    BlockedUsers.getKey({ userId }),
-    BlockedByUsers.getKey({ userId }),
-  ];
-  const [
-    cachedSystemHiddenTags,
-    cachedHiddenTags,
-    cachedHiddenImages,
-    cachedHiddenModels,
-    cachedHiddenUsers,
-    cachedImplicitHiddenImages,
-    cachedBlockedUsers,
-    cachedBlockedByUsers,
-  ] = await withSpan(
+  // ONE HGETALL pulls every hidden-preference field for this user (previously
+  // 7 individual GETs via packed.mGet's per-key fan-out — the largest Redis
+  // contributor on the feed path), alongside the global moderated-tags blob.
+  // Absent fields fall back per-pref to the DB via each cache's get() (see
+  // createUserCache).
+  const [hashFields, cachedModeratedTags] = await withSpan(
     'user-preferences:getAllHidden:redisFetch',
-    { keyCount: cacheKeys.length },
-    () => redis.packed.mGet(cacheKeys)
+    () =>
+      Promise.all([
+        redis.packed.hGetAll<unknown>(getUserPrefsHashKey(userId)),
+        redis.packed.get<AsyncReturnType<typeof getModeratedTags>>(
+          REDIS_KEYS.SYSTEM.MODERATED_TAGS
+        ),
+      ])
   );
 
   const getModerationTags = async () =>
-    (cachedSystemHiddenTags as AsyncReturnType<typeof getModeratedTags>) ??
+    (cachedModeratedTags as AsyncReturnType<typeof getModeratedTags>) ??
     (await getModeratedTags());
 
   const getHiddenTags = async ({ userId }: { userId: number }) =>
-    (cachedHiddenTags as AsyncReturnType<typeof HiddenTags.get>) ??
+    (hashFields[HiddenTags.field] as AsyncReturnType<typeof HiddenTags.get>) ??
     (await HiddenTags.get({ userId }));
 
   const getHiddenImages = async ({ userId }: { userId: number }) =>
-    (cachedHiddenImages as AsyncReturnType<typeof HiddenImages.get>) ??
+    (hashFields[HiddenImages.field] as AsyncReturnType<typeof HiddenImages.get>) ??
     (await HiddenImages.get({ userId }));
 
   const getHiddenModels = async ({ userId }: { userId: number }) =>
-    (cachedHiddenModels as AsyncReturnType<typeof HiddenModels.get>) ??
+    (hashFields[HiddenModels.field] as AsyncReturnType<typeof HiddenModels.get>) ??
     (await HiddenModels.get({ userId }));
 
+  const getHiddenModel3Ds = async ({ userId }: { userId: number }) =>
+    (hashFields[HiddenModel3Ds.field] as AsyncReturnType<typeof HiddenModel3Ds.get>) ??
+    (await HiddenModel3Ds.get({ userId }));
+
   const getHiddenUsers = async ({ userId }: { userId: number }) =>
-    (cachedHiddenUsers as AsyncReturnType<typeof HiddenUsers.get>) ??
+    (hashFields[HiddenUsers.field] as AsyncReturnType<typeof HiddenUsers.get>) ??
     (await HiddenUsers.get({ userId }));
 
   const getHiddenImplicitImages = async ({
@@ -331,32 +347,41 @@ const getAllHiddenForUsersCached = async ({
     hiddenTagIds: number[];
     moderatedTagIds: number[];
   }) =>
-    (cachedImplicitHiddenImages as AsyncReturnType<typeof ImplicitHiddenImages.get>) ??
+    (hashFields[ImplicitHiddenImages.field] as AsyncReturnType<typeof ImplicitHiddenImages.get>) ??
     (await ImplicitHiddenImages.get({ userId, hiddenTagIds, moderatedTagIds }));
 
   const getBlockedUsers = async ({ userId }: { userId: number }) =>
-    (cachedBlockedUsers as AsyncReturnType<typeof BlockedUsers.get>) ??
+    (hashFields[BlockedUsers.field] as AsyncReturnType<typeof BlockedUsers.get>) ??
     (await BlockedUsers.get({ userId }));
 
   const getBlockedByUsers = async ({ userId }: { userId: number }) =>
-    (cachedBlockedByUsers as AsyncReturnType<typeof BlockedByUsers.get>) ??
+    (hashFields[BlockedByUsers.field] as AsyncReturnType<typeof BlockedByUsers.get>) ??
     (await BlockedByUsers.get({ userId }));
 
-  // Resolve the 7 base preferences — each is a no-op if cached, otherwise
+  // Resolve the 8 base preferences — each is a no-op if cached, otherwise
   // hits the DB. Wrapped so we can attribute the cache-miss DB fallback
   // latency separately from the redis fan-out above.
-  const [moderatedTags, hiddenTags, images, models, users, blockedUsers, blockedByUsers] =
-    await withSpan('user-preferences:getAllHidden:resolve', () =>
-      Promise.all([
-        getModerationTags(),
-        getHiddenTags({ userId }),
-        getHiddenImages({ userId }),
-        getHiddenModels({ userId }),
-        getHiddenUsers({ userId }),
-        getBlockedUsers({ userId }),
-        getBlockedByUsers({ userId }),
-      ])
-    );
+  const [
+    moderatedTags,
+    hiddenTags,
+    images,
+    models,
+    model3ds,
+    users,
+    blockedUsers,
+    blockedByUsers,
+  ] = await withSpan('user-preferences:getAllHidden:resolve', () =>
+    Promise.all([
+      getModerationTags(),
+      getHiddenTags({ userId }),
+      getHiddenImages({ userId }),
+      getHiddenModels({ userId }),
+      getHiddenModel3Ds({ userId }),
+      getHiddenUsers({ userId }),
+      getBlockedUsers({ userId }),
+      getBlockedByUsers({ userId }),
+    ])
+  );
 
   const [implicitImages] = await Promise.all([
     getHiddenImplicitImages({
@@ -371,6 +396,7 @@ const getAllHiddenForUsersCached = async ({
     hiddenTags,
     images,
     models,
+    model3ds,
     users,
     implicitImages,
     blockedUsers,
@@ -379,16 +405,25 @@ const getAllHiddenForUsersCached = async ({
 };
 
 const getAllHiddenForUserFresh = async ({ userId }: { userId: number }) => {
-  const [moderatedTags, hiddenTags, images, models, users, blockedUsers, blockedByUsers] =
-    await Promise.all([
-      getModeratedTags(),
-      HiddenTags.get({ userId }),
-      HiddenImages.get({ userId }),
-      HiddenModels.get({ userId }),
-      HiddenUsers.get({ userId }),
-      BlockedUsers.get({ userId }),
-      BlockedByUsers.get({ userId }),
-    ]);
+  const [
+    moderatedTags,
+    hiddenTags,
+    images,
+    models,
+    model3ds,
+    users,
+    blockedUsers,
+    blockedByUsers,
+  ] = await Promise.all([
+    getModeratedTags(),
+    HiddenTags.get({ userId }),
+    HiddenImages.get({ userId }),
+    HiddenModels.get({ userId }),
+    HiddenModel3Ds.get({ userId }),
+    HiddenUsers.get({ userId }),
+    BlockedUsers.get({ userId }),
+    BlockedByUsers.get({ userId }),
+  ]);
 
   const [implicitImages] = await Promise.all([
     ImplicitHiddenImages.get({
@@ -403,6 +438,7 @@ const getAllHiddenForUserFresh = async ({ userId }: { userId: number }) => {
     hiddenTags,
     images,
     models,
+    model3ds,
     users,
     implicitImages,
     blockedUsers,
@@ -422,6 +458,7 @@ export async function getAllHiddenForUser({
     hiddenTags,
     images,
     models,
+    model3ds,
     users,
     implicitImages,
     blockedUsers,
@@ -433,6 +470,7 @@ export async function getAllHiddenForUser({
   const result = {
     hiddenImages: [...images.map((id) => ({ id, hidden: true })), ...implicitImages],
     hiddenModels: models.map((id) => ({ id, hidden: true })),
+    hiddenModel3Ds: model3ds.map((id) => ({ id, hidden: true })),
     hiddenUsers: users.map((user) => ({ ...user, hidden: true })),
     hiddenTags: [...hiddenTags.map((tag) => ({ ...tag, hidden: true })), ...moderatedTags],
     blockedUsers: blockedUsers.map((user) => ({ ...user, hidden: true })),
@@ -453,6 +491,8 @@ export async function toggleHidden({
       return await toggleHideImage({ userId, imageId: data[0].id });
     case 'model':
       return await toggleHideModel({ userId, modelId: data[0].id });
+    case 'model3d':
+      return await toggleHideModel3D({ userId, model3dId: data[0].id });
     case 'user':
       return await toggleHideUser({ userId, targetUserId: data[0].id, setTo: hidden });
     case 'tag':
@@ -506,8 +546,12 @@ async function toggleHiddenTags({
       });
     }
     if (toCreate.length) {
+      // skipDuplicates so a concurrent toggle that already inserted some of these
+      // (userId, tagId) rows doesn't blow up the WHOLE batch with a P2002 (which
+      // would drop the legitimately-new rows too) — bulk-insert is idempotent.
       await dbWrite.tagEngagement.createMany({
         data: toCreate.map((tagId) => ({ userId, tagId, type: 'Hide' })),
+        skipDuplicates: true,
       });
     }
 
@@ -563,7 +607,13 @@ async function toggleHideModel({
   });
 
   if (!engagement)
-    await dbWrite.modelEngagement.create({ data: { userId, modelId, type: 'Hide' } });
+    await dbWrite.modelEngagement
+      .create({ data: { userId, modelId, type: 'Hide' } })
+      // Toggle racing itself → P2002 on the (userId, modelId) PK. The Hide row
+      // already exists, so it's idempotent — fall through to the cache refresh.
+      .catch((error) => {
+        if (!isPrismaUniqueViolation(error)) throw error;
+      });
   else if (engagement.type === 'Hide')
     await dbWrite.modelEngagement.delete({ where: { userId_modelId: { userId, modelId } } });
   else
@@ -576,6 +626,48 @@ async function toggleHideModel({
 
   // const addedOrUpdated = !engagement || engagement.type !== 'Hide';
   // const toReturn = { id: modelId, kind: 'model' } as HiddenPreferencesKind;
+
+  return {
+    added: [],
+    removed: [],
+  };
+}
+
+// Hide / unhide a single Model3D for a viewer. Mirrors `toggleHideModel`
+// using the `Model3DEngagement` table (Hide type already exists, so no
+// migration required). Refreshes the per-user `HiddenModel3Ds` cache so the
+// next feed fetch picks the new id up.
+async function toggleHideModel3D({
+  userId,
+  model3dId,
+}: {
+  userId: number;
+  model3dId: number;
+}): Promise<HiddenPreferencesDiff> {
+  const engagement = await dbWrite.model3DEngagement.findUnique({
+    where: { userId_model3dId: { userId, model3dId } },
+    select: { type: true },
+  });
+
+  if (!engagement)
+    await dbWrite.model3DEngagement
+      .create({ data: { userId, model3dId, type: 'Hide' } })
+      // Toggle racing itself → P2002 on the (userId, model3dId) PK. Idempotent
+      // (Hide already exists) — fall through to the cache refresh.
+      .catch((error) => {
+        if (!isPrismaUniqueViolation(error)) throw error;
+      });
+  else if (engagement.type === 'Hide')
+    await dbWrite.model3DEngagement.delete({
+      where: { userId_model3dId: { userId, model3dId } },
+    });
+  else
+    await dbWrite.model3DEngagement.update({
+      where: { userId_model3dId: { userId, model3dId } },
+      data: { type: 'Hide' },
+    });
+
+  await HiddenModel3Ds.refreshCache({ userId });
 
   return {
     added: [],
@@ -597,9 +689,16 @@ async function toggleHideUser({
     select: { type: true },
   });
   if (!engagement)
-    await dbWrite.userEngagement.create({
-      data: { userId, targetUserId, type: 'Hide' },
-    });
+    await dbWrite.userEngagement
+      .create({
+        data: { userId, targetUserId, type: 'Hide' },
+      })
+      // Toggle racing itself → P2002 on the (userId, targetUserId) PK. The row
+      // already exists — idempotent, so fall through to the cache refreshes
+      // (which read DB truth) instead of bubbling a 500.
+      .catch((error) => {
+        if (!isPrismaUniqueViolation(error)) throw error;
+      });
   else if (engagement.type === 'Hide' && setTo !== true)
     await dbWrite.userEngagement.delete({
       where: { userId_targetUserId: { userId, targetUserId } },
@@ -644,9 +743,16 @@ async function toggleBlockUser({
     select: { type: true },
   });
   if (!engagement)
-    await dbWrite.userEngagement.create({
-      data: { userId, targetUserId, type: 'Block' },
-    });
+    await dbWrite.userEngagement
+      .create({
+        data: { userId, targetUserId, type: 'Block' },
+      })
+      // Toggle racing itself → P2002 on the (userId, targetUserId) PK. The row
+      // already exists — idempotent, so fall through to the cache refreshes
+      // (which read DB truth) instead of bubbling a 500.
+      .catch((error) => {
+        if (!isPrismaUniqueViolation(error)) throw error;
+      });
   else if (engagement.type === 'Block' && setTo !== true)
     await dbWrite.userEngagement.delete({
       where: { userId_targetUserId: { userId, targetUserId } },
@@ -679,7 +785,13 @@ async function toggleHideImage({
     select: { type: true },
   });
   if (!engagement)
-    await dbWrite.imageEngagement.create({ data: { userId, imageId, type: 'Hide' } });
+    await dbWrite.imageEngagement
+      .create({ data: { userId, imageId, type: 'Hide' } })
+      // Toggle racing itself → P2002 on the (userId, imageId) PK. Idempotent
+      // (Hide already exists) — fall through to the cache refresh.
+      .catch((error) => {
+        if (!isPrismaUniqueViolation(error)) throw error;
+      });
   else if (engagement.type === 'Hide')
     await dbWrite.imageEngagement.delete({
       where: { userId_imageId: { userId, imageId } },

@@ -66,6 +66,9 @@ export const postSelect = Prisma.validator<Prisma.PostSelect>()({
   user: { select: userWithCosmeticsSelect },
   publishedAt: true,
   availability: true,
-  tags: { select: { tag: { select: simpleTagSelect } } },
+  // where: { tag: { is: {} } } drops orphaned TagsOnPost join rows (tagId → hard-deleted
+  // Tag); the required `tag` relation would otherwise throw "Inconsistent query result" →
+  // 500. Same class/fix as articleDetailSelect.
+  tags: { select: { tag: { select: simpleTagSelect } }, where: { tag: { is: {} } } },
   collectionId: true,
 });

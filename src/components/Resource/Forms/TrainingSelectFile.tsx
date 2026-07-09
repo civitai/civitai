@@ -1,22 +1,30 @@
 import {
+  ActionIcon,
   Button,
   Center,
   Flex,
   Group,
   Image,
   Loader,
+  Menu,
   Paper,
+  ScrollArea,
   Stack,
   Text,
   Textarea,
   Title,
+  Tooltip,
 } from '@mantine/core';
 import {
   IconAlertCircle,
   IconAlertTriangle,
   IconArrowRight,
+  IconBrush,
+  IconDotsVertical,
   IconFileDownload,
+  IconRepeat,
 } from '@tabler/icons-react';
+import { CopyButton } from '~/components/CopyButton/CopyButton';
 import clsx from 'clsx';
 import dayjs from '~/shared/utils/dayjs';
 import { useRouter } from 'next/router';
@@ -28,13 +36,24 @@ import type { ModelWithTags } from '~/components/Resource/Wizard/ModelWizard';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { SubscriptionRequiredBlock } from '~/components/Subscriptions/SubscriptionRequiredBlock';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { canGenerateWithEpoch } from '~/server/common/model-helpers';
 import { pickBestTrainingFile, type TrainingResultsV2 } from '~/server/schema/model-file.schema';
-import type { ModelVersionUpsertInput } from '~/server/schema/model-version.schema';
-import { TrainingStatus } from '~/shared/utils/prisma/enums';
+import type { ModelFileCreateInput } from '~/server/schema/model-file.schema';
+import type {
+  ModelVersionUpsertInput,
+  TrainingDetailsObj,
+} from '~/server/schema/model-version.schema';
+import { getEpochJobAndFileName } from '~/server/utils/model-helpers';
+import type { BaseModel } from '~/shared/constants/basemodel.constants';
+import { stringifyAIR } from '~/shared/utils/air';
+import { ModelType, ModelUploadType, TrainingStatus } from '~/shared/utils/prisma/enums';
 import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
+import { buildContinuationRunUpdate, trainingStore } from '~/store/training.store';
+import { basePath as trainWizardBasePath } from '~/components/Training/Form/TrainingCommon';
+import type { TrainingBaseModelType } from '~/utils/training';
 import type { ModelVersionById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { getModelFileFormat } from '~/utils/file-helpers';
@@ -51,6 +70,8 @@ const EpochRow = ({
   selectedFile,
   setSelectedFile,
   onPublishClick,
+  onContinueTraining,
+  continueLoading,
   loading,
   incomplete,
   modelId,
@@ -64,6 +85,9 @@ const EpochRow = ({
   selectedFile: string | undefined;
   setSelectedFile: React.Dispatch<React.SetStateAction<string | undefined>>;
   onPublishClick: (modelUrl: string) => void;
+  /** Steps-pricing (AI Toolkit only): start a new training run continuing from this epoch. */
+  onContinueTraining?: (epoch: TrainingResultsV2['epochs'][number]) => void;
+  continueLoading?: boolean;
   loading?: boolean;
   incomplete?: boolean;
   modelId: number;
@@ -73,6 +97,9 @@ const EpochRow = ({
   modelName: string;
 }) => {
   const currentUser = useCurrentUser();
+  // On small containers the 4 labeled actions overflow the card, so collapse the
+  // secondary ones (Download/Generate/Train Further) into a ⋯ menu next to Continue.
+  const isMobile = useIsMobile();
 
   const handleDownload = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -98,41 +125,132 @@ const EpochRow = ({
       onClick={() => setSelectedFile(epoch.modelUrl)}
     >
       <Stack>
-        <Group justify="space-between" className={classes.epochRow}>
-          <Text fz="md" fw={700}>
+        <Group justify="space-between" wrap="nowrap">
+          <Text fz="md" fw={700} style={{ flexShrink: 0 }}>
             Epoch #{epoch.epochNumber}
           </Text>
-          <Group gap={8} wrap="nowrap">
-            <DownloadButton onClick={handleDownload} canDownload variant="light">
-              <Text align="center">
-                {epoch.modelSize > 0
-                  ? `Download (${formatKBytes(bytesToKB(epoch.modelSize))})`
-                  : 'Download'}
-              </Text>
-            </DownloadButton>
-            {canGenerate && (
-              <SubscriptionRequiredBlock feature="private-models">
-                {/* TODO will this work? */}
-                <GenerateButton
-                  versionId={modelVersionId}
-                  modelId={modelId}
-                  disabled={!currentUser?.isMember && !currentUser?.isModerator}
-                  epochNumber={epoch.epochNumber}
-                  data-activity="create:training-select"
-                />
-              </SubscriptionRequiredBlock>
-            )}
-            <Button
-              disabled={incomplete}
-              loading={loading}
-              onClick={() => onPublishClick(epoch.modelUrl)}
-            >
-              <Group gap={4} wrap="nowrap">
-                Continue
-                <IconArrowRight size={20} />
-              </Group>
-            </Button>
-          </Group>
+          {isMobile ? (
+            <Group gap={8} wrap="nowrap">
+              <Button
+                disabled={incomplete}
+                loading={loading}
+                onClick={() => onPublishClick(epoch.modelUrl)}
+              >
+                <Group gap={4} wrap="nowrap">
+                  Continue
+                  <IconArrowRight size={20} />
+                </Group>
+              </Button>
+              <Menu position="bottom-end" withinPortal>
+                <Menu.Target>
+                  <ActionIcon
+                    size="lg"
+                    variant="light"
+                    aria-label="More epoch actions"
+                    onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                  >
+                    <IconDotsVertical size={18} />
+                  </ActionIcon>
+                </Menu.Target>
+                <Menu.Dropdown>
+                  <Menu.Item leftSection={<IconFileDownload size={16} />} onClick={handleDownload}>
+                    {epoch.modelSize > 0
+                      ? `Download (${formatKBytes(bytesToKB(epoch.modelSize))})`
+                      : 'Download'}
+                  </Menu.Item>
+                  {canGenerate && (
+                    <SubscriptionRequiredBlock feature="private-models">
+                      <GenerateButton
+                        versionId={modelVersionId}
+                        modelId={modelId}
+                        epochNumber={epoch.epochNumber}
+                        data-activity="create:training-select"
+                      >
+                        <Menu.Item
+                          leftSection={<IconBrush size={16} />}
+                          disabled={!currentUser?.isMember && !currentUser?.isModerator}
+                        >
+                          Generate
+                        </Menu.Item>
+                      </GenerateButton>
+                    </SubscriptionRequiredBlock>
+                  )}
+                  {!!onContinueTraining && (
+                    <Menu.Item
+                      leftSection={<IconRepeat size={16} />}
+                      c="violet"
+                      disabled={continueLoading}
+                      onClick={(e: React.MouseEvent) => {
+                        e.stopPropagation();
+                        onContinueTraining(epoch);
+                      }}
+                    >
+                      Train Further
+                    </Menu.Item>
+                  )}
+                </Menu.Dropdown>
+              </Menu>
+            </Group>
+          ) : (
+            <Group gap={8} wrap="nowrap">
+              <DownloadButton onClick={handleDownload} canDownload variant="light">
+                <Text align="center">
+                  {epoch.modelSize > 0
+                    ? `Download (${formatKBytes(bytesToKB(epoch.modelSize))})`
+                    : 'Download'}
+                </Text>
+              </DownloadButton>
+              {canGenerate && (
+                <SubscriptionRequiredBlock feature="private-models">
+                  {/* TODO will this work? */}
+                  <GenerateButton
+                    versionId={modelVersionId}
+                    modelId={modelId}
+                    disabled={!currentUser?.isMember && !currentUser?.isModerator}
+                    epochNumber={epoch.epochNumber}
+                    data-activity="create:training-select"
+                    // Default render uses padding '12px 20px' on a fixed-height button, which
+                    // clips the 20px brush icon. py={8} gives the icon room (matches the same
+                    // fix applied to GenerateButton in ModelVersionDetails).
+                    py={8}
+                  />
+                </SubscriptionRequiredBlock>
+              )}
+              {!!onContinueTraining && (
+                <Tooltip
+                  label="Start a new training run that picks up from this epoch instead of the base model"
+                  withArrow
+                  multiline
+                  maw={250}
+                >
+                  <Button
+                    variant="light"
+                    color="violet"
+                    loading={continueLoading}
+                    onClick={(e: React.MouseEvent) => {
+                      e.stopPropagation();
+                      onContinueTraining(epoch);
+                    }}
+                  >
+                    <Group gap={4} wrap="nowrap">
+                      <IconRepeat size={18} />
+                      Train Further
+                    </Group>
+                  </Button>
+                </Tooltip>
+              )}
+              <Button
+                disabled={incomplete}
+                loading={loading}
+                onClick={() => onPublishClick(epoch.modelUrl)}
+              >
+                <Group gap={4} wrap="nowrap">
+                  Continue
+                  <IconArrowRight size={20} />
+                </Group>
+              </Button>
+            </Group>
+          )}
         </Group>
         <Group
           className={classes.epochRow}
@@ -184,6 +302,66 @@ const EpochRow = ({
           )}
         </Group>
       </Stack>
+    </Paper>
+  );
+};
+
+// Read-only list of the sample-image prompts the user configured for this training.
+// Surfaced when a training fails before any epoch completes so the prompts (which are
+// still saved server-side) remain recoverable without inspecting the page source.
+const SamplePromptsPanel = ({ prompts }: { prompts: string[] }) => {
+  const nonEmptyPrompts = prompts.filter((p) => p.trim().length > 0);
+  if (!nonEmptyPrompts.length) return null;
+
+  return (
+    <Paper p="md" radius="md" withBorder className="w-full max-w-2xl">
+      <Group justify="space-between" mb="xs">
+        <Text fw={600}>Your saved sample prompts</Text>
+        <CopyButton value={nonEmptyPrompts.join('\n')}>
+          {({ copy, copied, Icon, color }) => (
+            <Tooltip label={copied ? 'Copied' : 'Copy all prompts'} withArrow>
+              <Button
+                size="compact-sm"
+                variant="light"
+                color={color}
+                leftSection={<Icon size={16} />}
+                onClick={copy}
+              >
+                Copy all
+              </Button>
+            </Tooltip>
+          )}
+        </CopyButton>
+      </Group>
+      <Text size="sm" c="dimmed" mb="sm">
+        The training failed before any sample images were generated, but these are the prompts you
+        configured. You can copy them to reuse if you submit the training again.
+      </Text>
+      <ScrollArea.Autosize mah={260}>
+        <Stack gap="xs">
+          {nonEmptyPrompts.map((prompt, index) => (
+            <Group key={index} gap="xs" align="flex-start" wrap="nowrap">
+              <CopyButton value={prompt}>
+                {({ copy, copied, Icon, color }) => (
+                  <Tooltip label={copied ? 'Copied' : 'Copy prompt'} withArrow>
+                    <ActionIcon variant="subtle" color={color} onClick={copy} mt={4}>
+                      <Icon size={16} />
+                    </ActionIcon>
+                  </Tooltip>
+                )}
+              </CopyButton>
+              <Textarea
+                className="flex-1"
+                autosize
+                minRows={1}
+                maxRows={4}
+                value={prompt}
+                readOnly
+              />
+            </Group>
+          ))}
+        </Stack>
+      </ScrollArea.Autosize>
     </Paper>
   );
 };
@@ -260,6 +438,131 @@ export default function TrainingSelectFile({
   });
 
   const moveAssetMutation = trpc.training.moveAsset.useMutation();
+
+  // -- "Train Further" (steps-based pricing, AI Toolkit only) --------------------------
+  // Starts a new training run that continues from a selected epoch: creates a new Pending
+  // version under the same model, clones the training dataset file, seeds the training
+  // store with `continueFrom`, and drops the user into the training wizard's submit step.
+  const continueVersionMutation = trpc.modelVersion.upsert.useMutation();
+  const continueFileMutation = trpc.modelFile.create.useMutation();
+  const [continuingFrom, setContinuingFrom] = useState<number | undefined>();
+
+  const thisTrainingDetails = modelVersion.trainingDetails as TrainingDetailsObj | undefined;
+  const trainingEnded =
+    modelVersion.trainingStatus === TrainingStatus.InReview ||
+    modelVersion.trainingStatus === TrainingStatus.Approved ||
+    modelVersion.trainingStatus === TrainingStatus.Failed;
+  const canTrainFurther =
+    features.trainingStepsPricing &&
+    trainingEnded &&
+    thisTrainingDetails?.params?.engine === 'ai-toolkit';
+
+  const handleContinueTraining = async (epoch: TrainingResultsV2['epochs'][number]) => {
+    if (continuingFrom !== undefined) return;
+    const base = thisTrainingDetails?.baseModel;
+    if (!modelFile || !thisTrainingDetails || !base) {
+      showErrorNotification({
+        error: new Error('Missing training data for this model version.'),
+        autoClose: false,
+      });
+      return;
+    }
+    setContinuingFrom(epoch.epochNumber);
+
+    try {
+      const mediaType = thisTrainingDetails.mediaType ?? 'image';
+      // 'sd15' matches the server-side default in createTrainingWorkflow for versions
+      // that predate baseModelType.
+      const baseType = (thisTrainingDetails.baseModelType ?? 'sd15') as TrainingBaseModelType;
+
+      // The orchestrator expects `continueFrom` as an AIR referencing the LoRA — the same
+      // orchestrator-sourced AIR generation builds for epoch resources — not a file URL.
+      const epochJobFile = getEpochJobAndFileName(epoch.modelUrl);
+      if (!epochJobFile) {
+        throw new Error('Could not resolve a resource reference for this epoch.');
+      }
+      const continueFromAir = stringifyAIR({
+        baseModel: modelVersion.baseModel,
+        type: (model as { type?: ModelType }).type ?? ModelType.LORA,
+        modelId: epochJobFile.jobId,
+        id: epochJobFile.fileName,
+        source: 'orchestrator',
+      });
+
+      // Same shape TrainingBasicInfo creates, so the training wizard treats the new
+      // version as the active (Pending) one.
+      const versionData: ModelVersionUpsertInput = {
+        modelId: model.id,
+        name: `${modelVersion.name} (from epoch ${epoch.epochNumber})`,
+        baseModel: modelVersion.baseModel as BaseModel,
+        trainedWords: (modelVersion as { trainedWords?: string[] }).trainedWords ?? [],
+        trainingStatus: TrainingStatus.Pending,
+        trainingDetails: {
+          type: thisTrainingDetails.type,
+          mediaType,
+          baseModel: base,
+          baseModelType: thisTrainingDetails.baseModelType,
+          continueFromEpoch: {
+            air: continueFromAir,
+            epochNumber: epoch.epochNumber,
+            sourceModelVersionId: modelVersion.id,
+            sourceVersionName: modelVersion.name,
+          },
+        },
+        uploadType: ModelUploadType.Trained,
+      };
+      const newVersion = await continueVersionMutation.mutateAsync(versionData);
+
+      // Clone the dataset file onto the new version. Drop trainingResults from the copied
+      // metadata — those belong to the source run and would pollute the new run's epoch
+      // list until the orchestrator webhook overwrites them.
+      const { trainingResults: _omit, ...cleanMetadata } = (modelFile.metadata ??
+        {}) as FileMetadata;
+      const fileData: ModelFileCreateInput = {
+        name: `${newVersion.id}_training_data.zip`,
+        url: modelFile.url,
+        sizeKB: modelFile.sizeKB,
+        type: 'Training Data',
+        modelVersionId: newVersion.id,
+        visibility: modelFile.visibility,
+        metadata: cleanMetadata,
+      };
+      await continueFileMutation.mutateAsync(fileData);
+
+      // Seed the submit form: steps-pricing defaults + continueFrom, reusing the source
+      // run's base model and prompts. The same seeding runs reload-safe on Step 3
+      // (TrainingSubmit) via the shared helper, so the in-memory store being cleared on a
+      // refresh/deep-link can't silently fall back to the default SDXL base.
+      trainingStore.resetRuns(model.id, mediaType);
+      trainingStore.updateRun(
+        model.id,
+        mediaType,
+        1,
+        buildContinuationRunUpdate({
+          base,
+          baseType,
+          continueFromAir,
+          samplePrompts: thisTrainingDetails.samplePrompts,
+          negativePrompt: thisTrainingDetails.negativePrompt,
+        })
+      );
+
+      await queryUtils.training.getModelBasic.invalidate({ id: model.id });
+      // Explicit version handoff — the train wizard pins this version rather than
+      // assuming the newest one is the active training.
+      await router.push(
+        `${trainWizardBasePath}?modelId=${model.id}&modelVersionId=${newVersion.id}&step=3`
+      );
+    } catch (e) {
+      const error = e as Error;
+      showErrorNotification({
+        title: 'Failed to start continued training',
+        error: new Error(error.message),
+        autoClose: false,
+      });
+      setContinuingFrom(undefined);
+    }
+  };
 
   const handleSubmit = async (overrideFile?: string) => {
     const fileUrl = overrideFile || selectedFile;
@@ -453,12 +756,21 @@ export default function TrainingSelectFile({
   // Only show blocking error for Paused, Denied, or Failed without epochs
   const showBlockingError = !!errorMessage && !hasFailedWithEpochs;
 
+  // When a training fails before completing a single epoch, the user's configured sample
+  // prompts are still saved server-side but are otherwise only visible in the page source.
+  // Surface them so they can be copied/reused (Freshdesk #66457).
+  const showFailedSamplePrompts =
+    modelVersion.trainingStatus === TrainingStatus.Failed &&
+    noEpochs &&
+    samplePrompts.some((p) => p.trim().length > 0);
+
   return (
     <Stack>
       {showBlockingError ? (
         <Stack p="xl" align="center">
           <IconAlertCircle size={52} />
           <Text>{errorMessage}</Text>
+          {showFailedSamplePrompts && <SamplePromptsPanel prompts={samplePrompts} />}
         </Stack>
       ) : noEpochs ? (
         <Stack p="xl" align="center">
@@ -583,6 +895,8 @@ export default function TrainingSelectFile({
             selectedFile={selectedFile}
             setSelectedFile={setSelectedFile}
             onPublishClick={handleSubmit}
+            onContinueTraining={canTrainFurther ? handleContinueTraining : undefined}
+            continueLoading={continuingFrom === epochs[0].epochNumber}
             loading={awaitInvalidate}
             incomplete={resultsLoading}
             modelId={model.id}
@@ -606,6 +920,8 @@ export default function TrainingSelectFile({
                   selectedFile={selectedFile}
                   setSelectedFile={setSelectedFile}
                   onPublishClick={handleSubmit}
+                  onContinueTraining={canTrainFurther ? handleContinueTraining : undefined}
+                  continueLoading={continuingFrom === e.epochNumber}
                   loading={awaitInvalidate}
                   incomplete={resultsLoading}
                   modelId={model.id}

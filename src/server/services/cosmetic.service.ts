@@ -8,6 +8,7 @@ import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   EquipCosmeticInput,
   GetPaginatedCosmeticsInput,
+  GrantCosmeticsToUsersInput,
 } from '~/server/schema/cosmetic.schema';
 import {
   articlesSearchIndex,
@@ -203,6 +204,55 @@ export const grantCosmetics = async ({
 };
 
 /**
+ * Grant multiple cosmetics to multiple users (moderator tool). Grants the full
+ * cross product (every cosmetic to every user). Validates that all cosmetic and
+ * user IDs exist, reporting which are missing rather than silently skipping.
+ *
+ * The underlying insert is idempotent (ON CONFLICT DO NOTHING), so pairs the
+ * user already owns are skipped by the database; we count the existing rows
+ * beforehand to report newly granted vs already owned.
+ */
+export async function grantCosmeticsToUsers({ userIds, cosmeticIds }: GrantCosmeticsToUsersInput) {
+  const uniqueUserIds = [...new Set(userIds)];
+  const uniqueCosmeticIds = [...new Set(cosmeticIds)];
+
+  const cosmetics = await dbRead.cosmetic.findMany({
+    where: { id: { in: uniqueCosmeticIds } },
+    select: { id: true },
+  });
+  const missingCosmeticIds = uniqueCosmeticIds.filter((id) => !cosmetics.some((c) => c.id === id));
+  if (missingCosmeticIds.length)
+    throw new Error(`These cosmetics don't exist: ${missingCosmeticIds.join(', ')}`);
+
+  const users = await dbRead.user.findMany({
+    where: { id: { in: uniqueUserIds } },
+    select: { id: true },
+  });
+  const missingUserIds = uniqueUserIds.filter((id) => !users.some((u) => u.id === id));
+  if (missingUserIds.length)
+    throw new Error(`These users don't exist: ${missingUserIds.join(', ')}`);
+
+  const alreadyOwned = await dbWrite.userCosmetic.count({
+    where: {
+      userId: { in: uniqueUserIds },
+      cosmeticId: { in: uniqueCosmeticIds },
+      claimKey: 'claimed',
+    },
+  });
+
+  for (const userId of uniqueUserIds) {
+    await grantCosmetics({ userId, cosmeticIds: uniqueCosmeticIds });
+  }
+
+  const totalPairs = uniqueUserIds.length * uniqueCosmeticIds.length;
+  return {
+    totalPairs,
+    alreadyOwned,
+    newlyGranted: totalPairs - alreadyOwned,
+  };
+}
+
+/**
  * Resolve a target descriptor (collection of approved items, or explicit
  * userIds) to the set of users that should receive a cosmetic, then grant it.
  *
@@ -235,7 +285,11 @@ export async function assignCosmeticByTarget({
       FROM "CollectionItem" ci
       WHERE ci."collectionId" = ${target.collectionId}
         AND ci."addedById" IS NOT NULL
-        ${requireApproved ? Prisma.sql`AND ci."status" = 'ACCEPTED'::"CollectionItemStatus"` : Prisma.empty}
+        ${
+          requireApproved
+            ? Prisma.sql`AND ci."status" = 'ACCEPTED'::"CollectionItemStatus"`
+            : Prisma.empty
+        }
     `;
     userIds = rows.map((r) => r.userId);
   }
@@ -277,9 +331,7 @@ export async function unassignCosmetic({
   return { count: result.count };
 }
 
-export async function createCosmetic(
-  data: Prisma.CosmeticUncheckedCreateInput
-) {
+export async function createCosmetic(data: Prisma.CosmeticUncheckedCreateInput) {
   const cosmetic = await dbWrite.cosmetic.create({ data });
   return cosmetic;
 }

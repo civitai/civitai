@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import { v4 as uuid } from 'uuid';
 import { NotificationCategory } from '~/server/common/enums';
 import { reportAcceptedReward } from '~/server/rewards';
@@ -25,6 +25,7 @@ import {
   HiddenUsers,
 } from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 import type { ReportReason, ReportStatus, ReviewReactions } from '~/shared/utils/prisma/enums';
 
@@ -52,7 +53,11 @@ export const getComments = async <TSelect extends Prisma.CommentSelect>({
   const hiddenUsers = (await HiddenUsers.getCached({ userId: user?.id })).map((x) => x.id);
   const blockedByUsers = (await BlockedByUsers.getCached({ userId: user?.id })).map((x) => x.id);
   const blockedUsers = (await BlockedUsers.getCached({ userId: user?.id })).map((x) => x.id);
-  const excludedUserIds = [...hiddenUsers, ...blockedByUsers, ...blockedUsers];
+  // De-dupe + cap the exclusion list so the `userId: { notIn: [...] }` negation below stays
+  // under the Postgres bind-parameter limit (a heavily-blocked viewer's combined list can
+  // otherwise overflow → Prisma P2029 → 500). Ordering is a load-bearing safety priority —
+  // see boundExcludedUserIds.
+  const excludedUserIds = boundExcludedUserIds(hiddenUsers, blockedByUsers, blockedUsers);
 
   if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
 

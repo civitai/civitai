@@ -63,7 +63,7 @@ function ProfileOverview() {
     );
   }
 
-  if (!isLoading && !user) {
+  if (!user) {
     return <NotFound />;
   }
 

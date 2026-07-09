@@ -40,6 +40,7 @@ import type { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
 import { handleLogError } from '~/server/utils/errorHandling';
+import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
 import { NsfwLevel } from '~/server/common/enums';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
@@ -204,11 +205,14 @@ export const getBountyEntriesHandler = async ({
     const blockedByUsers = (await BlockedByUsers.getCached({ userId: ctx.user?.id })).map(
       (u) => u.id
     );
+    // Bound the (involuntary, unbounded) blocked-by list before it feeds the downstream
+    // Prisma `notIn` in getAllEntriesByBountyId — same P2029 class as comment.getAll.
+    const excludedUserIds = boundExcludedUserIds([], blockedByUsers, []);
     const entries = await getAllEntriesByBountyId({
       input: {
         bountyId: input.id,
         userId: input.owned ? ctx.user?.id : undefined,
-        excludedUserIds: blockedByUsers,
+        excludedUserIds,
         cursor: input.cursor,
         limit,
       },

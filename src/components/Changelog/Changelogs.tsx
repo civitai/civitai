@@ -1,3 +1,4 @@
+import { keepPreviousData } from '@tanstack/react-query';
 import type { MantineColor } from '@mantine/core';
 import {
   ActionIcon,
@@ -335,8 +336,8 @@ const CreateChangelog = ({
 
   const { data: tagData = [], isLoading: loadingTagData } = trpc.changelog.getAllTags.useQuery();
 
-  const { mutate, isLoading } = trpc.changelog.create.useMutation();
-  const { mutate: update, isLoading: isLoadingUpdate } = trpc.changelog.update.useMutation();
+  const { mutate, isPending: isLoading } = trpc.changelog.create.useMutation();
+  const { mutate: update, isPending: isLoadingUpdate } = trpc.changelog.update.useMutation();
 
   const form = useForm({
     schema,
@@ -447,7 +448,15 @@ const CreateChangelog = ({
                 name="content"
                 label="Content"
                 editorSize="xl"
-                includeControls={['heading', 'formatting', 'list', 'link', 'media', 'colors']} // mentions, polls
+                includeControls={[
+                  'heading',
+                  'formatting',
+                  'list',
+                  'link',
+                  'media',
+                  'colors',
+                  'timestamp',
+                ]} // mentions, polls
                 withAsterisk
                 stickyToolbar
               />
@@ -544,7 +553,7 @@ export function Changelogs() {
       { ...debouncedFilters },
       {
         getNextPageParam: (lastPage) => lastPage.nextCursor,
-        keepPreviousData: true,
+        placeholderData: keepPreviousData,
         // trpc: { context: { skipBatch: true } },
       }
     );

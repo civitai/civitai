@@ -72,6 +72,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({
+  requireModerator: true,
   useSession: true,
   resolver: async ({ session }) => {
     if (!session || !session.user?.isModerator)
@@ -325,7 +326,7 @@ function FocusedRun({
         </Container>
       </ScrollArea>
       <ActionFooter
-        disabled={upsertVerdict.isLoading}
+        disabled={upsertVerdict.isPending}
         onNo={() => submitAnswer(false)}
         onYes={() => submitAnswer(true)}
         onSkip={skip}

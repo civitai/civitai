@@ -94,6 +94,13 @@ export const challengeMetadataSchema = z.object({
   articleId: z.number().optional(),
   themeElements: z.array(z.string()).optional(),
   completionSummary: challengeCompletionSummarySchema.optional(),
+  reconciliation: z
+    .object({
+      paidUserIds: z.array(z.number()).optional(),
+      lastRunAt: z.string().optional(),
+      done: z.boolean().optional(),
+    })
+    .optional(),
 });
 export type ChallengeMetadata = z.infer<typeof challengeMetadataSchema>;
 

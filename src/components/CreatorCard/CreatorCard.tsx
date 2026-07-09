@@ -8,7 +8,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { constants } from '~/server/common/constants';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { formatDate } from '~/utils/date-helpers';
-import { sortDomainLinks } from '~/utils/domain-link';
+import { getDomainLinkLabel, sortDomainLinks } from '~/utils/domain-link';
 import { trpc } from '~/utils/trpc';
 import { TipBuzzButton } from '../Buzz/TipBuzzButton';
 import { UserStatBadges } from '../UserStatBadges/UserStatBadges';
@@ -114,6 +114,7 @@ export function CreatorCard({
                 target="_blank"
                 rel="nofollow noreferrer"
                 size={32}
+                aria-label={getDomainLinkLabel(link)}
               >
                 <DomainIcon domain={link.domain} size={20} />
               </LegacyActionIcon>

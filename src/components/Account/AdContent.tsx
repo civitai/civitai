@@ -32,7 +32,7 @@ export function AdContent() {
           label="Allow on-site ads"
           checked={allowAds}
           onChange={handleToggleAds}
-          disabled={updateUserSettingsMutation.isLoading}
+          disabled={updateUserSettingsMutation.isPending}
         />
       </div>
     </div>

@@ -3,7 +3,7 @@ import { spawnSync } from 'child_process';
 const spawnOptions = { stdio: 'inherit', shell: true };
 
 // Get the last migration folder in the /migrations directory
-const migrations = await readdir('prisma/migrations', { withFileTypes: true });
+const migrations = await readdir('packages/civitai-db-schema/prisma/migrations', { withFileTypes: true });
 const lastMigration = migrations.filter((dirent) => dirent.isDirectory()).sort((a, b) => b.name.localeCompare(a.name))[0].name;
 
 console.log(`Marking migration "${lastMigration}" as applied...`);

@@ -47,7 +47,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
   const { data: { Recommended: reviewedModels = [] } = { Recommended: [] } } =
     trpc.user.getEngagedModels.useQuery(undefined, {
       enabled: !!currentUser,
-      cacheTime: Infinity,
+      gcTime: Infinity,
       staleTime: Infinity,
     });
 
@@ -80,7 +80,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
     );
   }, [data, reviewedModels]);
 
-  const { mutate, isLoading: removingResource } = trpc.image.removeResource.useMutation();
+  const { mutate, isPending: removingResource } = trpc.image.removeResource.useMutation();
   const handleRemoveResource = (modelVersionId: number) => {
     setSelectedResource(modelVersionId);
     openConfirmModal({

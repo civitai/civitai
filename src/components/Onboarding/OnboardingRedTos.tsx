@@ -24,7 +24,7 @@ import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/Ty
 
 export function OnboardingRedTos() {
   const { next } = useOnboardingContext();
-  const { mutate, isLoading } = useOnboardingStepCompleteMutation();
+  const { mutate, isPending: isLoading } = useOnboardingStepCompleteMutation();
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
 

@@ -52,12 +52,7 @@ export function CivitaiLinkResourceManager({
   // const activities: Response[] = [];
   const { data, refetch, isFetched, isFetching, error } = trpc.model.getDownloadCommand.useQuery(
     { modelId, modelVersionId },
-    {
-      enabled: false,
-      onSuccess(data) {
-        runAddCommands(data?.commands);
-      },
-    }
+    { enabled: false }
   );
 
   useEffect(() => {
@@ -72,10 +67,13 @@ export function CivitaiLinkResourceManager({
     for (const command of commands) await runCommand(command);
   };
 
-  const addResource = () => {
+  const addResource = async () => {
     if (resource) return;
-    if (!isFetched) refetch();
-    else if (data) runAddCommands(data.commands);
+    // v5: query onSuccess removed — run commands from the manual refetch result.
+    if (!isFetched) {
+      const res = await refetch();
+      runAddCommands(res.data?.commands);
+    } else if (data) runAddCommands(data.commands);
     else showNotification({ message: `Could not get commands` });
   };
 

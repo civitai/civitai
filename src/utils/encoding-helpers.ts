@@ -47,19 +47,6 @@ import { isDefined } from '~/utils/type-guards';
 //   return result;
 // }
 
-export function decodeUTF32LE(buffer: Uint8Array): string {
-  let result = '';
-  const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-
-  for (let i = 0; i + 3 < buffer.byteLength; i += 4) {
-    const codePoint = view.getUint32(i, true); // little-endian
-    if (codePoint === 0) continue; // skip nulls/padding
-    result += String.fromCodePoint(codePoint);
-  }
-
-  return result;
-}
-
 export function decodeUserComment(buffer: Uint8Array): string {
   if (buffer.length < 8) return '';
 
@@ -69,8 +56,27 @@ export function decodeUserComment(buffer: Uint8Array): string {
   if (header.startsWith('ASCII')) return new TextDecoder('ascii').decode(content);
   if (header.startsWith('UTF8')) return new TextDecoder('utf-8').decode(content);
 
-  // For UNICODE header (old and new images), decode as UTF-32LE
-  return decodeUTF32LE(content);
+  // Check for BOM (Byte Order Mark) for UTF-16
+  if (content.length >= 2) {
+    if (content[0] === 0xFE && content[1] === 0xFF) {
+      return new TextDecoder('utf-16be').decode(content.subarray(2)).replace(/\0/g, '');
+    }
+    if (content[0] === 0xFF && content[1] === 0xFE) {
+      return new TextDecoder('utf-16le').decode(content.subarray(2)).replace(/\0/g, '');
+    }
+  }
+
+  // Heuristic: count null bytes at even vs odd offsets to determine UTF-16 endianness
+  let evenZeros = 0;
+  let oddZeros = 0;
+  const limit = Math.min(content.length, 1000);
+  for (let i = 0; i + 1 < limit; i += 2) {
+    if (content[i] === 0) evenZeros++;
+    if (content[i + 1] === 0) oddZeros++;
+  }
+
+  const encoding = oddZeros > evenZeros ? 'utf-16le' : 'utf-16be';
+  return new TextDecoder(encoding).decode(content).replace(/\0/g, '');
 }
 
 const prefix = [0x55, 0x4e, 0x49, 0x43, 0x4f, 0x44, 0x45, 0x00]; // UNICODE\0

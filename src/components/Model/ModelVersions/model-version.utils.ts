@@ -26,7 +26,7 @@ export const useQueryModelVersionsEngagement = (
     { id: modelId },
     {
       enabled: !!currentUser && options?.enabled,
-      cacheTime: Infinity,
+      gcTime: Infinity,
       staleTime: Infinity,
     }
   );
@@ -120,7 +120,7 @@ export const useMutateModelVersion = () => {
 
   return {
     modelVersionEarlyAccessPurchase: handleModelVersionEarlyAccessPurchase,
-    purchasingModelVersionEarlyAccess: modelVersionEarlyAccessPurchaseMutation.isLoading,
+    purchasingModelVersionEarlyAccess: modelVersionEarlyAccessPurchaseMutation.isPending,
   };
 };
 

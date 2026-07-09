@@ -1,16 +1,19 @@
 import { FliptClient } from '@flipt-io/flipt-client-js';
 import { env } from '~/env/server';
 import { logToAxiom } from '../logging/client';
+import type { AggSource } from '../../../event-engine-common/services/metrics';
 
 export enum FLIPT_FEATURE_FLAGS {
+  // Mirrors the `articleRatingDispute` fliptKey in feature-flags.service.ts so
+  // background paths (no request context) can gate on the same Flipt flag the
+  // tRPC `isFlagProtected('articleRatingDispute')` endpoints use.
+  ARTICLE_RATING_DISPUTE = 'article-rating-dispute',
   FEED_IMAGE_EXISTENCE = 'feed-image-existence',
-  ENTITY_METRIC_NO_CACHE_BUST = 'entity-metric-no-cache-bust',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
-  GIFT_CARD_VENDOR_ROYAL_CD_KEYS = 'gift-card-vendor-royal-cd-keys',
   GIFT_CARD_VENDOR_CRYPTO = 'gift-card-vendor-crypto',
   IMAGE_TRAINING = 'image-training',
   VIDEO_TRAINING = 'video-training',
@@ -31,12 +34,10 @@ export enum FLIPT_FEATURE_FLAGS {
   WAN22_TRAINING = 'wan22-training',
   IMAGE_TRAINING_RESULTS = 'image-training-results',
   CHALLENGE_PLATFORM_ENABLED = 'challenge-platform-enabled',
-  B2_UPLOAD_DEFAULT = 'b2-upload-default',
-  B2_IMAGE_UPLOAD = 'b2-image-upload',
-  B2_TRAINING_UPLOAD = 'b2-training-upload',
   COMIC_CREATOR = 'comic-creator',
   GENERATION_PRESETS = 'generation-presets',
   GENERATION_TESTING = 'generation-testing',
+  GENERATION_EXPERIMENTAL = 'generation-experimental',
   AI_TOOLKIT_DEFAULT_SD = 'ai-toolkit-default-sd',
   WAN22_MULTI_STEP = 'wan22-multi-step',
   ENHANCED_COMPATIBILITY_SDCPP = 'enhanced-compatibility-sdcpp',
@@ -53,12 +54,162 @@ export enum FLIPT_FEATURE_FLAGS {
   HIGH_REPLICATION_LAG_MODE = 'high-replication-lag-mode',
   LICENSING_FEE = 'licensing-fee',
   WILDCARDS = 'wildcards',
-  MEILI_CACHE_OPS = 'meili-cache-ops',
-  MEILI_USER_OWN_PASS = 'meili-user-own-pass',
 }
 
 const FLIPT_INIT_TIMEOUT_MS = 5000;
 const FLIPT_FAILURE_COOLDOWN_MS = 30_000;
+
+// Per-request wasm `evaluateBoolean`/`evaluateVariant` calls showed up as a
+// top-10 CPU frame under load (~1500 req/s on a single JS thread). The wasm
+// engine result for a given (flag, entityId, context) is stable between config
+// refreshes, and the client only pulls new config every `updateInterval` (60s).
+// A short in-process TTL cache collapses the wasm call rate.
+//
+// Staleness note: the TTL is ADDITIVE to the 60s config poll, not absorbed by
+// it — worst-case propagation of a flipped flag is ~(60s + TTL) per pod, and
+// pods converge independently. That's fine for gradual rollout flags; incident
+// kill-switches that must take effect ASAP are listed in BYPASS below. Tune via
+// FLIPT_EVAL_CACHE_TTL_MS (set to 0 to disable).
+const FLIPT_EVAL_CACHE_TTL_MS = (() => {
+  // parseInt is intentional (integer ms). Note a non-integer env like "0.5"
+  // parses to 0 → cache disabled, and "1e4" parses to 1 — both surprising, so
+  // the resolved value is logged below for operator visibility.
+  const parsed = parseInt(process.env.FLIPT_EVAL_CACHE_TTL_MS ?? '', 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 10_000;
+})();
+console.log(`[flipt] eval cache TTL: ${FLIPT_EVAL_CACHE_TTL_MS}ms (0 = disabled)`);
+// Per-generation entry cap. entityId/context are per-user for some flags, so the
+// keyspace is unbounded; we rotate generations at this size (see TtlCache).
+// Steady-state live entries are bounded to ~2x this; a burst of distinct
+// promoting reads with no intervening insert can transiently reach ~4x before
+// the next insert rotates — still bounded, and entries are tiny.
+const FLIPT_EVAL_CACHE_MAX = 10_000;
+
+// Flags exempt from caching: incident kill-switches where an operator expects a
+// flip to take effect ASAP and the eval is either rare (cold path) or the extra
+// staleness is not worth the CPU saved.
+// - REDIS_CLUSTER_ENHANCED_FAILOVER: evaluated only from Redis node-error/
+//   disconnect handlers (near-zero call volume → no CPU benefit) but gates
+//   failover during an incident, so caching it is all downside.
+// - HIGH_REPLICATION_LAG_MODE: an operator flips this ON during an active
+//   rep-lag incident to force RAW reads to primary; a ~70s (10s TTL + 60s poll)
+//   propagation delay prolongs the stale-read window the flag exists to close.
+//   It's only evaluated on the no-arg fallback path of getDbWithoutLag (RAW
+//   reads without per-id flagging — db-lag-helpers.ts:42,94), not the hot
+//   per-id path, so the CPU saved by caching it is modest. Correctness wins.
+//
+// NOT bypassed (deliberate): IMAGE_RESOURCE_USE_WRITE is also a global
+// replica/primary read-routing switch, but its intended flip is OFF-once-
+// backfill-complete — non-urgent and in the safe direction. It's evaluated on
+// hot image read paths (image.service.ts) with a single global key, so caching
+// gives the largest CPU win of any flag here; bypassing would re-add a
+// per-request wasm eval on the hot path. If its propagation latency ever
+// matters during an incident, lower FLIPT_EVAL_CACHE_TTL_MS globally rather
+// than bypassing this one flag.
+const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
+  FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER,
+  FLIPT_FEATURE_FLAGS.HIGH_REPLICATION_LAG_MODE,
+]);
+
+type FliptCacheEntry<T> = { value: T; expiresAt: number };
+
+// TTL cache with generational rotation instead of full-clear eviction. On
+// overflow the current generation becomes the "previous" one (the old previous
+// is dropped) and a fresh generation starts, so hot keys survive at least one
+// rotation and we never thrash to worse-than-no-cache under high key
+// cardinality. Single-threaded, so Map ops need no locking.
+class TtlCache<T> {
+  private current = new Map<string, FliptCacheEntry<T>>();
+  private previous = new Map<string, FliptCacheEntry<T>>();
+
+  get(key: string, now: number): { hit: boolean; value?: T } {
+    const cur = this.current.get(key);
+    if (cur) {
+      if (cur.expiresAt > now) return { hit: true, value: cur.value };
+      this.current.delete(key);
+    }
+    const prev = this.previous.get(key);
+    if (prev) {
+      if (prev.expiresAt > now) {
+        // Promote into the current generation so hot keys aren't lost on rotate.
+        this.previous.delete(key);
+        this.current.set(key, prev);
+        return { hit: true, value: prev.value };
+      }
+      this.previous.delete(key);
+    }
+    return { hit: false };
+  }
+
+  set(key: string, value: T, now: number): void {
+    if (FLIPT_EVAL_CACHE_TTL_MS === 0) return;
+    if (this.current.size >= FLIPT_EVAL_CACHE_MAX) {
+      this.previous = this.current;
+      this.current = new Map();
+    }
+    this.current.set(key, { value, expiresAt: now + FLIPT_EVAL_CACHE_TTL_MS });
+  }
+}
+
+const boolEvalCache = new TtlCache<boolean>();
+const variantEvalCache = new TtlCache<string | null>();
+
+// Build a collision-proof cache key. Components are URI-encoded so that a `|`,
+// `&`, or `=` inside an entityId or context value can't alias another key (the
+// context signature today is operator-controlled, but encoding makes the cache
+// safe for any future caller passing free-form values).
+function fliptCacheKey(flag: string, entityId: string, context: Record<string, string>): string {
+  const keys = Object.keys(context);
+  if (keys.length === 0) return `${flag}|${encodeURIComponent(entityId)}`;
+  const ctx = keys
+    .sort()
+    .map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(context[k])}`)
+    .join('&');
+  return `${flag}|${encodeURIComponent(entityId)}|${ctx}`;
+}
+
+// Evaluate a boolean flag against the wasm engine, memoized. Throws on engine
+// error so callers keep their existing try/catch fallback; only successful
+// evaluations are cached.
+function evalBooleanCached(
+  fliptClient: FliptClient,
+  flag: string,
+  entityId: string,
+  context: Record<string, string>
+): boolean {
+  if (FLIPT_EVAL_CACHE_BYPASS.has(flag)) {
+    return fliptClient.evaluateBoolean({ flagKey: flag, entityId, context }).enabled;
+  }
+  const now = Date.now();
+  const key = fliptCacheKey(flag, entityId, context);
+  const cached = boolEvalCache.get(key, now);
+  if (cached.hit) return cached.value as boolean;
+  const evaluation = fliptClient.evaluateBoolean({ flagKey: flag, entityId, context });
+  boolEvalCache.set(key, evaluation.enabled, now);
+  return evaluation.enabled;
+}
+
+// Evaluate a variant flag against the wasm engine, memoized. Caches the
+// post-processed result (variantKey, or null when no match).
+function evalVariantCached(
+  fliptClient: FliptClient,
+  flag: string,
+  entityId: string,
+  context: Record<string, string>
+): string | null {
+  if (FLIPT_EVAL_CACHE_BYPASS.has(flag)) {
+    const evaluation = fliptClient.evaluateVariant({ flagKey: flag, entityId, context });
+    return evaluation.match ? evaluation.variantKey : null;
+  }
+  const now = Date.now();
+  const key = fliptCacheKey(flag, entityId, context);
+  const cached = variantEvalCache.get(key, now);
+  if (cached.hit) return cached.value as string | null;
+  const evaluation = fliptClient.evaluateVariant({ flagKey: flag, entityId, context });
+  const result = evaluation.match ? evaluation.variantKey : null;
+  variantEvalCache.set(key, result, now);
+  return result;
+}
 
 // Dev-only local overrides. Set FLIPT_LOCAL_OVERRIDES in .env to short-circuit
 // flag evaluation without touching shared Flipt state (GitOps overwrites it).
@@ -168,13 +319,7 @@ export async function isFlipt(
   if (!fliptClient) return false;
 
   try {
-    const evaluation = fliptClient.evaluateBoolean({
-      flagKey: flag,
-      entityId,
-      context,
-    });
-
-    return evaluation.enabled;
+    return evalBooleanCached(fliptClient, flag, entityId, context);
   } catch (e) {
     console.error('Flipt evaluation error:', e);
     return false;
@@ -191,14 +336,7 @@ export async function getFliptVariant(
   if (!fliptClient) return null;
 
   try {
-    const evaluation = fliptClient.evaluateVariant({
-      flagKey: flag,
-      entityId,
-      context,
-    });
-
-    if (!evaluation.match) return null;
-    return evaluation.variantKey;
+    return evalVariantCached(fliptClient, flag, entityId, context);
   } catch (e) {
     console.error('Flipt variant evaluation error:', e);
     return null;
@@ -214,12 +352,7 @@ export async function getFliptBoolean(
   if (!fliptClient) return false;
 
   try {
-    const evaluation = fliptClient.evaluateBoolean({
-      flagKey: flag,
-      entityId,
-      context,
-    });
-    return evaluation.enabled;
+    return evalBooleanCached(fliptClient, flag, entityId, context);
   } catch (e) {
     return false;
   }
@@ -239,22 +372,58 @@ export function isFliptSync(
   if (!fliptClient) return null;
 
   try {
-    const evaluation = fliptClient.evaluateBoolean({
-      flagKey: flag,
-      entityId,
-      context,
-    });
-
-    return evaluation.enabled;
+    return evalBooleanCached(fliptClient, flag, entityId, context);
   } catch (e) {
-    const err = e as Error;
-    // Log unexpected errors (not just "flag not found") for observability
+    // Swallow eval errors (incl. "flag not found"); caller falls back to null
     return null;
   }
 }
 
 export async function ensureFliptInitialized(): Promise<void> {
   await FliptSingleton.getInstance();
+}
+
+// Single source of truth for which ClickHouse table the entity-metric READ path
+// pulls per-(entity,metric,day) totals from. BOTH read paths must use this:
+//   - `MetricService` (the watcher-fed `metrics:*` cache populate) — via the
+//     `aggSourceProvider` it is constructed with (image.service / bitdex-stats).
+//   - the direct CH subquery sites — via `buildEntityMetricPerDaySource` below,
+//     which emits the same `entityMetricDailyAgg_v2` table.
+//
+// `entityMetricDailyAgg_v2` is a read VIEW that already returns FINAL per-day
+// totals, so `needsArgMaxDedup: false` (no argMax dedup needed).
+//
+// History: PR #2666 made the v2 cutover permanent and DELETED the prior
+// `getEntityMetricAggSource()` provider, dropping the provider arg from every
+// `new MetricService(...)`. That silently fell MetricService back to the
+// submodule's `DEFAULT_AGG_SOURCE = entityMetricDailyAgg_new`. When that legacy
+// ReplacingMergeTree table was dropped from ClickHouse (2026-06-24), MetricService
+// began throwing `UNKNOWN_TABLE` (~100k/hr) → 500s on /api/v1/images and on-site
+// image feeds. This constant restores the deleted "one shared source of truth"
+// so a future table change can't migrate one reader and orphan another. v2 is
+// permanent — there is intentionally no Flipt flag here.
+export const imageMetricAggSource = (): AggSource => ({
+  table: 'entityMetricDailyAgg_v2',
+  needsArgMaxDedup: false,
+});
+
+// Build the inner `(entityId, metricType, day, total)` subquery the direct CH
+// read sites (search-index / comic populate / metric-helpers) sum over. `where`
+// is the caller's full WHERE clause (e.g. "WHERE entityType = 'Image' AND ...").
+// Reads the already-FINAL view `entityMetricDailyAgg_v2` (see imageMetricAggSource
+// above — same source of truth), so we select total directly (no argMax dedup).
+// Selecting metricType is harmless even for callers that only group by day (it's
+// just carried through the subquery).
+//
+// (Historically this was flag-switchable via METRICS_AGG_V2_READ between the
+// ReplacingMergeTree `entityMetricDailyAgg_new` — which needed argMax — and the
+// v2 view; the v2 cutover is now permanent so the source is hardcoded.)
+export function buildEntityMetricPerDaySource(where: string): string {
+  return `(
+      SELECT entityId, metricType, day, total
+      FROM entityMetricDailyAgg_v2
+      ${where}
+    )`;
 }
 
 export default FliptSingleton;

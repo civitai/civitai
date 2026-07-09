@@ -39,6 +39,9 @@ function loadSkillConfig() {
     healthCheckTimeout: 120000,
     rgbProxyEnabled: false,
     rgbProxyPath: '../rgb-proxy',
+    authHubEnabled: false,
+    authHubPath: 'apps/auth',
+    authHubPort: 5173,
   };
 
   if (existsSync(envPath)) {
@@ -66,6 +69,15 @@ function loadSkillConfig() {
           break;
         case 'RGB_PROXY_PATH':
           if (value) config.rgbProxyPath = value;
+          break;
+        case 'AUTH_HUB_ENABLED':
+          config.authHubEnabled = /^(true|1|yes|on)$/i.test(value);
+          break;
+        case 'AUTH_HUB_PATH':
+          if (value) config.authHubPath = value;
+          break;
+        case 'AUTH_HUB_PORT':
+          if (value) config.authHubPort = parseInt(value, 10);
           break;
       }
     }
@@ -708,6 +720,211 @@ class RgbProxy {
 
 const rgbProxy = new RgbProxy(skillConfig.rgbProxyPath);
 
+// Auth hub manager — the centralized login hub (apps/auth, SvelteKit + Vite). The main app is
+// verify-only now (docs/main-app-auth-cutover.md), so a fresh login in dev needs the hub running.
+// It reads its OWN apps/auth/.env (Vite loads it), so we don't inject env here — just spawn it and
+// track logs/status. Ready is detected from Vite's startup line; a JWKS probe confirms it's live.
+class AuthHub {
+  constructor(hubPath, port) {
+    this.path = resolve(projectRoot, hubPath);
+    this.port = port;
+    this.process = null;
+    this.status = 'stopped'; // stopped | starting | running | crashed | error | disabled
+    this.ready = false;
+    this.readyAt = null;
+    this.logs = [];
+    this.logIndex = 0;
+    this.startedAt = null;
+    this.stoppedAt = null;
+    this.exitCode = null;
+    this.lastError = null;
+  }
+
+  addLog(level, message) {
+    this.logIndex++;
+    this.logs.push({ index: this.logIndex, timestamp: new Date().toISOString(), level, message });
+    if (this.logs.length > MAX_LOG_LINES) this.logs = this.logs.slice(-MAX_LOG_LINES);
+  }
+
+  getLogs(since = 0, limit = 500) {
+    let logs = this.logs.filter(l => l.index > since);
+    if (limit && logs.length > limit) logs = logs.slice(-limit);
+    return logs;
+  }
+
+  start() {
+    if (this.process) {
+      this.addLog('info', 'Auth hub already running');
+      return this.getStatus();
+    }
+
+    if (!existsSync(this.path)) {
+      this.status = 'error';
+      this.lastError = `Auth hub path not found: ${this.path}`;
+      this.addLog('error', this.lastError);
+      return this.getStatus();
+    }
+
+    if (!existsSync(resolve(this.path, '.env'))) {
+      this.status = 'error';
+      this.lastError = `Auth hub .env missing: ${resolve(this.path, '.env')}. See SKILL.md (Auth Hub setup).`;
+      this.addLog('error', this.lastError);
+      return this.getStatus();
+    }
+
+    if (!existsSync(resolve(this.path, 'node_modules'))) {
+      this.status = 'error';
+      this.lastError = `Auth hub dependencies not installed. Run: pnpm install`;
+      this.addLog('error', this.lastError);
+      return this.getStatus();
+    }
+
+    this.status = 'starting';
+    this.ready = false;
+    this.readyAt = null;
+    this.lastError = null;
+    this.addLog('info', `Starting auth hub on port ${this.port}: ${this.path}`);
+
+    const isWindows = process.platform === 'win32';
+    const pnpmCmd = isWindows ? 'pnpm.cmd' : 'pnpm';
+
+    const spawnOptions = {
+      cwd: this.path,
+      env: process.env, // Vite loads apps/auth/.env itself — no injection
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: isWindows,
+    };
+    if (!isWindows) spawnOptions.detached = true;
+
+    let proc;
+    try {
+      proc = spawn(
+        pnpmCmd,
+        ['exec', 'vite', 'dev', '--port', String(this.port), '--strictPort'],
+        spawnOptions
+      );
+    } catch (err) {
+      this.status = 'error';
+      this.lastError = err.message;
+      this.addLog('error', `Spawn failed: ${err.message}`);
+      return this.getStatus();
+    }
+    this.process = proc;
+
+    this.startedAt = new Date().toISOString();
+    this.stoppedAt = null;
+    this.exitCode = null;
+    this.status = 'running';
+
+    const markReady = () => {
+      if (this.ready) return;
+      this.ready = true;
+      this.readyAt = new Date().toISOString();
+      this.addLog('info', `Auth hub ready on http://localhost:${this.port}`);
+    };
+
+    proc.stdout.on('data', (data) => {
+      const lines = data.toString().split('\n').filter(l => l.trim());
+      for (const line of lines) {
+        this.addLog('stdout', line);
+        if (!this.ready && (/ready in/i.test(line) || /localhost:\s*\d+/i.test(line))) markReady();
+      }
+    });
+
+    proc.stderr.on('data', (data) => {
+      const lines = data.toString().split('\n').filter(l => l.trim());
+      for (const line of lines) {
+        const lower = line.toLowerCase();
+        if (lower.includes('eaddrinuse')) {
+          this.lastError = `Port ${this.port} already in use. Stop the conflicting process first.`;
+          this.addLog('error', this.lastError);
+        } else if (lower.includes('error') || lower.includes('failed')) {
+          this.addLog('error', line);
+        } else {
+          this.addLog('stderr', line);
+        }
+      }
+    });
+
+    proc.on('exit', (code, signal) => {
+      this.exitCode = code;
+      this.addLog('info', `Auth hub exited (code=${code}, signal=${signal})`);
+      // Only mutate shared state if this is still the CURRENT process. A restart may have already
+      // replaced it (Vite also self-restarts on .env change) — a late exit must not clobber the new one.
+      if (this.process === proc) {
+        this.status = code === 0 ? 'stopped' : 'crashed';
+        this.ready = false;
+        this.stoppedAt = new Date().toISOString();
+        this.process = null;
+      }
+    });
+
+    proc.on('error', (err) => {
+      if (this.process !== proc) return;
+      this.status = 'error';
+      this.lastError = err.message;
+      this.addLog('error', `Process error: ${err.message}`);
+    });
+
+    return this.getStatus();
+  }
+
+  async stop() {
+    const proc = this.process;
+    if (!proc) {
+      this.status = 'stopped';
+      this.ready = false;
+      return this.getStatus();
+    }
+
+    this.addLog('info', 'Stopping auth hub...');
+    // Detach eagerly so a subsequent start() never sees a stale process (the exit handler is guarded on
+    // identity, so the late exit of this proc won't touch the fresh one).
+    this.process = null;
+    this.ready = false;
+    this.status = 'stopped';
+    this.stoppedAt = new Date().toISOString();
+
+    return new Promise((resolve) => {
+      proc.once('exit', () => resolve(this.getStatus()));
+      try {
+        if (process.platform === 'win32') {
+          spawn('taskkill', ['/pid', String(proc.pid), '/f', '/t'], { shell: true });
+        } else {
+          process.kill(-proc.pid, 'SIGKILL');
+        }
+      } catch (e) {}
+      setTimeout(() => resolve(this.getStatus()), 800);
+    });
+  }
+
+  async restart() {
+    await this.stop();
+    return this.start();
+  }
+
+  getStatus() {
+    return {
+      enabled: skillConfig.authHubEnabled,
+      status: this.status,
+      ready: this.ready,
+      readyAt: this.readyAt,
+      path: this.path,
+      port: this.port,
+      url: `http://localhost:${this.port}`,
+      jwksUrl: `http://localhost:${this.port}/api/auth/jwks`,
+      startedAt: this.startedAt,
+      stoppedAt: this.stoppedAt,
+      exitCode: this.exitCode,
+      lastError: this.lastError,
+      logCount: this.logs.length,
+      currentLogIndex: this.logIndex,
+    };
+  }
+}
+
+const authHub = new AuthHub(skillConfig.authHubPath, skillConfig.authHubPort);
+
 // Session manager
 const sessions = new Map();
 
@@ -800,6 +1017,7 @@ async function main() {
           uptime: process.uptime(),
           sessions: listSessions(),
           rgbProxy: rgbProxy.getStatus(),
+          authHub: authHub.getStatus(),
           projectRoot,
           daemonPort: config.port,
           baseDevPort: config.baseDevPort,
@@ -846,6 +1064,49 @@ async function main() {
       if (path === '/rgb/restart' && req.method === 'POST') {
         const status = await rgbProxy.restart();
         res.writeHead(200);
+        res.end(JSON.stringify(status));
+        return;
+      }
+
+      // GET /auth - Auth hub status
+      if (path === '/auth' && req.method === 'GET') {
+        res.writeHead(200);
+        res.end(JSON.stringify(authHub.getStatus()));
+        return;
+      }
+
+      // GET /auth/logs - Auth hub logs
+      if (path === '/auth/logs' && req.method === 'GET') {
+        const since = parseInt(url.searchParams.get('since') || '0', 10);
+        const limit = parseInt(url.searchParams.get('limit') || '500', 10);
+        res.writeHead(200);
+        res.end(JSON.stringify({
+          currentIndex: authHub.logIndex,
+          logs: authHub.getLogs(since, limit),
+        }));
+        return;
+      }
+
+      // POST /auth/start - Start auth hub
+      if (path === '/auth/start' && req.method === 'POST') {
+        const status = authHub.start();
+        res.writeHead(status.status === 'error' ? 500 : 200);
+        res.end(JSON.stringify(status));
+        return;
+      }
+
+      // POST /auth/stop - Stop auth hub
+      if (path === '/auth/stop' && req.method === 'POST') {
+        const status = await authHub.stop();
+        res.writeHead(200);
+        res.end(JSON.stringify(status));
+        return;
+      }
+
+      // POST /auth/restart - Restart auth hub
+      if (path === '/auth/restart' && req.method === 'POST') {
+        const status = await authHub.restart();
+        res.writeHead(status.status === 'error' ? 500 : 200);
         res.end(JSON.stringify(status));
         return;
       }
@@ -1014,6 +1275,7 @@ async function main() {
         }
         sessions.clear();
         await rgbProxy.stop();
+        await authHub.stop();
 
         res.writeHead(200);
         res.end(JSON.stringify({ success: true }));
@@ -1047,6 +1309,11 @@ async function main() {
       rgbProxy.start();
     }
 
+    if (skillConfig.authHubEnabled) {
+      console.error('AUTH_HUB_ENABLED=true — starting auth hub...');
+      authHub.start();
+    }
+
     // Output ready signal to stdout for parsing
     console.log(JSON.stringify({
       type: 'daemon_ready',
@@ -1054,6 +1321,7 @@ async function main() {
       pid: process.pid,
       projectRoot,
       rgbProxy: rgbProxy.getStatus(),
+      authHub: authHub.getStatus(),
     }));
   });
 
@@ -1073,6 +1341,7 @@ async function main() {
       await session.stop();
     }
     await rgbProxy.stop();
+    await authHub.stop();
     try { unlinkSync(pidFile); } catch (e) {}
     server.close();
     process.exit(0);
@@ -1084,6 +1353,7 @@ async function main() {
       await session.stop();
     }
     await rgbProxy.stop();
+    await authHub.stop();
     try { unlinkSync(pidFile); } catch (e) {}
     server.close();
     process.exit(0);

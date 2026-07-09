@@ -77,7 +77,7 @@ export default function ReferralsPage() {
             data={data}
             shareLink={shareLink}
             onRedeem={onRedeem}
-            isRedeeming={redeemMutation.isLoading}
+            isRedeeming={redeemMutation.isPending}
             pendingOffer={pendingOffer}
           />
         </Stack>

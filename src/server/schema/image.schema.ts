@@ -330,6 +330,10 @@ export const getInfiniteImagesSchema = baseQuerySchema
     limit: z.number().min(0).max(200).default(constants.galleryFilterDefaults.limit),
     modelId: z.number().optional(),
     modelVersionId: z.number().optional(),
+    // Filter the gallery to posts linked to a single Model3D
+    // (Post.model3dId). Resolved server-side into a postIds prefilter so the
+    // existing image fetch path is reused unchanged.
+    model3dId: z.number().optional(),
     notPublished: z.coerce.boolean().optional(),
     period: z.enum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
     periodMode: periodModeSchema,
@@ -343,7 +347,6 @@ export const getInfiniteImagesSchema = baseQuerySchema
     techniques: z.number().array().optional(),
     tools: z.number().array().optional(),
     types: z.array(z.enum(MediaType)).optional(),
-    useIndex: z.boolean().nullish(),
     userId: z.number().optional(),
     username: usernameSchema.optional(),
     // view: z.enum(['categories', 'feed']),
@@ -381,6 +384,8 @@ export const getInfiniteImagesSchema = baseQuerySchema
     // Mod only:
     poiOnly: z.boolean().optional(),
     minorOnly: z.boolean().optional(),
+    // Mod only: restrict a collection feed to entries still under review (CollectionItem.status = REVIEW).
+    pendingReviewOnly: z.boolean().optional(),
     // Client-only on green: opt-in PG-13 on public feeds. Passes through the
     // schema so the type lines up with client filter state; the server does
     // not read it (browsing level is the authoritative cap).

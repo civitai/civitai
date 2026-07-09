@@ -1,6 +1,6 @@
 import { Stack, Button, Modal, Group } from '@mantine/core';
 import { LinkType } from '~/shared/utils/prisma/enums';
-import { useSession } from 'next-auth/react';
+import { useSession } from '~/providers/SessionProvider';
 import { useEffect } from 'react';
 import * as z from 'zod';
 import { useForm, Form, InputText } from '~/libs/form';
@@ -28,7 +28,7 @@ export function SocialLinkModal({
 
   const form = useForm({ schema, defaultValues: selected });
 
-  const { mutate, isLoading } = trpc.userLink.upsert.useMutation({
+  const { mutate, isPending: isLoading } = trpc.userLink.upsert.useMutation({
     onSuccess: () => {
       utils.userLink.invalidate();
       onClose();

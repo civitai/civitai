@@ -23,7 +23,7 @@ export function PostUpsertForm2({
 }) {
   // #region [state]
   const router = useRouter();
-  const [postId, setPostId] = useState(initialPostId);
+  const [createdPostId, setCreatedPostId] = useState(initialPostId);
   const getFileUploadStatus = useS3UploadStore((state) => state.getStatus);
   const { uploading = 0 } = getFileUploadStatus((item) => item.meta?.versionId === modelVersionId);
   // #endregion
@@ -34,9 +34,16 @@ export function PostUpsertForm2({
     withFiles: true,
   });
 
+  // Prefer the post that already exists for this version (freshest source) so
+  // navigating back to the upload step and forward again doesn't spin up a
+  // duplicate post. The locally-created id covers the gap within a single mount
+  // before the modelVersion query refetches.
+  const existingPostId = modelVersion?.posts?.[0]?.id ?? 0;
+  const postId = createdPostId || existingPostId;
+
   const { data, isInitialLoading } = trpc.post.getEdit.useQuery(
     { id: postId },
-    { enabled: postId > 0, keepPreviousData: false }
+    { enabled: postId > 0, placeholderData: undefined }
   );
   // #endregion
 
@@ -71,6 +78,8 @@ export function PostUpsertForm2({
   const isExternalGeneration =
     modelVersion?.usageControl === ModelUsageControl.ExternalGeneration;
   const hasFiles = !!modelVersion?.files?.length || isExternalGeneration;
+  // Publishing without files is allowed (the model is just not downloadable until
+  // files are added) — warn rather than block.
   const confirmPublish = isUploading || !hasFiles;
   const confirmMessage = isUploading
     ? 'Files are still uploading. Publishing now will make your model visible, but downloads will not work until uploads finish. Continue?'
@@ -125,7 +134,7 @@ export function PostUpsertForm2({
               Our site is mostly used for sharing AI generated content. Make sure the images you are
               sharing for this resource have been generated with it.
             </Text>
-            <PostImageDropzone onCreatePost={(post) => setPostId(post.id)} />
+            <PostImageDropzone onCreatePost={(post) => setCreatedPostId(post.id)} />
           </div>
         ) : (
           <PostEdit />

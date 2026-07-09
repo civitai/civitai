@@ -2,6 +2,8 @@ import type {
   OpenAiGpt1CreateImageInput,
   OpenAiGpt1EditImageInput,
   OpenAiGpt1ImageGenInput,
+  OpenAiGpt2CreateImageInput,
+  OpenAiGpt2EditImageInput,
 } from '@civitai/client';
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
@@ -13,11 +15,12 @@ const openAISizes = [
 ];
 
 type OpenaiModel = (typeof openaiModels)[number];
-export const openaiModels = ['gpt-image-1', 'gpt-image-1.5'] as const;
+export const openaiModels = ['gpt-image-1', 'gpt-image-1.5', 'gpt-image-2'] as const;
 
 export const openaiModelVersionToModelMap = new Map<number, { model: OpenaiModel; name: string }>([
   [1733399, { model: 'gpt-image-1', name: 'v1' }],
   [2512167, { model: 'gpt-image-1.5', name: 'v1.5' }],
+  [2880272, { model: 'gpt-image-2', name: 'v2' }],
 ]);
 
 export const openaiConfig = ImageGenConfig({
@@ -43,9 +46,43 @@ export const openaiConfig = ImageGenConfig({
       height,
     };
   },
-  inputFn: ({ params, resources }): OpenAiGpt1CreateImageInput | OpenAiGpt1EditImageInput => {
+  inputFn: ({
+    params,
+    resources,
+  }):
+    | OpenAiGpt1CreateImageInput
+    | OpenAiGpt1EditImageInput
+    | OpenAiGpt2CreateImageInput
+    | OpenAiGpt2EditImageInput => {
     const checkpoint = resources.find((resource) => openaiModelVersionToModelMap.get(resource.id));
     const model = checkpoint ? openaiModelVersionToModelMap.get(checkpoint.id)?.model : undefined;
+
+    if (model === 'gpt-image-2') {
+      const baseData = {
+        engine: params.engine,
+        model: 'gpt-image-2' as const,
+        prompt: params.prompt,
+        quantity: params.quantity,
+        // gpt-image-2's quality enum has no 'auto' (gpt-image-1 does); clamp it.
+        quality: params.quality === 'auto' ? 'high' : params.quality,
+        width: params.width,
+        height: params.height,
+      };
+
+      if (!params.images?.length) {
+        return {
+          ...baseData,
+          operation: 'createImage',
+        } as OpenAiGpt2CreateImageInput;
+      } else {
+        return {
+          ...baseData,
+          operation: 'editImage',
+          images: params.images.map((x) => x.url),
+        } as OpenAiGpt2EditImageInput;
+      }
+    }
+
     const baseData = {
       engine: params.engine,
       model: model ?? 'gpt-image-1',

@@ -2,10 +2,9 @@ import { Alert, Center, Loader, Stack, Text, Anchor } from '@mantine/core';
 import { IconInbox } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { GeneratedOutput } from '~/components/ImageGeneration/GeneratedOutput';
-import {
-  matchesMarkerTags,
-  useGetTextToImageRequestsImages,
-} from '~/components/ImageGeneration/utils/generationRequestHooks';
+import type { AudioBlob, ImageBlob, VideoBlob } from '~/shared/orchestrator/workflow-data';
+import { useGeneratedRequestsContext } from '~/components/ImageGeneration/GeneratedRequestsProvider';
+import { matchesMarkerTags } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { generationGraphPanel } from '~/store/generation-graph.store';
@@ -15,13 +14,25 @@ import classes from './Feed.module.scss';
 export function Feed() {
   const filters = useFiltersContext((state) => state.generation);
 
-  const { requests, markerTags, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
-    useGetTextToImageRequestsImages();
+  const {
+    data: requests,
+    markerTags,
+    isLoading,
+    fetchNextPage,
+    hasNextPage,
+    isRefetching,
+    isError,
+  } = useGeneratedRequestsContext();
 
   const images = useMemo(
     () =>
+      // GeneratedOutput renders 2D media only — PolyGen has its own queue
+      // card path, so skip model3d blobs here.
       requests.flatMap((r) =>
-        r.succeededOutput.filter((img) => matchesMarkerTags(img, markerTags))
+        r.succeededOutput.filter(
+          (img): img is ImageBlob | VideoBlob | AudioBlob =>
+            img.type !== 'model3d' && matchesMarkerTags(img, markerTags)
+        )
       ),
     [requests, markerTags]
   );

@@ -17,7 +17,7 @@ export const useQueryChallenges = () => {
 export const useQueryCurrentChallenge = () => {
   const { data, isLoading } = trpc.dailyChallenge.getCurrent.useQuery(undefined, {
     staleTime: Infinity,
-    cacheTime: Infinity,
+    gcTime: Infinity,
   });
   return { challenge: data, loading: isLoading };
 };

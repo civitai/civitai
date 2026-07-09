@@ -1,3 +1,4 @@
+import { keepPreviousData } from '@tanstack/react-query';
 import type { ComboboxItem } from '@mantine/core';
 import {
   Alert,
@@ -35,6 +36,7 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { Form, InputNumber, InputSelect, InputTextArea, useForm } from '~/libs/form';
 import { createStrikeSchema, strikeStatusColorScheme } from '~/server/schema/strike.schema';
 import type { UserStandingRow } from '~/server/schema/strike.schema';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { EntityType, StrikeReason, StrikeStatus } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -73,6 +75,8 @@ const sortColumnMap: Record<string, SortValue> = {
   lastStrikeDate: 'lastStrike',
   createdAt: 'created',
 };
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 // ============================================================================
 // Main Page Component
@@ -124,7 +128,7 @@ function StrikesContent() {
       sort,
       sortOrder: activeSortDir,
     },
-    { keepPreviousData: true }
+    { placeholderData: keepPreviousData }
   );
 
   const handleOpenIssueModal = (defaultUserId?: number) => {

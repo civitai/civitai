@@ -57,6 +57,7 @@ const reports = [
       ReportEntity.Bounty,
       ReportEntity.BountyEntry,
       ReportEntity.ComicProject,
+      ReportEntity.Model3D,
     ],
   },
   {
@@ -76,6 +77,8 @@ const reports = [
       ReportEntity.Bounty,
       ReportEntity.BountyEntry,
       ReportEntity.ComicProject,
+      ReportEntity.Model3D,
+      ReportEntity.Model3DReview,
     ],
   },
   {
@@ -96,6 +99,8 @@ const reports = [
       ReportEntity.BountyEntry,
       ReportEntity.Chat,
       ReportEntity.ComicProject,
+      ReportEntity.Model3D,
+      ReportEntity.Model3DReview,
     ],
   },
   {
@@ -128,6 +133,8 @@ const reports = [
       ReportEntity.BountyEntry,
       ReportEntity.Chat,
       ReportEntity.ComicProject,
+      ReportEntity.Model3D,
+      ReportEntity.Model3DReview,
     ],
   },
 ];
@@ -176,7 +183,7 @@ export default function ReportModal({
     { id: entityId },
     { enabled: entityType === ReportEntity.Model }
   );
-  const { mutate, isLoading: isLoading } = trpc.report.create.useMutation({
+  const { mutate, isPending: isLoading } = trpc.report.create.useMutation({
     onMutate() {
       showNotification({
         id: SEND_REPORT_ID,
@@ -241,6 +248,20 @@ export default function ReportModal({
               );
             }
             await queryUtils.bounty.getInfinite.invalidate();
+            break;
+          case ReportEntity.Model3D:
+            if (variables.reason === ReportReason.NSFW) {
+              queryUtils.model3d.getById.setData(
+                { id: variables.id },
+                produce((old) => {
+                  if (old) old.nsfw = true;
+                })
+              );
+            }
+            await queryUtils.model3d.getInfinite.invalidate();
+            break;
+          case ReportEntity.Model3DReview:
+            await queryUtils.model3d.reviews.getInfinite.invalidate();
             break;
           // Nothing changes here so nothing to invalidate...
           case ReportEntity.Comment:

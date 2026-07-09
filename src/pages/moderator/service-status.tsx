@@ -18,6 +18,7 @@ import { useEffect, useState } from 'react';
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
 import { GenerationStatusCard } from '~/components/Moderation/GenerationStatusCard';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 
 function ServiceStatusPage() {
@@ -31,8 +32,8 @@ function ServiceStatusPage() {
             <Stack gap={0}>
               <Title order={2}>Service Status</Title>
               <Text c="dimmed" size="sm">
-                Enable or disable image generation and training. Set the message shown to users
-                when a service is unavailable.
+                Enable or disable image generation and training. Set the message shown to users when
+                a service is unavailable.
               </Text>
             </Stack>
           </Group>
@@ -128,7 +129,7 @@ function TrainingStatusCard() {
               </Alert>
             )}
             <Group justify="flex-end">
-              <Button onClick={handleSave} loading={setStatus.isLoading} disabled={!dirty}>
+              <Button onClick={handleSave} loading={setStatus.isPending} disabled={!dirty}>
                 Save
               </Button>
             </Group>
@@ -138,6 +139,8 @@ function TrainingStatusCard() {
     </Card>
   );
 }
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default Page(ServiceStatusPage, {
   features: (features) => features.serviceStatus,

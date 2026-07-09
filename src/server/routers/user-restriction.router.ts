@@ -14,12 +14,14 @@ import {
 } from '~/server/schema/user-restriction.schema';
 import type { BlockedPromptEntry } from '~/server/services/orchestrator/promptAuditing';
 import { debugAuditPrompt, type DebugAuditMatch } from '~/utils/metadata/audit';
+import { moderationActionEmail } from '~/server/email/templates';
 import { createNotification } from '~/server/services/notification.service';
 import {
   bustPromptAllowlistCache,
   resetProhibitedRequestCount,
 } from '~/server/services/orchestrator/promptAuditing';
 import { updateUserById } from '~/server/services/user.service';
+import { cancelSubscription, reinstateSubscription } from '~/server/services/stripe.service';
 import { moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
 import { UserRestrictionStatus } from '~/shared/utils/prisma/enums';
 import { refreshSession } from '~/server/auth/session-invalidation';
@@ -99,7 +101,12 @@ export const userRestrictionRouter = router({
 
     const restriction = await dbRead.userRestriction.findUnique({
       where: { id: userRestrictionId },
-      select: { id: true, userId: true, status: true },
+      select: {
+        id: true,
+        userId: true,
+        status: true,
+        user: { select: { email: true, username: true } },
+      },
     });
 
     if (!restriction) throw new Error('Restriction record not found');
@@ -123,6 +130,16 @@ export const userRestrictionRouter = router({
         data: { mutedAt: new Date() },
         updateSource: 'moderator:generationRestrictionUpheld',
       });
+      // Stop the recurring membership from auto-renewing for the restricted
+      // user. Cancel at period end (reversible) rather than waiting for the
+      // daily confirm-mutes safety-net job.
+      await cancelSubscription({ userId: restriction.userId, atPeriodEnd: true }).catch((error) =>
+        logToAxiom({
+          name: 'cancel-stripe-subscription-restriction-upheld',
+          type: 'error',
+          message: (error as Error).message,
+        })
+      );
       await refreshSession(restriction.userId);
     } else if (status === UserRestrictionStatus.Overturned) {
       // Unmute the user and reset their violation count
@@ -131,6 +148,14 @@ export const userRestrictionRouter = router({
         data: { muted: false },
         updateSource: 'moderator:generationRestrictionOverturned',
       });
+      // Reverse the at-period-end cancellation if the membership is still live.
+      await reinstateSubscription({ userId: restriction.userId }).catch((error) =>
+        logToAxiom({
+          name: 'reinstate-stripe-subscription-restriction-overturned',
+          type: 'error',
+          message: (error as Error).message,
+        })
+      );
       await resetProhibitedRequestCount(restriction.userId);
       await refreshSession(restriction.userId);
     }
@@ -148,6 +173,31 @@ export const userRestrictionRouter = router({
       userId: restriction.userId,
       details: { resolvedMessage: resolvedMessage ?? '' },
     }).catch();
+
+    // Send transactional email mirroring the in-app notification
+    try {
+      if (restriction.user?.email) {
+        // Intentionally omit `resolvedMessage` from the email — moderator
+        // free-text is shown only in-app (notification above), never emailed,
+        // to avoid exposing potentially explicit/targeted prose. The TOS link
+        // in the email template provides the policy reference for upheld cases.
+        await moderationActionEmail.send({
+          to: restriction.user.email,
+          username: restriction.user.username ?? 'User',
+          kind:
+            status === UserRestrictionStatus.Upheld
+              ? 'restriction-upheld'
+              : 'restriction-overturned',
+        });
+      }
+    } catch (error) {
+      logToAxiom({
+        type: 'error',
+        name: 'restriction-email-failed',
+        message: (error as Error).message,
+        error,
+      });
+    }
 
     logToAxiom({
       name: 'user-restriction-resolved',

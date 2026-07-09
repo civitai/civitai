@@ -65,7 +65,7 @@ export default function UnpublishModal({
       : unpublishModelMutation.mutate({ id: modelId, reason, customMessage });
   };
 
-  const loading = unpublishModelMutation.isLoading || unpublishVersionMutation.isLoading;
+  const loading = unpublishModelMutation.isPending || unpublishVersionMutation.isPending;
 
   return (
     <Modal {...dialog} title="Unpublish as Violation">

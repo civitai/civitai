@@ -73,7 +73,7 @@ export function AnnouncementEditModal({
   const theme = useMantineTheme();
   const colors = Object.keys(theme.colors);
 
-  const { mutate, isLoading } = trpc.announcement.upsertAnnouncement.useMutation({
+  const { mutate, isPending: isLoading } = trpc.announcement.upsertAnnouncement.useMutation({
     onSuccess: () => {
       dialog.onClose();
       queryUtils.announcement.getAnnouncementsPaged.invalidate();

@@ -100,7 +100,7 @@ Handler: src/server/services/orchestrator/ecosystems/<name>.handler.ts
 
 Wiring:
 - basemodel.constants.ts: uncomment/add ecosystem support + settings
-- workflows.ts: add to <TXT2IMG_IDS | TXT2VID_IDS | etc.> and NEW_FORM_ONLY
+- workflows.ts: add to <TXT2IMG_IDS | TXT2VID_IDS | etc.>
 - ecosystem-graph.ts: add to grouped discriminator
 - ecosystems/index.ts: import, type, export, router case
 ```
@@ -139,15 +139,6 @@ Two sections:
 #### 5b. `src/shared/data-graph/generation/config/workflows.ts`
 
 - Add `ECO.<Name>` to the appropriate workflow array (`TXT2IMG_IDS`, `TXT2VID_IDS`, `EDIT_IMG_IDS`, `I2V_ONLY_IDS`, etc.)
-- Add to the `NEW_FORM_ONLY` rules for every workflow the ecosystem supports (every new ecosystem is new-form-only):
-  ```ts
-  [
-    'txt2img',
-    (ecoId, modelId) =>
-      // ... existing conditions ...
-      ecoId === ECO.<Name>,
-  ],
-  ```
 
 #### 5c. Create the graph file: `src/shared/data-graph/generation/<name>-graph.ts`
 
@@ -395,3 +386,4 @@ Skip this if the variants share the same slider ranges (e.g. version bumps with 
 - **Sampler/scheduler**: if the provider recommends a single fixed sampler+scheduler, hardcode them in the handler rather than creating UI controls. Simpler UX and avoids bad user choices.
 - **Model-locked ecosystems**: set `modelLocked: true` in `ecosystemSettings.defaults` unless the ecosystem has multiple user-selectable checkpoints.
 - **Aspect ratio source**: prefer HuggingFace model card recommended resolutions over round-number guesses. They affect output quality significantly.
+- **Aspect ratio `priorityOptions`**: when an ecosystem exposes more than ~5 aspect ratios, pass `priorityOptions` to `aspectRatioNode` so the UI shows a standard preferred subset up front and tucks the rest behind the "More" overflow. Use the standard preferred set `['16:9', '4:3', '1:1', '3:4', '9:16']` (as Lens and NanoBanana do) when the ecosystem supports those ratios; substitute the nearest available ratio for any it lacks (e.g. Krea2 uses `4:5` in place of `3:4`). Without `priorityOptions`, every ratio renders inline, which is noisy for wide ratio sets.

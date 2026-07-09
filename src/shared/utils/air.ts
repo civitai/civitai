@@ -59,6 +59,20 @@ const typeUrnMap: Partial<Record<ModelType, string>> = {
   [ModelType.TextEncoder]: 'textencoder',
   [ModelType.UNet]: 'unet',
   [ModelType.CLIPVision]: 'clipvision',
+  [ModelType.CLIP]: 'clip',
+  [ModelType.VisionLanguage]: 'visionlanguage',
+};
+
+/**
+ * Override map keyed on `ModelFile.type` (not `ModelType`). A Checkpoint model
+ * whose primary weight file is a standalone diffusion model / UNET ships only the
+ * denoiser (no VAE/text-encoder baked in), so its AIR should advertise that file
+ * kind rather than the generic `checkpoint`. Used by `stringifyAIR` when a
+ * `fileType` is supplied. e.g. Flux / Wan / ZImage / Anima / Boogu checkpoints.
+ */
+const fileTypeUrnMap: Record<string, string> = {
+  'Diffusion Model': 'diffusionmodel',
+  UNet: 'unet',
 };
 
 /** Reverse map: URN type string → ModelType enum value */
@@ -77,6 +91,7 @@ export function stringifyAIR({
   modelId,
   id,
   fileId,
+  fileType,
   source = 'civitai',
 }: {
   baseModel: string;
@@ -86,6 +101,11 @@ export function stringifyAIR({
   /** Optional ModelFile id; emitted as `+<fileId>` so the orchestrator can
    * disambiguate among multiple files attached to the same version. */
   fileId?: number | string;
+  /** Optional `ModelFile.type` of the primary/selected file. When it maps to a
+   * standalone weight kind (`Diffusion Model`, `UNet`), it overrides the
+   * model-type-derived AIR type — e.g. a Checkpoint shipping a diffusion-model
+   * file becomes `...:diffusionmodel:...` instead of `...:checkpoint:...`. */
+  fileType?: string;
   source?: string;
 }) {
   let ecosystem = baseModel;
@@ -95,7 +115,8 @@ export function stringifyAIR({
   // Upscaler models use 'Other' in AIR for backwards compatibility
   if (ecosystem === 'Upscaler') ecosystem = 'Other';
 
-  const urnType = typeUrnMap[type] ?? 'unknown';
+  const urnType =
+    (fileType ? fileTypeUrnMap[fileType] : undefined) ?? typeUrnMap[type] ?? 'unknown';
 
   return Air.stringify({
     ecosystem: ecosystem.toLowerCase(),

@@ -72,7 +72,7 @@ export function FollowUserButton({ userId, onToggleFollow, ...buttonProps }: Pro
         radius="xl"
         variant={alreadyFollowing ? 'outline' : 'light'}
         onClick={handleFollowClick}
-        loading={toggleFollowMutation.isLoading}
+        loading={toggleFollowMutation.isPending}
         px="sm"
         style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.5 }}
         {...buttonProps}

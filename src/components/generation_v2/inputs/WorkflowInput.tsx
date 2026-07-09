@@ -6,11 +6,12 @@
  * Uses Popover on desktop and dialogStore modal on mobile.
  */
 
-import { Badge, Group, Modal, Popover, Text, UnstyledButton, Stack } from '@mantine/core';
+import { Badge, Group, Modal, Popover, Text, Tooltip, UnstyledButton, Stack } from '@mantine/core';
 import { useDisclosure, useMediaQuery } from '@mantine/hooks';
 import {
   IconArrowLeft,
   IconCheck,
+  IconCube,
   IconMusic,
   IconPhoto,
   IconVideo,
@@ -23,7 +24,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { RequireMembership } from '~/components/RequireMembership/RequireMembership';
 import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButton';
-import { useGatedEcosystems } from '~/components/generation_v2/hooks/useGatedEcosystems';
+import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import {
   filterWorkflowsByFeatureFlags,
   filterWorkflowsByGatedEcosystems,
@@ -32,6 +33,11 @@ import {
   workflowConfigByKey,
   getWorkflowLabelForEcosystem,
 } from '~/shared/data-graph/generation/config/workflows';
+import {
+  mergeGateStates,
+  rulesToStates,
+  type GateItemState,
+} from '~/shared/data-graph/generation/gates';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 // =============================================================================
@@ -121,6 +127,15 @@ interface WorkflowMenuItemProps {
   isCompatible?: boolean;
   /** Whether the current user is a member */
   isMember?: boolean;
+  /**
+   * Gate state from the unified resolver (legacy `disabledWorkflows` + rules).
+   * `disabled` → greyed "Disabled" badge; `memberOnly` → the membership upsell
+   * (same path as a workflow's own `memberOnly` flag). Hidden keys are filtered
+   * out upstream, so they never reach here.
+   */
+  gateState?: GateItemState['state'];
+  /** Optional rule message layered on the gate state's standard tooltip/upsell. */
+  gateMessage?: string;
 }
 
 function WorkflowMenuItem({
@@ -129,10 +144,44 @@ function WorkflowMenuItem({
   onSelect,
   isCompatible = true,
   isMember = false,
+  gateState,
+  gateMessage,
 }: WorkflowMenuItemProps) {
-  const disabled = workflow.memberOnly && !isMember;
+  // Operator/rule-disabled takes priority over the member-only gate: greyed,
+  // non-selectable, "Disabled" badge + tooltip (mirrors BaseModelInput).
+  if (gateState === 'disabled') {
+    return (
+      <Tooltip
+        label={gateMessage ?? 'This workflow is currently unavailable'}
+        position="right"
+        withArrow
+        openDelay={300}
+      >
+        <div className="w-full cursor-not-allowed rounded-md px-3 py-2.5 opacity-50">
+          <Group gap="sm" wrap="nowrap" justify="space-between">
+            <div className="min-w-0 flex-1">
+              <Text size="sm">{workflow.label}</Text>
+              {workflow.description && (
+                <Text size="xs" c="dimmed" className="mt-0.5">
+                  {workflow.description}
+                </Text>
+              )}
+            </div>
+            <Badge size="xs" color="gray" variant="light">
+              Disabled
+            </Badge>
+          </Group>
+        </div>
+      </Tooltip>
+    );
+  }
 
-  if (disabled) {
+  // Upsell when the workflow is member-only — either by its own config flag (for
+  // non-members) or by a `memberOnly` gate rule (already audience-filtered to
+  // non-members server-side, so it always upsells here).
+  const showMembership = gateState === 'memberOnly' || (workflow.memberOnly && !isMember);
+
+  if (showMembership) {
     return (
       <RequireMembership>
         <SupportButtonPolymorphic
@@ -254,23 +303,44 @@ function WorkflowListContent({
   isCompatible,
   isMember = false,
 }: WorkflowListContentProps) {
-  // Flatten all workflows with compatibility info
+  // Workflow gate state from the gate rules. Read here so both the desktop
+  // popover and the dialogStore modal that share this renderer get them. Mirrors
+  // the workflow node's resolver so client + server agree: hidden keys drop out
+  // of the list, the rest carry a per-state badge.
+  const { gateRules } = useGenerationConfig();
+  const { hiddenSet, stateMap } = useMemo(() => {
+    const { hidden, states } = mergeGateStates(undefined, rulesToStates(gateRules).workflows);
+    return {
+      hiddenSet: new Set(hidden),
+      stateMap: new Map(states.map((s) => [s.key, s])),
+    };
+  }, [gateRules]);
+
+  // Flatten all workflows with compatibility + gate info, dropping hidden keys.
   const allWorkflows = useMemo(() => {
-    const workflows: Array<{ workflow: WorkflowOption; compatible: boolean }> = [];
+    const workflows: Array<{
+      workflow: WorkflowOption;
+      compatible: boolean;
+      gate?: GateItemState;
+    }> = [];
 
     for (const category of categories) {
       for (const workflow of category.workflows) {
+        // The gate maps hold graphKeys; resolve the option's graphKey (an
+        // alias's graphKey points to its parent) before checking.
+        const graphKey = workflowOptionById.get(workflow.id)?.graphKey ?? workflow.id;
+        if (hiddenSet.has(graphKey)) continue;
         const compatible = isCompatible?.(workflow.id) ?? true;
-        workflows.push({ workflow, compatible });
+        workflows.push({ workflow, compatible, gate: stateMap.get(graphKey) });
       }
     }
 
     return workflows;
-  }, [categories, isCompatible]);
+  }, [categories, isCompatible, hiddenSet, stateMap]);
 
   return (
     <Stack gap={2}>
-      {allWorkflows.map(({ workflow, compatible }) => (
+      {allWorkflows.map(({ workflow, compatible, gate }) => (
         <WorkflowMenuItem
           key={workflow.id}
           workflow={workflow}
@@ -281,6 +351,8 @@ function WorkflowListContent({
           }}
           isCompatible={compatible}
           isMember={isMember}
+          gateState={gate?.state}
+          gateMessage={gate?.message}
         />
       ))}
     </Stack>
@@ -423,31 +495,37 @@ export function WorkflowInput({
   const [imageOpened, { close: closeImage, open: openImage }] = useDisclosure(false);
   const [videoOpened, { close: closeVideo, open: openVideo }] = useDisclosure(false);
   const [audioOpened, { close: closeAudio, open: openAudio }] = useDisclosure(false);
+  const [model3dOpened, { close: closeModel3d, open: openModel3d }] = useDisclosure(false);
 
   // Get all workflows grouped by category, then drop any whose backing ecosystems
-  // are all gated for this user (so e.g. the Audio segment disappears when the
-  // only audio ecosystem is mod-only and the user is not a mod).
-  const gatedEcosystems = useGatedEcosystems();
+  // are all HIDDEN by a gate rule for this user (so e.g. the Audio segment
+  // disappears when the only audio ecosystem is hidden and the user is gated).
+  const { gateRules } = useGenerationConfig();
   const features = useFeatureFlags();
   const options = useMemo(() => {
+    const hiddenEcosystems = new Set<string>();
+    for (const [key, r] of rulesToStates(gateRules).ecosystems)
+      if (r.state === 'hidden') hiddenEcosystems.add(key);
     const all = getAllWorkflowsGrouped();
-    const ecoFiltered = filterWorkflowsByGatedEcosystems(all, new Set(gatedEcosystems));
+    const ecoFiltered = filterWorkflowsByGatedEcosystems(all, hiddenEcosystems);
     return filterWorkflowsByFeatureFlags(
       ecoFiltered,
       features as unknown as Record<string, boolean | undefined>
     );
-  }, [gatedEcosystems, features]);
+  }, [gateRules, features]);
   const selected = getSelectedWorkflow(options, value, ecosystemId);
 
-  // Separate image, video, and audio categories
+  // Separate image, video, audio, and 3D model categories
   const imageCategories = options.filter((cat) => cat.category === 'image');
   const videoCategories = options.filter((cat) => cat.category === 'video');
   const audioCategories = options.filter((cat) => cat.category === 'audio');
+  const model3dCategories = options.filter((cat) => cat.category === 'model3d');
 
-  // Check if current selection is image, video, or audio
+  // Check if current selection is image, video, audio, or 3D model
   const isImageWorkflow = selected && selected.category.category === 'image';
   const isVideoWorkflow = selected && selected.category.category === 'video';
   const isAudioWorkflow = selected && selected.category.category === 'audio';
+  const isModel3dWorkflow = selected && selected.category.category === 'model3d';
 
   const handleImageSelect = (graphKey: string, ecosystemIds: number[], optionId: string) => {
     onChange?.(graphKey, ecosystemIds, optionId);
@@ -462,6 +540,11 @@ export function WorkflowInput({
   const handleAudioSelect = (graphKey: string, ecosystemIds: number[], optionId: string) => {
     onChange?.(graphKey, ecosystemIds, optionId);
     closeAudio();
+  };
+
+  const handleModel3dSelect = (graphKey: string, ecosystemIds: number[], optionId: string) => {
+    onChange?.(graphKey, ecosystemIds, optionId);
+    closeModel3d();
   };
 
   const openImageModal = () => {
@@ -512,9 +595,26 @@ export function WorkflowInput({
     });
   };
 
-  // Check if video/audio workflows are available
+  const openModel3dModal = () => {
+    dialogStore.trigger({
+      id: 'workflow-select-model3d',
+      component: WorkflowSelectModal,
+      props: {
+        title: 'Select 3D Model Workflow',
+        categories: model3dCategories,
+        selectedValue: selected?.workflow.id,
+        onSelect: (graphKey: string, ecosystemIds: number[], optionId: string) =>
+          onChange?.(graphKey, ecosystemIds, optionId),
+        isCompatible,
+        isMember,
+      },
+    });
+  };
+
+  // Check if video/audio/3D workflows are available
   const hasVideoWorkflows = videoCategories.some((cat) => cat.workflows.length > 0);
   const hasAudioWorkflows = audioCategories.some((cat) => cat.workflows.length > 0);
+  const hasModel3dWorkflows = model3dCategories.some((cat) => cat.workflows.length > 0);
 
   const segmentedContainerClass = clsx(
     'flex h-8 shrink-0 items-center overflow-hidden rounded-md border bg-white dark:bg-dark-6',
@@ -554,6 +654,16 @@ export function WorkflowInput({
             onClick={openAudioModal}
           />
         )}
+        {hasModel3dWorkflows && (
+          <WorkflowSegmentButton
+            icon={<IconCube size={16} />}
+            label="3D Models"
+            isActive={isModel3dWorkflow ?? false}
+            hasDivider
+            disabled={disabled}
+            onClick={openModel3dModal}
+          />
+        )}
       </div>
     );
   }
@@ -563,6 +673,7 @@ export function WorkflowInput({
     if (disabled) return;
     closeVideo();
     closeAudio();
+    closeModel3d();
     imageOpened ? closeImage() : openImage();
   };
 
@@ -570,6 +681,7 @@ export function WorkflowInput({
     if (disabled) return;
     closeImage();
     closeAudio();
+    closeModel3d();
     videoOpened ? closeVideo() : openVideo();
   };
 
@@ -577,11 +689,21 @@ export function WorkflowInput({
     if (disabled) return;
     closeImage();
     closeVideo();
+    closeModel3d();
     audioOpened ? closeAudio() : openAudio();
+  };
+
+  const handleModel3dClick = () => {
+    if (disabled) return;
+    closeImage();
+    closeVideo();
+    closeAudio();
+    model3dOpened ? closeModel3d() : openModel3d();
   };
 
   const hasSecondSegment = hasVideoWorkflows;
   const hasThirdSegment = hasAudioWorkflows;
+  const hasFourthSegment = hasModel3dWorkflows;
 
   return (
     <div className={segmentedContainerClass}>
@@ -669,6 +791,37 @@ export function WorkflowInput({
               categories={audioCategories}
               selectedValue={selected?.workflow.id}
               onSelect={handleAudioSelect}
+              isCompatible={isCompatible}
+              isMember={isMember}
+            />
+          </Popover.Dropdown>
+        </Popover>
+      )}
+
+      {hasFourthSegment && (
+        <Popover
+          opened={model3dOpened}
+          onChange={(isOpen) => !isOpen && closeModel3d()}
+          position="bottom-start"
+          width={300}
+          shadow="md"
+          withinPortal
+        >
+          <Popover.Target>
+            <WorkflowSegmentButton
+              icon={<IconCube size={16} />}
+              label="3D Models"
+              isActive={isModel3dWorkflow ?? false}
+              hasDivider
+              disabled={disabled}
+              onClick={handleModel3dClick}
+            />
+          </Popover.Target>
+          <Popover.Dropdown p="xs">
+            <WorkflowListContent
+              categories={model3dCategories}
+              selectedValue={selected?.workflow.id}
+              onSelect={handleModel3dSelect}
               isCompatible={isCompatible}
               isMember={isMember}
             />

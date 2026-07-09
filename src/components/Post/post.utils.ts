@@ -1,3 +1,4 @@
+import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { useMemo } from 'react';
 import * as z from 'zod';
@@ -65,10 +66,10 @@ export const useQueryPosts = (
       disableMinor: browsingSettingsAddons.settings.disableMinor,
     },
     {
-      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-      getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
+      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : undefined),
+      getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : undefined),
       trpc: { context: { skipBatch: true } },
-      ...options,
+      ...withPlaceholderData(options),
     }
   );
 
@@ -131,6 +132,6 @@ export const useMutatePost = () => {
 
   return {
     updateCollectionTagId: handleUpdateCollectionTagId,
-    updatingCollectionTagId: updateCollectionTagId.isLoading,
+    updatingCollectionTagId: updateCollectionTagId.isPending,
   };
 };

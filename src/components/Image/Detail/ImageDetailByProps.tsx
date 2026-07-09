@@ -36,6 +36,7 @@ import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
 import { ImageResources } from '~/components/Image/Detail/ImageResources';
+import { PostingToModel3DCard } from '~/components/Model3D/Posting/PostingToModel3DCard';
 import type { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard2';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -240,6 +241,19 @@ export function ImageDetailByProps({
                     collapsible
                     px="sm"
                   />
+                  {image.postId && (
+                    <Box px="sm">
+                      {/* Durable data-gate: `image.get` (the `data` query above)
+                          carries the visibility-checked `model3dId`, so the chip
+                          renders from the prop and never fires the ambient
+                          `model3d.getByPostId` query. */}
+                      <PostingToModel3DCard
+                        model3dId={data?.model3dId ?? null}
+                        postId={image.postId}
+                        label="Posted to 3D Model"
+                      />
+                    </Box>
+                  )}
                   <div>
                     <Divider
                       label="Discussion"
@@ -305,7 +319,7 @@ export function ImageDetailCarousel({
     height: image?.height ?? 1200,
     width: image?.width ?? 1200,
   });
-  const isDeletingImage = !!useIsMutating(getQueryKey(trpc.image.delete));
+  const isDeletingImage = !!useIsMutating({ mutationKey: getQueryKey(trpc.image.delete) });
 
   useDidUpdate(() => {
     if (!isDeletingImage) {

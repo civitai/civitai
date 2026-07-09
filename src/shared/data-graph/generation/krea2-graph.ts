@@ -1,31 +1,37 @@
 /**
  * Krea 2 Family Graph
  *
- * Controls for the Krea 2 ecosystem (Krea AI, FAL engine).
- * Model is locked; no LoRA support.
+ * Controls for the Krea 2 ecosystem. The checkpoint is locked (modelLocked), but
+ * the version selector offers four official variants that split across two
+ * engines:
  *
- * Two model versions discriminated by size (matches Krea2FalImageGenInput.size):
+ * FAL engine (Krea2FalImageGenInput) — size tiers, no LoRA:
  * - medium: lower-resolution tier
- * - large: higher-resolution tier
+ * - large:  higher-resolution tier
+ *   Controls: aspectRatio / creativity / styleReferences / seed.
  *
- * Controls per Krea2FalImageGenInput:
- * - aspectRatio: 8 fixed ratios (1:1, 4:3, 3:2, 16:9, 2.35:1, 4:5, 2:3, 9:16)
- * - creativity: raw / low / medium / high
- * - styleReferences: up to 10 reference images with per-image strength (0–1)
- * - seed
+ * Comfy engine (ComfyKrea2Raw/TurboCreateImageGenInput) — LoRA support:
+ * - raw:   full-step variant
+ * - turbo: distilled, low-step variant
+ *   Controls: aspectRatio / resources (LoRA) / negativePrompt / cfgScale / steps / seed.
  *
- * No negative prompt, no cfgScale, no steps.
+ * The selected version is mapped to a `krea2Variant` discriminator
+ * ('fal' | 'raw' | 'turbo') that swaps in the engine-appropriate controls.
  */
 
 import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
+import type { ResourceData } from './common';
 import {
   aspectRatioNode,
   createCheckpointGraph,
+  createResourcesGraph,
   enumNode,
+  negativePromptGraph,
   promptGraph,
   seedNode,
+  sliderNode,
   snippetsGraph,
   triggerWordsGraph,
 } from './common';
@@ -38,23 +44,47 @@ import {
 // Version Constants
 // =============================================================================
 
-/** Krea 2 version IDs */
+/**
+ * Krea 2 version IDs.
+ *
+ * medium/large are the FAL size tiers (no LoRA). raw/turbo are the comfy,
+ * LoRA-capable variants.
+ */
 export const krea2VersionIds = {
   medium: 2983023,
   large: 2983022,
+  raw: 3072329,
+  turbo: 3072332,
 } as const;
 
-export type Krea2Size = keyof typeof krea2VersionIds;
+/** FAL size tiers (the orchestrator picks output dimensions from this). */
+export type Krea2Size = 'medium' | 'large';
+
+/** Control-set discriminator derived from the selected version. */
+type Krea2Variant = 'fal' | 'raw' | 'turbo';
 
 const krea2VersionOptions = [
   { label: 'Medium', value: krea2VersionIds.medium },
   { label: 'Large', value: krea2VersionIds.large },
+  { label: 'Raw', value: krea2VersionIds.raw },
+  { label: 'Turbo', value: krea2VersionIds.turbo },
 ];
 
-/** Map version ID → size string (sent as `size` field to the orchestrator) */
+/** Map version ID → FAL size string (only the medium/large FAL tiers). */
 export const krea2VersionIdToSize = new Map<number, Krea2Size>([
   [krea2VersionIds.medium, 'medium'],
   [krea2VersionIds.large, 'large'],
+]);
+
+/**
+ * Map version ID → control-set variant. medium/large share the FAL control set;
+ * raw/turbo each get the comfy control set. Unknown IDs fall back to 'fal'.
+ */
+const krea2VersionIdToVariant = new Map<number, Krea2Variant>([
+  [krea2VersionIds.medium, 'fal'],
+  [krea2VersionIds.large, 'fal'],
+  [krea2VersionIds.raw, 'raw'],
+  [krea2VersionIds.turbo, 'turbo'],
 ]);
 
 // =============================================================================
@@ -179,10 +209,52 @@ function styleReferencesNode() {
 }
 
 // =============================================================================
+// Variant Subgraphs
+// =============================================================================
+
+/** Context shape passed to the krea2 variant subgraphs. */
+type Krea2VariantCtx = {
+  ecosystem: string;
+  workflow: string;
+  model: ResourceData;
+  krea2Variant: Krea2Variant;
+};
+
+/** FAL variant (medium/large): creativity + style references, no LoRA. */
+const falVariantGraph = new DataGraph<Krea2VariantCtx, GenerationCtx>()
+  .node('creativity', enumNode({ options: krea2CreativityOptions, defaultValue: 'medium' }))
+  .node('styleReferences', styleReferencesNode());
+
+/**
+ * Comfy raw variant (Krea 2 RAW): undistilled, full-guidance build.
+ * Defaults follow Krea's model card — ~52 steps at CFG 3.5. LoRA + negative
+ * prompt support.
+ */
+const rawVariantGraph = new DataGraph<Krea2VariantCtx, GenerationCtx>()
+  .merge(createResourcesGraph())
+  .merge(negativePromptGraph)
+  .node('cfgScale', sliderNode({ min: 1, max: 10, step: 0.5, defaultValue: 3.5 }))
+  .node('steps', sliderNode({ min: 1, max: 60, defaultValue: 30 }));
+
+/**
+ * Comfy turbo variant: 8-step distilled build. Guidance is baked into the
+ * weights, so Krea's model card runs it at CFG 0.0 / 8 steps — hence the cfg
+ * floor of 0. LoRA + negative prompt support.
+ */
+const turboVariantGraph = new DataGraph<Krea2VariantCtx, GenerationCtx>()
+  .merge(createResourcesGraph())
+  .merge(negativePromptGraph)
+  .node('cfgScale', sliderNode({ min: 0, max: 2, step: 0.1, defaultValue: 1 }))
+  .node('steps', sliderNode({ min: 1, max: 15, defaultValue: 8 }));
+
+// =============================================================================
 // Krea 2 Graph
 // =============================================================================
 
-export const krea2Graph = new DataGraph<{ ecosystem: string; workflow: string }, GenerationCtx>()
+export const krea2Graph = new DataGraph<
+  { ecosystem: string; workflow: string; model: ResourceData },
+  GenerationCtx
+>()
   .merge(
     () =>
       createCheckpointGraph({
@@ -191,9 +263,6 @@ export const krea2Graph = new DataGraph<{ ecosystem: string; workflow: string },
       }),
     []
   )
-  .merge(triggerWordsGraph)
-  .merge(snippetsGraph)
-  .merge(promptGraph)
   .node(
     'aspectRatio',
     aspectRatioNode({
@@ -202,6 +271,23 @@ export const krea2Graph = new DataGraph<{ ecosystem: string; workflow: string },
       priorityOptions: krea2PriorityRatios,
     })
   )
-  .node('creativity', enumNode({ options: krea2CreativityOptions, defaultValue: 'medium' }))
-  .node('styleReferences', styleReferencesNode())
+  // Derive the control-set variant from the selected version, then swap in the
+  // engine-appropriate controls (FAL: creativity/styleRefs; comfy: LoRA/cfg/steps).
+  .computed(
+    'krea2Variant',
+    (ctx): Krea2Variant =>
+      (ctx.model?.id ? krea2VersionIdToVariant.get(ctx.model.id) : undefined) ?? 'fal',
+    ['model']
+  )
+  .discriminator('krea2Variant', {
+    fal: falVariantGraph,
+    raw: rawVariantGraph,
+    turbo: turboVariantGraph,
+  })
+  // Prompt + triggerWords are common to all variants. negativePrompt lives in
+  // the comfy branches; its registration effect self-adds to the snippets
+  // target map when that branch is active.
+  .merge(triggerWordsGraph)
+  .merge(snippetsGraph)
+  .merge(promptGraph)
   .node('seed', seedNode());

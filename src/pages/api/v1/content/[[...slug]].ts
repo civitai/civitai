@@ -3,6 +3,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { publicApiContext, publicApiContext2 } from '~/server/createContext';
 import { appRouter } from '~/server/routers';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import { isClientAbortError } from '~/server/utils/errorHandling';
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
   // const apiCaller = appRouter.createCaller(publicApiContext(req, res));
@@ -12,6 +13,10 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     const result = await apiCaller.content.get({ slug: req.query.slug });
     return res.status(200).json(result);
   } catch (error: any) {
+    if (isClientAbortError(error)) {
+      if (!res.headersSent) res.status(499).end();
+      return;
+    }
     if (error instanceof TRPCError) return res.status(500).json({ error: error.cause });
     else return res.status(500).json({ error: 'Internal server error' });
   }

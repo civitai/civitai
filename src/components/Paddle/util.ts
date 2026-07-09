@@ -1,3 +1,4 @@
+import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { useEffect, useMemo, useState } from 'react';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -54,17 +55,17 @@ export const useMutatePaddle = () => {
 
   return {
     processCompleteBuzzTransaction: handleProcessCompleteBuzzTransaction,
-    processingCompleteBuzzTransaction: processCompleteBuzzTransactionMutation.isLoading,
+    processingCompleteBuzzTransaction: processCompleteBuzzTransactionMutation.isPending,
     updateSubscription: handleUpdateSubscription,
-    updatingSubscription: updateSubscriptionMutation.isLoading,
+    updatingSubscription: updateSubscriptionMutation.isPending,
     cancelSubscription: handleCancelSubscriptionMutation,
-    cancelingSubscription: cancelSubscriptionMutation.isLoading,
+    cancelingSubscription: cancelSubscriptionMutation.isPending,
     purchaseBuzzWithSubscription: handlePurchaseBuzzWithSubscription,
-    purchasingBuzzWithSubscription: purchaseBuzzWithSubscription.isLoading,
+    purchasingBuzzWithSubscription: purchaseBuzzWithSubscription.isPending,
     getOrCreateCustomer: handleGetOrCreateCustomer,
-    gettingOrCreateCustomer: getOrCreateCustomerIdMutation.isLoading,
+    gettingOrCreateCustomer: getOrCreateCustomerIdMutation.isPending,
     refreshSubscription: handleRefreshSubscription,
-    refreshingSubscription: refreshSubscriptionMutation.isLoading,
+    refreshingSubscription: refreshSubscriptionMutation.isPending,
   };
 };
 
@@ -108,7 +109,7 @@ export const usePaddleAdjustmentsInfinite = (
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       trpc: { context: { skipBatch: true } },
-      ...options,
+      ...withPlaceholderData(options),
     }
   );
 

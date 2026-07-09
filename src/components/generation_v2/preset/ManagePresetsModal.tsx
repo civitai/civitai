@@ -187,7 +187,7 @@ export function ManagePresetsModal() {
                           size="compact-sm"
                           leftSection={<IconCheck size={14} />}
                           onClick={submitEdit}
-                          loading={updatePreset.isLoading}
+                          loading={updatePreset.isPending}
                           disabled={!edit.name.trim()}
                         >
                           Save
@@ -270,7 +270,7 @@ export function ManagePresetsModal() {
               size="compact-sm"
               leftSection={<IconX size={14} />}
               onClick={discardOrder}
-              disabled={reorderPresets.isLoading}
+              disabled={reorderPresets.isPending}
             >
               Discard order changes
             </Button>
@@ -278,7 +278,7 @@ export function ManagePresetsModal() {
               size="compact-sm"
               leftSection={<IconCheck size={14} />}
               onClick={saveOrder}
-              loading={reorderPresets.isLoading}
+              loading={reorderPresets.isPending}
             >
               Save order
             </Button>

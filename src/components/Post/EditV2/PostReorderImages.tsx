@@ -130,7 +130,7 @@ export function ReorderImagesButton() {
     state.toggleReordering,
   ]);
 
-  const { mutate, isLoading } = trpc.post.reorderImages.useMutation({
+  const { mutate, isPending: isLoading } = trpc.post.reorderImages.useMutation({
     async onSuccess() {
       await queryUtils.model.getAll.invalidate();
       await queryUtils.image.getInfinite.invalidate();

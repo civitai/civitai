@@ -1,3 +1,4 @@
+import { keepPreviousData } from '@tanstack/react-query';
 import {
   Anchor,
   Badge,
@@ -83,7 +84,7 @@ export default function UserTransactions() {
   const { data, isLoading, fetchNextPage, isFetchingNextPage, hasNextPage } =
     trpc.buzz.getUserTransactions.useInfiniteQuery(filters, {
       getNextPageParam: (lastPage) => lastPage.cursor,
-      keepPreviousData: true,
+      placeholderData: keepPreviousData,
     });
 
   const transactions = useMemo(

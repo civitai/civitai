@@ -116,6 +116,8 @@ import type { ModelMeta } from '~/server/schema/model.schema';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getDefaultModelVersion } from '~/server/services/model-version.service';
+import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
+import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { ModelModifier } from '~/shared/utils/prisma/enums';
@@ -150,7 +152,7 @@ import { Meta } from '~/components/Meta/Meta';
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
-  resolver: async ({ ssg, ctx, session }) => {
+  resolver: async ({ ssg, ctx, session, features }) => {
     const params = (ctx.params ?? {}) as {
       id: string;
       slug: string[];
@@ -275,8 +277,74 @@ export const getServerSideProps = createServerSideProps({
               })
             : null,
           ssg.model.getCollectionShowcase.prefetch({ id }),
+          // Creator-card CLS fix: SSR-prefetch user.getCreator (the SmartCreatorCard
+          // query, keyed by `{ id }`) so it hydrates with the real creator — stats,
+          // rank, links, badges — instead of rendering the zeroed fallback and
+          // growing once the client fetch lands. Simple key, no middleware to
+          // mismatch; fail-soft on miss.
+          model?.user?.id
+            ? ssg.user.getCreator.prefetch({ id: model.user.id }).catch(() => null)
+            : null,
           session ? ssg.user.getEngagedModelVersions.prefetch({ id }) : null,
           session ? ssg.resourceReview.getUserResourceReview.prefetch({ modelId: id }) : null,
+          // App Blocks CLS fix: SSR-prefetch the slot's listForModel query so
+          // the client `useBlockSlot` useQuery hydrates with isLoading already
+          // false on first render — the slot reserves the right height from
+          // real data instead of flashing 0px → full frame (layout shift).
+          // The input MUST match useBlockSlot's exactly (slotId, modelId,
+          // modelType, modelNsfwLevel) or the React Query cache keys won't
+          // line up and hydration won't apply. Cheap: the blocks router gates
+          // on the appBlocks flag and returns [] when dark, and listForModel
+          // itself is the 60s-cached, indexed path. Fail-soft — a prefetch
+          // miss just falls back to the (now reserved-height) loading path.
+          model
+            ? ssg.blocks.listForModel
+                .prefetch({
+                  slotId: 'model.sidebar_top',
+                  modelId: id,
+                  modelType: model.type,
+                  modelNsfwLevel: model.nsfwLevel ?? undefined,
+                })
+                .catch(() => null)
+            : null,
+          // Carousel CLS fix: SSR-prefetch the images query the ModelCarousel
+          // (and the page's own useQueryImages) run client-side, so it hydrates
+          // with isLoading already false — the carousel reserves the right height
+          // from real image dimensions instead of a fixed 600px placeholder that
+          // rarely matches (layout shift). The input MUST match useQueryImages
+          // exactly: the addon-derived excludedTagIds/disablePoi/disableMinor are
+          // resolved from the LIVE addon list at the request's browsing level (not
+          // the DEFAULT constant), or the React Query key won't line up and the
+          // client refetches. Fail-soft on any miss.
+          model && modelVersionIdParsed
+            ? (async () => {
+                const { getBrowsingSettingAddons } = await import('~/server/services/system-cache');
+                const browsingLevel = getServerBrowsingLevel({
+                  canViewNsfw: features?.canViewNsfw ?? false,
+                  user: session?.user,
+                });
+                const addons = await getBrowsingSettingAddons().catch(() => null);
+                if (!addons) return null;
+                const addonSettings = resolveBrowsingSettingsAddons(addons, browsingLevel, {
+                  isModerator: session?.user?.isModerator,
+                });
+                return ssg.image.getInfinite
+                  .prefetchInfinite({
+                    modelVersionId: modelVersionIdParsed as number,
+                    prioritizedUserIds: [model.user.id],
+                    period: 'AllTime',
+                    sort: ImageSort.MostReactions,
+                    limit: CAROUSEL_LIMIT,
+                    pending: true,
+                    include: [],
+                    withMeta: false,
+                    excludedTagIds: addonSettings.excludedTagIds,
+                    disablePoi: addonSettings.disablePoi,
+                    disableMinor: addonSettings.disableMinor,
+                  })
+                  .catch(() => null);
+              })()
+            : null,
         ].filter(Boolean)
       );
     }
@@ -305,15 +373,14 @@ export default function ModelDetailsV2({
 
   const { blockedUsers } = useHiddenPreferencesData();
 
-  const { data: model, isLoading: loadingModel } = trpc.model.getById.useQuery(
-    { id, excludeTrainingData: true },
-    {
-      onSuccess(result) {
-        const latestVersion = result.modelVersions[0];
-        if (latestVersion) setSelectedVersion(latestVersion);
-      },
-    }
-  );
+  const { data: model, isLoading: loadingModel } = trpc.model.getById.useQuery({
+    id,
+    excludeTrainingData: true,
+  });
+  // NOTE: the removed v4 `onSuccess` set selectedVersion to modelVersions[0] on each fetch.
+  // That is already covered (URL-aware) by the `selectedVersion` useState initializer below
+  // and the querystring-sync effect further down — replicating it via useEffect([model]) would
+  // also fire on cached/SSR mounts (where onSuccess did not) and clobber deep-linked versions.
   const browsingSettingsAddons = useBrowsingSettingsAddons();
 
   const rawVersionId = router.query.modelVersionId;
@@ -324,7 +391,7 @@ export default function ModelDetailsV2({
   const { data: { Recommended: reviewedModels = [] } = { Recommended: [] } } =
     trpc.user.getEngagedModels.useQuery(undefined, {
       enabled: !!currentUser,
-      cacheTime: Infinity,
+      gcTime: Infinity,
       staleTime: Infinity,
     });
   const isFavorite = model && reviewedModels.includes(model.id);
@@ -402,7 +469,7 @@ export default function ModelDetailsV2({
         : 'Are you sure you want to delete this model? This action is destructive and you will have to contact support to restore your data.',
       centered: true,
       labels: { confirm: 'Delete Model', cancel: "No, don't delete it" },
-      confirmProps: { color: 'red', disabled: deleteMutation.isLoading },
+      confirmProps: { color: 'red', disabled: deleteMutation.isPending },
       closeOnConfirm: false,
       onConfirm: () => {
         if (model) {
@@ -578,9 +645,18 @@ export default function ModelDetailsV2({
     // Change the selected modelVersion based on querystring param
     if (loadingModel) return;
     const queryVersion = publishedVersions.find((v) => v.id === modelVersionId);
-    const hasSelected = publishedVersions.some((v) => v.id === selectedVersion?.id);
-    if (!hasSelected) setSelectedVersion(queryVersion ?? publishedVersions[0] ?? null);
-    if (selectedVersion && queryVersion !== selectedVersion) {
+    const current = publishedVersions.find((v) => v.id === selectedVersion?.id);
+    if (!current) {
+      // Selected version is no longer present (deep-link / removed version): fall back.
+      setSelectedVersion(queryVersion ?? publishedVersions[0] ?? null);
+    } else if (current !== selectedVersion) {
+      // Re-sync the held reference to the freshly-fetched object after a refetch. This
+      // replaces the query `onSuccess` removed in the RQ v5 migration; without it, the
+      // id-based effect below would compare a stale object ref and (with `router` in deps)
+      // loop on router.replace whenever a mod action invalidates model.getById.
+      setSelectedVersion(current);
+    }
+    if (selectedVersion && queryVersion?.id !== selectedVersion.id) {
       router.replace(
         getModelUrl({
           modelId: id,
@@ -864,7 +940,11 @@ export default function ModelDetailsV2({
                     withinPortal
                   >
                     <Menu.Target>
-                      <LegacyActionIcon className={classes.headerButton} variant="light">
+                      <LegacyActionIcon
+                        className={classes.headerButton}
+                        variant="light"
+                        aria-label="Model options"
+                      >
                         <IconDotsVertical size={20} />
                       </LegacyActionIcon>
                     </Menu.Target>
@@ -874,7 +954,7 @@ export default function ModelDetailsV2({
                           leftSection={<IconBan size={14} stroke={1.5} />}
                           color="yellow"
                           onClick={() => unpublishModelMutation.mutate({ id })}
-                          disabled={unpublishModelMutation.isLoading}
+                          disabled={unpublishModelMutation.isPending}
                         >
                           Unpublish
                         </Menu.Item>
@@ -886,7 +966,7 @@ export default function ModelDetailsV2({
                             leftSection={<IconRepeat size={14} stroke={1.5} />}
                             color="green"
                             onClick={handlePublishModel}
-                            disabled={publishModelMutation.isLoading}
+                            disabled={publishModelMutation.isPending}
                           >
                             Republish
                           </Menu.Item>
@@ -896,7 +976,7 @@ export default function ModelDetailsV2({
                           leftSection={<IconRecycle size={14} stroke={1.5} />}
                           color="green"
                           onClick={() => restoreModelMutation.mutate({ id })}
-                          disabled={restoreModelMutation.isLoading}
+                          disabled={restoreModelMutation.isPending}
                         >
                           Restore
                         </Menu.Item>
@@ -993,7 +1073,7 @@ export default function ModelDetailsV2({
                       {isModerator && (
                         <Menu.Item
                           leftSection={
-                            rescanModelMutation.isLoading ? (
+                            rescanModelMutation.isPending ? (
                               <Loader size={14} />
                             ) : (
                               <IconRadar2 size={14} stroke={1.5} />
@@ -1312,7 +1392,6 @@ export default function ModelDetailsV2({
                 <AssociatedModels
                   fromId={model.id}
                   type="Suggested"
-                  versionId={selectedVersion.id}
                   ownerId={model.user.id}
                   label={
                     <Group gap={8} wrap="nowrap">

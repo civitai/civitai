@@ -91,7 +91,7 @@ export function ReactionButton({
     } else return hasReacted ? initialCount + 1 : initialCount;
   }, [hasReactedInitial, hasReacted, initialCount]);
 
-  const { mutate, isLoading } = trpc.reaction.toggle.useMutation();
+  const { mutate, isPending: isLoading } = trpc.reaction.toggle.useMutation();
 
   const handleClick = (e: React.MouseEvent) => {
     e.preventDefault();

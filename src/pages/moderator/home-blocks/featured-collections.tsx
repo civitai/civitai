@@ -21,6 +21,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({
+  requireModerator: true,
   useSession: true,
   resolver: async ({ session }) => {
     const isModerator = session?.user?.isModerator ?? false;
@@ -112,7 +113,7 @@ export default function FeaturedCollectionsAdmin() {
             <Button
               leftSection={<IconPlus size={16} />}
               onClick={handleAdd}
-              loading={addMutation.isLoading}
+              loading={addMutation.isPending}
               disabled={typeof collectionIdInput !== 'number'}
             >
               Add
@@ -222,7 +223,7 @@ export default function FeaturedCollectionsAdmin() {
                           color="teal"
                           variant="light"
                           title="Approve current name + write config"
-                          loading={acknowledgeMutation.isLoading}
+                          loading={acknowledgeMutation.isPending}
                           onClick={() => acknowledgeMutation.mutate({ collectionId: c.id })}
                         >
                           <IconCheck size={16} />
@@ -238,7 +239,7 @@ export default function FeaturedCollectionsAdmin() {
                         onConfirm={() => removeMutation.mutate({ collectionId: c.id })}
                         withinPortal
                       >
-                        <ActionIcon color="red" variant="subtle" loading={removeMutation.isLoading}>
+                        <ActionIcon color="red" variant="subtle" loading={removeMutation.isPending}>
                           <IconTrash size={16} />
                         </ActionIcon>
                       </PopConfirm>

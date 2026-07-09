@@ -2,9 +2,9 @@ import type { ButtonProps } from '@mantine/core';
 import { Button, Group, useComputedColorScheme, useMantineTheme } from '@mantine/core';
 import { IconMessage2 } from '@tabler/icons-react';
 import { useChatStore } from '~/components/Chat/ChatProvider';
+import { useChatEnabled } from '~/components/Chat/useChatEnabled';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 
 export function ChatUserButton({
@@ -16,7 +16,7 @@ export function ChatUserButton({
   label?: string;
 } & ButtonProps) {
   const theme = useMantineTheme();
-  const features = useFeatureFlags();
+  const chatEnabled = useChatEnabled();
   const currentUser = useCurrentUser();
   const colorScheme = useComputedColorScheme('dark');
 
@@ -29,7 +29,7 @@ export function ChatUserButton({
     }));
   };
 
-  if (!features.chat || user.id === currentUser?.id) return <></>;
+  if (!chatEnabled || user.id === currentUser?.id) return <></>;
 
   return (
     <LoginPopover>

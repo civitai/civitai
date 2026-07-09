@@ -1,3 +1,4 @@
+import { keepPreviousData } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import type { GetAllToolsSchema } from '~/server/schema/tool.schema';
@@ -20,7 +21,7 @@ export function useQueryTools(opts?: {
       {
         ...options,
         getNextPageParam: (lastPage) => lastPage.nextCursor ?? null,
-        keepPreviousData: true,
+        placeholderData: keepPreviousData,
       }
     );
 

@@ -25,6 +25,7 @@ import { isNumber } from '~/utils/type-guards';
 import { showErrorNotification } from '~/utils/notifications';
 import { getModelUrl } from '~/utils/string-helpers';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
+import { useWizardStepSave } from './useWizardStepSave';
 
 const MAX_STEPS = 3;
 
@@ -59,14 +60,19 @@ const CreateSteps = ({
   // is omitted, so URL step 3 (post) collapses to rendered index 1.
   const activeIndex = skipFiles && step >= 2 ? Math.max(0, step - 2) : step - 1;
 
+  const navigateToStep = (urlStep: number) =>
+    router
+      .replace(`/models/${modelData?.id}/model-versions/${versionId}/wizard?step=${urlStep}`)
+      .then();
+  const { formId, handleStepSelect, withSavedNav, clearPendingStep } =
+    useWizardStepSave(navigateToStep);
+
   return (
     <Stepper
       active={activeIndex}
       onStepClick={(idx) => {
         const urlStep = skipFiles && idx >= 1 ? idx + 2 : idx + 1;
-        router.replace(
-          `/models/${modelData?.id}/model-versions/${versionId}/wizard?step=${urlStep}`
-        );
+        handleStepSelect(urlStep, step);
       }}
       allowNextStepsSelect={false}
       size="sm"
@@ -76,9 +82,10 @@ const CreateSteps = ({
         <div className="container flex max-w-sm flex-col gap-3">
           <Title order={3}>{editing ? 'Edit version' : 'Add version'}</Title>
           <ModelVersionUpsertForm
+            id={formId}
             model={modelData}
             version={modelVersion}
-            onSubmit={(result) => {
+            onSubmit={withSavedNav((result) => {
               const skipFiles = result?.usageControl === ModelUsageControl.ExternalGeneration;
               const nextStep = skipFiles ? 3 : 2;
               router
@@ -88,11 +95,11 @@ const CreateSteps = ({
                   editing ? { shallow: true } : undefined
                 )
                 .then();
-            }}
+            })}
           >
             {({ loading, canSave }) => (
               <Group mt="xl" justify="flex-end">
-                <Button type="submit" loading={loading} disabled={!canSave}>
+                <Button type="submit" loading={loading} disabled={!canSave} onClick={clearPendingStep}>
                   Next
                 </Button>
               </Group>
@@ -171,14 +178,17 @@ const TrainSteps = ({
     }
   };
 
+  const navigateToStep = (urlStep: number) =>
+    router
+      .replace(`/models/${modelData?.id}/model-versions/${modelVersion.id}/wizard?step=${urlStep}`)
+      .then();
+  const { formId, handleStepSelect, withSavedNav, clearPendingStep } =
+    useWizardStepSave(navigateToStep);
+
   return (
     <Stepper
       active={step - 1}
-      onStepClick={(step) =>
-        router.replace(
-          `/models/${modelData?.id}/model-versions/${modelVersion.id}/wizard?step=${step + 1}`
-        )
-      }
+      onStepClick={(idx) => handleStepSelect(idx + 1, step)}
       allowNextStepsSelect={false}
       size="sm"
       classNames={{ steps: 'container max-w-sm' }}
@@ -216,9 +226,10 @@ const TrainSteps = ({
         <div className="container flex max-w-sm flex-col gap-3">
           <Title order={3}>Edit version</Title>
           <ModelVersionUpsertForm
+            id={formId}
             model={modelData}
             version={modelVersion}
-            onSubmit={isPrivateModel ? onPublish : goNext}
+            onSubmit={withSavedNav(isPrivateModel ? onPublish : () => goNext())}
           >
             {({ loading, canSave }) => (
               <Stack gap="xs" mt="xl">
@@ -234,8 +245,9 @@ const TrainSteps = ({
                   </Button>
                   <Button
                     type="submit"
-                    loading={loading || publishPrivateModelVersionMutation.isLoading}
+                    loading={loading || publishPrivateModelVersionMutation.isPending}
                     disabled={!canSave}
+                    onClick={clearPendingStep}
                   >
                     {isPrivateModel ? 'Complete' : 'Next'}
                   </Button>

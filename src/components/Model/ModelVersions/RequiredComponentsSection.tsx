@@ -546,7 +546,8 @@ function ComponentGroup({
           {files.map((file) => {
             const isSelected = file.id === activeFile?.id;
             const isBestMatch = file.id === bestMatch?.id;
-            const label = getFileLabel(file) ?? file.name;
+            const fileLabel = getFileLabel(file);
+            const label = fileLabel ?? file.name;
             const description = getFileDescription(file);
             const fileDownloadUrl = createModelFileDownloadUrl({
               versionId,
@@ -602,6 +603,11 @@ function ComponentGroup({
                           </Badge>
                         )}
                       </Group>
+                      {fileLabel && (
+                        <Text size="xs" c="dimmed" truncate style={{ maxWidth: 200 }} title={file.name}>
+                          {file.name}
+                        </Text>
+                      )}
                       {description && (
                         <Text size="xs" c="dimmed">
                           {description}

@@ -6,6 +6,7 @@ import { useRef, useState } from 'react';
 import { BrowsingModeIcon } from '~/components/BrowsingMode/BrowsingMode';
 import { ReadOnlyNotice } from '~/components/ReadOnlyNotice/ReadOnlyNotice';
 import { ChatButton } from '~/components/Chat/ChatButton';
+import { useChatEnabled } from '~/components/Chat/useChatEnabled';
 import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
 import { Logo } from '~/components/Logo/Logo';
 import { ImpersonateButton } from '~/components/Moderation/ImpersonateButton';
@@ -51,6 +52,9 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
   const currentUser = useCurrentUser();
   const router = useRouter();
   const features = useFeatureFlags();
+  // Gate on the user's resolved chat setting so the chat icon never flashes in
+  // then out for users who have chat disabled. See useChatEnabled for details.
+  const showChat = useChatEnabled();
   const searchRef = useRef<HTMLInputElement>(null);
 
   const [showSearch, setShowSearch] = useState(false);
@@ -104,7 +108,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
             )}
             {currentUser && features.canViewNsfw && <BrowsingModeIcon />}
             {currentUser && <NotificationBell />}
-            {currentUser && features.chat && <ChatButton />}
+            {currentUser && showChat && <ChatButton />}
             {currentUser?.isModerator && <ModerationNav />}
             {currentUser && <ImpersonateButton />}
           </div>
@@ -127,12 +131,17 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         <Grid.Col span="auto" className="flex items-center justify-end @md:hidden">
           <div className="flex items-center gap-1">
             <CreateMenu />
-            <LegacyActionIcon variant="subtle" color="gray" onClick={() => setShowSearch(true)}>
+            <LegacyActionIcon
+              variant="subtle"
+              color="gray"
+              onClick={() => setShowSearch(true)}
+              aria-label="Search"
+            >
               <IconSearch />
             </LegacyActionIcon>
             {currentUser && <CivitaiLinkPopover />}
             {currentUser && <NotificationBell />}
-            {currentUser && features.chat && <ChatButton />}
+            {currentUser && showChat && <ChatButton />}
             {/*{currentUser?.isModerator && <ModerationNav />}*/}
             {currentUser && <ImpersonateButton />}
             <UserMenu />

@@ -23,7 +23,7 @@ import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
+import { CollectionItemStatus, ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { useImageStore } from '~/store/image.store';
 import { useTourContext } from '~/components/Tours/ToursProvider';
@@ -167,6 +167,14 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                       <Badge variant="filled" radius="xl" h={26} color="pink.3">
                         POI
                       </Badge>
+                    )}
+                    {(currentUser?.id === data.user.id || isModerator) &&
+                      data.collectionItemStatus === CollectionItemStatus.REVIEW && (
+                      <Tooltip label="Still being reviewed — not yet eligible for judging" withinPortal>
+                        <Badge variant="filled" radius="xl" h={26} color="yellow">
+                          Pending review
+                        </Badge>
+                      </Tooltip>
                     )}
                   </div>
                 </div>
@@ -330,6 +338,7 @@ function ImageReactions({ image, readonly }: { image: ImagesInfiniteModel; reado
           className="justify-between p-2"
           invisibleEmpty
           disableBuzzTip={image.poi}
+          abbreviate
         />
       )}
     </Metrics>

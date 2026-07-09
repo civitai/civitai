@@ -32,6 +32,38 @@ export const addViewSchema = z.object({
 
 export type AddViewSchema = z.infer<typeof addViewSchema>;
 
+// App Blocks Analytics Phase 2 — block render/impression event.
+//
+// `block_scope_invocations` (Postgres) only captures AUTHENTICATED scoped API
+// calls, so anon viewers and static/no-scope blocks (which never make a scoped
+// call) are invisible. This event fires once per host mount at the BLOCK_READY
+// transition to make those renders measurable. It is emitted via the lightweight
+// /api/track/block-render beacon (see that route) rather than a tRPC mutation,
+// to skip the per-request tRPC middleware cost at GA volume.
+//
+// GRANULARITY: this is ONE row PER HOST MOUNT. A tab-switch or model-navigation
+// remount RE-FIRES it, so the same viewer can produce multiple rows for the
+// "same" block view. Consumers computing "unique views" MUST dedup in-query
+// (e.g. by viewer/session over a window) — do NOT treat each row as a unique view.
+//
+// SECURITY: the client supplies ONLY the three identifiers below. `isAnon` is
+// derived server-side from the session (`!session?.user` in the beacon route)
+// and `userId` is stamped by the Tracker — neither is accepted from the client
+// (the non-strict object strips any client-sent isAnon/userId), so an anon
+// viewer can't spoof an authed render (or vice-versa).
+export type BlockRenderInput = z.infer<typeof blockRenderSchema>;
+export const blockRenderSchema = z.object({
+  // The approved AppBlock's id (UUID-ish string). Capped to keep a tampered
+  // client from bloating the tracker payload; well above any real id length.
+  appBlockId: z.string().trim().min(1).max(256),
+  // The block instance id (`page_<appBlockId>` for pages, or the per-slot
+  // install instance id for slot hosts).
+  blockInstanceId: z.string().trim().min(1).max(256),
+  // Where the block rendered: 'app.page' for the full-page runner, or a slot
+  // id like 'model.sidebar_top' for the in-page slot host.
+  slotId: z.string().trim().min(1).max(128),
+});
+
 export type TrackShareInput = z.infer<typeof trackShareSchema>;
 export const trackShareSchema = z.object({
   platform: z.enum(['reddit', 'twitter', 'clipboard']),
@@ -341,47 +373,64 @@ const generatorSubmitSchema = z.object({
   // and may be omitted depending on form/path. The submit-schema's job is
   // to enforce the entry-action discriminator, not to dictate which
   // optional context fields each emitter chooses to populate.
-  details: z
-    .object({
-      // Checkpoint version that will run the job. May be undefined for
-      // multi-resource workflows where the checkpoint isn't picked yet.
-      modelVersionId: z.number().nullish(),
-      // Discriminator for joining back to the entry-point click event.
-      // Reflects the most-recent intentful entry, not session history — each
-      // open-with-input call (remix click, model-stat click, replay) overwrites
-      // the previous value; close() resets to 'direct'; navbar Create resets
-      // to 'direct' via the no-input branch. So a user who remixes then
-      // pivots to the navbar will see fromAction='direct' on the next submit,
-      // not 'remix'.
-      //
-      // 'remix'  — opened from an image/video (generationGraphPanel runType=remix)
-      // 'create' — opened from a model/modelVersion page or model card
-      // 'replay' — re-run from the queue / previous output
-      // 'direct' — opened from /generate or with no input (panel default)
-      fromAction: z.enum(['create', 'remix', 'replay', 'direct']),
-      // True when remixOfId is being sent on the request — gated by the
-      // 0.75 prompt-similarity threshold in BOTH legacy and v2 forms (v2
-      // via the `useRemixOfId()` hook). Absent on video-form emits — the
-      // video path has no similarity hook yet. See the doc-block above
-      // for the hasRemixOfId roll-up caveat.
-      hasRemixOfId: z.boolean().optional(),
-      // 'legacy' (GenerationForm2) | 'new' (generation_v2/FormFooter) |
-      // 'video' (Generation/Video/VideoGenerationForm)
-      formVersion: z.enum(['legacy', 'new', 'video']).optional(),
-      // False when the submit attempt failed validation (react-hook-form
-      // onError path or graph.validate() early return). The data team can
-      // split valid-vs-invalid attempts to spot UX traps where users click
-      // Generate but the form blocks them. Default true (omitted on success
-      // path is treated as valid by downstream).
-      isValid: z.boolean().optional(),
-      // True when the submit short-circuits because the user is at their
-      // concurrent-request limit (snapshot.canGenerate === false). Capacity-
-      // bounded clicks show up as a distinct funnel stage and aren't
-      // conflated with RHF validation failures (missing prompt, etc.).
-      // isValid on these rows is path-dependent (legacy/video: false,
-      // v2: true) — see the doc-block above for the dashboard caveat.
-      isRateLimited: z.boolean().optional(),
-    }),
+  details: z.object({
+    // Checkpoint version that will run the job. May be undefined for
+    // multi-resource workflows where the checkpoint isn't picked yet.
+    modelVersionId: z.number().nullish(),
+    // Discriminator for joining back to the entry-point click event.
+    // Reflects the most-recent intentful entry, not session history — each
+    // open-with-input call (remix click, model-stat click, replay) overwrites
+    // the previous value; close() resets to 'direct'; navbar Create resets
+    // to 'direct' via the no-input branch. So a user who remixes then
+    // pivots to the navbar will see fromAction='direct' on the next submit,
+    // not 'remix'.
+    //
+    // 'remix'  — opened from an image/video (generationGraphPanel runType=remix)
+    // 'create' — opened from a model/modelVersion page or model card
+    // 'replay' — re-run from the queue / previous output
+    // 'direct' — opened from /generate or with no input (panel default)
+    fromAction: z.enum(['create', 'remix', 'replay', 'direct']),
+    // True when remixOfId is being sent on the request — gated by the
+    // 0.75 prompt-similarity threshold via the `useRemixOfId()` hook in the
+    // v2 form. See the doc-block above for the hasRemixOfId roll-up caveat.
+    hasRemixOfId: z.boolean().optional(),
+    // 'new' (generation_v2/FormFooter) is emitted by the current form.
+    // 'legacy'/'video' are retained for backward-compatibility with
+    // historical events from the removed legacy generation form.
+    formVersion: z.enum(['legacy', 'new', 'video']).optional(),
+    // False when the submit attempt failed validation (react-hook-form
+    // onError path or graph.validate() early return). The data team can
+    // split valid-vs-invalid attempts to spot UX traps where users click
+    // Generate but the form blocks them. Default true (omitted on success
+    // path is treated as valid by downstream).
+    isValid: z.boolean().optional(),
+    // True when the submit short-circuits because the user is at their
+    // concurrent-request limit (snapshot.canGenerate === false). Capacity-
+    // bounded clicks show up as a distinct funnel stage and aren't
+    // conflated with RHF validation failures (missing prompt, etc.).
+    // isValid on these rows is path-dependent (legacy/video: false,
+    // v2: true) — see the doc-block above for the dashboard caveat.
+    isRateLimited: z.boolean().optional(),
+    // Idempotency key also forwarded as `externalId` on the orchestration
+    // create-workflow call. Lets the dashboard join Generator_Submit rows
+    // to orchestration.jobs.externalId exactly (no userId+time heuristic).
+    //
+    // Present on happy-path emits (isValid:true, passed both RHF + the
+    // inner graph.validate / canGenerate gates) — NOT on RHF-fail or
+    // rate-limited emits, which never call mutateAsync. Note that some
+    // happy-path emits still produce no orchestration row — the user can
+    // cancel at the buzz-confirm prompt, hit insufficient-buzz, or trip
+    // a POI/mature-content reject after submit. Those rows will have
+    // externalId populated but never match a job; dashboard joins should
+    // treat unmatched-externalId submits as "submitted, no workflow"
+    // not "missing telemetry."
+    //
+    // Constraints mirror the orchestrator's own validation
+    // (civitai/civitai-orchestration#229 WorkflowTemplate.ExternalId) so
+    // tampered clients get rejected at the trpc layer instead of bloating
+    // the trackAction body before the orchestrator rejects.
+    externalId: z.string().max(128).regex(/^[A-Za-z0-9_-]+$/).optional(),
+  }),
 });
 
 export type TrackActionInput = z.infer<typeof trackActionSchema>;

@@ -14,10 +14,12 @@
  *   clearProfile     - { userId, fields?: ('location'|'bio'|'message')[] }
  *   mute             - { userId }                       Set muted=true
  *   unmute           - { userId }                       Set muted=false
+ *   forceLogout      - { userId }                       Invalidate all active sessions
  *   updateIdentity   - { userId, username?, email?, name? }    [privileged]
  *   toggleModerator  - { userId, isModerator: boolean }        [privileged]
  */
 import * as z from 'zod';
+import { invalidateSession } from '~/server/auth/session-invalidation';
 import {
   clearUserProfileFields,
   forceUpdateUserIdentity,
@@ -60,6 +62,14 @@ export default defineRetoolEndpoint('user', {
       return { muted: false, affected: { userIds: [input.userId] } };
     },
   }),
+  forceLogout: retoolAction({
+    input: z.object({ userId }),
+    rateLimit: { max: 30, windowSeconds: 60 },
+    async handler(input) {
+      await invalidateSession(input.userId);
+      return { loggedOut: true, affected: { userIds: [input.userId] } };
+    },
+  }),
   updateIdentity: retoolAction({
     // Kept as a plain ZodObject — the wrapper .extends() every action input,
     // and .refine() would return a ZodEffects with no .extend. The
@@ -73,14 +83,8 @@ export default defineRetoolEndpoint('user', {
     privileged: 'retoolUpdateIdentity',
     rateLimit: { max: 20, windowSeconds: 60 },
     async handler(input) {
-      if (
-        input.username === undefined &&
-        input.email === undefined &&
-        input.name === undefined
-      ) {
-        throw throwBadRequestError(
-          'At least one of username, email, name must be provided'
-        );
+      if (input.username === undefined && input.email === undefined && input.name === undefined) {
+        throw throwBadRequestError('At least one of username, email, name must be provided');
       }
       const result = await forceUpdateUserIdentity({
         userId: input.userId,

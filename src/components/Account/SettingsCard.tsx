@@ -13,6 +13,7 @@ import {
 import produce from 'immer';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useModelFileOptions } from '~/hooks/useModelFileOptions';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 // import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -35,8 +36,9 @@ export function SettingsCard() {
   const user = useCurrentUser();
   const queryUtils = trpc.useUtils();
   const flags = useFeatureFlags();
+  const { precisions, quantTypes } = useModelFileOptions();
 
-  const { mutate, isLoading } = trpc.user.update.useMutation({
+  const { mutate, isPending: isLoading } = trpc.user.update.useMutation({
     async onSuccess() {
       await queryUtils.model.getAll.invalidate();
       await user?.refresh();
@@ -45,7 +47,7 @@ export function SettingsCard() {
   });
 
   const { assistantPersonality } = useCurrentUserSettings();
-  const { mutate: mutateSetting, isLoading: isLoadingSetting } = useMutateUserSettings();
+  const { mutate: mutateSetting, isPending: isLoadingSetting } = useMutateUserSettings();
 
   if (!user) return null;
 
@@ -115,7 +117,7 @@ export function SettingsCard() {
           <Select
             label="Preferred Precision"
             // name="fp"
-            data={constants.modelFileFp.map((value) => ({
+            data={precisions.map((value) => ({
               value,
               label: value.toUpperCase(),
             }))}
@@ -138,7 +140,7 @@ export function SettingsCard() {
             <Select
               label="Preferred Quant Type"
               name="quantType"
-              data={constants.modelFileQuantTypes}
+              data={quantTypes}
               allowDeselect={false}
               value={user.filePreferences?.quantType ?? 'Q4_K_M'}
               onChange={(value: string | null) =>

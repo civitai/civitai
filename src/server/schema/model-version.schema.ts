@@ -80,6 +80,8 @@ export const trainingDetailsBaseModelsLtx23 = ['ltx23'] as const;
 export const trainingDetailsBaseModelsErnie = ['ernie'] as const;
 export const trainingDetailsBaseModelsHiDreamO1 = ['hidream_o1'] as const;
 export const trainingDetailsBaseModelsAnima = ['anima'] as const;
+export const trainingDetailsBaseModelsBoogu = ['boogu'] as const;
+export const trainingDetailsBaseModelsKrea2 = ['krea2'] as const;
 export const trainingDetailsBaseModelsAcestep15 = ['acestep_15'] as const;
 export const trainingDetailsBaseModelsAcestep15Xl = [
   'acestep_15_xl_base',
@@ -99,6 +101,8 @@ const trainingDetailsBaseModelsImage = [
   ...trainingDetailsBaseModelsErnie,
   ...trainingDetailsBaseModelsHiDreamO1,
   ...trainingDetailsBaseModelsAnima,
+  ...trainingDetailsBaseModelsBoogu,
+  ...trainingDetailsBaseModelsKrea2,
 ] as const;
 const trainingDetailsBaseModelsVideo = [
   ...trainingDetailsBaseModelsHunyuan,
@@ -155,6 +159,16 @@ export const trainingDetailsParams = z.object({
   shuffleCaption: z.boolean(),
   targetSteps: z.number(),
   engine: z.enum(engineTypes).optional().default('kohya'),
+  // Steps-based pricing (AI Toolkit) — sample generation + continue-training inputs.
+  // Stored on the UI/Kohya-shaped run params so they round-trip through the store,
+  // then mapped into the AI Toolkit payload at submit/whatif time.
+  sampleCfgScale: z.number().optional(),
+  sampleStrength: z.number().optional(),
+  /** AIR of a previously-trained LoRA to continue training from ("train further"). */
+  continueFrom: z.string().optional(),
+  // "Save every N steps" — the UI knob that derives `maxTrainEpochs` (saved checkpoints)
+  // as round(targetSteps / saveEvery). UI-only; we send the derived `epochs`, never this.
+  saveEvery: z.number().int().min(1).optional(),
 });
 export type TrainingDetailsParams = z.infer<typeof trainingDetailsParams>;
 
@@ -163,7 +177,16 @@ const aiToolkitTrainingDetailsParams = z.object({
   engine: z.literal('ai-toolkit'),
   ecosystem: z.string(),
   modelVariant: z.string().optional(),
-  epochs: z.number(),
+  // Steps-based pricing: `steps` is the primary length knob (drives pricing);
+  // `epochs` is the number of saved checkpoints. `epochs`-only (no `steps`) keeps
+  // the legacy flat per-epoch pricing for back-compat.
+  epochs: z.number().int().min(1).optional(),
+  steps: z.number().int().min(1).optional(),
+  batchSize: z.number().int().min(1).optional(),
+  sampleCfgScale: z.number().optional(),
+  sampleStrength: z.number().optional(),
+  /** AIR of a previously-trained LoRA to continue training from. */
+  continueFrom: z.string().optional(),
   resolution: z.number().nullable(),
   lr: z.number(),
   textEncoderLr: z.number().nullable(),
@@ -235,6 +258,18 @@ export const trainingDetailsObj = z.object({
   negativePrompt: z.string().optional(),
   staging: z.boolean().optional(),
   highPriority: z.boolean().optional(),
+  // "Train Further": which epoch this version continues training from. The orchestrator
+  // payload only needs params.continueFrom (an orchestrator-sourced AIR for the epoch's
+  // LoRA, same as generation uses); this object exists so the UI can clearly label the
+  // source epoch, and it survives reloads (the in-memory training store does not).
+  continueFromEpoch: z
+    .object({
+      air: z.string(),
+      epochNumber: z.number(),
+      sourceModelVersionId: z.number(),
+      sourceVersionName: z.string().optional(),
+    })
+    .optional(),
 });
 
 export const modelVersionUpsertSchema = z.object({
@@ -298,13 +333,21 @@ export type SetLinkedComponentsInput = z.infer<typeof setLinkedComponentsSchema>
 export const addLinkedComponentSchema = z.object({
   id: z.number(), // source model version ID (named `id` for isOwnerOrModerator middleware compat)
   targetVersionId: z.number(), // linked resource's version ID
+  targetFileId: z.number().optional(), // explicit file to link; falls back to auto-picking the primary
+  replaceFileId: z.number().optional(), // redundant file on the source version to delete after linking
   componentType: z.enum(constants.modelFileComponentTypes),
-  modelId: z.number(), // target model ID
-  modelName: z.string(), // target model name
-  versionName: z.string(), // target version name
+  modelId: z.number(),
+  modelName: z.string(),
+  versionName: z.string(),
   isRequired: z.boolean().optional().default(true),
 });
 export type AddLinkedComponentInput = z.infer<typeof addLinkedComponentSchema>;
+
+export const linkOfficialFileByHashSchema = z.object({
+  id: z.number(), // host version being edited; caller must own it
+  sha256: z.string().min(1),
+});
+export type LinkOfficialFileByHashInput = z.infer<typeof linkOfficialFileByHashSchema>;
 
 export type RecommendedResourceSchema = z.infer<typeof recommendedResourceSchema>;
 const recommendedResourceSchema = z.object({
@@ -383,12 +426,20 @@ export const modelVersionUpsertSchema2 = z.object({
   licensingFee: z.number().int().min(0).max(MAX_LICENSING_FEE).nullish(),
   licensingFeeType: z.enum(LicensingFeeType).nullish(),
   licensingFeeSettlementCurrency: z.enum(LicensingFeeSettlementCurrency).nullish(),
+  // Inherit another version's licensing fee (a LicensingRoot for this baseModel).
+  // Null falls back to the (baseModel, modelType) rule.
+  licensingSourceVersionId: z.number().nullish(),
 });
 
 export type GetModelVersionSchema = z.infer<typeof getModelVersionSchema>;
 export const getModelVersionSchema = z.object({
   id: z.number(),
   withFiles: z.boolean().optional(),
+});
+
+export type GetLicensingRootsSchema = z.infer<typeof getLicensingRootsSchema>;
+export const getLicensingRootsSchema = z.object({
+  baseModel: z.string(),
 });
 
 export type UpsertExplorationPromptInput = z.infer<typeof upsertExplorationPromptSchema>;
@@ -415,7 +466,6 @@ export type ModelVersionMeta = ModelMeta & {
   picFinderModelId?: number;
   earlyAccessDownloadData?: { date: string; downloads: number }[];
   generationImagesCount?: { date: string; generations: number }[];
-  allowAIRecommendations?: boolean;
   hadEarlyAccessPurchase?: boolean;
   /**
    * When set, opening this version in the generator loads the target version's
@@ -504,10 +554,10 @@ export const mergeVersionsSchema = z.object({
         type: z.enum(constants.modelFileTypes).optional(),
         metadata: z
           .object({
-            fp: z.enum(constants.modelFileFp).nullish(),
+            fp: z.string().max(64).nullish(),
             size: z.enum(constants.modelFileSizes).nullish(),
             format: z.enum(constants.modelFileFormats).nullish(),
-            quantType: z.enum(constants.modelFileQuantTypes).nullish(),
+            quantType: z.string().max(64).nullish(),
             isRequired: z.boolean().nullish(),
           })
           .optional(),

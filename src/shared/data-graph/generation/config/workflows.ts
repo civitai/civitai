@@ -23,8 +23,8 @@ import type { OutputType } from './types';
 // graphs import helpers from this file, so importing them back here would form a
 // graph <-> config/workflows cycle (the cause of "X is undefined" at module-eval).
 import {
+  happyHorseVersionIds,
   klingVersionIds,
-  nanoBananaVersionIds,
   viduVersionIds,
 } from '~/shared/data-graph/generation/version-ids';
 import {
@@ -63,6 +63,8 @@ const EDIT_IMG_IDS = [
   ECO.Grok,
   ECO.WanImage27,
   ECO.HiDreamO1,
+  ECO.MAI,
+  ECO.Boogu,
 ];
 
 /** Image ecosystems that support image:create */
@@ -101,6 +103,8 @@ const TXT2IMG_IDS = [
   ECO.Ernie,
   ECO.Lens,
   ECO.Krea2,
+  ECO.MAI,
+  ECO.Boogu,
 ];
 
 /** Video ecosystems that support video:create */
@@ -242,9 +246,9 @@ export const workflowConfigs: WorkflowConfigs = {
     description: 'Run a ControlNet preprocessor on an image (canny, openpose, depth, etc.)',
     category: 'image',
     showBackButton: true,
-    // Same gate as the ControlNets UI itself — this workflow only makes sense
-    // for users who can attach the preprocessed output to a ControlNet.
-    featureFlag: 'controlNets',
+    // ControlNets are disabled for now, so the preprocessor — which only produces
+    // input for a ControlNet — is hidden from the picker too.
+    // hidden: true,
     ecosystemIds: [],
     isNew: true,
   },
@@ -322,6 +326,8 @@ export const workflowConfigs: WorkflowConfigs = {
     description: 'Edit a video with AI',
     category: 'video',
     ecosystemIds: [ECO.Grok, ECO.WanVideo27, ECO.HappyHorse],
+    // HappyHorse v1.1 has no videoEdit operation — v1.0 only.
+    excludeModelVersionIds: [happyHorseVersionIds['v1.1']],
   },
 
   // Disabled — LTXV23 extendVideo is producing poor results. Re-enable once
@@ -346,6 +352,39 @@ export const workflowConfigs: WorkflowConfigs = {
     ecosystemIds: [ECO.AceAudio],
     stepDisplay: 'separate',
     memberOnly: true,
+  },
+
+  // ===========================================================================
+  // 3D Model Workflows (PolyGen / Meshy via Fal)
+  // ===========================================================================
+  //
+  // Both workflows ride the unified V2 pipeline (graph → handler → submit).
+  // Field rendering lives in `GenerationForm.tsx`, gated on the PolyGen
+  // ecosystem; submission/whatif go through `generateFromGraph` /
+  // `whatIfFromGraph` like every other ecosystem. Feature-flagged behind
+  // `model3dGenerator`.
+
+  txt2model3d: {
+    label: 'Create 3D Model',
+    modeLabel: 'Text to 3D',
+    description: 'Generate a 3D model from a text prompt (PolyGen via Meshy)',
+    category: 'model3d',
+    ecosystemIds: [ECO.PolyGen],
+    featureFlag: 'model3dGenerator',
+    isNew: true,
+  },
+
+  img2model3d: {
+    // Shares the `txt2model3d` label so the in-form title row reads the
+    // same "Create 3D Model" regardless of the selected mode (mirrors the
+    // Image segment, where txt2img/img2img both title as "Create Image").
+    label: 'Create 3D Model',
+    modeLabel: 'Image to 3D',
+    description: 'Generate a 3D model from a source image (PolyGen via Meshy)',
+    category: 'model3d',
+    ecosystemIds: [ECO.PolyGen],
+    featureFlag: 'model3dGenerator',
+    isNew: true,
   },
 
   // ===========================================================================
@@ -509,6 +548,7 @@ export const workflowCategories: { category: WorkflowCategory; label: string }[]
   { category: 'image', label: 'Image' },
   { category: 'video', label: 'Video' },
   { category: 'audio', label: 'Audio' },
+  { category: 'model3d', label: '3D Models' },
 ];
 
 /**
@@ -574,11 +614,25 @@ export function filterWorkflowsByGatedEcosystems<T extends { workflows: Workflow
 }
 
 /**
+ * Returns the feature-flag name a workflow requires, or `undefined` when
+ * the workflow is universally available. Server-side request handlers
+ * (e.g. orchestrator `generateFromGraph` / `whatIfFromGraph`) MUST consult
+ * this and reject submissions that lack the flag — `filterWorkflowsByFeatureFlags`
+ * only hides the option in the picker UI, so a crafted request payload would
+ * otherwise bypass the gate.
+ */
+export function getRequiredFeatureFlagForWorkflow(
+  workflowId: string | undefined
+): string | undefined {
+  if (!workflowId) return undefined;
+  return workflowConfigByKey.get(workflowId)?.featureFlag;
+}
+
+/**
  * Drop workflow options whose `featureFlag` is set to a flag that's disabled
  * for this user. Workflows without a `featureFlag` are always kept.
  *
- * Used by `WorkflowInput` so e.g. `img2img:preprocess` disappears when the
- * `controlNets` Flipt flag is off.
+ * Used by `WorkflowInput` to hide flag-gated workflows from the picker.
  */
 export function filterWorkflowsByFeatureFlags<T extends { workflows: WorkflowOption[] }>(
   grouped: T[],
@@ -679,113 +733,6 @@ export function getWorkflowLabelForEcosystem(
 }
 
 // =============================================================================
-// Legacy Form Support
-// =============================================================================
-
-/**
- * Rules for workflow/ecosystem/model combinations ONLY available in the new generation form.
- * The legacy form does not support these combinations.
- *
- * Entry types:
- * - `true` — the entire workflow has no legacy equivalent
- * - `(ecosystemId, modelId?) => boolean` — predicate for fine-grained checks
- *   (e.g. a specific model version within an ecosystem)
- *
- * When adding new workflows or ecosystem/model support only to the new form, add them here.
- */
-type NewFormOnlyRule = true | ((ecosystemId: number, modelId?: number) => boolean);
-
-const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
-  // Upscale workflow — legacy form has no upscaler node
-  ['img2img:upscale', true],
-
-  // Preprocess workflow — new form only (no legacy equivalent)
-  ['img2img:preprocess', true],
-
-  // Kling V3 and Vidu Q3 on standard video workflows (legacy doesn't support these versions)
-  [
-    'txt2vid',
-    (ecoId, modelId) =>
-      (ecoId === ECO.Kling && modelId === klingVersionIds.v3) ||
-      (ecoId === ECO.Vidu && modelId === viduVersionIds.q3) ||
-      ecoId === ECO.Grok ||
-      ecoId === ECO.WanVideo27 ||
-      ecoId === ECO.Seedance ||
-      ecoId === ECO.HappyHorse,
-  ],
-  [
-    'img2vid',
-    (ecoId, modelId) =>
-      (ecoId === ECO.Kling && modelId === klingVersionIds.v3) ||
-      (ecoId === ECO.Vidu && modelId === viduVersionIds.q3) ||
-      ecoId === ECO.Grok ||
-      ecoId === ECO.WanVideo27 ||
-      ecoId === ECO.Seedance ||
-      ecoId === ECO.HappyHorse,
-  ],
-
-  // ref2vid: legacy forms for Kling, Veo3, and Vidu don't support this workflow
-  [
-    'img2vid:ref2vid',
-    (ecoId) =>
-      ecoId === ECO.Kling ||
-      ecoId === ECO.Veo3 ||
-      ecoId === ECO.Vidu ||
-      ecoId === ECO.WanVideo27 ||
-      ecoId === ECO.HappyHorse,
-  ],
-
-  // NanoBanana V2 - only available in new form
-  [
-    'txt2img',
-    (ecoId, modelId) =>
-      (ecoId === ECO.NanoBanana && modelId === nanoBananaVersionIds.v2) ||
-      ecoId === ECO.Anima ||
-      ecoId === ECO.Grok ||
-      ecoId === ECO.Qwen2 ||
-      ecoId === ECO.WanImage27 ||
-      ecoId === ECO.Ernie ||
-      ecoId === ECO.HiDreamO1 ||
-      ecoId === ECO.Lens ||
-      ecoId === ECO.Krea2,
-  ],
-  [
-    'img2img:edit',
-    (ecoId, modelId) =>
-      (ecoId === ECO.NanoBanana && modelId === nanoBananaVersionIds.v2) ||
-      ecoId === ECO.Grok ||
-      ecoId === ECO.Qwen2 ||
-      ecoId === ECO.WanImage27 ||
-      ecoId === ECO.HiDreamO1,
-  ],
-
-  // Grok/LTXV23 vid2vid:edit - no legacy equivalent
-  ['vid2vid:edit', true],
-
-  // vid2vid:extend - no legacy equivalent
-  ['vid2vid:extend', true],
-
-  // Audio workflows - no legacy equivalent
-  ['txt2music', true],
-]);
-
-/**
- * Check if a workflow+ecosystem+model combination is only available in the new generation form.
- * Returns true if the legacy form does NOT support this combination.
- */
-export function isNewFormOnly(
-  workflowKey: string,
-  ecosystemId?: number,
-  modelId?: number
-): boolean {
-  const entry = NEW_FORM_ONLY.get(workflowKey);
-  if (entry === undefined) return false;
-  if (entry === true) return true;
-  if (ecosystemId === undefined) return false;
-  return entry(ecosystemId, modelId);
-}
-
-// =============================================================================
 // Workflow Groups (Mode Switching)
 // =============================================================================
 
@@ -803,6 +750,8 @@ export const workflowGroups: WorkflowGroup[] = [
     overrides: [{ ecosystemIds: WAN_ALL_IDS, workflows: ['txt2vid', 'img2vid'] }],
   },
   { workflows: ['vid2vid:edit', 'vid2vid:extend'] },
+  // 3D Models — mirrors the Image segment's "Text to / Image to" toggle.
+  { workflows: ['txt2model3d', 'img2model3d'] },
 ];
 
 /**

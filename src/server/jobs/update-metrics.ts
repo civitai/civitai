@@ -7,15 +7,14 @@ const metricSets = {
   'model-collections': [metrics.modelCollectionMetrics],
   basemodels: [metrics.baseModelMetrics],
   users: [metrics.userMetrics],
-  images: [metrics.imageMetrics],
   bounties: [metrics.bountyEntryMetrics, metrics.bountyMetrics],
-  // clubs: [
-  //   metrics.clubPostMetrics, metrics.clubMetrics // disable clubs
-  // ],
   posts: [metrics.postMetrics],
   tags: [metrics.tagMetrics],
   collections: [metrics.collectionMetrics],
   articles: [metrics.articleMetrics],
+  model3ds: [metrics.model3dMetrics],
+  comics: [metrics.comicProjectMetrics],
+  'app-listings': [metrics.appListingMetrics],
   // other: [
   //   metrics.answerMetrics, metrics.questionMetrics // disable questions and answers
   // ],
@@ -25,6 +24,9 @@ const metricSets = {
 const metricSchedules: Record<string, string> = {
   'model-collections': '*/5 * * * *', // every 5 minutes
   basemodels: '*/5 * * * *', // every 5 minutes
+  // Install/connect counts don't need minute-freshness — the store `popular`
+  // sort tolerates a few minutes of lag. Off-peak the affected set is empty.
+  'app-listings': '*/5 * * * *', // every 5 minutes
 };
 
 export const metricJobs = Object.entries(metricSets).map(([name, metrics]) =>

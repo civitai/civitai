@@ -51,6 +51,7 @@ import { constants } from '~/server/common/constants';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
 export const getServerSideProps = createServerSideProps({
+  requireModerator: true,
   useSession: true,
   resolver: async ({ session }) => {
     if (!session || !session?.user?.isModerator)
@@ -539,7 +540,7 @@ function BadgeForm({
 
           {/* Actions */}
           <Group>
-            <Button onClick={handleSubmit} loading={upsertMutation.isLoading}>
+            <Button onClick={handleSubmit} loading={upsertMutation.isPending}>
               {mode === 'edit' ? 'Update Badge' : 'Create Badge'}
             </Button>
             <Button variant="subtle" color="gray" onClick={onCancel}>

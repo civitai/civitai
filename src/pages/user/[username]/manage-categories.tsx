@@ -1,3 +1,4 @@
+import { keepPreviousData } from '@tanstack/react-query';
 import {
   Anchor,
   Badge,
@@ -80,7 +81,7 @@ export default function ManageCategories({
       userId: currentUser?.id,
       page,
     },
-    { enabled: !!currentUser, keepPreviousData: true }
+    { enabled: !!currentUser, placeholderData: keepPreviousData }
   );
   const { items, ...pagination } = models || {
     items: [],
@@ -95,7 +96,7 @@ export default function ManageCategories({
       current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
     );
 
-  const { mutate, isLoading } = trpc.model.setCategory.useMutation();
+  const { mutate, isPending: isLoading } = trpc.model.setCategory.useMutation();
   const handleUpdateCategories = useCallback(
     (categoryId: number) => {
       mutate(

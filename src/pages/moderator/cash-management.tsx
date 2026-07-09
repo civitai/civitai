@@ -20,6 +20,7 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 type AccountType = 'cashPending' | 'cashSettled';
 type Direction = 'grant' | 'deduct';
@@ -350,7 +351,7 @@ export function CashManagementPage() {
             </Button>
             <Button
               color={direction === 'grant' ? 'green' : 'red'}
-              loading={adjustMutation.isLoading}
+              loading={adjustMutation.isPending}
               onClick={handleSubmit}
             >
               Confirm {direction === 'grant' ? 'Grant' : 'Deduction'}
@@ -382,7 +383,7 @@ export function CashManagementPage() {
               <Button variant="default" onClick={() => setRefundTarget(null)}>
                 Cancel
               </Button>
-              <Button color="orange" loading={refundMutation.isLoading} onClick={handleRefund}>
+              <Button color="orange" loading={refundMutation.isPending} onClick={handleRefund}>
                 Confirm Refund
               </Button>
             </Group>
@@ -392,6 +393,8 @@ export function CashManagementPage() {
     </div>
   );
 }
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default Page(CashManagementPage, {
   features: (features) => features.cashManagement,

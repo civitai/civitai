@@ -103,7 +103,7 @@ export function SavePresetModal() {
           <Button variant="default" onClick={dialog.onClose}>
             Cancel
           </Button>
-          <Button onClick={handleSave} loading={createPreset.isLoading} disabled={!name.trim()}>
+          <Button onClick={handleSave} loading={createPreset.isPending} disabled={!name.trim()}>
             Save
           </Button>
         </Group>

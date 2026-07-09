@@ -21,7 +21,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { preventModelVersionLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { dataForModelsCache } from '~/server/redis/caches';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
@@ -262,9 +262,21 @@ export async function getTrainingServiceStatus() {
   // Fail open: symmetric with the three getGenerationStatus fixes in this
   // PR. A sysRedis outage shouldn't crash the training status endpoint or
   // training submission. Falls back to the schema's '{}' default.
+  // Note on Buffer-vs-string asymmetry (see PR #2697): sysRedis.hGet is typed
+  // `string | null` but the HA/Sentinel client returns a Buffer for
+  // BLOB_STRING replies. `JSON.parse` accepts a Buffer in Node ≥18 (we run
+  // Node 20 — see Dockerfile), and the `?? '{}'` fallback only fires when
+  // `raw` is null/undefined (Buffer is truthy), so this site is correct
+  // under both client modes. The fix sweep that accompanies this comment
+  // touched the sites that did string-typed ops (=== 'true', .split, etc.).
   let raw: string | null | undefined;
   try {
-    raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.TRAINING.STATUS);
+    // Wall-clock deadline: symmetric with the getGenerationStatus wrap in STEP 6.
+    // The try/catch only covers a fast DOWN reject — a silent sysRedis half-open
+    // would park this awaited hGet ~11min on the training status/submit path.
+    raw = await withSysReadDeadline(
+      sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.TRAINING.STATUS)
+    );
   } catch (err) {
     logSysRedisFailOpen('defaults-firing', 'getTrainingServiceStatus', err);
     raw = undefined;
@@ -470,6 +482,35 @@ export type TrainingWorkflowUpdateResult = {
 };
 
 /**
+ * Base type for PERMANENT, non-retryable failures of the training webhook path:
+ * conditions where retrying the workflow callback will deterministically fail
+ * again (the orchestrator re-delivers the identical workflow every time). The
+ * webhook handler catches this base type and acks (200) instead of returning
+ * 500, so a single orphaned/malformed training can't turn into a
+ * retry-amplified 500 storm. A genuine TRANSIENT failure (DB error, dependency
+ * timeout, unexpected bug) throws a plain Error instead and stays a 5xx so the
+ * orchestrator's retry can legitimately recover it.
+ */
+export class PermanentTrainingWebhookError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PermanentTrainingWebhookError';
+  }
+}
+
+/**
+ * Thrown when the training's backing ModelFile no longer exists (deleted or
+ * orphaned training) — the dominant observed storm cause. A subtype of
+ * PermanentTrainingWebhookError, so the handler treats it the same way.
+ */
+export class TrainingRecordNotFoundError extends PermanentTrainingWebhookError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TrainingRecordNotFoundError';
+  }
+}
+
+/**
  * Updates the model file metadata and model version training status based on workflow data.
  * Returns data needed for notifications (signals, emails, webhooks) which should be handled by the caller.
  */
@@ -480,8 +521,11 @@ export async function updateTrainingWorkflowRecords(
   const { transactions, steps, id: workflowId, createdAt, status: workflowStatus } = workflow;
 
   const step = steps?.[0] as (CustomImageResourceTrainingStep | CustomTrainingStep) | undefined;
-  if (!step) throw new Error('Missing step data');
-  if (!step.metadata.modelFileId) throw new Error('Missing modelFileId');
+  // Permanent: the workflow is created WITH its step + modelFileId metadata
+  // (see training.orch.ts). If the re-fetched workflow lacks either, the record
+  // is malformed/orphaned and every retry re-derives the same absence — ack it.
+  if (!step) throw new PermanentTrainingWebhookError('Missing step data');
+  if (!step.metadata.modelFileId) throw new PermanentTrainingWebhookError('Missing modelFileId');
 
   const {
     metadata: { modelFileId },
@@ -529,7 +573,10 @@ export async function updateTrainingWorkflowRecords(
     sampleImagesPrompts = imageOutput?.sampleImagesPrompts ?? [];
     moderationStatus = imageOutput?.moderationStatus;
   } else {
-    throw new Error(`Unsupported step type: ${stepType}`);
+    // Permanent: the step's $type is fixed at workflow creation; a type we
+    // don't handle won't become handleable on retry (retrying just re-fetches
+    // the same type). Ack + warn so a code-side gap surfaces without storming.
+    throw new PermanentTrainingWebhookError(`Unsupported step type: ${stepType}`);
   }
 
   if (moderationStatus === 'underReview') trainingStatus = TrainingStatus.Paused;
@@ -566,7 +613,7 @@ export async function updateTrainingWorkflowRecords(
       },
     },
   });
-  if (!modelFile) throw new Error(`ModelFile not found: "${modelFileId}"`);
+  if (!modelFile) throw new TrainingRecordNotFoundError(`ModelFile not found: "${modelFileId}"`);
 
   const { modelVersion } = modelFile;
   const { model } = modelVersion;

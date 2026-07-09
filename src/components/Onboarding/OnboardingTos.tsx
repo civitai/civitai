@@ -13,7 +13,7 @@ import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/Ty
 
 export function OnboardingTos() {
   const { next } = useOnboardingContext();
-  const { mutate, isLoading } = useOnboardingStepCompleteMutation();
+  const { mutate, isPending: isLoading } = useOnboardingStepCompleteMutation();
 
   const handleStepComplete = () => {
     mutate({ step: OnboardingSteps.TOS }, { onSuccess: () => next() });

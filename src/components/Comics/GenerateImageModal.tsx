@@ -1,3 +1,4 @@
+import { keepPreviousData } from '@tanstack/react-query';
 import {
   ActionIcon,
   Button,
@@ -87,7 +88,7 @@ export function GenerateImageModal({
           height: r.height,
         })),
       },
-      { staleTime: 30_000, enabled: opened, keepPreviousData: true }
+      { staleTime: 30_000, enabled: opened, placeholderData: keepPreviousData }
     );
 
   // In-flight guard. The fallback interval and the signal-driven poll can
@@ -115,7 +116,7 @@ export function GenerateImageModal({
         // Bypass any cached "processing" response — every poll must reflect
         // current orchestrator state, otherwise stale cache hides
         // completion from us indefinitely.
-        { staleTime: 0, cacheTime: 0 }
+        { staleTime: 0, gcTime: 0 }
       );
 
       if (result.status === 'succeeded' && result.images && result.images.length > 0) {

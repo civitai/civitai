@@ -128,6 +128,25 @@ function parseDetailsLine(line: string | undefined): Record<string, any> {
 
   return result;
 }
+
+export function normalizeGenerationDetails(details: string): string {
+  if (!details) return '';
+  const clean = details.replace(/^Parameters\s*:\s*/, '');
+
+  // If a "Steps:" line already exists, the metadata is already structured across lines —
+  // leave it untouched. This is what protects keywords that appear inside prompt text
+  // (e.g. "Hires steps:", or a prompt that literally says "steps:"). Only jammed
+  // single-line formats need fixing below.
+  if (/(^|\n)Steps: ?\d/.test(clean)) return clean;
+
+  // Put each section keyword on its own line. Split only when preceded by a real `,`/`.`
+  // delimiter (what the single-line formats use as separators). Keep every quantifier
+  // bounded ({0,7}, not *) so a crafted run of delimiters can't cause catastrophic
+  // backtracking (ReDoS) — this runs on untrusted uploaded image metadata.
+  return clean
+    .replace(/[ \t\r]{0,7}[.,][ \t\r.,]{0,7}(Negative prompt:)/gi, '\n$1')
+    .replace(/[ \t\r]{0,7}[.,][ \t\r.,]{0,7}(Steps:)(?=\s*\d)/gi, '\n$1');
+}
 // #endregion
 
 export const automaticMetadataProcessor = createMetadataProcessor({
@@ -140,7 +159,7 @@ export const automaticMetadataProcessor = createMetadataProcessor({
     }
 
     if (generationDetails?.includes('Steps: ')) {
-      exif.generationDetails = generationDetails;
+      exif.generationDetails = normalizeGenerationDetails(generationDetails);
       return true;
     }
 
@@ -151,7 +170,8 @@ export const automaticMetadataProcessor = createMetadataProcessor({
     const generationDetails = exif.generationDetails as string;
 
     if (!generationDetails) return metadata;
-    const metaLines = generationDetails.split('\n').filter((line) => line.trim() !== '');
+    const normalizedDetails = normalizeGenerationDetails(generationDetails);
+    const metaLines = normalizedDetails.split('\n').filter((line) => line.trim() !== '');
 
     // Remove templates
     for (const key of templateKeys) {

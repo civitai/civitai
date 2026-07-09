@@ -7,6 +7,7 @@ import { Instagram } from '~/libs/tiptap/extensions/Instagram';
 import { StrawPoll } from '~/libs/tiptap/extensions/StrawPoll';
 import { EdgeMediaNode } from '~/shared/tiptap/edge-media.node';
 import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
+import { TimestampNode } from '~/shared/tiptap/timestamp.node';
 
 export const tiptapExtensions = [
   StarterKit.configure({ heading: false }),
@@ -18,4 +19,5 @@ export const tiptapExtensions = [
   Instagram,
   Mention,
   StrawPoll,
+  TimestampNode,
 ];

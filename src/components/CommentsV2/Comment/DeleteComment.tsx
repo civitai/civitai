@@ -27,7 +27,7 @@ export function DeleteComment({
 } & CommentConnectorInput) {
   const queryUtils = trpc.useUtils();
   const { created } = useCommentsContext();
-  const { mutate, isLoading } = trpc.commentv2.delete.useMutation({
+  const { mutate, isPending: isLoading } = trpc.commentv2.delete.useMutation({
     async onSuccess(response, request) {
       showSuccessNotification({
         title: 'Your comment has been deleted',

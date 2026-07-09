@@ -162,8 +162,8 @@ export const getFileForModelVersion = async ({
   type?: ModelFileType;
   format?: ModelFileFormat;
   size?: ModelFileSize;
-  fp?: ModelFileFp;
-  quantType?: ModelFileQuantType;
+  fp?: string;
+  quantType?: string;
   user?: {
     isModerator?: boolean | null;
     id?: number;
@@ -174,7 +174,16 @@ export const getFileForModelVersion = async ({
   fileId?: number;
 }): Promise<ModelVersionFileResult> => {
   const modelVersion = await dbRead.modelVersion.findFirst({
-    where: { id: modelVersionId },
+    // `model: { is: {} }` requires the (required) `model` relation to exist.
+    // Without it, a ModelVersion whose `model` was hard-deleted (orphaned FK)
+    // makes Prisma throw "Inconsistent query result: Field model is required to
+    // return data, got null" at query execution → caught upstream → 500 on every
+    // download lookup for that version. With the filter the DB drops the orphan
+    // row, findFirst returns null, and we fall through to the `not-found` (404)
+    // branch below — a model-less version is genuinely not downloadable. Same
+    // class/fix as #2637 (relation-existence filter on orphaned required
+    // relations).
+    where: { id: modelVersionId, model: { is: {} } },
     select: {
       id: true,
       status: true,
@@ -226,6 +235,16 @@ export const getFileForModelVersion = async ({
   const isMod = user?.isModerator;
   const userId = user?.id;
   const isOwner = !!userId && modelVersion.model.userId === userId;
+
+  // A deleted model is downloadable by moderators only — no exceptions. This
+  // gate runs before every other access path (owner, internal noAuth callers,
+  // and the published-state check) so a deleted (incl. DMCA-removed) model can
+  // never be served to its owner or anyone else. Owners are otherwise allowed
+  // to download their own unpublished work, but a deleted model's owner is
+  // frequently the exact party a takedown targets (the uploader).
+  const modelDeleted = modelVersion.model.status === 'Deleted';
+  if (modelDeleted && !isMod) return { status: 'not-found' };
+
   const canDownload =
     noAuth ||
     isMod ||
@@ -279,10 +298,10 @@ export const getFileForModelVersion = async ({
     if (type) fileWhere.type = type;
     if (!isOwner && !isMod) fileWhere.visibility = ModelFileVisibility.Public;
     const files = await dbRead.modelFile.findMany({ where: fileWhere, select: fileSelect });
-    const metadata: FileMetadata = {
+    const metadata = {
       ...user?.filePreferences,
       ...removeEmpty({ format, size, fp, quantType }),
-    };
+    } as FileMetadata;
     const castedFiles = files as Array<Omit<FileResult, 'metadata'> & { metadata: FileMetadata }>;
     file = getPrimaryFile(castedFiles, { metadata });
 
@@ -334,9 +353,24 @@ export const getFileForModelVersion = async ({
   } catch (err) {
     // Both storage-resolver and delivery-worker fallback rejected this file —
     // usually an un-registered `file_locations` row on a bucket the
-    // delivery-worker doesn't know. Log so the leak is visible in production.
-    // safeError includes `name: 'Error'` which must be spread BEFORE our
-    // literal `name` or the event name gets overwritten.
+    // delivery-worker doesn't know, or a stored `file.url` whose delivery URL no
+    // longer resolves. A broken/missing delivery URL is a *not-found* (the file
+    // is not deliverable), NOT a server fault — so the endpoint should answer
+    // 404, not 500. `resolveDownloadUrl` no longer throws `URI malformed` on a
+    // malformed/already-encoded URL (delivery-worker now decodes best-effort),
+    // so reaching this catch means the file genuinely can't be resolved.
+    //
+    // Use a DISTINCT `resolve-failed` status (not the deterministic `not-found`)
+    // so the endpoint can mark this 404 `Cache-Control: no-store`. This catch
+    // fires on TRANSIENT delivery-worker/storage-resolver non-2xx too (a storage
+    // outage, not just a permanently-broken URL); under `PublicEndpoint`'s default
+    // `s-maxage=300` a transient failure would otherwise let the CDN edge-cache
+    // "File not found" for ~5 min for a file that actually exists, even after the
+    // backend recovers. The deterministic by-id `not-found` stays cacheable.
+    //
+    // Still log so the leak is visible in production. safeError includes
+    // `name: 'Error'` which must be spread BEFORE our literal `name` or the
+    // event name gets overwritten.
     logToAxiom({
       type: 'error',
       ...safeError(err),
@@ -348,7 +382,7 @@ export const getFileForModelVersion = async ({
       fileType: file.type,
       userId: user?.id,
     }).catch(() => undefined);
-    return { status: 'error' };
+    return { status: 'resolve-failed' };
   }
 };
 
@@ -359,7 +393,7 @@ export function getDownloadFilename({
 }: {
   model: { name: string; type: ModelType };
   modelVersion: { name: string; trainedWords?: string[] };
-  file: { name: string; overrideName?: string; type: ModelFileType | string };
+  file: { name: string; overrideName?: string | null; type: ModelFileType | string };
 }) {
   if (file.overrideName) return file.overrideName;
 
@@ -402,7 +436,13 @@ export function getDownloadFilename({
 
 type ModelVersionFileResult =
   | {
-      status: 'not-found' | 'unauthorized' | 'archived' | 'downloads-disabled' | 'error';
+      status:
+        | 'not-found'
+        | 'resolve-failed'
+        | 'unauthorized'
+        | 'archived'
+        | 'downloads-disabled'
+        | 'error';
     }
   | {
       status: 'early-access';
@@ -426,7 +466,7 @@ type FileResult = {
   type: string;
   id: number;
   name: string;
-  overrideName?: string;
+  overrideName?: string | null;
   metadata: Prisma.JsonValue;
   hashes: {
     hash: string;

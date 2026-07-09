@@ -127,7 +127,7 @@ const availabilityDetails = {
   },
 };
 
-export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: Props) {
+export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId }: Props) {
   const router = useRouter();
   const result = querySchema.safeParse(router.query);
   const currentUser = useCurrentUser();
@@ -321,7 +321,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
   const isDraft = model?.status === ModelStatus.Draft;
 
   return (
-    <Form form={form} onSubmit={handleSubmit}>
+    <Form id={id} form={form} onSubmit={handleSubmit}>
       <ContainerGrid2 gutter="xl">
         <ContainerGrid2.Col span={12}>
           <Stack>
@@ -747,13 +747,14 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
         </ContainerGrid2.Col>
       </ContainerGrid2>
       {typeof children === 'function'
-        ? children({ loading: upsertModelMutation.isLoading })
+        ? children({ loading: upsertModelMutation.isPending })
         : children}
     </Form>
   );
 }
 
 type Props = {
+  id?: string;
   onSubmit: (data: { id?: number }) => void;
   children: React.ReactNode | ((data: { loading: boolean }) => React.ReactNode);
   model?: Partial<Omit<ModelById, 'tagsOnModels'> & ModelUpsertInput>;
@@ -821,7 +822,7 @@ export const PrivateModelAutomaticSetup = ({
           <Button
             onClick={handleClose}
             color="gray"
-            disabled={privateModelFromTrainingMutation.isLoading}
+            disabled={privateModelFromTrainingMutation.isPending}
           >
             Cancel
           </Button>
@@ -829,8 +830,8 @@ export const PrivateModelAutomaticSetup = ({
             onClick={() => {
               handleConfirm();
             }}
-            disabled={privateModelFromTrainingMutation.isLoading}
-            loading={privateModelFromTrainingMutation.isLoading}
+            disabled={privateModelFromTrainingMutation.isPending}
+            loading={privateModelFromTrainingMutation.isPending}
           >
             Make Private
           </Button>

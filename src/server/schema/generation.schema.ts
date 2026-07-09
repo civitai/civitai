@@ -36,6 +36,26 @@ export const getGenerationResourcesSchema = z.object({
   supported: z.boolean().optional(),
 });
 
+/**
+ * Operator-controlled generator config, persisted to Redis (hash field
+ * `generation:ecosystem-config`). All GATING now lives in the gate-rules model
+ * (`generation:gate-rules`); the only field left here is `experimentalEcosystems`
+ * — an alert flag, not a gate (it shows the "experimental build" banner in the
+ * generator UI). Read/written by `get/setGenerationEcosystemConfig`.
+ */
+export const generationEcosystemConfigSchema = z.object({
+  experimentalEcosystems: z.array(z.string()).default([]),
+});
+export type GenerationEcosystemConfig = z.infer<typeof generationEcosystemConfigSchema>;
+export const DEFAULT_GENERATION_ECOSYSTEM_CONFIG: GenerationEcosystemConfig =
+  generationEcosystemConfigSchema.parse({});
+
+/** Runtime config: the Redis list + the per-user `generation-testing` Flipt result. */
+export type GenerationEcosystemContext = GenerationEcosystemConfig & {
+  /** Whether the current user passes the `generation-testing` Flipt flag (mods always do). */
+  hasTestingAccess: boolean;
+};
+
 export type GetGenerationRequestsInput = z.input<typeof getGenerationRequestsSchema>;
 export type GetGenerationRequestsOutput = z.output<typeof getGenerationRequestsSchema>;
 export const getGenerationRequestsSchema = z.object({
@@ -184,26 +204,76 @@ export const defaultsByTier: Record<UserTier, GenerationLimits> = {
   gold: { quantity: 12, queue: 10, steps: 60, resources: 12 },
 };
 
-export const generationStatusSchema = z.object({
-  available: z.boolean().default(true),
-  message: z.string().nullish(),
-  // minorFallback: z.boolean().default(true),
-  // sfwEmbed: z.boolean().default(true),
-  limits: z
-    .record(userTierSchema, generationLimitsSchema.partial().optional())
-    .default(defaultsByTier)
-    .transform((limits) => {
-      // Merge each tier with its defaults
-      const mergedLimits = { ...defaultsByTier };
-      for (const tier of userTierSchema.options) {
-        mergedLimits[tier] = { ...mergedLimits[tier], ...limits[tier] };
-      }
-      return mergedLimits;
-    }),
-  charge: z.boolean().default(true),
-  // checkResourceAvailability: z.boolean().default(false),
-  // membershipPriority: z.boolean().default(false),
+const generationStatusUpdatedBySchema = z.object({
+  id: z.number(),
+  username: z.string(),
+  at: z.string(),
 });
+export type GenerationStatusUpdatedBy = z.infer<typeof generationStatusUpdatedBySchema>;
+
+// Generation availability mode:
+//   'enabled'    — everyone can generate
+//   'memberOnly' — only members; free (non-member) users are blocked
+//   'disabled'   — nobody can generate (moderators always bypass)
+export const generationStatusModeSchema = z.enum(['enabled', 'memberOnly', 'disabled']);
+export type GenerationStatusMode = z.infer<typeof generationStatusModeSchema>;
+// Shown to blocked users when no custom status message is set — same default
+// regardless of mode.
+export const generationStatusDefaultMessage = 'Generation is currently disabled';
+
+const generationLimitsField = z
+  .record(userTierSchema, generationLimitsSchema.partial().optional())
+  .default(defaultsByTier)
+  .transform((limits) => {
+    // Merge each tier with its defaults
+    const mergedLimits = { ...defaultsByTier };
+    for (const tier of userTierSchema.options) {
+      mergedLimits[tier] = { ...mergedLimits[tier], ...limits[tier] };
+    }
+    return mergedLimits;
+  });
+
+// Fold the legacy boolean `available` kill switch onto `mode` on read.
+// Idempotent: a stored `mode` always wins.
+function foldLegacyGenerationStatus(raw: unknown) {
+  if (!raw || typeof raw !== 'object') return raw;
+  const obj = { ...(raw as Record<string, unknown>) };
+  if (obj.mode === undefined && typeof obj.available === 'boolean') {
+    obj.mode = obj.available ? 'enabled' : 'disabled';
+  }
+  return obj;
+}
+
+export const generationStatusSchema = z.preprocess(
+  foldLegacyGenerationStatus,
+  z
+    .object({
+      mode: generationStatusModeSchema.default('enabled'),
+      message: z.string().nullish(),
+      // Moderator who most recently put generation into a restricted mode
+      // (memberOnly/disabled). Preserved when set back to 'enabled' — we don't
+      // care who re-enables.
+      updatedBy: generationStatusUpdatedBySchema.nullish(),
+      // Self-hosted generation toggle: gates ecosystems that run on Civitai's
+      // own GPUs/workers (vs external providers). Independent of the global
+      // `mode` above — e.g. global can be 'enabled' while self-hosted is
+      // 'memberOnly'. Same three-state semantics. No message of its own; the
+      // client surfaces fixed copy for the self-hosted block.
+      selfHostedMode: generationStatusModeSchema.default('enabled'),
+      selfHostedUpdatedBy: generationStatusUpdatedBySchema.nullish(),
+      limits: generationLimitsField,
+      charge: z.boolean().default(true),
+      // checkResourceAvailability: z.boolean().default(false),
+      // membershipPriority: z.boolean().default(false),
+    })
+    // Back-compat projection: readers that only understand a global on/off
+    // switch (training, queue-limits, getGenerationStatusLimits) read
+    // `available`. 'memberOnly' is NOT a global outage, so it stays available.
+    .transform((status) => ({
+      ...status,
+      available: status.mode !== 'disabled',
+    }))
+);
 export type GenerationStatus = z.infer<typeof generationStatusSchema>;
 
 export const generationFormShapeSchema = baseGenerationParamsSchema.extend({

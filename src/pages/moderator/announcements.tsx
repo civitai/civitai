@@ -10,6 +10,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import type { UpsertAnnouncementSchema } from '~/server/schema/announcement.schema';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 
 const schema = z.object({ page: z.coerce.number().default(1) });
@@ -78,7 +79,7 @@ export function AnnouncementsPage() {
                     onConfirm={() => deleteMutation.mutate({ id: announcement.id })}
                     withinPortal
                   >
-                    <LegacyActionIcon loading={deleteMutation.isLoading} color="red">
+                    <LegacyActionIcon loading={deleteMutation.isPending} color="red">
                       <IconTrash />
                     </LegacyActionIcon>
                   </PopConfirm>
@@ -96,5 +97,7 @@ export function AnnouncementsPage() {
     </div>
   );
 }
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default Page(AnnouncementsPage, { features: (features) => features.announcements });

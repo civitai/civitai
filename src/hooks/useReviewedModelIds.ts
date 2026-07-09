@@ -17,7 +17,7 @@ export function useReviewedModelIds(): ReadonlySet<number> {
   const currentUser = useCurrentUser();
   const { data } = trpc.user.getEngagedModels.useQuery(undefined, {
     enabled: !!currentUser,
-    cacheTime: Infinity,
+    gcTime: Infinity,
     staleTime: Infinity,
   });
   const arr = data?.Recommended;

@@ -58,7 +58,16 @@ import type {
   TrainingDetailsBaseModelList,
   TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
-import type { BlobData } from '~/shared/orchestrator/workflow-data';
+import type {
+  AudioBlob,
+  BlobData,
+  ImageBlob,
+  VideoBlob,
+} from '~/shared/orchestrator/workflow-data';
+
+// Training never accepts 3D outputs; alias the 2D-only subset of BlobData
+// to keep `img.type` narrowed to MediaType for downstream EdgeMedia / SelectedImage.
+type TrainingGenerationBlob = ImageBlob | VideoBlob | AudioBlob;
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { MediaType, TrainingStatus } from '~/shared/utils/prisma/enums';
 import type { ImageGetMyInfinite, RecentTrainingData } from '~/types/router';
@@ -171,7 +180,14 @@ export default function ImageSelectModal({
   });
 
   const generatedMedia = useMemo(
-    () => (generationData ?? []).flatMap((wf) => wf.succeededOutput.filter((x) => x.available)),
+    () =>
+      (generationData ?? []).flatMap((wf) =>
+        // Training datasets only accept 2D media; PolyGen (3D) outputs
+        // have no sensible representation here.
+        wf.succeededOutput.filter(
+          (x): x is TrainingGenerationBlob => x.available && x.type !== 'model3d'
+        )
+      ),
     [generationData]
   );
 
@@ -322,7 +338,7 @@ const ImageGrid = ({
   type,
   data,
 }:
-  | { type: 'generation'; data: BlobData[] }
+  | { type: 'generation'; data: TrainingGenerationBlob[] }
   | { type: 'uploaded'; data: UploadedImage[] }
   | { type: 'training'; data: TrainedData[] }) => {
   if (!data || !data.length)
@@ -390,7 +406,7 @@ const ImageGrid = ({
             }
           >
             {type === 'generation'
-              ? imgs.map((img: BlobData) => (
+              ? imgs.map((img: TrainingGenerationBlob) => (
                   <ImageGridMedia
                     key={`${img.workflowId}_${img.stepName}_${img.id}`}
                     type={type}
@@ -415,7 +431,7 @@ const ImageGridMedia = ({
   type,
   img,
 }:
-  | { type: 'generation'; img: BlobData }
+  | { type: 'generation'; img: TrainingGenerationBlob }
   | { type: 'uploaded'; img: UploadedImage }
   | { type: 'training'; img: TrainedData }) => {
   const { selected, setSelected, importedUrls } = useImageSelectContext();

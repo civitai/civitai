@@ -3,6 +3,7 @@ import dayjs from '~/shared/utils/dayjs';
 import type { NextApiRequest } from 'next';
 import { isProd } from '~/env/other';
 import type { PaginationInput } from '~/server/schema/base.schema';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { QS } from '~/utils/qs';
 
 export const DEFAULT_PAGE_SIZE = 20;
@@ -105,6 +106,20 @@ function parseCursor(fields: SortField[], cursor: string | number | Date | bigin
     return { [fields[0].field]: cursor };
 
   const values = cursor.split('|');
+  // A cursor whose token count doesn't match the sort's field arity is
+  // malformed — typically a stale or hand-built cursor, or one carried across a
+  // deploy that changed the sort's `orderBy` field count. Reject as 400 rather
+  // than crashing on the next line's `values[i].includes(...)` (undefined →
+  // TypeError), which fell through to handleEndpointError's unlogged 500 branch
+  // — a silent, unattributable floor. NOTE: this guards arity only; it does NOT
+  // validate token contents, so an empty/NaN token (e.g. CONCAT(NULL,'|',id) →
+  // '|id' for a NULL sort column) still passes and parses to NaN — a separate,
+  // pre-existing issue, not addressed here.
+  if (values.length !== fields.length) {
+    throwBadRequestError(
+      `Invalid cursor: expected ${fields.length} value(s) for this sort, received ${values.length}`
+    );
+  }
   const result: Record<string, number | Date> = {};
   for (let i = 0; i < fields.length; i++) {
     const value = values[i];

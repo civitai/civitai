@@ -39,7 +39,7 @@ export function HideModelButton({ modelId, as = 'button', onToggleHide, ...props
       <Button
         variant={alreadyHiding ? 'outline' : 'filled'}
         onClick={handleHideClick}
-        loading={toggleHiddenMutation.isLoading}
+        loading={toggleHiddenMutation.isPending}
         {...props}
       >
         {alreadyHiding ? 'Unhide' : 'Hide'}

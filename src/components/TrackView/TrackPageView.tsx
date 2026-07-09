@@ -93,7 +93,7 @@ function trackPageView({ path, duration }: { path: string; duration: number }) {
 
   const ads = Object.keys(adUnitsLoaded).length > 0;
 
-  fetch('/api/page-view', {
+  fetch('/api/internal/ping', {
     method: 'post',
     keepalive: true,
     body: JSON.stringify(

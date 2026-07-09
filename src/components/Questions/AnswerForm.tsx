@@ -2,7 +2,7 @@ import { Button, Group, Stack, Alert, Text, List } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
 import { IconCheck, IconX } from '@tabler/icons-react';
 import type { TRPCClientErrorBase } from '@trpc/client';
-import type { DefaultErrorShape } from '@trpc/server';
+import type { TRPCDefaultErrorShape } from '@trpc/server';
 import * as z from 'zod';
 import { Form, InputRTE, useForm } from '~/libs/form';
 import type { GetAnswersProps } from '~/server/controllers/answer.controller';
@@ -25,7 +25,7 @@ export function AnswerForm({
   });
 
   const queryUtils = trpc.useUtils();
-  const { mutate, isLoading } = trpc.answer.upsert.useMutation({
+  const { mutate, isPending: isLoading } = trpc.answer.upsert.useMutation({
     async onSuccess(results, input) {
       showNotification({
         title: 'Your answer was saved',
@@ -38,7 +38,7 @@ export function AnswerForm({
       onCancel?.();
       form.reset();
     },
-    onError(error: TRPCClientErrorBase<DefaultErrorShape>) {
+    onError(error: TRPCClientErrorBase<TRPCDefaultErrorShape>) {
       const message = error.message;
 
       showNotification({

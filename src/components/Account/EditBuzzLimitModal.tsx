@@ -64,7 +64,7 @@ export function EditBuzzLimitModal({ opened, onClose, subject, name, initialLimi
     },
   });
 
-  const isLoading = apiKeyMutation.isLoading || consentMutation.isLoading;
+  const isLoading = apiKeyMutation.isPending || consentMutation.isPending;
 
   const handleSave = () => {
     const simple: SimpleBuzzLimit | null =
