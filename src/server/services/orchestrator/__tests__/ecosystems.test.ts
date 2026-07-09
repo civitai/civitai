@@ -18,7 +18,7 @@ describe('createEcosystemStepInput - Enhanced Compatibility', () => {
     baseStepIndex: 0,
   };
 
-  it('should override engine to "comfy" for single-step SDXL when enhancedCompatibility is true', async () => {
+  it('should override engine to "comfyui" for single-step SDXL when enhancedCompatibility is true', async () => {
     const data = {
       ecosystem: 'SDXL',
       workflow: 'txt2img',
@@ -32,10 +32,10 @@ describe('createEcosystemStepInput - Enhanced Compatibility', () => {
 
     const textToImageStep = steps.find((step) => step.$type === 'textToImage');
     expect(textToImageStep).toBeDefined();
-    expect((textToImageStep as any).input.engine).toBe('comfy');
+    expect((textToImageStep as any).input.engine).toBe('comfyui');
   });
 
-  it('should override engine to "comfy" for multi-step SDXL (ControlNet) when enhancedCompatibility is true', async () => {
+  it('should override engine to "comfyui" for multi-step SDXL (ControlNet) when enhancedCompatibility is true', async () => {
     const data = {
       ecosystem: 'SDXL',
       workflow: 'txt2img',
@@ -61,13 +61,13 @@ describe('createEcosystemStepInput - Enhanced Compatibility', () => {
     const preprocessStep = steps.find((step) => step.$type === 'preprocessImage');
     expect(preprocessStep).toBeDefined();
 
-    // Verify the engine is overridden to 'comfy' on the textToImage step
+    // Verify the engine is overridden to 'comfyui' on the textToImage step
     const textToImageStep = steps.find((step) => step.$type === 'textToImage');
     expect(textToImageStep).toBeDefined();
-    expect((textToImageStep as any).input.engine).toBe('comfy');
+    expect((textToImageStep as any).input.engine).toBe('comfyui');
   });
 
-  it('should NOT override engine for Flux1 even when enhancedCompatibility is true', async () => {
+  it('should override engine to "comfyui" for Flux1 when enhancedCompatibility is true', async () => {
     const data = {
       ecosystem: 'Flux1',
       workflow: 'txt2img',
@@ -81,12 +81,10 @@ describe('createEcosystemStepInput - Enhanced Compatibility', () => {
 
     const textToImageStep = steps.find((step) => step.$type === 'textToImage');
     expect(textToImageStep).toBeDefined();
-    // Default engine for Flux remains undefined/default in handler, not overridden to comfy
-    expect((textToImageStep as any).input.engine).not.toBe('comfy');
-    expect((textToImageStep as any).input.engine).not.toBe('comfyui');
+    expect((textToImageStep as any).input.engine).toBe('comfyui');
   });
 
-  it('should NOT override engine to "comfy" when enhancedCompatibility is false', async () => {
+  it('should NOT override engine to "comfyui" when enhancedCompatibility is false', async () => {
     const data = {
       ecosystem: 'SDXL',
       workflow: 'txt2img',

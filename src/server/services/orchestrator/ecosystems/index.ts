@@ -272,17 +272,19 @@ export async function createEcosystemStepInput(
 
   const steps = await createEcosystemStep(normalizedData, handlerCtx);
 
-  // Enhanced compatibility mode: set engine to 'comfy' for textToImage steps in
-  // EXPERIMENTAL_MODE_SUPPORTED_MODELS ecosystems.
-  const textToImageStep = steps.find((step) => step.$type === 'textToImage');
+  // Enhanced compatibility mode: set engine to 'comfyui' for every textToImage step
+  // in EXPERIMENTAL_MODE_SUPPORTED_MODELS ecosystems.
   if (
-    textToImageStep &&
     'enhancedCompatibility' in data &&
     data.enhancedCompatibility &&
-    // Belt-and-suspenders check in case data.ecosystem leaks an unsupported model type (like Flux) through a non-UI path
+    // Belt-and-suspenders check in case data.ecosystem leaks an unsupported ecosystem through a non-UI path
     EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(data.ecosystem)
   ) {
-    (textToImageStep as { input: Record<string, unknown> }).input.engine = 'comfy';
+    for (const step of steps) {
+      if (step.$type === 'textToImage') {
+        (step as { input: Record<string, unknown> }).input.engine = 'comfyui';
+      }
+    }
   }
 
   return steps;
