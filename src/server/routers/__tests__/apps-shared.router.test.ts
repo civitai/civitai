@@ -1,0 +1,483 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { TRPCError } from '@trpc/server';
+
+/**
+ * Coverage for `apps.shared.*` (block-token authed cross-user storage) +
+ * `apps.mod.purgeSharedRow` (session moderatorProcedure). Mocks the pg pool, the
+ * block-token verifier, the dedicated Flipt flag, the rate limiters, and the
+ * subject hydration so each auth / counter / trust / safety gate is pinned
+ * independently. The content-safety belt runs FOR REAL (real includesMinor /
+ * includesPoi / HTML-escape) with only its redis-backed deps (blocklist,
+ * promptAuditing) mocked — so the C3 tests exercise the genuine audit path.
+ */
+
+const {
+  mockVerifyBlockToken,
+  mockParseSubjectUserId,
+  mockDbRead,
+  mockIsSharedEnabled,
+  mockPool,
+  mockClient,
+  mockGetSessionUser,
+  mockCheckAppendRl,
+  mockCheckVoteRl,
+  mockThrowOnBlockedLinkDomain,
+  mockAuditPromptServer,
+} = vi.hoisted(() => {
+  const mockClient = {
+    query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
+    release: vi.fn(),
+  };
+  const mockPool = {
+    connect: vi.fn(async () => mockClient),
+    query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
+  };
+  return {
+    mockVerifyBlockToken: vi.fn(),
+    mockParseSubjectUserId: vi.fn(),
+    mockDbRead: { appBlock: { findUnique: vi.fn() } },
+    mockIsSharedEnabled: vi.fn(async () => true),
+    mockPool,
+    mockClient,
+    mockGetSessionUser: vi.fn(),
+    mockCheckAppendRl: vi.fn(async () => ({ allowed: true })),
+    mockCheckVoteRl: vi.fn(async () => ({ allowed: true })),
+    mockThrowOnBlockedLinkDomain: vi.fn(async () => undefined),
+    mockAuditPromptServer: vi.fn(async () => undefined),
+  };
+});
+
+vi.mock('~/server/middleware/block-scope.middleware', () => ({
+  verifyBlockToken: mockVerifyBlockToken,
+  parseSubjectUserId: (...args: unknown[]) => mockParseSubjectUserId(...args),
+}));
+vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
+vi.mock('~/server/services/app-blocks-flag', () => ({
+  isAppBlocksSharedStorageEnabled: mockIsSharedEnabled,
+}));
+vi.mock('~/server/auth/session-client', () => ({
+  sessionClient: { getSessionUserById: (...a: unknown[]) => mockGetSessionUser(...a) },
+}));
+vi.mock('~/server/db/appsDb', () => ({ requireAppsDb: () => mockPool }));
+vi.mock('~/server/utils/shared-storage-rate-limit', () => ({
+  checkSharedAppendRateLimit: (...a: unknown[]) => mockCheckAppendRl(...a),
+  checkSharedVoteRateLimit: (...a: unknown[]) => mockCheckVoteRl(...a),
+}));
+// Keep the content-safety belt REAL; mock only its redis-backed deps.
+vi.mock('~/server/services/blocklist.service', () => ({
+  throwOnBlockedLinkDomain: (...a: unknown[]) => mockThrowOnBlockedLinkDomain(...a),
+}));
+vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
+  auditPromptServer: (...a: unknown[]) => mockAuditPromptServer(...a),
+}));
+
+import { appsSharedRouter, appsModRouter } from '../apps-shared.router';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { OnboardingSteps } from '~/server/common/enums';
+
+const READ = 'apps:storage:shared:read';
+const WRITE = 'apps:storage:shared:write';
+
+function validClaims(over: Record<string, unknown> = {}) {
+  return {
+    iss: 'civitai',
+    aud: 'civitai-app-block',
+    sub: 'user:42',
+    iat: 0,
+    exp: 0,
+    jti: 'jti_test',
+    blockId: 'app-voting',
+    appId: 'app_test',
+    appBlockId: 'apb_test',
+    blockInstanceId: 'bki_inst',
+    ctx: {},
+    scopes: [READ, WRITE],
+    ...over,
+  };
+}
+
+// A subject that PASSES the min-trust gate (H3): verified, onboarded, >7d old.
+function trustedUser(over: Record<string, unknown> = {}) {
+  return {
+    id: 42,
+    isModerator: false,
+    bannedAt: null,
+    muted: false,
+    onboarding: OnboardingSteps.Buzz, // Flags.hasFlag(Buzz, Buzz) === true
+    emailVerified: new Date('2020-01-01'),
+    createdAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+    ...over,
+  };
+}
+
+function fakeCtx(user?: unknown) {
+  return {
+    acceptableOrigin: true,
+    user,
+    apiKeyId: null,
+    tokenScope: TokenScope.Full,
+    req: { headers: {} } as never,
+    res: { setHeader: () => undefined } as never,
+    cache: { edgeTTL: 0 },
+    features: {} as never,
+    track: undefined,
+  };
+}
+const caller = () => appsSharedRouter.createCaller(fakeCtx() as never);
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockIsSharedEnabled.mockImplementation(async () => true);
+  mockParseSubjectUserId.mockImplementation((sub: string) =>
+    sub === 'anon' ? null : Number(sub.split(':')[1])
+  );
+  mockGetSessionUser.mockResolvedValue(trustedUser());
+  mockDbRead.appBlock.findUnique.mockResolvedValue({ id: 'apb_test', status: 'approved' });
+  mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 });
+  mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
+  mockCheckAppendRl.mockResolvedValue({ allowed: true });
+  mockCheckVoteRl.mockResolvedValue({ allowed: true });
+  mockThrowOnBlockedLinkDomain.mockResolvedValue(undefined);
+  mockAuditPromptServer.mockResolvedValue(undefined);
+});
+
+describe('resolver gates', () => {
+  it('rejects an invalid token (UNAUTHORIZED)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(null);
+    await expect(caller().getCount({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+  });
+
+  it('rejects a missing AppBlock (NOT_FOUND)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockDbRead.appBlock.findUnique.mockResolvedValueOnce(null);
+    await expect(caller().getCount({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
+
+  it('rejects a non-approved AppBlock (FORBIDDEN)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockDbRead.appBlock.findUnique.mockResolvedValueOnce({ id: 'apb_x', status: 'pending' });
+    await expect(caller().getCount({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+  });
+
+  it('rejects a token missing the read scope (FORBIDDEN)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ scopes: [WRITE] }));
+    await expect(caller().getCount({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects a token missing the write scope on append (FORBIDDEN)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ scopes: [READ] }));
+    await expect(
+      caller().append({ blockToken: 't', value: { title: 'hi' } })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('FLAG DARK → every op refuses (FORBIDDEN)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    mockIsSharedEnabled.mockResolvedValue(false);
+    await expect(caller().list({ blockToken: 't' })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      caller().append({ blockToken: 't', value: { title: 'hi' } })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+});
+
+describe('H3 min-trust gate (write + vote)', () => {
+  const cases: Array<[string, Record<string, unknown> | null]> = [
+    ['vanished subject (null)', null],
+    ['muted', { muted: true }],
+    ['banned', { bannedAt: new Date() }],
+    ['unverified email', { emailVerified: undefined }],
+    ['onboarding incomplete', { onboarding: 0 }],
+    ['too-new account', { createdAt: new Date() }],
+  ];
+  for (const [name, over] of cases) {
+    it(`DENIES an untrusted writer: ${name} (FORBIDDEN)`, async () => {
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      mockGetSessionUser.mockResolvedValueOnce(over === null ? null : trustedUser(over));
+      await expect(
+        caller().append({ blockToken: 't', value: { title: 'idea' } })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockPool.connect).not.toHaveBeenCalled();
+    });
+  }
+
+  it('ALLOWS a trusted writer (reaches the data path)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('author_user_id') && sql.includes('count(*)'))
+        return { rows: [{ n: '0' }], rowCount: 1 };
+      if (sql.includes('.quota'))
+        return { rows: [{ used_bytes: '0', row_count: '0' }], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    });
+    const out = await caller().append({ blockToken: 't', value: { title: 'idea' } });
+    expect(out.key).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+    expect(mockPool.connect).toHaveBeenCalled();
+  });
+
+  it('anon may READ list/counts', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ sub: 'anon' }));
+    const out = await caller().list({ blockToken: 't' });
+    expect(out.items).toEqual([]);
+  });
+
+  it('anon NEVER writes (UNAUTHORIZED)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'anon' }));
+    await expect(
+      caller().append({ blockToken: 't', value: { title: 'x' } })
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    await expect(caller().vote({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+  });
+});
+
+describe('C1 cross-user overwrite', () => {
+  it('append SERVER-generates the key (client key never used)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('author_user_id') && sql.includes('count(*)'))
+        return { rows: [{ n: '0' }], rowCount: 1 };
+      if (sql.includes('.quota'))
+        return { rows: [{ used_bytes: '0', row_count: '0' }], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    });
+    // Even if a caller smuggles `key`, zod strips it and the server ULID is used.
+    const out = await caller().append({
+      blockToken: 't',
+      value: { title: 'idea' },
+      key: 'victim-key',
+    } as never);
+    const insert = (mockClient.query.mock.calls as Array<[string, unknown[]?]>).find((c) =>
+      c[0].includes('INSERT INTO "app_app_voting".shared_kv')
+    );
+    expect(insert).toBeTruthy();
+    expect((insert![1] as unknown[])[0]).toBe(out.key); // param[0] is the server ULID
+    expect((insert![1] as unknown[])[0]).not.toBe('victim-key');
+  });
+
+  it('withdraw only deletes the author’s OWN row (WHERE author_user_id)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockClient.query.mockImplementation(async (sql: string) => {
+      if (sql.startsWith('DELETE')) return { rows: [], rowCount: 0 }; // not the author → 0
+      return { rows: [], rowCount: 0 };
+    });
+    const out = await caller().withdraw({ blockToken: 't', key: 'someone-elses-key' });
+    expect(out.deleted).toBe(false);
+    const del = (mockClient.query.mock.calls as Array<[string, unknown[]?]>).find((c) =>
+      c[0].startsWith('DELETE')
+    );
+    expect(del![0]).toContain('author_user_id = $2');
+    expect((del![1] as unknown[])[1]).toBe(42);
+  });
+});
+
+describe('H1/H2 vote counter integrity (SQL shape + FK)', () => {
+  it('vote is FK/visibility-gated and uses the insert-gated counter CTE', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('hidden_at IS NULL') && sql.trim().startsWith('SELECT 1'))
+        return { rows: [{ '?column?': 1 }], rowCount: 1 };
+      if (sql.includes('WITH ins AS')) return { rows: [{ count: '1' }], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    });
+    const out = await caller().vote({ blockToken: 't', key: 'req1' });
+    expect(out.count).toBe(1);
+    const cte = (mockPool.query.mock.calls as Array<[string]>).find((c) =>
+      c[0].includes('WITH ins AS')
+    );
+    // insert-gated increment (H1): ON CONFLICT DO NOTHING + count + EXCLUDED.count
+    expect(cte![0]).toContain('ON CONFLICT (key, user_id) DO NOTHING');
+    expect(cte![0]).toContain('EXCLUDED.count');
+  });
+
+  it('H2: vote on a missing/hidden request rejects NOT_FOUND (pre-check)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 }); // pre-check finds nothing
+    await expect(caller().vote({ blockToken: 't', key: 'ghost' })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
+
+  it('H2: FK violation (23503) surfaces NOT_FOUND', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (sql.trim().startsWith('SELECT 1')) return { rows: [{ x: 1 }], rowCount: 1 };
+      if (sql.includes('WITH ins AS')) throw { code: '23503' };
+      return { rows: [], rowCount: 0 };
+    });
+    await expect(caller().vote({ blockToken: 't', key: 'race' })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
+
+  it('unvote decrements by exactly the rows deleted (symmetric CTE)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('WITH del AS')) return { rows: [{ count: '0' }], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    });
+    const out = await caller().unvote({ blockToken: 't', key: 'req1' });
+    expect(out.count).toBe(0);
+    const cte = (mockPool.query.mock.calls as Array<[string]>).find((c) =>
+      c[0].includes('WITH del AS')
+    );
+    expect(cte![0]).toContain('count - (SELECT count(*) FROM del)');
+  });
+});
+
+describe('C3 content safety (blocking on append)', () => {
+  it('rejects minor content + files a Report', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    await expect(
+      caller().append({ blockToken: 't', value: { title: '13 year old girl' } })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    // a shared_kv_reports row was filed (auto:minor)
+    const report = (mockPool.query.mock.calls as Array<[string, unknown[]?]>).find((c) =>
+      c[0].includes('shared_kv_reports')
+    );
+    expect(report).toBeTruthy();
+    expect(String((report![1] as unknown[])[3])).toContain('auto:');
+    expect(mockPool.connect).not.toHaveBeenCalled();
+  });
+
+  it('rejects a blocked link domain (BAD_REQUEST)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockThrowOnBlockedLinkDomain.mockRejectedValueOnce(new Error('invalid urls'));
+    await expect(
+      caller().append({ blockToken: 't', value: { title: 'visit http://bad.example' } })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  it('HTML in text is stored ESCAPED (C2 stored-XSS)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('author_user_id') && sql.includes('count(*)'))
+        return { rows: [{ n: '0' }], rowCount: 1 };
+      if (sql.includes('.quota'))
+        return { rows: [{ used_bytes: '0', row_count: '0' }], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    });
+    await caller().append({
+      blockToken: 't',
+      value: { title: 'hi <script>alert(1)</script>' },
+    });
+    const insert = (mockClient.query.mock.calls as Array<[string, unknown[]?]>).find((c) =>
+      c[0].includes('INSERT INTO "app_app_voting".shared_kv')
+    );
+    const stored = String((insert![1] as unknown[])[2]);
+    expect(stored).toContain('&lt;script&gt;');
+    expect(stored).not.toContain('<script>');
+  });
+
+  it('audit rejection (auto-mute path) surfaces BAD_REQUEST', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockAuditPromptServer.mockRejectedValueOnce(new Error('Your prompt was flagged'));
+    await expect(
+      caller().append({ blockToken: 't', value: { title: 'flagged text' } })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+});
+
+describe('H4 rate limits', () => {
+  it('append over the daily cap → TOO_MANY_REQUESTS', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockCheckAppendRl.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 60 });
+    await expect(
+      caller().append({ blockToken: 't', value: { title: 'idea' } })
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(mockPool.connect).not.toHaveBeenCalled();
+  });
+
+  it('vote over the per-minute cap → TOO_MANY_REQUESTS', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockCheckVoteRl.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 30 });
+    await expect(caller().vote({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+    });
+  });
+});
+
+describe('isolation + read invariants', () => {
+  it('list reads ONLY shared_kv/counters (never kv/votes), excludes hidden', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    await caller().list({ blockToken: 't' });
+    const sql = (mockPool.query.mock.calls[0] as [string])[0];
+    expect(sql).toContain('.shared_kv');
+    expect(sql).toContain('.counters');
+    expect(sql).toContain('hidden_at IS NULL');
+    expect(sql).not.toMatch(/\.kv\b/);
+    expect(sql).not.toMatch(/\.votes\b/);
+  });
+
+  it('per-app isolation: schema derives from claims.blockId (app A ≠ app B)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ blockId: 'app-beta' }));
+    await caller().list({ blockToken: 't' });
+    const sql = (mockPool.query.mock.calls[0] as [string])[0];
+    expect(sql).toContain('"app_app_beta".shared_kv');
+    expect(sql).not.toContain('app_app_voting');
+  });
+});
+
+describe('M4 mod-purge (session moderatorProcedure)', () => {
+  const modCtx = () =>
+    fakeCtx({ id: 9, isModerator: true, bannedAt: null, deletedAt: null, muted: false });
+  const modCaller = () => appsModRouter.createCaller(modCtx() as never);
+
+  it('DELETE cascades the row (+ files a report)', async () => {
+    mockDbRead.appBlock.findUnique.mockResolvedValueOnce({ id: 'apb_x', blockId: 'app-voting' });
+    mockClient.query.mockImplementation(async (sql: string) => {
+      if (sql.startsWith('DELETE')) return { rows: [], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    });
+    const out = await modCaller().purgeSharedRow({
+      appBlockId: 'apb_x',
+      key: 'bad',
+      action: 'delete',
+    });
+    expect(out).toMatchObject({ ok: true, action: 'delete', affected: 1 });
+    const del = (mockClient.query.mock.calls as Array<[string]>).find((c) =>
+      c[0].startsWith('DELETE')
+    );
+    expect(del![0]).toContain('"app_app_voting".shared_kv');
+    const report = (mockPool.query.mock.calls as Array<[string, unknown[]?]>).find((c) =>
+      c[0].includes('shared_kv_reports')
+    );
+    expect(String((report![1] as unknown[])[3])).toContain('mod:delete');
+  });
+
+  it('HIDE soft-hides (UPDATE hidden_at) without deleting', async () => {
+    mockDbRead.appBlock.findUnique.mockResolvedValueOnce({ id: 'apb_x', blockId: 'app-voting' });
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (sql.trim().startsWith('UPDATE')) return { rows: [], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    });
+    const out = await modCaller().purgeSharedRow({
+      appBlockId: 'apb_x',
+      key: 'bad',
+      action: 'hide',
+    });
+    expect(out).toMatchObject({ ok: true, action: 'hide', affected: 1 });
+    const upd = (mockPool.query.mock.calls as Array<[string]>).find((c) =>
+      c[0].trim().startsWith('UPDATE')
+    );
+    expect(upd![0]).toContain('hidden_at = now()');
+  });
+
+  it('is NOT reachable by a non-moderator session (FORBIDDEN)', async () => {
+    const nonMod = appsModRouter.createCaller(fakeCtx({ id: 1, isModerator: false }) as never);
+    await expect(
+      nonMod.purgeSharedRow({ appBlockId: 'apb_x', key: 'k', action: 'hide' })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+});
