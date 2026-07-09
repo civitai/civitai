@@ -511,17 +511,15 @@ const clearCache = async (userId: number, entityType: TagVotableEntityType) => {
 export const removeTagVotes = async ({ userId, type, id, tags }: TagVotingInput) => {
   const voteTable = type === 'model' ? 'TagsOnModelsVote' : 'TagsOnImageVote';
   const isTagIds = typeof tags[0] === 'number';
-  const tagIn = (isTagIds ? tags : tags.map((tag) => `'${tag}'`)).join(', ');
-  await dbWrite.$executeRawUnsafe(`
+  const tagCondition = isTagIds
+    ? Prisma.sql`"tagId" = ANY(${tags as number[]}::int[])`
+    : Prisma.sql`"tagId" IN (SELECT id FROM "Tag" WHERE "name" = ANY(${tags as string[]}::text[]))`;
+  await dbWrite.$executeRaw(Prisma.sql`
     DELETE
-    FROM "${voteTable}"
+    FROM "${Prisma.raw(voteTable)}"
     WHERE "userId" = ${userId}
-      AND "${type}Id" = ${id}
-      ${
-        isTagIds
-          ? `AND "tagId" IN (${tagIn})`
-          : `AND "tagId" IN (SELECT id FROM "Tag" WHERE name IN (${tagIn}))`
-      }
+      AND "${Prisma.raw(type)}Id" = ${id}
+      AND ${tagCondition}
   `);
 
   await clearCache(userId, type);
@@ -557,28 +555,29 @@ export const addTagVotes = async ({
 
   vote *= voteWeight;
   const isTagIds = typeof tags[0] === 'number';
-  const tagSelector = isTagIds ? 'id' : 'name';
-  const tagIn = (isTagIds ? tags : tags.map((tag) => `'${tag}'`)).join(', ');
+  const tagMatch = isTagIds
+    ? Prisma.sql`"id" = ANY(${tags as number[]}::int[])`
+    : Prisma.sql`"name" = ANY(${tags as string[]}::text[])`;
   const voteTable = type === 'model' ? 'TagsOnModelsVote' : 'TagsOnImageVote';
-  await dbWrite.$executeRawUnsafe(`
-    INSERT INTO "${voteTable}" ("userId", "tagId", "${type}Id", "vote")
+  await dbWrite.$executeRaw(Prisma.sql`
+    INSERT INTO "${Prisma.raw(voteTable)}" ("userId", "tagId", "${Prisma.raw(type)}Id", "vote")
     SELECT ${userId},
            id,
            ${id},
            ${vote}
     FROM "Tag"
-    WHERE ${tagSelector} IN (${tagIn})
-    ON CONFLICT ("userId", "tagId", "${type}Id") DO UPDATE SET "vote"      = ${vote},
+    WHERE ${tagMatch}
+    ON CONFLICT ("userId", "tagId", "${Prisma.raw(type)}Id") DO UPDATE SET "vote"      = ${vote},
                                                                "createdAt" = NOW()
   `);
 
   // If voting up a tag
   if (vote > 0) {
     // Check if it's a moderation tag
-    const [{ count }] = await dbRead.$queryRawUnsafe<{ count: number }[]>(`
+    const [{ count }] = await dbRead.$queryRaw<{ count: number }[]>(Prisma.sql`
       SELECT COUNT(*)::int "count"
       FROM "Tag"
-      WHERE ${tagSelector} IN (${tagIn})
+      WHERE ${tagMatch}
         AND "type" = 'Moderation'
     `);
     if (count > 0) await clearCache(userId, type); // Clear cache if it is
@@ -595,26 +594,28 @@ export const addTags = async ({ tags, entityIds, entityType, relationship }: Adj
   const isTagIds = typeof tags[0] === 'number';
   // Explicit cast to number[] or string[] to avoid type errors
   const castedTags = isTagIds ? (tags as number[]) : (tags as string[]);
-  const tagSelector = isTagIds ? 'id' : 'name';
-  const tagIn = (isTagIds ? castedTags : castedTags.map((tag) => `'${tag}'`)).join(', ');
+  const tagFilter = (alias: string) =>
+    isTagIds
+      ? Prisma.sql`${Prisma.raw(alias)}."id" = ANY(${castedTags as number[]}::int[])`
+      : Prisma.sql`${Prisma.raw(alias)}."name" = ANY(${castedTags as string[]}::text[])`;
 
   if (entityType === 'model') {
-    await dbWrite.$executeRawUnsafe(`
+    await dbWrite.$executeRaw(Prisma.sql`
       INSERT INTO "TagsOnModels" ("modelId", "tagId")
       SELECT m."id",
              t."id"
       FROM "Model" m
-             JOIN "Tag" t ON t.${tagSelector} IN (${tagIn})
-      WHERE m."id" IN (${entityIds.join(', ')})
+             JOIN "Tag" t ON ${tagFilter('t')}
+      WHERE m."id" = ANY(${entityIds}::int[])
       ON CONFLICT DO NOTHING
     `);
   } else if (entityType === 'image') {
-    const result = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
+    const result = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>(Prisma.sql`
       SELECT i."id" AS "imageId",  t."id" AS "tagId"
       FROM "Image" i
-      JOIN "Tag" t ON t.${tagSelector} IN (${tagIn})
-      WHERE i."id" IN (${entityIds.join(', ')});
-    `;
+      JOIN "Tag" t ON ${tagFilter('t')}
+      WHERE i."id" = ANY(${entityIds}::int[]);
+    `);
     await upsertTagsOnImageNew(
       result.map(({ imageId, tagId }) => ({
         imageId,
@@ -625,26 +626,26 @@ export const addTags = async ({ tags, entityIds, entityType, relationship }: Adj
       }))
     );
   } else if (entityType === 'article') {
-    await dbWrite.$executeRawUnsafe(`
+    await dbWrite.$executeRaw(Prisma.sql`
       INSERT INTO "TagsOnArticle" ("articleId", "tagId")
       SELECT a."id",
              t."id"
       FROM "Article" a
-             JOIN "Tag" t ON t.${tagSelector} IN (${tagIn})
-      WHERE a."id" IN (${entityIds.join(', ')})
+             JOIN "Tag" t ON ${tagFilter('t')}
+      WHERE a."id" = ANY(${entityIds}::int[])
       ON CONFLICT DO NOTHING
     `);
   } else if (entityType === 'tag') {
     if (!relationship) throw new Error('Relationship must be specified for tag tagging');
 
-    await dbWrite.$executeRawUnsafe(`
+    await dbWrite.$executeRaw(Prisma.sql`
       INSERT INTO "TagsOnTags" ("fromTagId", "toTagId", type)
       SELECT fromTag."id",
              toTag."id",
-             '${relationship}'::"TagsOnTagsType"
+             ${relationship}::"TagsOnTagsType"
       FROM "Tag" toTag
-             JOIN "Tag" fromTag ON fromTag.${tagSelector} IN (${tagIn})
-      WHERE toTag."id" IN (${entityIds.join(', ')})
+             JOIN "Tag" fromTag ON ${tagFilter('fromTag')}
+      WHERE toTag."id" = ANY(${entityIds}::int[])
       ON CONFLICT DO NOTHING
     `);
 
@@ -713,45 +714,38 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
   const isTagIds = typeof tags[0] === 'number';
   // Explicit cast to number[] or string[] to avoid type errors
   const castedTags = isTagIds ? (tags as number[]) : (tags as string[]);
-  const tagIn = (isTagIds ? castedTags : castedTags.map((tag) => `'${tag}'`)).join(', ');
+  const tagIdMatch = (col: string) =>
+    isTagIds
+      ? Prisma.sql`${Prisma.raw(`"${col}"`)} = ANY(${castedTags as number[]}::int[])`
+      : Prisma.sql`${Prisma.raw(
+          `"${col}"`
+        )} IN (SELECT id FROM "Tag" WHERE "name" = ANY(${castedTags as string[]}::text[]))`;
 
   // TODO.fix "disabled" doesnt exist for TagsOnModels, is this being used?
   if (entityType === 'model') {
-    await dbWrite.$executeRawUnsafe(`
+    await dbWrite.$executeRaw(Prisma.sql`
       UPDATE "TagsOnModels"
       SET "disabled" = true
-      WHERE "modelId" IN (${entityIds.join(', ')})
-        ${
-          isTagIds
-            ? `AND "tagId" IN (${tagIn})`
-            : `AND "tagId" IN (SELECT id FROM "Tag" WHERE name IN (${tagIn}))`
-        }
+      WHERE "modelId" = ANY(${entityIds}::int[])
+        AND ${tagIdMatch('tagId')}
     `);
   } else if (entityType === 'image') {
-    const toUpdate = await dbWrite.$queryRawUnsafe<{ imageId: number; tagId: number }[]>(`
+    const toUpdate = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>(Prisma.sql`
       SELECT "imageId", "tagId"
       FROM "TagsOnImageDetails"
-      WHERE "imageId" IN (${entityIds.join(', ')})
-        ${
-          isTagIds
-            ? `AND "tagId" IN (${tagIn})`
-            : `AND "tagId" IN (SELECT id FROM "Tag" WHERE name IN (${tagIn}))`
-        }
+      WHERE "imageId" = ANY(${entityIds}::int[])
+        AND ${tagIdMatch('tagId')}
     `);
 
     await upsertTagsOnImageNew(
       toUpdate.map(({ imageId, tagId }) => ({ imageId, tagId, disabled: true, needsReview: false }))
     );
   } else if (entityType === 'tag') {
-    await dbWrite.$executeRawUnsafe(`
+    await dbWrite.$executeRaw(Prisma.sql`
       DELETE
       FROM "TagsOnTags"
-      WHERE "toTagId" IN (${entityIds.join(', ')})
-        ${
-          isTagIds
-            ? `AND "fromTagId" IN (${tagIn})`
-            : `AND "fromTagId" IN (SELECT id FROM "Tag" WHERE name IN (${tagIn}))`
-        }
+      WHERE "toTagId" = ANY(${entityIds}::int[])
+        AND ${tagIdMatch('fromTagId')}
     `);
 
     // Bust cache for tag rules (since we can't easily check the type)
@@ -794,22 +788,23 @@ export const deleteTags = async ({ tags }: DeleteTagsSchema) => {
   const isTagIds = typeof tags[0] === 'number';
   // Explicit cast to number[] or string[] to avoid type errors
   const castedTags = isTagIds ? (tags as number[]) : (tags as string[]);
-  const tagSelector = isTagIds ? 'id' : 'name';
-  const tagIn = (isTagIds ? castedTags : castedTags.map((tag) => `'${tag}'`)).join(', ');
+  const tagMatch = isTagIds
+    ? Prisma.sql`"id" = ANY(${castedTags as number[]}::int[])`
+    : Prisma.sql`"name" = ANY(${castedTags as string[]}::text[])`;
 
   // Get affected images before deletion (cascade will delete ImageTag records)
-  const affectedImages = await dbWrite.$queryRaw<{ imageId: number }[]>`
+  const affectedImages = await dbWrite.$queryRaw<{ imageId: number }[]>(Prisma.sql`
     SELECT DISTINCT "imageId"
     FROM "ImageTag"
     WHERE "tagId" IN (
-      SELECT id FROM "Tag" WHERE ${tagSelector} IN (${tagIn})
+      SELECT id FROM "Tag" WHERE ${tagMatch}
     )
-  `;
+  `);
 
-  await dbWrite.$executeRawUnsafe(`
+  await dbWrite.$executeRaw(Prisma.sql`
     DELETE
     FROM "Tag"
-    WHERE ${tagSelector} IN (${tagIn})
+    WHERE ${tagMatch}
   `);
 
   // Bust cache for affected images
