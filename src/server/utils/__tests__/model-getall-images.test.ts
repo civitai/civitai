@@ -15,16 +15,17 @@ const makeImages = (n: number) =>
 
 describe('model-getall-images', () => {
   it('caps to at most GET_ALL_IMAGES_PER_MODEL', () => {
-    expect(GET_ALL_IMAGES_PER_MODEL).toBeLessThanOrEqual(3);
+    // Pinned: the browse cap is 8 (raised from 3 after the browsing-level
+    // feed-drop review — see the constant's doc).
+    expect(GET_ALL_IMAGES_PER_MODEL).toBe(8);
     const out = capGetAllModelImages(makeImages(20));
     expect(out.length).toBe(GET_ALL_IMAGES_PER_MODEL);
-    expect(out.length).toBeLessThanOrEqual(3);
   });
 
   it('keeps the leading images in order (browse UI reads images[0])', () => {
     const images = makeImages(20);
     const out = capGetAllModelImages(images);
-    expect(out.map((x) => x.id)).toEqual([1, 2, 3]);
+    expect(out.map((x) => x.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     // identity preserved (not re-cloned) so downstream `images[0]` is the same ref
     expect(out[0]).toBe(images[0]);
   });
