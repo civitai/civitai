@@ -6,11 +6,16 @@ import {
   NavigationInstrumentation,
   SessionInstrumentation,
   type TransportItem,
+  TransportItemType,
   ViewInstrumentation,
   WebVitalsInstrumentation,
 } from '@grafana/faro-web-sdk';
 import { env } from '~/env/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import {
+  type ClassifiableException,
+  classifyException,
+} from '~/utils/faro/classifyException';
 import { buildRumExperimentAttributes } from '~/utils/faro/experimentFlags';
 import { deepRedact } from '~/utils/faro/redact';
 import { resolveFaroSampling } from '~/utils/faro/traceSampler';
@@ -63,7 +68,12 @@ import { SampledTracingInstrumentation } from './SampledTracingInstrumentation';
  *     layers are independent, a non-sampled trace does NOT drop that session's errors/vitals.
  *
  * Every outgoing beacon is run through the deterministic PII scrub (`beforeSend`), which
- * FAILS CLOSED (drops the beacon on any scrub error).
+ * FAILS CLOSED (drops the beacon on any scrub error). EXCEPTION beacons are additionally
+ * classified (`~/utils/faro/classifyException`): a conservative allowlist of known-benign noise
+ * (request aborts, ad-blocker/3p script blocks, autoplay, opaque `Script error.`,
+ * extension-injected, bare transient network) is DROPPED, and the rest is tagged
+ * `context.error_category` (bizlogic|chunkload|meili|real → Loki `context_error_category`) so the
+ * dashboard/alerts can isolate the real-app-bug stream from ~75% non-actionable noise.
  *
  * Must live inside `FeatureFlagsProvider` (for the flag) which is inside
  * `IsClientProvider` (client-only, high in the tree).
@@ -115,6 +125,36 @@ function scrubBeacon(item: TransportItem): TransportItem | null {
     // Fail CLOSED — drop the beacon rather than risk sending unredacted PII.
     return null;
   }
+}
+
+/**
+ * `beforeSend` for a single beacon: redact (fail-closed), and for EXCEPTION beacons additionally
+ * classify — DROP a conservative allowlist of known-benign noise (aborts, ad-blocker/3p script
+ * blocks, autoplay, opaque `Script error.`, extension-injected, bare transient network) and TAG
+ * the rest with `context.error_category` (= bizlogic|chunkload|meili|real). Anything unmatched →
+ * `real`, kept. See `~/utils/faro/classifyException`.
+ *
+ * WHY THE TAG REACHES LOKI (verified against the Alloy faro.receiver source): the tag is written
+ * to the exception payload's `context` map (`ExceptionContext`, `Record<string,string>`). Alloy's
+ * `Exception.KeyVal()` merges that map with a `context_` prefix, so `context.error_category`
+ * lands as the logfmt field **`context_error_category`** — the same mechanism that surfaces a
+ * measurement's `context_route`.
+ *
+ * Classification runs on the ORIGINAL (pre-redact) payload — the structural type/value/stack the
+ * rules match on carry no PII, so redaction never alters them, and classifying the source of
+ * truth is the least surprising. The tag is then written onto the SCRUBBED clone that ships.
+ */
+function processBeacon(item: TransportItem): TransportItem | null {
+  if (item.type !== TransportItemType.EXCEPTION) return scrubBeacon(item);
+
+  const classification = classifyException(item.payload as ClassifiableException);
+  if (classification.drop) return null; // known-benign noise → never sent
+
+  const scrubbed = scrubBeacon(item);
+  if (!scrubbed) return null; // redaction failed closed
+  const payload = scrubbed.payload as { context?: Record<string, string> };
+  payload.context = { ...(payload.context ?? {}), error_category: classification.category };
+  return scrubbed;
 }
 
 interface InitFaroOptions {
@@ -238,11 +278,12 @@ function initFaro({ resourceTimingCohort, experimentAttributes }: InitFaroOption
         maxPerWindowEnv: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_MAX_PER_WINDOW,
       }),
     ],
-    // Defensive outer wrapper: scrubBeacon already fails closed, but guarantee that any
-    // unexpected throw still drops the beacon (null) rather than emitting it unscrubbed.
+    // Defensive outer wrapper: processBeacon (redact + exception classify/tag) already fails
+    // closed, but guarantee that any unexpected throw still drops the beacon (null) rather than
+    // emitting it unscrubbed.
     beforeSend: (item) => {
       try {
-        return scrubBeacon(item);
+        return processBeacon(item);
       } catch {
         return null;
       }
