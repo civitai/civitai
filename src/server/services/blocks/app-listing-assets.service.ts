@@ -3,10 +3,7 @@ import { randomUUID } from 'crypto';
 
 import { dbRead, dbWrite } from '~/server/db/client';
 import { NsfwLevel } from '~/server/common/enums';
-import {
-  getHighestBrowsingLevelBit,
-  orchestratorNsfwLevelMap,
-} from '~/shared/constants/browsingLevel.constants';
+import { nsfwLevelFromContentRating } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { newAppListingScreenshotId } from '~/server/utils/app-block-ids';
 import {
@@ -262,15 +259,12 @@ function assertOwnerAssetEditable(
 }
 
 /**
- * Map an `AppListing.contentRating` (`g|pg|pg13|r|x` — nullable) to the MAXIMUM
- * `NsfwLevel` bit its published assets may carry. Reuses the canonical
- * `orchestratorNsfwLevelMap` (which lacks the SFW `g` rating → PG). A
- * null/unknown rating FAILS CLOSED to PG (SFW) — never widen on ambiguity.
+ * Re-export the canonical `AppListing.contentRating` → max-`NsfwLevel` ceiling map
+ * (its home is `browsingLevel.constants`, shared with the client-side review-modal
+ * derive so the forward + inverse can never diverge). The backfill below uses it to
+ * clamp creator-derived screenshots.
  */
-export function nsfwLevelFromContentRating(rating: string | null | undefined): NsfwLevel {
-  if (!rating || rating === 'g') return NsfwLevel.PG;
-  return orchestratorNsfwLevelMap[rating] ?? NsfwLevel.PG;
-}
+export { nsfwLevelFromContentRating };
 
 /**
  * Load a listing and assert the caller owns it (or is a moderator). Throws
@@ -301,15 +295,39 @@ async function loadOwnedListing(listingId: string, user: SessionUser): Promise<O
 }
 
 /**
- * Load an Image, assert the caller owns it (or is a mod), and validate it for
- * the given asset kind. Returns the imageId once validated.
+ * The result of {@link loadValidatedImage}: a discriminated union so a still-
+ * SCANNING image is a NON-ERROR outcome the caller reports (client polls on it),
+ * NOT a thrown 4xx. TERMINAL problems still THROW (see below).
+ *
+ *   - `{ pending: true }`  — the Image exists, is owned + format-valid, but its
+ *     scan has not reached `Scanned` yet. NOT an error; NO db write; the caller
+ *     returns `{ status: 'pending' }` and the client re-polls.
+ *   - `{ pending: false, imageId }` — `Scanned` and attachable.
+ */
+type LoadValidatedImageResult = { pending: true } | { pending: false; imageId: number };
+
+/**
+ * Load an Image, assert the caller owns it (or is a mod), and validate it for the
+ * given asset kind. Returns a discriminated {@link LoadValidatedImageResult}:
+ * `{ pending: true }` while the scan is in-flight (a normal expected wait — no
+ * throw), `{ pending: false, imageId }` once `Scanned`.
+ *
+ * TERMINAL failures still THROW (real errors the client surfaces + stops polling
+ * on): missing → NOT_FOUND; not owned → FORBIDDEN; bad format → BAD_REQUEST;
+ * `ImageIngestionStatus.NotFound` (scanner couldn't fetch the bytes) → BAD_REQUEST;
+ * `Blocked` (prohibited content) → BAD_REQUEST.
+ *
+ * Content RATING is deliberately NOT gated here (W13): the scanner's per-image
+ * level is imprecise, every off-site listing is mod-reviewed before it is visible,
+ * and the rating is derived from + confirmed against the assets at approve. The
+ * `Blocked` reject is KEPT — it is a hard integrity reject (prohibited content),
+ * not a rating mismatch.
  */
 async function loadValidatedImage(
   imageId: number,
   kind: ListingAssetKind,
-  user: SessionUser,
-  contentRating: string | null
-): Promise<number> {
+  user: SessionUser
+): Promise<LoadValidatedImageResult> {
   const image = await dbRead.image.findUnique({
     where: { id: imageId },
     select: {
@@ -341,23 +359,11 @@ async function loadValidatedImage(
   );
   if (!result.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: result.reason });
 
-  // Content-status gate: a listing asset is publicly rendered (P2), so the Image
-  // must be scan-complete AND within the listing's maturity ceiling. This mirrors
-  // the site-wide "don't publish un-scanned / over-rated media" invariant.
-  //
-  // Distinguish a TERMINAL ingestion failure (NotFound = the scanner couldn't
-  // fetch the bytes; Blocked = the image was rejected) from the TRANSIENT
-  // scanning states (Pending / Error-retry / PendingManualAssignment). The client
-  // polls this proc until the scan lands.
-  //
-  // The retriable-vs-terminal signal is STRUCTURAL, not prose: the transient
-  // scanning state throws `CONFLICT` (the resource isn't in an attachable state
-  // YET → retry), while the terminal states throw `BAD_REQUEST`. The client keys
-  // its poll decision off the tRPC `code` (`error.data.code`), NEVER the message —
-  // so these human messages are free to change without breaking the poller.
-  // (Previously a terminal failure had to smuggle its non-retriability into a
-  // DIFFERENT message string, which the client regex-matched; that was the brittle
-  // OG-image-import dead-end this refactor removes.)
+  // Content-status gate. A TERMINAL ingestion failure (NotFound = the scanner
+  // couldn't fetch the bytes; Blocked = prohibited content) still THROWS
+  // BAD_REQUEST — the client shows the message + stops polling. A non-terminal
+  // scanning state (Pending / Error-retry / PendingManualAssignment) is NOT an
+  // error: return `{ pending: true }` so the caller reports it as a poll-able 200.
   if (image.ingestion === ImageIngestionStatus.NotFound) {
     throw new TRPCError({
       code: 'BAD_REQUEST',
@@ -371,58 +377,72 @@ async function loadValidatedImage(
     });
   }
   if (image.ingestion !== ImageIngestionStatus.Scanned) {
-    throw new TRPCError({
-      code: 'CONFLICT',
-      message: 'image is not approved for publishing (scan is not complete)',
-    });
+    // Still scanning — a NON-error pending result (supersedes the old CONFLICT
+    // throw; #3016's pending-CONFLICT is replaced by this poll-able result).
+    return { pending: true };
   }
-  // Fail closed: a null contentRating clamps to SFW (PG). NsfwLevel bits are
-  // severity-ordered (PG=1 < PG13=2 < R=4 < X=8 < XXX=16 < Blocked=32), so a
-  // numeric compare of the image's highest bit vs the ceiling is exact.
-  const maxLevel = nsfwLevelFromContentRating(contentRating);
-  const imageLevel = getHighestBrowsingLevelBit(image.nsfwLevel ?? 0);
-  if (imageLevel > maxLevel) {
-    throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message: "image exceeds the listing's content rating",
-    });
-  }
-  return image.id;
+  return { pending: false, imageId: image.id };
 }
 
 // ---------------------------------------------------------------------------
 // Creator asset management (owner/mod-gated).
 // ---------------------------------------------------------------------------
 
+/**
+ * The attach procs resolve with a discriminated `status` result instead of
+ * throwing for a still-scanning image: `{ status: 'pending' }` (200, NO db write —
+ * the client re-polls) while the Image's scan is in-flight, `{ status: 'attached',
+ * … }` once it lands and the attach is written. A TERMINAL problem (not-found /
+ * not-owned / bad-format / NotFound / Blocked) still THROWS from
+ * {@link loadValidatedImage}.
+ */
+export type SetListingIconResult = { status: 'pending' } | { status: 'attached'; iconId: number };
+export type SetListingCoverResult =
+  | { status: 'pending' }
+  | { status: 'attached'; coverId: number };
+export type AddListingScreenshotResult =
+  | { status: 'pending' }
+  | { status: 'attached'; id: string; order: number };
+
 export async function setListingIcon(
   args: { listingId: string; imageId: number },
   user: SessionUser
-): Promise<{ iconId: number }> {
+): Promise<SetListingIconResult> {
   const listing = await loadOwnedListing(args.listingId, user);
   assertOwnerAssetEditable(listing, user);
-  const iconId = await loadValidatedImage(args.imageId, 'icon', user, listing.contentRating);
-  await dbWrite.appListing.update({ where: { id: args.listingId }, data: { iconId } });
-  return { iconId };
+  const validated = await loadValidatedImage(args.imageId, 'icon', user);
+  if (validated.pending) return { status: 'pending' };
+  await dbWrite.appListing.update({
+    where: { id: args.listingId },
+    data: { iconId: validated.imageId },
+  });
+  return { status: 'attached', iconId: validated.imageId };
 }
 
 export async function setListingCover(
   args: { listingId: string; imageId: number },
   user: SessionUser
-): Promise<{ coverId: number }> {
+): Promise<SetListingCoverResult> {
   const listing = await loadOwnedListing(args.listingId, user);
   assertOwnerAssetEditable(listing, user);
-  const coverId = await loadValidatedImage(args.imageId, 'cover', user, listing.contentRating);
-  await dbWrite.appListing.update({ where: { id: args.listingId }, data: { coverId } });
-  return { coverId };
+  const validated = await loadValidatedImage(args.imageId, 'cover', user);
+  if (validated.pending) return { status: 'pending' };
+  await dbWrite.appListing.update({
+    where: { id: args.listingId },
+    data: { coverId: validated.imageId },
+  });
+  return { status: 'attached', coverId: validated.imageId };
 }
 
 export async function addListingScreenshot(
   args: { listingId: string; imageId: number; caption?: string | null },
   user: SessionUser
-): Promise<{ id: string; order: number }> {
+): Promise<AddListingScreenshotResult> {
   const listing = await loadOwnedListing(args.listingId, user);
   assertOwnerAssetEditable(listing, user);
-  const imageId = await loadValidatedImage(args.imageId, 'screenshot', user, listing.contentRating);
+  const validated = await loadValidatedImage(args.imageId, 'screenshot', user);
+  if (validated.pending) return { status: 'pending' };
+  const imageId = validated.imageId;
 
   // COUNT cap — reject the (N+1)th (mirrors E5 MAX_SCREENSHOTS "reject, not truncate").
   // Read the count + max order from dbWrite (primary), NOT the replica: under
@@ -454,7 +474,7 @@ export async function addListingScreenshot(
       caption: args.caption ?? null,
     },
   });
-  return { id, order: nextOrder };
+  return { status: 'attached', id, order: nextOrder };
 }
 
 /**
@@ -565,11 +585,26 @@ export type ListingAssetsView = {
   listingId: string;
   iconId: number | null;
   coverId: number | null;
-  screenshots: { id: string; imageId: number | null; order: number; caption: string | null }[];
+  /** Detected `nsfwLevel` of the icon/cover Image (null if unset/absent). */
+  iconNsfwLevel: number | null;
+  coverNsfwLevel: number | null;
+  screenshots: {
+    id: string;
+    imageId: number | null;
+    order: number;
+    caption: string | null;
+    /** Detected `nsfwLevel` of the backing Image (null if the Image was deleted). */
+    nsfwLevel: number | null;
+  }[];
   completeness: ListingAssetsCompleteResult;
 };
 
-/** Owner/mod read of a listing's current assets for the creator dashboard. */
+/**
+ * Owner/mod read of a listing's current assets for the creator dashboard + the mod
+ * review modal. Includes each asset's detected `nsfwLevel` (owner/mod-gated, so it
+ * is not a public exposure) so the review modal can derive the content rating from
+ * the assets' max level.
+ */
 export async function getListingAssets(
   args: { listingId: string },
   user: SessionUser
@@ -580,11 +615,32 @@ export async function getListingAssets(
     select: { id: true, imageId: true, order: true, caption: true },
     orderBy: { order: 'asc' },
   });
+
+  // Resolve the detected nsfwLevel of every backing Image in ONE query.
+  const imageIds = [
+    listing.iconId,
+    listing.coverId,
+    ...screenshots.map((s) => s.imageId),
+  ].filter((v): v is number => v != null);
+  const images = imageIds.length
+    ? await dbRead.image.findMany({
+        where: { id: { in: imageIds } },
+        select: { id: true, nsfwLevel: true },
+      })
+    : [];
+  const levelById = new Map<number, number | null>(
+    images.map((i) => [i.id, i.nsfwLevel ?? null])
+  );
+  const levelOf = (id: number | null): number | null =>
+    id == null ? null : levelById.get(id) ?? null;
+
   return {
     listingId: listing.id,
     iconId: listing.iconId,
     coverId: listing.coverId,
-    screenshots,
+    iconNsfwLevel: levelOf(listing.iconId),
+    coverNsfwLevel: levelOf(listing.coverId),
+    screenshots: screenshots.map((s) => ({ ...s, nsfwLevel: levelOf(s.imageId) })),
     completeness: checkListingAssetsComplete({
       iconId: listing.iconId,
       coverId: listing.coverId,

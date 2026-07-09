@@ -189,6 +189,11 @@ export type SubmitListingRevisionInput = z.infer<typeof submitListingRevisionSch
 export const approveExternalRequestSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
   approvalNotes: z.string().max(OFFSITE_APPROVAL_NOTES_MAX).optional(),
+  // Optional mod OVERRIDE of the final content rating stamped on approve. When
+  // omitted the service stamps the rating DERIVED from the assets' max detected
+  // nsfwLevel; when provided the service FLOORS it at the derived value (never
+  // publishes mature assets under a too-low rating). See `approveExternalRequest`.
+  contentRating: z.enum(OFFSITE_CONTENT_RATINGS).optional(),
 });
 export type ApproveExternalRequestInput = z.infer<typeof approveExternalRequestSchema>;
 
