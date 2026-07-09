@@ -209,6 +209,7 @@ export type ChallengeDetailForEdit = ChallengeDetail & {
   reviewPercentage: number;
   operationBudget: number;
   themeElements: string[] | null;
+  judgingCategories: ChallengeJudgingCategory[] | null;
 };
 
 export type ModeratorChallengeListItem = {

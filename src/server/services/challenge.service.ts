@@ -692,6 +692,8 @@ async function buildChallengeDetail(
   // Get challenge config for judgedTagId
   const challengeConfig = await getChallengeConfig();
 
+  const parsed = challengeJudgingCategoriesSchema.safeParse(challenge.judgingCategories);
+
   return {
     id: challenge.id,
     title: challenge.title,
@@ -749,6 +751,7 @@ async function buildChallengeDetail(
       reviewPercentage: challenge.reviewPercentage,
       operationBudget: challenge.operationBudget,
       themeElements,
+      judgingCategories: parsed.success ? parsed.data : null,
     },
   };
 }

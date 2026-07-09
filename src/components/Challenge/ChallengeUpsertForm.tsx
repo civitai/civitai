@@ -138,8 +138,6 @@ type ChallengeForEdit = {
   maxPrizePool: number | null;
   prizeDistribution: number[] | null;
   themeElements: string[] | null;
-  // Not populated by any loader today (moderator edit only fetches ChallengeDetailForEdit, which
-  // has no category-weight data); present so a future user-challenge edit flow can seed real values.
   judgingCategories?: CategoryWeightRow[];
 };
 

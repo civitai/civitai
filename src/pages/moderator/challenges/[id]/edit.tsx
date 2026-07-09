@@ -80,6 +80,7 @@ export default function EditChallengePage() {
     maxPrizePool: challenge.maxPrizePool,
     prizeDistribution: challenge.prizeDistribution,
     themeElements: challenge.themeElements,
+    judgingCategories: challenge.judgingCategories ?? undefined,
   };
 
   return (
