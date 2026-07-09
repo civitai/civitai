@@ -216,6 +216,33 @@ describe('UPDATE-first → INSERT-ON-CONFLICT fallback', () => {
 });
 
 // =========================================================================================================
+// Re-derives the fix from #2437 (daceheg): both upsert paths MERGE the incoming recipients into the
+// existing PendingNotification.users array instead of wholesale-replacing it. A wholesale replace drops
+// recipients a concurrent/earlier writer already accumulated for the same key before the worker consumes it.
+describe('users-array merge on upsert (does not clobber concurrently-queued recipients)', () => {
+  it('UPDATE unions existing users with the incoming set and dedups — never a bare replace', async () => {
+    h.state.updateRows = [{ id: 1 }];
+    await createNotification(payload({ userIds: [11, 22] }));
+
+    const upd = updateCall()!;
+    expect(upd.sql).toContain('unnest("users" || $1::int[])');
+    expect(upd.sql).toContain('SELECT DISTINCT');
+    // The old wholesale-replace form must be gone.
+    expect(upd.sql).not.toMatch(/SET\s+"users"\s*=\s*\$1::int\[\]/);
+  });
+
+  it('INSERT ... ON CONFLICT unions the existing row with excluded and dedups — never a bare replace', async () => {
+    h.state.updateRows = []; // force the INSERT branch
+    await createNotification(payload({ userIds: [11, 22] }));
+
+    const ins = insertCall()!;
+    expect(ins.sql).toContain('unnest("PendingNotification"."users" || excluded."users")');
+    expect(ins.sql).toContain('SELECT DISTINCT');
+    expect(ins.sql).not.toMatch(/"users"\s*=\s*excluded\."users"/);
+  });
+});
+
+// =========================================================================================================
 describe('error swallow contract (must be COUNTED, not a false success)', () => {
   it('opt-out query throws → logs to Axiom and returns {queued:0} (no throw, no false success)', async () => {
     h.state.throwOn = 'settings';
