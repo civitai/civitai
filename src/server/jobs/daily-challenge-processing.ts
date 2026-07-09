@@ -623,12 +623,15 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   const challengeMetadata = parseChallengeMetadata(challengeRecord?.metadata);
   const themeElements = challengeMetadata.themeElements;
   // User-source challenges carry creator-defined judging categories (JSONB); other sources
-  // leave this null. Parse defensively — a malformed/corrupt value falls back to the
-  // fixed theme/wittiness/humor/aesthetic scoring schema instead of failing the review.
-  const userJudgingCategories =
-    challengeRecord?.source === ChallengeSource.User
-      ? challengeJudgingCategoriesSchema.safeParse(challengeRecord.judgingCategories)
-      : undefined;
+  // leave this null unless DYNAMIC_JUDGING_CATEGORIES is enabled. Parse defensively — a
+  // malformed/corrupt value falls back to the fixed theme/wittiness/humor/aesthetic scoring
+  // schema instead of failing the review.
+  const useCategories =
+    challengeRecord?.source === ChallengeSource.User ||
+    (await isFlipt(FLIPT_FEATURE_FLAGS.DYNAMIC_JUDGING_CATEGORIES));
+  const userJudgingCategories = useCategories
+    ? challengeJudgingCategoriesSchema.safeParse(challengeRecord?.judgingCategories)
+    : undefined;
   const userCategories = userJudgingCategories?.success ? userJudgingCategories.data : undefined;
 
   // Get judging config from ChallengeJudge (or cached default judge if not assigned)
@@ -1196,11 +1199,14 @@ export async function pickWinnersForChallenge(
       const eventContext = await resolveEventContext(challengeJudgeRow?.eventId ?? null);
 
       // User-source challenges rank by creator-defined weighted categories (see
-      // getJudgedEntries); other sources keep the fixed theme/wittiness/humor/aesthetic rubric.
-      const userJudgingCategories =
-        challengeJudgeRow?.source === ChallengeSource.User
-          ? challengeJudgingCategoriesSchema.safeParse(challengeJudgeRow.judgingCategories)
-          : undefined;
+      // getJudgedEntries); other sources keep the fixed theme/wittiness/humor/aesthetic rubric
+      // unless DYNAMIC_JUDGING_CATEGORIES is enabled for this environment.
+      const useCategories =
+        challengeJudgeRow?.source === ChallengeSource.User ||
+        (await isFlipt(FLIPT_FEATURE_FLAGS.DYNAMIC_JUDGING_CATEGORIES));
+      const userJudgingCategories = useCategories
+        ? challengeJudgingCategoriesSchema.safeParse(challengeJudgeRow?.judgingCategories)
+        : undefined;
       const userCategories = userJudgingCategories?.success ? userJudgingCategories.data : undefined;
 
       // Close challenge collection
@@ -1524,12 +1530,13 @@ export async function getJudgedEntries(
   source: ChallengeSource = ChallengeSource.System,
   categories?: ChallengeJudgingCategory[]
 ) {
-  // User-source challenges score against creator-defined category labels, not the fixed
-  // theme/aesthetic/humor/wittiness keys, so the SQL weighted ordering below can't apply to
-  // them — rank those in JS instead (see the branch after the winner-cooldown filter).
-  // A User challenge whose categories failed validation falls back to the fixed schema at
-  // review time (see reviewEntriesForChallenge), so it must also rank via the fixed-key path.
-  const useWeightedCategories = source === ChallengeSource.User && !!categories?.length;
+  // Challenges scored against creator-defined category labels (User-source always, other
+  // sources when DYNAMIC_JUDGING_CATEGORIES is enabled — see the callers) can't use the fixed
+  // theme/aesthetic/humor/wittiness SQL ordering below — rank those in JS instead (see the
+  // branch after the winner-cooldown filter). The caller already resolved whether categories
+  // apply (including the fixed-schema fallback for malformed values), so route on their
+  // presence alone rather than re-checking source here.
+  const useWeightedCategories = !!categories?.length;
 
   // Get each user's BEST entry only (by AI score), so users with many entries
   // don't have an advantage over users with fewer entries

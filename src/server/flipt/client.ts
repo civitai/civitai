@@ -54,6 +54,10 @@ export enum FLIPT_FEATURE_FLAGS {
   HIGH_REPLICATION_LAG_MODE = 'high-replication-lag-mode',
   LICENSING_FEE = 'licensing-fee',
   WILDCARDS = 'wildcards',
+  // Lets non-User-source challenges (daily/mod/system) use creator-defined judgingCategories
+  // instead of the fixed theme/wittiness/humor/aesthetic rubric. Default OFF per environment —
+  // flip on once an environment's daily challenge is ready to run category-based judging.
+  DYNAMIC_JUDGING_CATEGORIES = 'dynamic-judging-categories',
 }
 
 const FLIPT_INIT_TIMEOUT_MS = 5000;
