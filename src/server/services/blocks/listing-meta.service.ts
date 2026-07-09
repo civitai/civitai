@@ -183,7 +183,14 @@ export async function ingestListingAssetFromUrl(opts: {
     height,
     mimeType,
     // The P1 image validator reads the byte size from `Image.metadata.size`.
-    metadata: { size: fetched.bytes.byteLength },
+    // `source`/`appListingAssetKind` stamp provenance so an OG-pulled asset is
+    // auditable + query-able (e.g. the prod scan-verification check) — mirrors
+    // `createStoredImage`.
+    metadata: {
+      size: fetched.bytes.byteLength,
+      source: 'app-listing-og-pull',
+      appListingAssetKind: input.kind,
+    },
     userId,
   });
 

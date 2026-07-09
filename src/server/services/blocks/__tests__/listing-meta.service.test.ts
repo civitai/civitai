@@ -154,7 +154,11 @@ describe('ingestListingAssetFromUrl', () => {
       height: 480,
       mimeType: 'image/jpeg',
       userId: 7,
-      metadata: { size: imageBytes.byteLength },
+      metadata: {
+        size: imageBytes.byteLength,
+        source: 'app-listing-og-pull',
+        appListingAssetKind: 'cover',
+      },
     });
     expect(arg.skipIngestion).toBeUndefined();
   });
