@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import handler from '../image-scan-result';
+import handler from '~/pages/api/webhooks/image-scan-result';
 import { TagSource, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { NsfwLevel } from '~/server/common/enums';
 

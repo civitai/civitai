@@ -44,7 +44,7 @@ vi.mock('~/env/server', () => ({
   }),
 }));
 
-import handler from '../adjust-tag-level';
+import handler from '~/pages/api/mod/adjust-tag-level';
 
 const runRequest = (query: Record<string, string>) => {
   const req = {
