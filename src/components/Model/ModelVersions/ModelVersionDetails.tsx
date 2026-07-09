@@ -774,9 +774,20 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                               // known — a cold store reads not-engaged and would fire
                               // the OPPOSITE of the user's intent.
                               if (!isNotifyKnown) return;
+                              // Carry an EXPLICIT direction (setTo) — never a blind
+                              // server toggle. on→OFF (set Mute, overrides a
+                              // follow-based auto-watch); off→ON (set Notify). With
+                              // setTo the server sets the row to exactly this state, so
+                              // a click acting on a fabricated/errored "off" for a
+                              // genuinely-ON model can no longer silently DELETE the
+                              // Notify — it's an idempotent subscribe, and the
+                              // optimistic write matches the guaranteed server outcome.
                               toggleNotifyModelMutation.mutate({
                                 modelId: model.id,
-                                type: isNotificationOn ? ModelEngagementType.Mute : undefined,
+                                type: isNotificationOn
+                                  ? ModelEngagementType.Mute
+                                  : ModelEngagementType.Notify,
+                                setTo: true,
                               });
                             }}
                             loading={toggleNotifyModelMutation.isPending || !isNotifyKnown}
