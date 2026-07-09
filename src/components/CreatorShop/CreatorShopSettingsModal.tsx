@@ -11,21 +11,12 @@ import {
   Textarea,
   ThemeIcon,
 } from '@mantine/core';
-import type { Icon, IconProps } from '@tabler/icons-react';
-import {
-  IconBox,
-  IconChevronDown,
-  IconChevronUp,
-  IconShirt,
-  IconSparkles,
-  IconStar,
-  IconUsers,
-} from '@tabler/icons-react';
-import type { ForwardRefExoticComponent, RefAttributes } from 'react';
+import { IconChevronDown, IconChevronUp, IconStar } from '@tabler/icons-react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { CreatorShopFeaturePickerModal } from '~/components/CreatorShop/CreatorShopFeaturePickerModal';
 import { CREATOR_SHOP_BORDER } from '~/components/CreatorShop/creator-shop.constants';
+import { sectionIcons } from '~/components/CreatorShop/section-meta';
 import {
   useMutateCreatorShop,
   useQueryCreatorShopSettings,
@@ -38,7 +29,6 @@ import {
 } from '~/server/schema/creator-shop.schema';
 
 type SectionState = { key: CreatorShopSectionKey; visible: boolean };
-type TablerIcon = ForwardRefExoticComponent<Omit<IconProps, 'ref'> & RefAttributes<Icon>>;
 
 const sectionLabels: Record<CreatorShopSectionKey, string> = {
   featured: 'Featured',
@@ -46,14 +36,6 @@ const sectionLabels: Record<CreatorShopSectionKey, string> = {
   resold: 'From other creators',
   merch: 'Merch (coming soon)',
   models: 'Models',
-};
-
-const sectionIcons: Record<CreatorShopSectionKey, TablerIcon> = {
-  featured: IconStar,
-  cosmetics: IconSparkles,
-  resold: IconUsers,
-  merch: IconShirt,
-  models: IconBox,
 };
 
 type SeedableSettings = {

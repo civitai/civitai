@@ -2,6 +2,9 @@ import { Center, Loader, Stack } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { constants } from '~/server/common/constants';
 import {
   useMutateCreatorShop,
   useQueryCreatorShop,
@@ -56,38 +59,46 @@ function UserShopPage() {
   const isEmpty = !isLoading && (shop?.cosmetics.length ?? 0) === 0;
 
   return (
-    <Stack gap="xl" mt="md" pb="xl">
-      <ShopHeader
-        displayName={displayName}
-        description={shop?.settings.description}
-        isOwner={isOwner}
-        baseUrl={baseUrl}
-      />
+    <MasonryProvider
+      columnWidth={constants.cardSizes.model}
+      maxColumnCount={7}
+      maxSingleColumnWidth={450}
+    >
+      <MasonryContainer p={0} mt="md" pb="xl">
+        <Stack gap="xl">
+          <ShopHeader
+            displayName={displayName}
+            description={shop?.settings.description}
+            isOwner={isOwner}
+            baseUrl={baseUrl}
+          />
 
-      {isOwner && shop && shop.settings.enabled !== true && (
-        <ShopDraftBanner
-          onEnable={() => updateSettings.mutate({ enabled: true })}
-          enabling={updateSettings.isPending}
-        />
-      )}
+          {isOwner && shop && shop.settings.enabled !== true && (
+            <ShopDraftBanner
+              onEnable={() => updateSettings.mutate({ enabled: true })}
+              enabling={updateSettings.isPending}
+            />
+          )}
 
-      {isLoading ? (
-        <Center py="xl">
-          <Loader />
-        </Center>
-      ) : !shop || isEmpty ? (
-        <EmptyShopState isOwner={isOwner} displayName={displayName} baseUrl={baseUrl} />
-      ) : (
-        <StorefrontSections
-          shop={shop}
-          ownedCosmeticIds={ownedCosmeticIds}
-          displayName={displayName}
-          username={username}
-          ownerUserId={user?.id ?? 0}
-          baseUrl={baseUrl}
-        />
-      )}
-    </Stack>
+          {isLoading ? (
+            <Center py="xl">
+              <Loader />
+            </Center>
+          ) : !shop || isEmpty ? (
+            <EmptyShopState isOwner={isOwner} displayName={displayName} baseUrl={baseUrl} />
+          ) : (
+            <StorefrontSections
+              shop={shop}
+              ownedCosmeticIds={ownedCosmeticIds}
+              displayName={displayName}
+              username={username}
+              ownerUserId={user?.id ?? 0}
+              baseUrl={baseUrl}
+            />
+          )}
+        </Stack>
+      </MasonryContainer>
+    </MasonryProvider>
   );
 }
 

@@ -1,5 +1,5 @@
-import { Button, Group, Stack, Text, Title } from '@mantine/core';
-import { IconPlus, IconSettings, IconShoppingBag } from '@tabler/icons-react';
+import { Button, Group, Stack, Text, ThemeIcon, Title } from '@mantine/core';
+import { IconSettings, IconShoppingBag } from '@tabler/icons-react';
 import Link from 'next/link';
 
 export function ShopHeader({
@@ -16,33 +16,36 @@ export function ShopHeader({
   const trimmed = description?.trim();
 
   return (
-    <Group justify="space-between" align="flex-end">
-      <Stack gap={2}>
-        <Group gap={8} align="center">
-          <IconShoppingBag size={22} />
-          <Title order={2}>{displayName}&apos;s Shop</Title>
-        </Group>
-        {trimmed ? (
-          <Text size="sm" mt={4} className="max-w-2xl">
-            {trimmed}
-          </Text>
-        ) : isOwner ? (
-          <Text size="xs" c="dimmed" fs="italic" mt={4}>
-            Add a shop description in Shop settings.
-          </Text>
-        ) : null}
-      </Stack>
+    <Group justify="space-between" align="flex-start" wrap="nowrap">
+      <Group gap="md" align="center" wrap="nowrap" style={{ minWidth: 0 }}>
+        <ThemeIcon size={48} radius="xl" variant="light" color="yellow">
+          <IconShoppingBag size={28} />
+        </ThemeIcon>
+        <Stack gap={2} style={{ minWidth: 0 }}>
+          <Title order={1} size="h2">
+            {displayName}&apos;s Shop
+          </Title>
+          {trimmed ? (
+            <Text size="sm" c="dimmed" lineClamp={2} className="max-w-2xl">
+              {trimmed}
+            </Text>
+          ) : isOwner ? (
+            <Text size="xs" c="dimmed" fs="italic">
+              Add a shop description in Shop settings.
+            </Text>
+          ) : null}
+        </Stack>
+      </Group>
       {isOwner && (
-        <Group gap="xs">
-          <Button
-            component={Link}
-            href={`${baseUrl}/shop/manage`}
-            variant="default"
-            leftSection={<IconSettings size={16} />}
-          >
-            Manage Your Shop
-          </Button>
-        </Group>
+        <Button
+          component={Link}
+          href={`${baseUrl}/shop/manage`}
+          variant="default"
+          leftSection={<IconSettings size={16} />}
+          style={{ flexShrink: 0 }}
+        >
+          Manage Your Shop
+        </Button>
       )}
     </Group>
   );

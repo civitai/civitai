@@ -47,7 +47,7 @@ export function StorefrontSections({
       />
     ),
     merch: <MerchSection />,
-    models: <ModelsSection shop={shop} displayName={displayName} username={username} />,
+    models: <ModelsSection shop={shop} username={username} />,
   };
 
   return (

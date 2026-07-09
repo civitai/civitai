@@ -1,17 +1,20 @@
-import { Badge, Group, Paper, Stack, Text, ThemeIcon, Title } from '@mantine/core';
+import { Badge, Paper, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconShoppingBag } from '@tabler/icons-react';
-import { SectionAccent } from '~/components/CreatorShop/Storefront/SectionAccent';
+import { sectionIcons } from '~/components/CreatorShop/section-meta';
+import { SectionHeader } from '~/components/CreatorShop/Storefront/SectionHeader';
 
 export function MerchSection() {
   return (
     <Stack gap="md">
-      <Group gap={10} align="center">
-        <SectionAccent />
-        <Title order={4}>Merch</Title>
-        <Badge variant="light" color="yellow" radius="sm">
-          Coming soon
-        </Badge>
-      </Group>
+      <SectionHeader
+        icon={sectionIcons.merch}
+        title="Merch"
+        right={
+          <Badge variant="light" color="yellow" radius="sm">
+            Coming soon
+          </Badge>
+        }
+      />
       <Paper withBorder radius="md" p={40}>
         <Stack align="center" gap={8}>
           <ThemeIcon size={48} radius="xl" variant="light" color="gray">
