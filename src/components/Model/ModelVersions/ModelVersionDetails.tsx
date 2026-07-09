@@ -113,6 +113,9 @@ import { TrackView } from '~/components/TrackView/TrackView';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { ToggleVaultButton } from '~/components/Vault/ToggleVaultButton';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
+import { applyNotifyToggled } from '~/store/engaged-models.optimistic';
+import { restoreMembership, snapshotMembership } from '~/store/engaged-models.store';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
@@ -344,24 +347,31 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   });
 
   // Notification toggle state
-  const {
-    data: { Notify: watchedModels = [], Mute: mutedModels = [] } = { Notify: [], Mute: [] },
-  } = trpc.user.getEngagedModels.useQuery(undefined, { enabled: !!user });
+  // PR2: per-visible-set membership for this single model (Notify/Mute).
+  const { isEngaged: isModelEngaged, isKnown: isNotifyKnown } = useEngagedModelMembership(model.id);
   const { data: followingUsers = [] } = trpc.user.getFollowingUsers.useQuery(undefined, {
     enabled: !!user,
     staleTime: 60 * 1000, // 1 minute - avoid refetching on every model view
   });
+  const isNotificationOn =
+    (followingUsers.includes(model.user.id) || isModelEngaged('Notify')) &&
+    !isModelEngaged('Mute');
   const toggleNotifyModelMutation = trpc.user.toggleNotifyModel.useMutation({
+    onMutate() {
+      // Optimistic store update + snapshot for rollback.
+      const snapshot = snapshotMembership(model.id);
+      applyNotifyToggled(model.id, !isNotificationOn);
+      return { snapshot };
+    },
     async onSuccess() {
+      // Keep the legacy getEngagedModels cache in sync for still-on-old-endpoint feeds.
       await queryUtils.user.getEngagedModels.invalidate();
     },
-    onError(error) {
+    onError(error, _vars, context) {
+      if (context?.snapshot) restoreMembership(model.id, context.snapshot);
       showErrorNotification({ title: 'Failed to update notification settings', error });
     },
   });
-  const isNotificationOn =
-    (followingUsers.includes(model.user.id) || watchedModels.includes(model.id)) &&
-    !mutedModels.includes(model.id);
 
   const handlePublishClick = async (publishDate?: Date) => {
     try {
@@ -759,13 +769,17 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         <LoginRedirect reason="notify-model">
                           <Button
                             color={isNotificationOn ? 'green' : 'gray'}
-                            onClick={() =>
+                            onClick={() => {
+                              // F1: block the toggle until Notify/Mute membership is
+                              // known — a cold store reads not-engaged and would fire
+                              // the OPPOSITE of the user's intent.
+                              if (!isNotifyKnown) return;
                               toggleNotifyModelMutation.mutate({
                                 modelId: model.id,
                                 type: isNotificationOn ? ModelEngagementType.Mute : undefined,
-                              })
-                            }
-                            loading={toggleNotifyModelMutation.isPending}
+                              });
+                            }}
+                            loading={toggleNotifyModelMutation.isPending || !isNotifyKnown}
                             fullWidth
                             style={{ paddingLeft: 0, paddingRight: 0 }}
                             aria-label={
