@@ -15,11 +15,14 @@ import { SafeFetchError, safeFetch } from '~/server/utils/safe-fetch';
  * `fetchListingMeta` SSRF-safe-fetches the target page and returns SUGGESTIONS
  * (name / tagline / cover+icon image URLs) the author can accept or override;
  * nothing is persisted. `ingestListingAssetFromUrl` runs on ACCEPT: it
- * SSRF-safe-fetches the suggested image, uploads the bytes to Cloudflare, and
- * materialises an `Image` row through the STANDARD ingestion/scan pipeline
- * (`createImage` with default ingestion — NO `skipIngestion`, NO scan bypass),
- * returning the numeric `imageId` the client then attaches via `setIcon`/`setCover`
- * (which enforce `ingestion === Scanned` + per-kind validation).
+ * SSRF-safe-fetches the suggested image, uploads the bytes into the SAME image
+ * store the browser-direct client upload path uses (the B2 image bucket +
+ * storage-resolver registration, via `uploadImageBufferToStore` — NOT Cloudflare
+ * Images, whose ids the scanner's edge URL never resolves), and materialises an
+ * `Image` row through the STANDARD ingestion/scan pipeline (`createImage` with
+ * default ingestion — NO `skipIngestion`, NO scan bypass), returning the numeric
+ * `imageId` the client then attaches via `setIcon`/`setCover` (which enforce
+ * `ingestion === Scanned` + per-kind validation).
  *
  * All outbound fetches go through `safeFetch` (lexical + DNS-resolve-public +
  * manual-redirect-revalidate + timeout + size cap + content-type allowlist). The
@@ -158,21 +161,22 @@ export async function ingestListingAssetFromUrl(opts: {
     });
   }
 
-  // Upload the ALREADY-FETCHED bytes to Cloudflare (never re-fetch the remote URL).
-  const { uploadBufferToCF } = await import('~/utils/cf-images-utils');
-  const ext = mimeType.split('/')[1] ?? 'img';
-  const uploaded = await uploadBufferToCF(fetched.bytes, `listing-asset.${ext}`, {
-    userId,
-    source: 'app-listing-og-pull',
-    kind: input.kind,
-  });
+  // Upload the ALREADY-FETCHED bytes into the SAME store the browser-direct client
+  // upload path uses (the B2 image bucket, registered in storage-resolver) — NOT
+  // Cloudflare Images. This is the load-bearing convergence: the edge URL
+  // (`getEdgeUrl` → `NEXT_PUBLIC_IMAGE_LOCATION`) and the image scanner read from
+  // this store, so the `Image.url` key below resolves at scan time and the row
+  // reaches `Scanned`. (Uploading to CF Images instead — the original bug — left
+  // these rows terminally `NotFound` because that store is never resolved here.)
+  const { uploadImageBufferToStore } = await import('~/utils/s3-utils');
+  const { key } = await uploadImageBufferToStore(fetched.bytes, { contentType: mimeType });
 
   // Materialise the Image row through the STANDARD scan pipeline (default
   // ingestion — no skipIngestion). Dynamic import keeps the heavy image.service
   // graph out of this module's static imports.
   const { createImage } = await import('~/server/services/image.service');
   const image = await createImage({
-    url: uploaded.id,
+    url: key,
     name: `listing-${input.kind}`,
     type: 'image',
     width,

@@ -495,6 +495,41 @@ describe('screenshot CRUD', () => {
     expect(mockDb.appListing.update).not.toHaveBeenCalled();
   });
 
+  // A TERMINAL ingestion failure must throw a DISTINCT, non-retriable message
+  // (NOT the retriable "scan is not complete"), so the client stops polling and
+  // shows a clear "upload it manually" error instead of an eternal scanning
+  // spinner. This is the client-resilience half of the OG-pull-ingest fix — a
+  // NotFound image (e.g. the old CF-Images-store bug) is the canonical trigger.
+  it('setIcon surfaces a DISTINCT terminal message for a NotFound image (not "scan is not complete")', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue(listingRow);
+    mockDb.image.findUnique.mockResolvedValue({
+      id: 9, userId: 42, type: 'image', width: 512, height: 512, mimeType: 'image/png',
+      metadata: {}, ingestion: 'NotFound', nsfwLevel: 1,
+    });
+    const { setListingIcon } = await import('../app-listing-assets.service');
+    await expect(setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner)).rejects.toThrow(
+      /couldn't be imported — upload it manually/
+    );
+    // Must NOT be the retriable message the client polls on.
+    await expect(setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner)).rejects.not.toThrow(
+      /scan is not complete/
+    );
+    expect(mockDb.appListing.update).not.toHaveBeenCalled();
+  });
+
+  it('setIcon surfaces a DISTINCT terminal message for a Blocked image', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue(listingRow);
+    mockDb.image.findUnique.mockResolvedValue({
+      id: 9, userId: 42, type: 'image', width: 512, height: 512, mimeType: 'image/png',
+      metadata: {}, ingestion: 'Blocked', nsfwLevel: 1,
+    });
+    const { setListingIcon } = await import('../app-listing-assets.service');
+    await expect(setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner)).rejects.toThrow(
+      /rejected during scanning/
+    );
+    expect(mockDb.appListing.update).not.toHaveBeenCalled();
+  });
+
   it('addScreenshot rejects an Image above the listing content rating (null rating → SFW)', async () => {
     // Listing has no contentRating → fail-closed PG ceiling; image is R (NsfwLevel.R === 4).
     mockDb.appListing.findUnique.mockResolvedValue(listingRow);

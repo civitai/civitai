@@ -344,6 +344,27 @@ async function loadValidatedImage(
   // Content-status gate: a listing asset is publicly rendered (P2), so the Image
   // must be scan-complete AND within the listing's maturity ceiling. This mirrors
   // the site-wide "don't publish un-scanned / over-rated media" invariant.
+  //
+  // Distinguish a TERMINAL ingestion failure (NotFound = the scanner couldn't
+  // fetch the bytes; Blocked = the image was rejected) from the TRANSIENT
+  // scanning states (Pending / Error-retry / PendingManualAssignment). The client
+  // polls this proc until the scan lands and treats "scan is not complete" as
+  // retriable — so a terminal failure MUST carry a DIFFERENT, non-retriable
+  // message, otherwise the author is stuck watching an eternal "still scanning"
+  // spinner with a useless Retry (that was the OG-image-import dead-end). The
+  // distinct message routes the client to a clear error + the manual-upload path.
+  if (image.ingestion === ImageIngestionStatus.NotFound) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: "that image couldn't be imported — upload it manually instead",
+    });
+  }
+  if (image.ingestion === ImageIngestionStatus.Blocked) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'that image was rejected during scanning — choose a different image',
+    });
+  }
   if (image.ingestion !== ImageIngestionStatus.Scanned) {
     throw new TRPCError({
       code: 'BAD_REQUEST',

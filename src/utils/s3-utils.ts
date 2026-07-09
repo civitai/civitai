@@ -13,11 +13,13 @@ import {
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { randomUUID } from 'crypto';
 import { dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
 
 import { logToAxiom } from '~/server/logging/client';
 import { instrumentB2Client, recordB2PresignIssued } from '~/server/prom/b2-put.metrics';
+import { registerMediaLocation } from '~/server/services/storage-resolver';
 
 const missingEnvs = (): string[] => {
   const keys = [];
@@ -103,6 +105,46 @@ export async function getImageUploadBackend(): Promise<{
     bucket: env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads',
     backend: 'backblaze',
   };
+}
+
+/**
+ * Server-side: upload ALREADY-FETCHED image bytes into the SAME store the
+ * browser-direct client upload path uses (the B2 image bucket resolved by
+ * `getImageUploadBackend`, registered in storage-resolver) and return the UUID
+ * key to store as `Image.url`.
+ *
+ * This is the server analogue of `/api/v1/image-upload` + the client's presigned
+ * PUT (`useCFImageUpload`): the bytes land where the edge URL (`getEdgeUrl` →
+ * `NEXT_PUBLIC_IMAGE_LOCATION`) and the image SCANNER actually read from, so a
+ * subsequent `createImage({ url: key })` reaches `Scanned`.
+ *
+ * 🔴 DO NOT reach for Cloudflare Images (`uploadBufferToCF`) to make a SCANNABLE
+ * image. CF Images is a DIFFERENT store the edge URL + scanner never resolve — a
+ * CF Images id used as `Image.url` yields an edge URL that 404s at scan time, so
+ * the row goes terminally `ImageIngestionStatus.NotFound`. (That bug shipped in
+ * the App Blocks OG-image auto-pull path.)
+ */
+export async function uploadImageBufferToStore(
+  data: Uint8Array | Buffer,
+  opts?: { contentType?: string }
+): Promise<{ key: string; backend: ImageUploadBackend }> {
+  const { s3, bucket, backend } = await getImageUploadBackend();
+  const key = randomUUID();
+  const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data);
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      Body: bytes,
+      ...(opts?.contentType ? { ContentType: opts.contentType } : {}),
+    })
+  );
+  // Mirror the upload endpoint: register the uuid→backend mapping so the
+  // storage-resolver / edge (and thus the scanner) can locate the object. Awaited
+  // (unlike the endpoint's fire-and-forget) to close the register-vs-scan race —
+  // `registerMediaLocation` swallows its own errors, so this can't throw.
+  await registerMediaLocation(key, backend, bytes.byteLength);
+  return { key, backend };
 }
 
 export function getS3Client() {
