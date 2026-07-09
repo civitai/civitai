@@ -1,3 +1,4 @@
+import { redirect } from '@sveltejs/kit';
 import { hubLogoutUrl } from '@civitai/auth';
 import { env } from '$env/dynamic/private';
 import type { LayoutServerLoad } from './$types';
@@ -8,6 +9,9 @@ import { navForMember } from '$lib/nav';
 // URL points at the hub because a spoke can't clear the shared cookie itself.
 export const load: LayoutServerLoad = ({ locals, url }) => {
   const user = locals.user;
+  // Temporary: moderators only while the app is in development.
+  if (!user.isModerator) redirect(303, 'https://civitai.com');
+
   const membership = getMembership(user);
 
   return {
