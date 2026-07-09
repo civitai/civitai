@@ -18,6 +18,7 @@ import { Page } from '~/components/AppLayout/Page';
 import { ChallengesInfinite } from '~/components/Challenge/Infinite/ChallengesInfinite';
 import { DailyChallengesRow } from '~/components/Challenge/DailyChallengesRow';
 import { FeaturedChallengeEvents } from '~/components/Challenge/FeaturedChallengeEvents';
+import { ChallengeFeedFilters } from '~/components/Filters/FeedFilters/ChallengeFeedFilters';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import {
@@ -172,9 +173,13 @@ function ChallengesPage() {
           </Group>
           <DailyChallengesRow />
 
-          {/* Community Challenges — user + staff-created, masonry (header filters drive this) */}
+          {/* Community Challenges — user + staff-created, masonry. Sort/filter controls live inline
+              here (moved off the global SubNav) since they only scope this section. */}
           <Divider />
-          <Title order={3}>Community Challenges</Title>
+          <Group wrap="wrap" gap="sm">
+            <Title order={3}>Community Challenges</Title>
+            <ChallengeFeedFilters ml="auto" />
+          </Group>
           <ChallengesInfinite
             filters={{
               source: [ChallengeSource.User, ChallengeSource.Mod],
