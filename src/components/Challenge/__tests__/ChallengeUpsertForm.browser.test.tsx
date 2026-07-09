@@ -40,7 +40,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       }),
       challenge: {
         getJudges: { useQuery: () => ({ data: [], isLoading: false }) },
-        getJudgeOptions: { useQuery: () => ({ data: [], isLoading: false }) },
         getEvents: { useQuery: () => ({ data: [], isLoading: false }) },
         upsert: { useMutation: noopMutation },
         upsertUserChallenge: { useMutation: noopMutation },

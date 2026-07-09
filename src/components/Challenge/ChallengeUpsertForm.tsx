@@ -198,13 +198,10 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
     })
   );
 
-  // Fetch available judges and events for dropdowns (mod queries only run for the moderator
-  // variant; the user variant gets its own restricted judge list from getJudgeOptions)
-  const { data: judges = [] } = trpc.challenge.getJudges.useQuery(undefined, { enabled: !isUser });
-  const { data: userJudgeOptions = [] } = trpc.challenge.getJudgeOptions.useQuery(undefined, {
-    enabled: isUser,
-  });
-  const judgeItems = isUser ? userJudgeOptions : judges;
+  // One judges endpoint for both variants — the server returns the full list (with sensitive fields)
+  // to moderators and the public, SFW-selectable subset to everyone else.
+  const { data: judges = [] } = trpc.challenge.getJudges.useQuery();
+  const judgeItems = judges;
   const { data: events = [] } = trpc.challenge.getEvents.useQuery(
     { activeOnly: false },
     { enabled: !isUser }

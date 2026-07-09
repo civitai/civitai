@@ -1449,14 +1449,6 @@ export async function scanUserChallenge(challengeId: number): Promise<void> {
 }
 
 // Public-safe judge options for the user challenge form: id/name/bio only (no prompt fields).
-export async function getActiveJudgeOptions() {
-  return dbRead.challengeJudge.findMany({
-    where: { active: true, name: { in: [...USER_SELECTABLE_JUDGE_NAMES] } },
-    select: { id: true, name: true, bio: true },
-    orderBy: { name: 'asc' },
-  });
-}
-
 export async function updateChallengeStatus(id: number, status: ChallengeStatus) {
   const challenge = await dbWrite.challenge.update({
     where: { id },
@@ -2041,18 +2033,38 @@ export async function voidChallenge(challengeId: number) {
 /**
  * Get active ChallengeJudge records for the moderator dropdown.
  */
-export async function getActiveJudges() {
-  return dbRead.challengeJudge.findMany({
-    where: { active: true },
+export type ActiveJudge = {
+  id: number;
+  userId: number | null;
+  name: string;
+  bio: string | null;
+  reviewPrompt: string | null;
+};
+
+// Active judges for the challenge form dropdowns. Moderators get every active judge plus the
+// sensitive fields (userId and reviewPrompt — the full judging rubric). Everyone else gets only the
+// publicly selectable, SFW judges with display fields; userId/reviewPrompt are never fetched and come
+// back null. Gate on the REAL ctx.user.isModerator — never a client-supplied flag — since reviewPrompt
+// leaking would let entrants game the judge.
+export async function getActiveJudges({
+  isModerator,
+}: {
+  isModerator: boolean;
+}): Promise<ActiveJudge[]> {
+  if (isModerator) {
+    return dbRead.challengeJudge.findMany({
+      where: { active: true },
+      orderBy: { name: 'asc' },
+      select: { id: true, userId: true, name: true, bio: true, reviewPrompt: true },
+    });
+  }
+
+  const rows = await dbRead.challengeJudge.findMany({
+    where: { active: true, name: { in: [...USER_SELECTABLE_JUDGE_NAMES] } },
     orderBy: { name: 'asc' },
-    select: {
-      id: true,
-      userId: true,
-      name: true,
-      bio: true,
-      reviewPrompt: true,
-    },
+    select: { id: true, name: true, bio: true },
   });
+  return rows.map((r) => ({ ...r, userId: null, reviewPrompt: null }));
 }
 
 /**

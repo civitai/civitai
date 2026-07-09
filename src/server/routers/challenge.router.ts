@@ -52,7 +52,6 @@ import {
   requestReview,
   upsertChallenge,
   upsertUserChallenge,
-  getActiveJudgeOptions,
   upsertChallengeEvent,
   voidChallenge,
   getActiveJudges,
@@ -163,12 +162,6 @@ export const challengeRouter = router({
     .use(isFlagProtected('challengePlatform'))
     .mutation(({ input, ctx }) => upsertChallenge({ ...input, userId: ctx.user.id })),
 
-  // User: judge options for the create form (id/name/bio only)
-  getJudgeOptions: protectedProcedure
-    .use(isFlagProtected('challengePlatform'))
-    .use(isFlagProtected('userChallenges'))
-    .query(() => getActiveJudgeOptions()),
-
   // User: Create or update a user-owned challenge.
   // Eligibility (score + standing + tier cap), ownership, and edit-locks are enforced
   // in the service (upsertUserChallenge). Dark behind the `userChallenges` flag.
@@ -191,10 +184,12 @@ export const challengeRouter = router({
     .use(isFlagProtected('challengePlatform'))
     .mutation(({ input }) => voidChallenge(input.id)),
 
-  // Moderator: Get active judges for dropdown
-  getJudges: moderatorProcedure
+  // Active judges for the challenge form dropdowns. Any authenticated user may call it; the service
+  // returns the full list (with sensitive fields) to moderators and the public, SFW-selectable subset
+  // to everyone else, based on the real ctx.user.isModerator.
+  getJudges: protectedProcedure
     .use(isFlagProtected('challengePlatform'))
-    .query(() => getActiveJudges()),
+    .query(({ ctx }) => getActiveJudges({ isModerator: !!ctx.user.isModerator })),
 
   // Moderator: Get system challenge config
   getSystemConfig: moderatorProcedure
