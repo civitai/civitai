@@ -489,11 +489,14 @@ export const createTrainingWhatIfWorkflow = async ({
   });
 
   const cost = workflow.cost?.total;
+  // Per-resource licensing fees (keyed by resource AIR) are already included in
+  // `cost.total`; surface their sum so the UI can break out the license fee.
+  const licenseFee = Object.values(workflow.cost?.fees ?? {}).reduce((sum, fee) => sum + fee, 0);
 
   const _step = workflow.steps?.[0] as ImageResourceTrainingStep | undefined;
   // console.dir(_step);
   const precedingJobs = _step?.jobs?.[0]?.queuePosition?.precedingJobs;
   const eta = _step?.output?.eta;
 
-  return { cost, precedingJobs, eta };
+  return { cost, licenseFee, precedingJobs, eta };
 };

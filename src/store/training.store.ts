@@ -137,6 +137,8 @@ export type TrainingRun = {
   highPriority: boolean;
   staging: boolean;
   buzzCost: number;
+  /** Portion of `buzzCost` that is the base model's licensing fee (already included in `buzzCost`). */
+  licenseFee: number;
   hasIssue: boolean;
 };
 
@@ -333,6 +335,7 @@ const defaultRunBase = {
   staging: false,
   highPriority: false,
   buzzCost: 0,
+  licenseFee: 0,
   hasIssue: false,
 };
 export const defaultRun = {
@@ -631,6 +634,7 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
           run.highPriority = data.highPriority ?? run.highPriority;
           run.staging = data.staging ?? run.staging;
           run.buzzCost = data.buzzCost ?? run.buzzCost;
+          run.licenseFee = data.licenseFee ?? run.licenseFee;
           run.hasIssue = data.hasIssue ?? run.hasIssue;
           run.params = { ...run.params, ...data.params };
         }

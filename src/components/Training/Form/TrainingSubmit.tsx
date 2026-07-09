@@ -291,6 +291,9 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
   const hasIssue = runs.some((r) => r.hasIssue);
   const totalBuzzCost = hasIssue ? -1 : runs.map((r) => r.buzzCost).reduce((s, a) => s + a, 0);
+  const totalLicenseFee = hasIssue
+    ? 0
+    : runs.map((r) => r.licenseFee ?? 0).reduce((s, a) => s + a, 0);
 
   // Check if user has insufficient buzz of the selected type
   const selectedBalance = buzzAccounts.find((a) => a.type === selectedType)?.balance ?? 0;
@@ -436,9 +439,14 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     }
 
     const cost = dryRunResult.data?.cost;
+    const licenseFee = dryRunResult.data?.licenseFee ?? 0;
     if (!isDefined(cost) || cost < 0) {
       if (!selectedRun.hasIssue) {
-        updateRun(model.id, thisMediaType, selectedRun.id, { hasIssue: true, buzzCost: -1 });
+        updateRun(model.id, thisMediaType, selectedRun.id, {
+          hasIssue: true,
+          buzzCost: -1,
+          licenseFee: 0,
+        });
         showErrorNotification({
           title: 'Error computing cost',
           error: new Error(
@@ -447,16 +455,22 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           autoClose: false,
         });
       }
-    } else if (cost !== selectedRun.buzzCost) {
-      updateRun(model.id, thisMediaType, selectedRun.id, { hasIssue: false, buzzCost: cost });
+    } else if (cost !== selectedRun.buzzCost || licenseFee !== selectedRun.licenseFee) {
+      updateRun(model.id, thisMediaType, selectedRun.id, {
+        hasIssue: false,
+        buzzCost: cost,
+        licenseFee,
+      });
     }
   }, [
     dryRunResult.data?.cost,
+    dryRunResult.data?.licenseFee,
     dryRunResult.error,
     dryRunResult.isLoading,
     runs.length,
     selectedRun.hasIssue,
     selectedRun.buzzCost,
+    selectedRun.licenseFee,
     model.id,
     thisMediaType,
     selectedRun.id,
@@ -651,6 +665,13 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 </Text>
               </Group>
             </Group>
+            {totalLicenseFee > 0 && (
+              <Text size="sm" c="dimmed">
+                Includes {(totalBuzzCost - totalLicenseFee).toLocaleString()} Buzz training +{' '}
+                {totalLicenseFee.toLocaleString()} Buzz license fee (a fee set by the base
+                model&apos;s creator).
+              </Text>
+            )}
             {features.trainingStepsPricing &&
               runs.some((r) => r.params.continueFrom) &&
               continueFromEpoch && (
@@ -1348,17 +1369,62 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 </>
               )}
 
-              <Badge>Cost</Badge>
               {dryRunResult.isLoading ? (
-                <Loader size="sm" />
+                <>
+                  <Badge>Cost</Badge>
+                  <Loader size="sm" />
+                </>
               ) : !isDefined(dryRunResult.data?.cost) || selectedRun.hasIssue ? (
-                <Text>Error</Text>
+                <>
+                  <Badge>Cost</Badge>
+                  <Text>Error</Text>
+                </>
+              ) : selectedRun.licenseFee > 0 ? (
+                <>
+                  <Badge>Training</Badge>
+                  <CurrencyBadge
+                    currency={Currency.BUZZ}
+                    unitAmount={dryRunResult.data.cost - selectedRun.licenseFee}
+                    displayCurrency={false}
+                  />
+
+                  <Divider orientation="vertical" />
+
+                  <Badge>
+                    <Group gap={4} wrap="nowrap">
+                      <Text inherit>License fee</Text>
+                      <InfoPopover size="xs" iconProps={{ size: 16 }} withinPortal>
+                        <Text size="sm">
+                          A licensing fee set by the base model&apos;s creator, charged on top of
+                          the training cost.
+                        </Text>
+                      </InfoPopover>
+                    </Group>
+                  </Badge>
+                  <CurrencyBadge
+                    currency={Currency.BUZZ}
+                    unitAmount={selectedRun.licenseFee}
+                    displayCurrency={false}
+                  />
+
+                  <Divider orientation="vertical" />
+
+                  <Badge>Total</Badge>
+                  <CurrencyBadge
+                    currency={Currency.BUZZ}
+                    unitAmount={dryRunResult.data.cost}
+                    displayCurrency={false}
+                  />
+                </>
               ) : (
-                <CurrencyBadge
-                  currency={Currency.BUZZ}
-                  unitAmount={dryRunResult.data.cost}
-                  displayCurrency={false}
-                />
+                <>
+                  <Badge>Cost</Badge>
+                  <CurrencyBadge
+                    currency={Currency.BUZZ}
+                    unitAmount={dryRunResult.data.cost}
+                    displayCurrency={false}
+                  />
+                </>
               )}
             </Group>
           </Paper>
