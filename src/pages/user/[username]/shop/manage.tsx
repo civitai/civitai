@@ -36,39 +36,53 @@ function ManageShopPage() {
   const username = (router.query.username as string) ?? '';
   const isOwner =
     !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
+  const isModerator = currentUser?.isModerator ?? false;
+  const canManage = isOwner || isModerator;
+
+  const { data: user } = trpc.userProfile.get.useQuery({ username }, { enabled: !!username });
+  // Moderators manage another creator's shop by passing that creator's userId;
+  // owners omit it and the server uses their own id.
+  const manageUserId = isOwner ? undefined : user?.id;
+  const queriesEnabled = isOwner || (isModerator && !!user?.id);
 
   const { data: requirements, isLoading: reqsLoading } =
     trpc.creatorProgram.getCreatorRequirements.useQuery(undefined, { enabled: isOwner });
   const eligible = !!requirements?.validMembership;
 
-  const { items, isLoading } = useQueryCreatorShopManage(isOwner);
-  const { settings } = useQueryCreatorShopSettings(isOwner);
+  const { items, isLoading } = useQueryCreatorShopManage(queriesEnabled, manageUserId);
+  const { settings } = useQueryCreatorShopSettings(queriesEnabled, manageUserId);
   const { archiveItem, unarchiveItem, updateSettings } = useMutateCreatorShop();
   const { status, setStatus, search, setSearch, sort, setSort, filtered, stats } =
     useManageItems(items);
 
   if (!username) return <NotFound />;
-  if (currentUser && !isOwner) return <NotFound />;
+  if (currentUser && !canManage) return <NotFound />;
 
-  // Creator Shop is a Creator Program member benefit — upsell everyone else.
-  if (reqsLoading)
+  // Creator Shop is a Creator Program member benefit — gate owners on
+  // eligibility, but let moderators manage any shop regardless.
+  if (isOwner && reqsLoading)
     return (
       <Center py="xl">
         <Loader />
       </Center>
     );
-  if (requirements && !eligible) return <ManageUpsell />;
+  if (isOwner && requirements && !eligible) return <ManageUpsell />;
 
   const showControls = !isLoading && items.length > 0;
 
   return (
     <Stack gap="lg" mt="md" pb="xl">
-      <ManageHeader />
+      <ManageHeader canAddItems={isOwner} targetUserId={manageUserId} />
 
       {settings && settings.enabled !== true && (
         <ShopDraftBanner
-          onEnable={() => updateSettings.mutate({ enabled: true })}
+          onEnable={() => updateSettings.mutate({ enabled: true, userId: manageUserId })}
           enabling={updateSettings.isPending}
+          disabledReason={
+            !isLoading && items.length === 0
+              ? 'Add at least one item before publishing your shop.'
+              : undefined
+          }
         />
       )}
 

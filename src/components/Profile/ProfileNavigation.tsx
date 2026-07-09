@@ -32,6 +32,7 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
   const currentUser = useCurrentUser();
   const isShopOwner =
     !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
+  const isModerator = currentUser?.isModerator ?? false;
 
   const {
     data: userOverview,
@@ -103,9 +104,12 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       icon: (props) => <IconShoppingBag {...props} />,
       label: 'Shop',
       className: homeStyleClasses.tabHighlight,
-      // A disabled shop is hidden from everyone but its owner.
+      // A disabled shop is hidden from everyone but its owner (and moderators,
+      // who need to review/fix shops regardless of publish state).
       disabled:
-        !features.creatorShop || !!user?.bannedAt || (!isShopOwner && !user?.creatorShopEnabled),
+        !features.creatorShop ||
+        !!user?.bannedAt ||
+        (!isShopOwner && !isModerator && !user?.creatorShopEnabled),
     },
   };
 

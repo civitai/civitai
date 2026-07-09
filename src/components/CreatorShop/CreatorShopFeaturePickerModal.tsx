@@ -87,10 +87,10 @@ function FeaturePickerCard({
   );
 }
 
-export function CreatorShopFeaturePickerModal() {
+export function CreatorShopFeaturePickerModal({ targetUserId }: { targetUserId?: number }) {
   const dialog = useDialogContext();
-  const { items, isLoading: itemsLoading } = useQueryCreatorShopManage();
-  const { settings, isLoading: settingsLoading } = useQueryCreatorShopSettings();
+  const { items, isLoading: itemsLoading } = useQueryCreatorShopManage(true, targetUserId);
+  const { settings, isLoading: settingsLoading } = useQueryCreatorShopSettings(true, targetUserId);
   const { updateSettings } = useMutateCreatorShop();
 
   const [selected, setSelected] = useSeededState(settings, (s) => s?.featuredItemIds ?? []);
@@ -105,7 +105,7 @@ export function CreatorShopFeaturePickerModal() {
     );
 
   const handleSave = async () => {
-    await updateSettings.mutateAsync({ featuredItemIds: selected });
+    await updateSettings.mutateAsync({ userId: targetUserId, featuredItemIds: selected });
     dialog.onClose();
   };
 

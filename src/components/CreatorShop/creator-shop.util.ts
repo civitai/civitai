@@ -26,8 +26,9 @@ export const useQueryCreatorShopManage = (enabled = true, userId?: number) => {
   return { items: data, ...rest };
 };
 
-export const useQueryCreatorShopSettings = (enabled = true) => {
-  const { data, ...rest } = trpc.creatorShop.getSettings.useQuery(undefined, { enabled });
+// `userId` is only honored for moderators (enforced server-side); owners omit it.
+export const useQueryCreatorShopSettings = (enabled = true, userId?: number) => {
+  const { data, ...rest } = trpc.creatorShop.getSettings.useQuery({ userId }, { enabled });
   return { settings: data, ...rest };
 };
 

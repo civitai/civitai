@@ -1,6 +1,7 @@
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   getCreatorShopSchema,
+  getCreatorShopSettingsSchema,
   getEarlyAccessPricesSchema,
   getManageItemsSchema,
   getPublicShopItemsSchema,
@@ -103,12 +104,18 @@ export const creatorShopRouter = router({
   // #endregion
 
   // #region [Shop settings]
-  getSettings: creatorShopProcedure.query(({ ctx }) =>
-    getCreatorShopSettings({ userId: ctx.user.id })
+  getSettings: creatorShopProcedure.input(getCreatorShopSettingsSchema).query(({ input, ctx }) =>
+    getCreatorShopSettings({
+      userId: ctx.user.isModerator && input.userId ? input.userId : ctx.user.id,
+    })
   ),
   updateSettings: creatorShopProcedure
     .input(updateCreatorShopSettingsSchema)
-    .mutation(({ input, ctx }) => updateCreatorShopSettings({ ...input, userId: ctx.user.id })),
+    .mutation(({ input, ctx }) => {
+      const { userId: targetUserId, ...patch } = input;
+      const userId = ctx.user.isModerator && targetUserId ? targetUserId : ctx.user.id;
+      return updateCreatorShopSettings({ ...patch, userId });
+    }),
   // #endregion
 
   // #region [Moderator: review queue]

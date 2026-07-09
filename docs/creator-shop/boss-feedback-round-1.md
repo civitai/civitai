@@ -21,7 +21,7 @@ checkboxes. `@ai:` notes flag decisions/questions. Priority: **P1** foundational
 
 ## B. Mod access (P1)
 
-- [ ] **B1 (P1)** Mods viewing another user's profile must see the **shop tab** and be able to **manage** that user's shop, even when published. Currently a mod sees neither on a published shop.
+- [x] **B1 (P1)** Mods can now see the shop tab and manage any shop. `ProfileNavigation` shows the tab for moderators regardless of publish state; `ShopHeader` shows a Manage button (`canManage`); the manage page lets mods through the access gate, resolves the target creator's `userId`, skips the owner-only Creator-Program eligibility gate, and threads the target `userId` into `getManageItems`/`getSettings`/`updateSettings` (all honored for moderators server-side). Settings + feature-picker modals accept a `targetUserId`. Add-item buttons are hidden for a mod on someone else's shop (they manage, not add).
 
 ## C. Profile overview integration (P2)
 
@@ -34,7 +34,7 @@ checkboxes. `@ai:` notes flag decisions/questions. Priority: **P1** foundational
 
 ## E. Publish gating (P1)
 
-- [ ] **E1 (P1)** Users **cannot publish** an empty shop (must have at least one item).
+- [x] **E1 (P1)** `updateCreatorShopSettings` now rejects enabling a shop with zero items (`throwBadRequestError`, checked inside the txn). Client-side, the manage-page draft banner disables the Publish button with an explanatory tooltip when the shop has no items.
 
 ## F. Shop settings sections (P2)
 

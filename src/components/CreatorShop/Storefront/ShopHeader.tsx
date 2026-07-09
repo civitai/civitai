@@ -6,11 +6,14 @@ export function ShopHeader({
   displayName,
   description,
   isOwner,
+  canManage,
   baseUrl,
 }: {
   displayName: string;
   description?: string | null;
   isOwner: boolean;
+  // Owners and moderators can manage the shop.
+  canManage: boolean;
   baseUrl: string;
 }) {
   const trimmed = description?.trim();
@@ -36,7 +39,7 @@ export function ShopHeader({
           ) : null}
         </Stack>
       </Group>
-      {isOwner && (
+      {canManage && (
         <Button
           component={Link}
           href={`${baseUrl}/shop/manage`}
@@ -44,7 +47,7 @@ export function ShopHeader({
           leftSection={<IconSettings size={16} />}
           style={{ flexShrink: 0 }}
         >
-          Manage Your Shop
+          {isOwner ? 'Manage Your Shop' : 'Manage Shop'}
         </Button>
       )}
     </Group>

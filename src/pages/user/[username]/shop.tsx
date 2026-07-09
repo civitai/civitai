@@ -49,6 +49,7 @@ function UserShopPage() {
 
   const isOwner =
     !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
+  const canManage = isOwner || (currentUser?.isModerator ?? false);
 
   if (!username) return <NotFound />;
   // A disabled shop returns NOT_FOUND to visitors — stay quiet about it.
@@ -70,6 +71,7 @@ function UserShopPage() {
             displayName={displayName}
             description={shop?.settings.description}
             isOwner={isOwner}
+            canManage={canManage}
             baseUrl={baseUrl}
           />
 

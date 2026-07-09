@@ -122,9 +122,9 @@ function SectionRow({
   );
 }
 
-export function CreatorShopSettingsModal() {
+export function CreatorShopSettingsModal({ targetUserId }: { targetUserId?: number }) {
   const dialog = useDialogContext();
-  const { settings, isLoading } = useQueryCreatorShopSettings();
+  const { settings, isLoading } = useQueryCreatorShopSettings(true, targetUserId);
   const { updateSettings } = useMutateCreatorShop();
 
   const [sections, setSections] = useSeededState(settings, seedSections);
@@ -147,6 +147,7 @@ export function CreatorShopSettingsModal() {
   const handleSave = async () => {
     const showModels = sections.find((s) => s.key === 'models')?.visible ?? false;
     await updateSettings.mutateAsync({
+      userId: targetUserId,
       enabled,
       sections,
       showModels,
@@ -211,7 +212,12 @@ export function CreatorShopSettingsModal() {
                   variant="light"
                   color="yellow"
                   size="xs"
-                  onClick={() => dialogStore.trigger({ component: CreatorShopFeaturePickerModal })}
+                  onClick={() =>
+                    dialogStore.trigger({
+                      component: CreatorShopFeaturePickerModal,
+                      props: { targetUserId },
+                    })
+                  }
                 >
                   Manage featured
                 </Button>

@@ -203,7 +203,15 @@ export const creatorShopSectionSchema = z.object({
 });
 
 export type UpdateCreatorShopSettingsInput = z.infer<typeof updateCreatorShopSettingsSchema>;
+export const getCreatorShopSettingsSchema = z.object({
+  // Moderators may read another creator's settings by passing their userId.
+  userId: z.number().optional(),
+});
+export type GetCreatorShopSettingsInput = z.infer<typeof getCreatorShopSettingsSchema>;
+
 export const updateCreatorShopSettingsSchema = z.object({
+  // Moderators may target another creator's shop by passing their userId.
+  userId: z.number().optional(),
   // Whether the shop is public. Off by default so creators can prep in private.
   enabled: z.boolean().optional(),
   showModels: z.boolean().optional(),

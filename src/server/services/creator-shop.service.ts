@@ -753,6 +753,13 @@ export const updateCreatorShopSettings = async ({
 }: UpdateCreatorShopSettingsInput & { userId: number }) => {
   // Read-merge-write the JSON blob so we only touch the creatorShop key.
   return dbWrite.$transaction(async (tx) => {
+    // Don't let a creator publish an empty shop — there'd be nothing to show.
+    if (patch.enabled === true) {
+      const itemCount = await tx.cosmeticShopItem.count({ where: { addedById: userId } });
+      if (itemCount === 0)
+        throw throwBadRequestError('Add at least one item to your shop before publishing.');
+    }
+
     const user = await tx.user.findUnique({ where: { id: userId }, select: { settings: true } });
     const settings = (user?.settings ?? {}) as UserSettingsSchema;
     const creatorShop: CreatorShopSettings = { ...(settings.creatorShop ?? {}), ...patch };
