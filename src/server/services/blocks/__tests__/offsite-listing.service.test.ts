@@ -39,7 +39,11 @@ type Client = {
     updateMany: ReturnType<typeof vi.fn>;
     deleteMany: ReturnType<typeof vi.fn>;
   };
-  appListingScreenshot: { count: ReturnType<typeof vi.fn> };
+  appListingScreenshot: {
+    count: ReturnType<typeof vi.fn>;
+    findMany: ReturnType<typeof vi.fn>;
+  };
+  image: { findMany: ReturnType<typeof vi.fn> };
   appBlock: { findFirst: ReturnType<typeof vi.fn> };
   appListingPublishRequest: {
     findUnique: ReturnType<typeof vi.fn>;
@@ -66,6 +70,10 @@ const { mockRead, mockWrite, ids } = vi.hoisted(() => {
     },
     appListingScreenshot: {
       count: vi.fn(async (..._a: unknown[]) => 0),
+      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+    },
+    image: {
+      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
     },
     appBlock: {
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
@@ -111,6 +119,8 @@ function resetClient(c: Client) {
   c.appListing.updateMany.mockReset().mockResolvedValue({ count: 1 });
   c.appListing.deleteMany.mockReset().mockResolvedValue({ count: 1 });
   c.appListingScreenshot.count.mockReset().mockResolvedValue(0);
+  c.appListingScreenshot.findMany.mockReset().mockResolvedValue([]);
+  c.image.findMany.mockReset().mockResolvedValue([]);
   c.appBlock.findFirst.mockReset().mockResolvedValue(null);
   c.appListingPublishRequest.findUnique.mockReset().mockResolvedValue(null);
   c.appListingPublishRequest.count.mockReset().mockResolvedValue(0);
@@ -475,10 +485,12 @@ describe('approveExternalRequest', () => {
     });
     expect(reqCall.data.reviewedAt).toBeInstanceOf(Date);
 
-    // Listing flip (status-guarded so an approved listing is never re-flipped).
+    // Listing flip (status-guarded so an approved listing is never re-flipped). The
+    // derived content rating is stamped alongside the status; with no asset levels
+    // staged the derive fails safe to 'g'.
     expect(mockWrite.appListing.updateMany).toHaveBeenCalledWith({
       where: { id: 'apl_1', status: 'draft' },
-      data: { status: 'approved' },
+      data: { status: 'approved', contentRating: 'g' },
     });
     expect(mockWrite.$transaction).toHaveBeenCalledTimes(1);
   });
@@ -646,6 +658,82 @@ describe('approveExternalRequest', () => {
     await expect(
       approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
     ).resolves.toMatchObject({ publishRequestId: 'alpr_1', listingId: 'apl_1' });
+  });
+
+  // -------------------------------------------------------------------------
+  // Content-rating derive + mod override (floored). The author is never blocked on
+  // the scanner's rating; the authoritative rating is DERIVED from the assets' max
+  // detected nsfwLevel at approve, with an optional mod override that is FLOORED at
+  // the derived value (never publishes mature assets under a too-low rating).
+  // -------------------------------------------------------------------------
+
+  /** Stage the PRIMARY (tx) asset-level reads used by resolveApprovalContentRating. */
+  function stagePrimaryAssetLevels(levels: { id: number; nsfwLevel: number }[]) {
+    // The screenshot ids the derive gathers (icon/cover come from the listing row).
+    mockWrite.appListingScreenshot.findMany.mockResolvedValue(
+      levels.filter((l) => l.id >= 10).map((l) => ({ imageId: l.id }))
+    );
+    mockWrite.image.findMany.mockResolvedValue(levels.map((l) => ({ nsfwLevel: l.nsfwLevel })));
+  }
+
+  function ratingStampedOnFlip(): unknown {
+    const flip = mockWrite.appListing.updateMany.mock.calls.find(
+      (c) => (c[0] as { where: { status?: string } }).where.status === 'draft'
+    );
+    return (flip?.[0] as { data: { contentRating?: unknown } }).data.contentRating;
+  }
+
+  it('DERIVES the rating from the assets max nsfwLevel (icon PG, cover PG13, screenshot R → r)', async () => {
+    stageApproveScenario({ iconId: 1, coverId: 2, screenshotCount: 1 });
+    stagePrimaryAssetLevels([
+      { id: 1, nsfwLevel: 1 }, // icon PG
+      { id: 2, nsfwLevel: 2 }, // cover PG13
+      { id: 10, nsfwLevel: 4 }, // screenshot R
+    ]);
+    await approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD });
+    expect(ratingStampedOnFlip()).toBe('r');
+  });
+
+  it('a mod override ABOVE the derived rating is HONOURED (derived r, override x → x)', async () => {
+    stageApproveScenario({ iconId: 1, coverId: 2, screenshotCount: 1 });
+    stagePrimaryAssetLevels([
+      { id: 1, nsfwLevel: 1 },
+      { id: 2, nsfwLevel: 2 },
+      { id: 10, nsfwLevel: 4 }, // derived r
+    ]);
+    await approveExternalRequest({
+      publishRequestId: 'alpr_1',
+      reviewerUserId: MOD,
+      contentRating: 'x',
+    });
+    expect(ratingStampedOnFlip()).toBe('x');
+  });
+
+  it('🔴 an UNDER-rating override is FLOORED to the derived value (derived r, override g → r)', async () => {
+    stageApproveScenario({ iconId: 1, coverId: 2, screenshotCount: 1 });
+    stagePrimaryAssetLevels([
+      { id: 1, nsfwLevel: 1 },
+      { id: 2, nsfwLevel: 2 },
+      { id: 10, nsfwLevel: 4 }, // derived r
+    ]);
+    await approveExternalRequest({
+      publishRequestId: 'alpr_1',
+      reviewerUserId: MOD,
+      contentRating: 'g', // BELOW derived → must NOT publish mature assets as 'g'
+    });
+    // Floored UP to the derived rating — never silently under-rated.
+    expect(ratingStampedOnFlip()).toBe('r');
+  });
+
+  it('with no override, the DERIVED rating is stamped (all-PG assets → g)', async () => {
+    stageApproveScenario({ iconId: 1, coverId: 2, screenshotCount: 1 });
+    stagePrimaryAssetLevels([
+      { id: 1, nsfwLevel: 1 },
+      { id: 2, nsfwLevel: 1 },
+      { id: 10, nsfwLevel: 1 },
+    ]);
+    await approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD });
+    expect(ratingStampedOnFlip()).toBe('g');
   });
 });
 

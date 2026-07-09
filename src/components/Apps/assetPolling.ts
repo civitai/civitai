@@ -4,38 +4,38 @@
  * so the backoff schedule + the keep-polling / terminal decision are unit-testable
  * WITHOUT mounting the component or faking timers.
  *
- * Context: an attach (setIcon / setCover / addScreenshot) requires a
- * scan-complete image. A freshly-persisted image is still scanning, so the attach
- * first rejects with "scan is not complete". Previously the asset then sat in
- * `processing` forever until the author clicked Retry — there was NO polling. The
- * component now auto-re-runs the attach on the schedule below, transitioning to
- * `attached` the moment the scan lands, to `error` on a NON-scan failure (blocked
- * / NSFW → stop), or to `timeout` once the budget is exhausted (keep the manual
- * Retry).
+ * Context: an attach (setIcon / setCover / addScreenshot) requires a scan-complete
+ * image. A freshly-persisted image is still scanning — so the attach now RESOLVES
+ * with `{ status: 'pending' }` (a normal expected wait, NOT a 4xx) while the scan
+ * is in-flight, and `{ status: 'attached' }` once it lands. The component
+ * auto-re-runs the attach on the schedule below, transitioning to `attached` the
+ * moment the scan lands, to `error` on a THROWN terminal failure (blocked /
+ * not-found / bad-format → stop), or to `timeout` once the budget is exhausted
+ * (keep the manual Retry).
+ *
+ * (Supersedes #3016's pending-CONFLICT: pending is no longer an error the poller
+ * keys off a tRPC `code` — it is the mutation's own resolved `status`.)
  */
 
 /** The classification of a single attach() outcome, independent of React state. */
 export type AttachOutcome =
   /** The attach succeeded — the asset is scan-complete and attached. Terminal. */
   | { kind: 'attached' }
-  /** The attach rejected because the scan isn't complete yet — keep polling. */
+  /** The attach resolved `pending` because the scan isn't complete yet — keep polling. */
   | { kind: 'scanning' }
-  /** The attach rejected for a non-scan reason (blocked / NSFW / bad dims). Terminal. */
+  /** The attach THREW a terminal failure (blocked / not-found / bad-format). Terminal. */
   | { kind: 'error'; message: string };
 
+/** The resolved (success) shape of an attach mutation — the discriminant is `status`. */
+export type AttachResult = { status: 'pending' | 'attached' };
+
 /**
- * The STRUCTURAL fields of a rejected attach() — extracted from the tRPC client
- * error, NOT parsed from its prose. `null` means the attach RESOLVED (success).
- *
- *   - `code`    — the tRPC error code (`error.data.code`): `CONFLICT` (retriable,
- *                 scan not complete yet) vs anything else (terminal). tRPC ALWAYS
- *                 surfaces this on `error.data`.
- *   - `message` — the human message, for DISPLAY only.
+ * The input to {@link classifyAttachResult}: EITHER the RESOLVED mutation result
+ * (`{ result }`) — whose `status` decides pending-vs-attached — OR a THROWN terminal
+ * error (`{ error }`), carrying its human message for DISPLAY only. Pending is no
+ * longer an error, so there is no tRPC `code` to inspect.
  */
-export type AttachError = {
-  code?: string;
-  message: string;
-};
+export type AttachInput = { result: AttachResult } | { error: { message: string } };
 
 /**
  * Backoff schedule (ms) between successive attach re-tries while an image is
@@ -86,19 +86,18 @@ export function nextPollDelay(
 }
 
 /**
- * Classify an attach() result into an {@link AttachOutcome}. PURE. `error === null`
- * means the attach RESOLVED (success → `attached`).
+ * Classify an attach() outcome into an {@link AttachOutcome}. PURE.
  *
- * The retriable-vs-terminal decision is STRUCTURAL — it reads the tRPC error
- * `code`, NEVER the prose (rewording the server message can't change the outcome,
- * which is the whole point of this contract): `CONFLICT` (scan not complete yet)
- * is retriable → `scanning`; anything else is terminal → `error`. The human
- * `message` is carried on the terminal `error` for DISPLAY only.
+ * The retriable-vs-terminal decision is STRUCTURAL — it reads the mutation's own
+ * resolved `status`, NEVER prose (rewording a server message can't change the
+ * outcome). A RESOLVED result with `status: 'pending'` is retriable → `scanning`;
+ * `status: 'attached'` is done → `attached`. A THROWN error is terminal → `error`,
+ * carrying its human `message` for DISPLAY only. (No tRPC `code` inspection —
+ * pending is a success result, not an error.)
  */
-export function classifyAttachResult(error: AttachError | null): AttachOutcome {
-  if (error === null) return { kind: 'attached' };
-  if (error.code === 'CONFLICT') return { kind: 'scanning' };
-  return { kind: 'error', message: error.message };
+export function classifyAttachResult(input: AttachInput): AttachOutcome {
+  if ('error' in input) return { kind: 'error', message: input.error.message };
+  return input.result.status === 'pending' ? { kind: 'scanning' } : { kind: 'attached' };
 }
 
 /**

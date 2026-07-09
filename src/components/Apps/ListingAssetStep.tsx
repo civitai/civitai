@@ -173,24 +173,28 @@ export function ListingAssetStep({
 
   async function attachOnce(key: string, kind: AssetKind, imageId: number): Promise<AttachOutcome> {
     try {
+      let res: { status: 'pending' | 'attached'; id?: string };
       if (kind === 'icon') {
-        await setIconMutation.mutateAsync({ listingId, imageId });
+        res = await setIconMutation.mutateAsync({ listingId, imageId });
       } else if (kind === 'cover') {
-        await setCoverMutation.mutateAsync({ listingId, imageId });
+        res = await setCoverMutation.mutateAsync({ listingId, imageId });
       } else {
-        const res = await addScreenshotMutation.mutateAsync({ listingId, imageId });
-        // Capture the row id so a freshly-added screenshot is also removable.
-        if (res && typeof (res as { id?: unknown }).id === 'string') {
-          rowIdRef.current.set(key, (res as { id: string }).id);
+        res = await addScreenshotMutation.mutateAsync({ listingId, imageId });
+        // Capture the row id so a freshly-added screenshot is also removable — only
+        // present once the attach ACTUALLY happened (status 'attached'); a 'pending'
+        // result has no row yet.
+        if (res && res.status === 'attached' && typeof res.id === 'string') {
+          rowIdRef.current.set(key, res.id);
         }
       }
-      return classifyAttachResult(null);
+      // Decide retriable-vs-terminal off the mutation's resolved `status`, NOT prose.
+      // A 'pending' result → scanning (keep polling); 'attached' → done. (See
+      // assetPolling.classifyAttachResult — pending is no longer an error.)
+      return classifyAttachResult({ result: res });
     } catch (err) {
-      // Decide retriable-vs-terminal off the STRUCTURAL tRPC error code
-      // (`error.data.code`), NOT the prose. The message is passed through for
-      // DISPLAY only. (See assetPolling.classifyAttachResult.)
-      const code = (err as { data?: { code?: string } })?.data?.code;
-      return classifyAttachResult({ code, message: (err as Error).message });
+      // A THROWN error is terminal (not-found / blocked / bad-format). The message
+      // is passed through for DISPLAY only.
+      return classifyAttachResult({ error: { message: (err as Error).message } });
     }
   }
 

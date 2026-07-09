@@ -10,10 +10,15 @@ import {
   OFFSITE_CONTENT_RATINGS,
   OFFSITE_REJECTION_REASON_MAX,
   OFFSITE_REJECTION_REASON_MIN,
+  type OffsiteContentRating,
   type PersistListingAssetImageInput,
   type SubmitExternalListingInput,
 } from '~/server/schema/blocks/offsite-listing.schema';
 import { assertListingAssetsComplete } from '~/server/services/blocks/app-listing-assets.service';
+import {
+  deriveContentRatingFromAssets,
+  nsfwLevelFromContentRating,
+} from '~/shared/constants/browsingLevel.constants';
 import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import {
   newAppListingId,
@@ -1072,6 +1077,46 @@ export type ApproveExternalRequestResult = {
 };
 
 /**
+ * Compute the content rating to STAMP on an off-site listing at approve. The
+ * scanner's per-image rating is imprecise, so the AUTHOR is never blocked on it +
+ * the author's declared rating is only a hint — the authoritative rating is DERIVED
+ * from the assets' MAX detected `nsfwLevel` (icon + cover + real screenshots) at
+ * review, with an optional mod OVERRIDE.
+ *
+ * 🔴 SAFETY (floor-at-derived): an override whose ceiling is BELOW the derived value
+ * would publish mature assets under a too-low rating — so it is clamped UP to the
+ * derived rating (never silently under-rated). An override AT or ABOVE the derived
+ * value is honoured (a mod may always rate UP). Reads the backing Image levels from
+ * the PRIMARY (`tx`) so the derived rating is row-consistent with the approve flip.
+ */
+async function resolveApprovalContentRating(
+  tx: Prisma.TransactionClient,
+  args: {
+    appListingId: string;
+    iconId: number | null;
+    coverId: number | null;
+    override?: OffsiteContentRating | null;
+  }
+): Promise<OffsiteContentRating> {
+  const shots = await tx.appListingScreenshot.findMany({
+    where: { appListingId: args.appListingId, imageId: { not: null } },
+    select: { imageId: true },
+  });
+  const imageIds = [args.iconId, args.coverId, ...shots.map((s) => s.imageId)].filter(
+    (v): v is number => v != null
+  );
+  const images = imageIds.length
+    ? await tx.image.findMany({ where: { id: { in: imageIds } }, select: { nsfwLevel: true } })
+    : [];
+  const derived = deriveContentRatingFromAssets(images.map((i) => ({ nsfwLevel: i.nsfwLevel })));
+  const override = args.override ?? null;
+  if (override == null) return derived;
+  return nsfwLevelFromContentRating(override) < nsfwLevelFromContentRating(derived)
+    ? derived // floor: an under-rating override is clamped up to the derived value
+    : override;
+}
+
+/**
  * MOD approve of a pending off-site request. Loads the request + its draft
  * `AppListing`, asserts `pending`, and enforces two gates BEFORE any mutation:
  *
@@ -1104,6 +1149,8 @@ export async function approveExternalRequest(opts: {
   publishRequestId: string;
   reviewerUserId: number;
   approvalNotes?: string | null;
+  /** Optional mod override of the final content rating (floored at the derived value). */
+  contentRating?: OffsiteContentRating | null;
 }): Promise<ApproveExternalRequestResult> {
   const { publishRequestId, reviewerUserId } = opts;
   const approvalNotes = opts.approvalNotes ?? null;
@@ -1169,6 +1216,7 @@ export async function approveExternalRequest(opts: {
       parentId: listing.revisionOfId,
       reviewerUserId,
       approvalNotes,
+      contentRating: opts.contentRating,
     });
   }
 
@@ -1246,9 +1294,18 @@ export async function approveExternalRequest(opts: {
         `cannot approve — the request is no longer pending`
       );
     }
+    // Derive (+ mod-override, floored) the content rating from the assets' max
+    // detected nsfwLevel and stamp it on the listing as it goes live. The author is
+    // never blocked on the scanner's rating — it is confirmed HERE at review.
+    const finalRating = await resolveApprovalContentRating(tx, {
+      appListingId,
+      iconId: primaryListing.iconId,
+      coverId: primaryListing.coverId,
+      override: opts.contentRating,
+    });
     const flipped = await tx.appListing.updateMany({
       where: { id: appListingId, status: 'draft' },
-      data: { status: 'approved' },
+      data: { status: 'approved', contentRating: finalRating },
     });
     if (flipped.count === 0) {
       // The draft was concurrently deleted / already flipped — abort (rolls back
@@ -1306,6 +1363,8 @@ async function applyApprovedRevision(opts: {
   parentId: string;
   reviewerUserId: number;
   approvalNotes: string | null;
+  /** Optional mod override of the final content rating (floored at the derived value). */
+  contentRating?: OffsiteContentRating | null;
 }): Promise<ApproveExternalRequestResult> {
   const { request, shadowId, parentId, reviewerUserId, approvalNotes } = opts;
 
@@ -1392,6 +1451,15 @@ async function applyApprovedRevision(opts: {
     }
 
     // (3) Copy scalars onto the parent (id / slug / appBlockId / status untouched).
+    // The content rating is DERIVED from the shadow's assets' max nsfwLevel (+ the
+    // mod override, floored) rather than trusting the shadow's declared value — same
+    // never-under-rate safety as the first-time approve path.
+    const finalRating = await resolveApprovalContentRating(tx, {
+      appListingId: shadowId,
+      iconId: shadow.iconId,
+      coverId: shadow.coverId,
+      override: opts.contentRating,
+    });
     await tx.appListing.update({
       where: { id: parentId },
       data: {
@@ -1399,7 +1467,7 @@ async function applyApprovedRevision(opts: {
         tagline: shadow.tagline,
         description: shadow.description,
         category: shadow.category,
-        contentRating: shadow.contentRating,
+        contentRating: finalRating,
         externalUrl: shadow.externalUrl,
         connectClientId: shadow.connectClientId,
         iconId: shadow.iconId,
