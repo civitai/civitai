@@ -1104,7 +1104,7 @@ export function enqueueImageIngestion({
 // ) {
 //   // Exclude specific users
 //   if (excludedUserIds?.length)
-//     AND.push(Prisma.sql`i."userId" != ALL(${excludedUserIds}::int[])`);
+//     AND.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
 //
 //   // Exclude specific images
 //   if (excludedImageIds?.length) {

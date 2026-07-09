@@ -194,7 +194,7 @@ export const HiddenModel3Ds = createUserCache({
 });
 
 export const HiddenUsers = createUserCache({
-  key: 'hidden-users-4',
+  key: 'hidden-users-5',
   callback: async ({ userId }) =>
     await dbRead.$queryRaw<{ id: number; username: string | null }[]>`
         SELECT
