@@ -421,6 +421,14 @@ export const getModelsRaw = async ({
   if (disableMinor) {
     AND.push(Prisma.sql`${pSql}."minor" = false`);
   }
+  if (input.excludedTagIds?.length) {
+    const notExcluded = Prisma.sql`NOT EXISTS (
+      SELECT 1 FROM "TagsOnModels" tom
+      WHERE tom."modelId" = m."id"
+        AND tom."tagId" IN (${Prisma.join([...new Set(input.excludedTagIds)])})
+    )`;
+    AND.push(userId ? Prisma.sql`(${notExcluded} OR m."userId" = ${userId})` : notExcluded);
+  }
 
   if (isModerator) {
     if (poiOnly) {
@@ -1026,6 +1034,15 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   user?: SessionUser;
   count?: boolean;
 }) => {
+  const blockedEnforcement = await enforceBlockedBrowsingTagsForModels(input, {
+    id: sessionUser?.id,
+    username: sessionUser?.username,
+    isModerator: sessionUser?.isModerator,
+  });
+  if (blockedEnforcement.emptyResult) {
+    return count ? { items: [], count: 0 } : { items: [], isPrivate: false };
+  }
+
   const {
     take,
     skip,
@@ -1113,11 +1130,14 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   if (excludedUserIds && excludedUserIds.length && !username) {
     AND.push({ userId: { notIn: excludedUserIds } });
   }
-  // if (excludedTagIds && excludedTagIds.length && !username) {
-  //   AND.push({
-  //     tagsOnModels: { none: { tagId: { in: excludedTagIds } } },
-  //   });
-  // }
+  if (excludedTagIds && excludedTagIds.length) {
+    AND.push({
+      OR: [
+        { tagsOnModels: { none: { tagId: { in: excludedTagIds } } } },
+        ...(sessionUser?.id ? [{ userId: sessionUser.id }] : []),
+      ],
+    });
+  }
   if (excludedModelIds && !hidden && !username) {
     AND.push({ id: { notIn: excludedModelIds } });
   }

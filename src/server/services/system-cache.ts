@@ -228,7 +228,18 @@ export async function getCategoryTags(type: 'image' | 'model' | 'post' | 'articl
 // Names resolved from the DB (lowercase) so W2 name matching + tag-page 404 work.
 export async function getBlockedBrowsingTags(): Promise<{ id: number; name: string }[]> {
   const cached = await redis.get(REDIS_KEYS.SYSTEM.BLOCKED_BROWSING_TAGS);
-  if (cached) return JSON.parse(cached) as { id: number; name: string }[];
+  if (cached) {
+    // Fail open on a corrupt ops-set value (this getter is on the hot feed +
+    // tag-page path); fall through to the DB fetch, which rewrites the key.
+    try {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed)) return parsed as { id: number; name: string }[];
+    } catch (err) {
+      logSysRedisFailOpen('read-degraded', 'getBlockedBrowsingTags', err, {
+        cachedSample: cached.slice(0, 64),
+      });
+    }
+  }
 
   log('getting blocked browsing tags');
   const tags = await dbRead.tag.findMany({

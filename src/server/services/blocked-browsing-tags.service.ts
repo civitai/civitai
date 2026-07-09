@@ -1,4 +1,7 @@
-import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  onlySelectableLevels,
+  publicBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import type { ResolvedBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import { getBlockedBrowsingTags, getBrowsingSettingAddons } from '~/server/services/system-cache';
@@ -42,13 +45,14 @@ async function loadBlockedBrowsingContext(browsingLevel: number | undefined, vie
     getBlockedBrowsingTags(),
     getBrowsingSettingAddons(),
   ]);
-  const resolved = resolveBrowsingSettingsAddons(
-    addons,
-    browsingLevel ?? publicBrowsingLevelsFlag,
-    {
-      isModerator: viewer.isModerator,
-    }
-  );
+  // `||` (not `??`): a client-sent browsingLevel of 0 would intersect no addon
+  // entry and silently disable every exclusion. Same guard for a Blocked-only
+  // level collapsing to 0 after onlySelectableLevels.
+  const level =
+    onlySelectableLevels(browsingLevel || publicBrowsingLevelsFlag) || publicBrowsingLevelsFlag;
+  const resolved = resolveBrowsingSettingsAddons(addons, level, {
+    isModerator: viewer.isModerator,
+  });
   return { blocked, resolved };
 }
 

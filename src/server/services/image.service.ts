@@ -1287,6 +1287,7 @@ export const getAllImages = async (
     baseModels,
     collectionTagId,
     excludedUserIds,
+    excludedTagIds,
     disablePoi,
     disableMinor,
     poiOnly,
@@ -1452,6 +1453,15 @@ export const getAllImages = async (
   }
   if (disableMinor) {
     AND.push(Prisma.sql`(i."minor" != TRUE)`);
+  }
+  if (excludedTagIds?.length) {
+    const notExcluded = Prisma.sql`NOT EXISTS (
+      SELECT 1 FROM "TagsOnImageDetails" toi
+      WHERE toi."imageId" = i.id
+        AND toi."tagId" IN (${Prisma.join([...new Set(excludedTagIds)])})
+        AND toi."disabled" = FALSE
+    )`;
+    AND.push(userId ? Prisma.sql`(${notExcluded} OR i."userId" = ${userId})` : notExcluded);
   }
 
   if (isModerator) {
