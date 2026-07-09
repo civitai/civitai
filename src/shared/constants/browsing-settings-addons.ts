@@ -93,11 +93,17 @@ export const BLOCKED_BROWSING_TAG_IDS: number[] = [
   130818, //porn actress
   130820, //adult actress
   133182, //porn star
+  130401, //deepfake
+  110980, //public figure
   5351, //child
   306619, //child present
   154326, //toddler
   161829, //male child
   163032, //female child
+  114467, //loli
+  6641, //shota
+  250436, //minor
+  115249, //teenager
 ];
 
 export const DEFAULT_BROWSING_SETTINGS_ADDONS: BrowsingSettingsAddon[] = [
@@ -118,6 +124,8 @@ export const DEFAULT_BROWSING_SETTINGS_ADDONS: BrowsingSettingsAddon[] = [
       130818, //porn actress
       130820, //adult actress
       133182, //porn star
+      130401, //deepfake
+      110980, //public figure
     ],
   },
   {
@@ -130,6 +138,16 @@ export const DEFAULT_BROWSING_SETTINGS_ADDONS: BrowsingSettingsAddon[] = [
       154326, //toddler
       161829, //male child
       163032, //female child
+    ],
+  },
+  {
+    type: 'some',
+    nsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
+    excludedTagIds: [
+      114467, //loli
+      6641, //shota
+      250436, //minor
+      115249, //teenager
     ],
   },
 ] as const;
