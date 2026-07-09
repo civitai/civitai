@@ -94,5 +94,26 @@ describe('tagsOnImageNew.service', () => {
       const tagIds = result.map((r) => r.tagId).sort();
       expect(tagIds).toEqual([7, 8, 9]);
     });
+
+    it('should not clobber a pre-existing tag when an Append rule targets it', async () => {
+      // Rule appends tag 11 whenever tag 12 is present, but tag 11 already
+      // exists as a genuine high-confidence User tag. First-wins must preserve it
+      // rather than downgrading it to { confidence: 70, source: 'Computed' }.
+      vi.mocked(systemCache.getTagRules).mockResolvedValue([
+        { toId: 12, fromId: 11, type: 'Append', fromTag: 'eleven', toTag: 'twelve', createdAt: new Date() },
+      ]);
+
+      const initialArgs = [
+        { imageId: 40, tagId: 11, confidence: 100, source: 'User' },
+        { imageId: 40, tagId: 12, confidence: 95, source: 'WD14' },
+      ] as any[];
+
+      const result = await applyTagRules(initialArgs);
+
+      expect(result).toHaveLength(2);
+      const tag11 = result.find((r) => r.tagId === 11);
+      expect(tag11?.confidence).toBe(100);
+      expect(tag11?.source).toBe('User');
+    });
   });
 });

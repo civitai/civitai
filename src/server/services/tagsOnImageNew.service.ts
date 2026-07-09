@@ -121,13 +121,15 @@ async function updateImageNsfwLevels(args: { imageId: number; tagId: number }[])
 export async function applyTagRules(args: TagsOnImageNewArgs[]) {
   const tagRules = await getTagRules();
 
-  const getMap = (items: TagsOnImageNewArgs[]) =>
-    items.reduce<Record<string, TagsOnImageNewArgs>>((acc, tag) => {
-      acc[`${tag.imageId}|${tag.tagId}`] = tag;
-      return acc;
-    }, {});
+  const keyOf = (imageId: number, tagId: number) => `${imageId}|${tagId}`;
 
-  const appliedMap = getMap(args);
+  // First-wins: a tag already present is never replaced, so a genuine User/
+  // high-confidence tag is not downgraded when a rule would append it as Computed.
+  const appliedMap: Record<string, TagsOnImageNewArgs> = {};
+  for (const tag of args) {
+    const key = keyOf(tag.imageId, tag.tagId);
+    if (!appliedMap[key]) appliedMap[key] = tag;
+  }
 
   for (const rule of tagRules) {
     const toAdd: Record<string, TagsOnImageNewArgs> = {};
@@ -136,17 +138,18 @@ export async function applyTagRules(args: TagsOnImageNewArgs[]) {
     for (const key in appliedMap) {
       const tag = appliedMap[key];
       if (tag.tagId === rule.toId) {
+        const targetKey = keyOf(tag.imageId, rule.fromId);
         if (rule.type === 'Replace') {
           toRemove.push(key);
-          toAdd[`${tag.imageId}|${rule.fromId}`] = { ...tag, tagId: rule.fromId };
-        } else {
-          toAdd[`${tag.imageId}|${rule.fromId}`] = { ...tag, tagId: rule.fromId, confidence: 70, source: 'Computed' };
+          if (!toAdd[targetKey]) toAdd[targetKey] = { ...tag, tagId: rule.fromId };
+        } else if (!toAdd[targetKey]) {
+          toAdd[targetKey] = { ...tag, tagId: rule.fromId, confidence: 70, source: 'Computed' };
         }
       }
     }
 
     for (const key of toRemove) delete appliedMap[key];
-    for (const key in toAdd) appliedMap[key] = toAdd[key];
+    for (const key in toAdd) if (!appliedMap[key]) appliedMap[key] = toAdd[key];
   }
 
   return Object.values(appliedMap);
