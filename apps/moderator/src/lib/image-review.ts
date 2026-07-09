@@ -22,3 +22,13 @@ export const IMAGE_REVIEW_SLUGS = [
 ] as const satisfies readonly ImageReviewType[];
 
 export type ImageReviewSlug = (typeof IMAGE_REVIEW_SLUGS)[number];
+
+// Every /images/[slug] view: the staff review modes above + csam (senior review queue) + the report
+// and appeal queues (their own services). csam/appeals are senior — gated in hooks via NAVIGATION.
+export const IMAGE_VIEW_SLUGS = [
+  ...IMAGE_REVIEW_SLUGS,
+  'csam',
+  'reported',
+  'appeals',
+] as const;
+export type ImageViewSlug = (typeof IMAGE_VIEW_SLUGS)[number];

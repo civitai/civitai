@@ -32,10 +32,12 @@ export const handle: Handle = async ({ event, resolve }) => {
 
   event.locals.user = result.user;
 
-  // Global role-tier gate — one place covering loads, actions, and endpoints (canAccess keys off
-  // route.id, so dynamic routes and `__data.json` data requests resolve to their page's nav entry).
+  // Global role-tier gate — one place covering loads, actions, and endpoints. Keyed on the concrete
+  // pathname (not route.id) so a dynamic route like /images/[slug] gates per-slug: /images/csam →
+  // senior, /images/minor → staff. canAccess's prefix match resolves `__data.json` data requests and
+  // sub-path endpoints to the right nav entry too. The `route.id &&` guard keeps static assets ungated.
   // A matched route above the user's tier bounces to the dashboard; unmatched routes fall through to 404.
-  if (event.route.id && !canAccess(result.user, event.route.id)) {
+  if (event.route.id && !canAccess(result.user, event.url.pathname)) {
     return new Response(null, { status: 303, headers: { location: '/' } });
   }
 

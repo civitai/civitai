@@ -3,8 +3,12 @@ import { z } from 'zod';
 import { env } from '$env/dynamic/private';
 import type { PageServerLoad } from './$types';
 import { parseQuery } from '$lib/server/query';
-import { getImageReviewQueue } from '$lib/server/image-review.service';
-import { IMAGE_REVIEW_SLUGS, type ImageReviewSlug } from '$lib/image-review';
+import {
+  getImageReviewQueue,
+  getReportedImageQueue,
+  getAppealImageQueue,
+} from '$lib/server/image-review.service';
+import { IMAGE_VIEW_SLUGS, type ImageViewSlug } from '$lib/image-review';
 import { allBrowsingLevelsFlag } from '@civitai/shared';
 import { getPromptHighlightSegments } from '@civitai/mod-utils/prompt-audit';
 
@@ -14,52 +18,65 @@ const querySchema = z.object({
   level: z.coerce.number().int().min(0).catch(allBrowsingLevelsFlag),
 });
 
-// One URL per review mode (/images/minor, /images/tag, …). The [slug] segment is the needsReview value;
-// reject anything that isn't a known mode so this dynamic route can't shadow a real sibling (to-ingest,
-// and later reported/appeals, are their own static routes and take precedence anyway). Access is gated
-// globally in hooks.server.ts via the '/images' prefix.
+// Every image queue is one URL: /images/<view>. Validate against the full view set, then dispatch to
+// the right service and return a `kind`-discriminated payload (review-highlight / review / reported /
+// appeal). Access — staff for the review modes + reported, senior for csam + appeals — is enforced
+// upstream in hooks.server.ts, keyed on the concrete pathname via the NAVIGATION roles. The explicit
+// guards below let `view` narrow per branch so each payload's `view` is exactly its own modes.
 export const load: PageServerLoad = async ({ params, url }) => {
-  // Only the staff modes are valid [slug]s — csam has its own senior route, not this dynamic one.
-  if (!(IMAGE_REVIEW_SLUGS as readonly string[]).includes(params.slug))
-    error(404, 'Unknown review mode');
-  const view = params.slug as ImageReviewSlug;
+  if (!(IMAGE_VIEW_SLUGS as readonly string[]).includes(params.slug))
+    error(404, 'Unknown image view');
+  const view = params.slug as ImageViewSlug;
 
   const { cursor, limit, level } = parseQuery(url, querySchema);
-  const data = await getImageReviewQueue({
+  const base = {
+    limit,
+    level,
+    civitaiUrl: env.CIVITAI_APP_URL ?? 'https://civitai.red',
+    wide: true,
+  };
+
+  if (view === 'reported') {
+    const { items, nextCursor } = await getReportedImageQueue({ browsingLevel: level, cursor, limit });
+    return { ...base, view, kind: 'reported' as const, items, nextCursor };
+  }
+
+  if (view === 'appeals') {
+    const { items, nextCursor } = await getAppealImageQueue({ browsingLevel: level, cursor, limit });
+    return { ...base, view, kind: 'appeal' as const, items, nextCursor };
+  }
+
+  if (view === 'minor' || view === 'remixSource') {
+    const { items, nextCursor } = await getImageReviewQueue({
+      needsReview: view,
+      browsingLevel: level,
+      cursor,
+      limit,
+    });
+    return {
+      ...base,
+      view,
+      kind: 'review-highlight' as const,
+      items: items.map(({ prompt, negativePrompt, ...item }) => ({
+        ...item,
+        promptHighlight: getPromptHighlightSegments(prompt, negativePrompt),
+      })),
+      nextCursor,
+    };
+  }
+
+  // view: 'poi' | 'tag' | 'newUser' | 'modRule' | 'csam'
+  const { items, nextCursor } = await getImageReviewQueue({
     needsReview: view,
     browsingLevel: level,
     cursor,
     limit,
   });
-
-  const base = {
-    limit,
-    level,
-    nextCursor: data.nextCursor,
-    civitaiUrl: env.CIVITAI_APP_URL ?? 'https://civitai.red',
-    wide: true,
+  return {
+    ...base,
+    view,
+    kind: 'review' as const,
+    items: items.map(({ prompt, negativePrompt, ...item }) => item),
+    nextCursor,
   };
-
-  // Payload is discriminated by view. prompt/negativePrompt are query-internal and dropped from every
-  // shape; only the two prompt-flagged views carry the highlight segments, computed server-side (the
-  // audit word lists are ~50KB and never ship to the client).
-  switch (view) {
-    case 'minor':
-    case 'remixSource':
-      return {
-        ...base,
-        view,
-        items: data.items.map(({ prompt, negativePrompt, ...item }) => ({
-          ...item,
-          promptHighlight: getPromptHighlightSegments(prompt, negativePrompt),
-        })),
-      };
-    default:
-      return {
-        ...base,
-        view,
-        items: data.items.map(({ prompt, negativePrompt, ...item }) => item),
-      };
-  }
 };
-
