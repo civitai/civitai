@@ -148,6 +148,15 @@ export const toggleModelEngagementInput = z.object({
 });
 export type ToggleModelEngagementInput = z.infer<typeof toggleModelEngagementInput>;
 
+// Per-visible-set engagement membership. Bounded (max 200) so the response is small +
+// index-scannable — the additive replacement for the unbounded `getEngagedModels`, which
+// returns a user's ENTIRE engagement history (a whale's 3.75 MB / 482 ms serialize froze
+// an api-primary pod). Reject (do not truncate) over-cap so callers can't silently widen it.
+export const getEngagedModelsByIdsSchema = z.object({
+  modelIds: z.array(z.number()).min(1).max(200),
+});
+export type GetEngagedModelsByIdsInput = z.infer<typeof getEngagedModelsByIdsSchema>;
+
 export const toggleFollowUserSchema = z.object({
   targetUserId: z.number(),
   username: usernameSchema.nullable().optional(),

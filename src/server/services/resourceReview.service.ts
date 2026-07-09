@@ -87,12 +87,16 @@ export const getUserResourceReview = async ({
 export const getResourceReviewsByUserId = ({
   userId,
   recommended,
+  modelIds,
 }: {
   userId: number;
   recommended?: boolean;
+  // When provided, bound the scan to these models (membership queries). Omitted =
+  // unfiltered = existing behavior for the current whole-history callers.
+  modelIds?: number[];
 }) => {
   return dbRead.resourceReview.findMany({
-    where: { userId, recommended },
+    where: { userId, recommended, ...(modelIds ? { modelId: { in: modelIds } } : {}) },
     select: { modelId: true, modelVersionId: true },
   });
 };

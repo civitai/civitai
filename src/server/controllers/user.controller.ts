@@ -24,6 +24,7 @@ import type { PaymentMethodDeleteInput } from '~/server/schema/stripe.schema';
 import type {
   DeleteUserInput,
   GetAllUsersInput,
+  GetEngagedModelsByIdsInput,
   GetByUsernameSchema,
   GetUserByUsernameSchema,
   GetUserCosmeticsSchema,
@@ -82,6 +83,7 @@ import {
   getUserCreator,
   getUserDownloadedModelVersions,
   getUserEngagedModels,
+  getUserEngagedModelsByIds,
   getUserEngagedModelVersions,
   getUserList,
   getUserPurchasedRewards,
@@ -660,6 +662,25 @@ export const getUserEngagedModelsHandler = async ({ ctx }: { ctx: ProtectedConte
     );
 
     return engagedModels;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+// Additive, per-visible-set counterpart to `getUserEngagedModelsHandler`. Bounded input →
+// bounded response, so (unlike the whole-history handler above) there is no cache: the tiny,
+// index-scannable payload isn't worth the combinatorial keyspace + bust-site sprawl.
+export const getUserEngagedModelsByIdsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetEngagedModelsByIdsInput;
+  ctx: ProtectedContext;
+}) => {
+  const { id } = ctx.user;
+  try {
+    return await getUserEngagedModelsByIds({ id, modelIds: input.modelIds });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
