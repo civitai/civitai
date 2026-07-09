@@ -482,6 +482,35 @@ export type TrainingWorkflowUpdateResult = {
 };
 
 /**
+ * Base type for PERMANENT, non-retryable failures of the training webhook path:
+ * conditions where retrying the workflow callback will deterministically fail
+ * again (the orchestrator re-delivers the identical workflow every time). The
+ * webhook handler catches this base type and acks (200) instead of returning
+ * 500, so a single orphaned/malformed training can't turn into a
+ * retry-amplified 500 storm. A genuine TRANSIENT failure (DB error, dependency
+ * timeout, unexpected bug) throws a plain Error instead and stays a 5xx so the
+ * orchestrator's retry can legitimately recover it.
+ */
+export class PermanentTrainingWebhookError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PermanentTrainingWebhookError';
+  }
+}
+
+/**
+ * Thrown when the training's backing ModelFile no longer exists (deleted or
+ * orphaned training) — the dominant observed storm cause. A subtype of
+ * PermanentTrainingWebhookError, so the handler treats it the same way.
+ */
+export class TrainingRecordNotFoundError extends PermanentTrainingWebhookError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TrainingRecordNotFoundError';
+  }
+}
+
+/**
  * Updates the model file metadata and model version training status based on workflow data.
  * Returns data needed for notifications (signals, emails, webhooks) which should be handled by the caller.
  */
@@ -492,8 +521,11 @@ export async function updateTrainingWorkflowRecords(
   const { transactions, steps, id: workflowId, createdAt, status: workflowStatus } = workflow;
 
   const step = steps?.[0] as (CustomImageResourceTrainingStep | CustomTrainingStep) | undefined;
-  if (!step) throw new Error('Missing step data');
-  if (!step.metadata.modelFileId) throw new Error('Missing modelFileId');
+  // Permanent: the workflow is created WITH its step + modelFileId metadata
+  // (see training.orch.ts). If the re-fetched workflow lacks either, the record
+  // is malformed/orphaned and every retry re-derives the same absence — ack it.
+  if (!step) throw new PermanentTrainingWebhookError('Missing step data');
+  if (!step.metadata.modelFileId) throw new PermanentTrainingWebhookError('Missing modelFileId');
 
   const {
     metadata: { modelFileId },
@@ -541,7 +573,10 @@ export async function updateTrainingWorkflowRecords(
     sampleImagesPrompts = imageOutput?.sampleImagesPrompts ?? [];
     moderationStatus = imageOutput?.moderationStatus;
   } else {
-    throw new Error(`Unsupported step type: ${stepType}`);
+    // Permanent: the step's $type is fixed at workflow creation; a type we
+    // don't handle won't become handleable on retry (retrying just re-fetches
+    // the same type). Ack + warn so a code-side gap surfaces without storming.
+    throw new PermanentTrainingWebhookError(`Unsupported step type: ${stepType}`);
   }
 
   if (moderationStatus === 'underReview') trainingStatus = TrainingStatus.Paused;
@@ -578,7 +613,7 @@ export async function updateTrainingWorkflowRecords(
       },
     },
   });
-  if (!modelFile) throw new Error(`ModelFile not found: "${modelFileId}"`);
+  if (!modelFile) throw new TrainingRecordNotFoundError(`ModelFile not found: "${modelFileId}"`);
 
   const { modelVersion } = modelFile;
   const { model } = modelVersion;
