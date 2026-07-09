@@ -27,6 +27,8 @@ import { requireAppsDb } from '~/server/db/appsDb';
 import { appSchemaIdent, sanitizeAppSlug } from '~/server/utils/apps-slug';
 import { newUlid } from '~/server/utils/app-block-ids';
 import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-scope.middleware';
+import { BlockRevocation } from '~/server/services/block-revocation.service';
+import { logToAxiom } from '~/server/logging/client';
 import { isAppBlocksSharedStorageEnabled } from '~/server/services/app-blocks-flag';
 import { sessionClient } from '~/server/auth/session-client';
 import type { SessionUser } from '~/types/session';
@@ -139,6 +141,14 @@ async function resolveSharedContext(blockToken: string, op: SharedOp): Promise<S
   if (!block) throw new TRPCError({ code: 'NOT_FOUND', message: 'app block not found' });
   if (block.status !== 'approved') {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'app block is not approved' });
+  }
+
+  // Per-instance revocation — the missing containment leg (audit M-1). The REST
+  // `withBlockScope` path enforces this; the tRPC shared path must too, so an
+  // uninstalled / toggled-off / publisher-banned instance can't keep writing
+  // until token expiry. Mirrors block-scope.middleware's check.
+  if (await BlockRevocation.isRevoked(claims.blockInstanceId)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'block instance revoked' });
   }
 
   // Per-op scope assertion (re-checks the issuance contract at point of use).
@@ -320,7 +330,7 @@ export const appsSharedRouter = router({
   append: publicProcedure
     .input(blockTokenInput.extend({ value: appendValueInput }))
     .mutation(async ({ input }) => {
-      const { userId, subjectUser, schema, appBlockId } = await resolveSharedContext(
+      const { userId, subjectUser, slug, schema, appBlockId } = await resolveSharedContext(
         input.blockToken,
         'append'
       );
@@ -356,6 +366,23 @@ export const appsSharedRouter = router({
               reporterUserId: uid,
               reason: `auto:${e.category}`,
             }).catch(() => {});
+          }
+          // H-1 (audit): the `shared_kv_reports` table has no reader yet, so the
+          // LEGAL-escalation signal (minor/POI) would otherwise be silent. Emit a
+          // structured, alertable event (NEVER the content) so a CSAM/minor attempt
+          // is observable even before the mod-queue wiring lands (a pre-GA gate).
+          if (e.category === 'minor' || e.category === 'poi') {
+            logToAxiom(
+              {
+                name: 'app-blocks-shared-storage-legal-block',
+                type: 'error',
+                category: e.category,
+                userId: uid,
+                slug,
+                appBlockId,
+              },
+              'block-audit'
+            ).catch(() => {});
           }
           throw new TRPCError({ code: 'BAD_REQUEST', message: e.message });
         }

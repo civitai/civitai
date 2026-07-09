@@ -23,6 +23,7 @@ const {
   mockCheckVoteRl,
   mockThrowOnBlockedLinkDomain,
   mockAuditPromptServer,
+  mockIsRevoked,
 } = vi.hoisted(() => {
   const mockClient = {
     query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
@@ -44,6 +45,7 @@ const {
     mockCheckVoteRl: vi.fn(async () => ({ allowed: true })),
     mockThrowOnBlockedLinkDomain: vi.fn(async () => undefined),
     mockAuditPromptServer: vi.fn(async () => undefined),
+    mockIsRevoked: vi.fn(async () => false),
   };
 });
 
@@ -70,6 +72,10 @@ vi.mock('~/server/services/blocklist.service', () => ({
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: (...a: unknown[]) => mockAuditPromptServer(...a),
 }));
+vi.mock('~/server/services/block-revocation.service', () => ({
+  BlockRevocation: { isRevoked: (...a: unknown[]) => mockIsRevoked(...a) },
+}));
+vi.mock('~/server/logging/client', () => ({ logToAxiom: async () => undefined }));
 
 import { appsSharedRouter, appsModRouter } from '../apps-shared.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -163,6 +169,15 @@ describe('resolver gates', () => {
     await expect(caller().getCount({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
       code: 'FORBIDDEN',
     });
+  });
+
+  it('rejects a revoked block instance (FORBIDDEN) — audit M-1', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockIsRevoked.mockResolvedValueOnce(true);
+    await expect(caller().getCount({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(mockPool.query).not.toHaveBeenCalled();
   });
 
   it('rejects a token missing the read scope (FORBIDDEN)', async () => {
