@@ -8,6 +8,9 @@
 > **TL;DR:** the Studio shell (auth, nav, dashboard) is up. To build the feature pages I need a few backend
 > pieces. The single most important is **A1** (owner-keyed rollup). For everything, I mostly need a **rough
 > timeline / which land before v1** so I can sequence the work.
+>
+> **@justin (2026-07-09):** direction below. A1 has a design already worked out — see the handoff doc linked in
+> the answer.
 
 ---
 
@@ -29,8 +32,16 @@ creators — so we'd ship with top-earners hidden and a version-count cap until 
 - Any existing MV/dictionary that already gets us part-way?
 - Want to pair on the schema for the MV + dictionary?
 
-**Answer:**
-_(rough timeline / feasibility →)_
+**Answer / direction (Justin):** Yes, build it — the design is already worked out. Stream `modelVersionId →
+ownerUserId` into ClickHouse as a **dictionary** (not a joined table): key = `modelVersionId`, attribute =
+`ownerUserId`, fed by **CDC/ClickPipe** from prod Postgres (CH can't reach the Bastion-gated DB directly; we
+already run ClickPipes against the Buzz DB, so reuse that pattern). Queries/MVs resolve the owner via
+`dictGet('mv_owner_dict','ownerUserId', modelVersionId)` — O(1), no join. Then an **AggregatingMergeTree MV**
+keyed on `(ownerUserId, date, source)` off the buzz-earning rows. Schedule before v1 if feasible; the
+`IN (…)` per-owner version-ID query stays as the small-creator / pre-launch fallback.
+
+Full build spec (dictionary + MV + CDC mirrors + confirm-before-building checklist + the query-time fallback):
+**[owner-rollup-handoff.md](owner-rollup-handoff.md)**. Happy to have you pair on / adjust the schema.
 
 ---
 
@@ -47,7 +58,10 @@ manually (repo does not run `prisma migrate deploy`).
 - Any concern moving `licensingFee` `Int → numeric`? Anything downstream that assumes integer buzz?
 - Do you want to own the `deliver-creator-compensation.ts` daily-boundary settlement change, or should I draft it?
 
-**Answer:**
+**Answer / direction (Justin):** **No concern** — move `licensingFee` `Int → numeric` at 0.01 precision.
+Settle sub-buzz amounts at the daily payout boundary (not floored per-transaction) in
+`deliver-creator-compensation.ts`. Migration applied manually per repo convention. Koen: flag anything downstream
+that assumes integer buzz; otherwise sort out who drafts the daily-boundary change with Briant.
 
 ---
 
@@ -65,7 +79,20 @@ gate as the pre-cutover "not-yet-payable" flag for the launch window.
   existing config blob? Any preference?
 - Is the "auto-pause on lapse" evaluated at read time (mini endpoint) only, or do we also need a batch job?
 
-**Answer:**
+**Answer / direction (Justin):** Resolve it at the **user level** (the creator's active-membership status), **not**
+as a per-`ModelVersion` flag — we don't want to update thousands of rows just to toggle fees on/off when
+membership lapses/renews. Evaluate at **read time**; no batch job.
+
+Touch points (audited on this branch):
+- **Charging = one place:** the mini endpoint `src/pages/api/v1/model-versions/mini/[id].ts` — this is the only
+  path that actually charges. It already loads the model's owner (`modelUserId`, joins `User`), so just add an
+  active-membership check. Reuse the pattern in `creator-program.service.ts:400-409` (`CustomerSubscription`
+  where `status='active' AND currentPeriodEnd > now`) — ideally extract it to a shared `hasActiveMembership(userId)`.
+- **Honest display = two more places:** the model-page block `ModelVersionDetails.tsx:1418` **and** the
+  generation-panel badge `ResourceItemContent.tsx:232` (fed by the version-keyed `resource-data.redis.ts` cache,
+  1h TTL, no user join). If the pause is only resolved in the mini endpoint, these will still advertise a fee
+  that won't be charged — resolve the display-pause client-side from the creator's membership, or the gen-panel
+  cache needs busting on membership change. Search index does **not** carry `licensingFee`, so it's not a risk site.
 
 ---
 
@@ -82,7 +109,10 @@ exact mechanics (B2).
 - Once Justin defines the mechanics (one-time purchase at a creator-set price? relation to early-access
   pricing?), can you scope the backend side with me?
 
-**Answer:**
+**Answer / direction (Justin):** **Reuse the early-access system** and allow **unlimited time** — that's the
+most convenient path and it's exactly what B2 defines ("indefinite sale" = early access with no time limit). So
+extend `earlyAccessConfig` to support an uncapped/no-time-limit mode rather than adding a separate field. Koen:
+scope the backend with Briant on that basis.
 
 ---
 
@@ -99,7 +129,12 @@ may defer.
 - If Justin wants these in v1 — is a per-`toAccountId` daily buzz-earnings-by-type MV feasible on your side?
 - Rough effort vs. deferring to fast-follow?
 
-**Answer:**
+**Answer / direction (Justin):** **v1 — yes, show these sources** in the earnings tab (per B3). These are buzz
+transactions paid **directly to the creator** (`toAccountId`), so a per-`toAccountId` daily
+buzz-earnings-by-type MV should work straight off the buzz transactions — no owner-join needed. The catch: access
++ cosmetic sales currently ride the generic "purchase" type, so we need a **distinct type/flag to identify these
+sales specifically** for the rollup. Koen: is the per-`toAccountId` MV feasible, and what's the effort? Pair with
+Briant on the type/flag.
 
 ---
 
