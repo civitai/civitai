@@ -17,7 +17,7 @@ import type {
   UpsertCosmeticShopItemInput,
   UpsertCosmeticShopSectionInput,
 } from '~/server/schema/cosmetic-shop.schema';
-import { CREATOR_SHOP_CREATOR_SHARE } from '~/server/schema/creator-shop.schema';
+import { computeCreatorShopSplit } from '~/server/schema/creator-shop.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
 import { imageSelect } from '~/server/selectors/image.selector';
@@ -478,6 +478,7 @@ export const getShopSectionsWithItems = async ({
 export const purchaseCosmeticShopItem = async ({
   userId,
   shopItemId,
+  viaShopUserId,
   buzzType = 'yellow',
 }: PurchaseCosmeticShopItemInput & {
   userId: number;
@@ -495,6 +496,7 @@ export const purchaseCosmeticShopItem = async ({
       unitAmount: true,
       title: true,
       meta: true,
+      addedById: true,
       cosmetic: {
         select: {
           type: true,
@@ -629,30 +631,64 @@ export const purchaseCosmeticShopItem = async ({
         // We do this last mainly because we don't want to fail the purchase if this fails.
         // We can divide the funds later if needed.
         // Creator Shop items pay the cosmetic's creator (cosmetic.createdById)
-        // their 70% share directly. Official items keep the legacy
-        // meta.paidToUserIds distribution (100%, split across recipients).
+        // their 70% share directly. When another creator (the seller = addedById)
+        // lists a sellable-by-others cosmetic, that 70% pool is split by the
+        // cosmetic's sellerShare (% of price the seller keeps; creator gets the
+        // rest). Official items keep the legacy meta.paidToUserIds distribution.
+        const price = shopItem.unitAmount;
         const creatorId = shopItem.cosmetic.createdById;
-        const recipients: { userId: number; amount: number }[] = creatorId
-          ? [
-              {
-                userId: creatorId,
-                amount: Math.floor(shopItem.unitAmount * CREATOR_SHOP_CREATOR_SHARE),
-              },
-            ]
-          : (meta?.paidToUserIds ?? []).map((uid) => ({
-              userId: uid,
-              amount: Math.floor(shopItem.unitAmount / (meta?.paidToUserIds?.length ?? 1)),
-            }));
+        const { creatorPool, sellerAmount, creatorAmount } = computeCreatorShopSplit(
+          price,
+          meta?.sellerShare ?? 0
+        );
+
+        // Cross-creator resale: when bought through another creator's shop
+        // (viaShopUserId) that actually resells this sellable item, split the 70%
+        // pool by the item's sellerShare. Verified server-side so credit can't be
+        // spoofed; otherwise the creator keeps the full 70%.
+        let resellerId: number | undefined;
+        if (viaShopUserId && creatorId && viaShopUserId !== creatorId && meta?.sellableByOthers) {
+          const viaUser = await dbRead.user.findUnique({
+            where: { id: viaShopUserId },
+            select: { settings: true },
+          });
+          const resoldIds =
+            (viaUser?.settings as { creatorShop?: { resoldItemIds?: number[] } } | null)
+              ?.creatorShop?.resoldItemIds ?? [];
+          if (resoldIds.includes(shopItem.id)) resellerId = viaShopUserId;
+        }
+
+        let recipients: { userId: number; amount: number }[];
+        if (creatorId) {
+          if (resellerId) {
+            recipients = [
+              ...(creatorAmount > 0 ? [{ userId: creatorId, amount: creatorAmount }] : []),
+              ...(sellerAmount > 0 ? [{ userId: resellerId, amount: sellerAmount }] : []),
+            ];
+          } else {
+            recipients = [{ userId: creatorId, amount: creatorPool }];
+          }
+        } else {
+          recipients = (meta?.paidToUserIds ?? []).map((uid) => ({
+            userId: uid,
+            amount: Math.floor(price / (meta?.paidToUserIds?.length ?? 1)),
+          }));
+        }
 
         await Promise.all(
           recipients.map((r) =>
             createBuzzTransaction({
               fromAccountId: 0,
               toAccountId: r.userId,
+              // Pay creators/resellers in the same Buzz color the buyer paid with.
+              toAccountType: buzzType,
               amount: r.amount,
               type: TransactionType.Sell,
               description: `A user has purchased your cosmetic - ${shopItem.title}`,
-              externalTransactionId: transactionId,
+              // Unique per recipient when the pool is split, so the two payouts
+              // don't collide on the same external id.
+              externalTransactionId:
+                recipients.length > 1 ? `${transactionId}:${r.userId}` : transactionId,
               details: { purchasedBy: userId, originalAmount: shopItem.unitAmount },
             })
           )

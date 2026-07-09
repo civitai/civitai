@@ -30,6 +30,7 @@ import {
   IconSparkles,
   IconTag,
   IconTrendingUp,
+  IconUsers,
   IconX,
 } from '@tabler/icons-react';
 import type { ComponentProps, ReactNode } from 'react';
@@ -381,6 +382,16 @@ function CreatorShopReviewPage() {
                         value={getDisplayName(selected.cosmetic.type)}
                         icon={<IconTag size={14} />}
                         iconColor="var(--mantine-color-cyan-5)"
+                      />
+                      <MoneyTile
+                        label="Resale by others"
+                        value={
+                          selectedMeta.sellableByOthers
+                            ? `Allowed · seller keeps ${selectedMeta.sellerShare ?? 0}%`
+                            : 'Owner only'
+                        }
+                        icon={<IconUsers size={14} />}
+                        iconColor="var(--mantine-color-teal-5)"
                       />
                     </SimpleGrid>
 

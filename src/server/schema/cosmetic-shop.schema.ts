@@ -40,6 +40,10 @@ export const cosmeticShopItemMeta = z.object({
   imageMeta: z
     .object({ width: z.number(), height: z.number(), hasTransparency: z.boolean() })
     .optional(),
+  // Cross-creator selling: whether other creators may resell this item, and the %
+  // of price (0-70, out of the creator's 70% pool) the reseller keeps.
+  sellableByOthers: z.boolean().optional(),
+  sellerShare: z.number().optional(),
 });
 
 export type UpsertCosmeticInput = z.infer<typeof upsertCosmeticInput>;
@@ -114,6 +118,9 @@ export const updateCosmeticShopSectionsOrderInput = z.object({
 export type PurchaseCosmeticShopItemInput = z.infer<typeof purchaseCosmeticShopItemInput>;
 export const purchaseCosmeticShopItemInput = z.object({
   shopItemId: z.number(),
+  // The creator whose shop this was bought through — used to credit a reseller
+  // (Creator Shop cross-creator selling). Verified server-side.
+  viaShopUserId: z.number().optional(),
 });
 
 export type GetPreviewImagesInput = z.infer<typeof getPreviewImagesInput>;

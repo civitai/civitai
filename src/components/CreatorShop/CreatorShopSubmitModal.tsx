@@ -5,6 +5,7 @@ import {
   Group,
   Modal,
   NumberInput,
+  Paper,
   Select,
   Stack,
   Switch,
@@ -24,6 +25,7 @@ import {
   COSMETIC_PRICE_FLOOR,
   CREATOR_SHOP_CREATOR_SHARE,
   CREATOR_SHOP_SUBMISSION_FEE,
+  computeCreatorShopSplit,
 } from '~/server/schema/creator-shop.schema';
 import { CosmeticShopItemStatus, type CosmeticType } from '~/shared/utils/prisma/enums';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -42,6 +44,8 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
     quantity,
     buzzType,
     animated,
+    sellableByOthers,
+    sellerShare,
     imageId,
     localUrl,
     checks,
@@ -60,6 +64,13 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
     pending,
     previewCosmetic,
   } = form;
+
+  // Resale payout breakdown at the current price (mirrors the server split).
+  const {
+    sellerAmount: resaleSellerAmount,
+    creatorAmount: resaleCreatorAmount,
+    platformCut: resalePlatformCut,
+  } = computeCreatorShopSplit(price, sellerShare);
 
   return (
     <Modal {...dialog} size="lg" title={isEdit ? 'Edit item' : 'Submit an item'}>
@@ -161,6 +172,57 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
             You earn ≈ {numberWithCommas(earn)} Buzz per sale
           </Text>
         </Group>
+
+        {!isEdit && (
+          <Stack gap={6}>
+            <Switch
+              checked={sellableByOthers}
+              onChange={(e) => form.setSellableByOthers(e.currentTarget.checked)}
+              label="Let other creators sell this"
+              description="Other creators can list this cosmetic in their own shops."
+            />
+            {sellableByOthers && (
+              <>
+                <NumberInput
+                  label="Reseller's cut"
+                  min={0}
+                  max={70}
+                  suffix="%"
+                  value={sellerShare}
+                  onChange={(v) =>
+                    form.setSellerShare(typeof v === 'number' ? Math.min(70, Math.max(0, v)) : 0)
+                  }
+                  description="The % of each resale the seller keeps (they set their own price)."
+                />
+                <Paper withBorder radius="md" p="sm">
+                  <Text size="xs" c="dimmed" mb={4}>
+                    Example — a {numberWithCommas(price)} Buzz resale splits into:
+                  </Text>
+                  <Group justify="space-between">
+                    <Text size="xs">Reseller earns</Text>
+                    <Text size="xs" fw={600}>
+                      {numberWithCommas(resaleSellerAmount)} Buzz · {sellerShare}%
+                    </Text>
+                  </Group>
+                  <Group justify="space-between">
+                    <Text size="xs">You earn</Text>
+                    <Text size="xs" fw={600} c="green">
+                      {numberWithCommas(resaleCreatorAmount)} Buzz · {70 - sellerShare}%
+                    </Text>
+                  </Group>
+                  <Group justify="space-between">
+                    <Text size="xs" c="dimmed">
+                      Civitai
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      {numberWithCommas(resalePlatformCut)} Buzz · 30%
+                    </Text>
+                  </Group>
+                </Paper>
+              </>
+            )}
+          </Stack>
+        )}
 
         {!isEdit && (
           <FeeSection

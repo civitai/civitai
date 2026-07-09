@@ -30,6 +30,7 @@ export function ManageStats({ stats }: { stats: ManageStatsData }) {
         value={`${numberWithCommas(stats.revenue)} Buzz`}
         color="grape"
         icon={<IconBolt size={20} />}
+        sub={`You keep ~${numberWithCommas(stats.earnings)}`}
       />
     </SimpleGrid>
   );

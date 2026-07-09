@@ -5,6 +5,7 @@ import { CosmeticsSection } from '~/components/CreatorShop/Storefront/CosmeticsS
 import { FeaturedSection } from '~/components/CreatorShop/Storefront/FeaturedSection';
 import { MerchSection } from '~/components/CreatorShop/Storefront/MerchSection';
 import { ModelsSection } from '~/components/CreatorShop/Storefront/ModelsSection';
+import { ResoldSection } from '~/components/CreatorShop/Storefront/ResoldSection';
 import type { CreatorShopSectionKey } from '~/server/schema/creator-shop.schema';
 import { creatorShopSectionKeys } from '~/server/schema/creator-shop.schema';
 
@@ -16,12 +17,14 @@ export function StorefrontSections({
   ownedCosmeticIds,
   displayName,
   username,
+  ownerUserId,
   baseUrl,
 }: {
   shop: CreatorShopData;
   ownedCosmeticIds: Set<number>;
   displayName: string;
   username: string;
+  ownerUserId: number;
   baseUrl: string;
 }) {
   const sectionOrder = useMemo<CreatorShopSectionKey[]>(() => {
@@ -36,6 +39,13 @@ export function StorefrontSections({
       <FeaturedSection shop={shop} displayName={displayName} ownedCosmeticIds={ownedCosmeticIds} />
     ),
     cosmetics: <CosmeticsSection items={shop.cosmetics} ownedCosmeticIds={ownedCosmeticIds} />,
+    resold: (
+      <ResoldSection
+        items={shop.resold}
+        ownedCosmeticIds={ownedCosmeticIds}
+        viaShopUserId={ownerUserId}
+      />
+    ),
     merch: <MerchSection />,
     models: <ModelsSection shop={shop} displayName={displayName} username={username} />,
   };

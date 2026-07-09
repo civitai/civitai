@@ -3,7 +3,9 @@ import {
   getCreatorShopSchema,
   getEarlyAccessPricesSchema,
   getManageItemsSchema,
+  getPublicShopItemsSchema,
   getReviewQueueSchema,
+  resoldItemSchema,
   reviewCreatorShopItemSchema,
   submitCreatorShopItemSchema,
   updateCreatorShopItemSchema,
@@ -14,6 +16,9 @@ import {
   getCreatorShop,
   getCreatorShopManageItems,
   getEarlyAccessModelPrices,
+  addResoldItem,
+  getPublicShopItemsForResale,
+  removeResoldItem,
   getCreatorShopReviewQueue,
   getCreatorShopSettings,
   reviewCreatorShopItem,
@@ -68,6 +73,16 @@ export const creatorShopRouter = router({
       userId: ctx.user.isModerator && input.userId ? input.userId : ctx.user.id,
     })
   ),
+  // Cross-creator selling: browse public cosmetics + list one in your own shop.
+  getPublicShopItems: creatorShopProcedure
+    .input(getPublicShopItemsSchema)
+    .query(({ input, ctx }) => getPublicShopItemsForResale({ ...input, userId: ctx.user.id })),
+  addResoldItem: creatorShopProcedure
+    .input(resoldItemSchema)
+    .mutation(({ input, ctx }) => addResoldItem({ ...input, userId: ctx.user.id })),
+  removeResoldItem: creatorShopProcedure
+    .input(resoldItemSchema)
+    .mutation(({ input, ctx }) => removeResoldItem({ ...input, userId: ctx.user.id })),
   // #endregion
 
   // #region [Public: storefront]

@@ -22,6 +22,20 @@ import {
 } from '~/shared/utils/prisma/enums';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
+import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
+
+// Storefront items carry the cosmetic's creator so cards can attribute the owner
+// (esp. resold items from other creators). Only used by the creator storefront.
+const creatorStorefrontItemSelect = Prisma.validator<Prisma.CosmeticShopItemSelect>()({
+  ...cosmeticShopItemSelect,
+  cosmetic: {
+    select: {
+      ...simpleCosmeticSelect,
+      videoUrl: true,
+      creator: { select: { id: true, username: true, image: true } },
+    },
+  },
+});
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import {
   CREATOR_SHOP_SUBMISSION_FEE,
@@ -34,7 +48,9 @@ import type {
   AutoCheck,
   CosmeticImageMeta,
   GetEarlyAccessPricesInput,
+  GetPublicShopItemsInput,
   GetReviewQueueInput,
+  ResoldItemInput,
   ReviewCreatorShopItemInput,
   SubmitCreatorShopItemInput,
   UpdateCreatorShopItemInput,
@@ -145,6 +161,8 @@ export const submitCreatorShopItem = async ({
   price,
   availableQuantity,
   buzzType,
+  sellableByOthers,
+  sellerShare,
 }: SubmitCreatorShopItemInput & { userId: number }) => {
   // The Creator Shop is a Creator Program member benefit.
   const { validMembership } = await getCreatorRequirements(userId);
@@ -197,6 +215,8 @@ export const submitCreatorShopItem = async ({
             submissionTxId: feeTxId,
             autoChecks: checks,
             imageMeta,
+            sellableByOthers,
+            sellerShare: sellableByOthers ? sellerShare : 0,
           } satisfies CosmeticShopItemMeta,
         },
         select: creatorShopItemSelect,
@@ -218,12 +238,15 @@ const getOwnedItemOrThrow = async (id: number, userId: number, isModerator = fal
       unitAmount: true,
       status: true,
       meta: true,
+      addedById: true,
       cosmetic: { select: { createdById: true, type: true } },
       _count: { select: { purchases: true } },
     },
   });
   if (!item) throw throwNotFoundError('Shop item not found');
-  if (!isModerator && item.cosmetic.createdById !== userId)
+  // Ownership is the lister (addedById), which may differ from the cosmetic's
+  // original creator for cross-listed items.
+  if (!isModerator && item.addedById !== userId)
     throw throwAuthorizationError('You can only manage your own shop items');
   return item;
 };
@@ -245,6 +268,17 @@ export const updateCreatorShopItem = async ({
     throw throwBadRequestError('Rejected items cannot be edited');
   if (existing.status === CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Archived items cannot be edited');
+
+  // Cross-listings point at another creator's shared cosmetic — the seller may
+  // never touch its art/name/description, only price & quantity.
+  const isOriginalCreator = isModerator || existing.cosmetic.createdById === userId;
+  if (
+    !isOriginalCreator &&
+    (name !== undefined || description !== undefined || imageUrl !== undefined)
+  )
+    throw throwBadRequestError(
+      "You can only change price and quantity for another creator's cosmetic"
+    );
 
   const isPublished = existing.status === CosmeticShopItemStatus.Published;
   const artChanged = imageUrl !== undefined;
@@ -372,7 +406,7 @@ export const unarchiveCreatorShopItem = async ({
 // only lets a moderator pass someone else's userId.
 export const getCreatorShopManageItems = async ({ userId }: { userId: number }) => {
   const items = await dbRead.cosmeticShopItem.findMany({
-    where: { cosmetic: { createdById: userId } },
+    where: { addedById: userId },
     select: creatorShopItemSelect,
     orderBy: { createdAt: 'desc' },
   });
@@ -398,20 +432,33 @@ export const getCreatorShop = async ({
     throw throwNotFoundError('Shop not found');
 
   const now = new Date();
-  const [items, earlyAccessModelCount] = await Promise.all([
+  const resoldIds = settings.resoldItemIds ?? [];
+  const [items, resoldItems, earlyAccessModelCount] = await Promise.all([
     dbRead.cosmeticShopItem.findMany({
       where: {
         status: CosmeticShopItemStatus.Published,
-        cosmetic: { createdById: userId },
+        addedById: userId,
         AND: [
           { OR: [{ availableFrom: null }, { availableFrom: { lte: now } }] },
           { OR: [{ availableTo: null }, { availableTo: { gte: now } }] },
         ],
       },
-      // Reuse the official shop's selector so creator cards render with the exact
-      // same <ShopItem> component + purchase modal as /shop.
-      select: cosmeticShopItemSelect,
+      // Reuse the official shop's selector (+ creator) so cards render with the
+      // exact same <ShopItem> component + purchase modal as /shop.
+      select: creatorStorefrontItemSelect,
       orderBy: { createdAt: 'desc' },
+    }),
+    // Resold items reference other creators' still-sellable published items —
+    // one inventory, owned by the original creator (no copy).
+    dbRead.cosmeticShopItem.findMany({
+      where: {
+        id: { in: resoldIds },
+        status: CosmeticShopItemStatus.Published,
+        meta: { path: ['sellableByOthers'], equals: true },
+        // Hide resold items whose owner has since made their shop private.
+        addedBy: { settings: { path: ['creatorShop', 'enabled'], equals: true } },
+      },
+      select: creatorStorefrontItemSelect,
     }),
     // Drives the Models section visibility — the storefront only lists the
     // creator's currently-Early-Access models (paid tiers come later).
@@ -427,16 +474,30 @@ export const getCreatorShop = async ({
 
   // Sanitize meta to only the purchase count the card needs — never the creator
   // payout/fee internals.
-  const cosmetics = items.map((item) => ({
+  const sanitize = (item: (typeof items)[number]) => ({
     ...item,
     meta: { purchases: (item.meta as CosmeticShopItemMeta)?.purchases ?? 0 },
-  }));
+  });
+  const cosmetics = items.map(sanitize);
+  // Resold items keep the seller share so the buyer can see the split at checkout.
+  const sanitizeResold = (item: (typeof resoldItems)[number]) => ({
+    ...item,
+    meta: {
+      purchases: (item.meta as CosmeticShopItemMeta)?.purchases ?? 0,
+      sellerShare: (item.meta as CosmeticShopItemMeta)?.sellerShare ?? 0,
+    },
+  });
+  // Preserve the creator's chosen resold order.
+  const resoldById = new Map(resoldItems.map((i) => [i.id, sanitizeResold(i)]));
+  const resold = resoldIds
+    .map((id) => resoldById.get(id))
+    .filter((x): x is ReturnType<typeof sanitizeResold> => !!x);
   const featuredIds = settings.featuredItemIds ?? [];
   const featured = featuredIds
     .map((fid) => cosmetics.find((c) => c.id === fid))
     .filter((x): x is (typeof cosmetics)[number] => !!x);
 
-  return { cosmetics, featured, settings, earlyAccessModelCount };
+  return { cosmetics, featured, resold, settings, earlyAccessModelCount };
 };
 
 // Early Access download prices for the shop's Models section, keyed by model
@@ -453,6 +514,100 @@ export const getEarlyAccessModelPrices = async ({ modelVersionIds }: GetEarlyAcc
     if (cfg?.chargeForDownload && cfg.downloadPrice) prices[v.id] = cfg.downloadPrice;
   }
   return prices;
+};
+
+// ---------------------------------------------------------------------------
+// Cross-creator selling: resell another creator's sellable shop item
+// ---------------------------------------------------------------------------
+
+// Gallery of published shop items other creators have marked sellable, excluding
+// the caller's own and ones they already resell.
+export const getPublicShopItemsForResale = async ({
+  userId,
+  limit,
+  cursor,
+  cosmeticTypes,
+  query,
+}: GetPublicShopItemsInput & { userId: number }) => {
+  const settings = await getCreatorShopSettings({ userId });
+  const alreadyResold = settings.resoldItemIds ?? [];
+  const raw = await dbRead.cosmeticShopItem.findMany({
+    where: {
+      status: CosmeticShopItemStatus.Published,
+      meta: { path: ['sellableByOthers'], equals: true },
+      addedById: { not: userId },
+      // Only surface items from creators whose shop is public (enabled).
+      addedBy: { settings: { path: ['creatorShop', 'enabled'], equals: true } },
+      ...(alreadyResold.length ? { id: { notIn: alreadyResold } } : {}),
+      ...(query
+        ? {
+            OR: [
+              { title: { contains: query, mode: 'insensitive' } },
+              { addedBy: { username: { contains: query, mode: 'insensitive' } } },
+            ],
+          }
+        : {}),
+      ...(cosmeticTypes?.length ? { cosmetic: { type: { in: cosmeticTypes } } } : {}),
+    },
+    take: limit + 1,
+    ...(cursor ? { cursor: { id: cursor } } : {}),
+    orderBy: { id: 'desc' },
+    select: {
+      id: true,
+      unitAmount: true,
+      availableQuantity: true,
+      meta: true,
+      cosmetic: { select: { id: true, name: true, type: true, data: true } },
+      addedBy: { select: { id: true, username: true, image: true } },
+    },
+  });
+  let nextCursor: number | undefined;
+  if (raw.length > limit) nextCursor = raw.pop()?.id;
+  const items = raw.map(({ meta, ...i }) => ({
+    ...i,
+    sellerShare: (meta as CosmeticShopItemMeta | null)?.sellerShare ?? 0,
+  }));
+  return { items, nextCursor };
+};
+
+// Load + validate a sellable shop item the caller may resell.
+const getResellableItemOrThrow = async (shopItemId: number, userId: number) => {
+  const item = await dbRead.cosmeticShopItem.findUnique({
+    where: { id: shopItemId },
+    select: { id: true, status: true, addedById: true, meta: true },
+  });
+  if (!item) throw throwNotFoundError('Shop item not found');
+  const meta = (item.meta ?? {}) as CosmeticShopItemMeta;
+  if (!meta.sellableByOthers)
+    throw throwAuthorizationError('This item is not available for other creators to sell');
+  if (item.status !== CosmeticShopItemStatus.Published)
+    throw throwBadRequestError('Only published items can be resold');
+  if (item.addedById === userId) throw throwBadRequestError('This is already your own item');
+  return item;
+};
+
+export const addResoldItem = async ({
+  userId,
+  shopItemId,
+}: ResoldItemInput & { userId: number }) => {
+  const { validMembership } = await getCreatorRequirements(userId);
+  if (!validMembership)
+    throw throwAuthorizationError('The Creator Shop is available to Creator Program members only');
+  await getResellableItemOrThrow(shopItemId, userId);
+  const settings = await getCreatorShopSettings({ userId });
+  const resoldItemIds = settings.resoldItemIds ?? [];
+  if (resoldItemIds.includes(shopItemId))
+    throw throwBadRequestError('You are already reselling this item');
+  return updateCreatorShopSettings({ userId, resoldItemIds: [...resoldItemIds, shopItemId] });
+};
+
+export const removeResoldItem = async ({
+  userId,
+  shopItemId,
+}: ResoldItemInput & { userId: number }) => {
+  const settings = await getCreatorShopSettings({ userId });
+  const resoldItemIds = (settings.resoldItemIds ?? []).filter((id) => id !== shopItemId);
+  return updateCreatorShopSettings({ userId, resoldItemIds });
 };
 
 // ---------------------------------------------------------------------------

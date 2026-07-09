@@ -15,6 +15,19 @@ export const CREATOR_SHOP_CREATOR_SHARE = 0.7;
 // A price edit beyond ±this fraction of the last approved price re-enters review.
 export const PRICE_REVIEW_THRESHOLD = 0.25;
 
+// The single source of truth for how a sale splits. `sellerShare` (0-70, % of
+// price) is the reseller's cut out of the creator's 70% pool; the creator keeps
+// the remainder; the platform always keeps 30%. Used by the payout AND the UI
+// so the numbers shown always match what's paid.
+export function computeCreatorShopSplit(price: number, sellerShare = 0) {
+  const creatorPool = Math.floor(price * CREATOR_SHOP_CREATOR_SHARE);
+  const share = Math.min(70, Math.max(0, sellerShare));
+  const sellerAmount = Math.floor(price * (share / 100));
+  const creatorAmount = creatorPool - sellerAmount;
+  const platformCut = price - creatorPool;
+  return { creatorPool, sellerAmount, creatorAmount, platformCut };
+}
+
 // Cosmetic subtypes a creator may submit (merch is a separate, later product).
 export const creatorCosmeticTypes = [
   CosmeticType.Badge,
@@ -102,6 +115,10 @@ export const submitCreatorShopItemSchema = z.object({
   price: z.number().int().min(COSMETIC_PRICE_FLOOR),
   availableQuantity: z.number().int().positive().nullish(),
   buzzType: z.enum(['green', 'yellow']).default('yellow'),
+  // Allow other creators to list this cosmetic, giving the seller this % of the
+  // price (0-70, out of the creator's 70% pool).
+  sellableByOthers: z.boolean().default(false),
+  sellerShare: z.number().int().min(0).max(70).default(0),
 });
 
 export type UpdateCreatorShopItemInput = z.infer<typeof updateCreatorShopItemSchema>;
@@ -124,6 +141,22 @@ export const getCreatorShopSchema = z.object({
 export type GetEarlyAccessPricesInput = z.infer<typeof getEarlyAccessPricesSchema>;
 export const getEarlyAccessPricesSchema = z.object({
   modelVersionIds: z.array(z.number()).max(200),
+});
+
+// Cross-creator selling: resell another creator's sellable shop item (by id) in
+// your own shop — a reference, not a copy, so the original owns price/inventory.
+export type ResoldItemInput = z.infer<typeof resoldItemSchema>;
+export const resoldItemSchema = z.object({
+  shopItemId: z.number(),
+});
+
+export type GetPublicShopItemsInput = z.infer<typeof getPublicShopItemsSchema>;
+export const getPublicShopItemsSchema = z.object({
+  limit: z.number().min(1).max(100).default(50),
+  cursor: z.number().optional(),
+  cosmeticTypes: z.array(z.enum(CosmeticType)).optional(),
+  // Matches the item title OR the owning creator's username.
+  query: z.string().optional(),
 });
 
 export type ReviewCreatorShopItemInput = z.infer<typeof reviewCreatorShopItemSchema>;
@@ -156,10 +189,16 @@ export const getManageItemsSchema = z.object({
 });
 
 // Storefront section order + per-section visibility (stored in User.settings).
-export const creatorShopSectionKeys = ['featured', 'cosmetics', 'merch', 'models'] as const;
+export const creatorShopSectionKeys = [
+  'featured',
+  'cosmetics',
+  'resold',
+  'merch',
+  'models',
+] as const;
 export type CreatorShopSectionKey = (typeof creatorShopSectionKeys)[number];
 export const creatorShopSectionSchema = z.object({
-  key: z.enum(['featured', 'cosmetics', 'merch', 'models']),
+  key: z.enum(['featured', 'cosmetics', 'resold', 'merch', 'models']),
   visible: z.boolean(),
 });
 
@@ -169,6 +208,8 @@ export const updateCreatorShopSettingsSchema = z.object({
   enabled: z.boolean().optional(),
   showModels: z.boolean().optional(),
   featuredItemIds: z.array(z.number()).max(CREATOR_SHOP_MAX_FEATURED).optional(),
+  // Other creators' shop items this creator resells (referenced by id).
+  resoldItemIds: z.array(z.number()).optional(),
   description: z.string().max(1000).nullish(),
   coverImageId: z.number().nullish(),
   sections: z.array(creatorShopSectionSchema).optional(),

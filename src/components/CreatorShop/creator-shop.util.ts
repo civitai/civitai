@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { trpc } from '~/utils/trpc';
 import type { RouterOutput } from '~/types/router';
+import type { GetPublicShopItemsInput } from '~/server/schema/creator-shop.schema';
 import type { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
@@ -28,6 +29,17 @@ export const useQueryCreatorShopManage = (enabled = true, userId?: number) => {
 export const useQueryCreatorShopSettings = (enabled = true) => {
   const { data, ...rest } = trpc.creatorShop.getSettings.useQuery(undefined, { enabled });
   return { settings: data, ...rest };
+};
+
+// Other creators' shop items available to resell (cross-creator selling).
+export type CreatorShopPublicShopItem =
+  RouterOutput['creatorShop']['getPublicShopItems']['items'][number];
+export const useQueryPublicShopItems = (filters: Partial<GetPublicShopItemsInput> = {}) => {
+  const { data, ...rest } = trpc.creatorShop.getPublicShopItems.useInfiniteQuery(filters, {
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+  });
+  const items = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data]);
+  return { items, ...rest };
 };
 
 // Early Access download prices for the Models section, keyed by model version id.
@@ -116,6 +128,23 @@ export const useMutateCreatorShop = () => {
     onError: onError('Failed to restore item'),
   });
 
+  const addResoldItem = trpc.creatorShop.addResoldItem.useMutation({
+    async onSuccess() {
+      await queryUtils.creatorShop.getSettings.invalidate();
+      await queryUtils.creatorShop.getShop.invalidate();
+      showSuccessNotification({ message: 'Added to your shop' });
+    },
+    onError: onError('Failed to add item'),
+  });
+
+  const removeResoldItem = trpc.creatorShop.removeResoldItem.useMutation({
+    async onSuccess() {
+      await queryUtils.creatorShop.getSettings.invalidate();
+      await queryUtils.creatorShop.getShop.invalidate();
+    },
+    onError: onError('Failed to remove item'),
+  });
+
   const updateSettings = trpc.creatorShop.updateSettings.useMutation({
     async onSuccess() {
       await queryUtils.creatorShop.getSettings.invalidate();
@@ -131,5 +160,14 @@ export const useMutateCreatorShop = () => {
     onError: onError('Failed to review item'),
   });
 
-  return { submitItem, updateItem, archiveItem, unarchiveItem, updateSettings, reviewItem };
+  return {
+    submitItem,
+    updateItem,
+    archiveItem,
+    unarchiveItem,
+    addResoldItem,
+    removeResoldItem,
+    updateSettings,
+    reviewItem,
+  };
 };

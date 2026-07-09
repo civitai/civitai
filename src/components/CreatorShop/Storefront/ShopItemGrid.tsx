@@ -12,10 +12,13 @@ export function ShopItemGrid({
   items,
   cols,
   ownedCosmeticIds,
+  viaShopUserId,
 }: {
   items: CreatorShopItem[];
   cols: SimpleGridProps['cols'];
   ownedCosmeticIds: Set<number>;
+  // When set, purchases are attributed to this shop owner (cross-creator resale).
+  viaShopUserId?: number;
 }) {
   return (
     <SimpleGrid cols={cols} spacing="md">
@@ -25,6 +28,8 @@ export function ShopItemGrid({
           item={item as unknown as CosmeticShopItemGetById}
           sectionItemCreatedAt={item.createdAt}
           alreadyOwned={ownedCosmeticIds.has(item.cosmeticId)}
+          viaShopUserId={viaShopUserId}
+          creator={item.cosmetic.creator}
         />
       ))}
     </SimpleGrid>

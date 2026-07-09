@@ -83,6 +83,7 @@ function UserShopPage() {
           ownedCosmeticIds={ownedCosmeticIds}
           displayName={displayName}
           username={username}
+          ownerUserId={user?.id ?? 0}
           baseUrl={baseUrl}
         />
       )}

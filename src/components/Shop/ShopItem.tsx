@@ -1,4 +1,5 @@
 import {
+  Anchor,
   Badge,
   Button,
   Divider,
@@ -10,6 +11,8 @@ import {
   Title,
   UnstyledButton,
 } from '@mantine/core';
+import { NextLink } from '~/components/NextLink/NextLink';
+import type { MouseEvent } from 'react';
 import { CosmeticType, Currency } from '~/shared/utils/prisma/enums';
 import dayjs from '~/shared/utils/dayjs';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -34,10 +37,16 @@ export const ShopItem = ({
   item,
   sectionItemCreatedAt,
   alreadyOwned = false,
+  viaShopUserId,
+  creator,
 }: {
   item: CosmeticShopItemGetById;
   sectionItemCreatedAt?: Date;
   alreadyOwned?: boolean;
+  // Attributes the purchase to this shop owner (Creator Shop cross-creator resale).
+  viaShopUserId?: number;
+  // The cosmetic's original creator, shown as attribution (Creator Shop only).
+  creator?: { id: number; username: string | null; image: string | null } | null;
 }) => {
   const cosmetic = item.cosmetic;
   const isAvailable =
@@ -122,7 +131,7 @@ export const ShopItem = ({
 
               dialogStore.trigger({
                 component: CosmeticShopItemPreviewModal,
-                props: { shopItem: item },
+                props: { shopItem: item, viaShopUserId },
               });
             }}
             disabled={!isAvailable || outOfStock}
@@ -151,6 +160,22 @@ export const ShopItem = ({
               className="!px-0"
             />
             <Title order={3}>{item.title}</Title>
+            {creator?.username && (
+              <Text size="xs" c="dimmed">
+                by{' '}
+                <Anchor
+                  component={NextLink}
+                  href={`/user/${creator.username}`}
+                  c="blue.4"
+                  fw={500}
+                  underline="always"
+                  // Don't trigger the card's purchase modal.
+                  onClick={(e: MouseEvent) => e.stopPropagation()}
+                >
+                  @{creator.username}
+                </Anchor>
+              </Text>
+            )}
           </Stack>
           {!!item.description && (
             <ContentClamp maxHeight={200}>
@@ -166,7 +191,7 @@ export const ShopItem = ({
               onClick={() => {
                 dialogStore.trigger({
                   component: CosmeticShopItemPreviewModal,
-                  props: { shopItem: item },
+                  props: { shopItem: item, viaShopUserId },
                 });
               }}
               disabled={!isAvailable || outOfStock}

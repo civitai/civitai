@@ -1,7 +1,8 @@
 import { Button, Group, Stack, Text, Title } from '@mantine/core';
-import { IconPlus, IconSettings } from '@tabler/icons-react';
+import { IconPlus, IconSettings, IconShoppingBagPlus } from '@tabler/icons-react';
 import { CreatorShopSettingsModal } from '~/components/CreatorShop/CreatorShopSettingsModal';
 import { CreatorShopSubmitModal } from '~/components/CreatorShop/CreatorShopSubmitModal';
+import { ListExistingModal } from '~/components/CreatorShop/Manage/ListExistingModal';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 
 export function ManageHeader() {
@@ -20,6 +21,13 @@ export function ManageHeader() {
           onClick={() => dialogStore.trigger({ component: CreatorShopSettingsModal })}
         >
           Shop settings
+        </Button>
+        <Button
+          variant="default"
+          leftSection={<IconShoppingBagPlus size={16} />}
+          onClick={() => dialogStore.trigger({ component: ListExistingModal })}
+        >
+          Resell a cosmetic
         </Button>
         <Button
           leftSection={<IconPlus size={16} />}

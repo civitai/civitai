@@ -19,6 +19,7 @@ import {
   IconShirt,
   IconSparkles,
   IconStar,
+  IconUsers,
 } from '@tabler/icons-react';
 import type { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -42,6 +43,7 @@ type TablerIcon = ForwardRefExoticComponent<Omit<IconProps, 'ref'> & RefAttribut
 const sectionLabels: Record<CreatorShopSectionKey, string> = {
   featured: 'Featured',
   cosmetics: 'Cosmetics',
+  resold: 'From other creators',
   merch: 'Merch (coming soon)',
   models: 'Models',
 };
@@ -49,6 +51,7 @@ const sectionLabels: Record<CreatorShopSectionKey, string> = {
 const sectionIcons: Record<CreatorShopSectionKey, TablerIcon> = {
   featured: IconStar,
   cosmetics: IconSparkles,
+  resold: IconUsers,
   merch: IconShirt,
   models: IconBox,
 };

@@ -6,11 +6,13 @@ export function StatCard({
   value,
   icon,
   color = 'gray',
+  sub,
 }: {
   label: string;
   value: number | string;
   icon: ReactNode;
   color?: string;
+  sub?: ReactNode;
 }) {
   return (
     <Paper
@@ -38,6 +40,11 @@ export function StatCard({
           >
             {value}
           </Text>
+          {sub && (
+            <Text size="xs" c="dimmed" lineClamp={1}>
+              {sub}
+            </Text>
+          )}
         </Stack>
       </Group>
     </Paper>

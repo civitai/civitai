@@ -49,6 +49,8 @@ export function useSubmitCreatorShopForm({
   const [animated, setAnimated] = useState<boolean>(
     !!(item?.cosmetic.data as { animated?: boolean } | null)?.animated
   );
+  const [sellableByOthers, setSellableByOthers] = useState(false);
+  const [sellerShare, setSellerShare] = useState(0);
 
   // Buyers already own the art once an item is published or sold — lock it.
   const artLocked =
@@ -139,6 +141,8 @@ export function useSubmitCreatorShopForm({
           price,
           availableQuantity: quantity ?? null,
           buzzType,
+          sellableByOthers,
+          sellerShare: sellableByOthers ? sellerShare : 0,
         });
       }
       resetFiles();
@@ -177,6 +181,10 @@ export function useSubmitCreatorShopForm({
     setBuzzType,
     animated,
     setAnimated,
+    sellableByOthers,
+    setSellableByOthers,
+    sellerShare,
+    setSellerShare,
     imageId,
     localUrl,
     checks,

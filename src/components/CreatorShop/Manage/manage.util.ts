@@ -1,9 +1,15 @@
 import { useMemo, useState } from 'react';
 import type { CreatorShopManageItem } from '~/components/CreatorShop/creator-shop.util';
 import type { SortKey, StatusFilterValue } from '~/components/CreatorShop/Manage/manage.constants';
+import { computeCreatorShopSplit } from '~/server/schema/creator-shop.schema';
 import { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
 
 const revenueOf = (item: CreatorShopManageItem) => item.purchases * item.unitAmount;
+// The creator's actual take (their 70% pool). Reseller splits on this item would
+// lower it, but the manage view can't see per-sale channel — so this is the
+// direct-sale estimate.
+const earningsOf = (item: CreatorShopManageItem) =>
+  computeCreatorShopSplit(item.unitAmount).creatorPool * item.purchases;
 
 const comparators: Record<SortKey, (a: CreatorShopManageItem, b: CreatorShopManageItem) => number> =
   {
@@ -20,6 +26,7 @@ export type ManageStats = {
   pending: number;
   units: number;
   revenue: number;
+  earnings: number;
 };
 
 // Owns the toolbar control state and derives the filtered/sorted list + headline
@@ -47,6 +54,7 @@ export function useManageItems(items: CreatorShopManageItem[]) {
       pending: by(CosmeticShopItemStatus.PendingReview),
       units: items.reduce((sum, i) => sum + i.purchases, 0),
       revenue: items.reduce((sum, i) => sum + revenueOf(i), 0),
+      earnings: items.reduce((sum, i) => sum + earningsOf(i), 0),
     };
   }, [items]);
 
