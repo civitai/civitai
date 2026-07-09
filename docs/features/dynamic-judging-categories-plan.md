@@ -208,3 +208,49 @@ Temp-admin endpoint under `src/pages/api/admin/temp/` (per repo convention: `Web
 past challenges carry explicit categories. Scope each action to a bounded id set/range per call.
 
 Done: endpoint implemented + documented; not run (surface to human for per-env execution).
+
+**Repositioned:** with Task 9 (default-rubric fallback), the backfill is NO LONGER required for
+correctness — post-migration null-category challenges self-heal via the default rubric + fixed
+schema. Backfill becomes an optional "make categories explicit + editable in the mod UI" step, and
+note that seeding DEFAULT categories flips a challenge from the fixed response schema to the
+category (label-keyed) schema (equivalent ranking, different score-key shape). Ship it after Task 9.
+
+---
+
+## Task 9 — Default-rubric fallback for the sentinel (Phase 1c, CRITICAL, precedes migration)
+
+Surfaced by Task 7: after a judge's prompt is migrated to carry `{{SCORING_RUBRICS}}`, a challenge
+with `judgingCategories = null` (all 197 current daily/mod challenges, and new dailies not seeded at
+creation) would leave the sentinel UNRESOLVED — the LLM would receive the literal `{{SCORING_RUBRICS}}`
+with no scoring criteria. This is a correctness bug that must land in code BEFORE the Task 7 SQL is
+applied to any environment.
+
+`src/server/games/daily-challenge/generative-content.ts` (`buildFallbackMessages`, ~:357):
+- Resolve the sentinel whenever it is present, using the challenge's categories if any, else
+  `DEFAULT_CATEGORY_ROWS` (import from `~/shared/constants/challenge.constants`). Concretely, the
+  rubric-injection categories become `effectiveCategories = categories?.length ? categories :
+  DEFAULT_CATEGORY_ROWS`, passed to `injectRubrics`. `injectRubrics` is already a no-op when the
+  sentinel is absent (unmigrated prompt), so this stays fully backward-compatible.
+- **Keep the response-schema selection UNCHANGED** — it must still key on the *real* `categories`
+  (`categories?.length ? buildCategoryReviewSchema(categories) : RESPONSE_SCHEMA`). A null-category
+  challenge keeps the fixed `RESPONSE_SCHEMA` (lowercase `theme/wittiness/humor/aesthetic`) and gets
+  the DEFAULT rubric blocks injected into the prompt — matching current pre-migration behavior. Do
+  NOT switch a null-category challenge to the category schema.
+- `DEFAULT_CATEGORY_ROWS` carries `key` for each row, so `getCategoryRubric(row.key, { nsfw })`
+  reproduces the canonical theme/wittiness/humor/aesthetic blocks (i.e. the exact text the migration
+  removed for the SFW judges).
+
+Invariant to preserve/prove: (a) sentinel ABSENT → still byte-identical to today (unchanged);
+(b) sentinel PRESENT + null categories → prompt contains the four default rubric blocks + fixed
+`RESPONSE_SCHEMA` (equivalent to the pre-migration prompt); (c) sentinel PRESENT + real categories →
+those categories' rubrics + category schema (unchanged from Task 3).
+
+Tests: cover (a)/(b)/(c). For (b), assert the migrated-prompt-with-null-categories message contains
+`THEME SCORING`…`AESTHETIC SCORING` blocks AND the fixed `RESPONSE_SCHEMA` score keys, and contains
+no unresolved `{{SCORING_RUBRICS}}`.
+
+After this lands, update the header note in
+`scripts/migrations/dynamic-judging-categories-judge-prompts.sql` to record that the code-side
+prerequisite is satisfied.
+
+Done: sentinel always resolves; migration is safe to apply; tests cover all three states.
