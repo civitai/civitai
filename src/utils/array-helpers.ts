@@ -58,7 +58,10 @@ const modelTypeOrder: { [k in ModelType]: number } = {
   [ModelType.AestheticGradient]: 15,
   [ModelType.Hypernetwork]: 16,
   [ModelType.Detection]: 17,
-  [ModelType.Other]: 18,
+  [ModelType.VisionLanguage]: 18,
+  [ModelType.CLIP]: 19,
+  [ModelType.LLM]: 20,
+  [ModelType.Other]: 21,
 };
 
 export function sortByModelTypes<T extends { modelType: ModelType | null }>(data: T[] = []) {

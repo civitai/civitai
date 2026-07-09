@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { lowerFirst } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import type { Session } from 'next-auth';
+import type { Session } from '~/types/session';
 import * as z from 'zod';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
@@ -63,6 +63,10 @@ type VersionRow = {
   baseLicensingFee: number | null;
   baseLicensingFeeType: LicensingFeeType | null;
   baseLicensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
+  licensingSourceVersionId: number | null;
+  sourceLicensingFee: number | null;
+  sourceLicensingFeeType: LicensingFeeType | null;
+  sourceLicensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
   versionFlags: number;
   userFlags: number;
 };
@@ -116,6 +120,10 @@ export default MixedAuthEndpoint(async function handler(
       rmv."licensingFee" AS "baseLicensingFee",
       rmv."licensingFeeType" AS "baseLicensingFeeType",
       rmv."licensingFeeSettlementCurrency" AS "baseLicensingFeeSettlementCurrency",
+      mv."licensingSourceVersionId",
+      lsv."licensingFee" AS "sourceLicensingFee",
+      lsv."licensingFeeType" AS "sourceLicensingFeeType",
+      lsv."licensingFeeSettlementCurrency" AS "sourceLicensingFeeSettlementCurrency",
       mv."flags" AS "versionFlags",
       u."flags" AS "userFlags",
       (
@@ -148,6 +156,7 @@ export default MixedAuthEndpoint(async function handler(
     LEFT JOIN "BaseModelLicensingFee" bmlf
       ON bmlf."baseModel" = mv."baseModel" AND bmlf."modelType" = m."type"
     LEFT JOIN "ModelVersion" rmv ON rmv.id = bmlf."modelVersionId"
+    LEFT JOIN "ModelVersion" lsv ON lsv.id = mv."licensingSourceVersionId"
     WHERE ${Prisma.join(where, ' AND ')}
   `;
   if (!modelVersion) return res.status(404).json({ error: 'Model not found' });
@@ -218,7 +227,7 @@ export default MixedAuthEndpoint(async function handler(
     // this does not work for things like Flux
     // if (targetFile.type !== 'Model') return res.status(404).json({ error: 'File is not a model' });
 
-    air = stringifyAIR({ ...modelVersion, fileId: modelFileId });
+    air = stringifyAIR({ ...modelVersion, fileId: modelFileId, fileType: targetFile.type });
     downloadUrl = `${baseUrl}${createModelFileDownloadUrl({
       versionId: modelVersion.id,
       fileId: modelFileId,
@@ -267,32 +276,87 @@ export default MixedAuthEndpoint(async function handler(
     .map((fm) => fm.modelId)
     .includes(modelVersion.modelId);
 
-  // Base-model rule wins over the version's own fee: derivatives inherit the
-  // base model's licensing, and the base version itself resolves to its own row.
-  // TODO: support coexisting base-model + per-version fees (split payouts,
-  // additive amounts, derivative opt-out, etc.). Today the upsert path blocks
-  // children from setting their own fee when a rule covers them, so this branch
-  // only sees one or the other in practice.
+  // Licensing-fee resolution (per resource). One "base/lineage" component — the
+  // fee owed to the licensor of whatever this version derives from — plus an
+  // optional "version" surcharge the creator stacks on top; each settles to its
+  // own recipient. `fees` carries the full breakdown; the orchestrator charges
+  // the sum and pays out each entry separately. The base/lineage component is
+  // resolved most-specific first:
+  //   1. this version is a LicensingRoot -> its own fee IS the lineage fee,
+  //      settled to itself, and it escapes the (baseModel, modelType) rule
+  //      (e.g. an ecosystem's Turbo checkpoint charges its rate, not the base's).
+  //   2. licensingSourceVersionId set -> the chosen root's fee, settled to it
+  //      (a checkpoint built on Turbo inherits the Turbo rate).
+  //   3. otherwise the (baseModel, modelType) BaseModelLicensingFee rule.
+  const isLicensingRoot =
+    Flags.hasFlag(modelVersion.versionFlags, ModelVersionFlag.LicensingRoot) &&
+    modelVersion.licensingFee != null &&
+    modelVersion.licensingFee > 0;
+  const hasSourceRule =
+    !isLicensingRoot &&
+    modelVersion.licensingSourceVersionId != null &&
+    modelVersion.sourceLicensingFee != null &&
+    modelVersion.sourceLicensingFee > 0;
   const hasBaseRule =
+    !isLicensingRoot &&
+    !hasSourceRule &&
     modelVersion.baseLicensingFeeRecipientId != null &&
     modelVersion.baseLicensingFee != null &&
     modelVersion.baseLicensingFee > 0;
-  const hasOwnFee = modelVersion.licensingFee != null && modelVersion.licensingFee > 0;
-  const fee = hasBaseRule
-    ? {
-        amount: modelVersion.baseLicensingFee!,
-        type: lowerFirst(modelVersion.baseLicensingFeeType ?? 'PerImageBuzz'),
-        settlementCurrency: lowerFirst(modelVersion.baseLicensingFeeSettlementCurrency ?? 'Buzz'),
-        recipientModelVersionId: modelVersion.baseLicensingFeeRecipientId!,
-      }
-    : hasOwnFee
-    ? {
-        amount: modelVersion.licensingFee!,
-        type: lowerFirst(modelVersion.licensingFeeType ?? 'PerImageBuzz'),
-        settlementCurrency: lowerFirst(modelVersion.licensingFeeSettlementCurrency ?? 'Buzz'),
-        recipientModelVersionId: modelVersion.id,
-      }
-    : undefined;
+
+  // When the base/lineage component already settles to this version itself (it's
+  // the root), its own fee IS that component — don't double-count it as a surcharge.
+  const isBaseRecipientItself =
+    isLicensingRoot ||
+    (hasBaseRule && modelVersion.baseLicensingFeeRecipientId === modelVersion.id);
+  const hasOwnFee =
+    modelVersion.licensingFee != null && modelVersion.licensingFee > 0 && !isBaseRecipientItself;
+
+  const fees: Array<{
+    role: 'baseModel' | 'version';
+    amount: number;
+    type: string;
+    settlementCurrency: string;
+    recipientModelVersionId: number;
+  }> = [];
+  if (isLicensingRoot) {
+    fees.push({
+      role: 'baseModel',
+      amount: modelVersion.licensingFee!,
+      type: lowerFirst(modelVersion.licensingFeeType ?? 'PerImageBuzz'),
+      settlementCurrency: lowerFirst(modelVersion.licensingFeeSettlementCurrency ?? 'Buzz'),
+      recipientModelVersionId: modelVersion.id,
+    });
+  } else if (hasSourceRule) {
+    fees.push({
+      role: 'baseModel',
+      amount: modelVersion.sourceLicensingFee!,
+      type: lowerFirst(modelVersion.sourceLicensingFeeType ?? 'PerImageBuzz'),
+      settlementCurrency: lowerFirst(modelVersion.sourceLicensingFeeSettlementCurrency ?? 'Buzz'),
+      recipientModelVersionId: modelVersion.licensingSourceVersionId!,
+    });
+  } else if (hasBaseRule) {
+    fees.push({
+      role: 'baseModel',
+      amount: modelVersion.baseLicensingFee!,
+      type: lowerFirst(modelVersion.baseLicensingFeeType ?? 'PerImageBuzz'),
+      settlementCurrency: lowerFirst(modelVersion.baseLicensingFeeSettlementCurrency ?? 'Buzz'),
+      recipientModelVersionId: modelVersion.baseLicensingFeeRecipientId!,
+    });
+  }
+  if (hasOwnFee) {
+    fees.push({
+      role: 'version',
+      amount: modelVersion.licensingFee!,
+      type: lowerFirst(modelVersion.licensingFeeType ?? 'PerImageBuzz'),
+      settlementCurrency: lowerFirst(modelVersion.licensingFeeSettlementCurrency ?? 'Buzz'),
+      recipientModelVersionId: modelVersion.id,
+    });
+  }
+
+  // Legacy single-fee field. Kept until the orchestrator reads `fees`; mirrors
+  // the old base-rule-wins behavior so existing consumers don't double-charge.
+  const fee = fees.find((f) => f.role === 'baseModel') ?? fees[0];
 
   const payoutEnabled =
     !Flags.hasFlag(modelVersion.userFlags, UserFlag.DisablePayout) &&
@@ -322,6 +386,7 @@ export default MixedAuthEndpoint(async function handler(
     minor: modelVersion.minor,
     sfwOnly: modelVersion.sfwOnly,
     fee,
+    fees,
     payoutEnabled,
   };
   res.status(200).json(data);

@@ -64,6 +64,7 @@ export const imagesQueryParamSchema = z
     modelVersionId: numericString(),
     notPublished: booleanString(),
     publishedOnly: booleanString(),
+    pendingReviewOnly: booleanString(),
     period: z.enum(MetricTimeframe),
     periodMode: z.enum(['stats', 'published']).optional(),
     postId: numericString(),
@@ -128,13 +129,16 @@ export const useQueryImages = (
   filters ??= {};
   const browsingSettingsAddons = useBrowsingSettingsAddons();
 
+  // `!!currentUser` guards against `filters.userId === currentUser?.id` being
+  // `undefined === undefined` for anonymous users, which treats them as the owner.
+  const isOwnImages =
+    !!currentUser &&
+    ((!!filters.username &&
+      filters.username.toLowerCase() === currentUser.username?.toLowerCase()) ||
+      filters.userId === currentUser.id);
   const excludedTagIds = [
     ...(filters.excludedTagIds ?? []),
-    ...((filters.username &&
-      filters.username.toLowerCase() === currentUser?.username?.toLowerCase()) ||
-    filters.userId === currentUser?.id
-      ? []
-      : browsingSettingsAddons.settings.excludedTagIds ?? []),
+    ...(isOwnImages ? [] : browsingSettingsAddons.settings.excludedTagIds ?? []),
   ].filter(isDefined);
 
   const { data, isLoading, ...rest } = trpc.image.getInfinite.useInfiniteQuery(

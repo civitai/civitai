@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { createBuzzClient } from '@civitai/buzz';
 import dayjs from '~/shared/utils/dayjs';
 import { v4 as uuid } from 'uuid';
 import { env } from '~/env/server';
@@ -27,7 +28,6 @@ import type {
   // GetTransactionsReportResultSchema,
   GetTransactionsReportSchema,
   GetUserBuzzAccountSchema,
-  GetUserBuzzTransactionsResponse,
   GetUserBuzzTransactionsSchema,
   PreviewMultiAccountTransactionInput,
   // PreviewMultiAccountTransactionResponse,
@@ -58,8 +58,6 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
-import { formatDate, stripTime } from '~/utils/date-helpers';
-import { QS } from '~/utils/qs';
 import { getUserByUsername, getUsers } from './user.service';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { grantCosmetics } from '~/server/services/cosmetic.service';
@@ -71,37 +69,28 @@ import { toPascalCase } from '~/utils/string-helpers';
 
 type AccountType = 'User' | 'CreatorProgramBank' | 'CashPending' | 'CashSettled';
 
-function baseEndpoint() {
-  if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
-  return env.BUZZ_ENDPOINT;
-}
-
-async function buzzApiFetch(urlPart: string, init?: RequestInit | undefined) {
-  return withRetries(async () => {
-    const url = `${baseEndpoint()}${urlPart}`;
-    const response = await fetch(url, init);
-    if (!response.ok) {
-      if (isDev) {
-        console.log({ url, status: response.status, statusText: response.statusText });
-      }
-      switch (response.status) {
-        case 400:
-          throw throwBadRequestError();
-        case 404:
-          throw new TRPCError({ code: 'NOT_FOUND', message: 'Not found' });
-        case 409:
-          throw throwBadRequestError('There is a conflict with the transaction');
-        default:
-          throw new TRPCError({
-            code: 'INTERNAL_SERVER_ERROR',
-            message: 'An unexpected error ocurred, please try again later',
-          });
-      }
+// Shared buzz-service client. Typed per-endpoint methods (buzzService.getAccount,
+// getUserBuzzByAccountType, createTransaction, …) are used directly by the wrappers below;
+// `mapError` centralises the buzz-status → tRPC-error mapping the app relied on.
+export const buzzService = createBuzzClient({
+  endpoint: env.BUZZ_ENDPOINT,
+  log: isDev ? (message, ...args) => console.log(message, ...args) : undefined,
+  mapError: (error) => {
+    switch (error.status) {
+      case 400:
+        throw throwBadRequestError();
+      case 404:
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Not found' });
+      case 409:
+        throw throwBadRequestError('There is a conflict with the transaction');
+      default:
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'An unexpected error ocurred, please try again later',
+        });
     }
-
-    return await response.json();
-  });
-}
+  },
+});
 
 type BuzzAccountsResponse<T extends BuzzAccountType = BuzzAccountType> = Record<T, number>;
 type BuzzAccountResponse = {
@@ -111,25 +100,21 @@ type BuzzAccountResponse = {
 };
 
 async function getUserBuzzAccountByAccountId(accountId: number): Promise<BuzzAccountResponse> {
-  return buzzApiFetch(`/account/${accountId}`);
+  return buzzService.getAccount(accountId);
 }
 
 async function getUserBuzzAccountByAccountType(
   accountId: number,
   accountType: BuzzAccountType
 ): Promise<BuzzAccountResponse> {
-  return buzzApiFetch(`/account/${BuzzTypes.toApiType(accountType)}/${accountId}`);
+  return buzzService.getUserBuzzByAccountType(accountId, accountType);
 }
 
 export async function getUserBuzzAccountByAccountTypes<T extends BuzzAccountType>(
   accountId: number,
   accountTypes: T[]
 ): Promise<BuzzAccountsResponse<T>> {
-  const data: Record<string, number> = await buzzApiFetch(
-    `/user/${accountId}/accounts?${accountTypes
-      .map((t) => `accountType=${BuzzTypes.toApiType(t)}`)
-      .join('&')}`
-  );
+  const data = await buzzService.getUserAccounts(accountId, accountTypes);
   return Object.entries(data).reduce((acc, [key, value]) => {
     const type = BuzzTypes.toClientType(key as BuzzApiAccountType);
     if (!type) return acc;
@@ -264,20 +249,18 @@ export async function getUserBuzzTransactions({
   accountType,
   ...query
 }: GetUserBuzzTransactionsSchema & { accountId: number; accountType?: BuzzAccountType }) {
-  const queryString = QS.stringify({
-    ...query,
-    start: query.start?.toISOString(),
-    end: query.end?.toISOString(),
-    cursor: query.cursor?.toISOString(),
-    descending: true,
-  });
-
   // Parse incoming data
-  const data: GetUserBuzzTransactionsResponse = await buzzApiFetch(
-    `/account/${
-      accountType ? `${BuzzTypes.toApiType(accountType)}/` : ''
-    }${accountId}/transactions?${queryString}`
-  );
+  const data = await buzzService.getAccountTransactions(accountId, {
+    accountType,
+    query: {
+      type: query.type,
+      cursor: query.cursor,
+      start: query.start,
+      end: query.end,
+      limit: query.limit,
+      descending: true,
+    },
+  });
 
   const { cursor, transactions } = getUserBuzzTransactionsResponse.parse(data);
 
@@ -367,23 +350,15 @@ export async function createBuzzTransaction({
     throw throwInsufficientFundsError(insufficientFundsErrorMsg);
   }
 
-  const body = JSON.stringify(
-    BuzzTypes.getApiTransaction({
-      ...payload,
-      details: {
-        ...(details ?? {}),
-        entityId: entityId ?? details?.entityId,
-        entityType: entityType ?? details?.entityType,
-      },
-      amount,
-      toAccountId,
-    })
-  );
-
-  const data: { transactionId: string | null } = await buzzApiFetch('/transaction', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body,
+  const data = await buzzService.createTransaction({
+    ...payload,
+    details: {
+      ...(details ?? {}),
+      entityId: entityId ?? details?.entityId,
+      entityType: entityType ?? details?.entityType,
+    },
+    amount,
+    toAccountId,
   });
 
   return data;
@@ -480,23 +455,36 @@ export async function createBuzzTransactionMany(
 ) {
   // Protect against transactions that are not valid. A transaction with from === to
   // breaks the entire request.
-  const validTransactions = transactions
-    .map((t) => BuzzTypes.getApiTransaction(t))
-    .filter(
-      (t) =>
-        t.toAccountId !== undefined &&
-        (t.fromAccountId !== t.toAccountId || t.fromAccountType === 'cashPending') &&
-        t.amount > 0
-    );
-  const body = JSON.stringify(validTransactions);
+  const validTransactions = transactions.filter(
+    (t) => t.toAccountId !== undefined && t.fromAccountId !== t.toAccountId && t.amount > 0
+  );
 
-  const data: { transactions: { transactionId: string }[] } = await buzzApiFetch(`/transactions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body,
-  });
+  const result = await buzzService.createTransactions(validTransactions);
 
-  return data;
+  // The batch endpoint only reports successes + conflicts. A `conflict` is the idempotency guard
+  // (a duplicate externalTransactionId — the money already moved), so it's benign. But an
+  // `insufficientFunds` (or any other non-success) result is dropped from BOTH arrays: the money did
+  // NOT move and it is otherwise invisible. Reconcile the counts and surface any shortfall — we can't
+  // name the exact failures because successes come back as opaque ids, not externalTransactionIds.
+  const unaccounted =
+    validTransactions.length - result.transactions.length - result.conflicts.length;
+  if (unaccounted > 0) {
+    logToAxiom({
+      type: 'buzz-transaction-many-dropped',
+      expected: validTransactions.length,
+      succeeded: result.transactions.length,
+      conflicted: result.conflicts.length,
+      unaccounted,
+      batch: validTransactions.slice(0, 500).map((t) => ({
+        externalTransactionId: t.externalTransactionId,
+        fromAccountId: t.fromAccountId,
+        toAccountId: t.toAccountId,
+        amount: t.amount,
+      })),
+    }).catch(() => {});
+  }
+
+  return result;
 }
 
 const MAX_RETRIES = 3;
@@ -546,7 +534,8 @@ export async function completeStripeBuzzTransaction({
     });
     const buzzAmount = totalCustomBuzz;
 
-    const body = JSON.stringify({
+    stage = 'buzzApi.transaction';
+    const data = (await buzzService.createTransaction({
       amount: buzzAmount,
       fromAccountId: 0,
       toAccountId: userId,
@@ -561,14 +550,7 @@ export async function completeStripeBuzzTransaction({
       }A total of ${numberWithCommas(buzzAmount)} Buzz was added to your account.`,
       details: { ...(details ?? {}), stripePaymentIntentId },
       externalTransactionId: paymentIntent.id,
-    });
-
-    stage = 'buzzApi.transaction';
-    const data: { transactionId: string } = await buzzApiFetch(`/transaction`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-    });
+    })) as { transactionId: string };
 
     // Write transactionId immediately so any subsequent failure lets the retry
     // path skip the main grant via the early-return above.
@@ -663,21 +645,7 @@ export async function refundTransaction(
   description?: string,
   details?: MixedObject
 ) {
-  const body = JSON.stringify({
-    description,
-    details,
-  });
-
-  const data: { transactionId: string } = await buzzApiFetch(
-    `/transactions/${transactionId}/refund`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-    }
-  );
-
-  return data;
+  return buzzService.refundTransaction(transactionId, { description, details });
 }
 
 export async function createMultiAccountBuzzTransaction(
@@ -685,25 +653,13 @@ export async function createMultiAccountBuzzTransaction(
 ) {
   // Default user acc:
   input.toAccountType = input.toAccountType ?? 'yellow'; // Default to bank if not provided
-  const body = JSON.stringify(BuzzTypes.getApiTransaction(input));
-
-  const data = await buzzApiFetch(`/multi-transactions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body,
-  });
+  const data = await buzzService.createMultiTransaction(input);
 
   return createMultiAccountBuzzTransactionResponse.parse(data);
 }
 
 export async function refundMultiAccountTransaction(input: RefundMultiAccountTransactionInput) {
-  const body = JSON.stringify(input);
-
-  const data = await buzzApiFetch(`/multi-transactions/refund`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body,
-  });
+  const data = await buzzService.refundMultiTransaction(input);
 
   return refundMultiAccountTransactionResponse.parse(data);
 }
@@ -711,27 +667,14 @@ export async function refundMultiAccountTransaction(input: RefundMultiAccountTra
 export async function previewMultiAccountTransaction(input: PreviewMultiAccountTransactionInput) {
   const { fromAccountId, fromAccountTypes, amount } = input;
 
-  const queryParams = new URLSearchParams({
-    fromAccountId: fromAccountId.toString(),
-    amount: amount.toString(),
+  const data = await buzzService.previewMultiTransaction({
+    fromAccountId,
+    amount,
+    fromAccountTypes,
   });
-
-  // Add multiple fromAccountTypes parameters
-  fromAccountTypes.forEach((accountType) => {
-    queryParams.append('fromAccountTypes', BuzzTypes.toApiType(accountType));
-  });
-
-  const data = await buzzApiFetch(`/multi-transactions/preview?${queryParams.toString()}`);
 
   return previewMultiAccountTransactionResponse.parse(data);
 }
-
-type AccountSummaryRecord = {
-  accountId: number;
-  date: Date;
-  balance: number;
-  lifetimeBalance: number;
-};
 
 export async function getAccountSummary({
   accountIds,
@@ -747,18 +690,10 @@ export async function getAccountSummary({
   window?: 'hour' | 'day' | 'week' | 'month' | 'year';
 }) {
   if (!Array.isArray(accountIds)) accountIds = [accountIds];
-  const queryParams: [string, string][] = [['descending', 'false']];
-  if (start) queryParams.push(['start', stripTime(start)]);
-  if (end) queryParams.push(['end', stripTime(end)]);
-  if (window) queryParams.push(['window', window]);
-  for (const accountId of accountIds) queryParams.push(['accountId', accountId.toString()]);
 
-  const dataRaw: Record<string, { data: AccountSummaryRecord[]; cursor: null }> =
-    await buzzApiFetch(
-      `/account/${BuzzTypes.toApiType(accountType)}/summary?${new URLSearchParams(
-        queryParams
-      ).toString()}`
-    );
+  const dataRaw = await buzzService.getAccountSummary(accountType, {
+    query: { accountId: accountIds, descending: false, start, end, window },
+  });
 
   return Object.fromEntries(
     Object.entries(dataRaw).map(([accountId, { data }]) => [
@@ -796,20 +731,10 @@ export async function getTopContributors({
   all?: boolean;
 }) {
   if (!Array.isArray(accountIds)) accountIds = [accountIds];
-  const queryParams: [string, string][] = [['limit', limit.toString()]];
-  if (start) queryParams.push(['start', start.toISOString()]);
-  if (end) queryParams.push(['end', end.toISOString()]);
-  if (all) queryParams.push(['all', 'true']);
-  for (const accountId of accountIds) queryParams.push(['accountId', accountId.toString()]);
 
-  const dataRaw: Record<
-    string,
-    { accountType: BuzzApiAccountType; accountId: number; contributedBalance: number }[]
-  > = await buzzApiFetch(
-    `/account/${BuzzTypes.toApiType(accountType)}/contributors?${new URLSearchParams(
-      queryParams
-    ).toString()}`
-  );
+  const dataRaw = await buzzService.getContributors(accountType, {
+    query: { accountId: accountIds, limit, start, end, all: all || undefined },
+  });
 
   return Object.fromEntries(
     Object.entries(dataRaw).map(([accountId, contributors]) => [
@@ -820,30 +745,12 @@ export async function getTopContributors({
 }
 
 export async function pingBuzzService() {
-  try {
-    const response = await fetch(`${baseEndpoint()}`, { signal: AbortSignal.timeout(1000) });
-    return response.ok;
-  } catch (error) {
-    console.log('Failed to ping Buzz service');
-    console.error(error);
-    return false;
-  }
+  return buzzService.ping();
 }
 
 export async function getTransactionByExternalId(externalId: string) {
-  const response = await fetch(`${baseEndpoint()}/transactions/${externalId}`);
-  if (!response.ok) {
-    switch (response.status) {
-      case 404:
-        return null;
-      default:
-        throw new TRPCError({
-          code: 'INTERNAL_SERVER_ERROR',
-          message: 'An unexpected error ocurred, please try again later',
-        });
-    }
-  }
-  const data = await response.json();
+  const data = await buzzService.getTransactionByExternalId(externalId);
+  if (data === null) return null;
   return getBuzzTransactionResponse.parse(data);
 }
 
@@ -1154,7 +1061,8 @@ export const getDailyCompensationRewardByUser = async ({
     },
   });
 
-  if (!clickhouse || !modelVersions.length) return [];
+  const hasPublishedResources = modelVersions.length > 0;
+  if (!clickhouse || !modelVersions.length) return { resources: [], hasPublishedResources };
 
   const minDate = dayjs.utc(date).startOf('day').startOf('month').toDate();
   const maxDate = dayjs.utc(date).endOf('day').endOf('month').toDate();
@@ -1182,11 +1090,11 @@ export const getDailyCompensationRewardByUser = async ({
     ORDER BY date DESC, total DESC
   `;
 
-  if (!generationData.length) return [];
+  if (!generationData.length) return { resources: [], hasPublishedResources };
 
   // cashData totals are in pennies — CH stores cashSettled amounts in
   // tenths-of-a-penny, so divide by 10.
-  return modelVersions
+  const resources = modelVersions
     .map(({ model, ...version }) => {
       const versionRows = generationData.filter((x) => x.modelVersionId === version.id);
       const buzzByDate = new Map<string, number>();
@@ -1220,6 +1128,8 @@ export const getDailyCompensationRewardByUser = async ({
     })
     .filter((v) => v.data.length > 0 || v.cashCents > 0)
     .sort((a, b) => b.totalSum + b.cashCents - (a.totalSum + a.cashCents));
+
+  return { resources, hasPublishedResources };
 };
 
 export async function claimWatchedAdReward({
@@ -1273,14 +1183,12 @@ export async function getTransactionsReport({
   // End date is always the start of the next day
   const endDate = dayjs().add(1, 'day').startOf('day');
 
-  const query = QS.stringify({
-    ...input,
-    accountType: BuzzTypes.toApiType(input.accountType ?? 'yellow'),
-    start: startDate.format('YYYY-MM-DD'),
-    end: endDate.format('YYYY-MM-DD'),
+  const data = await buzzService.getUserTransactionsReport(userId, {
+    accountType: input.accountType ?? 'yellow',
+    window: input.window,
+    start: startDate.toDate(),
+    end: endDate.toDate(),
   });
-
-  const data = await buzzApiFetch(`/user/${userId}/transactions/report?${query}`);
 
   return getTransactionsReportResultSchema.parse(data);
 }
@@ -1295,18 +1203,13 @@ export async function getCounterPartyBuzzTransactions({
     async () => {
       // if (isProd) logToAxiom({ type: 'buzz', id: accountId }, 'connection-testing').catch();
 
-      const queryString = QS.stringify({
-        accountId: counterPartyAccountId,
-        accountType: BuzzTypes.toApiType(counterPartyAccountType ?? 'yellow'),
+      return buzzService.getCounterparties<GetBuzzMovementsBetweenAccountsResponse>(accountId, {
+        accountType,
+        query: {
+          accountId: counterPartyAccountId,
+          accountType: counterPartyAccountType ?? 'yellow',
+        },
       });
-
-      const data: GetBuzzMovementsBetweenAccountsResponse = await buzzApiFetch(
-        `/account/${
-          accountType ? `${BuzzTypes.toApiType(accountType)}/` : ''
-        }${accountId}/counterparties?${queryString}`,
-        {}
-      );
-      return data;
     },
     3,
     1500
@@ -1398,17 +1301,7 @@ export const grantBuzzPurchase = async ({
 };
 
 export async function getMultiAccountTransactionsByPrefix(externalTransactionIdPrefix: string) {
-  const queryParams = new URLSearchParams({
-    externalTransactionIdPrefix,
-  });
-
-  const data: {
-    transactionId: string;
-    externalTransactionId: string;
-    accountType: BuzzApiAccountType;
-    accountId: number;
-    amount: number;
-  }[] = await buzzApiFetch(`/multi-transactions?${queryParams.toString()}`);
+  const data = await buzzService.listMultiTransactions({ externalTransactionIdPrefix });
 
   return data.map((item) => ({
     ...item,
@@ -1423,19 +1316,13 @@ export async function getAccountsBalances({
   accountIds: number[];
   accountTypes: BuzzAccountType[];
 }) {
-  const queryParams: [string, string][] = [];
   if (accountIds.length === 0) return [];
   if (accountTypes.length === 0) return [];
 
-  accountIds.forEach((id) => queryParams.push(['accountId', id.toString()]));
-  accountTypes.forEach((type) => queryParams.push(['accountType', BuzzTypes.toApiType(type)]));
-  const queryString = new URLSearchParams(queryParams);
-
-  const data: {
-    accountId: number;
-    accountType: BuzzApiAccountType;
-    balance: number;
-  }[] = await buzzApiFetch(`/account-balances?${queryString.toString()}`);
+  const data = await buzzService.getAccountBalances({
+    accountId: accountIds,
+    accountType: accountTypes,
+  });
 
   return data.map((item) => ({
     ...item,

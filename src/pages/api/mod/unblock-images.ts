@@ -1,6 +1,6 @@
 import { uniq } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import { ImageSort, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';

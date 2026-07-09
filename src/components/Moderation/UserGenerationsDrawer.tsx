@@ -126,7 +126,9 @@ function UserGenerationItem({ request }: { request: WorkflowData }) {
   const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === (params as any).workflow);
 
-  const displayImages = step.succeededOutput;
+  // GeneratedOutput renders 2D media only; PolyGen has its own queue card,
+  // so this moderation grid never sees model3d outputs.
+  const displayImages = step.succeededOutput.filter((img) => img.type !== 'model3d');
   const blockedCount = step.blockedCount;
 
   return (

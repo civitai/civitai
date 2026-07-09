@@ -45,6 +45,8 @@ export const componentTypeConfig: Record<
   UNet: { name: 'UNet', icon: IconBrain, color: 'orange' },
   DiffusionModel: { name: 'Diffusion Model', icon: IconBrain, color: 'orange' },
   CLIPVision: { name: 'CLIP Vision', icon: IconEye, color: 'green' },
+  CLIP: { name: 'CLIP', icon: IconTypography, color: 'violet' },
+  VisionLanguage: { name: 'VLM', icon: IconEye, color: 'grape' },
   ControlNet: { name: 'ControlNet', icon: IconAdjustments, color: 'cyan' },
   Upscaler: { name: 'Upscale Model', icon: IconArrowsMaximize, color: 'teal' },
   Workflow: { name: 'Workflow', icon: IconTopologyRing, color: 'indigo' },
@@ -58,11 +60,13 @@ export const componentTypeConfig: Record<
  */
 export const comfyFileTypeLabels: Record<string, string> = {
   'Text Encoder': 'Text Encoder',
+  'Vision Encoder': 'Vision Encoder',
   UNet: 'UNet',
   'Diffusion Model': 'Diffusion Model',
   CLIPVision: 'CLIP Vision',
   Workflow: 'Workflow',
   Upscaler: 'Upscale Model',
+  'Enhancement LoRA': 'Enhancement LoRA',
 };
 
 /**
@@ -121,6 +125,7 @@ export function filterFileTypeByExtension(value: ModelFileType, fileName: string
   switch (extension) {
     case 'ckpt':
     case 'safetensors':
+    case 'sft':
     case 'pt':
     case 'gguf':
     case 'onnx':
@@ -135,14 +140,17 @@ export function filterFileTypeByExtension(value: ModelFileType, fileName: string
         'ControlNet',
         'Upscaler',
         'Text Encoder',
+        'Vision Encoder',
+        'Enhancement LoRA',
+        'Other',
       ].includes(value);
     case 'zip':
-      return ['Training Data', 'Archive', 'Model', 'Workflow'].includes(value);
+      return ['Training Data', 'Archive', 'Model', 'Workflow', 'Other'].includes(value);
     case 'yml':
     case 'yaml':
     case 'json':
     case 'txt':
-      return ['Config', 'Text Encoder', 'Workflow'].includes(value);
+      return ['Config', 'Text Encoder', 'Workflow', 'Other'].includes(value);
     default:
       return true;
   }
@@ -170,6 +178,7 @@ const SPECIFIC_FALLBACK_TYPES = new Set([
   'ControlNet',
   'Upscaler',
   'Text Encoder',
+  'Vision Encoder',
   'Workflow',
   'Archive',
   'Config',
@@ -267,6 +276,9 @@ export const primaryFileTypesByModelType: Record<ModelType, readonly ModelFileTy
   TextEncoder: ['Model'],
   UNet: ['Model'],
   CLIPVision: ['Model'],
+  VisionLanguage: ['Model', 'Pruned Model'],
+  CLIP: ['Text Encoder', 'Vision Encoder'],
+  LLM: ['Model', 'Pruned Model'],
   Poses: ['Archive', 'Config'],
   Wildcards: ['Archive', 'Config'],
   Workflows: ['Archive', 'Config'],

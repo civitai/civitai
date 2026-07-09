@@ -23,9 +23,23 @@
     "noUncheckedIndexedAccess": false, // TODO swap to true
     "baseUrl": "src",
     "paths": {
-      "~/*": [
-        "./*"
-      ]
+      "~/*": ["./*"],
+      "@civitai/db-schema": ["../packages/civitai-db-schema/src/index"],
+      "@civitai/db-schema/*": ["../packages/civitai-db-schema/src/*"],
+      "@civitai/db": ["../packages/civitai-db/src/index"],
+      "@civitai/db/*": ["../packages/civitai-db/src/*"],
+      "@civitai/redis": ["../packages/civitai-redis/src/index"],
+      "@civitai/redis/*": ["../packages/civitai-redis/src/*"],
+      "@civitai/clickhouse": ["../packages/civitai-clickhouse/src/index"],
+      "@civitai/clickhouse/*": ["../packages/civitai-clickhouse/src/*"],
+      "@civitai/axiom": ["../packages/civitai-axiom/src/index"],
+      "@civitai/axiom/*": ["../packages/civitai-axiom/src/*"],
+      "@civitai/telemetry": ["../packages/civitai-telemetry/src/index"],
+      "@civitai/telemetry/*": ["../packages/civitai-telemetry/src/*"],
+      "@civitai/brand": ["../packages/civitai-brand/src/index"],
+      "@civitai/brand/*": ["../packages/civitai-brand/src/*"],
+      "@civitai/notifications": ["../packages/civitai-notifications/src/index"],
+      "@civitai/notifications/*": ["../packages/civitai-notifications/src/*"]
     },
     "noErrorTruncation": true,
     "plugins": [
@@ -42,7 +56,9 @@
     // "**/*.mjs",
     "scripts/local-dev/*.ts",
     "src",
+    "packages/*/src",
     "tests",
+    "test",
     ".next/types/**/*.ts"
   ],
   "exclude": [
@@ -51,6 +67,7 @@
     "./node_modules/*",
     "src/pages/api/dev-local/*.ts",
     "scripts/local-dev/*.ts",
-    "src/**/__tests__/**"
+    "src/**/__tests__/**",
+    "packages/civitai-ui"
   ]
 }

@@ -23,6 +23,10 @@ import { ModelType } from '~/shared/utils/prisma/enums';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import { findClosest, getRatio } from '~/utils/number-helpers';
 
+// Response header the orchestrator router sets when the generation client is behind; UpdateRequiredWatcher
+// reads it to prompt a refresh. (Rehomed from the deleted auth.constants.ts — it's a generation signal.)
+export const GENERATION_UPDATE_HEADER = 'x-generation-update-required';
+
 // =============================================================================
 // Seed Constants
 // =============================================================================
@@ -494,6 +498,9 @@ export const miscModelTypes: ModelType[] = [
   'Wildcards',
   'Workflows',
   'Detection',
+  'VisionLanguage',
+  'CLIP',
+  'LLM',
   'Other',
 ] as const;
 

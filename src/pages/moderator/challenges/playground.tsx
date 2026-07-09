@@ -1,5 +1,6 @@
 import { Meta } from '~/components/Meta/Meta';
 import { PlaygroundPage } from '~/components/Challenge/Playground/PlaygroundPage';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export default function JudgePlaygroundPage() {
   return (
@@ -9,3 +10,5 @@ export default function JudgePlaygroundPage() {
     </>
   );
 }
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });

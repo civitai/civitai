@@ -1,4 +1,5 @@
 import { vi } from 'vitest';
+import { generateKeyPairSync } from 'crypto';
 
 // Mock @civitai/client to avoid ESM resolution issues
 vi.mock('@civitai/client', () => ({
@@ -55,6 +56,24 @@ vi.mock('@civitai/client', () => ({
   },
 }));
 
+// App Blocks: provision a real RSA keypair so BlockTokenService can sign and
+// tests can verify against the matching public key. Generated once per test
+// process. The public PEM is re-exported so the block-token round-trip test
+// verifies against the exact key the service signed with. (The block-tokens
+// API "503 when keys not configured" test overrides ~/env/server per-test, so
+// these defaults don't interfere with that negative case.)
+const { publicKey: _btPublicKey, privateKey: _btPrivateKey } = generateKeyPairSync('rsa', {
+  modulusLength: 2048,
+});
+export const TEST_BLOCK_TOKEN_PUBLIC_PEM = _btPublicKey.export({
+  type: 'spki',
+  format: 'pem',
+}) as string;
+const TEST_BLOCK_TOKEN_PRIVATE_PEM = _btPrivateKey.export({
+  type: 'pkcs8',
+  format: 'pem',
+}) as string;
+
 // Mock environment variables. Use a Proxy so any env.X access returns a
 // reasonable default — saves us from enumerating every URL/endpoint var that
 // production code happens to read at module load.
@@ -68,6 +87,13 @@ const TEST_ENV_DEFAULTS: Record<string, unknown> = {
   // Same module-load pLimit() trap in signals/wrapper.ts (default 30).
   SIGNALS_CALL_CONCURRENCY: 30,
   LOGGING: '',
+  // App-blocks (git-push / forgejo / manifest) surfaces read these at module
+  // load. Live here so blocks-router tests don't each override the whole env
+  // mock (which drops the S3/MEILI defaults and crashes at import).
+  FORGEJO_PUBLIC_URL: 'https://forgejo.civitai.com',
+  APPS_DOMAIN: 'civit.ai',
+  BLOCK_TOKEN_PRIVATE_KEY: TEST_BLOCK_TOKEN_PRIVATE_PEM,
+  BLOCK_TOKEN_PUBLIC_KEY: TEST_BLOCK_TOKEN_PUBLIC_PEM,
   DATABASE_URL: 'postgres://user:pass@localhost:5432/db',
   NOTIFICATION_DB_URL: 'postgres://user:pass@localhost:5432/notif',
   DATABASE_SSL: false,
@@ -78,6 +104,9 @@ const TEST_ENV_DEFAULTS: Record<string, unknown> = {
   DATABASE_READ_TIMEOUT: 10000,
   REDIS_URL: 'redis://localhost:6379',
   REDIS_SYS_URL: 'redis://localhost:6379',
+  REDIS_SYS_SOCKET_TIMEOUT_MS: 0,
+  REDIS_SYS_READ_TIMEOUT_MS: 2000,
+  REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH: 10000,
   NEXTAUTH_URL: 'http://localhost:3000',
   NEXTAUTH_SECRET: 'test-secret',
   S3_UPLOAD_ENDPOINT: 'http://localhost:9000',
@@ -91,6 +120,28 @@ const TEST_ENV_DEFAULTS: Record<string, unknown> = {
   S3_IMAGE_UPLOAD_KEY: 'test-key',
   S3_IMAGE_UPLOAD_SECRET: 'test-secret',
 };
+
+// The @civitai/redis package validates its own env from `process.env` directly (its own schema),
+// NOT `~/env/server`, so the mock below doesn't reach it. Set the two required vars (the rest have
+// defaults) so loadRedisEnv() succeeds when a test imports the redis shim/package — the `redis`
+// driver itself is still mocked per-test, so no real connection is opened.
+process.env.REDIS_URL ??= 'redis://localhost:6379';
+process.env.REDIS_SYS_URL ??= 'redis://localhost:6379';
+
+// The @civitai/db package (packages/civitai-db/src/env.ts) has the SAME pattern: it owns its env
+// schema and validates `process.env` directly via loadDbEnv(), NOT `~/env/server`, so the Proxy mock
+// below doesn't reach it. Any test whose module graph transitively imports a db factory (e.g.
+// db-lag-helpers → notifDb → getClient → loadDbEnv) throws "[@civitai/db] Invalid environment
+// variables" the moment that import is evaluated — and because that import can race the heavy
+// event-engine graph across the worker pool, the failure was INTERMITTENT (green on lighter-loaded
+// runs, red under CPU pressure / certain run-order). It also surfaced indirectly as the
+// "No 'dbRead' export is defined on the mock" error in fail-soft code paths. Seed the four required
+// URLs (the rest have schema defaults) so loadDbEnv() always succeeds in tests; the Prisma clients
+// themselves are still mocked per-test (or never connected), so no real DB connection is opened.
+process.env.DATABASE_URL ??= 'postgres://user:pass@localhost:5432/db';
+process.env.DATABASE_REPLICA_URL ??= 'postgres://user:pass@localhost:5432/db';
+process.env.NOTIFICATION_DB_URL ??= 'postgres://user:pass@localhost:5432/notif';
+process.env.NOTIFICATION_DB_REPLICA_URL ??= 'postgres://user:pass@localhost:5432/notif';
 
 vi.mock('~/env/server', () => ({
   env: new Proxy(TEST_ENV_DEFAULTS, {
@@ -150,6 +201,14 @@ vi.mock('~/server/prom/client', () => ({
   licenseFeeAmountPaidCounter: promMetricStub(),
   userUpdateCounter: promMetricStub(),
   dbReadFallbackCounter: promMetricStub(),
+  // App-Blocks W4 KV storage metrics (apps.router). promMetricStub() covers the
+  // .inc()/.labels()/.observe()/.startTimer() surface these tests exercise.
+  appStorageOpsCounter: promMetricStub(),
+  appStorageQuotaExceededCounter: promMetricStub(),
+  appStorageLatencyHistogram: promMetricStub(),
+  // sysRedis sentinel observability counters (PR #2331 round-3).
+  sysredisSentinelTopologyChangesCounter: promMetricStub(),
+  sysredisSentinelClientErrorsCounter: promMetricStub(),
 }));
 
 // Mock logging

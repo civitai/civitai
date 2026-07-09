@@ -1,5 +1,15 @@
 import type { TooltipProps } from '@mantine/core';
-import { Alert, Anchor, Badge, Button, Stack, Text, ThemeIcon, Title, Tooltip } from '@mantine/core';
+import {
+  Alert,
+  Anchor,
+  Badge,
+  Button,
+  Stack,
+  Text,
+  ThemeIcon,
+  Title,
+  Tooltip,
+} from '@mantine/core';
 import { IconAlertCircle, IconClock, IconTrash } from '@tabler/icons-react';
 import { useIsMutating } from '@tanstack/react-query';
 import { useRouter } from 'next/router';
@@ -8,6 +18,8 @@ import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
+import { PostingToModel3DCard } from '~/components/Model3D/Posting/PostingToModel3DCard';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { DeletePostButton } from '~/components/Post/DeletePostButton';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { ReorderImagesButton } from '~/components/Post/EditV2/PostReorderImages';
@@ -293,6 +305,8 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         </Text>
       </div>
 
+      {params.model3dId ? <PostingToModel3DCard model3dId={params.model3dId} /> : null}
+
       {isUnpublishedByParent && (
         <Alert
           color="yellow"
@@ -453,3 +467,4 @@ const tooltipProps: Partial<TooltipProps> = {
   position: 'bottom',
   withArrow: true,
 };
+

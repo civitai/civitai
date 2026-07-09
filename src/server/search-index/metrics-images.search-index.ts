@@ -11,6 +11,7 @@ import type { Availability } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { imageOnSiteSql } from '~/server/utils/image-onsite';
+import { buildEntityMetricPerDaySource } from '~/server/flipt/client';
 
 const READ_BATCH_SIZE = 100000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = READ_BATCH_SIZE;
@@ -34,6 +35,10 @@ const filterableAttributes = [
   'modelVersionIds', // auto-detected going forward, auto + postedTo historically
   'modelVersionIdsManual',
   'postedToId',
+  // Filterable on the Model3D gallery page — set from `Post.model3dId` at
+  // index time so /3d-models/[id] can read images via Meilisearch instead of
+  // the slow DB feed path (which has been hitting the 20s ceiling).
+  'model3dId',
   'baseModel',
   'type',
   'hasMeta',
@@ -141,6 +146,7 @@ export type SearchBaseImage = {
   hasMeta: boolean;
   onSite: boolean;
   postedToId?: number;
+  model3dId?: number;
   needsReview: string | null;
   minor?: boolean;
   promptNsfw?: boolean;
@@ -354,6 +360,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         ) AS "hasPositivePrompt",
         ${imageOnSiteSql()} as "onSite",
         p."modelVersionId" as "postedToId",
+        p."model3dId" as "model3dId",
         i."meta"->'extra'->'remixOfId' as "remixOfId"
         FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId"
@@ -384,14 +391,16 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
 
       if (step === 1) {
         logger(`Pulling metrics :: ${indexName} ::`, batchLogKey, subBatchLogKey);
+        const perDaySource = buildEntityMetricPerDaySource(
+          `WHERE entityType = 'Image'
+                AND entityId IN (${batch.join(',')})`
+        );
         const metrics = await clickhouse?.$query<Metrics>(`
             SELECT entityId as "id",
-                   sumIf(total, metricType in ('ReactionLike', 'ReactionHeart', 'ReactionLaugh', 'ReactionCry')) as "reactionCount",
-                   sumIf(total, metricType = 'Comment') as "commentCount",
+                   sumIf(total, metricType in ('Like', 'Heart', 'Laugh', 'Cry')) as "reactionCount",
+                   sumIf(total, metricType = 'commentCount') as "commentCount",
                    sumIf(total, metricType = 'Collection') as "collectedCount"
-            FROM entityMetricDailyAgg
-            WHERE entityType = 'Image'
-              AND entityId IN (${batch.join(',')})
+            FROM ${perDaySource}
             GROUP BY id
           `);
 

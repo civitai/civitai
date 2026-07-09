@@ -24,6 +24,7 @@ export function ManageHomepageButton({
       size="md"
       variant="subtle"
       color="gray"
+      aria-label="Customize homepage"
       {...actionIconProps}
       onClick={() => openManageHomeBlocksModal()}
     >

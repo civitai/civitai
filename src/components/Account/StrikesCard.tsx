@@ -7,6 +7,18 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { UserScoreDisplay } from './UserScoreDisplay';
 
+// The strike email links to `/user/account#strikes`. This card sits near the
+// bottom of the page and only renders its `id` once data loads, so the browser's
+// native hash scroll fires too early. A stable callback ref scrolls the card into
+// view the moment its node mounts (post-load). `scroll-margin-top` (globals.css
+// `[id]`) clears the fixed header. Module-level so its identity stays stable —
+// an inline ref would re-run on every render.
+function scrollToStrikesIfHashed(node: HTMLDivElement | null) {
+  if (node && typeof window !== 'undefined' && window.location.hash === '#strikes') {
+    node.scrollIntoView({ block: 'start' });
+  }
+}
+
 export function StrikesCard() {
   const currentUser = useCurrentUser();
   const scores = currentUser?.meta?.scores;
@@ -32,20 +44,12 @@ export function StrikesCard() {
   const strikes = strikesData?.strikes ?? [];
 
   return (
-    <Card withBorder id="strikes">
+    <Card withBorder id="strikes" ref={scrollToStrikesIfHashed}>
       <Stack gap="lg">
-        {/* Header */}
-        <Group justify="space-between" align="center">
-          <Title order={2}>Account Standing</Title>
-          <Badge
-            color={standingColor}
-            size="lg"
-            variant="light"
-            leftSection={points === 0 ? <IconCheck size={14} /> : undefined}
-          >
-            {standingLabel}
-          </Badge>
-        </Group>
+        {/* Header — the standing badge now lives beside the Strikes subheading below,
+            since it's derived purely from strike points, not the Creator Score. Keeping
+            it up here implied it reflected the (possibly negative) score next to it. */}
+        <Title order={2}>Account Standing</Title>
 
         <Divider />
 
@@ -54,16 +58,28 @@ export function StrikesCard() {
 
         <Divider />
 
-        {/* Strikes Section */}
+        {/* Strikes Section — standing badge sits here, with its full state label
+            (Good Standing / Warning / Restricted), plus the active-count detail when
+            there are strikes. */}
         <Group justify="space-between" align="center">
           <Text size="lg" fw={700}>
             Strikes
           </Text>
-          {points > 0 && (
-            <Badge color={standingColor} size="md" variant="light">
-              {summary?.activeStrikes} active &middot; {points} {points === 1 ? 'point' : 'points'}
+          <Group gap="xs" wrap="nowrap">
+            <Badge
+              color={standingColor}
+              size="md"
+              variant="light"
+              leftSection={points === 0 ? <IconCheck size={14} /> : undefined}
+            >
+              {standingLabel}
             </Badge>
-          )}
+            {points > 0 && (
+              <Badge color={standingColor} size="md" variant="light">
+                {summary?.activeStrikes} active &middot; {points} {points === 1 ? 'point' : 'points'}
+              </Badge>
+            )}
+          </Group>
         </Group>
 
         {strikesLoading ? (

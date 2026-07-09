@@ -5,6 +5,7 @@ import { ComicFeedFilters } from '~/components/Filters/FeedFilters/ComicFeedFilt
 
 import { ChallengeFeedFilters } from '~/components/Filters/FeedFilters/ChallengeFeedFilters';
 import { ImageFeedFilters } from '~/components/Filters/FeedFilters/ImageFeedFilters';
+import { Model3DFeedFilters } from '~/components/Filters/FeedFilters/Model3DFeedFilters';
 import { ModelFeedFilters } from '~/components/Filters/FeedFilters/ModelFeedFilters';
 import { PostFeedFilters } from '~/components/Filters/FeedFilters/PostFeedFilters';
 import { VideoFeedFilters } from '~/components/Filters/FeedFilters/VideoFeedFilters';
@@ -20,6 +21,7 @@ const filterSections = [
   { pathname: '/models', component: <ModelFeedFilters ml="auto" /> },
   { pathname: '/images', component: <ImageFeedFilters ml="auto" hideMediaTypes /> },
   { pathname: '/videos', component: <VideoFeedFilters ml="auto" /> },
+  { pathname: '/3d-models', component: <Model3DFeedFilters ml="auto" /> },
   { pathname: '/posts', component: <PostFeedFilters ml="auto" /> },
   { pathname: '/articles', component: <ArticleFeedFilters ml="auto" /> },
   { pathname: '/bounties', component: <BountyFeedFilters ml="auto" /> },

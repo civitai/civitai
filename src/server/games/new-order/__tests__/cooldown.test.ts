@@ -93,7 +93,10 @@ vi.mock('~/shared/utils/prisma/enums', () => ({ NewOrderRankType: {} }));
 vi.mock('dayjs', () => ({ default: () => ({}) }));
 
 // Import AFTER mocks
-import { checkVotingRateLimit } from '~/server/games/new-order/utils';
+import {
+  checkVotingRateLimit,
+  DEFAULT_VOTING_RATE_LIMIT_CONFIG,
+} from '~/server/games/new-order/utils';
 
 const DEFAULT_CONFIG = {
   perMinute: 40,
@@ -221,16 +224,38 @@ describe('checkVotingRateLimit cooldown behavior', () => {
     expect(mockHandleLogError).toHaveBeenCalled();
   });
 
-  it('denies the vote when rate limit config is missing', async () => {
+  it('falls back to default limits and allows the vote when config is missing', async () => {
+    // A wiped/unseeded `new-order:config` must degrade to defaults, NOT lock
+    // every voter out. Regression guard for the 2026-06-15 incident where the
+    // missing key produced a permanent fake "60s cooldown" for all voters.
     configHolder.value = null;
+    mockRedis.zCard.mockResolvedValue(0);
+
+    const result = await checkVotingRateLimit(42);
+
+    expect(result.allowed).toBe(true);
+    expect(result.cooldownUntil).toBe(0);
+    // Vote recorded under the default sliding windows.
+    expect(mockRedis.zAdd).toHaveBeenCalledTimes(3);
+  });
+
+  it('still enforces default limits (not unlimited) when config is missing', async () => {
+    // Falling back to defaults must not become "allow everything" — a bot that
+    // hammers past the default minute cap still trips a cooldown.
+    configHolder.value = null;
+    mockRedis.pTTL.mockResolvedValueOnce(-2);
+    mockRedis.zCard
+      .mockResolvedValueOnce(DEFAULT_VOTING_RATE_LIMIT_CONFIG.perMinute) // minute at default cap
+      .mockResolvedValueOnce(50) // hour ok
+      .mockResolvedValueOnce(50); // day ok
 
     const result = await checkVotingRateLimit(42);
 
     expect(result.allowed).toBe(false);
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        details: expect.objectContaining({ reason: 'config-not-set' }),
-      })
-    );
+    expect(mockRedis.eval).toHaveBeenCalledWith(expect.stringContaining('PTTL'), {
+      keys: ['new-order:rate-limit:cooldown:42'],
+      arguments: [(10 * 60 * 1000).toString()],
+    });
+    expect(mockRedis.zAdd).not.toHaveBeenCalled();
   });
 });

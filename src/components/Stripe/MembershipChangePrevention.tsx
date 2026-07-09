@@ -326,6 +326,7 @@ export const CancelMembershipBenefitsModal = () => {
   const { vault, isLoading: vaultLoading } = useQueryVault();
   const { subscription, subscriptionLoading, subscriptionPaymentProvider } = useActiveSubscription({
     buzzType: mainBuzzType,
+    checkWhenInBadState: true,
   });
   const buzzConfig = useBuzzCurrencyConfig(mainBuzzType);
   const product = subscription?.product;

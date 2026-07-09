@@ -30,6 +30,8 @@ import { StrawPollNode } from '~/components/TipTap/StrawPollNode';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
 import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
+import { TimestampEditNode } from '~/components/TipTap/TimestampNode';
+import { InsertTimestampControl } from '~/components/RichTextEditor/InsertTimestampControl';
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
 //   sm: '30px',
@@ -135,6 +137,7 @@ export function RichTextEditor({
   const addMedia = addImages || addVideo;
   const addMentions = includeControls.includes('mentions');
   const addPolls = includeControls.includes('polls');
+  const addTimestamp = includeControls.includes('timestamp');
 
   const accepts = useMemo(() => {
     const accepts: MediaType[] = [];
@@ -208,6 +211,9 @@ export function RichTextEditor({
     if (addMentions)
       arr.push(MentionNode.configure({ suggestion: getSuggestions({ defaultSuggestions }) }));
     if (addPolls) arr.push(StrawPollNode);
+    // Always register the timestamp node so pasting/typing `<t:...>` converts
+    // anywhere; the toolbar insert button is gated by the `timestamp` control.
+    arr.push(TimestampEditNode);
 
     return arr;
   }, [
@@ -236,9 +242,26 @@ export function RichTextEditor({
 
   const editorRef = useRef<Editor>();
 
-  // To clear content after a form submission
+  // Sync `value` -> editor content on prop changes. Three cases:
+  //   1. `value` cleared (e.g. after a form submission) -> wipe editor.
+  //   2. Editor was still empty when `value` arrived later (an async
+  //      seed pattern: parent mounts the editor with `''`, then
+  //      `useEffect`s in real HTML from a `useQuery` result). Without
+  //      this branch the editor never picks up the seeded value and
+  //      the user sees an empty body — `useEditor({ content })` only
+  //      reads `content` on mount. Bit `/3d-models/[id]/edit.tsx` -> the
+  //      description silently vanished on Save.
+  //   3. Everything else (user has been typing): leave the editor
+  //      alone so we don't stomp on their cursor / undo stack.
   useEffect(() => {
-    if (!value && editor) editor.commands.clearContent();
+    if (!editor) return;
+    if (!value) {
+      editor.commands.clearContent();
+      return;
+    }
+    if (editor.isEmpty && editor.getHTML() !== value) {
+      editor.commands.setContent(value);
+    }
   }, [editor, value]);
 
   useEffect(() => {
@@ -365,6 +388,11 @@ export function RichTextEditor({
                 <InsertStrawPollControl />
               </RTE.ControlsGroup>
             )}
+            {addTimestamp && (
+              <RTE.ControlsGroup>
+                <InsertTimestampControl />
+              </RTE.ControlsGroup>
+            )}
           </RTE.Toolbar>
         )}
 
@@ -415,7 +443,8 @@ type ControlType =
   | 'video'
   | 'mentions'
   | 'polls'
-  | 'colors';
+  | 'colors'
+  | 'timestamp';
 export type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
   Pick<InputWrapperProps, 'label' | 'labelProps' | 'description' | 'withAsterisk' | 'error'> & {
     value?: string;

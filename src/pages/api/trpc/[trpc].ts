@@ -5,7 +5,10 @@ import { withAxiom } from '@civitai/next-axiom';
 import { isProd } from '~/env/other';
 import { createContext } from '~/server/createContext';
 import { logToAxiom, safeError } from '~/server/logging/client';
+import { recordTrpcError } from '~/server/prom/http-errors';
+import { isClientAbortError } from '~/server/utils/errorHandling';
 import { appRouter } from '~/server/routers';
+import { runWithSerializeCtx, serializeCtxFromRequest } from '~/server/logging/trpc-serialize-log';
 
 export const config = {
   api: {
@@ -40,6 +43,17 @@ const trpcHandler = createNextApiHandler({
     return Object.keys(headers).length > 0 ? { headers } : {};
   },
   onError: async ({ error, type, path, input, ctx, req }) => {
+    // Client disconnected mid-procedure (closed tab / scrolled the feed past /
+    // navigated away) — the request signal aborted and bubbled an AbortError that
+    // tRPC wrapped as INTERNAL_SERVER_ERROR. Not a server fault: skip BOTH the 5xx
+    // counter and the Axiom ingest (was ~0.07/s of mislabeled 500s, e.g.
+    // image.getInfinite). isClientAbortError walks error.cause for the wrapped abort.
+    if (isClientAbortError(error)) return error;
+
+    // Unsampled per-procedure 5xx attribution (no-ops for 4xx-class errors).
+    // Source of truth for the tRPC slice of the 5xx SLO; see http-errors.ts.
+    recordTrpcError(error, path);
+
     if (isProd) {
       // Auth-class rejections (FORBIDDEN / UNAUTHORIZED) are client-fault 4xx
       // responses — the status code already tells the caller + edge what
@@ -59,10 +73,24 @@ const trpcHandler = createNextApiHandler({
       // stringify + Axiom ingest would add event-loop pressure during the exact
       // storm the bulkhead exists to relieve. The `civitai_app_heavy_bulkhead_rejects`
       // gauge already carries the signal, so skip the ingest here too.
+      //
+      // SERVICE_UNAVAILABLE is the transient-upstream mapping (orchestrator 5xx /
+      // network blip → 503; see workflows.ts). It is retry-able + self-describing,
+      // and the continuously-polled `orchestrator.statusUpdate` turns one upstream
+      // blip into a sustained wave of 503 rejects — paying full stack-capture +
+      // JSON.stringify(input) + Axiom ingest per reject would add event-loop
+      // pressure during the exact outage (the same failure mode TOO_MANY_REQUESTS
+      // skips for). The 503 status itself, the preserved `cause`, and the
+      // `redis_commands_inflight` cluster gauge already carry the diagnostic
+      // signal, so the per-reject ingest is pure event-loop cost — skip it. (This
+      // skips ONLY the Axiom ingest: recordTrpcError above still counts the 503 in
+      // civitai_app_http_errors_total{status="503"}, and the client still gets a
+      // real 503.)
       if (
         error.code === 'FORBIDDEN' ||
         error.code === 'UNAUTHORIZED' ||
-        error.code === 'TOO_MANY_REQUESTS'
+        error.code === 'TOO_MANY_REQUESTS' ||
+        error.code === 'SERVICE_UNAVAILABLE'
       ) {
         return error;
       }
@@ -112,5 +140,8 @@ const trpcHandler = createNextApiHandler({
 // handled natively by `allowMethodOverride: true` above (main), so no manual
 // restore step is needed here.
 export default withAxiom(async (req: NextApiRequest, res: NextApiResponse) => {
-  await trpcHandler(req, res);
+  // Seed the request-scoped procedure-path context so the transformer's serialize
+  // step (an awaited descendant of trpcHandler) can name the offending procedure
+  // on an oversized/slow serialize. No-op wrapper when the instrument is disabled.
+  await runWithSerializeCtx(serializeCtxFromRequest(req), () => trpcHandler(req, res));
 }) as NextApiHandler;

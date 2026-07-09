@@ -31,11 +31,8 @@ import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
-import type { EncryptedDataSchema } from '~/server/schema/civToken.schema';
-import { impersonateEndpoint } from '~/shared/constants/auth.constants';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { showErrorNotification } from '~/utils/notifications';
-import { QS } from '~/utils/qs';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -44,7 +41,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
-  const { swapAccount, setOgAccount } = useAccountContext();
+  const { impersonate } = useAccountContext();
 
   const { data: user, isLoading: userLoading } = trpc.user.getCreator.useQuery(
     { username },
@@ -240,23 +237,19 @@ export const UserContextMenu = ({ username }: { username: string }) => {
       message: `-> ${user.username as string} (${user.id})`,
     });
 
-    const tokenResp = await fetch(`${impersonateEndpoint}?${QS.stringify({ userId: user.id })}`);
-    if (!tokenResp.ok) {
-      const errMsg = await tokenResp.text();
+    // Hub-native impersonation (F), centralized in the account context — authorized by mod status alone; the
+    // proxy mints + sets the civ-token (stamped impersonatedBy). No client-held token, no ogAccount.
+    try {
+      await impersonate(user.id); // reloads as the impersonated user on success
+    } catch (e) {
       updateNotification({
         id: notificationId,
         icon: <IconX size={18} />,
         color: 'red',
         title: 'Failed to switch',
-        message: errMsg,
+        message: (e as Error).message,
       });
-      return;
     }
-
-    const tokenJson: { token: EncryptedDataSchema } = await tokenResp.json();
-
-    setOgAccount({ id: currentUser.id, username: currentUser.username ?? '(unk)' });
-    await swapAccount(tokenJson.token);
   };
 
   if (userLoading || !user) {

@@ -64,7 +64,7 @@ export function YellowBuzzMigrationNotice({ children }: { children: React.ReactN
   if (!show) return <>{children}</>;
 
   const redDomain = serverDomains.red;
-  const redUrl = syncAccount(`//${redDomain}/`, '/user/buzz-dashboard');
+  const redUrl = syncAccount(`//${redDomain}/`);
 
   return (
     <Popover

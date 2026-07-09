@@ -116,6 +116,8 @@ import type { ModelMeta } from '~/server/schema/model.schema';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getDefaultModelVersion } from '~/server/services/model-version.service';
+import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
+import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { ModelModifier } from '~/shared/utils/prisma/enums';
@@ -150,7 +152,7 @@ import { Meta } from '~/components/Meta/Meta';
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
-  resolver: async ({ ssg, ctx, session }) => {
+  resolver: async ({ ssg, ctx, session, features }) => {
     const params = (ctx.params ?? {}) as {
       id: string;
       slug: string[];
@@ -275,8 +277,74 @@ export const getServerSideProps = createServerSideProps({
               })
             : null,
           ssg.model.getCollectionShowcase.prefetch({ id }),
+          // Creator-card CLS fix: SSR-prefetch user.getCreator (the SmartCreatorCard
+          // query, keyed by `{ id }`) so it hydrates with the real creator — stats,
+          // rank, links, badges — instead of rendering the zeroed fallback and
+          // growing once the client fetch lands. Simple key, no middleware to
+          // mismatch; fail-soft on miss.
+          model?.user?.id
+            ? ssg.user.getCreator.prefetch({ id: model.user.id }).catch(() => null)
+            : null,
           session ? ssg.user.getEngagedModelVersions.prefetch({ id }) : null,
           session ? ssg.resourceReview.getUserResourceReview.prefetch({ modelId: id }) : null,
+          // App Blocks CLS fix: SSR-prefetch the slot's listForModel query so
+          // the client `useBlockSlot` useQuery hydrates with isLoading already
+          // false on first render — the slot reserves the right height from
+          // real data instead of flashing 0px → full frame (layout shift).
+          // The input MUST match useBlockSlot's exactly (slotId, modelId,
+          // modelType, modelNsfwLevel) or the React Query cache keys won't
+          // line up and hydration won't apply. Cheap: the blocks router gates
+          // on the appBlocks flag and returns [] when dark, and listForModel
+          // itself is the 60s-cached, indexed path. Fail-soft — a prefetch
+          // miss just falls back to the (now reserved-height) loading path.
+          model
+            ? ssg.blocks.listForModel
+                .prefetch({
+                  slotId: 'model.sidebar_top',
+                  modelId: id,
+                  modelType: model.type,
+                  modelNsfwLevel: model.nsfwLevel ?? undefined,
+                })
+                .catch(() => null)
+            : null,
+          // Carousel CLS fix: SSR-prefetch the images query the ModelCarousel
+          // (and the page's own useQueryImages) run client-side, so it hydrates
+          // with isLoading already false — the carousel reserves the right height
+          // from real image dimensions instead of a fixed 600px placeholder that
+          // rarely matches (layout shift). The input MUST match useQueryImages
+          // exactly: the addon-derived excludedTagIds/disablePoi/disableMinor are
+          // resolved from the LIVE addon list at the request's browsing level (not
+          // the DEFAULT constant), or the React Query key won't line up and the
+          // client refetches. Fail-soft on any miss.
+          model && modelVersionIdParsed
+            ? (async () => {
+                const { getBrowsingSettingAddons } = await import('~/server/services/system-cache');
+                const browsingLevel = getServerBrowsingLevel({
+                  canViewNsfw: features?.canViewNsfw ?? false,
+                  user: session?.user,
+                });
+                const addons = await getBrowsingSettingAddons().catch(() => null);
+                if (!addons) return null;
+                const addonSettings = resolveBrowsingSettingsAddons(addons, browsingLevel, {
+                  isModerator: session?.user?.isModerator,
+                });
+                return ssg.image.getInfinite
+                  .prefetchInfinite({
+                    modelVersionId: modelVersionIdParsed as number,
+                    prioritizedUserIds: [model.user.id],
+                    period: 'AllTime',
+                    sort: ImageSort.MostReactions,
+                    limit: CAROUSEL_LIMIT,
+                    pending: true,
+                    include: [],
+                    withMeta: false,
+                    excludedTagIds: addonSettings.excludedTagIds,
+                    disablePoi: addonSettings.disablePoi,
+                    disableMinor: addonSettings.disableMinor,
+                  })
+                  .catch(() => null);
+              })()
+            : null,
         ].filter(Boolean)
       );
     }
@@ -872,7 +940,11 @@ export default function ModelDetailsV2({
                     withinPortal
                   >
                     <Menu.Target>
-                      <LegacyActionIcon className={classes.headerButton} variant="light">
+                      <LegacyActionIcon
+                        className={classes.headerButton}
+                        variant="light"
+                        aria-label="Model options"
+                      >
                         <IconDotsVertical size={20} />
                       </LegacyActionIcon>
                     </Menu.Target>

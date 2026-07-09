@@ -8,6 +8,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import * as z from 'zod';
 import { Text, Card, Badge, Group } from '@mantine/core';
 import { useStepper } from '~/hooks/useStepper';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -77,6 +78,8 @@ function ReportCsamUserPage() {
     </CsamProvider>
   );
 }
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default Page(ReportCsamUserPage, {
   footer: null,

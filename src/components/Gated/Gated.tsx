@@ -21,7 +21,7 @@ import {
   hasPublicBrowsingLevel,
   hasSafeBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
-import { useSession } from 'next-auth/react';
+import { useSession } from '~/providers/SessionProvider';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { Meta, type MetaProps } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';

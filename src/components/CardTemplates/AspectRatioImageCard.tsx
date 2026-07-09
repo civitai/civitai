@@ -59,6 +59,16 @@ export type AspectRatioImageCardProps<T extends DialogKey> = {
   target?: string;
   isRemix?: boolean;
   explain?: boolean;
+  /**
+   * Force the corner browsing-level badge to render on every card, not just
+   * mod/owner views of safe content. Mirrors `ImageGuard2.BlurToggle`'s
+   * `alwaysVisible`. With this on, the corner slot is a static level
+   * indicator; the click-to-reveal toggle on blurred content stays on the
+   * centered "This image is rated X" overlay rendered by ImageGuard2.
+   */
+  alwaysVisibleBadge?: boolean;
+  /** Accessible fallback alt text when the image itself has no name (e.g. the card's title). */
+  alt?: string;
 } & ContentTypeProps;
 
 const IMAGE_CARD_WIDTH = 450;
@@ -80,6 +90,8 @@ export function AspectRatioImageCard<T extends DialogKey>({
   target,
   isRemix,
   explain,
+  alwaysVisibleBadge,
+  alt,
 }: AspectRatioImageCardProps<T>) {
   const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
 
@@ -99,6 +111,9 @@ export function AspectRatioImageCard<T extends DialogKey>({
                 onClick={onClick}
                 routedDialog={routedDialog}
                 className={styles.linkOrClick}
+                // No-image branch already contains visible "No Image" text; only
+                // override the name when the caller supplied a semantic title.
+                aria-label={alt || undefined}
               >
                 <div className="flex h-full items-center justify-center">
                   <Text c="dimmed">No Image</Text>
@@ -138,6 +153,10 @@ export function AspectRatioImageCard<T extends DialogKey>({
                   routedDialog={routedDialog}
                   className={styles.linkOrClick}
                   target={target}
+                  // Prefer the caller-supplied `alt` (a semantic title, e.g. the
+                  // model name) over the raw image name (often an upload filename).
+                  // `||` (not `??`) so an empty-string name can't yield an empty label.
+                  aria-label={alt || image.name || 'View media'}
                 >
                   {!safe ? (
                     image.hash ? (
@@ -147,7 +166,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                         metadata={image.metadata as MixedObject}
                         src={image.url}
                         name={image.name ?? image.id.toString()}
-                        alt={image.name ?? undefined}
+                        alt={image.name ?? alt ?? undefined}
                         type={image.type}
                         imageId={image.id}
                         thumbnailUrl={image.thumbnailUrl}
@@ -165,7 +184,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                       metadata={image.metadata as MixedObject}
                       src={image.url}
                       name={image.name ?? image.id.toString()}
-                      alt={image.name ?? undefined}
+                      alt={image.name ?? alt ?? undefined}
                       type={image.type}
                       imageId={image.id}
                       thumbnailUrl={image.thumbnailUrl}
@@ -192,7 +211,10 @@ export function AspectRatioImageCard<T extends DialogKey>({
                   )}
                 </LinkOrClick>
                 <div className={cardStyles.header}>
-                  <ImageGuard2.BlurToggle className={cardStyles.chip} />
+                  <ImageGuard2.BlurToggle
+                    className={cardStyles.chip}
+                    alwaysVisible={alwaysVisibleBadge}
+                  />
                   {typeof header === 'function' ? header({ safe }) : header}
                 </div>
                 {footer && (
@@ -221,6 +243,7 @@ export function LinkOrClick<T extends DialogKey>({
   routedDialog,
   className,
   target,
+  'aria-label': ariaLabel,
 }: {
   href?: string;
   onClick?: React.MouseEventHandler;
@@ -228,17 +251,18 @@ export function LinkOrClick<T extends DialogKey>({
   routedDialog?: RoutedDialogProps<T>;
   className?: string;
   target?: string;
+  'aria-label'?: string;
 }) {
   return href ? (
-    <NextLink href={href} className={className} target={target}>
+    <NextLink href={href} className={className} target={target} aria-label={ariaLabel}>
       {children}
     </NextLink>
   ) : routedDialog ? (
-    <RoutedDialogLink {...routedDialog} className={className}>
+    <RoutedDialogLink {...routedDialog} className={className} aria-label={ariaLabel}>
       {children}
     </RoutedDialogLink>
   ) : onClick ? (
-    <button onClick={onClick} className={className}>
+    <button onClick={onClick} className={className} aria-label={ariaLabel}>
       {children}
     </button>
   ) : (

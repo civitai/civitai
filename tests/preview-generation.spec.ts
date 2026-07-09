@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { storageStatePath } from './preview-fixtures';
+import { retryFlaky } from './preview-retry';
 
 /**
  * Generation cost-quote e2e for a deployed PR preview.
@@ -45,33 +46,45 @@ test.describe('generation cost quote (gold)', () => {
 
   // 1. Primary, network-based: whatIf fires on /generate load and quotes a cost.
   test('whatIfFromGraph fires on /generate and returns a numeric cost', async ({ page }) => {
-    // Arm the response listener BEFORE navigating so an on-load fire isn't missed.
-    // 45s (was 25s): whatIf is the heaviest client-side flow — page load + hydrate +
-    // form init + resource resolve + orchestrator round-trip must all complete before
-    // it fires. On a CPU-throttled preview pod a slow window pushed this past 25s and
-    // it hard-failed (both attempts). 45s lets a slow window flake-and-recover; the
-    // orchestrator itself is fast (~57ms), so this never approaches 45s when healthy.
-    const whatIfResponse = page.waitForResponse(
-      (r) => r.url().includes(WHATIF_URL) && r.status() === 200,
-      { timeout: 45_000 }
+    // /generate is the heaviest SSR page; on a cold/contended single-replica preview
+    // pod the load+hydrate can exceed the whatIf wait, and Playwright's test-level
+    // retries fire within seconds — too fast to outlast a load spike. Retry the whole
+    // navigate+wait with backoff so a transient spike is ridden out (the assertion
+    // must still pass; a sustained failure surfaces after the attempts). Extend the
+    // per-test timeout to fit ~2 attempts of the 45s wait + navigation + backoff.
+    test.setTimeout(200_000);
+    const { body } = await retryFlaky(
+      'whatIf on /generate',
+      async () => {
+        // Arm the response listener BEFORE navigating so an on-load fire isn't missed.
+        // 45s: whatIf is the heaviest client-side flow — page load + hydrate + form
+        // init + resource resolve + orchestrator round-trip must complete before it
+        // fires. The orchestrator itself is fast (~57ms), so when healthy this never
+        // approaches 45s — the budget is for a cold-pod slow window.
+        const whatIfResponse = page.waitForResponse(
+          (r) => r.url().includes(WHATIF_URL) && r.status() === 200,
+          { timeout: 45_000 }
+        );
+
+        const resp = await page.goto('/generate', { waitUntil: 'domcontentloaded' });
+        expect(resp?.status(), 'HTTP status for /generate').toBeLessThan(400);
+
+        // Gate must not bounce a gold (paid) member.
+        expect(page.url(), 'should not redirect to /login').not.toContain('/login');
+        expect(page.url(), 'should not redirect to /preview-restricted').not.toContain(
+          '/preview-restricted'
+        );
+
+        // NOTE: relies on the default /generate form preselecting a valid model+workflow
+        // so whatIf fires without interaction. If a future default ships with no model
+        // preselected this will time out — see the UI-fallback note below.
+        const response = await whatIfResponse;
+        return { body: await response.json() };
+      },
+      { attempts: 2 }
     );
 
-    const resp = await page.goto('/generate', { waitUntil: 'domcontentloaded' });
-    expect(resp?.status(), 'HTTP status for /generate').toBeLessThan(400);
-
-    // Gate must not bounce a gold (paid) member.
-    expect(page.url(), 'should not redirect to /login').not.toContain('/login');
-    expect(page.url(), 'should not redirect to /preview-restricted').not.toContain(
-      '/preview-restricted'
-    );
-
-    // NOTE: relies on the default /generate form preselecting a valid model+workflow
-    // so whatIf fires without interaction. If a future default ships with no model
-    // preselected this will time out — see the UI-fallback test below for the signal.
-    const response = await whatIfResponse;
-    const body = await response.json();
     const total = extractCostTotal(body);
-
     expect(total, 'cost.total parsed from whatIfFromGraph response').not.toBeNull();
     expect(typeof total, 'cost.total is numeric').toBe('number');
     expect(total as number, 'cost.total is a non-negative quote').toBeGreaterThanOrEqual(0);

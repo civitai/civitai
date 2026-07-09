@@ -9,7 +9,6 @@ import { SubNav2 } from '~/components/AppLayout/SubNav';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
-import { MatureContentMigrationAlert } from '~/components/Alerts/MatureContentMigrationAlert';
 import { Announcements } from '~/components/Announcements/Announcements';
 import type { ScrollAreaProps } from '~/components/ScrollArea/ScrollArea';
 import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
@@ -103,7 +102,9 @@ function AdhesiveFooter() {
   const router = useRouter();
 
   if (currentUser?.isPaidMember || router.asPath.includes('/moderator')) return null;
-  return <AdhesiveAd />;
+  // Reserve the footer height up front for logged-out users (the bulk of ad
+  // traffic) so the bar doesn't shove content when it fills ~1-2s after paint.
+  return <AdhesiveAd preserveLayout={!currentUser} />;
 }
 
 export function MainContent({
@@ -130,8 +131,7 @@ export function MainContent({
           </SubNav>
         )}
         {!subNav && <RewardsBonusBanner />}
-        {announcements && <Announcements />}
-        {announcements && <MatureContentMigrationAlert />}
+        {announcements && <Announcements className="mb-3" />}
         {children}
       </main>
       {footer}

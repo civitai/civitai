@@ -1,16 +1,12 @@
 import { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
 import { z } from 'zod';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import { EntityAccessPermission, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { getDbWithoutLag, getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
-import {
-  getWanVersion,
-  wan21BaseModelMap,
-  wanGeneralBaseModelMap,
-} from '~/server/orchestrator/wan/wan.schema';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { wanBaseModelGroupIdMap } from '~/server/services/orchestrator/ecosystems/wan.handler';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
@@ -39,12 +35,12 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getPrimaryFile, getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
+import { withSpan } from '~/server/utils/otel-helpers';
 import { getPagedData } from '~/server/utils/pagination-helpers';
 import {
   fluxKreaAir,
   fluxUltraAir,
   getBaseModelFromResources,
-  getBaseModelFromResourcesWithDefault,
   ponyV7Air,
 } from '~/shared/constants/generation.constants';
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
@@ -62,7 +58,6 @@ import { parseAIR, stringifyAIR } from '~/shared/utils/air';
 import { Flags } from '~/shared/utils/flags';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { isDefined } from '~/utils/type-guards';
-import { getVeo3ProcessFromAir } from '~/server/orchestrator/veo3/veo3.schema';
 import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import {
   baseModelByName,
@@ -88,8 +83,8 @@ import {
   hasGenerationSupport,
   getResourceGenerationSupport,
 } from '~/shared/constants/basemodel.constants';
-import { getMetaResources, normalizeMeta } from '~/server/services/normalize-meta.service';
 import { mapDataToGraphInput } from '~/server/services/orchestrator/legacy-metadata-mapper';
+import { cleanPrompt } from '~/utils/metadata/audit';
 
 type GenerationResourceSimple = {
   id: number;
@@ -107,6 +102,38 @@ type GenerationResourceSimple = {
   fileSizeKB: number;
   available: boolean;
 };
+
+type MetaCivitaiResource = { type?: string; weight?: number; modelVersionId: number };
+
+/**
+ * Build the initial resource list from image metadata: maps `civitaiResources`
+ * to `{ modelVersionId, strength }` and adds the Wan checkpoint implied by the
+ * baseModel. Relocated from the removed `normalize-meta.service` (the rest of
+ * that service's normalization is now handled by `mapDataToGraphInput` + the
+ * generation graph).
+ */
+function getMetaResources({
+  baseModel,
+  civitaiResources,
+}: {
+  baseModel?: string;
+  civitaiResources?: MetaCivitaiResource[];
+}) {
+  const resources =
+    civitaiResources?.map(({ weight, modelVersionId }) => ({
+      modelVersionId: Number(modelVersionId),
+      strength: weight,
+    })) ?? [];
+
+  // add missing resource by baseModel
+  const modelVersionId = baseModel
+    ? wanBaseModelGroupIdMap[baseModel as BaseModelGroup]
+    : undefined;
+  if (modelVersionId && !resources.find((x) => x.modelVersionId === modelVersionId)) {
+    resources.push({ modelVersionId, strength: undefined });
+  }
+  return resources;
+}
 
 // const baseModelSetsArray = Object.values(baseModelSets);
 /** @deprecated using search index instead... */
@@ -248,7 +275,11 @@ export async function getGenerationStatus() {
   // Fail open: a sysRedis outage shouldn't crash generation API calls.
   let raw: string | null | undefined;
   try {
-    raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS);
+    // Wall-clock deadline so a silent sysRedis half-open can't park this read
+    // (runs in getGenerationConfig's Promise.all on every gen submit) ~11min.
+    raw = await withSysReadDeadline(
+      sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS)
+    );
   } catch (err) {
     logSysRedisFailOpen('defaults-firing', 'getGenerationStatus generation.service', err);
     raw = undefined;
@@ -436,6 +467,78 @@ async function swapGenerationAliases(
   return uniqBy(swapped, 'id');
 }
 
+/**
+ * Shared pre-normalization for the remix / generate-from-image paths
+ * (`getMediaGenerationData` + `resolveImageMeta`):
+ * - clean prompts (the mapper passes prompt/negativePrompt through raw)
+ * - derive `process` from the legacy `type` field (the mapper keys workflow off `process`)
+ * - resolve the ecosystem from baseModel, falling back to the checkpoint resource
+ * - filter resources to the resolved ecosystem
+ * - map the result to generation-graph params
+ *
+ * The mapper + generation graph handle everything else (workflow, images,
+ * aspectRatio, and per-ecosystem version resolution — incl. Wan).
+ */
+function resolveGraphParamsFromImageMeta({
+  initialMeta,
+  baseModel,
+  engine,
+  allResources,
+  width,
+  height,
+}: {
+  initialMeta: ImageMetaProps;
+  baseModel: string | undefined;
+  engine: string | undefined;
+  allResources: GenerationResource[];
+  width: number;
+  height: number;
+}): { resources: GenerationResource[]; params: Record<string, unknown> } {
+  const metaRecord = initialMeta as Record<string, unknown>;
+  const cleanedPrompts = cleanPrompt({
+    prompt: initialMeta.prompt,
+    negativePrompt: initialMeta.negativePrompt,
+  });
+  const process =
+    typeof metaRecord.type === 'string'
+      ? (metaRecord.type as string)
+      : (metaRecord.process as string | undefined);
+
+  // If the ecosystem is 'other' or missing, try to infer from the checkpoint resource
+  let ecosystem =
+    (metaRecord.ecosystem as string | undefined) ??
+    (baseModel ? getEcosystem(baseModel)?.key : undefined);
+  if (!ecosystem || ecosystem === 'Other') {
+    const checkpoint = allResources.find((x) => x.model.type === 'Checkpoint');
+    if (checkpoint) {
+      ecosystem = getEcosystem(checkpoint.baseModel)?.key;
+    }
+  }
+
+  const resources = !ecosystem
+    ? allResources
+    : allResources.filter(
+        (x) => !!getResourceGenerationSupport(ecosystem!, x.baseModel, x.model.type)
+      );
+
+  // Drop raw resource fields (handled separately via `resources`) and the legacy
+  // `type` (consumed into `process`); the mapper strips the rest.
+  const { civitaiResources: _cr, resources: _res, type: _t, ...restMeta } = metaRecord;
+  const meta = {
+    ...restMeta,
+    ...cleanedPrompts,
+    baseModel,
+    engine,
+    ecosystem,
+    process,
+  } as Record<string, unknown>;
+  // Handle legacy 'Clip skip' field name (old image meta uses space-separated key)
+  const clipSkip = meta.clipSkip ?? meta['Clip skip'] ?? undefined;
+  const params = mapDataToGraphInput({ ...meta, width, height, clipSkip, engine }, resources);
+
+  return { resources, params };
+}
+
 async function getMediaGenerationData({
   id,
   user,
@@ -473,7 +576,6 @@ async function getMediaGenerationData({
     createdAt: media.createdAt,
   };
 
-  // const { resources: imageResources, ...meta } = normalizeMeta(media.meta as ImageMetaProps);
   const initialMeta = (media.meta ?? {}) as ImageMetaProps;
   const imageResources = getMetaResources(initialMeta);
 
@@ -517,29 +619,15 @@ async function getMediaGenerationData({
 
   const type = baseModel ? getBaseModelMediaType(baseModel) ?? media.type : media.type;
   const engine = initialMeta.engine ?? (baseModel ? getBaseModelEngine(baseModel) : undefined);
-  const normalized = normalizeMeta({ ...initialMeta, baseModel, engine });
 
-  // If the ecosystem is 'other' or missing, try to infer from the checkpoint resource
-  let ecosystem = normalized.ecosystem;
-  if (!ecosystem || ecosystem === 'Other') {
-    const checkpoint = allResources.find((x) => x.model.type === 'Checkpoint');
-    if (checkpoint) {
-      ecosystem = getEcosystem(checkpoint.baseModel)?.key;
-    }
-  }
-
-  const resources = !ecosystem
-    ? allResources
-    : allResources.filter(
-        (x) => !!getResourceGenerationSupport(ecosystem!, x.baseModel, x.model.type)
-      );
-
-  // Delegate param mapping to shared function (handles workflow, baseModel, aspectRatio, etc.)
-  // Cast to Record for loose field access (normalizeMeta returns a union type)
-  const meta = normalized as Record<string, unknown>;
-  // Handle legacy 'Clip skip' field name (old image meta uses space-separated key)
-  const clipSkip = meta.clipSkip ?? meta['Clip skip'] ?? undefined;
-  const params = mapDataToGraphInput({ ...meta, width, height, clipSkip, engine }, resources);
+  const { resources, params } = resolveGraphParamsFromImageMeta({
+    initialMeta,
+    baseModel,
+    engine,
+    allResources,
+    width,
+    height,
+  });
 
   if (type === 'audio') throw new Error('not implemented');
 
@@ -701,10 +789,17 @@ const getModelVersionGenerationData = async ({
 };
 
 export async function getUnstableResources() {
-  const cachedData = await sysRedis
-    .hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:unstable-resources')
+  // Wall-clock deadline: this runs in getGenerationConfig's Promise.all on
+  // every gen submit, so a silent sysRedis half-open would park the whole submit.
+  const cachedData = await withSysReadDeadline(
+    sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:unstable-resources')
+  )
     .then((data) => (data ? fromJson<number[]>(data) : ([] as number[])))
-    .catch(() => [] as number[]); // fallback to empty array if redis fails
+    .catch((err) => {
+      // fallback to empty array if redis fails (DOWN or SLOW/deadline)
+      logSysRedisFailOpen('read-degraded', 'getUnstableResources', err);
+      return [] as number[];
+    });
 
   return cachedData ?? [];
 }
@@ -723,10 +818,17 @@ export async function getGenerationEcosystemConfig(
   user: { id?: number; isModerator?: boolean } = {}
 ): Promise<GenerationEcosystemContext> {
   const [cached, hasTestingAccess] = await Promise.all([
-    sysRedis
-      .hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:ecosystem-config')
+    // Wall-clock deadline: runs in getGenerationConfig's Promise.all on every
+    // gen submit — a silent sysRedis half-open would park the whole submit.
+    withSysReadDeadline(
+      sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:ecosystem-config')
+    )
       .then((data) => (data ? fromJson<Partial<GenerationEcosystemConfig>>(data) : null))
-      .catch(() => null), // fallback to default if redis fails
+      .catch((err) => {
+        // fallback to default if redis fails (DOWN or SLOW/deadline)
+        logSysRedisFailOpen('read-degraded', 'getGenerationEcosystemConfig', err);
+        return null;
+      }),
     resolveTestingAccess(user),
   ]);
 
@@ -771,10 +873,16 @@ const gateRulesArraySchema = z.array(gateRuleSchema);
  * Fail-open to `[]` so a bad/missing value never blocks generation.
  */
 export async function getGateRules(): Promise<GateRule[]> {
-  const cached = await sysRedis
-    .hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:gate-rules')
+  // Wall-clock deadline: getGateRules runs in getGenerationConfig's
+  // Promise.all on every gen submit — a silent sysRedis half-open would park it.
+  const cached = await withSysReadDeadline(
+    sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:gate-rules')
+  )
     .then((data) => (data ? fromJson<GateRule[]>(data) : null))
-    .catch(() => null);
+    .catch((err) => {
+      logSysRedisFailOpen('read-degraded', 'getGateRules', err);
+      return null;
+    });
   const parsed = gateRulesArraySchema.safeParse(cached ?? []);
   return parsed.success ? parsed.data : [];
 }
@@ -873,10 +981,17 @@ export async function getGenerationConfig(
 }
 
 export async function getUnavailableResources() {
-  const cachedData = await sysRedis
-    .hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:unavailable-resources')
+  // Wall-clock deadline: getUnavailableResources gates the gen submit path — a
+  // silent sysRedis half-open would park generation ~11min instead of failing open.
+  const cachedData = await withSysReadDeadline(
+    sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:unavailable-resources')
+  )
     .then((data) => (data ? fromJson<number[]>(data) : ([] as number[])))
-    .catch(() => [] as number[]); // fallback to empty array if redis fails
+    .catch((err) => {
+      // fallback to empty array if redis fails (DOWN or SLOW/deadline)
+      logSysRedisFailOpen('read-degraded', 'getUnavailableResources', err);
+      return [] as number[];
+    });
 
   return [...new Set(cachedData ?? [])];
 }
@@ -1153,9 +1268,15 @@ export async function getResourceData(
     typeof versionIds[0] === 'number' ? versionIds.map((id) => ({ id })) : versionIds
   ) as { id: number; epoch?: number }[];
 
-  const unavailableResources = await getUnavailableResources();
-  const featuredModels = await getFeaturedModels();
-  const hiddenGates = await getCanGenerateHiddenGates(user);
+  // Spans localize the gen-path park: getResourceData does these as SEQUENTIAL
+  // awaits, so wrapping each shows which prelim lookup dominates.
+  const unavailableResources = await withSpan('gen:getResourceData:unavailable', () =>
+    getUnavailableResources()
+  );
+  const featuredModels = await withSpan('gen:getResourceData:featured', () => getFeaturedModels());
+  const hiddenGates = await withSpan('gen:getResourceData:hiddenGates', () =>
+    getCanGenerateHiddenGates(user)
+  );
 
   function transformGenerationData(
     { settings, ...item }: GenerationResourceDataModel,
@@ -1300,6 +1421,7 @@ export async function getResourceData(
       fileSizeKB: fileSizeKB ? Math.round(fileSizeKB) : undefined,
       additionalResourceCost,
       epochDetails,
+      primaryFileType: primaryFile?.type,
     };
   }
 
@@ -1307,7 +1429,7 @@ export async function getResourceData(
     resource: ReturnType<typeof transformGenerationData>,
     modelFiles: ModelFileCached[]
   ) {
-    const { fileSizeKB, additionalResourceCost, epochDetails } = getModelFileProps(
+    const { fileSizeKB, additionalResourceCost, epochDetails, primaryFileType } = getModelFileProps(
       resource,
       modelFiles
     );
@@ -1316,6 +1438,9 @@ export async function getResourceData(
       type: resource.model.type,
       modelId: epochDetails ? epochDetails.jobId : resource.model.id,
       id: epochDetails ? epochDetails.fileName : resource.id,
+      // epoch resources resolve to an orchestrator-hosted file, not the version's
+      // primary model file, so only forward the file type for civitai sources.
+      fileType: epochDetails ? undefined : primaryFileType,
       source: epochDetails ? 'orchestrator' : 'civitai',
     });
 
@@ -1338,41 +1463,47 @@ export async function getResourceData(
   // The cache deduplicates by model version ID, but different epochs of the same
   // model version need separate entries with their own epochDetails.
   const uniqueIds = [...new Set(args.map((x) => x.id))];
-  const resources = await resourceDataCache
-    .fetch(uniqueIds)
-    .then((cachedResources) => {
-      const resourceById = new Map(cachedResources.map((r) => [r.id, r]));
-      return args
-        .map((arg) => {
-          const cached = resourceById.get(arg.id);
-          if (!cached) return null;
-          return transformGenerationData(cached, arg.epoch);
-        })
-        .filter(isDefined);
-    })
-    .then(async (resources) => {
-      const substitutes = await getResourceDataSubstitutes(resources);
-      const entityAccess = await getEntityAccess([...resources, ...substitutes]);
+  // Span localizes the gen-path park: this is the main resource-data fetch
+  // (cache/DB lookup + substitutes + entity access + model files) — the
+  // dominant work in getResourceData. Wrapping the whole .fetch().then().then()
+  // chain so its total time shows as one sub-step.
+  const resources = await withSpan('gen:getResourceData:fetch', () =>
+    resourceDataCache
+      .fetch(uniqueIds)
+      .then((cachedResources) => {
+        const resourceById = new Map(cachedResources.map((r) => [r.id, r]));
+        return args
+          .map((arg) => {
+            const cached = resourceById.get(arg.id);
+            if (!cached) return null;
+            return transformGenerationData(cached, arg.epoch);
+          })
+          .filter(isDefined);
+      })
+      .then(async (resources) => {
+        const substitutes = await getResourceDataSubstitutes(resources);
+        const entityAccess = await getEntityAccess([...resources, ...substitutes]);
 
-      for (const resource of [...resources, ...substitutes]) {
-        if (!resource.hasAccess) {
-          // TODO - get the number of remaining early access downloads if early access allows limited number of free generations
-          resource.hasAccess = !!(
-            entityAccess.find((e) => e.entityId === resource.id)?.hasAccess ||
-            !!resource.earlyAccessConfig?.generationTrialLimit
-          );
-          resource.canGenerate = resource.hasAccess && resource.canGenerate;
+        for (const resource of [...resources, ...substitutes]) {
+          if (!resource.hasAccess) {
+            // TODO - get the number of remaining early access downloads if early access allows limited number of free generations
+            resource.hasAccess = !!(
+              entityAccess.find((e) => e.entityId === resource.id)?.hasAccess ||
+              !!resource.earlyAccessConfig?.generationTrialLimit
+            );
+            resource.canGenerate = resource.hasAccess && resource.canGenerate;
+          }
         }
-      }
 
-      const modelFilesCached = await getModelFiles([...resources, ...substitutes]);
+        const modelFilesCached = await getModelFiles([...resources, ...substitutes]);
 
-      return resources.map((resource) => {
-        const modelFiles = modelFilesCached[resource.id]?.files ?? [];
-        const substitute = getSubstituteData(resource, substitutes, modelFiles);
-        return removeNulls({ ...bringItAllTogether(resource, modelFiles), substitute });
-      });
-    });
+        return resources.map((resource) => {
+          const modelFiles = modelFilesCached[resource.id]?.files ?? [];
+          const substitute = getSubstituteData(resource, substitutes, modelFiles);
+          return removeNulls({ ...bringItAllTogether(resource, modelFiles), substitute });
+        });
+      })
+  );
 
   if (withPreview) {
     const imageCache = await imagesForModelVersionsCache.fetch(resources.map((r) => r.id));
@@ -1516,7 +1647,7 @@ function extractHashCandidates(
  * Resolve resources from raw image EXIF metadata and transform to graph-compatible params.
  *
  * Mirrors the logic of get_image_resources.sql for resource resolution, then applies
- * the same normalizeMeta → mapDataToGraphInput pipeline as getMediaGenerationData.
+ * the same pre-normalize → mapDataToGraphInput pipeline as getMediaGenerationData.
  *
  * Returns { resources, params } where params are ready for the generation graph.
  */
@@ -1634,21 +1765,16 @@ export async function resolveImageMeta({
     allResources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
   );
   const engine = initialMeta.engine ?? (baseModel ? getBaseModelEngine(baseModel) : undefined);
-  const normalized = normalizeMeta({ ...initialMeta, baseModel, engine });
 
-  // Filter resources by ecosystem compatibility
-  const resources = !normalized.ecosystem
-    ? allResources
-    : allResources.filter(
-        (x) => !!getResourceGenerationSupport(normalized.ecosystem!, x.baseModel, x.model.type)
-      );
-
-  // Map to graph-compatible params
-  const meta = normalized as Record<string, unknown>;
-  const clipSkip = meta.clipSkip ?? meta['Clip skip'] ?? undefined;
-  const width = (meta.width as number) ?? 0;
-  const height = (meta.height as number) ?? 0;
-  const params = mapDataToGraphInput({ ...meta, width, height, clipSkip, engine }, resources);
+  const metaRecord = initialMeta as Record<string, unknown>;
+  const { resources, params } = resolveGraphParamsFromImageMeta({
+    initialMeta,
+    baseModel,
+    engine,
+    allResources,
+    width: (metaRecord.width as number) ?? 0,
+    height: (metaRecord.height as number) ?? 0,
+  });
 
   return { resources, params };
 }

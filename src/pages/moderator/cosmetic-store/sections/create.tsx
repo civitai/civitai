@@ -6,6 +6,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 
 export const getServerSideProps = createServerSideProps({
+  requireModerator: true,
   useSession: true,
   resolver: async ({ session }) => {
     if (!session || !session?.user?.isModerator)
@@ -27,8 +28,8 @@ export default function SectionsCreate() {
 
   const handleSuccess = () => {
     showSuccessNotification({
-      title: 'Club post created',
-      message: 'Your post was created and is now part of your club',
+      title: 'Section created',
+      message: 'Your cosmetic store section was created successfully',
     });
 
     router.push('/moderator/cosmetic-store/sections');

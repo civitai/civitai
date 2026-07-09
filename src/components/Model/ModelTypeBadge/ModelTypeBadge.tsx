@@ -1,5 +1,6 @@
 import type { BadgeProps } from '@mantine/core';
-import { Badge, Divider, Text } from '@mantine/core';
+import { Badge, Divider, Popover, Stack, Text } from '@mantine/core';
+import { useState } from 'react';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { IconHorse } from '@tabler/icons-react';
 import { IconNose } from '~/components/SVG/IconNose';
@@ -45,10 +46,53 @@ const BaseModelIndicator: Partial<Record<BaseModel, React.ReactNode | string>> =
   Chroma: 'CHR',
   ZImageTurbo: 'ZIT',
   Qwen: 'QW',
+  Anima: 'ANI',
 };
 
-export function ModelTypeBadge({ type, baseModel, ...badgeProps }: Props) {
-  const baseModelIndicator = BaseModelIndicator[baseModel];
+export function ModelTypeBadge({ type, baseModel, baseModels, ...badgeProps }: Props) {
+  const [opened, setOpened] = useState(false);
+  // Dedup by base name so the dropdown can't repeat rows even if a caller passes
+  // duplicates; the code-level dedup below further collapses same-indicator bases.
+  const bases = Array.from(new Set(baseModels?.length ? baseModels : [baseModel]));
+
+  // Dedup by short code (e.g. SD 1.4 + SD 1.5 -> one "SD1"), preserving order.
+  const seen = new Set<string>();
+  const codes: { base: BaseModel; node: React.ReactNode | string }[] = [];
+  for (const base of bases) {
+    const node = BaseModelIndicator[base];
+    if (node == null) continue;
+    const key = typeof node === 'string' ? node : base;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    codes.push({ base, node });
+  }
+
+  const MAX = 3;
+  const visible = codes.slice(0, MAX);
+  const overflow = codes.length - visible.length;
+  const isMulti = codes.length > 1;
+
+  const indicators = (
+    <span className="flex items-center gap-2">
+      {visible.map(({ base, node }) =>
+        typeof node === 'string' ? (
+          <Text key={base} size="xs" inherit>
+            {node}
+          </Text>
+        ) : (
+          <span key={base} className="flex items-center">
+            {node}
+          </span>
+        )
+      )}
+      {overflow > 0 && (
+        <Text size="xs" fw={700} c="inherit">
+          +{overflow}
+        </Text>
+      )}
+    </span>
+  );
+
   return (
     <Badge
       variant="light"
@@ -60,15 +104,55 @@ export function ModelTypeBadge({ type, baseModel, ...badgeProps }: Props) {
         {getDisplayName(type)}
       </Text>
 
-      {baseModelIndicator && (
+      {visible.length > 0 && (
         <>
           <Divider className="border-l-white/30 border-r-black/20" orientation="vertical" />
-          {typeof baseModelIndicator === 'string' ? (
-            <Text size="xs" inherit>
-              {baseModelIndicator}
-            </Text>
+          {isMulti ? (
+            <Popover
+              opened={opened}
+              onChange={setOpened}
+              withinPortal
+              withArrow
+              position="bottom-start"
+              shadow="md"
+            >
+              <Popover.Target>
+                {/* Must be a <button>: globals.css re-enables pointer-events only on
+                    button/a, while the card header is pointer-events:none. A span/div
+                    here lets the click fall through to the card link and navigate. */}
+                <button
+                  type="button"
+                  aria-label="Show all base models"
+                  className="flex cursor-pointer items-center gap-2 border-0 bg-transparent p-0 text-inherit"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setOpened((o) => !o);
+                  }}
+                >
+                  {indicators}
+                </button>
+              </Popover.Target>
+              <Popover.Dropdown
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+              >
+                <Stack gap={2}>
+                  <Text size="xs" fw={600} c="dimmed" tt="uppercase">
+                    Base models
+                  </Text>
+                  {bases.map((base) => (
+                    <Text key={base} size="sm">
+                      {base}
+                    </Text>
+                  ))}
+                </Stack>
+              </Popover.Dropdown>
+            </Popover>
           ) : (
-            baseModelIndicator
+            indicators
           )}
         </>
       )}
@@ -76,4 +160,8 @@ export function ModelTypeBadge({ type, baseModel, ...badgeProps }: Props) {
   );
 }
 
-type Props = Omit<BadgeProps, 'children'> & { type: ModelType; baseModel: BaseModel };
+type Props = Omit<BadgeProps, 'children'> & {
+  type: ModelType;
+  baseModel: BaseModel;
+  baseModels?: BaseModel[];
+};

@@ -10,8 +10,11 @@ import {
   HEAVY_REQUEST_CONCURRENCY,
 } from '~/server/utils/request-bulkhead';
 import { trpcProcedureDuration } from '~/server/prom/client';
+import { maybeLogTrpcSlow } from '~/server/logging/trpc-slow-log';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { instrumentSerialize } from '~/server/logging/trpc-serialize-log';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
@@ -42,8 +45,14 @@ const t = initTRPC
   .meta<TRPCMeta>()
   .create({
     transformer: {
+      // instrumentSerialize times the serialize (the exact frame that pegs the
+      // loop on an oversized response — see trpc-serialize-log.ts) and, only above
+      // a cheap duration floor, logs the offending procedure + byte size. Disarmed
+      // by default: a single boolean branch, then the original withSpan+superjson.
       serialize: (data: any) =>
-        withSpan('trpc:serialize:superjson', () => superjson.serialize(data)),
+        instrumentSerialize(() =>
+          withSpan('trpc:serialize:superjson', () => superjson.serialize(data))
+        ),
       deserialize: superjson.deserialize.bind(superjson),
     },
     errorFormatter({ shape }) {
@@ -77,7 +86,12 @@ let clientConfigCache: { value: Record<string, string>; expiresAt: number } | nu
 async function getClientConfigCached(): Promise<Record<string, string>> {
   const now = Date.now();
   if (clientConfigCache && clientConfigCache.expiresAt > now) return clientConfigCache.value;
-  const client = await sysRedis.hGetAll(REDIS_SYS_KEYS.CLIENT);
+  // Wall-clock deadline so a stalled/half-open sysRedis can't park this hGetAll for
+  // OS-keepalive minutes (the sys client has no socketTimeout, and a per-command
+  // timeout can't abort a written command). This read runs on EVERY web tRPC procedure
+  // (behind the 5s cache above); a timeout here is caught by needsUpdate's try/catch
+  // below and fails open (skips the update banner), never a 500.
+  const client = await withSysReadDeadline(sysRedis.hGetAll(REDIS_SYS_KEYS.CLIENT));
   clientConfigCache = { value: client, expiresAt: now + CLIENT_CONFIG_TTL_MS };
   return client;
 }
@@ -99,9 +113,10 @@ async function needsUpdate(req?: NextApiRequest) {
     logSysRedisFailOpen('read-degraded', 'needsUpdate', err);
     return false;
   }
-  if (client.version) {
+  const clientVersion = decodeRedisString(client.version);
+  if (clientVersion) {
     if (!version || version === 'unknown') return true;
-    return semver.lt(version, client.version);
+    return semver.lt(version, clientVersion);
   }
   if (client.date) {
     if (!date) return true;
@@ -216,30 +231,63 @@ const TRPC_PROCEDURE_METRICS = process.env.TRPC_PROCEDURE_METRICS === 'true';
 // The actual procedure-timing logic. Generic over `next`'s return type so it
 // stays transparent to tRPC's MiddlewareResult typing. Kept standalone so the
 // ALS label wrapper can be applied ONLY when the long-task labels tier is armed.
-function runRecordProcedureDuration<T>(path: string, next: () => Promise<T>): Promise<T> {
-  if (!TRPC_PROCEDURE_METRICS) return next();
-  const end = trpcProcedureDuration.startTimer({ path });
-  return (async () => {
-    try {
-      return await next();
-    } finally {
-      end();
+//
+// Always times the procedure (one `performance.now()` delta) so the always-on,
+// threshold-gated slow-procedure log (`maybeLogTrpcSlow`) can NAME the offender on
+// the next latency-tail spike — the gap that the OPT-IN `trpcProcedureDuration`
+// metric leaves open by default. The metric histogram stays opt-in
+// (`TRPC_PROCEDURE_METRICS`, high-cardinality); the slow log is free below
+// threshold (a numeric compare) and emits at most one log line per slow procedure.
+// A `.then()` on the existing promise (not an async IIFE) keeps the added overhead
+// to a single callback + timestamp per procedure.
+function runRecordProcedureDuration<T>(
+  path: string,
+  type: string,
+  userId: number | undefined,
+  next: () => Promise<T>
+): Promise<T> {
+  const metricsEnd = TRPC_PROCEDURE_METRICS ? trpcProcedureDuration.startTimer({ path }) : undefined;
+  const startedAt = performance.now();
+  return next().then(
+    (result) => {
+      // tRPC MiddlewareResult: { ok: true; ... } | { ok: false; error: TRPCError }.
+      // Read defensively so T stays transparent and a shape change can't throw.
+      const r = result as unknown as { ok?: boolean; error?: { code?: string } };
+      const ok = r?.ok !== false;
+      const errorCode = r?.ok === false ? r.error?.code : undefined;
+      metricsEnd?.();
+      maybeLogTrpcSlow({ path, type, durationMs: performance.now() - startedAt, ok, errorCode, userId });
+      return result;
+    },
+    (err) => {
+      metricsEnd?.();
+      maybeLogTrpcSlow({
+        path,
+        type,
+        durationMs: performance.now() - startedAt,
+        ok: false,
+        errorCode: err instanceof TRPCError ? err.code : undefined,
+        userId,
+      });
+      throw err;
     }
-  })();
+  );
 }
 
-const recordProcedureDuration = t.middleware(({ path, next }) => {
+const recordProcedureDuration = t.middleware(({ path, type, ctx, next }) => {
+  const userId = ctx.user?.id;
   // When the long-task LABELS tier is armed, wrap the procedure in an ALS store
   // tagged with its path so a detected synchronous block can be attributed to the
   // running procedure. This costs one AsyncLocalStorage.run() per request — the
-  // async_hooks context-propagation cost — so it is OFF by default. When it is
-  // not armed (the disarmed default AND base-armed-without-labels), this is the
-  // ORIGINAL code path: a direct call with NO wrapper, NO extra closure, NO
-  // microtask hop. Independent of TRPC_PROCEDURE_METRICS.
+  // async_hooks context-propagation cost — so it is OFF by default. When it is not
+  // armed (the disarmed default), the procedure-timing path is a single `.then()`
+  // on the existing promise. Independent of TRPC_PROCEDURE_METRICS.
   if (longTaskLabelsArmed) {
-    return runWithLongTaskLabel(`trpc:${path}`, () => runRecordProcedureDuration(path, next));
+    return runWithLongTaskLabel(`trpc:${path}`, () =>
+      runRecordProcedureDuration(path, type, userId, next)
+    );
   }
-  return runRecordProcedureDuration(path, next);
+  return runRecordProcedureDuration(path, type, userId, next);
 });
 
 export const publicProcedure = t.procedure
@@ -351,6 +399,28 @@ export const protectedProcedure = publicProcedure.use(isAuthed);
  * Moderator procedure
  **/
 export const moderatorProcedure = protectedProcedure.use(isMod);
+
+/**
+ * App developer procedure — authenticated + the `appBlocksAuthor` capability
+ * (Flipt `app-blocks-author`, static fallback mod-only). Gates the App Blocks
+ * AUTHOR surfaces (own submissions / revenue / analytics, withdraw, dev:live)
+ * for a curated non-mod cohort WITHOUT granting the mod REVIEW/curation powers
+ * (those stay on `moderatorProcedure`).
+ *
+ * Fail-CLOSED: `getFeatureFlags` resolves `appBlocksAuthor` from Flipt when the
+ * flag exists, else falls back to the static `availability: ['mod']` — so an
+ * absent flag / Flipt-down yields mods only, never open-to-all.
+ */
+const hasAppBlocksAuthor = t.middleware(({ ctx, next }) => {
+  const features = getFeatureFlags(ctx);
+  if (!features.appBlocksAuthor)
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'You do not have access to Apps authoring',
+    });
+  return next();
+});
+export const appDeveloperProcedure = protectedProcedure.use(hasAppBlocksAuthor);
 
 /**
  * Verified procedure to prevent users from making actions

@@ -1,0 +1,12 @@
+{
+  "name": "@civitai/clickhouse",
+  "version": "0.0.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "dependencies": {
+    "@clickhouse/client": "^0.2.2",
+    "dayjs": "^1.11.12",
+    "zod": "^4.0.17"
+  }
+}

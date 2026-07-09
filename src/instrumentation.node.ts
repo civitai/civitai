@@ -14,7 +14,7 @@ import { LoggerProvider, BatchLogRecordProcessor } from '@opentelemetry/sdk-logs
 import { logs } from '@opentelemetry/api-logs';
 import { trace } from '@opentelemetry/api';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
-import { registerCpuProfiler } from '~/server/cpu-profiler';
+import { registerCpuProfiler, registerEventLoopStallProfiler } from '~/server/cpu-profiler';
 import { registerEventLoopLongTaskDetector } from '~/server/eventloop-longtask';
 import { registerLivenessHeartbeat } from '~/server/liveness-heartbeat';
 
@@ -22,6 +22,15 @@ import { registerLivenessHeartbeat } from '~/server/liveness-heartbeat';
 // overhead; only does work when signalled. Independent of OTEL so it is
 // always available for live incident capture. See src/server/cpu-profiler.ts.
 registerCpuProfiler();
+
+// Arm the event-loop-stall SELF-TRIGGER for the same CPU profiler. An external
+// signal can't reach a fully-pinned loop (the SIGWINCH black-hole), so this
+// watches the pod's OWN event-loop lag and auto-arms V8's (separate-thread)
+// sampler when lag crosses a threshold — the one mechanism that captures a 504
+// wave's pin. DISARMED by default (no timer, no histogram, zero overhead) unless
+// CPU_PROFILE_LAG_TRIGGER_MS is set (suggested: 1000) on the dp-prod-api
+// deployment. See src/server/cpu-profiler.ts.
+registerEventLoopStallProfiler();
 
 // Arm the event-loop long-task detector. DISARMED by default (no-op unless
 // EVENTLOOP_LONGTASK_THRESHOLD_MS > 0), in which case the request hot path runs
@@ -41,6 +50,27 @@ registerEventLoopLongTaskDetector();
 // because it's served by the same saturated loop. See liveness-heartbeat.ts and
 // the liveness history in datapacket-talos deployment-api.yaml.
 registerLivenessHeartbeat();
+
+// Kick the in-process route warmer (fire-and-forget). Next standalone
+// lazy-require()s each route on first hit; the dependency-only readiness probe
+// marks a pod Ready while every hot route is still cold, so the first real
+// /api/v1/images / tRPC / SSR request pays lazy-require + JIT on the single
+// loop thread → pin → 504/502/499 on every rollout. The warmer self-requests
+// the hot routes over localhost during startup and flips /api/ready's warm gate
+// only once warm (fail-open). It is OPT-IN via WARMUP_ENABLED (default FALSE —
+// runs ONLY when WARMUP_ENABLED='true', set on the dp-prod SSR/API/heavy pools;
+// elsewhere it no-ops + flips warm immediately). It self-imports lazily so the
+// fetch/route code isn't pulled into the boot path needlessly.
+//
+// CRITICAL: do NOT await this. register() must return so Next can start the
+// HTTP listener — the warmer needs that listener up to self-request, so
+// awaiting here would deadlock boot. Any import/throw is swallowed: warmup must
+// never block or crash boot.
+void import('~/server/warmup')
+  .then((m) => m.runWarmup())
+  .catch((err) => {
+    console.error('[instrumentation.node] warmup kick failed (fail-open):', err);
+  });
 
 // Only enable OTEL if explicitly set AND endpoint is configured
 const OTEL_ENABLED = process.env.OTEL_ENABLED === 'true';

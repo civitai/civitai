@@ -18,6 +18,7 @@ import type { EntityAccessDataType } from '~/server/services/common.service';
 import { getModelClient } from '~/server/services/orchestrator/models';
 import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
+import { getPrimaryFile } from '~/server/utils/model-helpers';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { stringifyAIR } from '~/shared/utils/air';
 import {
@@ -37,9 +38,18 @@ export const tagIdsForImagesCache = createCachedObject<{
 }>({
   key: REDIS_KEYS.CACHES.TAG_IDS_FOR_IMAGES,
   idKey: 'imageId',
-  // 8h TTL — 296B/key but ~16M keys/shard (~4.4 GiB).
-  // With stale-while-revalidate, effective Redis EX = 16h.
+  // 8h logical TTL. Measured live (2026-06-17) at ~1.7KB/key and ~16.85 GiB/shard
+  // (~50 GiB cluster-wide) — the single largest next-redis-cluster consumer, NOT
+  // the ~4.4 GiB the prior comment assumed. The default SWR tail keeps the key
+  // resident for a full extra `ttl` past staleness (physical EX 16h); on an
+  // at-cap LRU cluster that tail is mostly evicted early anyway. Trim it to 1h
+  // (physical EX 9h) to cut resident memory. Trade-off: a key re-read only after
+  // the 8h–9h band (vs 8h–16h before) is now a blocking cold-miss (the fetch
+  // lock-winner re-queries Prisma inline) instead of a stale-serve — a small,
+  // non-zero miss uptick for sparsely-accessed images. Steadily-read keys are
+  // unaffected (they revalidate at the 8h logical boundary either way).
   ttl: CacheTTL.hour * 8,
+  staleWhileRevalidateTtl: CacheTTL.hour,
   async lookupFn(imageId, fromWrite) {
     const imageIds = Array.isArray(imageId) ? imageId : [imageId];
     const db = fromWrite ? dbWrite : dbRead;
@@ -504,6 +514,7 @@ export const dataForModelsCache = createCachedObject<ModelDataCache>({
          WHERE rr."sourceId" = mv.id
            AND rr.settings->>'isLinkedComponent' = 'true'
            AND rr.settings->>'componentType' = 'VAE'
+           AND EXISTS (SELECT 1 FROM "ModelFile" mf WHERE mf.id = (rr.settings->>'fileId')::int)
          LIMIT 1) AS "vaeId",
         COALESCE((
           SELECT gc.covered
@@ -651,6 +662,52 @@ export const userPostCountPublicCache = createUserContentCountCache<UserPostCoun
     WHERE "userId" IN (${Prisma.join(userIds)})
       AND "publishedAt" IS NOT NULL
       AND "publishedAt" <= NOW()
+      AND availability != 'Private'
+      AND ("nsfwLevel" & ${publicBrowsingLevelsFlag}) != 0
+    GROUP BY "userId"
+  `
+);
+
+type UserModel3DCount = { id: number; model3dCount: number };
+export const userModel3DCountCache = createUserContentCountCache<UserModel3DCount>(
+  'model3dCount',
+  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
+    SELECT
+      "userId" as id,
+      COUNT(*)::INT as "model3dCount"
+    FROM "Model3D"
+    WHERE "userId" IN (${Prisma.join(userIds)})
+      AND "status" = 'Published'
+      AND "deletedAt" IS NULL
+      AND availability != 'Private'
+    GROUP BY "userId"
+  `
+);
+export const userModel3DCountSfwCache = createUserContentCountCache<UserModel3DCount>(
+  'model3dCount:sfw',
+  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
+    SELECT
+      "userId" as id,
+      COUNT(*)::INT as "model3dCount"
+    FROM "Model3D"
+    WHERE "userId" IN (${Prisma.join(userIds)})
+      AND "status" = 'Published'
+      AND "deletedAt" IS NULL
+      AND availability != 'Private'
+      AND ("nsfwLevel" & ${sfwBrowsingLevelsFlag}) != 0
+    GROUP BY "userId"
+  `
+);
+export const userModel3DCountPublicCache = createUserContentCountCache<UserModel3DCount>(
+  'model3dCount:public',
+  async (userIds) => dbRead.$queryRaw`
+    SELECT
+      "userId" as id,
+      COUNT(*)::INT as "model3dCount"
+    FROM "Model3D"
+    WHERE "userId" IN (${Prisma.join(userIds)})
+      AND "status" = 'Published'
+      AND "deletedAt" IS NULL
       AND availability != 'Private'
       AND ("nsfwLevel" & ${publicBrowsingLevelsFlag}) != 0
     GROUP BY "userId"
@@ -950,6 +1007,7 @@ type UserContentOverview = {
   hasReceivedReviews: boolean;
   collectionCount: number;
   comicCount: number;
+  model3dCount: number;
 };
 
 function mergeOverviewResults(
@@ -962,7 +1020,8 @@ function mergeOverviewResults(
   bountyEntryCounts: Record<string, UserBountyEntryCount>,
   collectionCounts: Record<string, UserCollectionCount>,
   reviewFlags: Record<string, UserHasReceivedReviews>,
-  comicCounts: Record<string, UserComicCount>
+  comicCounts: Record<string, UserComicCount>,
+  model3dCounts: Record<string, UserModel3DCount>
 ): Record<number, UserContentOverview> {
   return Object.fromEntries(
     ids.map((id) => [
@@ -979,6 +1038,7 @@ function mergeOverviewResults(
         collectionCount: collectionCounts[id]?.collectionCount ?? 0,
         comicCount: comicCounts[id]?.comicCount ?? 0,
         hasReceivedReviews: reviewFlags[id]?.hasReceivedReviews ?? false,
+        model3dCount: model3dCounts[id]?.model3dCount ?? 0,
       },
     ])
   );
@@ -1000,6 +1060,7 @@ export const getUserContentOverview = async (
     collectionCounts,
     reviewFlags,
     comicCounts,
+    model3dCounts,
   ] = await Promise.all([
     userModelCountCache.fetch(ids),
     userPostCountCache.fetch(ids),
@@ -1010,6 +1071,7 @@ export const getUserContentOverview = async (
     userCollectionCountCache.fetch(ids),
     userHasReceivedReviewsCache.fetch(ids),
     userComicCountCache.fetch(ids),
+    userModel3DCountCache.fetch(ids),
   ]);
 
   return mergeOverviewResults(
@@ -1022,7 +1084,8 @@ export const getUserContentOverview = async (
     bountyEntryCounts,
     collectionCounts,
     reviewFlags,
-    comicCounts
+    comicCounts,
+    model3dCounts
   );
 };
 
@@ -1042,6 +1105,7 @@ export const getUserContentOverviewSfw = async (
     collectionCounts,
     reviewFlags,
     comicCounts,
+    model3dCounts,
   ] = await Promise.all([
     userModelCountSfwCache.fetch(ids),
     userPostCountSfwCache.fetch(ids),
@@ -1052,6 +1116,7 @@ export const getUserContentOverviewSfw = async (
     userCollectionCountSfwCache.fetch(ids),
     userHasReceivedReviewsCache.fetch(ids), // not NSFW-filtered
     userComicCountSfwCache.fetch(ids),
+    userModel3DCountSfwCache.fetch(ids),
   ]);
 
   return mergeOverviewResults(
@@ -1064,7 +1129,8 @@ export const getUserContentOverviewSfw = async (
     bountyEntryCounts,
     collectionCounts,
     reviewFlags,
-    comicCounts
+    comicCounts,
+    model3dCounts
   );
 };
 
@@ -1084,6 +1150,7 @@ export const getUserContentOverviewPublic = async (
     collectionCounts,
     reviewFlags,
     comicCounts,
+    model3dCounts,
   ] = await Promise.all([
     userModelCountPublicCache.fetch(ids),
     userPostCountPublicCache.fetch(ids),
@@ -1094,6 +1161,7 @@ export const getUserContentOverviewPublic = async (
     userCollectionCountPublicCache.fetch(ids),
     userHasReceivedReviewsCache.fetch(ids), // not NSFW-filtered
     userComicCountPublicCache.fetch(ids),
+    userModel3DCountPublicCache.fetch(ids),
   ]);
 
   return mergeOverviewResults(
@@ -1106,7 +1174,8 @@ export const getUserContentOverviewPublic = async (
     bountyEntryCounts,
     collectionCounts,
     reviewFlags,
-    comicCounts
+    comicCounts,
+    model3dCounts
   );
 };
 
@@ -1140,6 +1209,9 @@ export const userContentOverviewCache = {
       userComicCountCache.refresh(ids),
       userComicCountSfwCache.refresh(ids),
       userComicCountPublicCache.refresh(ids),
+      userModel3DCountCache.refresh(ids),
+      userModel3DCountSfwCache.refresh(ids),
+      userModel3DCountPublicCache.refresh(ids),
     ]);
   },
 };
@@ -1163,10 +1235,21 @@ export const imageMetaCache = createCachedObject<ImageWithMeta>({
     `;
     return Object.fromEntries(images.map((x) => [x.id, x]));
   },
-  // 4h TTL to bound Redis memory — image-meta is ~2.8KB/key (~2.3 GiB / ~1% of
-  // the cluster per the 2026-06-09 keyspace audit; the tag caches are the heavy
-  // consumers, not this one). With stale-while-revalidate, effective Redis EX = 8h.
+  // 4h logical TTL. image-meta is ~2.8KB/key; on next-redis-cluster the cache
+  // sits behind tag-ids-for-images (~16.85 GiB/shard) and post-stats (~8.2 GiB)
+  // as a top-3 consumer of an at-cap LRU cluster (3×32 GiB maxmemory, evicting
+  // ~250 keys/s/shard, ~100% used for hours — verified live 2026-06-17). The
+  // default SWR tail keeps every key resident for a full extra `ttl` past
+  // staleness (physical EX 8h). Trim it to 1h (physical EX 5h) to cut the
+  // resident set the cache wants to hold, matching tagIdsForImagesCache /
+  // postStatCache. Trade-off: a key re-read only in the 4h–5h-old band (vs
+  // 4h–8h before) is now a blocking cold-miss (the lock-winner re-queries
+  // Prisma inline on dbRead) instead of a stale-serve — but at cap those tail
+  // keys are exactly what LRU evicts first anyway, so steadily-read images are
+  // unaffected. Do NOT shorten the logical 4h ttl: that would convert the hot
+  // working set into misses and stampede dbRead.
   ttl: CacheTTL.hour * 4,
+  staleWhileRevalidateTtl: CacheTTL.hour,
 });
 
 type ImageWithMetadata = {
@@ -1188,8 +1271,11 @@ export const imageMetadataCache = createCachedObject<ImageWithMetadata>({
     `;
     return Object.fromEntries(images.map((x) => [x.id, x]));
   },
-  // 4h TTL — same rationale as imageMetaCache.
+  // 4h logical TTL + 1h SWR tail (physical EX 5h) — same rationale as
+  // imageMetaCache: bound the resident set on the at-cap next-redis-cluster
+  // without shortening the freshness window.
   ttl: CacheTTL.hour * 4,
+  staleWhileRevalidateTtl: CacheTTL.hour,
 });
 
 export const thumbnailCache = createCachedObject<{
@@ -1294,7 +1380,15 @@ type PostStatLookup = {
 export const postStatCache = createCachedObject<PostStatLookup>({
   key: REDIS_KEYS.CACHES.POST_STATS,
   idKey: 'postId',
+  // 24h logical TTL. Measured live (2026-06-17) at ~8.2 GiB on next-redis-cluster
+  // (~8.6%, 3rd-largest consumer). The default SWR tail keeps the key resident a
+  // full extra `ttl` past staleness (physical EX 48h). Trim it to 1h (physical
+  // EX 25h) to cut resident memory. Same trade-off as tagIdsForImagesCache: a
+  // post re-read only after the 24h–25h band (vs 24h–48h before) becomes a
+  // blocking cold-miss (inline PostMetric query) instead of a stale-serve;
+  // steadily-read posts are unaffected.
   ttl: CacheTTL.day,
+  staleWhileRevalidateTtl: CacheTTL.hour,
   lookupFn: async (ids, fromWrite) => {
     const db = fromWrite ? dbWrite : dbRead;
     const postIds = Array.isArray(ids) ? ids : [ids];
@@ -1508,12 +1602,20 @@ export const modelVersionResourceCache = createCachedObject<ModelVersionResource
     const db = fromWrite ? dbWrite : dbRead;
     const mvInfo = await db.modelVersion.findMany({
       where: { id: { in: ids } },
-      select: { id: true, baseModel: true, model: { select: { id: true, type: true } } },
+      select: {
+        id: true,
+        baseModel: true,
+        model: { select: { id: true, type: true } },
+        files: { select: { type: true, metadata: true } },
+      },
     });
 
     const versionInfo = await Promise.all(
       mvInfo.map(async (v) => {
         try {
+          const primaryFile = getPrimaryFile(
+            v.files as { type: string; metadata: BasicFileMetadata }[]
+          );
           const md = await getModelClient({
             token: env.ORCHESTRATOR_ACCESS_TOKEN,
             air: stringifyAIR({
@@ -1521,6 +1623,7 @@ export const modelVersionResourceCache = createCachedObject<ModelVersionResource
               type: v.model.type,
               modelId: v.model.id,
               id: v.id,
+              fileType: primaryFile?.type,
             }),
           });
           if (!md || !!md.error)

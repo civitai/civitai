@@ -1,6 +1,7 @@
 import { test as setup } from '@playwright/test';
 import fs from 'fs';
-import { encode } from 'next-auth/jwt';
+import { EncryptJWT } from 'jose';
+import { hkdfSync } from 'node:crypto';
 import { v4 as uuid } from 'uuid';
 import { PREVIEW_USERS, type PreviewRole, storageStatePath } from './preview-fixtures';
 
@@ -14,18 +15,20 @@ import { PREVIEW_USERS, type PreviewRole, storageStatePath } from './preview-fix
  * because previews run NODE_ENV=production, which disables both the
  * `testing-login` credentials provider and the `/testing/*` route.
  *
- * Instead we mint the NextAuth session cookie directly with the preview's
- * shared NEXTAUTH_SECRET — the same `encode()` the app signs with, so JWE parity
- * is guaranteed. Two distinct things then happen, and the distinction matters:
- *   1. The GATE (preview-auth.middleware) reads `token.user` straight from the
- *      cookie (no DB hit) — so the MINTED `id`/`isModerator` are what clear it.
- *   2. SSR page renders call the session() callback → refreshToken(), which sees
- *      an untracked token id and refreshes `token.user` from the DB
- *      (getSessionUser). So past the gate, the SEEDED DB row — not the minted
- *      fields — is the authoritative session user.
- * Net: the minted cookie authenticates as the seeded user. The minted object
- * below only needs `id` + `isModerator` (+ `tier` for the gate's Flipt context);
- * the rest is informational and is superseded by the DB row on first render. The
+ * Instead we mint the LEGACY next-auth session cookie directly with the preview's
+ * shared NEXTAUTH_SECRET — the same JWE the app's `decodeLegacySessionCookie`
+ * reads, so parity is guaranteed.
+ *
+ * IMPORTANT (post first-party-OAuth cutover): `getSessionUserById` now resolves a
+ * user from the shared session cache then the centralized hub (auth.civitai.com),
+ * which read the PRODUCTION identity store — they have NO row for these dev-clone-
+ * only smoke users, so a minted cookie would resolve to a null session and every
+ * authed request would loop to /login. `get-server-auth-session.ts` therefore has a
+ * PREVIEW-ONLY fallback (gated on IS_PREVIEW) that trusts the rich `user` embedded
+ * in this minted legacy cookie when the hub lookup misses — restoring the pre-cutover
+ * "gate reads token.user straight from the cookie" behaviour for previews only.
+ * So the minted `user` object below (id + isModerator + tier + the profile fields)
+ * IS the authoritative session user on a preview. The backing User rows (and the
  * backing User rows (and the gold subscription) are seeded into cnpg-cluster-dev
  * by the datapacket-talos `seed-smoke-test-users` CronJob; ci-smoke-tester /
  * ci-smoke-gold are in the flipt `testers` allowlist so they pass the gate.
@@ -38,6 +41,12 @@ const SECRET = process.env.NEXTAUTH_SECRET;
 const PREVIEW_URL = process.env.PREVIEW_URL;
 const COOKIE_NAME = '__Secure-civitai-token'; // libs/auth.ts — https preview => __Secure- prefix
 const MAX_AGE_S = 30 * 24 * 60 * 60;
+
+// Mint the LEGACY next-auth v4 session cookie (a `dir`/`A256GCM` JWE, HKDF-derived key) WITHOUT next-auth, which
+// is now removed. The app still ACCEPTS it via @civitai/auth's decodeLegacySessionCookie during the cutover, so
+// this mirrors that decoder's key derivation exactly.
+const ENC_INFO = 'NextAuth.js Generated Encryption Key';
+const derivedKey = (secret: string) => new Uint8Array(hkdfSync('sha256', secret, '', ENC_INFO, 32));
 
 async function mintStorageState(role: PreviewRole): Promise<string> {
   const u = PREVIEW_USERS[role];
@@ -59,7 +68,11 @@ async function mintStorageState(role: PreviewRole): Promise<string> {
   };
 
   const token = { user, sub: String(u.id), id: uuid(), signedAt: Date.now() };
-  const value = await encode({ token, secret: SECRET as string, maxAge: MAX_AGE_S });
+  const value = await new EncryptJWT(token)
+    .setProtectedHeader({ alg: 'dir', enc: 'A256GCM' })
+    .setIssuedAt()
+    .setExpirationTime(Math.floor(Date.now() / 1000) + MAX_AGE_S)
+    .encrypt(derivedKey(SECRET as string));
 
   const { hostname } = new URL(PREVIEW_URL as string);
   const storageState = {
@@ -134,5 +147,23 @@ setup('mint preview sessions', async ({ request }) => {
     for (const path of ['/moderator/reports', '/moderator/images']) {
       await request.get(path, { timeout: 60_000, headers }).catch(() => {});
     }
+  }
+
+  // Best-effort search warm-up (NOT a blocking readiness gate). The image-search
+  // path (getAllImagesIndex -> the in-cluster feeds-proxy via METRICS_SEARCH_HOST)
+  // can be cold/overloaded; fire ONE GET to warm the connection. We deliberately do
+  // NOT poll-until-ready: the earlier 12x6s gate wasted up to ~72s when search was
+  // overloaded for the whole window, and it was never the load-bearing fix anyway —
+  // each search-dependent spec (whatIf, /moderator/images, image-feed) wraps its
+  // query in retryFlaky (preview-retry.ts), which rides out a transient 408/5xx with
+  // backoff. So a single fire-and-forget warm-up is all that's useful here.
+  // (/moderator/images is already warmed by the mod loop above.)
+  if (gold) {
+    await request
+      .get('/api/v1/images?sort=Most%20Reactions&limit=1', {
+        timeout: 20_000,
+        headers: { cookie: `${COOKIE_NAME}=${gold}` },
+      })
+      .catch(() => {});
   }
 });

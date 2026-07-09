@@ -52,7 +52,8 @@ export function ModelsInfinite({
 
   return (
     <ModelCardContextProvider
-      useModelVersionRedirect={(filters?.baseModels ?? []).length > 0 || !!filters?.clubId}
+      useModelVersionRedirect={(filters?.baseModels ?? []).length > 0}
+      activeBaseModels={filters?.baseModels}
     >
       {!models.length && isFetching ? (
         <Center p="xl">

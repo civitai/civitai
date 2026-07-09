@@ -22,6 +22,7 @@ import {
   validateContestCollectionEntry,
 } from '~/server/services/collection.service';
 import { sendMessagesToCollaborators } from '~/server/services/entity-collaborator.service';
+import { publishModel3D } from '~/server/services/model3d.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import {
   handleLogError,
@@ -444,6 +445,30 @@ export const updatePostHandler = async ({
           },
           { ip: ctx.ip }
         );
+      }
+
+      // If the post is linked to a Model3D draft (queue-card "Post from
+      // Generation" flow), flip that draft to Published in lockstep. We
+      // swallow errors so a model3d-side hiccup doesn't block the post
+      // publish — publishModel3D is idempotent and we'll surface failures
+      // separately if it becomes a real problem.
+      if (updatedPost.model3dId) {
+        try {
+          await publishModel3D({
+            input: { id: updatedPost.model3dId },
+            user: ctx.user,
+          });
+        } catch (error) {
+          // Non-fatal: log via the standard tRPC error path but don't throw.
+          // The post is already published; the user can retry from the
+          // Model3D detail page if the draft is stuck.
+          // eslint-disable-next-line no-console
+          console.error('Failed to publish linked Model3D', {
+            postId: updatedPost.id,
+            model3dId: updatedPost.model3dId,
+            error,
+          });
+        }
       }
 
       // Give reward for first post of the day

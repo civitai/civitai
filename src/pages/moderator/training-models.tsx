@@ -50,6 +50,7 @@ import { getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import type { ModelFileMetadata } from '~/server/schema/model-file.schema';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { fetchBlob } from '~/utils/file-utils';
 import { getJSZip } from '~/utils/lazy';
 import { unzipTrainingData } from '~/utils/training';
@@ -57,6 +58,8 @@ import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types'
 import classes from './training-models.module.scss';
 
 const DEFAULT_TRAINING_ANNOUNCEMENT = `Due to high load, LoRA Trainings are not always successful - they may fail or get stuck in processing. Not to worry though, if your LoRA training fails your Buzz will be refunded within 24 hours. If your training has been processing for more than 24 hours it will be auto failed and a refund will be issued to you. If your training fails it's recommended that you try again.`;
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default function TrainingModerationFeedPage() {
   const currentUser = useCurrentUser();

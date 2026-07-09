@@ -9,6 +9,58 @@ import { SourceMapConsumer } from 'source-map';
 import path from 'node:path';
 import fs from 'node:fs';
 
+// Local Meili-deadline sentinel — kept in sync with FETCH_DOCUMENTS_TIMEOUT_MESSAGE
+// in src/server/meilisearch/client.ts. Duplicated as a literal (not imported) on
+// purpose: client.ts already imports `sleep` from this module, so importing the
+// constant back would form a circular dependency (the class that produced the
+// article.metrics Next-16 TDZ → 500 regression). A server-side timeout is NOT a
+// client abort — it surfaces as a 408 elsewhere.
+const MEILI_LOCAL_TIMEOUT_MESSAGE = 'meili-fetch-timeout';
+
+/**
+ * True when an error is a CLIENT-side request abort — the browser closed the tab,
+ * scrolled the infinite feed past the in-flight page, or navigated away, cancelling
+ * the request's AbortSignal mid-fetch. These surface as a bare `AbortError`
+ * (DOMException) that, untreated, bubbles to a 500 even though the server did
+ * nothing wrong and there is no client left to receive a response.
+ *
+ * Walks the `.cause` chain because tRPC wraps the thrown error as
+ * `TRPCError{ cause }` and the Meili layer may wrap once more. Explicitly EXCLUDES
+ * our own local Meili deadline, which also manifests as an AbortError but is a
+ * server-side timeout (handled as 408), not a client disconnect.
+ */
+export function isClientAbortError(e: unknown): boolean {
+  let cur = e as { name?: string; message?: string; cause?: unknown } | undefined;
+  for (let depth = 0; depth < 4 && cur; depth++) {
+    const isAbort =
+      cur.name === 'AbortError' ||
+      cur.message === 'This operation was aborted' ||
+      cur.message === 'The operation was aborted';
+    if (isAbort) {
+      const causeMsg = (cur.cause as { message?: string } | undefined)?.message;
+      const isLocalTimeout =
+        cur.message === MEILI_LOCAL_TIMEOUT_MESSAGE || causeMsg === MEILI_LOCAL_TIMEOUT_MESSAGE;
+      return !isLocalTimeout;
+    }
+    cur = cur.cause as typeof cur;
+  }
+  return false;
+}
+
+/**
+ * True when an error is a Prisma unique-constraint violation (P2002).
+ *
+ * Engagement "toggle" procedures follow a read-then-create pattern (findUnique →
+ * create-if-absent). Two concurrent calls can both observe "absent" and both
+ * create, so the loser hits the row's unique constraint (P2002). Because the row
+ * now exists, the toggle is idempotent: a P2002 there means "already toggled on",
+ * so the caller should treat it as success rather than bubble a 500. Use only at
+ * sites where P2002 unambiguously means "the exact row we wanted already exists".
+ */
+export function isPrismaUniqueViolation(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+}
+
 const prismaErrorToTrpcCode: Record<string, TRPC_ERROR_CODE_KEY> = {
   P1008: 'TIMEOUT',
   P2000: 'BAD_REQUEST',
@@ -168,6 +220,192 @@ export function throwConflictError(message: string | null = null, error?: unknow
     message,
     cause: error,
   });
+}
+
+/**
+ * Surface a transient dependency outage as TRPCError SERVICE_UNAVAILABLE (HTTP 503,
+ * retry-able) instead of a raw INTERNAL_SERVER_ERROR (500). 503 tells a polling
+ * client "temporarily unavailable, back off and retry" and keeps a dependency's
+ * own 5xx / network blip from counting against this app's 500 SLO.
+ *
+ * Always pass the original error as `cause` so it stays diagnosable in logs.
+ */
+export function throwServiceUnavailableError(message: string | null = null, error?: unknown) {
+  message ??= 'This service is temporarily unavailable. Please try again.';
+  throw new TRPCError({
+    code: 'SERVICE_UNAVAILABLE',
+    message,
+    cause: error,
+  });
+}
+
+/**
+ * True when an error is a status-less NETWORK failure reaching an upstream HTTP
+ * dependency — the TCP/DNS/TLS layer failed before any HTTP response came back, so
+ * there is no HTTP status to key off. The Node/undici fetch surfaces these as a
+ * bare `TypeError: fetch failed` whose `.cause` carries the real syscall
+ * (`ECONNREFUSED`/`ETIMEDOUT`/`ENOTFOUND`/`ECONNRESET`/`EAI_AGAIN`), or as an
+ * `AbortError`/timeout.
+ *
+ * This is intentionally NARROW: it matches ONLY recognized network signatures, so a
+ * genuine `TypeError` thrown by OUR OWN code (a real bug — e.g. reading a property
+ * of undefined) does NOT match and is left to surface as a 500. We never blanket-
+ * convert "any thrown error" to a network failure.
+ */
+export function isUpstreamNetworkError(e: unknown): boolean {
+  const NETWORK_CODES = new Set([
+    'ECONNREFUSED',
+    'ECONNRESET',
+    'ETIMEDOUT',
+    'ENOTFOUND',
+    'EAI_AGAIN',
+    'EHOSTUNREACH',
+    'ENETUNREACH',
+    'EPIPE',
+    'UND_ERR_CONNECT_TIMEOUT',
+    'UND_ERR_SOCKET',
+    'UND_ERR_HEADERS_TIMEOUT',
+    'UND_ERR_BODY_TIMEOUT',
+  ]);
+  // Walk the `.cause` chain (undici nests the syscall error under TypeError.cause).
+  let cur = e as { name?: string; message?: string; code?: string; cause?: unknown } | undefined;
+  for (let depth = 0; depth < 4 && cur && typeof cur === 'object'; depth++) {
+    if (typeof cur.code === 'string' && NETWORK_CODES.has(cur.code)) return true;
+    const msg = typeof cur.message === 'string' ? cur.message : '';
+    // The canonical undici/fetch network-failure signature.
+    if (msg === 'fetch failed' || msg.includes('fetch failed')) return true;
+    if (msg.includes('ECONNREFUSED') || msg.includes('ETIMEDOUT') || msg.includes('ENOTFOUND'))
+      return true;
+    // A request-timeout / abort with no HTTP status is also a transient reach
+    // failure (e.g. an orchestrator request that timed out before a response).
+    if (
+      cur.name === 'AbortError' ||
+      cur.name === 'TimeoutError' ||
+      msg === 'The operation was aborted' ||
+      msg === 'This operation was aborted'
+    )
+      return true;
+    cur = cur.cause as typeof cur;
+  }
+  return false;
+}
+
+/**
+ * Decides whether an orchestrator-client failure represents a genuine UPSTREAM
+ * server fault or network failure (→ should be surfaced as a retry-able 503) vs.
+ * something we should leave alone.
+ *
+ * Returns true ONLY for:
+ *  - a client error object carrying an HTTP `status >= 500` (upstream 5xx), or
+ *  - a status-less network failure (see {@link isUpstreamNetworkError}).
+ *
+ * Returns false for 4xx (client/validation faults — keep their mapped codes) and
+ * for unrecognized errors (a real bug in our code → keep surfacing as 500).
+ *
+ * `clientError` is the `{ status?, detail? }`-shaped object from the generated
+ * client's `{ data, error }` result; `thrown` is an error caught from a rejected
+ * client call (network failures arrive this way, with no `status`).
+ */
+export function isUpstreamServerOrNetworkError(args: {
+  clientError?: { status?: unknown } | null;
+  thrown?: unknown;
+}): boolean {
+  const { clientError, thrown } = args;
+  const status = clientError?.status;
+  if (typeof status === 'number' && status >= 500) return true;
+  if (thrown !== undefined && isUpstreamNetworkError(thrown)) return true;
+  return false;
+}
+
+/**
+ * True ONLY for a TRANSIENT ClickHouse CONNECTION / TRANSPORT failure — the kind
+ * that flaps when reaching ClickHouse Cloud (a socket reset / broken pipe / all
+ * connection tries failed), NOT a query/schema fault.
+ *
+ * Why this is deliberately NARROW: the buzz-reward write and the image-feed metric
+ * enrichment both touch ClickHouse, and we want a CH *transport* blip to fail SOFT
+ * (so it can't 500 a user mutation or a feed page). But a *query/schema* error
+ * (`Code: 60` UNKNOWN_TABLE, `Code: 349` NULL→non-Nullable, a syntax error) is a
+ * REAL BUG / deploy break — swallowing it would have HIDDEN the missing-table
+ * incident. So this predicate is an ALLOWLIST of transient-infra signatures and
+ * returns FALSE for everything else, leaving query/schema errors to surface (and
+ * alert) as a 500 exactly as today.
+ *
+ * Matches three shapes, because the same underlying failure can surface differently
+ * depending on the call path:
+ *  1. A raw socket error thrown before any HTTP response — `.code` is the syscall
+ *     (`ECONNRESET`/`EPIPE`/`ETIMEDOUT`/`ECONNREFUSED`), or the message is
+ *     `socket hang up`. This is how `@clickhouse/client` surfaces a dropped
+ *     connection (and how the event-engine-common `MetricService` read throws).
+ *  2. A `@clickhouse/client` `ClickHouseError` carrying a numeric `.code` string —
+ *     we match the transport-class codes `279` ALL_CONNECTION_TRIES_FAILED, `210`
+ *     NETWORK_ERROR (broken pipe while writing to socket), `209` SOCKET_TIMEOUT, AND
+ *     the one transient-CAPACITY brownout code `202` TOO_MANY_SIMULTANEOUS_QUERIES
+ *     (the 2026-06-18 incident that the inline buzz-reward fail-soft #2646 was built
+ *     for — a momentary CH Cloud overload, retryable, NOT a code bug). Query/schema
+ *     codes (`60`, `349`, …) are NOT in the set.
+ *  3. Our own `$query` wrapper flattens both of the above into a plain
+ *     `Error('ClickHouse query failed: <original message>')`, losing `.code`, so we
+ *     also string-match the transient signatures in the message (`Code: 279`/`210`/
+ *     `209`/`202`, `socket hang up`, `broken pipe`, `all connection tries failed`,
+ *     `too many simultaneous queries`). The message match is still transient-ONLY —
+ *     `Code: 60` / `unknown table` never match.
+ *
+ * Walks the `.cause` chain so a wrapped error (tRPC `TRPCError{ cause }`, undici
+ * `TypeError{ cause }`) is still classified.
+ */
+export function isClickHouseConnectionError(e: unknown): boolean {
+  // Syscall codes for a dropped/refused/reset TCP connection. (Intentionally a
+  // SUBSET of isUpstreamNetworkError's set — only true transport faults, no
+  // DNS-resolution-style codes that wouldn't apply to a pooled CH connection.)
+  const TRANSPORT_SYSCALL_CODES = new Set([
+    'ECONNRESET',
+    'EPIPE',
+    'ETIMEDOUT',
+    'ECONNREFUSED',
+    'EHOSTUNREACH',
+    'ENETUNREACH',
+    'UND_ERR_SOCKET',
+    'UND_ERR_CONNECT_TIMEOUT',
+  ]);
+  // ClickHouse server error codes that are TRANSIENT INFRA brownouts (never a query
+  // or schema fault). 279/210/209 = connection/transport; 202 = momentary capacity
+  // overload. Strings, because ClickHouseError.code is a string.
+  const TRANSIENT_CH_CODES = new Set(['279', '210', '209', '202']);
+
+  let cur = e as
+    | { name?: string; message?: string; code?: unknown; cause?: unknown }
+    | undefined;
+  for (let depth = 0; depth < 5 && cur && typeof cur === 'object'; depth++) {
+    const code = cur.code;
+    if (typeof code === 'string') {
+      // Shape 1: raw syscall code. Shape 2: numeric ClickHouseError code (string).
+      if (TRANSPORT_SYSCALL_CODES.has(code)) return true;
+      if (TRANSIENT_CH_CODES.has(code)) return true;
+    }
+    const msg = typeof cur.message === 'string' ? cur.message.toLowerCase() : '';
+    if (msg) {
+      // Shape 3: the $query-wrapped string. Transient-infra signatures ONLY — these
+      // never appear in an UNKNOWN_TABLE / NULL-insert / syntax error message.
+      if (
+        msg.includes('socket hang up') ||
+        msg.includes('broken pipe') ||
+        msg.includes('all connection tries failed') ||
+        msg.includes('connection refused') ||
+        msg.includes('connection reset') ||
+        msg.includes('too many simultaneous queries') ||
+        // The `Code: NNN` prefix our $query wrapper preserves, transient codes only.
+        msg.includes('code: 279') ||
+        msg.includes('code: 210') ||
+        msg.includes('code: 209') ||
+        msg.includes('code: 202')
+      ) {
+        return true;
+      }
+    }
+    cur = cur.cause as typeof cur;
+  }
+  return false;
 }
 
 export function handleLogError(e: Error, name?: string, details?: MixedObject) {

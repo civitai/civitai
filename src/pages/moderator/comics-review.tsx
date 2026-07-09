@@ -27,10 +27,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { BlockedReason } from '~/server/common/enums';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import {
-  showErrorNotification,
-  showSuccessNotification,
-} from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 const limitOptions = [10, 25, 50].map((n) => ({ value: String(n), label: `${n} per page` }));
@@ -155,6 +152,7 @@ function buildReviewSignals(image: {
 }
 
 export const getServerSideProps = createServerSideProps({
+  requireModerator: true,
   useSession: true,
   resolver: async ({ session }) => {
     if (!session?.user?.isModerator) return { notFound: true };
@@ -349,9 +347,7 @@ export default function ComicsModerationReview() {
                       )}
                     </div>
                     <Text size="sm" fw={600} lineClamp={1}>
-                      <Link href={`/comics/project/${project.id}`}>
-                        {project.name}
-                      </Link>
+                      <Link href={`/comics/project/${project.id}`}>{project.name}</Link>
                     </Text>
                     <Group gap={6}>
                       <IconUser size={12} />
@@ -446,11 +442,7 @@ export default function ComicsModerationReview() {
 
         {data?.nextCursor && (
           <Center mt="md">
-            <Button
-              variant="light"
-              loading={isFetching}
-              onClick={() => setCursor(data.nextCursor)}
-            >
+            <Button variant="light" loading={isFetching} onClick={() => setCursor(data.nextCursor)}>
               Load more
             </Button>
           </Center>

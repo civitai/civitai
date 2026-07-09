@@ -2,6 +2,7 @@ import { Alert, Center, Loader, Stack, Text, Anchor } from '@mantine/core';
 import { IconInbox } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { GeneratedOutput } from '~/components/ImageGeneration/GeneratedOutput';
+import type { AudioBlob, ImageBlob, VideoBlob } from '~/shared/orchestrator/workflow-data';
 import { useGeneratedRequestsContext } from '~/components/ImageGeneration/GeneratedRequestsProvider';
 import { matchesMarkerTags } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -25,8 +26,13 @@ export function Feed() {
 
   const images = useMemo(
     () =>
+      // GeneratedOutput renders 2D media only — PolyGen has its own queue
+      // card path, so skip model3d blobs here.
       requests.flatMap((r) =>
-        r.succeededOutput.filter((img) => matchesMarkerTags(img, markerTags))
+        r.succeededOutput.filter(
+          (img): img is ImageBlob | VideoBlob | AudioBlob =>
+            img.type !== 'model3d' && matchesMarkerTags(img, markerTags)
+        )
       ),
     [requests, markerTags]
   );

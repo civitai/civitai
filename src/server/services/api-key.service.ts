@@ -13,6 +13,7 @@ import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 import { bustBuzzLimitCache, deleteAuthSubject } from '~/server/http/orchestrator/api-key-spend';
+import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
 import { logToAxiom, safeError } from '~/server/logging/client';
 
 export function getApiKey({ id }: GetAPIKeyInput) {
@@ -147,6 +148,11 @@ export async function deleteApiKey({ id, userId }: DeleteAPIKeyInput & { userId:
         error: safeError(err),
       }).catch(() => {});
     });
+
+    // Expire the deleted key in the orchestrator: it caches the user's API
+    // keys for auth, so without this the key keeps working until the cache
+    // TTL lapses. invalidateCivitaiUser swallows its own errors.
+    await invalidateCivitaiUser({ userId });
   }
 
   return result;

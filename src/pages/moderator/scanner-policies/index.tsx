@@ -66,6 +66,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({
+  requireModerator: true,
   useSession: true,
   resolver: async ({ session }) => {
     if (!session || !session.user?.isModerator)
@@ -358,9 +359,7 @@ export default function ScannerPoliciesPage() {
 
   // Sort: active first (so they cluster at the top), then alphabetical by name.
   const sortCandidates = (list: ScannerPolicyCandidate[]) =>
-    [...list].sort(
-      (a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name)
-    );
+    [...list].sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
 
   const candidatesInTab = sortCandidates(
     candidates.filter((c) => (candidateTab === 'archived' ? c.archived : !c.archived))
@@ -1085,4 +1084,3 @@ export default function ScannerPoliciesPage() {
     </>
   );
 }
-

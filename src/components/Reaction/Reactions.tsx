@@ -40,7 +40,6 @@ const availableReactions: Partial<Record<ToggleReactionInput['entityType'], Revi
   image: ['Like', 'Heart', 'Laugh', 'Cry'],
   post: ['Like', 'Heart', 'Laugh', 'Cry'],
   bountyEntry: ['Like', 'Heart', 'Laugh', 'Cry'],
-  clubPost: ['Like', 'Heart', 'Laugh', 'Cry'],
   commentOld: ['Like', 'Heart', 'Laugh', 'Cry'],
   comment: ['Like', 'Heart', 'Laugh', 'Cry'],
   article: ['Like', 'Heart', 'Laugh', 'Cry'],
@@ -160,6 +159,7 @@ export function Reactions({
             size="compact-xs"
             onClick={() => setShowAll((s) => !s)}
             classNames={{ inner: 'flex gap-0.5' }}
+            aria-label="Add reaction"
             {...(buttonStyling ? buttonStyling('AddReaction') : {})}
           >
             <IconPlus size={16} stroke={2.5} />
@@ -289,6 +289,7 @@ function ReactionBadge({
       color={color}
       size="compact-xs"
       classNames={{ label: 'flex gap-1' }}
+      aria-label={`${reaction} reaction`}
       {...buttonStyling?.(reaction, hasReacted)}
       {...buttonProps}
     >

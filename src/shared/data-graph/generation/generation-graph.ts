@@ -106,6 +106,8 @@ const NEW_TO_OLD: Record<string, string> = {
   'video:edit': 'vid2vid:edit',
   'video:extend': 'vid2vid:extend',
   'audio:create': 'txt2music',
+  'model3d:create': 'txt2model3d',
+  'model3d:image-to-3d': 'img2model3d',
 };
 
 /** Migrate stored workflow key to current format, falling back to txt2img if unknown */
@@ -262,6 +264,11 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
         'vid2vid:extend',
         // Audio workflows with ecosystem support
         'txt2music',
+        // 3D Model workflows with ecosystem support (PolyGen via Meshy/Fal).
+        // Both ride the polygen-graph and render through `GenerationForm.tsx`
+        // like every other ecosystem (audio/video/image).
+        'txt2model3d',
+        'img2model3d',
       ] as const,
       graph: ecosystemGraph,
     },
@@ -315,10 +322,21 @@ export function workflowHasNode(workflow: string, nodeKey: string): boolean {
  * Checks whether each workflow's sub-graph contains an 'images' or 'video' input node.
  * Audio is not currently accepted as input by any workflow, so returns an empty array.
  */
-export function getWorkflowsForMediaType(mediaType: 'image' | 'video' | 'audio'): WorkflowOption[] {
-  if (mediaType === 'audio') return [];
-  const nodeKey = mediaType === 'image' ? 'images' : 'video';
-  return workflowOptions.filter((w) => workflowHasNode(w.graphKey, nodeKey));
+export function getWorkflowsForMediaType(
+  mediaType: 'image' | 'video' | 'audio' | 'model3d'
+): WorkflowOption[] {
+  // Audio + model3d are output-only formats; no workflow accepts them as input.
+  if (mediaType === 'audio' || mediaType === 'model3d') return [];
+  if (mediaType === 'video')
+    return workflowOptions.filter((w) => workflowHasNode(w.graphKey, 'video'));
+  // Most image-input workflows expose a standard `images` array node. PolyGen's
+  // img2model3d instead feeds a single `sourceImage` node nested behind the
+  // ecosystem + process discriminators, so `workflowHasNode` can't see it —
+  // include image-input 3D workflows explicitly by config instead.
+  return workflowOptions.filter(
+    (w) =>
+      workflowHasNode(w.graphKey, 'images') || (w.category === 'model3d' && w.inputType === 'image')
+  );
 }
 
 /** Type helper for the generation graph context */

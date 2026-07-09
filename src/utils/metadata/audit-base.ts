@@ -16,7 +16,13 @@ export function prepareWordRegex(word: string, pluralize = false) {
       .replace(/e/g, '[e|3]');
   }
   if (pluralize) regexStr += '[s|z]*';
-  regexStr = `([^a-zA-Z0-9]+|^)` + regexStr + `([^a-zA-Z0-9]+|$)`;
+  // Zero-width word boundaries instead of consuming `[^a-zA-Z0-9]+` runs — the
+  // greedy leading/trailing groups backtrack O(n²) over a long non-Latin (CJK)
+  // prompt, pinning the api event loop for seconds (user-triggerable DoS). The
+  // lookbehind/lookahead are boolean-equivalent ("not preceded/followed by an
+  // alnum" ≡ "preceded/followed by non-alnum or string edge") but zero-width →
+  // nothing to backtrack → linear. Mirrors the fix in audit.ts.
+  regexStr = `(?<![a-zA-Z0-9])` + regexStr + `(?![a-zA-Z0-9])`;
   const regex = new RegExp(regexStr, 'i');
   return regex;
 }

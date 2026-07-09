@@ -8,6 +8,8 @@ import { BackButton } from '~/components/BackButton/BackButton';
 import { PurchasableRewardUpsertForm } from '~/components/PurchasableRewards/PurchasableRewardUpsertForm';
 import { Meta } from '~/components/Meta/Meta';
 
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
+
 export default function PurchasableRewardCreate() {
   const router = useRouter();
   const onCreated = () => router.push(`/moderator/rewards`);

@@ -2,6 +2,7 @@ import { useHotkeys, useLocalStorage, useOs } from '@mantine/hooks';
 import { useState, useEffect, createContext, useContext } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ConnectProps } from '~/components/ImageGuard/ImageGuard2';
 import { ImageGuardContent } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -140,6 +141,7 @@ function ImageContent({
     key: 'detailView_defaultMuted',
     defaultValue: true,
   });
+  const features = useFeatureFlags();
 
   const imageHeight = image?.height ?? 1200;
   const imageWidth = image?.width ?? 1200;
@@ -186,7 +188,7 @@ function ImageContent({
               anim
               quality={90}
               original={isVideo ? true : undefined}
-              html5Controls={shouldDisplayHtmlControls(image)}
+              html5Controls={features.nativeVideoControls || shouldDisplayHtmlControls(image)}
               muted={defaultMuted}
               onMutedChange={(isMuted) => {
                 setDefaultMuted(isMuted);

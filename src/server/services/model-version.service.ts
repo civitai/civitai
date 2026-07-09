@@ -1,11 +1,17 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import dayjs from '~/shared/utils/dayjs';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
-import { CacheTTL, constants, nsfwRestrictedBaseModels } from '~/server/common/constants';
+import {
+  CacheTTL,
+  constants,
+  isNonCommercialBaseModel,
+  nsfwRestrictedBaseModels,
+} from '~/server/common/constants';
 import type { ModelFileType } from '~/server/common/constants';
+import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import {
   EntityAccessPermission,
   NotificationCategory,
@@ -24,8 +30,13 @@ import {
   modelVersionAccessCache,
   modelVersionResourceCache,
 } from '~/server/redis/caches';
-import { REDIS_KEYS } from '~/server/redis/client';
+import type { RedisKeyTemplateCache } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -48,6 +59,7 @@ import type {
   RecommendedSettingsSchema,
   AddLinkedComponentInput,
   LinkedComponentSettings,
+  LinkOfficialFileByHashInput,
   SetLinkedComponentsInput,
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
@@ -59,6 +71,7 @@ import {
 } from '~/server/search-index';
 import { deleteBidsForModelVersion } from '~/server/services/auction.service';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { findOfficialFileByHash } from '~/server/services/model-file.service';
 import {
   createMultiAccountBuzzTransaction,
   refundMultiAccountTransaction,
@@ -80,10 +93,16 @@ import type {
   ModelVersionEngagementType,
   TrainingStatus,
 } from '~/shared/utils/prisma/enums';
-import { Availability, CommercialUse, ModelStatus } from '~/shared/utils/prisma/enums';
+import {
+  Availability,
+  CommercialUse,
+  LicensingFeeSettlementCurrency,
+  LicensingFeeType,
+  ModelStatus,
+} from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
-import { filesForModelVersionCache } from './model-file.service';
+import { markFileReplaced, filesForModelVersionCache } from './model-file.service';
 import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
 import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
@@ -217,9 +236,18 @@ export const toggleModelVersionEngagement = async ({
     return;
   }
 
-  await dbWrite.modelVersionEngagement.create({
-    data: { type, modelVersionId: versionId, userId },
-  });
+  await dbWrite.modelVersionEngagement
+    .create({
+      data: { type, modelVersionId: versionId, userId },
+    })
+    .catch((error) => {
+      // A toggle racing itself: both calls see no engagement and both create,
+      // so the second hits the (userId, modelVersionId) unique constraint
+      // (P2002). The engagement already exists — a toggle is idempotent, so
+      // treat this as success instead of bubbling a 500.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') return;
+      throw error;
+    });
   return;
 };
 
@@ -238,6 +266,43 @@ export const getUserEarlyAccessModelVersions = async ({ userId }: { userId: numb
     },
     select: { id: true },
   });
+};
+
+// Licensing lineage roots selectable for a given base model — the versions
+// flagged LicensingRoot that define a fee others can inherit (e.g. an
+// ecosystem's Base / Turbo checkpoints). Feeds the version-form picker.
+export const getLicensingRoots = async ({ baseModel }: { baseModel: string }) => {
+  return dbRead.$queryRaw<
+    Array<{
+      id: number;
+      modelId: number;
+      modelName: string;
+      versionName: string;
+      licensingFee: number | null;
+      licensingFeeType: LicensingFeeType | null;
+      licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
+    }>
+  >`
+    SELECT
+      mv.id,
+      mv."modelId",
+      m.name AS "modelName",
+      mv.name AS "versionName",
+      mv."licensingFee",
+      mv."licensingFeeType",
+      mv."licensingFeeSettlementCurrency"
+    FROM "ModelVersion" mv
+    JOIN "Model" m ON m.id = mv."modelId"
+    WHERE mv."baseModel" = ${baseModel}
+      AND (mv.flags & ${ModelVersionFlag.LicensingRoot}) = ${ModelVersionFlag.LicensingRoot}
+      AND mv.status = ${ModelStatus.Published}::"ModelStatus"
+      AND mv."licensingFee" IS NOT NULL
+      AND mv."licensingFee" > 0
+      AND m.status = ${ModelStatus.Published}::"ModelStatus"
+      AND m.availability = ${Availability.Public}::"Availability"
+      AND m."deletedAt" IS NULL
+    ORDER BY m.name, mv.index
+  `;
 };
 
 export const upsertModelVersion = async ({
@@ -285,6 +350,21 @@ export const upsertModelVersion = async ({
         ', '
       )}`
     );
+  }
+
+  // Non-commercial base models (e.g. Ideogram) can't be monetized — reject any
+  // monetization on this version. Scoped to the version, so a model's other
+  // versions on commercial base models can still monetize.
+  if (isNonCommercialBaseModel(data.baseModel)) {
+    const attemptsMonetization =
+      (data.licensingFee != null && data.licensingFee > 0) ||
+      !!monetization?.type ||
+      !!updatedEarlyAccessConfig;
+    if (attemptsMonetization) {
+      throw throwBadRequestError(
+        `The base model "${data.baseModel}" is licensed for non-commercial use and cannot be monetized.`
+      );
+    }
   }
 
   // Check if trying to publish a model version when model is marked as cannotPublish
@@ -871,8 +951,11 @@ export const publishModelVersionsWithEarlyAccess = async ({
       } catch (e: any) {
         console.log(e.message);
         if (e?.message?.includes('Insufficient funds to pay for early access.')) {
-          // Create a notification for the user that the early access failed.
-          createNotification({
+          // Fire-and-forget ON PURPOSE: this runs inside an interactive $transaction (dbClient = tx,
+          // see the dbWrite.$transaction caller). Awaiting a cross-service HTTP call here would hold the
+          // transaction open for the client's retry window and risk the Prisma tx timeout, rolling back
+          // the publish. Best-effort delivery is the right trade here.
+          void createNotification({
             userId: currentVersion.model.userId,
             type: 'early-access-failed-to-publish',
             category: NotificationCategory.System,
@@ -1709,10 +1792,24 @@ export const modelVersionDonationGoals = async ({
       },
     },
   } as const;
-  const version = await dbRead.modelVersion.findFirstOrThrow(donationFindArgs).catch(() => {
-    dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'modelVersionDonationGoals' });
-    return dbWrite.modelVersion.findFirstOrThrow(donationFindArgs);
-  });
+  const version = await dbRead.modelVersion
+    .findFirstOrThrow(donationFindArgs)
+    .catch(() => {
+      // Replica miss (often replica lag) — retry against the primary before
+      // deciding the record is truly gone.
+      dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'modelVersionDonationGoals' });
+      return dbWrite.modelVersion.findFirstOrThrow(donationFindArgs);
+    })
+    .catch((error) => {
+      // Genuinely not found on the primary too (P2025) is a client/not-found
+      // condition — surface 404 at the source. (The controller handler also
+      // maps P2025→NOT_FOUND via throwDbError, but only once its `return` is
+      // awaited; throwing here makes the 404 correct regardless of that.)
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+        throw throwNotFoundError(`No model version with id ${id}`);
+      }
+      throw error;
+    });
 
   const canSeeAllGoals = userId === version.model.userId || isModerator;
 
@@ -1786,6 +1883,37 @@ export async function queryModelVersions<TSelect extends Prisma.ModelVersionSele
   return { items, nextCursor };
 }
 
+// Public-response cache (origin-side cache for GET /api/v1/models/[id]) toggle —
+// only populated on Datapacket (see PUBLIC_MODEL_RESPONSE_TTL in the handler).
+const PUBLIC_MODEL_RESPONSE_CACHE_ENABLED = env.IS_DATAPACKET;
+
+export function publicModelResponseKey(
+  modelId: number,
+  browsingLevel: number
+): RedisKeyTemplateCache {
+  return `${REDIS_KEYS.CACHES.PUBLIC_MODEL_RESPONSE}:${modelId}:${browsingLevel}`;
+}
+
+// Best-effort, fail-open invalidation of the origin-side public response cache for
+// GET /api/v1/models/[id] (see the handler). Called from bustMvCache so an
+// unpublish / takedown / update / delete drops the cached 200 immediately rather
+// than serving stale for up to the cache TTL globally. Busts BOTH browsing-level
+// keys the handler can write (all-levels for unrestricted regions, sfw-only for
+// region-restricted ones). Deletes the physical key — the handler's read keys off
+// key PRESENCE, so a clean delete forces a rebuild. A Redis error here must NOT
+// throw into the mutation path, so it is swallowed (the entry otherwise expires
+// via its TTL).
+export async function bustPublicModelResponseCache(modelId: number | number[]) {
+  if (!PUBLIC_MODEL_RESPONSE_CACHE_ENABLED) return;
+  const modelIds = Array.isArray(modelId) ? modelId : [modelId];
+  if (modelIds.length === 0) return;
+  const keys = modelIds.flatMap((id) => [
+    publicModelResponseKey(id, allBrowsingLevelsFlag),
+    publicModelResponseKey(id, sfwBrowsingLevelsFlag),
+  ]);
+  await redis.del(keys).catch(() => undefined);
+}
+
 export const bustMvCache = async (
   ids: number | number[],
   modelIds?: number | number[],
@@ -1806,6 +1934,9 @@ export const bustMvCache = async (
     // separately. Stale entries here filter the model out of feeds (versions
     // with status='Draft' get dropped by the post-fetch transform).
     await dataForModelsCache.refresh(mIds);
+    // Drop the origin-side public GET /api/v1/models/[id] response cache for these
+    // models so a takedown / unpublish / update stops serving a stale 200.
+    await bustPublicModelResponseCache(mIds);
     await modelsSearchIndex.queueUpdate(
       mIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
     );
@@ -1911,6 +2042,10 @@ export const createModelVersionPostFromTraining = async ({
       })
     )
   );
+
+  // Returned so request handlers can emit the post-create ClickHouse event
+  // (track.post) — the service-level createPost above doesn't track on its own.
+  return post;
 };
 
 export const getModelVersionPopularity = async ({ id }: GetModelVersionPopularityInput) => {
@@ -1986,43 +2121,124 @@ export const setLinkedComponents = async ({ id, components }: SetLinkedComponent
   if (source) await preventModelVersionLag(source.modelId, id);
 };
 
-export const addLinkedComponent = async (input: AddLinkedComponentInput) => {
-  // Find all files and pick the primary one using modelFileOrder priority
-  const files = await dbRead.modelFile.findMany({
-    where: { modelVersionId: input.targetVersionId },
-    select: { id: true, name: true, sizeKB: true, type: true, metadata: true },
-  });
+export const addLinkedComponent = async (
+  input: AddLinkedComponentInput & { userId: number; isModerator?: boolean }
+) => {
+  const { userId, isModerator } = input;
 
-  if (files.length === 0) {
-    throw new TRPCError({
-      code: 'NOT_FOUND',
-      message: 'No files found for the target model version',
+  type LinkedFile = {
+    id: number;
+    name: string;
+    sizeKB: number;
+    type: string;
+    metadata: unknown;
+  };
+
+  let linkedFile: LinkedFile;
+  // `resourceId` is the linked/canonical version stored on the row. When an
+  // explicit file is given we take it from the file itself (authoritative);
+  // otherwise it's the version the caller passed.
+  let resourceId = input.targetVersionId;
+
+  if (input.targetFileId != null) {
+    const file = await dbRead.modelFile.findUnique({
+      where: { id: input.targetFileId },
+      select: {
+        id: true,
+        name: true,
+        sizeKB: true,
+        type: true,
+        metadata: true,
+        modelVersionId: true,
+        modelVersion: { select: { model: { select: { userId: true } } } },
+      },
     });
+
+    if (!file) throw new TRPCError({ code: 'NOT_FOUND', message: 'Linked file not found' });
+
+    // The version being edited (`input.id`) already passed isOwnerOrModerator;
+    // this guards the *referenced* file's owner.
+    if (!isModerator && file.modelVersion.model.userId !== userId)
+      throw new TRPCError({
+        code: 'FORBIDDEN',
+        message: 'You do not own the file you are trying to link',
+      });
+
+    // resourceId + returned version data come from the file's parent version, so a
+    // targetVersionId that disagrees would produce inconsistent denormalized data
+    // (versionName/modelName). Reject the mismatch instead of silently ignoring it.
+    if (input.targetVersionId !== file.modelVersionId)
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'targetVersionId must match the parent version of targetFileId',
+      });
+
+    linkedFile = file;
+    resourceId = file.modelVersionId;
+  } else {
+    // No explicit file requested — auto-pick the primary by modelFileOrder priority.
+    const files = await dbRead.modelFile.findMany({
+      where: { modelVersionId: input.targetVersionId },
+      select: { id: true, name: true, sizeKB: true, type: true, metadata: true },
+    });
+
+    if (files.length === 0)
+      throw new TRPCError({
+        code: 'NOT_FOUND',
+        message: 'No files found for the target model version',
+      });
+
+    linkedFile = files.sort(
+      (a, b) =>
+        (constants.modelFileOrder[a.type as ModelFileType] ?? 99) -
+        (constants.modelFileOrder[b.type as ModelFileType] ?? 99)
+    )[0];
   }
 
-  const primaryFile = files.sort(
-    (a, b) =>
-      (constants.modelFileOrder[a.type as ModelFileType] ?? 99) -
-      (constants.modelFileOrder[b.type as ModelFileType] ?? 99)
-  )[0];
+  // Validate the redundant file up front (before any write) so a bad
+  // replaceFileId can't leave a dangling pointer: it must live on the version
+  // being edited and must not be a primary model file (never delete weights).
+  if (input.replaceFileId != null) {
+    const replaceFile = await dbRead.modelFile.findUnique({
+      where: { id: input.replaceFileId },
+      select: { modelVersionId: true, type: true },
+    });
+    if (!replaceFile || replaceFile.modelVersionId !== input.id)
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'replaceFileId must be a file on the version being edited',
+      });
+    if (
+      primaryModelFileTypes.includes(replaceFile.type as ModelFileType) ||
+      replaceFile.type === 'Training Data'
+    )
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'Cannot replace a primary model or training-data file',
+      });
+  }
 
   const settings = {
     isLinkedComponent: true as const,
     componentType: input.componentType,
-    fileId: primaryFile.id,
+    fileId: linkedFile.id,
     modelId: input.modelId,
     modelName: input.modelName,
     versionName: input.versionName,
-    fileName: primaryFile.name,
+    fileName: linkedFile.name,
     isRequired: input.isRequired ?? true,
   };
 
-  // Check for existing linked component with same source + target
+  // Dedupe on (sourceId, resourceId, fileId) so two distinct files from the
+  // same target version coexist instead of overwriting each other.
   const existing = await dbWrite.recommendedResource.findFirst({
     where: {
       sourceId: input.id,
-      resourceId: input.targetVersionId,
-      settings: { path: ['isLinkedComponent'], equals: true },
+      resourceId,
+      AND: [
+        { settings: { path: ['isLinkedComponent'], equals: true } },
+        { settings: { path: ['fileId'], equals: linkedFile.id } },
+      ],
     },
     select: { id: true },
   });
@@ -2033,12 +2249,15 @@ export const addLinkedComponent = async (input: AddLinkedComponentInput) => {
         data: { settings },
       })
     : await dbWrite.recommendedResource.create({
-        data: {
-          sourceId: input.id,
-          resourceId: input.targetVersionId,
-          settings,
-        },
+        data: { sourceId: input.id, resourceId, settings },
       });
+
+  // Quarantine the now-redundant local file instead of hard-deleting it: bytes
+  // are retained for 30 days (restorable) and freed later by the
+  // purge-replaced-files job. Requires the created pointer's id.
+  if (input.replaceFileId != null) {
+    await markFileReplaced({ fileId: input.replaceFileId, recommendedResourceId: result.id });
+  }
 
   const source = await dbWrite.modelVersion.findUnique({
     where: { id: input.id },
@@ -2046,19 +2265,19 @@ export const addLinkedComponent = async (input: AddLinkedComponentInput) => {
   });
   if (source) await preventModelVersionLag(source.modelId, input.id);
 
-  const meta = primaryFile.metadata as Record<string, unknown> | null;
+  const meta = linkedFile.metadata as Record<string, unknown> | null;
 
   return {
     recommendedResourceId: result.id,
     componentType: input.componentType,
     modelId: input.modelId,
     modelName: input.modelName,
-    versionId: input.targetVersionId,
+    versionId: resourceId,
     versionName: input.versionName,
-    fileId: primaryFile.id,
-    fileName: primaryFile.name,
-    sizeKB: primaryFile.sizeKB,
-    fileType: primaryFile.type,
+    fileId: linkedFile.id,
+    fileName: linkedFile.name,
+    sizeKB: linkedFile.sizeKB,
+    fileType: linkedFile.type,
     fileMetadata: meta
       ? {
           format: meta.format as string | null,
@@ -2161,6 +2380,14 @@ export const mergeVersions = async ({
   }
   if (sourceVersionIds.includes(targetVersionId)) {
     throw throwBadRequestError('Target version cannot be in the source versions list.');
+  }
+  // Defensive: every raw query below interpolates `Prisma.join(sourceVersionIds)`,
+  // which throws "Expected join([]) to be called with an array of multiple
+  // elements" on an empty array. The tRPC schema enforces `.min(1)`, but guard
+  // here too so any non-router caller gets a clean 400 (nothing to merge) rather
+  // than an INTERNAL_SERVER_ERROR.
+  if (sourceVersionIds.length === 0) {
+    throw throwBadRequestError('No source versions to merge.');
   }
 
   // Block if any source version has active monetization or early access purchases
@@ -2457,4 +2684,27 @@ export const mergeVersions = async ({
       });
     }
   }
+};
+
+export const linkOfficialFileByHash = async (
+  input: LinkOfficialFileByHashInput & { userId: number; isModerator?: boolean }
+) => {
+  // Host-version ownership is enforced by the router middleware (isOwnerOrModerator on input.id).
+  // Re-verify the byte match server-side — never trust a client-claimed match.
+  const match = await findOfficialFileByHash({ sha256: input.sha256 });
+  if (!match) return null;
+
+  // Link with OFFICIAL credentials so addLinkedComponent's target-ownership guard passes.
+  return addLinkedComponent({
+    id: input.id,
+    targetVersionId: match.versionId,
+    targetFileId: match.fileId,
+    componentType: match.componentType,
+    modelId: match.modelId,
+    modelName: match.modelName,
+    versionName: match.versionName,
+    isRequired: true,
+    userId: constants.system.officialUserId,
+    isModerator: true,
+  });
 };

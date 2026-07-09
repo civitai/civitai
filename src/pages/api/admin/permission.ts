@@ -9,7 +9,8 @@ import { refreshSession } from '~/server/auth/session-invalidation';
 import { commaDelimitedStringArray } from '~/utils/zod-helpers';
 
 const schema = z.object({
-  key: z.string().refine((x) => featureFlagKeys.includes(x as FeatureFlagKey)),
+  // Accepts a single key or a comma-delimited list (e.g. key=a,b,c).
+  key: commaDelimitedStringArray(),
   usernames: commaDelimitedStringArray(),
   revoke: z.coerce.boolean().optional(),
 });
@@ -19,24 +20,39 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   if (!result.success) return res.status(400).json(result.error);
 
   const { usernames, key, revoke } = result.data;
+
+  // Keep only valid feature flag keys; silently skip the rest.
+  const keys = key.filter((x): x is FeatureFlagKey =>
+    featureFlagKeys.includes(x as FeatureFlagKey)
+  );
+  const skipped = key.filter((x) => !featureFlagKeys.includes(x as FeatureFlagKey));
+
   const users = await dbWrite.user.findMany({
     where: { username: { in: usernames } },
     select: { id: true },
   });
 
-  // Add permission to users
+  // Add/remove each valid permission for the matched users.
+  // MUST run sequentially with await: addSystemPermission/removeSystemPermission
+  // each read-modify-write the *entire* system:permissions blob, so firing them
+  // concurrently (or not awaiting at all) makes them clobber each other —
+  // last-write-wins drops every mutation but one, and in a serverless route the
+  // response can return before unawaited writes settle.
   const userIds = users.map((x) => x.id);
-  if (revoke) {
-    removeSystemPermission(key as FeatureFlagKey, userIds);
-  } else {
-    addSystemPermission(key as FeatureFlagKey, userIds);
+  for (const k of keys) {
+    if (revoke) {
+      await removeSystemPermission(k, userIds);
+    } else {
+      await addSystemPermission(k, userIds);
+    }
   }
 
   // Invalidate their sessions
   for (const user of users) await refreshSession(user.id);
 
   return res.status(200).json({
-    key,
+    keys,
+    skipped,
     affected: users.length,
     userIds,
     revoke,
