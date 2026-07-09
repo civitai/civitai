@@ -59,8 +59,16 @@ export const useCreateResourceReview = () => {
       // Normalized store (PR2): mirror the same Recommended+Notify toggle for the
       // per-visible-set surfaces. Dual-written alongside the getEngagedModels cache
       // above until the feed callers migrate (PR3) and the old endpoint is dropped (PR4).
-      // Pass the SAME direction the legacy handler used (F3): the warm
-      // `previousEngaged.Recommended` snapshot, not the possibly-cold store.
+      // F3: derive the direction from the SAME `previousEngaged.Recommended` snapshot
+      // the legacy setData above consumed — deliberately NOT the normalized store.
+      // Passing the one shared snapshot keeps the two dual-writes CONSISTENT with each
+      // other (the Preserve invariant). PR3 removed this page's own getEngagedModels
+      // query, so on a directly-loaded model page that legacy cache is cold and this
+      // reads false; both writes then agree (both add), so they never diverge. Accepted
+      // narrow edge: re-affirming an ALREADY-recommended model won't toggle it off until
+      // a feed has warmed the cache. Sourcing direction from the store instead would warm
+      // this case but split the two writes' direction (store warm / legacy cold) — a
+      // worse divergence bug — so we keep the shared-snapshot source.
       applyReviewCreated(modelId, recommended, previousEngaged.Recommended?.includes(modelId) ?? false);
 
       queryUtils.model.getById.setData({ id: modelId }, (old) => {
@@ -173,7 +181,9 @@ export const useUpdateResourceReview = () => {
       });
 
       // Normalized store (PR2): mirror the Recommended toggle for per-visible-set surfaces.
-      // Direction from the warm legacy snapshot (F3), not the possibly-cold store.
+      // F3: direction from the SAME `previousEngaged` snapshot the legacy setData used
+      // (not the store), so both dual-writes stay consistent. See the create handler for
+      // the accepted cold-cache edge (this page's getEngagedModels query was removed in PR3).
       applyReviewUpdated(modelId, request.recommended, alreadyReviewed > -1);
 
       queryUtils.model.getById.setData({ id: modelId }, (old) => {

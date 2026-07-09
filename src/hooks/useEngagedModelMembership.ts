@@ -61,7 +61,16 @@ function flush() {
           useEngagedModelsStore.getState().applyServerResult(record ?? {}, ids);
         },
         () => {
-          // Leave the ids unknown so a later mount can retry.
+          // F2 (stuck-disabled): the fetch errored. If we left these ids unknown a
+          // component that stays mounted (unchanged deps → its effect never re-fires)
+          // would never re-request them, leaving its `disabled = loading = !isKnown`
+          // control PERMANENTLY dead with no retry. Mark them known-not-engaged so the
+          // control becomes actionable again. The dirty-guard still protects any id the
+          // user mutated meanwhile (locallyMutated is skipped). Trade-off, accepted: in
+          // this rare error case the F1 wrong-direction risk returns for a genuinely-ON
+          // model (it reads not-engaged) — a usable button beats a dead one, and the
+          // optimistic dual-write self-heals the store on the user's next interaction.
+          useEngagedModelsStore.getState().applyServerResult({}, ids);
         }
       )
       .finally(() => {
@@ -112,6 +121,14 @@ export interface EngagedMembershipResult {
    * direction from membership MUST gate their action on this (F1): while a model
    * is unknown the store reads as not-engaged, so an un-gated toggle would fire
    * the OPPOSITE of the user's intent. Ids ≤ 0 are never known.
+   *
+   * ALWAYS true when there is no authenticated user: an unauth user has no
+   * membership to toggle wrongly (the endpoint is protected, so nothing is ever
+   * queried and the id would otherwise stay "unknown" forever). Controls gate
+   * `disabled = loading = !isKnown`, so a perpetually-false isKnown would leave
+   * a logged-out user's control permanently disabled — and a disabled element
+   * can't fire the LoginRedirect click that prompts sign-in. Returning true for
+   * unauth keeps the control interactive so that click reaches LoginRedirect.
    */
   isKnown: (modelId: number) => boolean;
 }
@@ -148,12 +165,18 @@ export function useEngagedModelsMembership(modelIds: number[]): EngagedMembershi
   const knownById = new Map<number, boolean>();
   validIds.forEach((id, i) => knownById.set(id, knownFlags[i]));
 
+  // F1 (unauth): with no user there is nothing to query and nothing to toggle
+  // wrongly — treat every id as known so gated controls stay interactive and a
+  // logged-out click can reach LoginRedirect. (`enabled` is already false here,
+  // so `isLoading` is false too.)
+  const noUser = !currentUser;
+
   return {
     isEngaged: (modelId, type) => byId.get(modelId)?.has(type) ?? false,
     getTypes: (modelId) => [...(byId.get(modelId) ?? [])],
     sets,
     isLoading: enabled && knownFlags.some((known) => !known),
-    isKnown: (modelId) => knownById.get(modelId) ?? false,
+    isKnown: (modelId) => noUser || (knownById.get(modelId) ?? false),
   };
 }
 

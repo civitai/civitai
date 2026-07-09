@@ -91,19 +91,39 @@ describe('batcher', () => {
     expect(queryMock.mock.calls.map((c) => c[0].modelIds.length)).toEqual([200, 200, 50]);
   });
 
-  it('leaves ids unknown after a failed fetch so a later mount retries', async () => {
+  it('marks ids known-not-engaged after a failed fetch so a gated control is never permanently disabled (F2)', async () => {
     queryMock.mockRejectedValueOnce(new Error('boom'));
     requestEngagedMembership([5]);
     runFlush();
     await settle();
-    expect(useEngagedModelsStore.getState().queried.has(5)).toBe(false); // still unknown
 
-    // retry succeeds
-    queryMock.mockResolvedValueOnce({ Recommended: [5] });
+    // Fix 2: the errored ids become KNOWN (empty membership), not left unknown. A
+    // component that stays mounted (deps unchanged → effect never re-fires) would
+    // otherwise never re-request them, leaving its `disabled = !isKnown` control dead.
+    expect(useEngagedModelsStore.getState().queried.has(5)).toBe(true);
+    expect(useEngagedModelsStore.getState().membership[5]?.size ?? 0).toBe(0); // known-not-engaged
+
+    // Now-known → a subsequent request is a no-op (no refetch storm).
+    queryMock.mockClear();
     requestEngagedMembership([5]);
     runFlush();
     await settle();
-    expect(useEngagedModelsStore.getState().membership[5]?.has('Recommended')).toBe(true);
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it('a failed fetch does NOT clobber an id the user mutated while it was in flight (F2 dirty-guard holds through the error path)', async () => {
+    queryMock.mockRejectedValueOnce(new Error('boom'));
+    requestEngagedMembership([8]);
+    runFlush(); // fetch issued; .then/.catch queued but not yet run
+
+    // User turns Notify ON for model 8 WHILE that fetch is in flight.
+    useEngagedModelsStore.getState().setMembership(8, 'Notify', true);
+
+    await settle(); // the rejection lands here → applyServerResult({}, [8])
+
+    const m = useEngagedModelsStore.getState().membership[8];
+    expect(m?.has('Notify')).toBe(true); // the local mutation survived the error-path apply
+    expect(useEngagedModelsStore.getState().queried.has(8)).toBe(true);
   });
 
   it('does nothing when every requested id is already known', async () => {
@@ -275,6 +295,100 @@ describe('useEngagedModelsMembership — mutation-races-fetch (F2)', () => {
     expect(m?.has('Notify')).toBe(true); // the user's intent is preserved…
     expect(m?.has('Recommended')).toBe(false); // …and the stale snapshot was skipped
     expect(useEngagedModelsStore.getState().queried.has(7)).toBe(true); // consistent/known
+    unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F1 (unauth) — a logged-out user has no membership to toggle wrongly. `isKnown`
+// must be true so a gated control (`disabled = loading = !isKnown`) stays
+// INTERACTIVE — a disabled element can't fire the LoginRedirect click that
+// prompts sign-in. This is the login/conversion-funnel regression the re-audit
+// caught (isKnown was FALSE FOREVER for logged-out users → notify bell dead).
+// ---------------------------------------------------------------------------
+
+/**
+ * Mirror of the migrated notify controls' gating so we can assert the actual
+ * `disabled` DOM state the user sees, driven by the REAL hook. The control does
+ * `loading={mutation.isPending || !isKnown}`; Mantine then sets
+ * `disabled = disabled || loading`. Mutation is idle here (isPending=false), so
+ * the button is disabled iff `!isKnown`.
+ */
+function NotifyControlHarness({ modelId }: { modelId: number }) {
+  const { isKnown } = useEngagedModelMembership(modelId);
+  const isPending = false;
+  const loading = isPending || !isKnown;
+  const disabled = loading; // Mantine: disabled = disabled || loading
+  return React.createElement('button', { type: 'button', disabled }, 'notify');
+}
+
+function renderControl(modelId: number) {
+  const container = document.createElement('div');
+  const root = createRoot(container);
+  act(() => root.render(React.createElement(NotifyControlHarness, { modelId })));
+  return {
+    button: () => container.querySelector('button') as HTMLButtonElement,
+    rerender: () => act(() => root.render(React.createElement(NotifyControlHarness, { modelId }))),
+    unmount: () => act(() => root.unmount()),
+  };
+}
+
+describe('useEngagedModelMembership — unauthenticated (F1 login-funnel regression)', () => {
+  it('single-model: isKnown is TRUE with no currentUser (nothing to gate) — no query issued', async () => {
+    currentUser = null;
+    const { result, unmount } = renderHook(() => useEngagedModelMembership(42));
+    runFlush();
+    await settle();
+    expect(queryMock).not.toHaveBeenCalled();
+    expect(result.current?.isKnown).toBe(true);
+    expect(result.current?.isLoading).toBe(false);
+    unmount();
+  });
+
+  it('multi-model: isKnown(id) is TRUE for every id with no currentUser', async () => {
+    currentUser = null;
+    const { result, unmount } = renderHook(() => useEngagedModelsMembership([1, 2, 3]));
+    runFlush();
+    await settle();
+    expect(queryMock).not.toHaveBeenCalled();
+    expect(result.current?.isKnown(1)).toBe(true);
+    expect(result.current?.isKnown(2)).toBe(true);
+    expect(result.current?.isKnown(3)).toBe(true);
+    unmount();
+  });
+
+  it("a logged-out notify control is NOT disabled → its click can reach LoginRedirect", () => {
+    currentUser = null;
+    const { button, unmount } = renderControl(99);
+    // The store is cold (no query ever fires for unauth), yet the button is enabled
+    // because isKnown short-circuits to true. A disabled button would swallow the
+    // click that LoginRedirect clones onto it — this is the funnel fix.
+    expect(button().disabled).toBe(false);
+    unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F2 (authed + fetch error) — the gated control must not dead-lock. After the
+// by-ids fetch rejects, the control becomes actionable rather than staying a
+// permanent infinite-spinner disabled button.
+// ---------------------------------------------------------------------------
+describe('useEngagedModelMembership — authed fetch error does not dead-lock the control (F2)', () => {
+  it('authed control is disabled while the fetch is in flight, then ENABLED after the fetch errors', async () => {
+    currentUser = { id: 1 };
+    queryMock.mockRejectedValueOnce(new Error('boom'));
+    const { button, rerender, unmount } = renderControl(77);
+
+    // In flight → unknown → disabled (correct: we don't know the toggle direction yet).
+    expect(button().disabled).toBe(true);
+
+    runFlush();
+    await settle();
+    rerender();
+
+    // Fetch errored → Fix 2 marks it known-not-engaged → control is actionable again,
+    // not a permanently-disabled dead button.
+    expect(button().disabled).toBe(false);
     unmount();
   });
 });
