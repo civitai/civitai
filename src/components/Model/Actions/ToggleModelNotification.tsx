@@ -21,7 +21,7 @@ export function ToggleModelNotification({
   const queryUtils = trpc.useUtils();
 
   // PR2: per-visible-set membership for this single model (Notify/Mute).
-  const { isEngaged: isModelEngaged } = useEngagedModelMembership(modelId);
+  const { isEngaged: isModelEngaged, isKnown } = useEngagedModelMembership(modelId);
   const { data: following = [] } = trpc.user.getFollowingUsers.useQuery(undefined, {
     enabled: !!currentUser,
   });
@@ -66,13 +66,16 @@ export function ToggleModelNotification({
             variant="light"
             {...actionIconProps}
             color={isOn ? 'success' : undefined}
-            onClick={() =>
+            onClick={() => {
+              // F1: block the toggle until membership is known — a cold store reads
+              // as not-engaged and would fire the OPPOSITE of the user's intent.
+              if (!isKnown) return;
               toggleNotifyModelMutation.mutate({
                 modelId,
                 type: isOn ? ModelEngagementType.Mute : undefined,
-              })
-            }
-            loading={toggleNotifyModelMutation.isPending}
+              });
+            }}
+            loading={toggleNotifyModelMutation.isPending || !isKnown}
           >
             {isOn ? <IconBellCheck size={20} /> : <IconBellPlus size={20} />}
           </LegacyActionIcon>

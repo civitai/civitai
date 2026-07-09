@@ -105,6 +105,15 @@ export interface EngagedMembershipResult {
   sets: (ReadonlySet<EngagedModelType> | undefined)[];
   /** True while any requested id is still unknown (query in flight / pending). */
   isLoading: boolean;
+  /**
+   * Per-id "do we have definitive knowledge of this model's membership yet?".
+   * True once the id is in the store's `queried` set — i.e. a server result has
+   * landed OR an optimistic write has set it. Controls that compute a toggle
+   * direction from membership MUST gate their action on this (F1): while a model
+   * is unknown the store reads as not-engaged, so an un-gated toggle would fire
+   * the OPPOSITE of the user's intent. Ids ≤ 0 are never known.
+   */
+  isKnown: (modelId: number) => boolean;
 }
 
 /**
@@ -136,20 +145,26 @@ export function useEngagedModelsMembership(modelIds: number[]): EngagedMembershi
   const byId = new Map<number, ReadonlySet<EngagedModelType> | undefined>();
   modelIds.forEach((id, i) => byId.set(id, sets[i]));
 
+  const knownById = new Map<number, boolean>();
+  validIds.forEach((id, i) => knownById.set(id, knownFlags[i]));
+
   return {
     isEngaged: (modelId, type) => byId.get(modelId)?.has(type) ?? false,
     getTypes: (modelId) => [...(byId.get(modelId) ?? [])],
     sets,
     isLoading: enabled && knownFlags.some((known) => !known),
+    isKnown: (modelId) => knownById.get(modelId) ?? false,
   };
 }
 
 /** Single-model convenience wrapper. */
 export function useEngagedModelMembership(modelId: number) {
-  const { isEngaged, getTypes, isLoading } = useEngagedModelsMembership([modelId]);
+  const { isEngaged, getTypes, isLoading, isKnown } = useEngagedModelsMembership([modelId]);
   return {
     isEngaged: (type: EngagedModelType) => isEngaged(modelId, type),
     types: getTypes(modelId),
     isLoading,
+    /** Definitive membership knowledge for this model (see EngagedMembershipResult.isKnown). */
+    isKnown: isKnown(modelId),
   };
 }

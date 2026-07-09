@@ -1,4 +1,4 @@
-import { isModelEngaged, useEngagedModelsStore } from '~/store/engaged-models.store';
+import { useEngagedModelsStore } from '~/store/engaged-models.store';
 
 /**
  * Semantic optimistic mutators for the engaged-models store, one per user
@@ -20,16 +20,35 @@ import { isModelEngaged, useEngagedModelsStore } from '~/store/engaged-models.st
 
 const store = () => useEngagedModelsStore.getState();
 
-/** resourceReview.create — toggles `Recommended` + `Notify` together. */
-export function applyReviewCreated(modelId: number, recommended: boolean): void {
-  const shouldRemove = !recommended || isModelEngaged(modelId, 'Recommended');
+/**
+ * resourceReview.create — toggles `Recommended` + `Notify` together.
+ *
+ * F3: the toggle DIRECTION (`shouldRemove`) is derived from `alreadyRecommended`
+ * supplied by the caller — the reliable, warm `previousEngaged.Recommended`
+ * React-Query snapshot — NOT from the normalized store, which may be cold for
+ * this model (mid by-ids fetch) and would then read as not-recommended and flip
+ * the direction. This keeps exact parity with the legacy dual-write.
+ */
+export function applyReviewCreated(
+  modelId: number,
+  recommended: boolean,
+  alreadyRecommended: boolean
+): void {
+  const shouldRemove = !recommended || alreadyRecommended;
   store().setMembership(modelId, 'Recommended', !shouldRemove);
   store().setMembership(modelId, 'Notify', !shouldRemove);
 }
 
-/** resourceReview.update — toggles `Recommended` only. */
-export function applyReviewUpdated(modelId: number, recommended: boolean | null | undefined): void {
-  const shouldRemove = !recommended || isModelEngaged(modelId, 'Recommended');
+/**
+ * resourceReview.update — toggles `Recommended` only. Direction comes from the
+ * caller's `alreadyRecommended` (see `applyReviewCreated`), not the cold store.
+ */
+export function applyReviewUpdated(
+  modelId: number,
+  recommended: boolean | null | undefined,
+  alreadyRecommended: boolean
+): void {
+  const shouldRemove = !recommended || alreadyRecommended;
   store().setMembership(modelId, 'Recommended', !shouldRemove);
 }
 

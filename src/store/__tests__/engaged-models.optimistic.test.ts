@@ -38,19 +38,19 @@ afterEach(() => {
 describe('optimistic — create review', () => {
   it('adds Recommended + Notify when recommending a not-yet-recommended model', () => {
     seed(1, []);
-    applyReviewCreated(1, true);
+    applyReviewCreated(1, true, false);
     expect(types(1)).toEqual(['Notify', 'Recommended']);
   });
 
   it('removes Recommended + Notify when the review is NOT recommended', () => {
     seed(1, ['Recommended', 'Notify']);
-    applyReviewCreated(1, false);
+    applyReviewCreated(1, false, true);
     expect(types(1)).toEqual([]);
   });
 
   it('removes when recommending a model that is ALREADY recommended (shouldRemove branch)', () => {
     seed(1, ['Recommended', 'Notify']);
-    applyReviewCreated(1, true); // already recommended → toggles off
+    applyReviewCreated(1, true, true); // already recommended → toggles off
     expect(types(1)).toEqual([]);
   });
 });
@@ -58,20 +58,50 @@ describe('optimistic — create review', () => {
 describe('optimistic — update review', () => {
   it('adds Recommended when recommending a fresh model (touches only Recommended)', () => {
     seed(1, ['Notify']);
-    applyReviewUpdated(1, true);
+    applyReviewUpdated(1, true, false);
     expect(types(1)).toEqual(['Notify', 'Recommended']);
   });
 
   it('removes Recommended when recommended=false', () => {
     seed(1, ['Recommended', 'Notify']);
-    applyReviewUpdated(1, false);
+    applyReviewUpdated(1, false, true);
     expect(types(1)).toEqual(['Notify']); // Notify untouched
   });
 
   it('removes when already recommended (shouldRemove branch), leaving Notify', () => {
     seed(1, ['Recommended', 'Notify']);
-    applyReviewUpdated(1, true);
+    applyReviewUpdated(1, true, true);
     expect(types(1)).toEqual(['Notify']);
+  });
+});
+
+// F3: the toggle DIRECTION must come from the caller-supplied `alreadyRecommended`
+// (the warm legacy snapshot), NOT the normalized store — which can be cold for
+// this model while a by-ids fetch is in flight and would otherwise flip intent.
+describe('optimistic — create/update derive direction from the caller, not the (cold) store', () => {
+  it('create: cold store (unknown) + alreadyRecommended=false → ADDS (does not read store)', () => {
+    // Store has NO knowledge of model 1 (never seeded) — the legacy self-branch
+    // would read not-recommended and add; here we prove the param drives it.
+    applyReviewCreated(1, true, false);
+    expect(types(1)).toEqual(['Notify', 'Recommended']);
+  });
+
+  it('create: cold store but caller says alreadyRecommended=true → REMOVES', () => {
+    // The store is cold (reads not-recommended) yet the warm snapshot knows the
+    // user already recommended → direction must be "remove", not "add".
+    applyReviewCreated(1, true, true);
+    expect(types(1)).toEqual([]); // toggled off despite the cold store
+  });
+
+  it('update: store says Recommended but caller says alreadyRecommended=false → ADDS (param wins)', () => {
+    seed(1, ['Recommended']); // store disagrees with the caller on purpose
+    applyReviewUpdated(1, true, false);
+    expect(types(1)).toEqual(['Recommended']); // stays recommended (add branch)
+  });
+
+  it('update: store cold but caller says alreadyRecommended=true → REMOVES (param wins)', () => {
+    applyReviewUpdated(1, true, true);
+    expect(types(1)).toEqual([]); // removed despite the cold store
   });
 });
 
@@ -136,8 +166,8 @@ describe('optimistic — rollback restores prior membership exactly', () => {
     { name: 'favorite (off)', seed: ['Recommended', 'Notify'], apply: () => applyFavoriteToggled(1, false) },
     { name: 'notify (on)', seed: ['Mute'], apply: () => applyNotifyToggled(1, true) },
     { name: 'notify (off)', seed: ['Notify', 'Recommended'], apply: () => applyNotifyToggled(1, false) },
-    { name: 'create', seed: [], apply: () => applyReviewCreated(1, true) },
-    { name: 'update', seed: ['Notify'], apply: () => applyReviewUpdated(1, true) },
+    { name: 'create', seed: [], apply: () => applyReviewCreated(1, true, false) },
+    { name: 'update', seed: ['Notify'], apply: () => applyReviewUpdated(1, true, false) },
     { name: 'delete', seed: ['Recommended', 'Notify'], apply: () => applyReviewDeleted(1) },
   ];
 
@@ -160,7 +190,7 @@ describe('optimistic — no cross-model contamination', () => {
     seed(2, ['Recommended', 'Mute']);
     const yBefore = types(2);
 
-    applyReviewCreated(1, true);
+    applyReviewCreated(1, true, false);
     applyFavoriteToggled(1, false);
     applyNotifyToggled(1, false);
     applyReviewDeleted(1);

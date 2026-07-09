@@ -126,7 +126,7 @@ export function ResourceReviewThumbBadge({
 }) {
   const { totals, loading } = useQueryResourceReviewTotals({ modelId, modelVersionId });
   // PR2: per-visible-set membership for this single model.
-  const { isEngaged: isModelEngaged } = useEngagedModelMembership(modelId);
+  const { isEngaged: isModelEngaged, isKnown } = useEngagedModelMembership(modelId);
 
   if (loading && initialCount === undefined) return null;
 
@@ -138,8 +138,11 @@ export function ResourceReviewThumbBadge({
       color={hasReview ? 'success.5' : 'gray'}
       size="lg"
       icon={<ThumbsUpIcon size={16} filled />}
-      style={{ cursor: 'pointer' }}
-      onClick={onClick}
+      // F1: don't surface the click affordance until membership is known — the
+      // displayed review state (and any toggle the click drives) is unreliable
+      // while the store is cold for this model.
+      style={{ cursor: isKnown ? 'pointer' : 'progress' }}
+      onClick={isKnown ? onClick : undefined}
     >
       <Text>{abbreviateNumber(totals?.up ?? 0)}</Text>
     </IconBadge>

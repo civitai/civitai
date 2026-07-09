@@ -91,6 +91,51 @@ describe('engaged-models store — primitives', () => {
 });
 
 // ---------------------------------------------------------------------------
+// F2 — dirty-guard: an optimistic write that races an in-flight by-ids fetch
+// must NOT be clobbered by the (now-stale) server snapshot when it lands.
+// ---------------------------------------------------------------------------
+describe('engaged-models store — dirty-guard (F2)', () => {
+  it('applyServerResult does not overwrite an id mutated after the fetch was issued', () => {
+    // Fetch for model 1 is in flight; store is cold (1 not yet queried).
+    expect(isModelQueried(1)).toBe(false);
+
+    // User turns Notify ON while the fetch is in flight (optimistic write).
+    store.getState().setMembership(1, 'Notify', true);
+    expect(isModelEngaged(1, 'Notify')).toBe(true);
+    expect(isModelQueried(1)).toBe(true);
+
+    // The now-stale fetch resolves with the PRE-mutation snapshot (Notify absent,
+    // says Recommended). It must be ignored for id 1 — the local write wins.
+    store.getState().applyServerResult({ Recommended: [1] }, [1]);
+    expect(isModelEngaged(1, 'Notify')).toBe(true); // preserved
+    expect(isModelEngaged(1, 'Recommended')).toBe(false); // stale snapshot skipped
+    // still known → the batcher won't refetch, and the value is the user's intent
+    expect(isModelQueried(1)).toBe(true);
+  });
+
+  it('a stale snapshot never clobbers a mutated id but still applies to un-mutated ids', () => {
+    // Two ids in flight; user mutates only id 1.
+    store.getState().setMembership(1, 'Notify', true);
+
+    // Stale batch result for both ids arrives.
+    store.getState().applyServerResult({ Recommended: [1, 2] }, [1, 2]);
+
+    // id 1 (mutated) keeps the optimistic value; id 2 (untouched) takes the server truth.
+    expect(getEngagedModelTypes(1).sort()).toEqual(['Notify']);
+    expect(isModelEngaged(2, 'Recommended')).toBe(true);
+  });
+
+  it('reset() clears the dirty-guard so a later fetch applies normally', () => {
+    store.getState().setMembership(1, 'Notify', true);
+    store.getState().reset();
+    // Fresh session: the same id is fetched and the server result applies cleanly.
+    store.getState().applyServerResult({ Recommended: [1] }, [1]);
+    expect(isModelEngaged(1, 'Recommended')).toBe(true);
+    expect(isModelEngaged(1, 'Notify')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Reactive selector subscription
 // ---------------------------------------------------------------------------
 describe('engaged-models store — reactivity', () => {

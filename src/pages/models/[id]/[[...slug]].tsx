@@ -390,7 +390,9 @@ export default function ModelDetailsV2({
   );
 
   // PR2: per-visible-set membership for just this model (was the unbounded getEngagedModels).
-  const { isEngaged: isModelEngaged } = useEngagedModelMembership(model?.id ?? 0);
+  const { isEngaged: isModelEngaged, isKnown: isFavoriteKnown } = useEngagedModelMembership(
+    model?.id ?? 0
+  );
   const isFavorite = !!model && isModelEngaged('Recommended');
 
   const isModerator = currentUser?.isModerator ?? false;
@@ -821,8 +823,13 @@ export default function ModelDetailsV2({
                               filled={isFavorite}
                             />
                           }
-                          className="cursor-pointer"
-                          onClick={() => handleToggleFavorite({ setTo: !isFavorite })}
+                          className={isFavoriteKnown ? 'cursor-pointer' : 'cursor-progress'}
+                          onClick={() => {
+                            // F1: don't toggle until Recommended membership is known —
+                            // a cold store reads not-favorited and would flip intent.
+                            if (!isFavoriteKnown) return;
+                            handleToggleFavorite({ setTo: !isFavorite });
+                          }}
                         >
                           <Text className={classes.modelBadgeText}>
                             {abbreviateNumber(model.rank?.thumbsUpCountAllTime ?? 0)}

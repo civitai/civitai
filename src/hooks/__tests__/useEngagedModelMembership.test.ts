@@ -186,6 +186,95 @@ describe('useEngagedModelsMembership hook', () => {
     await settle();
     expect(queryMock).not.toHaveBeenCalled();
     expect(result.current?.isEngaged('Recommended')).toBe(false);
+    expect(result.current?.isKnown).toBe(false); // an unloaded model is never "known"
+    unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F1 — known-gating: controls that compute a toggle direction from membership
+// must be able to tell "unknown" from "not engaged" so they can block the click
+// until the store is warm for this model (the regression this PR revision fixes).
+// ---------------------------------------------------------------------------
+describe('useEngagedModelMembership — known-gating (F1)', () => {
+  it('single-model: isKnown=false while the fetch is in flight, then true (and ON) once it lands', async () => {
+    queryMock.mockResolvedValue({ Notify: [42] });
+    const { result, rerender, unmount } = renderHook(() => useEngagedModelMembership(42));
+
+    // Fetch registered but not yet resolved → the model is UNKNOWN. A cold store
+    // reads not-engaged, so a control MUST gate on isKnown here (not isEngaged).
+    expect(result.current?.isKnown).toBe(false);
+    expect(result.current?.isLoading).toBe(true);
+    expect(result.current?.isEngaged('Notify')).toBe(false);
+
+    runFlush();
+    await settle();
+    rerender();
+
+    // Now known and reflecting the true ON state.
+    expect(result.current?.isKnown).toBe(true);
+    expect(result.current?.isLoading).toBe(false);
+    expect(result.current?.isEngaged('Notify')).toBe(true);
+    unmount();
+  });
+
+  it('multi-model: isKnown is per-id — queried-not-engaged still counts as known', async () => {
+    queryMock.mockResolvedValue({ Recommended: [1] }); // 1 engaged, 2 absent
+    const { result, rerender, unmount } = renderHook(() => useEngagedModelsMembership([1, 2]));
+
+    expect(result.current?.isKnown(1)).toBe(false);
+    expect(result.current?.isKnown(2)).toBe(false);
+
+    runFlush();
+    await settle();
+    rerender();
+
+    expect(result.current?.isKnown(1)).toBe(true);
+    expect(result.current?.isKnown(2)).toBe(true); // known-not-engaged, not "unknown"
+    expect(result.current?.isEngaged(1, 'Recommended')).toBe(true);
+    expect(result.current?.isEngaged(2, 'Recommended')).toBe(false);
+    unmount();
+  });
+
+  it('an optimistic write makes the model known immediately (no fetch needed)', async () => {
+    const { result, rerender, unmount } = renderHook(() => useEngagedModelMembership(15));
+    expect(result.current?.isKnown).toBe(false);
+
+    // A control's optimistic mutation marks the id known via the store.
+    act(() => {
+      useEngagedModelsStore.getState().setMembership(15, 'Notify', true);
+    });
+    rerender();
+
+    expect(result.current?.isKnown).toBe(true);
+    expect(result.current?.isEngaged('Notify')).toBe(true);
+    unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F2 — a real in-flight-fetch-races-a-mutation path through the batcher: the
+// optimistic write must survive the (now-stale) server result landing on top.
+// ---------------------------------------------------------------------------
+describe('useEngagedModelsMembership — mutation-races-fetch (F2)', () => {
+  it('optimistic write during the in-flight fetch is not clobbered by the stale result', async () => {
+    // The server snapshot predates the user's mutation: it says Recommended, NOT Notify.
+    queryMock.mockResolvedValue({ Recommended: [7] });
+    const { unmount } = renderHook(() => useEngagedModelsMembership([7]));
+
+    runFlush(); // issues the fetch (promise created; .then queued but not yet run)
+
+    // User turns Notify ON for model 7 WHILE that fetch is in flight.
+    act(() => {
+      useEngagedModelsStore.getState().setMembership(7, 'Notify', true);
+    });
+
+    await settle(); // the now-stale fetch result lands here
+
+    const m = useEngagedModelsStore.getState().membership[7];
+    expect(m?.has('Notify')).toBe(true); // the user's intent is preserved…
+    expect(m?.has('Recommended')).toBe(false); // …and the stale snapshot was skipped
+    expect(useEngagedModelsStore.getState().queried.has(7)).toBe(true); // consistent/known
     unmount();
   });
 });

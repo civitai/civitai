@@ -59,7 +59,9 @@ export const useCreateResourceReview = () => {
       // Normalized store (PR2): mirror the same Recommended+Notify toggle for the
       // per-visible-set surfaces. Dual-written alongside the getEngagedModels cache
       // above until the feed callers migrate (PR3) and the old endpoint is dropped (PR4).
-      applyReviewCreated(modelId, recommended);
+      // Pass the SAME direction the legacy handler used (F3): the warm
+      // `previousEngaged.Recommended` snapshot, not the possibly-cold store.
+      applyReviewCreated(modelId, recommended, previousEngaged.Recommended?.includes(modelId) ?? false);
 
       queryUtils.model.getById.setData({ id: modelId }, (old) => {
         if (!old) return;
@@ -171,7 +173,8 @@ export const useUpdateResourceReview = () => {
       });
 
       // Normalized store (PR2): mirror the Recommended toggle for per-visible-set surfaces.
-      applyReviewUpdated(modelId, request.recommended);
+      // Direction from the warm legacy snapshot (F3), not the possibly-cold store.
+      applyReviewUpdated(modelId, request.recommended, alreadyReviewed > -1);
 
       queryUtils.model.getById.setData({ id: modelId }, (old) => {
         if (!old) return;

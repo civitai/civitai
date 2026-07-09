@@ -53,11 +53,27 @@ function setsEqual(a: ReadonlySet<EngagedModelType> | undefined, b: ReadonlySet<
   return true;
 }
 
+/**
+ * Dirty-guard (F2): ids the user has locally mutated (optimistic write / rollback).
+ * A by-ids fetch issued for an id that is subsequently mutated within the fetch
+ * RTT would, on resolution, carry a snapshot that predates the mutation. Without
+ * this guard `applyServerResult` unconditionally overwrites the id — clobbering
+ * the optimistic (already-server-persisted) value with a stale one and, because
+ * the id is now `queried`, never refetching → stuck stale. Any id in this set is
+ * skipped by `applyServerResult`, so a local write always wins over an in-flight
+ * server snapshot. Cleared by `reset()` (sign-out / tests). It is intentionally
+ * module-level (not selectable state): no component reads it, so mutating it must
+ * never fan a selector run out to consumers.
+ */
+const locallyMutated = new Set<number>();
+
 export const useEngagedModelsStore = create<EngagedModelsState>((set) => ({
   membership: {},
   queried: new Set<number>(),
 
-  setMembership: (modelId, type, on) =>
+  setMembership: (modelId, type, on) => {
+    // Local write → protect this id from a stale in-flight server snapshot (F2).
+    locallyMutated.add(modelId);
     set((state) => {
       const prev = state.membership[modelId];
       const next = new Set<EngagedModelType>(prev ?? []);
@@ -71,27 +87,38 @@ export const useEngagedModelsStore = create<EngagedModelsState>((set) => ({
 
       const queried = alreadyKnown ? state.queried : new Set(state.queried).add(modelId);
       return { membership: { ...state.membership, [modelId]: next }, queried };
-    }),
+    });
+  },
 
-  replaceMembership: (modelId, types) =>
+  replaceMembership: (modelId, types) => {
+    // Local write (rollback restore) → protect from a stale in-flight snapshot (F2).
+    locallyMutated.add(modelId);
     set((state) => {
       const next = new Set<EngagedModelType>(types);
       const alreadyKnown = state.queried.has(modelId);
       if (alreadyKnown && setsEqual(state.membership[modelId], next)) return state;
       const queried = alreadyKnown ? state.queried : new Set(state.queried).add(modelId);
       return { membership: { ...state.membership, [modelId]: next }, queried };
-    }),
+    });
+  },
 
   applyServerResult: (record, queriedIds) =>
     set((state) => {
       // Start every queried id at an empty set → any id absent from `record`
-      // becomes known-not-engaged (distinct from unknown).
+      // becomes known-not-engaged (distinct from unknown). Ids mutated locally
+      // since this fetch was issued are skipped entirely (F2 dirty-guard): the
+      // optimistic write reflects the user's just-persisted intent and must win
+      // over this now-stale snapshot.
       const byId = new Map<number, Set<EngagedModelType>>();
-      for (const id of queriedIds) byId.set(id, new Set());
+      for (const id of queriedIds) {
+        if (locallyMutated.has(id)) continue;
+        byId.set(id, new Set());
+      }
 
       for (const [type, ids] of Object.entries(record) as [EngagedModelType, number[] | undefined][]) {
         if (!ids) continue;
         for (const id of ids) {
+          if (locallyMutated.has(id)) continue; // stale — preserve the local mutation
           let s = byId.get(id);
           if (!s) {
             // Defensive: server returned an id we didn't ask about — still record it.
@@ -111,7 +138,10 @@ export const useEngagedModelsStore = create<EngagedModelsState>((set) => ({
       return { membership, queried };
     }),
 
-  reset: () => set({ membership: {}, queried: new Set<number>() }),
+  reset: () => {
+    locallyMutated.clear();
+    set({ membership: {}, queried: new Set<number>() });
+  },
 }));
 
 // ---------------------------------------------------------------------------

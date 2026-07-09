@@ -348,7 +348,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
 
   // Notification toggle state
   // PR2: per-visible-set membership for this single model (Notify/Mute).
-  const { isEngaged: isModelEngaged } = useEngagedModelMembership(model.id);
+  const { isEngaged: isModelEngaged, isKnown: isNotifyKnown } = useEngagedModelMembership(model.id);
   const { data: followingUsers = [] } = trpc.user.getFollowingUsers.useQuery(undefined, {
     enabled: !!user,
     staleTime: 60 * 1000, // 1 minute - avoid refetching on every model view
@@ -769,13 +769,17 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         <LoginRedirect reason="notify-model">
                           <Button
                             color={isNotificationOn ? 'green' : 'gray'}
-                            onClick={() =>
+                            onClick={() => {
+                              // F1: block the toggle until Notify/Mute membership is
+                              // known — a cold store reads not-engaged and would fire
+                              // the OPPOSITE of the user's intent.
+                              if (!isNotifyKnown) return;
                               toggleNotifyModelMutation.mutate({
                                 modelId: model.id,
                                 type: isNotificationOn ? ModelEngagementType.Mute : undefined,
-                              })
-                            }
-                            loading={toggleNotifyModelMutation.isPending}
+                              });
+                            }}
+                            loading={toggleNotifyModelMutation.isPending || !isNotifyKnown}
                             fullWidth
                             style={{ paddingLeft: 0, paddingRight: 0 }}
                             aria-label={
