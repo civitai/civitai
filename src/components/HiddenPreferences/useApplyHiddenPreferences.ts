@@ -8,6 +8,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NsfwLevel } from '~/server/common/enums';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
+import { emitFeedNoImagesDrop } from '~/utils/faro/feedDrop';
 import { getBlockedNsfwWords, hasNsfwWords } from '~/utils/metadata/audit-base';
 import { isDefined, paired } from '~/utils/type-guards';
 
@@ -125,7 +126,9 @@ type FilterPreferencesProps<TKey, TData> = {
   minorDisabled?: boolean;
 };
 
-function filterPreferences<
+// Exported for unit tests (the `case 'models'` browsing-level drop counting + the single
+// aggregate `emitFeedNoImagesDrop` call). Pure aside from that best-effort telemetry emit.
+export function filterPreferences<
   TKey extends keyof BaseDataTypeMap,
   TData extends BaseDataTypeMap[TKey]
 >({
@@ -272,6 +275,18 @@ function filterPreferences<
             : null;
         })
         .filter(isDefined);
+
+      // Aggregate telemetry for the SILENT browsing-level feed-drop: one event per filter
+      // call (NOT per dropped model) carrying the per-page drop count, sampled + gated on
+      // `noImages > 0`. `hidden.noImages` is excluded from `hiddenCount`, so this is the only
+      // way the drop rate is measurable. Best-effort — never throws. See feedDrop.ts for what
+      // it measures, its limitation (can't isolate the getAll cap's contribution), the
+      // sampling, and the Loki watch query.
+      emitFeedNoImagesDrop({
+        droppedNoImages: hidden.noImages,
+        total: value.length,
+        browsingLevel,
+      });
 
       return { items: models, hidden };
     case 'images':
