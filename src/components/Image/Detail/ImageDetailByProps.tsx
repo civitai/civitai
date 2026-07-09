@@ -243,7 +243,12 @@ export function ImageDetailByProps({
                   />
                   {image.postId && (
                     <Box px="sm">
+                      {/* Durable data-gate: `image.get` (the `data` query above)
+                          carries the visibility-checked `model3dId`, so the chip
+                          renders from the prop and never fires the ambient
+                          `model3d.getByPostId` query. */}
                       <PostingToModel3DCard
+                        model3dId={data?.model3dId ?? null}
                         postId={image.postId}
                         label="Posted to 3D Model"
                       />

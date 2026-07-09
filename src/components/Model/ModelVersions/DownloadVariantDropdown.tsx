@@ -256,6 +256,11 @@ export function DownloadVariantDropdown({
                         </Badge>
                       )}
                     </Group>
+                    {label && (
+                      <Text size="xs" c="dimmed" truncate style={{ maxWidth: 200 }} title={file.name}>
+                        {file.name}
+                      </Text>
+                    )}
                     {description && (
                       <Text size="xs" c="dimmed">
                         {description}
@@ -414,6 +419,11 @@ function FileSummaryRow({ file, isBestMatch = false }: { file: FileType; isBestM
             </Badge>
           )}
         </Group>
+        {label && (
+          <Text size="xs" c="dimmed" truncate style={{ maxWidth: 220 }} title={file.name}>
+            {file.name}
+          </Text>
+        )}
         <Text size="xs" c="dimmed">
           {detailText}
         </Text>

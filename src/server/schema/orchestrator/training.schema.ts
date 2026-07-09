@@ -1,4 +1,4 @@
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import * as z from 'zod';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
@@ -99,6 +99,14 @@ const aiToolkitTrainingParams = z
     }),
     aiToolkitBaseParams.extend({
       ecosystem: z.literal('anima'),
+      modelVariant: z.undefined().optional(),
+    }),
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('boogu'),
+      modelVariant: z.undefined().optional(),
+    }),
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('krea2'),
       modelVariant: z.undefined().optional(),
     }),
     // SD3, Flux1, Flux2Klein, and Wan require modelVariant

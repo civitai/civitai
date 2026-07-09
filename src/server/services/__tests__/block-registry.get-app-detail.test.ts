@@ -52,7 +52,10 @@ vi.mock('~/server/redis/client', () => ({
 }));
 // getAppDetail builds liveUrl from `env.APPS_DOMAIN` via a dynamic import of
 // `~/env/server` — stub it so the test doesn't pull the real env schema.
-vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
+// LOGGING is read by cache-helpers' createLogger at module-eval (the service
+// now imports cache-helpers for the review-aggregate queryCache); '' = no-op
+// logger.
+vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai', LOGGING: '' } }));
 
 /** Reconstructs the SQL string from the tagged-template args Prisma received. */
 function capturedSql(): string {
@@ -86,6 +89,8 @@ function rawRow(over: Partial<Record<string, unknown>> = {}) {
     version: '1.2.3',
     approved_scopes: ['ai:write:budgeted', 'models:read:self'],
     install_count: 7n,
+    avg_rating: 4.5,
+    review_count: 12n,
     // F-E E5 stored screenshot records (jsonb). The projection must expose ONLY
     // a public DISPLAY URL + index + content-type — NEVER the underlying MinIO
     // `key`. Index/ext build the opaque gated app route.
@@ -129,6 +134,8 @@ describe('BlockRegistry.getAppDetail — anon-exposure protections (F-E E2)', ()
       contentRating: 'PG',
       version: '1.2.3',
       installCount: 7,
+      avgRating: 4.5,
+      reviewCount: 12,
       liveUrl: 'https://cool-block.civit.ai',
     });
     expect(detail!.manifest.name).toBe('Cool Block');
@@ -201,12 +208,15 @@ describe('BlockRegistry.getAppDetail — anon-exposure protections (F-E E2)', ()
       [
         'appId',
         'appName',
+        'avgRating',
         'blockId',
         'contentRating',
+        'externalUrl',
         'id',
         'installCount',
         'liveUrl',
         'manifest',
+        'reviewCount',
         'scopes',
         'screenshots',
         'version',

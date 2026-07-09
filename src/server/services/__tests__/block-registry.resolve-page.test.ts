@@ -177,3 +177,39 @@ describe('BlockRegistry.resolvePageBlockBySlug — sandbox + scopes', () => {
     expect(res).toBeNull();
   });
 });
+
+describe('BlockRegistry.resolvePageBlockBySlug — NSFW-app-red-only contentRating', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('the select requests the contentRating column (so the run-page gate can read it)', async () => {
+    mockDbRead.appBlock.findFirst.mockResolvedValue({
+      ...pageRow({ manifest: PAGE_MANIFEST(), trustTier: 'verified' }),
+      contentRating: 'g',
+    });
+    await BlockRegistry.resolvePageBlockBySlug('hello-page', { db: 'read' });
+    const call = mockDbRead.appBlock.findFirst.mock.calls.at(-1)?.[0] as {
+      select?: Record<string, unknown>;
+    };
+    expect(call?.select?.contentRating).toBe(true);
+  });
+
+  it('surfaces the contentRating column value (mature)', async () => {
+    mockDbRead.appBlock.findFirst.mockResolvedValue({
+      ...pageRow({ manifest: PAGE_MANIFEST(), trustTier: 'verified' }),
+      contentRating: 'x',
+    });
+    const res = await BlockRegistry.resolvePageBlockBySlug('hello-page', { db: 'read' });
+    expect(res?.contentRating).toBe('x');
+  });
+
+  it('null-safe: a missing/non-string column → null (treated as SFW by the gate)', async () => {
+    mockDbRead.appBlock.findFirst.mockResolvedValue({
+      ...pageRow({ manifest: PAGE_MANIFEST(), trustTier: 'verified' }),
+      contentRating: undefined,
+    });
+    const res = await BlockRegistry.resolvePageBlockBySlug('hello-page', { db: 'read' });
+    expect(res?.contentRating).toBeNull();
+  });
+});

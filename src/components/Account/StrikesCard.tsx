@@ -46,18 +46,10 @@ export function StrikesCard() {
   return (
     <Card withBorder id="strikes" ref={scrollToStrikesIfHashed}>
       <Stack gap="lg">
-        {/* Header */}
-        <Group justify="space-between" align="center">
-          <Title order={2}>Account Standing</Title>
-          <Badge
-            color={standingColor}
-            size="lg"
-            variant="light"
-            leftSection={points === 0 ? <IconCheck size={14} /> : undefined}
-          >
-            {standingLabel}
-          </Badge>
-        </Group>
+        {/* Header — the standing badge now lives beside the Strikes subheading below,
+            since it's derived purely from strike points, not the Creator Score. Keeping
+            it up here implied it reflected the (possibly negative) score next to it. */}
+        <Title order={2}>Account Standing</Title>
 
         <Divider />
 
@@ -66,16 +58,28 @@ export function StrikesCard() {
 
         <Divider />
 
-        {/* Strikes Section */}
+        {/* Strikes Section — standing badge sits here, with its full state label
+            (Good Standing / Warning / Restricted), plus the active-count detail when
+            there are strikes. */}
         <Group justify="space-between" align="center">
           <Text size="lg" fw={700}>
             Strikes
           </Text>
-          {points > 0 && (
-            <Badge color={standingColor} size="md" variant="light">
-              {summary?.activeStrikes} active &middot; {points} {points === 1 ? 'point' : 'points'}
+          <Group gap="xs" wrap="nowrap">
+            <Badge
+              color={standingColor}
+              size="md"
+              variant="light"
+              leftSection={points === 0 ? <IconCheck size={14} /> : undefined}
+            >
+              {standingLabel}
             </Badge>
-          )}
+            {points > 0 && (
+              <Badge color={standingColor} size="md" variant="light">
+                {summary?.activeStrikes} active &middot; {points} {points === 1 ? 'point' : 'points'}
+              </Badge>
+            )}
+          </Group>
         </Group>
 
         {strikesLoading ? (

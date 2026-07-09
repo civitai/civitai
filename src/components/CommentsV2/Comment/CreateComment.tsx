@@ -6,7 +6,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SimpleUser } from '~/server/selectors/user.selector';
 import { useCommentsContext } from '~/components/CommentsV2/CommentsProvider';
-import { IconClubs, IconLock } from '@tabler/icons-react';
+import { IconLock } from '@tabler/icons-react';
 
 type CreateCommentProps = {
   onCancel?: () => void;

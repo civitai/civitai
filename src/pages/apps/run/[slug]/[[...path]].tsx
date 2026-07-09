@@ -7,6 +7,7 @@ import { useBlockToken } from '~/components/AppBlocks/useBlockToken';
 import type { BlockInstall, PageContext } from '~/components/AppBlocks/types';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { ratingAllowedOnHost } from '~/server/utils/server-domain';
 
 /**
  * W10 — full-page App Block route: `/apps/run/<slug>` (+ optional sub-path).
@@ -58,6 +59,17 @@ export const getServerSideProps = createServerSideProps<PageProps>({
     // missing / non-approved / non-page app → 404 (never leaks which).
     const page = await BlockRegistry.resolvePageBlockBySlug(slug, { db: 'read' });
     if (!page || !page.iframeSrc) return { notFound: true };
+
+    // NSFW-APP-RED-ONLY: a mature (r/x) page app is usable ONLY on a red-capable
+    // host (civitai.red). On civitai.com (or any non-red host) it is
+    // indistinguishable from a missing app — return the SAME fail-closed 404 the
+    // flag gate above produces, so mature content can never render off .red and
+    // the app can't be enumerated by slug. SFW apps render anywhere. The host is
+    // read from the request (the same authority the token mint uses).
+    const host = ctx.req.headers.host ?? '';
+    if (!ratingAllowedOnHost(page.contentRating, host)) {
+      return { notFound: true };
+    }
 
     return {
       props: {
@@ -132,10 +144,8 @@ export default function AppPage(props: PageProps) {
   // flow to the block via TOKEN_REFRESH (wired to PageBlockHost.onConsentGranted,
   // mirroring how IframeHost re-mints on REQUEST_CONSENT). The rotated token's
   // TOKEN_REFRESH push delivers the granted scopes and the block retries.
-  const { token, expiresAt, needsConsent, missingScopes, error, refresh } = useBlockToken(
-    install,
-    context
-  );
+  const { token, expiresAt, needsConsent, missingScopes, domain, maxBrowsingLevel, error, refresh } =
+    useBlockToken(install, context);
 
   const viewer = currentUser
     ? { id: currentUser.id, username: currentUser.username ?? null }
@@ -160,10 +170,13 @@ export default function AppPage(props: PageProps) {
           declaredScopes={scopes}
           missingScopes={missingScopes}
           needsConsent={needsConsent}
+          domain={domain}
+          maxBrowsingLevel={maxBrowsingLevel}
           tokenError={error != null}
           viewer={viewer}
           theme={theme}
           onConsentGranted={refresh}
+          onRetryToken={refresh}
         />
       </Box>
     </>

@@ -11,9 +11,15 @@ import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import { resolveRequestSignIn } from './requestSignInGate';
 import { resolveRequestConsent } from './requestConsentGate';
 import { hideBlock } from './hiddenBlocks';
+import { isPageSlot } from '~/shared/constants/slot-registry';
 import { sanitizeAppChromeName } from './appChromeName';
+import { sendBlockRender } from './sendBlockRender';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
-import { projectBlockInitContext, projectBlockInitViewer } from './projectBlockInit';
+import {
+  projectBlockInitContext,
+  projectBlockInitMaturity,
+  projectBlockInitViewer,
+} from './projectBlockInit';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, BlockInstall, ModelSlotContext, SlotContext } from './types';
@@ -24,11 +30,9 @@ import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/base
 import { trpc } from '~/utils/trpc';
 import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.schema';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { openLoginPopup } from '~/utils/auth-helpers';
 
 const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
-// Login flow for anonymous-conversion (REQUEST_SIGN_IN). SSR-disabled to match
-// requireLogin()'s own dynamic import — LoginContent touches window/router.
-const LoginModal = dynamic(() => import('~/components/Login/LoginModal'), { ssr: false });
 // Lazy-consent UI (REQUEST_CONSENT). Opened on demand when a logged-in viewer
 // clicks an action whose consent-gated scope the token is missing.
 const BlockConsentModal = dynamic(() => import('./BlockConsentModal'), { ssr: false });
@@ -50,6 +54,10 @@ interface IframeHostProps {
    *  we also trim them from the wrapped `token.scopes` we send the iframe so
    *  the block's "do I have this capability?" check is accurate. */
   missingScopes?: string[];
+  /** Advisory color-domain maturity signal (BLOCK_INIT). Server-authoritative
+   *  values mirrored from the token mint — the host forwards, never derives. */
+  domain?: 'green' | 'blue' | 'red' | null;
+  maxBrowsingLevel?: number;
   /** Re-mint the block token after a consent grant so it carries the newly
    *  granted scopes (pushed to the iframe via TOKEN_REFRESH). */
   onConsentGranted?: () => void;
@@ -111,23 +119,41 @@ function storageErrorMessage(err: unknown): string {
  * block can't fake, restyle, or hide it. It's the user-facing safety
  * signal that says "this is a sandboxed app block, not native Civitai UI":
  * a thin top bar with the Civitai app-block badge plus a menu whose
- * "Manage apps" item routes to /apps/installed and a "Hide app block" item
+ * "Manage apps" item routes to /apps/installed and a "Hide app" item
  * that locally hides this install for the viewer (a model owner's block shows
  * to every viewer; this lets a viewer dismiss one without affecting the
  * publisher or anyone else). Rendering it here (vs in the sandboxed iframe) is
  * the whole point — the trust boundary belongs to the host. (Roadmap W7.)
+ *
+ * SURFACE-AWARE: on the full-page run surface (`/apps/run/<slug>`, slot kind
+ * `page`) the "Hide app" action is meaningless — there is no model-page
+ * slot to dismiss the block FROM; the page IS the block. So the host passes the
+ * rendering `slotId` and we drop the "Hide" item when `isPageSlot(slotId)` is
+ * true. "Manage apps" + the provenance badge stay on every surface. (Mirrors PR
+ * #2747's `isPageSlot` page-vs-model distinction.) When `slotId` is omitted the
+ * chrome defaults to the model surface (shows Hide) — back-compat for any caller
+ * that hasn't threaded a slot.
  */
 export function AppBlockChrome({
   blockInstanceId,
   appName,
   modelId,
   modelName,
+  slotId,
 }: {
   blockInstanceId: string;
   appName?: string;
   modelId?: number;
   modelName?: string;
+  /** The slot this chrome renders in. Drives the page-vs-model surface
+   *  distinction — the "Hide" item is hidden on the full-page (`app.page`)
+   *  surface. Omitted → treated as a model surface (Hide shown). */
+  slotId?: string;
 }) {
+  // The full-page run surface (`app.page`) has no model-page slot to hide the
+  // block from — the page IS the block — so suppress the "Hide" item there.
+  const isPage = slotId != null && isPageSlot(slotId);
+  const showHide = !isPage;
   // The host-rendered name of the running app. (H2) Naming the app in the host
   // chrome — not just the iframe `title` — lets the user tell WHICH sandboxed
   // app is running and trust its provenance; the iframe can't fake it. The name
@@ -135,12 +161,25 @@ export function AppBlockChrome({
   // collapse whitespace, bound length) before rendering it in the trust label.
   const sanitizedName = sanitizeAppChromeName(appName);
   const hasName = sanitizedName !== null;
-  // Falls back to the literal "App block" so the trust label is never blank.
-  const label = sanitizedName ?? 'App block';
-  // When a real name shows, keep the icon's "App block" provenance aria-label so
-  // the icon + name read as "App block, <name>". On the fallback the visible
-  // Text already says "App block", so mark the icon decorative (aria-hidden)
-  // rather than leaving it an unlabeled SVG / double-reading "App block".
+  // Falls back to the literal "App" so the trust label is never blank.
+  const label = sanitizedName ?? 'App';
+  // De-dup the app name on the page surface. The breadcrumb's trailing crumb
+  // (`app-block-breadcrumb-name`) already carries the app name there, so the
+  // standalone badge name `Text` would render the SAME name a second time
+  // (`[icon] <name>  /  Apps  /  <name>`). Suppress the badge name `Text` when
+  // the breadcrumb is shown (page surface) and let the crumb be the sole
+  // app-name; the provenance ICON stays (see the icon aria-label below) so the
+  // trust signal is preserved. On the model surface (no breadcrumb) the badge
+  // name renders exactly as before.
+  const showBadgeName = !isPage;
+  // The icon must carry the "App" provenance aria-label whenever there is
+  // no adjacent visible Text saying "App" — i.e. when a real name shows
+  // (so the icon + name read as "App, <name>") OR when the badge name Text
+  // is suppressed on the page surface (so the provenance signal isn't lost with
+  // the dropped Text). It's marked decorative (aria-hidden) ONLY when the
+  // visible fallback "App" Text is present to carry provenance itself —
+  // avoiding an unlabeled SVG / a double-reading "App".
+  const iconProvenance = hasName || !showBadgeName;
   return (
     <Group
       justify="space-between"
@@ -159,31 +198,83 @@ export function AppBlockChrome({
       <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
         {/* Provenance signal for screen readers. role="img" is required for the
             aria-label to be reliably announced — a bare tabler <svg> has no role,
-            so without it the label is dropped. On the fallback the visible "App
-            block" Text carries provenance, so the icon is marked decorative. */}
+            so without it the label is dropped. On the fallback the visible "App"
+            Text carries provenance, so the icon is marked decorative. */}
         <IconApps
           size={14}
           stroke={1.5}
-          role={hasName ? 'img' : undefined}
-          aria-label={hasName ? 'App block' : undefined}
-          aria-hidden={hasName ? undefined : true}
+          role={iconProvenance ? 'img' : undefined}
+          aria-label={iconProvenance ? 'App' : undefined}
+          aria-hidden={iconProvenance ? undefined : true}
           style={{ flexShrink: 0 }}
         />
         {/* Host-rendered (spoof-proof) app-name label. Truncates with an
             ellipsis at a bounded width so a long name never wraps or shoves
-            the menu off the row in the narrow model.sidebar_top slot. */}
-        <Text size="xs" c="dimmed" truncate maw={160} data-testid="app-block-name">
-          {label}
-        </Text>
+            the menu off the row in the narrow model.sidebar_top slot. On the
+            page surface this is suppressed (the breadcrumb crumb below carries
+            the name once) — see `showBadgeName`. */}
+        {showBadgeName && (
+          <Text size="xs" c="dimmed" truncate maw={160} data-testid="app-block-name">
+            {label}
+          </Text>
+        )}
+        {/* Page-surface breadcrumb: `Apps / <app name>`. Only on the full-page
+            run surface (`app.page`) — the page IS the block, so an "up to the
+            apps list" trail is meaningful there; the compact model-slot chrome
+            (badge + ⋯ menu) gets nothing extra. "Apps" links back to /apps; the
+            app name reuses the SAME sanitized (spoof-proof) chrome name as the
+            provenance badge — never a raw/untrusted manifest string. */}
+        {isPage && (
+          <Group
+            gap={4}
+            wrap="nowrap"
+            style={{ minWidth: 0 }}
+            data-testid="app-block-breadcrumb"
+            aria-label="Breadcrumb"
+          >
+            <Text size="xs" c="dimmed" aria-hidden>
+              /
+            </Text>
+            {/* Link affordance: distinct link COLOR + underline so this crumb
+                reads as obviously clickable, visually separated from the static
+                dimmed crumb text + separators around it. Keeps the real anchor
+                semantics (it's a Next <Link>) for keyboard / middle-click. */}
+            <Text
+              component={Link}
+              href="/apps"
+              size="xs"
+              c="blue.6"
+              td="underline"
+              style={{ flexShrink: 0, cursor: 'pointer' }}
+              data-testid="app-block-breadcrumb-apps"
+              data-clickable="true"
+            >
+              Apps
+            </Text>
+            <Text size="xs" c="dimmed" aria-hidden>
+              /
+            </Text>
+            <Text
+              size="xs"
+              c="dimmed"
+              fw={500}
+              truncate
+              maw={200}
+              data-testid="app-block-breadcrumb-name"
+            >
+              {label}
+            </Text>
+          </Group>
+        )}
       </Group>
       <Menu position="bottom-end" shadow="md" width={180}>
         <Menu.Target>
-          <ActionIcon variant="subtle" color="gray" size="sm" aria-label="App block menu">
+          <ActionIcon variant="subtle" color="gray" size="sm" aria-label="App menu">
             <IconDots size={16} stroke={1.5} />
           </ActionIcon>
         </Menu.Target>
         <Menu.Dropdown>
-          <Menu.Label>App block</Menu.Label>
+          <Menu.Label>App</Menu.Label>
           <Menu.Item
             component={Link}
             href="/apps/installed"
@@ -191,20 +282,22 @@ export function AppBlockChrome({
           >
             Manage apps
           </Menu.Item>
-          <Menu.Item
-            leftSection={<IconEyeOff size={14} stroke={1.5} />}
-            onClick={() =>
-              hideBlock({
-                blockInstanceId,
-                appName,
-                modelId,
-                modelName,
-                hiddenAt: Date.now(),
-              })
-            }
-          >
-            Hide app block
-          </Menu.Item>
+          {showHide && (
+            <Menu.Item
+              leftSection={<IconEyeOff size={14} stroke={1.5} />}
+              onClick={() =>
+                hideBlock({
+                  blockInstanceId,
+                  appName,
+                  modelId,
+                  modelName,
+                  hiddenAt: Date.now(),
+                })
+              }
+            >
+              Hide app
+            </Menu.Item>
+          )}
         </Menu.Dropdown>
       </Menu>
     </Group>
@@ -217,6 +310,8 @@ export function IframeHost({
   token,
   expiresAt,
   missingScopes,
+  domain,
+  maxBrowsingLevel,
   onConsentGranted,
 }: IframeHostProps) {
   // Treat the slot context as ModelSlotContext when the optional viewer/theme
@@ -244,6 +339,24 @@ export function IframeHost({
   // the controller started — the next tick picks up the new payload) without
   // re-creating the controller and resetting its timers.
   const buildInitPayloadRef = useRef<() => BlockInitPayload>();
+  // Analytics Phase 2: emit-once guard for the block-render beacon (see the
+  // BLOCK_READY effect). The 'loading' → 'ready' transition is the primary
+  // dedup; this ref makes the per-mount emit deterministic even if duplicate
+  // BLOCK_READY acks land before React commits the 'ready' state.
+  const blockRenderEmittedRef = useRef<boolean>(false);
+
+  // App Blocks Analytics Phase 2 — fire-and-forget block render/impression,
+  // emitted exactly once per mount at the BLOCK_READY transition (see the
+  // BLOCK_READY effect below) via the lightweight /api/track/block-render beacon
+  // (NOT a tRPC mutation — this fires per model-page-with-a-block view, so at GA
+  // it must skip the full tRPC middleware chain; mirrors the #2680 addView ->
+  // beacon move). The client passes only the three identifiers; `isAnon`/`userId`
+  // are derived/stamped server-side in the route. This host only mounts via the
+  // `appBlocks`-flag-gated BlockSlot → BlockSlotClient → BlockHost path, so the
+  // event is dark behind the same flag as the rest of App Blocks.
+  // Slot the block rendered in (e.g. 'model.sidebar_top'). Mirrors the default
+  // used everywhere else modelCtx.slotId is read in this component.
+  const slotId = modelCtx.slotId ?? 'model.sidebar_top';
 
   const iframeSrc = install.manifest.iframe?.src ?? '';
   const expectedOrigin = useMemo(() => {
@@ -408,6 +521,8 @@ export function IframeHost({
     viewer: projectBlockInitViewer(context),
     theme: modelCtx.theme ?? 'light',
     renderMode: install.renderMode,
+    // Advisory maturity signal — server-authoritative values from the mint.
+    ...projectBlockInitMaturity({ domain, maxBrowsingLevel }),
   });
 
   // Keep the controller's interval posting the freshest payload. buildInitPayload
@@ -547,10 +662,24 @@ export function IframeHost({
         // (the block dedupes init), but we must not keep spamming.
         controllerRef.current?.notifyReady();
         applyHeight(payload.height);
+        // Analytics Phase 2: one render/impression per mount. `appliedReady`
+        // flips on the loading→ready transition; the emit-once ref makes it
+        // deterministic even if duplicate acks land before React commits 'ready'
+        // (so it fires exactly once per mount and never on re-render).
+        // Fire-and-forget beacon — failures are a no-op (and a harmless no-op
+        // until the `blockRenders` ClickHouse table exists; see PR body).
+        if (!blockRenderEmittedRef.current) {
+          blockRenderEmittedRef.current = true;
+          sendBlockRender({
+            appBlockId: install.appBlockId,
+            blockInstanceId: install.blockInstanceId,
+            slotId,
+          });
+        }
       }
     });
     return off;
-  }, [onMessage, applyHeight]);
+  }, [onMessage, applyHeight, install.appBlockId, install.blockInstanceId, slotId]);
 
   useEffect(() => {
     const off = onMessage<unknown>('RESIZE_IFRAME', (raw) => {
@@ -579,23 +708,19 @@ export function IframeHost({
   // flow when the user clicks an action that needs auth/money (e.g. Generate).
   // usePostMessage already pins origin + event.source; we additionally gate on
   // status === 'ready' (post-BLOCK_READY) so a pre-handshake block can't pop a
-  // login modal before any interaction, matching the OPEN_BUZZ_PURCHASE posture.
+  // login popup before any interaction, matching the OPEN_BUZZ_PURCHASE posture.
   //
   // returnUrl: an untrusted same-origin path the block may supply (must begin
   // with a single '/', no protocol-relative '//', so it can't redirect off-site
-  // after login). When absent or unsafe we fall through to undefined and
-  // LoginModal defaults returnUrl to the current page (router.asPath).
+  // after login). When absent or unsafe we fall through to the current page.
   useEffect(() => {
     const off = onMessage<{ returnUrl?: unknown } | undefined>('REQUEST_SIGN_IN', (raw) => {
       const resolved = resolveRequestSignIn(status, raw);
       if (resolved == null) return; // not ready — drop (gate centralises the rules)
-      dialogStore.trigger({
-        component: LoginModal,
-        props: {
-          reason: 'image-gen',
-          ...(resolved.returnUrl ? { returnUrl: resolved.returnUrl } : {}),
-        },
-      });
+      // Open the hub login in a popup (replaces the old in-page LoginModal). The host runs at TOP level — not
+      // inside the sandboxed block iframe — so the popup works here; on completion it navigates back.
+      const here = window.location.pathname + window.location.search + window.location.hash;
+      openLoginPopup(resolved.returnUrl ?? here, 'image-gen');
     });
     return off;
   }, [onMessage, status]);
@@ -645,6 +770,7 @@ export function IframeHost({
   const estimateWorkflowMutation = trpc.blocks.estimateWorkflow.useMutation();
   const pollWorkflowMutation = trpc.blocks.pollWorkflow.useMutation();
   const cancelWorkflowMutation = trpc.blocks.cancelWorkflow.useMutation();
+  const getMyBuzzBalanceMutation = trpc.blocks.getMyBuzzBalance.useMutation();
 
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; body?: unknown } | undefined>(
@@ -798,6 +924,14 @@ export function IframeHost({
         typeof raw.baseModelGroup === 'string' ? getBaseModelGroup(raw.baseModelGroup) : null;
       const baseModels = groupKey ? getBaseModelsByGroup(groupKey) : [];
       let answered = false;
+      // MEDIUM-2 (deferred — see PageBlockHost OPEN_RESOURCE_PICKER for the full
+      // rationale): the modal's NSFW filtering inherits the SITE-WIDE browsing
+      // level (blue = mature), so on a SFW (blue/green) block the picker UI can
+      // still surface mature checkpoints even though generation is SFW-clamped.
+      // Not an iframe leak (CHECKPOINT_PICKER_RESULT is name/id-only and every
+      // pick is re-gated SFW server-side at submit). `ResourceSelectOptions`
+      // exposes no browsing-level/sfwOnly constraint; wiring one would mean
+      // modifying the shared ResourceSelectModal internals — deferred follow-up.
       openResourceSelectModal({
         title: 'Choose a checkpoint',
         options: {
@@ -941,6 +1075,35 @@ export function IframeHost({
     return off;
   }, [onMessage, send, token, cancelWorkflowMutation]);
 
+  // GET_BUZZ_BALANCE → blocks.getMyBuzzBalance → BUZZ_BALANCE_RESULT. Backs the
+  // SDK `useBuzzBalance()` hook + the account-picker so a money block can show
+  // which wallet (blue/green/yellow) a generation draws from. Host-MEDIATED: the
+  // balance is derived from the token's SELF-BOUND `sub` server-side, never
+  // client input. MUTATION (not query) so the block JWT rides in the POST body,
+  // not a replayable ?input=… URL. REQUEST-style ⇒ every path MUST reply or the
+  // block hangs; errors come back as `error: <string>` (mirrors the storage
+  // handlers) rather than thrown upward.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown } | undefined>(
+      'GET_BUZZ_BALANCE',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string') return;
+        const requestId = raw.requestId;
+        // NB: unlike PageBlockHost's `token: string | null`, IframeHost's `token` is non-null, so there is deliberately no explicit null-token guard here — an empty token just falls through to the router's `z.string().min(1)` reject → the `catch` → error reply (still no hang).
+        try {
+          const balance = await getMyBuzzBalanceMutation.mutateAsync({ blockToken: token });
+          send('BUZZ_BALANCE_RESULT', { requestId, balance });
+        } catch (err) {
+          send('BUZZ_BALANCE_RESULT', {
+            requestId,
+            error: err instanceof Error ? err.message : 'unknown',
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, getMyBuzzBalanceMutation]);
+
   // App Blocks KV datastore (W4-v0). Five host-mediated handlers; the
   // iframe never sees the apps DB credentials. Every reply MUST come
   // back with the same requestId — the block-side hook times out at
@@ -1062,7 +1225,8 @@ export function IframeHost({
           requestId,
           keys: result.keys.map((k) => ({
             key: k.key,
-            updatedAt: k.updatedAt instanceof Date ? k.updatedAt.toISOString() : String(k.updatedAt),
+            updatedAt:
+              k.updatedAt instanceof Date ? k.updatedAt.toISOString() : String(k.updatedAt),
           })),
           nextCursor: result.nextCursor,
         });
@@ -1078,34 +1242,211 @@ export function IframeHost({
   }, [onMessage, send, token, trpcUtils]);
 
   useEffect(() => {
-    const off = onMessage<{ requestId?: unknown } | undefined>(
-      'APP_STORAGE_QUOTA',
+    const off = onMessage<{ requestId?: unknown } | undefined>('APP_STORAGE_QUOTA', async (raw) => {
+      if (!raw || typeof raw.requestId !== 'string') return;
+      const requestId = raw.requestId;
+      try {
+        const result = await trpcUtils.apps.storage.getQuota.fetch({ blockToken: token });
+        send('APP_STORAGE_QUOTA_RESULT', {
+          requestId,
+          usedBytes: result.usedBytes,
+          rowCount: result.rowCount,
+          limitBytes: result.limitBytes,
+          limitRows: result.limitRows,
+        });
+      } catch (err) {
+        send('APP_STORAGE_QUOTA_RESULT', {
+          requestId,
+          usedBytes: 0,
+          rowCount: 0,
+          limitBytes: 0,
+          limitRows: 0,
+          error: storageErrorMessage(err),
+        });
+      }
+    });
+    return off;
+  }, [onMessage, send, token, trpcUtils]);
+
+  // App Blocks SHARED (cross-user / app-global) storage bridge (Phase 2b). The
+  // public-write sibling of the per-user KV handlers above — a block token that
+  // carries `apps:storage:shared:*` drives the shared datastore via the SDK
+  // shared-storage hook (SHARED_LIST / GET_COUNT / GET_COUNTS / APPEND / VOTE /
+  // UNVOTE / WITHDRAW → SHARED_*_RESULT). The host injects the `token` it holds as
+  // `blockToken` (never trusts a message token); reads go through
+  // trpc.useUtils().apps.shared.*.fetch, writes through the useMutation hooks; the
+  // server enforces scope + flag + trust gate (resolveSharedContext). Every reply
+  // carries the same requestId on success AND error so the block never hangs.
+  const sharedAppendMutation = trpc.apps.shared.append.useMutation();
+  const sharedVoteMutation = trpc.apps.shared.vote.useMutation();
+  const sharedUnvoteMutation = trpc.apps.shared.unvote.useMutation();
+  const sharedWithdrawMutation = trpc.apps.shared.withdraw.useMutation();
+
+  useEffect(() => {
+    const off = onMessage<
+      | {
+          requestId?: unknown;
+          prefix?: unknown;
+          limit?: unknown;
+          cursor?: unknown;
+        }
+      | undefined
+    >('SHARED_LIST', async (raw) => {
+      if (!raw || typeof raw.requestId !== 'string') return;
+      const requestId = raw.requestId;
+      try {
+        const prefix = typeof raw.prefix === 'string' ? raw.prefix : undefined;
+        const limit =
+          typeof raw.limit === 'number' && Number.isFinite(raw.limit)
+            ? Math.min(Math.max(Math.floor(raw.limit), 1), 100)
+            : 50;
+        const cursor = typeof raw.cursor === 'string' ? raw.cursor : undefined;
+        const result = await trpcUtils.apps.shared.list.fetch({
+          blockToken: token,
+          prefix,
+          limit,
+          cursor,
+        });
+        send('SHARED_LIST_RESULT', {
+          requestId,
+          items: result.items.map((it) => ({
+            key: it.key,
+            authorUserId: it.authorUserId,
+            value: it.value,
+            count: it.count,
+            createdAt:
+              it.createdAt instanceof Date ? it.createdAt.toISOString() : String(it.createdAt),
+            updatedAt:
+              it.updatedAt instanceof Date ? it.updatedAt.toISOString() : String(it.updatedAt),
+          })),
+          nextCursor: result.nextCursor,
+        });
+      } catch (err) {
+        send('SHARED_LIST_RESULT', { requestId, error: storageErrorMessage(err) });
+      }
+    });
+    return off;
+  }, [onMessage, send, token, trpcUtils]);
+
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
+      'SHARED_GET_COUNT',
       async (raw) => {
-        if (!raw || typeof raw.requestId !== 'string') return;
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
         const requestId = raw.requestId;
         try {
-          const result = await trpcUtils.apps.storage.getQuota.fetch({ blockToken: token });
-          send('APP_STORAGE_QUOTA_RESULT', {
-            requestId,
-            usedBytes: result.usedBytes,
-            rowCount: result.rowCount,
-            limitBytes: result.limitBytes,
-            limitRows: result.limitRows,
+          const result = await trpcUtils.apps.shared.getCount.fetch({
+            blockToken: token,
+            key: raw.key,
           });
+          send('SHARED_GET_COUNT_RESULT', { requestId, count: result.count });
         } catch (err) {
-          send('APP_STORAGE_QUOTA_RESULT', {
-            requestId,
-            usedBytes: 0,
-            rowCount: 0,
-            limitBytes: 0,
-            limitRows: 0,
-            error: storageErrorMessage(err),
-          });
+          send('SHARED_GET_COUNT_RESULT', { requestId, error: storageErrorMessage(err) });
         }
       }
     );
     return off;
   }, [onMessage, send, token, trpcUtils]);
+
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; keys?: unknown } | undefined>(
+      'SHARED_GET_COUNTS',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || !Array.isArray(raw.keys)) return;
+        const requestId = raw.requestId;
+        try {
+          const result = await trpcUtils.apps.shared.getCounts.fetch({
+            blockToken: token,
+            keys: raw.keys as string[],
+          });
+          send('SHARED_GET_COUNTS_RESULT', { requestId, counts: result.counts });
+        } catch (err) {
+          send('SHARED_GET_COUNTS_RESULT', { requestId, error: storageErrorMessage(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, trpcUtils]);
+
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; value?: unknown } | undefined>(
+      'SHARED_APPEND',
+      async (raw) => {
+        if (
+          !raw ||
+          typeof raw.requestId !== 'string' ||
+          typeof raw.value !== 'object' ||
+          raw.value === null
+        )
+          return;
+        const requestId = raw.requestId;
+        try {
+          const result = await sharedAppendMutation.mutateAsync({
+            blockToken: token,
+            value: raw.value as { title: string; body?: string },
+          });
+          send('SHARED_APPEND_RESULT', { requestId, key: result.key });
+        } catch (err) {
+          send('SHARED_APPEND_RESULT', { requestId, error: storageErrorMessage(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, sharedAppendMutation]);
+
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
+      'SHARED_VOTE',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
+        const requestId = raw.requestId;
+        try {
+          const result = await sharedVoteMutation.mutateAsync({ blockToken: token, key: raw.key });
+          send('SHARED_VOTE_RESULT', { requestId, count: result.count });
+        } catch (err) {
+          send('SHARED_VOTE_RESULT', { requestId, error: storageErrorMessage(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, sharedVoteMutation]);
+
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
+      'SHARED_UNVOTE',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
+        const requestId = raw.requestId;
+        try {
+          const result = await sharedUnvoteMutation.mutateAsync({ blockToken: token, key: raw.key });
+          send('SHARED_UNVOTE_RESULT', { requestId, count: result.count });
+        } catch (err) {
+          send('SHARED_UNVOTE_RESULT', { requestId, error: storageErrorMessage(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, sharedUnvoteMutation]);
+
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
+      'SHARED_WITHDRAW',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
+        const requestId = raw.requestId;
+        try {
+          const result = await sharedWithdrawMutation.mutateAsync({
+            blockToken: token,
+            key: raw.key,
+          });
+          send('SHARED_WITHDRAW_RESULT', { requestId, ok: result.ok, deleted: result.deleted });
+        } catch (err) {
+          send('SHARED_WITHDRAW_RESULT', { requestId, error: storageErrorMessage(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, sharedWithdrawMutation]);
 
   useEffect(() => {
     if (status !== 'ready') return;
@@ -1146,6 +1487,7 @@ export function IframeHost({
         appName={install.manifest.name}
         modelId={modelCtx.modelId}
         modelName={modelCtx.modelName}
+        slotId={slotId}
       />
       {children}
     </Box>

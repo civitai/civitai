@@ -159,6 +159,12 @@ export const PUBLIC_MANIFEST_FIELDS = ['name', 'description', 'targets', 'hasPag
  *                       `scopes`. These are plain scope identifier strings
  *                       describing what the app can do (the whole point of the
  *                       disclosure) — never the raw manifest declaration.
+ *   - `coverUrl`      — the FIRST publisher-supplied screenshot's PUBLIC display
+ *                       URL (`toPublicScreenshots(id, screenshots)[0]?.url`),
+ *                       surfaced as the card's cover image. NULL when the app
+ *                       shipped no `screenshots/` dir. Same opaque, gated app
+ *                       route (`/api/blocks/screenshot/<id>/<index>.<ext>`) the
+ *                       detail page uses — the raw MinIO key is NEVER exposed.
  */
 export type AvailableBlock = {
   id: string;
@@ -169,6 +175,26 @@ export type AvailableBlock = {
   installCount: number;
   category: string | null;
   scopesSummary: string[];
+  // Off-site (external-link) app — PURE EXTERNAL LINK. When non-null, this
+  // listing opens an external URL in a new tab (NO install / scopes / token /
+  // subscription). The card uses this as the "open" target instead of the
+  // computed `https://<slug>.<APPS_DOMAIN>` liveUrl, hides Install + scopes, and
+  // flags the app as off-site. NULL = a normal on-platform app. Always https://.
+  externalUrl: string | null;
+  // Marketplace reviews (F-E "marketplace" cluster). avgRating is NULL when the
+  // app has no aggregate-eligible reviews (0-review apps); reviewCount excludes
+  // mod-excluded + self-reviews. Both display-safe (aggregate numbers only).
+  avgRating: number | null;
+  reviewCount: number;
+  // Card cover image: the FIRST publisher-supplied screenshot's PUBLIC display
+  // URL, or NULL when the app shipped no screenshots. Built via the SAME
+  // `toPublicScreenshots` projection the detail page uses (opaque gated route,
+  // never the raw MinIO key) — display-only. OPTIONAL: both producers
+  // (listAvailable/getFeaturedBlocks) always set it to `string | null`, but a
+  // nullable display field is left optional so test fixtures built via
+  // `Partial<AvailableBlock>` spread (which widens to `| undefined`) typecheck;
+  // the card treats absent the same as null (renders the placeholder).
+  coverUrl?: string | null;
 };
 
 /**
@@ -200,13 +226,17 @@ export function toPublicBlockManifest(raw: unknown): PublicBlockManifest {
 }
 
 /**
- * F-E E3 marketplace sort options:
- *   - `popular` (default) — install_count DESC (distinct-user installs).
- *   - `newest`            — current_version_deployed_at DESC, falling back to
- *                           created_at for pre-W2 rows with no deploy timestamp.
- *   - `name`              — manifest name ASC (case-insensitive).
+ * F-E marketplace sort options:
+ *   - `rating` (DEFAULT) — Bayesian-shrinkage avg rating DESC (a few-review 5★
+ *                          app can't outrank a many-review 4.x app; 0-review
+ *                          apps sit mid-pack at the global mean `m`). Ties fall
+ *                          back to install_count then id.
+ *   - `popular`          — install_count DESC (distinct-user installs).
+ *   - `newest`           — current_version_deployed_at DESC, falling back to
+ *                          created_at for pre-W2 rows with no deploy timestamp.
+ *   - `name`             — manifest name ASC (case-insensitive).
  */
-export const marketplaceSortSchema = z.enum(['popular', 'newest', 'name']);
+export const marketplaceSortSchema = z.enum(['rating', 'popular', 'newest', 'name']);
 export type MarketplaceSort = z.infer<typeof marketplaceSortSchema>;
 
 export const listAvailableSchema = z.object({
@@ -218,9 +248,10 @@ export const listAvailableSchema = z.object({
   // taxonomy const (MARKETPLACE_CATEGORIES) so the schema and the UI/DB share
   // ONE list — adding a category is a one-line const edit, no schema migration.
   category: z.enum(MARKETPLACE_CATEGORIES).optional(),
-  // F-E E3: sort order; defaults to popular (install_count desc) — same as the
-  // pre-E3 fixed ordering, so the default behaviour is unchanged.
-  sort: marketplaceSortSchema.default('popular'),
+  // F-E marketplace: sort order; defaults to `rating` (Bayesian-shrinkage avg
+  // rating desc) so the best-reviewed apps surface first; 0-review apps sit
+  // mid-pack at the global mean (not unfairly buried).
+  sort: marketplaceSortSchema.default('rating'),
   cursor: z.string().max(64).optional(),
   limit: z.number().int().min(1).max(50).default(20),
 });
@@ -278,6 +309,34 @@ export const getMarketplaceMetaSchema = z.object({
   appBlockId: z.string().min(1).max(64),
 });
 export type GetMarketplaceMetaInput = z.infer<typeof getMarketplaceMetaSchema>;
+
+// ---------------------------------------------------------------------------
+// F-E marketplace REVIEWS (5-star) — schemas.
+// ---------------------------------------------------------------------------
+
+/** Upsert (create-or-update) the viewer's review for an app block. */
+export const upsertAppBlockReviewSchema = z.object({
+  appBlockId: z.string().min(1).max(64),
+  rating: z.number().int().min(1).max(5), // STARS
+  recommended: z.boolean().optional(),
+  details: z.string().max(10000).nullish(),
+});
+export type UpsertAppBlockReviewInput = z.infer<typeof upsertAppBlockReviewSchema>;
+
+/** Keyset-paginated list of an app's reviews (newest first). */
+export const listAppBlockReviewsSchema = z.object({
+  appBlockId: z.string().min(1).max(64),
+  cursor: z.number().int().positive().optional(),
+  limit: z.number().int().min(1).max(50).default(20),
+});
+export type ListAppBlockReviewsInput = z.infer<typeof listAppBlockReviewsSchema>;
+
+/** MOD-ONLY: flip `exclude` on a review (keeps abuse out of the aggregate). */
+export const setAppReviewExcludedSchema = z.object({
+  id: z.number().int().positive(),
+  exclude: z.boolean(),
+});
+export type SetAppReviewExcludedInput = z.infer<typeof setAppReviewExcludedSchema>;
 
 /**
  * MOD-ONLY current marketplace metadata for one app_block — returned by
@@ -390,6 +449,14 @@ export type PublicAppDetail = {
   contentRating: string | null;
   version: string | null;
   installCount: number;
+  // Marketplace reviews (aggregate-eligible). avgRating NULL = 0-review app.
+  avgRating: number | null;
+  reviewCount: number;
   liveUrl: string;
   screenshots: PublicScreenshot[];
+  // Off-site (external-link) app — PURE EXTERNAL LINK. When non-null, the detail
+  // surfaces this as the primary CTA (open in a new tab) and hides install /
+  // scopes / iframe-preview. NULL = a normal on-platform app (liveUrl is the
+  // canonical standalone origin as before). Always https://.
+  externalUrl: string | null;
 };

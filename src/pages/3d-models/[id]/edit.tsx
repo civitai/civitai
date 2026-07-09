@@ -162,6 +162,12 @@ function Model3DEditPage({ id }: InferGetServerSidePropsType<typeof getServerSid
 
   if (isLoading) return <PageLoader />;
   if (!model3d) return <NotFound />;
+  // Hold the form until the seed effect has mirrored the loaded model
+  // into local state. RichTextEditor reads its `content` only at mount
+  // and won't re-sync on a delayed `value` change — if we render before
+  // `setDescription(model3d.description)` runs, the editor mounts empty,
+  // the user sees no body, and Save writes `description: null`.
+  if (!seeded) return <PageLoader />;
 
   const isOwner = !!currentUser && currentUser.id === model3d.userId;
   const isModerator = !!currentUser?.isModerator;
@@ -236,10 +242,11 @@ function Model3DEditPage({ id }: InferGetServerSidePropsType<typeof getServerSid
               </Badge>
             ) : (
               <Tooltip
-                label="A thumbnail image is required before publishing."
+                label="A saved name and a thumbnail image are required before publishing."
                 withinPortal
                 disabled={
-                  !!model3d.thumbnailImageId || model3d.status === Model3DStatus.Published
+                  (!!model3d.thumbnailImageId && !!model3d.name?.trim()) ||
+                  model3d.status === Model3DStatus.Published
                 }
               >
                 <div>
@@ -250,7 +257,7 @@ function Model3DEditPage({ id }: InferGetServerSidePropsType<typeof getServerSid
                     checked={model3d.status === Model3DStatus.Published}
                     disabled={
                       (model3d.status !== Model3DStatus.Published &&
-                        !model3d.thumbnailImageId) ||
+                        (!model3d.thumbnailImageId || !model3d.name?.trim())) ||
                       publishMutation.isPending ||
                       unpublishMutation.isPending
                     }

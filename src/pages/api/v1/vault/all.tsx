@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import { getPaginatedVaultItems } from '~/server/services/vault.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPaginatedVaultItemsSchema } from '~/server/schema/vault.schema';

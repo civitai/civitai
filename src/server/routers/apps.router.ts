@@ -15,7 +15,9 @@ import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import { dbRead } from '~/server/db/client';
 import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-scope.middleware';
-import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
+import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
+import { sessionClient } from '~/server/auth/session-client';
+import type { SessionUser } from '~/types/session';
 import { AppStorageProvisioner } from '~/server/services/apps/storage-provision.service';
 import {
   appStorageLatencyHistogram,
@@ -25,22 +27,25 @@ import {
 import { logToAxiom } from '~/server/logging/client';
 import { requireAppsDb } from '~/server/db/appsDb';
 import { appSchemaIdent, sanitizeAppSlug } from '~/server/utils/apps-slug';
-import { getUserById } from '~/server/services/user.service';
 import { middleware, publicProcedure, router } from '~/server/trpc';
+import { appsSharedRouter, appsModRouter } from '~/server/routers/apps-shared.router';
 
 /**
- * Phase 2 (internal-only graduation gate): App Blocks is moderator-only until
- * GA. Storage procedures are `publicProcedure` + block-token authed — the
- * viewer is resolved from the JWT subject, not `ctx.user`. Re-assert the
- * resolved viewer is a moderator here (block-token minting is also mod-gated,
- * but defense-in-depth re-checks per call). Throws FORBIDDEN otherwise.
+ * App Blocks authoring gate: storage procedures are `publicProcedure` +
+ * block-token authed — the viewer is resolved from the JWT subject, not
+ * `ctx.user`. Re-assert the resolved viewer is an app AUTHOR here (mod OR the
+ * app-dev-testers cohort, via the appBlocksAuthor capability) — defense-in-depth
+ * per call (mint is also author-gated). Mirrors blocks.router's
+ * assertViewerIsAppDeveloper so a KV-using block works for the whole author
+ * loop. Fail-closed: an unhydratable subject → undefined → mod-floor misses +
+ * Flipt eval can't match → FORBIDDEN. Throws FORBIDDEN otherwise.
  */
-async function assertViewerIsModerator(userId: number): Promise<void> {
-  const row = await getUserById({ id: userId, select: { id: true, isModerator: true } });
-  if (!row?.isModerator) {
+async function assertViewerIsAppDeveloper(userId: number): Promise<void> {
+  const user = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
+  if (!(await isAppBlocksAuthorEnabled({ user: user ?? undefined }))) {
     throw new TRPCError({
       code: 'FORBIDDEN',
-      message: 'App Blocks is restricted to the civitai team',
+      message: 'Apps authoring is not enabled for this account',
     });
   }
 }
@@ -70,9 +75,9 @@ const enforceAppBlocksFlag = middleware(async ({ ctx, next, type }) => {
   // gives the block a misleading-success path. The block already gates
   // its own UI on host signals, so a clean UNAUTHORIZED is fine.
   if (type === 'query') {
-    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
   }
-  throw new TRPCError({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
+  throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
 });
 
 /**
@@ -143,7 +148,7 @@ async function resolveStorageContext(blockToken: string, op: StorageOp): Promise
   // anon-handling (clean-null for reads, UNAUTHORIZED for writes) — block-token
   // minting is itself mod-gated so an anon mod token can't be minted anyway.
   if (userId != null) {
-    await assertViewerIsModerator(userId);
+    await assertViewerIsAppDeveloper(userId);
   }
   return {
     userId,
@@ -518,6 +523,14 @@ export const appsStorageRouter = router({
 
 export const appsRouter = router({
   storage: appsStorageRouter,
+  // SHARED (app-global / cross-user) storage — the public-write surface (voting +
+  // community lists). Block-token authed with its OWN resolver (resolveSharedContext:
+  // trust gate, NOT the app-author gate) + dedicated fail-closed flag. See
+  // apps-shared.router.ts.
+  shared: appsSharedRouter,
+  // Cross-app moderator surface for shared storage (session moderatorProcedure —
+  // NOT block-token reachable). Purge/hide any shared row + file a report.
+  mod: appsModRouter,
 });
 
 // Postgres literal quoting — used ONLY for the regex-validated appBlockId

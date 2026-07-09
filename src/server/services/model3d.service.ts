@@ -10,11 +10,19 @@ import {
   getUploadS3Client,
   isB2Url,
 } from '~/utils/s3-utils';
-import { MetricTimeframe, Model3DStatus, TagTarget } from '~/shared/utils/prisma/enums';
 import {
-  allBrowsingLevelsFlag,
+  EntityType,
+  JobQueueType,
+  MetricTimeframe,
+  Model3DStatus,
+  TagTarget,
+} from '~/shared/utils/prisma/enums';
+import { enqueueJobs } from '~/server/services/job-queue.service';
+import {
   parseBitwiseBrowsingLevel,
+  publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import { canViewModel3d } from '~/server/services/model3d.visibility';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
@@ -48,7 +56,7 @@ import { Model3DSort } from '~/server/schema/model3d.schema';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { handlePolyGenWorkflowResult } from '~/server/services/orchestrator/ecosystems/polyGen.handler';
-import type { PolyGenStep, Workflow, WorkflowStep } from '@civitai/client';
+import type { ImageBlob, PolyGenStep, Workflow, WorkflowStep } from '@civitai/client';
 import type { Context } from '~/server/createContext';
 
 type SessionUser = {
@@ -207,9 +215,19 @@ export const getModel3DById = async ({
       if (model3d.deletedAt) throw throwNotFoundError(`No 3D model with id ${id}`);
     }
 
+    // The signed-in user's own recommend (thumbs-up), so the detail page can
+    // render the gold thumbs-up toggle in its correct state.
+    const userReview = user
+      ? await dbRead.model3DReview.findUnique({
+          where: { model3dId_userId: { model3dId: id, userId: user.id } },
+          select: { id: true, recommended: true },
+        })
+      : null;
+
     return {
       ...model3d,
       tags: model3d.tags.map((t) => t.tag),
+      userReview,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -300,6 +318,15 @@ export const ensureModel3DFromWorkflow = async ({
       );
     }
 
+    // The chained `model3DPreview` step (see polygen-graph.handler) renders the
+    // centered 2D preview the user actually saw in the queue card. Prefer it as
+    // the saved thumbnail over the polyGen auto-thumbnail. It's not in the
+    // client's WorkflowStep union, so reach into its image output structurally.
+    const previewStep = workflow.steps.find((s: WorkflowStep) => s.$type === 'model3DPreview') as
+      | { output?: { images?: ImageBlob[] } }
+      | undefined;
+    const thumbnailOverride = previewStep?.output?.images?.find((img) => !!img?.url);
+
     const meta = (workflow.metadata ?? {}) as Record<string, unknown>;
     const generationParams = (meta.params ?? {}) as Record<string, unknown>;
     const sourceImageId =
@@ -314,6 +341,7 @@ export const ensureModel3DFromWorkflow = async ({
       // safe.
       generationParams: generationParams as never,
       sourceImageId,
+      thumbnailOverride,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -345,27 +373,20 @@ export const getModel3DsInfinite = async ({
   includeDrafts,
   sort,
   period,
-  rigged,
   animated,
+  unrated,
   browsingLevel,
   user,
 }: GetModel3DsInfiniteInput & { user?: SessionUser | null }) => {
   try {
     const isModerator = !!user?.isModerator;
 
-    // Mod-only gating at the service layer (feature-flag-equivalent). Without a
-    // signed-in mod, surface nothing. Workstream H wires the Flipt flag at the
-    // router middleware layer; this is a defense-in-depth check.
-    if (!isModerator) {
-      // Owner-scoped listing is allowed (so users can see their own drafts on
-      // their profile tab once the feature flag opens up). Anonymous + non-mod
-      // viewers get an empty list until the flag flips.
-      if (!user) return { items: [], nextCursor: undefined as number | undefined };
-      // Allow the user to fetch their own; otherwise empty.
-      if (userId && userId !== user.id && !username) {
-        return { items: [], nextCursor: undefined as number | undefined };
-      }
-    }
+    // Access to the feed is gated by the `model3dFeed` flag at the router /
+    // page layer. Content visibility below is self-contained — the status
+    // filter serves Published-only to non-owners, drafts are gated to
+    // owner/mod, and unrated/nsfw rows are filtered for non-owners — so the
+    // feed is safe to serve to anonymous + non-mod viewers (previously they
+    // were short-circuited to an empty list, which hid the public feed).
 
     const AND: Prisma.Model3DWhereInput[] = [{ deletedAt: null }];
 
@@ -403,11 +424,13 @@ export const getModel3DsInfinite = async ({
     if (query) AND.push({ name: { contains: query, mode: 'insensitive' } });
     if (tagIds?.length) AND.push({ tags: { some: { tagId: { in: tagIds } } } });
 
-    // PolyGen generation-param toggles. JSON path equality against the form-input
-    // snapshot stored on Model3D.generationParams.
-    if (rigged) {
-      AND.push({ generationParams: { path: ['enableRigging'], equals: true } });
-    }
+    // PolyGen `enableAnimation` toggle. JSON path equality against the
+    // form-input snapshot stored on `Model3D.generationParams`. The
+    // standalone `rigged` filter is gone (rigging now follows animation
+    // at submit time via `toMeshyPolyGenInput`), so we only key off
+    // `enableAnimation`. Older records with `enableRigging: true,
+    // enableAnimation: false` still exist but aren't filterable — they
+    // surface only via the unfiltered feed / direct link.
     if (animated) {
       AND.push({ generationParams: { path: ['enableAnimation'], equals: true } });
     }
@@ -437,20 +460,31 @@ export const getModel3DsInfinite = async ({
         (!!username && !!user.username && username === user.username));
     const canSeeUnrated = isModerator || isOwnerScoped;
 
-    if (!canSeeUnrated) {
-      AND.push({ nsfwLevel: { not: 0 } });
-    }
+    if (unrated && canSeeUnrated) {
+      // Mod/owner "unrated" filter — surface only not-yet-rated rows so mods
+      // can find + rate them. Bypasses the browsing-level filter entirely.
+      AND.push({ nsfwLevel: 0 });
+    } else {
+      if (!canSeeUnrated) {
+        AND.push({ nsfwLevel: { not: 0 } });
+      }
 
-    const effectiveBrowsingLevel = browsingLevel ?? allBrowsingLevelsFlag;
-    const allowedLevels = parseBitwiseBrowsingLevel(effectiveBrowsingLevel);
-    if (allowedLevels.length > 0) {
-      if (canSeeUnrated) {
-        // Owners + mods may still see their unrated drafts (nsfwLevel = 0).
-        AND.push({
-          OR: [{ nsfwLevel: { in: allowedLevels } }, { nsfwLevel: 0 }],
-        });
-      } else {
-        AND.push({ nsfwLevel: { in: allowedLevels } });
+      // `browsingLevel` is already clamped per-request by the `applyDomainFeature`
+      // middleware on `publicProcedure` — SFW on the green domain, for everyone
+      // including mods. Trust it (like the models feed does) and default to
+      // SFW-public when it's absent/0, so a missing level can never fall back to
+      // "all levels" and leak mature content into the feed.
+      const effectiveBrowsingLevel = browsingLevel || publicBrowsingLevelsFlag;
+      const allowedLevels = parseBitwiseBrowsingLevel(effectiveBrowsingLevel);
+      if (allowedLevels.length > 0) {
+        if (canSeeUnrated) {
+          // Owners + mods may still see their unrated drafts (nsfwLevel = 0).
+          AND.push({
+            OR: [{ nsfwLevel: { in: allowedLevels } }, { nsfwLevel: 0 }],
+          });
+        } else {
+          AND.push({ nsfwLevel: { in: allowedLevels } });
+        }
       }
     }
 
@@ -474,18 +508,11 @@ export const getModel3DsInfinite = async ({
       switch (sort) {
         case Model3DSort.MostDownloaded:
           return [{ metric: { downloadCount: 'desc' } }, { id: 'desc' }];
-        case Model3DSort.HighestRated:
-          // "Highest rated" = highest thumbs-up share. We don't have a stored
-          // ratio column, so order by recommendedCount as a proxy (rows with
-          // more recommends rise) — matches the spirit of the regular models
-          // feed (which also uses an aggregate metric, not a normalized rate).
-          return [
-            { metric: { recommendedCount: 'desc' } },
-            { metric: { ratingCount: 'desc' } },
-            { id: 'desc' },
-          ];
         case Model3DSort.MostLiked:
-          return [{ metric: { reactionCount: 'desc' } }, { id: 'desc' }];
+          // "Most Liked" = thumbs-up (recommend) count. `reactionCount` used to
+          // back this but it was copied from the thumbnail image's reactions —
+          // a metric nothing feeds — so it was effectively always 0.
+          return [{ metric: { recommendedCount: 'desc' } }, { id: 'desc' }];
         case Model3DSort.Newest:
         default:
           return [{ publishedAt: { sort: 'desc', nulls: 'last' } }, { id: 'desc' }];
@@ -507,13 +534,30 @@ export const getModel3DsInfinite = async ({
       nextCursor = nextItem?.id;
     }
 
+    // The signed-in user's own recommend (thumbs-up) per row, so the card can
+    // render the gold thumbs-up in its toggled state. One indexed lookup keyed
+    // on (userId, model3dId) rather than a per-row correlated sub-select.
+    const rowIds = rows.map((r) => r.id);
+    const userReviews =
+      user && rowIds.length
+        ? await dbRead.model3DReview.findMany({
+            where: { userId: user.id, model3dId: { in: rowIds } },
+            select: { id: true, model3dId: true, recommended: true },
+          })
+        : [];
+    const reviewByModel = new Map(userReviews.map((r) => [r.model3dId, r]));
+
     // Flatten `tags: [{ tagId }]` → `tags: number[]` so the client-side
     // `useApplyHiddenPreferences` hook can apply tag-based filtering with
     // the same shape it uses for the `'models'` branch.
-    const items = rows.map(({ tags, ...rest }) => ({
-      ...rest,
-      tags: tags.map((t) => t.tagId),
-    }));
+    const items = rows.map(({ tags, ...rest }) => {
+      const review = reviewByModel.get(rest.id);
+      return {
+        ...rest,
+        tags: tags.map((t) => t.tagId),
+        userReview: review ? { id: review.id, recommended: review.recommended } : null,
+      };
+    });
 
     return { items, nextCursor };
   } catch (error) {
@@ -739,6 +783,7 @@ export const publishModel3D = async ({
       id: true,
       userId: true,
       status: true,
+      name: true,
       thumbnailImageId: true,
       deletedAt: true,
     },
@@ -746,6 +791,12 @@ export const publishModel3D = async ({
   if (!existing) throw throwNotFoundError(`No 3D model with id ${input.id}`);
   if (!isModerator && existing.userId !== user.id) throw throwAuthorizationError();
   if (existing.deletedAt) throw throwBadRequestError('Cannot publish a deleted 3D model');
+  // Drafts are materialized with a blank name (forces the user to name them);
+  // publish is a separate mutation from the name-enforcing upsert, so guard the
+  // name here too — otherwise a nameless draft could be published directly.
+  if (!existing.name?.trim()) {
+    throw throwBadRequestError('A name is required before publishing.');
+  }
   if (!existing.thumbnailImageId) {
     throw throwBadRequestError('A thumbnail image is required before publishing.');
   }
@@ -1097,9 +1148,7 @@ export const getModel3DByThumbnailImageId = async ({
 // "Posted to 3D Model" chip on the image viewers and the post-create page.
 // Returns the minimal card payload (id + name + thumbnail) or null when the
 // post isn't linked OR the viewer can't see the Model3D. The chip silently
-// hides on null instead of surfacing a 404. Visibility mirrors
-// `getModel3DById`: mods see everything, owner sees their own (any status),
-// public sees Published + not-Deleted. Inlined here rather than calling
+// hides on null instead of surfacing a 404. Inlined here rather than calling
 // `getModel3DById` so this service takes primitives (userId/isModerator)
 // instead of a full session user.
 export const getModel3DByPostId = async ({
@@ -1125,17 +1174,98 @@ export const getModel3DByPostId = async ({
   const model3d = post?.model3d;
   if (!model3d) return null;
 
-  const isOwner = !!userId && model3d.userId === userId;
-  if (!isModerator && !isOwner) {
-    if (model3d.status !== Model3DStatus.Published) return null;
-    if (model3d.deletedAt) return null;
-  }
+  if (
+    !canViewModel3d({
+      status: model3d.status,
+      deletedAt: model3d.deletedAt,
+      ownerId: model3d.userId,
+      userId,
+      isModerator,
+    })
+  )
+    return null;
 
   return {
     id: model3d.id,
     name: model3d.name,
     thumbnailImage: model3d.thumbnailImage,
   };
+};
+
+// Durable replacement for the ambient `model3d.getByPostId` chip call: resolve
+// JUST the linked Model3D id for a post, applying the SAME visibility rule, so
+// the image-detail payload (`image.get`) can carry `model3dId` and the chip
+// renders from the prop without firing a per-image tRPC query. Returns the id
+// when the viewer may see the Model3D, else null (no link / hidden draft /
+// deleted) — never leaks a hidden model's existence as a clickable chip.
+export const getVisibleModel3DIdForPost = async ({
+  postId,
+  userId,
+  isModerator = false,
+}: {
+  postId: number;
+  userId?: number;
+  isModerator?: boolean;
+}): Promise<number | null> => {
+  const post = await dbRead.post.findUnique({
+    where: { id: postId },
+    select: {
+      model3d: { select: { id: true, userId: true, status: true, deletedAt: true } },
+    },
+  });
+  const model3d = post?.model3d;
+  if (!model3d) return null;
+  if (
+    !canViewModel3d({
+      status: model3d.status,
+      deletedAt: model3d.deletedAt,
+      ownerId: model3d.userId,
+      userId,
+      isModerator,
+    })
+  )
+    return null;
+  return model3d.id;
+};
+
+// Batched sibling of `getVisibleModel3DIdForPost` for the image FEED path.
+// The feed payload (`getAllImages` / `getAllImagesIndex`) already carries a RAW
+// `Post.model3dId` (selected from SQL or read from the Meili doc) that is NOT
+// visibility-checked — a hidden Draft / deleted Model3D's id would otherwise
+// leak to the client as a clickable chip. Most feed images aren't linked to a
+// Model3D at all (model3dId is null), so callers pass ONLY the handful of
+// non-null ids per page; this resolves them in ONE query (no per-image N+1) and
+// returns the set the viewer may see. Applies the SAME `canViewModel3d`
+// predicate as the single-post lookup, so a hidden model is nulled identically.
+export const getVisibleModel3DIds = async ({
+  model3dIds,
+  userId,
+  isModerator = false,
+}: {
+  model3dIds: number[];
+  userId?: number;
+  isModerator?: boolean;
+}): Promise<Set<number>> => {
+  const ids = [...new Set(model3dIds)];
+  if (!ids.length) return new Set();
+  const rows = await dbRead.model3D.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, userId: true, status: true, deletedAt: true },
+  });
+  const visible = new Set<number>();
+  for (const row of rows) {
+    if (
+      canViewModel3d({
+        status: row.status,
+        deletedAt: row.deletedAt,
+        ownerId: row.userId,
+        userId,
+        isModerator,
+      })
+    )
+      visible.add(row.id);
+  }
+  return visible;
 };
 
 // ---------------------------------------------------------------------------
@@ -1245,7 +1375,7 @@ export const upsertModel3DFromWorkflow = async ({
     variant?: string;
   }>;
 }): Promise<{ id: number; created: boolean }> => {
-  return dbWrite.$transaction(async (tx) => {
+  const result = await dbWrite.$transaction(async (tx) => {
     const existing = await tx.model3D.findUnique({
       where: { workflowId },
       select: { id: true },
@@ -1258,7 +1388,9 @@ export const upsertModel3DFromWorkflow = async ({
 
     const created = await tx.model3D.create({
       data: {
-        name: `Generated 3D Model`,
+        // Intentionally blank so the edit page forces the user to name the
+        // model rather than skipping past a pre-filled placeholder.
+        name: '',
         userId,
         workflowId,
         thumbnailImageId,
@@ -1287,6 +1419,26 @@ export const upsertModel3DFromWorkflow = async ({
 
     return { id: created.id, created: true };
   });
+
+  // Explicitly enqueue the freshly-created Model3D for nsfwLevel rollup.
+  // Belt-and-suspenders with the scan-webhook path: the webhook also
+  // enqueues when the thumbnail Image finishes scanning, but that path
+  // depends on the Image's scan completing AFTER this row is committed
+  // (otherwise the webhook's `findMany` race-misses). Enqueueing here
+  // guarantees the row enters the cron pipeline at least once regardless
+  // of which side completes first. `ON CONFLICT DO NOTHING` in
+  // `enqueueJobs` makes the eventual double-enqueue a no-op.
+  if (result.created) {
+    await enqueueJobs([
+      {
+        entityId: result.id,
+        entityType: EntityType.Model3D,
+        type: JobQueueType.UpdateNsfwLevel,
+      },
+    ]);
+  }
+
+  return result;
 };
 
 // ---------------------------------------------------------------------------

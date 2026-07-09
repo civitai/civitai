@@ -75,8 +75,6 @@ export const upsertCommentV2Handler = async ({
         ? 'Bounty'
         : input.entityType === 'bountyEntry'
         ? 'BountyEntry'
-        : input.entityType === 'clubPost'
-        ? 'ClubPost'
         : input.entityType === 'challenge'
         ? 'Challenge'
         : null;
@@ -95,34 +93,9 @@ export const upsertCommentV2Handler = async ({
       }
     }
 
-    if (type === 'ClubPost') {
-      // confirm the user has access to this clubPost:
-      const clubPost = await dbRead.clubPost.findFirst({
-        where: { id: input.entityId },
-        select: { membersOnly: true, clubId: true },
-      });
-
-      if (!clubPost) throw throwNotFoundError(`No clubPost with id ${input.entityId}`);
-
-      if (clubPost.membersOnly) {
-        // confirm the user is a member of this club in any way:
-        const club = await dbRead.club.findFirst({
-          where: { id: clubPost.clubId },
-          select: {
-            memberships: { where: { userId: ctx.user.id } },
-            userId: true,
-            admins: { where: { userId: ctx.user.id } },
-          },
-        });
-
-        if (!club?.admins.length && !club?.memberships.length && club?.userId !== ctx.user.id)
-          throw throwAuthorizationError('You do not have access to this club post.');
-      }
-    }
-
     const result = await upsertComment({ ...input, userId: ctx.user.id });
     if (!input.id) {
-      if (type && type !== 'ClubPost' && type !== 'Article' && type !== 'Challenge') {
+      if (type && type !== 'Article' && type !== 'Challenge') {
         await ctx.track.comment({
           type,
           nsfw: result.nsfw,

@@ -23,7 +23,7 @@ export const collectedContentReward = createBuzzEvent({
     if (!supported.includes(input.entityType)) return false;
 
     if (!input.ownerId) {
-      const [{ userId }] = await db.$queryRawUnsafe<{ userId: number }[]>(`
+      const [{ userId } = { userId: undefined }] = await db.$queryRawUnsafe<{ userId?: number }[]>(`
         SELECT "userId"
         FROM "${input.entityType}"
         WHERE id = ${input.entityId}
@@ -32,8 +32,11 @@ export const collectedContentReward = createBuzzEvent({
       input.ownerId = userId;
     }
 
-    // Don't reward the user for collecting their own content
-    if (input.ownerId === input.collectorId) return false;
+    // No owner resolved (entity missing/deleted, or an id that isn't this type) or self-collect → no reward.
+    // The guard on the destructure above (matching goodContent.reward) prevents a `[]` result from throwing
+    // "Cannot read properties of undefined (reading 'userId')" out of this inline reward and 500-ing the
+    // user's collection.saveItem.
+    if (!input.ownerId || input.ownerId === input.collectorId) return false;
 
     return {
       toUserId: input.ownerId,

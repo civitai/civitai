@@ -80,6 +80,8 @@ export const trainingDetailsBaseModelsLtx23 = ['ltx23'] as const;
 export const trainingDetailsBaseModelsErnie = ['ernie'] as const;
 export const trainingDetailsBaseModelsHiDreamO1 = ['hidream_o1'] as const;
 export const trainingDetailsBaseModelsAnima = ['anima'] as const;
+export const trainingDetailsBaseModelsBoogu = ['boogu'] as const;
+export const trainingDetailsBaseModelsKrea2 = ['krea2'] as const;
 export const trainingDetailsBaseModelsAcestep15 = ['acestep_15'] as const;
 export const trainingDetailsBaseModelsAcestep15Xl = [
   'acestep_15_xl_base',
@@ -99,6 +101,8 @@ const trainingDetailsBaseModelsImage = [
   ...trainingDetailsBaseModelsErnie,
   ...trainingDetailsBaseModelsHiDreamO1,
   ...trainingDetailsBaseModelsAnima,
+  ...trainingDetailsBaseModelsBoogu,
+  ...trainingDetailsBaseModelsKrea2,
 ] as const;
 const trainingDetailsBaseModelsVideo = [
   ...trainingDetailsBaseModelsHunyuan,
@@ -329,13 +333,21 @@ export type SetLinkedComponentsInput = z.infer<typeof setLinkedComponentsSchema>
 export const addLinkedComponentSchema = z.object({
   id: z.number(), // source model version ID (named `id` for isOwnerOrModerator middleware compat)
   targetVersionId: z.number(), // linked resource's version ID
+  targetFileId: z.number().optional(), // explicit file to link; falls back to auto-picking the primary
+  replaceFileId: z.number().optional(), // redundant file on the source version to delete after linking
   componentType: z.enum(constants.modelFileComponentTypes),
-  modelId: z.number(), // target model ID
-  modelName: z.string(), // target model name
-  versionName: z.string(), // target version name
+  modelId: z.number(),
+  modelName: z.string(),
+  versionName: z.string(),
   isRequired: z.boolean().optional().default(true),
 });
 export type AddLinkedComponentInput = z.infer<typeof addLinkedComponentSchema>;
+
+export const linkOfficialFileByHashSchema = z.object({
+  id: z.number(), // host version being edited; caller must own it
+  sha256: z.string().min(1),
+});
+export type LinkOfficialFileByHashInput = z.infer<typeof linkOfficialFileByHashSchema>;
 
 export type RecommendedResourceSchema = z.infer<typeof recommendedResourceSchema>;
 const recommendedResourceSchema = z.object({
@@ -414,12 +426,20 @@ export const modelVersionUpsertSchema2 = z.object({
   licensingFee: z.number().int().min(0).max(MAX_LICENSING_FEE).nullish(),
   licensingFeeType: z.enum(LicensingFeeType).nullish(),
   licensingFeeSettlementCurrency: z.enum(LicensingFeeSettlementCurrency).nullish(),
+  // Inherit another version's licensing fee (a LicensingRoot for this baseModel).
+  // Null falls back to the (baseModel, modelType) rule.
+  licensingSourceVersionId: z.number().nullish(),
 });
 
 export type GetModelVersionSchema = z.infer<typeof getModelVersionSchema>;
 export const getModelVersionSchema = z.object({
   id: z.number(),
   withFiles: z.boolean().optional(),
+});
+
+export type GetLicensingRootsSchema = z.infer<typeof getLicensingRootsSchema>;
+export const getLicensingRootsSchema = z.object({
+  baseModel: z.string(),
 });
 
 export type UpsertExplorationPromptInput = z.infer<typeof upsertExplorationPromptSchema>;
@@ -534,10 +554,10 @@ export const mergeVersionsSchema = z.object({
         type: z.enum(constants.modelFileTypes).optional(),
         metadata: z
           .object({
-            fp: z.enum(constants.modelFileFp).nullish(),
+            fp: z.string().max(64).nullish(),
             size: z.enum(constants.modelFileSizes).nullish(),
             format: z.enum(constants.modelFileFormats).nullish(),
-            quantType: z.enum(constants.modelFileQuantTypes).nullish(),
+            quantType: z.string().max(64).nullish(),
             isRequired: z.boolean().nullish(),
           })
           .optional(),

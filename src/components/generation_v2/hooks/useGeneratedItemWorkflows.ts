@@ -33,13 +33,8 @@ import { generationGraphPanel, generationGraphStore } from '~/store/generation-g
 import { workflowPreferences } from '~/store/workflow-preferences.store';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { BlobData } from '~/shared/orchestrator/workflow-data';
-import { sourceMetadataStore, type SourceMetadata } from '~/store/source-metadata.store';
-import { useLegacyGeneratorStore } from '~/store/legacy-generator.store';
-import { UpscaleImageModal } from '~/components/Orchestrator/components/UpscaleImageModal';
-import { BackgroundRemovalModal } from '~/components/Orchestrator/components/BackgroundRemovalModal';
-import { VideoInterpolationModal } from '~/components/Orchestrator/components/VideoInterpolationModal';
-import { UpscaleVideoModal } from '~/components/Orchestrator/components/UpscaleVideoModal';
-import { getImageDimensions, getSourceImageFromUrl } from '~/utils/image-utils';
+import { sourceMetadataStore } from '~/store/source-metadata.store';
+import { getImageDimensions } from '~/utils/image-utils';
 import { showWarningNotification } from '~/utils/notifications';
 
 // =============================================================================
@@ -163,6 +158,17 @@ function isCrossMediaWorkflow(image: BlobData, workflowId: string): boolean {
 }
 
 /**
+ * Whether the workflow feeds its image into PolyGen's single `sourceImage`
+ * node rather than the standard `images` array (i.e. img2model3d). Detected by
+ * config — `workflowHasNode` can't see `sourceImage` since it's nested behind
+ * the ecosystem + process discriminators.
+ */
+function usesSourceImageInput(workflowId: string): boolean {
+  const config = workflowConfigByKey.get(workflowId);
+  return config?.category === 'model3d' && getInputTypeForWorkflow(workflowId) === 'image';
+}
+
+/**
  * Get the target ecosystem for a workflow, respecting stored preferences.
  * - Cross-media with alias constraint: force an ecosystem from the alias's ecosystemIds
  * - Cross-media with single-ecosystem workflow: force that ecosystem (e.g., ref2vid → Vidu)
@@ -253,15 +259,24 @@ async function applyWorkflowToForm({
 
   const inputType = getInputTypeForWorkflow(workflowId);
 
+  // PolyGen img2model3d takes its image on a single `sourceImage` node rather
+  // than the standard `images` array; feed it there instead.
+  const usesSourceImage = usesSourceImageInput(workflowId);
+
   // Build images in graph format { url, width, height }[]
   // Pass image for workflows that require it (inputType: 'image') OR
   // for text-input workflows whose graph has an 'images' node.
   const isImageType = image.mediaType === 'image';
   const acceptsImages =
-    inputType === 'image' || (isImageType && workflowHasNode(workflowId, 'images'));
+    !usesSourceImage &&
+    (inputType === 'image' || (isImageType && workflowHasNode(workflowId, 'images')));
 
   let images: { url: string; width: number; height: number }[] | undefined;
-  if (acceptsImages) {
+  let sourceImage: { url: string; width: number; height: number } | undefined;
+  if (usesSourceImage && isImageType) {
+    const { width, height } = await resolveImageDimensions(image);
+    sourceImage = { url: image.url, width, height };
+  } else if (acceptsImages) {
     const { width, height } = await resolveImageDimensions(image);
     images = [{ url: image.url, width, height }];
   }
@@ -281,6 +296,7 @@ async function applyWorkflowToForm({
       prompt: image.params?.prompt,
       negativePrompt: image.params?.negativePrompt,
       ...(images ? { images } : {}),
+      ...(sourceImage ? { sourceImage } : {}),
       ...(inputType === 'video' ? { video: image.url } : {}),
       ...(ecosystem ? { ecosystem } : {}),
     },
@@ -289,90 +305,11 @@ async function applyWorkflowToForm({
   });
 }
 
-// =============================================================================
-// Modal Handlers for Legacy Generator
-// =============================================================================
-
-/** Workflows that have dedicated modals for legacy generator users */
-const MODAL_WORKFLOWS = [
-  'img2img:upscale',
-  'img2img:remove-background',
-  'vid2vid:interpolate',
-  'vid2vid:upscale',
-];
-
-/**
- * Check if a workflow should open a modal for legacy generator users.
- */
-function shouldOpenModal(workflowId: string): boolean {
-  const useLegacy = useLegacyGeneratorStore.getState().useLegacy;
-  return useLegacy && MODAL_WORKFLOWS.includes(workflowId);
-}
-
-/**
- * Get source metadata for an image/video from the step.
- * metadata.params/resources are always the original generation (resolved).
- */
-function getSourceMetadataFromImage(
-  image: BlobData
-): Omit<SourceMetadata, 'extractedAt'> | undefined {
-  if (!image.params && !image.resources) return undefined;
-  return { params: image.params, resources: image.resources };
-}
-
-/**
- * Open the appropriate modal for an enhancement workflow.
- * Returns true if a modal was opened, false otherwise.
- */
-async function openEnhancementModal(workflowId: string, image: BlobData): Promise<boolean> {
-  const metadata = getSourceMetadataFromImage(image);
-
-  switch (workflowId) {
-    case 'img2img:upscale': {
-      const sourceImage = await getSourceImageFromUrl({ url: image.url, upscale: true });
-      dialogStore.trigger({
-        component: UpscaleImageModal,
-        props: { sourceImage, metadata },
-      });
-      return true;
-    }
-
-    case 'img2img:remove-background': {
-      const sourceImage = await getSourceImageFromUrl({ url: image.url });
-      dialogStore.trigger({
-        component: BackgroundRemovalModal,
-        props: { sourceImage, metadata },
-      });
-      return true;
-    }
-
-    case 'vid2vid:interpolate': {
-      dialogStore.trigger({
-        component: VideoInterpolationModal,
-        props: { videoUrl: image.url, metadata },
-      });
-      return true;
-    }
-
-    case 'vid2vid:upscale': {
-      dialogStore.trigger({
-        component: UpscaleVideoModal,
-        props: { videoUrl: image.url, metadata },
-      });
-      return true;
-    }
-
-    default:
-      return false;
-  }
-}
-
 /**
  * Apply a workflow to the form with ecosystem selection.
  * For non-enhancement workflows, always shows an ecosystem selection modal
  * so the user can choose which ecosystem to use. Incompatible ecosystems
  * show a warning message; compatible ones just show the picker.
- * For legacy generator users, opens dedicated modals for enhancement workflows.
  */
 export async function applyWorkflowWithCheck({
   workflowId: rawWorkflowId,
@@ -387,12 +324,6 @@ export async function applyWorkflowWithCheck({
   // For aliases, capture their specific ecosystem constraint (e.g., First/Last Frame → Vidu only)
   const isAlias = option && option.id !== option.graphKey;
   const aliasEcosystemIds = isAlias ? option.ecosystemIds : undefined;
-
-  // For legacy generator users, check if we should open a modal instead
-  if (shouldOpenModal(workflowId)) {
-    const modalOpened = await openEnhancementModal(workflowId, image);
-    if (modalOpened) return;
-  }
 
   // Close the lightbox if we're in the lightbox context (enhancement modals stay on top)
   if (isLightbox) dialogStore.closeById('generated-image');
@@ -415,6 +346,21 @@ export async function applyWorkflowWithCheck({
       image,
       ecosystem: getTargetEcosystemKey(workflowId, ecosystemKey, isCrossMedia, aliasEcosystemIds),
       clearResources: isStandalone || isCrossMedia,
+    });
+    return;
+  }
+
+  // PolyGen image-to-3D: force the workflow's ecosystem and feed the image
+  // into the `sourceImage` node, dropping the source's SD params/resources.
+  // Must run before the `compatible` replay branch below, which would
+  // otherwise carry the source image's params and set `images` (neither of
+  // which the PolyGen graph reads).
+  if (usesSourceImageInput(workflowId)) {
+    await applyWorkflowToForm({
+      workflowId,
+      image,
+      ecosystem: getTargetEcosystemKey(workflowId, ecosystemKey, isCrossMedia, aliasEcosystemIds),
+      clearResources: true,
     });
     return;
   }

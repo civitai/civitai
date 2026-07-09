@@ -68,14 +68,32 @@ function buildHeaders(): HeadersInit {
   };
 }
 
-async function fjFetch(path: string, init?: RequestInit): Promise<Response> {
+/** Default client-side abort for cheap Forgejo metadata calls. Forgejo API
+ *  calls should be sub-second; anything longer indicates an in-cluster
+ *  reachability problem worth surfacing fast. Tunable via FORGEJO_API_TIMEOUT_MS. */
+function apiTimeoutMs(): number {
+  return env.FORGEJO_API_TIMEOUT_MS;
+}
+
+/** Generous client-side abort for the bundle COMMIT/PUSH path (first-time
+ *  review-repo create + a single multi-file commit of every bundle file). A
+ *  real app (gen-matrix = ~888 files) genuinely takes longer than the cheap
+ *  metadata calls; the old 15s ceiling aborted real submits. Tunable via
+ *  FORGEJO_COMMIT_TIMEOUT_MS. */
+function commitTimeoutMs(): number {
+  return env.FORGEJO_COMMIT_TIMEOUT_MS;
+}
+
+async function fjFetch(
+  path: string,
+  init?: RequestInit,
+  timeoutMs: number = apiTimeoutMs()
+): Promise<Response> {
   const url = `${getBaseUrl()}${path}`;
-  // 15s — Forgejo API calls should be sub-second; anything longer indicates
-  // an in-cluster reachability problem worth surfacing fast.
   const res = await fetch(url, {
     ...init,
     headers: { ...buildHeaders(), ...(init?.headers ?? {}) },
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   return res;
 }
@@ -132,7 +150,15 @@ export async function createRepoFromTemplate(opts: {
     delete body.auto_init;
   }
 
-  const res = await fjFetch(endpoint, { method: 'POST', body: JSON.stringify(body) });
+  // Repo creation (template `generate` clones the starter repo; `auto_init`
+  // materialises an initial commit) is the slow first-time op on the approve
+  // path, so give it the generous commit timeout rather than the cheap-call
+  // ceiling. The idempotent 409/422 → getRepo lookup stays a cheap call.
+  const res = await fjFetch(
+    endpoint,
+    { method: 'POST', body: JSON.stringify(body) },
+    commitTimeoutMs()
+  );
   if (res.status === 409 || res.status === 422) {
     // Already exists — fetch and return.
     return getRepo(opts.slug);
@@ -214,7 +240,7 @@ export async function getRawFile(opts: {
   const url = `${getBaseUrl()}/${FORGEJO_ORG}/${opts.slug}/raw/commit/${opts.ref}/${opts.path}`;
   const res = await fetch(url, {
     headers: { Authorization: `token ${getAdminToken()}` },
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.timeout(apiTimeoutMs()),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
@@ -395,14 +421,22 @@ export async function commitFiles(opts: {
     return { sha: branchInfo.commit.id };
   }
 
-  const res = await fjFetch(`/api/v1/repos/${org}/${opts.slug}/contents`, {
-    method: 'POST',
-    body: JSON.stringify({
-      files: operations,
-      message: opts.message,
-      branch,
-    }),
-  });
+  // The multi-file commit is the genuinely slow Forgejo call — a real bundle
+  // (gen-matrix = ~888 files) takes well over the cheap-call ceiling, so give
+  // it the generous commit timeout instead of letting AbortSignal kill the
+  // push mid-flight ("The operation was aborted due to timeout").
+  const res = await fjFetch(
+    `/api/v1/repos/${org}/${opts.slug}/contents`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        files: operations,
+        message: opts.message,
+        branch,
+      }),
+    },
+    commitTimeoutMs()
+  );
   const result = await unwrap<{ commit: { sha: string } }>(res);
   return { sha: result.commit.sha };
 }
@@ -523,7 +557,7 @@ export async function mintForgejoUserToken(opts: {
       Accept: 'application/json',
     },
     body: JSON.stringify({ name: opts.name, scopes: opts.scopes }),
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.timeout(apiTimeoutMs()),
   });
   const token = await unwrap<{ sha1: string }>(res);
   if (!token?.sha1) {
@@ -571,18 +605,44 @@ export async function ensureReviewRepo(slug: string): Promise<void> {
   // Forgejo login session (Forgejo's own login form is currently
   // throwing CSRF errors for moderator browsing flows — orthogonal
   // issue, tracked separately).
-  const repoRes = await fjFetch(`/api/v1/orgs/${FORGEJO_REVIEW_ORG}/repos`, {
-    method: 'POST',
-    body: JSON.stringify({
-      name: slug,
-      description: `Pending publish-request bundle for ${slug}.`,
-      private: false,
-      auto_init: true,
-      default_branch: 'main',
-    }),
-  });
+  // auto_init:true makes Forgejo materialise a real git repo on disk, which on
+  // first submit is the slow part of the review-repo path (it shares the same
+  // worst-case as the bundle commit). Use the generous commit timeout so a
+  // cold first-time create doesn't abort before the repo is ready.
+  const repoRes = await fjFetch(
+    `/api/v1/orgs/${FORGEJO_REVIEW_ORG}/repos`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        name: slug,
+        description: `Pending publish-request bundle for ${slug}.`,
+        private: false,
+        auto_init: true,
+        default_branch: 'main',
+      }),
+    },
+    commitTimeoutMs()
+  );
   if (!repoRes.ok && repoRes.status !== 409 && repoRes.status !== 422) {
     const body = await repoRes.text().catch(() => '');
     throw new Error(`Forgejo review repo create ${repoRes.status}: ${body.slice(0, 240)}`);
   }
+}
+
+/**
+ * MOD REVIEW SANDBOX (#2831) — current HEAD commit sha of the in-review repo
+ * `civitai-apps-review/<slug>` on `main`. submitVersion pushes the pending
+ * bundle to this repo (replaceAllFiles=true) and only one pending request exists
+ * per slug, so HEAD is exactly the pending version's source — the sha the review
+ * build clones + tags. Full 40-hex sha (the build pipeline requires it).
+ */
+export async function getReviewRepoHeadSha(slug: string): Promise<string> {
+  const res = await fjFetch(
+    `/api/v1/repos/${FORGEJO_REVIEW_ORG}/${slug}/branches/${encodeURIComponent('main')}`
+  );
+  const branch = await unwrap<{ commit: { id: string } }>(res);
+  if (!branch?.commit?.id) {
+    throw new Error(`in-review repo ${FORGEJO_REVIEW_ORG}/${slug} has no main HEAD`);
+  }
+  return branch.commit.id;
 }

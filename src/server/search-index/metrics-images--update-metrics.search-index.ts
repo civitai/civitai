@@ -4,7 +4,7 @@ import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { buildEntityMetricPerDaySource, getEntityMetricAggSource } from '~/server/flipt/client';
+import { buildEntityMetricPerDaySource } from '~/server/flipt/client';
 
 const READ_BATCH_SIZE = 100000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = READ_BATCH_SIZE;
@@ -69,10 +69,8 @@ export const imagesMetricsDetailsSearchIndexUpdateMetrics = createSearchIndexUpd
         : Array.from({ length: batch.endId - batch.startId + 1 }, (_, i) => batch.startId + i);
 
     const metrics: Metrics[] = [];
-    const aggSource = await getEntityMetricAggSource();
     const tasks = chunk(ids, 5000).map((batch) => async () => {
       const perDaySource = buildEntityMetricPerDaySource(
-        aggSource,
         `WHERE entityType = 'Image'
             AND entityId IN (${batch.join(',')})`
       );

@@ -403,7 +403,25 @@ export async function recordSpendAttribution(
   // stamped.
   const rateCardVersion = UNRATED_RATE_CARD_VERSION;
   const spendSharePct = 0;
-  const appOwnerShareCents = 0;
+  // The accrued bounty for THIS row. Track-only today: identically 0 until the
+  // payout rail (#2605) starts stamping a non-zero share here. `let` so the
+  // per-APP daily cap below can CLAMP it (a Sybil ring pointed at one app must
+  // not mint unbounded platform-funded bounty — audit note 🟡-2).
+  let appOwnerShareCents = 0;
+
+  // PER-APP daily spend-BOUNTY accrual cap (audit 🟡-2 / Sybil-economics
+  // review). The per-user `BLOCK_BUZZ_CAP_PER_DAY` bounds one viewer's daily
+  // SPEND but is blind to MANY viewers funnelling bounty at ONE app. Reserve
+  // this row's accrued share against the app's cumulative UTC-day BOUNTY
+  // counter and clamp the accrual to whatever headroom remains. Same atomic
+  // INCRBY-with-TTL TOCTOU-safe mechanism as the per-user cap. DORMANT today:
+  // `appOwnerShareCents` is 0, so `reserveAppBountyAccrual` short-circuits
+  // without touching Redis and grants 0 — the cap never clamps and behaviour
+  // is byte-identical to before. When #2605 flips spendSharePct>0 the cap is
+  // already enforcing. Void rows (self/internal) also carry 0 → no-op.
+  const { reserveAppBountyAccrual } = await import('./app-bounty-cap.service');
+  const bountyReservation = await reserveAppBountyAccrual(appBlockId, appOwnerShareCents);
+  appOwnerShareCents = bountyReservation.grantedCents;
 
   // Void rows that are zero because of WHO spent/owns so they are never
   // backpaid. Otherwise the row is 'tracked' — share-pending, awaiting the
@@ -463,6 +481,10 @@ export async function recordSpendAttribution(
         status,
         voidedReason,
         isSelfSpend,
+        // Per-app bounty cap observability (dormant today: clamped=false,
+        // appBountyDailyTotal=0). Surfaces a clamp the moment the cap bites.
+        appBountyClamped: bountyReservation.clamped,
+        appBountyDailyTotal: bountyReservation.total,
       },
       'webhooks'
     ).catch(() => null);
@@ -475,6 +497,17 @@ export async function recordSpendAttribution(
 
     return { written: true, row: created };
   } catch (err) {
+    // This call's row was NOT persisted (either a duplicate that the ORIGINAL
+    // row already accounts for, or a hard write failure). Release the bounty we
+    // reserved for it so the per-app daily counter reflects only persisted
+    // accrual — otherwise a retry storm would double-count toward the cap.
+    // Best-effort + DORMANT today (granted 0 → no-op). Refund against the
+    // PINNED key from the reservation (never a re-derived one — midnight-UTC
+    // race, same reasoning as the per-user refund).
+    if (bountyReservation.grantedCents > 0) {
+      const { refundAppBountyAccrual } = await import('./app-bounty-cap.service');
+      await refundAppBountyAccrual(bountyReservation.key, bountyReservation.grantedCents);
+    }
     // Idempotency: a re-poll / retry / re-submit that races the original
     // write lands on the (workflow_id, app_block_id) UNIQUE -> P2002.
     // Return the pre-existing row so callers treat first-write and retry
@@ -1246,6 +1279,30 @@ export async function getRevenueForOwner({
       shareCents: r._sum.appOwnerShareCents ?? 0,
       count: r._count,
     })),
+  };
+}
+
+/**
+ * Zeroed revenue payload — the dark-behind-the-flag shape for getMyRevenue.
+ * Mirrors getRevenueForOwner's `{ summary, topApps }` (+ empty attributions
+ * feed) with every bucket at zero so a flag-off caller gets no data and we
+ * run NO aggregate queries. Pure constant; no DB access.
+ */
+export function emptyRevenue(): {
+  summary: RevenueSummary;
+  topApps: Array<{ appBlockId: string; shareCents: number; count: number }>;
+  recentAttributions: [];
+} {
+  const zeroBucket = { count: 0, grossCents: 0, shareCents: 0 };
+  return {
+    summary: {
+      pending: { ...zeroBucket },
+      confirmed: { ...zeroBucket },
+      paidOut: { ...zeroBucket },
+      voided: { count: 0, grossCents: 0 },
+    },
+    topApps: [],
+    recentAttributions: [],
   };
 }
 

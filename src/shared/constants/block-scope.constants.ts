@@ -36,6 +36,15 @@ export type ScopeBitmaskRequirement = number | typeof SKIP_OAUTH_CHECK;
 
 export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> = {
   'models:read:self': TokenScope.ModelsRead,
+  // NOTE: there is intentionally NO `catalog:read` scope. The block catalog
+  // endpoints (/api/v1/blocks/models, /api/v1/blocks/images) serve PUBLIC,
+  // maturity-clamped data and accept ANY valid block token (withBlockScope with
+  // no requiredScope) — they need the token only for its signed
+  // `maxBrowsingLevel` claim, not for authorization. A `catalog:read` scope was
+  // briefly added (#2671) and retired the next day: requiring a
+  // declarable+grantable scope added friction (Go CLI manifest validator + each
+  // app's OauthClient.allowedScopes bit) with no security value, since the
+  // catalog is strictly MORE restricted than the public /api/v1/models.
   'media:read:owned': TokenScope.MediaRead,
   'user:read:self': TokenScope.UserRead,
   'ai:write:budgeted': TokenScope.AIServicesWrite,
@@ -58,6 +67,16 @@ export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> =
   // unknown scopes, so previously a manifest *couldn't* even list it).
   'apps:storage:read': SKIP_OAUTH_CHECK,
   'apps:storage:write': SKIP_OAUTH_CHECK,
+  // apps:storage:shared:* — the SHARED (app-global / cross-user) datastore. Same
+  // no-OAuth-bit posture as apps:storage:* (never touches the user's civitai
+  // resources via the OAuth surface). SKIP_OAUTH_CHECK; the real gate is
+  // `resolveSharedContext` (apps-shared.router) which asserts the scope is present
+  // per op AND runs the min-trust gate + the dedicated fail-closed Flipt flag.
+  // DELIBERATELY kept OUT of BOTH dev-mint allowlists (DEV_TOKEN_SCOPE_ALLOWLIST,
+  // TUNNEL_HOST_MINT_SCOPE_ALLOWLIST) — granted only to approved, mod-reviewed
+  // apps that declare it, never to a pre-approval dev-tunnel/dev-token session.
+  'apps:storage:shared:read': SKIP_OAUTH_CHECK,
+  'apps:storage:shared:write': SKIP_OAUTH_CHECK,
 } as const;
 
 export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;

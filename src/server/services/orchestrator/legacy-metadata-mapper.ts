@@ -542,7 +542,11 @@ export function mapDataToGraphInput(
         height: p.sourceImage.height,
       },
     ];
-  } else if (p?.images) {
+  } else if (Array.isArray(p?.images)) {
+    // Guard against a non-array `images` (malformed/legacy stored params): a bare
+    // `p.images.map(...)` throws "e.images.map is not a function" while shaping
+    // generation data → generation.getGenerationData 500s. Only map when it's
+    // actually an array; otherwise leave images undefined.
     images = p.images.map((img) => ({
       url: img.url,
       width: img.width,

@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { selectLiveLinkedComponents } from '~/server/utils/model-helpers';
 import type { BaseModelType } from '~/server/common/constants';
 import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
 import { baseModelLicenses, constants } from '~/server/common/constants';
@@ -77,6 +78,8 @@ import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { updateTrainingWorkflowRecords } from '~/server/services/training.service';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { Flags } from '~/shared/utils/flags';
+import { ModelVersionFlag } from '~/shared/constants/model-version-flags.constants';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -129,6 +132,7 @@ const loadModelVersion = async ({
         licensingFee: true,
         licensingFeeType: true,
         licensingFeeSettlementCurrency: true,
+        licensingSourceVersionId: true,
         meta: true,
         model: {
           select: {
@@ -143,7 +147,7 @@ const loadModelVersion = async ({
             availability: true,
           },
         },
-        files: withFiles ? { select: modelFileSelect } : false,
+        files: withFiles ? { select: modelFileSelect, where: { replacedAt: null } } : false,
         posts: withFiles ? { select: { id: true, userId: true } } : false,
         requireAuth: true,
         settings: true,
@@ -214,26 +218,29 @@ const loadModelVersion = async ({
         });
     }
 
-    const linkedComponents = linkedComponentResources.map((r) => {
-      const s = r.settings as LinkedComponentSettings;
-      const fileData = linkedFileDataMap.get(s.fileId);
-      return {
-        recommendedResourceId: r.id,
-        componentType: s.componentType,
-        modelId: s.modelId,
-        modelName: s.modelName,
-        versionId: r.resource?.id ?? 0,
-        versionName: s.versionName,
-        fileId: s.fileId,
-        fileName: fileData?.name ?? s.fileName,
-        sizeKB: fileData?.sizeKB,
-        fileType: fileData?.type,
-        fileMetadata: fileData?.metadata as
-          | { format?: string | null; size?: string | null; fp?: string | null }
-          | undefined,
-        isRequired: s.isRequired,
-      };
-    });
+    const linkedComponents = selectLiveLinkedComponents(
+      linkedComponentResources.map((r) => {
+        const s = r.settings as LinkedComponentSettings;
+        const fileData = linkedFileDataMap.get(s.fileId);
+        return {
+          recommendedResourceId: r.id,
+          componentType: s.componentType,
+          modelId: s.modelId,
+          modelName: s.modelName,
+          versionId: r.resource?.id ?? 0,
+          versionName: s.versionName,
+          fileId: s.fileId,
+          fileName: fileData?.name ?? s.fileName,
+          sizeKB: fileData?.sizeKB,
+          fileType: fileData?.type,
+          fileMetadata: fileData?.metadata as
+            | { format?: string | null; size?: string | null; fp?: string | null }
+            | undefined,
+          isRequired: s.isRequired,
+        };
+      }),
+      new Set(linkedFileDataMap.keys())
+    );
 
     const recommendedResourceIds = regularResources.map((x) => x.resource.id);
     const generationResources = await getResourceData(recommendedResourceIds, {
@@ -416,28 +423,20 @@ export const upsertModelVersionHandler = async ({
       if (!input.licensingFeeType) input.licensingFeeType = LicensingFeeType.PerImageBuzz;
       if (!input.licensingFeeSettlementCurrency)
         input.licensingFeeSettlementCurrency = LicensingFeeSettlementCurrency.Buzz;
+    }
 
-      // TODO: handle the case where both a base-model rule and a per-version fee
-      // exist (split payouts, additive fees, derivative opt-out, etc.). For now,
-      // a base-model rule fully owns the fee for its (baseModel, modelType) and
-      // child versions can't set their own.
-      const model = await dbRead.model.findUnique({
-        where: { id: input.modelId },
-        select: { type: true },
+    // Licensing lineage: the chosen source must be a LicensingRoot for the same
+    // base model. Guards against pointing at an arbitrary (or zero-fee) version
+    // to dodge the base-model rule.
+    if (input.licensingSourceVersionId != null) {
+      const source = await dbRead.modelVersion.findUnique({
+        where: { id: input.licensingSourceVersionId },
+        select: { flags: true, baseModel: true },
       });
-      if (model) {
-        const baseRule = await dbRead.baseModelLicensingFee.findUnique({
-          where: {
-            baseModel_modelType: { baseModel: input.baseModel, modelType: model.type },
-          },
-          select: { modelVersionId: true },
-        });
-        if (baseRule && baseRule.modelVersionId !== input.id) {
-          throw throwBadRequestError(
-            'This base model already has a licensing fee. You cannot set a per-version fee on a derivative.'
-          );
-        }
-      }
+      if (!source || !Flags.hasFlag(source.flags, ModelVersionFlag.LicensingRoot))
+        throw throwBadRequestError('Invalid licensing source: not a licensing lineage root.');
+      if (source.baseModel !== input.baseModel)
+        throw throwBadRequestError('Licensing source must share the same base model.');
     }
 
     const version = await upsertModelVersion({
@@ -862,7 +861,11 @@ export const modelVersionDonationGoalsHandler = async ({
   ctx: Context;
 }) => {
   try {
-    return modelVersionDonationGoals({
+    // `await` is load-bearing: without it the rejected promise escapes this
+    // try/catch (so a Prisma error bypassed the P2025→NOT_FOUND mapping in
+    // throwDbError and surfaced as INTERNAL_SERVER_ERROR). The service now also
+    // throws NOT_FOUND at the source, so this is belt-and-suspenders.
+    return await modelVersionDonationGoals({
       ...input,
       userId: ctx.user?.id,
       isModerator: ctx.user?.isModerator,
@@ -1083,10 +1086,19 @@ export async function publishPrivateModelVersionHandler({
   }
 
   if (!version.posts.length) {
-    await createModelVersionPostFromTraining({
+    const post = await createModelVersionPostFromTraining({
       modelVersionId: version.id,
       user: ctx.user,
     });
+    // createPost (service) doesn't emit the post-create ClickHouse event, so do it
+    // here, tagged 'training' to mark the origin. nsfw is hardcoded false rather
+    // than derived from nsfwLevel (as other track.post calls do): the sample
+    // images were just uploaded and aren't scanned yet, so the post's nsfwLevel
+    // is still 0 and !getIsSafeBrowsingLevel(0) would flag every training post as
+    // NSFW. The scan pipeline sets the real level later.
+    if (post) {
+      await ctx.track.post({ type: 'Create', postId: post.id, nsfw: false, tags: ['training'] });
+    }
   }
 
   const modelVersion = await updateModelVersionById({

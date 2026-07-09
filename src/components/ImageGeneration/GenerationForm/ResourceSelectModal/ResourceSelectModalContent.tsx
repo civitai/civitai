@@ -23,7 +23,7 @@ import {
   type Tabs,
 } from './useResourceSelectFilters';
 
-const tabs: Tabs[] = ['all', 'featured', 'recent', 'liked', 'mine'];
+const tabs: Tabs[] = ['all', 'featured', 'recent', 'liked', 'official', 'mine'];
 const defaultTab: Tabs = 'all';
 const hitsPerPage = 20;
 
@@ -77,6 +77,11 @@ export function ResourceSelectModalContent() {
   if (!features.auctions) {
     allowedTabs = allowedTabs.filter((t) => t !== 'featured');
   }
+  // The "Official" tab is the dedup nudge for component linking — surface the
+  // CivitaiOfficial canonical resources only in that context, not in generation.
+  if (selectSource !== 'modelVersion') {
+    allowedTabs = allowedTabs.filter((t) => t !== 'official');
+  }
 
   function handleClose() {
     dialog.onClose();
@@ -93,7 +98,7 @@ export function ResourceSelectModalContent() {
         />
       )}
 
-      <div className="sticky top-[-48px] z-30 flex flex-col gap-3 bg-gray-0 p-3 dark:bg-dark-7">
+      <div className="sticky top-0 z-30 flex flex-col gap-3 bg-gray-0 p-3 dark:bg-dark-7">
         <div className="flex flex-wrap items-center justify-between gap-4 @sm:gap-10">
           <Text>{title}</Text>
           <CustomSearchBox
@@ -139,12 +144,7 @@ export function ResourceSelectModalContent() {
           </Center>
         </div>
       ) : (
-        <ResourceHitList
-          key={selectedTab}
-          likes={likedModels}
-          featured={featuredModels}
-          selectedTab={selectedTab}
-        />
+        <ResourceHitList key={selectedTab} featured={featuredModels} selectedTab={selectedTab} />
       )}
     </>
   );

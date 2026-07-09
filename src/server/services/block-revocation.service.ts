@@ -1,9 +1,14 @@
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 
-// 15 minutes — the worst-case remaining lifetime of any token at the moment
-// of revocation (block-token.service.ts TOKEN_LIFETIME_SECONDS = 900).
-// Settings tokens have a shorter lifetime (300s) but reusing the larger TTL
-// is harmless and keeps the schema simple.
+// 15 minutes. NOTE: this NO LONGER covers the worst-case token lifetime — App
+// Blocks dev:live tokens now live up to DEV_TOKEN_LIFETIME_SECONDS (4h, see
+// block-token.service.ts). This TTL is intentionally left at 15min because the
+// revocation WRITE path (revokeInstance/clearInstance) is currently UNWIRED
+// (zero callers). BEFORE wiring a revocation write path, you MUST: (1) raise
+// this TTL to cover the max token lifetime, AND (2) namespace dev instance ids
+// distinctly (dev page tokens share the `page_<appBlockId>` shape with prod page
+// mints — see the note in api/v1/blocks/dev-token.ts), or a dev revocation will
+// bleed into production page tokens for the same app.
 const REVOCATION_TTL_SECONDS = 900;
 
 function revokedKey(blockInstanceId: string) {

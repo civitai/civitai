@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Button, Divider, Group, Modal, Radio, Stack, Text } from '@mantine/core';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { Availability } from '~/shared/utils/prisma/enums';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export const ModelAvailabilityUpdate = ({ modelId }: { modelId: number }) => {
@@ -17,10 +18,17 @@ export const ModelAvailabilityUpdate = ({ modelId }: { modelId: number }) => {
       await queryUtils.modelVersion.getById.invalidate();
       handleClose();
     },
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Failed to make model public',
+        error: new Error(error.message),
+        autoClose: false,
+      });
+    },
   });
 
-  const handleConfirm = async () => {
-    await publishPrivateModelMutation.mutateAsync({ modelId, publishVersions });
+  const handleConfirm = () => {
+    publishPrivateModelMutation.mutate({ modelId, publishVersions });
   };
 
   if (!model) return null;

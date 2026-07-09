@@ -37,7 +37,7 @@ export const CosmeticSample = ({
 
       return (
         <div style={{ width: values.badgeSize }}>
-          <EdgeMedia src={decorationData.url} alt={cosmetic.name} />
+          <EdgeMedia src={decorationData.url} alt={cosmetic.name} width={values.badgeSize} />
         </div>
       );
     case CosmeticType.ContentDecoration:
@@ -80,6 +80,7 @@ export const CosmeticSample = ({
             alt={cosmetic.name}
             type={backgroundData.type}
             anim={true}
+            width={450}
             style={{
               objectFit: 'cover',
               // objectPosition: 'right bottom',

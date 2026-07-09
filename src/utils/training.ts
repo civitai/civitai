@@ -22,6 +22,8 @@ export const trainingBaseModelTypesImage = [
   'ernie',
   'hidream-o1',
   'anima',
+  'boogu',
+  'krea2',
 ] as const;
 export const trainingBaseModelTypesVideo = ['hunyuan', 'wan', 'ltx2', 'ltx23'] as const;
 export const trainingBaseModelTypesAudio = ['acestep15', 'acestep15xl'] as const;
@@ -48,7 +50,11 @@ export const aiToolkitSaveEveryDefault = (steps: number): number =>
   Math.max(AI_TOOLKIT_SAVE_EVERY.min, Math.round(steps / AI_TOOLKIT_EPOCHS.default));
 
 export const aiToolkitStepDefault = (baseType: TrainingBaseModelType): number =>
-  baseType === 'ltx2' || baseType === 'ltx23' ? 3000 : baseType === 'anima' ? 1500 : 2000;
+  baseType === 'ltx2' || baseType === 'ltx23' || baseType === 'boogu'
+    ? 3000
+    : baseType === 'anima'
+    ? 1500
+    : 2000;
 
 export const aiToolkitBatchMax = (baseType: TrainingBaseModelType): number => {
   if (baseType === 'sdxl' || baseType === 'sd15') return 4;
@@ -315,6 +321,36 @@ export const trainingModelInfo: {
     aiToolkit: { ecosystem: 'anima' },
   },
   //
+  boogu: {
+    label: 'Base',
+    pretty: 'Boogu Image 0.1 Base',
+    type: 'boogu',
+    description: "Boogu's unified multimodal image generation and editing model (Base v0.1).",
+    // Placeholder AIR sourced from the orchestrator sample — replace with the canonical
+    // civitai checkpoint URN once the Boogu base model is uploaded to the main site
+    // (urn:air:boogu:checkpoint:civitai:<modelId>@<versionId>). Boogu is an AI-Toolkit-only
+    // ecosystem, so this air is not sent as the orchestrator `model` (the orchestrator
+    // resolves the base model from the ecosystem); it's used for UI display / getModel.
+    air: 'urn:air:boogu:repository:huggingface:Boogu/Boogu-Image-0.1-Base@main.tar',
+    baseModel: 'Boogu',
+    isNew: true,
+    aiToolkit: { ecosystem: 'boogu' },
+  },
+  //
+  krea2: {
+    label: 'Base',
+    pretty: 'Krea 2',
+    type: 'krea2',
+    description: "Krea AI's in-house image generation model.",
+    // Krea 2 is an AI-Toolkit-only ecosystem, so this AIR is NOT sent as the orchestrator
+    // `model` (the orchestrator resolves the base model from the ecosystem); it's only used for
+    // UI display / getModel. Points at the locked Krea 2 generation checkpoint.
+    air: 'urn:air:krea2:checkpoint:civitai:2656567@2983022',
+    baseModel: 'Krea 2',
+    isNew: true,
+    aiToolkit: { ecosystem: 'krea2' },
+  },
+  //
   flux2klein_4b: {
     label: '4B Base',
     pretty: 'Flux.2 Klein 4B Base',
@@ -494,6 +530,8 @@ const baseTypeToEcosystem: Partial<Record<TrainingBaseModelType, string>> = {
   ltx23: 'ltx23',
   'hidream-o1': 'hidream-o1',
   anima: 'anima',
+  boogu: 'boogu',
+  krea2: 'krea2',
   acestep15: 'ace_step_15',
   acestep15xl: 'ace_step_15_xl',
 };
@@ -590,6 +628,8 @@ export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean =
     'ltx23',
     'hidream-o1',
     'anima',
+    'boogu',
+    'krea2',
     'acestep15',
     'acestep15xl',
   ];
@@ -607,6 +647,8 @@ export const isAiToolkitMandatory = (baseType: TrainingBaseModelType): boolean =
     'ltx23',
     'hidream-o1',
     'anima',
+    'boogu',
+    'krea2',
     'acestep15',
     'acestep15xl',
   ];
@@ -633,6 +675,8 @@ export const getDefaultEngine = (
   if (baseType === 'ltx23') return 'ai-toolkit'; // LTX 2.3 requires AI Toolkit
   if (baseType === 'hidream-o1') return 'ai-toolkit'; // HiDream O1 requires AI Toolkit
   if (baseType === 'anima') return 'ai-toolkit'; // Anima requires AI Toolkit
+  if (baseType === 'boogu') return 'ai-toolkit'; // Boogu requires AI Toolkit
+  if (baseType === 'krea2') return 'ai-toolkit'; // Krea 2 requires AI Toolkit
   if (baseType === 'acestep15' || baseType === 'acestep15xl') return 'ai-toolkit'; // Audio models require AI Toolkit
   if (baseType === 'wan') return 'ai-toolkit'; // Wan defaults to AI Toolkit
   if (baseType === 'hunyuan') return 'musubi';

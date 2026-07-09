@@ -14,6 +14,12 @@ interface UseBlockTokenResult {
   needsConsent: boolean;
   /** A6: the consent-gated scopes withheld from the current token. */
   missingScopes: string[];
+  /** Advisory maturity signal mirrored from the mint (BLOCK_INIT). The color
+   *  domain the token was minted on, or null when unresolved. */
+  domain: 'green' | 'blue' | 'red' | null;
+  /** Advisory: the bitwise browsing-level ceiling for the domain (SFW on
+   *  green/blue, all on red). undefined on legacy responses → fail closed. */
+  maxBrowsingLevel: number | undefined;
   refresh: () => Promise<void>;
 }
 
@@ -24,6 +30,9 @@ interface TokenResponse {
    *  app's approved manifest. Older responses omit these → treat as no-op. */
   needsConsent?: boolean;
   missingScopes?: string[];
+  /** Advisory maturity signal. Omitted by pre-feature responses → fail closed. */
+  domain?: 'green' | 'blue' | 'red' | null;
+  maxBrowsingLevel?: number;
 }
 
 const REFRESH_LEAD_MS = 2 * 60 * 1000; // refresh 2 minutes before expiry
@@ -59,6 +68,8 @@ export function useBlockToken(
   const [pending, setPending] = useState<boolean>(true);
   const [needsConsent, setNeedsConsent] = useState<boolean>(false);
   const [missingScopes, setMissingScopes] = useState<string[]>([]);
+  const [domain, setDomain] = useState<'green' | 'blue' | 'red' | null>(null);
+  const [maxBrowsingLevel, setMaxBrowsingLevel] = useState<number | undefined>(undefined);
   // M4 (audit-10): peek the current token via a ref instead of running a
   // side-effect inside a state-updater. React 18 strict-mode calls updaters
   // twice in dev; a counter/increment side-effect there would silently
@@ -130,6 +141,16 @@ export function useBlockToken(
       setExpiresAt(data.expiresAt);
       setNeedsConsent(data.needsConsent === true);
       setMissingScopes(Array.isArray(data.missingScopes) ? data.missingScopes : []);
+      setDomain(
+        data.domain === 'green' || data.domain === 'blue' || data.domain === 'red'
+          ? data.domain
+          : null
+      );
+      setMaxBrowsingLevel(
+        typeof data.maxBrowsingLevel === 'number' && Number.isFinite(data.maxBrowsingLevel)
+          ? data.maxBrowsingLevel
+          : undefined
+      );
       setPending(false);
 
       const expiresAtMs = new Date(data.expiresAt).getTime();
@@ -197,5 +218,15 @@ export function useBlockToken(
     await requestToken();
   }, [requestToken]);
 
-  return { token, expiresAt, error, pending, needsConsent, missingScopes, refresh };
+  return {
+    token,
+    expiresAt,
+    error,
+    pending,
+    needsConsent,
+    missingScopes,
+    domain,
+    maxBrowsingLevel,
+    refresh,
+  };
 }

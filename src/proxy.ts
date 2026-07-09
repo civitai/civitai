@@ -6,7 +6,11 @@ export async function proxy(request: NextRequest) {
   return runMiddlewares(request);
 }
 
-// See "Matching Paths" below to learn more
+// Proxy always runs on the Node.js runtime in Next 16 (not the Edge sandbox), so the route guards
+// can use full Node APIs — needed for the thin-session migration, where they resolve the user from
+// redis/db (`getSessionUser`) instead of reading it from the cookie. Self-hosted, so no infra change.
+// See thin-session-token-design.md. Only `matcher` is allowed here now — `runtime` and route-segment
+// `api` config are rejected in a Proxy file.
 export const config = {
   matcher: [
     '/', // Home page
@@ -20,9 +24,4 @@ export const config = {
     // '/models/:path*',
     '/user/:path*',
   ],
-  api: {
-    bodyParser: {
-      sizeLimit: '10mb',
-    },
-  },
 };

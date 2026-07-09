@@ -69,6 +69,7 @@ import { audioSampleOverrideSchema } from '~/server/schema/model-version.schema'
 import type { ImageTrainingRouterWhatIfSchema } from '~/server/schema/orchestrator/training.schema';
 import { Currency, ModelUploadType, TrainingStatus } from '~/shared/utils/prisma/enums';
 import {
+  buildContinuationRunUpdate,
   defaultRun,
   defaultRunAudio,
   defaultRunVideo,
@@ -149,16 +150,39 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       : defaultRun;
   const selectedRun = runs[selectedRunIndex] ?? fallbackRun;
 
-  // "Train Further": the source-epoch reference is persisted on the version because the
-  // in-memory training store doesn't survive reloads. Re-seed the run's continueFrom from
-  // it once per mount; if the user removes it afterwards, we don't re-add it.
+  // "Train Further": the continuation config (base model, AI-Toolkit engine, steps, and the
+  // source-epoch reference) is seeded into the in-memory store by the "Train Further" button,
+  // but that store doesn't survive a reload / deep-link straight into Step 3. Everything the
+  // re-seed needs is persisted on the version, so rebuild the run from it once per mount.
+  // Without this, a reloaded continuation kept the default SDXL base — and because the base
+  // selector is hidden for continuations, the user couldn't fix it (ClickUp 868k47a7x).
   const continueFromEpoch = thisTrainingDetails?.continueFromEpoch;
   const hydratedContinueFrom = useRef(false);
   useEffect(() => {
     if (hydratedContinueFrom.current) return;
     if (!features.trainingStepsPricing || !continueFromEpoch) return;
     hydratedContinueFrom.current = true;
-    if (selectedRun.params.continueFrom !== continueFromEpoch.air) {
+
+    const persistedBase = thisTrainingDetails?.baseModel;
+    // The store was rebuilt from defaults (reload / deep-link) when the run still holds the
+    // media-type default base and no custom model. In that case re-seed the whole
+    // continuation run from the version; otherwise the in-session seed is intact and we only
+    // need to make sure the continueFrom AIR is present.
+    const storeAtDefault = selectedRun.base === fallbackRun.base && !selectedRun.customModel;
+    if (storeAtDefault && persistedBase) {
+      updateRun(
+        model.id,
+        thisMediaType,
+        selectedRun.id,
+        buildContinuationRunUpdate({
+          base: persistedBase,
+          baseType: (thisTrainingDetails?.baseModelType ?? 'sd15') as TrainingBaseModelType,
+          continueFromAir: continueFromEpoch.air,
+          samplePrompts: thisTrainingDetails?.samplePrompts,
+          negativePrompt: thisTrainingDetails?.negativePrompt,
+        })
+      );
+    } else if (selectedRun.params.continueFrom !== continueFromEpoch.air) {
       updateRun(model.id, thisMediaType, selectedRun.id, {
         params: { continueFrom: continueFromEpoch.air },
       });
@@ -670,8 +694,8 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
     runs.forEach(async (run, idx) => {
       const {
-        base,
-        baseType,
+        base: runBase,
+        baseType: runBaseType,
         params,
         customModel,
         samplePrompts,
@@ -681,6 +705,22 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         highPriority,
       } = run;
       const { optimizerArgs, ...paramData } = params;
+
+      // Continuations MUST train on the exact base model of the source LoRA. The base selector
+      // is hidden for them, so the store value can't be trusted (a cleared/stale store would
+      // otherwise submit the default SDXL base). Pin base/baseType to the source version's
+      // persisted values — everything downstream (ecosystem, the AIR the server resolves, the
+      // output baseModel column, persisted trainingDetails) is derived from these, so this makes
+      // a base mismatch structurally impossible (ClickUp 868k47a7x).
+      const isContinuationRun = !!paramData.continueFrom && paramData.engine === 'ai-toolkit';
+      const base =
+        isContinuationRun && thisTrainingDetails?.baseModel
+          ? thisTrainingDetails.baseModel
+          : runBase;
+      const baseType =
+        isContinuationRun && thisTrainingDetails?.baseModelType
+          ? thisTrainingDetails.baseModelType
+          : runBaseType;
 
       if (isInvalidRapid(baseType, paramData.engine)) {
         showErrorNotification({
@@ -1037,13 +1077,34 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         <Divider />
       </Stack>
 
-      {!isContinuation && (
+      {!isContinuation ? (
         <ModelSelect
           selectedRun={selectedRun}
           modelId={model.id}
           mediaType={thisMediaType}
           numImages={thisNumImages}
         />
+      ) : (
+        // Continuations inherit the source LoRA's base model (the selector is hidden), so show
+        // it read-only — otherwise there's no way to tell what's being trained on.
+        <Paper p="sm" radius="md" withBorder mt="sm">
+          <Group justify="space-between" wrap="nowrap" gap="sm">
+            <Stack gap={2}>
+              <Text size="xs" c="dimmed" tt="uppercase" fw={700}>
+                Base model
+              </Text>
+              <Text fw={600}>
+                {selectedRun.base in trainingModelInfo
+                  ? trainingModelInfo[selectedRun.base as TrainingDetailsBaseModelList]?.pretty ??
+                    selectedRun.base
+                  : selectedRun.base}
+              </Text>
+            </Stack>
+            <Badge color="violet" variant="light" leftSection={<IconRepeat size={14} />}>
+              Inherited from source LoRA
+            </Badge>
+          </Group>
+        </Paper>
       )}
 
       {prefersCaptions.includes(selectedRun.baseType) &&
@@ -1151,40 +1212,35 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               size="md"
               mt="sm"
             >
-              <Group gap="sm" justify="space-between" wrap="nowrap">
-                <Text>
-                  Continuing training from{' '}
-                  <Text span fw={700}>
-                    {continueFromEpoch && continueFromEpoch.air === selectedRun.params.continueFrom
-                      ? `Epoch #${continueFromEpoch.epochNumber}${
-                          continueFromEpoch.sourceVersionName
-                            ? ` of ${continueFromEpoch.sourceVersionName}`
-                            : ''
-                        }`
-                      : selectedRun.params.continueFrom.split('/').pop()}
-                  </Text>
-                  {' — '}this run picks up from that checkpoint instead of the base model.
-                  {selectedRun.params.engine !== 'ai-toolkit' && (
-                    <Text span c="yellow.7" fw={600}>
-                      {' '}
-                      This requires the AI Toolkit engine and will be ignored with the current
-                      engine.
-                    </Text>
-                  )}
+              {/* No "remove" action here: a "Train Further" version exists solely to continue
+                  from this epoch, and its base model is inherited from the source. Detaching the
+                  continuation would leave the run in a broken half-state, so it's fixed. */}
+              <Text>
+                Continuing training from{' '}
+                <Text span fw={700}>
+                  {continueFromEpoch && continueFromEpoch.air === selectedRun.params.continueFrom
+                    ? `Epoch #${continueFromEpoch.epochNumber}${
+                        continueFromEpoch.sourceVersionName
+                          ? ` of ${continueFromEpoch.sourceVersionName}`
+                          : ''
+                      }`
+                    : selectedRun.params.continueFrom.split('/').pop()}
                 </Text>
-                <Button
-                  variant="subtle"
-                  color="red"
-                  size="compact-sm"
-                  onClick={() =>
-                    updateRun(model.id, thisMediaType, selectedRun.id, {
-                      params: { continueFrom: undefined },
-                    })
-                  }
-                >
-                  Remove
-                </Button>
-              </Group>
+                {' — '}this run picks up from that checkpoint, trained on{' '}
+                <Text span fw={700}>
+                  {selectedRun.base in trainingModelInfo
+                    ? trainingModelInfo[selectedRun.base as TrainingDetailsBaseModelList]?.pretty ??
+                      selectedRun.base
+                    : selectedRun.base}
+                </Text>
+                .
+                {selectedRun.params.engine !== 'ai-toolkit' && (
+                  <Text span c="yellow.7" fw={600}>
+                    {' '}
+                    This requires the AI Toolkit engine and will be ignored with the current engine.
+                  </Text>
+                )}
+              </Text>
             </AlertWithIcon>
           )}
           <AdvancedSettings

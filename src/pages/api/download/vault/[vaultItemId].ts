@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import requestIp from 'request-ip';
 import * as z from 'zod';
 import { env } from '~/env/server';

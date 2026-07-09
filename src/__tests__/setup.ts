@@ -87,6 +87,11 @@ const TEST_ENV_DEFAULTS: Record<string, unknown> = {
   // Same module-load pLimit() trap in signals/wrapper.ts (default 30).
   SIGNALS_CALL_CONCURRENCY: 30,
   LOGGING: '',
+  // App-blocks (git-push / forgejo / manifest) surfaces read these at module
+  // load. Live here so blocks-router tests don't each override the whole env
+  // mock (which drops the S3/MEILI defaults and crashes at import).
+  FORGEJO_PUBLIC_URL: 'https://forgejo.civitai.com',
+  APPS_DOMAIN: 'civit.ai',
   BLOCK_TOKEN_PRIVATE_KEY: TEST_BLOCK_TOKEN_PRIVATE_PEM,
   BLOCK_TOKEN_PUBLIC_KEY: TEST_BLOCK_TOKEN_PUBLIC_PEM,
   DATABASE_URL: 'postgres://user:pass@localhost:5432/db',
@@ -115,6 +120,28 @@ const TEST_ENV_DEFAULTS: Record<string, unknown> = {
   S3_IMAGE_UPLOAD_KEY: 'test-key',
   S3_IMAGE_UPLOAD_SECRET: 'test-secret',
 };
+
+// The @civitai/redis package validates its own env from `process.env` directly (its own schema),
+// NOT `~/env/server`, so the mock below doesn't reach it. Set the two required vars (the rest have
+// defaults) so loadRedisEnv() succeeds when a test imports the redis shim/package — the `redis`
+// driver itself is still mocked per-test, so no real connection is opened.
+process.env.REDIS_URL ??= 'redis://localhost:6379';
+process.env.REDIS_SYS_URL ??= 'redis://localhost:6379';
+
+// The @civitai/db package (packages/civitai-db/src/env.ts) has the SAME pattern: it owns its env
+// schema and validates `process.env` directly via loadDbEnv(), NOT `~/env/server`, so the Proxy mock
+// below doesn't reach it. Any test whose module graph transitively imports a db factory (e.g.
+// db-lag-helpers → notifDb → getClient → loadDbEnv) throws "[@civitai/db] Invalid environment
+// variables" the moment that import is evaluated — and because that import can race the heavy
+// event-engine graph across the worker pool, the failure was INTERMITTENT (green on lighter-loaded
+// runs, red under CPU pressure / certain run-order). It also surfaced indirectly as the
+// "No 'dbRead' export is defined on the mock" error in fail-soft code paths. Seed the four required
+// URLs (the rest have schema defaults) so loadDbEnv() always succeeds in tests; the Prisma clients
+// themselves are still mocked per-test (or never connected), so no real DB connection is opened.
+process.env.DATABASE_URL ??= 'postgres://user:pass@localhost:5432/db';
+process.env.DATABASE_REPLICA_URL ??= 'postgres://user:pass@localhost:5432/db';
+process.env.NOTIFICATION_DB_URL ??= 'postgres://user:pass@localhost:5432/notif';
+process.env.NOTIFICATION_DB_REPLICA_URL ??= 'postgres://user:pass@localhost:5432/notif';
 
 vi.mock('~/env/server', () => ({
   env: new Proxy(TEST_ENV_DEFAULTS, {

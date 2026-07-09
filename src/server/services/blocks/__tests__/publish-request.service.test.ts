@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import JSZip from 'jszip';
 import {
+  computeBundleLineDiff,
   computeFileDiff,
   computeManifestDiff,
   extractBundleMetadata,
@@ -365,5 +366,120 @@ describe('schema boundary caps', () => {
     const formulaUsed = Math.ceil((MAX_BUNDLE_SIZE_BYTES * 4) / 3) + 16;
     expect(formulaUsed).toBeGreaterThanOrEqual(trueB64Length);
     expect(formulaUsed - trueB64Length).toBeLessThanOrEqual(16);
+  });
+});
+
+describe('computeBundleLineDiff', () => {
+  const f = (path: string, content: string | Buffer) => ({
+    path,
+    content: Buffer.isBuffer(content) ? content : Buffer.from(content, 'utf8'),
+  });
+
+  it('treats null previous as a first-version whole-file add', () => {
+    const result = computeBundleLineDiff([f('index.ts', 'a\nb\nc\n')], null);
+    expect(result.truncated).toBe(false);
+    expect(result.files).toHaveLength(1);
+    const file = result.files[0];
+    expect(file.path).toBe('index.ts');
+    expect(file.changeKind).toBe('added');
+    expect(file.skipReason).toBeNull();
+    expect(file.added).toBe(3);
+    expect(file.removed).toBe(0);
+    // All three lines present as additions in the hunk. (Unified-diff output
+    // may include a `\ No newline at end of file` marker line — not a content
+    // line — which we ignore here.)
+    const contentLines = file.hunks.flatMap((h) => h.lines).filter((l) => !l.startsWith('\\'));
+    expect(contentLines).toEqual(['+a', '+b', '+c']);
+  });
+
+  it('omits files that did not change (byte-identical) and emits only the changed one', () => {
+    const prev = [f('a.ts', 'same\n'), f('b.ts', 'old\n')];
+    const curr = [f('a.ts', 'same\n'), f('b.ts', 'new\n')];
+    const result = computeBundleLineDiff(curr, prev);
+    expect(result.files.map((x) => x.path)).toEqual(['b.ts']);
+    const file = result.files[0];
+    expect(file.changeKind).toBe('changed');
+    expect(file.skipReason).toBeNull();
+  });
+
+  it('produces the expected unified-diff hunk for a changed file', () => {
+    const prev = [f('greet.ts', 'line1\nline2\nline3\nline4\nline5\n')];
+    const curr = [f('greet.ts', 'line1\nline2\nCHANGED\nline4\nline5\n')];
+    const result = computeBundleLineDiff(curr, prev);
+    const file = result.files[0];
+    expect(file.skipReason).toBeNull();
+    expect(file.added).toBe(1);
+    expect(file.removed).toBe(1);
+    const lines = file.hunks.flatMap((h) => h.lines);
+    // The removed line3 and the added CHANGED line are both present.
+    expect(lines).toContain('-line3');
+    expect(lines).toContain('+CHANGED');
+    // Context lines are carried with a leading space.
+    expect(lines).toContain(' line2');
+    expect(lines).toContain(' line4');
+    // Hunk geometry is well-formed.
+    expect(file.hunks[0].oldStart).toBeGreaterThan(0);
+    expect(file.hunks[0].newStart).toBeGreaterThan(0);
+  });
+
+  it('marks a binary file (by extension) as skipped without diffing', () => {
+    const prev = [f('logo.png', 'old-bytes\n')];
+    const curr = [f('logo.png', 'new-bytes\n')];
+    const result = computeBundleLineDiff(curr, prev);
+    const file = result.files[0];
+    expect(file.skipReason).toBe('binary');
+    expect(file.hunks).toEqual([]);
+  });
+
+  it('marks a binary file (by NUL-byte sniff, unknown extension) as skipped', () => {
+    const prev = [f('blob.dat', Buffer.from([0x68, 0x69, 0x0a]))]; // "hi\n"
+    const curr = [f('blob.dat', Buffer.from([0x68, 0x00, 0x69, 0x0a]))]; // contains NUL
+    const result = computeBundleLineDiff(curr, prev);
+    const file = result.files[0];
+    expect(file.skipReason).toBe('binary');
+    expect(file.hunks).toEqual([]);
+  });
+
+  it('elides a file whose side exceeds the per-file byte cap', () => {
+    const small = 'x\n';
+    const big = 'y\n'.repeat(100);
+    const prev = [f('huge.ts', small)];
+    const curr = [f('huge.ts', big)];
+    // Cap below the new side's length so it must be elided.
+    const result = computeBundleLineDiff(curr, prev, { maxFileBytes: 10 });
+    const file = result.files[0];
+    expect(file.skipReason).toBe('too-large');
+    expect(file.hunks).toEqual([]);
+  });
+
+  it('elides a diff that exceeds the per-file line cap', () => {
+    // 50 lines, completely rewritten → ~100 +/- lines, over a small cap.
+    const prev = [f('big.ts', Array.from({ length: 50 }, (_, i) => `old${i}`).join('\n') + '\n')];
+    const curr = [f('big.ts', Array.from({ length: 50 }, (_, i) => `new${i}`).join('\n') + '\n')];
+    const result = computeBundleLineDiff(curr, prev, { maxDiffLines: 10 });
+    const file = result.files[0];
+    expect(file.skipReason).toBe('diff-too-large');
+    expect(file.hunks).toEqual([]);
+    // Counts are still reported even when the hunks are elided.
+    expect(file.added).toBeGreaterThan(0);
+    expect(file.removed).toBeGreaterThan(0);
+  });
+
+  it('caps the total number of files diffed and flags truncation', () => {
+    const curr = [f('a.ts', 'a\n'), f('b.ts', 'b\n'), f('c.ts', 'c\n')];
+    const result = computeBundleLineDiff(curr, null, { maxFiles: 2 });
+    expect(result.truncated).toBe(true);
+    // First two diffed, third marked file-cap (sorted order: a, b, c).
+    expect(result.files).toHaveLength(3);
+    expect(result.files[0].skipReason).toBeNull();
+    expect(result.files[1].skipReason).toBeNull();
+    expect(result.files[2].skipReason).toBe('file-cap');
+    expect(result.files[2].path).toBe('c.ts');
+  });
+
+  it('emits files in deterministic sorted-path order', () => {
+    const curr = [f('z.ts', 'z\n'), f('a.ts', 'a\n'), f('m.ts', 'm\n')];
+    const result = computeBundleLineDiff(curr, null);
+    expect(result.files.map((x) => x.path)).toEqual(['a.ts', 'm.ts', 'z.ts']);
   });
 });

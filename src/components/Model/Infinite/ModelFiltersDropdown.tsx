@@ -157,20 +157,27 @@ export function DumbModelFiltersDropdown({
     (isModerator && mergedFilters.disablePoi ? 1 : 0) +
     (isModerator && mergedFilters.disableMinor ? 1 : 0);
 
-  const target = (
-    <Indicator
-      offset={4}
-      label={filterLength ? filterLength : undefined}
-      size={14}
-      zIndex={10}
-      disabled={!filterLength}
-      inline
-    >
-      <FilterButton icon={IconFilter} onClick={toggle} active={opened}>
-        Filters
-      </FilterButton>
-    </Indicator>
+  const filterButton = (
+    <FilterButton icon={IconFilter} onClick={toggle} active={opened}>
+      Filters
+    </FilterButton>
   );
+
+  // Active-filter count badge. Keep the Indicator as a purely visual wrapper:
+  // in the desktop path Popover.Target must clone the inner <button> (which
+  // forwards the aria-haspopup/expanded/controls it injects), NOT the
+  // Indicator's role-less <div> — putting aria-expanded on a <div> trips the
+  // aria-allowed-attr a11y rule.
+  const indicatorProps = {
+    offset: 4,
+    label: filterLength ? filterLength : undefined,
+    size: 14,
+    zIndex: 10,
+    disabled: !filterLength,
+    inline: true,
+  };
+
+  const target = <Indicator {...indicatorProps}>{filterButton}</Indicator>;
 
   const dropdownBody = (
     <Stack gap={8} p="md">
@@ -424,7 +431,9 @@ export function DumbModelFiltersDropdown({
         withinPortal
         withArrow
       >
-        <Popover.Target>{target}</Popover.Target>
+        <Indicator {...indicatorProps}>
+          <Popover.Target>{filterButton}</Popover.Target>
+        </Indicator>
         <Popover.Dropdown maw={576} p={0} w="100%">
           <ScrollArea.Autosize
             mah={maxPopoverHeight ?? 'calc(90vh - var(--header-height) - 156px)'}

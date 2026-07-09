@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { projectBlockInitContext, projectBlockInitViewer } from '../projectBlockInit';
+import {
+  projectBlockInitContext,
+  projectBlockInitMaturity,
+  projectBlockInitViewer,
+} from '../projectBlockInit';
 import type { BlockCheckpointInfo, ModelSlotContext, ShowcaseImage } from '../types';
 
 /**
@@ -164,5 +168,49 @@ describe('projectBlockInitViewer (BLOCK_INIT viewer allowlist)', () => {
       projectBlockInitViewer({ slotId: 'model.sidebar_top', viewerUserId: null } as ModelSlotContext)
     ).toBeNull();
     expect(projectBlockInitViewer({ slotId: 'model.sidebar_top' })).toBeNull();
+  });
+});
+
+/**
+ * BLOCK_INIT maturity signal projection (advisory — block self-filtering/blur).
+ * The values are the server-authoritative ones from the token mint; the host
+ * forwards them. The projection sanitizes / fails closed so junk never reaches
+ * the iframe.
+ */
+describe('projectBlockInitMaturity', () => {
+  it('forwards a green SFW signal', () => {
+    expect(projectBlockInitMaturity({ domain: 'green', maxBrowsingLevel: 3 })).toEqual({
+      domain: 'green',
+      maxBrowsingLevel: 3,
+    });
+  });
+
+  it('forwards a red mature signal', () => {
+    expect(projectBlockInitMaturity({ domain: 'red', maxBrowsingLevel: 31 })).toEqual({
+      domain: 'red',
+      maxBrowsingLevel: 31,
+    });
+  });
+
+  it('coerces an unrecognized domain to null', () => {
+    expect(projectBlockInitMaturity({ domain: 'purple', maxBrowsingLevel: 3 }).domain).toBeNull();
+  });
+
+  it('maps a missing/null domain to null', () => {
+    expect(projectBlockInitMaturity({ domain: null }).domain).toBeNull();
+    expect(projectBlockInitMaturity({}).domain).toBeNull();
+  });
+
+  it('drops a non-numeric / absent ceiling (undefined → SDK fails closed)', () => {
+    expect(projectBlockInitMaturity({ domain: 'green' }).maxBrowsingLevel).toBeUndefined();
+    expect(
+      projectBlockInitMaturity({ domain: 'green', maxBrowsingLevel: NaN }).maxBrowsingLevel
+    ).toBeUndefined();
+    expect(
+      projectBlockInitMaturity({
+        domain: 'green',
+        maxBrowsingLevel: 'x' as unknown as number,
+      }).maxBrowsingLevel
+    ).toBeUndefined();
   });
 });

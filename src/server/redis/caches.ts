@@ -18,6 +18,7 @@ import type { EntityAccessDataType } from '~/server/services/common.service';
 import { getModelClient } from '~/server/services/orchestrator/models';
 import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
+import { getPrimaryFile } from '~/server/utils/model-helpers';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { stringifyAIR } from '~/shared/utils/air';
 import {
@@ -468,6 +469,7 @@ export const dataForModelsCache = createCachedObject<ModelDataCache>({
          WHERE rr."sourceId" = mv.id
            AND rr.settings->>'isLinkedComponent' = 'true'
            AND rr.settings->>'componentType' = 'VAE'
+           AND EXISTS (SELECT 1 FROM "ModelFile" mf WHERE mf.id = (rr.settings->>'fileId')::int)
          LIMIT 1) AS "vaeId",
         COALESCE((
           SELECT gc.covered
@@ -1555,12 +1557,20 @@ export const modelVersionResourceCache = createCachedObject<ModelVersionResource
     const db = fromWrite ? dbWrite : dbRead;
     const mvInfo = await db.modelVersion.findMany({
       where: { id: { in: ids } },
-      select: { id: true, baseModel: true, model: { select: { id: true, type: true } } },
+      select: {
+        id: true,
+        baseModel: true,
+        model: { select: { id: true, type: true } },
+        files: { select: { type: true, metadata: true } },
+      },
     });
 
     const versionInfo = await Promise.all(
       mvInfo.map(async (v) => {
         try {
+          const primaryFile = getPrimaryFile(
+            v.files as { type: string; metadata: BasicFileMetadata }[]
+          );
           const md = await getModelClient({
             token: env.ORCHESTRATOR_ACCESS_TOKEN,
             air: stringifyAIR({
@@ -1568,6 +1578,7 @@ export const modelVersionResourceCache = createCachedObject<ModelVersionResource
               type: v.model.type,
               modelId: v.model.id,
               id: v.id,
+              fileType: primaryFile?.type,
             }),
           });
           if (!md || !!md.error)

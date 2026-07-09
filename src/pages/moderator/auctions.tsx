@@ -9,6 +9,7 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Form, InputNumber, InputSwitch, InputTextArea, useForm } from '~/libs/form';
 import { updateAuctionBaseInput } from '~/server/schema/auction.schema';
 import type { GetAuctionBasesReturn } from '~/server/services/auction.service';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 
 type AuctionBaseItem = GetAuctionBasesReturn['items'][number];
@@ -171,5 +172,7 @@ function AuctionsPage() {
     </div>
   );
 }
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default Page(AuctionsPage, { features: (f) => f.auctionsMod });

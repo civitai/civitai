@@ -6,6 +6,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 
 export const getServerSideProps = createServerSideProps({
+  requireModerator: true,
   useSession: true,
   resolver: async ({ session }) => {
     if (!session || !session?.user?.isModerator)

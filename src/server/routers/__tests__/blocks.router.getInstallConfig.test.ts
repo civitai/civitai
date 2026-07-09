@@ -53,10 +53,10 @@ vi.mock('~/server/db/client', () => ({
   dbRead: { appBlock: { findUnique: mockDbReadAppBlockFindUnique } },
   dbWrite: { modelBlockInstall: { findUnique: vi.fn() }, model: { findUnique: vi.fn() } },
 }));
-vi.mock('~/server/redis/client', () => ({
-  redis: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
-  REDIS_KEYS: { BLOCKS: {} },
-}));
+vi.mock('~/server/redis/client', async () => {
+  const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
+  return { ...actual, redis: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) } };
+});
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   verifyBlockToken: vi.fn(),
   parseSubjectUserId: vi.fn(),
@@ -64,12 +64,13 @@ vi.mock('~/server/middleware/block-scope.middleware', () => ({
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: vi.fn(),
 }));
+vi.mock('~/server/services/orchestrator/orchestration-new.service', () => ({
+  buildGenerationContext: vi.fn(),
+  createWorkflowStepsFromGraphInput: vi.fn(),
+}));
 vi.mock('~/server/services/orchestrator/workflows', () => ({
   submitWorkflow: vi.fn(),
   getWorkflow: vi.fn(),
-}));
-vi.mock('~/server/services/orchestrator/textToImage/textToImage', () => ({
-  createTextToImageStep: vi.fn(),
 }));
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: vi.fn(),

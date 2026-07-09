@@ -6,6 +6,7 @@ import { BlockRevocation } from '~/server/services/block-revocation.service';
 import {
   BLOCK_TOKEN_AUDIENCE,
   BLOCK_TOKEN_ISSUER,
+  DEV_TOKEN_LIFETIME_SECONDS,
   getBlockTokenVerificationKeysByKid,
 } from '~/server/services/block-token.service';
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
@@ -41,6 +42,30 @@ export interface BlockTokenClaims {
   ctx: Record<string, unknown>;
   scopes: string[];
   buzzBudget?: number;
+  /**
+   * AUTHORITATIVE color-domain maturity ceiling (bitwise browsing-level flag,
+   * from `domainBrowsingCeiling`) stamped at mint. The block generation path
+   * derives `allowMatureContent` from this — never from a client body field.
+   * ABSENT on legacy tokens minted before the maturity feature → consumers
+   * MUST fail closed (treat as SFW). The block catalog endpoints
+   * (/api/v1/blocks/models, /api/v1/blocks/images) likewise intersect the
+   * requested browsing level with this ceiling so a SFW-domain token can never
+   * widen to mature catalog content.
+   */
+  maxBrowsingLevel?: number;
+  /** Advisory: the color domain the token was minted on (`green`|`blue`|`red`). */
+  domain?: string;
+  /**
+   * DEV-TOKEN marker — present (true) ONLY on tokens minted by the mod-gated
+   * dev-token endpoint (`/api/v1/blocks/dev-token`) for the `dev:live` localhost
+   * harness. It selects the per-token-type max-age cap in `verifyBlockToken`
+   * (4h for dev, 15min for every other token). The claim is only trustworthy
+   * BECAUSE the signature (RS256, our kid) is verified before it's read — a
+   * forged `dev:true` can't pass the signature gate. The claim is optional and
+   * MUST be a boolean if present; an absent OR non-boolean `dev` fails safe to
+   * the SHORTER 15min cap (and a non-boolean is rejected outright).
+   */
+  dev?: boolean;
 }
 
 export type BlockScopedNextApiRequest = NextApiRequest & {
@@ -48,7 +73,56 @@ export type BlockScopedNextApiRequest = NextApiRequest & {
 };
 
 export interface WithBlockScopeOpts {
-  requiredScope: string;
+  /**
+   * The block scope this endpoint requires. When PRESENT, the middleware
+   * enforces `claims.scopes.includes(requiredScope)` (403 on miss) AND runs
+   * `enforceContextBinding` for the token's scopes — the standard per-scope
+   * authorization path (me.ts, submit-version, settings, etc.).
+   *
+   * When OMITTED ("any valid block token" mode), the middleware STILL performs
+   * the FULL token validation (RS256 signature + kid, iss/aud/exp, max-age,
+   * the claim shape guards incl. `maxBrowsingLevel`), the per-instance
+   * revocation check, the `private, no-store` cache header, and exact-origin
+   * CORS — it ONLY skips the per-scope authorization check and
+   * `enforceContextBinding`. Anonymous callers (no token / non-JWT bearer) are
+   * still rejected (the wrapped handler's own 401 guard fires).
+   *
+   * This mode exists for the block CATALOG endpoints (/api/v1/blocks/models,
+   * /api/v1/blocks/images): they serve PUBLIC, maturity-clamped data, so a
+   * specific declarable+grantable scope adds friction (CLI manifest validator +
+   * per-app OauthClient.allowedScopes bit) with no security value. They need a
+   * token ONLY for its signed `maxBrowsingLevel` claim — the authoritative
+   * maturity ceiling source — NOT for authorization. Token validity + the
+   * clamp (resolveCatalogBrowsingLevel, fail-closed SFW) is the whole authority
+   * surface; the scope gate would add nothing.
+   */
+  requiredScope?: string;
+
+  /**
+   * Opt-in: answer CORS for an OPAQUE-origin caller (`Origin: null`) by echoing
+   * `Access-Control-Allow-Origin: null`.
+   *
+   * WHY: UNVERIFIED App Blocks are sandboxed WITHOUT `allow-same-origin` (see
+   * `src/components/AppBlocks/sandbox.ts` — only internal/verified tiers get
+   * it), so the iframe runs at an OPAQUE origin and every `fetch` it makes
+   * sends `Origin: null`. `null` can never be in the OauthClient.allowedOrigins
+   * allowlist, so a direct (non-bridge) catalog fetch's CORS preflight falls
+   * through to the handler and 405s — the in-block resource browser then can't
+   * load. (Generation/money go through the postMessage host bridge, which is
+   * CORS-free; the catalog selector is the one path that direct-fetches.)
+   *
+   * SAFE ONLY for the block CATALOG endpoints (/api/v1/blocks/{models,images}),
+   * which is why this is an explicit per-endpoint opt-in and NOT a blanket
+   * middleware behavior: they return PUBLIC, maturity-clamped data (strictly ⊆
+   * the public, already-`ACAO:*` /api/v1/models), carry NO credentials
+   * (Allow-Credentials is omitted and block iframes have no civitai cookie), and
+   * the real request still requires a valid short-lived block JWT in
+   * `Authorization` (an attacker's own null-origin sandboxed page can't mint
+   * one). The preflight is CORS POLICY only; the token remains the gate. NEVER
+   * set this on a scoped/credentialed endpoint (me.ts, settings, …) — `ACAO:
+   * null` there would let ANY sandboxed page read a per-user response.
+   */
+  allowOpaqueOrigin?: boolean;
 }
 
 // L7 (audit-10): issuer/audience imported from block-token.service so a
@@ -198,7 +272,8 @@ function rememberWarnedOrigin(origin: string) {
  */
 async function setBlockCors(
   req: NextApiRequest,
-  res: NextApiResponse
+  res: NextApiResponse,
+  opts: WithBlockScopeOpts
 ): Promise<'handled' | 'fallthrough'> {
   const origin = req.headers.origin;
   const isAllowed = await originAllowed(origin);
@@ -212,6 +287,25 @@ async function setBlockCors(
     // civitai session cookies (cross-origin), and emitting "false" is a no-op
     // per the CORS spec. Setting "true" would require Allow-Origin to never
     // be "*", and we want that flexibility on the wrapped handler's path.
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return 'handled';
+    }
+    return 'fallthrough';
+  }
+
+  // Opaque-origin (`Origin: null`) opt-in — CATALOG endpoints only (see
+  // WithBlockScopeOpts.allowOpaqueOrigin). Unverified blocks run sandboxed
+  // without `allow-same-origin` → opaque origin → `Origin: null`, which can
+  // never be in the allowlist above. We echo `ACAO: null` ONLY when the
+  // endpoint opted in. Allow-Credentials stays omitted (no cookies ride a
+  // null-origin request anyway), and the real GET still requires a valid block
+  // JWT — the preflight is policy only, the token is the gate.
+  if (opts.allowOpaqueOrigin && origin === 'null') {
+    res.setHeader('Access-Control-Allow-Origin', 'null');
+    res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     if (req.method === 'OPTIONS') {
@@ -258,6 +352,19 @@ function isBlockJwt(token: string): boolean {
   }
 }
 
+// Per-token-type belt-and-suspenders age caps (replaces the old global
+// `maxTokenAge: '15m'` on jwtVerify). `exp` (the real lifetime, enforced by
+// jwtVerify) is the primary control; THIS is the redundant defence that catches
+// a signer bug emitting a too-long `exp` — applied PER TYPE so a 4h dev token is
+// allowed while every other token type stays capped at 15min. The 30s slack
+// matches the prior `clockTolerance: '30s'`.
+const MAX_TOKEN_AGE_DEFAULT_SECONDS = 15 * 60; // 15min — production/all non-dev tokens
+// 4h — dev:live tokens (dev:true claim). Imported from the SIGNER
+// (block-token.service.ts DEV_TOKEN_LIFETIME_SECONDS) so the verify cap can
+// never silently desync from the lifetime the signer actually stamps.
+const MAX_TOKEN_AGE_DEV_SECONDS = DEV_TOKEN_LIFETIME_SECONDS;
+const MAX_TOKEN_AGE_CLOCK_TOLERANCE_SECONDS = 30;
+
 export async function verifyBlockToken(token: string): Promise<BlockTokenClaims | null> {
   // L-VERIFY: require a kid and verify against exactly that one key. The
   // signer (BlockTokenService.sign) has stamped a `kid` (sha256 of the key
@@ -295,10 +402,13 @@ export async function verifyBlockToken(token: string): Promise<BlockTokenClaims 
         // sporadic 401s right at issuance time when verifier and signer
         // clocks drift even slightly (~1s is common in containerized envs).
         clockTolerance: '30s',
-        // B6: belt-and-suspenders cap. exp already enforces this since the
-        // signer sets it to iat+900s, but maxTokenAge defends against a
-        // future change that quietly extends the lifetime.
-        maxTokenAge: '15m',
+        // B6 (per-type, replaces the old global maxTokenAge: '15m'): the
+        // belt-and-suspenders age cap is enforced BELOW, after the claims are
+        // verified, so it can differ by token type (4h for dev:live tokens,
+        // 15min for everything else). jwtVerify STILL enforces `exp` here — the
+        // real lifetime — so removing maxTokenAge does NOT remove lifetime
+        // enforcement; it only lifts the single global age ceiling that would
+        // otherwise reject a legitimate 4h dev token. See MAX_TOKEN_AGE_* below.
       });
       const claims = payload as unknown as BlockTokenClaims;
       // B6: strict scalar-type assertions on every claim we trust. jose's
@@ -326,6 +436,44 @@ export async function verifyBlockToken(token: string): Promise<BlockTokenClaims 
       // a future handler that does claims.sub.startsWith('user:') and
       // parseInts without going through parseSubjectUserId.
       if (!isValidSubject(claims.sub)) return null;
+      // Maturity claim shape guard. The claim is optional (absent on legacy
+      // tokens), but if present it MUST be a finite number — a forged token
+      // carrying a non-numeric / NaN / Infinity maxBrowsingLevel is rejected
+      // outright so the generation clamp never coerces a junk ceiling into an
+      // unintended (wider) maturity. (Consumers ALSO fail closed on absence;
+      // this is the upstream belt that keeps a malformed claim from ever
+      // reaching them.) Same for the advisory `domain` string.
+      if (
+        claims.maxBrowsingLevel !== undefined &&
+        (typeof claims.maxBrowsingLevel !== 'number' || !Number.isFinite(claims.maxBrowsingLevel))
+      ) {
+        return null;
+      }
+      if (claims.domain !== undefined && typeof claims.domain !== 'string') {
+        return null;
+      }
+      // DEV-marker shape guard. The claim is optional (absent on every
+      // non-dev token), but if PRESENT it MUST be a boolean — a forged/garbage
+      // `dev` (string, number, object) is rejected outright so the max-age cap
+      // below can trust it. A signature-valid `dev:true` is only producible by
+      // our own signer (jwtVerify already checked the RS256 signature against
+      // our keys above), so the flag is trustworthy at this point.
+      if (claims.dev !== undefined && typeof claims.dev !== 'boolean') {
+        return null;
+      }
+      // Per-token-type max-age belt (replaces the global maxTokenAge). `exp`
+      // already enforced the real lifetime in jwtVerify; this re-checks the age
+      // against the type-specific cap so a signer bug emitting a too-long `exp`
+      // is still caught. FAIL-SAFE TO THE SHORTER CAP: only an explicit
+      // `dev === true` (validated boolean above) gets the 4h cap; absent /
+      // false / anything-else → the 15min cap.
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      const ageSeconds = nowSeconds - claims.iat;
+      const ageCapSeconds =
+        claims.dev === true ? MAX_TOKEN_AGE_DEV_SECONDS : MAX_TOKEN_AGE_DEFAULT_SECONDS;
+      if (ageSeconds > ageCapSeconds + MAX_TOKEN_AGE_CLOCK_TOLERANCE_SECONDS) {
+        return null;
+      }
       return claims;
     } catch {
       // try the next key
@@ -466,6 +614,24 @@ export function enforceContextBinding(
         }
         break;
       }
+      case 'apps:storage:shared:read': {
+        // SHARED (app-global) READS are allowed for anon — the shared list +
+        // counts are public within the app (the real per-op authorization + the
+        // min-trust gate live in `resolveSharedContext`, apps-shared.router). No
+        // extra request-shape binding here; presence of the scope is the check.
+        break;
+      }
+      case 'apps:storage:shared:write': {
+        // SHARED WRITES (append / vote / withdraw / report) are NEVER anonymous —
+        // they are attributed to the subject and pass the min-trust gate. Reject an
+        // anon subject here so wiring this scope can't silently fail open (mirrors
+        // the apps:storage:write case). The trust gate itself is enforced in
+        // `resolveSharedContext`.
+        if (claims.sub === 'anon') {
+          throw forbidden(`${scope} requires authenticated subject`);
+        }
+        break;
+      }
       default:
         // Fail closed (L-M6). Reaching here means a scope passed the
         // `isKnownBlockScope` gate above (it's in BLOCK_SCOPE_TO_OAUTH_BIT)
@@ -485,7 +651,7 @@ export function withBlockScope(
   opts: WithBlockScopeOpts
 ): NextApiHandler {
   return async (req, res) => {
-    const cors = await setBlockCors(req, res);
+    const cors = await setBlockCors(req, res, opts);
     if (cors === 'handled') return;
 
     const authHeader = req.headers.authorization ?? '';
@@ -540,19 +706,27 @@ export function withBlockScope(
       return;
     }
 
-    if (!claims.scopes.includes(opts.requiredScope)) {
-      res.status(403).json({ error: `missing required scope: ${opts.requiredScope}` });
-      return;
-    }
-
-    try {
-      enforceContextBinding(claims, req);
-    } catch (err) {
-      if (err instanceof ForbiddenError) {
-        res.status(403).json({ error: err.message });
+    // "Any valid block token" mode (opts.requiredScope omitted): the token has
+    // already passed full validation + the revocation check above. Skip the
+    // per-scope authorization check AND enforceContextBinding — these endpoints
+    // (the public catalog) authorize on token-validity alone and derive their
+    // only authority (the maturity ceiling) from claims.maxBrowsingLevel, not a
+    // scope. See WithBlockScopeOpts.requiredScope.
+    if (opts.requiredScope !== undefined) {
+      if (!claims.scopes.includes(opts.requiredScope)) {
+        res.status(403).json({ error: `missing required scope: ${opts.requiredScope}` });
         return;
       }
-      throw err;
+
+      try {
+        enforceContextBinding(claims, req);
+      } catch (err) {
+        if (err instanceof ForbiddenError) {
+          res.status(403).json({ error: err.message });
+          return;
+        }
+        throw err;
+      }
     }
 
     (req as BlockScopedNextApiRequest).blockClaims = claims;
@@ -643,9 +817,16 @@ export function withBlockScope(
               userId: userIdForLog,
               appBlockId: claims.appBlockId,
               blockInstanceId: claims.blockInstanceId,
-              scope: opts.requiredScope,
+              // In "any valid block token" mode there is no required scope; the
+            // audit column is NOT NULL, so record a stable sentinel that
+            // distinguishes these rows from real per-scope invocations.
+            scope: opts.requiredScope ?? '(any-token)',
               endpoint: endpointForLog,
               statusCode: res.statusCode,
+              // Phase 2: a dev token MAY carry a synthetic non-FK appBlockId (a
+              // pre-approval dev-tunnel app) — let the audit write persist it via
+              // the nullable-appBlockId path instead of FK-failing + swallowing.
+              dev: claims.dev === true,
             })
           )
           .catch(() => {

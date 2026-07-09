@@ -72,6 +72,92 @@ describe('BlockTokenService.sign — JWT round-trip', () => {
     expect(payload.buzzBudget).toBe(200);
   });
 
+  it('stamps maxBrowsingLevel + domain claims when supplied (SFW domain)', async () => {
+    const { BlockTokenService } = await import('../block-token.service');
+    const r = await BlockTokenService.sign({
+      userId: 1,
+      blockId: 'b',
+      appId: 'a',
+      appBlockId: 'apb_a',
+      blockInstanceId: 'bki',
+      scopes: ['ai:write:budgeted'],
+      ctx: { modelId: 1 },
+      domain: 'green',
+      maxBrowsingLevel: 3, // sfwBrowsingLevelsFlag (PG | PG13)
+    });
+    const { payload } = await jwtVerify(r.token, publicKey, {
+      issuer: 'civitai',
+      audience: 'civitai-app-block',
+      algorithms: ['RS256'],
+    });
+    expect(payload.maxBrowsingLevel).toBe(3);
+    expect(payload.domain).toBe('green');
+  });
+
+  it('stamps the mature ceiling for a red domain', async () => {
+    const { BlockTokenService } = await import('../block-token.service');
+    const r = await BlockTokenService.sign({
+      userId: 1,
+      blockId: 'b',
+      appId: 'a',
+      appBlockId: 'apb_a',
+      blockInstanceId: 'bki',
+      scopes: ['ai:write:budgeted'],
+      ctx: { modelId: 1 },
+      domain: 'red',
+      maxBrowsingLevel: 31, // allBrowsingLevelsFlag
+    });
+    const { payload } = await jwtVerify(r.token, publicKey, {
+      issuer: 'civitai',
+      audience: 'civitai-app-block',
+      algorithms: ['RS256'],
+    });
+    expect(payload.maxBrowsingLevel).toBe(31);
+    expect(payload.domain).toBe('red');
+  });
+
+  it('omits the maturity claims entirely when not supplied (legacy path)', async () => {
+    const { BlockTokenService } = await import('../block-token.service');
+    const r = await BlockTokenService.sign({
+      userId: 1,
+      blockId: 'b',
+      appId: 'a',
+      appBlockId: 'apb_a',
+      blockInstanceId: 'bki',
+      scopes: ['models:read:self'],
+      ctx: { modelId: 1 },
+    });
+    const { payload } = await jwtVerify(r.token, publicKey, {
+      issuer: 'civitai',
+      audience: 'civitai-app-block',
+      algorithms: ['RS256'],
+    });
+    expect(payload.maxBrowsingLevel).toBeUndefined();
+    expect(payload.domain).toBeUndefined();
+  });
+
+  it('omits the domain claim when null (host did not resolve a color) but keeps the ceiling', async () => {
+    const { BlockTokenService } = await import('../block-token.service');
+    const r = await BlockTokenService.sign({
+      userId: 1,
+      blockId: 'b',
+      appId: 'a',
+      appBlockId: 'apb_a',
+      blockInstanceId: 'bki',
+      scopes: ['models:read:self'],
+      ctx: { modelId: 1 },
+      domain: null,
+      maxBrowsingLevel: 3, // still the fail-closed SFW ceiling
+    });
+    const { payload } = await jwtVerify(r.token, publicKey, {
+      issuer: 'civitai',
+      audience: 'civitai-app-block',
+      algorithms: ['RS256'],
+    });
+    expect(payload.domain).toBeUndefined();
+    expect(payload.maxBrowsingLevel).toBe(3);
+  });
+
   it('signs anon subjects as sub="anon"', async () => {
     const { BlockTokenService } = await import('../block-token.service');
     const r = await BlockTokenService.sign({
@@ -244,6 +330,74 @@ describe('Settings-scope tokens get a shorter lifetime (audit H-2 partial)', () 
       audience: 'civitai-app-block',
       algorithms: ['RS256'],
     });
+    const ttl = (payload.exp as number) - (payload.iat as number);
+    expect(ttl).toBeLessThanOrEqual(900);
+    expect(ttl).toBeGreaterThan(890);
+  });
+
+  it('dev:true tokens carry a ~4h exp + a dev:true claim (overrides the default 15min)', async () => {
+    const { BlockTokenService } = await import('../block-token.service');
+    const r = await BlockTokenService.sign({
+      userId: 1,
+      blockId: 'b',
+      appId: 'a',
+      appBlockId: 'apb_a',
+      blockInstanceId: 'bki',
+      scopes: ['models:read:self'],
+      ctx: { modelId: 1 },
+      dev: true,
+    });
+    const { payload } = await jwtVerify(r.token, publicKey, {
+      issuer: 'civitai',
+      audience: 'civitai-app-block',
+      algorithms: ['RS256'],
+    });
+    const ttl = (payload.exp as number) - (payload.iat as number);
+    expect(ttl).toBeLessThanOrEqual(4 * 60 * 60);
+    expect(ttl).toBeGreaterThan(4 * 60 * 60 - 10);
+    expect(payload.dev).toBe(true);
+  });
+
+  it('dev:true OVERRIDES the settings-scope 5min branch (4h wins)', async () => {
+    // Defensive precedence assertion — dev page tokens never carry settings
+    // scopes in practice, but if both were ever set, dev (4h) must win.
+    const { BlockTokenService } = await import('../block-token.service');
+    const r = await BlockTokenService.sign({
+      userId: 1,
+      blockId: 'b',
+      appId: 'a',
+      appBlockId: 'apb_a',
+      blockInstanceId: 'bki',
+      scopes: ['block:settings:read'],
+      ctx: { modelId: 1 },
+      dev: true,
+    });
+    const { payload } = await jwtVerify(r.token, publicKey, {
+      issuer: 'civitai',
+      audience: 'civitai-app-block',
+      algorithms: ['RS256'],
+    });
+    const ttl = (payload.exp as number) - (payload.iat as number);
+    expect(ttl).toBeGreaterThan(4 * 60 * 60 - 10);
+  });
+
+  it('omits the dev claim entirely when dev is not set (byte-identical to today)', async () => {
+    const { BlockTokenService } = await import('../block-token.service');
+    const r = await BlockTokenService.sign({
+      userId: 1,
+      blockId: 'b',
+      appId: 'a',
+      appBlockId: 'apb_a',
+      blockInstanceId: 'bki',
+      scopes: ['models:read:self'],
+      ctx: { modelId: 1 },
+    });
+    const { payload } = await jwtVerify(r.token, publicKey, {
+      issuer: 'civitai',
+      audience: 'civitai-app-block',
+      algorithms: ['RS256'],
+    });
+    expect(payload.dev).toBeUndefined();
     const ttl = (payload.exp as number) - (payload.iat as number);
     expect(ttl).toBeLessThanOrEqual(900);
     expect(ttl).toBeGreaterThan(890);

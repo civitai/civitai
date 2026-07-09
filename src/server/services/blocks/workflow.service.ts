@@ -1,13 +1,14 @@
 import { TRPCError } from '@trpc/server';
 import type { Workflow, WorkflowStatus } from '@civitai/client';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { dbRead } from '~/server/db/client';
 import { getBaseModelSetType } from '~/shared/constants/generation.constants';
+import { getEcosystem } from '~/shared/constants/basemodel.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import type {
   BlockWorkflowBody,
   BlockWorkflowSnapshot,
 } from '~/server/schema/blocks/workflow.schema';
-import type { GenerateImageSchema } from '~/server/schema/orchestrator/textToImage.schema';
 
 // Map orchestrator-internal states the block contract doesn't expose to the
 // closest publicly-modeled status. `unassigned`/`preparing`/`scheduled` are
@@ -48,6 +49,7 @@ export function snapshotFromWorkflow(workflow: Workflow): BlockWorkflowSnapshot 
     }
   }
   const total = workflow.cost?.total;
+  const spentAccountType = primaryDebitedAccountType(workflow.transactions);
   return {
     // A whatif/estimate workflow has no orchestrator id. The block SDK's
     // inbound validator (isValidWorkflowSnapshot) DROPS any snapshot whose
@@ -61,7 +63,42 @@ export function snapshotFromWorkflow(workflow: Workflow): BlockWorkflowSnapshot 
     status,
     ...(typeof total === 'number' ? { cost: { total } } : {}),
     ...(imageUrls.length > 0 ? { imageUrls } : {}),
+    // Surface the realized spent account (money page blocks). Additive +
+    // optional — omitted when there's no debit to report so every existing
+    // snapshot stays byte-identical to before.
+    ...(spentAccountType ? { spentAccountType } : {}),
   };
+}
+
+// The three spendable buzz accounts a snapshot surfaces. `fakeRed` is
+// disabled/internal and never a real spend; credits and any other account type
+// are not reported.
+const SNAPSHOT_SPENDABLE_ACCOUNTS: ReadonlySet<string> = new Set<BuzzSpendType>([
+  'blue',
+  'green',
+  'yellow',
+]);
+
+/**
+ * The buzz account that PRIMARILY funded a generation — the accountType of the
+ * largest realized `debit` on the orchestrator's `transactions.list`. A single
+ * generation can split across free (blue) and paid (green/yellow) buzz; we
+ * report the account with the biggest debit as the primary funder. Returns
+ * `undefined` when there are no debits (estimate / cache-hit / no-transactions
+ * snapshot) or the largest debit is an internal-only account (fakeRed), so the
+ * field is simply omitted rather than leaking a non-spendable type.
+ */
+function primaryDebitedAccountType(
+  transactions: Workflow['transactions']
+): BuzzSpendType | undefined {
+  const debits = (transactions?.list ?? []).filter((t) => t.type === 'debit');
+  if (debits.length === 0) return undefined;
+  const largest = debits.reduce((a, b) =>
+    Math.abs(b.amount ?? 0) > Math.abs(a.amount ?? 0) ? b : a
+  );
+  return SNAPSHOT_SPENDABLE_ACCOUNTS.has(largest.accountType)
+    ? (largest.accountType as BuzzSpendType)
+    : undefined;
 }
 
 /**
@@ -216,46 +253,66 @@ function defaultDimensions(baseModel: string): { width: number; height: number }
 }
 
 /**
- * Translate the block's narrow body into the platform's `generateImageSchema`
- * shape. Defaults are intentionally conservative — matches the comics-router
- * preset (sampler=Euler, steps=25, priority=low) so block submissions and
- * platform submissions share the same orchestrator cost profile.
+ * Translate the block's narrow body into the platform's generation-graph
+ * `input` (the flat `Record<string, unknown>` shape `generateFromGraph` /
+ * `createWorkflowStepsFromGraphInput` consume). Defaults are intentionally
+ * conservative — matches the comics-router preset (sampler=Euler, steps=25,
+ * priority=low) so block submissions and platform submissions share the same
+ * orchestrator cost profile.
  *
- * `checkpointVersionId` is now the caller's responsibility (passed by the
- * router after `resolveBlockCheckpoint`). For Checkpoint-bound installs the
- * resolver returns `body.modelVersionId` here, so the resources array has
- * exactly one entry — the model is its own anchor. For LoRA installs the
- * resolver returns a different versionId; we prepend that as the anchor
- * and push the LoRA after it.
+ * Migrated off the deleted legacy `createTextToImageStep` path (which consumed
+ * the old `{ params, resources }` `GenerateImageSchema`). The new graph
+ * pipeline owns resource enrichment, AIR resolution, canGenerate/availability
+ * gating, and POI — so this only has to produce a valid graph input.
+ *
+ * Resource model:
+ *   - `model` is the CHECKPOINT (the graph's anchor); `resources` are the
+ *     additional networks (LoRAs). This is the graph's split — distinct from
+ *     the old shape, which put the checkpoint at `resources[0]`.
+ *   - `ecosystem` is derived from the CHECKPOINT's baseModel (`checkpointBaseModel`),
+ *     NOT the bound model's — for a non-Checkpoint install the resolver picks a
+ *     default checkpoint that may belong to a different base-model family.
+ *
+ * `checkpointVersionId` / `checkpointBaseModel` are the caller's responsibility
+ * (passed by the router after `resolveBlockCheckpoint`). For Checkpoint-bound
+ * installs both describe `body.modelVersionId` and `resources` is empty (the
+ * model is its own anchor). For LoRA installs the resolver returns a different
+ * checkpoint; the bound LoRA is pushed into `resources`.
+ *
+ * DIMENSIONS: the graph's `aspectRatio` node snaps the block-supplied
+ * width/height to the ecosystem's nearest canonical bucket (the block sends
+ * arbitrary 64–2048 dims from untrusted iframe UI). This is a deliberate
+ * behavior change from the deleted path, which passed exact dims through — the
+ * orchestrator prefers canonical dims and the main generator already snaps.
  */
 export function buildTextToImageInput(
   body: Extract<BlockWorkflowBody, { kind: 'textToImage' }>,
-  resolved: { baseModel: string; modelType: string; checkpointVersionId: number }
-): GenerateImageSchema {
-  const dims = defaultDimensions(resolved.baseModel);
+  resolved: {
+    baseModel: string;
+    modelType: string;
+    checkpointVersionId: number;
+    checkpointBaseModel: string;
+  }
+): Record<string, unknown> {
+  const dims = defaultDimensions(resolved.checkpointBaseModel);
   const width = body.params.width ?? dims.width;
   const height = body.params.height ?? dims.height;
 
-  const resources: Array<{ id: number; strength: number }> = [
-    { id: resolved.checkpointVersionId, strength: 1 },
-  ];
-  // Avoid duplicating the same versionId on both sides when the model is
-  // itself the anchor — that would double-bill the resource and double-
-  // count strength.
+  // LoRAs only — the checkpoint is the `model` anchor, not a `resources` entry.
+  const resources: Array<{ id: number; strength: number }> = [];
+  // The bound model is itself a LoRA (LoRA install) — push it as a network.
+  // A Checkpoint-bound install has no additional network here.
   if (resolved.modelType !== 'Checkpoint') {
     resources.push({ id: body.modelVersionId, strength: 1 });
   }
 
   // Page-LoRA (Increment 1): fan each caller-supplied additional resource into
-  // the generic `resources` array as { id, strength }. The orchestrator step
-  // (createTextToImageStep) consumes `resources` generically and builds
-  // additionalNetworks from the non-Checkpoint entries — no further step change
-  // is needed. DEDUPE against every id already present (the checkpoint anchor
-  // AND the bound-model anchor pushed above) so a LoRA that coincides with the
+  // `resources` as { id, strength }. DEDUPE against the checkpoint anchor AND
+  // the bound-model network already present so a LoRA that coincides with the
   // anchor isn't double-billed / double-counted in strength. A LoRA that
   // duplicates another LoRA keeps its first occurrence (first-wins).
   if (body.additionalResources?.length) {
-    const seen = new Set(resources.map((r) => r.id));
+    const seen = new Set<number>([resolved.checkpointVersionId, ...resources.map((r) => r.id)]);
     for (const r of body.additionalResources) {
       if (seen.has(r.modelVersionId)) continue;
       seen.add(r.modelVersionId);
@@ -263,31 +320,30 @@ export function buildTextToImageInput(
     }
   }
 
+  // Ecosystem drives the graph's branch + resource enrichment. Fall back to
+  // SDXL (the graph's ultimate fallback) if the checkpoint's baseModel is
+  // unrecognized — the resource belt will still gate it.
+  const ecosystem = getEcosystem(resolved.checkpointBaseModel)?.key ?? 'SDXL';
+
   return {
-    params: {
-      prompt: body.params.prompt,
-      negativePrompt: body.params.negativePrompt,
-      cfgScale: body.params.cfgScale,
-      sampler: body.params.sampler ?? 'Euler',
-      steps: body.params.steps ?? 25,
-      seed: body.params.seed ?? null,
-      // Per-resource clipSkip carried from the showcase image's meta.
-      // Flux pipelines ignore it; SD1/SDXL graphs apply it at the
-      // CLIP-encoder node. Omit when not set so the platform uses its
-      // default rather than 0 (which would skip no layers in some graphs).
-      ...(body.params.clipSkip != null ? { clipSkip: body.params.clipSkip } : {}),
-      quantity: body.params.quantity,
-      baseModel: resolved.baseModel,
-      width,
-      height,
-      workflow: 'txt2img',
-      draft: false,
-      disablePoi: false,
-      priority: 'low',
-      sourceImage: null,
-    },
+    workflow: 'txt2img',
+    ecosystem,
+    model: { id: resolved.checkpointVersionId },
     resources,
-    tags: [],
-    tips: { creators: 0, civitai: 0 },
-  } as unknown as GenerateImageSchema;
+    prompt: body.params.prompt,
+    ...(body.params.negativePrompt != null ? { negativePrompt: body.params.negativePrompt } : {}),
+    ...(body.params.cfgScale != null ? { cfgScale: body.params.cfgScale } : {}),
+    sampler: body.params.sampler ?? 'Euler',
+    steps: body.params.steps ?? 25,
+    ...(body.params.seed != null ? { seed: body.params.seed } : {}),
+    // Per-resource clipSkip carried from the showcase image's meta. Flux
+    // pipelines have no clipSkip node (silently ignored); SD1/SDXL apply it at
+    // the CLIP-encoder node. Omit when not set so the ecosystem uses its default.
+    ...(body.params.clipSkip != null ? { clipSkip: body.params.clipSkip } : {}),
+    // The aspectRatio node accepts { value, width, height } and snaps to the
+    // nearest bucket by dimensions — see the DIMENSIONS note above.
+    aspectRatio: { value: `${width}:${height}`, width, height },
+    quantity: body.params.quantity,
+    priority: 'low',
+  };
 }

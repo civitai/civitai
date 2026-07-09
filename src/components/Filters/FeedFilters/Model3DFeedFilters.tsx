@@ -19,6 +19,7 @@ import { StagedFiltersFooter } from '~/components/Filters/StagedFiltersFooter';
 import { useStagedFilters } from '~/components/Filters/useStagedFilters';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { Model3DSort } from '~/server/schema/model3d.schema';
@@ -49,8 +50,8 @@ const periodOptions = (Object.values(MetricTimeframe) as MetricTimeframe[]).map(
 
 type Model3DFilterState = {
   period: MetricTimeframe;
-  rigged: boolean;
   animated: boolean;
+  unrated: boolean;
 };
 
 export function Model3DFeedFilters({ ...groupProps }: GroupProps) {
@@ -58,6 +59,8 @@ export function Model3DFeedFilters({ ...groupProps }: GroupProps) {
   const { query } = router;
   const isClient = useIsClient();
   const mobile = useIsMobile();
+  const currentUser = useCurrentUser();
+  const isModerator = !!currentUser?.isModerator;
 
   const sort = useMemo<Model3DSort>(() => {
     const raw = typeof query.sort === 'string' ? query.sort : undefined;
@@ -69,8 +72,8 @@ export function Model3DFeedFilters({ ...groupProps }: GroupProps) {
     return raw && PERIOD_VALUES.has(raw) ? (raw as MetricTimeframe) : MetricTimeframe.AllTime;
   }, [query.period]);
 
-  const rigged = query.rigged === 'true';
   const animated = query.animated === 'true';
+  const unrated = isModerator && query.unrated === 'true';
 
   const setQuery = useCallback(
     (patch: Record<string, string | undefined>) => {
@@ -85,23 +88,27 @@ export function Model3DFeedFilters({ ...groupProps }: GroupProps) {
 
   // Committed = URL-backed state. Apply writes back to URL via setQuery.
   const committed: Model3DFilterState = useMemo(
-    () => ({ period, rigged, animated }),
-    [period, rigged, animated]
+    () => ({ period, animated, unrated }),
+    [period, animated, unrated]
   );
 
   const handleApply = useCallback(
     (next: Model3DFilterState) => {
       setQuery({
         period: next.period === MetricTimeframe.AllTime ? undefined : next.period,
-        rigged: next.rigged ? 'true' : undefined,
         animated: next.animated ? 'true' : undefined,
+        unrated: next.unrated ? 'true' : undefined,
+        // Clear any legacy `?rigged=` left in the URL from before the
+        // rigging filter was removed (the Meshy API now binds rigging
+        // to animation, so the filter is no longer meaningful).
+        rigged: undefined,
       });
     },
     [setQuery]
   );
 
   const handleClear = useCallback(() => {
-    setQuery({ period: undefined, rigged: undefined, animated: undefined });
+    setQuery({ period: undefined, animated: undefined, unrated: undefined, rigged: undefined });
   }, [setQuery]);
 
   const { opened, toggle, close, mergedFilters, isDirty, patchPending, apply, reset, clearAndClose } =
@@ -113,8 +120,8 @@ export function Model3DFeedFilters({ ...groupProps }: GroupProps) {
 
   const filterLength =
     (mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0) +
-    (mergedFilters.rigged ? 1 : 0) +
-    (mergedFilters.animated ? 1 : 0);
+    (mergedFilters.animated ? 1 : 0) +
+    (mergedFilters.unrated ? 1 : 0);
 
   const target = (
     <Indicator
@@ -157,17 +164,20 @@ export function Model3DFeedFilters({ ...groupProps }: GroupProps) {
         <Divider label="Modifiers" className="text-sm font-bold" mb={4} />
         <div className="flex flex-wrap gap-2">
           <FilterChip
-            checked={mergedFilters.rigged}
-            onChange={(checked) => patchPending({ rigged: checked })}
-          >
-            <span>Rigged</span>
-          </FilterChip>
-          <FilterChip
             checked={mergedFilters.animated}
             onChange={(checked) => patchPending({ animated: checked })}
           >
             <span>Animated</span>
           </FilterChip>
+          {/* Mod-only: surface not-yet-rated models so they can be triaged. */}
+          {isModerator && (
+            <FilterChip
+              checked={mergedFilters.unrated}
+              onChange={(checked) => patchPending({ unrated: checked })}
+            >
+              <span>Unrated</span>
+            </FilterChip>
+          )}
         </div>
       </Stack>
     </Stack>

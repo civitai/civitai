@@ -1,58 +1,70 @@
-import { Client } from '@axiomhq/axiom-node';
-import { isProd } from '~/env/other';
+// App shim for @civitai/axiom. The package owns its env schema (incl. PODNAME and
+// LOG_ERRORS_TO_STDOUT) plus the logToAxiom/safeError implementations; the app instantiates the
+// logger, re-exports the shared names, and keeps the TRPC-aware fault helpers here (they depend on
+// @trpc/server, an app concern, not the app-agnostic package).
+import { TRPCError } from '@trpc/server';
+import type { TRPC_ERROR_CODE_KEY } from '@trpc/server/rpc';
+import { createAxiomLogger, safeError } from '@civitai/axiom/client';
 import { env } from '~/env/server';
 
-const shouldConnect = !env.IS_BUILD && env.AXIOM_TOKEN && env.AXIOM_ORG_ID;
-const axiom = shouldConnect
-  ? new Client({
-      token: env.AXIOM_TOKEN,
-      orgId: env.AXIOM_ORG_ID,
-    })
-  : null;
+// The build guard is a Next.js concern, so it lives here in the app shim — not in
+// the app-agnostic @civitai/axiom package. Skip the client during `next build`.
+const noopLog = async (_data: MixedObject, _datastream?: string) => {};
+
+export const logToAxiom = env.IS_BUILD ? noopLog : createAxiomLogger().logToAxiom;
+export { safeError };
 
 /**
- * Extract only safe primitive fields from an error for logging.
+ * TRPCError codes that represent a CLIENT fault — i.e. normal user-feedback that
+ * a request was rejected (bad input, not allowed, not found, rate-limited, etc.).
+ * These are NOT incidents and must never be logged at error severity, or they
+ * drown out the real server-side failures on the error board.
  *
- * Logging raw error objects (especially from axios or AWS SDK) blows up the
- * Axiom schema because each unique key in `.config`, `.headers`, `.cause`,
- * `.$metadata`, `.config.data._readableState`, etc. becomes a separate field.
- * Always pass errors through this helper before logging them.
+ * Everything NOT in this set (notably INTERNAL_SERVER_ERROR, TIMEOUT) — and any
+ * non-TRPCError thrown value — is treated as a SERVER fault worth an error log.
  */
-export function safeError(e: unknown): MixedObject | undefined {
-  if (e == null) return undefined;
-  if (e instanceof Error) {
-    const anyErr = e as { code?: unknown; cause?: unknown };
-    const cause = anyErr.cause;
+const CLIENT_FAULT_TRPC_CODES: ReadonlySet<TRPC_ERROR_CODE_KEY> = new Set([
+  'BAD_REQUEST',
+  'FORBIDDEN',
+  'UNAUTHORIZED',
+  'NOT_FOUND',
+  'TOO_MANY_REQUESTS',
+  'CONFLICT',
+  'PRECONDITION_FAILED',
+]);
+
+/**
+ * Classify a thrown value as a client fault (expected user feedback) or a server
+ * fault (a real failure worth an error log). A non-TRPCError is always a server
+ * fault — there was no deliberate validation rejection, so the cause is unknown.
+ */
+export function classifyErrorFault(e: unknown): 'client' | 'server' {
+  if (e instanceof TRPCError && CLIENT_FAULT_TRPC_CODES.has(e.code)) return 'client';
+  return 'server';
+}
+
+/**
+ * Build the `error` field for a server-fault log entry, UN-MASKING the underlying
+ * cause.
+ *
+ * `errorHandling.ts` rewrites the user-facing message to a generic
+ * "An unexpected error ocurred..." but preserves the original error on `.cause`
+ * (see `throwDbError` / `throwInternalServerError` / `handleTRPCError`). Logging
+ * only the masked TRPCError therefore hides the actual failure. This walks to the
+ * cause so the diagnosable signal (the original message + stack + Prisma code)
+ * lands in the log alongside the surfaced TRPCError.
+ */
+export function buildServerFaultErrorLog(e: unknown): MixedObject {
+  if (e instanceof TRPCError) {
     return {
+      code: e.code,
       name: e.name,
       message: e.message,
       stack: e.stack,
-      code: anyErr.code,
-      causeMessage:
-        cause instanceof Error ? cause.message : cause != null ? String(cause) : undefined,
+      // The pre-mask original — carries the real message/stack/Prisma code.
+      cause: safeError(e.cause),
     };
   }
-  return { message: String(e) };
-}
-
-export async function logToAxiom(data: MixedObject, datastream?: string) {
-  const sendData = { pod: env.PODNAME, ...data };
-  if (isProd) {
-    if (!axiom) return;
-    datastream ??= env.AXIOM_DATASTREAM;
-    if (!datastream) return;
-
-    // Write stderr BEFORE awaiting Axiom — when Axiom is degraded,
-    // ingestEvents rejects and the rest of this function never runs.
-    // Loki ingest depends on the stderr line; without this ordering,
-    // the Grafana alerts that consume `{ "name": "sysredis-fail-open",
-    // ... }` go silent during the exact multi-service incident class
-    // they exist to handle (sysRedis + Axiom both down).
-    if (process.env.LOG_ERRORS_TO_STDOUT === 'true')
-      console.error(JSON.stringify({ _axiom: datastream, ...sendData }));
-
-    await axiom.ingestEvents(datastream, sendData);
-  } else {
-    console.log('logToAxiom', sendData);
-  }
+  // Non-TRPCError: log the full error directly (already the real failure).
+  return safeError(e) ?? { message: String(e) };
 }

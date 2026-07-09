@@ -71,21 +71,25 @@ export function ArticleRatingReviewCard({
   const { article, user } = review;
   const isResolved = review.status !== ReportStatus.Pending;
 
+  // No preselection: the mod must deliberately pick a level before resolving
+  // (Submit stays disabled until then). Resolved cards show the applied level.
   const [selectedLevel, setSelectedLevel] = useState<string>(
-    String(review.appliedLevel ?? review.suggestedLevel)
+    isResolved && review.appliedLevel != null ? String(review.appliedLevel) : ''
   );
   const [modComment, setModComment] = useState<string>(review.modComment ?? '');
   const [resolvedLocal, setResolvedLocal] = useState<boolean>(isResolved);
 
   const utils = trpc.useUtils();
   const { mutate, isPending } = trpc.article.resolveRatingReview.useMutation({
-    onSuccess: (_, variables) => {
+    onSuccess: (data) => {
       setResolvedLocal(true);
       showSuccessNotification({
+        // Status is derived server-side: Actioned = the owner's suggestion was
+        // granted; Unactioned = a different level was applied (overrode).
         message:
-          variables.status === ReportStatus.Actioned
-            ? 'Rating review approved'
-            : 'Rating review rejected',
+          data.status === ReportStatus.Actioned
+            ? 'Owner suggestion approved'
+            : 'Rating set to a different level',
       });
       // Optimistically drop the resolved review from the active page cache
       // for the current filter. Skipping the full invalidate keeps the page
@@ -100,34 +104,41 @@ export function ArticleRatingReviewCard({
           })),
         };
       });
+      // Refresh the queue badges. Single cheap groupBy — safe to invalidate
+      // even while the paginated list uses optimistic removal above.
+      utils.article.getRatingReviewCounts.invalidate();
     },
     onError: (error) => {
       showErrorNotification({ error: new Error(error.message), title: 'Failed to resolve review' });
     },
   });
 
-  const handleApprove = () => {
+  const handleResolve = () => {
+    if (!selectedLevel) return;
     mutate({
       reviewId: review.id,
-      status: ReportStatus.Actioned,
       appliedLevel: Number(selectedLevel),
       modComment: modComment.trim() || undefined,
     });
   };
 
-  const handleDismiss = () => {
-    mutate({
-      reviewId: review.id,
-      status: ReportStatus.Unactioned,
-      modComment: modComment.trim() || undefined,
-    });
-  };
-
-  const dismissDisabled = isPending || resolvedLocal;
-  const approveDisabled = isPending || resolvedLocal;
+  // Submit is gated on a deliberate level pick. When the pick matches the
+  // owner's suggestion the action grants it ("Approve"); otherwise the mod is
+  // overriding to a different level ("Set rating to").
+  const hasPick = selectedLevel !== '';
+  const grantsSuggestion = hasPick && Number(selectedLevel) === review.suggestedLevel;
+  const submitDisabled = isPending || resolvedLocal || !hasPick;
+  const submitLabel = !hasPick
+    ? 'Resolve'
+    : grantsSuggestion
+    ? `Approve as ${getBrowsingLevelLabel(Number(selectedLevel))}`
+    : `Set rating to ${getBrowsingLevelLabel(Number(selectedLevel))}`;
 
   const articleHref = `/articles/${article.id}`;
   const userHref = user.username ? `/user/${user.username}` : undefined;
+  // Live cover is resolved from `coverId` server-side; `article.cover` is the
+  // legacy URL column kept only as a fallback for very old articles.
+  const coverSrc = article.coverImage?.url ?? article.cover;
 
   return (
     <div
@@ -138,9 +149,9 @@ export function ArticleRatingReviewCard({
       {/* Cover */}
       <div className="shrink-0">
         <Link href={articleHref} target="_blank">
-          {article.cover ? (
+          {coverSrc ? (
             <EdgeMedia2
-              src={article.cover}
+              src={coverSrc}
               type="image"
               width={240}
               style={{
@@ -258,42 +269,72 @@ export function ArticleRatingReviewCard({
               maxLength={1000}
             />
             <Text size="xs" c="dimmed">
-              Approving locks the rating at this level until a moderator clears it. Owner edits
-              won&apos;t drop the rating below it automatically — but a re-dispute will auto-approve
-              if a rescan agrees.
+              Pick the correct level and resolve. This locks the rating at that level until a
+              moderator clears it — owner edits won&apos;t drop it below automatically, but a
+              re-dispute will auto-approve if a rescan agrees. Matching the owner&apos;s suggestion
+              approves it; any other level overrides to your ruling.
             </Text>
             <Group justify="flex-end" gap="xs">
               <Button
-                color="red"
-                variant="filled"
-                disabled={dismissDisabled}
-                loading={isPending}
-                onClick={handleDismiss}
-              >
-                Reject
-              </Button>
-              <Button
-                color="teal"
-                disabled={approveDisabled}
-                onClick={handleApprove}
+                color={grantsSuggestion ? 'teal' : 'blue'}
+                disabled={submitDisabled}
+                onClick={handleResolve}
                 loading={isPending}
               >
-                Approve as {getBrowsingLevelLabel(Number(selectedLevel))}
+                {submitLabel}
               </Button>
             </Group>
           </Stack>
         ) : (
-          <Stack gap={4}>
-            <Text size="xs" c="dimmed" fw={500}>
-              Moderator note
-            </Text>
-            <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
-              {review.modComment?.trim() || (
-                <Text component="span" size="sm" c="dimmed" fs="italic">
-                  No note
+          <Stack gap="xs">
+            {/* Audit trail: who actioned this review and when. `resolver` is
+                null for auto-approved rows (a rescan agreed with the owner). */}
+            <Group gap={6} wrap="nowrap">
+              <Text size="xs" c="dimmed" fw={500}>
+                {review.resolver ? 'Resolved by' : 'Resolved'}
+              </Text>
+              {review.resolver ? (
+                <Group gap={4} wrap="nowrap">
+                  <Avatar src={review.resolver.image ?? undefined} size={18} radius="xl" />
+                  {review.resolver.username ? (
+                    <Text
+                      component={Link}
+                      href={`/user/${review.resolver.username}`}
+                      target="_blank"
+                      size="xs"
+                      c="dimmed"
+                    >
+                      {review.resolver.username}
+                    </Text>
+                  ) : (
+                    <Text size="xs" c="dimmed">
+                      User #{review.resolver.id}
+                    </Text>
+                  )}
+                </Group>
+              ) : (
+                <Text size="xs" c="dimmed" fs="italic">
+                  auto-approved
                 </Text>
               )}
-            </Text>
+              {review.resolvedAt ? (
+                <Text size="xs" c="dimmed">
+                  · {new Date(review.resolvedAt).toLocaleString()}
+                </Text>
+              ) : null}
+            </Group>
+            <Stack gap={4}>
+              <Text size="xs" c="dimmed" fw={500}>
+                Moderator note
+              </Text>
+              <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
+                {review.modComment?.trim() || (
+                  <Text component="span" size="sm" c="dimmed" fs="italic">
+                    No note
+                  </Text>
+                )}
+              </Text>
+            </Stack>
           </Stack>
         )}
       </Stack>

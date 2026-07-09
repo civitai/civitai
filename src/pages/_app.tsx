@@ -5,8 +5,9 @@ import dynamic from 'next/dynamic';
 // before any <Link> mounts — see the file for rationale.
 import '~/utils/disable-router-prefetch';
 import { getCookie, getCookies, deleteCookie } from 'cookies-next';
-import type { Session } from 'next-auth';
-import { SessionProvider } from 'next-auth/react';
+import type { Session } from '~/types/session';
+import { SessionProvider } from '~/providers/SessionProvider';
+import { resolveAuthGuard } from '~/server/auth/route-guard';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
@@ -39,7 +40,7 @@ import { ToursProvider } from '~/components/Tours/ToursProvider';
 import { TrackPageView } from '~/components/TrackView/TrackPageView';
 import { UpdateRequiredWatcher } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
 import { env } from '~/env/client';
-import { isDev, isProd } from '~/env/other';
+import { isDev, isPreview, isProd } from '~/env/other';
 import { civitaiTokenCookieName } from '~/libs/auth';
 import { ActivityReportingProvider } from '~/providers/ActivityReportingProvider';
 import { AppProvider } from '~/providers/AppProvider';
@@ -49,15 +50,23 @@ import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { FiltersProvider } from '~/providers/FiltersProvider';
 import { ThirdPartyConsentProvider } from '~/components/Consent/ThirdPartyConsentProvider';
 import { GoogleAnalytics } from '~/providers/GoogleAnalytics';
+import { FaroProvider } from '~/components/Faro/FaroProvider';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 // import { PaddleProvider } from '~/providers/PaddleProvider';
 // import { PaypalProvider } from '~/providers/PaypalProvider';
 // import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { ThemeProvider } from '~/providers/ThemeProvider';
 import type { UserContentSettings } from '~/server/schema/user.schema';
+import type { UserSettingsChat } from '~/server/schema/chat.schema';
+import { resolveChatSettings } from '~/server/schema/chat.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { TosMeta } from '~/server/services/content.service';
 import type { AnnouncementsSeed } from '~/providers/announcements-seed';
+import type { DismissedByType } from '~/components/Announcements/announcements-dismissed-cookie';
+import {
+  ANNOUNCEMENTS_DISMISSED_COOKIE,
+  parseDismissedCookieValue,
+} from '~/components/Announcements/announcements-dismissed-cookie';
 import type { BrowsingSettingsAddon } from '~/shared/constants/browsing-settings-addons';
 import type { ParsedCookies } from '~/shared/utils/cookies';
 import { parseCookies } from '~/shared/utils/cookies';
@@ -104,10 +113,17 @@ type CustomAppProps = {
   userFeatureFlags?: FeatureAccess;
   tosMeta?: TosMeta;
   announcements?: AnnouncementsSeed;
+  announcementsDismissed?: DismissedByType;
   following?: number[];
   seed: number;
   settings: UserContentSettings;
   browsingSettingsAddons: BrowsingSettingsAddon[];
+  liveNow: boolean;
+  // SSR-seeded `chat.getUserSettings` (logged-in only) — the per-user chat
+  // settings (mute sounds / bad-word filter / acknowledged). Derived from the
+  // `settings.chat` field already fetched for the bootstrap; no extra I/O. See
+  // AppProvider seed.
+  chatSettings?: UserSettingsChat;
   canIndex: boolean;
   hasAuthCookie: boolean;
   region: RegionInfo;
@@ -129,12 +145,15 @@ function MyApp(props: CustomAppProps) {
       userFeatureFlags,
       tosMeta,
       announcements,
+      announcementsDismissed,
       following,
       seed = Date.now(),
       canIndex,
       hasAuthCookie,
       settings,
       browsingSettingsAddons,
+      liveNow = false,
+      chatSettings,
       region,
       domain,
       host,
@@ -186,7 +205,10 @@ function MyApp(props: CustomAppProps) {
       settings={settings}
       tosMeta={tosMeta}
       announcements={announcements}
+      announcementsDismissed={announcementsDismissed}
       following={following}
+      liveNow={liveNow}
+      chatSettings={chatSettings}
       region={region}
       domain={domain}
       host={host}
@@ -217,6 +239,8 @@ function MyApp(props: CustomAppProps) {
                 <RouterTransition />
                 {/* <ChadGPT isAuthed={!!session} /> */}
                 <FeatureFlagsProvider flags={flags} userFlags={userFeatureFlags}>
+                  {/* Faro RUM bootstrap — dark until the `faro` flag + build-args are on */}
+                  <FaroProvider />
                   <GoogleAnalytics />
                   <AccountProvider>
                     <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
@@ -340,8 +364,23 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const colorScheme = getCookie('mantine-color-scheme', appContext.ctx) ?? 'dark';
   const cookies = getCookies(appContext.ctx);
   const parsedCookies = parseCookies(cookies);
+  // Server-read announcement `dismissed` state from the `announcements-dismissed`
+  // cookie. `getCookies` hands us the URL-decoded JSON string, which
+  // `parseDismissedCookieValue` (the SAME parser the client store uses) turns into
+  // the per-type dismissed record. Threaded down so SSR + first client paint agree.
+  const announcementsDismissed = parseDismissedCookieValue(
+    typeof cookies[ANNOUNCEMENTS_DISMISSED_COOKIE] === 'string'
+      ? (cookies[ANNOUNCEMENTS_DISMISSED_COOKIE] as string)
+      : undefined
+  );
 
-  let hasAuthCookie = Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
+  // Match BOTH session cookie families: the new hub `civ-token` / `__Secure-civ-token` AND the legacy
+  // next-auth `civitai-token` / `__Secure-civitai-token` (still honored during the cutover). Note the suffixes
+  // don't subsume each other — `civitai-token` does NOT end with `civ-token` — so both checks are required.
+  // Used to seed `SessionProvider` (unknown → fetch on mount) and `loggedIn` below.
+  let hasAuthCookie = Object.keys(cookies).some(
+    (x) => x.endsWith('civ-token') || x.endsWith('civitai-token')
+  );
   // const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
   // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
   const { serverDomainMap, getRequestDomainColor, getAllServerHosts, getAvailableOAuthProviders } =
@@ -352,7 +391,8 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     red: serverDomainMap.red,
   };
   const canIndex = getAllServerHosts().includes((request.headers.host ?? '').toLowerCase());
-  const availableOAuthProviders = getAvailableOAuthProviders(request.headers.host);
+  // Provider list comes from the hub (single source of provider config/secrets), cached + fail-open.
+  const availableOAuthProviders = await getAvailableOAuthProviders();
 
   const region = getRegion(request);
 
@@ -441,11 +481,13 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   // every full render's critical path. SSR-injecting the addons keeps the
   // `system.getBrowsingSettingAddons` round-trip off api-primary (it becomes
   // `initialData` for the client provider).
-  const [{ getFeatureFlagsAsync, computeUserFeatureFlagsOverlay }, { getBrowsingSettingAddons }] =
-    await Promise.all([
-      import('~/server/services/feature-flags.service'),
-      import('~/server/services/system-cache'),
-    ]);
+  const [
+    { getFeatureFlagsAsync, computeUserFeatureFlagsOverlay },
+    { getBrowsingSettingAddons, getLiveNow },
+  ] = await Promise.all([
+    import('~/server/services/feature-flags.service'),
+    import('~/server/services/system-cache'),
+  ]);
   const [flags, browsingSettingsAddons] = await Promise.all([
     getFeatureFlagsAsync({
       user: session?.user,
@@ -454,6 +496,24 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     }),
     getBrowsingSettingAddons(),
   ]);
+
+  // SSR-seed the global `system.getLiveNow` boolean (a single `redis.get`,
+  // identical for every user) so the ambient `useIsLive` client query reads a
+  // primed cache and never fires on bootstrap (~26 req/s off api-primary).
+  // Fail open to `false` (the "not live" default): `getLiveNow` has no internal
+  // try/catch, and an uncaught redis throw here would 500 every page render —
+  // so a degraded sysRedis must degrade to "not live", never to an error. The
+  // client query still self-heals on its 5-minute refetch interval.
+  let liveNow = false;
+  try {
+    liveNow = await getLiveNow();
+  } catch (e) {
+    console.warn(
+      `[_app] getLiveNow bootstrap failed, defaulting to not-live: ${
+        e instanceof Error ? e.message : String(e)
+      }`
+    );
+  }
 
   const domain = getRequestDomainColor(request);
 
@@ -477,6 +537,23 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     userFeatureFlags = computeUserFeatureFlagsOverlay(settings.features, flags);
   }
 
+  // SSR-seed `chat.getUserSettings` (logged-in only) so the chat widget reads a
+  // primed cache and never fires the query on bootstrap (~19 req/s off
+  // api-primary). Fully DERIVED from the `settings.chat` field already fetched
+  // above for the bootstrap — NO extra I/O. The chat settings are static per
+  // user (only the user's own `setUserSettings` changes them, which patches the
+  // cache via optimistic `setData`), so SSR-seeding is exact.
+  //
+  // Byte-equality (#2471): the `chat.getUserSettings` resolver returns
+  // `settings.chat` and substitutes the SAME default object when absent — mirror
+  // it here so the seed matches the resolver output exactly. Seed only when a
+  // settings snapshot is present (the degraded/anon path leaves it undefined and
+  // the client query self-heals).
+  let chatSettings: UserSettingsChat | undefined;
+  if (session?.user && settings) {
+    chatSettings = resolveChatSettings(settings.chat);
+  }
+
   if (session) {
     (appContext.ctx.req as any)['session'] = session;
   } else if (hasAuthCookie && !settingsDegraded) {
@@ -492,6 +569,25 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     hasAuthCookie = false;
   }
 
+  // Auth route guards, moved off the edge middleware (the thin hub civ-token can't resolve the full user in the
+  // edge runtime — see preview-access.ts / route-guards). Runs here in Node with the resolved session, catching
+  // direct/SSR loads. A non-mod can't client-nav to these (the nav isn't shown to them) and the tRPC procedures
+  // are the real data gate, so the client-nav gap is harmless.
+  const guardPath = (request.url ?? '').split('?')[0];
+  const guard = resolveAuthGuard(guardPath, session, { isProd, isPreview });
+  let guardTo: string | undefined;
+  if (guard && 'redirect' in guard) {
+    guardTo = guard.redirect;
+  } else if (guard && 'needsPreviewCheck' in guard && session?.user) {
+    // Logged-in non-moderator on a preview deploy → resolve the allowlist via Flipt (async, kept out of the guard).
+    const { checkPreviewAccess } = await import('~/server/auth/preview-access');
+    if (!(await checkPreviewAccess(session.user))) guardTo = '/preview-restricted';
+  }
+  if (guardTo && appContext.ctx.res) {
+    appContext.ctx.res.writeHead(302, { Location: guardTo });
+    appContext.ctx.res.end();
+  }
+
   return {
     pageProps: {
       ...pageProps,
@@ -502,10 +598,12 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       session,
       settings,
       browsingSettingsAddons,
+      liveNow,
       flags,
       userFeatureFlags,
       tosMeta,
       announcements,
+      announcementsDismissed,
       following,
       seed: Date.now(),
       hasAuthCookie,

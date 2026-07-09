@@ -8,6 +8,7 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { isAppBlocksPipelineEnabled } from '~/server/services/app-blocks-flag';
 import { setCommitStatus } from '~/server/services/blocks/forgejo.service';
 import { triggerApply, waitForApplyJob } from '~/server/services/blocks/apps-pipeline.service';
+import { autogenerateScreenshotIfMissing } from '~/server/services/blocks/autogenerate-screenshot.service';
 import { markRequestDeployState } from '~/server/services/blocks/publish-request.service';
 
 /**
@@ -233,7 +234,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // `app-blocks-pipeline-enabled` flag (NOT the mod-segmented user flag), so the
   // pipeline can run for mod-approved blocks without enabling the user feature.
   if (!(await isAppBlocksPipelineEnabled())) {
-    res.status(503).json({ error: 'App Blocks not enabled' });
+    res.status(503).json({ error: 'Apps are not enabled' });
     return;
   }
 
@@ -403,6 +404,15 @@ async function watchApplyJobAndRecord(args: {
         context: 'civitai/deploy',
         description: 'Deployed to civitai-apps',
       });
+      // F-E E5 autogen — DISABLED (no-op). It captured the standalone
+      // `https://<slug>.<APPS_DOMAIN>` URL, but App Blocks only render when
+      // EMBEDDED in the host (they wait for a `BLOCK_INIT` postMessage that never
+      // comes standalone), so every capture was a useless "waiting for host"
+      // loading skeleton. `autogenerateScreenshotIfMissing` short-circuits while
+      // `BLOCK_SCREENSHOT_AUTOGEN_ENABLED` is false; the wiring is kept so a
+      // future in-host `/apps/run/<slug>` capture can re-enable it. Real
+      // screenshots come from creator/dev upload. Best-effort + fire-and-forget.
+      void safe(autogenerateScreenshotIfMissing, args.appBlockId, args.slug);
     } else {
       // Failure or timeout — leave the existing currentVersionDeployedAt
       // alone (it correctly reflects the LAST successful deploy, not the

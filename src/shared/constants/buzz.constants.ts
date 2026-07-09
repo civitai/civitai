@@ -1,4 +1,31 @@
 import { BuzzClientAccount } from '@civitai/client';
+import {
+  buzzApiAccountTypes,
+  clientToApiAccountType,
+  toApiType as buzzToApiType,
+  toClientType as buzzToClientType,
+  toApiTransaction as buzzToApiTransaction,
+} from '@civitai/buzz';
+import type {
+  BuzzApiAccountType,
+  BuzzAccountType,
+  BuzzSpendType,
+  BuzzCreatorProgramType,
+  BuzzCashType,
+  LegacyBuzzType,
+} from '@civitai/buzz';
+
+// The account-type model + friendly↔API name map now live in @civitai/buzz (browser-safe,
+// shared with the SvelteKit spokes). Re-exported here so existing imports keep working.
+export { buzzApiAccountTypes };
+export type {
+  BuzzApiAccountType,
+  BuzzAccountType,
+  BuzzSpendType,
+  BuzzCreatorProgramType,
+  BuzzCashType,
+  LegacyBuzzType,
+};
 
 export enum TransactionType {
   Tip = 0,
@@ -31,33 +58,6 @@ export enum TransactionType {
   LicenseFee = 27,
 }
 
-export type BuzzApiAccountType = (typeof buzzApiAccountTypes)[number];
-export const buzzApiAccountTypes = [
-  'User',
-  'Yellow',
-  'Club',
-  'Event',
-  'Generation',
-  'Blue',
-  'Green',
-  'FakeRed',
-  'Other',
-  // WHEN LOOKING INTO CLICKHOUSE, THESE ARE PARSED AS KEBAB CASE.
-  'CashPending',
-  'CashSettled',
-  'CreatorProgramBank',
-  'CreatorProgramBankGreen',
-] as const;
-
-export type BuzzSpendType = 'blue' | 'green' | 'yellow' | 'red';
-export type BuzzCreatorProgramType = 'creatorProgramBank' | 'creatorProgramBankGreen';
-export type BuzzCashType = 'cashPending' | 'cashSettled';
-export type LegacyBuzzType = 'club';
-export type BuzzAccountType =
-  | BuzzSpendType
-  | BuzzCreatorProgramType
-  | BuzzCashType
-  | LegacyBuzzType;
 type BuzzTypeConfig =
   | {
       type: 'spend';
@@ -87,16 +87,30 @@ const BuzzClientAccountMap: Record<BuzzSpendType, BuzzClientAccount> = {
   red: BuzzClientAccount.FAKE_RED,
 };
 
+// `value` is sourced from the package's canonical friendly→API map (single source, no drift);
+// the UX flags (nsfw/purchasable/bankable/disabled) stay app-side.
 const buzzTypeConfig: Record<BuzzAccountType, BuzzTypeConfig> = {
-  blue: { type: 'spend', value: 'Generation' },
-  green: { type: 'spend', value: 'Green', bankable: true, purchasable: true },
-  yellow: { type: 'spend', value: 'User', nsfw: true, bankable: true, purchasable: true },
-  red: { type: 'spend', value: 'FakeRed', nsfw: true, purchasable: true, disabled: true },
-  creatorProgramBank: { type: 'bank', value: 'CreatorProgramBank' },
-  creatorProgramBankGreen: { type: 'bank', value: 'CreatorProgramBankGreen' },
-  cashPending: { type: 'cash', value: 'CashPending' },
-  cashSettled: { type: 'cash', value: 'CashSettled' },
-  club: { type: 'legacy', value: 'Club' },
+  blue: { type: 'spend', value: clientToApiAccountType.blue },
+  green: { type: 'spend', value: clientToApiAccountType.green, bankable: true, purchasable: true },
+  yellow: {
+    type: 'spend',
+    value: clientToApiAccountType.yellow,
+    nsfw: true,
+    bankable: true,
+    purchasable: true,
+  },
+  red: {
+    type: 'spend',
+    value: clientToApiAccountType.red,
+    nsfw: true,
+    purchasable: true,
+    disabled: true,
+  },
+  creatorProgramBank: { type: 'bank', value: clientToApiAccountType.creatorProgramBank },
+  creatorProgramBankGreen: { type: 'bank', value: clientToApiAccountType.creatorProgramBankGreen },
+  cashPending: { type: 'cash', value: clientToApiAccountType.cashPending },
+  cashSettled: { type: 'cash', value: clientToApiAccountType.cashSettled },
+  club: { type: 'legacy', value: clientToApiAccountType.club },
 };
 
 export const buzzAccountTypes = Object.keys(buzzTypeConfig) as BuzzAccountType[];
@@ -114,32 +128,15 @@ export const buzzPurchaseTypes = buzzSpendTypes.filter((type) => {
   return config.type === 'spend' && config.purchasable;
 });
 
-function getApiTypeFromClientType(type: BuzzAccountType) {
-  const config = buzzTypeConfig[type];
-  if (!config) return type as BuzzApiAccountType;
-  return config.value;
-}
-
-const apiTypesMap = Object.fromEntries(
-  buzzAccountTypes.flatMap((type) => {
-    return [
-      [getApiTypeFromClientType(type as BuzzAccountType), type],
-      [getApiTypeFromClientType(type as BuzzAccountType).toLowerCase(), type],
-      [type, type],
-    ];
-  })
-);
-
 export class BuzzTypes {
   static getConfig(type: BuzzSpendType) {
     return buzzTypeConfig[type];
   }
   static toApiType(type: BuzzAccountType): BuzzApiAccountType {
-    return getApiTypeFromClientType(type);
+    return buzzToApiType(type);
   }
   static toClientType(value: string): BuzzAccountType {
-    if (!(value in apiTypesMap)) throw new Error(`unsupported buzz type: ${value}`);
-    return apiTypesMap[value as BuzzApiAccountType];
+    return buzzToClientType(value);
   }
   static toSpendType(value: string): BuzzSpendType {
     const type = this.toClientType(value);
@@ -159,15 +156,7 @@ export class BuzzTypes {
   static getApiTransaction<
     T extends { fromAccountType?: BuzzAccountType; toAccountType?: BuzzAccountType }
   >(transaction: T) {
-    return {
-      ...transaction,
-      fromAccountType: transaction.fromAccountType
-        ? this.toApiType(transaction.fromAccountType)
-        : undefined,
-      toAccountType: transaction.toAccountType
-        ? this.toApiType(transaction.toAccountType)
-        : undefined,
-    };
+    return buzzToApiTransaction(transaction);
   }
 }
 

@@ -46,7 +46,7 @@ vi.mock('~/server/redis/client', () => ({
   },
   REDIS_SYS_KEYS: { BLOCKS: { EMERGENCY_KILL_LIST: 'kill' } },
 }));
-vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
+vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai', LOGGING: '' } }));
 
 function capturedSql(): string {
   expect(mockDb.$queryRaw).toHaveBeenCalled();
@@ -77,6 +77,8 @@ function featuredRow(over: Partial<Record<string, unknown>> = {}) {
     install_count: 9n,
     category: 'games',
     approved_scopes: ['ai:write:budgeted', 'models:read:self', 'buzz:read:self', 'social:tip:self'],
+    avg_rating: 4.7,
+    review_count: 21n,
     manifest: {
       name: 'Cool Block',
       description: 'Does cool things',
@@ -121,7 +123,20 @@ describe('BlockRegistry.getFeaturedBlocks — featured rail exposure (F-E E4)', 
     expect(items).toHaveLength(1);
     const item = items[0];
     expect(Object.keys(item).sort()).toEqual(
-      ['appId', 'appName', 'blockId', 'category', 'id', 'installCount', 'manifest', 'scopesSummary'].sort()
+      [
+        'appId',
+        'appName',
+        'avgRating',
+        'blockId',
+        'category',
+        'coverUrl',
+        'externalUrl',
+        'id',
+        'installCount',
+        'manifest',
+        'reviewCount',
+        'scopesSummary',
+      ].sort()
     );
     const manifest = item.manifest as Record<string, unknown>;
     expect(manifest.name).toBe('Cool Block');

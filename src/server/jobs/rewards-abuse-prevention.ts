@@ -6,7 +6,7 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
 import { userMultipliersCache } from '~/server/redis/caches';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { createNotification } from '~/server/services/notification.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
@@ -14,9 +14,22 @@ export const rewardsAbusePrevention = createJob(
   'rewards-abuse-prevention',
   '0 3 * * *',
   async () => {
+    let abuseLimitsRaw: string | Buffer | null = null;
+    try {
+      abuseLimitsRaw = await withSysReadDeadline(
+        sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'rewards:abuse-limits')
+      );
+    } catch {
+      // sysRedis DOWN/SLOW — we can't read the abuse thresholds. This job DISABLES
+      // user rewards (destructive), so skip this cycle rather than run on unknown
+      // config. The nightly cron retries tomorrow; a missed run is harmless.
+      return { usersDisabled: 0, skipped: 'sysRedis-config-read-failed' };
+    }
+    // Buffer-coerce (sentinel-mode sysRedis returns Buffer for BLOB_STRING replies;
+    // `?? '{}'` alone would mis-handle a Buffer — same root cause as base.metrics).
     const abuseLimits = abuseLimitsSchema.parse(
       JSON.parse(
-        (await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'rewards:abuse-limits')) ?? '{}'
+        (Buffer.isBuffer(abuseLimitsRaw) ? abuseLimitsRaw.toString('utf8') : abuseLimitsRaw) ?? '{}'
       )
     );
     const abusers = await clickhouse?.$query<Abuser>(`

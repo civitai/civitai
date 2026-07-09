@@ -12,29 +12,40 @@ import { renderWithProviders } from '../../../test/component-setup';
  * needs auth/money asks the host to start the civitai login flow via
  * REQUEST_SIGN_IN on the user's click. Before this fix the sign-in bridge was
  * only wired into the model-slot host (IframeHost); PageBlockHost never handled
- * REQUEST_SIGN_IN, so a logged-out viewer's action dead-ended (the login modal
- * never opened). We mirror IframeHost EXACTLY: the shared resolveRequestSignIn
- * gate pins status === 'ready' + sanitises a same-origin returnUrl, then opens
- * LoginModal via the shared dialogStore (fire-and-forget, no host→block reply).
+ * REQUEST_SIGN_IN, so a logged-out viewer's action dead-ended (login never
+ * started). The shared resolveRequestSignIn gate pins status === 'ready' +
+ * sanitises a same-origin returnUrl, then starts the hub login via openLoginPopup
+ * (fire-and-forget, no host→block reply).
  *
- * We assert against the shared dialogStore (the same store IframeHost's sign-in
- * handler triggers) rather than rendering the modal, since LoginModal pulls in
- * client-only providers — same posture as the consent + buzz tests. The pure
- * gate (readiness + returnUrl sanitisation) is covered by requestSignInGate
- * unit tests; this is the host-integration layer.
+ * We assert against the stubbed openLoginPopup (login is a popup to the hub now —
+ * the old in-page LoginModal was removed in the auth cutover). The pure gate
+ * (readiness + returnUrl sanitisation) is covered by requestSignInGate unit
+ * tests; this is the host-integration layer.
  */
 
 // trpc is mocked so PageBlockHost's workflow + storage bridges mount network-free
 // (inert stubs here — exercised in their own suites).
 vi.mock('~/utils/trpc', () => ({
+  // FeatureFlagsProvider (in PageBlockHost's real render graph) statically imports
+  // `setTrpcBatchingEnabled` from this module (#2946). vi.mock replaces the module
+  // wholesale, so the factory must re-declare it or the ESM link fails and the whole
+  // test file fails to import.
+  setTrpcBatchingEnabled: vi.fn(),
   trpc: {
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getMyBuzzBalance: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       estimateWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       pollWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {
+      shared: {
+        append: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        vote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        unvote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        withdraw: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      },
       storage: {
         set: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         delete: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -42,6 +53,11 @@ vi.mock('~/utils/trpc', () => ({
     },
     useUtils: () => ({
       apps: {
+        shared: {
+          list: { fetch: vi.fn() },
+          getCount: { fetch: vi.fn() },
+          getCounts: { fetch: vi.fn() },
+        },
         storage: {
           get: { fetch: vi.fn() },
           list: { fetch: vi.fn() },
@@ -52,8 +68,18 @@ vi.mock('~/utils/trpc', () => ({
   },
 }));
 
+// Login is hub-driven now (a popup to auth.civitai.com via openLoginPopup) — the old in-page
+// LoginModal was removed in the auth cutover. Stub openLoginPopup so REQUEST_SIGN_IN assertions
+// check the call args without actually opening a window.
+vi.mock('~/utils/auth-helpers', async (importActual) => ({
+  ...(await importActual<typeof import('~/utils/auth-helpers')>()),
+  openLoginPopup: vi.fn(),
+}));
+
 // eslint-disable-next-line import/first
 import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
+// eslint-disable-next-line import/first
+import { openLoginPopup } from '~/utils/auth-helpers';
 
 function postFromBlock(type: string, payload?: unknown) {
   const iframeEl = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
@@ -107,26 +133,22 @@ async function driveToReady() {
 describe('PageBlockHost REQUEST_SIGN_IN (W10 anonymous-conversion wiring)', () => {
   beforeEach(() => {
     useDialogStore.getState().closeAll();
+    vi.mocked(openLoginPopup).mockClear();
   });
 
-  test('after BLOCK_READY, REQUEST_SIGN_IN opens the LoginModal', async () => {
+  test('after BLOCK_READY, REQUEST_SIGN_IN starts the hub login (defaults to the current page)', async () => {
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
-    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    expect(openLoginPopup).not.toHaveBeenCalled();
 
     postFromBlock('REQUEST_SIGN_IN', {});
 
     await vi.waitFor(() => {
-      expect(useDialogStore.getState().dialogs).toHaveLength(1);
+      expect(openLoginPopup).toHaveBeenCalledTimes(1);
     });
-    // No returnUrl supplied → LoginModal defaults to the current page (the host
-    // omits the prop). reason is forwarded.
-    const dialogProps = useDialogStore.getState().dialogs[0].props as {
-      reason?: string;
-      returnUrl?: string;
-    };
-    expect(dialogProps.reason).toBe('image-gen');
-    expect(dialogProps.returnUrl).toBeUndefined();
+    // No returnUrl supplied → the host falls back to the current page; reason is forwarded.
+    const here = window.location.pathname + window.location.search + window.location.hash;
+    expect(openLoginPopup).toHaveBeenCalledWith(here, 'image-gen');
   });
 
   test('REQUEST_SIGN_IN honors a safe same-origin returnUrl', async () => {
@@ -136,26 +158,25 @@ describe('PageBlockHost REQUEST_SIGN_IN (W10 anonymous-conversion wiring)', () =
     postFromBlock('REQUEST_SIGN_IN', { returnUrl: '/apps/run/my-page-app/editor' });
 
     await vi.waitFor(() => {
-      expect(useDialogStore.getState().dialogs).toHaveLength(1);
+      expect(openLoginPopup).toHaveBeenCalledTimes(1);
     });
-    const dialogProps = useDialogStore.getState().dialogs[0].props as { returnUrl?: string };
-    expect(dialogProps.returnUrl).toBe('/apps/run/my-page-app/editor');
+    expect(openLoginPopup).toHaveBeenCalledWith('/apps/run/my-page-app/editor', 'image-gen');
   });
 
   test('REQUEST_SIGN_IN drops an unsafe absolute returnUrl (open-redirect guard)', async () => {
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
 
-    // Absolute / protocol-relative returnUrl is rejected by the shared gate →
-    // the host opens the modal WITHOUT a returnUrl (LoginModal defaults to the
-    // current page), so the post-login redirect can't bounce off-site.
+    // Absolute / protocol-relative returnUrl is rejected by the shared gate → the host
+    // falls back to the current page, so the post-login redirect can't bounce off-site.
     postFromBlock('REQUEST_SIGN_IN', { returnUrl: 'https://evil.com/steal' });
 
+    const here = window.location.pathname + window.location.search + window.location.hash;
     await vi.waitFor(() => {
-      expect(useDialogStore.getState().dialogs).toHaveLength(1);
+      expect(openLoginPopup).toHaveBeenCalledTimes(1);
     });
-    const dialogProps = useDialogStore.getState().dialogs[0].props as { returnUrl?: string };
-    expect(dialogProps.returnUrl).toBeUndefined();
+    expect(openLoginPopup).toHaveBeenCalledWith(here, 'image-gen');
+    expect(openLoginPopup).not.toHaveBeenCalledWith('https://evil.com/steal', expect.anything());
   });
 
   test('REQUEST_SIGN_IN before BLOCK_READY is dropped (no pre-handshake login modal)', async () => {
@@ -169,6 +190,6 @@ describe('PageBlockHost REQUEST_SIGN_IN (W10 anonymous-conversion wiring)', () =
     postFromBlock('REQUEST_SIGN_IN', {});
 
     await new Promise((r) => setTimeout(r, 150));
-    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    expect(openLoginPopup).not.toHaveBeenCalled();
   });
 });

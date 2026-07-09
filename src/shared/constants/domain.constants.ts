@@ -6,8 +6,8 @@ export type ColorDomain = (typeof colorDomainNames)[number];
  * - `primary` is the canonical host. All outbound URL construction (sync-account
  *   redirects, base URLs, sitemap, region-redirect targets) uses this.
  * - `aliases` are additional hosts that resolve to the same color on inbound
- *   requests. Aliases do NOT inherit the color's OAuth credentials — see
- *   `PROVIDER_AUTH_<alias_slug>` env pattern handled in next-auth-options.
+ *   requests. (OAuth is hub-side now — auth.civitai.com owns provider credentials
+ *   + the single callback URL — so aliases no longer need per-host credentials.)
  */
 export type DomainConfig = {
   primary: string;

@@ -37,19 +37,32 @@ const mocks = vi.hoisted(() => ({
   estimate: vi.fn(),
   poll: vi.fn(),
   cancel: vi.fn(),
+  balance: vi.fn(),
 }));
 
 vi.mock('~/utils/trpc', () => ({
+  // FeatureFlagsProvider (in PageBlockHost's real render graph) statically imports
+  // `setTrpcBatchingEnabled` from this module (#2946). vi.mock replaces the module
+  // wholesale, so the factory must re-declare it or the ESM link fails and the whole
+  // test file fails to import.
+  setTrpcBatchingEnabled: vi.fn(),
   trpc: {
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: mocks.submit }) },
       estimateWorkflow: { useMutation: () => ({ mutateAsync: mocks.estimate }) },
       pollWorkflow: { useMutation: () => ({ mutateAsync: mocks.poll }) },
       cancelWorkflow: { useMutation: () => ({ mutateAsync: mocks.cancel }) },
+      getMyBuzzBalance: { useMutation: () => ({ mutateAsync: mocks.balance }) },
     },
     // PageBlockHost also wires the storage bridge (inert here — exercised in
     // PageBlockHostStorage.browser.test.tsx); stub so the component mounts.
     apps: {
+      shared: {
+        append: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        vote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        unvote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        withdraw: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      },
       storage: {
         set: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         delete: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -57,6 +70,11 @@ vi.mock('~/utils/trpc', () => ({
     },
     useUtils: () => ({
       apps: {
+        shared: {
+          list: { fetch: vi.fn() },
+          getCount: { fetch: vi.fn() },
+          getCounts: { fetch: vi.fn() },
+        },
         storage: {
           get: { fetch: vi.fn() },
           list: { fetch: vi.fn() },
@@ -147,6 +165,7 @@ describe('PageBlockHost workflow bridge (W10 money-path wiring)', () => {
     mocks.estimate.mockReset();
     mocks.poll.mockReset();
     mocks.cancel.mockReset();
+    mocks.balance.mockReset();
     // dialogStore is a module-level zustand store shared across tests — reset it
     // (the OPEN_BUZZ_PURCHASE handler triggers a dialog on it).
     useDialogStore.getState().closeAll();
@@ -408,5 +427,124 @@ describe('PageBlockHost workflow bridge (W10 money-path wiring)', () => {
       if (!el) return;
     });
     expect(mocks.estimate).not.toHaveBeenCalled();
+  });
+
+  // ── Phase 3: per-account buzz — GET_BUZZ_BALANCE + accountType forwarding ────
+  //
+  // The block reads its own per-account (blue/green/yellow) balance via the
+  // @civitai/blocks-react `useBuzzBalance()` hook, which posts GET_BUZZ_BALANCE
+  // and awaits BUZZ_BALANCE_RESULT. The host mediates it through the block-token-
+  // authed `blocks.getMyBuzzBalance` MUTATION (token-`sub`-bound server-side); on
+  // submit it forwards a preferred `accountType`, and surfaces the realized
+  // `spentAccountType` back on the snapshot. Every path MUST reply or the block
+  // hangs to its SDK timeout.
+  test('GET_BUZZ_BALANCE forwards the page token to getMyBuzzBalance and posts BUZZ_BALANCE_RESULT', async () => {
+    const balance = { blue: 1200, green: 300, yellow: 50 };
+    mocks.balance.mockResolvedValue(balance);
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('GET_BUZZ_BALANCE', { requestId: 'rq_bal' });
+
+    await vi.waitFor(() => {
+      // Forwarded the page `token` PROP as blockToken (the SELF-BOUND credential);
+      // the handler never trusts a client-supplied userId.
+      expect(mocks.balance).toHaveBeenCalledWith({ blockToken: 'tok_abc' });
+    });
+    await vi.waitFor(() => {
+      const r = replies.last('BUZZ_BALANCE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_bal', balance });
+    });
+    replies.stop();
+  });
+
+  test('GET_BUZZ_BALANCE error path posts an error-variant BUZZ_BALANCE_RESULT (no hang)', async () => {
+    mocks.balance.mockRejectedValue(new Error('invalid block token'));
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('GET_BUZZ_BALANCE', { requestId: 'rq_bal_err' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('BUZZ_BALANCE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      // error-carrying variant (no balance) so the useBuzzBalance hook rejects
+      // instead of spinning to its timeout.
+      expect(r.payload).toEqual({ requestId: 'rq_bal_err', error: 'invalid block token' });
+    });
+    replies.stop();
+  });
+
+  test('GET_BUZZ_BALANCE with NO requestId is dropped (no mutation, no reply)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('GET_BUZZ_BALANCE', {}); // missing requestId
+
+    await new Promise((r) => setTimeout(r, 150));
+    expect(mocks.balance).not.toHaveBeenCalled();
+    expect(replies.last('BUZZ_BALANCE_RESULT')).toBeUndefined();
+    replies.stop();
+  });
+
+  test('GET_BUZZ_BALANCE with a null page token replies with the error variant (never hangs)', async () => {
+    // DEVIATION from the workflow handlers (which DROP a null-token request): a
+    // balance read is a pure UI affordance, so a null token replies with the
+    // error variant instead of stranding the hook. The iframe still mounts while
+    // status === 'loading' (before the no_token timeout), so a block CAN post.
+    renderWithProviders(<PageBlockHost {...baseProps} token={null} />);
+    await vi.waitFor(() => {
+      const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement | null;
+      if (!el?.contentWindow) throw new Error('iframe not mounted yet');
+    });
+    const replies = listenForReply();
+
+    postFromBlock('GET_BUZZ_BALANCE', { requestId: 'rq_bal_notoken' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('BUZZ_BALANCE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_bal_notoken', error: 'no block token' });
+    });
+    // No server call is made without a token.
+    expect(mocks.balance).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('SUBMIT_WORKFLOW forwards a preferred accountType through to submitWorkflow', async () => {
+    const snapshot = { workflowId: 'wf_acct', status: 'processing', spentAccountType: 'green' };
+    mocks.submit.mockResolvedValue({ snapshot });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    // The block picks a preferred wallet; the host passes the body through
+    // wholesale (server-side domain-clamps it), so accountType rides along.
+    postFromBlock('SUBMIT_WORKFLOW', {
+      requestId: 'rq_acct',
+      body: { prompt: 'fox', accountType: 'green' },
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.submit).toHaveBeenCalledWith({
+        blockToken: 'tok_abc',
+        body: { prompt: 'fox', accountType: 'green' },
+      });
+    });
+    // And the realized spentAccountType on the returned snapshot reaches the block
+    // (the host does NOT field-whitelist the snapshot — it passes it through).
+    await vi.waitFor(() => {
+      const r = replies.last('WORKFLOW_SUBMITTED');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_acct', snapshot });
+      expect((r.payload as { snapshot: { spentAccountType?: string } }).snapshot.spentAccountType).toBe(
+        'green'
+      );
+    });
+    replies.stop();
   });
 });

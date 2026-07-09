@@ -8,6 +8,7 @@ import { env } from '~/env/client';
 import { ModelStatus } from '~/shared/utils/prisma/enums';
 
 export const getServerSideProps = createServerSideProps({
+  requireModerator: true,
   useSSG: true,
   useSession: true,
   resolver: async () => {

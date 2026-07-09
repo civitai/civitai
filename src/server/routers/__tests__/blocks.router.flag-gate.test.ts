@@ -63,13 +63,14 @@ vi.mock('~/server/middleware/block-scope.middleware', () => ({
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: vi.fn(),
 }));
+vi.mock('~/server/services/orchestrator/orchestration-new.service', () => ({
+  buildGenerationContext: vi.fn(),
+  createWorkflowStepsFromGraphInput: vi.fn(),
+}));
 vi.mock('~/server/services/orchestrator/workflows', () => ({
   submitWorkflow: vi.fn(),
   getWorkflow: vi.fn(),
   cancelWorkflow: vi.fn(),
-}));
-vi.mock('~/server/services/orchestrator/textToImage/textToImage', () => ({
-  createTextToImageStep: vi.fn(),
 }));
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: vi.fn(),
@@ -81,12 +82,10 @@ vi.mock('~/server/db/client', () => ({
   dbRead: mockDbRead,
   dbWrite: { modelBlockInstall: { findUnique: vi.fn() }, model: { findUnique: vi.fn() } },
 }));
-vi.mock('~/server/redis/client', () => ({
-  redis: mockRedis,
-  sysRedis: mockSysRedis,
-  REDIS_KEYS: { BLOCKS: { POPULAR_CHECKPOINT: 'blocks:popular-checkpoint' } },
-  REDIS_SYS_KEYS: { BLOCKS: { BUZZ_CAP: 'system:blocks:buzz-cap' } },
-}));
+vi.mock('~/server/redis/client', async () => {
+  const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
+  return { ...actual, redis: mockRedis, sysRedis: mockSysRedis };
+});
 vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
   dailyBoostReward: { apply: vi.fn(), getUserRewardDetails: vi.fn() },
 }));

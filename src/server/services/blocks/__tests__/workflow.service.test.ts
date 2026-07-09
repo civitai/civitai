@@ -23,6 +23,15 @@ import {
   resolvePageResourceContext,
   snapshotFromWorkflow,
 } from '../workflow.service';
+// REAL param-building path (no mocks): the generation graph validator and the
+// step-metadata snapshot fn are the exact functions the orchestrator's
+// `createWorkflowStepsFromGraph` runs to derive `workflowMetadata.params`. Both
+// live in the browser-safe `shared/` tree (no DB/redis), so we import and run
+// them for real in the integration-style test below.
+import { generationGraph } from '~/shared/data-graph/generation/generation-graph';
+import { toStepMetadata } from '~/shared/utils/resource.utils';
+import { removeEmpty } from '~/utils/object-helpers';
+import type { GenerationCtx } from '~/shared/data-graph/generation/context';
 
 function fakeWorkflow(over: Record<string, unknown> = {}) {
   return {
@@ -132,6 +141,213 @@ describe('snapshotFromWorkflow', () => {
     const snap = snapshotFromWorkflow(wf as never);
     expect(snap.imageUrls).toBeUndefined();
   });
+
+  // ---- image extraction across ALL image-producing step types --------------
+  // The extractor accepts THREE step types (textToImage / imageGen / comfy);
+  // the happy-path test above only exercises textToImage. These pin the other
+  // two branches + the cross-step concatenation order.
+  it('surfaces images from an imageGen step', () => {
+    const wf = fakeWorkflow({
+      steps: [
+        {
+          $type: 'imageGen',
+          name: 's1',
+          status: 'succeeded',
+          metadata: {},
+          output: { images: [{ id: 'g1', url: 'https://cdn/gen.png', available: true }] },
+        },
+      ],
+    });
+    const snap = snapshotFromWorkflow(wf as never);
+    expect(snap.imageUrls).toEqual(['https://cdn/gen.png']);
+  });
+
+  it('surfaces images from a comfy step', () => {
+    const wf = fakeWorkflow({
+      steps: [
+        {
+          $type: 'comfy',
+          name: 's1',
+          status: 'succeeded',
+          metadata: {},
+          output: { images: [{ id: 'c1', url: 'https://cdn/comfy.png', available: true }] },
+        },
+      ],
+    });
+    const snap = snapshotFromWorkflow(wf as never);
+    expect(snap.imageUrls).toEqual(['https://cdn/comfy.png']);
+  });
+
+  it('concatenates available images across mixed image-producing steps in step order', () => {
+    const wf = fakeWorkflow({
+      steps: [
+        {
+          $type: 'textToImage',
+          name: 's1',
+          status: 'succeeded',
+          metadata: {},
+          output: { images: [{ id: 'a', url: 'https://cdn/a.png', available: true }] },
+        },
+        {
+          // A non-image step interleaved — must be skipped, not break ordering.
+          $type: 'chatCompletion',
+          name: 's2',
+          status: 'succeeded',
+          metadata: {},
+          output: { images: [{ id: 'leak', url: 'https://leak/', available: true }] },
+        },
+        {
+          $type: 'comfy',
+          name: 's3',
+          status: 'succeeded',
+          metadata: {},
+          output: { images: [{ id: 'b', url: 'https://cdn/b.png', available: true }] },
+        },
+      ],
+    });
+    const snap = snapshotFromWorkflow(wf as never);
+    expect(snap.imageUrls).toEqual(['https://cdn/a.png', 'https://cdn/b.png']);
+  });
+
+  it('tolerates an image-producing step that carries no output (undefined images)', () => {
+    const wf = fakeWorkflow({
+      steps: [{ $type: 'textToImage', name: 's1', status: 'processing', metadata: {} }],
+    });
+    const snap = snapshotFromWorkflow(wf as never);
+    expect(snap.imageUrls).toBeUndefined();
+  });
+
+  // ---- spentAccountType (money page blocks) --------------------------------
+  // The snapshot surfaces the account that PRIMARILY funded the generation:
+  // the accountType of the LARGEST realized debit on transactions.list.
+  describe('spentAccountType (realized spent account)', () => {
+    it('omits spentAccountType when there are no transactions (backward compatible)', () => {
+      const snap = snapshotFromWorkflow(fakeWorkflow() as never);
+      expect(snap.spentAccountType).toBeUndefined();
+    });
+
+    it('omits spentAccountType when the transactions list is empty', () => {
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({ transactions: { list: [] } }) as never
+      );
+      expect(snap.spentAccountType).toBeUndefined();
+    });
+
+    it('surfaces the accountType of the largest debit (split blue+green → green when green is larger)', () => {
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({
+          transactions: {
+            list: [
+              { type: 'debit', amount: 10, accountType: 'blue' },
+              { type: 'debit', amount: 90, accountType: 'green' },
+            ],
+          },
+        }) as never
+      );
+      expect(snap.spentAccountType).toBe('green');
+    });
+
+    it('reports blue when blue is the largest debit (free-funded generation)', () => {
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({
+          transactions: {
+            list: [
+              { type: 'debit', amount: 80, accountType: 'blue' },
+              { type: 'debit', amount: 5, accountType: 'yellow' },
+            ],
+          },
+        }) as never
+      );
+      expect(snap.spentAccountType).toBe('blue');
+    });
+
+    it('ignores credits when picking the largest debit', () => {
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({
+          transactions: {
+            list: [
+              { type: 'debit', amount: 20, accountType: 'yellow' },
+              // A larger CREDIT (refund/correction) must not be treated as a spend.
+              { type: 'credit', amount: 100, accountType: 'green' },
+            ],
+          },
+        }) as never
+      );
+      expect(snap.spentAccountType).toBe('yellow');
+    });
+
+    it('omits spentAccountType when the largest debit is an internal-only account (fakeRed)', () => {
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({
+          transactions: { list: [{ type: 'debit', amount: 50, accountType: 'fakeRed' }] },
+        }) as never
+      );
+      expect(snap.spentAccountType).toBeUndefined();
+    });
+
+    it('compares debits by MAGNITUDE, so negatively-signed debit amounts still rank (Math.abs)', () => {
+      // The orchestrator may represent a debit as a negative amount. The picker
+      // ranks by absolute value, so a -90 green debit must outrank a -10 blue one
+      // (existing tests only use positive amounts — this pins the sign-agnostic
+      // branch).
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({
+          transactions: {
+            list: [
+              { type: 'debit', amount: -10, accountType: 'blue' },
+              { type: 'debit', amount: -90, accountType: 'green' },
+            ],
+          },
+        }) as never
+      );
+      expect(snap.spentAccountType).toBe('green');
+    });
+
+    it('breaks an equal-magnitude tie deterministically toward the FIRST debit (reduce keeps the accumulator)', () => {
+      // Two debits of equal magnitude: the reduce keeps `a` on a non-strict-greater
+      // `b`, so the FIRST-listed debit wins. Pinning this guards against a flip to
+      // `>=` that would silently change which account gets reported.
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({
+          transactions: {
+            list: [
+              { type: 'debit', amount: 50, accountType: 'green' },
+              { type: 'debit', amount: 50, accountType: 'yellow' },
+            ],
+          },
+        }) as never
+      );
+      expect(snap.spentAccountType).toBe('green');
+    });
+
+    it('treats a debit with no amount as 0, so a real debit outranks it', () => {
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({
+          transactions: {
+            list: [
+              { type: 'debit', accountType: 'blue' }, // amount omitted → 0
+              { type: 'debit', amount: 5, accountType: 'green' },
+            ],
+          },
+        }) as never
+      );
+      expect(snap.spentAccountType).toBe('green');
+    });
+
+    it('omits spentAccountType when the ONLY entries are credits (no debit to attribute)', () => {
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({
+          transactions: {
+            list: [
+              { type: 'credit', amount: 30, accountType: 'green' },
+              { type: 'credit', amount: 5, accountType: 'yellow' },
+            ],
+          },
+        }) as never
+      );
+      expect(snap.spentAccountType).toBeUndefined();
+    });
+  });
 });
 
 describe('resolveBlockVersionContext', () => {
@@ -211,34 +427,55 @@ describe('buildTextToImageInput', () => {
     },
   };
   // checkpointVersionId === body.modelVersionId for Checkpoint-bound installs
-  // (resolveBlockCheckpoint returns the model as its own anchor). For LoRAs
-  // the resolver returns a different versionId — represented here.
+  // (resolveBlockCheckpoint returns the model as its own anchor). For LoRAs the
+  // resolver returns a different versionId — represented here. `checkpointBaseModel`
+  // is the RESOLVED checkpoint's baseModel (drives the graph `ecosystem`).
   const checkpointResolved = {
     baseModel: 'SDXL 1.0',
     modelType: 'Checkpoint',
     checkpointVersionId: 99,
+    checkpointBaseModel: 'SDXL 1.0',
   };
   const sd1CheckpointResolved = {
     baseModel: 'SD 1.5',
     modelType: 'Checkpoint',
     checkpointVersionId: 99,
+    checkpointBaseModel: 'SD 1.5',
   };
   const fluxLoraResolved = {
     baseModel: 'Flux.1 D',
     modelType: 'LORA',
     checkpointVersionId: 691639,
+    checkpointBaseModel: 'Flux.1 D',
   };
 
+  // New shape: the function now emits the flat generation-graph `input`
+  // (`{ workflow, ecosystem, model, resources, prompt, ...top-level params }`)
+  // rather than the legacy `{ params, resources }` GenerateImageSchema. The
+  // checkpoint is the `model` anchor; `resources` holds ONLY additional networks
+  // (LoRAs). Dimensions live on `aspectRatio` (raw here — the graph's
+  // aspectRatio node snaps them to a canonical bucket at validation time).
+
+  it('derives the graph ecosystem from the resolved checkpoint baseModel', () => {
+    expect(buildTextToImageInput(baseBody as never, checkpointResolved).ecosystem).toBe('SDXL');
+    expect(buildTextToImageInput(baseBody as never, sd1CheckpointResolved).ecosystem).toBe('SD1');
+    expect(buildTextToImageInput(baseBody as never, fluxLoraResolved).ecosystem).toBe('Flux1');
+  });
+
   it('fills SDXL/Flux-class defaults (1024x1024) when the block omits dimensions', () => {
-    const out = buildTextToImageInput(baseBody as never, checkpointResolved);
-    expect(out.params.width).toBe(1024);
-    expect(out.params.height).toBe(1024);
+    const out = buildTextToImageInput(baseBody as never, checkpointResolved) as {
+      aspectRatio: { width: number; height: number };
+    };
+    expect(out.aspectRatio.width).toBe(1024);
+    expect(out.aspectRatio.height).toBe(1024);
   });
 
   it('fills SD1/SD2 defaults (512x512) for older base models', () => {
-    const out = buildTextToImageInput(baseBody as never, sd1CheckpointResolved);
-    expect(out.params.width).toBe(512);
-    expect(out.params.height).toBe(512);
+    const out = buildTextToImageInput(baseBody as never, sd1CheckpointResolved) as {
+      aspectRatio: { width: number; height: number };
+    };
+    expect(out.aspectRatio.width).toBe(512);
+    expect(out.aspectRatio.height).toBe(512);
   });
 
   it('respects block-supplied width/height when set', () => {
@@ -246,35 +483,36 @@ describe('buildTextToImageInput', () => {
       ...baseBody,
       params: { ...baseBody.params, width: 768, height: 1152 },
     };
-    const out = buildTextToImageInput(body as never, checkpointResolved);
-    expect(out.params.width).toBe(768);
-    expect(out.params.height).toBe(1152);
+    const out = buildTextToImageInput(body as never, checkpointResolved) as {
+      aspectRatio: { value: string; width: number; height: number };
+    };
+    expect(out.aspectRatio.width).toBe(768);
+    expect(out.aspectRatio.height).toBe(1152);
+    expect(out.aspectRatio.value).toBe('768:1152');
   });
 
   it('defaults sampler/steps and pins workflow to txt2img', () => {
     const out = buildTextToImageInput(baseBody as never, checkpointResolved);
-    expect(out.params.sampler).toBe('Euler');
-    expect(out.params.steps).toBe(25);
-    expect(out.params.workflow).toBe('txt2img');
-    expect(out.params.priority).toBe('low');
-    expect(out.params.draft).toBe(false);
-    expect(out.params.sourceImage).toBeNull();
+    expect(out.sampler).toBe('Euler');
+    expect(out.steps).toBe(25);
+    expect(out.workflow).toBe('txt2img');
+    expect(out.priority).toBe('low');
+    expect(out.prompt).toBe('a cat');
   });
 
-  it('passes the bound model alone when it is itself a Checkpoint', () => {
+  it('puts the bound Checkpoint at `model` with no additional resources', () => {
     const out = buildTextToImageInput(baseBody as never, checkpointResolved);
-    expect(out.resources).toEqual([{ id: 99, strength: 1 }]);
+    expect(out.model).toEqual({ id: 99 });
+    expect(out.resources).toEqual([]);
   });
 
-  it('prepends the resolved checkpoint when the bound model is a LoRA', () => {
+  it('anchors `model` on the resolved checkpoint and pushes the bound LoRA into resources', () => {
     const out = buildTextToImageInput(baseBody as never, fluxLoraResolved);
-    // Resolver-supplied anchor first, then the LoRA the block is bound to.
     // The resolver picks 691639 for Flux1 family (publisher default in this
-    // fixture); the host doesn't second-guess what the resolver returned.
-    expect(out.resources).toEqual([
-      { id: 691639, strength: 1 },
-      { id: 99, strength: 1 },
-    ]);
+    // fixture); the host doesn't second-guess what the resolver returned. The
+    // bound LoRA (body model 99) is the only additional network.
+    expect(out.model).toEqual({ id: 691639 });
+    expect(out.resources).toEqual([{ id: 99, strength: 1 }]);
   });
 
   it('forwards block-supplied sampler/steps/seed overrides', () => {
@@ -283,13 +521,13 @@ describe('buildTextToImageInput', () => {
       params: { ...baseBody.params, sampler: 'DPM++ 2M Karras', steps: 30, seed: 12345 },
     };
     const out = buildTextToImageInput(body as never, checkpointResolved);
-    expect(out.params.sampler).toBe('DPM++ 2M Karras');
-    expect(out.params.steps).toBe(30);
-    expect(out.params.seed).toBe(12345);
+    expect(out.sampler).toBe('DPM++ 2M Karras');
+    expect(out.steps).toBe(30);
+    expect(out.seed).toBe(12345);
   });
 
   // ── Page-LoRA (Increment 1): fan additionalResources into `resources` ──────
-  it('fans N additional LoRAs into the resources array after the checkpoint anchor', () => {
+  it('fans N additional LoRAs into the resources array (checkpoint stays on `model`)', () => {
     const body = {
       ...baseBody,
       additionalResources: [
@@ -299,8 +537,8 @@ describe('buildTextToImageInput', () => {
       ],
     };
     const out = buildTextToImageInput(body as never, checkpointResolved);
+    expect(out.model).toEqual({ id: 99 });
     expect(out.resources).toEqual([
-      { id: 99, strength: 1 }, // checkpoint anchor
       { id: 201, strength: 0.8 },
       { id: 202, strength: 1.2 },
       { id: 203, strength: -0.5 },
@@ -311,34 +549,32 @@ describe('buildTextToImageInput', () => {
     const body = {
       ...baseBody,
       additionalResources: [
-        { modelVersionId: 99, strength: 0.7 }, // same as the checkpoint anchor
+        { modelVersionId: 99, strength: 0.7 }, // same as the checkpoint anchor (`model`)
         { modelVersionId: 201, strength: 1 },
       ],
     };
     const out = buildTextToImageInput(body as never, checkpointResolved);
-    // The checkpoint stays as the single anchor at strength 1 (no double-bill /
-    // double-strength), and only the genuinely-new LoRA is appended.
-    expect(out.resources).toEqual([
-      { id: 99, strength: 1 },
-      { id: 201, strength: 1 },
-    ]);
+    // The checkpoint stays as the `model` anchor (no double-bill); only the
+    // genuinely-new LoRA lands in resources.
+    expect(out.model).toEqual({ id: 99 });
+    expect(out.resources).toEqual([{ id: 201, strength: 1 }]);
   });
 
-  it('does NOT duplicate the bound-model anchor when the body model is a LoRA', () => {
-    // fluxLoraResolved: checkpointVersionId=691639 (resolver anchor),
-    // body.modelVersionId=99 is itself a LoRA pushed as the second entry. An
+  it('does NOT duplicate the bound-model network when the body model is a LoRA', () => {
+    // fluxLoraResolved: checkpointVersionId=691639 (resolver anchor → `model`),
+    // body.modelVersionId=99 is itself a LoRA pushed into resources. An
     // additionalResource repeating either id must be deduped.
     const body = {
       ...baseBody,
       additionalResources: [
-        { modelVersionId: 691639, strength: 0.5 }, // == checkpoint anchor
-        { modelVersionId: 99, strength: 0.5 }, // == bound-model anchor
+        { modelVersionId: 691639, strength: 0.5 }, // == checkpoint anchor (`model`)
+        { modelVersionId: 99, strength: 0.5 }, // == bound-model network
         { modelVersionId: 300, strength: 0.9 }, // genuinely new
       ],
     };
     const out = buildTextToImageInput(body as never, fluxLoraResolved);
+    expect(out.model).toEqual({ id: 691639 });
     expect(out.resources).toEqual([
-      { id: 691639, strength: 1 },
       { id: 99, strength: 1 },
       { id: 300, strength: 0.9 },
     ]);
@@ -353,15 +589,13 @@ describe('buildTextToImageInput', () => {
       ],
     };
     const out = buildTextToImageInput(body as never, checkpointResolved);
-    expect(out.resources).toEqual([
-      { id: 99, strength: 1 },
-      { id: 201, strength: 0.3 }, // first occurrence kept
-    ]);
+    expect(out.resources).toEqual([{ id: 201, strength: 0.3 }]); // first occurrence kept
   });
 
-  it('is byte-identical when additionalResources is absent (no behaviour change)', () => {
+  it('emits no additional resources when additionalResources is absent', () => {
     const out = buildTextToImageInput(baseBody as never, checkpointResolved);
-    expect(out.resources).toEqual([{ id: 99, strength: 1 }]);
+    expect(out.model).toEqual({ id: 99 });
+    expect(out.resources).toEqual([]);
   });
 });
 
@@ -470,5 +704,163 @@ describe('resolvePageResourceContext', () => {
       model: { id: 8, type: 'LORA', userId: 55 },
     });
     await expect(resolvePageResourceContext(201)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Integration-style: REAL block input → REAL graph validation → REAL params
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// WHY THIS EXISTS (the audit's 🟡 gap): the router-level tests in
+// `src/server/routers/__tests__/blocks.router.workflow.test.ts` mock
+// `createWorkflowStepsFromGraphInput` WHOLESALE — they hand the router a canned
+// `{ workflowMetadata }` and assert the router attaches it to the real submit
+// body / omits it on whatIf. That proves the router PLUMBING but NOT the PR's
+// headline claim: that REAL block input, run through the ACTUAL param-mapping,
+// yields a POPULATED `workflowMetadata.params`. A regression in
+// `buildTextToImageInput` or the param snapshot (e.g. dropping `prompt`/`seed`,
+// or the graph silently blanking them) would leave those plumbing tests green
+// while shipping blank queue/remix metadata. This closes that gap.
+//
+// WHAT IS REAL vs STUBBED, and why:
+//   • REAL  — `buildTextToImageInput` (the block→graph-input translator under
+//             test), `generationGraph.safeParse` (the EXACT validator
+//             `createWorkflowStepsFromGraph` runs via `validateInput`), and
+//             `toStepMetadata` + `removeEmpty` (the EXACT param-snapshot fns
+//             that build `workflowMetadata.params`). This is the whole
+//             param-mapping path the PR touches — nothing about how `params` is
+//             derived is mocked.
+//   • STUBBED (by NOT running it) — resource ENRICHMENT
+//             (`validateAndEnrichResources` → `getResourceData`, a DB/network
+//             lookup) and the orchestrator step-input handlers. Those are
+//             external IO and do NOT contribute to `params` (params come from
+//             the validated graph output minus model/resources/vae). We re-run
+//             `createWorkflowStepsFromGraph`'s param logic faithfully
+//             (safeParse → toStepMetadata → removeEmpty) rather than calling
+//             `createWorkflowStepsFromGraphInput`, which would drag in the real
+//             DB client + event-engine-common import graph (un-runnable on this
+//             host, and the reason the router tests mock it wholesale).
+//
+// HONEST LIMITATION: this asserts the params snapshot + the CHECKPOINT in
+// `resources`. It does NOT assert ADDITIONAL LoRA resources land in
+// `workflowMetadata.resources`, because the graph's `resources` node requires
+// the enriched ResourceData map (from `getResourceData`) to validate unknown
+// version ids — without enrichment `safeParse` rejects them. Faking that map
+// would prove a mock, not real behavior, so the additional-resource→metadata
+// linkage is intentionally left to the (mocked) router test's
+// `realBody.metadata.resources` assertion. The checkpoint anchor, which the
+// graph resolves WITHOUT enrichment, IS covered here.
+describe('block input yields populated workflow metadata params (real graph path)', () => {
+  // A free user's generation context — the same shape `buildGenerationContext`
+  // produces, hand-built so the test stays off sysRedis/DB. The graph validator
+  // reads limits/tier/gateRules from this; nothing here affects how `params` is
+  // snapshotted.
+  const externalCtx: GenerationCtx = {
+    limits: { maxQuantity: 4, maxResources: 10, vidQuantity: 1 },
+    user: { isMember: false, tier: 'free' },
+    flags: {},
+    selfHostedDisabledEcosystems: [],
+    selfHostedMode: 'enabled',
+    gateRules: [],
+  };
+
+  // Mirror of the param-snapshot CALCULATION inside
+  // `createWorkflowStepsFromGraph`: validate the graph input, then
+  // `removeEmpty(toStepMetadata(data).params)`. (Computed-key stripping and the
+  // seed default also live there, but our body supplies a literal seed and our
+  // asserted fields are all form inputs, never computed — so this faithfully
+  // reproduces the `workflowMetadata.params` for this body.)
+  function paramsFromRealGraph(input: Record<string, unknown>) {
+    const result = generationGraph.safeParse(input, externalCtx);
+    if (!result.success) {
+      throw new Error(`graph validation failed: ${JSON.stringify(result.errors)}`);
+    }
+    const meta = toStepMetadata(result.data as never);
+    return {
+      params: removeEmpty(meta.params as Record<string, unknown>),
+      resources: meta.resources,
+    };
+  }
+
+  it('populates params (prompt/seed/sampler/cfgScale/steps) from real block input', () => {
+    // A realistic form-shaped textToImage block body — the Extract<…,'textToImage'>
+    // shape the iframe posts: per-image params the user set in the block UI.
+    const body = {
+      kind: 'textToImage' as const,
+      modelId: 7,
+      modelVersionId: 99,
+      params: {
+        prompt: 'a photo of a cat astronaut',
+        negativePrompt: 'blurry, low quality',
+        cfgScale: 7,
+        sampler: 'Euler a',
+        steps: 25,
+        seed: 12345,
+        quantity: 1,
+      },
+    };
+    // checkpoint-bound install: the resolved checkpoint IS body.modelVersionId.
+    const resolved = {
+      baseModel: 'SDXL 1.0',
+      modelType: 'Checkpoint',
+      checkpointVersionId: 99,
+      checkpointBaseModel: 'SDXL 1.0',
+    };
+
+    // REAL translator → REAL graph validation → REAL param snapshot.
+    const input = buildTextToImageInput(body as never, resolved);
+    const { params, resources } = paramsFromRealGraph(input);
+
+    // The headline claim: params is POPULATED with the user's form fields
+    // (verbatim), not blank. A regression that re-blanks block metadata fails here.
+    expect(params).toMatchObject({
+      workflow: 'txt2img',
+      prompt: 'a photo of a cat astronaut',
+      negativePrompt: 'blurry, low quality',
+      cfgScale: 7,
+      sampler: 'Euler a',
+      steps: 25,
+      seed: 12345,
+      quantity: 1,
+    });
+    // ecosystem is derived from the checkpoint baseModel by the real translator.
+    expect(params.ecosystem).toBe('SDXL');
+
+    // The checkpoint anchor shows up in the resources snapshot (this is the part
+    // of `workflowMetadata.resources` the graph resolves without enrichment).
+    expect(resources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 99, model: { type: 'Checkpoint' } }),
+      ])
+    );
+  });
+
+  it('snaps SD1 defaults and still populates params for an SD1.5 checkpoint', () => {
+    // Cross-check a second ecosystem so the assertion isn't SDXL-specific: the
+    // real graph must snap SD1.5 to 512² and carry the same form params through.
+    const body = {
+      kind: 'textToImage' as const,
+      modelId: 7,
+      modelVersionId: 99,
+      params: { prompt: 'a dog', sampler: 'DPM++ 2M Karras', steps: 30, seed: 777, quantity: 2 },
+    };
+    const resolved = {
+      baseModel: 'SD 1.5',
+      modelType: 'Checkpoint',
+      checkpointVersionId: 99,
+      checkpointBaseModel: 'SD 1.5',
+    };
+    const input = buildTextToImageInput(body as never, resolved);
+    const { params } = paramsFromRealGraph(input);
+    expect(params).toMatchObject({
+      workflow: 'txt2img',
+      ecosystem: 'SD1',
+      prompt: 'a dog',
+      sampler: 'DPM++ 2M Karras',
+      steps: 30,
+      seed: 777,
+      quantity: 2,
+    });
+    expect(params.aspectRatio).toMatchObject({ width: 512, height: 512 });
   });
 });

@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 
 /**
  * Liveness heartbeat for an EXEC liveness probe.
@@ -43,6 +44,16 @@ let loggedError = false;
 export function registerLivenessHeartbeat() {
   if (started) return;
   started = true;
+
+  // Ensure the parent dir exists so the first write doesn't ENOENT. In the prod node:20-alpine pods `/tmp`
+  // already exists (mkdir recursive is a no-op), so the probe path is unchanged; on a Windows dev box
+  // `/tmp/heartbeat` resolves to `C:\tmp\heartbeat`, whose parent doesn't exist — without this every 2s tick
+  // logged an ENOENT. Best-effort: if mkdir fails, write() below still logs the persistent failure once.
+  try {
+    fs.mkdirSync(path.dirname(HEARTBEAT_FILE), { recursive: true });
+  } catch {
+    // ignore — handled + logged by write()
+  }
 
   const write = () => {
     try {

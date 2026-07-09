@@ -14,7 +14,6 @@
  * | useSourceMetadataStore             | store/source-metadata.store.ts               | ImageUploadMultipleInput, FormFooter, useGeneratedItemWorkflows  | sessionStorage |
  * | useRemixStore                      | store/remix.store.ts                         | FormFooter, useRemixOfId, useGeneratedItemWorkflows              | localStorage   |
  * | useEcosystemGroupPreferencesStore  | store/ecosystem-group-preferences.store.ts   | BaseModelInput                                                   | localStorage   |
- * | useLegacyGeneratorStore            | store/legacy-generator.store.ts              | useGeneratedItemWorkflows                                        | localStorage   |
  * | usePromptFocusedStore              | inputs/PromptInput.tsx (local)               | PromptInput                                                      | memory         |
  */
 
@@ -1819,25 +1818,18 @@ export function GenerationForm() {
                   />
                 )}
               />
-              <Controller
-                graph={graph}
-                name="enableRigging"
-                render={({ value, onChange }) => (
-                  <Checkbox
-                    label="Enable rigging"
-                    description="Add a skeleton to the mesh for animation"
-                    checked={!!value}
-                    onChange={(e) => onChange(e.currentTarget.checked)}
-                  />
-                )}
-              />
+              {/* Single "Animate" toggle — the Meshy API requires rigging
+                  whenever animation is enabled, so we collapse the two
+                  flags into one user-facing checkbox. `toMeshyPolyGenInput`
+                  pins `enableRigging = enableAnimation` at submit time so
+                  the API contract is upheld. */}
               <Controller
                 graph={graph}
                 name="enableAnimation"
                 render={({ value, onChange }) => (
                   <Checkbox
-                    label="Enable animation"
-                    description="Generate idle animation for the rigged mesh"
+                    label="Animate"
+                    description="Generate a rigged, animated mesh (skeleton + idle animation)"
                     checked={!!value}
                     onChange={(e) => onChange(e.currentTarget.checked)}
                   />

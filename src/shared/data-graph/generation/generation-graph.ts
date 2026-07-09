@@ -327,8 +327,16 @@ export function getWorkflowsForMediaType(
 ): WorkflowOption[] {
   // Audio + model3d are output-only formats; no workflow accepts them as input.
   if (mediaType === 'audio' || mediaType === 'model3d') return [];
-  const nodeKey = mediaType === 'image' ? 'images' : 'video';
-  return workflowOptions.filter((w) => workflowHasNode(w.graphKey, nodeKey));
+  if (mediaType === 'video')
+    return workflowOptions.filter((w) => workflowHasNode(w.graphKey, 'video'));
+  // Most image-input workflows expose a standard `images` array node. PolyGen's
+  // img2model3d instead feeds a single `sourceImage` node nested behind the
+  // ecosystem + process discriminators, so `workflowHasNode` can't see it —
+  // include image-input 3D workflows explicitly by config instead.
+  return workflowOptions.filter(
+    (w) =>
+      workflowHasNode(w.graphKey, 'images') || (w.category === 'model3d' && w.inputType === 'image')
+  );
 }
 
 /** Type helper for the generation graph context */

@@ -14,7 +14,7 @@ import { LoggerProvider, BatchLogRecordProcessor } from '@opentelemetry/sdk-logs
 import { logs } from '@opentelemetry/api-logs';
 import { trace } from '@opentelemetry/api';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
-import { registerCpuProfiler } from '~/server/cpu-profiler';
+import { registerCpuProfiler, registerEventLoopStallProfiler } from '~/server/cpu-profiler';
 import { registerEventLoopLongTaskDetector } from '~/server/eventloop-longtask';
 import { registerLivenessHeartbeat } from '~/server/liveness-heartbeat';
 
@@ -22,6 +22,15 @@ import { registerLivenessHeartbeat } from '~/server/liveness-heartbeat';
 // overhead; only does work when signalled. Independent of OTEL so it is
 // always available for live incident capture. See src/server/cpu-profiler.ts.
 registerCpuProfiler();
+
+// Arm the event-loop-stall SELF-TRIGGER for the same CPU profiler. An external
+// signal can't reach a fully-pinned loop (the SIGWINCH black-hole), so this
+// watches the pod's OWN event-loop lag and auto-arms V8's (separate-thread)
+// sampler when lag crosses a threshold — the one mechanism that captures a 504
+// wave's pin. DISARMED by default (no timer, no histogram, zero overhead) unless
+// CPU_PROFILE_LAG_TRIGGER_MS is set (suggested: 1000) on the dp-prod-api
+// deployment. See src/server/cpu-profiler.ts.
+registerEventLoopStallProfiler();
 
 // Arm the event-loop long-task detector. DISARMED by default (no-op unless
 // EVENTLOOP_LONGTASK_THRESHOLD_MS > 0), in which case the request hot path runs

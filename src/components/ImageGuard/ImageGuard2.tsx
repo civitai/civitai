@@ -42,7 +42,6 @@ export type ConnectType =
   | 'collection'
   | 'bounty'
   | 'bountyEntry'
-  | 'club'
   | 'article'
   | 'comicChapter'
   | 'model3d';
@@ -335,6 +334,9 @@ function BlurToggle({
   return (
     <Badge
       component="button"
+      // Name the icon-only toggle (button-name a11y). When `alwaysVisible` the
+      // browsing-level label text is the accessible name, so don't override it.
+      aria-label={alwaysVisible ? undefined : show ? 'Hide content' : 'Show content'}
       classNames={{ ...classNames, root: getBrowsingLevelClass(classes.root, browsingLevel) }}
       className={clsx(badgeClass, 'pointer-events-auto cursor-pointer')}
       rightSection={imageFlagRight}
@@ -344,11 +346,13 @@ function BlurToggle({
     >
       <span className="inline-flex items-center gap-1">
         {alwaysVisible && (
-          <span className="font-bold leading-none">
-            {getBrowsingLevelLabel(browsingLevel)}
-          </span>
+          <span className="font-bold leading-none">{getBrowsingLevelLabel(browsingLevel)}</span>
         )}
-        {show ? <IconEyeOff size={14} strokeWidth={2.5} /> : <IconEye size={14} strokeWidth={2.5} />}
+        {show ? (
+          <IconEyeOff size={14} strokeWidth={2.5} />
+        ) : (
+          <IconEye size={14} strokeWidth={2.5} />
+        )}
       </span>
     </Badge>
   );

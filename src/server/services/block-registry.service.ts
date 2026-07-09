@@ -3,6 +3,7 @@ import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { manifestSettingsSchema } from '~/server/schema/blocks/manifest-settings.meta.schema';
+import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import {
   getPopularCheckpointForEcosystem,
@@ -10,6 +11,7 @@ import {
   validateBlockCheckpoint,
 } from '~/server/services/blocks/checkpoint.service';
 import { validateBlockSettings } from '~/server/services/blocks/settings-validator.service';
+import { clampTunnelDeclaredScopes } from '~/server/services/blocks/dev-scoped-mint.service';
 import {
   newBlockInstanceId,
   newBlockUserSubscriptionId,
@@ -31,6 +33,10 @@ import type {
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
 import { toPublicBlockManifest, toPublicScreenshots } from '~/server/schema/blocks/subscription.schema';
 import { isLaunchSlot, PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
+import { isMatureContentRating } from '~/server/utils/server-domain';
+import { CacheTTL } from '~/server/common/constants';
+import { queryCache } from '~/server/utils/cache-helpers';
+import { BAYES_MIN_REVIEWS } from '~/server/services/appBlockReview.service';
 
 const CACHE_TTL_SECONDS = 60;
 export const MAX_BLOCKS_PER_SLOT = 3;
@@ -45,36 +51,161 @@ export const MAX_BLOCKS_PER_SLOT = 3;
 export const MARKETPLACE_SCOPES_SUMMARY_LIMIT = 3;
 
 /**
- * F-E E3 marketplace keyset cursor. Encodes the last row's `(sortKey, id)` as a
- * base64url string so the next page resumes strictly after it (the sort key is
- * embedded so a paged scan stays stable even when many rows share a sort value,
- * e.g. install_count=0). Opaque to the client. We use a unit-separator (\x1f) —
- * a char that can't appear in any of our sort keys (zero-padded digits, a
- * fixed-width timestamp, or a lowercased name) nor in an app_block id — so the
- * split is unambiguous.
+ * F-E E3 marketplace keyset cursor. Encodes the last row's `(sortKey, id)` plus
+ * the pinned Bayesian mean `m` as a base64url string so the next page resumes
+ * strictly after it (the sort key is embedded so a paged scan stays stable even
+ * when many rows share a sort value, e.g. install_count=0). Opaque to the
+ * client. We use a unit-separator (\x1f) — a char that can't appear in any of
+ * our sort keys (zero-padded digits, a fixed-width timestamp, or a lowercased
+ * name) nor in an app_block id nor a numeric mean — so the split is unambiguous.
+ *
+ * `m` PINNING (the `rating` sort): the sort key is computed from the global mean
+ * `m`, which is read from a 1h cache that can expire/bust MID-PAGINATION. If
+ * page 2 re-derived every row's key with a different `m` than page 1's cursor
+ * was encoded with, the keyset boundary shifts and one row is silently skipped
+ * or duplicated. So we PIN `m` into the cursor and reuse it for every page of a
+ * paging session. Empty for sorts that don't use `m` (popular/newest/name).
  */
 const CURSOR_SEPARATOR = String.fromCharCode(31); // unit separator (\x1f)
-function encodeMarketplaceCursor(sortKey: string, id: string): string {
-  return Buffer.from(`${sortKey}${CURSOR_SEPARATOR}${id}`, 'utf8').toString('base64url');
+function encodeMarketplaceCursor(sortKey: string, id: string, pinnedMean?: number): string {
+  // Only the `rating` sort pins a mean; other sorts emit the legacy 2-field
+  // `sortKey␟id` cursor (no trailing separator) so their format is unchanged.
+  const body =
+    pinnedMean == null
+      ? `${sortKey}${CURSOR_SEPARATOR}${id}`
+      : `${sortKey}${CURSOR_SEPARATOR}${id}${CURSOR_SEPARATOR}${pinnedMean}`;
+  return Buffer.from(body, 'utf8').toString('base64url');
 }
 function decodeMarketplaceCursor(cursor: string | undefined): {
   cursorSortKey: string | null;
   cursorId: string | null;
+  /** The mean `m` pinned by the FIRST page of this session (null if absent). */
+  cursorMean: number | null;
 } {
-  if (!cursor) return { cursorSortKey: null, cursorId: null };
+  const empty = { cursorSortKey: null, cursorId: null, cursorMean: null };
+  if (!cursor) return empty;
   let decoded: string;
   try {
     decoded = Buffer.from(cursor, 'base64url').toString('utf8');
   } catch {
     // Malformed cursor → treat as first page (fail-open to a safe default).
-    return { cursorSortKey: null, cursorId: null };
+    return empty;
   }
-  const sep = decoded.indexOf(CURSOR_SEPARATOR);
-  if (sep < 0) return { cursorSortKey: null, cursorId: null };
+  // Split on the FIRST two separators: [sortKey, id, mean]. sortKey + id can't
+  // contain \x1f (zero-padded digits / timestamp / lowercased name / app id),
+  // so the first two indexOf hits are the field boundaries.
+  const sep1 = decoded.indexOf(CURSOR_SEPARATOR);
+  if (sep1 < 0) return empty;
+  const sep2 = decoded.indexOf(CURSOR_SEPARATOR, sep1 + 1);
+  // Legacy 2-field cursor (no pinned mean) — fail-open to an unpinned page.
+  const cursorId = sep2 < 0 ? decoded.slice(sep1 + 1) : decoded.slice(sep1 + 1, sep2);
+  const meanField = sep2 < 0 ? '' : decoded.slice(sep2 + 1);
+  const meanNum = meanField === '' ? NaN : Number(meanField);
   return {
-    cursorSortKey: decoded.slice(0, sep),
-    cursorId: decoded.slice(sep + 1),
+    cursorSortKey: decoded.slice(0, sep1),
+    cursorId,
+    cursorMean: Number.isFinite(meanNum) ? meanNum : null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Marketplace reviews — aggregate SQL + Bayesian sort (F-E "marketplace").
+// ---------------------------------------------------------------------------
+
+/**
+ * Correlated subquery: AVG(rating) over an app's AGGREGATE-ELIGIBLE reviews —
+ * NOT mod-excluded AND NOT the app owner's own (self-review). NULL for a
+ * 0-review app. The card number, the detail number, and the global-mean `m`
+ * share this eligibility filter so they all agree (one source of truth).
+ */
+const AVG_RATING_SUBQUERY = Prisma.sql`(
+  SELECT AVG(abr.rating)::float
+  FROM app_block_reviews abr
+  WHERE abr.app_block_id = ab.id
+    AND NOT abr.exclude
+    AND abr.user_id IS DISTINCT FROM oc."userId"
+)`;
+
+/** Correlated subquery: COUNT of aggregate-eligible reviews (same filter). */
+const REVIEW_COUNT_SUBQUERY = Prisma.sql`(
+  SELECT COUNT(*)::bigint
+  FROM app_block_reviews abr
+  WHERE abr.app_block_id = ab.id
+    AND NOT abr.exclude
+    AND abr.user_id IS DISTINCT FROM oc."userId"
+)`;
+
+/** Correlated subquery: SUM(rating) of aggregate-eligible reviews (same filter). */
+const SUM_RATING_SUBQUERY = Prisma.sql`(
+  SELECT COALESCE(SUM(abr.rating), 0)::float
+  FROM app_block_reviews abr
+  WHERE abr.app_block_id = ab.id
+    AND NOT abr.exclude
+    AND abr.user_id IS DISTINCT FROM oc."userId"
+)`;
+
+// Scale factor for encoding the [1,5] Bayesian score as a zero-padded sortable
+// integer string. score * 1e6 → 7 digits max (5_000_000), lpad to 9 for headroom.
+const BAYES_SCORE_SCALE = 1_000_000;
+const BAYES_SCORE_PAD = 9;
+const INSTALL_PAD = 20; // matches the `popular` sort's install-count padding
+
+/**
+ * The Bayesian-shrinkage `rating` sort key, as a single zero-padded sortable
+ * TEXT (the same fragment reused IDENTICALLY in SELECT, the keyset WHERE, and
+ * ORDER BY — if it drifts, keyset pagination silently skips rows).
+ *
+ *   score = (C*m + SUM(rating)) / (C + n)
+ *     n = aggregate-eligible review count, m = global mean (param), C = prior.
+ *   0-review apps → score = m (mid-pack, not buried).
+ *
+ * Encoded DESC: lpad(round(score*SCALE)) so a plain TEXT DESC compare orders by
+ * score. Tiebreaker concatenated: equal scores fall back to install_count
+ * (lpad), then `ab.id` (the row-value keyset's final component). The whole key
+ * is one TEXT so the keyset tuple `(sort_key, id)` is a correct total order.
+ */
+function bayesianRatingSortKey(globalMean: number): Prisma.Sql {
+  // score = (C*m + SUM) / (C + n). C and m are server constants/params (safe).
+  const score = Prisma.sql`(
+    (${BAYES_MIN_REVIEWS}::float * ${globalMean}::float + ${SUM_RATING_SUBQUERY})
+    / (${BAYES_MIN_REVIEWS}::float + ${REVIEW_COUNT_SUBQUERY})
+  )`;
+  const installCount = Prisma.sql`(
+    SELECT COUNT(DISTINCT bus.user_id) FROM block_user_subscriptions bus
+    WHERE bus.app_block_id = ab.id
+  )`;
+  // NB: cast the pad-length args to ::int. Prisma binds the JS number
+  // constants as bigint, and `lpad(text, bigint, unknown)` has no overload
+  // (the signature is `lpad(text, integer, text)`) → the whole query 500s at
+  // runtime with `function lpad(text, bigint, unknown) does not exist`. The
+  // unit tests only assert the SQL string shape (/lpad/), so this slipped past
+  // them and was caught by the preview smoke test hitting a real database.
+  return Prisma.sql`(
+    lpad(round(${score} * ${BAYES_SCORE_SCALE})::bigint::text, ${BAYES_SCORE_PAD}::int, '0')
+    || lpad(${installCount}::text, ${INSTALL_PAD}::int, '0')
+  )`;
+}
+
+/**
+ * The global mean rating `m` across ALL aggregate-eligible app reviews (NOT
+ * exclude AND not self-review), cached 1h. Falls back to the neutral mid-scale
+ * (3.0) when there are no reviews yet (the marketplace is dark/empty), so a
+ * 0-review world still produces a sane, stable sort.
+ */
+async function getGlobalMeanRating(): Promise<number> {
+  const cacheable = queryCache(dbRead, 'getGlobalMeanRating', 'v1');
+  const rows = await cacheable<{ mean: number | null }[]>(
+    Prisma.sql`
+      SELECT AVG(abr.rating)::float AS mean
+      FROM app_block_reviews abr
+      JOIN app_blocks ab ON ab.id = abr.app_block_id
+      JOIN "OauthClient" oc ON oc.id = ab.app_id
+      WHERE NOT abr.exclude
+        AND abr.user_id IS DISTINCT FROM oc."userId"
+    `,
+    { ttl: CacheTTL.hour, tag: ['app-rating:global-mean'] }
+  );
+  return rows[0]?.mean ?? 3.0;
 }
 
 // Slot-reservation math lives in a client-safe module so the model-page SSR
@@ -161,6 +292,16 @@ interface ListForModelOpts {
    * otherwise leak across users in the shared (modelId, slotId) cache key.
    */
   viewerUserId?: number | null;
+  /**
+   * NSFW-APP-RED-ONLY: true when the request is on a red-capable host
+   * (`isHostForColor(host, 'red')`, computed in the router). When false (the
+   * default — fail-closed), mature-rated (r/x) apps are dropped from the result,
+   * EVEN on a cache hit (the shared (modelId, slotId) cache is host-agnostic, so
+   * the filter is applied after the cache read to avoid cross-host leakage).
+   * This stacks on top of the existing model-NSFW-level ceiling (maxRating):
+   * a mature app must clear BOTH the model's nsfw ladder AND the host gate.
+   */
+  redCapable?: boolean;
 }
 
 // Ordered ratings for ladder comparisons. Each rating implies "and below."
@@ -282,6 +423,38 @@ export interface PageBlockSsr {
    *  granted set (declared − missingScopes from the mint) for BLOCK_INIT, so the
    *  block sees the real scopes it has rather than a hardcoded empty array. */
   scopes: string[];
+  /** NSFW-APP-RED-ONLY: the authoritative content rating (app_blocks.content_rating
+   *  column, set on approve). The SSR run-page gate 404s a mature (r/x) page app
+   *  when the request host is not red-capable. NULL for pre-feature rows → SFW. */
+  contentRating: string | null;
+}
+
+/**
+ * APP DEV TUNNEL — the caller's OWN app resolved for the `/apps/dev/<blockId>`
+ * route, at ANY status (pending/draft/approved/rejected). DISTINCT from
+ * PageBlockSsr in TWO load-bearing ways:
+ *   - it is OWNERSHIP-SCOPED (resolves only the caller's own app; null for
+ *     another author's app — see resolveDevPageBlockForAuthor), and
+ *   - it carries NO iframeSrc: the dev route's iframe points at the ephemeral
+ *     tunnel host (server-derived), NEVER the manifest's stored iframe.src. This
+ *     is why it can never resolve or serve a deployed `<slug>.civit.ai` bundle.
+ */
+export interface DevPageBlockResolution {
+  appBlockId: string;
+  blockId: string;
+  appId: string;
+  status: string;
+  trustTier: 'unverified' | 'verified' | 'internal';
+  name: string;
+  pageTitle: string;
+  sandbox: string;
+  scopes: string[];
+  contentRating: string | null;
+  /** For an `ephemeral` resolution only: which scope source produced `scopes` —
+   *  `'pending'` (the caller's own submitted-but-unapproved manifest) or
+   *  `'brand-new'` (a truly-unclaimed slug, scopes from the dev-tunnel session).
+   *  Undefined for the owned-approved path. Used for the mint-time audit log. */
+  ephemeralSource?: 'pending' | 'brand-new';
 }
 
 interface UninstallOpts {
@@ -432,6 +605,28 @@ function launchOnlySqlFilter(launchOnly: boolean): Prisma.Sql {
   return Prisma.sql`COALESCE(ab.manifest->'page'->>'path', '') <> ''`;
 }
 
+/**
+ * NSFW-APP-RED-ONLY — the SQL embodiment of the host maturity gate, applied in
+ * the public marketplace LISTING queries (listAvailable / getFeaturedBlocks /
+ * getAppDetail). A mature-rated app (`content_rating` ∈ {r, x}, the authoritative
+ * approve-time column) is EXCLUDED from listings unless the request is on a
+ * red-capable host (`isHostForColor(host, 'red')`, computed in the router and
+ * passed as `redCapable`).
+ *
+ *   - redCapable host (civitai.red) → `TRUE` (no maturity filter; mature apps
+ *     are visible).
+ *   - any other host (civitai.com, …) → keep ONLY rows whose `content_rating`
+ *     is NOT mature. NULL / unknown rating is treated as SFW (kept) — the column
+ *     is non-null on approve, so this only defends a pre-feature row, and the
+ *     direction is fail-closed for MATURE rows (the thing we must hide).
+ *
+ * This is independent of (and stacks with) the launch-only and approved filters.
+ */
+function matureHostSqlFilter(redCapable: boolean): Prisma.Sql {
+  if (redCapable) return Prisma.sql`TRUE`;
+  return Prisma.sql`COALESCE(LOWER(ab.content_rating), '') NOT IN ('r', 'x')`;
+}
+
 function resolveRenderMode(
   manifestRenderMode: string | undefined,
   blockRenderMode: string,
@@ -467,8 +662,15 @@ export class BlockRegistry {
   static async listForModel(opts: ListForModelOpts): Promise<BlockInstallRecord[]> {
     const { modelId, slotId, modelType, modelNsfwLevel } = opts;
     const viewerUserId = opts.viewerUserId ?? null;
+    const redCapable = opts.redCapable === true;
     const maxRating = maxRatingForNsfwLevel(modelNsfwLevel);
     const maxRatingIdx = CONTENT_RATING_INDEX[maxRating];
+    // NSFW-APP-RED-ONLY: drop a record whose app is mature-rated (r/x) when the
+    // request is not on a red-capable host. The record carries `manifest.
+    // contentRating` (projected below), so this works identically on a cache hit
+    // and on a fresh DB read. Fail-closed: !redCapable hides mature apps.
+    const passesHostMaturity = (r: BlockInstallRecord): boolean =>
+      redCapable || !isMatureContentRating(r.manifest?.contentRating ?? null);
     // v1: disable the shared (modelId, slotId) cache layer whenever a
     // viewer is attached, since viewer_personal subscriptions make the
     // result per-viewer. The 60s cache for anon viewers and authed
@@ -486,7 +688,11 @@ export class BlockRegistry {
           // M-7: sentinel from getKillList() means sysRedis is unreachable;
           // suppress everything on this branch (cached path).
           if (kill.has('__KILL_LIST_UNREACHABLE__')) return [];
-          return kill.size === 0 ? cached : cached.filter((r) => !kill.has(r.blockId));
+          // Apply the host-maturity gate on the cache hit too — the cache key is
+          // host-agnostic, so a .red-populated entry must not leak mature apps to
+          // a .com reader.
+          const live = kill.size === 0 ? cached : cached.filter((r) => !kill.has(r.blockId));
+          return live.filter(passesHostMaturity);
         }
       } catch {
         // fail open — fall through to DB
@@ -965,13 +1171,19 @@ export class BlockRegistry {
 
     if (cacheEnabled) {
       try {
+        // Cache the HOST-AGNOSTIC set (all ratings) under the host-agnostic key,
+        // so a .red and a .com read share one entry. The per-host maturity gate
+        // is applied on read (here + on the cache-hit branch above), never baked
+        // into the cached value — otherwise a .com-populated entry would hide
+        // mature apps from a subsequent .red reader.
         await redis.packed.set(key, hydrated, { EX: CACHE_TTL_SECONDS });
       } catch {
         // fail open
       }
     }
 
-    return hydrated;
+    // NSFW-APP-RED-ONLY: apply the host maturity gate to the returned set.
+    return hydrated.filter(passesHostMaturity);
   }
 
   /**
@@ -1580,6 +1792,9 @@ export class BlockRegistry {
         // model render path, which reads the `trust_tier` column (see
         // resolveRenderMode + the `r.trust_tier` raw select used by listForModel).
         trustTier: true,
+        // NSFW-APP-RED-ONLY: authoritative content rating (set on approve). The
+        // SSR run-page gate uses it to 404 a mature page app off a red host.
+        contentRating: true,
       },
     });
     if (!ab) return null;
@@ -1619,6 +1834,242 @@ export class BlockRegistry {
       name,
       pageTitle: typeof page.title === 'string' ? page.title : name,
       scopes: declaredScopes,
+      // NSFW-APP-RED-ONLY: NULL-safe (column is non-null on approve, but defend
+      // against a pre-feature / partial row → treated as SFW by the gate).
+      contentRating: typeof ab.contentRating === 'string' ? ab.contentRating : null,
+    };
+  }
+
+  /**
+   * APP DEV TUNNEL — resolve the caller's OWN app by `blockId` (== AppBlock
+   * `block_id`, GLOBALLY unique via `@@unique([blockId])`) at ANY status, for the
+   * `/apps/dev/<blockId>` SSR route + the startDevTunnel gate. Ownership is
+   * enforced IN the query (`app.userId === userId`), so a `blockId` owned by a
+   * DIFFERENT author — or no such app — returns null (no ownership/existence
+   * oracle). Unlike resolvePageBlockBySlug this does NOT require `status:approved`
+   * NOR `manifestDeclaresPage`: a developer iterating locally may have a
+   * draft/pending app whose manifest has no page block yet. The dev host renders
+   * the LOCAL code via the tunnel, so the manifest iframe/page is irrelevant here.
+   *
+   * NOTE: this returns NO iframeSrc — the route derives the iframe host from the
+   * assigned tunnel host ONLY (T6). It cannot be used to serve a deployed bundle.
+   *
+   * EPHEMERAL PRE-SUBMIT FALLBACK (Phase 1): when the caller owns NO AppBlock row
+   * for `blockId` at all (the app has not been submitted/approved — no row + no
+   * OauthClient are created until moderator APPROVE), we attempt an EPHEMERAL
+   * resolution so an author can iterate on local code in the real host BEFORE
+   * submitting. It writes NO DB row and returns a synthetic resolution with safe
+   * `unverified` defaults (see resolveEphemeralDevPageBlock). SCOPED features
+   * (Buzz / App Storage block-token mint) remain 403 until approval — the prod
+   * block-token mint (`/api/v1/block-tokens`) still gates on `status:'approved'`
+   * and is untouched here; this is UI / local-code rendering only.
+   */
+  static async resolveDevPageBlockForAuthor(
+    blockId: string,
+    userId: number,
+    opts?: {
+      db?: 'read' | 'write';
+      /** BRAND-NEW (no pending row) scope source: the caller's dev-tunnel session's
+       *  clamped `grantedScopes` (from their local `block.manifest.json`, sent by the
+       *  CLI at tunnel start). Ignored for the pending (own submission → server-read
+       *  manifest) and owned-approved paths. Absent → brand-new resolves read-only. */
+      sessionGrantedScopes?: string[];
+      /** Whether the dedicated `app-blocks-dev-tunnel-unsubmitted-spend` flag is ON
+       *  for the caller. When false, the BRAND-NEW branch strips `ai:write:budgeted`
+       *  (renders read-only). Fail-closed default (false). No effect on pending. */
+      unsubmittedSpendAllowed?: boolean;
+    }
+  ): Promise<DevPageBlockResolution | null> {
+    if (!blockId || !userId) return null;
+    const db = opts?.db === 'write' ? dbWrite : dbRead;
+    const ab = await db.appBlock.findFirst({
+      // Ownership-scoped: the app's OauthClient.userId is the v1 ownership source
+      // of truth (same as getMyAppRepo). A foreign-owned or missing app → null,
+      // in which case we fall through to the ephemeral pre-submit path below.
+      where: { blockId, app: { userId } },
+      select: {
+        id: true,
+        blockId: true,
+        appId: true,
+        status: true,
+        manifest: true,
+        trustTier: true,
+        contentRating: true,
+      },
+    });
+    // No OWNED AppBlock row → try the ephemeral pre-submit resolution (Phase 1).
+    // resolveEphemeralDevPageBlock returns null (→ same bare NOT_FOUND, no oracle)
+    // for a slug claimed by anyone else, so a foreign-owned app is never leaked.
+    if (!ab)
+      return this.resolveEphemeralDevPageBlock(blockId, userId, db, {
+        sessionGrantedScopes: opts?.sessionGrantedScopes,
+        unsubmittedSpendAllowed: opts?.unsubmittedSpendAllowed,
+      });
+    const manifest = (ab.manifest ?? {}) as Record<string, unknown>;
+    const iframe = (manifest.iframe ?? {}) as { sandbox?: unknown };
+    const page = (manifest.page ?? {}) as { title?: unknown };
+    const name = typeof manifest.name === 'string' ? manifest.name : ab.blockId;
+    const declaredScopes = Array.isArray((manifest as { scopes?: unknown }).scopes)
+      ? (manifest as { scopes: unknown[] }).scopes.filter((s): s is string => typeof s === 'string')
+      : [];
+    return {
+      appBlockId: ab.id,
+      blockId: ab.blockId,
+      appId: ab.appId,
+      status: ab.status,
+      trustTier:
+        ab.trustTier === 'verified' || ab.trustTier === 'internal'
+          ? (ab.trustTier as 'verified' | 'internal')
+          : 'unverified',
+      name,
+      pageTitle: typeof page.title === 'string' ? page.title : name,
+      sandbox: typeof iframe.sandbox === 'string' ? iframe.sandbox : '',
+      scopes: declaredScopes,
+      contentRating: typeof ab.contentRating === 'string' ? ab.contentRating : null,
+    };
+  }
+
+  /**
+   * EPHEMERAL PRE-SUBMIT DEV RESOLUTION (Phase 1 — "ephemeral resolution", design
+   * approach C). Reached ONLY from resolveDevPageBlockForAuthor when the caller
+   * owns NO AppBlock row for `blockId`. Lets an author open a dev tunnel for a
+   * BRAND-NEW app they have not yet submitted (before any AppBlock/OauthClient row
+   * exists), so they can iterate on local code inside the real host. Writes NO DB
+   * row — the returned resolution is a purely synthetic, ownership/existence gate
+   * plus manifest DISPLAY defaults; the iframe host is still derived from the live
+   * tunnel only (the resolution carries no iframeSrc).
+   *
+   * SECURITY — ANTI-SHADOW GUARD (refuse any slug claimed by someone else). Every
+   * refusal returns the SAME bare null the "foreign / absent app" case returns, so
+   * the guard NEVER distinguishes AMONG the claimed cases: foreign-approved,
+   * foreign-pending, and foreign-suspended all yield an identical bare null. It is
+   * NOT a full "no existence oracle" (see the caller comment in blocks.router.ts):
+   * a claimed slug returns null (consuming no host-pool / rate-limit budget) while
+   * an unclaimed slug returns a synthetic resolution (which downstream may allocate
+   * a rate-limited host), so a claimed-vs-unclaimed signal is inherent. Approved
+   * slugs are already PUBLIC (they render at `<slug>.civit.ai`), so the only
+   * residual signal this leaks is the EXISTENCE of a pending/suspended slug — and
+   * only to another author-flagged (trusted-cohort) caller, gated behind the
+   * per-user rate limit. That residual is the accepted trade for the pre-submit UX.
+   *   (A) if ANY AppBlock row exists for `blockId` → REFUSE. The caller-owned row
+   *       was already checked (and returned) by the caller, so any row reaching
+   *       here is FOREIGN. `block_id` is GLOBALLY unique (`@@unique([blockId])`,
+   *       `app_blocks_block_id_unique`), so a single indexed lookup settles it: a
+   *       row (any status/owner) means the slug is claimed and can never become
+   *       the caller's — a superset of "an approved AppBlock exists (any owner)".
+   *   (B) if an AppBlockPublishRequest with `status:'pending'` exists for `blockId`
+   *       owned by a DIFFERENT user → REFUSE. The partial unique index
+   *       `UNIQUE(slug) WHERE status='pending'` guarantees ≤1 pending row per slug,
+   *       so this is a single indexed (`app_block_publish_requests_slug_idx`)
+   *       lookup. The caller's OWN pending request is ALLOWED (they are claiming
+   *       the slug), as is a truly-unclaimed slug.
+   *   (C) if `blockId` is not a CANONICAL slug (the same `SLUG_REGEX` + 3–40-char
+   *       bounds submit enforces on `manifest.blockId`) → REFUSE, returning the
+   *       same bare null BEFORE any DB read. Every stored AppBlock.blockId / pending
+   *       slug is canonical, so a non-canonical `blockId` can never match a real row
+   *       — without this guard an uppercase / dotted / over-length / leading-digit
+   *       string would sail past guards (A)/(B) as "unclaimed" and burn a
+   *       rate-limited host-pool allocation. The owned path is unaffected (its rows
+   *       are always canonical, so it never reaches here).
+   * A user can therefore NEVER get an ephemeral resolution for a slug that belongs
+   * to — or is pending for — anyone else, nor for a structurally-invalid slug, and
+   * the refusal never reveals WHICH of these cases triggered it.
+   *
+   * Safe DISPLAY defaults (no DB row, no reviewed manifest): `unverified` trust
+   * tier, EMPTY scopes (scoped block-token mint stays 403 until approval — Phase 2),
+   * SFW `contentRating`, and a minimal `allow-scripts allow-forms` sandbox that
+   * matches the unverified-tier allowed set (the client re-clamps via
+   * intersectSandbox, so this can only ever be as wide as the tier permits). The
+   * synthetic appBlockId/appId use an `ephemeral-<slug>` namespace that can never
+   * collide with a real AppBlock.id or an OauthClient.id (UUIDv4 / `appblk-<slug>`).
+   */
+  private static async resolveEphemeralDevPageBlock(
+    blockId: string,
+    userId: number,
+    db: typeof dbRead | typeof dbWrite,
+    opts?: { sessionGrantedScopes?: string[]; unsubmittedSpendAllowed?: boolean }
+  ): Promise<DevPageBlockResolution | null> {
+    // Guard (C): reject a non-CANONICAL slug BEFORE any DB read (same bare null,
+    // no oracle). Canonical = the exact constraint submit enforces on
+    // manifest.blockId (SLUG_REGEX + 3–40 chars). Every stored blockId/pending
+    // slug is canonical, so a non-canonical string can never match a real row —
+    // rejecting it here stops an uppercase / dotted (`a.b`) / over-length /
+    // leading-digit slug from being treated as "unclaimed" and burning a
+    // rate-limited host-pool allocation. The owned path never reaches this
+    // (its rows are always canonical, so guard-A/B and this are moot for it).
+    if (blockId.length < 3 || blockId.length > 40 || !SLUG_REGEX.test(blockId)) {
+      return null;
+    }
+    // Guard (A): any FOREIGN AppBlock row for this slug → refuse (slug is claimed
+    // globally via @@unique([blockId])). Indexed on app_blocks_block_id_unique.
+    const claimed = await db.appBlock.findUnique({
+      where: { blockId },
+      select: { id: true },
+    });
+    if (claimed) return null;
+    // Guard (B): a FOREIGN pending publish request for this slug → refuse. ≤1
+    // pending row per slug (partial unique index). The caller's own pending is OK.
+    const pending = await db.appBlockPublishRequest.findFirst({
+      where: { slug: blockId, status: 'pending' },
+      select: { submittedByUserId: true, manifest: true },
+    });
+    if (pending && pending.submittedByUserId !== userId) return null;
+    // SCOPE SOURCE — the declared scopes the dev-page host surfaces to the block as
+    // `declaredScopes` (→ the block's `granted` UI state) AND the block-token mint
+    // uses as the JWT's granted set (both consume the SAME `clampTunnelDeclaredScopes`
+    // so they can NEVER diverge). Two ephemeral cases:
+    //
+    //   • SUBMITTED-PENDING (the caller owns `pending`): clamp the pending
+    //     submission's SERVER-READ, un-reviewed `manifest.scopes`. Without this the
+    //     block's Generate gate reads empty and hangs on "Grant access" while the JWT
+    //     already carries the budgeted scope (the pre-#2992 bug). NOT gated by the
+    //     unsubmitted-spend flag — the app IS submitted.
+    //   • BRAND-NEW (no pending row, truly-unclaimed slug the caller owns): the scope
+    //     source is the AUTHENTICATED CLI's dev-tunnel session (`sessionGrantedScopes`,
+    //     already clamped at write) — NEVER a browser body. When the dedicated
+    //     `app-blocks-dev-tunnel-unsubmitted-spend` flag is OFF for the caller, strip
+    //     `ai:write:budgeted` so a never-reviewed app renders READ-ONLY (fail-closed).
+    //
+    // NO new authority either way: the belt (TUNNEL allowlist, no OAuth ceiling,
+    // keyCanSpend=true) is identical; the runtime author-flag re-check + per-call /
+    // per-session / per-day Buzz caps remain the actual spend gates.
+    let ephemeralScopes: string[] = [];
+    const ephemeralSource: 'pending' | 'brand-new' = pending ? 'pending' : 'brand-new';
+    if (pending) {
+      const pendingManifest = (pending.manifest ?? {}) as { scopes?: unknown };
+      const declared = Array.isArray(pendingManifest.scopes)
+        ? pendingManifest.scopes.filter((s): s is string => typeof s === 'string')
+        : [];
+      ephemeralScopes = clampTunnelDeclaredScopes(declared);
+    } else {
+      ephemeralScopes = clampTunnelDeclaredScopes(opts?.sessionGrantedScopes ?? []);
+      if (!opts?.unsubmittedSpendAllowed) {
+        ephemeralScopes = ephemeralScopes.filter((s) => s !== 'ai:write:budgeted');
+      }
+    }
+    // ALLOWED — truly-unclaimed slug, or the caller owns the pending request.
+    return {
+      // Synthetic, non-resolving ids (`ephemeral-<slug>`): the render path never
+      // FK-resolves these (the prod block-token mint 403s on the unapproved app
+      // before any appId/appBlockId lookup), and the prefix can never equal a real
+      // AppBlock.id nor an OauthClient.id (UUIDv4 / `appblk-<slug>`).
+      appBlockId: `ephemeral-${blockId}`,
+      blockId,
+      appId: `ephemeral-${blockId}`,
+      status: 'ephemeral',
+      trustTier: 'unverified',
+      name: blockId,
+      pageTitle: blockId,
+      // Minimal safe sandbox for an unverified tier (client intersectSandbox
+      // re-clamps to the allowlist ∪ MINIMAL_SANDBOX regardless).
+      sandbox: 'allow-scripts allow-forms',
+      // Clamped tunnel scopes: the own-pending server-read manifest (pending) or the
+      // CLI-declared session scopes (brand-new, flag-gated). Aligned with the
+      // block-token mint so the dev-page block's Generate gate is not falsely empty.
+      scopes: ephemeralScopes,
+      ephemeralSource,
+      // SFW default — no reviewed content rating exists pre-submit.
+      contentRating: null,
     };
   }
 
@@ -2456,9 +2907,10 @@ export class BlockRegistry {
   /**
    * Marketplace listing. Filters by slot (manifest @> {targets:[{slotId}]}),
    * a free-text ILIKE on the manifest name/blockId, and (F-E E3) a mod-assigned
-   * `category`. Sortable (F-E E3) by `popular` (install_count desc — the
-   * default, unchanged from pre-E3), `newest` (current_version_deployed_at
-   * desc, falling back to created_at), or `name` (manifest name asc).
+   * `category`. Sortable by `rating` (Bayesian-shrinkage avg rating desc — the
+   * DEFAULT; 0-review apps sit mid-pack at the global mean), `popular`
+   * (install_count desc), `newest` (current_version_deployed_at desc, falling
+   * back to created_at), or `name` (manifest name asc).
    *
    * Cursor: a deterministic keyset over `(sortKey, id)`. We always append
    * `ab.id ASC` as the final tiebreaker so the cursor is unambiguous; the
@@ -2478,7 +2930,14 @@ export class BlockRegistry {
     // passes `!ctx.user?.isModerator`), the marketplace returns ONLY
     // launch-eligible (page) apps. Defaults false (moderator / internal callers
     // see everything — grandfather). See launchOnlySqlFilter / isLaunchSlot.
-    launchOnly = false
+    launchOnly = false,
+    // NSFW-APP-RED-ONLY: true when the request is on a red-capable host
+    // (`isHostForColor(host, 'red')`, computed in the router). When false,
+    // mature-rated apps (r/x) are excluded. Defaults false (fail-closed: a
+    // caller that forgets to thread the host hides mature apps). Independent of
+    // launchOnly — a moderator on civitai.com still does NOT see mature apps in
+    // the listing, because maturity is a HOST property, not a privilege.
+    redCapable = false
   ): Promise<{ items: AvailableBlock[]; nextCursor?: string }> {
     const { slotId, query, category, sort, cursor, limit } = input;
     type Row = {
@@ -2489,7 +2948,13 @@ export class BlockRegistry {
       manifest: unknown;
       install_count: bigint;
       category: string | null;
+      external_url: string | null;
       approved_scopes: string[] | null;
+      avg_rating: number | null;
+      review_count: bigint;
+      // The raw stored screenshots jsonb (the SAME column getAppDetail reads) —
+      // projected to a public cover URL below (first screenshot, opaque route).
+      screenshots: unknown;
       // The sort key for THIS row, projected so we can encode it into the
       // nextCursor for a stable keyset scan. Text so one column fits all sorts.
       sort_key: string;
@@ -2501,8 +2966,9 @@ export class BlockRegistry {
     const categoryFilter = category ?? null;
 
     // Keyset cursor = `${sortKey} ${id}` of the last row of the prior page.
-    // Split it back into (sortKey, id) so the WHERE clause resumes after it.
-    const { cursorSortKey, cursorId } = decodeMarketplaceCursor(cursor);
+    // Split it back into (sortKey, id, mean) so the WHERE clause resumes after
+    // it and the `rating` sort reuses the SAME pinned mean across all pages.
+    const { cursorSortKey, cursorId, cursorMean } = decodeMarketplaceCursor(cursor);
 
     // The sort key is a TEXT expression chosen so a plain text comparison
     // orders rows correctly for the requested sort. The SAME expression is used
@@ -2517,13 +2983,27 @@ export class BlockRegistry {
     // less-than the cursor tuple); name ASC (resume strictly greater-than).
     // ab.id shares the sort_key direction so the row-value tuple comparison is
     // a correct, total keyset.
+    // `rating` (the default) needs the marketplace-wide Bayesian prior `m`
+    // (cheap, 1h-cached scalar) injected as a param. The other sorts ignore it.
+    // PIN `m` across a paging session: page 1 reads the 1h cache and encodes the
+    // value it used into nextCursor; pages 2..N decode that pinned `m` and reuse
+    // it (NOT a fresh cache read) so the sort key stays identical even if the
+    // cache expires/busts mid-pagination — otherwise the keyset boundary shifts
+    // and one row is silently skipped or duplicated. Cursorless first page only
+    // reads the cache. Other sorts don't use `m` (kept 0).
+    const globalMean =
+      sort === 'rating'
+        ? cursorMean ?? (await getGlobalMeanRating())
+        : 0;
     const sortKeyExpr =
-      sort === 'popular'
+      sort === 'rating'
+        ? bayesianRatingSortKey(globalMean)
+        : sort === 'popular'
         ? Prisma.sql`lpad((SELECT COUNT(DISTINCT bus.user_id) FROM block_user_subscriptions bus WHERE bus.app_block_id = ab.id)::text, 20, '0')`
         : sort === 'newest'
         ? Prisma.sql`to_char(COALESCE(ab.current_version_deployed_at, ab.created_at) AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISSUS')`
         : Prisma.sql`LOWER(COALESCE(ab.manifest->>'name', ab.block_id))`;
-    const descending = sort === 'popular' || sort === 'newest';
+    const descending = sort === 'rating' || sort === 'popular' || sort === 'newest';
     const dir = descending ? Prisma.sql`DESC` : Prisma.sql`ASC`;
     const keysetCmp = descending ? Prisma.sql`<` : Prisma.sql`>`;
 
@@ -2535,7 +3015,9 @@ export class BlockRegistry {
         oc.name AS app_name,
         ab.manifest,
         ab.category,
+        ab.external_url,
         ab.approved_scopes,
+        ab.screenshots,
         -- Post kill_per_model_installs: "install count" = how many distinct
         -- USERS use this app, not how many subscription rows exist. A single
         -- user can hold several rows for one app (a blanket publisher sub +
@@ -2544,6 +3026,10 @@ export class BlockRegistry {
         -- ranking. COUNT(DISTINCT user_id) makes the number mean "users".
         (SELECT COUNT(DISTINCT bus.user_id)::bigint FROM block_user_subscriptions bus
          WHERE bus.app_block_id = ab.id) AS install_count,
+        -- Marketplace reviews: aggregate-eligible AVG + COUNT (excludes
+        -- mod-excluded + self-reviews). NULL avg = 0-review app.
+        ${AVG_RATING_SUBQUERY} AS avg_rating,
+        ${REVIEW_COUNT_SUBQUERY} AS review_count,
         -- The sort key for this row, as text, so the keyset cursor can carry it.
         ${sortKeyExpr} AS sort_key
       FROM app_blocks ab
@@ -2551,6 +3037,8 @@ export class BlockRegistry {
       WHERE ab.status = 'approved'
         -- PAGE-ONLY LAUNCH GATE: non-mod callers see launch (page) apps only.
         AND ${launchOnlySqlFilter(launchOnly)}
+        -- NSFW-APP-RED-ONLY: hide mature (r/x) apps on non-red hosts.
+        AND ${matureHostSqlFilter(redCapable)}
         AND (
           ${slotFilter}::text IS NULL
           OR ab.manifest @> ${slotFilter}::jsonb
@@ -2571,8 +3059,13 @@ export class BlockRegistry {
     `)) as Row[];
     const trimmed = rows.slice(0, limit);
     const last = trimmed[trimmed.length - 1];
+    // Pin `m` into the cursor for the `rating` sort so every subsequent page
+    // reuses page 1's mean (see globalMean above). Omitted for other sorts.
+    const pinnedMean = sort === 'rating' ? globalMean : undefined;
     const nextCursor =
-      rows.length > limit && last ? encodeMarketplaceCursor(last.sort_key, last.id) : undefined;
+      rows.length > limit && last
+        ? encodeMarketplaceCursor(last.sort_key, last.id, pinnedMean)
+        : undefined;
     return {
       // F-E E1 anon-exposure allowlist: project the raw stored manifest down to
       // the vetted PUBLIC subset (name/description/targets[].slotId) via
@@ -2591,6 +3084,10 @@ export class BlockRegistry {
         // Public, mod-assigned category (NULL until the E3 migration + a mod set
         // it). Display-only.
         category: r.category ?? null,
+        // Off-site (external-link) app: the off-platform URL the card opens in a
+        // new tab. NULL = a normal on-platform app. Validated https:// at
+        // registration; display/navigation-only (no token/scope attached).
+        externalUrl: r.external_url ?? null,
         // F-E E3 scopes-on-cards: the FIRST N APPROVED scope ids (the same
         // permission-disclosure list E2 surfaces). Defensive against a NULL
         // column (pre-approval rows) → empty list. NEVER the manifest's raw
@@ -2600,6 +3097,13 @@ export class BlockRegistry {
               .filter((s): s is string => typeof s === 'string')
               .slice(0, MARKETPLACE_SCOPES_SUMMARY_LIMIT)
           : [],
+        // Marketplace reviews (aggregate-eligible). avgRating NULL = 0-review.
+        avgRating: r.avg_rating ?? null,
+        reviewCount: Number(r.review_count),
+        // Card cover: the FIRST public screenshot URL (or NULL when the app
+        // shipped none). Reuses the SAME toPublicScreenshots projection the
+        // detail page uses — opaque gated route, never the raw MinIO key.
+        coverUrl: toPublicScreenshots(r.id, r.screenshots)[0]?.url ?? null,
       })),
       nextCursor,
     };
@@ -2631,7 +3135,12 @@ export class BlockRegistry {
     // app resolves to null — the router maps that to the SAME NOT_FOUND a
     // missing/unapproved app produces, so a non-mod can't enumerate or read a
     // model-slot app's detail. Defaults false (mods see everything).
-    launchOnly = false
+    launchOnly = false,
+    // NSFW-APP-RED-ONLY: true when the request is on a red-capable host. When
+    // false, a mature (r/x) app resolves to null → the router surfaces the SAME
+    // NOT_FOUND as a missing app, so a mature app's DETAIL can't be read off
+    // .red (mirrors the run-page SSR 404). Defaults false (fail-closed).
+    redCapable = false
   ): Promise<PublicAppDetail | null> {
     type Row = {
       id: string;
@@ -2643,7 +3152,10 @@ export class BlockRegistry {
       content_rating: string | null;
       version: string | null;
       approved_scopes: string[] | null;
+      external_url: string | null;
       install_count: bigint;
+      avg_rating: number | null;
+      review_count: bigint;
       // F-E E5: stored screenshot records ([{ key, index, ext, contentType }]),
       // jsonb. NULL until the E5 migration is applied + an app is (re)approved
       // with a `screenshots/` dir — projected to PUBLIC display URLs below.
@@ -2660,9 +3172,12 @@ export class BlockRegistry {
         ab.content_rating,
         ab.version,
         ab.approved_scopes,
+        ab.external_url,
         ab.screenshots,
         (SELECT COUNT(DISTINCT bus.user_id)::bigint FROM block_user_subscriptions bus
-         WHERE bus.app_block_id = ab.id) AS install_count
+         WHERE bus.app_block_id = ab.id) AS install_count,
+        ${AVG_RATING_SUBQUERY} AS avg_rating,
+        ${REVIEW_COUNT_SUBQUERY} AS review_count
       FROM app_blocks ab
       LEFT JOIN "OauthClient" oc ON oc.id = ab.app_id
       WHERE ab.id = ${appBlockId}::text
@@ -2679,6 +3194,10 @@ export class BlockRegistry {
     // router surfaces NOT_FOUND (no detail leak). isAppLaunchEligible reuses the
     // same "declares a page" predicate as the listing filter + the page mint.
     if (launchOnly && !isAppLaunchEligible(row.manifest)) return null;
+    // NSFW-APP-RED-ONLY (non-red host): a mature (r/x) app is indistinguishable
+    // from a missing one off .red — return null → NOT_FOUND. Uses the
+    // authoritative content_rating column (set on approve), not the manifest.
+    if (!redCapable && isMatureContentRating(row.content_rating)) return null;
     return {
       id: row.id,
       blockId: row.block_id,
@@ -2695,9 +3214,18 @@ export class BlockRegistry {
       contentRating: row.content_rating ?? null,
       version: row.version ?? null,
       installCount: Number(row.install_count),
+      // Marketplace reviews (aggregate-eligible — excludes mod-excluded +
+      // self-reviews). avgRating NULL = 0-review. Display-safe aggregates.
+      avgRating: row.avg_rating ?? null,
+      reviewCount: Number(row.review_count),
       // Already-public standalone origin (no token/scope). Same host the webhook
-      // validates the submitted bundle's iframe.src against.
+      // validates the submitted bundle's iframe.src against. For an external
+      // (off-site) app this origin doesn't host anything — the client uses
+      // `externalUrl` as the open target instead (and hides install/preview).
       liveUrl: `https://${row.block_id}.${env.APPS_DOMAIN}`,
+      // Off-site (external-link) app: the off-platform URL. NULL = on-platform.
+      // Validated https:// at registration; display/navigation-only.
+      externalUrl: row.external_url ?? null,
       // F-E E5 screenshot gallery — PUBLIC display URLs only (the gated app
       // route), built server-side from appBlockId + index + ext. The stored
       // MinIO key is never exposed; a NULL column (pre-migration / no screenshots)
@@ -2729,7 +3257,10 @@ export class BlockRegistry {
     limit: number,
     // PAGE-ONLY LAUNCH GATE: non-mod callers get launch (page) apps only;
     // mods see every featured app. Defaults false. See launchOnlySqlFilter.
-    launchOnly = false
+    launchOnly = false,
+    // NSFW-APP-RED-ONLY: hide mature (r/x) apps from the featured rail unless on
+    // a red-capable host. Defaults false (fail-closed). See matureHostSqlFilter.
+    redCapable = false
   ): Promise<AvailableBlock[]> {
     type Row = {
       id: string;
@@ -2739,7 +3270,13 @@ export class BlockRegistry {
       manifest: unknown;
       install_count: bigint;
       category: string | null;
+      external_url: string | null;
       approved_scopes: string[] | null;
+      avg_rating: number | null;
+      review_count: bigint;
+      // Raw screenshots jsonb — projected to a public cover URL below (same as
+      // listAvailable / getAppDetail).
+      screenshots: unknown;
     };
     const rows = (await dbRead.$queryRaw<Row[]>`
       SELECT
@@ -2749,14 +3286,20 @@ export class BlockRegistry {
         oc.name AS app_name,
         ab.manifest,
         ab.category,
+        ab.external_url,
         ab.approved_scopes,
+        ab.screenshots,
         (SELECT COUNT(DISTINCT bus.user_id)::bigint FROM block_user_subscriptions bus
-         WHERE bus.app_block_id = ab.id) AS install_count
+         WHERE bus.app_block_id = ab.id) AS install_count,
+        ${AVG_RATING_SUBQUERY} AS avg_rating,
+        ${REVIEW_COUNT_SUBQUERY} AS review_count
       FROM app_blocks ab
       LEFT JOIN "OauthClient" oc ON oc.id = ab.app_id
       WHERE ab.status = 'approved'
         -- PAGE-ONLY LAUNCH GATE: non-mod callers see launch (page) apps only.
         AND ${launchOnlySqlFilter(launchOnly)}
+        -- NSFW-APP-RED-ONLY: hide mature (r/x) apps on non-red hosts.
+        AND ${matureHostSqlFilter(redCapable)}
         AND ab.featured = true
       ORDER BY ab.featured_order ASC NULLS LAST,
                install_count DESC,
@@ -2772,11 +3315,17 @@ export class BlockRegistry {
       manifest: toPublicBlockManifest(r.manifest),
       installCount: Number(r.install_count),
       category: r.category ?? null,
+      externalUrl: r.external_url ?? null,
       scopesSummary: Array.isArray(r.approved_scopes)
         ? r.approved_scopes
             .filter((s): s is string => typeof s === 'string')
             .slice(0, MARKETPLACE_SCOPES_SUMMARY_LIMIT)
         : [],
+      avgRating: r.avg_rating ?? null,
+      reviewCount: Number(r.review_count),
+      // Card cover: FIRST public screenshot URL (or NULL). Same projection as
+      // listAvailable — no widening.
+      coverUrl: toPublicScreenshots(r.id, r.screenshots)[0]?.url ?? null,
     }));
   }
 

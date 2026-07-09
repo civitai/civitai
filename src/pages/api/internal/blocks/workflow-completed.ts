@@ -98,7 +98,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // (e.g. `app-blocks-billing-enabled`) before Phase-3 billing wires real spend.
   const enabled = await isAppBlocksPipelineEnabled();
   if (!enabled) {
-    res.status(503).json({ error: 'App Blocks not enabled' });
+    res.status(503).json({ error: 'Apps are not enabled' });
     return;
   }
   const parsed = requestSchema.safeParse(req.body ?? {});

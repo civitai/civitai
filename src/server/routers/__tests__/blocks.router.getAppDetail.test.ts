@@ -49,13 +49,14 @@ vi.mock('~/server/middleware/block-scope.middleware', () => ({
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: vi.fn(),
 }));
+vi.mock('~/server/services/orchestrator/orchestration-new.service', () => ({
+  buildGenerationContext: vi.fn(),
+  createWorkflowStepsFromGraphInput: vi.fn(),
+}));
 vi.mock('~/server/services/orchestrator/workflows', () => ({
   submitWorkflow: vi.fn(),
   getWorkflow: vi.fn(),
   cancelWorkflow: vi.fn(),
-}));
-vi.mock('~/server/services/orchestrator/textToImage/textToImage', () => ({
-  createTextToImageStep: vi.fn(),
 }));
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: vi.fn(),
@@ -65,12 +66,14 @@ vi.mock('~/server/db/client', () => ({
   dbRead: { appBlock: { findUnique: vi.fn() } },
   dbWrite: { modelBlockInstall: { findUnique: vi.fn() }, model: { findUnique: vi.fn() } },
 }));
-vi.mock('~/server/redis/client', () => ({
-  redis: { get: vi.fn(), set: vi.fn() },
-  sysRedis: { get: vi.fn(), incrBy: vi.fn(), expire: vi.fn(), ttl: vi.fn() },
-  REDIS_KEYS: { BLOCKS: { POPULAR_CHECKPOINT: 'blocks:popular-checkpoint' } },
-  REDIS_SYS_KEYS: { BLOCKS: { BUZZ_CAP: 'system:blocks:buzz-cap' } },
-}));
+vi.mock('~/server/redis/client', async () => {
+  const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
+  return {
+    ...actual,
+    redis: { get: vi.fn(), set: vi.fn() },
+    sysRedis: { get: vi.fn(), incrBy: vi.fn(), expire: vi.fn(), ttl: vi.fn() },
+  };
+});
 vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
   dailyBoostReward: { apply: vi.fn(), getUserRewardDetails: vi.fn() },
 }));
@@ -158,7 +161,9 @@ describe('blocks.getAppDetail — anon-capable, dark behind the flag (F-E E2)', 
     // passed to the service (which restricts to page apps; that filtering is
     // covered in block-registry.page-only-launch.test.ts — here the service is
     // mocked, so we only assert the forwarded arg).
-    expect(mockGetAppDetail).toHaveBeenCalledWith('ab_1', true);
+    // NSFW-APP-RED-ONLY: the 3rd arg is redCapable, derived from the request
+    // host. The fake ctx carries no host header → not red-capable → false.
+    expect(mockGetAppDetail).toHaveBeenCalledWith('ab_1', true, false);
   });
 
   it('moderator (the live state today): served, launchOnly=false (grandfather)', async () => {
@@ -166,8 +171,8 @@ describe('blocks.getAppDetail — anon-capable, dark behind the flag (F-E E2)', 
     const result = await caller.getAppDetail(input);
     expect(result).toEqual(PUBLIC_DETAIL);
     expect(mockGetAppDetail).toHaveBeenCalledTimes(1);
-    // A moderator sees everything → launchOnly=false.
-    expect(mockGetAppDetail).toHaveBeenCalledWith('ab_1', false);
+    // A moderator sees everything → launchOnly=false. redCapable=false (no host).
+    expect(mockGetAppDetail).toHaveBeenCalledWith('ab_1', false, false);
   });
 
   it('NOT_FOUND when the service returns null (missing / non-approved app)', async () => {

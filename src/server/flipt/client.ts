@@ -1,6 +1,7 @@
 import { FliptClient } from '@flipt-io/flipt-client-js';
 import { env } from '~/env/server';
 import { logToAxiom } from '../logging/client';
+import type { AggSource } from '../../../event-engine-common/services/metrics';
 
 export enum FLIPT_FEATURE_FLAGS {
   // Mirrors the `articleRatingDispute` fliptKey in feature-flags.service.ts so
@@ -8,17 +9,6 @@ export enum FLIPT_FEATURE_FLAGS {
   // tRPC `isFlagProtected('articleRatingDispute')` endpoints use.
   ARTICLE_RATING_DISPUTE = 'article-rating-dispute',
   FEED_IMAGE_EXISTENCE = 'feed-image-existence',
-  ENTITY_METRIC_NO_CACHE_BUST = 'entity-metric-no-cache-bust',
-  // When ON, image metric counts are read from the watcher-fed `metrics:*`
-  // cache (MetricService) instead of the legacy in-app `entitymetric:*` cache.
-  // Default OFF — reversible kill switch for the metrics-source cutover.
-  IMAGE_METRICS_FROM_WATCHER = 'image-metrics-from-watcher',
-  // When ON, the entity-metric read path pulls per-day totals from the
-  // already-FINAL read VIEW `entityMetricDailyAgg_v2` (no argMax dedup) instead
-  // of the ReplacingMergeTree `entityMetricDailyAgg_new` (which needs argMax).
-  // Default OFF — reversible kill switch; merging/deploying is a no-op until the
-  // flag flips, and flipping back instantly restores the legacy source.
-  METRICS_AGG_V2_READ = 'metrics-agg-v2-read',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
 
@@ -44,10 +34,10 @@ export enum FLIPT_FEATURE_FLAGS {
   WAN22_TRAINING = 'wan22-training',
   IMAGE_TRAINING_RESULTS = 'image-training-results',
   CHALLENGE_PLATFORM_ENABLED = 'challenge-platform-enabled',
-  B2_UPLOAD_DEFAULT = 'b2-upload-default',
   COMIC_CREATOR = 'comic-creator',
   GENERATION_PRESETS = 'generation-presets',
   GENERATION_TESTING = 'generation-testing',
+  GENERATION_EXPERIMENTAL = 'generation-experimental',
   AI_TOOLKIT_DEFAULT_SD = 'ai-toolkit-default-sd',
   WAN22_MULTI_STEP = 'wan22-multi-step',
   ENHANCED_COMPATIBILITY_SDCPP = 'enhanced-compatibility-sdcpp',
@@ -393,49 +383,45 @@ export async function ensureFliptInitialized(): Promise<void> {
   await FliptSingleton.getInstance();
 }
 
-// Entity-metric read source, gated by METRICS_AGG_V2_READ. OFF (default) reads
-// the ReplacingMergeTree `entityMetricDailyAgg_new` which needs per-day argMax
-// dedup; ON reads the already-FINAL view `entityMetricDailyAgg_v2` directly.
-// Single source of truth shared by every read site (MetricService provider +
-// the search-index / populate / metric-helper queries) so the cutover is one
-// flag flip everywhere.
-export type EntityMetricAggSource = { table: string; needsArgMaxDedup: boolean };
-
-const ENTITY_METRIC_AGG_LEGACY: EntityMetricAggSource = {
-  table: 'entityMetricDailyAgg_new',
-  needsArgMaxDedup: true,
-};
-const ENTITY_METRIC_AGG_V2: EntityMetricAggSource = {
+// Single source of truth for which ClickHouse table the entity-metric READ path
+// pulls per-(entity,metric,day) totals from. BOTH read paths must use this:
+//   - `MetricService` (the watcher-fed `metrics:*` cache populate) — via the
+//     `aggSourceProvider` it is constructed with (image.service / bitdex-stats).
+//   - the direct CH subquery sites — via `buildEntityMetricPerDaySource` below,
+//     which emits the same `entityMetricDailyAgg_v2` table.
+//
+// `entityMetricDailyAgg_v2` is a read VIEW that already returns FINAL per-day
+// totals, so `needsArgMaxDedup: false` (no argMax dedup needed).
+//
+// History: PR #2666 made the v2 cutover permanent and DELETED the prior
+// `getEntityMetricAggSource()` provider, dropping the provider arg from every
+// `new MetricService(...)`. That silently fell MetricService back to the
+// submodule's `DEFAULT_AGG_SOURCE = entityMetricDailyAgg_new`. When that legacy
+// ReplacingMergeTree table was dropped from ClickHouse (2026-06-24), MetricService
+// began throwing `UNKNOWN_TABLE` (~100k/hr) → 500s on /api/v1/images and on-site
+// image feeds. This constant restores the deleted "one shared source of truth"
+// so a future table change can't migrate one reader and orphan another. v2 is
+// permanent — there is intentionally no Flipt flag here.
+export const imageMetricAggSource = (): AggSource => ({
   table: 'entityMetricDailyAgg_v2',
   needsArgMaxDedup: false,
-};
-
-export async function getEntityMetricAggSource(): Promise<EntityMetricAggSource> {
-  const useV2 = await getFliptBoolean(FLIPT_FEATURE_FLAGS.METRICS_AGG_V2_READ);
-  return useV2 ? ENTITY_METRIC_AGG_V2 : ENTITY_METRIC_AGG_LEGACY;
-}
+});
 
 // Build the inner `(entityId, metricType, day, total)` subquery the direct CH
 // read sites (search-index / comic populate / metric-helpers) sum over. `where`
 // is the caller's full WHERE clause (e.g. "WHERE entityType = 'Image' AND ...").
-// Legacy source argMax-dedups per (entity, metric, day); the v2 view is already
-// FINAL so we select total directly. Selecting metricType is harmless even for
-// callers that only group by day (it's just carried through the subquery).
-export function buildEntityMetricPerDaySource(
-  source: EntityMetricAggSource,
-  where: string
-): string {
-  if (source.needsArgMaxDedup) {
-    return `(
-      SELECT entityId, metricType, day, argMax(total, refreshedAt) AS total
-      FROM ${source.table}
-      ${where}
-      GROUP BY entityId, metricType, day
-    )`;
-  }
+// Reads the already-FINAL view `entityMetricDailyAgg_v2` (see imageMetricAggSource
+// above — same source of truth), so we select total directly (no argMax dedup).
+// Selecting metricType is harmless even for callers that only group by day (it's
+// just carried through the subquery).
+//
+// (Historically this was flag-switchable via METRICS_AGG_V2_READ between the
+// ReplacingMergeTree `entityMetricDailyAgg_new` — which needed argMax — and the
+// v2 view; the v2 cutover is now permanent so the source is hardcoded.)
+export function buildEntityMetricPerDaySource(where: string): string {
   return `(
       SELECT entityId, metricType, day, total
-      FROM ${source.table}
+      FROM entityMetricDailyAgg_v2
       ${where}
     )`;
 }

@@ -38,6 +38,7 @@ import { trpc } from '~/utils/trpc';
 import { Page } from '~/components/AppLayout/Page';
 
 export const getServerSideProps = createServerSideProps({
+  requireModerator: true,
   useSession: true,
   resolver: async ({ session }) => {
     if (!session || !session.user?.isModerator)

@@ -1,14 +1,26 @@
 import { Anchor, Group, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconArrowRight, IconCube } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { getModel3DUrl } from '~/utils/string-helpers';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { trpc } from '~/utils/trpc';
 
 type Props = {
-  /** Render the chip directly for a known Model3D. Skips the postId lookup. */
+  /**
+   * Linked Model3D id, threaded from the caller's already-fetched payload.
+   * Three states, intentionally distinct:
+   *  - `number`    → render the chip directly via `getById` (no postId lookup).
+   *  - `null`      → the caller's payload RESOLVED that there's no visible
+   *                  Model3D for this post (e.g. the `image.get` data-gate).
+   *                  Render nothing AND do NOT fall back to `getByPostId` —
+   *                  this is the durable elimination of the ambient call.
+   *  - `undefined` → the caller has no signal (e.g. a feed-sourced item that
+   *                  isn't enriched). Fall back to the `getByPostId` lookup.
+   */
   model3dId?: number | null;
   /** Resolve the chip from `Post.model3dId`. Used by the image viewers
-   *  (they only know the postId; the link to the 3D model lives one hop away). */
+   *  (they only know the postId; the link to the 3D model lives one hop away).
+   *  Only consulted when `model3dId` is `undefined` (no payload signal). */
   postId?: number | null;
   /** Label eyebrow. Defaults to "Posting to 3D Model" (matches the post-create
    *  context). Use "Posted to 3D Model" on read-only surfaces. */
@@ -28,20 +40,32 @@ export function PostingToModel3DCard({
   label = 'Posting to 3D Model',
   className,
 }: Props) {
-  // Single round-trip per resolution path: when only postId is known, the
-  // server resolves Post → Model3D in one query and returns the card payload
-  // (or null). When the caller already has a model3dId, fall through to the
-  // canonical getById. Visibility checks live in `getModel3DById` either way.
+  // `undefined` means the caller had no payload signal → use the postId
+  // lookup. `null` means the caller's payload already resolved "no visible
+  // Model3D" → render nothing and DON'T fall back (the durable data-gate; this
+  // is what keeps `getByPostId` from firing on the image-detail viewers). A
+  // number → render directly via getById.
+  const hasResolvedSignal = model3dId !== undefined;
+
+  // Single round-trip per resolution path: when only postId is known (no
+  // resolved signal), the server resolves Post → Model3D in one query and
+  // returns the card payload (or null). When the caller already has a
+  // model3dId, fall through to the canonical getById. Visibility checks live
+  // in `getModel3DById` / the server-side data-gate either way.
   const byPostQuery = trpc.model3d.getByPostId.useQuery(
     { postId: postId ?? 0 },
-    { enabled: !model3dId && !!postId }
+    { enabled: !hasResolvedSignal && !!postId }
   );
   const byIdQuery = trpc.model3d.getById.useQuery(
     { id: model3dId ?? 0 },
     { enabled: !!model3dId }
   );
 
-  const data = model3dId ? byIdQuery.data : byPostQuery.data;
+  const data = model3dId
+    ? byIdQuery.data
+    : hasResolvedSignal
+    ? null // resolved-absent: don't read the (disabled) postId query
+    : byPostQuery.data;
 
   // Silent-skip while the server has yet to confirm a linked Model3D, OR once
   // it confirms there isn't one. Matches the silent-skip pattern of the
@@ -50,7 +74,7 @@ export function PostingToModel3DCard({
   if (!data) return null;
 
   return (
-    <Link legacyBehavior href={`/3d-models/${data.id}`} passHref>
+    <Link legacyBehavior href={getModel3DUrl({ id: data.id, name: data.name })} passHref>
       <Anchor
         underline="never"
         className={`group block rounded-md border border-blue-6/30 bg-blue-6/10 p-3 transition-colors hover:bg-blue-6/15 ${

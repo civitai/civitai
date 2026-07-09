@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { Flags } from '~/shared/utils/flags';

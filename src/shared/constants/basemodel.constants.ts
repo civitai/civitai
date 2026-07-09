@@ -211,6 +211,9 @@ export const ECO = {
   // Ideogram
   Ideogram: 72,
 
+  // Boogu
+  Boogu: 74,
+
   // Child ecosystems of SDXL
   Pony: 100,
   Illustrious: 101,
@@ -629,6 +632,15 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 170,
   },
 
+  // Boogu Family (familyId: 23)
+  {
+    id: ECO.Boogu,
+    key: 'Boogu',
+    displayName: 'Boogu',
+    familyId: 23,
+    sortOrder: 180,
+  },
+
   // HiDream Family (familyId: 19)
   {
     id: ECO.HiDream,
@@ -968,8 +980,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.Ernie, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.Ernie, supportType: 'training', modelTypes: loraOnly },
 
-  // Krea 2 - checkpoint only (locked, no LoRA support)
-  { ecosystemId: ECO.Krea2, supportType: 'generation', modelTypes: checkpointOnly },
+  // Krea 2 - checkpoint locked, but base/turbo comfy variants support LoRA (medium/large FAL tiers do not); LoRA training via AI-Toolkit
+  { ecosystemId: ECO.Krea2, supportType: 'generation', modelTypes: checkpointAndLora },
+  { ecosystemId: ECO.Krea2, supportType: 'training', modelTypes: loraOnly },
 
   // MAI - checkpoint only (Microsoft MAI-Image-2.5, locked, no LoRA support)
   { ecosystemId: ECO.MAI, supportType: 'generation', modelTypes: checkpointOnly },
@@ -1003,6 +1016,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   },
   { ecosystemId: ECO.Anima, supportType: 'training', modelTypes: loraOnly },
 
+  // Boogu - LORA training (AI Toolkit only)
+  { ecosystemId: ECO.Boogu, supportType: 'training', modelTypes: loraOnly },
+
   // PonyV7 - checkpoint and LORA (based on AuraFlow)
   { ecosystemId: ECO.PonyV7, supportType: 'generation', modelTypes: checkpointAndLora },
 
@@ -1015,6 +1031,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.ZImageBase, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.ZImageBase, supportType: 'training', modelTypes: loraOnly },
   { ecosystemId: ECO.ZImageBase, supportType: 'auction', modelTypes: checkpointAndLora },
+
+  // Boogu - checkpoint and LORA (training upcoming per orchestrator)
+  { ecosystemId: ECO.Boogu, supportType: 'generation', modelTypes: checkpointAndLora },
 
   // LTXV - checkpoint only (parent ecosystem)
   { ecosystemId: ECO.LTXV, supportType: 'generation', modelTypes: checkpointOnly },
@@ -1345,7 +1364,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.Seedream,
     defaults: {
-      model: { id: 2208278 },
+      model: { id: 3110984 },
       modelLocked: true,
     },
   },
@@ -1359,6 +1378,12 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.ZImageBase,
     defaults: {
       model: { id: 2635223 },
+    },
+  },
+  {
+    ecosystemId: ECO.Boogu,
+    defaults: {
+      model: { id: 3049541 },
     },
   },
   {
@@ -1422,7 +1447,9 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.HappyHorse,
     defaults: {
-      model: { id: 2902378 },
+      // Default to the newest version (v1.1 = 3063263); v1.0 (2902378) remains
+      // selectable via the version picker in happy-horse-graph.ts.
+      model: { id: 3063263 },
       modelLocked: true,
     },
   },
@@ -1904,6 +1931,7 @@ export const BM = {
   Krea2: 89,
   MAI: 90,
   Ideogram: 91,
+  Boogu: 93,
   // PolyGen was originally 90 on the hackaton branch; bumped to 91 to dodge
   // MAI (main-line), then bumped again to 92 on the main merge to dodge
   // Ideogram (also main-line).
@@ -2286,6 +2314,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     name: 'Ideogram',
     description: "Ideogram, Inc.'s text-to-image generation models with strong typography",
   },
+  {
+    id: 23,
+    name: 'Boogu',
+    description: "Boogu's unified multimodal image generation and editing models",
+  },
 ];
 
 export const ecosystemFamilyById = new Map(ecosystemFamilies.map((f) => [f.id, f]));
@@ -2486,6 +2519,17 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Ideogram,
     licenseId: 37,
+  },
+
+  // Boogu
+  {
+    id: BM.Boogu,
+    name: 'Boogu',
+    description: "Boogu's unified multimodal image generation and editing model",
+    type: 'image',
+    ecosystemId: ECO.Boogu,
+    licenseId: 13,
+    experimental: true, // show "Experimental Build" alert in the generator while Boogu rolls out
   },
 
   // Illustrious
@@ -3228,6 +3272,22 @@ export function getRootEcosystem(ecosystemIdOrBaseModel: number | string): Ecosy
     return getRootEcosystem(ecosystem.parentEcosystemId);
   }
   return ecosystem;
+}
+
+/**
+ * Clip skip is a CLIP text-encoder concept that only applies to the Stable
+ * Diffusion 1.x and SDXL families (SDXL children like Pony, Illustrious and
+ * NoobAI resolve to the SDXL root). Returns false for everything else
+ * (Flux, SD3, video ecosystems, etc.) and for unknown base models.
+ */
+export function baseModelSupportsClipSkip(baseModel?: string | null): boolean {
+  if (!baseModel) return false;
+  try {
+    const root = getRootEcosystem(baseModel);
+    return root.id === ECO.SD1 || root.id === ECO.SDXL;
+  } catch {
+    return false;
+  }
 }
 
 /**

@@ -31,10 +31,14 @@ import { storageStatePath } from './preview-fixtures';
 
 const ADDONS_PROCEDURE = 'system.getBrowsingSettingAddons';
 
-// A page that is reachable without clearing the preview gate. Anonymous traffic
-// 307s to /login, but _app.getInitialProps (and thus the SSR inject + provider
-// mount) still runs there — exactly the bootstrap path we want to probe.
-const ANON_LANDING = '/login';
+// A page that renders for anonymous traffic without clearing the preview gate, so
+// _app.getInitialProps (and thus the SSR inject + provider mount) runs — exactly
+// the bootstrap path we want to probe. Post first-party-OAuth cutover, /login is a
+// server-side REDIRECT to the hub (no in-app render), so it can't be the landing
+// anymore; /preview-restricted is the gate's other allow-listed exception
+// (resolveAuthGuard: `path !== '/preview-restricted'`) and renders via _app for
+// anyone, anonymous included.
+const ANON_LANDING = '/preview-restricted';
 
 // A core page a gate-passing user lands on directly (no /login bounce).
 const AUTHED_LANDING = '/models';
@@ -132,9 +136,9 @@ test.describe('SSR-injected browsingSettingsAddons (logged-in)', () => {
  *  [ ] Chat icon no-flash: logged-in user WITH chat disabled — the chat icon
  *      must NOT appear-then-disappear on load. It should gate on
  *      useFeatureFlagsReady() and only render once the user flag overlay settles.
- *  [ ] No per-mount getSettings refetch: with the four ambient consumers mounted
- *      (chat icon + MatureContentMigrationAlert + NavTidyNotice +
- *      YellowBuzzMigrationNotice), client-side nav between pages must NOT trigger
+ *  [ ] No per-mount getSettings refetch: with the ambient consumers mounted
+ *      (chat icon + NavTidyNotice + YellowBuzzMigrationNotice), client-side nav
+ *      between pages must NOT trigger
  *      a `user.getSettings` refetch per mount (they now read the SSR-seeded
  *      cache + gate on useFeatureFlagsReady, not staleTime:0 + isFetched).
  *  [ ] Alert render/dismiss/persist: a migration/nav alert renders from

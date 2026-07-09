@@ -1131,9 +1131,15 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
 export const cancelSubscription = async ({
   userId,
   subscriptionId,
+  atPeriodEnd,
 }: {
   userId?: number;
   subscriptionId?: string;
+  // When set, schedule the cancellation for the end of the paid period
+  // (cancel_at_period_end) instead of ending it immediately. Used for ban /
+  // restriction flows so the user keeps what they paid for and the action is
+  // reversible via reinstateSubscription.
+  atPeriodEnd?: boolean;
 }) => {
   if (!subscriptionId && userId) {
     const subscription = await dbWrite.customerSubscription.findFirst({
@@ -1156,7 +1162,35 @@ export const cancelSubscription = async ({
   const stripe = await getServerStripe();
   if (!stripe) throw throwBadRequestError('Stripe is not available');
 
+  if (atPeriodEnd) {
+    await stripe.subscriptions.update(subscriptionId, { cancel_at_period_end: true });
+    return;
+  }
+
   await stripe.subscriptions.del(subscriptionId);
+};
+
+// Reverses a cancel_at_period_end cancellation while the subscription is still
+// within its paid period (used when a ban is lifted or a restriction is
+// overturned). No-op if the user has no still-active Stripe subscription
+// pending cancellation — once the period has lapsed the subscription is gone
+// and the user must re-subscribe.
+export const reinstateSubscription = async ({ userId }: { userId: number }) => {
+  const subscription = await dbWrite.customerSubscription.findFirst({
+    where: {
+      userId,
+      product: { provider: 'Stripe' },
+      status: { in: ['active', 'past_due', 'trialing'] },
+      cancelAtPeriodEnd: true,
+    },
+    select: { id: true },
+  });
+  if (!subscription) return;
+
+  const stripe = await getServerStripe();
+  if (!stripe) throw throwBadRequestError('Stripe is not available');
+
+  await stripe.subscriptions.update(subscription.id, { cancel_at_period_end: false });
 };
 
 // NOTE: The Price rows returned here are the source of truth for the buzz

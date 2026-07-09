@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { env } from '~/env/server';
@@ -39,6 +39,7 @@ import {
 } from '~/server/services/collection.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { canViewCollectionPost } from '~/server/services/post-collection-visibility';
 import {
   createImage,
   createImageResources,
@@ -72,7 +73,6 @@ import {
   Availability,
   CollectionContributorPermission,
   CollectionMode,
-  CollectionReadConfiguration,
   CollectionType,
   MediaType,
   Model3DStatus,
@@ -157,12 +157,11 @@ const getPostStatsObject = async (data: { id: number }[]) => {
  * - user: Internal (session user from context)
  * - tags: src/components/Post/post.utils.ts:30, src/components/Post/Infinite/PostsInfinite.tsx:20, src/components/Collections/Collection.tsx:378
  * - modelVersionId: src/components/ResourceReview/ResourceReviewDetail.tsx:47, src/components/Post/post.utils.ts:32, src/components/Post/Infinite/PostsInfinite.tsx:19, src/components/Collections/Collection.tsx:377
- * - ids: src/server/services/collection.service.ts:1347, src/server/services/clubPost.service.ts:321 (internal server-side use only)
+ * - ids: src/server/services/collection.service.ts:1347 (internal server-side use only)
  * - collectionId: src/components/Post/post.utils.ts:37, src/components/Post/Infinite/PostsInfinite.tsx:24, src/components/Collections/Collection.tsx:384,390
  * - include: Internal use (cosmetics, detail)
  * - draftOnly: src/pages/user/[username]/posts.tsx:90, src/components/Post/Infinite/PostsInfinite.tsx:25, src/components/Collections/Collection.tsx:380,391
  * - followed: src/pages/user/[username]/posts.tsx:90, src/components/Post/post.utils.ts:39, src/components/Collections/Collection.tsx:381,391
- * - clubId: src/pages-old/clubs/[id]/posts.tsx:41
  * - browsingLevel: src/components/Post/post.utils.ts:24,49,61, src/components/ResourceReview/ResourceReviewDetail.tsx:43,49
  * - pending: src/pages/user/[username]/posts.tsx:90, src/components/Post/Infinite/PostsInfinite.tsx:27
  * - excludedTagIds: src/components/Post/post.utils.ts:51-56,62 (from browsing settings addons)
@@ -190,7 +189,6 @@ export const getPostsInfinite = async ({
   draftOnly,
   scheduled,
   followed,
-  clubId,
   browsingLevel,
   pending,
   excludedTagIds,
@@ -203,7 +201,6 @@ export const getPostsInfinite = async ({
   include?: string[];
 }) => {
   const AND = [Prisma.sql`1 = 1`];
-  const WITH: Prisma.Sql[] = [];
   const cacheTags: string[] = [];
   let cacheTime = CacheTTL.xs;
   const userId = user?.id;
@@ -407,34 +404,7 @@ export const getPostsInfinite = async ({
     }
   }
 
-  if (clubId) {
-    cacheTime = 0; //CacheTTL.day;
-    cacheTags.push(`posts-club:${clubId}`);
-
-    WITH.push(Prisma.sql`
-      "clubPosts" AS (
-        SELECT DISTINCT ON (p."id") p."id" as "postId"
-        FROM "EntityAccess" ea
-        JOIN "Post" p ON p."id" = ea."accessToId"
-        LEFT JOIN "ClubTier" ct ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = ct."id" AND ct."clubId" = ${clubId}
-        WHERE (
-            (
-             ea."accessorType" = 'Club' AND ea."accessorId" = ${clubId}
-            )
-            OR (
-              ea."accessorType" = 'ClubTier' AND ct."clubId" = ${clubId}
-            )
-          )
-          AND ea."accessToType" = 'Post'
-      )
-    `);
-
-    joins.push(`JOIN "clubPosts" cp ON cp."postId" = p."id"`);
-  }
-
-  const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
   const postsRawQuery = Prisma.sql`
-    ${queryWith}
     SELECT
       p.id,
       p."nsfwLevel",
@@ -550,12 +520,7 @@ export const getPostsInfinite = async ({
             const collection = collections.find((x) => x.id === p.collectionId);
             if (!collection) return false;
 
-            if (
-              collection.read !== CollectionReadConfiguration.Public &&
-              !collection?.contributors[0]?.permissions.includes(
-                CollectionContributorPermission.VIEW
-              )
-            ) {
+            if (!canViewCollectionPost(collection)) {
               return false;
             }
           }
@@ -894,10 +859,7 @@ export const updatePost = async ({
   const publishedAt = data.publishedAt instanceof Date ? data.publishedAt : undefined;
   const restData = publishedAt !== undefined ? { ...data, publishedAt: undefined } : data;
 
-  // Did the anti-bump guard actually (re)write publishedAt this call? Drives the
-  // search-index refresh below.
   let publishedAtWritten = false;
-
   const post = await dbWrite.$transaction(async (tx) => {
     const updated = await tx.post.update({
       where: { id, userId: !user.isModerator ? user.id : undefined },
@@ -958,20 +920,16 @@ export const updatePost = async ({
   await preventReplicationLag('post', post.id);
   await userPostCountCache.refresh(post.userId);
 
-  // Re-index the post's images whenever publishedAt is (re)written — scheduling,
-  // rescheduling, or publishing all change the images' index-relevant fields
-  // (publishedAtUnix, sortAt). No other path covers this transition: the
-  // `post_published_at_change` trigger only bumps `Image.updatedAt`, and the
-  // incremental search-index sync that keys off it can drop the update
-  // (publishedAtUnix drift), leaving the post published-but-invisible on
-  // feed/profile/galleries (CU 868k2d05k bug C). Enqueue a durable index update
-  // so the doc is re-pulled with the new publishedAt; for a future (scheduled)
-  // date the read-time `publishedAtUnix <= now` filter then surfaces it
-  // automatically at go-live — no publish-time event required.
+  // A publishedAt change moves the images' feed sort position
+  // (GREATEST(publishedAt, scannedAt, createdAt)), but the DB-trigger-driven
+  // updatedAt bump isn't reliably picked up by the metrics_images index — so
+  // a reschedule would otherwise leave the index frozen at the original time.
+  // Enqueue an explicit reindex so sortAt/publishedAtUnix get recomputed.
   if (publishedAtWritten) {
-    const images = await dbWrite.$queryRaw<{ id: number }[]>`
-      SELECT id FROM "Image" WHERE "postId" = ${id}
-    `;
+    const images = await dbWrite.image.findMany({
+      where: { postId: post.id },
+      select: { id: true },
+    });
     if (images.length) {
       await queueImageSearchIndexUpdate({
         ids: images.map((i) => i.id),

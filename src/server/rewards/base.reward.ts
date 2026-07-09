@@ -4,13 +4,17 @@ import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { rewardFailedCounter, rewardGivenCounter } from '~/server/prom/client';
+import {
+  clickhouseFailSoftCounter,
+  rewardFailedCounter,
+  rewardGivenCounter,
+} from '~/server/prom/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { BuzzAccountType, BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransactionMany, getMultipliersForUser } from '~/server/services/buzz.service';
 import { hashifyObject } from '~/utils/string-helpers';
-import { withRetries } from '../utils/errorHandling';
+import { isClickHouseConnectionError, withRetries } from '../utils/errorHandling';
 
 // Retry budget for the batch `process` (cron) path — can afford to block.
 const BATCH_RETRY_COUNT = 5;
@@ -210,15 +214,37 @@ export function createBuzzEvent<T>({
 
   const apply = async (input: T, tracking?: { ip?: string }) => {
     if (!clickhouse) return;
-    const definedKey = await getKey(input, { ch: clickhouse, db: dbWrite });
-    if (!definedKey) return;
+
+    // Fail-soft (resolution): getKey / getMultipliersForUser / getTransactionDetails hit the DB/Redis/CH and
+    // run SYNCHRONOUSLY inside the triggering user mutation (collection.saveItem, toggleFollow, post.update,
+    // ...). A throw here — e.g. a getKey query that returns no rows and gets destructured — must NEVER 500
+    // that mutation, so resolve inside a fail-soft envelope and skip the reward on failure. Safe: nothing is
+    // committed until processOnDemand below (no dedup entry yet), so an early throw leaves no side effects and
+    // no double-award. The grant path (addBuzzEvent / sendAward) is separately fail-soft further down.
+    const resolved = await (async () => {
+      const definedKey = await getKey(input, { ch: clickhouse, db: dbWrite });
+      if (!definedKey) return null;
+      const { rewardsMultiplier } = await getMultipliersForUser(definedKey.toUserId);
+      const transactionDetails = buzzEvent.getTransactionDetails
+        ? await buzzEvent.getTransactionDetails(input, { ch: clickhouse, db: dbWrite })
+        : undefined;
+      return { definedKey, rewardsMultiplier, transactionDetails };
+    })().catch((error) => {
+      logToAxiom({
+        name: 'buzz-rewards',
+        type: 'error',
+        message: 'Reward resolution failed (fail-soft)',
+        rewardType: type,
+        error: (error as Error)?.message,
+        stack: (error as Error)?.stack,
+      }).catch();
+      rewardFailedCounter?.inc?.();
+      return null;
+    });
+    if (!resolved) return;
+    const { definedKey, rewardsMultiplier, transactionDetails } = resolved;
 
     const { ip } = tracking ?? {};
-    const { rewardsMultiplier } = await getMultipliersForUser(definedKey.toUserId);
-
-    const transactionDetails = buzzEvent.getTransactionDetails
-      ? await buzzEvent.getTransactionDetails(input, { ch: clickhouse, db: dbWrite })
-      : undefined;
 
     const key = { type, ...definedKey } as BuzzEventKey;
     const event: BuzzEventLog = {
@@ -245,17 +271,32 @@ export function createBuzzEvent<T>({
     // The ClickHouse `buzzEvents` insert is an AUDIT/analytics row — it does NOT
     // move money. The actual Buzz grant is `sendAward` below, and dedup is enforced
     // by the Redis Lua script in `processOnDemand` (which already committed the dedup
-    // entry above). So a failed insert must NEVER 500 the user action: we log + count
-    // and skip the award for this event. The user simply doesn't receive one reward
-    // credit during a ClickHouse brownout — no 500, no double-award (the Redis dedup
-    // entry is already set, so a retry of the same event returns early and never
-    // re-awards). Use a SHORT retry budget so we don't block the mutation for ~2.5s
-    // during a brownout. The batch `process` path is unchanged (background cron).
+    // entry above). So a TRANSIENT ClickHouse transport failure (socket hang up /
+    // Code 279 / Code 210) must NEVER 500 the user action: we log + count and skip
+    // the award for this event. The user simply doesn't receive one reward credit
+    // during a ClickHouse brownout — no 500, no double-award (the Redis dedup entry
+    // is already set, so a retry of the same event returns early and never re-awards).
+    // Use a SHORT retry budget so we don't block the mutation for ~2.5s during a
+    // brownout. The batch `process` path is unchanged (background cron).
+    //
+    // NARROW the fail-soft to TRANSPORT errors only. A CH QUERY/SCHEMA error on the
+    // `buzzEvents` insert — `Code: 60` UNKNOWN_TABLE (table dropped/renamed by a bad
+    // deploy), `Code: 349` NULL→non-Nullable, a column-type break — is a REAL BUG,
+    // not a brownout. Swallowing it would silently stop ALL buzz-event recording
+    // with no 500 to flag it (exactly the failure mode that the recent missing-table
+    // incident surfaced LOUDLY via 500s). So a non-transport error RETHROWS and
+    // surfaces as a 500 → visible + alertable. (The mutation 500-ing on a genuine
+    // schema break is the correct, loud behavior — it forces a fix.)
     try {
       await addBuzzEvent(event, INLINE_RETRY_COUNT, INLINE_RETRY_DELAY);
     } catch (error) {
-      log(event, { message: 'Failed to record Buzz event', error });
+      if (!isClickHouseConnectionError(error)) {
+        // Real query/schema bug — surface it (500) so it can't hide.
+        throw error;
+      }
+      log(event, { message: 'Failed to record Buzz event (CH transport)', error });
       rewardFailedCounter?.inc?.();
+      clickhouseFailSoftCounter.inc({ path: 'buzz-reward' });
       // Fail-soft: do not rethrow. Skip sendAward for this event too — the audit row
       // that records the grant could not be written, so we treat the reward as not
       // granted this time rather than granting Buzz with no corresponding event row.

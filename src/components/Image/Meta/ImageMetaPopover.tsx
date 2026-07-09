@@ -17,7 +17,10 @@ export function ImageMetaPopover2({
 }) {
   return (
     <Popover className="relative flex items-center">
-      <PopoverButton className="flex cursor-pointer items-center justify-center border-none bg-transparent">
+      <PopoverButton
+        aria-label="Generation data"
+        className="flex cursor-pointer items-center justify-center border-none bg-transparent"
+      >
         {children}
       </PopoverButton>
       <PopoverPanel

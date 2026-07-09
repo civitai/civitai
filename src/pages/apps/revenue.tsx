@@ -2,12 +2,12 @@ import {
   Anchor,
   Badge,
   Card,
-  Container,
   Group,
   Loader,
   SimpleGrid,
   Stack,
   Table,
+  Tabs,
   Text,
   Title,
   Tooltip,
@@ -15,7 +15,9 @@ import {
 import { IconBolt, IconInfoCircle } from '@tabler/icons-react';
 import Link from 'next/link';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { AppAnalyticsPanel } from '~/components/AppBlocks/AppAnalyticsPanel';
 import { Meta } from '~/components/Meta/Meta';
+import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -25,7 +27,10 @@ import { trpc } from '~/utils/trpc';
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ features, session, ctx }) => {
-    if (!features?.appBlocks) return { notFound: true };
+    // Author-capability gate (Phase B): the dedicated `appBlocksAuthor` flag
+    // (Flipt `app-blocks-author`, static fallback mod-only), INDEPENDENT of the
+    // marketplace-visibility `appBlocks` flag (which widens to public at GA).
+    if (!features?.appBlocksAuthor) return { notFound: true };
     if (!session?.user) {
       return {
         redirect: {
@@ -34,7 +39,7 @@ export const getServerSideProps = createServerSideProps({
         },
       };
     }
-    if (!isAppDeveloper(session.user)) {
+    if (!isAppDeveloper(session.user, { appBlocksAuthor: features?.appBlocksAuthor })) {
       return { notFound: true };
     }
     return { props: {} };
@@ -127,10 +132,7 @@ function SummaryCards({ summary }: { summary: SummaryShape }) {
           <Text size="xs" c="dimmed" fw={600} tt="uppercase">
             Voided
           </Text>
-          <Tooltip
-            label="Refunds, chargebacks, and self-purchases. Not paid out."
-            position="top"
-          >
+          <Tooltip label="Refunds, chargebacks, and self-purchases. Not paid out." position="top">
             <IconInfoCircle size={14} />
           </Tooltip>
         </Group>
@@ -145,141 +147,150 @@ function SummaryCards({ summary }: { summary: SummaryShape }) {
   );
 }
 
-export default function RevenueDashboardPage() {
-  const features = useFeatureFlags();
-  if (!features.appBlocks) return <NotFound />;
+function RevenuePanel() {
   const { data: rawData, isLoading, error } = trpc.blocks.getMyRevenue.useQuery({});
   const data = rawData as RevenueData | undefined;
 
   return (
-    <>
-      <Meta title="App Blocks Revenue — Civitai" deIndex />
-      <Container size="lg" py="xl">
-        <Stack gap="lg">
-          <div>
-            <Title order={2}>App Blocks Revenue</Title>
-            <Text c="dimmed" size="sm">
-              Revenue share from buzz purchases originated inside your blocks. Payouts
-              are batched weekly; see <Anchor component={Link} href="/apps/installed">
-                Apps
-              </Anchor>{' '}
-              to manage installations.
-            </Text>
-          </div>
+    <Stack gap="lg">
+      {isLoading && (
+        <Group justify="center" py="xl">
+          <Loader />
+        </Group>
+      )}
+      {error && (
+        <Text c="red" size="sm">
+          Failed to load revenue: {error.message}
+        </Text>
+      )}
 
-          {isLoading && (
-            <Group justify="center" py="xl">
-              <Loader />
-            </Group>
+      {data && (
+        <>
+          <SummaryCards summary={data.summary} />
+
+          {data.topApps.length > 0 && (
+            <Card padding="md" radius="md" withBorder>
+              <Title order={5}>Top earning apps</Title>
+              <Stack gap="xs" mt="sm">
+                {data.topApps.map((app) => (
+                  <Group key={app.appBlockId} justify="space-between">
+                    <Anchor component={Link} href={`/apps/${app.appBlockId}/revenue`} size="sm">
+                      {app.appBlockId}
+                    </Anchor>
+                    <Group gap="xs">
+                      <Text size="sm" fw={600}>
+                        {dollars(app.shareCents)}
+                      </Text>
+                      <Badge variant="light" size="sm">
+                        {app.count}
+                      </Badge>
+                    </Group>
+                  </Group>
+                ))}
+              </Stack>
+            </Card>
           )}
-          {error && (
-            <Text c="red" size="sm">
-              Failed to load revenue: {error.message}
-            </Text>
-          )}
 
-          {data && (
-            <>
-              <SummaryCards summary={data.summary} />
-
-              {data.topApps.length > 0 && (
-                <Card padding="md" radius="md" withBorder>
-                  <Title order={5}>Top earning apps</Title>
-                  <Stack gap="xs" mt="sm">
-                    {data.topApps.map((app) => (
-                      <Group key={app.appBlockId} justify="space-between">
-                        <Anchor
-                          component={Link}
-                          href={`/apps/${app.appBlockId}/revenue`}
+          <Card padding="md" radius="md" withBorder>
+            <Title order={5}>Recent attributions</Title>
+            {data.recentAttributions.length === 0 ? (
+              <Text c="dimmed" size="sm" mt="sm">
+                No buzz purchases yet. Install your apps on more models to earn share.
+              </Text>
+            ) : (
+              <Table mt="sm" highlightOnHover>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Date</Table.Th>
+                    <Table.Th>App</Table.Th>
+                    <Table.Th>Scope</Table.Th>
+                    <Table.Th>
+                      <Group gap={4}>
+                        <IconBolt size={14} />
+                        Buzz
+                      </Group>
+                    </Table.Th>
+                    <Table.Th>Gross</Table.Th>
+                    <Table.Th>Your share</Table.Th>
+                    <Table.Th>Status</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {data.recentAttributions.map((row: RecentRow) => (
+                    <Table.Tr key={row.id}>
+                      <Table.Td>{new Date(row.attributedAt).toLocaleDateString()}</Table.Td>
+                      <Table.Td>
+                        <Anchor component={Link} href={`/apps/${row.appBlockId}/revenue`} size="sm">
+                          {row.appBlockId}
+                        </Anchor>
+                      </Table.Td>
+                      <Table.Td>{row.scope}</Table.Td>
+                      <Table.Td>{row.buzzAmount.toLocaleString()}</Table.Td>
+                      <Table.Td>{dollars(row.usdAmountCents)}</Table.Td>
+                      <Table.Td>{dollars(row.appOwnerShareCents)}</Table.Td>
+                      <Table.Td>
+                        <Badge
+                          variant="light"
+                          color={
+                            row.status === 'paid_out'
+                              ? 'green'
+                              : row.status === 'confirmed'
+                              ? 'teal'
+                              : row.status === 'voided'
+                              ? 'red'
+                              : 'gray'
+                          }
                           size="sm"
                         >
-                          {app.appBlockId}
-                        </Anchor>
-                        <Group gap="xs">
-                          <Text size="sm" fw={600}>
-                            {dollars(app.shareCents)}
-                          </Text>
-                          <Badge variant="light" size="sm">
-                            {app.count}
-                          </Badge>
-                        </Group>
-                      </Group>
-                    ))}
-                  </Stack>
-                </Card>
-              )}
+                          {row.status}
+                          {row.voidedReason ? ` (${row.voidedReason})` : ''}
+                        </Badge>
+                      </Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            )}
+          </Card>
+        </>
+      )}
+    </Stack>
+  );
+}
 
-              <Card padding="md" radius="md" withBorder>
-                <Title order={5}>Recent attributions</Title>
-                {data.recentAttributions.length === 0 ? (
-                  <Text c="dimmed" size="sm" mt="sm">
-                    No buzz purchases yet. Install your blocks on more models to earn share.
-                  </Text>
-                ) : (
-                  <Table mt="sm" highlightOnHover>
-                    <Table.Thead>
-                      <Table.Tr>
-                        <Table.Th>Date</Table.Th>
-                        <Table.Th>App</Table.Th>
-                        <Table.Th>Scope</Table.Th>
-                        <Table.Th>
-                          <Group gap={4}>
-                            <IconBolt size={14} />
-                            Buzz
-                          </Group>
-                        </Table.Th>
-                        <Table.Th>Gross</Table.Th>
-                        <Table.Th>Your share</Table.Th>
-                        <Table.Th>Status</Table.Th>
-                      </Table.Tr>
-                    </Table.Thead>
-                    <Table.Tbody>
-                      {data.recentAttributions.map((row: RecentRow) => (
-                        <Table.Tr key={row.id}>
-                          <Table.Td>
-                            {new Date(row.attributedAt).toLocaleDateString()}
-                          </Table.Td>
-                          <Table.Td>
-                            <Anchor
-                              component={Link}
-                              href={`/apps/${row.appBlockId}/revenue`}
-                              size="sm"
-                            >
-                              {row.appBlockId}
-                            </Anchor>
-                          </Table.Td>
-                          <Table.Td>{row.scope}</Table.Td>
-                          <Table.Td>{row.buzzAmount.toLocaleString()}</Table.Td>
-                          <Table.Td>{dollars(row.usdAmountCents)}</Table.Td>
-                          <Table.Td>{dollars(row.appOwnerShareCents)}</Table.Td>
-                          <Table.Td>
-                            <Badge
-                              variant="light"
-                              color={
-                                row.status === 'paid_out'
-                                  ? 'green'
-                                  : row.status === 'confirmed'
-                                  ? 'teal'
-                                  : row.status === 'voided'
-                                  ? 'red'
-                                  : 'gray'
-                              }
-                              size="sm"
-                            >
-                              {row.status}
-                              {row.voidedReason ? ` (${row.voidedReason})` : ''}
-                            </Badge>
-                          </Table.Td>
-                        </Table.Tr>
-                      ))}
-                    </Table.Tbody>
-                  </Table>
-                )}
-              </Card>
-            </>
-          )}
-        </Stack>
-      </Container>
+export default function AppBlocksDashboardPage() {
+  const features = useFeatureFlags();
+  if (!features.appBlocks) return <NotFound />;
+
+  return (
+    <>
+      <Meta title="Apps Dashboard — Civitai" deIndex />
+      <AppsPageLayout
+        size="lg"
+        title="Apps Dashboard"
+        subtitle={
+          <>
+            Revenue share and analytics for your apps. Payouts are batched weekly; see{' '}
+            <Anchor component={Link} href="/apps/installed">
+              Apps
+            </Anchor>{' '}
+            to manage installations.
+          </>
+        }
+      >
+        <Tabs defaultValue="revenue" keepMounted={false}>
+          <Tabs.List mb="md">
+            <Tabs.Tab value="revenue">Revenue</Tabs.Tab>
+            <Tabs.Tab value="analytics">Analytics</Tabs.Tab>
+          </Tabs.List>
+          <Tabs.Panel value="revenue">
+            <RevenuePanel />
+          </Tabs.Panel>
+          <Tabs.Panel value="analytics">
+            <AppAnalyticsPanel />
+          </Tabs.Panel>
+        </Tabs>
+      </AppsPageLayout>
     </>
   );
 }

@@ -25,6 +25,7 @@ import type {
   VideoInterpolationStepTemplate,
 } from '@civitai/client';
 import { maxRandomSeed } from '~/server/common/constants';
+import { EXPERIMENTAL_MODE_SUPPORTED_MODELS } from '~/shared/constants/generation.constants';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import type { GenerationHandlerCtx } from '../orchestration-new.service';
 
@@ -46,6 +47,7 @@ import { createLensInput } from './lens.handler';
 import { createKrea2Input } from './krea2.handler';
 import { createMAIInput } from './mai.handler';
 import { createZImageInput } from './z-image.handler';
+import { createBooguInput } from './boogu.handler';
 import { createHiDreamInput } from './hi-dream.handler';
 import { createHiDreamO1Input } from './hi-dream-o1.handler';
 import { createPonyV7Input } from './pony-v7.handler';
@@ -129,6 +131,9 @@ export type ChromaCtx = EcosystemGraphOutput & { ecosystem: 'Chroma' };
 
 /** ZImage context (ZImageTurbo and ZImageBase) */
 export type ZImageCtx = EcosystemGraphOutput & { ecosystem: 'ZImageTurbo' | 'ZImageBase' };
+
+/** Boogu context */
+export type BooguCtx = EcosystemGraphOutput & { ecosystem: 'Boogu' };
 
 /** HiDream context */
 export type HiDreamCtx = EcosystemGraphOutput & { ecosystem: 'HiDream' };
@@ -220,6 +225,7 @@ export { createNanoBananaInput } from './nano-banana.handler';
 export { createAnimaInput } from './anima.handler';
 export { createChromaInput } from './chroma.handler';
 export { createZImageInput } from './z-image.handler';
+export { createBooguInput } from './boogu.handler';
 export { createHiDreamInput } from './hi-dream.handler';
 export { createHiDreamO1Input } from './hi-dream-o1.handler';
 export { createPonyV7Input } from './pony-v7.handler';
@@ -281,13 +287,19 @@ export async function createEcosystemStepInput(
 
   const steps = await createEcosystemStep(normalizedData, handlerCtx);
 
-  // Enhanced compatibility mode: set engine to 'comfyui' for textToImage steps
+  // Enhanced compatibility mode: set engine to 'comfyui' for every textToImage step
+  // in EXPERIMENTAL_MODE_SUPPORTED_MODELS ecosystems.
   if (
-    steps[0]?.$type === 'textToImage' &&
     'enhancedCompatibility' in data &&
-    data.enhancedCompatibility
+    data.enhancedCompatibility &&
+    // Belt-and-suspenders check in case data.ecosystem leaks an unsupported ecosystem through a non-UI path
+    EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(data.ecosystem)
   ) {
-    (steps[0] as { input: Record<string, unknown> }).input.engine = 'comfyui';
+    for (const step of steps) {
+      if (step.$type === 'textToImage') {
+        (step as { input: Record<string, unknown> }).input.engine = 'comfyui';
+      }
+    }
   }
 
   return steps;
@@ -330,6 +342,10 @@ async function createEcosystemStep(
     case 'ZImageTurbo':
     case 'ZImageBase':
       return createZImageInput(normalizedData, handlerCtx);
+
+    // Boogu
+    case 'Boogu':
+      return createBooguInput(normalizedData, handlerCtx);
 
     // HiDream
     case 'HiDream':
