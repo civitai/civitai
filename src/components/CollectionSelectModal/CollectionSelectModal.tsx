@@ -19,6 +19,7 @@ import cardClasses from '~/components/Cards/Cards.module.css';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
+import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
 import { searchIndexMap } from '~/components/Search/search.types';
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
@@ -267,9 +268,11 @@ const meilisearch = instantMeiliSearch(
   { primaryKey: 'id', keepZeroFacets: true }
 );
 
-const searchClient: InstantSearchProps['searchClient'] = {
+// Wrapped so a Meili outage degrades to empty results instead of an uncaught
+// `MeiliSearchCommunicationError`. Fails quietly (modal picker, no banner).
+const searchClient: InstantSearchProps['searchClient'] = createResilientSearchClient({
   ...meilisearch,
   search(requests) {
     return meilisearch.search(requests);
   },
-};
+});
