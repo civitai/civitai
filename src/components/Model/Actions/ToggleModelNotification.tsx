@@ -5,6 +5,9 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
+import { applyNotifyToggled } from '~/store/engaged-models.optimistic';
+import { restoreMembership, snapshotMembership } from '~/store/engaged-models.store';
 import { ModelEngagementType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -17,29 +20,36 @@ export function ToggleModelNotification({
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
 
-  const {
-    data: { Notify: watchedModels = [], Mute: mutedModels = [] } = { Notify: [], Mute: [] },
-  } = trpc.user.getEngagedModels.useQuery(undefined, { enabled: !!currentUser });
+  // PR2: per-visible-set membership for this single model (Notify/Mute).
+  const { isEngaged: isModelEngaged } = useEngagedModelMembership(modelId);
   const { data: following = [] } = trpc.user.getFollowingUsers.useQuery(undefined, {
     enabled: !!currentUser,
   });
 
+  const isWatching = isModelEngaged('Notify');
+  const isMuted = isModelEngaged('Mute');
+  const alreadyFollowing = following.includes(userId);
+  const isOn = (alreadyFollowing || isWatching) && !isMuted;
+
   const toggleNotifyModelMutation = trpc.user.toggleNotifyModel.useMutation({
+    onMutate() {
+      // Optimistic store update + snapshot for rollback.
+      const snapshot = snapshotMembership(modelId);
+      applyNotifyToggled(modelId, !isOn);
+      return { snapshot };
+    },
     async onSuccess() {
+      // Keep the legacy getEngagedModels cache in sync for still-on-old-endpoint feeds.
       await queryUtils.user.getEngagedModels.invalidate();
     },
-    onError(error) {
+    onError(error, _vars, context) {
+      if (context?.snapshot) restoreMembership(modelId, context.snapshot);
       showErrorNotification({
         title: 'Failed to update notification settings',
         error,
       });
     },
   });
-
-  const isWatching = watchedModels.includes(modelId);
-  const isMuted = mutedModels.includes(modelId);
-  const alreadyFollowing = following.includes(userId);
-  const isOn = (alreadyFollowing || isWatching) && !isMuted;
 
   return (
     <Tooltip

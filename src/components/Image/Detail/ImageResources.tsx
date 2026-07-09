@@ -20,6 +20,7 @@ import { cloneElement, useMemo, useState } from 'react';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useEngagedModelsMembership } from '~/hooks/useEngagedModelMembership';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
@@ -44,12 +45,16 @@ export function ImageResources({ imageId }: { imageId: number }) {
     { trpc: { context: { skipBatch: true } } }
   );
 
-  const { data: { Recommended: reviewedModels = [] } = { Recommended: [] } } =
-    trpc.user.getEngagedModels.useQuery(undefined, {
-      enabled: !!currentUser,
-      gcTime: Infinity,
-      staleTime: Infinity,
-    });
+  // PR2: per-visible-set membership for just the resources shown on this image.
+  const resourceModelIds = useMemo(
+    () =>
+      (data ?? [])
+        .map((r) => r.modelId)
+        .filter((id): id is number => typeof id === 'number' && id > 0),
+    [data]
+  );
+  const { isEngaged: isModelEngaged, sets: membershipSets } =
+    useEngagedModelsMembership(resourceModelIds);
 
   const resources = useMemo(() => {
     return (
@@ -61,7 +66,9 @@ export function ImageResources({ imageId }: { imageId: number }) {
             items.findIndex((t) => t.modelVersionId === resource.modelVersionId) === index
         )
         .map((resource, index) => {
-          const hasReview = resource.modelId ? reviewedModels.includes(resource.modelId) : false;
+          const hasReview = resource.modelId
+            ? isModelEngaged(resource.modelId, 'Recommended')
+            : false;
           const isAvailable = resource.modelVersionId !== null;
           return {
             ...resource,
@@ -78,7 +85,9 @@ export function ImageResources({ imageId }: { imageId: number }) {
           return 0;
         }) ?? []
     );
-  }, [data, reviewedModels]);
+    // `membershipSets` (stable-by-shallow) is the reactive proxy for `isModelEngaged`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, membershipSets]);
 
   const { mutate, isPending: removingResource } = trpc.image.removeResource.useMutation();
   const handleRemoveResource = (modelVersionId: number) => {

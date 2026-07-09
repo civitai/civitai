@@ -11,6 +11,13 @@ import type {
 } from '~/server/schema/resourceReview.schema';
 import type { ResourceReviewPaged, ResourceReviewRatingTotals } from '~/types/router';
 import { queryClient, trpc } from '~/utils/trpc';
+import { restoreMembership, snapshotMembership } from '~/store/engaged-models.store';
+import {
+  applyFavoriteToggled,
+  applyReviewCreated,
+  applyReviewDeleted,
+  applyReviewUpdated,
+} from '~/store/engaged-models.optimistic';
 
 export const useCreateResourceReview = () => {
   const queryUtils = trpc.useUtils();
@@ -48,6 +55,11 @@ export const useCreateResourceReview = () => {
 
         return { Recommended: [...Recommended, modelId], Notify: [...Notify, modelId], ...rest };
       });
+
+      // Normalized store (PR2): mirror the same Recommended+Notify toggle for the
+      // per-visible-set surfaces. Dual-written alongside the getEngagedModels cache
+      // above until the feed callers migrate (PR3) and the old endpoint is dropped (PR4).
+      applyReviewCreated(modelId, recommended);
 
       queryUtils.model.getById.setData({ id: modelId }, (old) => {
         if (!old) return;
@@ -158,6 +170,9 @@ export const useUpdateResourceReview = () => {
         return { Recommended: [...Recommended, modelId], ...rest };
       });
 
+      // Normalized store (PR2): mirror the Recommended toggle for per-visible-set surfaces.
+      applyReviewUpdated(modelId, request.recommended);
+
       queryUtils.model.getById.setData({ id: modelId }, (old) => {
         if (!old) return;
 
@@ -230,6 +245,9 @@ export const useDeleteResourceReview = () => {
           ...rest,
         };
       });
+
+      // Normalized store (PR2): mirror the Recommended+Notify removal for per-visible-set surfaces.
+      applyReviewDeleted(modelId);
 
       queryUtils.model.getById.setData({ id: modelId }, (old) => {
         if (!old) return;
@@ -311,6 +329,8 @@ export function useToggleFavoriteMutation() {
       const engagedModels = queryUtils.user.getEngagedModels.getData();
       const bookmarkedModels = queryUtils.user.getBookmarkedModels.getData();
       const modelDetails = queryUtils.model.getById.getData({ id: modelId });
+      // Normalized store (PR2): snapshot for rollback, then apply the same toggle.
+      const engagedMembership = snapshotMembership(modelId);
 
       // update liked models
       // nb: should technically update the "liked models" collection too
@@ -339,6 +359,9 @@ export function useToggleFavoriteMutation() {
         }
         return old;
       });
+
+      // Normalized store (PR2): mirror the favorite toggle for per-visible-set surfaces.
+      applyFavoriteToggled(modelId, setTo);
 
       // Update model details
       queryUtils.model.getById.setData({ id: modelId }, (old) => {
@@ -406,12 +429,14 @@ export function useToggleFavoriteMutation() {
         }
       });
 
-      return { prevData: { engagedModels, modelDetails, userReviews, bookmarkedModels } };
+      return { prevData: { engagedModels, modelDetails, userReviews, bookmarkedModels }, engagedMembership };
     },
     onError: (error, { modelId }, context) => {
       queryUtils.user.getEngagedModels.setData(undefined, context?.prevData?.engagedModels);
       queryUtils.user.getBookmarkedModels.setData(undefined, context?.prevData?.bookmarkedModels);
       queryUtils.model.getById.setData({ id: modelId }, context?.prevData?.modelDetails);
+      // Normalized store (PR2): restore the snapshotted membership.
+      if (context?.engagedMembership) restoreMembership(modelId, context.engagedMembership);
     },
     onSettled: async (result, error, { modelId }) => {
       await queryUtils.resourceReview.getUserResourceReview.invalidate({ modelId });

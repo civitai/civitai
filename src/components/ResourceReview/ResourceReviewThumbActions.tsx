@@ -12,8 +12,7 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import type { ResourceReviewSimpleModel } from '~/server/selectors/resourceReview.selector';
-import { trpc } from '~/utils/trpc';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
 import classes from './ResourceReviewThumbActions.module.scss';
 
 export function ResourceReviewThumbActions({
@@ -125,14 +124,13 @@ export function ResourceReviewThumbBadge({
   modelVersionId?: number;
   count?: number;
 }) {
-  const currentUser = useCurrentUser();
   const { totals, loading } = useQueryResourceReviewTotals({ modelId, modelVersionId });
-  const { data: { Recommended: reviewedModels = [] } = { Recommended: [] } } =
-    trpc.user.getEngagedModels.useQuery(undefined, { enabled: !!currentUser });
+  // PR2: per-visible-set membership for this single model.
+  const { isEngaged: isModelEngaged } = useEngagedModelMembership(modelId);
 
   if (loading && initialCount === undefined) return null;
 
-  const hasReview = reviewedModels.includes(modelId);
+  const hasReview = isModelEngaged('Recommended');
 
   return (
     <IconBadge
