@@ -184,6 +184,8 @@ export async function prepareModelVersionResponse(
 
   return {
     ...version,
+    // licensingFee is a Prisma Decimal; coerce so the public API keeps emitting a number, not a JSON string.
+    licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
     air: stringifyAIR({
       baseModel: version.baseModel,
       type: model.type,

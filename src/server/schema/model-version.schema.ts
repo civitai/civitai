@@ -423,7 +423,7 @@ export const modelVersionUpsertSchema2 = z.object({
     .nullish(),
   uploadType: z.enum(ModelUploadType).optional(),
   usageControl: z.enum(ModelUsageControl).optional(),
-  licensingFee: z.number().int().min(0).max(MAX_LICENSING_FEE).nullish(),
+  licensingFee: z.number().min(0).max(MAX_LICENSING_FEE).nullish(),
   licensingFeeType: z.enum(LicensingFeeType).nullish(),
   licensingFeeSettlementCurrency: z.enum(LicensingFeeSettlementCurrency).nullish(),
   // Inherit another version's licensing fee (a LicensingRoot for this baseModel).
