@@ -9,6 +9,7 @@ import { setServerDomains } from '~/utils/sync-account';
 import { trpc } from '~/utils/trpc';
 import type { AnnouncementsSeed } from '~/providers/announcements-seed';
 import { reviveAnnouncementsSeed } from '~/providers/announcements-seed';
+import type { DismissedByType } from '~/components/Announcements/announcements-dismissed-cookie';
 
 type AppProviderProps = {
   children: React.ReactNode;
@@ -22,6 +23,11 @@ type AppProviderProps = {
   // `useDomainColor()` key — this provider sits above FeatureFlagsProvider so it
   // can't compute that key itself.
   announcements?: AnnouncementsSeed;
+  // Server-read announcement `dismissed` state (from the `announcements-dismissed`
+  // cookie, parsed in `_app`). Threaded to `useGetAnnouncements` so SSR + the first
+  // client paint compute `dismissed` from the SAME value — the hydration-match
+  // guarantee behind the SSR-exact feed-CLS fix. Absent → treated as empty.
+  announcementsDismissed?: DismissedByType;
   // SSR-computed `user.getFollowingUsers` result (logged-in only) — the list of
   // followed userIds. Seeds the query directly (fixed `undefined` key) so the
   // ambient follow/notify buttons never fire it on bootstrap.
@@ -64,6 +70,7 @@ type AppContext = {
   availableOAuthProviders: string[];
   verifiedBot: VerifiedBot | null;
   announcements?: AnnouncementsSeed;
+  announcementsDismissed?: DismissedByType;
   tosMeta?: TosMeta;
 };
 const Context = createContext<AppContext | null>(null);
@@ -90,6 +97,7 @@ export function AppProvider({
   settings,
   tosMeta,
   announcements,
+  announcementsDismissed,
   following,
   liveNow,
   chatSettings,
@@ -158,6 +166,7 @@ export function AppProvider({
     availableOAuthProviders,
     verifiedBot,
     announcements: reviveAnnouncementsSeed(announcements),
+    announcementsDismissed,
     // All-string payload (current hash + baseline + field keys) — survives the
     // pageProps JSON round-trip as-is, no revival needed.
     tosMeta,
