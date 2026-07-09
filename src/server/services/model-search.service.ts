@@ -9,7 +9,7 @@ import type { GetAllModelsOutput } from '~/server/schema/model.schema';
 import { getDownloadFilename } from '~/server/services/file.service';
 import { getModelsWithVersions } from '~/server/services/model.service';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
-import { ModelFileVisibility, ModelModifier } from '~/shared/utils/prisma/enums';
+import { ModelFileVisibility, ModelModifier, ModelType } from '~/shared/utils/prisma/enums';
 import type { ModelHashType } from '~/shared/utils/prisma/enums';
 import { Flags } from '~/shared/utils/flags';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
@@ -77,6 +77,8 @@ export type RunModelSearchContext = {
   baseUrlOrigin: string;
 };
 
+const modelTypeValues = new Set<string>(Object.values(ModelType));
+
 export class ModelSearchMeiliTimeoutError extends Error {
   constructor() {
     super('Model search is temporarily overloaded — please retry.');
@@ -96,9 +98,19 @@ export async function resolveModelSearchIds(opts: {
   cursor?: GetAllModelsOutput['cursor'];
   limit: number;
   browsingLevel: number;
+  /**
+   * Type filter applied INSIDE the Meili query. Without it, a `query` +
+   * `types` request intersects the top-N relevance hits (of ANY type) with
+   * the type filter in the DB — for sparse types like Wildcards that's
+   * usually an empty page even when strong matches exist. Values are
+   * validated against ModelType here because the block endpoint's schema
+   * accepts arbitrary strings (also keeps them out of the filter expression).
+   */
+  types?: string[];
 }): Promise<{ searchIds: number[]; nextCursor?: string }> {
-  const { query, cursor, limit, browsingLevel } = opts;
+  const { query, cursor, limit, browsingLevel, types } = opts;
   const browsingLevelValues = Flags.instanceToArray(browsingLevel);
+  const typeValues = types?.filter((t) => modelTypeValues.has(t));
   const queryOffset = cursor && Number.isFinite(Number(cursor)) ? Math.max(0, Number(cursor)) : 0;
 
   let meiliResult: SearchResponse<{ id: number }> | undefined;
@@ -109,7 +121,10 @@ export async function resolveModelSearchIds(opts: {
           client.index(MODELS_SEARCH_INDEX).search<{ id: number }>(query, {
             offset: queryOffset || undefined,
             limit: limit ? limit + 1 : undefined,
-            filter: [`nsfwLevel IN [${browsingLevelValues.join(',')}]`],
+            filter: [
+              `nsfwLevel IN [${browsingLevelValues.join(',')}]`,
+              ...(typeValues?.length ? [`type IN [${typeValues.join(',')}]`] : []),
+            ],
             attributesToRetrieve: ['id'],
           })
         )

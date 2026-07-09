@@ -103,7 +103,13 @@ export default MixedAuthEndpoint(async function handler(
   let meiliNextCursor: string | undefined;
   if (query) {
     try {
-      const meili = await resolveModelSearchIds({ query, cursor, limit, browsingLevel });
+      const meili = await resolveModelSearchIds({
+        query,
+        cursor,
+        limit,
+        browsingLevel,
+        types: data.types,
+      });
       searchIds = meili.searchIds;
       meiliNextCursor = meili.nextCursor;
     } catch (e) {
