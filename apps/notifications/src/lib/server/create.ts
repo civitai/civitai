@@ -42,7 +42,7 @@ export async function createNotification(
     // same key between our UPDATE and INSERT.
     const updateResp = await notifDbWrite().cancellableQuery<{ id: number }>(
       `UPDATE "PendingNotification"
-         SET "users" = $1::int[], "lastTriggered" = NOW()
+         SET "users" = ARRAY(SELECT DISTINCT unnest("users" || $1::int[])), "lastTriggered" = NOW()
        WHERE "key" = $2
        RETURNING id`,
       [targets, data.key]
@@ -54,7 +54,7 @@ export async function createNotification(
         `INSERT INTO "PendingNotification" (key, type, category, users, details, "debounceSeconds")
          VALUES ($1, $2, $3::"NotificationCategory", $4::int[], $5::jsonb, $6)
          ON CONFLICT (key)
-         DO UPDATE SET "users" = excluded."users", "lastTriggered" = NOW()`,
+         DO UPDATE SET "users" = ARRAY(SELECT DISTINCT unnest("PendingNotification"."users" || excluded."users")), "lastTriggered" = NOW()`,
         [
           data.key,
           data.type,
