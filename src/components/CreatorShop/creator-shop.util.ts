@@ -148,6 +148,8 @@ export const useMutateCreatorShop = () => {
   const updateSettings = trpc.creatorShop.updateSettings.useMutation({
     async onSuccess() {
       await queryUtils.creatorShop.getSettings.invalidate();
+      // The storefront reads settings (enabled, sections, resold) via getShop too.
+      await queryUtils.creatorShop.getShop.invalidate();
       showSuccessNotification({ message: 'Shop settings saved' });
     },
     onError: onError('Failed to save settings'),
