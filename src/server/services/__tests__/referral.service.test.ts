@@ -915,7 +915,7 @@ describe('buzz account routing (central bank 0)', () => {
     expect(reverted).toBe(false);
   });
 
-  it('claws a settled reward BACK to the central bank (toAccountId 0)', async () => {
+  it('claws a settled reward BACK to the central bank (toAccountId 0, bank side untyped)', async () => {
     mockDbWrite.referralReward.findMany.mockResolvedValue([
       { id: 2, userId: 7, status: ReferralRewardStatus.Settled, buzzAmount: 500 },
     ]);
@@ -923,16 +923,38 @@ describe('buzz account routing (central bank 0)', () => {
 
     await revokeForChargeback({ sourceEventId: 'pi_bank', reason: 'refund' });
 
-    expect(createBuzzTransaction).toHaveBeenCalledWith(
-      expect.objectContaining({
-        fromAccountId: 7, // debit the referrer (real, balance-checked account)
-        fromAccountType: 'blue',
-        toAccountId: 0, // return to the central bank
-        amount: 500,
-        type: TransactionType.ChargeBack,
-        externalTransactionId: 'referral-clawback:2',
-      })
+    const clawback = (createBuzzTransaction as any).mock.calls.find((c: any) =>
+      String(c[0].externalTransactionId).startsWith('referral-clawback:')
     );
+    expect(clawback).toBeTruthy();
+    expect(clawback[0]).toMatchObject({
+      fromAccountId: 7, // debit the referrer (real, balance-checked account)
+      fromAccountType: 'blue',
+      toAccountId: 0, // return to the central bank
+      amount: 500,
+      type: TransactionType.ChargeBack,
+      externalTransactionId: 'referral-clawback:2',
+    });
+    // The bank side must be untyped, matching the payout + every other
+    // send-to-bank call. `objectContaining`/`toMatchObject` can't catch an
+    // extra field, so assert its absence explicitly (fail-before if
+    // toAccountType: 'blue' is still present).
+    expect(clawback[0].toAccountType).toBeUndefined();
+  });
+
+  it('clears a stale revokedReason when a reward settles successfully', async () => {
+    okCtx();
+
+    await recordMembershipPaymentReward(settlePayload);
+
+    // settleRewardRow's CAS claim flips the row to Settled — and must also
+    // null out any lingering revokedReason (the ~190 stuck rewards carry the
+    // old insufficient-funds string). Fail-before if the claim omits it.
+    const claim = (mockDbWrite.referralReward.updateMany as any).mock.calls.find(
+      (c: any) => c[0]?.data?.status === ReferralRewardStatus.Settled
+    );
+    expect(claim).toBeTruthy();
+    expect(claim[0].data.revokedReason).toBeNull();
   });
 });
 

@@ -491,7 +491,11 @@ async function settleRewardRow(reward: SettleableReward) {
   // runs of the cron — only one caller will see count > 0.
   const claimed = await dbWrite.referralReward.updateMany({
     where: { id: reward.id, status: ReferralRewardStatus.Pending },
-    data: { status: ReferralRewardStatus.Settled, settledAt: new Date() },
+    // Clear any stale revokedReason left by a prior failed-grant revert (the
+    // ~190 rewards stuck by the account-0 bug carry the old insufficient-funds
+    // string) so a successfully-settled reward has a clean reason. The revert
+    // path below re-sets it if the grant fails.
+    data: { status: ReferralRewardStatus.Settled, settledAt: new Date(), revokedReason: null },
   });
   if (claimed.count === 0) return;
 
@@ -576,10 +580,13 @@ export async function revokeForChargeback(params: { sourceEventId: string; reaso
   for (const reward of affected) {
     if (reward.status === ReferralRewardStatus.Settled && reward.buzzAmount > 0) {
       await createBuzzTransaction({
+        // Debit the referrer's blue ledger; return to the central bank (id 0)
+        // untyped, matching the payout + every other "send to bank" call in the
+        // repo (cosmetic-shop/report/purchasable-reward all omit the bank-side
+        // toAccountType).
         fromAccountId: reward.userId,
         fromAccountType: 'blue',
         toAccountId: REFERRAL_SYSTEM_ACCOUNT_ID,
-        toAccountType: 'blue',
         amount: reward.buzzAmount,
         type: TransactionType.ChargeBack,
         description: `Referral reward clawback (${reason})`,
