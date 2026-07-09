@@ -7,12 +7,13 @@ import {
   Paper,
   SimpleGrid,
   Stack,
+  Switch,
   Text,
   Title,
 } from '@mantine/core';
 import dayjs from '~/shared/utils/dayjs';
 import { useRouter } from 'next/router';
-import React from 'react';
+import React, { useState } from 'react';
 import * as z from 'zod';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -146,6 +147,36 @@ type Props = {
   variant?: 'moderator' | 'user';
 };
 
+// D6-seed: the mod "Customize judging categories" toggle starts ON whenever categories already
+// exist (or the challenge is new) and OFF when a mod opens an existing null-category challenge —
+// so saving an unrelated field never silently converts it onto the custom rubric.
+export function resolveInitialCustomizeCategories(params: {
+  isUser: boolean;
+  isEditing: boolean;
+  existingCategories?: CategoryWeightRow[] | null;
+}) {
+  const { isUser, isEditing, existingCategories } = params;
+  return isUser || !isEditing || !!existingCategories?.length;
+}
+
+export type ModJudgingCategoriesResult =
+  | { success: true; data: CategoryWeightRow[] | null }
+  | { success: false; message: string };
+
+// Off -> explicit null (Task 5 persists Prisma.JsonNull) and the sum-100 validation is skipped
+// entirely, so toggling off (or leaving off) never blocks submit on stale/empty category rows.
+export function resolveModJudgingCategoriesSubmission(
+  customizeCategories: boolean,
+  categories: CategoryWeightRow[]
+): ModJudgingCategoriesResult {
+  if (!customizeCategories) return { success: true, data: null };
+  const result = challengeJudgingCategoriesSchema.safeParse(categories);
+  if (!result.success) {
+    return { success: false, message: result.error.issues[0]?.message ?? 'Invalid judging categories' };
+  }
+  return { success: true, data: result.data };
+}
+
 export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props) {
   const isUser = variant === 'user';
   const router = useRouter();
@@ -156,6 +187,16 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
     challenge?.status === ChallengeStatus.Completing ||
     challenge?.status === ChallengeStatus.Completed ||
     challenge?.status === ChallengeStatus.Cancelled;
+
+  // Mod-only "Customize judging categories" toggle. Presentation/submission-only state — it isn't
+  // part of the submitted schema, so it lives outside RHF rather than as a form field.
+  const [customizeCategories, setCustomizeCategories] = useState(() =>
+    resolveInitialCustomizeCategories({
+      isUser,
+      isEditing,
+      existingCategories: challenge?.judgingCategories,
+    })
+  );
 
   // Fetch available judges and events for dropdowns (mod queries only run for the moderator
   // variant; the user variant gets its own restricted judge list from getJudgeOptions)
@@ -219,7 +260,11 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
       entryFee: CHALLENGE_MIN_ENTRY_FEE,
       initialPrizeBuzz: 0,
       maxParticipants: undefined,
-      judgingCategories: challenge?.judgingCategories ?? DEFAULT_CATEGORY_ROWS,
+      // User variant + new mod challenges seed defaults immediately; a mod editing an existing
+      // null-category challenge starts empty — CategoryWeights is hidden (toggle off) until the
+      // mod opts in, at which point it's seeded on demand (see handleCustomizeCategoriesChange).
+      judgingCategories:
+        challenge?.judgingCategories ?? (isUser || !isEditing ? DEFAULT_CATEGORY_ROWS : []),
     },
   });
 
@@ -250,6 +295,16 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
       showErrorNotification({ title: 'Unable to create challenge', error: new Error(error.message) });
     },
   });
+
+  // Seed on demand when a mod opts into customizing: an empty array is a broken editor state
+  // (CategoryWeights requires an always-present locked `theme` row), so only seed if not already
+  // populated — never overwrite categories the mod already has.
+  const handleCustomizeCategoriesChange = (checked: boolean) => {
+    setCustomizeCategories(checked);
+    if (checked && (form.getValues('judgingCategories')?.length ?? 0) === 0) {
+      form.setValue('judgingCategories', DEFAULT_CATEGORY_ROWS);
+    }
+  };
 
   const handleSubmit = (data: z.infer<typeof schema>) => {
     // Convert display dates back to real UTC and snap to exact hours
@@ -301,6 +356,18 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
       return;
     }
 
+    const judgingCategoriesResult = resolveModJudgingCategoriesSubmission(
+      customizeCategories,
+      data.judgingCategories
+    );
+    if (!judgingCategoriesResult.success) {
+      showErrorNotification({
+        title: 'Invalid judging categories',
+        error: new Error(judgingCategoriesResult.message),
+      });
+      return;
+    }
+
     // Parse comma-separated theme elements into array
     const parsedThemeElements = data.themeElements
       ?.split(',')
@@ -322,6 +389,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
       judgeId: data.judgeId ? Number(data.judgeId) : null,
       eventId: data.eventId ? Number(data.eventId) : null,
       judgingPrompt: data.judgingPrompt || undefined,
+      judgingCategories: judgingCategoriesResult.data,
       reviewPercentage: data.reviewPercentage,
       maxEntriesPerUser: data.maxEntriesPerUser,
       entryPrizeRequirement: data.entryPrizeRequirement,
@@ -899,7 +967,28 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                 disabled={isActive || isTerminal}
               />
             )}
-            {/* User challenges score against creator-defined categories; mods use the prompt above. */}
+            {!isUser && (
+              <>
+                <Divider label="Categories" />
+                <Switch
+                  label="Customize judging categories"
+                  description="Replace the default scoring rubric with your own weighted categories."
+                  checked={customizeCategories}
+                  onChange={(event) =>
+                    handleCustomizeCategoriesChange(event.currentTarget.checked)
+                  }
+                  disabled={isActive || isTerminal}
+                />
+                {customizeCategories ? (
+                  <CategoryWeights />
+                ) : (
+                  <Text size="sm" c="dimmed">
+                    This challenge is judged against the default rubric until categories are
+                    customized.
+                  </Text>
+                )}
+              </>
+            )}
             {isUser && (
               <>
                 <Divider label="Categories" />
