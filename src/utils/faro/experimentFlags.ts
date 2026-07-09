@@ -56,6 +56,7 @@ export const RUM_EXPERIMENT_ATTR_PREFIX = 'exp_';
  */
 export const RUM_EXPERIMENT_FLAGS = [
   { flag: 'feedReserveCls', attr: 'exp_feed_reserve_cls' },
+  { flag: 'genTabDeferView', attr: 'exp_gen_tab_defer_view' },
 ] as const satisfies ReadonlyArray<{ flag: FeatureFlagKey; attr: string }>;
 
 /**
