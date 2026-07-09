@@ -78,6 +78,7 @@ import {
 } from '../referral.service';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { ReferralRewardKind, ReferralRewardStatus } from '~/shared/utils/prisma/enums';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 
 const resetAllMocks = () => {
   for (const [key, v] of Object.entries(mockDbWrite)) {
@@ -818,6 +819,122 @@ describe('revokeForChargeback', () => {
 // -----------------------------------------------------------------------------
 // computeLifetimeReferralPoints — Expired status retention
 // -----------------------------------------------------------------------------
+
+// -----------------------------------------------------------------------------
+// Buzz account routing — referral rewards must mint from the central bank (0)
+// so the Buzz service's insufficient-funds check (fromAccountId !== 0) is
+// bypassed, exactly like base.reward.ts. Previously they minted from the
+// balance-checked account -1 (blue), which stranded ~190 rewards once its dust
+// was spent (regression since referral-v2 #2178).
+// -----------------------------------------------------------------------------
+
+describe('buzz account routing (central bank 0)', () => {
+  const settlePayload = {
+    refereeId: 42,
+    tier: 'bronze' as const,
+    monthlyBuzzAmount: 10_000,
+    sourceEventId: 'inv-routing-1',
+  };
+
+  const okCtx = () => {
+    mockDbWrite.userReferral.findUnique.mockResolvedValue({
+      id: 1,
+      userReferralCodeId: 99,
+      firstPaidAt: null,
+      paidMonthCount: 0,
+      userReferralCode: {
+        id: 99,
+        userId: 7,
+        deletedAt: null,
+        user: { createdAt: new Date('2024-01-01') },
+      },
+    });
+    (mockDbWrite.$queryRaw as any).mockResolvedValue([{ paidMonthCount: 0, firstPaidAt: null }]);
+    mockDbWrite.referralReward.create.mockImplementation(async ({ data }: any) => ({
+      id: 555,
+      buzzAmount: data.buzzAmount ?? 0,
+      tokenAmount: data.tokenAmount ?? 0,
+      kind: data.kind,
+      userId: data.userId,
+      refereeId: data.refereeId ?? null,
+      tierGranted: data.tierGranted ?? null,
+      ...data,
+    }));
+    mockDbWrite.userReferral.update.mockResolvedValue({});
+    mockDbWrite.referralReward.updateMany.mockResolvedValue({ count: 1 });
+  };
+
+  it('pays the referral reward FROM the central bank (fromAccountId 0), not the balance-checked -1', async () => {
+    okCtx();
+
+    await recordMembershipPaymentReward(settlePayload);
+
+    const grant = (createBuzzTransaction as any).mock.calls.find((c: any) =>
+      String(c[0].externalTransactionId).startsWith('referral-reward:')
+    );
+    expect(grant).toBeTruthy();
+    // The load-bearing assertion: 0 is the mint that bypasses the
+    // insufficient-funds check. Reverting REFERRAL_SYSTEM_ACCOUNT_ID to -1
+    // fails this (fail-before / pass-after).
+    expect(grant[0].fromAccountId).toBe(0);
+  });
+
+  it('credits the referrer blue ledger and omits fromAccountType to match base.reward', async () => {
+    okCtx();
+
+    await recordMembershipPaymentReward(settlePayload);
+
+    const grant = (createBuzzTransaction as any).mock.calls.find((c: any) =>
+      String(c[0].externalTransactionId).startsWith('referral-reward:')
+    );
+    expect(grant[0]).toMatchObject({
+      fromAccountId: 0,
+      toAccountId: 42, // the reward recipient (RefereeBonus → referee)
+      toAccountType: 'blue',
+      amount: 2_500, // 25% of 10k
+      type: TransactionType.Reward,
+    });
+    // Canonical bank-grant pattern (base.reward.ts / merch.service.ts) omits
+    // fromAccountType entirely — the recipient ledger is set via toAccountType.
+    expect(grant[0].fromAccountType).toBeUndefined();
+    expect(grant[0].externalTransactionId).toBe('referral-reward:555');
+  });
+
+  it('settles a reward against the (mocked) bank without ever tripping insufficient-funds / revert', async () => {
+    okCtx();
+
+    await recordMembershipPaymentReward(settlePayload);
+
+    // The grant succeeded, so settleRewardRow must NOT have reverted the row
+    // back to Pending. Pre-fix, a real bank would have thrown insufficient-funds
+    // from account -1 and triggered exactly this revert path.
+    const reverted = (mockDbWrite.referralReward.update as any).mock.calls.some(
+      (c: any) =>
+        c[0]?.data?.status === ReferralRewardStatus.Pending && c[0]?.data?.revokedReason
+    );
+    expect(reverted).toBe(false);
+  });
+
+  it('claws a settled reward BACK to the central bank (toAccountId 0)', async () => {
+    mockDbWrite.referralReward.findMany.mockResolvedValue([
+      { id: 2, userId: 7, status: ReferralRewardStatus.Settled, buzzAmount: 500 },
+    ]);
+    mockDbWrite.referralReward.update.mockResolvedValue({});
+
+    await revokeForChargeback({ sourceEventId: 'pi_bank', reason: 'refund' });
+
+    expect(createBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fromAccountId: 7, // debit the referrer (real, balance-checked account)
+        fromAccountType: 'blue',
+        toAccountId: 0, // return to the central bank
+        amount: 500,
+        type: TransactionType.ChargeBack,
+        externalTransactionId: 'referral-clawback:2',
+      })
+    );
+  });
+});
 
 describe('computeLifetimeReferralPoints', () => {
   it('includes Expired tokens in the status filter so lifetime points do not drop', async () => {

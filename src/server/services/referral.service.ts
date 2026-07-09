@@ -10,7 +10,12 @@ import { createBuzzTransaction } from '~/server/services/buzz.service';
 import type { ProductTier } from '~/server/schema/subscriptions.schema';
 import { logToAxiom } from '~/server/logging/client';
 
-export const REFERRAL_SYSTEM_ACCOUNT_ID = -1;
+// Central bank account. Referral rewards must mint from the bank (id 0), which
+// the Buzz service's insufficient-funds check bypasses (`fromAccountId !== 0`),
+// exactly like every other reward path (see base.reward.ts). Account -1 (blue)
+// is a normal balance-checked account and stranded ~190 rewards once its
+// incidental dust was spent — a regression-by-design since referral-v2 (#2178).
+export const REFERRAL_SYSTEM_ACCOUNT_ID = 0;
 // Distinct CustomerSubscription.buzzType so referral grants stack with paid
 // yellow/green/blue subscriptions without tripping @@unique([userId, buzzType]).
 const REFERRAL_BUZZ_TYPE = 'referral';
@@ -493,8 +498,10 @@ async function settleRewardRow(reward: SettleableReward) {
   if (reward.buzzAmount > 0) {
     try {
       await createBuzzTransaction({
+        // Mint from the central bank (id 0). Omit fromAccountType to match the
+        // canonical bank-grant pattern (base.reward.ts / merch.service.ts): the
+        // recipient's blue ledger is credited via toAccountType below.
         fromAccountId: REFERRAL_SYSTEM_ACCOUNT_ID,
-        fromAccountType: 'blue',
         toAccountId: reward.userId,
         toAccountType: 'blue',
         amount: reward.buzzAmount,
