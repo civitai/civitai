@@ -156,19 +156,31 @@ Done: mod create/update persists categories; validation reused.
 ## Task 6 — UI: show CategoryWeights for mods (Phase 5)
 
 `src/components/Challenge/ChallengeUpsertForm.tsx`:
-- Un-gate `<CategoryWeights />` (`:905`, currently `{isUser && …}`) so it also renders for the
-  moderator variant. Keep the "Judging Prompt Override" field for mods (they compose).
-- **D6-seed:** for the mod variant editing an existing challenge whose `judgingCategories` is
-  null/absent, do NOT auto-seed `DEFAULT_CATEGORY_ROWS`; render the editor empty with a note that the
-  challenge uses the default rubric until categories are added. New challenges may keep the default
-  seed. (User variant behavior unchanged.)
-- Optional: gate the mod-variant editor behind the same Flipt flag so the UI matches the active
-  backend behavior per env.
+- Render category judging for the **moderator variant** too (currently `{isUser && …}` at `:905`).
+  Keep the "Judging Prompt Override" field for mods (they compose).
+- **D6-seed via an explicit toggle (not an empty editor).** `CategoryWeights` requires an always-
+  present locked `theme` row and its "Add category" button excludes `theme` — so an empty
+  `judgingCategories: []` is an unreachable/broken state (no theme, can't add one). Implement D6-seed
+  ("opt-in, never silently convert") as a mod-only switch, e.g. **"Customize judging categories"**:
+  - **Off** → the challenge uses the default rubric; the form submits `judgingCategories: null`
+    (Task 5 persists `Prisma.JsonNull`). `CategoryWeights` is hidden. Show a short note that judging
+    uses the default rubric until customized.
+  - **On** → render `CategoryWeights`; if the challenge has no categories yet, seed the field array
+    with `DEFAULT_CATEGORY_ROWS` at that moment (valid starting point with the locked theme row).
+  - **Initial switch state:** ON when the challenge already has `judgingCategories`; OFF when a mod
+    edits an existing challenge that has none (prevents "edit title + save" from converting judging).
+    New challenges (create): default ON, seeded with `DEFAULT_CATEGORY_ROWS`.
+  - **User variant unchanged:** no toggle — `CategoryWeights` always renders, seeded as today.
+- The mod submit handler must send `judgingCategories: null` when the toggle is Off (so an existing
+  challenge is explicitly reverted to / kept on the default rubric), and the category array when On.
+- Do NOT gate the mod editor behind the Flipt flag — mods may pre-configure categories before the
+  flag is enabled per env; stored categories only affect judging once the flag is on (Task 4).
 
-Tests / manual: mod edit form shows categories, round-trips through Task 5; existing null-category
-challenge is not silently converted on save.
+Tests / manual: mod form shows the toggle; Off → submits `null` (no conversion of an existing
+null-category challenge on an unrelated save); On with no prior categories → seeds defaults incl. the
+locked theme row and round-trips through Task 5; User variant behavior unchanged.
 
-Done: mods can view/edit categories; no accidental conversion.
+Done: mods can opt into custom categories; no accidental conversion; no broken empty state.
 
 ---
 
