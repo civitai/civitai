@@ -1,4 +1,3 @@
-import { Prisma } from '@prisma/client';
 import dayjs from '~/shared/utils/dayjs';
 import { chunk } from 'lodash-es';
 import { PG_INT4_MAX, PG_INT4_MIN } from '~/server/common/constants';
@@ -68,7 +67,7 @@ export const modelMetrics = createMetricProcessor({
       const queuedModelVersions = await ctx.db.$queryRaw<{ id: number }[]>`
         SELECT id
         FROM "ModelVersion"
-        WHERE "modelId" IN (${Prisma.join(ctx.queue)})
+        WHERE "modelId" = ANY(${ctx.queue}::int[])
       `;
       ctx.queuedModelVersions = queuedModelVersions.map((x) => x.id);
     }
