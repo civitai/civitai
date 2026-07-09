@@ -407,22 +407,26 @@ ships **~1 week before** it (Justin), so comp-retirement is **not** a v1 item.
 ### Decided — Q1: minimal monetization scope for v1
 
 The creator-studio **monetization module** ships the **minimal creator-side writes only** — `setLicensingFee` /
-`bulkSetLicensingFee` with a member-`tier` gate and the `active` flag ([§7.1](#71-schema--data-main-app-db)), plus
-`setUnlimitedAccess` (same shape). These are plain `ModelVersion` writes — no buzz call, no domain co-write. The risky
+`bulkSetLicensingFee` with a **Creator Program membership** gate (decided 2026-07-09) and the `active` flag
+([§7.1](#71-schema--data-main-app-db)), plus `setUnlimitedAccess` (same shape). These are plain `ModelVersion` writes — no buzz call, no domain co-write. The risky
 buyer-side paths (`earlyAccessPurchase`, cosmetic purchase) **stay in the main app**; they don't move for v1. It's a
 **module, not a package** (single caller in v1 — [§2](#2-architecture--tooling)); with the cutover decoupled (Q5) the
 extraction is off the critical path, so the dependency-map (§7.5) is no longer a blocker.
 
-### To confirm (surfaced in review)
+### Member gate — DECIDED (2026-07-09)
 
-- **Member gate: subscription `tier` vs full Creator Program membership — possibly feature-specific.** Justin said the
-  fee gate is **`tier`** (any active bronze/silver/gold subscription); the HackMD said "active **Creator Program**
-  members" (tier **+** creator score ≥40k). And Justin scoped **indefinite-sale specifically to CP members** — which
-  suggests the gates may **differ by feature** (licensing fee = `tier`; indefinite-sale = CP membership) rather than one
-  bar. Confirm both — it changes who can set a fee, who can sell indefinitely, and the `/join` upsell copy
-  ([§5.2](#52-reuse-existing-main-app-endpointsservices)).
+- **Full Creator Program membership is the single bar for ALL member-only actions** (fee-set *and*
+  sell-indefinitely) — not a tier-only or feature-specific split. Rationale: tier-only would let a brand-new
+  bronze subscriber fee-gate other people's models; CP requires creator score. Resolved from the `onboarding`
+  CP flag. See [questions-justin-product.md B1](creator-studio/questions-justin-product.md) /
+  [pre-implementation-decisions.md B1](creator-studio/pre-implementation-decisions.md).
 
-### Questions for Justin — review pass (2026-07-02)
+### Questions for Justin — review pass (2026-07-02) · ANSWERED 2026-07-09
+
+> Full responses in [questions-justin-product.md](creator-studio/questions-justin-product.md) (B1–B11) and the
+> reconciled [pre-implementation-decisions.md](creator-studio/pre-implementation-decisions.md). Notable changes
+> from the assumptions below: single CP-membership gate (Q1), indefinite-sale = uncapped early access (Q2), all
+> earnings sources in v1 (Q3), two-section analytics (Q4), notify on fee pause (Q5), bulk editing is v1 (Q9).
 
 Consolidated **product/business** calls for Justin's doc review. (Eng/design-owned items — charting lib, `/licensing`
 separate-vs-mode, owner-keyed rollup, etc. — are in [creator-studio/README.md](creator-studio/README.md#cross-cutting-decisions-needed-answer-once--they-recur-across-pages).)

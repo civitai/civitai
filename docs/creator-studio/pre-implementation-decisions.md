@@ -1,80 +1,87 @@
-# Creator Studio — pre-implementation decision checklist
+# Creator Studio — decisions (reconciled)
 
-> Consolidates every **open** question from the plan + page specs into one decision list, grouped by owner.
-> Source docs: [creator-studio-plan.md](../creator-studio-plan.md) (esp. [§9](../creator-studio-plan.md#9-decisions--open-questions)),
-> [README §cross-cutting](README.md#cross-cutting-decisions-needed-answer-once--they-recur-across-pages), and the seven page specs.
+> **Status: mostly DECIDED (2026-07-09).** This was the open-question checklist; the answers are now locked in
+> [questions-justin-product.md](questions-justin-product.md) (B1–B11) and
+> [questions-koen-backend.md](questions-koen-backend.md) (A1–A5) — **those are the source of truth**. This doc is
+> reconciled to match them so it no longer drifts. IDs (A#/B#/C#) map to the question docs.
 >
-> **Purpose:** unblock the build. Phase 1 (app shell) has **no** dependency on anything below and is already
-> being scaffolded. The items here gate the *feature* pages. Each row says **who owns it** and **what it blocks**.
+> Source specs: [creator-studio-plan.md](../creator-studio-plan.md), the seven page specs. Where the plan/page
+> specs still describe an old assumption (e.g. the tier-vs-CP fee split), **this doc + the question docs win** —
+> flagged inline below.
 
-Legend: 🔴 hard blocker (a page can't be built correctly without it) · 🟠 shapes scope but has a safe default · 🟢 eng/design can just decide.
+Legend: ✅ decided · 🔧 needs a build/schema change · 🟢 eng/design call still open.
 
 ---
 
-## A. Backend / data — Koen (highest leverage)
+## A. Backend / data — Koen
 
-| # | Decision | Blocks | Sev | Recommended default if unanswered |
-|---|---|---|---|---|
-| A1 | **Owner-keyed earnings rollup MV** — a `(ownerUserId, date, source)` materialized view off `orchestration.resourceCompensations`, plus a `modelVersion → ownerUserId` dictionary in ClickHouse. Every earnings table is keyed by `modelVersionId`, never the creator's `userId`. ([plan §7.6 gap #1](../creator-studio-plan.md#76-clickhouse-analytics--materialized-views)) | `/` dashboard, `/earnings`, `/earnings/analytics` (all "my models" scoping + top-earners) | 🔴 | Ship v1 with app-side `WHERE modelVersionId IN (…)` fallback; **cap** per-creator version count and hide "top-earning models" until the MV lands. Don't let prolific creators balloon the query. |
-| A2 | **Fractional `licensingFee` migration** — `ModelVersion.licensingFee` is `Int` today; needs `numeric`/decimal at 0.01 precision, settled at the daily payout boundary in `deliver-creator-compensation.ts`. Manual migration (repo doesn't run `prisma migrate deploy`). ([plan §7.1](../creator-studio-plan.md#71-schema--data-main-app-db)) | `/models`, `/licensing` (fee amount input can't accept fractional until this lands) | 🔴 | none — schema change must precede the fee editor. Write the SQL now, surface for manual apply. |
-| A3 | **Fee `active` flag** — add `active`/`enabled` on the version's licensing fee so a lapsed member's fee auto-pauses (value kept, application gated) and the mini endpoint (`.../model-versions/mini/[id].ts`) checks active membership on hit. ([plan §7.1](../creator-studio-plan.md#71-schema--data-main-app-db)) | `/models`, `/licensing` (the `Active`/`Paused`/`Off` badge), `/settings` | 🔴 | none — the "Paused" state in every spec depends on it. |
-| A4 | **Indefinite-sale representation** — a main-app field/flag for "available for sale indefinitely, no time/quantity cap" that bypasses `scoreTimeFrameUnlock`/`scoreQuantityUnlock` for eligible members. ([plan §7.1](../creator-studio-plan.md#71-schema--data-main-app-db)) | `/models` sell-indefinitely control | 🔴 | Gate the control behind a feature flag; ship `/models` without it in v1 if the backend slips (it's a distinct action from fee-setting). |
-| A5 | **Access/cosmetic-sale earnings MV (gap #2)** — a per-`toAccountId` daily buzz-earnings-by-type rollup; those earnings are buzz *transactions*, not in `resourceCompensations`. Only needed if v1 shows those sources. ([plan §7.6 gap #2](../creator-studio-plan.md#76-clickhouse-analytics--materialized-views)) | `/earnings` (access-sale + cosmetic-sale cards), `/` | 🟠 | Ship comp/license/tip only in v1; show access/cosmetic cards as "coming soon". Tie to B3. |
+| # | Item | Decision (2026-07-09) | State |
+|---|---|---|---|
+| A1 | Owner-keyed earnings rollup | **Build it.** CH **dictionary** `modelVersionId → ownerUserId` fed by **CDC/ClickPipe** from prod Postgres (reuse the Buzz-DB ClickPipe pattern); queries resolve owner via `dictGet(...)` (O(1), no join). Then an **AggregatingMergeTree** MV on `(ownerUserId, date, source)`. Schedule before v1 if feasible; app-side `WHERE modelVersionId IN (…)` stays as the small-creator / pre-launch fallback. Full spec: [owner-rollup-handoff.md](owner-rollup-handoff.md). | ✅🔧 |
+| A2 | Fractional `licensingFee` | **No concern** — `Int → numeric` at 0.01 precision; settle sub-buzz at the **daily payout boundary** (not per-txn) in `deliver-creator-compensation.ts`. Manual migration. Koen flags anything assuming integer buzz; drafter of the settlement change TBD with Briant. | ✅🔧 |
+| A3 | Fee pause on lapse | **Resolve at the USER level** (creator's active-membership status), **not** a per-`ModelVersion` flag — avoid mass row updates. **Read-time, no batch job.** Touch points: charge = mini endpoint `model-versions/mini/[id].ts` (add `hasActiveMembership(userId)`, pattern at `creator-program.service.ts:400-409`); honest display = `ModelVersionDetails.tsx:1418` + `ResourceItemContent.tsx:232` (version-keyed cache — resolve pause client-side or bust on membership change). Search index doesn't carry `licensingFee`. | ✅🔧 |
+| A4 | Indefinite-sale representation | **Reuse early access, uncapped in time** — extend `earlyAccessConfig` to a no-time-limit mode rather than a new field. (Matches B2.) Koen scopes the backend with Briant. | ✅🔧 |
+| A5 | Access/cosmetic-sale earnings MV | **In v1.** These are buzz txns paid **directly to the creator** (`toAccountId`) → a per-`toAccountId` daily buzz-earnings-by-type MV, **no owner-join**. Catch: access + cosmetic sales ride the generic "purchase" type today → need a **distinct type/flag** to isolate them. Koen confirms feasibility/effort; pair with Briant on the type/flag. | ✅🔧 |
 
 ---
 
 ## B. Product / business — Justin
 
-| # | Decision | Blocks | Sev | Recommended default if unanswered |
-|---|---|---|---|---|
-| B1 | **Member gate: subscription `tier` vs full CP membership — and is it feature-specific?** Justin said fee = `tier`; HackMD said CP members; indefinite-sale was scoped to CP. Likely: **fee = `tier`, indefinite-sale = CP membership (score ≥40k)**. ([plan §9 "to confirm"](../creator-studio-plan.md#to-confirm-surfaced-in-review)) | Gating on `/models`, `/licensing`, `/settings`; **all** `/join` CTA copy ("subscribe to a plan" vs "join the Creator Program") | 🔴 | Build gating as **feature-specific** (fee→tier, indefinite→CP) behind one `membership.ts` resolver so flipping either is a one-line change. |
-| B2 | **Indefinite-sale mechanics** — one-time purchase at a creator-set price? How does it relate to early-access pricing (replaces / stacks / separate)? ([models.md open Qs](models.md#open-questions)) | `/models` sell-indefinitely UX (depends on A4) | 🔴 | Blocked on spec — don't build the control until defined; A4 is the schema half. |
-| B3 | **v1 earnings sources** — comp/license/tip only, or also access-sale + cosmetic-sale (needs A5)? ([earnings.md](earnings.md#open-questions)) | `/earnings`, `/` scope | 🟠 | comp/license/tip in v1; access/cosmetic fast-follow. |
-| B4 | **"Basic analytics" metric list** — lock it (proposed: generations-over-time, downloads-over-time, top-models table, a few stat tiles) so it doesn't balloon. ([analytics.md](analytics.md#open-questions)) | `/earnings/analytics` scope | 🟠 | Ship the four proposed; richer analytics post-v1. |
-| B5 | **Fee auto-pause → notify the creator?** A silent pause = lost income = support tickets. In-app / email in v1? ([plan §9 Q5](../creator-studio-plan.md#questions-for-justin--review-pass-2026-07-02)) | v1 notification scope (may add work outside this app) | 🟠 | No notification in v1; surface the paused state prominently in-Studio. Revisit if support load appears. |
-| B6 | **Max licensing fee** — floor is 0.01 buzz/image (confirmed). Is the cap still `MAX_LICENSING_FEE=100` with fractional pricing? ([plan §9 Q7](../creator-studio-plan.md#questions-for-justin--review-pass-2026-07-02)) | fee input validation bounds | 🟢 | Keep 100 cap unless told otherwise; trivial to change. |
-| B7 | **Publish/schedule + bulk fee editor — v1 or fast-follow?** Both flagged "2nd priority"/"may trail". ([models.md](models.md), [licensing.md](licensing.md)) | `/models` publish, `/licensing` bulk | 🟠 | Per-version fee first; publish/schedule and bulk trail into fast-follow if time-boxed. |
-| B8 | **Studio discoverability** — nav link from the main app for everyone / only users with models / launch announcement? Shapes the non-member + `/join` experience. ([plan §9 Q8](../creator-studio-plan.md#questions-for-justin--review-pass-2026-07-02)) | main-app entry point (outside this app), `/join` framing | 🟢 | Not a v1-build blocker for the app itself; needed before launch. |
-| B9 | **Currency display** — buzz-only in v1, or USD equivalents for cash earnings? ([plan §9 Q10](../creator-studio-plan.md#questions-for-justin--review-pass-2026-07-02)) | `/`, `/earnings` number formatting | 🟢 | Buzz-only in v1. |
-| B10 | **Default fee suggestions** — confirm values (LoRA ~0.1, base ~1 buzz/image) and which model types get one. ([settings.md](settings.md), [plan §9 Q11](../creator-studio-plan.md#questions-for-justin--review-pass-2026-07-02)) | `getDefaultFeeSuggestions`, `/settings`, `/licensing` "apply default" | 🟢 | Use the proposed values as config; easy to tune. |
-| B11 | **Cutover creator comms / grandfathering** — when 25% comp retires (~1wk after v1), the creator-facing story + any transition. ([plan §9 Q6](../creator-studio-plan.md#questions-for-justin--review-pass-2026-07-02)) | Post-v1 cutover track, not this app's v1 | 🟢 | Out of v1 scope; flag for the cutover track. |
+| # | Item | Decision (2026-07-09) | State |
+|---|---|---|---|
+| B1 | Member gate | **Full Creator Program membership is the single bar for ALL member-only actions** (fee-set *and* sell-indefinitely) — **not** the feature-specific tier/CP split. Rationale: tier-only lets a brand-new bronze account fee-gate other people's models; CP requires creator score, keeping a quality bar. **Build fix applied** — `membership.ts` now gates both `can*` helpers on `isCreatorProgramMember` (resolved from the `onboarding` CreatorProgram flag). | ✅🔧 |
+| B2 | Indefinite-sale mechanics | **= early access with no time limit** — reuse the existing EA system (charge to download and/or generate), just uncapped. Not a new purchase mechanic. See A4. | ✅ |
+| B3 | v1 earnings sources | **Show all sources in v1**, incl. access-sale + cosmetic-sale (needs A5 + the distinct txn type/flag). Comp + licenses can share a chart with a source filter. | ✅🔧 |
+| B4 | Analytics scope | **Two dashboard sections.** **(a) Model:** the proposed metrics **plus** weekly granularity, generations **split by buzz color**, earnings **WoW** delta, per-model earnings (last 1–2 wk), and a **cost-to-generate reference** (avg buzz/image by base-model + type). **(b) NEW Content/Creator section** (all keyed to the creator's `userId`, no owner-join): reactions received over time, followers/new-followers, images & posts published, profile views, top-content-by-reactions table, and all-time stat tiles. Trend charts hit raw event tables; clean build = new owner-keyed daily SummingMergeTree MVs. | ✅🔧 |
+| B5 | Fee auto-pause → notify | **Notify — email + in-app.** In-app: "you have models that lost their licensing fee." Email: top models that lost the fee, capped at **10** + "and N more." | ✅🔧 |
+| B6 | Max licensing fee | **Keep the 100 buzz/image cap.** | ✅ |
+| B7 | Bulk fee editor | **Bulk fee editing is v1**, not fast-follow — it's the point of the tool. Bulk ops get a confirm-before-continue; audit log nice-to-have; no undo. | ✅ |
+| B8 | Currency display | **Show earnings in the currency they were received** (buzz for nearly everyone; cash for the ~1 cash earner). **No conversion/rate.** | ✅ |
+| B9 | Default fee suggestions | **No default fee** — off unless a creator turns one on. When they do, seed the input: **LoRA ~0.1**, **base/checkpoint ~1** buzz/image; nothing for other types. | ✅ |
+| B10 | Studio discoverability | **Main-app user-dropdown** nav item + on-site **launch announcement** + a Buzz-dashboard notice. | ✅ |
+| B11 | Cutover comms | **Straight cutover, no grandfathering.** Accrued comp up to the cutoff is settled (not clawed back); no new comp after. Comms: Creator Economy Update article [32087](https://civitai.com/articles/32087/creator-economy-update-2026-you-set-the-price-now). | ✅ |
 
 ---
 
-## C. Eng / design — decide amongst ourselves (no external dependency)
+## C. Eng / design — still ours to decide
 
-| # | Decision | Blocks | Sev | Recommendation |
-|---|---|---|---|---|
-| C1 | **Svelte charting library** — no chart primitive in `@civitai/ui`; Chart.js is React-only. Pick one (LayerChart / LayerCake / d3-based) and decide if it lands **in `@civitai/ui`** (shared) or app-local. | `/earnings/analytics`, `/earnings` charts, `/` sparkline | 🔴 | **Decide week 1.** Lean LayerChart (built on LayerCake, shadcn-svelte's charting companion, Tailwind-friendly). Add it **into `@civitai/ui`** as a shared `chart` primitive so both charted pages and the dashboard sparkline share it. |
-| C2 | **`/licensing`: separate page vs a mode/tab of `/models`** — docs say "resolve before building." Same rows, same field, same write. ([licensing.md fork](licensing.md#️-open-fork--separate-page-or-a-mode-of-models)) | `/licensing` shape + nav | 🟠 | **Option B — `?mode=bulk` on `/models`.** Same route + shared row component; zero divergence; discoverable where creators already are. Keep the `/licensing` nav slot only if design wants a distinct entry. |
-| C3 | **Date-range control** — the docs assume no calendar primitive. ⚠️ **Stale:** `@civitai/ui` now ships `calendar`, `date-picker`, **and** `range-calendar` (+ `pagination`). | `/earnings/analytics`, `/earnings` | 🟢 | Ship **presets (7/30/90d)** for v1 for speed; the `range-calendar` primitive is available if/when we want a custom range. No new dependency needed. |
-| C4 | **Pagination — offset vs cursor** for creators with many versions (Justin: "not sure yet"). ([models.md](models.md#routing--url-state)) | `/models`, `/licensing` table | 🟢 | Offset for v1 (simpler, URL-addressable via the `pagination` primitive); revisit if a creator's version count makes it slow. |
-| C5 | **Dashboard vs /earnings vs /analytics boundary** — keep the same numbers from appearing (and drifting) in three places. ([README #5](README.md#cross-cutting-decisions-needed-answer-once--they-recur-across-pages)) | `/`, `/earnings`, `/earnings/analytics` content split | 🟢 | Dashboard = at-a-glance totals + entry points; `/earnings` = by-source breakdown + cash; `/analytics` = usage that drives fees. One shared ClickHouse read module so numbers can't drift. |
-| C6 | **CP cash + withdrawal home** — dashboard vs `/earnings` vs `/settings` (pick one entry point). ([README #4](README.md#cross-cutting-decisions-needed-answer-once--they-recur-across-pages)) | `/`, `/earnings`, `/settings` | 🟢 | `/earnings` owns the cash panel + Withdraw link-out; dashboard/settings only link to it. |
-
----
-
-## What is NOT blocked (build now)
-
-Phase 1 app shell — **zero** dependency on the above:
-
-- Scaffold `apps/creator-studio` (SvelteKit spoke) — **in progress**.
-- Auth spoke gate: any authenticated user (`createSpokeGuard`, `require: (u) => !!u`).
-- `@civitai/ui` sidebar + mobile sheet nav, driven by one app-local `nav.ts` (with `memberOnly`).
-- Membership resolver stub (`membership.ts`) — feature-specific by construction so B1 is a one-line flip.
-- Dashboard skeleton (cards + skeletons; real ClickHouse reads wait on A1).
-- `/join`, `/models`, `/earnings`, `/earnings/analytics`, `/licensing`, `/settings` route stubs.
-
-## Suggested sequencing
-
-1. **Now:** Phase 1 shell (no blockers).
-2. **This week (parallel):** get **A1** (rollup timeline) + **B1** (gate definition) answered — they gate the most pages. Decide **C1** (charting) + **C2** (`/licensing` shape) internally.
-3. **Then:** land **A2/A3** migrations → build `/models` fee editor. **A4/B2** → sell-indefinitely. **A5/B3** → full earnings sources.
+| # | Item | Recommendation | State |
+|---|---|---|---|
+| C1 | Svelte charting library | Lean **LayerChart** (LayerCake-based, shadcn-svelte's charting companion), added **into `@civitai/ui`** as a shared `chart` primitive. Now higher-stakes given B4's expanded analytics. **Decide before `/analytics`.** | 🟢 |
+| C2 | `/licensing`: page vs mode of `/models` | **`?mode=bulk` on `/models`** — same rows/field/write, one shared row component. B7 makes bulk **v1**, so this surface ships in v1 either way. | 🟢 |
+| C3 | Date-range control | Ship **presets (7/30/90d)**; `@civitai/ui` has `calendar`/`date-picker`/`range-calendar` if we want custom ranges. B4 adds a **weekly-granularity** toggle. | 🟢 |
+| C4 | Pagination — offset vs cursor | **Offset** for v1 (URL-addressable via the `pagination` primitive); revisit if version counts make it slow. | 🟢 |
+| C5 | Dashboard vs /earnings vs /analytics boundary | Dashboard = at-a-glance totals + entry points; `/earnings` = by-source breakdown + cash; `/analytics` = the two B4 sections. One shared ClickHouse read module so numbers can't drift. | 🟢 |
+| C6 | CP cash + withdrawal home | `/earnings` owns the cash panel + Withdraw link-out; dashboard/settings only link to it. | 🟢 |
 
 ---
 
-### Docs that need a fix (found while reviewing)
+## Status & sequencing
 
-- The **"no calendar primitive"** warning in [analytics.md](analytics.md) / [earnings.md](earnings.md) / [README #3](README.md) is **stale** — `@civitai/ui` now has `calendar` + `date-picker` + `range-calendar` + `pagination`. Only the **chart** primitive is genuinely missing. Update those notes when convenient.
+**Done:** Phase 1 shell (scaffold, auth spoke gate, nav, membership resolver, dashboard skeleton, route stubs) —
+committed. Access is temporarily **moderator-gated** (base-layout redirect) during development. **B1 build fix
+applied** (CP-membership gate).
+
+**Backend (Koen) — needed for the feature pages, roughly in build order:**
+
+1. **A2 + A3** → unblock the `/models` fee editor (fractional fee + user-level pause).
+2. **A4** → sell-indefinitely (early-access-uncapped).
+3. **A1** (owner rollup) + **A5** (per-`toAccountId` sales MV + distinct txn type) → dashboard / `/earnings` / `/analytics`.
+
+**Eng/design (ours):** lock **C1** (charting) before `/analytics`; **C2** confirmed (`?mode=bulk`).
+
+**Buildable now without waiting:** `/models` **read side** — the creator's models + versions (kysely reads,
+re-activating `db.ts`), the grouped table, access/publish/fee **display**, and CP-gated controls rendered
+disabled. The fractional **input** waits on A2; the **write** on A2/A3 + the monetization module.
+
+---
+
+### Plan/spec drift to reconcile (this doc + the question docs win)
+
+- **B1** — the plan §9 / models.md / licensing.md still describe a **tier-based or feature-specific** fee gate.
+  It's now a **single CP-membership bar**. Update those when next touched.
+- **B4** — analytics.md scopes a smaller "basic" set; the real v1 is the **two-section** dashboard above.
+- **B7** — plan §8 / licensing.md call bulk editing "fast-follow"; it's **v1**.
+- **"No calendar primitive"** warning in analytics.md / earnings.md / README is stale — `@civitai/ui` now has
+  `calendar` + `date-picker` + `range-calendar` + `pagination`. Only a **chart** primitive is genuinely missing.
 </content>
-</invoke>
