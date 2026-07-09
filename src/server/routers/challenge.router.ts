@@ -42,6 +42,7 @@ import {
   getChallengeEvents,
   getChallengeWinners,
   getCompletedChallengesWithWinners,
+  getDailyChallenges,
   getInfiniteChallenges,
   getModeratorChallenges,
   getUpcomingThemes,
@@ -74,6 +75,12 @@ export const challengeRouter = router({
     .input(getInfiniteChallengesSchema)
     .use(isFlagProtected('challengePlatform'))
     .query(({ input, ctx }) => getInfiniteChallenges({ ...input, currentUserId: ctx.user?.id })),
+
+  // Active + next few upcoming daily (System) challenges for the horizontal daily row
+  getDaily: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .use(isFlagProtected('challengePlatform'))
+    .query(() => getDailyChallenges()),
 
   // Get single challenge by ID (public — sensitive fields stripped)
   getById: publicProcedure

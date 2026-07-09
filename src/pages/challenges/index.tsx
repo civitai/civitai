@@ -16,6 +16,7 @@ import { useRouter } from 'next/router';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { ChallengesInfinite } from '~/components/Challenge/Infinite/ChallengesInfinite';
+import { DailyChallengesRow } from '~/components/Challenge/DailyChallengesRow';
 import { FeaturedChallengeEvents } from '~/components/Challenge/FeaturedChallengeEvents';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
@@ -24,7 +25,7 @@ import {
   parseParticipationQuery,
 } from '~/components/Challenge/Infinite/ChallengeFiltersDropdown';
 import { ChallengeSort } from '~/server/schema/challenge.schema';
-import { ChallengeStatus } from '~/shared/utils/prisma/enums';
+import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
@@ -164,11 +165,17 @@ function ChallengesPage() {
           {/* Featured Challenge Events */}
           <FeaturedChallengeEvents />
 
-          {/* Daily Challenges */}
+          {/* Daily Challenges — active + upcoming System challenges, horizontal scroll */}
           <Divider />
           <Title order={3}>Daily Challenges</Title>
+          <DailyChallengesRow />
+
+          {/* Community Challenges — user + staff-created, masonry (header filters drive this) */}
+          <Divider />
+          <Title order={3}>Community Challenges</Title>
           <ChallengesInfinite
             filters={{
+              source: [ChallengeSource.User, ChallengeSource.Mod],
               sort,
               status: statusArray.length > 0 ? statusArray : undefined,
               includeEnded,

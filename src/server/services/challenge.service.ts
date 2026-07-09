@@ -180,6 +180,148 @@ function buildChallengeCursor(
 }
 
 // Service functions
+// Raw row shape returned by the shared challenge-card projection below. Mapped to ChallengeListItem
+// by mapChallengeRowsToCards.
+type ChallengeCardRow = {
+  id: number;
+  title: string;
+  theme: string | null;
+  invitation: string | null;
+  coverImageId: number | null;
+  startsAt: Date;
+  endsAt: Date;
+  status: ChallengeStatus;
+  source: ChallengeSource;
+  prizePool: number;
+  entryCount: bigint;
+  commentCount: bigint;
+  modelVersionIds: number[] | null;
+  modelId: number | null;
+  modelName: string | null;
+  nsfwLevel: number;
+  allowedNsfwLevel: number;
+  collectionId: number | null;
+  createdById: number;
+  creatorUsername: string | null;
+  creatorImage: string | null;
+  creatorDeletedAt: Date | null;
+  judgeUserId: number | null;
+  judgeUsername: string | null;
+  judgeImage: string | null;
+  judgeDeletedAt: Date | null;
+};
+
+// SELECT + FROM/JOINs for a challenge card. Callers append their own WHERE/ORDER BY/LIMIT. Shared by
+// the infinite feed and the daily row so both render identical ChallengeCard data.
+const challengeCardQuery = Prisma.sql`
+    SELECT
+      c.id,
+      c.title,
+      c.theme,
+      c.invitation,
+      c."coverImageId",
+      c."startsAt",
+      c."endsAt",
+      c.status,
+      c.source,
+      c."prizePool",
+      (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') as "entryCount",
+      COALESCE((SELECT t."commentCount" FROM "Thread" t WHERE t."challengeId" = c.id), 0) as "commentCount",
+      c."nsfwLevel",
+      c."allowedNsfwLevel",
+      c."modelVersionIds",
+      (SELECT mv."modelId" FROM "ModelVersion" mv WHERE mv.id = c."modelVersionIds"[1] LIMIT 1) as "modelId",
+      (SELECT m.name FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId" WHERE mv.id = c."modelVersionIds"[1] LIMIT 1) as "modelName",
+      c."collectionId",
+      c."createdById",
+      u.username as "creatorUsername",
+      u.image as "creatorImage",
+      u."deletedAt" as "creatorDeletedAt",
+      cj."userId" as "judgeUserId",
+      ju.username as "judgeUsername",
+      ju.image as "judgeImage",
+      ju."deletedAt" as "judgeDeletedAt"
+    FROM "Challenge" c
+    JOIN "User" u ON u.id = c."createdById"
+    LEFT JOIN "ChallengeJudge" cj ON cj.id = c."judgeId"
+    LEFT JOIN "User" ju ON ju.id = cj."userId"`;
+
+// Hydrate card rows with display user (judge if present, else creator) profile pictures/cosmetics and
+// cover images, then shape into ChallengeListItem.
+async function mapChallengeRowsToCards(items: ChallengeCardRow[]): Promise<ChallengeListItem[]> {
+  const displayUserIds = [...new Set(items.map((item) => item.judgeUserId ?? item.createdById))];
+  const [profilePictures, cosmetics] = await Promise.all([
+    getProfilePicturesForUsers(displayUserIds),
+    getCosmeticsForUsers(displayUserIds),
+  ]);
+
+  const coverImageIds = items.map((item) => item.coverImageId).filter((id): id is number => !!id);
+  const coverImages = await dbRead.image.findMany({
+    where: { id: { in: coverImageIds } },
+    select: imageSelect,
+  });
+
+  return items.map((item) => {
+    const coverImage = item.coverImageId
+      ? coverImages.find((img) => img.id === item.coverImageId)
+      : null;
+
+    return {
+      id: item.id,
+      title: item.title,
+      theme: item.theme,
+      invitation: item.invitation,
+      startsAt: item.startsAt,
+      endsAt: item.endsAt,
+      status: item.status,
+      source: item.source,
+      prizePool: item.prizePool,
+      nsfwLevel: item.nsfwLevel,
+      allowedNsfwLevel: item.allowedNsfwLevel,
+      collectionId: item.collectionId,
+      entryCount: Number(item.entryCount),
+      commentCount: Number(item.commentCount),
+      coverImage: coverImage
+        ? {
+            id: coverImage.id,
+            url: coverImage.url,
+            nsfwLevel: coverImage.nsfwLevel,
+            hash: coverImage.hash,
+            width: coverImage.width,
+            height: coverImage.height,
+            type: coverImage.type,
+          }
+        : null,
+      modelVersionIds: item.modelVersionIds ?? [],
+      createdBy: {
+        id: item.judgeUserId ?? item.createdById,
+        username: item.judgeUsername ?? item.creatorUsername,
+        image: item.judgeImage ?? item.creatorImage,
+        profilePicture: profilePictures[item.judgeUserId ?? item.createdById] ?? null,
+        cosmetics: cosmetics[item.judgeUserId ?? item.createdById] ?? null,
+        deletedAt: item.judgeDeletedAt ?? item.creatorDeletedAt,
+      },
+    };
+  });
+}
+
+/**
+ * Active + next few upcoming System (auto-generated daily) challenges for the horizontal "Daily
+ * Challenges" row. Returns at most `limit` cards, active first then soonest-upcoming. System
+ * challenges are always Scanned, so no scan gate is needed — only the visibility gate applies.
+ */
+export async function getDailyChallenges(limit = 4): Promise<ChallengeListItem[]> {
+  const items = await dbRead.$queryRaw<ChallengeCardRow[]>`
+    ${challengeCardQuery}
+    WHERE c.source = ${ChallengeSource.System}::"ChallengeSource"
+      AND c."visibleAt" <= now()
+      AND c.status IN ('Active'::"ChallengeStatus", 'Scheduled'::"ChallengeStatus")
+    ORDER BY CASE c.status WHEN 'Active' THEN 0 ELSE 1 END ASC, c."startsAt" ASC
+    LIMIT ${limit}
+  `;
+  return mapChallengeRowsToCards(items);
+}
+
 export async function getInfiniteChallenges(
   input: GetInfiniteChallengesInput & { currentUserId?: number }
 ) {
@@ -384,67 +526,8 @@ export async function getInfiniteChallenges(
   }
 
   // Entry count now comes from CollectionItem via the challenge's collection
-  const items = await dbRead.$queryRaw<
-    Array<{
-      id: number;
-      title: string;
-      theme: string | null;
-      invitation: string | null;
-      coverImageId: number | null;
-      startsAt: Date;
-      endsAt: Date;
-      status: ChallengeStatus;
-      source: ChallengeSource;
-      prizePool: number;
-      entryCount: bigint;
-      commentCount: bigint;
-      modelVersionIds: number[] | null;
-      modelId: number | null;
-      modelName: string | null;
-      nsfwLevel: number;
-      allowedNsfwLevel: number;
-      collectionId: number | null;
-      createdById: number;
-      creatorUsername: string | null;
-      creatorImage: string | null;
-      creatorDeletedAt: Date | null;
-      judgeUserId: number | null;
-      judgeUsername: string | null;
-      judgeImage: string | null;
-      judgeDeletedAt: Date | null;
-    }>
-  >`
-    SELECT
-      c.id,
-      c.title,
-      c.theme,
-      c.invitation,
-      c."coverImageId",
-      c."startsAt",
-      c."endsAt",
-      c.status,
-      c.source,
-      c."prizePool",
-      (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') as "entryCount",
-      COALESCE((SELECT t."commentCount" FROM "Thread" t WHERE t."challengeId" = c.id), 0) as "commentCount",
-      c."nsfwLevel",
-      c."allowedNsfwLevel",
-      c."modelVersionIds",
-      (SELECT mv."modelId" FROM "ModelVersion" mv WHERE mv.id = c."modelVersionIds"[1] LIMIT 1) as "modelId",
-      (SELECT m.name FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId" WHERE mv.id = c."modelVersionIds"[1] LIMIT 1) as "modelName",
-      c."collectionId",
-      c."createdById",
-      u.username as "creatorUsername",
-      u.image as "creatorImage",
-      u."deletedAt" as "creatorDeletedAt",
-      cj."userId" as "judgeUserId",
-      ju.username as "judgeUsername",
-      ju.image as "judgeImage",
-      ju."deletedAt" as "judgeDeletedAt"
-    FROM "Challenge" c
-    JOIN "User" u ON u.id = c."createdById"
-    LEFT JOIN "ChallengeJudge" cj ON cj.id = c."judgeId"
-    LEFT JOIN "User" ju ON ju.id = cj."userId"
+  const items = await dbRead.$queryRaw<ChallengeCardRow[]>`
+    ${challengeCardQuery}
     ${whereClause}
     ORDER BY ${orderByClause}
     LIMIT ${limit + 1}
@@ -462,63 +545,7 @@ export async function getInfiniteChallenges(
     }
   }
 
-  // Fetch profile pictures for display users (judge when present, else creator)
-  const displayUserIds = [...new Set(items.map((item) => item.judgeUserId ?? item.createdById))];
-  const [profilePictures, cosmetics] = await Promise.all([
-    getProfilePicturesForUsers(displayUserIds),
-    getCosmeticsForUsers(displayUserIds),
-  ]);
-
-  // Fetch cover images
-  const coverImageIds = items.map((item) => item.coverImageId).filter((id): id is number => !!id);
-  const coverImages = await dbRead.image.findMany({
-    where: { id: { in: coverImageIds } },
-    select: imageSelect,
-  });
-
-  // Transform results
-  const challenges: ChallengeListItem[] = items.map((item) => {
-    const coverImage = item.coverImageId
-      ? coverImages.find((img) => img.id === item.coverImageId)
-      : null;
-
-    return {
-      id: item.id,
-      title: item.title,
-      theme: item.theme,
-      invitation: item.invitation,
-      startsAt: item.startsAt,
-      endsAt: item.endsAt,
-      status: item.status,
-      source: item.source,
-      prizePool: item.prizePool,
-      nsfwLevel: item.nsfwLevel,
-      allowedNsfwLevel: item.allowedNsfwLevel,
-      collectionId: item.collectionId,
-      entryCount: Number(item.entryCount),
-      commentCount: Number(item.commentCount),
-      coverImage: coverImage
-        ? {
-            id: coverImage.id,
-            url: coverImage.url,
-            nsfwLevel: coverImage.nsfwLevel,
-            hash: coverImage.hash,
-            width: coverImage.width,
-            height: coverImage.height,
-            type: coverImage.type,
-          }
-        : null,
-      modelVersionIds: item.modelVersionIds ?? [],
-      createdBy: {
-        id: item.judgeUserId ?? item.createdById,
-        username: item.judgeUsername ?? item.creatorUsername,
-        image: item.judgeImage ?? item.creatorImage,
-        profilePicture: profilePictures[item.judgeUserId ?? item.createdById] ?? null,
-        cosmetics: cosmetics[item.judgeUserId ?? item.createdById] ?? null,
-        deletedAt: item.judgeDeletedAt ?? item.creatorDeletedAt,
-      },
-    };
-  });
+  const challenges = await mapChallengeRowsToCards(items);
 
   return {
     items: challenges,
