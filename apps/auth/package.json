@@ -1,6 +1,6 @@
 {
   "name": "@civitai/auth-app",
-  "version": "0.1.18",
+  "version": "0.1.23",
   "private": true,
   "type": "module",
   "scripts": {
@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@civitai/auth": "workspace:*",
+    "@civitai/axiom": "workspace:*",
     "@civitai/brand": "workspace:*",
     "@civitai/db": "workspace:*",
     "@civitai/db-schema": "workspace:*",

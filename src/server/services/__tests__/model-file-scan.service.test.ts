@@ -99,6 +99,7 @@ vi.mock('~/server/search-index', () => ({
 
 vi.mock('~/server/services/model-file.service', () => ({
   deleteFilesForModelVersionCache: mockDeleteFilesForModelVersionCache,
+  findOfficialFileByHash: vi.fn(),
 }));
 
 vi.mock('~/server/services/notification.service', () => ({
@@ -128,6 +129,8 @@ vi.mock('~/server/redis/client', () => ({
   },
 }));
 
+vi.mock('~/server/services/model-version.service', () => ({ addLinkedComponent: vi.fn() }));
+
 import {
   applyScanOutcome,
   examinePickleImports,
@@ -136,6 +139,9 @@ import {
   unpublishBlockedModel,
 } from '~/server/services/model-file-scan.service';
 import { ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
+import { findOfficialFileByHash } from '~/server/services/model-file.service';
+import { addLinkedComponent } from '~/server/services/model-version.service';
+import { constants } from '~/server/common/constants';
 
 describe('model-file-scan.service', () => {
   beforeEach(() => {
@@ -1222,6 +1228,68 @@ describe('model-file-scan.service', () => {
       expect(mockUnpublishModelById).toHaveBeenCalledWith(
         expect.objectContaining({ meta: {} })
       );
+    });
+  });
+
+  // ==========================================================================
+  // applyScanOutcome — post-scan official-match dedup safety net
+  // ==========================================================================
+  describe('applyScanOutcome — official-match dedup', () => {
+    const OFFICIAL = constants.system.officialUserId;
+
+    it('converts a matching non-official upload to a pointer and deletes the row', async () => {
+      // file owned by a normal user, a VAE
+      mockDbWrite.modelFile.findUnique.mockResolvedValue({
+        id: 500,
+        type: 'VAE',
+        modelVersionId: 10,
+        modelVersion: { modelId: 1, model: { userId: 999 } },
+      });
+      vi.mocked(findOfficialFileByHash).mockResolvedValue({
+        versionId: 42, fileId: 900, modelId: 7, modelName: 'Boogu VAE',
+        versionName: 'v1', fileName: 'boogu.vae.safetensors', sizeKB: 300_000, componentType: 'VAE',
+      });
+
+      await applyScanOutcome({ fileId: 500, hashes: { SHA256: 'abc' }, virusScan: { result: ScanResultCode.Success, message: null } });
+
+      expect(addLinkedComponent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 10, targetVersionId: 42, targetFileId: 900, replaceFileId: 500,
+          componentType: 'VAE', userId: OFFICIAL, isModerator: true,
+        })
+      );
+    });
+
+    it('does nothing when the uploader IS official', async () => {
+      mockDbWrite.modelFile.findUnique.mockResolvedValue({
+        id: 501, type: 'VAE', modelVersionId: 11, modelVersion: { modelId: 2, model: { userId: OFFICIAL } },
+      });
+      await applyScanOutcome({ fileId: 501, hashes: { SHA256: 'abc' }, virusScan: { result: ScanResultCode.Success, message: null } });
+      expect(findOfficialFileByHash).not.toHaveBeenCalled();
+      expect(addLinkedComponent).not.toHaveBeenCalled();
+    });
+
+    it('skips a primary-typed (main-section) file — cannot delete primary weights', async () => {
+      // addLinkedComponent refuses to delete a Model-typed file, so the post-scan
+      // dedup never attempts it; the client prevents that case before upload.
+      mockDbWrite.modelFile.findUnique.mockResolvedValue({
+        id: 503, type: 'Model', modelVersionId: 13, modelVersion: { modelId: 4, model: { userId: 999 } },
+      });
+      await applyScanOutcome({ fileId: 503, hashes: { SHA256: 'abc' }, virusScan: { result: ScanResultCode.Success, message: null } });
+      expect(findOfficialFileByHash).not.toHaveBeenCalled();
+      expect(addLinkedComponent).not.toHaveBeenCalled();
+    });
+
+    it('never throws out of scan finalization when dedup fails', async () => {
+      mockDbWrite.modelFile.findUnique.mockResolvedValue({
+        id: 502, type: 'VAE', modelVersionId: 12, modelVersion: { modelId: 3, model: { userId: 999 } },
+      });
+      vi.mocked(findOfficialFileByHash).mockRejectedValue(new Error('boom'));
+      await expect(
+        applyScanOutcome({ fileId: 502, hashes: { SHA256: 'abc' }, virusScan: { result: ScanResultCode.Success, message: null } })
+      ).resolves.toBeUndefined();
+      // prove the error path was actually entered (not skipped) before it was swallowed
+      expect(findOfficialFileByHash).toHaveBeenCalled();
     });
   });
 });

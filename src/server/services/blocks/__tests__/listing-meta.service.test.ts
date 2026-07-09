@@ -4,10 +4,21 @@ import { TRPCError } from '@trpc/server';
 /**
  * External-listing metadata AUTO-PULL service. Covers `fetchListingMeta` (page →
  * suggestions; non-https reject; SafeFetchError → friendly BAD_REQUEST; empty page
- * → {}) and `ingestListingAssetFromUrl` (SSRF-safe image fetch → sharp decode → CF
- * upload → `createImage` through the STANDARD scan pipeline; the scan-invariant
- * that `createImage` is called WITHOUT `skipIngestion`; unsupported format reject).
- * All I/O deps (safeFetch, sharp, CF upload, createImage) are mocked.
+ * → {}) and `ingestListingAssetFromUrl` (SSRF-safe image fetch → sharp decode →
+ * upload the bytes into the SCANNABLE image store → `createImage` through the
+ * STANDARD scan pipeline; the scan-invariant that `createImage` is called WITHOUT
+ * `skipIngestion`; unsupported format reject).
+ *
+ * 🔴 STORE-CONVERGENCE REGRESSION GUARD: the original bug uploaded the bytes to
+ * Cloudflare Images (`uploadBufferToCF`) and stored the CF Images id as
+ * `Image.url`. The scanner's edge URL (`getEdgeUrl` → `NEXT_PUBLIC_IMAGE_LOCATION`)
+ * never resolves a CF Images id, so it 404'd at scan time and every OG-pull image
+ * went terminally `ImageIngestionStatus.NotFound`. The fix routes the bytes
+ * through `uploadImageBufferToStore` — the SAME B2 image bucket + storage-resolver
+ * registration the working browser-direct upload path uses — and stores its UUID
+ * key. These tests assert that convergence (and would FAIL on the old CF path).
+ *
+ * All I/O deps (safeFetch, sharp, the store upload, createImage) are mocked.
  */
 
 // A real SafeFetchError class shared with the mocked module so `instanceof` holds
@@ -32,8 +43,12 @@ const { mockMetadata, mockSharp } = vi.hoisted(() => {
 });
 vi.mock('sharp', () => ({ default: mockSharp }));
 
-const { mockUploadBufferToCF } = vi.hoisted(() => ({ mockUploadBufferToCF: vi.fn() }));
-vi.mock('~/utils/cf-images-utils', () => ({ uploadBufferToCF: mockUploadBufferToCF }));
+const { mockUploadImageBufferToStore } = vi.hoisted(() => ({
+  mockUploadImageBufferToStore: vi.fn(),
+}));
+vi.mock('~/utils/s3-utils', () => ({
+  uploadImageBufferToStore: mockUploadImageBufferToStore,
+}));
 
 const { mockCreateImage } = vi.hoisted(() => ({ mockCreateImage: vi.fn() }));
 vi.mock('~/server/services/image.service', () => ({ createImage: mockCreateImage }));
@@ -47,7 +62,7 @@ beforeEach(() => {
   mockSafeFetch.mockReset();
   mockMetadata.mockReset();
   mockSharp.mockClear();
-  mockUploadBufferToCF.mockReset();
+  mockUploadImageBufferToStore.mockReset();
   mockCreateImage.mockReset();
 });
 
@@ -104,11 +119,11 @@ describe('ingestListingAssetFromUrl', () => {
       bytes: imageBytes,
     });
     mockMetadata.mockResolvedValue({ width: 640, height: 480, format: 'jpeg' });
-    mockUploadBufferToCF.mockResolvedValue({ id: 'cf-image-uuid' });
+    mockUploadImageBufferToStore.mockResolvedValue({ key: 'store-uuid-key', backend: 'backblaze' });
     mockCreateImage.mockResolvedValue({ id: 999 });
   }
 
-  it('safe-fetches → decodes → uploads → createImage (default scan pipeline) → imageId', async () => {
+  it('safe-fetches → decodes → uploads to the scannable store → createImage (default scan pipeline) → imageId', async () => {
     primeHappyPath();
     const res = await ingestListingAssetFromUrl({
       input: { url: 'https://cdn.example.com/og.png', kind: 'cover' },
@@ -116,25 +131,34 @@ describe('ingestListingAssetFromUrl', () => {
     });
     expect(res).toEqual({ imageId: 999 });
 
-    // Bytes uploaded to CF are the ones safeFetch returned (never a re-fetch).
-    expect(mockUploadBufferToCF).toHaveBeenCalledWith(
+    // STORE CONVERGENCE (regression guard): the bytes go to the SAME scannable
+    // image store the working manual-upload path uses — NOT Cloudflare Images.
+    // The bytes uploaded are the ones safeFetch returned (never a re-fetch), and
+    // the decoded mime is passed as the object Content-Type.
+    expect(mockUploadImageBufferToStore).toHaveBeenCalledTimes(1);
+    expect(mockUploadImageBufferToStore).toHaveBeenCalledWith(
       imageBytes,
-      expect.stringContaining('listing-asset'),
-      expect.objectContaining({ userId: 7, kind: 'cover' })
+      expect.objectContaining({ contentType: 'image/jpeg' })
     );
 
-    // SCAN INVARIANT: createImage is called with default ingestion — NO
-    // skipIngestion — so the image flows through the standard scan-gate.
+    // SCAN INVARIANT: createImage is called with the STORE's UUID key as
+    // `Image.url` (what the edge URL + scanner resolve) and default ingestion —
+    // NO skipIngestion — so the image flows through the standard scan-gate and can
+    // reach `Scanned`. (On the old CF path this url was a CF Images id → NotFound.)
     expect(mockCreateImage).toHaveBeenCalledTimes(1);
     const arg = mockCreateImage.mock.calls[0][0];
     expect(arg).toMatchObject({
-      url: 'cf-image-uuid',
+      url: 'store-uuid-key',
       type: 'image',
       width: 640,
       height: 480,
       mimeType: 'image/jpeg',
       userId: 7,
-      metadata: { size: imageBytes.byteLength },
+      metadata: {
+        size: imageBytes.byteLength,
+        source: 'app-listing-og-pull',
+        appListingAssetKind: 'cover',
+      },
     });
     expect(arg.skipIngestion).toBeUndefined();
   });
@@ -157,7 +181,7 @@ describe('ingestListingAssetFromUrl', () => {
     await expect(
       ingestListingAssetFromUrl({ input: { url: 'https://cdn.example.com/x.gif', kind: 'icon' }, userId: 1 })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-    expect(mockUploadBufferToCF).not.toHaveBeenCalled();
+    expect(mockUploadImageBufferToStore).not.toHaveBeenCalled();
     expect(mockCreateImage).not.toHaveBeenCalled();
   });
 
@@ -176,7 +200,7 @@ describe('ingestListingAssetFromUrl', () => {
         userId: 1,
       })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-    expect(mockUploadBufferToCF).not.toHaveBeenCalled();
+    expect(mockUploadImageBufferToStore).not.toHaveBeenCalled();
     expect(mockCreateImage).not.toHaveBeenCalled();
   });
 

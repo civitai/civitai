@@ -7,6 +7,7 @@ import {
   Input,
   Popover,
   SegmentedControl,
+  Select,
   Stack,
   Switch,
   Text,
@@ -17,7 +18,7 @@ import { IconAlertTriangle, IconInfoCircle } from '@tabler/icons-react';
 import { getQueryKey } from '@trpc/react-query';
 import { isEqual, uniq } from 'lodash-es';
 import { useRouter } from 'next/router';
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import * as z from 'zod';
 
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
@@ -146,7 +147,14 @@ const querySchema = z.object({
   bountyId: z.coerce.number().optional(),
 });
 
-export function ModelVersionUpsertForm({ id, model, version, children, onSubmit }: Props) {
+export function ModelVersionUpsertForm({
+  id,
+  model,
+  version,
+  children,
+  onSubmit,
+  afterName,
+}: Props) {
   const features = useFeatureFlags();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
@@ -202,6 +210,7 @@ export function ModelVersionUpsertForm({ id, model, version, children, onSubmit 
     licensingFee: version?.licensingFee ?? 0,
     licensingFeeType: version?.licensingFeeType ?? null,
     licensingFeeSettlementCurrency: version?.licensingFeeSettlementCurrency ?? null,
+    licensingSourceVersionId: version?.licensingSourceVersionId ?? null,
     requireAuth: version?.requireAuth ?? true,
     recommendedResources: version?.recommendedResources ?? [],
     // Being extra safe here and ensuring this value exists.
@@ -242,6 +251,27 @@ export function ModelVersionUpsertForm({ id, model, version, children, onSubmit 
   const showLicensingFeeSettlementCurrency =
     existingSettlementCurrency === LicensingFeeSettlementCurrency.Cash ||
     !!currentUser?.isModerator;
+
+  const licensingSourceVersionId = form.watch('licensingSourceVersionId') ?? null;
+  const { data: licensingRootsData = [] } = trpc.modelVersion.getLicensingRoots.useQuery(
+    { baseModel },
+    { enabled: !!baseModel }
+  );
+  // Exclude the version being edited — a root defines its own fee and must not
+  // point at itself. The picker always carries an implicit "Default (base model
+  // standard fee)" option, so a single remaining root is still a real choice
+  // (default vs that lineage); we only hide it when there are no roots at all.
+  const licensingRoots = licensingRootsData.filter((r) => r.id !== version?.id);
+
+  // A licensing lineage root is scoped to a base model, so a base-model change
+  // invalidates any selected source. Skip the initial value (edit pre-fill).
+  const prevBaseModelRef = useRef(baseModel);
+  useEffect(() => {
+    if (prevBaseModelRef.current === baseModel) return;
+    prevBaseModelRef.current = baseModel;
+    if (form.getValues('licensingSourceVersionId') != null)
+      form.setValue('licensingSourceVersionId', null, { shouldDirty: true });
+  }, [baseModel]);
 
   // handle mismatched baseModels in training data
   useEffect(() => {
@@ -431,6 +461,7 @@ export function ModelVersionUpsertForm({ id, model, version, children, onSubmit 
             withAsterisk
             maxLength={25}
           />
+          {afterName}
 
           {features.generationOnlyModels && (!isPrivateModel || currentUser?.isModerator) && (
             <>
@@ -793,6 +824,30 @@ export function ModelVersionUpsertForm({ id, model, version, children, onSubmit 
               <Divider my="md" />
             </Stack>
           )}
+          {(showLicensingFeeBlock || !!currentUser?.isModerator) && licensingRoots.length > 0 && (
+            <Stack gap="xs">
+              <Select
+                label="Licensing base"
+                description="If this model is built on a specific base, pick it so generations inherit that base's licensing fee. Leave as default to use the base model's standard fee."
+                placeholder="Default (base model standard fee)"
+                clearable
+                value={licensingSourceVersionId ? String(licensingSourceVersionId) : null}
+                onChange={(val) =>
+                  form.setValue('licensingSourceVersionId', val ? Number(val) : null, {
+                    shouldDirty: true,
+                  })
+                }
+                data={licensingRoots.map((r) => ({
+                  value: String(r.id),
+                  label: `${r.modelName} — ${r.versionName} (${r.licensingFee} Buzz${
+                    r.licensingFeeSettlementCurrency === LicensingFeeSettlementCurrency.Cash
+                      ? ', cash'
+                      : ''
+                  })`,
+                }))}
+              />
+            </Stack>
+          )}
           {showLicensingFeeBlock && (
             <Stack gap="xs">
               <InputNumber
@@ -1046,4 +1101,5 @@ type Props = {
   children: (data: { loading: boolean; canSave: boolean }) => React.ReactNode;
   model?: Partial<ModelUpsertInput & { publishedAt: Date | null }>;
   version?: Partial<VersionInput>;
+  afterName?: React.ReactNode;
 };

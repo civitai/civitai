@@ -393,7 +393,7 @@ export function getDownloadFilename({
 }: {
   model: { name: string; type: ModelType };
   modelVersion: { name: string; trainedWords?: string[] };
-  file: { name: string; overrideName?: string; type: ModelFileType | string };
+  file: { name: string; overrideName?: string | null; type: ModelFileType | string };
 }) {
   if (file.overrideName) return file.overrideName;
 
@@ -466,7 +466,7 @@ type FileResult = {
   type: string;
   id: number;
   name: string;
-  overrideName?: string;
+  overrideName?: string | null;
   metadata: Prisma.JsonValue;
   hashes: {
     hash: string;

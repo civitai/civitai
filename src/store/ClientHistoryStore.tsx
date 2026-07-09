@@ -2,6 +2,7 @@ import { useWindowEvent } from '@mantine/hooks';
 import { useEffect } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
+import { getHistoryStateKey } from '~/store/clientHistoryState';
 
 // partial support navigation api - https://caniuse.com/?search=window.navigation
 const isClient = typeof window !== 'undefined';
@@ -57,7 +58,8 @@ export function ClientHistoryStore() {
 
   useEffect(() => {
     if (!keys.length) {
-      setDefault(history.state.key);
+      const key = getHistoryStateKey(history.state);
+      if (key) setDefault(key);
     }
   }, [keys, setDefault]);
 
@@ -73,7 +75,8 @@ export function ClientHistoryStore() {
   }, [pushKey]);
 
   const handlePopstate = (e: any) => {
-    if (e.state.key) setKey(e.state.key);
+    const key = getHistoryStateKey(e?.state);
+    if (key) setKey(key);
   };
   useWindowEvent('popstate', handlePopstate);
 
@@ -83,7 +86,7 @@ export function ClientHistoryStore() {
 export function useHasClientHistory() {
   const index = useClientHistoryStore((state) => state.index ?? 0);
   if (hasNavigation) {
-    return navigation.currentEntry.index > 0;
+    return (navigation.currentEntry?.index ?? 0) > 0;
   } else {
     return index > 0;
   }
@@ -92,10 +95,10 @@ export function useHasClientHistory() {
 export const getHasClientHistory = () => {
   if (!hasNavigation) {
     const keys = sessionStorage.getItem(sessionKey)?.split(',') ?? [];
-    const current = history.state.key;
-    const index = keys.indexOf(current);
+    const current = getHistoryStateKey(history.state);
+    const index = current ? keys.indexOf(current) : -1;
     return index > 0;
-  } else return navigation.currentEntry.index > 0;
+  } else return (navigation.currentEntry?.index ?? 0) > 0;
 };
 
 // export function BackButton({ children }: { children: React.ReactElement }) {

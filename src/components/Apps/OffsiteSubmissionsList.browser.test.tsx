@@ -11,10 +11,11 @@ import { renderWithProviders } from '../../../test/component-setup';
  * `apps-offsite-submissions-section-*` testids.
  *
  * The list transitively imports `MySubmissionsList` (for `ReviewerNotesButton`),
- * which pulls in the analytics inline stat → `~/utils/trpc`; and the editable rows
- * mount `OffsiteEditModal`. Both are mocked so this stays network-free. Per the
- * documented gotcha, the wholesale `~/utils/trpc` mock includes
- * `setTrpcBatchingEnabled` (a graph-reachable module imports it).
+ * which pulls in the analytics inline stat → `~/utils/trpc`, mocked so this stays
+ * network-free. Per the documented gotcha, the wholesale `~/utils/trpc` mock
+ * includes `setTrpcBatchingEnabled` (a graph-reachable module imports it). The Edit
+ * affordance is now a plain LINK to `/apps/submit?edit=<id>` (the modal was
+ * consolidated into the submit wizard) — no per-row trpc surface to stub.
  */
 
 vi.mock('~/utils/trpc', () => ({
@@ -26,12 +27,6 @@ vi.mock('~/utils/trpc', () => ({
     },
   },
   setTrpcBatchingEnabled: vi.fn(),
-}));
-
-// The edit affordance pulls trpc mutations + category constants we don't exercise
-// here; stub it so an editable (pending/approved) row renders without that surface.
-vi.mock('~/components/Apps/OffsiteEditModal', () => ({
-  OffsiteEditModal: () => <div data-testid="offsite-edit-modal-stub" />,
 }));
 
 vi.mock('~/utils/notifications', () => ({
@@ -125,6 +120,22 @@ describe('OffsiteSubmissionsList — status sections', () => {
     expect(page.getByTestId('apps-offsite-submissions-section-live').elements()).toHaveLength(0);
     expect(page.getByTestId('apps-offsite-submissions-section-rejected').elements()).toHaveLength(0);
     expect(page.getByTestId('apps-offsite-submissions-section-withdrawn').elements()).toHaveLength(0);
+  });
+
+  test('an editable row renders an Edit link to the submit wizard in edit mode', async () => {
+    renderWithProviders(
+      <OffsiteSubmissionsList
+        submissions={[
+          makeOffsite({ id: 'a', slug: 'live-off', appListingId: 'l-a', status: 'approved' }),
+        ]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    const editLink = page.getByTestId('apps-offsite-edit-live-off');
+    await expect.element(editLink).toBeInTheDocument();
+    // The Edit affordance is a LINK to /apps/submit?edit=<appListingId> (not a modal).
+    expect(editLink.element().getAttribute('href')).toBe('/apps/submit?edit=l-a');
   });
 
   test('the text filter narrows rows within their sections', async () => {

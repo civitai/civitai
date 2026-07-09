@@ -212,6 +212,25 @@ export function clearLoginRetryCookie(): string {
   return `${LOGIN_RETRY_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
 }
 
+// Post-login RETRY budget. /api/auth/post-login is reached with the civ-token cookie already meant to be set;
+// when the session STILL doesn't resolve there, the cookie either never landed OR landed but can't be verified
+// (bad issuer / clock skew / key rotation). authorize.ts's marker probes cookie PRESENCE only, so it can't catch
+// the second case — post-login ⇄ /login would loop forever. This counter breaks it: bounce once (a transient
+// verify miss self-heals on the retry), then show the terminal page. Independent of LOGIN_RETRY_COOKIE so the two
+// breakers never reset each other's budget. Host-only + non-secure + short TTL, like the marker.
+export const POST_LOGIN_RETRY_COOKIE = 'civ_pl_retry';
+const POST_LOGIN_RETRY_TTL_S = 120;
+
+/** Set-Cookie recording the current post-login retry count (host-only; always lands). */
+export function postLoginRetryCookie(count: number): string {
+  return `${POST_LOGIN_RETRY_COOKIE}=${count}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${POST_LOGIN_RETRY_TTL_S}`;
+}
+
+/** Expire the post-login retry counter (on success or terminal error). */
+export function clearPostLoginRetryCookie(): string {
+  return `${POST_LOGIN_RETRY_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
+}
+
 /**
  * Expire the civ-token session cookie (BOTH name prefixes) across every plausible Domain scope — host-only and
  * the registrable domain we'd set — plus the marker. A stale, wrong-scope cookie can wedge the session (the
@@ -236,6 +255,6 @@ export function clearAllSessionCookies(host?: string): string[] {
       );
     }
   }
-  out.push(clearPostLoginMarker(), clearLoginRetryCookie());
+  out.push(clearPostLoginMarker(), clearLoginRetryCookie(), clearPostLoginRetryCookie());
   return out;
 }

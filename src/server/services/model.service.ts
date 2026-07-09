@@ -2366,6 +2366,8 @@ export const unpublishModelById = async ({
 export const getVaeFiles = async ({ vaeIds }: { vaeIds: number[] }) => {
   const files = (
     await dbRead.modelFile.findMany({
+      // No replacedAt/visibility filter needed: only primary `Model` files are read here,
+      // and primary files are never quarantined (linked-component replace rejects them).
       where: {
         modelVersionId: { in: vaeIds },
         type: 'Model',

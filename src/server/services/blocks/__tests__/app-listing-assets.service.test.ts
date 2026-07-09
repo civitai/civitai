@@ -401,6 +401,63 @@ describe('screenshot CRUD', () => {
     ]);
   });
 
+  // -------------------------------------------------------------------------
+  // 🔴 Owner asset-edit guard (audit #3010): a LIVE approved, non-shadow listing
+  // must NOT have its assets mutated directly by its owner — that would bypass mod
+  // review. Edits route through a shadow revision (revisionOfId != null). Mods bypass.
+  // -------------------------------------------------------------------------
+
+  it('removeScreenshot REFUSES a live approved (non-shadow) listing for a non-mod owner', async () => {
+    mockDb.appListingScreenshot.findUnique.mockResolvedValue({
+      id: 'b',
+      appListingId: 'apl_live',
+      appListing: { userId: 42, status: 'approved', revisionOfId: null },
+    });
+    const { removeListingScreenshot } = await import('../app-listing-assets.service');
+    await expect(removeListingScreenshot({ screenshotId: 'b' }, owner)).rejects.toThrow(
+      /live; edit its assets through a revision/
+    );
+    expect(mockDb.appListingScreenshot.delete).not.toHaveBeenCalled();
+  });
+
+  it('removeScreenshot ALLOWS removal on a SHADOW revision draft (revisionOfId set)', async () => {
+    mockDb.appListingScreenshot.findUnique.mockResolvedValue({
+      id: 'b',
+      appListingId: 'apl_shadow',
+      appListing: { userId: 42, status: 'draft', revisionOfId: 'apl_parent' },
+    });
+    mockDb.appListingScreenshot.findMany.mockResolvedValue([]);
+    const { removeListingScreenshot } = await import('../app-listing-assets.service');
+    const res = await removeListingScreenshot({ screenshotId: 'b' }, owner);
+    expect(res.removed).toBe('b');
+    expect(mockDb.appListingScreenshot.delete).toHaveBeenCalledWith({ where: { id: 'b' } });
+  });
+
+  it('a MODERATOR bypasses the guard (may curate a live approved listing)', async () => {
+    mockDb.appListingScreenshot.findUnique.mockResolvedValue({
+      id: 'b',
+      appListingId: 'apl_live',
+      appListing: { userId: 42, status: 'approved', revisionOfId: null },
+    });
+    mockDb.appListingScreenshot.findMany.mockResolvedValue([]);
+    const { removeListingScreenshot } = await import('../app-listing-assets.service');
+    const res = await removeListingScreenshot({ screenshotId: 'b' }, mod);
+    expect(res.removed).toBe('b');
+  });
+
+  it('setIcon REFUSES a live approved (non-shadow) listing for a non-mod owner (no write)', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue({
+      ...listingRow,
+      status: 'approved',
+      revisionOfId: null,
+    });
+    const { setListingIcon } = await import('../app-listing-assets.service');
+    await expect(setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner)).rejects.toThrow(
+      /live; edit its assets through a revision/
+    );
+    expect(mockDb.appListing.update).not.toHaveBeenCalled();
+  });
+
   it('setIcon rejects an Image owned by a DIFFERENT user (confused-deputy IDOR)', async () => {
     // Caller owns the LISTING but attaches an Image belonging to someone else.
     mockDb.appListing.findUnique.mockResolvedValue(listingRow);
@@ -425,16 +482,74 @@ describe('screenshot CRUD', () => {
     expect(mockDb.appListingScreenshot.create).not.toHaveBeenCalled();
   });
 
-  it('setIcon rejects an Image that is not scan-complete (ingestion !== Scanned)', async () => {
+  // The retriable-vs-terminal signal is the STRUCTURAL tRPC code, NOT the human
+  // message string: the transient scanning state throws CONFLICT (retry), the
+  // terminal states throw BAD_REQUEST. The client keys its poll decision off the
+  // code (`error.data.code`), so a message reword can't break the poller.
+  //
+  // Captures a thrown TRPCError so its code + message can be asserted.
+  async function captureAttachError(
+    fn: () => Promise<unknown>
+  ): Promise<{ code?: string; message?: string }> {
+    try {
+      await fn();
+      throw new Error('expected the attach to reject, but it resolved');
+    } catch (err) {
+      const e = err as { code?: string; message?: string };
+      return { code: e.code, message: e.message };
+    }
+  }
+
+  it('setIcon on a not-yet-scanned Image → RETRIABLE CONFLICT (NOT BAD_REQUEST)', async () => {
     mockDb.appListing.findUnique.mockResolvedValue(listingRow);
     mockDb.image.findUnique.mockResolvedValue({
       id: 9, userId: 42, type: 'image', width: 512, height: 512, mimeType: 'image/png',
       metadata: {}, ingestion: 'Pending', nsfwLevel: 1,
     });
     const { setListingIcon } = await import('../app-listing-assets.service');
-    await expect(setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner)).rejects.toThrow(
-      /not approved for publishing/
+    const err = await captureAttachError(() =>
+      setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner)
     );
+    // Retriable → CONFLICT, NOT the misleading BAD_REQUEST (which implies bad input).
+    expect(err.code).toBe('CONFLICT');
+    expect(err.code).not.toBe('BAD_REQUEST');
+    // Human message unchanged (display only).
+    expect(err.message).toMatch(/not approved for publishing/);
+    expect(mockDb.appListing.update).not.toHaveBeenCalled();
+  });
+
+  // A TERMINAL ingestion failure stays BAD_REQUEST, so the client stops polling
+  // and shows a clear "upload it manually" error instead of an eternal scanning
+  // spinner. This is the client-resilience half of the OG-pull-ingest fix — a
+  // NotFound image (e.g. the old CF-Images-store bug) is the canonical trigger.
+  it('setIcon on a NotFound image → TERMINAL BAD_REQUEST', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue(listingRow);
+    mockDb.image.findUnique.mockResolvedValue({
+      id: 9, userId: 42, type: 'image', width: 512, height: 512, mimeType: 'image/png',
+      metadata: {}, ingestion: 'NotFound', nsfwLevel: 1,
+    });
+    const { setListingIcon } = await import('../app-listing-assets.service');
+    const err = await captureAttachError(() =>
+      setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner)
+    );
+    expect(err.code).toBe('BAD_REQUEST');
+    // Human message unchanged (display only).
+    expect(err.message).toMatch(/couldn't be imported — upload it manually/);
+    expect(mockDb.appListing.update).not.toHaveBeenCalled();
+  });
+
+  it('setIcon on a Blocked image → TERMINAL BAD_REQUEST', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue(listingRow);
+    mockDb.image.findUnique.mockResolvedValue({
+      id: 9, userId: 42, type: 'image', width: 512, height: 512, mimeType: 'image/png',
+      metadata: {}, ingestion: 'Blocked', nsfwLevel: 1,
+    });
+    const { setListingIcon } = await import('../app-listing-assets.service');
+    const err = await captureAttachError(() =>
+      setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner)
+    );
+    expect(err.code).toBe('BAD_REQUEST');
+    expect(err.message).toMatch(/rejected during scanning/);
     expect(mockDb.appListing.update).not.toHaveBeenCalled();
   });
 

@@ -1048,6 +1048,13 @@ model ModelVersion {
   licensingFeeType               LicensingFeeType?               @default(PerImageBuzz)
   licensingFeeSettlementCurrency LicensingFeeSettlementCurrency? @default(Buzz)
 
+  // Licensing lineage: the root version whose fee this version inherits (e.g. a
+  // checkpoint built on Anima-Turbo points at the turbo version). Null falls
+  // back to the (baseModel, modelType) BaseModelLicensingFee rule. Decoupled
+  // from baseModel so it never affects gen-compat / leaderboards / filters.
+  licensingSourceVersionId Int?
+  licensingSource          ModelVersion?  @relation("licensingSource", fields: [licensingSourceVersionId], references: [id], onDelete: SetNull)
+
   monetization            ModelVersionMonetization?
   metrics                 ModelVersionMetric[]
   files                   ModelFile[]
@@ -1061,6 +1068,7 @@ model ModelVersion {
   metricsDaily            ModelMetricDaily[]
   modelVersionExploration ModelVersionExploration[]
   vaeFor                  ModelVersion[]            @relation("vae")
+  licensingDerivatives    ModelVersion[]            @relation("licensingSource")
   generationCoverage      GenerationCoverage?
   recommendedResources    RecommendedResource[]     @relation("recommendedResources")
   recommendedTo           RecommendedResource[]     @relation("recommendedTo")
@@ -1072,6 +1080,7 @@ model ModelVersion {
   baseModelLicensingFees  BaseModelLicensingFee[]
 
   @@index([modelId], type: Hash)
+  @@index([licensingSourceVersionId])
 }
 
 model BaseModelLicensingFee {
@@ -1177,6 +1186,7 @@ model ModelFile {
   headerData        Json?
   visibility        ModelFileVisibility @default(Public)
   dataPurged        Boolean             @default(false)
+  replacedAt        DateTime?
 
   @@index([modelVersionId], type: Hash)
 }

@@ -161,7 +161,7 @@ import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import {
   queueComicsForPanelImages,
-  queueModel3DForThumbnailImage,
+  updateModel3DNsfwLevelForThumbnailImage,
 } from '~/server/services/nsfwLevels.service';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
 import { bulkSetReportStatus, resolveEntityAppeal } from '~/server/services/report.service';
@@ -1855,7 +1855,9 @@ export const getAllImages = async (
       i.poi,
       i."acceptableMinor",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
-      ${Prisma.raw(collectionId ? ', ct.note as "collectionItemNote", ct.status as "collectionItemStatus"' : '')}
+      ${Prisma.raw(
+        collectionId ? ', ct.note as "collectionItemNote", ct.status as "collectionItemStatus"' : ''
+      )}
       ${queryFrom}
       ORDER BY ${Prisma.raw(orderBy)}
       ${Prisma.raw(skip ? `OFFSET ${skip}` : '')}
@@ -4734,24 +4736,19 @@ export const getImageMetricsObject = async (
     // is typed identically (no widening to the full metric union).
     const fetchPromise = getImageMetricService().fetch('Image', ids);
     type ImageMetricMap = Awaited<typeof fetchPromise>;
-    const metrics = await withTimeoutFallback(
-      fetchPromise,
-      timeoutMs,
-      {} as ImageMetricMap,
-      () => {
-        imageMetricsClickhouseTimeoutCounter.inc();
-        logToAxiom(
-          {
-            type: 'warning',
-            name: 'getImageMetrics timeout',
-            message: `ClickHouse image metrics read exceeded ${timeoutMs}ms`,
-            idCount: ids.length,
-            timeoutMs,
-          },
-          'clickhouse'
-        ).catch();
-      }
-    );
+    const metrics = await withTimeoutFallback(fetchPromise, timeoutMs, {} as ImageMetricMap, () => {
+      imageMetricsClickhouseTimeoutCounter.inc();
+      logToAxiom(
+        {
+          type: 'warning',
+          name: 'getImageMetrics timeout',
+          message: `ClickHouse image metrics read exceeded ${timeoutMs}ms`,
+          idCount: ids.length,
+          timeoutMs,
+        },
+        'clickhouse'
+      ).catch();
+    });
     const result: ImageMetricsObject = {};
     for (const id of ids) {
       const m = metrics[id];
@@ -6747,7 +6744,10 @@ export async function updateImageNsfwLevel({
 }) {
   if (!nsfwLevel) throw throwBadRequestError();
   if (isModerator) {
-    const image = await dbRead.image.findUnique({ where: { id }, select: { metadata: true } });
+    const image = await dbRead.image.findUnique({
+      where: { id },
+      select: { metadata: true, postId: true },
+    });
     if (!image) throw throwNotFoundError('Image not found');
 
     const metadata = (image.metadata as ImageMetadata) ?? undefined;
@@ -6768,13 +6768,7 @@ export async function updateImageNsfwLevel({
         data: { status },
       });
     }
-    // If this image is the thumbnail of a Model3D, enqueue the parent
-    // Model3D for nsfwLevel recompute. Without this, a moderator clamping
-    // the thumbnail's nsfwLevel via the image mod surface would leave
-    // `Model3D.nsfwLevel` (and the denormalized `Model3DMetric.nsfwLevel`)
-    // stale — the parent row's level is derived from the thumbnail alone
-    // (`updateModel3DNsfwLevels` in `nsfwLevels.service.ts`).
-    await queueModel3DForThumbnailImage(id);
+    await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId: image.postId });
     await trackModActivity(userId, {
       entityType: 'image',
       entityId: id,

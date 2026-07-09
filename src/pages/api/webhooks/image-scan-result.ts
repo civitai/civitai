@@ -26,7 +26,7 @@ import {
   imageScanTypes,
 } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
-import { queueModel3DForThumbnailImage } from '~/server/services/nsfwLevels.service';
+import { updateModel3DNsfwLevelForThumbnailImage } from '~/server/services/nsfwLevels.service';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
 import { getTagRules } from '~/server/services/system-cache';
 import {
@@ -201,7 +201,8 @@ export default WebhookEndpoint(async (req, res) => {
     // Image was deleted between scan submit and callback — there's nothing to
     // update. ACK with 200 so the scanner drops the job instead of re-delivering
     // the result for a row that no longer exists.
-    if (e.message === 'Image not found') return res.status(200).json({ ok: true, skipped: 'deleted' });
+    if (e.message === 'Image not found')
+      return res.status(200).json({ ok: true, skipped: 'deleted' });
     return res.status(400).send({ error: e.message });
   }
 });
@@ -269,11 +270,7 @@ async function updateImage(
 
       // await dbWrite.$executeRaw`SELECT update_nsfw_level_new(${id}::int);`;
       if (image.postId) await updatePostNsfwLevel(image.postId);
-
-      // Re-enqueue the parent Model3D (if this image is a 3D thumbnail) so its
-      // nsfwLevel picks up the now-scanned thumbnail. The new scanner path does
-      // this too; the legacy path must mirror it or the model stays unrated.
-      await queueModel3DForThumbnailImage(id);
+      await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId: image.postId });
 
       await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
 
@@ -315,7 +312,7 @@ async function updateImage(
         // #endregion
       }
     } else if (data.ingestion === 'Blocked') {
-      await queueModel3DForThumbnailImage(id);
+      await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId: image.postId });
       await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Delete });
     }
 
