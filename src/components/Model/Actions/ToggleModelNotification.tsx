@@ -70,9 +70,19 @@ export function ToggleModelNotification({
               // F1: block the toggle until membership is known — a cold store reads
               // as not-engaged and would fire the OPPOSITE of the user's intent.
               if (!isKnown) return;
+              // Carry an EXPLICIT direction (setTo) derived from the button intent,
+              // never a blind server-side toggle. isOn=true → the user wants OFF
+              // (set Mute, which also overrides a follow-based auto-watch); isOn=false
+              // → the user wants ON (set Notify). With setTo the server sets the row
+              // to exactly this state, so even if the store fabricated "off" for a
+              // genuinely-ON model (the #3034 error-path un-stick), a click can no
+              // longer silently DELETE the existing Notify — it's an idempotent
+              // subscribe. The optimistic write below is therefore the guaranteed
+              // outcome, not a guess, so the store never ends up lying vs the server.
               toggleNotifyModelMutation.mutate({
                 modelId,
-                type: isOn ? ModelEngagementType.Mute : undefined,
+                type: isOn ? ModelEngagementType.Mute : ModelEngagementType.Notify,
+                setTo: true,
               });
             }}
             loading={toggleNotifyModelMutation.isPending || !isKnown}
