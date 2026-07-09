@@ -117,6 +117,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import type { RuleDefinition } from '~/server/utils/mod-rules';
+import { capGetAllModelImages } from '~/server/utils/model-getall-images';
 import {
   DEFAULT_PAGE_SIZE,
   getCursorClauses,
@@ -1362,7 +1363,13 @@ export const getModelsWithImagesAndModelVersions = async ({
           // images: model.nsfw
           //   ? versionImages.map((x) => ({ ...x, nsfwLevel: NsfwLevel.XXX }))
           //   : versionImages,
-          images: filteredImages,
+          // Cap the images in the getAll (browse feed) response — the browse
+          // ModelCard only renders images[0], but the shared image cache returns
+          // up to 20, bloating the tRPC payload (serialized synchronously on the
+          // event loop). `capGetAllModelImages` returns a new array, so the shared
+          // `imagesForModelVersionsCache` entries (still used at full 20 by
+          // model-detail pages, auctions, etc.) are untouched.
+          images: capGetAllModelImages(filteredImages),
           canGenerate,
         };
       })
