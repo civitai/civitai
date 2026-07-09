@@ -1,5 +1,5 @@
-import { ActionIcon, Button, Group, Stack, Text, Tooltip } from '@mantine/core';
-import { IconPlus, IconX } from '@tabler/icons-react';
+import { ActionIcon, Badge, Button, Group, Paper, Progress, Stack, Text, Tooltip } from '@mantine/core';
+import { IconLock, IconPlus, IconX } from '@tabler/icons-react';
 import { useFieldArray, useFormContext, useWatch } from 'react-hook-form';
 import { InputNumber, InputSelect } from '~/libs/form';
 import {
@@ -7,7 +7,6 @@ import {
   type CategoryWeightRow,
   CHALLENGE_CATEGORY_GROUPS,
   CHALLENGE_PRESET_CATEGORIES,
-  type ChallengeCategoryKey,
   makeRow,
   MAX_CATEGORIES,
 } from '~/shared/constants/challenge.constants';
@@ -28,25 +27,21 @@ function keyOptionsFor(index: number, rows: CategoryWeightRow[]) {
 
 /**
  * Judging-category editor: Theme is always present and locked; up to 3 more rows can be added,
- * each an unused preset from the curated library (grouped by vibe). Criteria are fixed per preset
- * (shown read-only) — the server re-derives label+criteria from the key, so no free text reaches
- * the judge. RHF's `judgingCategories` field array is the single source of truth. Renders only the
- * row list + add/total controls — the parent supplies the surrounding chrome (the "Judging" card in
- * ChallengeUpsertForm, user variant).
+ * each an unused preset from the curated library (grouped by vibe). `key` and `weight` are the only
+ * per-row form state — label + criteria are derived from the key at render (and the server re-derives
+ * them too), so no free text reaches the judge and the display can never desync from the selected
+ * key. RHF's `judgingCategories` field array is the single source of truth. Renders only the row list
+ * + add/total controls — the parent supplies the surrounding "Judging" card.
  */
 export default function CategoryWeights() {
   const { control } = useFormContext();
-  const { fields, append, remove, update } = useFieldArray({ control, name: 'judgingCategories' });
+  const { fields, append, remove } = useFieldArray({ control, name: 'judgingCategories' });
   const rows = (useWatch({ control, name: 'judgingCategories' }) as CategoryWeightRow[]) ?? [];
 
   const total = rows.reduce((sum, row) => sum + (row.weight || 0), 0);
-  const hasInvalidRow = rows.some((row) => row.weight < 1);
+  const hasInvalidRow = rows.some((row) => (row.weight || 0) < 1);
+  const isValid = total === 100 && !hasInvalidRow;
   const canAdd = fields.length < MAX_CATEGORIES;
-
-  const handleKeyChange = (index: number, key: ChallengeCategoryKey) => {
-    const currentWeight = rows[index]?.weight ?? 0;
-    update(index, { ...makeRow(key), weight: currentWeight });
-  };
 
   const addRow = () => {
     const usedKeys = new Set(rows.map((row) => row.key));
@@ -55,12 +50,13 @@ export default function CategoryWeights() {
   };
 
   return (
-    <Stack gap="md">
+    <Stack gap="sm" data-testid="category-weights">
       {fields.map((field, index) => {
         const row = rows[index];
         const isTheme = row?.key === 'theme';
+        const criteria = row?.key ? CHALLENGE_PRESET_CATEGORIES[row.key]?.criteria : undefined;
         return (
-          <Stack key={field.id} gap={4}>
+          <Paper key={field.id} withBorder radius="md" p="sm">
             <Group align="flex-end" wrap="nowrap" gap="sm">
               <InputSelect
                 name={`judgingCategories.${index}.key`}
@@ -70,15 +66,14 @@ export default function CategoryWeights() {
                     ? [{ value: 'theme', label: CHALLENGE_PRESET_CATEGORIES.theme.label }]
                     : keyOptionsFor(index, rows)
                 }
-                onChange={(value: ChallengeCategoryKey) => value && handleKeyChange(index, value)}
                 disabled={isTheme}
                 allowDeselect={false}
-                searchable
-                className="w-56 shrink-0"
+                searchable={!isTheme}
+                className="flex-1"
               />
               <InputNumber
                 name={`judgingCategories.${index}.weight`}
-                label="Weight"
+                label="Weight %"
                 min={1}
                 max={100}
                 step={1}
@@ -87,8 +82,14 @@ export default function CategoryWeights() {
                 clampBehavior="blur"
                 className="w-24 shrink-0"
               />
-              {!isTheme && (
-                <Tooltip label="Remove category">
+              {isTheme ? (
+                <Tooltip label="Theme is required and can't be removed" withArrow>
+                  <ActionIcon variant="subtle" color="gray" aria-label="Theme is required" disabled>
+                    <IconLock size={16} />
+                  </ActionIcon>
+                </Tooltip>
+              ) : (
+                <Tooltip label="Remove category" withArrow>
                   <ActionIcon
                     color="red"
                     variant="subtle"
@@ -100,28 +101,52 @@ export default function CategoryWeights() {
                 </Tooltip>
               )}
             </Group>
-            <Text size="sm" c="dimmed">
-              {row?.criteria}
-            </Text>
-          </Stack>
+            {criteria && (
+              <Text size="xs" c="dimmed" mt="xs" lh={1.4}>
+                {criteria}
+              </Text>
+            )}
+          </Paper>
         );
       })}
 
-      <Group justify="space-between" wrap="wrap">
-        <Button
-          variant="light"
+      <Stack gap={6}>
+        <Group justify="space-between" wrap="wrap" gap="sm">
+          <Button
+            variant="light"
+            size="sm"
+            leftSection={<IconPlus size={16} />}
+            onClick={addRow}
+            disabled={!canAdd}
+          >
+            Add category
+          </Button>
+          <Group gap="xs" wrap="nowrap">
+            <Text size="sm" c="dimmed">
+              Total weight
+            </Text>
+            <Badge size="lg" variant="light" color={isValid ? 'green' : 'red'}>
+              {total}%
+            </Badge>
+          </Group>
+        </Group>
+        <Progress
+          value={Math.min(total, 100)}
+          color={isValid ? 'green' : total > 100 ? 'red' : 'yellow'}
           size="sm"
-          leftSection={<IconPlus size={16} />}
-          onClick={addRow}
-          disabled={!canAdd}
-        >
-          Add category
-        </Button>
-        <Text size="sm" fw={500} c={total === 100 && !hasInvalidRow ? 'dimmed' : 'red'}>
-          Total weight: {total}%{total !== 100 ? ' (must equal 100%)' : ''}
-          {total === 100 && hasInvalidRow ? ' (each category needs a weight ≥ 1)' : ''}
-        </Text>
-      </Group>
+          radius="xl"
+        />
+        {total !== 100 && (
+          <Text size="xs" c="red">
+            Weights must total 100% (currently {total}%).
+          </Text>
+        )}
+        {total === 100 && hasInvalidRow && (
+          <Text size="xs" c="red">
+            Each category needs a weight of at least 1%.
+          </Text>
+        )}
+      </Stack>
     </Stack>
   );
 }

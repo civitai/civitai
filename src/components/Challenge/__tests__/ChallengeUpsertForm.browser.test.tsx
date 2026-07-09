@@ -120,10 +120,14 @@ describe('ChallengeUpsertForm — mod judging-categories toggle', () => {
     await expect
       .element(page.getByText(/judged against the default rubric/i))
       .toBeInTheDocument();
-    expect(page.getByText(/Total weight:/).elements()).toHaveLength(0);
+    expect(page.getByText(/Total weight/).elements()).toHaveLength(0);
   });
 
   test('switching ON seeds DEFAULT_CATEGORY_ROWS (not an empty editor)', async () => {
+    // Widen the default (narrow, mobile-sized) test viewport so the row Group (wrap="nowrap")
+    // and card footer lay out the same as a real desktop viewport for the Task 3 screenshot below.
+    await page.viewport(1000, 900);
+
     renderWithProviders(
       <ChallengeUpsertForm challenge={existingChallengeNoCategories} variant="moderator" />
     );
@@ -134,8 +138,12 @@ describe('ChallengeUpsertForm — mod judging-categories toggle', () => {
     expect(page.getByText(/judged against the default rubric/i).elements()).toHaveLength(0);
 
     // DEFAULT_CATEGORY_ROWS sums to exactly 100 (theme 50 / wittiness 15 / humor 15 / aesthetic 20).
-    // An empty-seed regression would render 0 rows and "Total weight: 0%" instead.
-    await expect.element(page.getByText(/Total weight: 100%/)).toBeInTheDocument();
+    // The footer splits the old "Total weight: X%" string into a label + a separate Badge — an
+    // empty-seed regression would render 0 rows and a "0%" badge instead of "100%".
+    await expect.element(page.getByText('Total weight')).toBeInTheDocument();
+    // `exact: true` — the mod form's (visually-hidden but still-mounted) Dynamic-pool prize-split
+    // line also contains the substring "100%", so a substring match here would be ambiguous.
+    await expect.element(page.getByText('100%', { exact: true })).toBeInTheDocument();
 
     // The locked Theme row is present (non-removable) plus 3 removable rows — 3 "Remove category"
     // buttons confirms 4 total rows, matching DEFAULT_CATEGORY_ROWS, not a single empty/blank row.
@@ -143,6 +151,25 @@ describe('ChallengeUpsertForm — mod judging-categories toggle', () => {
     await expect
       .element(page.getByText(/How well the entry fits and interprets the challenge theme/))
       .toBeInTheDocument();
+
+    // Task 3 capture: seeded (toggle-ON) state showing the category rows + total/progress footer,
+    // scoped to CategoryWeights' own root (via `data-testid`) rather than the whole multi-field form.
+    // component-setup.tsx deliberately doesn't load Mantine's stylesheet (keeps component tests
+    // CSS-free/fast) — without it, unsized icon <svg>s (e.g. the NumberInput steppers) fall back to
+    // the ~300x150 UA default and dwarf the real content. A full Mantine CSS import breaks other
+    // assertions in this file (cascade-layer ordering shifts click targets), so instead scope a
+    // tiny icon-sizing rule to just this capture and remove it immediately after.
+    const iconSizeFix = document.createElement('style');
+    iconSizeFix.textContent = 'svg { width: 1em; height: 1em; }';
+    document.head.appendChild(iconSizeFix);
+    try {
+      await page.screenshot({
+        element: page.getByTestId('category-weights'),
+        path: '/private/tmp/claude-501/-Users-hackstreetboy-Projects-civitai/becb6bca-2078-4ee0-93e2-7fbab59669c1/scratchpad/category-weights-ui.png',
+      });
+    } finally {
+      iconSizeFix.remove();
+    }
   });
 
   test('switching back OFF hides the editor again', async () => {
@@ -152,12 +179,49 @@ describe('ChallengeUpsertForm — mod judging-categories toggle', () => {
 
     const toggle = page.getByRole('switch', { name: /Customize judging categories/i });
     await toggle.click();
-    await expect.element(page.getByText(/Total weight: 100%/)).toBeInTheDocument();
+    await expect.element(page.getByText('Total weight')).toBeInTheDocument();
 
     await toggle.click();
     await expect
       .element(page.getByText(/judged against the default rubric/i))
       .toBeInTheDocument();
-    expect(page.getByText(/Total weight:/).elements()).toHaveLength(0);
+    expect(page.getByText(/Total weight/).elements()).toHaveLength(0);
+  });
+
+  // Regression test for the bug CategoryWeights.tsx's fix addresses: the Category select used to
+  // be BOTH name-bound (RHF writes `.key`) AND carry an onChange that called
+  // `update(index, {...makeRow(key), weight})`. The two writes raced, so picking a new category
+  // could desync the shown criteria from the selected key and/or reset that row's weight to 0.
+  // Now the select is solely name-bound, criteria is derived at render from `row.key` (never
+  // stored), and weight has its own untouched name-bound field.
+  test("changing a non-theme row's category swaps its criteria and preserves its weight", async () => {
+    renderWithProviders(
+      <ChallengeUpsertForm challenge={existingChallengeNoCategories} variant="moderator" />
+    );
+
+    await page.getByRole('switch', { name: /Customize judging categories/i }).click();
+    await expect.element(page.getByText('Total weight')).toBeInTheDocument();
+
+    // Rows render in DEFAULT_CATEGORY_ROWS order: theme(0), wittiness(1), humor(2), aesthetic(3).
+    const categoryInputs = page.getByLabelText('Category');
+    const weightInputs = page.getByLabelText('Weight %');
+
+    await expect.element(weightInputs.nth(1)).toHaveValue('15');
+    await expect
+      .element(page.getByText(/Cleverness and conceptual wit of the idea/))
+      .toBeInTheDocument();
+
+    await categoryInputs.nth(1).click();
+    await page.getByRole('option', { name: 'Creativity' }).click();
+
+    // Criteria swaps to the newly selected category's text...
+    await expect
+      .element(page.getByText(/Originality and inventiveness of the concept; higher for fresh/))
+      .toBeInTheDocument();
+    // ...and the old Wittiness criteria is gone (no stale/desynced label+criteria pairing).
+    expect(page.getByText(/Cleverness and conceptual wit of the idea/).elements()).toHaveLength(0);
+
+    // The bug this guards against: the category change must not reset this row's weight to 0.
+    await expect.element(weightInputs.nth(1)).toHaveValue('15');
   });
 });
