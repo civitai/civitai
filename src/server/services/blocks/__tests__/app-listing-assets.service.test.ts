@@ -482,51 +482,78 @@ describe('screenshot CRUD', () => {
     expect(mockDb.appListingScreenshot.create).not.toHaveBeenCalled();
   });
 
-  it('setIcon rejects an Image that is not scan-complete (ingestion !== Scanned)', async () => {
+  // The retriable-vs-terminal signal is STRUCTURAL (tRPC code + a machine
+  // scanStatus token on the error cause), NOT the human message string. The
+  // client keys its poll decision off the code/token, so a message reword can't
+  // break the poller. See `~/shared/constants/scan-status.constants`.
+  //
+  // Captures a thrown TRPCError so the code + cause.scanStatus can be asserted.
+  async function captureAttachError(
+    fn: () => Promise<unknown>
+  ): Promise<{ code?: string; scanStatus?: unknown; message?: string }> {
+    try {
+      await fn();
+      throw new Error('expected the attach to reject, but it resolved');
+    } catch (err) {
+      const e = err as { code?: string; message?: string; cause?: { scanStatus?: unknown } };
+      return { code: e.code, scanStatus: e.cause?.scanStatus, message: e.message };
+    }
+  }
+
+  it('setIcon on a not-yet-scanned Image → RETRIABLE CONFLICT + SCAN_PENDING (NOT BAD_REQUEST)', async () => {
     mockDb.appListing.findUnique.mockResolvedValue(listingRow);
     mockDb.image.findUnique.mockResolvedValue({
       id: 9, userId: 42, type: 'image', width: 512, height: 512, mimeType: 'image/png',
       metadata: {}, ingestion: 'Pending', nsfwLevel: 1,
     });
     const { setListingIcon } = await import('../app-listing-assets.service');
-    await expect(setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner)).rejects.toThrow(
-      /not approved for publishing/
+    const err = await captureAttachError(() =>
+      setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner)
     );
+    // Retriable → CONFLICT, NOT the misleading BAD_REQUEST (which implies bad input).
+    expect(err.code).toBe('CONFLICT');
+    expect(err.code).not.toBe('BAD_REQUEST');
+    expect(err.scanStatus).toBe('SCAN_PENDING');
+    // Human message unchanged (display only).
+    expect(err.message).toMatch(/not approved for publishing/);
     expect(mockDb.appListing.update).not.toHaveBeenCalled();
   });
 
-  // A TERMINAL ingestion failure must throw a DISTINCT, non-retriable message
-  // (NOT the retriable "scan is not complete"), so the client stops polling and
-  // shows a clear "upload it manually" error instead of an eternal scanning
-  // spinner. This is the client-resilience half of the OG-pull-ingest fix — a
-  // NotFound image (e.g. the old CF-Images-store bug) is the canonical trigger.
-  it('setIcon surfaces a DISTINCT terminal message for a NotFound image (not "scan is not complete")', async () => {
+  // A TERMINAL ingestion failure stays BAD_REQUEST and carries a DISTINCT machine
+  // token (SCAN_FAILED), so the client stops polling and shows a clear "upload it
+  // manually" error instead of an eternal scanning spinner. This is the client-
+  // resilience half of the OG-pull-ingest fix — a NotFound image (e.g. the old
+  // CF-Images-store bug) is the canonical trigger.
+  it('setIcon on a NotFound image → TERMINAL BAD_REQUEST + SCAN_FAILED', async () => {
     mockDb.appListing.findUnique.mockResolvedValue(listingRow);
     mockDb.image.findUnique.mockResolvedValue({
       id: 9, userId: 42, type: 'image', width: 512, height: 512, mimeType: 'image/png',
       metadata: {}, ingestion: 'NotFound', nsfwLevel: 1,
     });
     const { setListingIcon } = await import('../app-listing-assets.service');
-    await expect(setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner)).rejects.toThrow(
-      /couldn't be imported — upload it manually/
+    const err = await captureAttachError(() =>
+      setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner)
     );
-    // Must NOT be the retriable message the client polls on.
-    await expect(setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner)).rejects.not.toThrow(
-      /scan is not complete/
-    );
+    expect(err.code).toBe('BAD_REQUEST');
+    expect(err.scanStatus).toBe('SCAN_FAILED');
+    // Human message unchanged (display only).
+    expect(err.message).toMatch(/couldn't be imported — upload it manually/);
     expect(mockDb.appListing.update).not.toHaveBeenCalled();
   });
 
-  it('setIcon surfaces a DISTINCT terminal message for a Blocked image', async () => {
+  it('setIcon on a Blocked image → TERMINAL BAD_REQUEST + SCAN_BLOCKED', async () => {
     mockDb.appListing.findUnique.mockResolvedValue(listingRow);
     mockDb.image.findUnique.mockResolvedValue({
       id: 9, userId: 42, type: 'image', width: 512, height: 512, mimeType: 'image/png',
       metadata: {}, ingestion: 'Blocked', nsfwLevel: 1,
     });
     const { setListingIcon } = await import('../app-listing-assets.service');
-    await expect(setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner)).rejects.toThrow(
-      /rejected during scanning/
+    const err = await captureAttachError(() =>
+      setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner)
     );
+    expect(err.code).toBe('BAD_REQUEST');
+    expect(err.scanStatus).toBe('SCAN_BLOCKED');
+    expect(err.message).toMatch(/rejected during scanning/);
     expect(mockDb.appListing.update).not.toHaveBeenCalled();
   });
 

@@ -8,6 +8,7 @@ import {
   orchestratorNsfwLevelMap,
 } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { SCAN_STATUS } from '~/shared/constants/scan-status.constants';
 import { newAppListingScreenshotId } from '~/server/utils/app-block-ids';
 import {
   MAX_LISTING_SCREENSHOTS,
@@ -348,27 +349,36 @@ async function loadValidatedImage(
   // Distinguish a TERMINAL ingestion failure (NotFound = the scanner couldn't
   // fetch the bytes; Blocked = the image was rejected) from the TRANSIENT
   // scanning states (Pending / Error-retry / PendingManualAssignment). The client
-  // polls this proc until the scan lands and treats "scan is not complete" as
-  // retriable — so a terminal failure MUST carry a DIFFERENT, non-retriable
-  // message, otherwise the author is stuck watching an eternal "still scanning"
-  // spinner with a useless Retry (that was the OG-image-import dead-end). The
-  // distinct message routes the client to a clear error + the manual-upload path.
+  // polls this proc until the scan lands.
+  //
+  // The retriable-vs-terminal signal is STRUCTURAL, not prose (see
+  // `scan-status.constants`): the transient state throws `CONFLICT` (resource not
+  // in an attachable state YET → retry), the terminal states throw `BAD_REQUEST`,
+  // and every throw carries a machine token in `cause.scanStatus` that the tRPC
+  // errorFormatter surfaces on `error.data.scanStatus`. The client keys its poll
+  // decision off the code/token, NEVER the message — so these human messages are
+  // free to change without breaking the poller. (Previously a terminal failure had
+  // to smuggle its non-retriability into a DIFFERENT message string; that was the
+  // brittle OG-image-import dead-end this refactor removes.)
   if (image.ingestion === ImageIngestionStatus.NotFound) {
     throw new TRPCError({
       code: 'BAD_REQUEST',
       message: "that image couldn't be imported — upload it manually instead",
+      cause: { scanStatus: SCAN_STATUS.FAILED },
     });
   }
   if (image.ingestion === ImageIngestionStatus.Blocked) {
     throw new TRPCError({
       code: 'BAD_REQUEST',
       message: 'that image was rejected during scanning — choose a different image',
+      cause: { scanStatus: SCAN_STATUS.BLOCKED },
     });
   }
   if (image.ingestion !== ImageIngestionStatus.Scanned) {
     throw new TRPCError({
-      code: 'BAD_REQUEST',
+      code: 'CONFLICT',
       message: 'image is not approved for publishing (scan is not complete)',
+      cause: { scanStatus: SCAN_STATUS.PENDING },
     });
   }
   // Fail closed: a null contentRating clamps to SFW (PG). NsfwLevel bits are
