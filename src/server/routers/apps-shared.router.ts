@@ -160,7 +160,14 @@ async function resolveSharedContext(blockToken: string, op: SharedOp): Promise<S
     });
   }
 
-  const userId = parseSubjectUserId(claims.sub);
+  // parseSubjectUserId throws a plain ForbiddenError on a malformed `sub`; surface
+  // it as a clean FORBIDDEN (not an uncaught 500). Fail-closed either way. (audit 🟢-4)
+  let userId: number | null;
+  try {
+    userId = parseSubjectUserId(claims.sub);
+  } catch {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'invalid token subject' });
+  }
   // Hydrate the TOKEN SUBJECT (block-token path has no ctx.user) — needed for both
   // the flag segment eval and the trust gate. Fail-closed on a vanished subject.
   const subjectUser =
