@@ -40,6 +40,12 @@ vi.mock('~/utils/trpc', () => ({
       cancelWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {
+      shared: {
+        append: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        vote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        unvote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        withdraw: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      },
       storage: {
         set: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         delete: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -47,6 +53,11 @@ vi.mock('~/utils/trpc', () => ({
     },
     useUtils: () => ({
       apps: {
+        shared: {
+          list: { fetch: vi.fn() },
+          getCount: { fetch: vi.fn() },
+          getCounts: { fetch: vi.fn() },
+        },
         storage: {
           get: { fetch: vi.fn() },
           list: { fetch: vi.fn() },
