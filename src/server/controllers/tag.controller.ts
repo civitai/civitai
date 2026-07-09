@@ -10,10 +10,8 @@ import type {
   GetTagsInput,
   GetTrendingTagsSchema,
   GetVotableTagsSchema,
-  ModerateTagsSchema,
   RemoveTagVotesSchema,
 } from '~/server/schema/tag.schema';
-import { trackModActivity } from '~/server/services/moderator.service';
 import { getHomeExcludedTags } from '~/server/services/system-cache';
 import {
   addTags,
@@ -23,7 +21,6 @@ import {
   getTags,
   getTagWithModelCount,
   getVotableTags,
-  moderateTags,
   removeTagVotes,
 } from '~/server/services/tag.service';
 import { throwDbError } from '~/server/utils/errorHandling';
@@ -173,25 +170,6 @@ export const addTagsHandler = async ({ input }: { input: AdjustTagsSchema }) => 
 export const disableTagsHandler = async ({ input }: { input: AdjustTagsSchema }) => {
   try {
     await disableTags(input);
-  } catch (error) {
-    throw throwDbError(error);
-  }
-};
-
-export const moderateTagsHandler = async ({
-  input,
-  ctx,
-}: {
-  input: ModerateTagsSchema;
-  ctx: ProtectedContext;
-}) => {
-  try {
-    await moderateTags(input);
-    await trackModActivity(ctx.user.id, {
-      entityType: input.entityType,
-      entityId: input.entityIds,
-      activity: 'moderateTag',
-    });
   } catch (error) {
     throw throwDbError(error);
   }

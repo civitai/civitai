@@ -105,13 +105,6 @@ export const deleteTagsSchema = z.object({
 });
 export type DeleteTagsSchema = z.infer<typeof deleteTagsSchema>;
 
-export const moderateTagsSchema = z.object({
-  entityIds: z.number().array(),
-  entityType: taggableEntitySchema,
-  disable: z.boolean(),
-});
-export type ModerateTagsSchema = z.infer<typeof moderateTagsSchema>;
-
 export type VotableTagConnectorInput = z.infer<typeof votableTagConnectorSchema>;
 export const votableTagConnectorSchema = z.object({
   entityId: z.number(),

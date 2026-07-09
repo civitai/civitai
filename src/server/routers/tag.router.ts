@@ -8,7 +8,6 @@ import {
   getVotableTagsHandler,
   removeTagVotesHandler,
   disableTagsHandler,
-  moderateTagsHandler,
   getManagableTagsHandler,
   deleteTagsHandler,
   getHomeExcludedTagsHandler,
@@ -24,7 +23,6 @@ import {
   getTagsInput,
   getTrendingTagsSchema,
   getVotableTagsSchema,
-  moderateTagsSchema,
   removeTagVotesSchema,
 } from '~/server/schema/tag.schema';
 import { getTag, getTagsForReview } from '~/server/services/tag.service';
@@ -74,6 +72,5 @@ export const tagRouter = router({
     .mutation(removeTagVotesHandler),
   addTags: moderatorProcedure.input(adjustTagsSchema).mutation(addTagsHandler),
   disableTags: moderatorProcedure.input(adjustTagsSchema).mutation(disableTagsHandler),
-  moderateTags: moderatorProcedure.input(moderateTagsSchema).mutation(moderateTagsHandler),
   deleteTags: moderatorProcedure.input(deleteTagsSchema).mutation(deleteTagsHandler),
 });

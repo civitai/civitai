@@ -106,11 +106,9 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
   - Services: `image.service.ts` → `getImagesPendingIngestion`
   - Infra: **Postgres only.** Simplest of the image pages.
 
-- [ ] **`/moderator/image-tags`** — `src/pages/moderator/image-tags.tsx` — flag: none
-  - Procedures: `image.getModeratorReviewQueue` (with `tagReview: true`); `tag.moderateTags` (mutation)
-  - Services: `image.service.ts` → `getImageModerationReviewQueue` (reused); `tag.service.ts` → `moderateTags`
-  - Schemas: `image.schema.ts` (`imageReviewQueueInputSchema`), `tag.schema.ts` (`moderateTagsSchema`)
-  - Infra: **Postgres** + tracking
+- [x] **`/moderator/image-tags`** — `src/pages/moderator/image-tags.tsx` — flag: none — **Migrated.** tagReview queue ported to Kysely (match the `TagsOnImageNew` partial-index predicate EXACTLY incl. the `::integer` cast — a mismatched form seq-scans the table; no Tag join in the CTE); tags read from `TagsOnImageDetails` + a `TagsOnImageVote` hash-index vote count, NOT the expensive `ImageTag` view. Moderator decisions are authoritative → direct `upsert_tag_on_image` (disabled/keep) via the ported `upsertTagsOnImageNew` helper, NOT the weighted-vote system. Per-tag + per-card Remove/Keep instead of multi-select bulk. Trimmed orphaned `tag.moderateTags`. New shared spoke helpers: `tags-on-image.service.ts` (Kysely `upsertTagsOnImageNew` + `applyTagRules`), `cache.ts` (`bustCachedObject`/`bustImageTagCaches`).
+  - Procedures: `image.getModeratorReviewQueue` (with `tagReview: true`); `tag.moderateTags` (mutation) — **STAYS in main:** `getImageModerationReviewQueue` is shared with `images.tsx`; the vote plumbing (`getVotableTags`/`addTagVotes`/`removeTagVotes`) is app-wide.
+  - Infra: **Postgres** (TagsOnImageNew/Details/Vote) + Redis (imageTags/tagIds/thumbnail cache busts, shared `system:tag-rules`) + search-index enqueue
 
 - [x] **`/moderator/image-rating-review`** — `src/pages/moderator/image-rating-review.tsx` — flag: none — **Migrated.** Deferred: VotableTags (needs the tag-voting slice, shared with image-tags), `imageMetadataCache.refresh` (Wave 3 Redis). Model3D nsfwLevel sync is no longer a deferral — the main app now derives it from the thumbnail via the connected-entity cascade (`docs/model3d-thumbnail-nsfw-propagation.md` in the main repo), so the spoke's direct `nsfwLevel` write drives it automatically. Main-app `getImageRatingRequests`/`updateImageNsfwLevel` left in place (image.service migrates with the image cluster; `updateImageNsfwLevel` still backs downleveled-review + user voting).
   - Procedures: `image.getImageRatingRequests` (query); `image.updateImageNsfwLevel` (mutation)

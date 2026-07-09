@@ -20,7 +20,6 @@ import type {
   GetTagsInput,
   GetVotableTagsSchema,
   GetVotableTagsSchema2,
-  ModerateTagsSchema,
 } from '~/server/schema/tag.schema';
 import { modelTagCompositeSelect } from '~/server/selectors/tag.selector';
 import { getCategoryTags, getReplacedTagIds, getSystemTags } from '~/server/services/system-cache';
@@ -756,37 +755,6 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
 
     // Bust cache for tag rules (since we can't easily check the type)
     await redis.del(REDIS_KEYS.SYSTEM.TAG_RULES);
-  }
-};
-
-export const moderateTags = async ({ entityIds, entityType, disable }: ModerateTagsSchema) => {
-  if (entityType === 'model') {
-    // We aren't doing user model tagging quite yet...
-    throw new Error('Not implemented');
-    // await dbWrite.$executeRawUnsafe(`
-    //   UPDATE "TagsOnModels"
-    //   SET "disabled" = ${disable}, "needsReview" = false
-    //   WHERE "needsReview" = true AND "modelId" IN (${entityIds.join(', ')})
-    // `);
-  } else if (entityType === 'image') {
-    const toUpdate = await dbWrite.$queryRawUnsafe<{ imageId: number; tagId: number }[]>(`
-      SELECT "imageId", "tagId"
-      FROM "TagsOnImageDetails"
-      WHERE "needsReview" = true
-        AND "imageId" IN (${entityIds.join(', ')});
-    `);
-
-    await upsertTagsOnImageNew(
-      toUpdate.map(({ imageId, tagId }) => ({
-        imageId,
-        tagId,
-        automated: false,
-        disabled: disable,
-        needsReview: false,
-      }))
-    );
-
-    await imageTagsCache.bust(entityIds);
   }
 };
 

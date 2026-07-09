@@ -17,6 +17,7 @@ const MIGRATED_ROUTES: Record<string, string> = {
   'ingestion-error-review': 'ingestion-error-review',
   'image-rating-review': 'image-rating-review',
   'downleveled-review': 'downleveled-review',
+  'image-tags': 'image-tags',
   blocklists: 'blocklists',
 };
 
