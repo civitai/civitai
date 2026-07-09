@@ -83,6 +83,72 @@ export const AppStorageProvisioner = {
         )
       `);
 
+      // ── SHARED (app-global / cross-user) storage tables ────────────────────
+      // The public-write surface (voting + community lists). Distinct from the
+      // per-user `kv` table above: rows are app-global, readable by all users of
+      // the app, written per the shared write policy (apps-shared.router).
+      //
+      // shared_kv.key is a SERVER-generated ULID (never a client key — C1: a
+      // client-chosen key would let user B overwrite user A's row). INSERT-only
+      // create; author_user_id is attribution + rate-limit + moderation.
+      // size_bytes mirrors `kv` so the SAME quota trigger folds shared bytes/rows
+      // into the app's 50MB / 1M budget. hidden_at/hidden_by back the mod soft-hide.
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ${schema}.shared_kv (
+          key text PRIMARY KEY,
+          author_user_id integer NOT NULL,
+          value jsonb NOT NULL,
+          size_bytes integer GENERATED ALWAYS AS (octet_length(value::text)) STORED,
+          hidden_at timestamptz,
+          hidden_by integer,
+          created_at timestamptz DEFAULT now() NOT NULL,
+          updated_at timestamptz DEFAULT now() NOT NULL
+        )
+      `);
+      await client.query(
+        `CREATE INDEX IF NOT EXISTS shared_kv_author_idx ON ${schema}.shared_kv (author_user_id)`
+      );
+      await client.query(
+        `CREATE INDEX IF NOT EXISTS shared_kv_created_idx ON ${schema}.shared_kv (created_at)`
+      );
+
+      // votes — one row per (key, user). The UNIQUE (composite PK) guarantees
+      // one-vote-per-user (H1). FK ON DELETE CASCADE ties a vote's lifetime to its
+      // request so withdraw/purge reclaim cleanly. This table is NEVER listable —
+      // only the aggregate `count` is ever returned (design isolation invariant).
+      // votes carry NO size_bytes / NO quota trigger → excluded from the byte quota.
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ${schema}.votes (
+          key text NOT NULL REFERENCES ${schema}.shared_kv(key) ON DELETE CASCADE,
+          user_id integer NOT NULL,
+          created_at timestamptz DEFAULT now() NOT NULL,
+          PRIMARY KEY (key, user_id)
+        )
+      `);
+
+      // counters — the monotonic vote-tally CACHE (votes are the source of truth,
+      // this is reconstructable). CHECK(count >= 0) blocks any unvote underflow
+      // (H1). FK ON DELETE CASCADE. Excluded from the byte quota.
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ${schema}.counters (
+          key text PRIMARY KEY REFERENCES ${schema}.shared_kv(key) ON DELETE CASCADE,
+          count bigint NOT NULL DEFAULT 0 CHECK (count >= 0)
+        )
+      `);
+
+      // shared_kv_reports — user + moderator reports on a shared row (M4/M5). The
+      // `key` is intentionally NOT an FK: a report must survive a hard-delete/purge
+      // of the row it concerns (audit trail). Excluded from the byte quota.
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ${schema}.shared_kv_reports (
+          id text PRIMARY KEY,
+          key text,
+          reporter_user_id integer,
+          reason text,
+          created_at timestamptz DEFAULT now() NOT NULL
+        )
+      `);
+
       // Trigger function — quota row is keyed on app_block_id pulled from
       // session-local `app.current_app_block_id`. tRPC procedures must
       // `SET LOCAL app.current_app_block_id = ...` in the same txn as the
@@ -127,6 +193,18 @@ export const AppStorageProvisioner = {
       await client.query(`
         CREATE TRIGGER kv_quota_trg
         AFTER INSERT OR UPDATE OR DELETE ON ${schema}.kv
+        FOR EACH ROW EXECUTE FUNCTION ${schema}.kv_quota_trigger()
+      `);
+
+      // Reuse the SAME quota-trigger function on shared_kv (it only touches
+      // ${schema}.quota + NEW/OLD.size_bytes + row_count — all present on
+      // shared_kv). Shared writes SET LOCAL app.current_app_block_id in-txn just
+      // like the per-user path, so shared bytes/rows fold into the same 50MB / 1M
+      // app budget. votes/counters/reports have no trigger → excluded from quota.
+      await client.query(`DROP TRIGGER IF EXISTS shared_kv_quota_trg ON ${schema}.shared_kv`);
+      await client.query(`
+        CREATE TRIGGER shared_kv_quota_trg
+        AFTER INSERT OR UPDATE OR DELETE ON ${schema}.shared_kv
         FOR EACH ROW EXECUTE FUNCTION ${schema}.kv_quota_trigger()
       `);
 
