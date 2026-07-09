@@ -12,6 +12,15 @@ const buzzPurchaseMetadataSchema = z
     // For whatever reason, paddle converts it to snake case.
     buzz_amount: z.coerce.number().positive().optional(),
     user_id: z.coerce.number().positive().optional(),
+    // App Blocks attribution — see
+    // src/server/schema/blocks/attribution.schema.ts. The .passthrough()
+    // below lets these flow through unmodified; listing them
+    // explicitly gives downstream metadata-builders a typed shape.
+    blockAppId: z.string().optional(),
+    blockAppBlockId: z.string().optional(),
+    blockInstanceId: z.string().optional(),
+    blockScope: z.string().optional(),
+    blockModelId: z.coerce.number().int().positive().optional(),
   })
   .passthrough();
 

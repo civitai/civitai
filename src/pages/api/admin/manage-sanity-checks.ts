@@ -1,6 +1,6 @@
 import type { AxiomAPIRequest } from '@civitai/next-axiom';
 import type { NextApiResponse } from 'next';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { manageSanityChecks } from '~/server/services/games/new-order.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';

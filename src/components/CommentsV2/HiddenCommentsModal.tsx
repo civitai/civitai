@@ -11,6 +11,8 @@ import { trpc } from '~/utils/trpc';
 
 type CommentEntityType =
   | 'model'
+  | 'model3d'
+  | 'model3dReview'
   | 'post'
   | 'article'
   | 'bounty'

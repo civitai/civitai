@@ -44,6 +44,7 @@ import { fetchGenerationData } from '~/store/generation-graph.store';
 import { aDayAgo, formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import type { ResourceSelectSource } from '../resource-select.types';
 import { TopRightIcons } from './TopRightIcons';
@@ -53,12 +54,10 @@ const IMAGE_CARD_WIDTH = 450;
 export function ResourceSelectCard({
   data,
   height,
-  isFavorite,
   selectSource,
 }: {
   data: SearchIndexDataMap['models'][number];
   height?: number;
-  isFavorite: boolean;
   selectSource?: ResourceSelectSource;
 }) {
   const { onSelect } = useResourceSelectContext();
@@ -108,6 +107,14 @@ export function ResourceSelectCard({
     });
     setLoading(false);
   };
+
+  // Read favorite state straight from the bookmarked-models query so the
+  // toggle's optimistic cache update drives the button — single source of truth,
+  // no prop drilling (which would churn the virtualized list's render fn).
+  const { data: bookmarkedModels } = trpc.user.getBookmarkedModels.useQuery(undefined, {
+    enabled: !!currentUser,
+  });
+  const isFavorite = !!bookmarkedModels?.includes(data.id);
 
   const favoriteMutation = useToggleFavoriteMutation();
   const handleToggleFavorite = ({ versionId, setTo }: { versionId?: number; setTo: boolean }) => {

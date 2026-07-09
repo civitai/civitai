@@ -27,6 +27,7 @@ export const resourceDataCache = createCachedArray({
          WHERE rr."sourceId" = mv.id
            AND rr.settings->>'isLinkedComponent' = 'true'
            AND rr.settings->>'componentType' = 'VAE'
+           AND EXISTS (SELECT 1 FROM "ModelFile" mf WHERE mf.id = (rr.settings->>'fileId')::int)
          LIMIT 1) AS "vaeId",
         mv."status",
         mv."usageControl",

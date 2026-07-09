@@ -25,6 +25,7 @@ import { ArticleStatus } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { unpublishReasons, type UnpublishReason } from '~/server/common/moderation-helpers';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ArticleContextMenu } from '~/components/Article/ArticleContextMenu';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { ArticleGetAllRecord } from '~/server/services/article.service';
@@ -242,3 +243,5 @@ export default function ModeratorArticlesPage() {
     </>
   );
 }
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });

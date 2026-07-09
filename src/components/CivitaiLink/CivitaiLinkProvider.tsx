@@ -152,10 +152,12 @@ const Provider = ({ children }: { children: React.ReactNode }) => {
   const getWorker = () => {
     if (workerPromise.current) return workerPromise.current;
     if (workerRef.current) return Promise.resolve(workerRef.current);
-    const worker = new SharedWorker(
-      new URL('/src/workers/civitai-link.worker.ts', import.meta.url),
-      { name: 'civitai-link' }
-    );
+    // Built by `pnpm build:workers` (scripts/build-workers.mjs) → public/workers.
+    // Static path (not new URL(import.meta.url)) to bypass Turbopack's broken
+    // .ts SharedWorker compilation — see vercel/next.js#74842.
+    const worker = new SharedWorker('/workers/civitai-link.worker.js', {
+      name: 'civitai-link',
+    });
 
     const handleError = (msg: string) => {
       console.error(msg);

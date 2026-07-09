@@ -4,6 +4,7 @@ import type {
   TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
 import {
+  AI_TOOLKIT_SAVE_EVERY,
   engineTypes,
   type EngineTypes,
   loraTypes,
@@ -158,6 +159,8 @@ export const trainingSettings: TrainingSettingsType[] = [
       ltx23: { all: { default: 'ai-toolkit' } },
       hidream_o1: { all: { default: 'ai-toolkit' } },
       anima: { all: { default: 'ai-toolkit' } },
+      boogu: { all: { default: 'ai-toolkit' } },
+      krea2: { all: { default: 'ai-toolkit' } },
       acestep_15: { all: { default: 'ai-toolkit' } },
       acestep_15_xl_base: { all: { default: 'ai-toolkit' } },
       acestep_15_xl_sft: { all: { default: 'ai-toolkit' } },
@@ -197,6 +200,10 @@ export const trainingSettings: TrainingSettingsType[] = [
       anima: {
         all: { default: 5 },
       },
+      boogu: {
+        all: { default: 5 },
+      },
+      // Krea 2 uses the standard 10 epochs (= base default) per the model owners' spec.
       ltx2: {
         all: { min: 1, max: 20 },
       },
@@ -266,6 +273,14 @@ export const trainingSettings: TrainingSettingsType[] = [
       anima: {
         all: { default: 4, max: 4 },
       },
+      // Boogu batch size is fixed at 1 for this ecosystem (per @civitai/client).
+      boogu: {
+        all: { default: 1, min: 1, max: 1 },
+      },
+      // Krea 2 batch size is fixed at 1 for this ecosystem (per @civitai/client).
+      krea2: {
+        all: { default: 1, min: 1, max: 1 },
+      },
       ltx2: { all: { default: 2, min: 1, max: 4 } },
       ltx23: { all: { default: 2, min: 1, max: 4 } },
       // sd3_medium: { all: { default: 4, max: 4 } },
@@ -284,23 +299,55 @@ export const trainingSettings: TrainingSettingsType[] = [
     label: 'Steps',
     hint: (
       <>
-        The total number of steps for training. Computed automatically with (epochs * # of images *
-        repeats / batch size).
+        The total number of training steps. With AI Toolkit this is the primary control over
+        training length and what pricing is based on &mdash; set it directly.
         <br />
-        The maximum allowed is 10,000 steps.
+        For other engines it is computed automatically from (epochs &times; # of images &times;
+        repeats / batch size). The maximum allowed is 10,000 steps.
       </>
     ),
     type: 'int',
-    default: undefined,
+    // Steps-based pricing prefill (AI Toolkit). For Kohya-style engines this default is
+    // immediately overwritten by the auto-calc in AdvancedSettings.
+    default: 2000,
     min: 1,
     max: 10000,
     step: 1,
+    // Kept disabled by default (Kohya auto-computes); AdvancedSettings makes it editable
+    // for the AI Toolkit engine where steps is the primary, user-set length knob.
     disabled: true,
-    // overrides: {
-    //   hy_720_fp8: { all: { max: 5000 } },
-    //   wan_2_1_i2v_14b_720p: { all: { max: 5000 } },
-    //   wan_2_1_t2v_14b: { all: { max: 5000 } },
-    // },
+    overrides: {
+      ltx2: { all: { default: 3000 } },
+      ltx23: { all: { default: 3000 } },
+      anima: { all: { default: 1500 } },
+      boogu: { all: { default: 3000 } },
+    },
+  },
+  {
+    name: 'saveEvery',
+    label: 'Save every',
+    hint: (
+      <>
+        How often (in steps) a checkpoint is saved. Each saved checkpoint is a downloadable epoch
+        you can pick from afterwards.
+        <br />
+        Lower values save more checkpoints (e.g. 3,000 steps saving every 250 produces 12). Has a
+        smaller effect on cost than Steps.
+      </>
+    ),
+    type: 'int',
+    // Default mirrors targetSteps / 10 checkpoints; the seeding effects recompute it per run.
+    // Bounds come from AI_TOOLKIT_SAVE_EVERY so the input and the seeds share one source.
+    default: AI_TOOLKIT_SAVE_EVERY.default,
+    min: AI_TOOLKIT_SAVE_EVERY.min,
+    max: AI_TOOLKIT_SAVE_EVERY.max,
+    step: AI_TOOLKIT_SAVE_EVERY.step,
+    overrides: {
+      ltx2: { all: { default: 300 } },
+      ltx23: { all: { default: 300 } },
+      anima: { all: { default: 150 } },
+      boogu: { all: { default: 300 } },
+    },
   },
   {
     name: 'resolution',
@@ -325,6 +372,8 @@ export const trainingSettings: TrainingSettingsType[] = [
       flux2klein_9b: { all: { default: 1024 } },
       hidream_o1: { all: { default: 1024 } },
       anima: { all: { default: 1024 } },
+      boogu: { all: { default: 1024 } },
+      krea2: { all: { default: 1024 } },
       ltx2: { all: { disabled: true, default: 960, min: 960, max: 960 } },
       ltx23: { all: { disabled: true, default: 960, min: 960, max: 960 } },
       // Audio has no spatial resolution — disable but keep a value the WhatIf schema accepts.
@@ -375,6 +424,8 @@ export const trainingSettings: TrainingSettingsType[] = [
       wan_2_2_t2v_a14b: { all: { disabled: true } },
       hidream_o1: { all: { disabled: true } },
       anima: { all: { disabled: true } },
+      boogu: { all: { disabled: true } },
+      krea2: { all: { disabled: true } },
       acestep_15: { all: { disabled: true } },
       acestep_15_xl_base: { all: { disabled: true } },
       acestep_15_xl_sft: { all: { disabled: true } },
@@ -417,6 +468,8 @@ export const trainingSettings: TrainingSettingsType[] = [
       wan_2_2_t2v_a14b: { all: { disabled: true } },
       hidream_o1: { all: { disabled: true } },
       anima: { all: { disabled: true } },
+      boogu: { all: { disabled: true } },
+      krea2: { all: { disabled: true } },
       acestep_15: { all: { disabled: true } },
       acestep_15_xl_base: { all: { disabled: true } },
       acestep_15_xl_sft: { all: { disabled: true } },
@@ -486,6 +539,8 @@ export const trainingSettings: TrainingSettingsType[] = [
       flux2klein_9b: { all: { default: 1e-4 } },
       hidream_o1: { all: { default: 1e-4 } },
       anima: { all: { default: 1e-4 } },
+      boogu: { all: { default: 1e-4 } },
+      krea2: { all: { default: 1e-4 } },
       acestep_15: { all: { default: 1e-4 } },
       acestep_15_xl_base: { all: { default: 1e-4 } },
       acestep_15_xl_sft: { all: { default: 1e-4 } },
@@ -521,6 +576,8 @@ export const trainingSettings: TrainingSettingsType[] = [
       wan_2_2_t2v_a14b: { all: { disabled: true, default: 0, max: 0 } },
       hidream_o1: { all: { disabled: true, default: 0, max: 0 } },
       anima: { all: { disabled: true, default: 0, max: 0 } },
+      boogu: { all: { disabled: true, default: 0, max: 0 } },
+      krea2: { all: { disabled: true, default: 0, max: 0 } },
       acestep_15: { all: { disabled: true, default: 0, max: 0 } },
       acestep_15_xl_base: { all: { disabled: true, default: 0, max: 0 } },
       acestep_15_xl_sft: { all: { disabled: true, default: 0, max: 0 } },
@@ -553,6 +610,8 @@ export const trainingSettings: TrainingSettingsType[] = [
       flux2klein_9b: { all: { default: 'constant' } },
       hidream_o1: { all: { default: 'constant' } },
       anima: { all: { default: 'constant' } },
+      boogu: { all: { default: 'constant' } },
+      krea2: { all: { default: 'constant' } },
       acestep_15: { all: { default: 'constant' } },
       acestep_15_xl_base: { all: { default: 'constant' } },
       acestep_15_xl_sft: { all: { default: 'constant' } },
@@ -613,6 +672,8 @@ export const trainingSettings: TrainingSettingsType[] = [
       ltx23: { all: { disabled: true, default: 0, max: 0 } },
       hidream_o1: { all: { disabled: true, default: 0, max: 0 } },
       anima: { all: { disabled: true, default: 0, max: 0 } },
+      boogu: { all: { disabled: true, default: 0, max: 0 } },
+      krea2: { all: { disabled: true, default: 0, max: 0 } },
       acestep_15: { all: { disabled: true, default: 0, max: 0 } },
       acestep_15_xl_base: { all: { disabled: true, default: 0, max: 0 } },
       acestep_15_xl_sft: { all: { disabled: true, default: 0, max: 0 } },
@@ -641,6 +702,8 @@ export const trainingSettings: TrainingSettingsType[] = [
       flux2klein_9b: { all: { default: 32 } },
       hidream_o1: { all: { default: 32 } },
       anima: { all: { default: 32 } },
+      boogu: { all: { default: 32 } },
+      krea2: { all: { default: 32 } },
       acestep_15: { all: { default: 32 } },
       acestep_15_xl_base: { all: { default: 32 } },
       acestep_15_xl_sft: { all: { default: 32 } },
@@ -686,6 +749,8 @@ export const trainingSettings: TrainingSettingsType[] = [
       ltx23: { all: { default: 32 } },
       hidream_o1: { all: { default: 32 } },
       anima: { all: { default: 32 } },
+      boogu: { all: { default: 32 } },
+      krea2: { all: { default: 32 } },
       acestep_15: { all: { default: 32 } },
       acestep_15_xl_base: { all: { default: 32 } },
       acestep_15_xl_sft: { all: { default: 32 } },
@@ -714,6 +779,8 @@ export const trainingSettings: TrainingSettingsType[] = [
       ltx23: { all: { disabled: true, default: 0, min: 0, max: 0 } },
       hidream_o1: { all: { default: 0 } },
       anima: { all: { default: 0 } },
+      boogu: { all: { default: 0 } },
+      krea2: { all: { default: 0 } },
       acestep_15: { all: { disabled: true, default: 0, min: 0, max: 0 } },
       acestep_15_xl_base: { all: { disabled: true, default: 0, min: 0, max: 0 } },
       acestep_15_xl_sft: { all: { disabled: true, default: 0, min: 0, max: 0 } },
@@ -788,6 +855,12 @@ export const trainingSettings: TrainingSettingsType[] = [
         all: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
       },
       anima: {
+        all: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
+      },
+      boogu: {
+        all: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
+      },
+      krea2: {
         all: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
       },
       ltx2: { all: { default: optimizerArgMapVideo.AdamW8Bit } },

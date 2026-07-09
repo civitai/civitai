@@ -9,6 +9,19 @@ export default class _Document extends Document {
       <Html {...mantineHtmlProps}>
         {/* <InlineStylesHead /> */}
         <Head>
+          {/*
+            Declare CSS cascade layer order BEFORE anything else in <head>.
+            A layer's priority is fixed at its first appearance in the CSSOM,
+            and Next 16 / Turbopack injects each CSS Module's `@layer modules`
+            block at runtime — potentially before globals.css parses. Declaring
+            the order here (the first node in <head>) makes it deterministic:
+            preflight < theme < mantine < modules < unlayered Tailwind utils.
+          */}
+          <style
+            dangerouslySetInnerHTML={{
+              __html: '@layer tailwind-preflight, theme, mantine, modules;',
+            }}
+          />
           <ColorSchemeScript />
         </Head>
         <body

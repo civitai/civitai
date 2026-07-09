@@ -1,210 +1,72 @@
-import type { Counter, Gauge, Histogram } from 'prom-client';
+// App shim for @civitai/telemetry. Re-exports the generic prom helpers + metric
+// definitions, and registers the DB pool-depth gauges here — they compose the db
+// pools + prom helpers, which is app-level glue, not infrastructure.
 import client from 'prom-client';
+import {
+  PROM_PREFIX,
+  redisCommandsInflight,
+  redisCommandDuration,
+  sysredisSentinelTopologyChangesCounter,
+  sysredisSentinelClientErrorsCounter,
+  redisSelfHealReconnectCounter,
+  redisSelfHealDeadlineHitsWindow,
+  redisRoutingRetryCounter,
+} from '@civitai/telemetry/client';
 import { datapacketDbRead } from '~/server/db/datapacketDb';
-import { notifDbRead, notifDbWrite } from '~/server/db/notifDb';
 import { pgDbRead, pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
+// request-bulkhead is a pure leaf module (no imports), so this edge cannot form a cycle.
+import { bulkheadSnapshot } from '~/server/utils/request-bulkhead';
 
-const PROM_PREFIX = 'civitai_app_';
-export function registerCounter({ name, help }: { name: string; help: string }) {
-  // Do this to deal with HMR in nextjs
-  try {
-    return new client.Counter({ name: PROM_PREFIX + name, help });
-  } catch (e) {
-    return client.register.getSingleMetric(PROM_PREFIX + name) as Counter<string>;
-  }
-}
+export * from '@civitai/telemetry/client';
 
-export function registerCounterWithLabels<T extends string>({
-  name,
-  help,
-  labelNames,
-}: {
-  name: string;
-  help: string;
-  labelNames: readonly T[];
-}) {
-  // Do this to deal with HMR in nextjs
-  try {
-    return new client.Counter({ name: PROM_PREFIX + name, help, labelNames });
-  } catch (e) {
-    return client.register.getSingleMetric(PROM_PREFIX + name) as Counter<T>;
-  }
-}
+// Bridge to @civitai/redis via globalThis: the redis client lives in a package that must NOT
+// statically import prom-client (it's reachable from the client bundle), so it reads these metric
+// handles off globalThis at command/connect time (getRedisMetrics()/attachSysSentinelListeners).
+// Publishing here — where prom-client is already loaded — captures them directly. No eager
+// reader exists; consumed only from @civitai/redis client function bodies (self-heal watchdog +
+// routing-retry path).
+(globalThis as unknown as { __civitaiRedisMetrics?: unknown }).__civitaiRedisMetrics = {
+  redisCommandsInflight,
+  redisCommandDuration,
+  sysredisSentinelTopologyChangesCounter,
+  sysredisSentinelClientErrorsCounter,
+  redisSelfHealReconnectCounter,
+  redisSelfHealDeadlineHitsWindow,
+  redisRoutingRetryCounter,
+};
 
-export function registerGaugeWithLabels<T extends string>({
-  name,
-  help,
-  labelNames,
-}: {
-  name: string;
-  help: string;
-  labelNames: readonly T[];
-}) {
-  // Do this to deal with HMR in nextjs
-  try {
-    return new client.Gauge({ name: PROM_PREFIX + name, help, labelNames });
-  } catch (e) {
-    return client.register.getSingleMetric(PROM_PREFIX + name) as Gauge<T>;
-  }
-}
-
-export function registerHistogram<T extends string = string>({
-  name,
-  help,
-  labelNames,
-  buckets,
-  prefix = PROM_PREFIX,
-}: {
-  name: string;
-  help: string;
-  labelNames?: readonly T[];
-  buckets?: readonly number[];
-  prefix?: string;
-}) {
-  // Do this to deal with HMR in nextjs
-  const fullName = prefix + name;
-  try {
-    return new client.Histogram({
-      name: fullName,
-      help,
-      labelNames: labelNames ? [...labelNames] : undefined,
-      buckets: buckets ? [...buckets] : undefined,
-    });
-  } catch (e) {
-    return client.register.getSingleMetric(fullName) as Histogram<T>;
-  }
-}
-
-// Auth counters
-export const missingSignedAtCounter = registerCounter({
-  name: 'missing_signed_at_total',
-  help: 'Missing Signed At',
-});
-
-// Account counters
-export const newUserCounter = registerCounter({
-  name: 'new_user_total',
-  help: 'New user created',
-});
-export const loginCounter = registerCounter({
-  name: 'login_total',
-  help: 'User logged in',
-});
-
-// Onboarding counters
-export const onboardingCompletedCounter = registerCounter({
-  name: 'onboarding_completed_total',
-  help: 'User completed onboarding',
-});
-export const onboardingErrorCounter = registerCounter({
-  name: 'onboarding_error_total',
-  help: 'User onboarding error',
-});
-
-// Content counters
-export const leakingContentCounter = registerCounter({
-  name: 'leaking_content_total',
-  help: 'Inappropriate content that was reported in safe feeds',
-});
-
-// Vault counters
-export const vaultItemProcessedCounter = registerCounter({
-  name: 'vault_item_processed_total',
-  help: 'Vault item processed',
-});
-export const vaultItemFailedCounter = registerCounter({
-  name: 'vault_item_failed_total',
-  help: 'Vault item failed',
-});
-
-// Reward counters
-export const rewardGivenCounter = registerCounter({
-  name: 'reward_given_total',
-  help: 'Reward given',
-});
-export const rewardFailedCounter = registerCounter({
-  name: 'reward_failed_total',
-  help: 'Reward failed',
-});
-
-export const clavataCounter = registerCounter({
-  name: 'clavata_req_total',
-  help: 'Clavata requests',
-});
-
-// Cache metrics
-export const cacheHitCounter = registerCounterWithLabels({
-  name: 'cache_hit_total',
-  help: 'Cache hits by cache name and type',
-  labelNames: ['cache_name', 'cache_type'] as const,
-});
-
-export const cacheMissCounter = registerCounterWithLabels({
-  name: 'cache_miss_total',
-  help: 'Cache misses by cache name and type',
-  labelNames: ['cache_name', 'cache_type'] as const,
-});
-
-export const cacheRevalidateCounter = registerCounterWithLabels({
-  name: 'cache_revalidate_total',
-  help: 'Cache revalidations (stale-while-revalidate) by cache name and type',
-  labelNames: ['cache_name', 'cache_type'] as const,
-});
-
-// Image feed metrics
-export const imagesFeedWithoutIndexCounter = registerCounter({
-  name: 'images_feed_without_index_total',
-  help: 'Number of times getInfiniteImagesHandler is called with useIndex=false or undefined',
-});
-
-// Creator compensation metrics
-export const creatorCompCreatorsPaidCounter = registerCounterWithLabels({
-  name: 'creator_comp_creators_paid_total',
-  help: 'Total number of creators who received compensation',
-  labelNames: ['account_type'] as const,
-});
-
-export const creatorCompAmountPaidCounter = registerCounterWithLabels({
-  name: 'creator_comp_amount_paid_total',
-  help: 'Total buzz amount paid to creators',
-  labelNames: ['account_type'] as const,
-});
-
-// License fee payout metrics
-export const licenseFeeCreatorsPaidCounter = registerCounterWithLabels({
-  name: 'license_fee_creators_paid_total',
-  help: 'Total number of creators who received license fee payouts',
-  labelNames: ['account_type'] as const,
-});
-
-export const licenseFeeAmountPaidCounter = registerCounterWithLabels({
-  name: 'license_fee_amount_paid_total',
-  help: 'Total amount paid to creators for license fees',
-  labelNames: ['account_type'] as const,
-});
-
-// User update tracking metrics
-export const userUpdateCounter = registerCounterWithLabels({
-  name: 'user_update_total',
-  help: 'Total number of user table updates by location',
-  labelNames: ['location'] as const,
-});
-
-// CDC replication lag fallback metrics
-export const dbReadFallbackCounter = registerCounterWithLabels({
-  name: 'dbread_fallback_total',
-  help: 'Number of times a dbRead query fell back to dbWrite due to CDC replication lag',
-  labelNames: ['entity', 'caller'] as const,
-});
-
-// pgPoolAcquireHistogram is registered in src/server/db/db-helpers.ts, not here.
-// Defining it here would create a module-init cycle (prom/client.ts imports
-// pgDb → db-helpers, which would import this histogram back), which webpack's
-// CJS chunking can break with a TDZ error at runtime.
+// pgPoolAcquireHistogram is registered in @civitai/db's db-helpers, not here, to avoid
+// a module-init cycle (this module imports pgDb → db-helpers, which would import the
+// histogram back), which webpack's CJS chunking can break with a TDZ error at runtime.
 
 declare global {
-  // eslint-disable-next-line no-var
+  // eslint-disable-next-line no-var, vars-on-top
   var pgGaugeInitialized: boolean;
+  // eslint-disable-next-line no-var
+  var heavyBulkheadGaugeInitialized: boolean;
+}
+
+// Heavy-route bulkhead observability (per pod). collect()-based so it reflects the
+// live in-process state on each scrape with no per-request work. This is the signal
+// for tuning HEAVY_REQUEST_CONCURRENCY: rejects climbing means the pod is shedding.
+if (!global.heavyBulkheadGaugeInitialized) {
+  new client.Gauge({
+    name: PROM_PREFIX + 'heavy_bulkhead_active',
+    help: 'In-flight heavy-route bulkhead slots per key (per pod)',
+    labelNames: ['key'],
+    collect() {
+      for (const { key, active } of bulkheadSnapshot()) this.set({ key }, active);
+    },
+  });
+  new client.Gauge({
+    name: PROM_PREFIX + 'heavy_bulkhead_rejects',
+    help: 'Cumulative heavy-route bulkhead fast-fail rejects per key (per pod); monotonic, use rate()',
+    labelNames: ['key'],
+    collect() {
+      for (const { key, rejects } of bulkheadSnapshot()) this.set({ key }, rejects);
+    },
+  });
+  global.heavyBulkheadGaugeInitialized = true;
 }
 
 if (!global.pgGaugeInitialized) {
@@ -260,8 +122,6 @@ if (!global.pgGaugeInitialized) {
       this.set({ pool: 'read' }, pgDbRead?.totalCount ?? 0);
       this.set({ pool: 'write' }, pgDbWrite?.totalCount ?? 0);
       this.set({ pool: 'read_long' }, pgDbReadLong?.totalCount ?? 0);
-      this.set({ pool: 'notif_read' }, notifDbRead?.totalCount ?? 0);
-      this.set({ pool: 'notif_write' }, notifDbWrite?.totalCount ?? 0);
       this.set({ pool: 'datapacket_read' }, datapacketDbRead?.totalCount ?? 0);
     },
   });
@@ -273,8 +133,6 @@ if (!global.pgGaugeInitialized) {
       this.set({ pool: 'read' }, pgDbRead?.idleCount ?? 0);
       this.set({ pool: 'write' }, pgDbWrite?.idleCount ?? 0);
       this.set({ pool: 'read_long' }, pgDbReadLong?.idleCount ?? 0);
-      this.set({ pool: 'notif_read' }, notifDbRead?.idleCount ?? 0);
-      this.set({ pool: 'notif_write' }, notifDbWrite?.idleCount ?? 0);
       this.set({ pool: 'datapacket_read' }, datapacketDbRead?.idleCount ?? 0);
     },
   });
@@ -286,8 +144,6 @@ if (!global.pgGaugeInitialized) {
       this.set({ pool: 'read' }, pgDbRead?.waitingCount ?? 0);
       this.set({ pool: 'write' }, pgDbWrite?.waitingCount ?? 0);
       this.set({ pool: 'read_long' }, pgDbReadLong?.waitingCount ?? 0);
-      this.set({ pool: 'notif_read' }, notifDbRead?.waitingCount ?? 0);
-      this.set({ pool: 'notif_write' }, notifDbWrite?.waitingCount ?? 0);
       this.set({ pool: 'datapacket_read' }, datapacketDbRead?.waitingCount ?? 0);
     },
   });

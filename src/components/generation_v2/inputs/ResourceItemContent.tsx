@@ -193,6 +193,7 @@ export function ResourceItemContent({
               metadata={null}
               width={450}
               className="size-full object-cover"
+              alt={resource.model.name}
             />
           </div>
         )}

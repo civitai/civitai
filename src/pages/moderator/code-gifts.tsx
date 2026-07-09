@@ -8,6 +8,7 @@ import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { trpc } from '~/utils/trpc';
 import { GiftNoticeEditModal } from '~/components/GiftNotice/GiftNoticeEditModal';
 import type { UpsertGiftNoticeInput } from '~/server/schema/redeemableCode.schema';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { formatDate } from '~/utils/date-helpers';
 
@@ -147,5 +148,7 @@ export function CodeGiftsPage() {
     </div>
   );
 }
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default Page(CodeGiftsPage);

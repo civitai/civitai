@@ -18,18 +18,35 @@ export const clearVaultItems = createJob('clear-vault-items', '0 0 * * *', async
 
   // Find vaults that are over their storage limit.
   // Query looks a bit on the heavier side, but since it's running only once a day, should be ok generally speaking.
+  //
+  // Guard: compare usage against the *effective* limit — the greater of the
+  // stored `storageKb` and the user's current active entitlement. `storageKb`
+  // can drift below the real entitlement during a tier handoff (see
+  // reconcile-vault-storage.ts), and we must never delete a paying member's
+  // files because of a stale-low capacity counter. Only genuinely over-limit
+  // vaults (used > both the stored and the entitled capacity) are cleared.
   const problemVaults = await dbWrite.$queryRaw<VaultWithUsedStorage[]>`
+    WITH active_entitlement AS (
+      SELECT cs."userId", SUM((p.metadata->>'vaultSizeKb')::bigint)::int AS entitled_kb
+      FROM "CustomerSubscription" cs
+      JOIN "Product" p ON p.id = cs."productId"
+      WHERE cs.status IN ('active', 'trialing')
+        AND cs."currentPeriodEnd" >= NOW()
+        AND (p.metadata->>'vaultSizeKb') IS NOT NULL
+      GROUP BY cs."userId"
+    )
     SELECT
       v."userId",
-      v."storageKb",
+      GREATEST(v."storageKb", COALESCE(ae.entitled_kb, 0)) as "storageKb",
       v."updatedAt",
       COALESCE(SUM(vi."detailsSizeKb" + vi."imagesSizeKb" + vi."modelSizeKb")::int, 0) as "usedStorageKb"
     FROM "Vault" v
     LEFT JOIN "VaultItem" vi ON v."userId" = vi."vaultId"
+    LEFT JOIN active_entitlement ae ON ae."userId" = v."userId"
     WHERE v."updatedAt" < NOW() - INTERVAL '2 month'
     GROUP BY
-      v."userId"
-    HAVING COALESCE(SUM(vi."detailsSizeKb" + vi."imagesSizeKb" + vi."modelSizeKb")::int, 0) > v."storageKb"
+      v."userId", v."storageKb", ae.entitled_kb
+    HAVING COALESCE(SUM(vi."detailsSizeKb" + vi."imagesSizeKb" + vi."modelSizeKb")::int, 0) > GREATEST(v."storageKb", COALESCE(ae.entitled_kb, 0))
   `;
 
   for (const vault of problemVaults) {

@@ -26,6 +26,8 @@ import { getBaseModelFromResources } from '~/shared/constants/generation.constan
 import { splitResourcesByType } from '~/shared/utils/resource.utils';
 import { parseAIRSafe } from '~/shared/utils/air';
 import type { GenerationGraphCtx } from '~/shared/data-graph/generation';
+import { generationGraph } from '~/shared/data-graph/generation/generation-graph';
+import type { GenerationCtx } from '~/shared/data-graph/generation/context';
 import {
   isWorkflowAvailable,
   isEnhancementWorkflow,
@@ -540,7 +542,11 @@ export function mapDataToGraphInput(
         height: p.sourceImage.height,
       },
     ];
-  } else if (p?.images) {
+  } else if (Array.isArray(p?.images)) {
+    // Guard against a non-array `images` (malformed/legacy stored params): a bare
+    // `p.images.map(...)` throws "e.images.map is not a function" while shaping
+    // generation data → generation.getGenerationData 500s. Only map when it's
+    // actually an array; otherwise leave images undefined.
     images = p.images.map((img) => ({
       url: img.url,
       width: img.width,
@@ -600,6 +606,58 @@ export function mapDataToGraphInput(
     ...(openAITransparentBackground != null && { transparent: openAITransparentBackground }),
     ...(openAIQuality != null && { quality: openAIQuality }),
   });
+}
+
+/**
+ * Permissive context for display-only graph resolution. Generous limits and
+ * full access so user gating/limits never fail the structural parse — we only
+ * read the resulting node partition (input vs computed), never the values.
+ */
+const DISPLAY_GENERATION_CTX: GenerationCtx = {
+  limits: { maxQuantity: 100, maxResources: 100, vidQuantity: 100 },
+  user: { isMember: true, tier: 'gold' },
+};
+
+/** Minimal resource shape needed to resolve the graph for display purposes. */
+type DisplayResource = {
+  id: number;
+  baseModel?: string | null;
+  model: { type: string };
+  strength?: number | null;
+};
+
+/**
+ * For on-site generation metadata, resolves which meta keys correspond to real
+ * generator *input* nodes by running the data through the generation graph and
+ * keeping only `kind: 'node'` entries — dropping computed/derived nodes
+ * (workflow, ecosystem, triggerWords, etc.). This lets metadata display follow
+ * the graph instead of a hand-maintained whitelist.
+ *
+ * `prompt`/`negativePrompt` are omitted (the UI renders them on their own), and
+ * the result is intersected with the meta that's actually present. Returns null
+ * when the data can't be resolved through the graph (foreign or incomplete
+ * metadata) — callers should fall back to showing all keys.
+ */
+export function getGenerationDisplayKeys(
+  meta: Record<string, unknown>,
+  resources: DisplayResource[]
+): string[] | null {
+  try {
+    const enriched = resources as unknown as GenerationResource[];
+    const input = {
+      ...mapDataToGraphInput(meta, enriched),
+      ...splitResourcesByType(enriched),
+    };
+    const result = generationGraph.safeParse(input, DISPLAY_GENERATION_CTX);
+    if (!result.success) return null;
+
+    return Object.values(result.nodes)
+      .filter((node) => node.kind === 'node')
+      .map((node) => node.key)
+      .filter((key) => key !== 'prompt' && key !== 'negativePrompt' && meta[key] != null);
+  } catch {
+    return null;
+  }
 }
 
 /**

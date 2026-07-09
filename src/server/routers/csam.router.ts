@@ -1,6 +1,13 @@
-import { createCsamReportHandler } from '~/server/controllers/csam.controller';
+import {
+  createCsamReportHandler,
+  createExternalCsamReportHandler,
+} from '~/server/controllers/csam.controller';
 import { paginationSchema } from '~/server/schema/base.schema';
-import { createCsamReportSchema, getImageResourcesSchema } from '~/server/schema/csam.schema';
+import {
+  createCsamReportSchema,
+  createExternalCsamReportSchema,
+  getImageResourcesSchema,
+} from '~/server/schema/csam.schema';
 import {
   getCsamReportStats,
   getCsamReportsPaged,
@@ -14,6 +21,9 @@ export const csamRouter = router({
     .input(getImageResourcesSchema)
     .query(({ input }) => getImageResources(input)),
   createReport: moderatorProcedure.input(createCsamReportSchema).mutation(createCsamReportHandler),
+  createExternalReport: moderatorProcedure
+    .input(createExternalCsamReportSchema)
+    .mutation(createExternalCsamReportHandler),
   getCsamReports: moderatorProcedure
     .input(paginationSchema)
     .query(({ input }) => getCsamReportsPaged(input)),

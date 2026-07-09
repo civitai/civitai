@@ -1,23 +1,20 @@
-import { types } from 'pg';
+// App shim: datapacket read pool. See pgDb.ts for the pattern.
+import { getClient, type AugmentedPool } from '~/server/db/db-helpers';
 import { isProd } from '~/env/other';
-import type { AugmentedPool } from '~/server/db/db-helpers';
-import { getClient } from '~/server/db/db-helpers';
+import { createLogger } from '~/utils/logging';
+
+const log = createLogger('pgDb', 'blue');
 
 declare global {
   // eslint-disable-next-line no-var, vars-on-top
   var globalDatapacketDbRead: AugmentedPool | undefined;
 }
 
-// Fix Dates
-types.setTypeParser(types.builtins.TIMESTAMP, function (stringValue) {
-  return new Date(stringValue.replace(' ', 'T') + 'Z');
-});
-
 export let datapacketDbRead: AugmentedPool;
 if (isProd) {
-  datapacketDbRead = getClient({ instance: 'datapacketRead' });
+  datapacketDbRead = getClient({ instance: 'datapacketRead', log });
 } else {
   if (!global.globalDatapacketDbRead)
-    global.globalDatapacketDbRead = getClient({ instance: 'datapacketRead' });
+    global.globalDatapacketDbRead = getClient({ instance: 'datapacketRead', log });
   datapacketDbRead = global.globalDatapacketDbRead;
 }

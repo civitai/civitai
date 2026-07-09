@@ -34,7 +34,18 @@ import {
   type EcosystemDisplayItem,
 } from '~/shared/constants/basemodel.constants';
 import { getWorkflowsForEcosystem } from '~/shared/data-graph/generation/config/workflows';
+import type { GateItemState } from '~/shared/data-graph/generation/gates';
 import { useEcosystemGroupPreferencesStore } from '~/store/ecosystem-group-preferences.store';
+
+// Badge + default tooltip per shown-but-disabled state. A rule's `message`
+// (when present) overrides only the tooltip copy, layered on the same badge.
+const GATE_BADGE: Record<
+  GateItemState['state'],
+  { label: string; color: string; tooltip: string }
+> = {
+  memberOnly: { label: 'Members only', color: 'yellow', tooltip: 'Members-only generation' },
+  disabled: { label: 'Disabled', color: 'gray', tooltip: 'Temporarily unavailable' },
+};
 
 // =============================================================================
 // Types
@@ -47,16 +58,16 @@ export interface BaseModelInputProps {
   label?: string;
   /** Compatible ecosystems for the selected workflow (ecosystem keys) */
   compatibleEcosystems?: string[];
-  /** Ecosystem keys to exclude from the list entirely (e.g. gated by feature flag) */
+  /** Ecosystem keys to exclude from the list entirely (gated/hidden upstream). */
   excludeEcosystems?: string[];
   /**
-   * Ecosystem keys shown but disabled (not selectable) — e.g. self-hosted
-   * ecosystems turned off by the moderator toggle. Rendered greyed with a
-   * badge, unlike `excludeEcosystems` which removes them entirely.
+   * Ecosystem keys shown but disabled (not selectable), each with its own
+   * state (`disabled`/`memberOnly`) + optional message — resolved by the
+   * ecosystem node from the unified gate sources (self-hosted toggle + rules).
+   * Rendered greyed with a per-state badge, unlike `excludeEcosystems` which
+   * removes them entirely.
    */
-  disabledEcosystems?: string[];
-  /** Why the `disabledEcosystems` are disabled — drives the badge/label copy. */
-  disabledReason?: 'memberOnly' | 'disabled';
+  ecosystemStates?: GateItemState[];
   /** Whether the input is disabled */
   disabled?: boolean;
   /** Check if an ecosystem is compatible with the current workflow */
@@ -64,7 +75,7 @@ export interface BaseModelInputProps {
   /** Get the target workflow label for an incompatible ecosystem */
   getTargetWorkflow?: (ecosystemKey: string) => string;
   /** Current output type - only ecosystems supporting this type will be shown */
-  outputType?: 'image' | 'video' | 'audio';
+  outputType?: 'image' | 'video' | 'audio' | 'model3d';
 }
 
 type FamilyGroup = {
@@ -137,10 +148,8 @@ interface BaseModelListContentProps {
   /** Get the target workflow label for an incompatible ecosystem */
   getTargetWorkflow?: (ecosystemKey: string) => string;
   onSelect: (key: string) => void;
-  /** Ecosystem keys shown-but-disabled (self-hosted toggle). */
-  disabledEcosystemSet?: Set<string>;
-  /** Badge text + color + tooltip for disabled items. */
-  disabledBadge?: { label: string; color: string; tooltip: string };
+  /** Ecosystem key → its shown-but-disabled state (badge/tooltip per state). */
+  disabledStateMap?: Map<string, GateItemState>;
   /** Whether there are any incompatible items */
   hasIncompatibleItems?: boolean;
   /** Current tab */
@@ -163,8 +172,7 @@ function BaseModelListContent({
   allGroupedByFamily,
   getTargetWorkflow,
   onSelect,
-  disabledEcosystemSet,
-  disabledBadge,
+  disabledStateMap,
   hasIncompatibleItems,
   activeTab,
   onTabChange,
@@ -293,7 +301,7 @@ function BaseModelListContent({
     } else if (e.key === 'Enter' && activeIndex >= 0) {
       e.preventDefault();
       const item = flatItems[activeIndex];
-      if (item && !disabledEcosystemSet?.has(item.key)) onSelect(item.key);
+      if (item && !disabledStateMap?.has(item.key)) onSelect(item.key);
     }
   };
 
@@ -315,7 +323,9 @@ function BaseModelListContent({
       item.type === 'group' && item.defaultEcosystemId
         ? ecosystemById.get(item.defaultEcosystemId)?.key ?? item.key
         : item.key;
-    const isDisabled = disabledEcosystemSet?.has(disabledCheckKey) ?? false;
+    const gateState = disabledStateMap?.get(disabledCheckKey);
+    const isDisabled = !!gateState;
+    const badge = gateState ? GATE_BADGE[gateState.state] : undefined;
     const button = (
       <UnstyledButton
         key={item.key}
@@ -341,9 +351,9 @@ function BaseModelListContent({
             {item.name}
           </Text>
         </div>
-        {isDisabled && disabledBadge ? (
-          <Badge size="xs" color={disabledBadge.color} variant="light">
-            {disabledBadge.label}
+        {badge ? (
+          <Badge size="xs" color={badge.color} variant="light">
+            {badge.label}
           </Badge>
         ) : (
           <>
@@ -356,11 +366,11 @@ function BaseModelListContent({
       </UnstyledButton>
     );
 
-    if (isDisabled && disabledBadge) {
+    if (gateState && badge) {
       return (
         <Tooltip
           key={item.key}
-          label={disabledBadge.tooltip}
+          label={gateState.message ?? badge.tooltip}
           position="right"
           withArrow
           openDelay={300}
@@ -467,8 +477,7 @@ interface BaseModelSelectModalProps {
   /** Get the target workflow label for an incompatible ecosystem */
   getTargetWorkflow?: (ecosystemKey: string) => string;
   onSelect: (key: string) => void;
-  disabledEcosystemSet?: Set<string>;
-  disabledBadge?: { label: string; color: string; tooltip: string };
+  disabledStateMap?: Map<string, GateItemState>;
   hasIncompatibleItems?: boolean;
   activeTab: TabValue;
   onTabChange: (tab: TabValue) => void;
@@ -482,8 +491,7 @@ function BaseModelSelectModal({
   allGroupedByFamily,
   getTargetWorkflow,
   onSelect,
-  disabledEcosystemSet,
-  disabledBadge,
+  disabledStateMap,
   hasIncompatibleItems,
   activeTab: initialTab,
   onTabChange,
@@ -524,8 +532,7 @@ function BaseModelSelectModal({
           allGroupedByFamily={allGroupedByFamily}
           getTargetWorkflow={getTargetWorkflow}
           onSelect={handleSelect}
-          disabledEcosystemSet={disabledEcosystemSet}
-          disabledBadge={disabledBadge}
+          disabledStateMap={disabledStateMap}
           hasIncompatibleItems={hasIncompatibleItems}
           activeTab={localTab}
           onTabChange={handleTabChange}
@@ -592,8 +599,7 @@ export function BaseModelInput({
   onChange,
   compatibleEcosystems,
   excludeEcosystems,
-  disabledEcosystems,
-  disabledReason = 'disabled',
+  ecosystemStates,
   disabled,
   isCompatible,
   getTargetWorkflow,
@@ -603,16 +609,9 @@ export function BaseModelInput({
     () => (excludeEcosystems?.length ? new Set(excludeEcosystems) : null),
     [excludeEcosystems]
   );
-  const disabledEcosystemSet = useMemo(
-    () => (disabledEcosystems?.length ? new Set(disabledEcosystems) : undefined),
-    [disabledEcosystems]
-  );
-  const disabledBadge = useMemo(
-    () =>
-      disabledReason === 'memberOnly'
-        ? { label: 'Members only', color: 'yellow', tooltip: 'Members-only generation' }
-        : { label: 'Disabled', color: 'gray', tooltip: 'Temporarily unavailable' },
-    [disabledReason]
+  const disabledStateMap = useMemo(
+    () => (ecosystemStates?.length ? new Map(ecosystemStates.map((e) => [e.key, e])) : undefined),
+    [ecosystemStates]
   );
   const isMobile = useMediaQuery('(max-width: 768px)');
   const [popoverOpened, { close: closePopover, open: openPopover }] = useDisclosure(false);
@@ -816,8 +815,7 @@ export function BaseModelInput({
         groupedByFamily,
         allGroupedByFamily,
         getTargetWorkflow,
-        disabledEcosystemSet,
-        disabledBadge,
+        disabledStateMap,
         hasIncompatibleItems,
         activeTab,
         onTabChange: handleTabChange,
@@ -877,8 +875,7 @@ export function BaseModelInput({
           allGroupedByFamily={allGroupedByFamily}
           getTargetWorkflow={getTargetWorkflow}
           onSelect={handleSelect}
-          disabledEcosystemSet={disabledEcosystemSet}
-          disabledBadge={disabledBadge}
+          disabledStateMap={disabledStateMap}
           hasIncompatibleItems={hasIncompatibleItems}
           activeTab={activeTab}
           onTabChange={handleTabChange}

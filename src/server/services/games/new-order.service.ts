@@ -35,6 +35,7 @@ import {
 } from '~/server/games/new-order/utils';
 import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { decodeRedisString } from '~/server/redis/buffer-decode';
 import type { InfiniteQueryInput } from '~/server/schema/base.schema';
 import type {
   AddImageRatingInput,
@@ -234,7 +235,7 @@ export async function smitePlayer({
     })
     .catch((e) => handleLogError(e, 'signals:new-order-smite-player'));
 
-  createNotification({
+  await createNotification({
     category: NotificationCategory.System,
     type: 'new-order-smite-received',
     key: `new-order-smite-received:${playerId}:${smite.id}`,
@@ -266,7 +267,7 @@ export async function cleanseAllSmites({
     })
     .catch((e) => handleLogError(e, 'signals:new-order-smite-cleansed-all'));
 
-  createNotification({
+  await createNotification({
     category: NotificationCategory.System,
     type: 'new-order-smite-cleansed',
     key: `new-order-smite-cleansed:${playerId}:all:${new Date().getTime()}`,
@@ -300,7 +301,7 @@ export async function cleanseSmite({ id, cleansedReason, playerId }: CleanseSmit
     })
     .catch((e) => handleLogError(e, 'signals:new-order-smite-cleansed'));
 
-  createNotification({
+  await createNotification({
     category: NotificationCategory.System,
     type: 'new-order-smite-cleansed',
     key: `new-order-smite-cleansed:${playerId}:${id}`,
@@ -1113,7 +1114,9 @@ export async function getSanityCheckImage(): Promise<SanityCheck | null> {
 
   try {
     // Get all sanity checks from Redis set (format: "imageId:nsfwLevel")
-    const allSanityChecks = await sysRedis.sMembers(REDIS_SYS_KEYS.NEW_ORDER.SANITY_CHECKS.POOL);
+    const allSanityChecks = (
+      await sysRedis.sMembers(REDIS_SYS_KEYS.NEW_ORDER.SANITY_CHECKS.POOL)
+    ).map((m) => decodeRedisString(m));
     if (!allSanityChecks || allSanityChecks.length === 0) {
       return null;
     }
@@ -1359,7 +1362,7 @@ export async function resetPlayer({
     .catch((e) => handleLogError(e, 'signals:new-order-reset-player'));
 
   if (withNotification)
-    createNotification({
+    await createNotification({
       category: NotificationCategory.System,
       type: 'new-order-game-over',
       key: `new-order-game-over:${playerId}:${new Date().getTime()}`,
@@ -1715,7 +1718,9 @@ export async function getImagesQueue({
   if (effectiveRankType === NewOrderRankType.Knight && !isModerator) {
     try {
       // Fetch ALL sanity checks from Redis ONCE
-      const allSanityChecks = await sysRedis!.sMembers(REDIS_SYS_KEYS.NEW_ORDER.SANITY_CHECKS.POOL);
+      const allSanityChecks = (
+        await sysRedis!.sMembers(REDIS_SYS_KEYS.NEW_ORDER.SANITY_CHECKS.POOL)
+      ).map((m) => decodeRedisString(m));
 
       if (allSanityChecks && allSanityChecks.length > 0) {
         // Insert sanity checks scaled to queue size (~2 per 20 images, ~10 per 100)
@@ -1878,11 +1883,21 @@ export async function getPlayerHistory({
     `userId = ${playerId}`,
     `createdAt >= parseDateTimeBestEffort('${player.startAt.toISOString()}')`,
   ];
-  // cursor is now guaranteed to be a Date (schema coerces); safe to ISO-format.
-  if (cursor) AND.push(`createdAt < '${cursor.toISOString()}'`);
-
   const HAVING = [];
   if (status?.length) HAVING.push(`status IN ('${status.join("','")}')`);
+  // Keyset pagination on the AGGREGATE sort key (max(createdAt), imageId) via
+  // HAVING — NOT a raw-row `createdAt < cursor` in WHERE. Filtering raw rows by the
+  // cursor corrupts the per-image max(createdAt): it SKIPS a boundary image whose
+  // only rating is at the cursor second, and DUPLICATES a re-rated image whose
+  // older rows survive the prune (reappearing with a stale max). The tuple compare
+  // + matching (lastCreatedAt, imageId) ORDER BY gives gap/dup-free paging incl.
+  // same-second ties. Both cursor fields are schema-validated (Date + number) so
+  // this is injection-safe. (Cost: each page aggregates the player's window like
+  // page 1 — acceptable for a history view.)
+  if (cursor)
+    HAVING.push(
+      `(max(createdAt), imageId) < (parseDateTimeBestEffort('${cursor.createdAt.toISOString()}'), ${cursor.imageId})`
+    );
 
   const judgments = await clickhouse.$query<{
     imageId: number;
@@ -1905,13 +1920,19 @@ export async function getPlayerHistory({
     WHERE ${AND.join(' AND ')}
     GROUP BY imageId
     ${HAVING.length > 0 ? `HAVING ${HAVING.join(' AND ')}` : ''}
-    ORDER BY lastCreatedAt DESC
+    ORDER BY lastCreatedAt DESC, imageId DESC
     LIMIT ${limit + 1}
   `;
   if (judgments.length === 0) return { items: [], nextCursor: null };
 
-  let nextCursor: Date | null = null;
-  if (judgments.length > limit) nextCursor = judgments.pop()?.lastCreatedAt ?? null;
+  // Cursor = the LAST KEPT row's (createdAt, imageId), not the popped probe row —
+  // next page is HAVING (max(createdAt), imageId) < cursor, so it resumes strictly
+  // after this row with no skip/dup.
+  const hasMore = judgments.length > limit;
+  if (hasMore) judgments.pop();
+  const lastKept = judgments[judgments.length - 1];
+  const nextCursor =
+    hasMore && lastKept ? { createdAt: lastKept.lastCreatedAt, imageId: lastKept.imageId } : null;
 
   const imageIds = judgments.map((j) => j.imageId).sort();
   const images = await dbRead.image.findMany({
@@ -2024,7 +2045,7 @@ export async function manageSanityChecks({ add, remove }: { add?: number[]; remo
     if (remove && remove.length > 0) {
       // Convert imageIds to the format imageId:nsfwLevel and remove from Redis set
       // We need to find all members that match the imageIds
-      const allMembers = await sysRedis.sMembers(poolKey);
+      const allMembers = (await sysRedis.sMembers(poolKey)).map((m) => decodeRedisString(m));
       const toRemove = allMembers.filter((member) => {
         const [imageId] = member.split(':');
         return remove.includes(Number(imageId));
@@ -2052,7 +2073,7 @@ export async function manageSanityChecks({ add, remove }: { add?: number[]; remo
     }
 
     // Return current pool state
-    const currentPool = await sysRedis.sMembers(poolKey);
+    const currentPool = (await sysRedis.sMembers(poolKey)).map((m) => decodeRedisString(m));
     const poolData = currentPool.map((member) => {
       const [imageId, nsfwLevel] = member.split(':');
       return {

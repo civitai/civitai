@@ -1,6 +1,12 @@
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import {
+  redis,
+  REDIS_KEYS,
+  REDIS_SYS_KEYS,
+  sysRedis,
+  withSysReadDeadline,
+} from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import type { TagsOnTagsType } from '~/shared/utils/prisma/enums';
@@ -116,13 +122,19 @@ export async function getReplacedTagIds(): Promise<number[]> {
 
 export async function getSystemPermissions(): Promise<Record<string, number[]>> {
   // Throws on sysRedis error. Callers decide fail-open behavior:
-  //   - session-user.ts wraps the call and skips the 4h cache write on
-  //     error, to avoid poisoning the SessionUser cache with empty
-  //     permissions for hours after sysRedis recovers.
+  //   - the hub's produceSessionUser (session-producer.ts) skips the
+  //     SessionUser cache write on error, to avoid poisoning the cache
+  //     with empty permissions for hours after sysRedis recovers.
   //   - addSystemPermission / removeSystemPermission MUST throw to avoid
   //     overwriting the real permission set with a partial mutation
   //     (read returns {} during outage, write later succeeds → wipe).
-  const cachedPermissions = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.PERMISSIONS);
+  // Wall-clock deadline so a silent sysRedis half-open can't park this read (reached
+  // per-request on a session-cache miss; the sys client has no socketTimeout and a
+  // per-command timeout can't abort a written command). On timeout it throws — which
+  // preserves this function's throw-on-error contract for all callers.
+  const cachedPermissions = await withSysReadDeadline(
+    sysRedis.get(REDIS_SYS_KEYS.SYSTEM.PERMISSIONS)
+  );
   if (cachedPermissions) return JSON.parse(cachedPermissions);
 
   return {};
@@ -162,7 +174,7 @@ const colorPriority = [
   'grey',
 ];
 
-export async function getCategoryTags(type: 'image' | 'model' | 'post' | 'article') {
+export async function getCategoryTags(type: 'image' | 'model' | 'post' | 'article' | 'model3d') {
   let categories: TypeCategory[] | undefined;
   const categoriesCache = await redis.get(`${REDIS_KEYS.SYSTEM.CATEGORIES}:${type}`);
   if (categoriesCache) categories = JSON.parse(categoriesCache);
@@ -253,16 +265,34 @@ export async function getLiveNow() {
 }
 
 export async function getBrowsingSettingAddons() {
-  let cached: string | null;
+  let cached: string | null = null;
   try {
-    cached = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.BROWSING_SETTING_ADDONS);
+    // Wall-clock deadline: this is an SSR every-render read (via _app.tsx
+    // getInitialProps). Without the race a silent sysRedis half-open parks
+    // the awaited get ~11min on EVERY page render; the try/catch below only
+    // covers a fast DOWN reject. On timeout the deadline rejects into the
+    // catch → fail open to defaults.
+    cached = await withSysReadDeadline(
+      sysRedis.get(REDIS_SYS_KEYS.SYSTEM.BROWSING_SETTING_ADDONS)
+    );
   } catch (err) {
     logSysRedisFailOpen('read-degraded', 'getBrowsingSettingAddons', err);
     return DEFAULT_BROWSING_SETTINGS_ADDONS;
   }
   if (cached) {
-    const data = JSON.parse(cached) as BrowsingSettingsAddon[];
-    return data;
+    try {
+      return JSON.parse(cached) as BrowsingSettingsAddon[];
+    } catch (err) {
+      // Corrupt/non-JSON value in sysRedis (e.g. a malformed value set by
+      // an ops tool). Without this guard the parse throws all the way up
+      // through _app.tsx getInitialProps and 500s every page render.
+      // Fail open to defaults — same posture as the read above and
+      // getCreationBlockedTags below.
+      logSysRedisFailOpen('read-degraded', 'getBrowsingSettingAddons', err, {
+        cachedSample: cached.slice(0, 64),
+      });
+      return DEFAULT_BROWSING_SETTINGS_ADDONS;
+    }
   }
 
   return DEFAULT_BROWSING_SETTINGS_ADDONS;
@@ -279,9 +309,14 @@ export async function getCreationBlockedTags(): Promise<CreationBlockedTag[]> {
   // from model.controller.ts. A sysRedis outage would otherwise 500
   // every model upload. Empty list matches the unset-key behavior — no
   // tags blocked during the outage window.
-  let raw: string | null;
+  let raw: string | null = null;
   try {
-    raw = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.CREATION_BLOCKED_TAGS);
+    // Wall-clock deadline: called on every model upsert (ModelUpsertForm
+    // tRPC) + model.controller.ts, so a silent sysRedis half-open would park
+    // this awaited get ~11min on the upload path; the try/catch only covers a
+    // fast DOWN reject. On timeout the deadline rejects into the catch →
+    // fail open to the empty (no-tags-blocked) list.
+    raw = await withSysReadDeadline(sysRedis.get(REDIS_SYS_KEYS.SYSTEM.CREATION_BLOCKED_TAGS));
   } catch (err) {
     logSysRedisFailOpen('defaults-firing', 'getCreationBlockedTags', err);
     return [];
@@ -346,7 +381,9 @@ export async function removeCreationBlockedTags(tagIds: number[]): Promise<Creat
 export async function getLiveFeatureFlags() {
   let cached: string | null;
   try {
-    cached = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.LIVE_FEATURE_FLAGS);
+    // Wall-clock deadline so a silent sysRedis half-open can't park this read
+    // (evaluated on the generation/feature-flag hot path) ~11min.
+    cached = await withSysReadDeadline(sysRedis.get(REDIS_SYS_KEYS.SYSTEM.LIVE_FEATURE_FLAGS));
   } catch (err) {
     logSysRedisFailOpen('read-degraded', 'getLiveFeatureFlags', err);
     return DEFAULT_LIVE_FEATURE_FLAGS;

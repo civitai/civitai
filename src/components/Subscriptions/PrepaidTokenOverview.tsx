@@ -125,17 +125,17 @@ function TokenCard({ token, onClaimed }: { token: PrepaidToken; onClaimed?: () =
         }}
       >
         <Group justify="space-between" align="center" wrap="nowrap">
-          <Group gap="sm" align="center" wrap="nowrap">
+          <Group gap="sm" align="center" wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
             <ThemeIcon color="yellow" variant="light" size="md" radius="xl">
               <IconBolt size={16} />
             </ThemeIcon>
-            <Stack gap={1}>
-              <Group gap={6}>
+            <Stack gap={1} style={{ minWidth: 0 }}>
+              <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
                 <Badge size="xs" color={TIER_COLORS[token.tier]} variant="filled">
                   {token.tier}
                 </Badge>
                 {token.unlockedAt && (
-                  <Text size="xs" c="dimmed">
+                  <Text size="xs" c="dimmed" truncate>
                     {formatLocalDateTime(token.unlockedAt)}
                   </Text>
                 )}
@@ -152,7 +152,7 @@ function TokenCard({ token, onClaimed }: { token: PrepaidToken; onClaimed?: () =
             leftSection={<IconBolt size={14} />}
             loading={claimMutation.isPending}
             onClick={() => claimMutation.mutate({ tokenId: token.id })}
-            style={{ color: 'var(--mantine-color-dark-9)' }}
+            style={{ color: 'var(--mantine-color-dark-9)', flexShrink: 0 }}
           >
             Claim
           </Button>

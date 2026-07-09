@@ -5,11 +5,11 @@ import * as process from 'node:process';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { checkLocalDb, insertRows } from './utils';
 
-const baseDir = './prisma/migrations';
+const baseDir = './packages/civitai-db-schema/prisma/migrations';
 
 const getHashForMigration = async (folder: string) => {
   const hash = createHash('sha256');
-  const content = await fs.readFile(`./prisma/migrations/${folder}/migration.sql`, 'utf-8');
+  const content = await fs.readFile(`./packages/civitai-db-schema/prisma/migrations/${folder}/migration.sql`, 'utf-8');
   hash.update(content);
   return hash.digest('hex');
 };

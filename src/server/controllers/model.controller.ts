@@ -10,7 +10,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import type { Context, ProtectedContext } from '~/server/createContext';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import { dataForModelsCache, modelTagCache } from '~/server/redis/caches';
 import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
@@ -110,7 +110,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { getPrimaryFile, selectLiveLinkedComponents } from '~/server/utils/model-helpers';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
 import {
@@ -137,7 +137,6 @@ import { isDefined } from '~/utils/type-guards';
 import { redis, REDIS_KEYS } from '../redis/client';
 import type { BountyDetailsSchema } from '../schema/bounty.schema';
 import {
-  getGenerationEcosystemConfig,
   getResourceData,
   getUnavailableResources,
   resolveCanGenerateForVersions,
@@ -210,9 +209,6 @@ export const getModelHandler = async ({
 
     const modelCategories = await getCategoryTags('model');
     const unavailableGenResources = await getUnavailableResources();
-    const ecosystemConfig = await getGenerationEcosystemConfig(ctx.user ?? {}, {
-      isGreen: features.isGreen,
-    });
 
     const sfwOnly = !!features.isGreen;
     const versionGenStates = await resolveCanGenerateForVersions(
@@ -368,28 +364,31 @@ export const getModelHandler = async ({
             return { ...match, ...removeNulls(item.settings as RecommendedSettingsSchema) };
           })
           .filter(isDefined),
-        linkedComponents: version.recommendedResources
-          .filter((r) => isLinkedComponent(r.settings))
-          .map((r) => {
-            const s = r.settings as LinkedComponentSettings;
-            const fileData = linkedFileDataMap.get(s.fileId);
-            return {
-              recommendedResourceId: r.id,
-              componentType: s.componentType as ModelFileComponentType,
-              modelId: s.modelId,
-              modelName: s.modelName,
-              versionId: r.resource?.id ?? 0,
-              versionName: s.versionName,
-              fileId: s.fileId,
-              fileName: fileData?.name ?? s.fileName,
-              sizeKB: fileData?.sizeKB,
-              fileType: fileData?.type,
-              fileMetadata: fileData?.metadata as
-                | { format?: string | null; size?: string | null; fp?: string | null }
-                | undefined,
-              isRequired: s.isRequired,
-            };
-          }),
+        linkedComponents: selectLiveLinkedComponents(
+          version.recommendedResources
+            .filter((r) => isLinkedComponent(r.settings))
+            .map((r) => {
+              const s = r.settings as LinkedComponentSettings;
+              const fileData = linkedFileDataMap.get(s.fileId);
+              return {
+                recommendedResourceId: r.id,
+                componentType: s.componentType as ModelFileComponentType,
+                modelId: s.modelId,
+                modelName: s.modelName,
+                versionId: r.resource?.id ?? 0,
+                versionName: s.versionName,
+                fileId: s.fileId,
+                fileName: fileData?.name ?? s.fileName,
+                sizeKB: fileData?.sizeKB,
+                fileType: fileData?.type,
+                fileMetadata: fileData?.metadata as
+                  | { format?: string | null; size?: string | null; fp?: string | null }
+                  | undefined,
+                isRequired: s.isRequired,
+              };
+            }),
+          new Set(linkedFileDataMap.keys())
+        ),
       };
     });
 
@@ -1090,7 +1089,7 @@ export const restoreModelHandler = async ({
 
     return model;
   } catch (error) {
-    if (error instanceof TRPCError) error;
+    if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
 };
@@ -1254,7 +1253,7 @@ export const toggleModelLockHandler = async ({ input }: { input: ToggleModelLock
   try {
     await toggleLockModel(input);
   } catch (error) {
-    if (error instanceof TRPCError) error;
+    if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
 };
@@ -1287,7 +1286,7 @@ export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) =
 
     return updatedModel;
   } catch (error) {
-    if (error instanceof TRPCError) error;
+    if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
 };
@@ -1339,7 +1338,7 @@ export const declineReviewHandler = async ({
 
     return updatedModel;
   } catch (error) {
-    if (error instanceof TRPCError) error;
+    if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
 };
@@ -1391,7 +1390,7 @@ export const changeModelModifierHandler = async ({
 
     return updatedModel;
   } catch (error) {
-    if (error instanceof TRPCError) error;
+    if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
 };
@@ -1503,9 +1502,6 @@ export const getAssociatedResourcesCardDataHandler = async ({
       : [];
 
     const unavailableGenResources = await getUnavailableResources();
-    const ecosystemConfig = await getGenerationEcosystemConfig(user ?? {}, {
-      isGreen: ctx.features.isGreen,
-    });
 
     const associatedSfwOnly = !!ctx.features.isGreen;
     // `modelVersionAlias` is omitted here: these versions come from
@@ -1825,7 +1821,9 @@ export async function toggleCheckpointCoverageHandler({
 }) {
   try {
     const affectedVersionIds = await toggleCheckpointCoverage(input);
-    if (affectedVersionIds) await bustMvCache(affectedVersionIds);
+    // Forward the model id (input.id) so bustMvCache also drops the origin-side
+    // public GET /api/v1/models/[id] response cache for this model.
+    if (affectedVersionIds) await bustMvCache(affectedVersionIds, input.id);
 
     await modelsSearchIndex.queueUpdate([
       { id: input.id, action: SearchIndexUpdateQueueAction.Update },
@@ -1885,7 +1883,9 @@ export async function getModelCollectionShowcaseHandler({ input }: { input: GetB
 
     return {
       ...collection,
-      itemCount: itemCount.count,
+      // getCollectionItemCount uses GROUP BY, so an empty showcase collection
+      // (no accepted items) returns no row and itemCount is undefined — default to 0.
+      itemCount: Number(itemCount?.count ?? 0),
     };
   } catch (error) {
     throw throwDbError(error);
@@ -1975,6 +1975,29 @@ export const privateModelFromTrainingHandler = async ({
       user: ctx.user,
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+
+    // The showcase post(s) auto-created from training go through the service-level
+    // createPost, which doesn't emit the post-create ClickHouse event — so emit it
+    // here for each, tagged 'training' to mark the origin.
+    const trainingVersionIds = model.modelVersions?.map((v) => v.id) ?? [];
+    if (trainingVersionIds.length) {
+      // Read from primary: these posts were just created in privateModelFromTraining
+      // above, so a replica read could miss them and silently skip the events.
+      const createdPosts = await dbWrite.post.findMany({
+        where: { modelVersionId: { in: trainingVersionIds }, userId: ctx.user.id },
+        select: { id: true },
+      });
+      // nsfw is hardcoded false rather than derived from nsfwLevel (as other
+      // track.post calls do): the sample images were just uploaded and aren't
+      // scanned yet, so each post's nsfwLevel is still 0 and
+      // !getIsSafeBrowsingLevel(0) would flag every training post as NSFW. The
+      // scan pipeline sets the real level later.
+      await Promise.all(
+        createdPosts.map((p) =>
+          ctx.track.post({ type: 'Create', postId: p.id, nsfw: false, tags: ['training'] })
+        )
+      );
+    }
 
     if (input.id) await dataForModelsCache.refresh(input.id);
 

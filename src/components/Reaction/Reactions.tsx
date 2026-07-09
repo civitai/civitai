@@ -1,4 +1,4 @@
-import type { GroupProps } from '@mantine/core';
+import type { ButtonProps, GroupProps } from '@mantine/core';
 import { Badge, Button, Group, Text, useMantineTheme } from '@mantine/core';
 import { useSessionStorage } from '@mantine/hooks';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
@@ -40,7 +40,6 @@ const availableReactions: Partial<Record<ToggleReactionInput['entityType'], Revi
   image: ['Like', 'Heart', 'Laugh', 'Cry'],
   post: ['Like', 'Heart', 'Laugh', 'Cry'],
   bountyEntry: ['Like', 'Heart', 'Laugh', 'Cry'],
-  clubPost: ['Like', 'Heart', 'Laugh', 'Cry'],
   commentOld: ['Like', 'Heart', 'Laugh', 'Cry'],
   comment: ['Like', 'Heart', 'Laugh', 'Cry'],
   article: ['Like', 'Heart', 'Laugh', 'Cry'],
@@ -90,12 +89,14 @@ export function Reactions({
   showAll: initialShowAll,
   invisibleEmpty,
   disableBuzzTip,
+  abbreviate,
 }: ReactionsProps & {
   className?: string;
   targetUserId?: number;
   showAll?: boolean;
   invisibleEmpty?: boolean;
   disableBuzzTip?: boolean;
+  abbreviate?: boolean;
 }) {
   const storedReactions = useReactionsStore({ entityType, entityId });
   const [showAll, setShowAll] = useSessionStorage<boolean>({
@@ -158,6 +159,7 @@ export function Reactions({
             size="compact-xs"
             onClick={() => setShowAll((s) => !s)}
             classNames={{ inner: 'flex gap-0.5' }}
+            aria-label="Add reaction"
             {...(buttonStyling ? buttonStyling('AddReaction') : {})}
           >
             <IconPlus size={16} stroke={2.5} />
@@ -174,6 +176,7 @@ export function Reactions({
           readonly={readonly}
           available={available}
           invisibleEmpty={invisibleEmpty}
+          abbreviate={abbreviate}
         />
         {supportsBuzzTipping && targetUserId && (
           <BuzzTippingBadge
@@ -210,12 +213,14 @@ function ReactionsList({
   noEmpty,
   readonly,
   invisibleEmpty,
+  abbreviate,
 }: Omit<ReactionsProps, 'popoverPosition'> & {
   noEmpty?: boolean;
   available?: ReviewReactions[];
 
   readonly?: boolean;
   invisibleEmpty?: boolean;
+  abbreviate?: boolean;
 }) {
   const currentUser = useCurrentUser();
   return (
@@ -248,7 +253,7 @@ function ReactionsList({
               noEmpty={noEmpty}
               invisibleEmpty={invisibleEmpty}
             >
-              {ReactionBadge}
+              {(props) => <ReactionBadge {...props} abbreviate={abbreviate} />}
             </ReactionButton>
           );
         })}
@@ -261,31 +266,41 @@ function ReactionBadge({
   count,
   reaction,
   canClick,
+  abbreviate,
+  ...buttonProps
 }: {
   hasReacted: boolean;
   count: number;
   reaction: ReviewReactions;
   canClick: boolean;
-}) {
+  abbreviate?: boolean;
+} & Omit<ButtonProps, 'children'> &
+  React.ComponentPropsWithoutRef<'button'>) {
   const color = hasReacted ? 'blue' : 'gray';
   const { hideReactionCount, buttonStyling } = useReactionSettingsContext();
   return (
     <Button
       radius="xs"
       variant={hasReacted ? 'light' : 'subtle'}
-      className={classes.reactionBadge}
+      className={clsx(classes.reactionBadge, hasReacted && classes.hasReacted)}
       disabled={!canClick}
       pl={2}
       pr={3}
       color={color}
       size="compact-xs"
       classNames={{ label: 'flex gap-1' }}
+      aria-label={`${reaction} reaction`}
       {...buttonStyling?.(reaction, hasReacted)}
+      {...buttonProps}
     >
       <Text style={{ fontSize: '1.2em', lineHeight: 1.1 }}>
         {constants.availableReactions[reaction]}
       </Text>{' '}
-      {!hideReactionCount && <AnimatedCount value={count} abbreviate={false} />}
+      {!hideReactionCount && (
+        <Text inherit lh={1}>
+          <AnimatedCount value={count} abbreviate={abbreviate ?? false} />
+        </Text>
+      )}
     </Button>
   );
 }
@@ -329,7 +344,7 @@ function BuzzTippingBadge({
       styles={{ root: { paddingBlock: 0 } }}
     >
       <IconBolt color="yellow.7" style={{ fill: theme.colors.yellow[7] }} size={16} />
-      <Text inherit>
+      <Text inherit lh={1}>
         <AnimatedCount value={tippedAmountCount + tippedAmount} />
       </Text>
     </Badge>

@@ -1,7 +1,8 @@
-import { Badge, Box, Button, Center, Container, Loader, Text } from '@mantine/core';
+import { Alert, Badge, Box, Button, Center, Container, Loader, Text } from '@mantine/core';
 import {
   IconAlertCircle,
   IconEyeOff,
+  IconInfoCircle,
   IconPhoto,
   IconPhotoOff,
   IconPlus,
@@ -69,17 +70,25 @@ function UserOwnComics() {
 
   return (
     <Container size="xl" py="md">
-      <div className="flex justify-between items-center mb-4">
+      <div className="flex justify-between items-center gap-4 mb-3">
         <h2 className="text-lg font-semibold">My Comics</h2>
         <Button
           leftSection={<IconPlus size={16} />}
           size="sm"
           component={Link}
           href="/comics/create"
+          className="shrink-0"
         >
           New Project
         </Button>
       </div>
+
+      <Alert variant="light" color="blue" icon={<IconInfoCircle size={18} />} mb="lg">
+        <Text size="sm">
+          Drafts and pending comics show up here on your profile&apos;s Comics page. Only you can
+          see them until you publish a chapter.
+        </Text>
+      </Alert>
 
       {isLoading ? (
         <div className="flex justify-center py-12">

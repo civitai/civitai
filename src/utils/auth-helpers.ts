@@ -1,81 +1,90 @@
-import { signIn } from 'next-auth/react';
-import { env } from '~/env/client';
+// All authentication is centralized at the hub (auth.civitai.com) — the HUB's login UI sets the session cookie;
+// the main app never mints one. These helpers navigate (or pop up) to login via the MAIN SERVER: /login and
+// /api/auth/login-popup build the hub URL with the server's AUTH_JWT_ISSUER, so there's no client-side hub env
+// var to set (or to silently no-op when missing).
 
-// Auth proxy URL for PR previews - hardcoded as fallback since env vars may not be
-// baked in at build time for newly added variables
-// Trigger rebuild for PR #1989 pipeline test
-const PR_PREVIEW_AUTH_PROXY = 'https://auth.civitaic.com';
-
-/**
- * Check if we're running on a PR preview subdomain (pr-*.civitaic.com)
- */
-function isPrPreview(): boolean {
-  if (typeof window === 'undefined') return false;
-  return /^pr-\d+\.civitaic\.com$/.test(window.location.hostname);
+/** Same-origin POPUP login entry — the main server redirects to the hub, landing on /login/popup-done. */
+function loginPopupUrl(callbackUrl: string, reason?: string): string {
+  const u = new URL('/api/auth/login-popup', window.location.origin);
+  u.searchParams.set('cb', callbackUrl);
+  if (reason) u.searchParams.set('reason', reason);
+  return u.toString();
 }
 
-/**
- * Get the auth proxy URL - either from env var or by detecting PR preview hostname.
- * Uses nullish coalescing to ensure the fallback code is not tree-shaken.
- */
-function getAuthProxyUrl(): string | undefined {
-  // Try env var first, then fallback to hostname detection for PR previews
-  // Using ?? ensures both branches are preserved in the bundle
-  return env.NEXT_PUBLIC_AUTH_PROXY_URL ?? (isPrPreview() ? PR_PREVIEW_AUTH_PROXY : undefined);
+/** Same-origin FULL-PAGE login — the main server's /login redirect, landing back on `dest`. */
+function fullPageLoginUrl(dest: string, reason?: string): string {
+  const u = new URL('/login', window.location.origin);
+  u.searchParams.set('returnUrl', dest);
+  if (reason) u.searchParams.set('reason', reason);
+  return u.toString();
 }
 
-export type HandleSignInOptions = {
-  /**
-   * When true, ask the OAuth provider to show its account chooser instead of
-   * silently re-using whatever identity the user is already signed in with.
-   * Used by the "add another account" flow so users can pick a different
-   * account on the same provider (e.g. a second Google account).
-   */
-  forceAccountSelection?: boolean;
-};
+/** Same-origin BroadcastChannel the popup-done page signals on, so the opener (and the email magic-link tab, which
+ *  has no opener) can coordinate. */
+export const LOGIN_POPUP_CHANNEL = 'civitai-login';
+export const LOGIN_POPUP_DONE = 'civitai-login-popup-done';
 
 /**
- * Handle sign-in through auth proxy if configured (for PR previews).
- * This redirects OAuth flows through a shared auth endpoint that has registered OAuth callbacks.
- *
- * For PR previews (detected by env var or hostname pattern):
- * - Redirects to auth proxy for OAuth flow
- * - After OAuth completes, user is redirected back to the original site
- * - Session cookie works across subdomains due to NEXTAUTH_COOKIE_DOMAIN setting
- *
- * For regular environments:
- * - Uses NextAuth's built-in signIn function
+ * Open the hub login (`auth.civitai.com/login`) in a POPUP window. The hub runs its normal login flow (providers
+ * + email) and sets the cookie, then lands on the same-origin `/login/popup-done` page. That page broadcasts
+ * `LOGIN_POPUP_DONE`; we close the popup and navigate this (the originating) tab to `callbackUrl` — the page the
+ * user started from. Falls back to a full-page login if the popup is blocked.
  */
-export function handleSignIn(
-  providerId: string,
-  callbackUrl: string,
-  options: HandleSignInOptions = {}
-) {
-  const authProxyUrl = getAuthProxyUrl();
-  const { forceAccountSelection } = options;
-
-  if (authProxyUrl && typeof window !== 'undefined') {
-    // For PR previews: redirect to auth proxy with full return URL
-    const fullCallbackUrl = callbackUrl.startsWith('http')
-      ? callbackUrl
-      : `${window.location.origin}${callbackUrl.startsWith('/') ? callbackUrl : '/' + callbackUrl}`;
-
-    const url = new URL(`${authProxyUrl}/login`);
-    url.searchParams.set('returnUrl', fullCallbackUrl);
-
-    // Forward reason param (e.g., switch-accounts) so auth proxy doesn't auto-redirect.
-    // The proxy runs the same login page, so it will re-apply prompt=select_account
-    // on its end when it sees reason=switch-accounts.
-    const reason = new URLSearchParams(window.location.search).get('reason');
-    if (reason) url.searchParams.set('reason', reason);
-
-    window.location.href = url.toString();
-  } else {
-    // Normal flow: use NextAuth's built-in signIn.
-    // The third arg is passed through to the OAuth authorization URL as query params.
-    // `prompt=select_account` is the standard OpenID Connect value Google honors to
-    // force its account picker; providers that don't recognize it ignore it.
-    const authorizationParams = forceAccountSelection ? { prompt: 'select_account' } : undefined;
-    signIn(providerId, { callbackUrl }, authorizationParams);
+export function openLoginPopup(callbackUrl: string, reason?: string) {
+  if (typeof window === 'undefined') return;
+  // The main server builds the hub URL (whose post-login dest is /login/popup-done) — we just open same-origin.
+  const url = loginPopupUrl(callbackUrl, reason);
+  // Center the popup on the current browser window (screenX/Y + outer size handle multi-monitor setups).
+  const width = 480;
+  const height = 760;
+  const left = Math.round(window.screenX + Math.max(0, (window.outerWidth - width) / 2));
+  const top = Math.round(window.screenY + Math.max(0, (window.outerHeight - height) / 2));
+  const popup = window.open(
+    url,
+    'civitai-login',
+    `width=${width},height=${height},left=${left},top=${top},menubar=no,toolbar=no`
+  );
+  if (!popup) {
+    window.location.href = fullPageLoginUrl(callbackUrl, reason); // blocked → full-page, lands on callbackUrl
+    return;
   }
+  const channel = new BroadcastChannel(LOGIN_POPUP_CHANNEL);
+  // Tear down on completion OR when the popup is closed/abandoned — otherwise a stale listener would linger and
+  // a later login could fire it, navigating to the wrong page.
+  let poll: ReturnType<typeof setInterval>;
+  const cleanup = () => {
+    clearInterval(poll);
+    channel.close();
+  };
+  poll = setInterval(() => {
+    if (popup.closed) cleanup();
+  }, 500);
+  channel.onmessage = (e) => {
+    if ((e.data as { type?: string } | null)?.type !== LOGIN_POPUP_DONE) return;
+    cleanup();
+    try {
+      popup.close();
+    } catch {
+      /* may already be closed */
+    }
+    window.location.assign(callbackUrl); // back to where they started, now signed in
+  };
+}
+
+/**
+ * Sign out via the main app's /api/auth/logout, which clears the hub's civ-token (+ the legacy cookie + the
+ * orchestrator cookie) and best-effort revokes the token at the hub, then redirects. See cutover doc (B).
+ *
+ * Default behavior: redirect back to the CURRENT page, which reloads it signed-out. If that page requires
+ * authentication, its own guard (getServerSideProps redirect / requireLogin) sends the user to a public page —
+ * so we don't special-case it here. Callers can pass an explicit `callbackUrl` to land somewhere specific.
+ */
+export function handleSignOut(options: { callbackUrl?: string } = {}) {
+  if (typeof window === 'undefined') return Promise.resolve();
+  const here = window.location.pathname + window.location.search + window.location.hash;
+  const callbackUrl = options.callbackUrl ?? here;
+  const url = new URL('/api/auth/logout', window.location.origin);
+  url.searchParams.set('callbackUrl', callbackUrl);
+  window.location.href = url.toString();
+  return Promise.resolve();
 }
