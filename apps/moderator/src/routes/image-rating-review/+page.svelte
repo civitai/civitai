@@ -6,7 +6,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Card, CardContent } from '@civitai/ui/components/ui/card/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
-  import { browsingLevels, NsfwLevel, getBrowsingLevelLabel } from '$lib/browsing-levels';
+  import { browsingLevels, NsfwLevel, getBrowsingLevelLabel } from '@civitai/shared';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -64,7 +64,7 @@
 {#if data.items.length === 0}
   <div class="placeholder">No images awaiting rating review.</div>
 {:else}
-  <div class="grid gap-5" style="grid-template-columns: repeat(auto-fill, minmax(260px, 1fr))">
+  <div class="grid gap-5" style="grid-template-columns: repeat(auto-fill, minmax(300px, 1fr))">
     {#each data.items as item (item.id)}
       {@const setLevel = acted.get(item.id) ?? item.nsfwLevel}
       {@const reqLevel = highestRequested(item.votes)}

@@ -1,7 +1,8 @@
 import { hubLogoutUrl } from '@civitai/auth';
 import { env } from '$env/dynamic/private';
 import type { LayoutServerLoad } from './$types';
-import { navGroupsForUser } from '$lib/server/access';
+import { navForUser } from '$lib/server/access';
+import { getSidebarCounts } from '$lib/server/sidebar-counts.service';
 import { recordPageVisit } from '$lib/server/page-visits';
 
 // The spoke guard (hooks.server.ts) guarantees `locals.user` is a moderator here. Surface a thin slice
@@ -31,11 +32,11 @@ export const load: LayoutServerLoad = ({ locals, url, route }) => {
   }
 
   return {
-    user: user
-      ? { id: user.id, username: user.username ?? null, image: user.image ?? null }
-      : null,
+    user: user ? { id: user.id, username: user.username ?? null, image: user.image ?? null } : null,
     logoutUrl: env.AUTH_JWT_ISSUER ? hubLogoutUrl(env.AUTH_JWT_ISSUER, url.origin) : null,
-    navGroups: navGroupsForUser(user),
+    nav: navForUser(user),
+    // Streamed (unawaited) so the sidebar renders instantly and the count badges fill in when ready.
+    sidebarCounts: user ? getSidebarCounts() : Promise.resolve({}),
     // Base for links to the main site (report/article/user pages). Env-driven so it can point at
     // civitai.red etc.; exposed via layout data since these links render client-side.
     civitaiUrl: env.CIVITAI_APP_URL || 'https://civitai.com',

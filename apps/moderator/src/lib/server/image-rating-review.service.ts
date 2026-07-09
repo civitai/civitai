@@ -1,6 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
-import { NsfwLevel } from '$lib/browsing-levels';
+import { NsfwLevel } from '@civitai/shared';
 import type { MediaType } from '$lib/media/edge-url';
 
 export type ImageRatingItem = {

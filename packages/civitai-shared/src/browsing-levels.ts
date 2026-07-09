@@ -1,6 +1,7 @@
 // Numeric (bitwise) NSFW levels — mirror of the main app's `~/server/common/enums` NsfwLevel and
 // `~/shared/constants/browsingLevel.constants`. These are stable app constants, not Prisma enums, so
-// @civitai/db-schema doesn't carry them; re-authored here (client-safe, no server deps).
+// @civitai/db-schema doesn't carry them. Client-safe (no server/framework deps) so any app can import
+// them — server code, SvelteKit components, and the main app alike.
 export const NsfwLevel = {
   PG: 1,
   PG13: 2,
@@ -17,6 +18,11 @@ export const browsingLevels = [
   NsfwLevel.X,
   NsfwLevel.XXX,
 ] as const;
+
+// Every level incl. Blocked OR'd together — the review-queue browsing filter defaults to this so a
+// moderator sees all levels until they narrow it (matches the main app's `allBrowsingLevelsFlag`).
+export const allBrowsingLevelsFlag =
+  browsingLevels.reduce((flag, level) => flag | level, 0) | NsfwLevel.Blocked;
 
 const browsingLevelLabels: Record<number, string> = {
   0: '?',
@@ -46,8 +52,8 @@ export function getBrowsingLevelLabel(value: number | null | undefined): string 
   return highest ? browsingLevelLabels[highest] : '?';
 }
 
-// Single-bit levels a moderator can pin an article to (excludes Blocked; that's a TOS action, not a
-// rating). The resolve callback re-validates server-side.
+// Single-bit levels a moderator can pin content to (excludes Blocked; that's a TOS action, not a
+// rating). Callers should re-validate server-side.
 export const validNsfwLevels = new Set<number>(browsingLevels);
 
 // Ingestion-error review lets a moderator set any browsing level OR Blocked (a mis-ingested image may be

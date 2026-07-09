@@ -11,6 +11,7 @@
     IconShieldLock,
     IconChartBar,
     IconCircle,
+    IconChevronRight,
     IconLogout,
   } from '@tabler/icons-svelte';
   import {
@@ -19,17 +20,25 @@
     SidebarHeader,
     SidebarContent,
     SidebarGroup,
-    SidebarGroupLabel,
     SidebarGroupContent,
     SidebarMenu,
     SidebarMenuItem,
     SidebarMenuButton,
+    SidebarMenuSub,
+    SidebarMenuSubItem,
+    SidebarMenuSubButton,
     SidebarFooter,
     SidebarInset,
     SidebarTrigger,
   } from '@civitai/ui/components/ui/sidebar/index.js';
+  import {
+    Collapsible,
+    CollapsibleContent,
+    CollapsibleTrigger,
+  } from '@civitai/ui/components/ui/collapsible/index.js';
   import { Avatar, AvatarImage, AvatarFallback } from '@civitai/ui/components/ui/avatar/index.js';
   import type { LayoutData } from './$types';
+  import type { NavLink } from '$lib/server/access';
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
@@ -44,12 +53,23 @@
     '/admin': IconShieldLock,
     '/page-visits': IconChartBar,
   };
-  const iconFor = (path: string) => icons[path] ?? IconCircle;
+  const groupIcons: Record<string, typeof IconPhoto> = { Images: IconPhoto };
+  const iconFor = (item: NavLink) =>
+    (item.path ? icons[item.path] : groupIcons[item.label]) ?? IconCircle;
 
-  const roleLabel = (role: string) => {
-    const name = role.slice(role.indexOf(':') + 1);
-    return name.charAt(0).toUpperCase() + name.slice(1);
-  };
+  // Sidebar triage counts stream in after the shell renders — hold the resolved value reactively so the
+  // nav paints immediately and badges fill in.
+  let counts = $state<Record<string, number> | null>(null);
+  $effect(() => {
+    data.sidebarCounts?.then((c) => (counts = c)).catch(() => {});
+  });
+  const countFor = (key: string | undefined) => (key && counts ? (counts[key] ?? null) : null);
+  const rollupFor = (item: NavLink) =>
+    item.children ? (item.children.reduce((sum, c) => sum + (countFor(c.countKey) ?? 0), 0) || null) : null;
+
+  // Group expand/collapse (default open); toggled by the user.
+  let openGroups = $state<Record<string, boolean>>({});
+  const isOpen = (label: string) => openGroups[label] ?? true;
 
   const isActive = (href: string, path: string) =>
     href === '/' ? path === '/' : path === href || path.startsWith(href + '/');
@@ -84,30 +104,95 @@
     </SidebarHeader>
 
     <SidebarContent>
-      {#each data.navGroups as group (group.role ?? 'base')}
-        <SidebarGroup>
-          {#if group.role}
-            <SidebarGroupLabel>{roleLabel(group.role)}</SidebarGroupLabel>
-          {/if}
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {#each group.links as item (item.path)}
-                {@const Icon = iconFor(item.path)}
-                <SidebarMenuItem>
-                  <SidebarMenuButton isActive={isActive(item.path, page.url.pathname)}>
-                    {#snippet child({ props })}
-                      <a href={item.path} {...props}>
-                        <Icon size={18} stroke={1.5} />
-                        <span>{item.label}</span>
-                      </a>
-                    {/snippet}
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              {/each}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      {/each}
+      <SidebarGroup>
+        <SidebarGroupContent>
+          <SidebarMenu>
+            {#each data.nav as item (item.path ?? item.label)}
+                {@const Icon = iconFor(item)}
+                {#if item.children}
+                  {@const rollup = rollupFor(item)}
+                  <Collapsible
+                    open={isOpen(item.label)}
+                    onOpenChange={(o) => (openGroups[item.label] = o)}
+                  >
+                    <SidebarMenuItem>
+                      <CollapsibleTrigger>
+                        {#snippet child({ props })}
+                          <SidebarMenuButton {...props}>
+                            <Icon size={18} stroke={1.5} />
+                            <span>{item.label}</span>
+                            {#if rollup !== null}
+                              <span
+                                class="ml-auto rounded-full bg-sidebar-foreground/10 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-sidebar-foreground/70"
+                              >
+                                {rollup}
+                              </span>
+                            {/if}
+                            <IconChevronRight
+                              size={15}
+                              class="ml-1 shrink-0 text-sidebar-foreground/50 transition-transform {isOpen(
+                                item.label
+                              )
+                                ? 'rotate-90'
+                                : ''}"
+                            />
+                          </SidebarMenuButton>
+                        {/snippet}
+                      </CollapsibleTrigger>
+                      <CollapsibleContent>
+                        <SidebarMenuSub>
+                          {#each item.children as childLink (childLink.path ?? childLink.label)}
+                            {@const cnt = countFor(childLink.countKey)}
+                            <SidebarMenuSubItem>
+                              <SidebarMenuSubButton
+                                isActive={!childLink.external &&
+                                  !!childLink.path &&
+                                  isActive(childLink.path, page.url.pathname)}
+                              >
+                                {#snippet child({ props })}
+                                  <a
+                                    href={childLink.external
+                                      ? `${data.civitaiUrl}${childLink.path}`
+                                      : childLink.path}
+                                    target={childLink.external ? '_blank' : undefined}
+                                    rel={childLink.external ? 'noreferrer' : undefined}
+                                    {...props}
+                                  >
+                                    <span>{childLink.label}{childLink.external ? ' ↗' : ''}</span>
+                                    {#if cnt !== null}
+                                      <span
+                                        class="ml-auto text-xs tabular-nums text-sidebar-foreground/50"
+                                      >
+                                        {cnt}
+                                      </span>
+                                    {/if}
+                                  </a>
+                                {/snippet}
+                              </SidebarMenuSubButton>
+                            </SidebarMenuSubItem>
+                          {/each}
+                        </SidebarMenuSub>
+                      </CollapsibleContent>
+                    </SidebarMenuItem>
+                  </Collapsible>
+                {:else}
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      isActive={!!item.path && isActive(item.path, page.url.pathname)}
+                    >
+                      {#snippet child({ props })}
+                        <a href={item.path} {...props}>
+                          <Icon size={18} stroke={1.5} />
+                          <span>{item.label}</span>
+                        </a>
+                      {/snippet}
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                {/if}
+            {/each}
+          </SidebarMenu>
+        </SidebarGroupContent>
+      </SidebarGroup>
     </SidebarContent>
 
     <SidebarFooter>

@@ -3,7 +3,7 @@
 
   let { data }: { data: PageData } = $props();
   const name = $derived(data.user?.username ?? 'moderator');
-  const pages = $derived(data.navGroups.flatMap((g) => g.links).filter((l) => l.path !== '/'));
+  const pages = $derived(data.nav.filter((l) => l.path && l.path !== '/'));
 </script>
 
 <header class="page-header">

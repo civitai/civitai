@@ -24,7 +24,7 @@
     ratingReviewStatusFilters,
     ratingReviewStatusBadge,
   } from '$lib/article-rating-review';
-  import { browsingLevels, getBrowsingLevelLabel } from '$lib/browsing-levels';
+  import { browsingLevels, getBrowsingLevelLabel } from '@civitai/shared';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();

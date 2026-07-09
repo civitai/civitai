@@ -1,7 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { getIngestionErrorImages, resolveIngestionError } from '$lib/server/ingestion.service';
-import { ingestionErrorLevelSet } from '$lib/browsing-levels';
+import { ingestionErrorLevelSet } from '@civitai/shared';
 
 const LIMIT_OPTIONS = [10, 25, 50, 100];
 

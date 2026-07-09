@@ -3,72 +3,167 @@ import type { SessionUser } from '@civitai/auth';
 
 export const APP = 'moderator';
 
-export type NavLink = { path: string; label: string };
+// Moderator role tiers, lowest privilege first. A user's rank is the highest tier they hold; access +
+// visibility require rank >= the item's required rank (holding `staff` implies `volunteer` etc.).
+const ROLE_RANK = {
+  'moderator:volunteer': 0,
+  'moderator:staff': 1,
+  'moderator:senior': 2,
+  'moderator:admin': 3,
+} as const;
+export type Role = keyof typeof ROLE_RANK;
 
-// Moderator roles, lowest privilege first. Each tier ADDS its pages; a user inherits every tier at or below
-// their highest role (admin ⊇ senior ⊇ staff ⊇ volunteer). Pages under the admin tier are admin-only.
-export const ROLE_HIERARCHY: { role: string; navigation: NavLink[] }[] = [
-  { role: 'moderator:volunteer', navigation: [{ path: '/reports', label: 'Reports' }] },
+// One unified nav tree (NOT split into role sections). `role` = the minimum tier to SEE + ACCESS this
+// item; children inherit their parent's role unless they raise it (e.g. a senior child under the staff
+// Images group). `external` links out to the main app. `countKey` indexes the sidebar counts map.
+export type NavLink = {
+  label: string;
+  path?: string;
+  role?: Role;
+  countKey?: string;
+  external?: boolean;
+  children?: NavLink[];
+};
+
+export const NAVIGATION: NavLink[] = [
+  { path: '/', label: 'Dashboard' },
+  { path: '/reports', label: 'Reports', role: 'moderator:volunteer' },
   {
+    // The /images review queue — its modes are the sub-nav, each its own /images/<mode> route (handled by
+    // the [slug] page). `path: '/images'` gates the staff subtree; senior-only children (CSAM, and later
+    // Appeals) raise their own role, and longest-prefix gating in canAccess honors that.
+    label: 'Images',
+    path: '/images',
     role: 'moderator:staff',
-    navigation: [
-      { path: '/images', label: 'Images' },
-      { path: '/images/to-ingest', label: 'Images to Ingest' },
-      { path: '/ingestion-error-review', label: 'Ingestion Errors' },
-      { path: '/image-rating-review', label: 'Image Ratings' },
-      { path: '/downleveled-review', label: 'Downleveled' },
-      { path: '/image-tags', label: 'Image Tags' },
-      { path: '/articles', label: 'Articles' },
-      { path: '/article-rating-review', label: 'Article Ratings' },
-      { path: '/cosmetics/grant', label: 'Grant Cosmetics' },
-      { path: '/scanner-audit', label: 'Scanner Audit' },
-      { path: '/blocklists', label: 'Blocklists' },
+    children: [
+      { path: '/images/minor', label: 'Minor', countKey: 'minor' },
+      { path: '/images/poi', label: 'POI', countKey: 'poi' },
+      { path: '/images/tag', label: 'Blocked Tags', countKey: 'tag' },
+      { path: '/images/newUser', label: 'New Users', countKey: 'newUser' },
+      { path: '/images/modRule', label: 'Rule Violations', countKey: 'modRule' },
+      { path: '/images/remixSource', label: 'Remix Source', countKey: 'remixSource' },
+      { path: '/images/reported', label: 'Reported', countKey: 'reported' },
+      { path: '/images/appeals', label: 'Appeals', role: 'moderator:senior', countKey: 'appeals' },
+      { path: '/images/csam', label: 'CSAM', role: 'moderator:senior', countKey: 'csam' },
     ],
   },
-  { role: 'moderator:senior', navigation: [{ path: '/users', label: 'Users' }] },
-  {
-    role: 'moderator:admin',
-    navigation: [
-      { path: '/admin', label: 'Permissions' },
-      { path: '/page-visits', label: 'Page Usage' },
-    ],
-  },
+  { path: '/image-tags', label: 'Image Tags', role: 'moderator:staff', countKey: 'imageTags' },
+  { path: '/image-rating-review', label: 'Image Ratings', role: 'moderator:staff' },
+  { path: '/downleveled-review', label: 'Downleveled', role: 'moderator:staff' },
+  { path: '/images/to-ingest', label: 'Images to Ingest', role: 'moderator:staff' },
+  { path: '/ingestion-error-review', label: 'Ingestion Errors', role: 'moderator:staff' },
+  { path: '/articles', label: 'Articles', role: 'moderator:staff' },
+  { path: '/article-rating-review', label: 'Article Ratings', role: 'moderator:staff' },
+  { path: '/cosmetics/grant', label: 'Grant Cosmetics', role: 'moderator:staff' },
+  { path: '/scanner-audit', label: 'Scanner Audit', role: 'moderator:staff' },
+  { path: '/blocklists', label: 'Blocklists', role: 'moderator:staff' },
+  { path: '/users', label: 'Users', role: 'moderator:senior' },
+  { path: '/admin', label: 'Permissions', role: 'moderator:admin' },
+  { path: '/page-visits', label: 'Page Usage', role: 'moderator:admin' },
 ];
-
-const BASE_NAVIGATION: NavLink[] = [{ path: '/', label: 'Dashboard' }];
-
-export type NavGroup = { role: string | null; links: NavLink[] };
 
 type RoleUser = Pick<SessionUser, 'roles'> | null | undefined;
 
-// Index of the highest tier the user holds (-1 if none); they inherit every tier up to and including it.
+// Highest tier the user holds (-1 = none; base/no-role items are still visible at -1).
 function userRank(user: RoleUser): number {
-  const roles = new Set(user?.roles ?? []);
-  let rank = -1;
-  ROLE_HIERARCHY.forEach((tier, i) => {
-    if (roles.has(tier.role)) rank = i;
-  });
-  return rank;
+  return Math.max(-1, ...(user?.roles ?? []).map((r) => ROLE_RANK[r as Role] ?? -1));
 }
 
-export function navGroupsForUser(user: RoleUser): NavGroup[] {
-  const rank = userRank(user);
-  const groups: NavGroup[] = [{ role: null, links: BASE_NAVIGATION }];
-  for (let i = 0; i <= rank; i++) {
-    const tier = ROLE_HIERARCHY[i];
-    if (tier.navigation.length) groups.push({ role: tier.role, links: tier.navigation });
+const rankOf = (role: Role | undefined, inherited: number) =>
+  role !== undefined ? ROLE_RANK[role] : inherited;
+
+// Prune the tree to what `user` may see: drop items above their rank, recurse children with the item's
+// (inherited) rank, and drop a group left with no visible children.
+function pruneNav(links: NavLink[], rank: number, inherited = -1): NavLink[] {
+  const out: NavLink[] = [];
+  for (const link of links) {
+    const required = rankOf(link.role, inherited);
+    if (rank < required) continue;
+    const children = link.children ? pruneNav(link.children, rank, required) : undefined;
+    if (link.children && (!children || children.length === 0)) continue;
+    out.push({ ...link, children });
   }
-  return groups;
+  return out;
 }
 
 export function navForUser(user: RoleUser): NavLink[] {
-  return navGroupsForUser(user).flatMap((g) => g.links);
+  return pruneNav(NAVIGATION, userRank(user));
 }
 
+// Flat (path, requiredRank) for every INTERNAL path in the full tree — the gating source of truth.
+function collectPathRanks(
+  links: NavLink[],
+  inherited = -1,
+  acc: { path: string; rank: number }[] = []
+): { path: string; rank: number }[] {
+  for (const link of links) {
+    const required = rankOf(link.role, inherited);
+    if (link.path && !link.external) acc.push({ path: link.path, rank: required });
+    if (link.children) collectPathRanks(link.children, required, acc);
+  }
+  return acc;
+}
+const PATH_RANKS = collectPathRanks(NAVIGATION);
+
+// Longest-matching path wins, so a senior child (/images/appeals) still requires senior even though the
+// staff /images prefix also matches. Unmatched paths are denied.
 export function canAccess(user: RoleUser, pathname: string): boolean {
-  return navForUser(user).some((l) => pathname === l.path || pathname.startsWith(`${l.path}/`));
+  const matches = PATH_RANKS.filter(
+    (pr) => pathname === pr.path || pathname.startsWith(`${pr.path}/`)
+  );
+  if (!matches.length) return false;
+  const best = matches.reduce((a, b) => (b.path.length > a.path.length ? b : a));
+  return userRank(user) >= best.rank;
 }
 
 export function requireAccess(user: RoleUser, pathname: string): void {
   if (!canAccess(user, pathname)) error(403, 'You do not have access to this page.');
+}
+
+function findNavItem(pathname: string, links: NavLink[] = NAVIGATION): NavLink | undefined {
+  for (const link of links) {
+    if (link.path === pathname) return link;
+    if (link.children) {
+      const found = findNavItem(pathname, link.children);
+      if (found) return found;
+    }
+  }
+  return undefined;
+}
+
+// NAVIGATION is the single source of page labels — a page reads its own title from here (via server
+// props) rather than re-declaring it.
+export function navLabel(pathname: string): string | undefined {
+  return findNavItem(pathname)?.label;
+}
+
+// The accessible children of the group at `groupPath` for `user` (role-pruned, inheriting the group's
+// role). Used by the /images hub page to list its sub-pages.
+export function childLinks(groupPath: string, user: RoleUser): NavLink[] {
+  const group = findNavItem(groupPath);
+  if (!group?.children) return [];
+  return pruneNav(group.children, userRank(user), rankOf(group.role, -1));
+}
+
+// Role → pages view for the admin transparency page. Top-level items grouped by their required tier, plus
+// any child that RAISES the role (e.g. senior CSAM under the staff Images group); same-tier children (the
+// image modes) are represented by their group entry.
+export function roleHierarchy(): { role: Role; navigation: { path: string; label: string }[] }[] {
+  const byRank = new Map<number, { path: string; label: string }[]>();
+  const push = (rank: number, link: NavLink) => {
+    if (!link.path) return;
+    byRank.set(rank, [...(byRank.get(rank) ?? []), { path: link.path, label: link.label }]);
+  };
+  for (const link of NAVIGATION) {
+    const rank = rankOf(link.role, -1);
+    push(rank, link);
+    for (const child of link.children ?? []) {
+      if (child.role !== undefined && ROLE_RANK[child.role] !== rank)
+        push(ROLE_RANK[child.role], child);
+    }
+  }
+  return (Object.keys(ROLE_RANK) as Role[]).map((role) => ({
+    role,
+    navigation: byRank.get(ROLE_RANK[role]) ?? [],
+  }));
 }

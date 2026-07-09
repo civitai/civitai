@@ -7,7 +7,7 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
-  import { ingestionErrorLevels, getBrowsingLevelLabel } from '$lib/browsing-levels';
+  import { ingestionErrorLevels, getBrowsingLevelLabel } from '@civitai/shared';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();

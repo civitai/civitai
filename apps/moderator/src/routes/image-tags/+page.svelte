@@ -62,7 +62,7 @@
 {#if data.items.length === 0}
   <div class="placeholder">No tags to review.</div>
 {:else}
-  <div class="grid gap-5" style="grid-template-columns: repeat(auto-fill, minmax(320px, 1fr))">
+  <div class="grid gap-5" style="grid-template-columns: repeat(auto-fill, minmax(300px, 1fr))">
     {#each data.items as item (item.id)}
       {@const flagged = item.tags.filter((t) => t.needsReview)}
       {@const pending = flagged.filter((t) => !resolved.has(key(item.id, t.tagId)))}

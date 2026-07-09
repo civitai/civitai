@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { env } from '$env/dynamic/private';
 import type { Actions, PageServerLoad } from './$types';
 import { parseQuery } from '$lib/server/query';
-import { validNsfwLevels, NsfwLevel } from '$lib/browsing-levels';
+import { validNsfwLevels, NsfwLevel } from '@civitai/shared';
 import { getImageRatingRequests } from '$lib/server/image-rating-review.service';
 import { updateImageNsfwLevel } from '$lib/server/image-nsfw-level';
 

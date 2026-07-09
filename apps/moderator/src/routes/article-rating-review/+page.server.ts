@@ -6,7 +6,7 @@ import {
   getArticleRatingReviewCounts,
 } from '$lib/server/article-rating-reviews.service';
 import { resolveRatingReview } from '$lib/server/article-rating-review-actions';
-import { validNsfwLevels } from '$lib/browsing-levels';
+import { validNsfwLevels } from '@civitai/shared';
 import { parseQuery } from '$lib/server/query';
 
 const LIMIT = 20;
