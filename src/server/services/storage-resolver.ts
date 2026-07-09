@@ -20,6 +20,7 @@ export async function registerMediaLocation(
         Authorization: `Bearer ${STORAGE_RESOLVER_TOKEN}`,
       },
       body: JSON.stringify({ uuid, backend, sizeBytes }),
+      signal: AbortSignal.timeout(60_000),
     });
   } catch (e) {
     // Fire-and-forget — don't block uploads on registry failure
@@ -38,6 +39,7 @@ export async function resolveMediaLocation(
         ...(STORAGE_RESOLVER_TOKEN && { Authorization: `Bearer ${STORAGE_RESOLVER_TOKEN}` }),
       },
       body: JSON.stringify({ uuid }),
+      signal: AbortSignal.timeout(60_000),
     });
     if (!res.ok) return null;
     return res.json() as Promise<{ backend: ImageUploadBackend; url: string }>;

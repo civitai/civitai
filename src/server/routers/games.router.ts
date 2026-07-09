@@ -60,6 +60,7 @@ async function createGameInstance(code: string) {
       code,
       token: env.CHOPPED_TOKEN,
     }),
+    signal: AbortSignal.timeout(60_000),
   });
 
   if (!response.ok) {

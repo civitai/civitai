@@ -931,6 +931,7 @@ export const ingestImage = async ({
   const response = await fetch(scanUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    signal: AbortSignal.timeout(60_000),
     body: JSON.stringify({
       imageId: id,
       imageKey: url,
@@ -1037,6 +1038,7 @@ export const ingestImageBulk = async ({
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(60_000),
       body: JSON.stringify(
         images.map((image) => ({
           imageId: image.id,

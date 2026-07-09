@@ -130,6 +130,7 @@ export async function verifyCaptchaToken({
       response: token,
       remoteip: ip,
     }),
+    signal: AbortSignal.timeout(30_000),
   });
   const verifyLatencyMs = Date.now() - startedAt;
   const cfRay = result.headers.get('cf-ray') ?? undefined;

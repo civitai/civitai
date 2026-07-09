@@ -28,6 +28,7 @@ export default TokenSecuredEndpoint(
           'Content-Type': 'application/x-www-form-urlencoded',
         },
         body: new URLSearchParams({ url }),
+        signal: AbortSignal.timeout(60_000),
       });
 
       if (!response.ok) throw new Error('Network response was not ok');
