@@ -18,11 +18,22 @@ const AnnouncementsCarousel = dynamic(
  *   - `feedReserveCls` ON + `type === 'site'`: the hook exposes the dismissed data
  *     on the server + first client paint (both read the same cookie), so this
  *     renders the real carousel — or nothing, if the active announcement is
- *     dismissed — directly into the SSR HTML. No placeholder reserve, no
- *     post-hydration collapse (the net-negative mechanism this replaces).
+ *     dismissed — directly into the SSR HTML. No placeholder reserve, and (for the
+ *     steady state) no post-hydration collapse — the net-negative mechanism this
+ *     replaces.
  *   - Flag OFF / non-`site`: the hook keeps the `isClient` gate, so `data` is empty
  *     on the server + first client paint and this renders `null` there, exactly as
  *     before — byte-identical.
+ *
+ * ONE bounded exception to "no post-hydration collapse": a user who dismissed a
+ * STILL-ACTIVE announcement under the OLD localStorage bundle, on their FIRST load
+ * of the new bundle with the flag ON. The localStorage→cookie migration only runs
+ * CLIENT-side, so on that first load there is no cookie server-side → the seed is
+ * empty → SSR + first client paint expose the carousel, then post-hydration the
+ * (just-migrated) store filters it out = one upward shift. This is NOT a hydration
+ * error (first paint == SSR, both off the empty server seed); it self-heals on the
+ * 2nd load (the cookie now exists, so SSR renders nothing) and is scoped to the
+ * flag's audience (mod-only today) + the rollout window. Accepted trade-off.
  */
 export function Announcements({
   className,

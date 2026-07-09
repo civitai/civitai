@@ -85,6 +85,41 @@ describe('resolveAnnouncementExposure — flag ON (SSR-exact, site placement)', 
     expect(server).toEqual(postHydration); // and it never inserts-then-collapses
   });
 
+  test('MIGRATION FIRST LOAD: seed empty (no cookie server-side yet) but store dismissed (client migration) → SSR/first-paint EXPOSE, post-hydration FILTERS (the one-time, self-healing divergence)', () => {
+    // A legacy localStorage dismisser's FIRST load of the new bundle: the
+    // localStorage→cookie migration runs client-only, so the server has no cookie
+    // (`dismissedSeed=[]`) while the just-migrated client store holds the dismissal
+    // (`dismissedStore=[1]`). This is the ONLY intentional SSR-vs-post-hydration
+    // divergence — a one-time upward shift that self-heals on the 2nd load (the
+    // cookie then exists → seed matches store). Pinned here as intentional.
+    const dismissedSeedMig = [] as number[]; // no cookie server-side
+    const dismissedStoreMig = [1]; // migrated from localStorage on the client
+
+    // Server render AND first client paint (both isClient=false) use the seed →
+    // #1 is NOT dismissed → the carousel is exposed. First paint == SSR (no
+    // hydration error).
+    const server = resolveAnnouncementExposure({
+      typed,
+      exposeSSR: true,
+      isClient: false,
+      dismissedStore: dismissedStoreMig,
+      dismissedSeed: dismissedSeedMig,
+    });
+    expect(visible(server)).toEqual([1, 2]);
+
+    // Post-hydration (isClient=true) switches to the migrated store → #1 filtered
+    // out. This is the single expected divergence from the pre-hydration render.
+    const postHydration = resolveAnnouncementExposure({
+      typed,
+      exposeSSR: true,
+      isClient: true,
+      dismissedStore: dismissedStoreMig,
+      dismissedSeed: dismissedSeedMig,
+    });
+    expect(visible(postHydration)).toEqual([2]);
+    expect(postHydration).not.toEqual(server); // the known one-time collapse
+  });
+
   test('NON-DISMISSER: the real carousel data is present on the server render (renders from server HTML), no post-hydration insert', () => {
     const server = resolveAnnouncementExposure({
       typed,

@@ -104,9 +104,18 @@ export function useGetAnnouncements(type: AnnouncementType = 'site') {
   // `site` feed placement. When ON, the server + first client paint both read the
   // dismissed set from the SAME cookie (`dismissedSeed`), so SSR renders the REAL
   // carousel (or nothing) at its true height from frame 0 — no `isClient` gate, no
-  // min-height reserve, no post-hydration collapse. Post-hydration we switch to
-  // the store (initialized from the same cookie → identical value → no visual
-  // change) so live dismisses stay reactive.
+  // min-height reserve, and (steady state) no post-hydration collapse. Post-
+  // hydration we switch to the store (initialized from the same cookie → identical
+  // value → no visual change) so live dismisses stay reactive.
+  //
+  // BOUNDED exception: on a legacy dismisser's FIRST load of the new bundle the
+  // cookie doesn't exist server-side yet (the localStorage→cookie migration is
+  // client-only), so `dismissedSeed` is empty while the migrated `dismissedStore`
+  // is not → SSR/first-paint expose the carousel (seed, isClient=false) and post-
+  // hydration filters it (store, isClient=true) = one self-healing upward shift
+  // (fixed on the 2nd load once the cookie exists). Not a hydration error — first
+  // paint matches SSR. Modeled by the migration-transition case in
+  // `announcements-exposure.test.ts`.
   //
   // When OFF (or type !== 'site'): behavior is byte-identical to before — the
   // `isClient` gate zeroes `data` on the server + first client render (deferring
