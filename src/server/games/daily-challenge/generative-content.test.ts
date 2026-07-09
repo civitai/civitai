@@ -3,6 +3,7 @@ import {
   buildCategoryReviewSchema,
   buildFallbackMessages,
   injectRubrics,
+  RESPONSE_SCHEMA,
 } from './generative-content';
 import { getCategoryRubric } from './category-rubrics';
 import { challengeJudgingCategoriesSchema } from '~/server/schema/challenge.schema';
@@ -92,12 +93,10 @@ describe('buildFallbackMessages — backward-compatibility invariant', () => {
     const messages = buildFallbackMessages(makeInput(config, undefined));
     const text = systemText(messages);
 
-    expect(text.startsWith(`${config.prompts.systemMessage}\n\n${review}\n\nReply with json\n\n`)).toBe(
-      true
-    );
-    // Fixed RESPONSE_SCHEMA markers (theme/wittiness/humor/aesthetic score keys).
-    expect(text).toContain('"wittiness": number');
-    expect(text).not.toContain('SCORING (0-10)');
+    const expected = `${config.prompts.systemMessage}\n\n${stripLeadingWhitespace(
+      review
+    )}\n\nReply with json\n\n${stripLeadingWhitespace(RESPONSE_SCHEMA)}`;
+    expect(text).toBe(expected);
   });
 });
 

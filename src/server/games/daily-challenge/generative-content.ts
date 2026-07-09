@@ -239,7 +239,7 @@ type GeneratedReview = {
   aestheticFlaws?: string[];
 };
 
-const RESPONSE_SCHEMA = `{
+export const RESPONSE_SCHEMA = `{
   "score": {
     "theme": number,     // 0-10
     "wittiness": number, // 0-10

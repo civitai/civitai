@@ -1527,7 +1527,7 @@ export async function getJudgedEntries(
   collectionId: number,
   config: ChallengeConfig,
   eventContext?: EventContext,
-  source: ChallengeSource = ChallengeSource.System,
+  _source: ChallengeSource = ChallengeSource.System,
   categories?: ChallengeJudgingCategory[]
 ) {
   // Challenges scored against creator-defined category labels (User-source always, other
