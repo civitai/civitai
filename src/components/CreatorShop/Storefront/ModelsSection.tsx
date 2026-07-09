@@ -1,13 +1,24 @@
-import { Group, Stack, Text, Title } from '@mantine/core';
+import {
+  Center,
+  Group,
+  Loader,
+  LoadingOverlay,
+  SimpleGrid,
+  Stack,
+  Text,
+  Title,
+} from '@mantine/core';
+import { useMemo } from 'react';
+import { ModelCardContextProvider } from '~/components/Cards/ModelCardContext';
 import type { CreatorShopData } from '~/components/CreatorShop/creator-shop.util';
+import { useQueryEarlyAccessPrices } from '~/components/CreatorShop/creator-shop.util';
+import { ModelShopCard } from '~/components/CreatorShop/Storefront/ModelShopCard';
 import { SectionAccent } from '~/components/CreatorShop/Storefront/SectionAccent';
 import { SortFilter } from '~/components/Filters';
-import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
-import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
-import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
-import { useModelQueryParams } from '~/components/Model/model.utils';
-import { constants } from '~/server/common/constants';
+import { useModelQueryParams, useQueryModels } from '~/components/Model/model.utils';
+import { NoContent } from '~/components/NoContent/NoContent';
 import { ModelSort } from '~/server/common/enums';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 
@@ -23,6 +34,19 @@ export function ModelsSection({
   const { set, ...queryFilters } = useModelQueryParams();
   const sort = queryFilters.sort ?? ModelSort.Newest;
   const period = queryFilters.period ?? MetricTimeframe.AllTime;
+
+  // browsingLevel is applied inside useQueryModels; no need to pass it here.
+  const { models, fetchNextPage, hasNextPage, isRefetching, isFetching } = useQueryModels({
+    ...queryFilters,
+    username,
+    sort,
+    period,
+    earlyAccess: true,
+    pending: true,
+  });
+
+  const versionIds = useMemo(() => models.map((m) => m.version.id), [models]);
+  const priceByVersionId = useQueryEarlyAccessPrices(versionIds);
 
   if (!shop.settings.showModels || shop.earlyAccessModelCount <= 0) return null;
 
@@ -49,19 +73,36 @@ export function ModelsSection({
           />
         </Group>
       </Group>
-      <MasonryProvider
-        columnWidth={constants.cardSizes.model}
-        maxColumnCount={7}
-        maxSingleColumnWidth={450}
-      >
-        <MasonryContainer p={0}>
-          {/* The creator's models, filterable — but locked to Early Access (paid tiers come later). */}
-          <ModelsInfinite
-            filters={{ ...queryFilters, username, sort, period, earlyAccess: true, pending: true }}
-            disableStoreFilters
-          />
-        </MasonryContainer>
-      </MasonryProvider>
+
+      <ModelCardContextProvider useModelVersionRedirect>
+        {!models.length && isFetching ? (
+          <Center p="xl">
+            <Loader size="xl" />
+          </Center>
+        ) : models.length ? (
+          <div className="relative">
+            <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
+            <SimpleGrid cols={{ base: 2, sm: 3, md: 4 }} spacing="md">
+              {models.map((model) => (
+                <ModelShopCard
+                  key={model.id}
+                  data={model}
+                  price={priceByVersionId[model.version.id]}
+                />
+              ))}
+            </SimpleGrid>
+            {hasNextPage && (
+              <InViewLoader loadFn={fetchNextPage} loadCondition={!isFetching}>
+                <Center p="xl" style={{ height: 36 }} mt="md">
+                  <Loader />
+                </Center>
+              </InViewLoader>
+            )}
+          </div>
+        ) : (
+          <NoContent py="lg" message="No Early Access models yet." />
+        )}
+      </ModelCardContextProvider>
     </Stack>
   );
 }

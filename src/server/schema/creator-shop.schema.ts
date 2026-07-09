@@ -121,15 +121,21 @@ export const getCreatorShopSchema = z.object({
   userId: z.number(),
 });
 
+export type GetEarlyAccessPricesInput = z.infer<typeof getEarlyAccessPricesSchema>;
+export const getEarlyAccessPricesSchema = z.object({
+  modelVersionIds: z.array(z.number()).max(200),
+});
+
 export type ReviewCreatorShopItemInput = z.infer<typeof reviewCreatorShopItemSchema>;
 export const reviewCreatorShopItemSchema = z
   .object({
     id: z.number(),
-    action: z.enum(['approve', 'reject']),
+    // reject = terminal; request-changes = creator can edit & resubmit.
+    action: z.enum(['approve', 'reject', 'request-changes']),
     rejectionReason: z.string().max(1000).optional(),
   })
-  .refine((v) => v.action !== 'reject' || !!v.rejectionReason?.length, {
-    message: 'A rejection reason is required when rejecting an item',
+  .refine((v) => v.action === 'approve' || !!v.rejectionReason?.length, {
+    message: 'A note is required when rejecting or requesting changes',
     path: ['rejectionReason'],
   });
 

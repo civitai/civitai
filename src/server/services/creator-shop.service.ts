@@ -33,12 +33,14 @@ import {
 import type {
   AutoCheck,
   CosmeticImageMeta,
+  GetEarlyAccessPricesInput,
   GetReviewQueueInput,
   ReviewCreatorShopItemInput,
   SubmitCreatorShopItemInput,
   UpdateCreatorShopItemInput,
   UpdateCreatorShopSettingsInput,
 } from '~/server/schema/creator-shop.schema';
+import type { ModelVersionEarlyAccessConfig } from '~/server/schema/model-version.schema';
 
 // Card/listing shape for the creator management + moderator views.
 const creatorShopItemSelect = Prisma.validator<Prisma.CosmeticShopItemSelect>()({
@@ -238,16 +240,20 @@ export const updateCreatorShopItem = async ({
   availableQuantity,
 }: UpdateCreatorShopItemInput & { userId: number; isModerator?: boolean }) => {
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
+  // Rejected is terminal; archived items must be restored before editing.
+  if (existing.status === CosmeticShopItemStatus.Rejected)
+    throw throwBadRequestError('Rejected items cannot be edited');
   if (existing.status === CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Archived items cannot be edited');
 
+  const isPublished = existing.status === CosmeticShopItemStatus.Published;
   const artChanged = imageUrl !== undefined;
-  // Buyers already have the art — it can't change once published or sold.
-  if (
-    artChanged &&
-    (existing.status === CosmeticShopItemStatus.Published || existing._count.purchases > 0)
-  )
-    throw throwBadRequestError('Artwork cannot be changed once an item is published or sold');
+  // A live item may already have buyers — only price & quantity may change.
+  if (isPublished && (name !== undefined || description !== undefined || artChanged))
+    throw throwBadRequestError('Published items can only change price and quantity');
+  // Buyers already have the art — it can't change once sold.
+  if (artChanged && existing._count.purchases > 0)
+    throw throwBadRequestError('Artwork cannot be changed once an item has sold');
 
   // Validate + build replaced artwork server-side.
   let artwork:
@@ -273,11 +279,11 @@ export const updateCreatorShopItem = async ({
   const bigPriceChange =
     price != null && base > 0 && Math.abs(price - base) / base > PRICE_REVIEW_THRESHOLD;
 
-  // Published → back to review on a content change or a >±25% price change (a
-  // small price tweak stays live). Rejected / PendingReview → (re)submit.
+  // Published re-enters review only on a >±25% price change (a small tweak stays
+  // live). RequestedChanges & PendingReview edits (re)enter the queue.
   const backToReview =
-    (existing.status === CosmeticShopItemStatus.Published && (contentChanged || bigPriceChange)) ||
-    existing.status === CosmeticShopItemStatus.Rejected ||
+    (isPublished && bigPriceChange) ||
+    existing.status === CosmeticShopItemStatus.RequestedChanges ||
     existing.status === CosmeticShopItemStatus.PendingReview;
   const status = backToReview ? CosmeticShopItemStatus.PendingReview : existing.status;
 
@@ -320,10 +326,44 @@ export const archiveCreatorShopItem = async ({
   isModerator?: boolean;
   id: number;
 }) => {
-  await getOwnedItemOrThrow(id, userId, isModerator);
+  const existing = await getOwnedItemOrThrow(id, userId, isModerator);
+  if (existing.status === CosmeticShopItemStatus.Archived)
+    throw throwBadRequestError('Item is already archived');
+  const meta = (existing.meta ?? {}) as CosmeticShopItemMeta;
   return dbWrite.cosmeticShopItem.update({
     where: { id },
-    data: { status: CosmeticShopItemStatus.Archived, archivedAt: new Date() },
+    data: {
+      status: CosmeticShopItemStatus.Archived,
+      archivedAt: new Date(),
+      // Remember where to restore it to when unarchived.
+      meta: { ...meta, preArchiveStatus: existing.status } as Prisma.InputJsonValue,
+    },
+    select: creatorShopItemSelect,
+  });
+};
+
+export const unarchiveCreatorShopItem = async ({
+  userId,
+  isModerator,
+  id,
+}: {
+  userId: number;
+  isModerator?: boolean;
+  id: number;
+}) => {
+  const existing = await getOwnedItemOrThrow(id, userId, isModerator);
+  if (existing.status !== CosmeticShopItemStatus.Archived)
+    throw throwBadRequestError('Only archived items can be restored');
+  const { preArchiveStatus, ...meta } = (existing.meta ?? {}) as CosmeticShopItemMeta & {
+    preArchiveStatus?: CosmeticShopItemStatus;
+  };
+  return dbWrite.cosmeticShopItem.update({
+    where: { id },
+    data: {
+      status: preArchiveStatus ?? CosmeticShopItemStatus.Published,
+      archivedAt: null,
+      meta: meta as Prisma.InputJsonValue,
+    },
     select: creatorShopItemSelect,
   });
 };
@@ -358,20 +398,32 @@ export const getCreatorShop = async ({
     throw throwNotFoundError('Shop not found');
 
   const now = new Date();
-  const items = await dbRead.cosmeticShopItem.findMany({
-    where: {
-      status: CosmeticShopItemStatus.Published,
-      cosmetic: { createdById: userId },
-      AND: [
-        { OR: [{ availableFrom: null }, { availableFrom: { lte: now } }] },
-        { OR: [{ availableTo: null }, { availableTo: { gte: now } }] },
-      ],
-    },
-    // Reuse the official shop's selector so creator cards render with the exact
-    // same <ShopItem> component + purchase modal as /shop.
-    select: cosmeticShopItemSelect,
-    orderBy: { createdAt: 'desc' },
-  });
+  const [items, earlyAccessModelCount] = await Promise.all([
+    dbRead.cosmeticShopItem.findMany({
+      where: {
+        status: CosmeticShopItemStatus.Published,
+        cosmetic: { createdById: userId },
+        AND: [
+          { OR: [{ availableFrom: null }, { availableFrom: { lte: now } }] },
+          { OR: [{ availableTo: null }, { availableTo: { gte: now } }] },
+        ],
+      },
+      // Reuse the official shop's selector so creator cards render with the exact
+      // same <ShopItem> component + purchase modal as /shop.
+      select: cosmeticShopItemSelect,
+      orderBy: { createdAt: 'desc' },
+    }),
+    // Drives the Models section visibility — the storefront only lists the
+    // creator's currently-Early-Access models (paid tiers come later).
+    dbRead.model.count({
+      where: {
+        userId,
+        status: ModelStatus.Published,
+        deletedAt: null,
+        earlyAccessDeadline: { gte: now },
+      },
+    }),
+  ]);
 
   // Sanitize meta to only the purchase count the card needs — never the creator
   // payout/fee internals.
@@ -384,18 +436,23 @@ export const getCreatorShop = async ({
     .map((fid) => cosmetics.find((c) => c.id === fid))
     .filter((x): x is (typeof cosmetics)[number] => !!x);
 
-  // Drives the Models section visibility — the storefront only lists the
-  // creator's currently-Early-Access models (paid tiers come later).
-  const earlyAccessModelCount = await dbRead.model.count({
-    where: {
-      userId,
-      status: ModelStatus.Published,
-      deletedAt: null,
-      earlyAccessDeadline: { gte: now },
-    },
-  });
-
   return { cosmetics, featured, settings, earlyAccessModelCount };
+};
+
+// Early Access download prices for the shop's Models section, keyed by model
+// version id (the model feed doesn't carry earlyAccessConfig).
+export const getEarlyAccessModelPrices = async ({ modelVersionIds }: GetEarlyAccessPricesInput) => {
+  const prices: Record<number, number> = {};
+  if (!modelVersionIds.length) return prices;
+  const versions = await dbRead.modelVersion.findMany({
+    where: { id: { in: modelVersionIds } },
+    select: { id: true, earlyAccessConfig: true },
+  });
+  for (const v of versions) {
+    const cfg = v.earlyAccessConfig as ModelVersionEarlyAccessConfig | null;
+    if (cfg?.chargeForDownload && cfg.downloadPrice) prices[v.id] = cfg.downloadPrice;
+  }
+  return prices;
 };
 
 // ---------------------------------------------------------------------------
@@ -465,29 +522,33 @@ export const reviewCreatorShopItem = async ({
     throw throwBadRequestError('Archived items cannot be reviewed');
 
   const meta = (item.meta ?? {}) as CosmeticShopItemMeta;
+  const now = new Date();
+  const reviewFields = { reviewedById: reviewerId, reviewedAt: now };
 
   const updated =
-    action === 'reject'
-      ? await dbWrite.cosmeticShopItem.update({
-          where: { id },
-          data: {
-            status: CosmeticShopItemStatus.Rejected,
-            reviewedById: reviewerId,
-            reviewedAt: new Date(),
-            rejectionReason: rejectionReason ?? null,
-          },
-          select: creatorShopItemSelect,
-        })
-      : // Approve: publish + record the approved price. Payout is wired at purchase
-        // time from cosmetic.createdById — no paidToUserIds needed.
+    action === 'approve'
+      ? // Publish + record the approved price. Payout is wired at purchase time
+        // from cosmetic.createdById — no paidToUserIds needed.
         await dbWrite.cosmeticShopItem.update({
           where: { id },
           data: {
+            ...reviewFields,
             status: CosmeticShopItemStatus.Published,
-            reviewedById: reviewerId,
-            reviewedAt: new Date(),
             rejectionReason: null,
             meta: { ...meta, lastApprovedAmount: item.unitAmount } as Prisma.InputJsonValue,
+          },
+          select: creatorShopItemSelect,
+        })
+      : // reject = terminal; request-changes = creator can edit & resubmit.
+        await dbWrite.cosmeticShopItem.update({
+          where: { id },
+          data: {
+            ...reviewFields,
+            status:
+              action === 'reject'
+                ? CosmeticShopItemStatus.Rejected
+                : CosmeticShopItemStatus.RequestedChanges,
+            rejectionReason: rejectionReason ?? null,
           },
           select: creatorShopItemSelect,
         });
@@ -496,23 +557,20 @@ export const reviewCreatorShopItem = async ({
   const creatorId = item.cosmetic.createdById;
   if (creatorId) {
     const username = item.cosmetic.creator?.username ?? undefined;
-    await createNotification(
+    const type =
       action === 'approve'
-        ? {
-            type: 'creator-shop-item-approved',
-            userId: creatorId,
-            category: NotificationCategory.System,
-            key: `creator-shop-item-approved:${id}`,
-            details: { title: item.title, username },
-          }
-        : {
-            type: 'creator-shop-item-rejected',
-            userId: creatorId,
-            category: NotificationCategory.System,
-            key: `creator-shop-item-rejected:${id}:${new Date().getTime()}`,
-            details: { title: item.title, username, reason: rejectionReason ?? undefined },
-          }
-    );
+        ? 'creator-shop-item-approved'
+        : action === 'request-changes'
+        ? 'creator-shop-item-changes-requested'
+        : 'creator-shop-item-rejected';
+    await createNotification({
+      type,
+      userId: creatorId,
+      category: NotificationCategory.System,
+      // Approvals dedupe per item; review verdicts can recur, so stamp them.
+      key: action === 'approve' ? `${type}:${id}` : `${type}:${id}:${now.getTime()}`,
+      details: { title: item.title, username, reason: rejectionReason ?? undefined },
+    });
   }
 
   return updated;

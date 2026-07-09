@@ -7,6 +7,7 @@ export const statusMeta: Record<CosmeticShopItemStatus, { label: string; color: 
   Draft: { label: 'Draft', color: 'gray' },
   PendingReview: { label: 'Pending Review', color: 'yellow' },
   Published: { label: 'Published', color: 'green' },
+  RequestedChanges: { label: 'Changes Requested', color: 'orange' },
   Rejected: { label: 'Rejected', color: 'red' },
   Archived: { label: 'Archived', color: 'gray' },
 };
@@ -15,6 +16,7 @@ export const statusFilters: Array<{ value: StatusFilterValue; label: string }> =
   { value: 'all', label: 'All' },
   { value: CosmeticShopItemStatus.Published, label: 'Published' },
   { value: CosmeticShopItemStatus.PendingReview, label: 'Pending Review' },
+  { value: CosmeticShopItemStatus.RequestedChanges, label: 'Changes Requested' },
   { value: CosmeticShopItemStatus.Draft, label: 'Draft' },
   { value: CosmeticShopItemStatus.Rejected, label: 'Rejected' },
   { value: CosmeticShopItemStatus.Archived, label: 'Archived' },

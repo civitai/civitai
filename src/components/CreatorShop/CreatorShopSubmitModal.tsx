@@ -25,12 +25,14 @@ import {
   CREATOR_SHOP_CREATOR_SHARE,
   CREATOR_SHOP_SUBMISSION_FEE,
 } from '~/server/schema/creator-shop.schema';
-import type { CosmeticType } from '~/shared/utils/prisma/enums';
+import { CosmeticShopItemStatus, type CosmeticType } from '~/shared/utils/prisma/enums';
 import { numberWithCommas } from '~/utils/number-helpers';
 
 export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem }) {
   const dialog = useDialogContext();
   const form = useSubmitCreatorShopForm({ item, onClose: dialog.onClose });
+  // A live item may already have buyers — only price & quantity may change.
+  const contentLocked = item?.status === CosmeticShopItemStatus.Published;
   const {
     isEdit,
     type,
@@ -62,58 +64,75 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
   return (
     <Modal {...dialog} size="lg" title={isEdit ? 'Edit item' : 'Submit an item'}>
       <Stack>
-        <Select
-          label="Cosmetic type"
-          data={cosmeticTypeOptions}
-          value={type}
-          onChange={(v) => v && form.setType(v as CosmeticType)}
-          allowDeselect={false}
-          withAsterisk
-          disabled={isEdit}
-          description={isEdit ? 'Type cannot be changed after submission' : undefined}
-        />
+        {contentLocked ? (
+          <>
+            <Text fw={600}>{name}</Text>
+            {artOk && (
+              <Stack gap={6}>
+                <Divider label="Preview" labelPosition="left" />
+                <CosmeticPreview cosmetic={previewCosmetic} />
+              </Stack>
+            )}
+            <Alert color="blue" icon={<IconInfoCircle size={18} />}>
+              <Text size="xs">This item is live — you can only change its price and quantity.</Text>
+            </Alert>
+          </>
+        ) : (
+          <>
+            <Select
+              label="Cosmetic type"
+              data={cosmeticTypeOptions}
+              value={type}
+              onChange={(v) => v && form.setType(v as CosmeticType)}
+              allowDeselect={false}
+              withAsterisk
+              disabled={isEdit}
+              description={isEdit ? 'Type cannot be changed after submission' : undefined}
+            />
 
-        <ArtworkField
-          type={type}
-          artLocked={artLocked}
-          localUrl={localUrl}
-          imageId={imageId}
-          uploading={uploading}
-          maxSize={maxSize}
-          checks={checks}
-          onDrop={form.handleDrop}
-          onReplace={form.handleReplace}
-        />
+            <ArtworkField
+              type={type}
+              artLocked={artLocked}
+              localUrl={localUrl}
+              imageId={imageId}
+              uploading={uploading}
+              maxSize={maxSize}
+              checks={checks}
+              onDrop={form.handleDrop}
+              onReplace={form.handleReplace}
+            />
 
-        {artOk && (
-          <Stack gap={6}>
-            <Divider label="Preview" labelPosition="left" />
-            <CosmeticPreview cosmetic={previewCosmetic} />
-          </Stack>
-        )}
+            {artOk && (
+              <Stack gap={6}>
+                <Divider label="Preview" labelPosition="left" />
+                <CosmeticPreview cosmetic={previewCosmetic} />
+              </Stack>
+            )}
 
-        <TextInput
-          label="Title"
-          withAsterisk
-          value={name}
-          onChange={(e) => form.setName(e.currentTarget.value)}
-          placeholder="e.g. Golden Laurel Badge"
-        />
-        <Textarea
-          label="Description"
-          value={description}
-          onChange={(e) => form.setDescription(e.currentTarget.value)}
-          autosize
-          minRows={2}
-        />
+            <TextInput
+              label="Title"
+              withAsterisk
+              value={name}
+              onChange={(e) => form.setName(e.currentTarget.value)}
+              placeholder="e.g. Golden Laurel Badge"
+            />
+            <Textarea
+              label="Description"
+              value={description}
+              onChange={(e) => form.setDescription(e.currentTarget.value)}
+              autosize
+              minRows={2}
+            />
 
-        {supportsAnimated && !artLocked && (
-          <Switch
-            checked={animated}
-            onChange={(e) => form.setAnimated(e.currentTarget.checked)}
-            label="Animated cosmetic"
-            description="Enable if your artwork is an animated PNG or WebP."
-          />
+            {supportsAnimated && !artLocked && (
+              <Switch
+                checked={animated}
+                onChange={(e) => form.setAnimated(e.currentTarget.checked)}
+                label="Animated cosmetic"
+                description="Enable if your artwork is an animated PNG or WebP."
+              />
+            )}
+          </>
         )}
 
         <Group grow align="flex-end">

@@ -440,6 +440,7 @@ export const CosmeticShopItemStatus = {
   PendingReview: 'PendingReview',
   Published: 'Published',
   Rejected: 'Rejected',
+  RequestedChanges: 'RequestedChanges',
   Archived: 'Archived',
 } as const;
 export type CosmeticShopItemStatus =

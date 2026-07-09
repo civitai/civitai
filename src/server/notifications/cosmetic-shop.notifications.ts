@@ -14,15 +14,25 @@ export const cosmeticShopNotifications = createNotificationProcessor({
       url: details.username ? `/user/${details.username as string}/shop` : '/',
     }),
   },
-  'creator-shop-item-rejected': {
-    displayName: 'Creator Shop: Cosmetic needs changes',
+  'creator-shop-item-changes-requested': {
+    displayName: 'Creator Shop: Changes requested',
     category: NotificationCategory.System,
     prepareMessage: ({ details }) => ({
       message: details.reason
         ? `Your cosmetic "${details.title as string}" needs changes: ${details.reason as string}`
-        : `Your cosmetic "${
+        : `Changes were requested on your cosmetic "${
             details.title as string
-          }" wasn't approved. Edit and resubmit it from your shop.`,
+          }". Edit and resubmit it from your shop.`,
+      url: details.username ? `/user/${details.username as string}/shop/manage` : '/',
+    }),
+  },
+  'creator-shop-item-rejected': {
+    displayName: 'Creator Shop: Cosmetic rejected',
+    category: NotificationCategory.System,
+    prepareMessage: ({ details }) => ({
+      message: details.reason
+        ? `Your cosmetic "${details.title as string}" was rejected: ${details.reason as string}`
+        : `Your cosmetic "${details.title as string}" was rejected.`,
       url: details.username ? `/user/${details.username as string}/shop/manage` : '/',
     }),
   },

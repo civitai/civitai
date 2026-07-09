@@ -110,7 +110,7 @@ export type CosmeticType = "Badge" | "NamePlate" | "ContentDecoration" | "Profil
 
 export type CosmeticSource = "Trophy" | "Purchase" | "Event" | "Membership" | "Claim";
 
-export type CosmeticShopItemStatus = "Draft" | "PendingReview" | "Published" | "Rejected" | "Archived";
+export type CosmeticShopItemStatus = "Draft" | "PendingReview" | "Published" | "Rejected" | "RequestedChanges" | "Archived";
 
 export type CosmeticEntity = "Model" | "Image" | "Article" | "Post" | "Model3D";
 

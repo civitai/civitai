@@ -1,7 +1,11 @@
+import { useEffect, useMemo, useState } from 'react';
 import { trpc } from '~/utils/trpc';
 import type { RouterOutput } from '~/types/router';
 import type { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+
+// Matches getEarlyAccessPricesSchema.modelVersionIds.max(200).
+const EARLY_ACCESS_PRICE_BATCH = 200;
 
 export type CreatorShopData = RouterOutput['creatorShop']['getShop'];
 export type CreatorShopItem = CreatorShopData['cosmetics'][number];
@@ -24,6 +28,42 @@ export const useQueryCreatorShopManage = (enabled = true, userId?: number) => {
 export const useQueryCreatorShopSettings = (enabled = true) => {
   const { data, ...rest } = trpc.creatorShop.getSettings.useQuery(undefined, { enabled });
   return { settings: data, ...rest };
+};
+
+// Early Access download prices for the Models section, keyed by model version id.
+// As the infinite feed grows we only request ids we haven't resolved yet (in
+// batches), instead of re-fetching the whole growing set on every page.
+export const useQueryEarlyAccessPrices = (modelVersionIds: number[]) => {
+  const [prices, setPrices] = useState<Record<number, number>>({});
+  // Every id we've already asked the server about (priced or not) so we never
+  // re-request it — the response omits unpriced ids, so a price map alone can't
+  // distinguish "no price" from "not yet fetched".
+  const [resolved, setResolved] = useState<Set<number>>(() => new Set());
+
+  const requestedIds = useMemo(
+    () => modelVersionIds.filter((id) => !resolved.has(id)).slice(0, EARLY_ACCESS_PRICE_BATCH),
+    [modelVersionIds, resolved]
+  );
+
+  const { data, dataUpdatedAt } = trpc.creatorShop.getEarlyAccessPrices.useQuery(
+    { modelVersionIds: requestedIds },
+    { enabled: requestedIds.length > 0 }
+  );
+
+  useEffect(() => {
+    if (!data) return;
+    setPrices((prev) => ({ ...prev, ...data }));
+    // `dataUpdatedAt` only advances on a completed fetch, whose query key is the
+    // current `requestedIds`, so this closure always matches the response.
+    setResolved((prev) => {
+      const next = new Set(prev);
+      for (const id of requestedIds) next.add(id);
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataUpdatedAt]);
+
+  return prices;
 };
 
 export const useQueryCreatorShopReviewQueue = ({
@@ -69,6 +109,13 @@ export const useMutateCreatorShop = () => {
     onError: onError('Failed to archive item'),
   });
 
+  const unarchiveItem = trpc.creatorShop.unarchiveItem.useMutation({
+    async onSuccess() {
+      await queryUtils.creatorShop.getManageItems.invalidate();
+    },
+    onError: onError('Failed to restore item'),
+  });
+
   const updateSettings = trpc.creatorShop.updateSettings.useMutation({
     async onSuccess() {
       await queryUtils.creatorShop.getSettings.invalidate();
@@ -84,5 +131,5 @@ export const useMutateCreatorShop = () => {
     onError: onError('Failed to review item'),
   });
 
-  return { submitItem, updateItem, archiveItem, updateSettings, reviewItem };
+  return { submitItem, updateItem, archiveItem, unarchiveItem, updateSettings, reviewItem };
 };

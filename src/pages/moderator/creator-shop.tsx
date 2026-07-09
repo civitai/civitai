@@ -151,9 +151,9 @@ function CreatorShopReviewPage() {
     setReason('');
   };
 
-  // "Request changes" and "Reject" both move the item to Rejected (the creator
-  // can then edit & resubmit); the note distinguishes intent for the creator.
-  const handleReject = async () => {
+  // Reject is terminal; request-changes lets the creator edit & resubmit. Both
+  // require a note so the creator knows why.
+  const submitReview = async (action: 'reject' | 'request-changes') => {
     if (!selected) return;
     if (!reason.trim())
       return showErrorNotification({
@@ -162,7 +162,7 @@ function CreatorShopReviewPage() {
       });
     await reviewItem.mutateAsync({
       id: selected.id,
-      action: 'reject',
+      action,
       rejectionReason: reason.trim(),
     });
     setReason('');
@@ -454,7 +454,11 @@ function CreatorShopReviewPage() {
                     className="max-md:w-full"
                   />
                   <Group gap="sm" wrap="nowrap">
-                    <Button variant="default" loading={reviewItem.isPending} onClick={handleReject}>
+                    <Button
+                      variant="default"
+                      loading={reviewItem.isPending}
+                      onClick={() => submitReview('request-changes')}
+                    >
                       Request changes
                     </Button>
                     <Button
@@ -462,7 +466,7 @@ function CreatorShopReviewPage() {
                       variant="light"
                       leftSection={<IconX size={16} />}
                       loading={reviewItem.isPending}
-                      onClick={handleReject}
+                      onClick={() => submitReview('reject')}
                     >
                       Reject
                     </Button>

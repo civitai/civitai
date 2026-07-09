@@ -1,5 +1,5 @@
 import { ActionIcon, Badge, Group, Menu, Stack, Text } from '@mantine/core';
-import { IconArchive, IconDots, IconEdit } from '@tabler/icons-react';
+import { IconArchive, IconArchiveOff, IconDots, IconEdit } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 import { useMemo } from 'react';
 import { CreatorShopSubmitModal } from '~/components/CreatorShop/CreatorShopSubmitModal';
@@ -14,6 +14,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 
 type ArchiveMutation = ReturnType<typeof useMutateCreatorShop>['archiveItem'];
+type UnarchiveMutation = ReturnType<typeof useMutateCreatorShop>['unarchiveItem'];
 
 // A column owns both its header cell and how it renders a row cell, so adding /
 // reordering columns is a localized change to this array.
@@ -36,11 +37,19 @@ function ItemCell({ item }: { item: CreatorShopManageItem }) {
         <Text size="xs" c="dimmed">
           {getDisplayName(item.cosmetic.type)}
         </Text>
-        {item.status === CosmeticShopItemStatus.Rejected && item.rejectionReason && (
-          <Text size="xs" c="red" mt={2} lineClamp={2}>
-            Rejected: {item.rejectionReason}
-          </Text>
-        )}
+        {item.rejectionReason &&
+          (item.status === CosmeticShopItemStatus.Rejected ||
+            item.status === CosmeticShopItemStatus.RequestedChanges) && (
+            <Text
+              size="xs"
+              c={item.status === CosmeticShopItemStatus.Rejected ? 'red' : 'orange'}
+              mt={2}
+              lineClamp={2}
+            >
+              {item.status === CosmeticShopItemStatus.Rejected ? 'Rejected' : 'Changes requested'}:{' '}
+              {item.rejectionReason}
+            </Text>
+          )}
       </Stack>
     </Group>
   );
@@ -49,10 +58,13 @@ function ItemCell({ item }: { item: CreatorShopManageItem }) {
 function ItemActionsMenu({
   item,
   archiveItem,
+  unarchiveItem,
 }: {
   item: CreatorShopManageItem;
   archiveItem: ArchiveMutation;
+  unarchiveItem: UnarchiveMutation;
 }) {
+  const isArchived = item.status === CosmeticShopItemStatus.Archived;
   return (
     <Menu withinPortal position="bottom-end">
       <Menu.Target>
@@ -61,29 +73,45 @@ function ItemActionsMenu({
         </ActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
-        <Menu.Item
-          leftSection={<IconEdit size={16} />}
-          disabled={item.status === CosmeticShopItemStatus.Archived}
-          onClick={() =>
-            dialogStore.trigger({ component: CreatorShopSubmitModal, props: { item } })
-          }
-        >
-          {item.status === CosmeticShopItemStatus.Rejected ? 'Edit & resubmit' : 'Edit'}
-        </Menu.Item>
-        <Menu.Item
-          color="red"
-          leftSection={<IconArchive size={16} />}
-          disabled={item.status === CosmeticShopItemStatus.Archived || archiveItem.isPending}
-          onClick={() => archiveItem.mutate({ id: item.id })}
-        >
-          Archive
-        </Menu.Item>
+        {isArchived ? (
+          <Menu.Item
+            leftSection={<IconArchiveOff size={16} />}
+            disabled={unarchiveItem.isPending}
+            onClick={() => unarchiveItem.mutate({ id: item.id })}
+          >
+            Restore
+          </Menu.Item>
+        ) : (
+          <>
+            <Menu.Item
+              leftSection={<IconEdit size={16} />}
+              // Rejected is terminal — nothing more can be changed.
+              disabled={item.status === CosmeticShopItemStatus.Rejected}
+              onClick={() =>
+                dialogStore.trigger({ component: CreatorShopSubmitModal, props: { item } })
+              }
+            >
+              {item.status === CosmeticShopItemStatus.RequestedChanges ? 'Edit & resubmit' : 'Edit'}
+            </Menu.Item>
+            <Menu.Item
+              color="red"
+              leftSection={<IconArchive size={16} />}
+              disabled={archiveItem.isPending}
+              onClick={() => archiveItem.mutate({ id: item.id })}
+            >
+              Archive
+            </Menu.Item>
+          </>
+        )}
       </Menu.Dropdown>
     </Menu>
   );
 }
 
-export function useManageColumns(archiveItem: ArchiveMutation): ManageColumn[] {
+export function useManageColumns(
+  archiveItem: ArchiveMutation,
+  unarchiveItem: UnarchiveMutation
+): ManageColumn[] {
   return useMemo(
     () => [
       { key: 'item', header: 'Item', render: (item) => <ItemCell item={item} /> },
@@ -142,9 +170,11 @@ export function useManageColumns(archiveItem: ArchiveMutation): ManageColumn[] {
         header: '',
         width: 56,
         align: 'right',
-        render: (item) => <ItemActionsMenu item={item} archiveItem={archiveItem} />,
+        render: (item) => (
+          <ItemActionsMenu item={item} archiveItem={archiveItem} unarchiveItem={unarchiveItem} />
+        ),
       },
     ],
-    [archiveItem]
+    [archiveItem, unarchiveItem]
   );
 }

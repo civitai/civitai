@@ -3492,6 +3492,7 @@ enum CosmeticShopItemStatus {
   PendingReview
   Published
   Rejected
+  RequestedChanges
   Archived
 }
 

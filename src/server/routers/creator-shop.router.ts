@@ -1,6 +1,7 @@
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   getCreatorShopSchema,
+  getEarlyAccessPricesSchema,
   getManageItemsSchema,
   getReviewQueueSchema,
   reviewCreatorShopItemSchema,
@@ -12,10 +13,12 @@ import {
   archiveCreatorShopItem,
   getCreatorShop,
   getCreatorShopManageItems,
+  getEarlyAccessModelPrices,
   getCreatorShopReviewQueue,
   getCreatorShopSettings,
   reviewCreatorShopItem,
   submitCreatorShopItem,
+  unarchiveCreatorShopItem,
   updateCreatorShopItem,
   updateCreatorShopSettings,
 } from '~/server/services/creator-shop.service';
@@ -52,6 +55,13 @@ export const creatorShopRouter = router({
       isModerator: ctx.user.isModerator,
     })
   ),
+  unarchiveItem: creatorShopProcedure.input(getByIdSchema).mutation(({ input, ctx }) =>
+    unarchiveCreatorShopItem({
+      id: input.id,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    })
+  ),
   // Moderators may inspect another creator's shop by passing their userId.
   getManageItems: creatorShopProcedure.input(getManageItemsSchema).query(({ input, ctx }) =>
     getCreatorShopManageItems({
@@ -71,6 +81,10 @@ export const creatorShopRouter = router({
         isModerator: ctx.user?.isModerator,
       })
     ),
+  getEarlyAccessPrices: publicProcedure
+    .use(isFlagProtected('creatorShop'))
+    .input(getEarlyAccessPricesSchema)
+    .query(({ input }) => getEarlyAccessModelPrices(input)),
   // #endregion
 
   // #region [Shop settings]

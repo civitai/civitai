@@ -43,7 +43,7 @@ function ManageShopPage() {
 
   const { items, isLoading } = useQueryCreatorShopManage(isOwner);
   const { settings } = useQueryCreatorShopSettings(isOwner);
-  const { archiveItem, updateSettings } = useMutateCreatorShop();
+  const { archiveItem, unarchiveItem, updateSettings } = useMutateCreatorShop();
   const { status, setStatus, search, setSearch, sort, setSort, filtered, stats } =
     useManageItems(items);
 
@@ -92,7 +92,11 @@ function ManageShopPage() {
       ) : filtered.length === 0 ? (
         <ManageEmptyState hasItems={items.length > 0} />
       ) : (
-        <ManageItemsTable items={filtered} archiveItem={archiveItem} />
+        <ManageItemsTable
+          items={filtered}
+          archiveItem={archiveItem}
+          unarchiveItem={unarchiveItem}
+        />
       )}
     </Stack>
   );

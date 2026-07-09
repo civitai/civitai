@@ -6,11 +6,13 @@ import { useManageColumns } from '~/components/CreatorShop/Manage/manage.columns
 export function ManageItemsTable({
   items,
   archiveItem,
+  unarchiveItem,
 }: {
   items: CreatorShopManageItem[];
   archiveItem: ReturnType<typeof useMutateCreatorShop>['archiveItem'];
+  unarchiveItem: ReturnType<typeof useMutateCreatorShop>['unarchiveItem'];
 }) {
-  const columns = useManageColumns(archiveItem);
+  const columns = useManageColumns(archiveItem, unarchiveItem);
 
   return (
     <Paper withBorder radius="md" className="overflow-hidden">
