@@ -83,6 +83,13 @@ const featureFlags = createFeatureFlags({
   // cosmetic space reservation (worst case = a little dead space, never a
   // functional break), so flipping the flag off is an instant, safe rollback.
   feedReserveCls: { availability: ['mod'], fliptKey: 'feed-reserve-cls' },
+  // Perf experiment: defer the generation-tab-switch remount (useDeferredValue) to fix
+  // mobile INP (p75 ~304ms, dominant phase = processing_duration; the gen-tab switch is
+  // the single hottest interaction). `availability: ['public']` = a clean all-user A/B with
+  // NO mod segment (a mod cohort contaminated a prior A/B) — ramp a % of ALL users via Flipt
+  // (`gen-tab-defer-view`) as a THRESHOLD rollout. OFF = byte-identical to today. Measured via
+  // RUM `exp_gen_tab_defer_view`. Flipping off is an instant, safe rollback (deferral only).
+  genTabDeferView: { availability: ['public'], fliptKey: 'gen-tab-defer-view' },
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },

@@ -21,6 +21,12 @@ describe('RUM_EXPERIMENT_FLAGS (curated allowlist)', () => {
     expect(entry?.attr).toBe('exp_feed_reserve_cls');
   });
 
+  it('includes the genTabDeferView experiment with its explicit exp_ attribute name', () => {
+    const entry = RUM_EXPERIMENT_FLAGS.find((f) => f.flag === 'genTabDeferView');
+    expect(entry).toBeDefined();
+    expect(entry?.attr).toBe('exp_gen_tab_defer_view');
+  });
+
   it('every curated attribute uses the exp_ prefix (greppable Loki field contract)', () => {
     for (const { attr } of RUM_EXPERIMENT_FLAGS) {
       expect(attr.startsWith(RUM_EXPERIMENT_ATTR_PREFIX)).toBe(true);
@@ -44,9 +50,19 @@ describe('buildRumExperimentAttributes', () => {
     expect(attrs.exp_feed_reserve_cls).toBe('false');
   });
 
+  it('emits "true"/"false" cohorts for the genTabDeferView experiment', () => {
+    expect(buildRumExperimentAttributes({ genTabDeferView: true }).exp_gen_tab_defer_view).toBe(
+      'true'
+    );
+    expect(buildRumExperimentAttributes({ genTabDeferView: false }).exp_gen_tab_defer_view).toBe(
+      'false'
+    );
+  });
+
   it('treats a missing flag as off ("false"), never undefined/absent', () => {
     const attrs = buildRumExperimentAttributes({});
     expect(attrs.exp_feed_reserve_cls).toBe('false');
+    expect(attrs.exp_gen_tab_defer_view).toBe('false');
   });
 
   it('coerces every value to a string (MetaAttributes must be strings)', () => {
