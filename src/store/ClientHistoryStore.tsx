@@ -86,7 +86,7 @@ export function ClientHistoryStore() {
 export function useHasClientHistory() {
   const index = useClientHistoryStore((state) => state.index ?? 0);
   if (hasNavigation) {
-    return navigation.currentEntry.index > 0;
+    return (navigation.currentEntry?.index ?? 0) > 0;
   } else {
     return index > 0;
   }
@@ -98,7 +98,7 @@ export const getHasClientHistory = () => {
     const current = getHistoryStateKey(history.state);
     const index = current ? keys.indexOf(current) : -1;
     return index > 0;
-  } else return navigation.currentEntry.index > 0;
+  } else return (navigation.currentEntry?.index ?? 0) > 0;
 };
 
 // export function BackButton({ children }: { children: React.ReactElement }) {
