@@ -482,25 +482,25 @@ describe('screenshot CRUD', () => {
     expect(mockDb.appListingScreenshot.create).not.toHaveBeenCalled();
   });
 
-  // The retriable-vs-terminal signal is STRUCTURAL (tRPC code + a machine
-  // scanStatus token on the error cause), NOT the human message string. The
-  // client keys its poll decision off the code/token, so a message reword can't
-  // break the poller. See `~/shared/constants/scan-status.constants`.
+  // The retriable-vs-terminal signal is the STRUCTURAL tRPC code, NOT the human
+  // message string: the transient scanning state throws CONFLICT (retry), the
+  // terminal states throw BAD_REQUEST. The client keys its poll decision off the
+  // code (`error.data.code`), so a message reword can't break the poller.
   //
-  // Captures a thrown TRPCError so the code + cause.scanStatus can be asserted.
+  // Captures a thrown TRPCError so its code + message can be asserted.
   async function captureAttachError(
     fn: () => Promise<unknown>
-  ): Promise<{ code?: string; scanStatus?: unknown; message?: string }> {
+  ): Promise<{ code?: string; message?: string }> {
     try {
       await fn();
       throw new Error('expected the attach to reject, but it resolved');
     } catch (err) {
-      const e = err as { code?: string; message?: string; cause?: { scanStatus?: unknown } };
-      return { code: e.code, scanStatus: e.cause?.scanStatus, message: e.message };
+      const e = err as { code?: string; message?: string };
+      return { code: e.code, message: e.message };
     }
   }
 
-  it('setIcon on a not-yet-scanned Image → RETRIABLE CONFLICT + SCAN_PENDING (NOT BAD_REQUEST)', async () => {
+  it('setIcon on a not-yet-scanned Image → RETRIABLE CONFLICT (NOT BAD_REQUEST)', async () => {
     mockDb.appListing.findUnique.mockResolvedValue(listingRow);
     mockDb.image.findUnique.mockResolvedValue({
       id: 9, userId: 42, type: 'image', width: 512, height: 512, mimeType: 'image/png',
@@ -513,18 +513,16 @@ describe('screenshot CRUD', () => {
     // Retriable → CONFLICT, NOT the misleading BAD_REQUEST (which implies bad input).
     expect(err.code).toBe('CONFLICT');
     expect(err.code).not.toBe('BAD_REQUEST');
-    expect(err.scanStatus).toBe('SCAN_PENDING');
     // Human message unchanged (display only).
     expect(err.message).toMatch(/not approved for publishing/);
     expect(mockDb.appListing.update).not.toHaveBeenCalled();
   });
 
-  // A TERMINAL ingestion failure stays BAD_REQUEST and carries a DISTINCT machine
-  // token (SCAN_FAILED), so the client stops polling and shows a clear "upload it
-  // manually" error instead of an eternal scanning spinner. This is the client-
-  // resilience half of the OG-pull-ingest fix — a NotFound image (e.g. the old
-  // CF-Images-store bug) is the canonical trigger.
-  it('setIcon on a NotFound image → TERMINAL BAD_REQUEST + SCAN_FAILED', async () => {
+  // A TERMINAL ingestion failure stays BAD_REQUEST, so the client stops polling
+  // and shows a clear "upload it manually" error instead of an eternal scanning
+  // spinner. This is the client-resilience half of the OG-pull-ingest fix — a
+  // NotFound image (e.g. the old CF-Images-store bug) is the canonical trigger.
+  it('setIcon on a NotFound image → TERMINAL BAD_REQUEST', async () => {
     mockDb.appListing.findUnique.mockResolvedValue(listingRow);
     mockDb.image.findUnique.mockResolvedValue({
       id: 9, userId: 42, type: 'image', width: 512, height: 512, mimeType: 'image/png',
@@ -535,13 +533,12 @@ describe('screenshot CRUD', () => {
       setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner)
     );
     expect(err.code).toBe('BAD_REQUEST');
-    expect(err.scanStatus).toBe('SCAN_FAILED');
     // Human message unchanged (display only).
     expect(err.message).toMatch(/couldn't be imported — upload it manually/);
     expect(mockDb.appListing.update).not.toHaveBeenCalled();
   });
 
-  it('setIcon on a Blocked image → TERMINAL BAD_REQUEST + SCAN_BLOCKED', async () => {
+  it('setIcon on a Blocked image → TERMINAL BAD_REQUEST', async () => {
     mockDb.appListing.findUnique.mockResolvedValue(listingRow);
     mockDb.image.findUnique.mockResolvedValue({
       id: 9, userId: 42, type: 'image', width: 512, height: 512, mimeType: 'image/png',
@@ -552,7 +549,6 @@ describe('screenshot CRUD', () => {
       setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner)
     );
     expect(err.code).toBe('BAD_REQUEST');
-    expect(err.scanStatus).toBe('SCAN_BLOCKED');
     expect(err.message).toMatch(/rejected during scanning/);
     expect(mockDb.appListing.update).not.toHaveBeenCalled();
   });

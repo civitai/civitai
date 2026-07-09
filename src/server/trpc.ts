@@ -23,7 +23,6 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { scanStatusFromCause } from '~/shared/constants/scan-status.constants';
 import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import type { Context } from './createContext';
 
@@ -49,20 +48,8 @@ const t = initTRPC
         withSpan('trpc:serialize:superjson', () => superjson.serialize(data)),
       deserialize: superjson.deserialize.bind(superjson),
     },
-    errorFormatter({ shape, error }) {
-      // Surface the App-Blocks listing-asset scan-status token (if any) on
-      // `error.data.scanStatus` so the client can distinguish the retriable
-      // "still scanning" state (SCAN_PENDING) from the terminal ones
-      // (SCAN_FAILED / SCAN_BLOCKED) STRUCTURALLY — never by parsing the human
-      // message. Additive + optional: `undefined` for every other error, so no
-      // other consumer is affected. See `~/shared/constants/scan-status.constants`.
-      return {
-        ...shape,
-        data: {
-          ...shape.data,
-          scanStatus: scanStatusFromCause(error.cause),
-        },
-      };
+    errorFormatter({ shape }) {
+      return shape;
     },
   });
 

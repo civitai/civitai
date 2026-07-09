@@ -14,7 +14,6 @@ import {
   shouldKeepPolling,
   type AttachOutcome,
 } from '~/components/Apps/assetPolling';
-import type { ScanStatusCode } from '~/shared/constants/scan-status.constants';
 import {
   appendScreenshotSlot,
   makeScreenshotSlotId,
@@ -187,15 +186,11 @@ export function ListingAssetStep({
       }
       return classifyAttachResult(null);
     } catch (err) {
-      // Extract the STRUCTURAL fields off the tRPC client error — the code and
-      // the machine scanStatus token — NOT the prose. The message is passed
-      // through for DISPLAY only. (See assetPolling.classifyAttachResult.)
-      const data = (err as { data?: { code?: string; scanStatus?: ScanStatusCode } })?.data;
-      return classifyAttachResult({
-        code: data?.code,
-        scanStatus: data?.scanStatus,
-        message: (err as Error).message,
-      });
+      // Decide retriable-vs-terminal off the STRUCTURAL tRPC error code
+      // (`error.data.code`), NOT the prose. The message is passed through for
+      // DISPLAY only. (See assetPolling.classifyAttachResult.)
+      const code = (err as { data?: { code?: string } })?.data?.code;
+      return classifyAttachResult({ code, message: (err as Error).message });
     }
   }
 

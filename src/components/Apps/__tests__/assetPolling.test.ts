@@ -19,27 +19,19 @@ describe('classifyAttachResult', () => {
     expect(classifyAttachResult(null)).toEqual({ kind: 'attached' });
   });
 
-  it('SCAN_PENDING token → scanning (retriable)', () => {
+  it('CONFLICT code → scanning (retriable)', () => {
     expect(
       classifyAttachResult({
         code: 'CONFLICT',
-        scanStatus: 'SCAN_PENDING',
         message: 'image is not approved for publishing (scan is not complete)',
       })
     ).toEqual({ kind: 'scanning' });
   });
 
-  it('CONFLICT code with NO token → scanning (retriable, code-only fallback)', () => {
-    expect(
-      classifyAttachResult({ code: 'CONFLICT', message: 'still scanning' }).kind
-    ).toBe('scanning');
-  });
-
-  it('SCAN_FAILED token → error (terminal) carrying the human message', () => {
+  it('BAD_REQUEST code → error (terminal) carrying the human message', () => {
     expect(
       classifyAttachResult({
         code: 'BAD_REQUEST',
-        scanStatus: 'SCAN_FAILED',
         message: "that image couldn't be imported — upload it manually instead",
       })
     ).toEqual({
@@ -48,55 +40,42 @@ describe('classifyAttachResult', () => {
     });
   });
 
-  it('SCAN_BLOCKED token → error (terminal)', () => {
+  it('BAD_REQUEST (blocked) → error (terminal)', () => {
     expect(
       classifyAttachResult({
         code: 'BAD_REQUEST',
-        scanStatus: 'SCAN_BLOCKED',
         message: 'that image was rejected during scanning — choose a different image',
       }).kind
     ).toBe('error');
   });
 
-  it('BAD_REQUEST with no token → error (terminal, code-only fallback)', () => {
+  it('an undefined / unknown code → error (terminal, fail-safe)', () => {
     expect(
-      classifyAttachResult({ code: 'BAD_REQUEST', message: 'Image was blocked (NSFW)' })
+      classifyAttachResult({ code: undefined, message: 'Image was blocked (NSFW)' })
     ).toEqual({ kind: 'error', message: 'Image was blocked (NSFW)' });
   });
 
-  // REGRESSION GUARD: prose no longer drives the decision. A retriable response
-  // whose human message has been COMPLETELY REWORDED (no "scan is not complete"
-  // anywhere) still classifies as `scanning`, because the decision reads the
-  // structural code/token — the old regex would have mis-classified this as a
-  // terminal error and stopped polling.
-  it('reworded retriable message still classifies as scanning (structural, not prose)', () => {
+  // REGRESSION GUARD: prose no longer drives the decision. The decision reads the
+  // structural tRPC code, so a retriable response whose human message has been
+  // COMPLETELY REWORDED (no "scan is not complete" anywhere) still classifies as
+  // `scanning` — the old regex would have mis-classified this as a terminal error
+  // and stopped polling. Conversely a reworded message that HAPPENS to sound
+  // retriable does NOT flip a BAD_REQUEST into scanning.
+  it('a reworded message does not change the classification (code-driven, not prose)', () => {
+    // Reworded retriable message, still CONFLICT → scanning.
     expect(
       classifyAttachResult({
         code: 'CONFLICT',
-        scanStatus: 'SCAN_PENDING',
         message: 'hang tight — your picture is still being checked',
       }).kind
     ).toBe('scanning');
-    // And even a reworded message that HAPPENS to contain scary terminal-sounding
-    // words is retriable when the structural signal says so.
-    expect(
-      classifyAttachResult({
-        code: 'CONFLICT',
-        message: 'blocked pending review',
-      }).kind
-    ).toBe('scanning');
-  });
-
-  // The token wins even if a (hypothetical) mismatched code accompanies it —
-  // the token is the most specific structural signal.
-  it('SCAN_PENDING token classifies as scanning regardless of a stray code', () => {
+    // Reworded terminal message that sounds like "scanning", still BAD_REQUEST → error.
     expect(
       classifyAttachResult({
         code: 'BAD_REQUEST',
-        scanStatus: 'SCAN_PENDING',
-        message: 'whatever',
+        message: 'scan is not complete (but this is terminal)',
       }).kind
-    ).toBe('scanning');
+    ).toBe('error');
   });
 });
 

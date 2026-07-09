@@ -14,11 +14,6 @@
  * Retry).
  */
 
-import {
-  isRetriableScanStatus,
-  type ScanStatusCode,
-} from '~/shared/constants/scan-status.constants';
-
 /** The classification of a single attach() outcome, independent of React state. */
 export type AttachOutcome =
   /** The attach succeeded — the asset is scan-complete and attached. Terminal. */
@@ -32,17 +27,13 @@ export type AttachOutcome =
  * The STRUCTURAL fields of a rejected attach() — extracted from the tRPC client
  * error, NOT parsed from its prose. `null` means the attach RESOLVED (success).
  *
- *   - `code`       — the tRPC error code (`error.data.code`), e.g. `CONFLICT`
- *                    (retriable) vs `BAD_REQUEST` (terminal). ALWAYS present on a
- *                    tRPC error.
- *   - `scanStatus` — the machine token (`error.data.scanStatus`), when the server
- *                    is a version that surfaces it: `SCAN_PENDING` (retriable) /
- *                    `SCAN_FAILED` / `SCAN_BLOCKED` (terminal).
- *   - `message`    — the human message, for DISPLAY only.
+ *   - `code`    — the tRPC error code (`error.data.code`): `CONFLICT` (retriable,
+ *                 scan not complete yet) vs anything else (terminal). tRPC ALWAYS
+ *                 surfaces this on `error.data`.
+ *   - `message` — the human message, for DISPLAY only.
  */
 export type AttachError = {
   code?: string;
-  scanStatus?: ScanStatusCode;
   message: string;
 };
 
@@ -98,22 +89,14 @@ export function nextPollDelay(
  * Classify an attach() result into an {@link AttachOutcome}. PURE. `error === null`
  * means the attach RESOLVED (success → `attached`).
  *
- * The retriable-vs-terminal decision is STRUCTURAL — it reads the tRPC error's
- * machine fields, NEVER its prose (rewording the server message can't change the
- * outcome, which is the whole point of this contract):
- *   1. If the server surfaced the `scanStatus` token, trust it: `SCAN_PENDING`
- *      is retriable (`scanning`), `SCAN_FAILED` / `SCAN_BLOCKED` are terminal.
- *   2. Otherwise fall back to the tRPC `code`: `CONFLICT` = retriable (`scanning`),
- *      anything else = terminal `error`.
- * The human `message` is carried on the terminal `error` for DISPLAY only.
+ * The retriable-vs-terminal decision is STRUCTURAL — it reads the tRPC error
+ * `code`, NEVER the prose (rewording the server message can't change the outcome,
+ * which is the whole point of this contract): `CONFLICT` (scan not complete yet)
+ * is retriable → `scanning`; anything else is terminal → `error`. The human
+ * `message` is carried on the terminal `error` for DISPLAY only.
  */
 export function classifyAttachResult(error: AttachError | null): AttachOutcome {
   if (error === null) return { kind: 'attached' };
-  if (error.scanStatus !== undefined) {
-    return isRetriableScanStatus(error.scanStatus)
-      ? { kind: 'scanning' }
-      : { kind: 'error', message: error.message };
-  }
   if (error.code === 'CONFLICT') return { kind: 'scanning' };
   return { kind: 'error', message: error.message };
 }
