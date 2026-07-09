@@ -4,6 +4,7 @@ import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { buildEntityMetricPerDaySource } from '~/server/flipt/client';
 
 const READ_BATCH_SIZE = 100000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = READ_BATCH_SIZE;
@@ -41,12 +42,16 @@ export const imagesMetricsDetailsSearchIndexUpdateMetrics = createSearchIndexUpd
     // TODO somehow check for postId existence, otherwise there are lots of unused rows
 
     lastUpdatedAt ??= new Date(1723528353000);
+    // Subtract a 2-minute buffer so events that landed slightly late (or after
+    // the ReplacingMergeTree dedup settled) near the previous boundary aren't
+    // missed. Overlap is harmless here — entityIds are deduped downstream.
+    const lastUpdatedAtBuffered = new Date(lastUpdatedAt.getTime() - 2 * 60 * 1000);
     const ids = await ch.$query<{ id: number }>`
       SELECT
         distinct entityId as "id"
-      FROM entityMetricEvents
+      FROM entityMetricEvents_month
       WHERE entityType = 'Image'
-      AND createdAt > ${lastUpdatedAt}
+      AND createdAt > ${lastUpdatedAtBuffered}
     `;
     const updateIds = ids?.map((x) => x.id) ?? [];
 
@@ -65,14 +70,16 @@ export const imagesMetricsDetailsSearchIndexUpdateMetrics = createSearchIndexUpd
 
     const metrics: Metrics[] = [];
     const tasks = chunk(ids, 5000).map((batch) => async () => {
+      const perDaySource = buildEntityMetricPerDaySource(
+        `WHERE entityType = 'Image'
+            AND entityId IN (${batch.join(',')})`
+      );
       const results = await ch?.$query<Metrics>(`
         SELECT entityId as "id",
-          sumIf(total, metricType in ('ReactionLike', 'ReactionHeart', 'ReactionLaugh', 'ReactionCry')) as "reactionCount",
-          sumIf(total, metricType = 'Comment') as "commentCount",
+          sumIf(total, metricType in ('Like', 'Heart', 'Laugh', 'Cry')) as "reactionCount",
+          sumIf(total, metricType = 'commentCount') as "commentCount",
           sumIf(total, metricType = 'Collection') as "collectedCount"
-        FROM entityMetricDailyAgg
-        WHERE entityType = 'Image'
-          AND entityId IN (${batch.join(',')})
+        FROM ${perDaySource}
         GROUP BY id
       `);
       if (results?.length) metrics.push(...results);

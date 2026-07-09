@@ -92,9 +92,9 @@ async function getReactionTasks(ctx: MetricContext) {
   const affectedImages = await ctx.ch.$query<{ imageId: number }>`
     -- get recent images with reactions
     SELECT DISTINCT entityId as imageId
-    FROM entityMetricEvents
+    FROM entityMetricEvents_month
     WHERE entityType = 'Image'
-    AND metricType LIKE 'Reaction%'
+    AND metricType IN ('Like', 'Heart', 'Laugh', 'Cry')
     AND createdAt > ${ctx.lastUpdate};
   `;
 

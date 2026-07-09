@@ -4,11 +4,14 @@ import { createJob } from './job';
 import { ComicPanelStatus } from '~/shared/utils/prisma/enums';
 import { getUserQueueStatus } from '~/server/services/orchestrator/queue-limits';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
-import { createImageGen } from '~/server/services/orchestrator/imageGen/imageGen';
+import {
+  findPresetModelConfigByVersionId,
+  submitPresetImageGen,
+} from '~/server/services/orchestrator/preset-image-gen.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { SignalMessages } from '~/server/common/enums';
 import { signalClient } from '~/utils/signal-client';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import type { UserTier } from '~/server/schema/user.schema';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
@@ -113,7 +116,7 @@ export const processEnqueuedComicPanelsJob = createJob(
         // Get user's tier from their active subscriptions
         const highestSub = await getHighestTierSubscription(userId);
         const userTier = (highestSub?.tier ?? 'free') as UserTier;
-        // Merge tier into user object for createImageGen which expects SessionUser
+        // Merge tier into user object for submitPresetImageGen which expects SessionUser
         const sessionUser = { ...user, tier: userTier } as SessionUser;
 
         // Get user's token and queue status
@@ -159,16 +162,38 @@ export const processEnqueuedComicPanelsJob = createJob(
             const { generationParams, referenceImages, maxReferenceImages } = metadata;
             const isGreen = metadata.isGreen === true;
 
+            // Resolve the preset model config from the persisted version id (the
+            // job stores the version id, not the app-facing model key).
+            const modelConfig = findPresetModelConfigByVersionId(
+              generationParams.checkpointVersionId
+            );
+            if (!modelConfig) {
+              log(
+                `Panel ${panel.id}: Unknown checkpoint version ${generationParams.checkpointVersionId}, marking as failed`
+              );
+              await dbWrite.comicPanel.update({
+                where: { id: panel.id },
+                data: {
+                  status: ComicPanelStatus.Failed,
+                  errorMessage: `Unknown checkpoint version ${generationParams.checkpointVersionId}`,
+                },
+              });
+              totalFailed++;
+              continue;
+            }
+
             // Cap reference images (simple slice)
             const images = (referenceImages || []).slice(0, maxReferenceImages || 3);
 
             // Determine currencies based on the domain the panel was created on
-            const currencies: BuzzSpendType[] = isGreen
-              ? ['green', 'blue']
-              : ['yellow', 'blue'];
+            const currencies: BuzzSpendType[] = isGreen ? ['green', 'blue'] : ['yellow', 'blue'];
             const tags = isGreen ? ['comics', 'green'] : ['comics'];
 
-            // Audit prompt before submitting (same rules as real-time generation)
+            // Audit prompt before submitting. Unlike the interactive comics/iterate
+            // paths (which rely on `generateFromGraph`'s internal audit), this job
+            // runs outside the tRPC request path, so we keep an explicit pre-submit
+            // gate here. `generateFromGraph` will also audit, but auditing twice in
+            // a background job is an acceptable cost for the early gate.
             await auditPromptServer({
               prompt: generationParams.prompt,
               negativePrompt: generationParams.negativePrompt || '',
@@ -177,34 +202,21 @@ export const processEnqueuedComicPanelsJob = createJob(
               isModerator: sessionUser.isModerator,
             });
 
-            // Submit to orchestrator
-            const result = await createImageGen({
-              params: {
-                prompt: generationParams.prompt,
-                negativePrompt: generationParams.negativePrompt || '',
-                engine: generationParams.engine,
-                baseModel: generationParams.baseModel,
-                width: generationParams.width,
-                height: generationParams.height,
-                aspectRatio: metadata.aspectRatio,
-                workflow: 'txt2img',
-                sampler: 'Euler',
-                steps: 25,
-                quantity: metadata.quantity ?? 1,
-                draft: false,
-                disablePoi: false,
-                priority: 'low',
-                sourceImage: null,
-                images,
-              },
-              resources: [{ id: generationParams.checkpointVersionId, strength: 1 }],
-              tags,
-              tips: { creators: 0, civitai: 0 },
+            // Submit to orchestrator via the generation graph. `versionIdOverride`
+            // preserves the exact persisted version (incl. img2img variants).
+            const result = await submitPresetImageGen({
+              prompt: generationParams.prompt,
+              aspectRatio: metadata.aspectRatio,
+              quantity: metadata.quantity ?? 1,
+              images,
+              modelConfig,
+              versionIdOverride: generationParams.checkpointVersionId,
               user: sessionUser,
               token,
+              currencies,
+              tags,
               isGreen,
               allowMatureContent: isGreen ? false : undefined,
-              currencies,
             });
 
             // Update panel status
@@ -231,7 +243,7 @@ export const processEnqueuedComicPanelsJob = createJob(
                   workflowId: result.id,
                 },
               })
-              .catch(() => {}); // Don't fail the job if signal fails
+              .catch(() => null); // Don't fail the job if signal fails
           } catch (error: any) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             log(`Panel ${panel.id}: Failed to submit - ${errorMessage}`);

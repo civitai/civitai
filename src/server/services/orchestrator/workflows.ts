@@ -28,12 +28,85 @@ import type {
   workflowUpdateSchema,
 } from '~/server/schema/orchestrator/workflows.schema';
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
+import { observeOrchestratorRead } from '~/server/services/orchestrator/orchestrator-read-metrics';
 import {
+  isUpstreamNetworkError,
+  isUpstreamServerOrNetworkError,
   throwAuthorizationError,
   throwBadRequestError,
   throwInsufficientFundsError,
   throwInternalServerError,
+  throwNotFoundError,
+  throwRateLimitError,
+  throwServiceUnavailableError,
 } from '~/server/utils/errorHandling';
+
+// Stable, user-facing copy for a transient orchestrator outage (HTTP 503). Shared
+// by every read path that funnels through this module (getWorkflow → statusUpdate;
+// queryWorkflows → queryGeneratedImages) so a brief upstream blip becomes one
+// retry-able message instead of a wave of raw 500s with an empty body.
+const ORCHESTRATOR_UNAVAILABLE_MESSAGE =
+  'Generation services are temporarily unavailable. Please try again.';
+
+// Backstop deadline for the orchestrator workflow READ (queryWorkflows). A read is
+// safe to bound — the polling client simply re-fetches — so this caps a runaway
+// query that would otherwise hang unbounded and pin a request. Sized well above the
+// observed latency tail (max ~17.7s on the queryGeneratedImages feed) so it 503s
+// essentially nothing today and only fires on a true runaway. A fired
+// AbortSignal.timeout() throws a `TimeoutError`, which the existing
+// `isUpstreamNetworkError` catch below classifies → retry-able 503 (no new handling
+// needed). Bounds ALL queryWorkflows callers (queryGeneratedImages feed,
+// queryWorkflowsByTags, queue-status, admin) — every one a request-scoped read.
+const ORCHESTRATOR_QUERY_TIMEOUT_MS = 20_000;
+
+// Backstop deadline for the single-workflow orchestrator READ (getWorkflow). This is
+// the `orchestrator.statusUpdate` poll path (getWorkflowStatusUpdate → getWorkflow),
+// which the generation UI fires continuously while a workflow runs — so it is the most
+// re-fetchable read we have: a bounded poll simply re-polls on the next tick with no
+// lost state. Left unbounded, a single getWorkflow can park on an orchestrator hang and
+// pin an api-pool connection; because the pool is shared, enough parked polls
+// head-of-line-block every cheap endpoint (a 7ms buzz.getBuzzAccount was seen at 40s edge
+// during parks). Bounding it caps that park blast radius. Sized to match the sibling
+// query backstop (well above the healthy sub-second GET tail; the ~24s GET/status p99 is
+// the park itself), so it 503s essentially nothing today and fires only on the park tail;
+// tighten later once the healthy-tail p99 is confirmed via the latency dashboard. A fired
+// AbortSignal.timeout() surfaces a `TimeoutError`, which the existing getWorkflow catch /
+// default branch classifies via isUpstreamNetworkError → retry-able 503 (no new handling).
+const ORCHESTRATOR_GET_TIMEOUT_MS = 20_000;
+
+// Per-attempt backstop for the whatIf cost-estimate SUBMIT only (not generate). whatIf
+// (orchestrator.whatIfFromGraph) is a side-effect-free estimate that, on img2img inputs,
+// can hang ~30s on an orchestrator source-image-download step; with the default 3
+// retries that amplifies to ~90s AND head-of-line-blocks the entire api pool at the
+// connection layer (a 7ms buzz.getBuzzAccount handler was observed taking 40s at the
+// edge during these parks). 8s is chosen safely above the observed orchestrator submit
+// P99 (~4.7s) so it fires only on the genuine source-hang tail, not on legit slow-but-OK
+// submits. We KEEP the 3-attempt retry (transient blips still recover — koenbeuk's
+// concern from the closed #2776/#2807) but bound EACH attempt: a fresh
+// AbortSignal.timeout per iteration aborts only the stuck attempt and the loop retries.
+// With 3 attempts + backoff (~0.5s + 1.5s) the whatIf worst case becomes ~26s instead
+// of ~90s; tighten later if the p99 headroom allows. A fired timeout throws a
+// TimeoutError, which the existing catch treats as a transient failure → backoff + retry,
+// and the final exhaustion is classified as a retry-able 503 (see submitWorkflow). The
+// orchestrator-side root fix (stamp source dims / bound the download) is orch #261.
+const WHATIF_SUBMIT_ATTEMPT_TIMEOUT_MS = 8_000;
+
+// Classify an orchestrator READ failure as the fired read-backstop deadline (#2883,
+// ORCHESTRATOR_GET_TIMEOUT_MS / ORCHESTRATOR_QUERY_TIMEOUT_MS) vs any other error — for the additive read
+// metric ONLY (does NOT touch control flow / error mapping). A fired `AbortSignal.timeout()` surfaces as an
+// Error/DOMException named `TimeoutError` (or `AbortError` for a composed/manual abort). Because
+// `createOrchestratorClient` does NOT set `throwOnError`, this shape appears on BOTH the `.catch` reject path
+// (a mid-body abort rejects) AND the `if (!data)` resolve path (a pre-response abort RESOLVES with
+// `{ error: TimeoutError, response: undefined }`) — so both call sites classify with this. Walks the `.cause`
+// chain briefly since tRPC/undici nest the original.
+function isOrchestratorReadTimeout(e: unknown): boolean {
+  let cur = e as { name?: string; cause?: unknown } | undefined;
+  for (let depth = 0; depth < 4 && cur && typeof cur === 'object'; depth++) {
+    if (cur.name === 'TimeoutError' || cur.name === 'AbortError') return true;
+    cur = cur.cause as typeof cur;
+  }
+  return false;
+}
 
 export async function queryWorkflows({
   token,
@@ -43,17 +116,43 @@ export async function queryWorkflows({
 }: z.output<typeof workflowQuerySchema> & { token: string; hideMatureContent: boolean }) {
   const client = createOrchestratorClient(token);
 
+  // Additive read instrumentation: time ONLY the orchestrator client network call (not the whole handler) and
+  // record exactly one observation — in the `.catch` on a reject, else on the resolve path below. See
+  // orchestrator-read-metrics.ts for why. Purely observational; does NOT change any control flow / mapping.
+  const readStart = performance.now();
   const { data, error } = await clientQueryWorkflows({
     client,
+    // Read backstop: abort a runaway orchestrator query (see constant above). The
+    // resulting TimeoutError is caught below and mapped to a retry-able 503.
+    signal: AbortSignal.timeout(ORCHESTRATOR_QUERY_TIMEOUT_MS),
     query: {
       ...query,
       tags: ['civitai', ...(query.tags ?? [])],
       fromDate: fromDate?.toISOString(),
       toDate: toDate?.toISOString(),
     },
-  }).catch((error) => {
-    throw error;
+  }).catch((thrown) => {
+    // A rejected client call has no HTTP status. A recognized NETWORK failure
+    // (fetch failed / ECONNREFUSED / timeout) is a transient upstream outage →
+    // retry-able 503, not an app 500. An unrecognized throw (a real bug in our
+    // code) is left to bubble as a 500.
+    observeOrchestratorRead(
+      'queryWorkflows',
+      isOrchestratorReadTimeout(thrown) ? 'timeout' : 'error',
+      (performance.now() - readStart) / 1000
+    );
+    if (isUpstreamNetworkError(thrown))
+      throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, thrown);
+    throw thrown;
   });
+  // Resolve path (the `.catch` did NOT run). A `!data` result is either the pre-response backstop abort
+  // (`{ error: TimeoutError, response: undefined }` → timeout) or an upstream error; a `data` result is a
+  // success. Exactly one observation per call is recorded (here XOR in the catch above).
+  observeOrchestratorRead(
+    'queryWorkflows',
+    data ? 'ok' : isOrchestratorReadTimeout(error) ? 'timeout' : 'error',
+    (performance.now() - readStart) / 1000
+  );
   if (!data) {
     switch (error.status) {
       case 400:
@@ -62,9 +161,27 @@ export async function queryWorkflows({
         throw throwAuthorizationError(error.detail);
       case 403:
         throw throwInsufficientFundsError(error.detail);
+      case 429:
+        throw throwRateLimitError(error.detail);
+      case 404:
+        // Preserve not-found semantics on the read paths (a deleted/not-owned
+        // workflowId) rather than flattening to BAD_REQUEST below.
+        throw throwNotFoundError(error.detail);
       default:
         if (error.detail?.startsWith('<!DOCTYPE'))
           throw throwInternalServerError('Generation services down');
+        // An unhandled 4xx is a client/validation fault (e.g. a 404 on a deleted or
+        // not-owned workflow) — surface as 4xx, not a re-thrown raw error that tRPC
+        // maps to 500.
+        if (typeof error.status === 'number' && error.status >= 400 && error.status < 500)
+          throw throwBadRequestError(error.detail);
+        // A genuine upstream 5xx (or status-less network fault) is a transient
+        // dependency outage — surface as a retry-able 503 so the polling client
+        // backs off, instead of a raw 500 with an empty message that counts
+        // against our 500 SLO. Unexpected/unclassified errors still fall through
+        // to a raw re-throw (→ 500) so real bugs stay visible.
+        if (isUpstreamServerOrNetworkError({ clientError: error, thrown: error }))
+          throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, error);
         throw error;
     }
   }
@@ -79,7 +196,42 @@ export async function getWorkflow({
   query,
 }: Options<GetWorkflowData> & { token: string }) {
   const client = createOrchestratorClient(token);
-  const { data, error } = await clientGetWorkflow({ client, path, query });
+  // Additive read instrumentation: time ONLY the orchestrator client network call and record exactly one
+  // observation (in the `.catch` on a reject, else on the resolve path below). This is the statusUpdate poll
+  // hot path — the read the #2883 backstop targets. Purely observational; does NOT change control flow.
+  const readStart = performance.now();
+  const { data, error } = await clientGetWorkflow({
+    client,
+    path,
+    query,
+    // Read backstop: abort a runaway single-workflow read (see constant above). Mirrors
+    // queryWorkflows — the statusUpdate poll simply re-fetches, so bounding is safe and
+    // caps an orchestrator park from HOL-blocking the shared api pool. The resulting
+    // TimeoutError is caught below and mapped to a retry-able 503.
+    signal: AbortSignal.timeout(ORCHESTRATOR_GET_TIMEOUT_MS),
+  }).catch((thrown) => {
+    // The generated client REJECTS (no `{ data, error }` result) when the fetch
+    // itself fails — e.g. orchestrator unreachable. The statusUpdate poll fires
+    // continuously, so a brief blip here otherwise becomes a wave of raw 500s
+    // (TypeError: fetch failed). A recognized network failure → retry-able 503;
+    // an unrecognized throw (a real bug) bubbles as a 500.
+    observeOrchestratorRead(
+      'getWorkflow',
+      isOrchestratorReadTimeout(thrown) ? 'timeout' : 'error',
+      (performance.now() - readStart) / 1000
+    );
+    if (isUpstreamNetworkError(thrown))
+      throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, thrown);
+    throw thrown;
+  });
+  // Resolve path (the `.catch` did NOT run). A `!data` result is either the pre-response backstop abort
+  // (`{ error: TimeoutError, response: undefined }` → timeout, the LOAD-BEARING resolve shape) or an upstream
+  // error; a `data` result is a success. Exactly one observation per call (here XOR in the catch above).
+  observeOrchestratorRead(
+    'getWorkflow',
+    data ? 'ok' : isOrchestratorReadTimeout(error) ? 'timeout' : 'error',
+    (performance.now() - readStart) / 1000
+  );
   if (!data) {
     switch (error.status) {
       case 400:
@@ -88,9 +240,29 @@ export async function getWorkflow({
         throw throwAuthorizationError(error.detail);
       case 403:
         throw throwInsufficientFundsError(error.detail);
+      case 429:
+        throw throwRateLimitError(error.detail);
+      case 404:
+        // Preserve not-found semantics on the read paths (a deleted/not-owned
+        // workflowId) rather than flattening to BAD_REQUEST below.
+        throw throwNotFoundError(error.detail);
       default:
         if (error.detail?.startsWith('<!DOCTYPE'))
           throw throwInternalServerError('Generation services down');
+        // An unhandled 4xx is a client/validation fault (e.g. a 404 on a deleted or
+        // not-owned workflow) — surface as 4xx, not a re-thrown raw error that tRPC
+        // maps to 500.
+        if (typeof error.status === 'number' && error.status >= 400 && error.status < 500)
+          throw throwBadRequestError(error.detail);
+        // A genuine upstream 5xx (or status-less network fault) is a transient
+        // dependency outage — surface as a retry-able 503 (SERVICE_UNAVAILABLE)
+        // with a stable message + the original error preserved as `cause`,
+        // instead of re-throwing the raw client error (empty message → tRPC
+        // INTERNAL_SERVER_ERROR 500 against our 500 SLO). This is the wave-of-500s
+        // root cause for orchestrator.statusUpdate. Unclassified errors still
+        // re-throw raw (→ 500) so genuine code bugs stay visible.
+        if (isUpstreamServerOrNetworkError({ clientError: error, thrown: error }))
+          throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, error);
         throw error;
     }
   }
@@ -126,18 +298,50 @@ export async function submitWorkflow({
     console.log('------');
   }
 
-  const result = await submitWorkflowWithRetry({
-    client,
-    body: { ...body, tags: ['civitai', ...(body.tags ?? [])] },
-    query,
-  });
+  // whatIf is a side-effect-free cost estimate and passes `query:{whatif:true}`;
+  // generate passes no whatif. Scope the per-attempt timeout to whatIf ONLY so a real
+  // generation submit is never false-aborted (same marker used by the closed #2807).
+  const isWhatif = (query as { whatif?: boolean } | undefined)?.whatif === true;
+
+  let result: ClientSubmitResult & { attempts: number };
+  try {
+    result = await submitWorkflowWithRetry(
+      {
+        client,
+        body: { ...body, tags: ['civitai', ...(body.tags ?? [])] },
+        query,
+      },
+      // KEEP the default 3 retries on BOTH paths (transient orchestrator blips still
+      // recover). For whatIf, additionally bound each attempt so a stuck img2img
+      // source-download can't park ~30s × 3 (~90s) and head-of-line-block the api pool.
+      isWhatif ? { perAttemptTimeoutMs: WHATIF_SUBMIT_ATTEMPT_TIMEOUT_MS } : undefined
+    );
+  } catch (e) {
+    // The retry wrapper throws (rather than returning a `{ data:undefined }` result)
+    // only on a network/timeout/abort failure of the FINAL attempt — there is no HTTP
+    // status to map in the switch below. A recognized transient upstream failure
+    // (including the whatIf per-attempt AbortSignal.timeout) → retry-able 503, mirroring
+    // the read-path (queryWorkflows/getWorkflow) catch. whatIf's client
+    // (useWhatIfFromGraph) degrades a 503 to a default cost estimate, so the user gets
+    // an instant fallback instead of a ~90s hang. A genuine code-bug throw bubbles
+    // unchanged (→ 500) so real bugs stay visible.
+    if (isUpstreamNetworkError(e))
+      throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, e);
+    throw e;
+  }
 
   // Narrow on `result.data` (not a destructured copy) so this always-throwing
   // guard both exposes `error`/`response` on the failure member here AND narrows
   // `result.data` to defined for the `return` below.
   if (!result.data) {
     const { error, response } = result;
-    const { messages } = (typeof error !== 'string' ? error.errors ?? {} : {}) as {
+    // Null-guard `error`: on a status-less resolve the client can hand back
+    // `{ data: undefined, error: undefined, response: undefined }`, and a bare
+    // `error.errors` would then throw a TypeError ("Cannot read properties of
+    // undefined") BEFORE the `!response` 503 guard below — surfacing as a raw 500
+    // (the exact metric this targets). The `&& error` lets that shape fall through
+    // to the 503 mapping instead of crashing.
+    const { messages } = (typeof error !== 'string' && error ? error.errors ?? {} : {}) as {
       messages?: string[];
     };
     let message = messages?.length ? messages.join(',\n') : handleError(error);
@@ -158,6 +362,20 @@ export async function submitWorkflow({
       console.dir(JSON.stringify(body));
       console.log('----Workflow End Error Request Body----');
     }
+    // LOAD-BEARING: `createOrchestratorClient` does NOT set `throwOnError`, so the
+    // @civitai/client RESOLVES (it does NOT reject) when the underlying fetch throws —
+    // a network failure OR a fired per-attempt `AbortSignal.timeout` both come back as
+    // `{ error, response: undefined }`. That means the abort path does NOT hit the
+    // try/catch above; it lands here with `response === undefined`. We must map that to a
+    // retry-able 503 — mirroring the read-path (queryWorkflows/getWorkflow) default —
+    // BEFORE the `response.status` switch below, which would otherwise crash on
+    // `undefined.status` (→ a raw 500, the exact metric this PR targets). A status-less
+    // result is NEVER a valid success: whether it's a recognized network/abort signature
+    // (isUpstreamNetworkError) or any other status-less shape, treat it as transient →
+    // 503 (with the original error preserved as `cause`), never re-throw raw / crash.
+    if (!response) {
+      throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, error);
+    }
     switch (response.status) {
       case 400:
         throw throwBadRequestError(message);
@@ -165,12 +383,49 @@ export async function submitWorkflow({
         throw throwAuthorizationError(message);
       case 403:
         throw throwInsufficientFundsError(message);
-      case 500:
-        throw throwInternalServerError(message);
+      case 429:
+        // Preserve rate-limit semantics: TOO_MANY_REQUESTS (not a flattened
+        // BAD_REQUEST), so the client can back off AND the tRPC onError Axiom-skip
+        // for TOO_MANY_REQUESTS keeps a 429 storm off the event loop.
+        throw throwRateLimitError(message);
       default:
-        if (message?.startsWith('<!DOCTYPE'))
-          throw throwInternalServerError('Generation services down');
-        throw error;
+        // An unhandled 4xx from the orchestrator is a client/validation fault
+        // (e.g. "<resource> is not enabled for generation. Please contact …"),
+        // not a server error. Surface it as a 4xx instead of re-throwing a raw
+        // error that tRPC maps to INTERNAL_SERVER_ERROR (500) — that misclassified
+        // generate/whatIf validation rejections as the app's own 500s.
+        if (typeof response.status === 'number' && response.status >= 400 && response.status < 500)
+          throw throwBadRequestError(message);
+        // A genuine upstream 5xx — an orchestrator HTTP 500, or a gateway/LB HTML
+        // error page (which arrives as a 5xx body starting with `<!DOCTYPE`) — is a
+        // TRANSIENT dependency outage, NOT this app's own fault. Mirror the read
+        // paths (queryWorkflows/getWorkflow, above): map it to a retry-able 503
+        // SERVICE_UNAVAILABLE, guarded on the SAME `isUpstreamServerOrNetworkError`
+        // predicate, with the ORIGINAL client error preserved as `cause`.
+        //
+        // Before this the submit switch had NO 503 branch: the old `case 500` and
+        // the 5xx `default` both threw `throwInternalServerError(<string>)`, which
+        // (a) counted a transient orchestrator blip against our 500 SLO and (b)
+        // dropped the structured client error — only a derived STRING survived as
+        // `cause`, which `buildServerFaultErrorLog` renders EMPTY. That is the
+        // causeless-generic-500 signature seen on orchestrator.whatIfFromGraph /
+        // generateFromGraph; this is its submit-path fix and the read-path analogue.
+        if (isUpstreamServerOrNetworkError({ clientError: { status: response.status }, thrown: error }))
+          throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, error);
+        // Anything else (a non-4xx/5xx anomaly with no `data` — e.g. a malformed
+        // "success", a genuine bug) stays a 500 so real problems remain visible, but
+        // carry the ORIGINAL client error as `cause` (not a bare string) so
+        // `buildServerFaultErrorLog` can un-mask the real message/stack. We do NOT
+        // blanket-convert to 503 — only recognized transient upstream failures above.
+        // When `error` is nullish here (a 2xx/empty-body anomaly: `!data` +
+        // truthy `response` + `status < 400` + no `error`), synthesize a defined
+        // Error so `throwInternalServerError`'s `(error as any).message` read
+        // (errorHandling.ts) can't itself throw a spurious TypeError — the very
+        // causeless-500 shape this PR exists to kill. A non-nullish `error` flows
+        // through unchanged, cause preserved (Item B).
+        throw throwInternalServerError(
+          error ?? new Error('orchestrator returned no data', { cause: error })
+        );
     }
   }
 
@@ -185,6 +440,15 @@ export type SubmitWorkflowRetryOptions = {
   maxAttempts?: number;
   /** Base backoff in ms; delay before retry N = baseDelayMs * 3 ** (N - 1). Default 500. */
   baseDelayMs?: number;
+  /**
+   * Bounds EACH attempt with a FRESH `AbortSignal.timeout(perAttemptTimeoutMs)` created
+   * per loop iteration — a fired timeout aborts only that one attempt and the loop still
+   * retries (NOT a single deadline shared across all attempts). The aborted attempt
+   * throws a `TimeoutError`, which the existing catch below treats as a transient network
+   * failure → backoff + retry until `maxAttempts`. `undefined` ⇒ unbounded attempts
+   * (current behavior; the generate/write path passes nothing and is byte-identical).
+   */
+  perAttemptTimeoutMs?: number;
   /** Invoked right before each backoff sleep — useful for logging/metrics. */
   onRetry?: (info: { attempt: number; status?: number; delayMs: number }) => void;
 };
@@ -203,14 +467,31 @@ export type SubmitWorkflowRetryOptions = {
  */
 export async function submitWorkflowWithRetry(
   options: SubmitOptions,
-  { maxAttempts = 3, baseDelayMs = 500, onRetry }: SubmitWorkflowRetryOptions = {}
+  {
+    maxAttempts = 3,
+    baseDelayMs = 500,
+    perAttemptTimeoutMs,
+    onRetry,
+  }: SubmitWorkflowRetryOptions = {}
 ): Promise<ClientSubmitResult & { attempts: number }> {
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     let result: ClientSubmitResult | undefined;
     try {
-      result = await clientSubmitWorkflow(options);
+      // Bound this attempt with a FRESH timeout signal (created inside the loop) so a
+      // fired deadline aborts only this attempt — the loop still retries with a new
+      // budget. If the caller already passed a signal, compose so either source aborts.
+      const attemptOptions =
+        perAttemptTimeoutMs == null
+          ? options
+          : {
+              ...options,
+              signal: options.signal
+                ? AbortSignal.any([options.signal, AbortSignal.timeout(perAttemptTimeoutMs)])
+                : AbortSignal.timeout(perAttemptTimeoutMs),
+            };
+      result = await clientSubmitWorkflow(attemptOptions);
     } catch (e) {
       // Network failure / no response. Out of retries → surface it like a direct call would.
       lastError = e;

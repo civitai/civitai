@@ -3,6 +3,7 @@ import { useMemo } from 'react';
 import { useResourceSelectContext } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
 import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { constants } from '~/server/common/constants';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import type { GetFeaturedModels } from '~/server/services/model.service';
 import { Availability } from '~/shared/utils/prisma/enums';
@@ -12,14 +13,25 @@ import { isDefined } from '~/utils/type-guards';
 
 const take = 20;
 
-export type Tabs = 'all' | 'featured' | 'recent' | 'liked' | 'mine';
+export type Tabs = 'all' | 'official' | 'featured' | 'recent' | 'liked' | 'mine';
+
+// The Official/Mine tabs let a creator link any of their own / the official
+// component models regardless of base-model match (e.g. a VAE shared across SDXL
+// variants). Used to relax the constraint in BOTH the Meili query and the
+// client-side version filter — keep them in sync via this one predicate.
+export function skipBaseModelForOwnTabs(tab: Tabs | undefined, selectSource?: string): boolean {
+  return (tab === 'mine' || tab === 'official') && selectSource === 'modelVersion';
+}
 
 export function useResourceSelectQueries(selectedTab: Tabs) {
   const currentUser = useCurrentUser();
   const { selectSource } = useResourceSelectContext();
 
+  // Fetch for any logged-in user (not just the 'liked' tab) so the favorite
+  // state renders correctly on every tab and the toggle's optimistic cache
+  // update propagates back to the cards for immediate feedback.
   const { data: likedModels } = trpc.user.getBookmarkedModels.useQuery(undefined, {
-    enabled: !!currentUser && selectedTab === 'liked',
+    enabled: !!currentUser,
   });
 
   const { data: featuredModels, isFetching: isLoadingFeatured } =
@@ -125,17 +137,19 @@ export function useResourceSelectMeiliFilters({
       }
     }
 
+    // Featured tab restricts via the featured-IDs AND clause instead; the own/official
+    // tabs relax base-model matching (see skipBaseModelForOwnTabs).
+    const skipBaseModel =
+      featuredByType.size > 0 || skipBaseModelForOwnTabs(selectedTab, selectSource);
+
     for (const { type, baseModels = [] } of resources) {
       const _type = filters.types.length > 0 ? filters.types.find((x) => x === type) : type;
 
-      // On the featured tab, skip baseModel for all types —
-      // the AND filter with featured IDs restricts results instead
-      const _baseModels =
-        featuredByType.size > 0
-          ? []
-          : filters.baseModels.length > 0
-          ? filters.baseModels.filter((baseModel) => baseModels.includes(baseModel))
-          : baseModels;
+      const _baseModels = skipBaseModel
+        ? []
+        : filters.baseModels.length > 0
+        ? filters.baseModels.filter((baseModel) => baseModels.includes(baseModel))
+        : baseModels;
 
       if (_type) {
         if (!_baseModels.length) or.push(`type = ${_type}`);
@@ -221,6 +235,8 @@ export function useResourceSelectMeiliFilters({
       if (currentUser) {
         meiliFilters.push(`user.id = ${currentUser.id}`);
       }
+    } else if (selectedTab === 'official') {
+      meiliFilters.push(`user.id = ${constants.system.officialUserId}`);
     }
 
     return [...meiliFilters, ...exclude].join(' AND ');

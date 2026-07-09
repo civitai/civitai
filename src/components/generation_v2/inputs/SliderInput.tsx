@@ -1,7 +1,7 @@
 import type { InputWrapperProps, NumberInputProps, SliderProps } from '@mantine/core';
 import { Group, Input, NumberInput, Slider, Text } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { isValidElement, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import clsx from 'clsx';
 
@@ -157,6 +157,19 @@ export function SliderInput({
 
   const hasPresets = presets && presets.length > 0;
 
+  // Derive an accessible name for the Slider thumb + NumberInput. The visible
+  // `label` (rendered on Input.Wrapper) can't be programmatically associated
+  // with either of the two inner controls, so a11y tooling reports both as
+  // unnamed. Reuse the field's own visible label so the accessible name always
+  // matches what the user sees. Handles both a plain string label and the
+  // `<ControllerLabel label="..." />` wrapper used across the generation form.
+  const accessibleName =
+    typeof label === 'string'
+      ? label
+      : isValidElement(label) && typeof (label.props as { label?: unknown })?.label === 'string'
+      ? ((label.props as { label: string }).label)
+      : undefined;
+
   return (
     <Input.Wrapper
       {...inputWrapperProps}
@@ -182,6 +195,7 @@ export function SliderInput({
       <div className={clsx('mt-1 flex items-center gap-2', { ['flex-row-reverse']: reverse })}>
         <Slider
           {...sliderProps}
+          thumbLabel={sliderProps?.thumbLabel ?? accessibleName}
           className={clsx('flex-1', sliderProps?.className)}
           min={min}
           max={max}
@@ -197,6 +211,7 @@ export function SliderInput({
         />
         <NumberInput
           ref={numberRef}
+          aria-label={numberProps?.['aria-label'] ?? accessibleName}
           {...numberProps}
           className={clsx('min-w-[60px] flex-[0]', numberProps?.className)}
           style={{

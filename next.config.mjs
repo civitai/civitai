@@ -32,6 +32,12 @@ export default defineNextConfig(
   withAxiom({
     env: {
       version: packageJson.version,
+      // The client login helpers need the hub origin. Reuse AUTH_JWT_ISSUER (the server's single hub-URL source)
+      // by exposing it to the client bundle as NEXT_PUBLIC_AUTH_HUB_URL — so there's no separate var to set. An
+      // explicit NEXT_PUBLIC_AUTH_HUB_URL still wins if provided. (AUTH_JWT_ISSUER is public: the JWT `iss` /
+      // JWKS origin.)
+      NEXT_PUBLIC_AUTH_HUB_URL:
+        process.env.NEXT_PUBLIC_AUTH_HUB_URL ?? process.env.AUTH_JWT_ISSUER,
     },
     // webpack: (config, options) => {
     //   if (isDev && !options.isServer) {
@@ -61,6 +67,14 @@ export default defineNextConfig(
 
     //   return config;
     // },
+    // Turbopack is the default bundler as of Next 16. The OpenTelemetry packages
+    // that produced the `require-in-the-middle` webpack warnings are listed in
+    // `serverExternalPackages` below, so Turbopack externalizes them and never
+    // emits those warnings — an empty config just acknowledges we're on Turbopack
+    // and silences Next's "webpack config with no turbopack config" build error.
+    turbopack: {},
+    allowedDevOrigins: ['civitai-dev.green', 'civitai-dev.blue', 'civitai-dev.red'],
+    // Retained for the `next build --webpack` fallback path; ignored under Turbopack.
     webpack: (config) => {
       config.ignoreWarnings = [
         { module: /require-in-the-middle/ },
@@ -69,14 +83,34 @@ export default defineNextConfig(
       return config;
     },
     reactStrictMode: true,
+    // Source maps for prod CPU-profile de-minification.
+    //
+    // Under Turbopack (our prod bundler, Next 16), the ONLY source-map lever is the
+    // experimental `turbopackSourceMaps` flag, whose build-time default IS
+    // `productionBrowserSourceMaps`. So setting this `true` turns on map emission for
+    // BOTH client (`.next/static/**/*.js.map`) and server (`.next/server/**/*.js.map`)
+    // chunks. Turbopack ignores `experimental.serverSourceMaps` (webpack-only) — that
+    // flag below only matters for the `next build --webpack` fallback path.
+    //
+    // Maps are inert at runtime: the Node server never loads a `.js.map` unless an
+    // inspector / error-stack resolver reads it, so there is NO
+    //  request-path perf cost.
+    // They are NOT served to browsers for server chunks (those live in `.next/server`,
+    // which is not a static-served directory). Cost is build time + image size only.
+    //
+    // IMPORTANT: `output:'standalone'` traces required files via @vercel/nft, which
+    // follows `import`/`require`/`fs` — it does NOT trace sibling `.js.map` files, so
+    // the server maps are emitted to `.next/server` but DROPPED from `.next/standalone`.
+    // The runtime image does NOT ship these maps (the RUNNER stage copies only
+    // standalone + static). The build instead publishes them as a separate
+    // `civitai-web-maps:<tag>` artifact (Dockerfile `maps` target + the pipeline),
+    // fetched on demand by `scripts/resolve-cpuprofile.mjs --image <tag>` to
+    // de-minify a captured profile — keeping the runtime image lean.
     productionBrowserSourceMaps: true,
     // Next.js i18n docs: https://nextjs.org/docs/advanced-features/i18n-routing
     i18n: {
       locales: ['en'],
       defaultLocale: 'en',
-    },
-    eslint: {
-      ignoreDuringBuilds: true,
     },
     generateEtags: false,
     compress: false,
@@ -103,18 +137,59 @@ export default defineNextConfig(
             // removeConsole: true,
           }
         : {},
-    transpilePackages: ['superjson'],
+    transpilePackages: [
+      'superjson',
+      '@civitai/db-schema',
+      '@civitai/db',
+      '@civitai/buzz',
+      '@civitai/redis',
+      '@civitai/clickhouse',
+      '@civitai/axiom',
+      '@civitai/telemetry',
+      '@civitai/auth',
+      '@civitai/notifications',
+    ],
+    // Renamed from experimental.serverComponentsExternalPackages → top-level serverExternalPackages in Next 15
+    serverExternalPackages: [
+      'redis', '@redis/client', '@redis/bloom', '@redis/json', '@redis/search', '@redis/time-series',
+      '@opentelemetry/sdk-node', '@opentelemetry/instrumentation', '@opentelemetry/instrumentation-http',
+      '@opentelemetry/instrumentation-redis', '@prisma/instrumentation',
+    ],
+    // Several entry points read markdown from src/static-content at runtime via fs
+    // (dynamic string paths that @vercel/nft can't trace). With output:'standalone'
+    // the build only ships traced files, so without these explicit includes the
+    // markdown is missing in the deployed image and every read hits ENOENT ->
+    // 500/404 (works locally because the full source tree is present). Top-level as
+    // of Next 15 (lived under `experimental` on Next 14). Keyed by each read site.
+    outputFileTracingIncludes: {
+      '/safety': ['./src/static-content/**/*'],
+      '/region-blocked': ['./src/static-content/**/*'],
+      '/content/[[...slug]]': ['./src/static-content/**/*'],
+      '/api/trpc/[trpc]': ['./src/static-content/**/*'],
+      '/api/v1/content/[[...slug]]': ['./src/static-content/**/*'],
+      // /api/og uses next/og's `ImageResponse`, which on the nodejs runtime
+      // lazily require()s `next/dist/compiled/@vercel/og/index.node.js` (plus its
+      // resvg/yoga WASM + fonts). @vercel/nft cannot follow that dynamic require,
+      // so with output:'standalone' the file is DROPPED from the image and every
+      // origin (cache-miss) /api/og render throws `Cannot find module ...
+      // index.node.js` -> 500. This became the dominant app-500 source (~1.9/s)
+      // after the Next 16.2.7 upgrade; Cloudflare edge-caching of OG images masks
+      // it for popular entities. Force-include the whole compiled @vercel/og dir
+      // (entry + WASM + fonts) for this route. Two version-agnostic globs (no
+      // hardcoded next@<hash>): the symlinked path, plus the real pnpm path with a
+      // `next@*` wildcard in case globby doesn't follow the node_modules/next
+      // symlink. Whichever matches copies the files; a non-matching glob is a no-op.
+      '/api/og': [
+        './node_modules/next/dist/compiled/@vercel/og/**/*',
+        './node_modules/.pnpm/next@*/node_modules/next/dist/compiled/@vercel/og/**/*',
+      ],
+    },
     experimental: {
       // scrollRestoration: true,
       cpus: 8,
       serverSourceMaps: true,
-      instrumentationHook: true, // Enable instrumentation.ts for OTEL
+      // instrumentationHook removed in Next 15 — instrumentation.ts is enabled by default now
       largePageDataBytes: 512 * 100000,
-      serverComponentsExternalPackages: [
-        'redis', '@redis/client', '@redis/bloom', '@redis/json', '@redis/search', '@redis/time-series',
-        '@opentelemetry/sdk-node', '@opentelemetry/instrumentation', '@opentelemetry/instrumentation-http',
-        '@opentelemetry/instrumentation-redis', '@prisma/instrumentation',
-      ],
       optimizePackageImports: [
         '@civitai/client',
         './src/libs/form',
@@ -122,30 +197,6 @@ export default defineNextConfig(
         '@tabler/icons-react',
         '@headlessui/react',
       ],
-      // Several entry points read markdown from src/static-content at runtime via
-      // fs (dynamic string paths that @vercel/nft can't trace). With
-      // output: 'standalone' the build only ships traced files, so without these
-      // explicit includes the markdown is missing in the deployed image and every
-      // read hits ENOENT -> 500/404 (works locally because the full source tree is
-      // present). Keyed by every entry point that performs the read:
-      //   /safety, /region-blocked          - direct fs read in getServerSideProps
-      //   /content/[[...slug]]               - content.get via SSG prefetch (SSR)
-      //   /api/trpc/[trpc]                   - content.get + checkTosUpdate (the
-      //                                        TOS check runs for every logged-in
-      //                                        user on every page)
-      //   /api/v1/content/[[...slug]]        - content.get via REST apiCaller
-      // In standalone mode the includes are unioned into the shared .next/standalone
-      // root, so any one key would suffice, but we list each read site explicitly so
-      // the fix survives a future move off standalone (per-function tracing).
-      // NOTE: on Next 14 this key lives under `experimental` (moved to top-level in
-      // Next 15) - placing it at the top level here is a silent no-op.
-      outputFileTracingIncludes: {
-        '/safety': ['./src/static-content/**/*'],
-        '/region-blocked': ['./src/static-content/**/*'],
-        '/content/[[...slug]]': ['./src/static-content/**/*'],
-        '/api/trpc/[trpc]': ['./src/static-content/**/*'],
-        '/api/v1/content/[[...slug]]': ['./src/static-content/**/*'],
-      },
     },
     headers: async () => {
       // Add X-Robots-Tag header to all pages matching /sitemap.xml and /sitemap-models.xml /sitemap-articles.xml, etc

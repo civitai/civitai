@@ -117,10 +117,12 @@ export async function requestEmailChange(userId: number, newEmail: string) {
 export async function confirmEmailChange(token: string) {
   const { userId, newEmail } = await verifyEmailChangeToken(token);
 
-  // Update the user's email
+  // Clicking the token link sent to newEmail proves inbox ownership, so mark the email verified — not just
+  // set it. emailVerified (not email) is what gates the last-login-method delete guard and hub magic-link
+  // login, so leaving it null traps users who can't otherwise self-serve a verified email (ClickUp 868k9gug8).
   await dbWrite.user.update({
     where: { id: userId },
-    data: { email: newEmail },
+    data: { email: newEmail, emailVerified: new Date() },
   });
 
   userUpdateCounter?.inc({ location: 'email-verification.service:confirmEmailChange' });

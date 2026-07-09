@@ -15,14 +15,21 @@ module.exports = {
     // "plugin:import/typescript",
     'prettier',
   ],
-  // settings: {
-  //   "import/resolver": {
-  //     // You will also need to install and configure the TypeScript resolver
-  //     // See also https://github.com/import-js/eslint-import-resolver-typescript#configuration
-  //     "typescript": true,
-  //     "node": true,
-  //   },
-  // },
+  settings: {
+    // eslint-config-next 15's no-html-link-for-pages rule can't auto-detect the
+    // pages dir in this layout (src/pages + an src/app stub) and throws
+    // "path argument must be undefined". Pointing the plugin at the project root
+    // lets it resolve src/pages correctly.
+    next: {
+      rootDir: __dirname,
+    },
+    // "import/resolver": {
+    //   // You will also need to install and configure the TypeScript resolver
+    //   // See also https://github.com/import-js/eslint-import-resolver-typescript#configuration
+    //   "typescript": true,
+    //   "node": true,
+    // },
+  },
   rules: {
     // Flags awaited external I/O inside a Prisma interactive $transaction
     // callback (blows the txn timeout budget). See eslint-local-rules.js.

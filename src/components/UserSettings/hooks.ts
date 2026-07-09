@@ -1,8 +1,12 @@
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 
 export function useCurrentUserSettings() {
-  const { data = {} } = trpc.user.getSettings.useQuery();
+  const currentUser = useCurrentUser();
+  const { data = {} } = trpc.user.getSettings.useQuery(undefined, {
+    enabled: !!currentUser,
+  });
   return data;
 }
 

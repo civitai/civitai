@@ -5,6 +5,7 @@ import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.schema';
 import { getModeratedTags } from '~/server/services/system-cache';
+import { isPrismaUniqueViolation } from '~/server/utils/errorHandling';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { TagEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
 
@@ -178,8 +179,22 @@ export const HiddenModels = createUserCache({
     ).map((x) => x.modelId),
 });
 
+// Per-user `Hide` engagements on Model3D rows. Mirrors HiddenModels but
+// against the `Model3DEngagement` table (`Model3DEngagementType.Hide` is
+// already in the prisma enum, no migration required).
+export const HiddenModel3Ds = createUserCache({
+  key: 'hidden-model3ds-1',
+  callback: async ({ userId }) =>
+    (
+      await dbRead.model3DEngagement.findMany({
+        where: { userId, type: 'Hide' },
+        select: { model3dId: true },
+      })
+    ).map((x) => x.model3dId),
+});
+
 export const HiddenUsers = createUserCache({
-  key: 'hidden-users-4',
+  key: 'hidden-users-5',
   callback: async ({ userId }) =>
     await dbRead.$queryRaw<{ id: number; username: string | null }[]>`
         SELECT
@@ -188,6 +203,7 @@ export const HiddenUsers = createUserCache({
         FROM "UserEngagement" ue
         JOIN "User" u ON u."id" = ue."targetUserId"
         WHERE ue."userId" = ${userId} AND ue.type = ${UserEngagementType.Hide}::"UserEngagementType"
+        ORDER BY ue."createdAt" DESC
       `,
 });
 
@@ -243,6 +259,11 @@ interface HiddenModel extends HiddenPreferenceBase {
   hidden: boolean;
 }
 
+interface HiddenModel3D extends HiddenPreferenceBase {
+  id: number;
+  hidden: boolean;
+}
+
 interface HiddenImage extends HiddenPreferenceBase {
   id: number;
   /** the presence of a tagId indicates that this image is hidden due to a user's tag vote */
@@ -253,6 +274,7 @@ interface HiddenImage extends HiddenPreferenceBase {
 type HiddenPreferencesKind =
   | ({ kind: 'tag' } & HiddenTag)
   | ({ kind: 'model' } & HiddenModel)
+  | ({ kind: 'model3d' } & HiddenModel3D)
   | ({ kind: 'image' } & HiddenImage)
   | ({ kind: 'user' } & HiddenUser)
   | ({ kind: 'blockedUser' } & HiddenUser);
@@ -266,6 +288,7 @@ export type HiddenPreferenceTypes = {
   hiddenTags: HiddenTag[];
   hiddenUsers: HiddenUser[];
   hiddenModels: HiddenModel[];
+  hiddenModel3Ds: HiddenModel3D[];
   hiddenImages: HiddenImage[];
   blockedUsers: HiddenUser[];
   blockedByUsers: HiddenUser[];
@@ -308,6 +331,10 @@ const getAllHiddenForUsersCached = async ({
     (hashFields[HiddenModels.field] as AsyncReturnType<typeof HiddenModels.get>) ??
     (await HiddenModels.get({ userId }));
 
+  const getHiddenModel3Ds = async ({ userId }: { userId: number }) =>
+    (hashFields[HiddenModel3Ds.field] as AsyncReturnType<typeof HiddenModel3Ds.get>) ??
+    (await HiddenModel3Ds.get({ userId }));
+
   const getHiddenUsers = async ({ userId }: { userId: number }) =>
     (hashFields[HiddenUsers.field] as AsyncReturnType<typeof HiddenUsers.get>) ??
     (await HiddenUsers.get({ userId }));
@@ -332,21 +359,30 @@ const getAllHiddenForUsersCached = async ({
     (hashFields[BlockedByUsers.field] as AsyncReturnType<typeof BlockedByUsers.get>) ??
     (await BlockedByUsers.get({ userId }));
 
-  // Resolve the 7 base preferences — each is a no-op if cached, otherwise
+  // Resolve the 8 base preferences — each is a no-op if cached, otherwise
   // hits the DB. Wrapped so we can attribute the cache-miss DB fallback
   // latency separately from the redis fan-out above.
-  const [moderatedTags, hiddenTags, images, models, users, blockedUsers, blockedByUsers] =
-    await withSpan('user-preferences:getAllHidden:resolve', () =>
-      Promise.all([
-        getModerationTags(),
-        getHiddenTags({ userId }),
-        getHiddenImages({ userId }),
-        getHiddenModels({ userId }),
-        getHiddenUsers({ userId }),
-        getBlockedUsers({ userId }),
-        getBlockedByUsers({ userId }),
-      ])
-    );
+  const [
+    moderatedTags,
+    hiddenTags,
+    images,
+    models,
+    model3ds,
+    users,
+    blockedUsers,
+    blockedByUsers,
+  ] = await withSpan('user-preferences:getAllHidden:resolve', () =>
+    Promise.all([
+      getModerationTags(),
+      getHiddenTags({ userId }),
+      getHiddenImages({ userId }),
+      getHiddenModels({ userId }),
+      getHiddenModel3Ds({ userId }),
+      getHiddenUsers({ userId }),
+      getBlockedUsers({ userId }),
+      getBlockedByUsers({ userId }),
+    ])
+  );
 
   const [implicitImages] = await Promise.all([
     getHiddenImplicitImages({
@@ -361,6 +397,7 @@ const getAllHiddenForUsersCached = async ({
     hiddenTags,
     images,
     models,
+    model3ds,
     users,
     implicitImages,
     blockedUsers,
@@ -369,16 +406,25 @@ const getAllHiddenForUsersCached = async ({
 };
 
 const getAllHiddenForUserFresh = async ({ userId }: { userId: number }) => {
-  const [moderatedTags, hiddenTags, images, models, users, blockedUsers, blockedByUsers] =
-    await Promise.all([
-      getModeratedTags(),
-      HiddenTags.get({ userId }),
-      HiddenImages.get({ userId }),
-      HiddenModels.get({ userId }),
-      HiddenUsers.get({ userId }),
-      BlockedUsers.get({ userId }),
-      BlockedByUsers.get({ userId }),
-    ]);
+  const [
+    moderatedTags,
+    hiddenTags,
+    images,
+    models,
+    model3ds,
+    users,
+    blockedUsers,
+    blockedByUsers,
+  ] = await Promise.all([
+    getModeratedTags(),
+    HiddenTags.get({ userId }),
+    HiddenImages.get({ userId }),
+    HiddenModels.get({ userId }),
+    HiddenModel3Ds.get({ userId }),
+    HiddenUsers.get({ userId }),
+    BlockedUsers.get({ userId }),
+    BlockedByUsers.get({ userId }),
+  ]);
 
   const [implicitImages] = await Promise.all([
     ImplicitHiddenImages.get({
@@ -393,6 +439,7 @@ const getAllHiddenForUserFresh = async ({ userId }: { userId: number }) => {
     hiddenTags,
     images,
     models,
+    model3ds,
     users,
     implicitImages,
     blockedUsers,
@@ -412,6 +459,7 @@ export async function getAllHiddenForUser({
     hiddenTags,
     images,
     models,
+    model3ds,
     users,
     implicitImages,
     blockedUsers,
@@ -423,6 +471,7 @@ export async function getAllHiddenForUser({
   const result = {
     hiddenImages: [...images.map((id) => ({ id, hidden: true })), ...implicitImages],
     hiddenModels: models.map((id) => ({ id, hidden: true })),
+    hiddenModel3Ds: model3ds.map((id) => ({ id, hidden: true })),
     hiddenUsers: users.map((user) => ({ ...user, hidden: true })),
     hiddenTags: [...hiddenTags.map((tag) => ({ ...tag, hidden: true })), ...moderatedTags],
     blockedUsers: blockedUsers.map((user) => ({ ...user, hidden: true })),
@@ -443,6 +492,8 @@ export async function toggleHidden({
       return await toggleHideImage({ userId, imageId: data[0].id });
     case 'model':
       return await toggleHideModel({ userId, modelId: data[0].id });
+    case 'model3d':
+      return await toggleHideModel3D({ userId, model3dId: data[0].id });
     case 'user':
       return await toggleHideUser({ userId, targetUserId: data[0].id, setTo: hidden });
     case 'tag':
@@ -496,8 +547,12 @@ async function toggleHiddenTags({
       });
     }
     if (toCreate.length) {
+      // skipDuplicates so a concurrent toggle that already inserted some of these
+      // (userId, tagId) rows doesn't blow up the WHOLE batch with a P2002 (which
+      // would drop the legitimately-new rows too) — bulk-insert is idempotent.
       await dbWrite.tagEngagement.createMany({
         data: toCreate.map((tagId) => ({ userId, tagId, type: 'Hide' })),
+        skipDuplicates: true,
       });
     }
 
@@ -553,7 +608,13 @@ async function toggleHideModel({
   });
 
   if (!engagement)
-    await dbWrite.modelEngagement.create({ data: { userId, modelId, type: 'Hide' } });
+    await dbWrite.modelEngagement
+      .create({ data: { userId, modelId, type: 'Hide' } })
+      // Toggle racing itself → P2002 on the (userId, modelId) PK. The Hide row
+      // already exists, so it's idempotent — fall through to the cache refresh.
+      .catch((error) => {
+        if (!isPrismaUniqueViolation(error)) throw error;
+      });
   else if (engagement.type === 'Hide')
     await dbWrite.modelEngagement.delete({ where: { userId_modelId: { userId, modelId } } });
   else
@@ -566,6 +627,48 @@ async function toggleHideModel({
 
   // const addedOrUpdated = !engagement || engagement.type !== 'Hide';
   // const toReturn = { id: modelId, kind: 'model' } as HiddenPreferencesKind;
+
+  return {
+    added: [],
+    removed: [],
+  };
+}
+
+// Hide / unhide a single Model3D for a viewer. Mirrors `toggleHideModel`
+// using the `Model3DEngagement` table (Hide type already exists, so no
+// migration required). Refreshes the per-user `HiddenModel3Ds` cache so the
+// next feed fetch picks the new id up.
+async function toggleHideModel3D({
+  userId,
+  model3dId,
+}: {
+  userId: number;
+  model3dId: number;
+}): Promise<HiddenPreferencesDiff> {
+  const engagement = await dbWrite.model3DEngagement.findUnique({
+    where: { userId_model3dId: { userId, model3dId } },
+    select: { type: true },
+  });
+
+  if (!engagement)
+    await dbWrite.model3DEngagement
+      .create({ data: { userId, model3dId, type: 'Hide' } })
+      // Toggle racing itself → P2002 on the (userId, model3dId) PK. Idempotent
+      // (Hide already exists) — fall through to the cache refresh.
+      .catch((error) => {
+        if (!isPrismaUniqueViolation(error)) throw error;
+      });
+  else if (engagement.type === 'Hide')
+    await dbWrite.model3DEngagement.delete({
+      where: { userId_model3dId: { userId, model3dId } },
+    });
+  else
+    await dbWrite.model3DEngagement.update({
+      where: { userId_model3dId: { userId, model3dId } },
+      data: { type: 'Hide' },
+    });
+
+  await HiddenModel3Ds.refreshCache({ userId });
 
   return {
     added: [],
@@ -587,9 +690,16 @@ async function toggleHideUser({
     select: { type: true },
   });
   if (!engagement)
-    await dbWrite.userEngagement.create({
-      data: { userId, targetUserId, type: 'Hide' },
-    });
+    await dbWrite.userEngagement
+      .create({
+        data: { userId, targetUserId, type: 'Hide' },
+      })
+      // Toggle racing itself → P2002 on the (userId, targetUserId) PK. The row
+      // already exists — idempotent, so fall through to the cache refreshes
+      // (which read DB truth) instead of bubbling a 500.
+      .catch((error) => {
+        if (!isPrismaUniqueViolation(error)) throw error;
+      });
   else if (engagement.type === 'Hide' && setTo !== true)
     await dbWrite.userEngagement.delete({
       where: { userId_targetUserId: { userId, targetUserId } },
@@ -634,9 +744,16 @@ async function toggleBlockUser({
     select: { type: true },
   });
   if (!engagement)
-    await dbWrite.userEngagement.create({
-      data: { userId, targetUserId, type: 'Block' },
-    });
+    await dbWrite.userEngagement
+      .create({
+        data: { userId, targetUserId, type: 'Block' },
+      })
+      // Toggle racing itself → P2002 on the (userId, targetUserId) PK. The row
+      // already exists — idempotent, so fall through to the cache refreshes
+      // (which read DB truth) instead of bubbling a 500.
+      .catch((error) => {
+        if (!isPrismaUniqueViolation(error)) throw error;
+      });
   else if (engagement.type === 'Block' && setTo !== true)
     await dbWrite.userEngagement.delete({
       where: { userId_targetUserId: { userId, targetUserId } },
@@ -669,7 +786,13 @@ async function toggleHideImage({
     select: { type: true },
   });
   if (!engagement)
-    await dbWrite.imageEngagement.create({ data: { userId, imageId, type: 'Hide' } });
+    await dbWrite.imageEngagement
+      .create({ data: { userId, imageId, type: 'Hide' } })
+      // Toggle racing itself → P2002 on the (userId, imageId) PK. Idempotent
+      // (Hide already exists) — fall through to the cache refresh.
+      .catch((error) => {
+        if (!isPrismaUniqueViolation(error)) throw error;
+      });
   else if (engagement.type === 'Hide')
     await dbWrite.imageEngagement.delete({
       where: { userId_imageId: { userId, imageId } },

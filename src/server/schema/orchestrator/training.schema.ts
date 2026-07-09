@@ -1,4 +1,4 @@
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import * as z from 'zod';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
@@ -22,7 +22,14 @@ const prodigyOptimizers = ['prodigy', 'prodigy8bit'];
 const maxLrForNonProdigy = 0.1;
 const aiToolkitBaseParams = z.object({
   engine: z.literal(OrchEngineTypes.AiToolkit),
-  epochs: z.number().max(aiToolkitMaxEpochs),
+  // Steps-based pricing: `steps` is the primary length knob; `epochs` is the saved
+  // checkpoint count. Both optional — `epochs`-only keeps legacy flat pricing.
+  epochs: z.number().int().min(1).max(aiToolkitMaxEpochs).optional(),
+  steps: z.number().int().min(1).optional(),
+  batchSize: z.number().int().min(1).optional(),
+  sampleCfgScale: z.number().optional(),
+  sampleStrength: z.number().optional(),
+  continueFrom: z.string().optional(),
   resolution: z.number().nullable(),
   lr: z.number(),
   textEncoderLr: z.number().nullable(),
@@ -92,6 +99,14 @@ const aiToolkitTrainingParams = z
     }),
     aiToolkitBaseParams.extend({
       ecosystem: z.literal('anima'),
+      modelVariant: z.undefined().optional(),
+    }),
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('boogu'),
+      modelVariant: z.undefined().optional(),
+    }),
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('krea2'),
       modelVariant: z.undefined().optional(),
     }),
     // SD3, Flux1, Flux2Klein, and Wan require modelVariant
@@ -167,7 +182,12 @@ const whatIfAiToolkitParams = z.object({
   trainingDataImagesCount: z.number(),
   ecosystem: z.string(),
   modelVariant: z.string().optional(),
-  epochs: z.number().max(aiToolkitMaxEpochs),
+  epochs: z.number().int().min(1).max(aiToolkitMaxEpochs).optional(),
+  steps: z.number().int().min(1).optional(),
+  batchSize: z.number().int().min(1).optional(),
+  sampleCfgScale: z.number().optional(),
+  sampleStrength: z.number().optional(),
+  continueFrom: z.string().optional(),
   resolution: z.number().nullable(),
   lr: z.number(),
   textEncoderLr: z.number().nullable(),

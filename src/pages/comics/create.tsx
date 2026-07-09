@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Alert,
   Button,
   Container,
   Group,
@@ -12,7 +13,16 @@ import {
   Title,
 } from '@mantine/core';
 import { Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
-import { IconBook, IconPhoto, IconPhotoUp, IconUpload, IconUser, IconWand, IconX } from '@tabler/icons-react';
+import {
+  IconBook,
+  IconInfoCircle,
+  IconPhoto,
+  IconPhotoUp,
+  IconUpload,
+  IconUser,
+  IconWand,
+  IconX,
+} from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
@@ -94,9 +104,7 @@ function CreateComicPage() {
         aspectRatios: ['3:4'] as `${number}:${number}`[],
         onConfirm: async (output: { src: string; cropped?: Blob }[]) => {
           const blob = output[0]?.cropped;
-          const uploadFile = blob
-            ? new File([blob], 'cover.jpg', { type: blob.type })
-            : file;
+          const uploadFile = blob ? new File([blob], 'cover.jpg', { type: blob.type }) : file;
           const result = await uploadCoverToCF(uploadFile);
           setCoverUrl(result.id);
           URL.revokeObjectURL(url);
@@ -159,178 +167,8 @@ function CreateComicPage() {
       <div className={styles.layout}>
         {/* ── Left: Form ─────────────────────────── */}
         <div className={styles.formColumn}>
-          <Stack gap="md">
-            {/* ── Images ── */}
-            <div>
-              <Text size="sm" fw={600} mb={2}>
-                Images
-              </Text>
-              <Text size="xs" c="dimmed" mb="sm">
-                Upload a wide hero banner for the comic overview page and a portrait cover for
-                browse cards. Both are optional and can be changed later.
-              </Text>
-            </div>
-            <div className={styles.imagesRow}>
-              {/* Hero */}
-              <div className={styles.heroSection}>
-                <Text size="xs" fw={600} c="dimmed" mb={4}>
-                  Hero Banner
-                </Text>
-                {heroUploading ? (
-                  <div className={styles.heroDropzone}>
-                    <Stack align="center" justify="center" gap={4} h="100%">
-                      <Loader size="sm" color="yellow" />
-                      <Text size="xs" c="dimmed">
-                        Uploading...
-                      </Text>
-                    </Stack>
-                  </div>
-                ) : heroUrl ? (
-                  <HeroPositionPicker
-                    url={heroUrl}
-                    position={heroPosition}
-                    onPositionChange={setHeroPosition}
-                    onRemove={() => {
-                      setHeroUrl(null);
-                      setHeroPosition(50);
-                    }}
-                    className={styles.heroPickerWrap}
-                  />
-                ) : (
-                  <Stack gap={4}>
-                    <Dropzone
-                      onDrop={handleHeroDrop}
-                      accept={IMAGE_MIME_TYPE}
-                      maxFiles={1}
-                      className={styles.heroDropzone}
-                    >
-                      <Stack
-                        align="center"
-                        justify="center"
-                        gap={4}
-                        h="100%"
-                        style={{ pointerEvents: 'none' }}
-                      >
-                        <Dropzone.Accept>
-                          <IconUpload size={20} className="text-blue-500" />
-                        </Dropzone.Accept>
-                        <Dropzone.Reject>
-                          <IconX size={20} className="text-red-500" />
-                        </Dropzone.Reject>
-                        <Dropzone.Idle>
-                          <IconPhoto size={20} style={{ color: '#909296' }} />
-                        </Dropzone.Idle>
-                        <Text size="xs" c="dimmed">
-                          16:9 banner
-                        </Text>
-                      </Stack>
-                    </Dropzone>
-                    <Group gap={4}>
-                      <Button
-                        variant="subtle"
-                        size="compact-xs"
-                        leftSection={<IconPhotoUp size={14} />}
-                        onClick={handlePickHeroFromGenerator}
-                        loading={pickingHero}
-                      >
-                        Pick from generator
-                      </Button>
-                      <Button
-                        variant="subtle"
-                        size="compact-xs"
-                        leftSection={<IconWand size={14} />}
-                        onClick={() => setGenerateHeroOpened(true)}
-                      >
-                        Generate
-                      </Button>
-                    </Group>
-                  </Stack>
-                )}
-              </div>
-
-              {/* Cover */}
-              <div className={styles.coverSection}>
-                <Text size="xs" fw={600} c="dimmed" mb={4}>
-                  Cover
-                </Text>
-                {coverUploading ? (
-                  <div className={styles.coverDropzone}>
-                    <Stack align="center" justify="center" gap={4} h="100%">
-                      <Loader size="xs" color="yellow" />
-                      <Text size="xs" c="dimmed">
-                        Uploading...
-                      </Text>
-                    </Stack>
-                  </div>
-                ) : coverUrl ? (
-                  <div className={styles.coverPreviewWrap}>
-                    <div className={styles.coverPreview}>
-                      <img src={getEdgeUrl(coverUrl, { width: 240 })} alt="Cover" />
-                    </div>
-                    <ActionIcon
-                      variant="filled"
-                      color="dark"
-                      size="xs"
-                      className={styles.removeBtn}
-                      onClick={() => setCoverUrl(null)}
-                    >
-                      <IconX size={12} />
-                    </ActionIcon>
-                  </div>
-                ) : (
-                  <Stack gap={4}>
-                    <Dropzone
-                      onDrop={handleCoverDrop}
-                      accept={IMAGE_MIME_TYPE}
-                      maxFiles={1}
-                      className={styles.coverDropzone}
-                    >
-                      <Stack
-                        align="center"
-                        justify="center"
-                        gap={4}
-                        h="100%"
-                        style={{ pointerEvents: 'none' }}
-                      >
-                        <Dropzone.Accept>
-                          <IconUpload size={18} className="text-blue-500" />
-                        </Dropzone.Accept>
-                        <Dropzone.Reject>
-                          <IconX size={18} className="text-red-500" />
-                        </Dropzone.Reject>
-                        <Dropzone.Idle>
-                          <IconPhoto size={18} style={{ color: '#909296' }} />
-                        </Dropzone.Idle>
-                        <Text size="xs" c="dimmed">
-                          3:4
-                        </Text>
-                      </Stack>
-                    </Dropzone>
-                    <Group gap={4}>
-                      <Button
-                        variant="subtle"
-                        size="compact-xs"
-                        leftSection={<IconPhotoUp size={14} />}
-                        onClick={handlePickCoverFromGenerator}
-                        loading={pickingCover}
-                      >
-                        Pick from generator
-                      </Button>
-                      <Button
-                        variant="subtle"
-                        size="compact-xs"
-                        leftSection={<IconWand size={14} />}
-                        onClick={() => setGenerateCoverOpened(true)}
-                      >
-                        Generate
-                      </Button>
-                    </Group>
-                  </Stack>
-                )}
-              </div>
-            </div>
-
-            {/* ── Details ── */}
+          <Stack gap="xl">
+            {/* ── Details (name is the most important field — keep it first) ── */}
             <div>
               <Text size="sm" fw={600} mb={2}>
                 Details
@@ -368,6 +206,188 @@ function CreateComicPage() {
               value={description}
               onChange={(e) => setDescription(e.target.value)}
             />
+
+            {/* ── Images (secondary to the name, so placed below) ── */}
+            <div>
+              <Text size="sm" fw={600} mb={2}>
+                Images
+              </Text>
+              <Text size="xs" c="dimmed" mb="sm">
+                Upload a wide hero banner for the comic overview page and a portrait cover for
+                browse cards. Both are optional and can be changed later.
+              </Text>
+            </div>
+            <div className={styles.imagesRow}>
+              {/* Hero — takes the remaining width beside the cover card */}
+              <div className={styles.heroSection}>
+                <Text size="xs" fw={600} c="dimmed" mb={4}>
+                  Hero Banner
+                </Text>
+                {heroUploading ? (
+                  <div className={styles.heroDropzone}>
+                    <Stack align="center" justify="center" gap={4} h="100%">
+                      <Loader size="sm" color="yellow" />
+                      <Text size="xs" c="dimmed">
+                        Uploading...
+                      </Text>
+                    </Stack>
+                  </div>
+                ) : heroUrl ? (
+                  <HeroPositionPicker
+                    url={heroUrl}
+                    position={heroPosition}
+                    onPositionChange={setHeroPosition}
+                    onRemove={() => {
+                      setHeroUrl(null);
+                      setHeroPosition(50);
+                    }}
+                    className={styles.heroPickerWrap}
+                  />
+                ) : (
+                  <Stack gap={6}>
+                    <Dropzone
+                      onDrop={handleHeroDrop}
+                      accept={IMAGE_MIME_TYPE}
+                      maxFiles={1}
+                      className={styles.heroDropzone}
+                    >
+                      <Stack
+                        align="center"
+                        justify="center"
+                        gap={4}
+                        h="100%"
+                        style={{ pointerEvents: 'none' }}
+                      >
+                        <Dropzone.Accept>
+                          <IconUpload size={20} className="text-blue-500" />
+                        </Dropzone.Accept>
+                        <Dropzone.Reject>
+                          <IconX size={20} className="text-red-500" />
+                        </Dropzone.Reject>
+                        <Dropzone.Idle>
+                          <IconPhoto size={20} style={{ color: '#909296' }} />
+                        </Dropzone.Idle>
+                        <Text size="xs" c="dimmed">
+                          16:9 banner
+                        </Text>
+                      </Stack>
+                    </Dropzone>
+                    <Group gap={8}>
+                      <Button
+                        variant="subtle"
+                        size="compact-xs"
+                        leftSection={<IconPhotoUp size={14} />}
+                        onClick={handlePickHeroFromGenerator}
+                        loading={pickingHero}
+                      >
+                        Pick from generator
+                      </Button>
+                      <Button
+                        variant="subtle"
+                        size="compact-xs"
+                        leftSection={<IconWand size={14} />}
+                        onClick={() => setGenerateHeroOpened(true)}
+                      >
+                        Generate
+                      </Button>
+                    </Group>
+                  </Stack>
+                )}
+              </div>
+
+              {/* Cover — a compact card with its actions stacked beneath,
+                  so the "Pick from generator" button has full width and
+                  never gets clipped */}
+              <div className={styles.coverSection}>
+                <Text size="xs" fw={600} c="dimmed" mb={4}>
+                  Cover
+                </Text>
+                {coverUploading ? (
+                  <div className={styles.coverDropzone}>
+                    <Stack align="center" justify="center" gap={4} h="100%">
+                      <Loader size="xs" color="yellow" />
+                      <Text size="xs" c="dimmed">
+                        Uploading...
+                      </Text>
+                    </Stack>
+                  </div>
+                ) : coverUrl ? (
+                  <div className={styles.coverPreviewWrap}>
+                    <div className={styles.coverPreview}>
+                      <img src={getEdgeUrl(coverUrl, { width: 240 })} alt="Cover" />
+                    </div>
+                    <ActionIcon
+                      variant="filled"
+                      color="dark"
+                      size="xs"
+                      className={styles.removeBtn}
+                      onClick={() => setCoverUrl(null)}
+                    >
+                      <IconX size={12} />
+                    </ActionIcon>
+                  </div>
+                ) : (
+                  <Stack gap={8}>
+                    <Dropzone
+                      onDrop={handleCoverDrop}
+                      accept={IMAGE_MIME_TYPE}
+                      maxFiles={1}
+                      className={styles.coverDropzone}
+                    >
+                      <Stack
+                        align="center"
+                        justify="center"
+                        gap={4}
+                        h="100%"
+                        style={{ pointerEvents: 'none' }}
+                      >
+                        <Dropzone.Accept>
+                          <IconUpload size={18} className="text-blue-500" />
+                        </Dropzone.Accept>
+                        <Dropzone.Reject>
+                          <IconX size={18} className="text-red-500" />
+                        </Dropzone.Reject>
+                        <Dropzone.Idle>
+                          <IconPhoto size={18} style={{ color: '#909296' }} />
+                        </Dropzone.Idle>
+                        <Text size="xs" c="dimmed">
+                          3:4
+                        </Text>
+                      </Stack>
+                    </Dropzone>
+                    <Button
+                      variant="subtle"
+                      size="compact-xs"
+                      leftSection={<IconPhotoUp size={14} />}
+                      onClick={handlePickCoverFromGenerator}
+                      loading={pickingCover}
+                    >
+                      Pick from generator
+                    </Button>
+                    <Button
+                      variant="subtle"
+                      size="compact-xs"
+                      leftSection={<IconWand size={14} />}
+                      onClick={() => setGenerateCoverOpened(true)}
+                    >
+                      Generate
+                    </Button>
+                  </Stack>
+                )}
+              </div>
+            </div>
+
+            {/* Heads-up: where the comic lives after creation */}
+            <Alert variant="light" color="blue" icon={<IconInfoCircle size={18} />}>
+              <Text size="sm">
+                Your comic is saved as a{' '}
+                <Text span fw={700}>
+                  draft
+                </Text>{' '}
+                and will appear on your profile&apos;s Comics page. It stays private to you until
+                you publish a chapter.
+              </Text>
+            </Alert>
 
             {/* Actions */}
             <Group justify="flex-end">

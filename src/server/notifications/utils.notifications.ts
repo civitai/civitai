@@ -1,12 +1,12 @@
 import { articleNotifications } from '~/server/notifications/article.notifications';
 import { comicNotifications } from '~/server/notifications/comics.notifications';
+import { articleRatingReviewNotifications } from '~/server/notifications/article-rating-review.notifications';
 import { articleUnpublishNotifications } from '~/server/notifications/article-unpublish.notifications';
 import { auctionNotifications } from '~/server/notifications/auction.notifications';
 import type { BareNotification } from '~/server/notifications/base.notifications';
 import { bountyNotifications } from '~/server/notifications/bounty.notifications';
 import { buzzNotifications } from '~/server/notifications/buzz.notifications';
 import { challengeNotifications } from '~/server/notifications/challenge.notifications';
-import { clubNotifications } from '~/server/notifications/club.notifications';
 import { collectionNotifications } from '~/server/notifications/collection.notifications';
 import { commentNotifications } from '~/server/notifications/comment.notifications';
 import { cosmeticShopNotifications } from '~/server/notifications/cosmetic-shop.notifications';
@@ -38,13 +38,13 @@ export const notificationProcessors = {
   ...unpublishNotifications,
   ...articleNotifications,
   ...articleUnpublishNotifications,
+  ...articleRatingReviewNotifications,
   ...reportNotifications,
   ...featuredNotifications,
   ...bountyNotifications,
   ...buzzNotifications,
   ...collectionNotifications,
   ...imageNotifications,
-  ...clubNotifications,
   ...creatorsProgramNotifications,
   ...followNotifications,
   ...generationMuteNotifications,

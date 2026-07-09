@@ -11,6 +11,7 @@ import {
 } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getHasClientHistory } from '~/store/ClientHistoryStore';
+import { getRoutedDialogState } from '~/components/Dialog/routedDialogState';
 
 export function RoutedDialogProvider() {
   const router = useRouter();
@@ -82,7 +83,12 @@ export function RoutedDialogProvider() {
       const dialog = dialogs[name];
       if (!dialog) continue;
       if ((dialog as any).requireAuth && !currentUser) continue;
-      const state = history.state.state;
+      // Safari/iOS can deliver a null `history.state` on back/forward + bfcache
+      // restores (same crash class fixed in BrowserRouterProvider). This effect
+      // runs on that nav (deps include browserRouter.query), and on a `?dialog=…`
+      // URL `toOpen` is non-empty — an unguarded `history.state.state` threw
+      // `TypeError: null is not an object`. Degrade to `{}` (no extra props).
+      const state = getRoutedDialogState(history.state);
       const Dialog = createBrowserRouterSync(dialog.component);
       dialogStore.trigger({
         id: key,

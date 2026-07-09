@@ -1,5 +1,5 @@
 import { getCookies } from 'cookies-next';
-import { useSession } from 'next-auth/react';
+import { useSession } from '~/providers/SessionProvider';
 
 import React, { createContext, useContext, useMemo } from 'react';
 import { useIsClient } from '~/providers/IsClientProvider';

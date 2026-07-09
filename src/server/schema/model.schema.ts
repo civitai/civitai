@@ -113,7 +113,6 @@ export const getAllModelsSchema = z.object({
   collectionId: z.number().optional(),
   collectionItemStatus: z.array(z.enum(CollectionItemStatus)).optional(),
   fileFormats: z.enum(constants.modelFileFormats).array().optional(),
-  clubId: z.number().optional(),
   pending: z.boolean().optional(),
   collectionTagId: z.number().optional(),
   availability: z.enum(Availability).optional(),

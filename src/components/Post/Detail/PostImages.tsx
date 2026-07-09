@@ -169,7 +169,9 @@ export function PostImages({
                           width={width < maxWidth ? width : maxWidth}
                           original={image.type === 'video'}
                           anim={safe}
-                          html5Controls={shouldDisplayHtmlControls(image)}
+                          html5Controls={
+                            features.nativeVideoControls || shouldDisplayHtmlControls(image)
+                          }
                           videoRef={videoRef}
                           vimeoVideoId={vimeoVideoId}
                         />
@@ -178,7 +180,8 @@ export function PostImages({
                     <Reactions
                       className={clsx(classes.reactions, {
                         [classes.reactionsWithControls]:
-                          !vimeoVideoId && shouldDisplayHtmlControls(image),
+                          !vimeoVideoId &&
+                          (features.nativeVideoControls || shouldDisplayHtmlControls(image)),
                         [classes.vimeoReactions]: !!vimeoVideoId,
                       })}
                       entityId={image.id}

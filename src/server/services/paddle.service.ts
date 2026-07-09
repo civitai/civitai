@@ -41,6 +41,11 @@ import type {
 } from '~/server/schema/subscriptions.schema';
 import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
 import { createBuzzTransaction, getMultipliersForUser } from '~/server/services/buzz.service';
+import {
+  AttributionAppMissingError,
+  recordAttribution,
+} from '~/server/services/blocks/buzz-attribution.service';
+import { extractAttribution } from '~/server/schema/blocks/attribution.schema';
 import { grantCosmetics } from '~/server/services/cosmetic.service';
 import { getPlans } from '~/server/services/subscriptions.service';
 import { getOrCreateVault } from '~/server/services/vault.service';
@@ -242,6 +247,50 @@ export const processCompleteBuzzTransaction = async (
       userId,
       cosmeticIds,
     });
+  }
+
+  // App Blocks revenue-share attribution. Skipped silently when the
+  // line-item customData doesn't carry block fields (the steady-state
+  // for every non-block paddle buzz purchase). Attribution failures
+  // never throw — the buzz credit has already happened and the next
+  // webhook retry will re-attempt the write (idempotent on
+  // payment_transaction_id + app_block_id).
+  const attribution = extractAttribution(meta as Record<string, unknown> as Record<string, string | number | null | undefined>);
+  if (attribution) {
+    try {
+      // Paddle doesn't surface processor fees on the line item shape
+      // the SDK gives us here — we'd need a separate call against
+      // transactions.get and inspect totals.fee. For v1 we leave fee
+      // at 0 (publisher gets a slightly higher cut than Paddle's net).
+      // Revisit if reconciliation surfaces material drift. TODO.
+      const providerFeeCents = 0;
+      const usdAmountCents = Number(transaction.details?.totals?.total ?? 0);
+      await recordAttribution({
+        userId,
+        buzzAmount: amount,
+        buzzType: 'yellow',
+        usdAmountCents,
+        providerFeeCents,
+        paymentProvider: 'paddle',
+        paymentTransactionId: transaction.id,
+        buzzTransactionId: null,
+        attribution,
+      });
+    } catch (attrErr) {
+      const isExpected = attrErr instanceof AttributionAppMissingError;
+      logToAxiom(
+        {
+          name: 'paddle-webhook',
+          type: isExpected ? 'warning' : 'error',
+          stage: 'block-attribution-write',
+          paddleTransactionId: transaction.id,
+          attribution,
+          error: (attrErr as Error)?.message,
+          stack: (attrErr as Error)?.stack,
+        },
+        'webhooks'
+      ).catch(() => null);
+    }
   }
 };
 

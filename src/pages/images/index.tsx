@@ -25,7 +25,7 @@ export default Page(
           {hidden && <Title>Your Hidden Images</Title>}
           <div className="flex flex-col gap-2.5">
             <ImageCategories />
-            <ImagesInfinite showEof showAds useIndex />
+            <ImagesInfinite showEof showAds />
           </div>
         </MasonryContainer>
       </>

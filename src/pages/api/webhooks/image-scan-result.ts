@@ -26,6 +26,7 @@ import {
   imageScanTypes,
 } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
+import { updateModel3DNsfwLevelForThumbnailImage } from '~/server/services/nsfwLevels.service';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
 import { getTagRules } from '~/server/services/system-cache';
 import {
@@ -64,8 +65,6 @@ import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import type { NextApiRequest } from 'next';
 
 // const REQUIRED_SCANS = 2;
-
-const localTagCache: Record<string, { id: number; blocked?: true; ignored?: true }> = {};
 
 enum Status {
   Success = 0,
@@ -126,6 +125,12 @@ export default WebhookEndpoint(async (req, res) => {
     try {
       await processImageScanResult(req);
     } catch (e: any) {
+      // Image was deleted between scan submit and callback — nothing to update.
+      // ACK with 200 so the orchestrator drops the workflow instead of retrying
+      // a result for a row that no longer exists.
+      if (e instanceof Error && e.message.startsWith('image not found')) {
+        return res.status(200).json({ ok: true, skipped: 'deleted' });
+      }
       if (e instanceof Error) {
         await logToAxiom({
           name: 'image-scan-result',
@@ -191,7 +196,11 @@ export default WebhookEndpoint(async (req, res) => {
 
     return res.status(200).json({ ok: true });
   } catch (e: any) {
-    if (e.message === 'Image not found') return res.status(404).send({ error: e.message });
+    // Image was deleted between scan submit and callback — there's nothing to
+    // update. ACK with 200 so the scanner drops the job instead of re-delivering
+    // the result for a row that no longer exists.
+    if (e.message === 'Image not found')
+      return res.status(200).json({ ok: true, skipped: 'deleted' });
     return res.status(400).send({ error: e.message });
   }
 });
@@ -259,6 +268,7 @@ async function updateImage(
 
       // await dbWrite.$executeRaw`SELECT update_nsfw_level_new(${id}::int);`;
       if (image.postId) await updatePostNsfwLevel(image.postId);
+      await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId: image.postId });
 
       await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
 
@@ -300,6 +310,7 @@ async function updateImage(
         // #endregion
       }
     } else if (data.ingestion === 'Blocked') {
+      await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId: image.postId });
       await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Delete });
     }
 
@@ -531,6 +542,8 @@ async function getTagsFromIncomingTags({
   tags: BodyProps['tags'];
   source: BodyProps['source'];
 }) {
+  const localTagCache: Record<string, { id: number; blocked?: true; ignored?: true }> = {};
+
   if (!incomingTags) {
     await logToAxiom({
       type: 'image-scan-result',
@@ -642,7 +655,7 @@ async function getTagsFromIncomingTags({
         target:
           source === TagSource.WD14
             ? [TagTarget.Image]
-            : [TagTarget.Image, TagTarget.Post, TagTarget.Model],
+            : [TagTarget.Image, TagTarget.Post, TagTarget.Model, TagTarget.Model3D],
       })),
     });
     const newFoundTags = await dbWrite.tag.findMany({

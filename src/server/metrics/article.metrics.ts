@@ -2,12 +2,19 @@ import { chunk } from 'lodash-es';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { articlesSearchIndex } from '~/server/search-index';
+// NOTE: `articlesSearchIndex` ('~/server/search-index') and `articleStatCache`
+// ('~/server/redis/caches') are imported LAZILY inside update() rather than at the
+// top level. Statically they form a circular import back into this module; under
+// Next 16 / Turbopack these become async modules, which opened a cold-start window
+// where this module's `articleMetrics` export was read before it was assigned →
+// `ReferenceError: Cannot access 'S' before initialization` → 500s on api-heavy.
+// Both are only used at runtime inside update(), so deferring the import is safe and
+// breaks the cycle. These are the only two imports unique to article.metrics vs the
+// other 14 metric processors, which is why only this one threw.
 import { createLogger } from '~/utils/logging';
 import type { Task } from '~/server/utils/concurrency-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { executeRefresh, getAffected, getEntityMetricTasks } from '~/server/metrics/metric-helpers';
-import { articleStatCache } from '~/server/redis/caches';
 import type { ArticleMetric } from '~/shared/utils/prisma/models';
 import { templateHandler } from '~/server/db/db-helpers';
 
@@ -71,6 +78,8 @@ export const articleMetrics = createMetricProcessor({
     //---------------------------------------
     const affectedArticleIds = Object.keys(ctx.updates).map((id) => parseInt(id, 10));
     log('update search index', affectedArticleIds.length, 'articles');
+    // Lazy import — breaks the static circular import (see top-of-file note).
+    const { articlesSearchIndex } = await import('~/server/search-index');
     await articlesSearchIndex.queueUpdate(
       affectedArticleIds.map((id) => ({
         id,
@@ -82,6 +91,8 @@ export const articleMetrics = createMetricProcessor({
     //---------------------------------------
     log('bust article stat cache', affectedArticleIds.length, 'articles');
     if (affectedArticleIds.length > 0) {
+      // Lazy import — breaks the static circular import (see top-of-file note).
+      const { articleStatCache } = await import('~/server/redis/caches');
       await articleStatCache.bust(affectedArticleIds);
     }
   },
@@ -207,7 +218,7 @@ async function getEngagementTasks(ctx: MetricContext) {
       SELECT
         ae."articleId",
         'AllTime'::"MetricTimeframe" AS timeframe,
-        COUNT(ae.id)::int AS "hideCount"
+        COUNT(*)::int AS "hideCount"
       FROM "ArticleEngagement" ae
       WHERE ae."articleId" IN (${ids})
         AND ae."articleId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}

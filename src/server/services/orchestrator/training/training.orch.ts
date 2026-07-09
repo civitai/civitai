@@ -169,7 +169,7 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
 
   let trainingInput: AiToolkitTrainingInput = {
     engine: 'ai-toolkit',
-    ecosystem: aiToolkitParams.ecosystem as any, // Type assertion for new ecosystems (qwen, chroma, zimageturbo, zimagebase) until @civitai/client is updated
+    ecosystem: aiToolkitParams.ecosystem,
 
     ...(aiToolkitParams.modelVariant && { modelVariant: aiToolkitParams.modelVariant }),
     trainingData: {
@@ -179,8 +179,16 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
     } as ZipTrainingData,
     samples: {
       prompts: samplePrompts,
+      cfgScale: aiToolkitParams.sampleCfgScale ?? undefined,
+      strength: aiToolkitParams.sampleStrength ?? undefined,
     },
-    epochs: aiToolkitParams.epochs,
+    // Steps-based pricing: `steps` is the primary length knob and drives pricing;
+    // `epochs` is the saved-checkpoint count. `numberOfRepeats` is deprecated and no
+    // longer sent. Sending `epochs` without `steps` keeps the legacy flat pricing.
+    steps: aiToolkitParams.steps ?? undefined,
+    epochs: aiToolkitParams.epochs ?? undefined,
+    batchSize: aiToolkitParams.batchSize ?? undefined,
+    continueFrom: aiToolkitParams.continueFrom ?? undefined,
     lr: aiToolkitParams.lr,
     textEncoderLr: aiToolkitParams.textEncoderLr ?? undefined,
     trainTextEncoder: aiToolkitParams.trainTextEncoder,
@@ -192,9 +200,11 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
     flipAugmentation: aiToolkitParams.flipAugmentation,
     shuffleTokens: aiToolkitParams.shuffleTokens,
     keepTokens: aiToolkitParams.keepTokens,
-    numberOfRepeats: aiToolkitParams.numRepeats ?? undefined,
     triggerWord,
-  } as AiToolkitTrainingInput & { triggerWord: string };
+    // `storageBuzzPerEpoch`, `defaultSteps`, `usesStepPricing`, and `maxBatchSize` are
+    // server-computed readonly outputs on the SDK type — cast through `unknown` since we
+    // can't (and shouldn't) supply them on the request.
+  } as unknown as AiToolkitTrainingInput & { triggerWord: string };
 
   if (aiToolkitParams.ecosystem === 'sd1') {
     trainingInput = {
@@ -340,8 +350,29 @@ export const createTrainingWorkflow = async ({
   const modelFileId = modelVersion.fileId;
 
   // Don't override the engine field in params - it needs to remain as the literal type
-  // from the database for the discriminated union to work properly
-  const params = trainingParams;
+  // from the database for the discriminated union to work properly.
+  // Note: `continueFrom` (continue-training) is an orchestrator-sourced AIR referencing
+  // the epoch's LoRA — same form generation uses — and passes through as-is.
+  let params = trainingParams;
+
+  // The trainingStepsPricing flag is authoritative on the submission path: when it's off,
+  // strip the steps-pricing fields even if they made it into the stored params (direct API
+  // callers, or a version created while the user was flagged in). An epochs-only payload
+  // keeps the legacy flat per-epoch pricing.
+  if (trainingParams.engine === 'ai-toolkit') {
+    if (!features.trainingStepsPricing) {
+      const { steps, batchSize, sampleCfgScale, sampleStrength, continueFrom, ...legacyParams } =
+        trainingParams;
+      params = legacyParams;
+    }
+  } else {
+    // continueFrom / sample params / saveEvery are AI Toolkit-only. The kohya-shaped params
+    // schema tolerates them (it doubles as the UI run state), but they must never reach the
+    // kohya/rapid/musubi dispatch, which spreads params straight into the payload.
+    const { continueFrom, sampleCfgScale, sampleStrength, saveEvery, ...engineParams } =
+      trainingParams;
+    params = engineParams;
+  }
 
   const runArgs: ImageTrainingStepSchema = {
     model,

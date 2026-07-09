@@ -133,7 +133,7 @@ export const userBuzzTransactionInputSchema = buzzTransactionSchema
   .check((ctx) => {
     if (
       ctx.value.entityType &&
-      ['Image', 'Model', 'Article', 'ComicProject', 'ComicChapter'].includes(
+      ['Image', 'Model', 'Article', 'ComicProject', 'ComicChapter', 'Model3D'].includes(
         ctx.value.entityType
       ) &&
       ctx.value.amount > buzzConstants.maxTipAmount
@@ -175,13 +175,6 @@ export type GetBuzzAccountSchema = z.infer<typeof getBuzzAccountSchema>;
 export const getBuzzAccountTransactionsSchema =
   getUserBuzzTransactionsSchema.merge(getBuzzAccountSchema);
 export type GetBuzzAccountTransactionsSchema = z.infer<typeof getBuzzAccountTransactionsSchema>;
-
-export const clubTransactionSchema = z.object({
-  clubId: z.number(),
-  amount: z.number(),
-});
-
-export type ClubTransactionSchema = z.infer<typeof clubTransactionSchema>;
 
 export const compensationSources = ['compensation', 'licenseFee'] as const;
 export type CompensationSource = (typeof compensationSources)[number];

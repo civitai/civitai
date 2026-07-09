@@ -9,6 +9,7 @@ import {
   BOUNTIES_SEARCH_INDEX,
   TOOLS_SEARCH_INDEX,
   COMICS_SEARCH_INDEX,
+  MODELS_3D_SEARCH_INDEX,
 } from '~/server/common/constants';
 
 const searchIndexes = [
@@ -20,6 +21,7 @@ const searchIndexes = [
   BOUNTIES_SEARCH_INDEX,
   TOOLS_SEARCH_INDEX,
   COMICS_SEARCH_INDEX,
+  // TODO: add MODELS_3D_SEARCH_INDEX once the Model3D parser + routing is implemented
 ] as const;
 export type SearchIndex = (typeof searchIndexes)[number];
 export const SearchIndexEntityTypes = {
@@ -31,6 +33,8 @@ export const SearchIndexEntityTypes = {
   [BOUNTIES_SEARCH_INDEX]: 'Bounty',
   [TOOLS_SEARCH_INDEX]: 'Tool',
   [COMICS_SEARCH_INDEX]: 'Comic',
+  // TODO: implement Model3D search parser
+  [MODELS_3D_SEARCH_INDEX]: 'Model3D',
 } as const;
 
 export type SearchIndexEntityType =

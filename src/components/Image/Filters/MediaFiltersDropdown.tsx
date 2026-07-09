@@ -1,6 +1,5 @@
 import type { ButtonProps } from '@mantine/core';
 import {
-  Button,
   Chip,
   Divider,
   Drawer,
@@ -10,14 +9,15 @@ import {
   ScrollArea,
   Stack,
   Tooltip,
-  useComputedColorScheme,
   Group,
 } from '@mantine/core';
 import { IconFilter } from '@tabler/icons-react';
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import { PeriodFilter } from '~/components/Filters';
 import { FilterChip } from '~/components/Filters/FilterChip';
+import { StagedFiltersFooter } from '~/components/Filters/StagedFiltersFooter';
+import { useStagedFilters } from '~/components/Filters/useStagedFilters';
 import { TechniqueMultiSelect } from '~/components/Technique/TechniqueMultiSelect';
 import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -48,7 +48,6 @@ export function MediaFiltersDropdown({
   style,
   ...buttonProps
 }: Props) {
-  const colorScheme = useComputedColorScheme('dark');
   const mobile = useIsMobile();
   const isClient = useIsClient();
   const currentUser = useCurrentUser();
@@ -60,8 +59,6 @@ export function MediaFiltersDropdown({
   // PG-13 access to opt in/out of.
   const showPG13Toggle = isGreen && !!currentUser;
 
-  const [opened, setOpened] = useState(false);
-
   const { filters, setFilters } = useFiltersContext((state) => ({
     filters: state[filterType],
     setFilters:
@@ -72,32 +69,17 @@ export function MediaFiltersDropdown({
         : state.setModelImageFilters,
   }));
 
-  const mergedFilters = query || filters;
+  const committedFilters = useMemo(() => query || filters, [query, filters]);
 
-  // maybe have individual filter length with labels next to them
+  const handleApply = useCallback(
+    (next: typeof committedFilters) => {
+      if (onChange) onChange(next);
+      else setFilters(next);
+    },
+    [onChange, setFilters]
+  );
 
-  const filterLength =
-    ('types' in mergedFilters && !hideMediaTypes ? mergedFilters.types?.length ?? 0 : 0) +
-    (mergedFilters.withMeta ? 1 : 0) +
-    (mergedFilters.requiringMeta ? 1 : 0) +
-    (mergedFilters.hidden ? 1 : 0) +
-    (mergedFilters.fromPlatform ? 1 : 0) +
-    (mergedFilters.hideManualResources ? 1 : 0) +
-    (mergedFilters.hideAutoResources ? 1 : 0) +
-    (mergedFilters.notPublished ? 1 : 0) +
-    (mergedFilters.scheduled ? 1 : 0) +
-    (!!mergedFilters.tools?.length ? 1 : 0) +
-    (!!mergedFilters.techniques?.length ? 1 : 0) +
-    (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0) +
-    (!hideBaseModels ? mergedFilters.baseModels?.length ?? 0 : 0) +
-    (!!mergedFilters.remixesOnly || !!mergedFilters.nonRemixesOnly ? 1 : 0) +
-    (mergedFilters.poiOnly ? 1 : 0) +
-    (mergedFilters.minorOnly ? 1 : 0) +
-    (isModerator && mergedFilters.disablePoi ? 1 : 0) +
-    (isModerator && mergedFilters.disableMinor ? 1 : 0) +
-    (showPG13Toggle && mergedFilters.includePG13 ? 1 : 0);
-
-  const clearFilters = useCallback(() => {
+  const handleClear = useCallback(() => {
     // All values must be `undefined` so `removeEmpty` strips them from the URL
     // (when onChange writes to query params) and from the Zustand store. Using
     // `false` here would leave keys like `?withMeta=false` on the URL.
@@ -122,7 +104,6 @@ export function MediaFiltersDropdown({
       minorOnly: undefined,
       includePG13: undefined,
     };
-
     // `period` is special: the URL path needs `undefined` so `removeEmpty`
     // strips `?period=AllTime`, but the Zustand store needs `AllTime` so
     // `PeriodFilter` keeps rendering its chips (it returns null when period
@@ -131,8 +112,38 @@ export function MediaFiltersDropdown({
     else setFilters({ ...reset, period: MetricTimeframe.AllTime });
   }, [onChange, setFilters]);
 
+  const { opened, toggle, close, mergedFilters, isDirty, patchPending, apply, reset, clearAndClose } =
+    useStagedFilters({
+      committed: committedFilters,
+      onApply: handleApply,
+      onClear: handleClear,
+    });
+
+  // maybe have individual filter length with labels next to them
+
+  const filterLength =
+    ('types' in mergedFilters && !hideMediaTypes ? mergedFilters.types?.length ?? 0 : 0) +
+    (mergedFilters.withMeta ? 1 : 0) +
+    (mergedFilters.requiringMeta ? 1 : 0) +
+    (mergedFilters.hidden ? 1 : 0) +
+    (mergedFilters.fromPlatform ? 1 : 0) +
+    (mergedFilters.hideManualResources ? 1 : 0) +
+    (mergedFilters.hideAutoResources ? 1 : 0) +
+    (mergedFilters.notPublished ? 1 : 0) +
+    (mergedFilters.scheduled ? 1 : 0) +
+    (!!mergedFilters.tools?.length ? 1 : 0) +
+    (!!mergedFilters.techniques?.length ? 1 : 0) +
+    (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0) +
+    (!hideBaseModels ? mergedFilters.baseModels?.length ?? 0 : 0) +
+    (!!mergedFilters.remixesOnly || !!mergedFilters.nonRemixesOnly ? 1 : 0) +
+    (mergedFilters.poiOnly ? 1 : 0) +
+    (mergedFilters.minorOnly ? 1 : 0) +
+    (isModerator && mergedFilters.disablePoi ? 1 : 0) +
+    (isModerator && mergedFilters.disableMinor ? 1 : 0) +
+    (showPG13Toggle && mergedFilters.includePG13 ? 1 : 0);
+
   const handleChange: Props['onChange'] = (value) => {
-    onChange ? onChange(value) : setFilters(value);
+    patchPending(value);
   };
 
   const target = (
@@ -147,7 +158,7 @@ export function MediaFiltersDropdown({
       <FilterButton
         {...buttonProps}
         icon={IconFilter}
-        onClick={() => setOpened((o) => !o)}
+        onClick={toggle}
         active={opened}
       >
         Filters
@@ -155,20 +166,16 @@ export function MediaFiltersDropdown({
     </Indicator>
   );
 
-  const dropdown = (
+  const dropdownBody = (
     <Stack gap="lg" p="md">
       <Stack gap="md">
         <Divider label="Time period" className="text-sm font-bold" mb={4} />
-        {query?.period && onChange ? (
-          <PeriodFilter
-            type={filterType}
-            variant="chips"
-            value={query.period}
-            onChange={(period) => onChange({ period })}
-          />
-        ) : (
-          <PeriodFilter type={filterType} variant="chips" />
-        )}
+        <PeriodFilter
+          type={filterType}
+          variant="chips"
+          value={mergedFilters.period ?? MetricTimeframe.AllTime}
+          onChange={(period) => handleChange({ period })}
+        />
       </Stack>
       <Stack gap="md">
         {!hideMediaTypes && (
@@ -362,17 +369,17 @@ export function MediaFiltersDropdown({
           comboboxProps={{ withinPortal: false }}
         />
       </Stack>
-      {filterLength > 0 && (
-        <Button
-          color="gray"
-          variant={colorScheme === 'dark' ? 'filled' : 'light'}
-          onClick={clearFilters}
-          fullWidth
-        >
-          Clear all filters
-        </Button>
-      )}
     </Stack>
+  );
+
+  const dropdownFooter = (
+    <StagedFiltersFooter
+      isDirty={isDirty}
+      onApply={apply}
+      onReset={reset}
+      filterLength={filterLength}
+      onClear={clearAndClose}
+    />
   );
 
   if (mobile)
@@ -381,21 +388,29 @@ export function MediaFiltersDropdown({
         {target}
         <Drawer
           opened={opened}
-          onClose={() => setOpened(false)}
+          onClose={close}
           size="90%"
           position="bottom"
           styles={{
             content: {
-              height: 'auto',
               maxHeight: 'calc(100dvh - var(--header-height))',
-              overflowY: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
             },
-            body: { padding: 0, overflowY: 'auto' },
+            body: {
+              padding: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              flex: 1,
+              minHeight: 0,
+            },
             header: { padding: '4px 8px' },
             close: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
           }}
         >
-          {dropdown}
+          <div className="min-h-0 flex-1 overflow-y-auto">{dropdownBody}</div>
+          {dropdownFooter}
         </Drawer>
       </>
     );
@@ -406,15 +421,17 @@ export function MediaFiltersDropdown({
       position="bottom-end"
       shadow="md"
       radius={12}
-      onClose={() => setOpened(false)}
+      opened={opened}
+      onClose={close}
       middlewares={{ flip: true, shift: true }}
       withinPortal
     >
       <Popover.Target>{target}</Popover.Target>
       <Popover.Dropdown maw={468} p={0} w="100%">
-        <ScrollArea.Autosize type="hover" mah={'calc(90vh - var(--header-height) - 56px)'}>
-          {dropdown}
+        <ScrollArea.Autosize type="hover" mah={'calc(90vh - var(--header-height) - 156px)'}>
+          {dropdownBody}
         </ScrollArea.Autosize>
+        {dropdownFooter}
       </Popover.Dropdown>
     </Popover>
   );

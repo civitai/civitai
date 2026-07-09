@@ -1,6 +1,8 @@
+@use 'sass:math';
+
 $sizeValue: 18px;
-$up: round(calc($sizeValue / 3));
-$down: round(calc($sizeValue / -3));
+$up: math.round(math.div($sizeValue, 3));
+$down: math.round(math.div($sizeValue, -3));
 
 .root {
   border-radius: theme('borderRadius.sm');
@@ -27,7 +29,7 @@ $down: round(calc($sizeValue / -3));
   &, &::before, &::after {
     display: block;
     width: $sizeValue;
-    height: round(calc($sizeValue / 12));
+    height: math.round(math.div($sizeValue, 12));
     outline: 1px solid transparent;
     transition-property: background-color, transform;
     transition-duration: 300ms;

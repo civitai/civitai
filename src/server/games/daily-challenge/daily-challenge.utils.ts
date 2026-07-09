@@ -7,12 +7,14 @@ import { parseChallengeMetadata } from '~/server/schema/challenge.schema';
 import { Flags } from '~/shared/utils/flags';
 
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import {
   type ChallengeDetails,
   closeChallengeCollection,
   getActiveChallengeFromDb,
   getActiveChallengesFromDb,
+  getChallengesToReconcileFromDb,
   getEndedActiveChallengesFromDb,
   getScheduledChallengeFromDb,
   getScheduledChallengesReadyToStart,
@@ -96,11 +98,15 @@ export const dailyChallengeConfig: ChallengeConfig = {
 export async function getChallengeConfig() {
   let config: Partial<ChallengeConfig> = {};
   try {
-    const redisConfig = await sysRedis.packed.get<Partial<ChallengeConfig>>(
-      REDIS_SYS_KEYS.DAILY_CHALLENGE.CONFIG
+    // Wall-clock deadline so a silent sysRedis half-open can't park this read
+    // ~11min (the try/catch only covers a fast DOWN / a parse error). On timeout
+    // the deadline rejects into the catch → fall through to schema defaults.
+    const redisConfig = await withSysReadDeadline(
+      sysRedis.packed.get<Partial<ChallengeConfig>>(REDIS_SYS_KEYS.DAILY_CHALLENGE.CONFIG)
     );
     if (redisConfig) config = challengeConfigSchema.partial().parse(redisConfig);
   } catch (e) {
+    logSysRedisFailOpen('read-degraded', 'getChallengeConfig', e);
     console.error('Invalid daily challenge config in redis:', e);
   }
 
@@ -543,6 +549,15 @@ export async function getActiveChallenges(): Promise<DailyChallengeDetails[]> {
  */
 export async function getEndedActiveChallenges(): Promise<DailyChallengeDetails[]> {
   const challenges = await getEndedActiveChallengesFromDb();
+  return challenges.map(challengeToLegacyFormat);
+}
+
+/**
+ * Gets recently-completed challenges that still have stuck REVIEW CollectionItems,
+ * in legacy format. Used by the reconciliation pass.
+ */
+export async function getChallengesToReconcile(windowHours = 48): Promise<DailyChallengeDetails[]> {
+  const challenges = await getChallengesToReconcileFromDb(windowHours);
   return challenges.map(challengeToLegacyFormat);
 }
 

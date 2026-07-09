@@ -240,6 +240,38 @@ async function cmdRgb(subcmd) {
   console.log(JSON.stringify(result.data, null, 2));
 }
 
+async function cmdAuth(subcmd) {
+  await ensureDaemon();
+  const action = subcmd || 'status';
+  let result;
+  switch (action) {
+    case 'status':
+      result = await daemonRequest('/auth');
+      break;
+    case 'start':
+      result = await daemonRequest('/auth/start', { method: 'POST' });
+      break;
+    case 'stop':
+      result = await daemonRequest('/auth/stop', { method: 'POST' });
+      break;
+    case 'restart':
+      result = await daemonRequest('/auth/restart', { method: 'POST' });
+      break;
+    case 'logs':
+      result = await daemonRequest('/auth/logs');
+      break;
+    default:
+      console.error(`Unknown auth subcommand: ${action}`);
+      console.error('Usage: auth [status|start|stop|restart|logs]');
+      process.exit(1);
+  }
+  if (!result.ok) {
+    console.error('Error:', result.error || result.data?.error || JSON.stringify(result.data));
+    process.exit(1);
+  }
+  console.log(JSON.stringify(result.data, null, 2));
+}
+
 async function cmdShutdown() {
   const result = await daemonRequest('/shutdown', { method: 'POST' });
   if (!result.ok && result.status !== 0) {
@@ -283,6 +315,9 @@ switch (command) {
   case 'rgb':
     cmdRgb(arg1);
     break;
+  case 'auth':
+    cmdAuth(arg1);
+    break;
   case 'shutdown':
     cmdShutdown();
     break;
@@ -298,6 +333,7 @@ Commands:
   stop <session-id>   Stop a session
   restart <session-id> Restart a session
   rgb [subcmd]        RGB proxy control (status|start|stop|restart|logs)
+  auth [subcmd]       Auth hub control (status|start|stop|restart|logs)
   shutdown            Shutdown the daemon
 `);
     if (command) {

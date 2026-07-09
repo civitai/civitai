@@ -1,7 +1,7 @@
 import { Anchor, Stack, Text } from '@mantine/core';
 import { randomId } from '@mantine/hooks';
 import { hideNotification, showNotification } from '@mantine/notifications';
-import { createContext, useContext, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import * as z from 'zod';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { LinkedComponent } from '~/server/schema/model-file.schema';
@@ -14,8 +14,14 @@ import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import { ModelStatus, ModelType, ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { getPrimaryFileTypes, primaryFileTypesByModelType } from '~/utils/file-display-helpers';
-import { getModelFileFormat } from '~/utils/file-helpers';
-import { showErrorNotification } from '~/utils/notifications';
+import {
+  getModelFileFormat,
+  inferGgufQuantType,
+  inferSafetensorsPrecision,
+} from '~/utils/file-helpers';
+import { resolveOfficialFileHash } from '~/components/Resource/official-match';
+import { useFileHash } from '~/hooks/useFileHash';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { bytesToKB } from '~/utils/number-helpers';
 import { getFileExtension, getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -30,9 +36,25 @@ type SchemaError = {
   quantType?: ZodErrorSchema;
 };
 
+// Both link mutations (the Meili picker and linkOfficialFileByHash) return the
+// same server shape; map it to a client LinkedComponent in one place.
+function toLinkedComponent(
+  result: Omit<LinkedComponent, 'componentType' | 'fileMetadata'> & {
+    componentType: string;
+    fileMetadata: LinkedComponent['fileMetadata'] | null;
+  }
+): LinkedComponent {
+  return {
+    ...result,
+    componentType: result.componentType as ModelFileComponentType,
+    fileMetadata: result.fileMetadata ?? undefined,
+  };
+}
+
 export type FileFromContextProps = {
   id?: number;
   name: string;
+  overrideName?: string | null;
   modelType?: ModelType | null;
   type?: ModelFileType | null;
   sizeKB?: number;
@@ -46,6 +68,9 @@ export type FileFromContextProps = {
   uuid: string;
   isPending?: boolean;
   isUploading?: boolean;
+  // True while the file is being hashed + checked against official copies before
+  // any upload starts. Cleared when the check resolves (link or upload).
+  isCheckingOfficial?: boolean;
   status: 'pending' | 'uploading' | 'error' | 'aborted' | 'success';
 };
 
@@ -88,6 +113,7 @@ export const useFilesContext = () => {
 
 export function FilesProvider({ model, version, children }: FilesProviderProps) {
   const queryUtils = trpc.useUtils();
+  const { hashFile } = useFileHash();
   const upload = useS3UploadStore((state) => state.upload);
   const setItems = useS3UploadStore((state) => state.setItems);
 
@@ -96,6 +122,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     const initialFiles = (version?.files?.map((file) => ({
       id: file.id,
       name: file.name,
+      overrideName: file.overrideName ?? null,
       type: file.type as ModelFileType,
       sizeKB: file.sizeKB,
       size: file.metadata?.size,
@@ -125,11 +152,20 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     return [...initialFiles, ...uploading].filter(isDefined);
   });
 
+  // Latest files snapshot for async callbacks (upload completion reads the most
+  // recent metadata the user has set, not what was present when upload started).
+  const filesRef = useRef(files);
+  filesRef.current = files;
+  // Tracks files whose byte-upload has already been kicked off so the auto-start
+  // effect doesn't start the same file twice across renders.
+  const startedUploadsRef = useRef<Set<string>>(new Set());
+
   const handleUpdateFile = (uuid: string, file: Partial<FileFromContextProps>) => {
     setFiles((state) => state.map((x) => (x.uuid === uuid ? { ...x, ...file } : x)));
   };
 
   const removeFile = (uuid: string) => {
+    startedUploadsRef.current.delete(uuid);
     setFiles((state) => state.filter((x) => x.uuid !== uuid));
   };
 
@@ -151,6 +187,8 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       });
     },
   });
+
+  const linkOfficialMutation = trpc.modelVersion.linkOfficialFileByHash.useMutation();
 
   const addLinkedComponentMutation = trpc.modelVersion.addLinkedComponent.useMutation({
     onError(error) {
@@ -208,24 +246,9 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       isRequired: component.isRequired ?? true,
     });
 
-    const enriched: LinkedComponent = {
-      recommendedResourceId: result.recommendedResourceId,
-      componentType: result.componentType as ModelFileComponentType,
-      modelId: result.modelId,
-      modelName: result.modelName,
-      versionId: result.versionId,
-      versionName: result.versionName,
-      fileId: result.fileId,
-      fileName: result.fileName,
-      sizeKB: result.sizeKB,
-      fileType: result.fileType,
-      fileMetadata: result.fileMetadata ?? undefined,
-      isRequired: result.isRequired,
-    };
-
     setLinkedComponents((prev) => [
       ...prev.filter((c) => c.versionId !== component.versionId),
-      enriched,
+      toLinkedComponent(result),
     ]);
   };
 
@@ -485,9 +508,15 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
   });
 
   const onDrop = (files: File[], defaultType?: ModelFileType, skipInference?: boolean) => {
+    // For Additional Components (skipInference), we can't reliably tell what kind
+    // of component a weight file is, so we pick a safe default from the section's
+    // allow-list so the upload can start immediately — the user refines the type
+    // after it finishes.
+    const additionalTypes =
+      dropzoneOptionsByModelType[model?.type ?? 'Checkpoint'].additional.fileTypes;
     const toUpload = files.map((file) => {
       const inferredType = skipInference
-        ? defaultType
+        ? defaultType ?? inferComponentFileType(file.name, additionalTypes)
         : defaultType ?? inferFileType(file.name, model?.type);
       return {
         name: file.name,
@@ -505,6 +534,28 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       };
     }) as FileFromContextProps[];
     setFiles((state) => [...state, ...toUpload]);
+
+    // Auto-detect file metadata from the header so the user doesn't have to pick
+    // it manually: precision (fp) for safetensors, quant type for GGUF. Runs in
+    // the background; the upload-completion handler reads the latest value via
+    // filesRef, so it's fine if this resolves after the byte upload has started.
+    for (const item of toUpload) {
+      if (!item.file) continue;
+      const fileName = item.file.name.toLowerCase();
+      if (fileName.endsWith('.safetensors') || fileName.endsWith('.sft')) {
+        inferSafetensorsPrecision(item.file)
+          .then((fp) => {
+            if (fp) handleUpdateFile(item.uuid, { fp });
+          })
+          .catch(() => null);
+      } else if (fileName.endsWith('.gguf')) {
+        inferGgufQuantType(item.file)
+          .then((quantType) => {
+            if (quantType) handleUpdateFile(item.uuid, { quantType });
+          })
+          .catch(() => null);
+      }
+    }
   };
 
   const handleUpload = async ({
@@ -520,8 +571,55 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
   }: FileFromContextProps) => {
     if (!file || !type) return;
 
+    let officialSha256: string | null = null;
+    try {
+      officialSha256 = await resolveOfficialFileHash({
+        file,
+        findBySize: (size) => queryUtils.modelFile.hasOfficialFileOfSize.fetch({ size }),
+        hashFile,
+        onHashStart: () =>
+          setFiles((state) =>
+            state.map((x) => (x.uuid === uuid ? { ...x, isCheckingOfficial: true } : x))
+          ),
+      });
+    } catch {
+      // network/server error — fall through to normal upload
+    }
+
+    if (officialSha256 && versionId) {
+      // Bytes already exist on the official account — re-verify server-side, skip upload,
+      // and create a linked-component pointer instead.
+      try {
+        const result = await linkOfficialMutation.mutateAsync({
+          id: versionId,
+          sha256: officialSha256,
+        });
+        if (result) {
+          setLinkedComponents((prev) => [...prev, toLinkedComponent(result)]);
+          setFiles((state) => state.filter((x) => x.uuid !== uuid));
+          showSuccessNotification({
+            title: 'Linked to official file',
+            message: `${result.modelName} already hosts this file — upload skipped.`,
+          });
+          return;
+        }
+        // no match → fall through to normal upload
+      } catch (e) {
+        showErrorNotification({
+          title: 'Failed to link official file',
+          reason: 'Uploading normally instead.',
+          error: e as Error,
+        });
+        // fall through to normal upload
+      }
+    }
+
     setFiles((state) =>
-      state.map((x) => (x.uuid === uuid ? { ...x, isPending: false, isUploading: true } : x))
+      state.map((x) =>
+        x.uuid === uuid
+          ? { ...x, isPending: false, isUploading: true, isCheckingOfficial: false }
+          : x
+      )
     );
 
     try {
@@ -531,32 +629,52 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
           type: type === 'Model' ? UploadType.Model : UploadType.Default,
           meta: { versionId, type, size, fp, format, quantType, isRequired, uuid },
         },
-        async ({ meta, size, backend, ...result }) => {
-          const { versionId, type, uuid, ...metadata } = meta as {
+        async ({ meta, size: uploadedSize, backend, ...result }) => {
+          // `uploadedSize` is the byte size of the upload (renamed to avoid
+          // shadowing the `size` model-metadata field, which is 'full' | 'pruned').
+          const start = meta as {
             versionId: number;
-            type: ModelFileType;
             uuid: string;
+            size?: FileFromContextProps['size'];
+            fp?: FileFromContextProps['fp'];
+            format?: FileFromContextProps['format'];
+            quantType?: FileFromContextProps['quantType'];
+            isRequired?: FileFromContextProps['isRequired'];
           };
-          if (versionId) {
-            try {
-              const saved = await createFileMutation.mutateAsync({
-                ...result,
-                sizeKB: bytesToKB(size),
-                modelVersionId: versionId,
-                type,
-                metadata,
-                ...(backend === 'b2' ? { backend, s3Path: result.key } : {}),
-              });
-              setItems((items) => items.filter((x) => x.uuid !== result.uuid));
-              setFiles((state) =>
-                state.map((x) => (x.uuid === uuid ? { ...x, id: saved.id, isUploading: false } : x))
-              );
-            } catch (e: unknown) {
-              showErrorNotification({
-                title: 'Failed to save file',
-                error: e as Error,
-              });
-            }
+          const { versionId, uuid } = start;
+          if (!versionId) return;
+          // Read the latest metadata the user (or precision auto-detect) has set
+          // during the upload, falling back to what was captured at upload start.
+          // This is what makes auto-starting the upload on drop safe: the bytes go
+          // up immediately while type/precision can still be edited until save.
+          const latest = filesRef.current.find((x) => x.uuid === uuid);
+          const fileType = latest?.type ?? type;
+          if (!fileType) return;
+          const metadata = {
+            size: latest?.size ?? start.size ?? undefined,
+            fp: latest?.fp ?? start.fp ?? undefined,
+            format: latest?.format ?? start.format ?? undefined,
+            quantType: latest?.quantType ?? start.quantType ?? undefined,
+            isRequired: latest?.isRequired ?? start.isRequired ?? undefined,
+          };
+          try {
+            const saved = await createFileMutation.mutateAsync({
+              ...result,
+              sizeKB: bytesToKB(uploadedSize),
+              modelVersionId: versionId,
+              type: fileType,
+              metadata,
+              ...(backend === 'b2' ? { backend, s3Path: result.key } : {}),
+            });
+            setItems((items) => items.filter((x) => x.uuid !== result.uuid));
+            setFiles((state) =>
+              state.map((x) => (x.uuid === uuid ? { ...x, id: saved.id, isUploading: false } : x))
+            );
+          } catch (e: unknown) {
+            showErrorNotification({
+              title: 'Failed to save file',
+              error: e as Error,
+            });
           }
         }
       );
@@ -586,6 +704,29 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     await handleUpload(file);
   };
 
+  // Auto-start byte uploads as soon as a file has enough info to upload (a type
+  // and a File object). The slow byte transfer overlaps with the user filling in
+  // metadata; the file record is saved on completion with the latest metadata.
+  // Failed uploads are NOT auto-restarted (their uuid stays in the started set) —
+  // the user retries explicitly via the file's retry button.
+  useEffect(() => {
+    if (!version?.id) return;
+    for (const file of files) {
+      if (
+        file.isPending &&
+        file.file &&
+        file.type &&
+        !file.id &&
+        !file.isUploading &&
+        !startedUploadsRef.current.has(file.uuid)
+      ) {
+        startedUploadsRef.current.add(file.uuid);
+        void handleUpload(file);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [files, version?.id]);
+
   const dropzoneConfig = dropzoneOptionsByModelType[model?.type ?? 'Checkpoint'];
 
   return (
@@ -596,7 +737,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         onDrop,
         startUpload,
         errors: errors,
-        hasPending: files.some((x) => x.isPending),
+        hasPending: files.some((x) => x.isPending || x.isCheckingOfficial),
         retry,
         updateFile: handleUpdateFile,
         removeFile,
@@ -678,7 +819,11 @@ function inferFileType(fileName: string, modelType?: ModelType | null): ModelFil
     case 'gguf':
     case 'sft':
     case 'onnx':
-      return 'Model';
+      // CLIP weights aren't a single "Model" file — they're a text or vision
+      // encoder. Default to Text Encoder (a CLIP primary type) so the dropped
+      // file lands in the primary section; the user switches to Vision Encoder
+      // when appropriate.
+      return modelType === ModelType.CLIP ? 'Text Encoder' : 'Model';
     case 'zip':
       return modelType && archivePrimaryModelTypes.includes(modelType) ? 'Archive' : undefined;
     case 'yaml':
@@ -688,6 +833,35 @@ function inferFileType(fileName: string, modelType?: ModelType | null): ModelFil
       return 'Config';
     default:
       return undefined;
+  }
+}
+
+
+/**
+ * Pick a default type for a file dropped into the Additional Components section so
+ * its upload can start immediately. We can't reliably tell a VAE from a Text
+ * Encoder by the file alone, so weight/unknown files default to the generic
+ * "Other" — the user refines it after the upload finishes. The chosen type is
+ * always one the section actually allows.
+ */
+function inferComponentFileType(
+  fileName: string,
+  allowedTypes: ModelFileType[]
+): ModelFileType | undefined {
+  const ext = getFileExtension(fileName);
+  const pick = (...candidates: ModelFileType[]) =>
+    candidates.find((type) => allowedTypes.includes(type));
+  switch (ext) {
+    case 'yaml':
+    case 'yml':
+    case 'json':
+    case 'txt':
+      return pick('Config', 'Other');
+    case 'zip':
+      return pick('Training Data', 'Archive', 'Other');
+    default:
+      // weights (.safetensors/.ckpt/.pt/.sft/.bin/.gguf/.onnx) and anything else
+      return pick('Other') ?? allowedTypes[0];
   }
 }
 
@@ -707,12 +881,16 @@ const ggufExts = [...modelExts, '.gguf'];
 const configExts = ['.yaml', '.yml', '.json', '.txt'];
 const archiveExts = ['.zip'];
 
+// Primary-file cap for weights-bearing types — room for multiple fp precisions
+// (fp16/fp32/fp8/bf16) plus gguf quant variants (Q2_K…Q8_0) of the same model.
+const mainModelMaxFiles = 20;
+
 const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
   Checkpoint: {
     primary: {
       extensions: [...ggufExts, '.onnx'],
       fileTypes: [...primaryFileTypesByModelType.Checkpoint],
-      maxFiles: 8,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...configExts, ...archiveExts, ...ggufExts],
@@ -725,6 +903,8 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
         'Text Encoder',
         'Workflow',
         'Upscaler',
+        'Enhancement LoRA',
+        'Other',
       ],
       maxFiles: 6,
     },
@@ -733,7 +913,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: ggufExts,
       fileTypes: [...primaryFileTypesByModelType.LORA],
-      maxFiles: 3,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...modelExts, ...configExts, ...archiveExts],
@@ -744,6 +924,8 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
         'UNet',
         'Diffusion Model',
         'CLIPVision',
+        'Enhancement LoRA',
+        'Other',
       ],
       maxFiles: 5,
     },
@@ -752,7 +934,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: ggufExts,
       fileTypes: [...primaryFileTypesByModelType.DoRA],
-      maxFiles: 3,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...modelExts, ...configExts, ...archiveExts],
@@ -763,6 +945,8 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
         'UNet',
         'Diffusion Model',
         'CLIPVision',
+        'Enhancement LoRA',
+        'Other',
       ],
       maxFiles: 5,
     },
@@ -771,7 +955,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: ggufExts,
       fileTypes: [...primaryFileTypesByModelType.LoCon],
-      maxFiles: 3,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...modelExts, ...configExts, ...archiveExts],
@@ -782,6 +966,8 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
         'UNet',
         'Diffusion Model',
         'CLIPVision',
+        'Enhancement LoRA',
+        'Other',
       ],
       maxFiles: 5,
     },
@@ -790,11 +976,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: modelExts,
       fileTypes: [...primaryFileTypesByModelType.TextualInversion],
-      maxFiles: 2,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...archiveExts, ...configExts],
-      fileTypes: ['Training Data', 'Config'],
+      fileTypes: ['Training Data', 'Config', 'Other'],
       maxFiles: 2,
     },
   },
@@ -802,11 +988,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: modelExts,
       fileTypes: [...primaryFileTypesByModelType.Hypernetwork],
-      maxFiles: 1,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...archiveExts, ...configExts, ...modelExts],
-      fileTypes: ['Training Data', 'Config'],
+      fileTypes: ['Training Data', 'Config', 'Other'],
       maxFiles: 2,
     },
   },
@@ -814,11 +1000,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: modelExts,
       fileTypes: [...primaryFileTypesByModelType.AestheticGradient],
-      maxFiles: 1,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...archiveExts, ...configExts, ...modelExts],
-      fileTypes: ['Training Data', 'Config'],
+      fileTypes: ['Training Data', 'Config', 'Other'],
       maxFiles: 2,
     },
   },
@@ -826,11 +1012,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: ggufExts,
       fileTypes: [...primaryFileTypesByModelType.Controlnet],
-      maxFiles: 2,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...configExts, ...archiveExts],
-      fileTypes: ['Archive', 'Config'],
+      fileTypes: ['Archive', 'Config', 'Other'],
       maxFiles: 2,
     },
   },
@@ -838,11 +1024,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: [...modelExts, '.onnx'],
       fileTypes: [...primaryFileTypesByModelType.MotionModule],
-      maxFiles: 2,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...configExts, ...archiveExts],
-      fileTypes: ['Archive', 'Config'],
+      fileTypes: ['Archive', 'Config', 'Other'],
       maxFiles: 1,
     },
   },
@@ -850,11 +1036,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: ['.pt', '.safetensors'],
       fileTypes: [...primaryFileTypesByModelType.Detection],
-      maxFiles: 4,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...configExts, ...archiveExts],
-      fileTypes: ['Config', 'Archive'],
+      fileTypes: ['Config', 'Archive', 'Other'],
       maxFiles: 1,
     },
   },
@@ -862,11 +1048,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: ggufExts,
       fileTypes: [...primaryFileTypesByModelType.Upscaler],
-      maxFiles: 1,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...configExts, ...archiveExts],
-      fileTypes: ['Config', 'Archive'],
+      fileTypes: ['Config', 'Archive', 'Other'],
       maxFiles: 1,
     },
   },
@@ -874,11 +1060,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: ggufExts,
       fileTypes: [...primaryFileTypesByModelType.VAE],
-      maxFiles: 1,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...configExts, ...archiveExts],
-      fileTypes: ['Config', 'Archive'],
+      fileTypes: ['Config', 'Archive', 'Other'],
       maxFiles: 1,
     },
   },
@@ -886,11 +1072,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: ggufExts,
       fileTypes: [...primaryFileTypesByModelType.TextEncoder],
-      maxFiles: 1,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...configExts, ...archiveExts],
-      fileTypes: ['Config', 'Archive'],
+      fileTypes: ['Config', 'Archive', 'Other'],
       maxFiles: 1,
     },
   },
@@ -898,11 +1084,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: ggufExts,
       fileTypes: [...primaryFileTypesByModelType.UNet],
-      maxFiles: 1,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...configExts, ...archiveExts],
-      fileTypes: ['Config', 'Archive'],
+      fileTypes: ['Config', 'Archive', 'Other'],
       maxFiles: 1,
     },
   },
@@ -910,12 +1096,48 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: ggufExts,
       fileTypes: [...primaryFileTypesByModelType.CLIPVision],
-      maxFiles: 1,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...configExts, ...archiveExts],
-      fileTypes: ['Config', 'Archive'],
+      fileTypes: ['Config', 'Archive', 'Other'],
       maxFiles: 1,
+    },
+  },
+  VisionLanguage: {
+    primary: {
+      extensions: [...ggufExts, '.onnx'],
+      fileTypes: [...primaryFileTypesByModelType.VisionLanguage],
+      maxFiles: mainModelMaxFiles,
+    },
+    additional: {
+      extensions: [...configExts, ...archiveExts, ...ggufExts],
+      fileTypes: ['VAE', 'Config', 'Training Data', 'CLIPVision', 'Text Encoder', 'Other'],
+      maxFiles: 6,
+    },
+  },
+  CLIP: {
+    primary: {
+      extensions: ggufExts,
+      fileTypes: [...primaryFileTypesByModelType.CLIP],
+      maxFiles: mainModelMaxFiles,
+    },
+    additional: {
+      extensions: [...configExts, ...archiveExts],
+      fileTypes: ['Config', 'Archive', 'Other'],
+      maxFiles: 2,
+    },
+  },
+  LLM: {
+    primary: {
+      extensions: ggufExts,
+      fileTypes: [...primaryFileTypesByModelType.LLM],
+      maxFiles: mainModelMaxFiles,
+    },
+    additional: {
+      extensions: [...configExts, ...archiveExts],
+      fileTypes: ['Config', 'Archive', 'Other'],
+      maxFiles: 2,
     },
   },
   Poses: {
@@ -926,7 +1148,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     },
     additional: {
       extensions: [...configExts, ...archiveExts],
-      fileTypes: ['Config', 'Archive'],
+      fileTypes: ['Config', 'Archive', 'Other'],
       maxFiles: 1,
     },
   },
@@ -938,7 +1160,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     },
     additional: {
       extensions: [...configExts, ...archiveExts],
-      fileTypes: ['Config', 'Archive'],
+      fileTypes: ['Config', 'Archive', 'Other'],
       maxFiles: 1,
     },
   },
@@ -950,7 +1172,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     },
     additional: {
       extensions: [...configExts, ...archiveExts],
-      fileTypes: ['Config', 'Archive'],
+      fileTypes: ['Config', 'Archive', 'Other'],
       maxFiles: 1,
     },
   },
@@ -958,11 +1180,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: [...archiveExts, ...configExts, ...ggufExts],
       fileTypes: [...primaryFileTypesByModelType.Other],
-      maxFiles: 1,
+      maxFiles: mainModelMaxFiles,
     },
     additional: {
       extensions: [...configExts, ...archiveExts],
-      fileTypes: ['Config', 'Archive'],
+      fileTypes: ['Config', 'Archive', 'Other'],
       maxFiles: 1,
     },
   },

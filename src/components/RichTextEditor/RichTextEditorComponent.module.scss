@@ -30,15 +30,15 @@
   // border-color should be set inline via style prop if it depends on error
 
   // Fixes gapcursor color for dark mode
-  :global .ProseMirror-gapcursor:after {
+  :global(.ProseMirror-gapcursor):after {
     border-top: 1px solid light-dark(black, white);
   }
 
-  :global .ProseMirror {
+  :global(.ProseMirror) {
     min-height: var(--editor-min-height, 50px);
     word-break: break-word;
 
-    p.is-editor-empty:first-of-type::before {
+    :global(p.is-editor-empty:first-of-type::before) {
       // color should be set inline via style prop if it depends on error
       font-size: var(--editor-font-size, 14px);
     }

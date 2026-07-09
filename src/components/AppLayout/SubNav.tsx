@@ -5,11 +5,13 @@ import { ComicFeedFilters } from '~/components/Filters/FeedFilters/ComicFeedFilt
 
 import { ChallengeFeedFilters } from '~/components/Filters/FeedFilters/ChallengeFeedFilters';
 import { ImageFeedFilters } from '~/components/Filters/FeedFilters/ImageFeedFilters';
+import { Model3DFeedFilters } from '~/components/Filters/FeedFilters/Model3DFeedFilters';
 import { ModelFeedFilters } from '~/components/Filters/FeedFilters/ModelFeedFilters';
 import { PostFeedFilters } from '~/components/Filters/FeedFilters/PostFeedFilters';
 import { VideoFeedFilters } from '~/components/Filters/FeedFilters/VideoFeedFilters';
 import { ToolFeedFilters } from '~/components/Filters/FeedFilters/ToolFeedFilters';
 import { ManageHomepageButton } from '~/components/HomeBlocks/ManageHomepageButton';
+import { NavTidyNotice } from '~/components/Alerts/NavTidyNotice';
 import { HomeTabs } from '~/components/HomeContentToggle/HomeContentToggle';
 import { ToolImageFeedFilters } from '~/components/Filters/FeedFilters/ToolImageFeedFilters';
 import clsx from 'clsx';
@@ -19,6 +21,7 @@ const filterSections = [
   { pathname: '/models', component: <ModelFeedFilters ml="auto" /> },
   { pathname: '/images', component: <ImageFeedFilters ml="auto" hideMediaTypes /> },
   { pathname: '/videos', component: <VideoFeedFilters ml="auto" /> },
+  { pathname: '/3d-models', component: <Model3DFeedFilters ml="auto" /> },
   { pathname: '/posts', component: <PostFeedFilters ml="auto" /> },
   { pathname: '/articles', component: <ArticleFeedFilters ml="auto" /> },
   { pathname: '/bounties', component: <BountyFeedFilters ml="auto" /> },
@@ -39,6 +42,7 @@ export function SubNav2() {
       })}
     >
       <HomeTabs />
+      <NavTidyNotice />
       {section?.component}
     </div>
   );

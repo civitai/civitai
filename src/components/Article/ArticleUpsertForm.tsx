@@ -179,12 +179,12 @@ export function ArticleUpsertForm({ article }: Props) {
     const tags =
       selectedTags && selectedCategory ? selectedTags.concat([selectedCategory]) : selectedTags;
 
-    const submitArticle = (args?: { status?: ArticleStatus }) => {
-      // Moderators can directly edit lockedProperties; non-moderators use the ref
-      const finalLockedProperties = currentUser?.isModerator
-        ? lockedProperties
-        : lockedPropertiesRef.current;
+    // §7b — if a moderator previously locked the rating with a manual override,
+    // warn the owner that saving will trigger a rescan that may reset the
+    // override. Mods bypass this guard (they can adjust the override directly).
+    const hasModeratorOverride = !!article?.moderatorNsfwLevel && !currentUser?.isModerator;
 
+    const performUpsert = (args?: { status?: ArticleStatus }) => {
       upsertArticleMutation.mutate(
         {
           ...rest,
@@ -229,21 +229,25 @@ export function ArticleUpsertForm({ article }: Props) {
       );
     };
 
-    // Check if publishing or updating published article with embedded images
+    // Check if publishing or updating published article with embedded images.
     const contentImages = features.articleImageScanning ? extractImagesFromArticle(content) : [];
+    const needsImageScanConfirm =
+      contentImages.length > 0 && (publishing || article?.status === ArticleStatus.Published);
+    const existingImageUrls = new Set(article?.contentImages?.map((img) => img.url) || []);
+    const newImages = needsImageScanConfirm
+      ? contentImages.filter((img) => !existingImageUrls.has(img.url))
+      : [];
+    const requiresImageScanModal = needsImageScanConfirm && newImages.length > 0;
 
-    if (contentImages.length > 0 && (publishing || article?.status === ArticleStatus.Published)) {
-      // Check if images are already in the database
-      const existingImageUrls = new Set(article?.contentImages?.map((img) => img.url) || []);
-      const newImages = contentImages.filter((img) => !existingImageUrls.has(img.url));
-
-      if (newImages.length === 0) {
-        // All images already exist in database, no scanning delay expected
-        submitArticle();
+    // After the (optional) override warning confirms, advance to the image
+    // scan confirm (if any), or straight to the mutation. Each modal's
+    // onConfirm advances to the next gate — never re-enters the outer flow.
+    const continueAfterOverrideCheck = () => {
+      if (!requiresImageScanModal) {
+        performUpsert();
         return;
       }
 
-      // Has new images that need scanning, show confirmation modal
       openConfirmModal({
         title: 'Article Image Processing',
         children: (
@@ -270,13 +274,28 @@ export function ArticleUpsertForm({ article }: Props) {
         ),
         labels: { cancel: 'Cancel', confirm: 'Continue' },
         confirmProps: { color: 'blue' },
-        onConfirm: () => submitArticle({ status: ArticleStatus.Processing }),
+        onConfirm: () => performUpsert({ status: ArticleStatus.Processing }),
       });
+    };
+
+    // Gate 1: moderator-override warning. If absent, fall through to gate 2.
+    if (!hasModeratorOverride) {
+      continueAfterOverrideCheck();
       return;
     }
 
-    // No images or just saving draft, proceed normally
-    submitArticle();
+    openConfirmModal({
+      title: 'Moderator rating will be re-evaluated',
+      children: (
+        <Text>
+          A moderator previously set this article&apos;s rating manually. Saving will trigger a
+          rescan and may reset that rating. Continue?
+        </Text>
+      ),
+      labels: { cancel: 'Cancel', confirm: 'Save and rescan' },
+      confirmProps: { color: 'yellow' },
+      onConfirm: continueAfterOverrideCheck,
+    });
   };
 
   return (
@@ -316,6 +335,7 @@ export function ArticleUpsertForm({ article }: Props) {
                 'video',
                 'polls',
                 'colors',
+                'timestamp',
               ]}
               withAsterisk
               stickyToolbar

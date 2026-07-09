@@ -27,7 +27,6 @@ import {
 } from '~/utils/metadata/audit';
 import { getComputedTags, getConditionalTagsForReview } from '~/server/utils/tag-rules';
 import { getTagRules } from '~/server/services/system-cache';
-import { TtlCache } from '~/server/utils/ttl-cache';
 import { Prisma } from '@prisma/client';
 import { insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import { isDefined } from '~/utils/type-guards';
@@ -38,13 +37,14 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { createImageTagsForReview } from '~/server/services/image-review.service';
-import { tagIdsForImagesCache } from '~/server/redis/caches';
+import { tagIdsForImagesCache, tagCacheByName } from '~/server/redis/caches';
 import type { MediaMetadata } from '~/server/schema/media.schema';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
 import {
   queueComicsForPanelImage,
   updateComicNsfwLevelsForImage,
+  updateModel3DNsfwLevelForThumbnailImage,
 } from '~/server/services/nsfwLevels.service';
 import { getImagesModRules, queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { signalClient } from '~/utils/signal-client';
@@ -113,8 +113,6 @@ type ProcessedTag = {
   nsfwLevel: number;
   type: TagType;
 };
-
-const tagCache = new TtlCache<TagWithId>({});
 
 export async function processImageScanResult(req: NextApiRequest) {
   const event: WorkflowEvent = req.body;
@@ -569,14 +567,14 @@ async function processTags({
   }
   const deduped: NormalizedTag[] = Object.values(tagMap);
 
-  const { found, missing } = tagCache.getMany(deduped.map((x) => x.name));
+  const { found, missing } = await tagCacheByName.fetch(deduped.map((x) => x.name));
   let queriedTags: TagWithId[] = [];
   if (missing.length > 0) {
     queriedTags = await dbWrite.tag.findMany({
       where: { name: { in: missing } },
       select: { id: true, name: true, nsfwLevel: true, type: true },
     });
-    tagCache.setMany(queriedTags.map((data) => ({ key: data.name, data })));
+    await tagCacheByName.setMany(queriedTags.map((data) => ({ key: data.name, data })));
   }
   const queriedNames = new Set(queriedTags.map((t) => t.name));
   const tagsToCreate = missing.filter((name) => !queriedNames.has(name));
@@ -593,7 +591,7 @@ async function processTags({
       ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
       RETURNING id, name, "nsfwLevel", type
     `;
-    tagCache.setMany(createdTags.map((data) => ({ key: data.name, data })));
+    await tagCacheByName.setMany(createdTags.map((data) => ({ key: data.name, data })));
   }
 
   const allTags = [...found.values(), ...queriedTags, ...createdTags]
@@ -995,6 +993,7 @@ async function applyIngestionSideEffects({
     // A previously-cached Blocked image can still satisfy the showcase query
     // filters (needsReview IS NULL, nsfwLevel != 0) so drop it from the showcase.
     if (image.postId) await bustCachesForPosts(image.postId);
+    await updateModel3DNsfwLevelForThumbnailImage({ imageId: image.id, postId: image.postId });
     // If this image belongs to a comic panel, the parent project may
     // have been search-indexed under the old (unblocked) state. Re-queue
     // it so the next index pass re-evaluates visibility against the
@@ -1018,6 +1017,7 @@ async function applyIngestionSideEffects({
       // Without this, the showcase cache stays empty until its 24h TTL for any model version whose images hadn't scanned yet on first read.
       await bustCachesForPosts(image.postId);
     }
+    await updateModel3DNsfwLevelForThumbnailImage({ imageId: image.id, postId: image.postId });
     await updateComicNsfwLevelsForImage(image.id);
     // Refresh the comic project in the search index — even on a clean
     // Scanned, `needsReview` may have been set, which the index treats

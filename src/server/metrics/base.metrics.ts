@@ -8,7 +8,8 @@ import type { AugmentedPool } from '~/server/db/db-helpers';
 import { pgDbWrite } from '~/server/db/pgDb';
 import type { JobContext } from '~/server/jobs/job';
 import { getJobDate } from '~/server/jobs/job';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { addToQueue, checkoutQueue } from '~/server/redis/queues';
 
 const DEFAULT_UPDATE_INTERVAL = 60 * 1000;
@@ -56,13 +57,36 @@ export function createMetricProcessor({
 
       // Check if update is needed
       const shouldUpdate = lastUpdate.getTime() + updateInterval < Date.now();
-      const metricUpdateAllowed =
-        ((await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, `metric:${name.toLowerCase()}`)) ??
-          'true') === 'true';
+      // sysRedis.hGet is typed string but the HA/Sentinel client returns a
+      // Buffer for BLOB_STRING replies. `Buffer === 'true'` is always false,
+      // which silently flips this flag to disabled in sentinel mode. Coerce
+      // to a utf8 string before comparing. See PR #2697 for the canonical
+      // regression case (queues.ts getBucketNames).
+      let metricRaw: string | Buffer | null = null;
+      try {
+        metricRaw = await withSysReadDeadline(
+          sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, `metric:${name.toLowerCase()}`)
+        );
+      } catch (err) {
+        // sysRedis DOWN (throw) or SLOW (deadline) — the metric kill-switch fails
+        // OPEN to its absent default ('true' = allowed) below. Metric/rank updates
+        // are DB/ClickHouse-driven and non-destructive, and the queue commit is
+        // already blip-hardened (#2922), so a sysRedis stall must not stop them.
+        // Emit the fail-open so a blip that silently bypasses a deliberately-set
+        // 'false' kill-switch is visible (Loki `sysredis-fail-open`), matching the
+        // queues.ts safeSysRead pattern.
+        logSysRedisFailOpen('read-degraded', 'base.metrics metric-flag', err, { metric: name });
+        metricRaw = null;
+      }
+      const metricFlag = Buffer.isBuffer(metricRaw) ? metricRaw.toString('utf8') : metricRaw;
+      const metricUpdateAllowed = (metricFlag ?? 'true') === 'true';
       if (!shouldUpdate || !metricUpdateAllowed) return;
 
       // Run update
-      const queue = await checkoutQueue('metric-update:' + name);
+      // NOTE: must match the casing used in queueUpdate (name.toLowerCase()) below —
+      // otherwise reader/writer keys diverge (e.g. 'metric-update:Post' vs
+      // 'metric-update:post') and every explicitly-queued update is silently dropped.
+      const queue = await checkoutQueue('metric-update:' + name.toLowerCase());
       ctx.queue = queue.content;
       ctx.lastUpdate = dayjs(lastUpdate).subtract(2, 'minute').toDate(); // Expand window to allow clickhouse tracker to catch up
       await update(ctx);
@@ -78,9 +102,22 @@ export function createMetricProcessor({
       const [lastUpdate, setLastUpdate] = await getJobDate(`rank:${name.toLowerCase()}`);
       const refreshInterval = rank.refreshInterval ?? DEFAULT_RANK_REFRESH_INTERVAL;
       const shouldUpdateRank = lastUpdate.getTime() + refreshInterval < Date.now();
-      const rankUpdateAllowed =
-        ((await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, `rank:${name.toLowerCase()}`)) ??
-          'true') === 'true';
+      // Buffer-coerce mirror of the metric flag above. Same root cause —
+      // sentinel-mode sysRedis returns Buffer, which silently fails the
+      // === 'true' check. See PR #2697.
+      let rankRaw: string | Buffer | null = null;
+      try {
+        rankRaw = await withSysReadDeadline(
+          sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, `rank:${name.toLowerCase()}`)
+        );
+      } catch (err) {
+        // sysRedis DOWN/SLOW — the rank kill-switch fails OPEN to its absent
+        // default ('true' = allowed) below, same rationale as the metric flag.
+        logSysRedisFailOpen('read-degraded', 'base.metrics rank-flag', err, { metric: name });
+        rankRaw = null;
+      }
+      const rankFlag = Buffer.isBuffer(rankRaw) ? rankRaw.toString('utf8') : rankRaw;
+      const rankUpdateAllowed = (rankFlag ?? 'true') === 'true';
       if (!shouldUpdateRank || !rankUpdateAllowed) return;
 
       // Run rank refresh

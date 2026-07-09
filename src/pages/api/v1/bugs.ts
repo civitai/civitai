@@ -4,6 +4,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { publicApiContext2 } from '~/server/createContext';
 import { logToAxiom } from '~/server/logging/client';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import { isClientAbortError } from '~/server/utils/errorHandling';
 
 const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
@@ -53,6 +54,10 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
 
     return res.status(200).json({ items, metadata: { nextCursor } });
   } catch (error) {
+    if (isClientAbortError(error)) {
+      if (!res.headersSent) res.status(499).end();
+      return;
+    }
     if (error instanceof TRPCError) {
       const status = getHTTPStatusCodeFromError(error);
       const parsedError = (() => {

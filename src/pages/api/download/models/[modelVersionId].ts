@@ -19,8 +19,8 @@ const schema = z.object({
   type: z.enum(constants.modelFileTypes).optional(),
   format: z.enum(constants.modelFileFormats).optional(),
   size: z.enum(constants.modelFileSizes).optional(),
-  fp: z.enum(constants.modelFileFp).optional(),
-  quantType: z.enum(constants.modelFileQuantTypes).optional(),
+  fp: z.string().max(64).optional(),
+  quantType: z.string().max(64).optional(),
   fileId: z.preprocess((val) => (val ? Number(val) : undefined), z.number().optional()),
 });
 
@@ -45,6 +45,15 @@ const downloadLimiter = createLimiter({
 
 export default PublicEndpoint(
   async function downloadModel(req: NextApiRequest, res: NextApiResponse) {
+    // This response is per-user, auth/early-access-gated, rate-limited, and
+    // redirects to a short-lived signed file URL. It must never be cached by the
+    // CDN. PublicEndpoint stamps a `public, s-maxage` default which would
+    // (a) leak one user's signed redirect to every other requester and
+    // (b) keep serving a deleted/taken-down model's 302 from edge for the whole
+    // cache window after the origin already returns 404 — defeating DMCA
+    // takedowns. Override with no-store so deletes take effect immediately.
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
+
     const isBrowser = isRequestFromBrowser(req);
     function errorResponse(status: number, message: string) {
       res.status(status);
@@ -101,6 +110,18 @@ export default PublicEndpoint(
       });
 
       if (fileResult.status === 'not-found') return errorResponse(404, 'File not found');
+      if (fileResult.status === 'resolve-failed') {
+        // Same 404 as `not-found`, but this 404 came from a delivery-worker /
+        // storage-resolver resolve FAILURE, which can be TRANSIENT (a storage
+        // outage, not a permanently-missing file). PublicEndpoint set a default
+        // `Cache-Control: public, s-maxage=300, …` before this handler ran;
+        // override it with `no-store` so a transient resolve failure is NOT
+        // edge-cached as "File not found" for ~5 min for a file that exists.
+        // setHeader (last-write-wins, headers not yet flushed) overrides the
+        // PublicEndpoint default. Deterministic by-id `not-found` stays cacheable.
+        res.setHeader('Cache-Control', 'private, no-store');
+        return errorResponse(404, 'File not found');
+      }
       if (fileResult.status === 'archived')
         return errorResponse(410, 'Model archived, not available for download');
       if (fileResult.status === 'early-access') {

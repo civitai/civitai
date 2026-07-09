@@ -75,7 +75,7 @@ export interface BaseModelInputProps {
   /** Get the target workflow label for an incompatible ecosystem */
   getTargetWorkflow?: (ecosystemKey: string) => string;
   /** Current output type - only ecosystems supporting this type will be shown */
-  outputType?: 'image' | 'video' | 'audio';
+  outputType?: 'image' | 'video' | 'audio' | 'model3d';
 }
 
 type FamilyGroup = {

@@ -38,6 +38,7 @@ export const ComicCard = memo(function ComicCard({ data }: { data: ComicItem }) 
   return (
     <AspectRatioImageCard
       href={`/comics/${data.id}/${slugit(data.name)}`}
+      alt={data.name}
       aspectRatio="portrait"
       image={coverImage}
       header={

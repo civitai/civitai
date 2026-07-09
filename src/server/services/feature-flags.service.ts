@@ -1,7 +1,7 @@
 import type { IncomingMessage } from 'http';
 import { camelCase } from 'lodash-es';
 import type { NextApiRequest } from 'next';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import { isDev } from '~/env/other';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
@@ -52,8 +52,50 @@ const featureFlags = createFeatureFlags({
   apiKeys: ['public'],
   apiKeyBuzzLimit: { availability: ['mod'], fliptKey: 'api-key-buzz-limit' },
   oauthApps: { availability: ['mod'], fliptKey: 'oauth-apps' },
+  // Faro RUM frontend observability. Default OFF (mods only); widen the cohort via
+  // Flipt (`faro`). Runtime kill-switch for the Faro Web SDK — the FaroProvider only
+  // initialises when this flag is on AND the NEXT_PUBLIC_FARO_* build-args are set.
+  faro: { availability: ['mod'], fliptKey: 'faro' },
+  // Cohort-ramp gate for the Faro resource_timing decomposition. SEPARATE from `faro` so the
+  // network-phase measurements can be ramped by % of users at runtime (via Flipt) independently
+  // of the main RUM signals — the FaroProvider includes ResourceTimingInstrumentation only when
+  // this flag is on AND the NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED build-arg is set.
+  // availability ['mod'] is the Flipt-DOWN fallback (mirrors `faro`); Flipt is authoritative
+  // when the flag exists — ramp by bumping its % rollout, never all-at-once.
+  faroResourceTiming: { availability: ['mod'], fliptKey: 'faro-resource-timing' },
+  // Cohort-ramp gate for tRPC request batching (httpBatchStreamLink). Default OFF
+  // (mods only) so batching is dark until ramped via Flipt (`trpc-batching`). Batching
+  // is applied ONLY to AUTHENTICATED-browser queries — anonymous tRPC GETs stay
+  // unbatched so they remain CF edge-cacheable (verified: anon `model.getAll` GET
+  // returns cf-cache-status HIT with s-maxage=60; authed requests have edgeTTL forced
+  // to 0 in createContext, so batching them loses no edge cache). availability ['mod']
+  // is the Flipt-DOWN fallback (mirrors `faro`); Flipt is authoritative when the flag
+  // exists — ramp by bumping its % rollout, never all-at-once. See `src/utils/trpc.ts`.
+  trpcBatching: { availability: ['mod'], fliptKey: 'trpc-batching' },
+  // Feed-page CLS fix. Reserves vertical space for the above-feed announcements
+  // banner during the pre-hydration window so the isClient-gated / dynamically
+  // imported carousel mount doesn't shove the (very tall) masonry feed down — the
+  // shift production RUM attributes to `MasonryContainer .queries`, which is the
+  // DISPLACED VICTIM (largest moved element), not the cause. Default OFF (mods
+  // only = the Flipt-DOWN fallback); ramp a % of ALL
+  // users via Flipt (`feed-reserve-cls`) as a THRESHOLD rollout — CLS is an
+  // all-user route metric, so a mod cohort can't move the aggregate. Purely
+  // cosmetic space reservation (worst case = a little dead space, never a
+  // functional break), so flipping the flag off is an instant, safe rollback.
+  feedReserveCls: { availability: ['mod'], fliptKey: 'feed-reserve-cls' },
+  // Perf experiment: defer the generation-tab-switch remount (useDeferredValue) to fix
+  // mobile INP (p75 ~304ms, dominant phase = processing_duration; the gen-tab switch is
+  // the single hottest interaction). `availability: []` = DARK by default and fails CLOSED when
+  // the Flipt flag is absent or Flipt is down (empty availability → static eval false), so the
+  // deferral only turns on via the Flipt `gen-tab-defer-view` THRESHOLD rollout — a clean all-user
+  // A/B with NO mod segment (a mod cohort contaminated a prior A/B). NOT `['public']`: that would
+  // fail OPEN (true for 100% of users) whenever the Flipt key is missing/unreachable, defeating
+  // the A/B (no flag-off cohort) and shipping the deferral fleet-wide unmeasured. OFF =
+  // byte-identical to today. Measured via RUM `exp_gen_tab_defer_view`. Instant safe rollback.
+  genTabDeferView: { availability: [], fliptKey: 'gen-tab-defer-view' },
   articles: ['public'],
   articleCreate: ['public'],
+  articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },
   adminTags: ['mod', 'granted'],
   civitaiLink: ['mod', 'member'],
   imageTraining: { availability: ['user'], fliptKey: 'image-training' },
@@ -78,7 +120,12 @@ const featureFlags = createFeatureFlags({
   ernieTraining: { availability: ['mod'], fliptKey: 'ernie-training' },
   hidreamO1Training: { availability: ['mod'], fliptKey: 'hidream-o1-training' },
   animaTraining: { availability: ['mod'], fliptKey: 'anima-training' },
+  booguTraining: { availability: ['mod'], fliptKey: 'boogu-training' },
+  krea2Training: { availability: ['mod'], fliptKey: 'krea2-training' },
   audioTraining: { availability: ['mod'], fliptKey: 'audio-training' },
+  // Steps-based training pricing + QOL inputs (steps/batchSize/sample params/continue-training).
+  // Public availability so it can be rolled out to a tester segment via Flipt; default off.
+  trainingStepsPricing: { availability: ['mod'], fliptKey: 'training-steps-pricing' },
   trainingAutoLabelOrchestrator: {
     availability: ['mod'],
     fliptKey: 'training-auto-label-orchestrator',
@@ -87,11 +134,15 @@ const featureFlags = createFeatureFlags({
   trainingAutoCaption: { availability: ['public'], fliptKey: 'training-auto-caption2' },
   trainingAutoTag: { availability: ['public'], fliptKey: 'training-auto-tag2' },
   wan22MultiStep: { availability: ['public'], fliptKey: 'wan22-multi-step' },
-  controlNets: { availability: ['public'], fliptKey: 'control-nets' },
   enhancedCompatibilitySdcpp: {
     availability: ['public'],
     fliptKey: 'enhanced-compatibility-sdcpp',
   },
+  // Anima ControlNet kill-switch. Default ON (public + fail-open when Flipt is
+  // down); the `anima-controlnet` Flipt flag is the lever — flip it OFF to hide
+  // the Anima ControlNet input (and strip controlNets server-side) without a
+  // deploy if the orchestrator side misbehaves.
+  animaControlnet: { availability: ['public'], fliptKey: 'anima-controlnet' },
   questions: ['dev', 'mod'],
   imageGeneration: ['public'],
   largerGenerationImages: {
@@ -99,6 +150,27 @@ const featureFlags = createFeatureFlags({
     default: false,
     displayName: 'Larger Images in Generator',
     description: `Images displayed in the generator will be larger on small screens`,
+    availability: ['public'],
+  },
+  postsNavItem: {
+    toggleable: true,
+    default: false,
+    displayName: 'Posts in Navigation',
+    description: `Show the Posts item in the main site navigation.`,
+    availability: ['public'],
+  },
+  eventsNavItem: {
+    toggleable: true,
+    default: false,
+    displayName: 'Events in Navigation',
+    description: `Show the Events item in the main site navigation.`,
+    availability: ['public'],
+  },
+  nativeVideoControls: {
+    toggleable: true,
+    default: false,
+    displayName: 'Native Video Controls',
+    description: `Use your browser's built-in video player controls (with a seek bar) for all videos.`,
     availability: ['public'],
   },
   alternateHome: ['public'],
@@ -114,7 +186,6 @@ const featureFlags = createFeatureFlags({
   imageSearch: ['public'],
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
-  recommenders: isDev ? ['granted', 'dev', 'mod'] : ['dev', 'mod'],
   assistant: {
     toggleable: true,
     default: true,
@@ -129,8 +200,6 @@ const featureFlags = createFeatureFlags({
   csamReports: isDev ? ['mod'] : ['granted'],
   appealReports: isDev ? ['mod'] : ['granted'],
   reviewTrainingData: isDev ? ['mod'] : ['granted'],
-  clubs: ['mod'],
-  createClubs: ['mod', 'granted'],
   moderateTags: ['granted'],
   chat: {
     toggleable: true,
@@ -189,7 +258,7 @@ const featureFlags = createFeatureFlags({
   comicCreator: { availability: ['mod'], fliptKey: 'comic-creator' },
   licensingFee: { availability: ['user'], fliptKey: 'licensing-fee' },
   liveMetrics: { availability: ['mod'], fliptKey: 'live-metrics' },
-  strikes: ['dev', 'granted'],
+  strikes: ['public'],
   prepaidBuzzTransactions: { availability: ['mod'], fliptKey: 'prepaid-buzz-transactions' },
   userPaymentConfiguration: {
     availability: ['granted'],
@@ -198,12 +267,56 @@ const featureFlags = createFeatureFlags({
   articleImageScanning: ['public'],
   generationPresets: { availability: ['public'], fliptKey: 'generation-presets' },
   wildcards: { availability: ['public'], fliptKey: 'wildcards' },
+  // 3D Models — split flags: feed (view/comment/review) vs generator (create).
+  // Both mod-only at launch; Flipt key allows broadening without a code change.
+  model3dFeed: { availability: ['mod'], fliptKey: 'model3d-feed' },
+  model3dGenerator: { availability: ['mod'], fliptKey: 'model3d-generator' },
   // Retool privileged endpoints — `granted` means the moderator must carry the
   // matching permission key in user.permissions. Endpoints lookup the key
   // directly from `RetoolAction.privileged`, so the permission name MUST stay
   // in sync with the camelCase flag key here.
   retoolUpdateIdentity: ['granted'],
   retoolToggleModerator: ['granted'],
+  // App Blocks (Phase 1) — gates the BlockSlot mount on model pages. Off by
+  // default until we ship publisher install UX + moderator approval workflow.
+  // When off, BlockSlot renders nothing and no token-issuance traffic fires.
+  appBlocks: { availability: ['mod'], fliptKey: 'app-blocks-enabled' },
+  // App Blocks W13 — dedicated App Store VISIBILITY flag, decoupled from
+  // `app-blocks-enabled` (which doubles as the block-runtime kill-switch) so the
+  // store catalog can widen to public INDEPENDENTLY of the held block-runtime GA.
+  // Store-visibility surfaces gate on `appListings || appBlocks` (client) /
+  // `isAppListingsEnabled()` which falls back to `isAppBlocksEnabled()` (server),
+  // so while the `app-listings` Flipt flag does not yet exist this resolves via
+  // the `availability: ['mod']` Flipt-down fallback (mods only) + the OR-fallback
+  // to `app-blocks-enabled` — i.e. ZERO behavior change today (the currently
+  // mod+app-dev-testers cohort keeps identical store access).
+  appListings: { availability: ['mod'], fliptKey: 'app-listings' },
+  // App Blocks W10 — full-page apps (`/apps/run/<slug>`). A SEPARATE dark flag
+  // so the page surface enables independently of the master `app-blocks-enabled`
+  // gate. The page route + page-token mint require BOTH `appBlocks` AND
+  // `appBlocksPages`. Mod-only today; widened (Flipt segment) at W10 launch.
+  appBlocksPages: { availability: ['mod'], fliptKey: 'app-blocks-pages-enabled' },
+  // App Blocks — "App builders" get-started landing page (`/apps/get-started`).
+  // Scope A soft launch: a single marketing/funnel page that explains the
+  // platform to would-be app developers. INDEPENDENT of the mod-only `appBlocks`
+  // gate — this flag controls ONLY the get-started page + its nav entry, NOT
+  // any other `/apps/*` surface (those stay gated on `appBlocks`). Staged
+  // mod-only today (like `appBlocks` / `appBlocksPages`) so it deploys dark-to-
+  // public and mods can review the page live on prod; widened to `['public']`
+  // (a one-line flag change) when launch copy + the real Request-access link
+  // land. The Flipt key stays the kill-switch / future-widen lever (flip it off
+  // to drop the page + nav entry without a deploy).
+  appBlocksGetStarted: { availability: ['mod'], fliptKey: 'app-blocks-get-started' },
+  // App Blocks — AUTHOR capability (developer soft-launch, Phase B). Grants the
+  // right to SUBMIT apps + use `dev:live` (the author surfaces + the runtime
+  // spend gate on a block-token subject). INDEPENDENT of the mod-only
+  // marketplace-visibility `appBlocks` flag ON PURPOSE: `appBlocks` widens to
+  // `public` at GA, but authoring must stay gated, so the author authz decision
+  // keys off THIS flag, never `appBlocks`. Mirrors `appBlocks` shape — staged
+  // mod-only today (`['mod']` = the Flipt-down / flag-absent fallback), widened
+  // to mods + a curated cohort via the Flipt `app-blocks-author` flag (created
+  // AFTER this merges: absent → static mod-only, identical to today).
+  appBlocksAuthor: { availability: ['mod'], fliptKey: 'app-blocks-author' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
@@ -438,7 +551,15 @@ function computeFeatureFlags(ctx: FeatureAccessContext): FeatureAccess {
   const fliptContext = buildFliptContext(ctx.user);
   const keys = Object.keys(featureFlags) as FeatureFlagKey[];
   return keys.reduce<FeatureAccess>((acc, key) => {
-    if (hasFeature(key, ctx, fliptContext)) acc[key] = true;
+    if (!hasFeature(key, ctx, fliptContext)) return acc;
+    const feature = featureFlags[key];
+    // Toggleable flags resolve to their default at the base layer. Logged-in
+    // users get their stored choice merged on top client-side (via
+    // user.getFeatureFlags), but anonymous users have no override — so a
+    // default-off toggleable (e.g. postsNavItem) must stay off for them rather
+    // than leak through on bare access.
+    if (feature.toggleable && feature.default === false) return acc;
+    acc[key] = true;
     return acc;
   }, {} as FeatureAccess);
 }
@@ -552,6 +673,49 @@ export const domainRestrictedToggleableKeys = new Set(
     })
     .map(([key]) => key as FeatureFlagKey)
 );
+
+export const defaultToggleableFeatures = toggleableFeatures.reduce(
+  (acc, feature) => ({ ...acc, [feature.key]: feature.default }),
+  {} as FeatureAccess
+);
+
+/**
+ * Pure computation of the per-user toggleable-feature overlay returned by
+ * `user.getFeatureFlags`. Single source of truth shared by the tRPC resolver
+ * (`getUserFeatureFlagsHandler`) and the SSR seed in `_app` getInitialProps —
+ * keeping the SSR-injected `initialData` byte-identical to a live fetch.
+ *
+ * @param userFeatures the stored `settings.features` JSON record (toggle choices)
+ * @param hostFeatures the request's already-resolved host-level FeatureAccess
+ *   (the controller's `ctx.features`) — used to enforce domain restrictions.
+ */
+export function computeUserFeatureFlagsOverlay(
+  userFeatures: Record<string, boolean> | undefined,
+  hostFeatures: FeatureAccess
+): FeatureAccess {
+  const features = userFeatures ?? {};
+
+  // filter toggleable features from user settings
+  const filteredUserFeatures = Object.keys(features).reduce(
+    (acc, key) =>
+      toggleableFeatures.some((x) => x.key === key) ? { ...acc, [key]: features[key] } : acc,
+    {} as FeatureAccess
+  );
+
+  const result = {
+    ...defaultToggleableFeatures,
+    ...filteredUserFeatures,
+  } as FeatureAccess;
+
+  // Don't let toggleable defaults override domain restrictions
+  for (const key of domainRestrictedToggleableKeys) {
+    if (key in result && !hostFeatures[key]) {
+      delete result[key];
+    }
+  }
+
+  return result;
+}
 
 type FeatureAvailability = (typeof featureAvailability)[number];
 export type FeatureFlagKey = keyof typeof featureFlags;

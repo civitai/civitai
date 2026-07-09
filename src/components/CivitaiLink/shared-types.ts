@@ -57,7 +57,10 @@ export type ResourceType =
   | 'Wildcards'
   | 'Workflows'
   | 'DoRA'
-  | 'Detection';
+  | 'Detection'
+  | 'VisionLanguage'
+  | 'CLIP'
+  | 'LLM';
 
 type CommandBase = {
   id: string;

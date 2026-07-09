@@ -72,6 +72,7 @@ export function UserMenu() {
     <Popover width={isMobile ? '100%' : 260} position="bottom-end" opened={open} onChange={setOpen}>
       <Popover.Target>
         <UnstyledButton
+          aria-label={currentUser ? 'Account menu' : 'Menu'}
           className={clsx(
             'flex items-center hover:bg-gray-1 @md:rounded-[32px] dark:hover:bg-dark-5',
             { ['bg-gray-1 dark:bg-dark-5']: open }
@@ -287,7 +288,7 @@ function AccountSwitcher({ onAccountClick }: { onAccountClick: () => void }) {
       {Object.entries(accounts).map(([k, v]) => (
         <MenuItemButton
           key={k}
-          onClick={v.active ? undefined : () => swapAccount(v.token)}
+          onClick={v.active ? undefined : () => swapAccount(v.id)}
           className={clsx('flex items-center justify-between gap-2.5', {
             ['cursor-auto']: v.active,
           })}
@@ -296,7 +297,12 @@ function AccountSwitcher({ onAccountClick }: { onAccountClick: () => void }) {
             <CustomUserAvatar data={v} />
             <Username username={v.username} />
           </div>
-          {v.active && <IconCircleCheck size={20} color="green" />}
+          {v.active ? (
+            <IconCircleCheck size={20} color="green" />
+          ) : v.needsLogin ? (
+            // Aged out of the seamless-switch window — clicking re-authenticates at the hub.
+            <span className="text-xs opacity-60">Sign in</span>
+          ) : null}
         </MenuItemButton>
       ))}
       <Divider />

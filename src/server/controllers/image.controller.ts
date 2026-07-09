@@ -280,21 +280,35 @@ export const getInfiniteImagesHandler = async ({
 }) => {
   const { user, features, signal } = ctx;
 
-  // Check BitDex mode first â€” if active (shadow or primary), always route through
-  // getAllImagesIndex (which handles BitDex internally), bypassing the useIndex check.
-  // Skip BitDex for queries that need features it doesn't support:
-  // - collectionId: requires relational joins through CollectionItem table
-  // - prioritizedUserIds: showcase carousel needs DB-level user prioritization (TODO in getAllImagesIndex)
-  // - reactions: per-user reaction data isn't in the search index, needs DB subquery on ImageReaction
-  // - postId/postIds: specific post queries are ~2ms in Postgres (covered index) and create
-  //   unique cache keys in BitDex that hurt cache hit rate
-  const skipBitdex =
-    !!input.collectionId ||
-    !!input.prioritizedUserIds?.length ||
-    !!input.reactions?.length ||
+  // Params the search index physically can't serve â€” these must use the DB
+  // (getAllImages). The decision is server-side: there is no client `useIndex`
+  // flag, so a client can't force the expensive un-indexed path on a broad query.
+  // Correctness-critical filters (wrong results if the index ignored them):
+  // - postId/postIds: specific post lookups (~2ms covered-index in PG; also create
+  //   unique cache keys in BitDex that hurt cache hit rate)
+  // - collectionId: requires relational joins through CollectionItem
+  // - reactions: per-user reaction data isn't indexed (needs ImageReaction subquery)
+  // - imageId: not a search-index filter
+  // - bare modelId: the index keys on modelVersionId / postedToId, not modelId, so
+  //   a modelId-only query would silently return the global feed (matches the
+  //   /api/v1/images legacy-method logic)
+  // Ordering-only:
+  // - prioritizedUserIds: DB-level user prioritization (TODO in getAllImagesIndex).
+  //   Only forces the DB when scoped to a model (its sole legit use â€” the model
+  //   showcase carousel, which always pairs it with modelVersionId). Sent alone it
+  //   degrades to index ordering rather than acting as a broad-feed DB escape hatch.
+  const requiresDbPath =
     !!input.postId ||
-    !!input.postIds?.length;
-  const bitdexMode = skipBitdex
+    !!input.postIds?.length ||
+    !!input.collectionId ||
+    !!input.reactions?.length ||
+    !!input.imageId ||
+    (!!input.modelId && !input.modelVersionId) ||
+    (!!input.prioritizedUserIds?.length && (!!input.modelId || !!input.modelVersionId));
+
+  // BitDex (Flipt-gated index experiment) routes through getAllImagesIndex, so it
+  // can only run when the index can serve the query.
+  const bitdexMode = requiresDbPath
     ? null
     : await getFliptVariant(
         FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
@@ -303,9 +317,9 @@ export const getInfiniteImagesHandler = async ({
       );
   const useBitdex = bitdexMode === 'shadow' || bitdexMode === 'primary';
 
-  // Use getAllImagesIndex when useIndex is true OR BitDex is active.
-  // Use getAllImages (DB) otherwise.
-  const useIndex = useBitdex || (features.imageIndexFeed && input.useIndex);
+  // Use getAllImagesIndex when BitDex is active or the index can serve the query;
+  // otherwise use getAllImages (DB).
+  const useIndex = useBitdex || (features.imageIndexFeed && !requiresDbPath);
 
   if (!useIndex) {
     imagesFeedWithoutIndexCounter.inc();
@@ -373,8 +387,13 @@ export const getImagesAsPostsInfiniteHandler = async ({
     const { user, features } = ctx;
 
     // Check BitDex mode â€” if active, always route through getAllImagesIndex.
-    // Skip BitDex for unsupported query types (collections, prioritized users).
-    const skipBitdex = !!input.collectionId || !!input.prioritizedUserIds?.length;
+    // Skip BitDex for unsupported query types (collections, prioritized
+    // users). BitDex doesn't index `model3dId` yet, so model3d galleries
+    // still skip it — but Meilisearch DOES index `model3dId` (added with the
+    // `images-model3d:` gallery enablement), so we always allow the Meili
+    // index path below.
+    const skipBitdex =
+      !!input.collectionId || !!input.prioritizedUserIds?.length || !!input.model3dId;
     const bitdexMode = skipBitdex
       ? null
       : await getFliptVariant(
@@ -507,24 +526,30 @@ export const getImagesAsPostsInfiniteHandler = async ({
       }
     }
 
-    // Get reviews from the users who created the posts
+    // Get reviews from the users who created the posts.
+    // Resource reviews are model-scoped; skip the fetch entirely when this is
+    // a non-model gallery (e.g. Model3D) so we don't run an unfiltered review
+    // query for unrelated models.
     const userIds = [...new Set(mergedPosts.map(([post]) => post.user.id).filter(isDefined))];
-    const reviews = await dbRead.resourceReview.findMany({
-      where: {
-        userId: { in: userIds },
-        modelId: input.modelId,
-        modelVersionId: input.modelVersionId,
-      },
-      select: {
-        userId: true,
-        rating: true,
-        details: true,
-        id: true,
-        modelVersionId: true,
-        recommended: true,
-      },
-      orderBy: { rating: 'desc' },
-    });
+    const reviews =
+      input.modelId || input.modelVersionId
+        ? await dbRead.resourceReview.findMany({
+            where: {
+              userId: { in: userIds },
+              modelId: input.modelId,
+              modelVersionId: input.modelVersionId,
+            },
+            select: {
+              userId: true,
+              rating: true,
+              details: true,
+              id: true,
+              modelVersionId: true,
+              recommended: true,
+            },
+            orderBy: { rating: 'desc' },
+          })
+        : [];
 
     // Prepare the results
     const results = mergedPosts.map((images) => {

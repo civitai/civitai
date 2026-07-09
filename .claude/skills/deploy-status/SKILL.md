@@ -1,8 +1,10 @@
 ---
 name: deploy-status
-description: Check deployment status, view pipeline progress, and debug build failures. Combines GitHub Deployments API (public status) with Tekton Dashboard API (authenticated logs). No cluster access required.
-argument-hint: [recent | sha:<commit> | env:<environment> | logs:<run-name>]
+description: Check civitai PROD deployment status across the live Tekton -> Flux -> Flagger chain on the DataPacket cluster (kubectl, read-only). Tekton/Flagger cluster state is the primary truth; the GitHub Deployments API is kept as a public cross-check. Use to see where a deploy is in the chain, watch it to completion, or debug a build/canary failure.
+argument-hint: status [<tag|sha>] | watch [<tag|sha>] | gh-recent | gh-sha:<commit> | logs:<run-name>
 allowed-tools:
+  - Bash(kubectl:*)
+  - Bash(bash:*)
   - Bash(gh:*)
   - Bash(curl:*)
   - Bash(open:*)
@@ -11,188 +13,135 @@ allowed-tools:
 
 # Deploy Status
 
-Check civitai-web deployment status and debug build failures. Two tiers of access:
+Monitor the **real** civitai PROD deploy chain — Tekton build -> Flux image automation -> Flagger canary -> prod primaries — by reading live cluster state with `kubectl`. The GitHub Deployments API is retained as a public cross-check (its source is the `github-create-deploy` Tekton task).
 
-1. **Status** (public, via `gh api`): deployment state, timestamps, descriptions
-2. **Logs** (authenticated, via Tekton Dashboard): build output, error details, task logs
+**Primary truth = cluster state** (this skill's `status` / `watch`). **Cross-check = GitHub Deployments** (`gh-*` commands below).
 
-## Usage
+## Cluster requirement (READ-ONLY)
 
-- `/deploy-status` or `/deploy-status recent` — show recent deployments with status
-- `/deploy-status sha:<commit>` — check deployment for a specific commit
-- `/deploy-status logs:<run-name>` — open Tekton Dashboard for a specific pipeline run
-- `/deploy-status debug` — investigate the latest failure
+All `status` / `watch` queries run against the DataPacket cluster via kubectl context **`civit-datapacket`**. One kubeconfig covers the whole chain (build ns `tekton-builds`, Flux ns `flux-system`, app+canary ns `civitai-dp-prod`).
 
-## Quick Status Check
+This skill performs **status reads only** — `kubectl get` / `kubectl logs`. It NEVER mutates the cluster (no apply/delete/patch/rollout/scale). To *trigger* or *roll back* a deploy, use the talos-infra `dp-build-deploy` skill instead.
 
-### Latest deployment status
+## CRITICAL — prod is NOT keyed off the semver tag
+
+A release maps to prod via the **release-branch commit**, not the tag object. Getting this wrong reports a stage/next build as prod.
+
+| Run name pattern | Branch label | Image | Target | Prod? |
+|---|---|---|---|---|
+| `civitai-web-build-*` | `release` | `ghcr.io/civitai/civitai-prod` | civitai.com | **YES** |
+| `civitai-web-tag-build-*` | `<semver>` (e.g. `v5.0.1817`) | `ghcr.io/civitai/civitai-web` | next/stage | no — EXCLUDE |
+| `civitai-web-main-build-*` | `main` | civitai-prod (throttled) | — | no — EXCLUDE |
+| `pr-preview-*` / `pr-check-*` | _(none)_ | — | PR preview | no — EXCLUDE |
+
+The semver tag (`vX.Y.Z`) fires a **different** trigger (`civitai-app-tag-trigger`) that builds `civitai-web` (stage) on the tag commit. The PROD run is the `civitai-web-build-*` on the **release-branch** commit. Example: tag `v5.0.1817` -> tag run on commit `5f19831` (civitai-web, NOT prod); the prod run is release commit `3dcd1e8` = `civitai-web-build-cp9kz`.
+
+The prod selector that enforces this:
+
 ```bash
-DEPLOY_ID=$(gh api repos/civitai/civitai/deployments --jq '[.[] | select(.environment == "prod")] | .[0].id')
-echo "Deployment: $DEPLOY_ID"
-gh api "repos/civitai/civitai/deployments/$DEPLOY_ID" --jq '{sha: (.sha[:7]), env: .environment, created: .created_at}'
-gh api "repos/civitai/civitai/deployments/$DEPLOY_ID/statuses" --jq '.[0] | {state: .state, description: .description, updated: .updated_at}'
+kubectl --context civit-datapacket -n tekton-builds get pipelinerun \
+  -l pipeline=build-and-push,pipeline.jquad.rocks/git.repository.branch.name=release \
+  --sort-by=.metadata.creationTimestamp
 ```
 
-### Recent deployments with current state
+## Usage (cluster — primary)
+
+Driver script: `deploy-chain.sh` (in this skill dir). Dependency-light bash + kubectl.
+
+- `bash deploy-chain.sh status` — full chain snapshot for the **latest** release-branch prod run.
+- `bash deploy-chain.sh status <sha>` — snapshot for the prod run matching that commit (full or short sha, matched on the `git.repository.branch.commit` label). A raw sha for a tag/stage build correctly resolves to **no prod run** (it is never reported as prod).
+- `bash deploy-chain.sh status <tag>` — a semver tag (e.g. `v5.0.1817` / `5.0.1817`, must contain a dot) is resolved to the **release-branch HEAD** via `gh`, then matched to its prod run.
+- `bash deploy-chain.sh watch [<tag|sha>]` — poll the chain to completion, printing each transition; exits 0 when **both** SSR and API primaries are on the new tag, exits 1 if the build fails or a canary rolls back.
+
+### What `status` prints (the full phase chain)
+
+1. **BUILD** — PipelineRun `.status.conditions` + per-task TaskRuns (ns `tekton-builds`). Task order: `notify-preparing -> github-create-deploy -> fetch-repository -> build-image -> migrations` (plus trailing `github-*`/`notify-*` tasks). `github-create-deploy` is what writes the GitHub Deployments entries.
+2. **IMAGE PICKED UP** — Flux ImagePolicy `flux-system/civitai-prod-release` `.status.latestImage` (`ghcr.io/civitai/civitai-prod:<14-digit-ts>-<sha7>`). ~1m GHCR scan.
+3. **TAG PINNED TO GIT** — `ImageUpdateAutomation` (`flux-system/civitai-dp-prod`) commits the new tag to trunk (<=5m); reflected once primaries pick it up.
+4. **CANARY** — two Flagger Canary CRs in `civitai-dp-prod`: `civitai-dp-prod` (**SSR**) and `civitai-dp-prod-api` (**API / tRPC path**). Reads `.status.phase`, `.status.canaryWeight`, `.status.iterations`, `.status.failedChecks` + recent Warning events (rollbacks).
+5. **PRIMARIES (100% prod)** — `civitai-dp-prod-primary` (SSR) and `civitai-dp-prod-api-primary` (API). Deploy is fully live when both primary images == the new tag. **The API primary on the new tag is what makes tRPC procedures live.**
+
+Then an overall **SUMMARY** line: where in the chain + ETA (building / awaiting Flux pickup / canary progressing / rolled back / fully on prod).
+
+Canary progression: `Initialized -> Progressing` (10->50% in 2-min steps) `-> Promoting -> Finalising -> Succeeded`. At rest between deploys a canary sits at `Succeeded weight=0`. End-to-end ~35-40 min (build 15-25).
+
+### Manual one-liners (same queries the script runs)
+
 ```bash
+CTX="--context civit-datapacket"
+# Latest prod run name
+kubectl $CTX -n tekton-builds get pipelinerun \
+  -l pipeline=build-and-push,pipeline.jquad.rocks/git.repository.branch.name=release \
+  --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}'; echo
+# Resolve a specific commit -> prod run
+kubectl $CTX -n tekton-builds get pipelinerun \
+  -l pipeline=build-and-push,pipeline.jquad.rocks/git.repository.branch.name=release,pipeline.jquad.rocks/git.repository.branch.commit=<FULL_SHA> \
+  -o jsonpath='{.items[-1].metadata.name}'; echo
+# Build condition + tasks
+kubectl $CTX -n tekton-builds get pipelinerun <RUN> -o jsonpath='{.status.conditions[0].reason}: {.status.conditions[0].message}'; echo
+kubectl $CTX -n tekton-builds get taskrun -l tekton.dev/pipelineRun=<RUN> --no-headers
+# Flux image
+kubectl $CTX -n flux-system get imagepolicy civitai-prod-release -o jsonpath='{.status.latestImage}'; echo
+# Canaries (both)
+kubectl $CTX -n civitai-dp-prod get canary
+kubectl $CTX -n civitai-dp-prod get canary civitai-dp-prod-api -o jsonpath='phase={.status.phase} weight={.status.canaryWeight} failedChecks={.status.failedChecks}'; echo
+# Primaries
+kubectl $CTX -n civitai-dp-prod get deploy civitai-dp-prod-primary     -o jsonpath='{.spec.template.spec.containers[0].image}'; echo
+kubectl $CTX -n civitai-dp-prod get deploy civitai-dp-prod-api-primary -o jsonpath='{.spec.template.spec.containers[0].image}'; echo
+# Canary rollback / warning events
+kubectl $CTX -n civitai-dp-prod get events --field-selector type=Warning --sort-by=.lastTimestamp | tail -10
+```
+
+## GitHub Deployments cross-check (public, no cluster)
+
+Useful when you can't reach the cluster or want to confirm the `github-create-deploy` task's view. This is the **secondary** source now.
+
+```bash
+# Latest prod deployment + state
+DEPLOY_ID=$(gh api repos/civitai/civitai/deployments --jq '[.[] | select(.environment == "prod")] | .[0].id')
+gh api "repos/civitai/civitai/deployments/$DEPLOY_ID" --jq '{sha: (.sha[:7]), env: .environment, created: .created_at}'
+gh api "repos/civitai/civitai/deployments/$DEPLOY_ID/statuses" --jq '.[0] | {state: .state, description: .description, updated: .updated_at}'
+
+# Recent prod deployments with current state
 gh api repos/civitai/civitai/deployments --jq '[.[] | select(.environment == "prod")] | .[:5] | .[].id' | while read id; do
   INFO=$(gh api "repos/civitai/civitai/deployments/$id" --jq '"\(.sha[:7]) \(.created_at)"')
   STATUS=$(gh api "repos/civitai/civitai/deployments/$id/statuses" --jq '.[0] | "\(.state)\t\(.description)"' 2>/dev/null || echo "unknown")
   echo "$id  $INFO  $STATUS"
 done
-```
 
-### Check specific commit
-```bash
+# Specific commit
 gh api "repos/civitai/civitai/deployments?sha=COMMIT_SHA" --jq '.[] | {id: .id, env: .environment, created: .created_at}'
 ```
 
-### Full status timeline for a deployment
-```bash
-gh api "repos/civitai/civitai/deployments/DEPLOY_ID/statuses" --jq 'reverse | .[] | {state: .state, description: .description, time: .updated_at}'
-```
+GitHub Deployment state mapping: `queued` = build, `in_progress` = rolling out, `success` = done, `failure` = failed, `inactive` = superseded.
 
-## Debugging Failures
+## Build logs (Tekton)
 
-### Step 1: Find the failed deployment
-```bash
-gh api repos/civitai/civitai/deployments --jq '
-  [.[] | select(.environment == "prod")] | .[:5] | .[] |
-  {id: .id, sha: (.sha[:7]), created: .created_at}
-' | head -20
-
-# Get statuses for the latest
-DEPLOY_ID=$(gh api repos/civitai/civitai/deployments --jq '[.[] | select(.environment == "prod")] | .[0].id')
-gh api "repos/civitai/civitai/deployments/$DEPLOY_ID/statuses" --jq '.[] | {state: .state, description: .description, time: .updated_at}'
-```
-
-### Step 2: Open Tekton Dashboard for details
-
-The Tekton Dashboard provides full build logs, task output, and error details.
-Access requires GitHub org membership (civitai/oauth team).
-
-**Dashboard URLs:**
-
-| View | URL |
-|------|-----|
-| All pipeline runs | `https://tekton.civitai.com/#/namespaces/tekton-builds/pipelineruns` |
-| Specific run | `https://tekton.civitai.com/#/namespaces/tekton-builds/pipelineruns/<RUN_NAME>` |
-| Task runs | `https://tekton.civitai.com/#/namespaces/tekton-builds/taskruns` |
-
-Open a specific run in browser:
-```bash
-# Replace RUN_NAME with the pipeline run name (e.g., civitai-web-deploy-vgp54)
-xdg-open "https://tekton.civitai.com/#/namespaces/tekton-builds/pipelineruns/RUN_NAME"
-```
-
-### Step 3: Access Tekton API via curl (authenticated)
-
-For programmatic access to pipeline details and logs, curl the Tekton Dashboard API.
-Requires a valid session cookie from browser login.
-
-**First-time setup (one-time per session):**
-1. Open https://tekton.civitai.com in your browser and log in via GitHub
-2. Copy the `_oauth2_proxy` cookie value from your browser's dev tools
-3. Export it:
-```bash
-export TEKTON_COOKIE="_oauth2_proxy=<your-cookie-value>"
-```
-
-**API endpoints:**
+Cluster (preferred):
 
 ```bash
-TEKTON="https://tekton.civitai.com"
-
-# List recent pipeline runs
-curl -s -b "$TEKTON_COOKIE" "$TEKTON/apis/tekton.dev/v1/namespaces/tekton-builds/pipelineruns?limit=10" \
-  | jq '.items[] | {name: .metadata.name, status: .status.conditions[0].reason, started: .status.startTime}'
-
-# Get specific pipeline run details
-curl -s -b "$TEKTON_COOKIE" "$TEKTON/apis/tekton.dev/v1/namespaces/tekton-builds/pipelineruns/RUN_NAME" \
-  | jq '{
-    name: .metadata.name,
-    status: .status.conditions[0].reason,
-    message: .status.conditions[0].message,
-    tasks: [.status.childReferences[] | {task: .pipelineTaskName, name: .name}]
-  }'
-
-# List task runs for a pipeline run
-curl -s -b "$TEKTON_COOKIE" "$TEKTON/apis/tekton.dev/v1/namespaces/tekton-builds/taskruns?labelSelector=tekton.dev/pipelineRun=RUN_NAME" \
-  | jq '.items[] | {
-    task: .metadata.labels["tekton.dev/pipelineTask"],
-    status: .status.conditions[0].reason,
-    message: .status.conditions[0].message
-  }'
-
-# Get pod logs for a failed task (replace TASK_POD_NAME)
-curl -s -b "$TEKTON_COOKIE" "$TEKTON/api/v1/namespaces/tekton-builds/pods/TASK_POD_NAME/log?container=step-build-and-push&tailLines=100"
+RUN=<civitai-web-build-xxxxx>
+# build-image pod logs (BuildKit output / compile errors)
+POD=$(kubectl --context civit-datapacket -n tekton-builds get taskrun \
+  -l tekton.dev/pipelineRun=$RUN,tekton.dev/pipelineTask=build-image \
+  -o jsonpath='{.items[0].status.podName}')
+kubectl --context civit-datapacket -n tekton-builds logs $POD --container step-build-and-push --tail=120
 ```
 
-**Common container names for log retrieval:**
+Dashboard (browser, GitHub-org auth) for a run: `https://tekton.civitai.com/#/namespaces/tekton-builds/pipelineruns/<RUN_NAME>`.
 
-| Task | Container | What it shows |
-|------|-----------|---------------|
-| build-image | `step-build-and-push` | BuildKit output, compilation errors |
-| build-image-secondary | `step-build-and-push` | Green image build |
-| tag-do-image | `step-tag` | Image tagging with crane |
-| deploy-do | `step-clone-deployment-repo` | Git clone of deployment repo |
-| deploy-do | `step-deploy` | ConfigMap update, manifest apply, rollout status |
-| notify-* | `step-notify` | Node-RED webhook calls |
+## Debugging cheatsheet
 
-### Debugging cheatsheet
+- **Build stuck/slow**: check `build-image` TaskRun + pod logs (above). Common: OOM on Next.js build, BuildKit lock/disk on worker-spare.
+- **Image not picked up**: Flux ImagePolicy `latestImage` not advancing — tag must match `^\d{14}-[a-f0-9]+$`. Check ImageRepository `civitai-prod-release` scan.
+- **Canary rollback**: `get events --field-selector type=Warning` on ns `civitai-dp-prod`; Flagger needs 99% success rate + P99 < 5000ms, rolls back after 5 failed checks. Check `.status.failedChecks` on **both** canaries.
+- **Prod stuck on old image**: confirm both primaries' images; if policy has the new tag but primaries don't after >10m, the ImageUpdateAutomation commit or Kustomization reconcile is lagging — escalate to talos-infra (`dp-build-deploy` skill).
 
-**Build failed:**
-```bash
-# Open build logs in dashboard
-xdg-open "https://tekton.civitai.com/#/namespaces/tekton-builds/pipelineruns/RUN_NAME"
-# Look at build-image task → step-build-and-push logs
-# Common causes: TypeScript errors, dependency issues, out of disk
-```
-
-**Deploy failed:**
-```bash
-# Check deploy-do task logs
-# Common causes: DO kubeconfig expired, manifest invalid, rollout timeout
-xdg-open "https://tekton.civitai.com/#/namespaces/tekton-builds/pipelineruns/RUN_NAME"
-```
-
-**Pipeline stuck in queued:**
-```bash
-# Check if build node has disk pressure or other scheduling issues
-# This requires cluster access — escalate to infra team
-gh api "repos/civitai/civitai/deployments/$DEPLOY_ID/statuses" --jq '.[0]'
-# If stuck in "queued" for >30min, the build node may be unhealthy
-```
-
-## Interpreting States
-
-| State | Phase | Meaning |
-|-------|-------|---------|
-| `queued` | Build | Pipeline started, image building (~12min) |
-| `in_progress` | Deploy | Build succeeded, rolling out to DO cluster (~6min) |
-| `success` | Done | All 6 deployments rolled out |
-| `failure` | Error | Pipeline failed — check Tekton Dashboard for details |
-| `inactive` | Superseded | Replaced by a newer deployment |
-
-## Pipeline Architecture
-
-```
-Push to release branch
-  → Tekton: build image (BuildKit, ~12min)
-  → GitHub: deployment status = queued
-  → Tekton: tag as civitai-prod:latest (crane)
-  → GitHub: deployment status = in_progress
-  → Tekton: update ConfigMap + apply manifest + rolling restart (~6min)
-  → GitHub: deployment status = success | failure
-```
-
-**Deployments tracked:**
-civitai, civitai-trpc, civitai-api, civitai-job, civitai-api-internal, civitai-auth
-
-## Access Levels
+## Access levels
 
 | What | How | Who |
-|------|-----|-----|
-| Deployment status | `gh api` | Anyone with GitHub access |
-| Build logs & details | Tekton Dashboard | civitai org / oauth team members |
-| Cluster operations | kubectl | Infra team only |
+|---|---|---|
+| Live chain status (this skill) | kubectl ctx `civit-datapacket` (read-only) | anyone with the DP kubeconfig |
+| GitHub deployment status | `gh api` | anyone with GitHub access |
+| Build logs | kubectl logs / Tekton Dashboard | DP kubeconfig / civitai org |
+| Trigger / rollback / mutate | talos-infra `dp-build-deploy` skill | infra team |

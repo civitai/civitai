@@ -7,6 +7,8 @@ import { pgDbWrite } from '~/server/db/pgDb';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { commaDelimitedStringArray } from '~/utils/zod-helpers';
 
+import { tagCache, tagCacheByName } from '~/server/redis/caches';
+
 const schema = z.object({
   tags: commaDelimitedStringArray(),
   nsfwLevel: z.coerce.number().refine((v) => Object.values(NsfwLevel).includes(v)),
@@ -18,14 +20,23 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   if (!nsfwLevel) return res.status(400).json({ error: 'No nsfwLevel provided' });
 
   const tagType = nsfwLevel === NsfwLevel.PG ? TagType.Label : TagType.Moderation;
-  const updateResult = await pgDbWrite.query<{ id: number }>(`
-    UPDATE "Tag"
-    SET "nsfwLevel" = ${nsfwLevel}, type = '${tagType}'::"TagType"
-    WHERE name IN (${tags.map((tag) => `'${tag}'`)})
-      AND "nsfwLevel" != ${nsfwLevel}
-    RETURNING id;
-  `);
+  const updateResult = await pgDbWrite.query<{ id: number }>(
+    `UPDATE "Tag"
+    SET "nsfwLevel" = $1, type = $2::"TagType"
+    WHERE name = ANY($3::text[])
+      AND "nsfwLevel" != $1
+    RETURNING id;`,
+    [nsfwLevel, tagType, tags]
+  );
   const tagIds = updateResult.rows.map((r) => r.id);
+
+  if (tagIds.length > 0) {
+    await Promise.all([
+      ...tags.map((tag) => tagCacheByName.bust(tag)),
+      ...tagIds.map((id) => tagCache.bust(id)),
+    ]);
+  }
+
   if (!tagIds.length) return res.status(200).json({ tagIds, nsfwLevel, noUpdates: true, tags });
 
   // Return the response early to avoid timeouts

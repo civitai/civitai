@@ -1,7 +1,14 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { dbRead } from '~/server/db/client';
-import { imageMetricsCache } from '~/server/redis/entity-metric-populate';
+import { clickhouse } from '~/server/clickhouse/client';
+import { redis } from '~/server/redis/client';
+import { imageMetricAggSource } from '~/server/flipt/client';
+import { MetricService } from '../../../../event-engine-common/services/metrics';
+import type {
+  IClickhouseClient,
+  IRedisClient,
+} from '../../../../event-engine-common/types/package-stubs';
 
 /**
  * BitDex comparison stats endpoint — lightweight ground-truth lookups.
@@ -19,10 +26,7 @@ import { imageMetricsCache } from '~/server/redis/entity-metric-populate';
  *   and metrics from Redis/ClickHouse (reactionLike, comment, collection, etc.)
  *   Max 50 IDs per request.
  */
-export default WebhookEndpoint(async function handler(
-  req: NextApiRequest,
-  res: NextApiResponse
-) {
+export default WebhookEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
   // Set a 5-second statement timeout for all PG queries in this request
   await dbRead.$executeRawUnsafe(`SET LOCAL statement_timeout = '5000'`);
 
@@ -60,22 +64,30 @@ export default WebhookEndpoint(async function handler(
         },
       });
 
-      // Metrics from Redis/ClickHouse (per-ID, already optimized with caching)
-      const metrics = await imageMetricsCache.fetch(ids);
+      // Metrics from the watcher-fed `metrics:*` cache (MetricService, backed by
+      // the FINAL entityMetricDailyAgg_v2 view), per-ID with stampede caching.
+      const metricService = new MetricService(
+        clickhouse as IClickhouseClient,
+        redis as unknown as IRedisClient,
+        imageMetricAggSource
+      );
+      const metrics = await metricService.fetch('Image', ids);
 
       result.images = images.map((img) => {
         const m = metrics[img.id];
         return {
           ...img,
-          metrics: m ? {
-            reactionLike: m.reactionLike ?? 0,
-            reactionHeart: m.reactionHeart ?? 0,
-            reactionLaugh: m.reactionLaugh ?? 0,
-            reactionCry: m.reactionCry ?? 0,
-            comment: m.comment ?? 0,
-            collection: m.collection ?? 0,
-            buzz: m.buzz ?? 0,
-          } : null,
+          metrics: m
+            ? {
+                reactionLike: m.Like ?? 0,
+                reactionHeart: m.Heart ?? 0,
+                reactionLaugh: m.Laugh ?? 0,
+                reactionCry: m.Cry ?? 0,
+                comment: m.commentCount ?? 0,
+                collection: m.Collection ?? 0,
+                buzz: m.tippedAmount ?? 0,
+              }
+            : null,
         };
       });
     }

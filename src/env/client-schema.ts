@@ -39,6 +39,33 @@ export const clientSchema = z.object({
   // Auth proxy URL for PR previews - when set, OAuth flows redirect through this URL
   // instead of handling locally (e.g., "https://auth.civitaic.com")
   NEXT_PUBLIC_AUTH_PROXY_URL: z.string().optional(),
+  // (NEXT_PUBLIC_AUTH_HUB_URL removed: every client-initiated hub flow — login full-page + popup, account
+  // connect, discord-link — now routes through a same-origin main-app endpoint that builds the hub URL from
+  // the SERVER's AUTH_JWT_ISSUER, so the client no longer needs a build-time hub origin.)
+  // Faro RUM (frontend observability). ALL optional/defaulted so they are NOT
+  // required-in-prod (a required NEXT_PUBLIC_ var breaks fresh PR-preview builds).
+  // Shipped dark: even with the build-args set, Faro only inits when the runtime
+  // `faro` feature flag is also on.
+  NEXT_PUBLIC_FARO_ENABLED: z.stringbool().default(false),
+  NEXT_PUBLIC_FARO_COLLECTOR_URL: z.url().optional(), // e.g. https://faro.civitai.com/collect
+  // Browser-trace (OTel span) sampling ratio — wired into the tracer provider via
+  // SampledTracingInstrumentation. Independent of session sampling: lowering it reduces
+  // trace volume WITHOUT reducing error/web-vitals coverage.
+  NEXT_PUBLIC_FARO_TRACES_SAMPLE_RATE: z.string().default('0.1'),
+  // Session sampling ratio — gates ALL Faro signals (errors/web-vitals/events/sessions).
+  NEXT_PUBLIC_FARO_SESSION_SAMPLE_RATE: z.string().default('1.0'),
+  // Resource Timing decomposition (DNS/TCP/TLS/TTFB/download splits for same-origin `/api`
+  // requests, emitted as custom Faro measurements). Ships DARK — default OFF — so it can be
+  // ramped INDEPENDENTLY of the main RUM flag once volume is confirmed on a small cohort.
+  // Only takes effect when NEXT_PUBLIC_FARO_ENABLED + the `faro` flag are also on.
+  NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED: z.stringbool().default(false),
+  // Deploy-tunable volume knobs for the resource-timing gate (dial the ramp WITHOUT a rebuild;
+  // parsed to numbers with a safe fallback in resolveResourceTimingConfig). Default sample rate
+  // is 0.05 — deliberately low so the aggregate stays under Loki's 10 MB/s per-stream ceiling on
+  // the shared `source="faro-rum"` stream at 100k concurrent (0.25 would breach it ~84.5k). The
+  // per-window cap is the pathological-single-client belt.
+  NEXT_PUBLIC_FARO_RESOURCE_TIMING_SAMPLE_RATE: z.string().default('0.05'),
+  NEXT_PUBLIC_FARO_RESOURCE_TIMING_MAX_PER_WINDOW: z.string().default('8'),
 });
 
 /**
@@ -80,4 +107,13 @@ export const clientEnv = {
     process.env.NEXT_PUBLIC_CF_INVISIBLE_TURNSTILE_SITEKEY,
   NEXT_PUBLIC_CF_MANAGED_TURNSTILE_SITEKEY: process.env.NEXT_PUBLIC_CF_MANAGED_TURNSTILE_SITEKEY,
   NEXT_PUBLIC_AUTH_PROXY_URL: process.env.NEXT_PUBLIC_AUTH_PROXY_URL,
+  NEXT_PUBLIC_FARO_ENABLED: process.env.NEXT_PUBLIC_FARO_ENABLED,
+  NEXT_PUBLIC_FARO_COLLECTOR_URL: process.env.NEXT_PUBLIC_FARO_COLLECTOR_URL,
+  NEXT_PUBLIC_FARO_TRACES_SAMPLE_RATE: process.env.NEXT_PUBLIC_FARO_TRACES_SAMPLE_RATE,
+  NEXT_PUBLIC_FARO_SESSION_SAMPLE_RATE: process.env.NEXT_PUBLIC_FARO_SESSION_SAMPLE_RATE,
+  NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED: process.env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED,
+  NEXT_PUBLIC_FARO_RESOURCE_TIMING_SAMPLE_RATE:
+    process.env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_SAMPLE_RATE,
+  NEXT_PUBLIC_FARO_RESOURCE_TIMING_MAX_PER_WINDOW:
+    process.env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_MAX_PER_WINDOW,
 };

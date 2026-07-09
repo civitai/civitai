@@ -1,4 +1,5 @@
 import { NsfwLevel } from '~/server/common/enums';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { Flags } from '~/shared/utils/flags';
 
 export function parseBitwiseBrowsingLevel(level: number): number[] {
@@ -95,10 +96,122 @@ export function getBrowsingLevelLabel(value: number) {
   const highest = getHighestBrowsingLevelBit(value);
   return highest ? browsingLevelLabels[highest] : '?';
 }
+
+// ---------------------------------------------------------------------------
+// Off-site App-Listing content-rating ↔ NsfwLevel mapping (App Blocks W13).
+//
+// Client-SAFE (this module is imported by browser components), so both the review
+// modal (derive a rating from an approved listing's asset levels) AND the server
+// (approve stamp + the asset attach ceiling) share ONE implementation — a
+// divergent inverse would let mature assets publish under a too-low rating.
+// ---------------------------------------------------------------------------
+
+/**
+ * The off-site content-rating ladder, ASCENDING by maturity ceiling. Kept in sync
+ * with `OFFSITE_CONTENT_RATINGS` in `offsite-listing.schema` (a plain literal list
+ * here avoids a shared→server-schema import; a unit test asserts they match). A
+ * value typed as {@link OffsiteRatingValue} is structurally assignable to that
+ * schema's `OffsiteContentRating` (same string literals).
+ */
+export const OFFSITE_CONTENT_RATING_LADDER = ['g', 'pg', 'pg13', 'r', 'x'] as const;
+export type OffsiteRatingValue = (typeof OFFSITE_CONTENT_RATING_LADDER)[number];
+
+/**
+ * Map an off-site content rating (`g|pg|pg13|r|x` — nullable) to the MAXIMUM
+ * `NsfwLevel` bit its published assets may carry. Reuses the canonical
+ * `orchestratorNsfwLevelMap` (which lacks the SFW `g` rating → PG). A null/unknown
+ * rating FAILS CLOSED to PG (SFW) — never widen on ambiguity. (Canonical home; the
+ * app-listing-assets service re-exports this.)
+ */
+export function nsfwLevelFromContentRating(rating: string | null | undefined): NsfwLevel {
+  if (!rating || rating === 'g') return NsfwLevel.PG;
+  return orchestratorNsfwLevelMap[rating] ?? NsfwLevel.PG;
+}
+
+/**
+ * Inverse of {@link nsfwLevelFromContentRating} for a SINGLE detected level: the
+ * MINIMAL off-site rating whose ceiling covers `level`. Fail-CLOSED: a level above
+ * the `x` ceiling (X/XXX/Blocked) returns the TOP rating (`x`), NEVER a lower one —
+ * so a scanner's high reading can never be under-rated. Level 0 (no maturity
+ * signal) → `g`.
+ */
+export function contentRatingFromNsfwLevel(level: number): OffsiteRatingValue {
+  const bit = getHighestBrowsingLevelBit(level);
+  for (const rating of OFFSITE_CONTENT_RATING_LADDER) {
+    if (bit <= nsfwLevelFromContentRating(rating)) return rating;
+  }
+  // Fail closed: a bit above every ladder ceiling (X/XXX/Blocked) → the top rating.
+  return OFFSITE_CONTENT_RATING_LADDER[OFFSITE_CONTENT_RATING_LADDER.length - 1];
+}
+
+/**
+ * Derive the minimal off-site content rating that covers the MAX `nsfwLevel` across
+ * a listing's assets (icon + cover + screenshots). Empty / all-null → `g`. Used as
+ * the review modal's default + the approve-time derived floor. Fail-CLOSED via
+ * {@link contentRatingFromNsfwLevel} (never under-rates).
+ */
+export function deriveContentRatingFromAssets(
+  assets: { nsfwLevel?: number | null }[]
+): OffsiteRatingValue {
+  let maxBit = 0;
+  for (const a of assets) {
+    const bit = getHighestBrowsingLevelBit(a.nsfwLevel ?? 0);
+    if (bit > maxBit) maxBit = bit;
+  }
+  return contentRatingFromNsfwLevel(maxBit);
+}
 export const nsfwBrowsingLevelsFlag = flagifyBrowsingLevel(nsfwBrowsingLevelsArray);
 
 // all browsing levels
 export const allBrowsingLevelsFlag = flagifyBrowsingLevel([...browsingLevels]);
+
+/**
+ * App Blocks maturity policy — the SINGLE SOURCE OF TRUTH mapping a color
+ * domain to the maximum browsing-level flag content rendered/generated inside a
+ * block on that domain may carry.
+ *
+ * PRODUCT DECISION (App-Blocks-scoped): BOTH `green` AND `blue` clamp to SFW
+ * (PG + PG-13); only `red` permits mature output. This DELIBERATELY differs
+ * from the site-wide `canViewNsfw` feature flag, which today is TRUE on `blue`
+ * (the main site treats blue as a mature domain). Blocks lead the platform
+ * here: until the site-wide blue→SFW flip lands as a separate platform change,
+ * the App-Blocks generation/catalog belts enforce blue=SFW on their own. Change
+ * the policy in ONE place — this function — and the token-mint claim, the
+ * generation clamp, the prompt-audit, and the BLOCK_INIT signal all follow.
+ *
+ * Returned value is a bitwise browsing-level flag (see `NsfwLevel`):
+ *   - green → SFW  (PG + PG-13)              `sfwBrowsingLevelsFlag`
+ *   - blue  → SFW  (PG + PG-13) [product]    `sfwBrowsingLevelsFlag`
+ *   - red   → all levels (no clamp)          `allBrowsingLevelsFlag`
+ *
+ * Unknown / undefined domain → FAIL CLOSED to SFW (the most restrictive
+ * non-empty ceiling). Callers must never widen on ambiguity.
+ */
+export function domainBrowsingCeiling(color: ColorDomain | undefined | null): number {
+  switch (color) {
+    case 'red':
+      return allBrowsingLevelsFlag;
+    case 'green':
+    case 'blue':
+      return sfwBrowsingLevelsFlag;
+    default:
+      // Fail closed: an unknown/missing domain gets the most restrictive ceiling.
+      return sfwBrowsingLevelsFlag;
+  }
+}
+
+/**
+ * Derive whether mature (NSFW) generation output is permitted for a given
+ * browsing-level ceiling. Mirrors the orchestrator's `allowMatureContent`
+ * semantics (orchestrator.router.ts): `false` hard-blocks mature output,
+ * `undefined` leaves it to the caller/orchestrator default (red domain).
+ *
+ * A ceiling that contains NO nsfw bits (SFW domains) → `false` (block mature).
+ * A ceiling that contains any nsfw bit (red) → `undefined` (no clamp).
+ */
+export function allowMatureContentForCeiling(maxBrowsingLevel: number): boolean | undefined {
+  return Flags.intersects(maxBrowsingLevel, nsfwBrowsingLevelsFlag) ? undefined : false;
+}
 
 // helpers
 export function onlySelectableLevels(level: number) {

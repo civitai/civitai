@@ -448,7 +448,15 @@ const CreateChangelog = ({
                 name="content"
                 label="Content"
                 editorSize="xl"
-                includeControls={['heading', 'formatting', 'list', 'link', 'media', 'colors']} // mentions, polls
+                includeControls={[
+                  'heading',
+                  'formatting',
+                  'list',
+                  'link',
+                  'media',
+                  'colors',
+                  'timestamp',
+                ]} // mentions, polls
                 withAsterisk
                 stickyToolbar
               />

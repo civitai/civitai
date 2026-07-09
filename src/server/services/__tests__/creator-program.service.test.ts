@@ -121,6 +121,7 @@ import {
   getBanked,
   getCompensationPool,
   getCreatorRequirements,
+  getPoolParticipantsV2,
   joinCreatorsProgram,
   withdrawCash,
 } from '~/server/services/creator-program.service';
@@ -167,9 +168,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockSysRedis.get.mockResolvedValue(null);
   // Default fetchThroughCache: just call the function
-  mockFetchThroughCache.mockImplementation(
-    async (_key: string, fn: () => Promise<any>) => fn()
-  );
+  mockFetchThroughCache.mockImplementation(async (_key: string, fn: () => Promise<any>) => fn());
 });
 
 // ─── getCreatorRequirements ────────────────────────────────────────────────────
@@ -562,6 +561,52 @@ describe('withdrawCash', () => {
   });
 });
 
+// ─── getPoolParticipantsV2 ───────────────────────────────────────────────────────
+describe('getPoolParticipantsV2', () => {
+  const month = new Date('2026-06-15T12:00:00Z');
+  const monthAccount = 202606;
+
+  it('sums duplicate per-buzz-type contributor rows into a single participant', async () => {
+    // A creator who banked both green and yellow is returned as two rows with the same userId.
+    // These must collapse to one participant so the distribute job emits a single grant covering
+    // both types (regression: duplicate rows produced two grants sharing an externalTransactionId
+    // and the second was dropped, paying the creator for only one buzz type).
+    mockGetTopContributors.mockResolvedValueOnce({
+      [monthAccount]: [
+        { userId: 4944, amount: 151798 }, // yellow
+        { userId: 4944, amount: 100482 }, // green
+        { userId: 999, amount: 50000 },
+      ],
+    });
+    mockDbWrite.$queryRaw.mockResolvedValueOnce([]); // no banned participants
+
+    const participants = await getPoolParticipantsV2(month, false);
+
+    const alex = participants.filter((p) => p.userId === 4944);
+    expect(alex).toHaveLength(1);
+    expect(alex[0].amount).toBe(252280);
+    expect(participants).toHaveLength(2);
+    // Upstream contributor order is preserved (the distribute pool-depletion cutoff depends on it).
+    expect(participants.map((p) => p.userId)).toEqual([4944, 999]);
+  });
+
+  it('drops banned participants after summing', async () => {
+    mockGetTopContributors.mockResolvedValueOnce({
+      [monthAccount]: [
+        { userId: 4944, amount: 100000 },
+        { userId: 4944, amount: 50000 },
+        { userId: 999, amount: 50000 },
+      ],
+    });
+    mockDbWrite.$queryRaw.mockResolvedValueOnce([{ userId: 4944 }]); // 4944 banned
+
+    const participants = await getPoolParticipantsV2(month, false);
+
+    expect(participants).toHaveLength(1);
+    expect(participants[0].userId).toBe(999);
+  });
+});
+
 // ─── Unified pool invariants ───────────────────────────────────────────────────
 describe('unified pool invariants', () => {
   beforeEach(() => {
@@ -632,9 +677,7 @@ describe('unified pool invariants', () => {
     await extractBuzz(userId);
 
     const allCalls = mockCreateBuzzTransaction.mock.calls;
-    const extractCalls = allCalls.filter(
-      (call: any[]) => call[0].type === TransactionType.Extract
-    );
+    const extractCalls = allCalls.filter((call: any[]) => call[0].type === TransactionType.Extract);
 
     expect(extractCalls).toHaveLength(2);
     const greenRefund = extractCalls.find((c: any[]) => c[0].toAccountType === 'green');

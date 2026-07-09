@@ -2,28 +2,27 @@ import type { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import dayjs from '~/shared/utils/dayjs';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import requestIp from 'request-ip';
 import * as z from 'zod';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { isProd } from '~/env/other';
 import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
-import { buildFliptContext, getFeatureFlags } from '~/server/services/feature-flags.service';
-import { buildSearchActor } from '~/server/meilisearch/client';
-import {
-  getAllImages,
-  getAllImagesIndex,
-  getImagesFromFeedSearch,
-} from '~/server/services/image.service';
-import { imageMetaCache } from '~/server/redis/caches';
-import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
+import client from 'prom-client';
+import { ensureRegisterFeedImageExistenceCheckMetrics } from '~/server/metrics/feed-image-existence-check.metrics';
+import { isTransientMeiliError } from '~/server/meilisearch/client';
+import { runImageSearch } from '~/server/services/image-search.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import { isClientAbortError } from '~/server/utils/errorHandling';
+import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
+import {
+  acquireBulkheadSlot,
+  BulkheadFullError,
+  HEAVY_REQUEST_CONCURRENCY,
+} from '~/server/utils/request-bulkhead';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getPagination } from '~/server/utils/pagination-helpers';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { baseModels } from '~/shared/constants/basemodel.constants';
 import {
-  getNsfwLevelDeprecatedReverseMapping,
   nsfwBrowsingLevelsFlag,
   NsfwLevelDeprecated,
   nsfwLevelMapDeprecated,
@@ -82,9 +81,38 @@ const imagesEndpointSchema = z.object({
   withMeta: booleanString().default(false),
   requiringMeta: booleanString().optional(),
   flatMeta: booleanString().optional(),
+  withTags: booleanString().default(false),
 });
 
+// Reuse the shared images-search metrics bundle (idempotent registration on the
+// default registry that /api/metrics scrapes). This times the FULL REST handler
+// — including enrichment + JSON serialization, the actual pin cost — which the
+// inner getImagesFromSearch timer doesn't capture. route label keeps it queryable
+// alongside the search-fn timing without extra cardinality.
+const { requestDurationSeconds } = ensureRegisterFeedImageExistenceCheckMetrics(client.register);
+
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // When the long-task LABELS tier is armed, attribute any synchronous event-loop
+  // block during this heavy handler to 'rest:/api/v1/images'. That costs one
+  // AsyncLocalStorage.run() per request and is OFF by default. When it is not
+  // armed (the disarmed default AND base-armed-without-labels), this is the
+  // ORIGINAL code path: a direct handler call with NO wrapper/closure. See
+  // src/server/eventloop-longtask.ts.
+  if (longTaskLabelsArmed) {
+    return runWithLongTaskLabel('rest:/api/v1/images', () => handleImagesRequest(req, res));
+  }
+  return handleImagesRequest(req, res);
+});
+
+async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
+  // Started AFTER param validation + the paging guard so cheap 400/429 rejects
+  // aren't recorded as ~0ms heavy requests, which would dilute the heavy-tail P99
+  // this metric exists to measure. (Also the correct slot for the bulkhead merge:
+  // the #2428 acquire goes immediately above this, so a 503-rejected request is
+  // never timed.) Ended in finally; `?.` because early returns leave it unstarted.
+  let endTimer: (() => void) | undefined;
+
+  let releaseSlot: (() => void) | undefined;
   try {
     const reqParams = imagesEndpointSchema.safeParse(req.query);
     if (!reqParams.success) return res.status(400).json({ error: reqParams.error });
@@ -92,7 +120,8 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     const session = await getServerAuthSession({ req, res });
 
     // Handle pagination
-    const { limit, page, cursor, nsfw, browsingLevel, type, withMeta, flatMeta, ...data } = reqParams.data;
+    const { limit, page, cursor, nsfw, browsingLevel, type, withMeta, flatMeta, withTags, ...data } =
+      reqParams.data;
     let skip: number | undefined;
     const usingPaging = page && !cursor;
     if (usingPaging) {
@@ -106,107 +135,42 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       ({ skip } = getPagination(limit, page));
     }
 
+    // Per-pod concurrency cap (shared with the tRPC feed via the 'heavy-image' key):
+    // fast-fail with 503 when this pod is already saturated with heavy image work,
+    // so a backlog can't pin the single JS thread → probe timeout → Error/137.
+    // Acquired AFTER param validation + the paging guard so cheap 400/429 rejects
+    // don't consume a heavy slot. no-store so an edge layer can't cache the 503
+    // and turn a momentary shed into a multi-minute outage. Released in the finally
+    // below — NOT on res 'close', which can lag the actual heavy work by the
+    // keep-alive teardown and would hold the slot (and shed) long after the JS
+    // thread is free. Symmetric with the tRPC heavyProcedure's finally release.
+    try {
+      releaseSlot = acquireBulkheadSlot('heavy-image', HEAVY_REQUEST_CONCURRENCY);
+    } catch (e) {
+      if (e instanceof BulkheadFullError) {
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Retry-After', '2');
+        return res.status(503).json({ error: 'Server busy, please retry shortly.' });
+      }
+      throw e;
+    }
+
+    // Timed only for admitted requests (bulkhead 503 returns above, before this).
+    endTimer = requestDurationSeconds.startTimer({ route: 'api/v1/images' });
+
     // Check if request is from restricted region and override browsing level
     const region = getRegion(req);
     let _browsingLevel = browsingLevel ?? nsfw ?? publicBrowsingLevelsFlag;
     if (isRegionRestricted(region)) _browsingLevel = sfwBrowsingLevelsFlag;
 
-    const features = getFeatureFlags({ user: session?.user, req });
-
-    // Check BitDex mode — if active, route through getAllImagesIndex
-    const bitdexMode = await getFliptVariant(
-      FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
-      session?.user?.id?.toString() || 'anonymous',
-      buildFliptContext(session?.user)
+    // Search + response shaping is shared with /api/v1/blocks/images via
+    // runImageSearch. The PUBLIC endpoint passes its existing region/nsfw-derived
+    // browsingLevel UNCHANGED (mapped above from ?nsfw=/?browsingLevel=); the
+    // block endpoint passes a server-clamped value. No other lever differs.
+    const { items, nextCursor } = await runImageSearch(
+      { limit, skip, cursor, type, withMeta, flatMeta, withTags, data },
+      { browsingLevel: _browsingLevel, user: session?.user, req }
     );
-    const useBitdex = bitdexMode === 'shadow' || bitdexMode === 'primary';
-
-    // Always route modelId/imageId lookups through legacy getAllImages — BitDex
-    // and Meili feed search don't support filtering by modelId/imageId (they index
-    // postedToId/modelVersionId only), so they'd silently return the global feed.
-    // When both modelId and modelVersionId are passed, modelId is redundant
-    // (getAllImages also silently ignores it via an `else if` chain) — let those
-    // requests flow through the search index so engagement sorts
-    // (MostReactions/MostComments/MostCollected) work, since getAllImages's gallery
-    // sort branches for those are currently disabled. Fixes #2134.
-    //
-    // KNOWN LIMITATION: when only `modelId` is passed (no `modelVersionId`), the
-    // legacy DB path is the only option, and its MostReactions/MostComments/
-    // MostCollected branches are intentionally commented out at
-    // image.service.ts:1414-1422 with a `// TODO this causes the app to spike`
-    // note. As a result, those sorts collapse to newest-by-id for `modelId`-only
-    // queries. Callers that need engagement-sorted galleries should also pass a
-    // specific `modelVersionId`, which routes through the search index where
-    // those sorts are honored.
-    const useLegacyMethod = data.imageId || (data.modelId && !data.modelVersionId);
-
-    const actor = buildSearchActor({
-      userId: session?.user?.id,
-      ip: requestIp.getClientIp(req),
-      userAgent: req.headers['user-agent'],
-    });
-
-    const { items, nextCursor } = useLegacyMethod
-      ? await getAllImages({
-          ...data,
-          types: type ? [type] : undefined,
-          limit,
-          skip,
-          cursor,
-          // Only fetch tagIds and profilePictures here; metaSelect is fetched
-          // on-demand in the controller below to avoid query filtering.
-          include: ['tagIds', 'profilePictures'],
-          periodMode: 'published',
-          headers: { src: '/api/v1/images' },
-          browsingLevel: _browsingLevel,
-          withMeta: false,
-          user: session?.user,
-          disableMinor: true,
-          disablePoi: true,
-          includeBaseModel: true,
-          dbTarget: features.datapacketRead ? 'datapacket' : 'read',
-        })
-      : useBitdex
-      ? await getAllImagesIndex({
-          ...data,
-          types: type ? [type] : undefined,
-          limit,
-          skip,
-          cursor,
-          include: ['tagIds', 'profilePictures'],
-          periodMode: 'published',
-          browsingLevel: _browsingLevel,
-          withMeta: false,
-          user: session?.user,
-          useCombinedNsfwLevel: !features.canViewNsfw,
-          disableMinor: true,
-          disablePoi: true,
-          headers: { src: '/api/v1/images' },
-          dbTarget: features.datapacketRead ? 'datapacket' : 'read',
-          actor,
-        })
-      : await getImagesFromFeedSearch({
-          ...data,
-          types: type ? [type] : undefined,
-          limit,
-          skip,
-          cursor,
-          include: ['tagIds', 'profilePictures'],
-          periodMode: 'published',
-          browsingLevel: _browsingLevel,
-          withMeta: false,
-          currentUserId: session?.user?.id,
-          isModerator: session?.user?.isModerator,
-          useCombinedNsfwLevel: !features.canViewNsfw,
-          disableMinor: true,
-          disablePoi: true,
-          actor,
-        });
-
-    let imageMetas: Record<number, { id: number; meta?: any }> = {};
-    if (withMeta && items.length > 0) {
-      imageMetas = await imageMetaCache.fetch(items.map((img) => img.id));
-    }
 
     const metadata: Metadata = {
       nextCursor,
@@ -219,52 +183,67 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     metadata.nextPage = getNextPage({ req, ...metadata });
 
     res.status(200).json({
-      items: items.map((image) => {
-        const nsfw = getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel);
-
-        return {
-          id: image.id,
-          url: getEdgeUrl(image.url, { original: true, type: image.type }),
-          hash: image.hash,
-          width: image.width,
-          height: image.height,
-          nsfwLevel: nsfw,
-          type: image.type,
-          nsfw: nsfw !== NsfwLevelDeprecated.None,
-          browsingLevel: image.nsfwLevel,
-          createdAt: image.createdAt,
-          postId: image.postId,
-          stats: {
-            cryCount: image.stats?.cryCountAllTime ?? 0,
-            laughCount: image.stats?.laughCountAllTime ?? 0,
-            likeCount: image.stats?.likeCountAllTime ?? 0,
-            dislikeCount: image.stats?.dislikeCountAllTime ?? 0,
-            heartCount: image.stats?.heartCountAllTime ?? 0,
-            commentCount: image.stats?.commentCountAllTime ?? 0,
-          },
-          meta: (() => {
-            if (!withMeta) return null;
-            const imageMeta = imageMetas[image.id]?.meta ?? null;
-            const useFlat = flatMeta !== undefined ? flatMeta : !useLegacyMethod;
-            return useFlat ? imageMeta : { id: image.id, meta: imageMeta };
-          })(),
-          username: image.user.username,
-          baseModel: image.baseModel,
-          modelVersionIds: image.modelVersionIds,
-        };
-      }),
+      items,
       metadata,
     });
   } catch (error) {
+    if (isClientAbortError(error)) {
+      // Client disconnected mid-feed (closed tab / scrolled past / navigated). The
+      // Meili fetch's AbortSignal fired and bubbled a bare AbortError — not a server
+      // fault. 499 keeps it out of the 5xx SLO + the http-errors counter. (Was the
+      // top mislabeled-500 source on this endpoint.)
+      if (!res.headersSent) res.status(499).end();
+      return;
+    }
+    // Meili saturation / timeout / upstream 408/429/5xx (feeds-proxy shed or
+    // backend brownout) → 503 SERVICE_UNAVAILABLE, retryable. `isTransientMeiliError`
+    // matches BOTH civitai's own wrapper errors (MeiliCallTimeoutError /
+    // MeilisearchFetchError) AND the meilisearch-js SDK's own error types
+    // (MeiliSearchCommunicationError / MeiliSearchApiError / MeiliSearchTimeOutError)
+    // that the feed library's inner SDK calls throw — none of which are
+    // TRPCErrors, so the generic mapping below would otherwise default them to
+    // 500. Those SDK errors (a 408 "Request Timeout" / 503 "Service Unavailable"
+    // from the proxy) were the dominant mislabeled-500 source on this endpoint.
+    // The service layer (getImagesFromFeedSearch / getAllImagesIndex) now wraps
+    // them as TRPCError SERVICE_UNAVAILABLE before they reach here, but this
+    // branch is kept as defense-in-depth (a raw SDK error escaping the wrap
+    // still becomes 503-with-headers, not a hard 500). no-store so an edge
+    // layer can't cache the error; Retry-After so clients/CF retry the
+    // (typically seconds-long) flap. 4xx-other (malformed filter / auth) is NOT
+    // transient and still bubbles to the generic mapping below.
+    if (isTransientMeiliError(error)) {
+      if (!res.headersSent) {
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Retry-After', '2');
+        res
+          .status(503)
+          .json({ error: 'Image search is temporarily overloaded — please retry.' });
+      }
+      return;
+    }
     const trpcError = error as TRPCError;
     const statusCode = getHTTPStatusCodeFromError(trpcError);
+
+    // A TRPCError SERVICE_UNAVAILABLE wrapped by the service layer (the normal
+    // path for a transient Meili failure now) maps to 503 here — attach the
+    // same no-store + Retry-After so the retryable contract is identical to the
+    // raw-error branch above.
+    if (statusCode === 503 && !res.headersSent) {
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Retry-After', '2');
+    }
 
     return res.status(statusCode).json({
       error: trpcError.message,
       code: trpcError.code,
     });
+  } finally {
+    endTimer?.();
+    // Release the heavy slot as soon as the handler resolves (synchronous
+    // serialization — the actual pin cost — is done by now), not on socket close.
+    releaseSlot?.();
   }
-});
+}
 
 type Metadata = {
   currentPage?: number;

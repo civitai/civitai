@@ -8,6 +8,7 @@ import {
   getUserSettingsHandler,
   isTypingHandler,
   markAllAsReadHandler,
+  markChatReadHandler,
   modifyUserHandler,
   setUserSettingsHandler,
 } from '~/server/controllers/chat.controller';
@@ -17,6 +18,7 @@ import {
   getInfiniteMessagesInput,
   getMessageByIdInput,
   isTypingInput,
+  markChatReadInput,
   modifyUserInput,
   userSettingsChat,
 } from '~/server/schema/chat.schema';
@@ -48,6 +50,10 @@ export const chatRouter = router({
   markAllAsRead: protectedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .mutation(markAllAsReadHandler),
+  markChatRead: protectedProcedure
+    .meta({ requiredScope: TokenScope.SocialWrite })
+    .input(markChatReadInput)
+    .mutation(markChatReadHandler),
   getInfiniteMessages: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .input(getInfiniteMessagesInput)

@@ -1,0 +1,6 @@
+{
+  "_comment": "First Load JS budgets (brotli). Report-only during the soak: scripts/bundle-budget.mjs runs without --gate and the Dockerfile stage ends in `|| true`. Tightened to baseline + ~10-15% headroom from build pr-preview-2511-fzrjd (shared 425.9 kB, heaviest route /user/[username]/models 1.13 MB). To enforce: add --gate to the `size` script + drop the `|| true` in the Dockerfile. `routes` overrides routeMax for a specific page.",
+  "shared": "470 kB",
+  "routeMax": "1.3 MB",
+  "routes": {}
+}

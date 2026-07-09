@@ -82,7 +82,16 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
   const pendingBackfill = pendingImages.filter((img) => img.isBackfill);
   const pendingUserUploads = pendingImages.filter((img) => !img.isBackfill);
 
-  const rescanImages = images.filter((img) => img.ingestion === 'Rescan');
+  // Rescan mirrors Pending/Error: only re-send once the retry delay has elapsed
+  // (cooldown via scanRequestedAt) and while still under the retry cap. Without
+  // the cooldown, every Rescan image was re-submitted on every run — the
+  // low-priority scanner-queue flood.
+  const rescanImages = images.filter(
+    (img) =>
+      img.ingestion === 'Rescan' &&
+      (!img.scanRequestedAt || img.scanRequestedAt <= rescanDate) &&
+      Number(img.retryCount ?? 0) < IMAGE_SCANNING_RETRY_LIMIT
+  );
 
   const errorImages = images.filter(
     (img) =>
@@ -111,6 +120,14 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
           img.scanRequestedAt > rescanDate
         ) {
           return true;
+        }
+        // Rescan waiting for the retry delay (and still under the retry cap) - KEEP.
+        // Must mirror the rescanImages cooldown above, otherwise a cooled-down
+        // Rescan image is neither processed nor waiting and gets wrongly pruned.
+        if (img.ingestion === 'Rescan') {
+          const waitingForDelay = !!img.scanRequestedAt && img.scanRequestedAt > rescanDate;
+          const underRetryLimit = Number(img.retryCount ?? 0) < IMAGE_SCANNING_RETRY_LIMIT;
+          return waitingForDelay && underRetryLimit;
         }
         // Error but waiting for retry delay or under retry limit
         if (img.ingestion === 'Error') {

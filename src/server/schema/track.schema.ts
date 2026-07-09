@@ -32,6 +32,38 @@ export const addViewSchema = z.object({
 
 export type AddViewSchema = z.infer<typeof addViewSchema>;
 
+// App Blocks Analytics Phase 2 — block render/impression event.
+//
+// `block_scope_invocations` (Postgres) only captures AUTHENTICATED scoped API
+// calls, so anon viewers and static/no-scope blocks (which never make a scoped
+// call) are invisible. This event fires once per host mount at the BLOCK_READY
+// transition to make those renders measurable. It is emitted via the lightweight
+// /api/track/block-render beacon (see that route) rather than a tRPC mutation,
+// to skip the per-request tRPC middleware cost at GA volume.
+//
+// GRANULARITY: this is ONE row PER HOST MOUNT. A tab-switch or model-navigation
+// remount RE-FIRES it, so the same viewer can produce multiple rows for the
+// "same" block view. Consumers computing "unique views" MUST dedup in-query
+// (e.g. by viewer/session over a window) — do NOT treat each row as a unique view.
+//
+// SECURITY: the client supplies ONLY the three identifiers below. `isAnon` is
+// derived server-side from the session (`!session?.user` in the beacon route)
+// and `userId` is stamped by the Tracker — neither is accepted from the client
+// (the non-strict object strips any client-sent isAnon/userId), so an anon
+// viewer can't spoof an authed render (or vice-versa).
+export type BlockRenderInput = z.infer<typeof blockRenderSchema>;
+export const blockRenderSchema = z.object({
+  // The approved AppBlock's id (UUID-ish string). Capped to keep a tampered
+  // client from bloating the tracker payload; well above any real id length.
+  appBlockId: z.string().trim().min(1).max(256),
+  // The block instance id (`page_<appBlockId>` for pages, or the per-slot
+  // install instance id for slot hosts).
+  blockInstanceId: z.string().trim().min(1).max(256),
+  // Where the block rendered: 'app.page' for the full-page runner, or a slot
+  // id like 'model.sidebar_top' for the in-page slot host.
+  slotId: z.string().trim().min(1).max(128),
+});
+
 export type TrackShareInput = z.infer<typeof trackShareSchema>;
 export const trackShareSchema = z.object({
   platform: z.enum(['reddit', 'twitter', 'clipboard']),
@@ -379,6 +411,25 @@ const generatorSubmitSchema = z.object({
     // isValid on these rows is path-dependent (legacy/video: false,
     // v2: true) — see the doc-block above for the dashboard caveat.
     isRateLimited: z.boolean().optional(),
+    // Idempotency key also forwarded as `externalId` on the orchestration
+    // create-workflow call. Lets the dashboard join Generator_Submit rows
+    // to orchestration.jobs.externalId exactly (no userId+time heuristic).
+    //
+    // Present on happy-path emits (isValid:true, passed both RHF + the
+    // inner graph.validate / canGenerate gates) — NOT on RHF-fail or
+    // rate-limited emits, which never call mutateAsync. Note that some
+    // happy-path emits still produce no orchestration row — the user can
+    // cancel at the buzz-confirm prompt, hit insufficient-buzz, or trip
+    // a POI/mature-content reject after submit. Those rows will have
+    // externalId populated but never match a job; dashboard joins should
+    // treat unmatched-externalId submits as "submitted, no workflow"
+    // not "missing telemetry."
+    //
+    // Constraints mirror the orchestrator's own validation
+    // (civitai/civitai-orchestration#229 WorkflowTemplate.ExternalId) so
+    // tampered clients get rejected at the trpc layer instead of bloating
+    // the trackAction body before the orchestrator rejects.
+    externalId: z.string().max(128).regex(/^[A-Za-z0-9_-]+$/).optional(),
   }),
 });
 

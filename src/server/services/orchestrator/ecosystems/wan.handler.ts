@@ -34,6 +34,7 @@ import { ecosystemToVersionDef } from '~/shared/data-graph/generation/wan-graph'
 import { ecosystemToImageVersionDef } from '~/shared/data-graph/generation/wan-image-graph';
 import { defineHandler } from './handler-factory';
 import { isFlipt, FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
+import { type BaseModelGroup } from '~/shared/constants/basemodel.constants';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
@@ -458,3 +459,17 @@ export function isWanEcosystem(ecosystem: string): ecosystem is WanBaseModel {
     ecosystem.startsWith('WanVideo') || ecosystem.startsWith('WanImage') || ecosystem === 'WanVideo'
   );
 }
+
+// =============================================================================
+// Wan base-model → version-id map
+// =============================================================================
+// Relocated from the removed legacy `wan.schema.ts`. Consumed by the generation
+// service (`getMetaResources`) to add the implied Wan checkpoint resource when
+// resolving image metadata.
+
+export const wanBaseModelGroupIdMap: Partial<Record<BaseModelGroup, number>> = {
+  WanVideo1_3B_T2V: 1500646,
+  WanVideo14B_T2V: 1707796,
+  WanVideo14B_I2V_480p: 1501125,
+  WanVideo14B_I2V_720p: 1501344,
+};
