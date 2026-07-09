@@ -9,7 +9,11 @@ import { civitaiLLM } from '~/server/services/ai/civitai-llm';
 import { openrouter, AI_MODELS, type AIModel } from '~/server/services/ai/openrouter';
 import type { SimpleMessage } from '~/server/services/ai/openrouter';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
-import { sanitizeCategoryLabel } from '~/shared/constants/challenge.constants';
+import {
+  sanitizeCategoryLabel,
+  type ChallengeCategoryKey,
+} from '~/shared/constants/challenge.constants';
+import { getCategoryRubric } from './category-rubrics';
 import { findLastIndex } from '~/utils/array-helpers';
 import { markdownToHtml } from '~/utils/markdown-helpers';
 import { stripLeadingWhitespace } from '~/utils/string-helpers';
@@ -220,8 +224,11 @@ type GenerateReviewInput = {
   config: JudgingConfig;
   model?: AIModel;
   // User-created challenges: creator-defined judging categories. When present the review
-  // JSON schema is built from these instead of the fixed theme/wittiness/humor/aesthetic set.
-  categories?: { name: string; criteria: string }[];
+  // JSON schema is built from these instead of the fixed theme/wittiness/humor/aesthetic set,
+  // and `key` selects each category's rich scoring rubric for `{{SCORING_RUBRICS}}` injection.
+  categories?: { key: ChallengeCategoryKey; name: string; criteria: string }[];
+  // Selects NSFW rubric variants (getCategoryRubric). No-op until CATEGORY_RUBRICS_NSFW is populated.
+  nsfw?: boolean;
 };
 type GeneratedReview = {
   score: Score;
@@ -262,7 +269,8 @@ ${scoreLines}
   },
   "reaction": "Laugh" | "Heart" | "Like" | "Cry",
   "comment": "your review comment (2-3 sentences)",
-  "summary": "concise factual summary of the image"
+  "summary": "concise factual summary of the image",
+  "aestheticFlaws": ["string describing flaw 1","string describing flaw 2",...] // optional array of strings describing specific aesthetic flaws in the image
 }`;
 }
 
@@ -351,18 +359,39 @@ function buildMessagesFromTemplate(input: GenerateReviewInput): SimpleMessage[] 
   return messages;
 }
 
+/** Sentinel in a judge's `reviewPrompt` marking where per-category scoring rubrics are injected. */
+const SCORING_RUBRICS_SENTINEL = '{{SCORING_RUBRICS}}';
+
+/**
+ * Replace the `{{SCORING_RUBRICS}}` sentinel in a review prompt with the concatenated rich rubrics
+ * for the selected categories. If the sentinel is absent the prompt is returned unchanged (byte for
+ * byte) — no judge carries the sentinel today, so live review output is unaffected.
+ */
+export function injectRubrics(
+  reviewPrompt: string,
+  categories: { key: ChallengeCategoryKey }[],
+  nsfw?: boolean
+): string {
+  if (!reviewPrompt.includes(SCORING_RUBRICS_SENTINEL)) return reviewPrompt;
+  const block = categories.map((c) => getCategoryRubric(c.key, { nsfw })).join('\n\n');
+  return reviewPrompt.split(SCORING_RUBRICS_SENTINEL).join(block);
+}
+
 /**
  * Build simple 2-message array from systemPrompt + reviewPrompt fields (fallback path).
  */
-function buildFallbackMessages(input: GenerateReviewInput): SimpleMessage[] {
+export function buildFallbackMessages(input: GenerateReviewInput): SimpleMessage[] {
   const themeElementsLine = formatThemeElementsLine(input.themeElements);
   const userText = `Theme: ${input.theme}${themeElementsLine}\nCreator: ${input.creator}`;
   const responseSchema = input.categories?.length
     ? buildCategoryReviewSchema(input.categories)
     : RESPONSE_SCHEMA;
+  const reviewText = input.categories?.length
+    ? injectRubrics(input.config.prompts.review, input.categories, input.nsfw)
+    : input.config.prompts.review;
 
   return [
-    prepareSystemMessage(input.config, 'review', responseSchema),
+    prepareSystemMessage(input.config, 'review', responseSchema, reviewText),
     {
       role: 'user' as const,
       content: [
@@ -446,10 +475,13 @@ function formatThemeElementsLine(themeElements?: string[]): string {
 function prepareSystemMessage(
   config: JudgingConfig,
   promptType: JudgingPromptType,
-  responseStructure: string
+  responseStructure: string,
+  // When provided, replaces config.prompts[promptType] as the task text (rubric-injected review
+  // prompt). Undefined leaves output byte-identical to the pre-override behavior.
+  promptOverride?: string
 ) {
   // Remove leading whitespace
-  const taskSummary = stripLeadingWhitespace(config.prompts[promptType]);
+  const taskSummary = stripLeadingWhitespace(promptOverride ?? config.prompts[promptType]);
   responseStructure = stripLeadingWhitespace(responseStructure);
 
   const text = `${config.prompts.systemMessage}\n\n${taskSummary}\n\nReply with json\n\n${responseStructure}`;

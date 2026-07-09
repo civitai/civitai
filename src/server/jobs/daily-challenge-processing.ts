@@ -48,7 +48,10 @@ import {
   type JudgingConfig,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { calculateWeightedCategoryScore } from '~/server/games/daily-challenge/daily-challenge-scoring';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  getIsSafeBrowsingLevel,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import {
   generateArticle,
   generateCollectionDetails,
@@ -914,7 +917,12 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         creator: entry.username,
         imageUrl: getEdgeUrl(entry.url, { width: 1200, name: 'image' }),
         config: judgingConfig,
-        categories: userCategories?.map((c) => ({ name: c.label, criteria: c.criteria })),
+        categories: userCategories?.map((c) => ({
+          key: c.key,
+          name: c.label,
+          criteria: c.criteria,
+        })),
+        nsfw: !getIsSafeBrowsingLevel(allowedNsfwLevel),
       });
       log('Review prepared', entry.imageId, review);
 
