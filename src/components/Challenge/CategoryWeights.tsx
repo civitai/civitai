@@ -3,38 +3,14 @@ import { IconPlus, IconX } from '@tabler/icons-react';
 import { useFieldArray, useFormContext, useWatch } from 'react-hook-form';
 import { InputNumber, InputSelect } from '~/libs/form';
 import {
+  ADDABLE_PRESET_KEYS,
+  type CategoryWeightRow,
   CHALLENGE_CATEGORY_GROUPS,
-  CHALLENGE_CATEGORY_KEYS,
   CHALLENGE_PRESET_CATEGORIES,
   type ChallengeCategoryKey,
+  makeRow,
+  MAX_CATEGORIES,
 } from '~/shared/constants/challenge.constants';
-
-export type CategoryWeightRow = {
-  key: ChallengeCategoryKey;
-  label: string;
-  criteria: string;
-  weight: number;
-};
-
-const MAX_CATEGORIES = 4;
-// Presets a non-Theme row may pick; Theme is reserved for the always-present first row.
-const ADDABLE_PRESET_KEYS = CHALLENGE_CATEGORY_KEYS.filter((key) => key !== 'theme');
-
-function makeRow(key: ChallengeCategoryKey): CategoryWeightRow {
-  const preset = CHALLENGE_PRESET_CATEGORIES[key];
-  return { key, label: preset.label, criteria: preset.criteria, weight: 0 };
-}
-
-// Default starting categories mirror the daily rubric split (theme 50 / wittiness 15 / humor 15 /
-// aesthetic 20 = 100) so a creator has a sensible default without configuring anything. Theme stays
-// first + non-removable; the other three are freely editable or removable. Owned here and seeded by
-// the parent form's defaultValues so useFieldArray starts populated with no seeding effect.
-export const DEFAULT_CATEGORY_ROWS: CategoryWeightRow[] = [
-  { ...makeRow('theme'), weight: 50 },
-  { ...makeRow('wittiness'), weight: 15 },
-  { ...makeRow('humor'), weight: 15 },
-  { ...makeRow('aesthetic'), weight: 20 },
-];
 
 // Build the grouped Select options for one row: every category the row may switch to — its own key
 // plus any preset not already used by another row — grouped by vibe. Empty groups are dropped.

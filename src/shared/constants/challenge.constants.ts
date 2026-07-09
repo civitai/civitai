@@ -96,6 +96,37 @@ export const CHALLENGE_CATEGORY_KEYS = Object.keys(CHALLENGE_PRESET_CATEGORIES) 
   ...ChallengeCategoryKey[]
 ];
 
+// Shape of one judging-category row in the creator form (RHF field-array item). label + criteria are
+// display-only copies of the preset — the server re-derives them from `key` at write time.
+export type CategoryWeightRow = {
+  key: ChallengeCategoryKey;
+  label: string;
+  criteria: string;
+  weight: number;
+};
+
+// Theme + up to 3 more.
+export const MAX_CATEGORIES = 4;
+
+// Presets a non-Theme row may pick; Theme is reserved for the always-present first row.
+export const ADDABLE_PRESET_KEYS = CHALLENGE_CATEGORY_KEYS.filter((key) => key !== 'theme');
+
+export function makeRow(key: ChallengeCategoryKey): CategoryWeightRow {
+  const preset = CHALLENGE_PRESET_CATEGORIES[key];
+  return { key, label: preset.label, criteria: preset.criteria, weight: 0 };
+}
+
+// Default starting categories mirror the daily rubric split (theme 50 / wittiness 15 / humor 15 /
+// aesthetic 20 = 100) so a creator has a sensible default without configuring anything. Theme stays
+// first + non-removable; the other three are freely editable or removable. Seeded into the form's
+// defaultValues so useFieldArray starts populated with no seeding effect.
+export const DEFAULT_CATEGORY_ROWS: CategoryWeightRow[] = [
+  { ...makeRow('theme'), weight: 50 },
+  { ...makeRow('wittiness'), weight: 15 },
+  { ...makeRow('humor'), weight: 15 },
+  { ...makeRow('aesthetic'), weight: 20 },
+];
+
 // Judges a public-challenge creator may pick. Keyed on NAME (env-stable; excludes "CivChan NSFW",
 // which shares CivChan's userId — public challenges are SFW-only).
 export const USER_SELECTABLE_JUDGE_NAMES = ['CivBot', 'CivChan'] as const;

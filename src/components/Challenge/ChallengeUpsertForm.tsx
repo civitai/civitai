@@ -52,15 +52,14 @@ import {
 import { computeDynamicPool } from '~/server/games/daily-challenge/challenge-pool';
 import { IconCheck, IconInfoCircle } from '@tabler/icons-react';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import CategoryWeights, {
-  DEFAULT_CATEGORY_ROWS,
-  type CategoryWeightRow,
-} from '~/components/Challenge/CategoryWeights';
+import CategoryWeights from '~/components/Challenge/CategoryWeights';
 import {
+  type CategoryWeightRow,
   CHALLENGE_ENTRY_HOUSE_CUT,
   CHALLENGE_MAX_ENTRY_FEE,
   CHALLENGE_MAX_INITIAL_PRIZE,
   CHALLENGE_MIN_ENTRY_FEE,
+  DEFAULT_CATEGORY_ROWS,
   getEntryPoolContribution,
 } from '~/shared/constants/challenge.constants';
 
