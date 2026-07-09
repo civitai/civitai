@@ -201,7 +201,6 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
   // One judges endpoint for both variants — the server returns the full list (with sensitive fields)
   // to moderators and the public, SFW-selectable subset to everyone else.
   const { data: judges = [] } = trpc.challenge.getJudges.useQuery();
-  const judgeItems = judges;
   const { data: events = [] } = trpc.challenge.getEvents.useQuery(
     { activeOnly: false },
     { enabled: !isUser }
@@ -937,8 +936,8 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   ? 'Select the AI judge for this challenge.'
                   : 'Select a judge persona for this challenge. Leave empty for default judging.'
               }
-              data={judgeItems.map((j) => ({ value: String(j.id), label: j.name }))}
-              renderOption={(item) => renderJudgeOption({ ...item, judges: judgeItems })}
+              data={judges.map((j) => ({ value: String(j.id), label: j.name }))}
+              renderOption={(item) => renderJudgeOption({ ...item, judges: judges })}
               onChange={(value) => {
                 if (isUser) return;
                 const selectedJudge = judges.find((j) => String(j.id) === value);
