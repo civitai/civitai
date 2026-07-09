@@ -3,7 +3,11 @@ import {
   CHALLENGE_MAX_INITIAL_PRIZE,
   CHALLENGE_MIN_ENTRY_FEE,
 } from '~/shared/constants/challenge.constants';
-import { prizeSchema, userChallengeUpsertSchema } from '~/server/schema/challenge.schema';
+import {
+  prizeSchema,
+  upsertChallengeSchema,
+  userChallengeUpsertSchema,
+} from '~/server/schema/challenge.schema';
 
 // Regression guard: negative money/quantity values must never validate — a negative amount
 // flowing into a Buzz transaction is a grant-instead-of-charge vector (has bitten us before).
@@ -61,5 +65,87 @@ describe('userChallengeUpsertSchema money/quantity floors', () => {
     expect(
       userChallengeUpsertSchema.safeParse({ ...valid, prizeDistribution: [120, -10, -10] }).success
     ).toBe(false);
+  });
+});
+
+// Task 5: moderator upsert schema accepts (and validates) judgingCategories the same way the
+// user path does — reusing challengeJudgingCategoriesSchema's theme-once/unique/sum-100/max-4
+// superRefine rather than duplicating it.
+describe('upsertChallengeSchema judgingCategories', () => {
+  const valid = {
+    title: 'A valid challenge title',
+    theme: 'Neon',
+    coverImage: { url: '123e4567-e89b-12d3-a456-426614174000' },
+    startsAt: new Date('2026-08-01T00:00:00Z'),
+    endsAt: new Date('2026-08-08T00:00:00Z'),
+    visibleAt: new Date('2026-08-01T00:00:00Z'),
+  };
+
+  it('accepts a payload that omits judgingCategories (leaves it undefined)', () => {
+    const result = upsertChallengeSchema.safeParse(valid);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.judgingCategories).toBeUndefined();
+  });
+
+  it('accepts an explicit null (behavior-preserving: no categories set)', () => {
+    const result = upsertChallengeSchema.safeParse({ ...valid, judgingCategories: null });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.judgingCategories).toBeNull();
+  });
+
+  it('accepts a valid category set and derives label/criteria server-side', () => {
+    const result = upsertChallengeSchema.safeParse({
+      ...valid,
+      judgingCategories: [
+        { key: 'theme', weight: 60 },
+        { key: 'aesthetic', weight: 40 },
+      ],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.judgingCategories).toHaveLength(2);
+      expect(result.data.judgingCategories?.[0].label).toBeTruthy();
+    }
+  });
+
+  it('rejects weights that do not sum to 100', () => {
+    const result = upsertChallengeSchema.safeParse({
+      ...valid,
+      judgingCategories: [{ key: 'theme', weight: 90 }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a category set missing the mandatory theme key', () => {
+    const result = upsertChallengeSchema.safeParse({
+      ...valid,
+      judgingCategories: [{ key: 'humor', weight: 100 }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects duplicate category keys', () => {
+    const result = upsertChallengeSchema.safeParse({
+      ...valid,
+      judgingCategories: [
+        { key: 'theme', weight: 50 },
+        { key: 'theme', weight: 50 },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects more than 4 categories', () => {
+    const result = upsertChallengeSchema.safeParse({
+      ...valid,
+      judgingCategories: [
+        { key: 'theme', weight: 20 },
+        { key: 'humor', weight: 20 },
+        { key: 'wittiness', weight: 20 },
+        { key: 'aesthetic', weight: 20 },
+        { key: 'creativity', weight: 20 },
+      ],
+    });
+    expect(result.success).toBe(false);
   });
 });

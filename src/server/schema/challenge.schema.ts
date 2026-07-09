@@ -309,6 +309,38 @@ export const getModeratorChallengesSchema = infiniteQuerySchema.merge(
   })
 );
 
+// Judging categories: preset-only category weights, shared by the moderator and user upsert
+// schemas. Derives label/criteria from the key server-side (see transform below) so client-sent
+// text can never reach the AI judge prompt.
+export const challengeJudgingCategorySchema = z
+  .object({
+    key: z.enum(CHALLENGE_CATEGORY_KEYS),
+    weight: z.number().int().min(1).max(100),
+  })
+  // Derive label + criteria from the key server-side so the client can never inject its own
+  // criteria text into the AI judge; any client-sent label/criteria are ignored/stripped.
+  .transform(({ key, weight }) => ({
+    key,
+    weight,
+    label: CHALLENGE_PRESET_CATEGORIES[key].label,
+    criteria: CHALLENGE_PRESET_CATEGORIES[key].criteria,
+  }));
+export type ChallengeJudgingCategory = z.infer<typeof challengeJudgingCategorySchema>;
+
+export const challengeJudgingCategoriesSchema = z
+  .array(challengeJudgingCategorySchema)
+  .min(1)
+  .max(4)
+  .superRefine((cats, ctx) => {
+    if (cats.filter((c) => c.key === 'theme').length !== 1)
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Theme is required exactly once' });
+    const keys = cats.map((c) => c.key);
+    if (new Set(keys).size !== keys.length)
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Each category can be used once' });
+    if (cats.reduce((s, c) => s + c.weight, 0) !== 100)
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Category weights must sum to 100%' });
+  });
+
 // Moderator: Create/Update challenge
 // Base schema is a ZodObject so the form can use .omit().extend()
 export const upsertChallengeBaseSchema = z.object({
@@ -324,6 +356,7 @@ export const upsertChallengeBaseSchema = z.object({
   modelVersionIds: z.array(z.number()).default([]),
   judgeId: z.number().optional().nullable(),
   judgingPrompt: z.string().optional().nullable(),
+  judgingCategories: challengeJudgingCategoriesSchema.optional().nullable(),
   reviewPercentage: z.number().min(0).max(100).default(100),
   maxReviews: z.number().optional().nullable(),
   maxEntriesPerUser: z.number().min(1).max(100).default(20),
@@ -359,35 +392,6 @@ export type UpsertChallengeInput = z.infer<typeof upsertChallengeSchema>;
 // A restricted, safe subset of the moderator upsert: no free-form judgingPrompt, no
 // arbitrary status/source/prizePool. Judging is category-based; funding is entry-fee.
 // The judge must be an existing active judge (validated server-side).
-export const challengeJudgingCategorySchema = z
-  .object({
-    key: z.enum(CHALLENGE_CATEGORY_KEYS),
-    weight: z.number().int().min(1).max(100),
-  })
-  // Derive label + criteria from the key server-side so the client can never inject its own
-  // criteria text into the AI judge; any client-sent label/criteria are ignored/stripped.
-  .transform(({ key, weight }) => ({
-    key,
-    weight,
-    label: CHALLENGE_PRESET_CATEGORIES[key].label,
-    criteria: CHALLENGE_PRESET_CATEGORIES[key].criteria,
-  }));
-export type ChallengeJudgingCategory = z.infer<typeof challengeJudgingCategorySchema>;
-
-export const challengeJudgingCategoriesSchema = z
-  .array(challengeJudgingCategorySchema)
-  .min(1)
-  .max(4)
-  .superRefine((cats, ctx) => {
-    if (cats.filter((c) => c.key === 'theme').length !== 1)
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Theme is required exactly once' });
-    const keys = cats.map((c) => c.key);
-    if (new Set(keys).size !== keys.length)
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Each category can be used once' });
-    if (cats.reduce((s, c) => s + c.weight, 0) !== 100)
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Category weights must sum to 100%' });
-  });
-
 export const userChallengeUpsertBaseSchema = z.object({
   id: z.number().optional(),
   title: z.string().trim().min(3).max(200),

@@ -922,7 +922,15 @@ export async function upsertChallenge({
   userId,
   ...input
 }: UpsertChallengeInput & { userId: number }) {
-  const { id, coverImage, judgeId, eventId, themeElements: inputThemeElements, ...data } = input;
+  const {
+    id,
+    coverImage,
+    judgeId,
+    eventId,
+    themeElements: inputThemeElements,
+    judgingCategories,
+    ...data
+  } = input;
 
   // Defense-in-depth: validate endsAt > startsAt (also validated by Zod schema)
   if (data.endsAt <= data.startsAt) {
@@ -1045,6 +1053,9 @@ export async function upsertChallenge({
           prizeDistribution: data.prizeDistribution
             ? (data.prizeDistribution as unknown as Prisma.InputJsonValue)
             : Prisma.JsonNull,
+          judgingCategories: judgingCategories
+            ? (judgingCategories as unknown as Prisma.InputJsonValue)
+            : Prisma.JsonNull,
           ...(themeElements && {
             metadata: { ...existingMetadata, themeElements },
           }),
@@ -1130,6 +1141,9 @@ export async function upsertChallenge({
           entryPrize: data.entryPrize ? data.entryPrize : Prisma.JsonNull,
           prizeDistribution: data.prizeDistribution
             ? (data.prizeDistribution as unknown as Prisma.InputJsonValue)
+            : Prisma.JsonNull,
+          judgingCategories: judgingCategories
+            ? (judgingCategories as unknown as Prisma.InputJsonValue)
             : Prisma.JsonNull,
           ...(newThemeElements && { metadata: { themeElements: newThemeElements } }),
         },
