@@ -28,6 +28,7 @@ import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/Cleara
 import { getModelUrl, slugit } from '~/utils/string-helpers';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { env } from '~/env/client';
+import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
 import { ModelSearchItem } from '~/components/AutocompleteSearch/renderItems/models';
 import { ArticlesSearchItem } from '~/components/AutocompleteSearch/renderItems/articles';
 import { UserSearchItem } from '~/components/AutocompleteSearch/renderItems/users';
@@ -71,7 +72,9 @@ type Props = Omit<AutocompleteProps, 'data' | 'onSubmit'> & {
   searchBoxProps?: SearchBoxProps;
 };
 
-const searchClient: InstantSearchProps['searchClient'] = {
+// Wrapped so a Meili outage degrades to empty results instead of an uncaught
+// `MeiliSearchCommunicationError`. Fails quietly (header autocomplete, no banner).
+const searchClient: InstantSearchProps['searchClient'] = createResilientSearchClient({
   ...meilisearch,
   search(requests) {
     // Prevent making a request if there is no query
@@ -95,7 +98,7 @@ const searchClient: InstantSearchProps['searchClient'] = {
 
     return meilisearch.search(requests);
   },
-};
+});
 
 const DEFAULT_DROPDOWN_ITEM_LIMIT = 6;
 

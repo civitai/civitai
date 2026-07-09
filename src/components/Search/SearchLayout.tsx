@@ -11,11 +11,17 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 
+import { Alert } from '@mantine/core';
 import { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { IconAlertTriangle, IconChevronsLeft } from '@tabler/icons-react';
 import { routing } from '~/components/Search/useSearchState';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
+import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
+import {
+  searchAvailability,
+  useSearchAvailabilityStore,
+} from '~/components/Search/search-availability.store';
 import Link from 'next/link';
 import { env } from '~/env/client';
 import type { SearchIndex } from '~/components/Search/parsers/base';
@@ -45,12 +51,16 @@ const meilisearch = instantMeiliSearch(
   { primaryKey: 'id', keepZeroFacets: true }
 );
 
-const searchClient: InstantSearchProps['searchClient'] = {
-  ...meilisearch,
-  search(requests) {
-    return meilisearch.search(requests);
-  },
-};
+// Wrap the Meili client so a backend outage/blip degrades to an empty result set
+// (with a "temporarily unavailable" banner) instead of throwing an uncaught
+// `MeiliSearchCommunicationError`. Happy path is unchanged: a successful search
+// returns Meili's response verbatim. The availability store is the side-channel
+// used to render the banner (the swallowed error never reaches
+// `useInstantSearch().status`).
+const searchClient: InstantSearchProps['searchClient'] = createResilientSearchClient(meilisearch, {
+  onError: () => searchAvailability.setUnavailable(true),
+  onSuccess: () => searchAvailability.setUnavailable(false),
+});
 
 // #region [ImageGuardContext]
 type SearchLayoutState = {
@@ -193,6 +203,7 @@ export function SearchLayout({
   ]);
 
   const isProfaneSearch = profanityAnalysis.hasProfanity;
+  const isSearchUnavailable = useSearchAvailabilityStore((state) => state.unavailable);
 
   return (
     <SearchLayoutCtx.Provider value={ctx}>
@@ -341,7 +352,22 @@ export function SearchLayout({
               </SearchLayout.Content>
             </SearchLayout.Root>
           ) : (
-            <>{children}</>
+            <>
+              {isSearchUnavailable && (
+                <SearchLayout.Content>
+                  <Alert
+                    icon={<IconAlertTriangle size={18} />}
+                    color="yellow"
+                    variant="light"
+                    title="Search is temporarily unavailable"
+                  >
+                    We couldn&apos;t reach search just now. This is usually brief — please try your
+                    search again in a moment.
+                  </Alert>
+                </SearchLayout.Content>
+              )}
+              {children}
+            </>
           )}
         </AppLayout>
       </InstantSearch>
