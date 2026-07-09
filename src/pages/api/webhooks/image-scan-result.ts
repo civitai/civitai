@@ -66,8 +66,6 @@ import type { NextApiRequest } from 'next';
 
 // const REQUIRED_SCANS = 2;
 
-const localTagCache: Record<string, { id: number; blocked?: true; ignored?: true }> = {};
-
 enum Status {
   Success = 0,
   NotFound = 1, // image not found at url
@@ -544,6 +542,8 @@ async function getTagsFromIncomingTags({
   tags: BodyProps['tags'];
   source: BodyProps['source'];
 }) {
+  const localTagCache: Record<string, { id: number; blocked?: true; ignored?: true }> = {};
+
   if (!incomingTags) {
     await logToAxiom({
       type: 'image-scan-result',
