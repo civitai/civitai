@@ -233,7 +233,33 @@ type OwnedListing = {
   userId: number;
   iconId: number | null;
   coverId: number | null;
+  status: string;
+  revisionOfId: string | null;
 };
+
+/**
+ * 🔴 Owner asset-edit guard (defense-in-depth). An APPROVED, non-shadow (live,
+ * `revisionOfId == null`) listing must NOT have its assets mutated directly by its
+ * owner — those edits go through a SHADOW revision (mod re-review), so a direct
+ * add/remove/replace on the live row can never silently change the served listing.
+ * Draft / pending / shadow (`revisionOfId != null`) listings are freely editable.
+ *
+ * Moderators BYPASS (they may curate a live listing). The mod placeholder backfill
+ * writes assets via `dbWrite` DIRECTLY, NOT through these owner procs, so it is
+ * unaffected by this guard.
+ */
+function assertOwnerAssetEditable(
+  listing: { status: string; revisionOfId: string | null },
+  user: SessionUser
+): void {
+  if (user.isModerator) return;
+  if (listing.status === 'approved' && listing.revisionOfId == null) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'This listing is live; edit its assets through a revision instead of directly.',
+    });
+  }
+}
 
 /**
  * Map an `AppListing.contentRating` (`g|pg|pg13|r|x` — nullable) to the MAXIMUM
@@ -263,6 +289,8 @@ async function loadOwnedListing(listingId: string, user: SessionUser): Promise<O
       userId: true,
       iconId: true,
       coverId: true,
+      status: true,
+      revisionOfId: true,
     },
   });
   if (!listing) throw new TRPCError({ code: 'NOT_FOUND', message: 'Listing not found' });
@@ -345,6 +373,7 @@ export async function setListingIcon(
   user: SessionUser
 ): Promise<{ iconId: number }> {
   const listing = await loadOwnedListing(args.listingId, user);
+  assertOwnerAssetEditable(listing, user);
   const iconId = await loadValidatedImage(args.imageId, 'icon', user, listing.contentRating);
   await dbWrite.appListing.update({ where: { id: args.listingId }, data: { iconId } });
   return { iconId };
@@ -355,6 +384,7 @@ export async function setListingCover(
   user: SessionUser
 ): Promise<{ coverId: number }> {
   const listing = await loadOwnedListing(args.listingId, user);
+  assertOwnerAssetEditable(listing, user);
   const coverId = await loadValidatedImage(args.imageId, 'cover', user, listing.contentRating);
   await dbWrite.appListing.update({ where: { id: args.listingId }, data: { coverId } });
   return { coverId };
@@ -365,6 +395,7 @@ export async function addListingScreenshot(
   user: SessionUser
 ): Promise<{ id: string; order: number }> {
   const listing = await loadOwnedListing(args.listingId, user);
+  assertOwnerAssetEditable(listing, user);
   const imageId = await loadValidatedImage(args.imageId, 'screenshot', user, listing.contentRating);
 
   // COUNT cap — reject the (N+1)th (mirrors E5 MAX_SCREENSHOTS "reject, not truncate").
@@ -409,7 +440,7 @@ export async function reorderListingScreenshots(
   args: { listingId: string; orderedIds: string[] },
   user: SessionUser
 ): Promise<{ reordered: number }> {
-  await loadOwnedListing(args.listingId, user);
+  assertOwnerAssetEditable(await loadOwnedListing(args.listingId, user), user);
   // Read the current set from dbWrite (primary): under replica lag the reorder
   // could target a just-deleted id (P2025 → 500 after the delete committed) or
   // miss a just-added row.
@@ -443,12 +474,16 @@ export async function updateListingScreenshotCaption(
 ): Promise<{ id: string }> {
   const shot = await dbRead.appListingScreenshot.findUnique({
     where: { id: args.screenshotId },
-    select: { id: true, appListing: { select: { userId: true } } },
+    select: {
+      id: true,
+      appListing: { select: { userId: true, status: true, revisionOfId: true } },
+    },
   });
   if (!shot) throw new TRPCError({ code: 'NOT_FOUND', message: 'Screenshot not found' });
   if (shot.appListing.userId !== user.id && !user.isModerator) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not own this listing' });
   }
+  assertOwnerAssetEditable(shot.appListing, user);
   await dbWrite.appListingScreenshot.update({
     where: { id: args.screenshotId },
     data: { caption: args.caption ?? null },
@@ -466,12 +501,19 @@ export async function removeListingScreenshot(
 ): Promise<{ removed: string }> {
   const shot = await dbRead.appListingScreenshot.findUnique({
     where: { id: args.screenshotId },
-    select: { id: true, appListingId: true, appListing: { select: { userId: true } } },
+    select: {
+      id: true,
+      appListingId: true,
+      appListing: { select: { userId: true, status: true, revisionOfId: true } },
+    },
   });
   if (!shot) throw new TRPCError({ code: 'NOT_FOUND', message: 'Screenshot not found' });
   if (shot.appListing.userId !== user.id && !user.isModerator) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not own this listing' });
   }
+  // 🔴 Never delete a screenshot from a LIVE approved listing directly (bypasses
+  // review) — edits go through a shadow revision. Mods bypass (curation).
+  assertOwnerAssetEditable(shot.appListing, user);
   await dbWrite.appListingScreenshot.delete({ where: { id: args.screenshotId } });
 
   // Re-pack: contiguous orders over the survivors (ordered by their old order).
