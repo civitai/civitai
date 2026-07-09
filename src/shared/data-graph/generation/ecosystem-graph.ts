@@ -48,6 +48,7 @@ import { flux2Graph } from './flux2-graph';
 import { flux2KleinGraph } from './flux2-klein-graph';
 import { fluxKontextGraph } from './flux-kontext-graph';
 import { zImageGraph } from './z-image-graph';
+import { booguGraph } from './boogu-graph';
 import { chromaGraph } from './chroma-graph';
 import { hiDreamGraph } from './hi-dream-graph';
 import { hiDreamO1Graph } from './hi-dream-o1-graph';
@@ -71,6 +72,7 @@ import { maiGraph } from './mai-graph';
 import { seedanceGraph } from './seedance-graph';
 import { happyHorseGraph } from './happy-horse-graph';
 import { aceAudioGraph } from './ace-audio-graph';
+import { polyGenGraph } from './polygen-graph';
 
 // =============================================================================
 // Helper Functions
@@ -169,7 +171,11 @@ function getEcosystemStates(
 }
 
 export const ecosystemGraph = new DataGraph<
-  { workflow: string; output: 'image' | 'video' | 'audio'; input: 'text' | 'image' | 'video' },
+  {
+    workflow: string;
+    output: 'image' | 'video' | 'audio' | 'model3d';
+    input: 'text' | 'image' | 'video';
+  },
   GenerationCtx
 >()
   // ecosystem depends on workflow to filter compatible ecosystems
@@ -197,7 +203,13 @@ export const ecosystemGraph = new DataGraph<
       // so a fresh form doesn't land on an unusable selection. Fall through to
       // the first usable, then any compatible, then SDXL.
       const outputDefault =
-        ctx.output === 'audio' ? 'Ace' : ctx.output === 'video' ? 'Kling' : 'ZImageTurbo';
+        ctx.output === 'audio'
+          ? 'Ace'
+          : ctx.output === 'video'
+          ? 'Kling'
+          : ctx.output === 'model3d'
+          ? 'PolyGen'
+          : 'ZImageTurbo';
       const usableEcosystems = disabledSet.size
         ? compatibleEcosystems.filter((key) => !disabledSet.has(key))
         : compatibleEcosystems;
@@ -340,6 +352,7 @@ export const ecosystemGraph = new DataGraph<
     },
     { values: ['Flux1Kontext'] as const, graph: fluxKontextGraph },
     { values: ['ZImageTurbo', 'ZImageBase'] as const, graph: zImageGraph },
+    { values: ['Boogu'] as const, graph: booguGraph },
     { values: ['Chroma'] as const, graph: chromaGraph },
     { values: ['HiDream'] as const, graph: hiDreamGraph },
     { values: ['HiDream-O1'] as const, graph: hiDreamO1Graph },
@@ -382,6 +395,10 @@ export const ecosystemGraph = new DataGraph<
     { values: ['HappyHorse'] as const, graph: happyHorseGraph },
     // Audio ecosystems
     { values: ['Ace'] as const, graph: aceAudioGraph },
+    // 3D Model ecosystems — PolyGen (Meshy via Fal). Field rendering for the
+    // PolyGen graph lives in `GenerationForm.tsx`, auto-hidden via Controller
+    // when the active ecosystem isn't PolyGen (same pattern as ACE audio).
+    { values: ['PolyGen'] as const, graph: polyGenGraph },
   ])
   // Enhanced compatibility mode - txt2img only, supported ecosystems, hidden for Flux Ultra
   .node(
@@ -423,7 +440,9 @@ export const ecosystemGraph = new DataGraph<
         when: ctx.output === 'image' || supportsVideoQuantity,
       };
     },
-    ['workflow', 'output', 'ecosystem', 'model', 'enhancedCompatibility']
+    // `ext:limits` tracks live getStatus quantity caps (maxQuantity / vidQuantity);
+    // `ext:flags` tracks the enhancedCompatibilitySdcpp toggle that drives the bogo step.
+    ['workflow', 'output', 'ecosystem', 'model', 'enhancedCompatibility', 'ext:limits', 'ext:flags']
   );
 
 // Prompt + triggerWords are now defined per-ecosystem inside each subgraph

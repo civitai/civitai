@@ -15,7 +15,7 @@ import { getVaeFiles } from '~/server/services/model.service';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { reduceToBasicFileMetadata } from '~/server/services/model-file.service';
-import type { Session } from 'next-auth';
+import type { Session } from '~/types/session';
 import { stringifyAIR } from '~/shared/utils/air';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
 import {
@@ -189,6 +189,7 @@ export async function prepareModelVersionResponse(
       type: model.type,
       modelId: version.modelId,
       id: version.id,
+      fileType: primaryFile.type,
     }),
     stats: {
       downloadCount: metrics[0]?.downloadCount ?? 0,

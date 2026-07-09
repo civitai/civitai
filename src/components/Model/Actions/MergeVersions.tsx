@@ -33,6 +33,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import type { ModelFileType } from '~/server/common/constants';
 import { componentFileTypes, constants, zipModelFileTypes } from '~/server/common/constants';
+import { useModelFileOptions } from '~/hooks/useModelFileOptions';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
 import { getFileExtension } from '~/utils/string-helpers';
@@ -930,6 +931,8 @@ function MergeFileCard({
     file.metadata?.isRequired ??
     false) as boolean;
 
+  const { precisions, quantTypes } = useModelFileOptions();
+
   const iconConfig = getFileIconConfig(file.name, { format: effectiveFormat });
   const FileIcon = iconConfig.icon;
   const fileSizeStr = file.sizeKB ? formatKBytes(file.sizeKB) : undefined;
@@ -1050,7 +1053,7 @@ function MergeFileCard({
                     w={100}
                     placeholder="Quant"
                     searchable
-                    data={constants.modelFileQuantTypes}
+                    data={quantTypes}
                     value={effectiveQuantType}
                     onChange={(value) => {
                       onUpdate({ metadata: { quantType: value as ModelFileQuantType | null } });
@@ -1067,7 +1070,7 @@ function MergeFileCard({
                     size="xs"
                     w={85}
                     placeholder="fp16"
-                    data={constants.modelFileFp}
+                    data={precisions}
                     value={effectiveFp}
                     onChange={(value) => {
                       onUpdate({ metadata: { fp: value as ModelFileFp | null } });

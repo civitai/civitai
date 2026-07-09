@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { uniq, uniqBy } from 'lodash-es';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import { v4 as uuid } from 'uuid';
 import { FEATURED_MODEL_COLLECTION_ID } from '~/server/common/constants';
 import {
@@ -18,7 +18,8 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { tagIdsForImagesCache, userCollectionCountCache } from '~/server/redis/caches';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import { userPreferencesSchema } from '~/server/schema/base.schema';
 import type {
@@ -106,7 +107,17 @@ function computeHourlySeed(): number {
 
 // Get the current random seed from Redis, or compute a new one
 export async function getCollectionRandomSeed(): Promise<number> {
-  const cached = await sysRedis.get(REDIS_SYS_KEYS.COLLECTION.RANDOM_SEED);
+  // Fail open + wall-clock deadline: a Random-sorted collection view should
+  // degrade to a locally-computed hourly seed, not 500/park, on a sysRedis blip.
+  // computeHourlySeed() is the same value this function writes on a cache miss,
+  // so a degraded read just skips the shared-cache round-trip.
+  let cached: string | null;
+  try {
+    cached = await withSysReadDeadline(sysRedis.get(REDIS_SYS_KEYS.COLLECTION.RANDOM_SEED));
+  } catch (err) {
+    logSysRedisFailOpen('read-degraded', 'getCollectionRandomSeed', err);
+    return computeHourlySeed();
+  }
   if (cached) return Number(cached);
 
   const seed = computeHourlySeed();
@@ -1919,6 +1930,34 @@ export const validateContestCollectionEntry = async ({
 
   if (userMeta?.contestBanDetails) {
     throw throwBadRequestError('You are banned from participating in contests');
+  }
+
+  // Block re-submitting an image a challenge judge has already scored. Removal
+  // hard-deletes the CollectionItem (erasing tag/score), so the judge's comment is the
+  // durable "already judged" signal — across this and every other challenge. Limited to
+  // challenge collections (target has a linked Challenge) so community contests are
+  // unaffected. Scoped to genuine re-adds: an image still present as an entry is excluded,
+  // so editing a post that re-saves its images doesn't fail.
+  if (imageIds.length > 0 && !isModerator) {
+    const alreadyJudged = await dbRead.$queryRaw<{ imageId: number }[]>`
+      SELECT DISTINCT th."imageId"
+      FROM "Thread" th
+      JOIN "CommentV2" cm ON cm."threadId" = th.id
+      JOIN "ChallengeJudge" cj ON cj."userId" = cm."userId"
+      WHERE th."imageId" IN (${Prisma.join(imageIds)})
+        AND EXISTS (SELECT 1 FROM "Challenge" ch WHERE ch."collectionId" = ${collectionId})
+        AND NOT EXISTS (
+          SELECT 1 FROM "CollectionItem" ci
+          WHERE ci."collectionId" = ${collectionId}
+            AND ci."imageId" = th."imageId"
+            AND ci.status IN ('ACCEPTED', 'REVIEW')
+        )
+    `;
+    if (alreadyJudged.length > 0) {
+      throw throwBadRequestError(
+        'This image has already been judged in a challenge and cannot be re-submitted. Please enter a new image.'
+      );
+    }
   }
 
   if (!metadata) {

@@ -1,6 +1,5 @@
 import { env } from '~/env/server';
 import {
-  aliasSlug,
   colorDomainNames,
   type ColorDomain,
   type DomainConfig,
@@ -9,14 +8,10 @@ import {
 } from '~/shared/constants/domain.constants';
 
 /**
- * OAuth provider IDs we expose on the login page. Order matters — login UI
- * iterates this list to render buttons.
- *
- * IMPORTANT: keep in sync with the `providers` array in
- * `src/server/auth/next-auth-options.ts`. Any OAuth provider added there but
- * not listed here will bypass the per-host filter (treated as a non-OAuth
- * provider) and would auth fine on a primary host but fail silently on an
- * alias host because no alias-keyed credential lookup runs.
+ * The OAuth provider IDs the connected-accounts UI knows how to render. `getAvailableOAuthProviders` intersects
+ * the hub's enabled-provider list with this set, so a provider the hub enables but that's missing here is simply
+ * not surfaced. Keep in sync with the hub's provider config (`apps/auth/src/lib/server/auth/providers.ts`) and
+ * `@civitai/auth`'s `ProviderId`.
  */
 export const oauthProviderIds = ['discord', 'github', 'google', 'reddit'] as const;
 export type OAuthProviderId = (typeof oauthProviderIds)[number];
@@ -73,6 +68,48 @@ export function isHostForColor(host: string, color: ColorDomain): boolean {
   return cfg.primary === normalized || cfg.aliases.includes(normalized);
 }
 
+/**
+ * App Blocks NSFW gating — the SINGLE SOURCE OF TRUTH for "this host may serve
+ * mature-rated apps". A mature app (`contentRating` ∈ {r, x}) is usable ONLY on
+ * a RED-capable host.
+ *
+ * Why `isHostForColor(host, 'red')` and NOT `getRequestDomainColor(host)`:
+ * `civitai.red` is configured as BOTH a blue and a red domain, and
+ * `getRequestDomainColor` is a first-match walk over [green, blue, red], so it
+ * returns `blue` for `civitai.red` — which would (wrongly) treat .red as SFW.
+ * `isHostForColor(host, 'red')` is the membership test that correctly returns
+ * TRUE for `civitai.red` (its primary/aliases) regardless of the color-walk
+ * ordering. This is deliberately scoped to the App-Blocks NSFW gate; it does NOT
+ * change the global color resolution.
+ */
+
+/** Mature content ratings (App Blocks). Everything else is SFW. */
+const MATURE_CONTENT_RATINGS = new Set(['r', 'x']);
+
+/**
+ * True iff the rating is mature (r/x). FAIL-CLOSED on ambiguity in the OPPOSITE
+ * direction is the caller's job: an unknown/missing/empty rating returns
+ * `false` (SFW) here, which is safe because `contentRating` is a REQUIRED,
+ * validated manifest field (`block-manifest-validator.service.ts`) stored on
+ * approve — a missing value means "not mature", and the gates that hide/refuse
+ * mature content only act when this is `true`.
+ */
+export function isMatureContentRating(rating: string | null | undefined): boolean {
+  if (typeof rating !== 'string') return false;
+  return MATURE_CONTENT_RATINGS.has(rating.toLowerCase());
+}
+
+/**
+ * True iff an app with `rating` is allowed to be listed / detailed / run on
+ * `host`. SFW ratings (g/pg/pg13 and any unknown→SFW) are allowed on ANY host;
+ * a mature rating (r/x) requires a RED-capable host. Fail-closed: a mature
+ * rating on a non-red host returns `false`.
+ */
+export function ratingAllowedOnHost(rating: string | null | undefined, host: string): boolean {
+  if (!isMatureContentRating(rating)) return true;
+  return isHostForColor(host, 'red');
+}
+
 /** True if `host` is the canonical primary for its resolved color. */
 export function isPrimaryHost(host: string): boolean {
   const normalized = host.toLowerCase();
@@ -100,66 +137,34 @@ export function isAliasHost(host: string): boolean {
   return false;
 }
 
-/**
- * Resolve OAuth credentials for `provider` on `host`.
- *
- * - Primary hosts: prefer the per-color override
- *   (`<PROVIDER>_CLIENT_ID_<COLOR>` + `_CLIENT_SECRET_<COLOR>`); fall back to
- *   the global default (`<PROVIDER>_CLIENT_ID` + `_CLIENT_SECRET`).
- * - Alias hosts: require an alias-keyed CSV pair
- *   (`<PROVIDER>_AUTH_<aliasSlug>=<id>,<secret>`). No default fallback —
- *   provider is unavailable on the alias if the env var is absent.
- *
- * Returns `null` when no credential is configured for this host.
- */
-export function resolveOAuthCredentialsForHost(
-  provider: OAuthProviderId,
-  host: string
-): { clientId: string; clientSecret: string } | null {
-  const normalized = host.toLowerCase();
-  const upper = provider.toUpperCase();
+// The OAuth providers a user can connect — sourced from the HUB, which is the SINGLE authority for provider
+// config + secrets (the spoke holds NO provider secrets). Fetched server-to-server from `GET {hub}/api/auth/
+// providers` and cached in-memory; fails OPEN to the last-good (or empty) list so an SSR render never breaks on
+// a hub blip. Server-only (reads AUTH_JWT_ISSUER). Replaces the old per-host CLIENT_ID/SECRET resolution.
+const PROVIDERS_TTL_MS = 10 * 60_000;
+let providersCache: { ids: OAuthProviderId[]; at: number } | undefined;
 
-  // Identify the color (if any) and whether this is the primary.
-  let color: ColorDomain | undefined;
-  let isPrimary = false;
-  for (const c of colorDomainNames) {
-    const cfg = serverDomainMap[c];
-    if (!cfg) continue;
-    if (cfg.primary === normalized) {
-      color = c;
-      isPrimary = true;
-      break;
-    }
-    if (cfg.aliases.includes(normalized)) {
-      color = c;
-      break;
-    }
+export async function getAvailableOAuthProviders(): Promise<OAuthProviderId[]> {
+  if (providersCache && Date.now() - providersCache.at < PROVIDERS_TTL_MS)
+    return providersCache.ids;
+
+  const hub = (process.env.AUTH_JWT_ISSUER ?? '').replace(/\/+$/, '');
+  if (!hub) return providersCache?.ids ?? [];
+
+  try {
+    const res = await fetch(`${hub}/api/auth/providers`);
+    if (!res.ok) return providersCache?.ids ?? [];
+    const data = (await res.json()) as { providers?: { id?: string }[] };
+    const known = new Set<string>(oauthProviderIds);
+    const ids = (data.providers ?? [])
+      .map((p) => p?.id)
+      .filter((id): id is OAuthProviderId => typeof id === 'string' && known.has(id));
+    providersCache = { ids, at: Date.now() };
+    return ids;
+  } catch {
+    // hub unreachable — keep rendering with the last-good (or empty) list rather than throwing in SSR.
+    return providersCache?.ids ?? [];
   }
-
-  if (color && !isPrimary) {
-    // Alias host — require explicit CSV credentials. No default fallback.
-    const csv = process.env[`${upper}_AUTH_${aliasSlug(normalized)}`];
-    if (!csv) return null;
-    const [clientId, clientSecret] = csv.split(',').map((s) => s.trim());
-    if (!clientId || !clientSecret) return null;
-    return { clientId, clientSecret };
-  }
-
-  // Primary host (or unknown host — fall back to global, matching legacy behavior).
-  const colorId = color ? process.env[`${upper}_CLIENT_ID_${color.toUpperCase()}`] : undefined;
-  const colorSecret = color
-    ? process.env[`${upper}_CLIENT_SECRET_${color.toUpperCase()}`]
-    : undefined;
-  const clientId = colorId ?? process.env[`${upper}_CLIENT_ID`];
-  const clientSecret = colorSecret ?? process.env[`${upper}_CLIENT_SECRET`];
-  if (!clientId || !clientSecret) return null;
-  return { clientId, clientSecret };
-}
-
-/** Provider IDs that have credentials configured for the given host. */
-export function getAvailableOAuthProviders(host: string | undefined): OAuthProviderId[] {
-  if (!host) return [...oauthProviderIds];
-  return oauthProviderIds.filter((id) => resolveOAuthCredentialsForHost(id, host) !== null);
 }
 
 export function getRequestDomainColor(req: { headers: { host?: string } }) {

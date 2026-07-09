@@ -57,6 +57,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { Model3DModAction } from '~/components/Model3D/Moderation/Model3DModAction';
 import { RuleDefinitionPopover } from '~/components/Moderation/RuleDefinitionPopover';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NoContent } from '~/components/NoContent/NoContent';
@@ -68,6 +69,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
 import { ModReviewType, NsfwLevel } from '~/server/common/enums';
 import { resolveAppealSchema } from '~/server/schema/report.schema';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 import type { ImageModerationReviewQueueImage } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
@@ -124,6 +126,8 @@ const useStore = create<StoreState>()(
     },
   }))
 );
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default function Images() {
   // const queryUtils = trpc.useUtils();
@@ -683,6 +687,11 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
           </Stack>
         </Card.Section>
       )}
+      {/* Thumbnail-driven Model3D mod affordance — renders null unless this
+          image is the @unique thumbnail of a Model3D (workstream H, §2.10). */}
+      <Card.Section>
+        <Model3DModAction imageId={image.id} />
+      </Card.Section>
     </Card>
   );
 }

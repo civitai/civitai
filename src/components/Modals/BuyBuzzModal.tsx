@@ -21,6 +21,7 @@ import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isMobileDevice } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { BlockAttribution } from '~/server/schema/blocks/attribution.schema';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { formatRewardsBoost } from '~/utils/buzz';
@@ -32,6 +33,16 @@ export type BuyBuzzModalProps = {
   onPurchaseSuccess?: () => void;
   minBuzzAmount?: number;
   initialBuzzType?: BuzzSpendType;
+  /**
+   * App Blocks revenue-share attribution. Populated by IframeHost when
+   * the modal is opened from inside a block iframe — the iframe NEVER
+   * provides any of these fields itself, the host derives them from
+   * the install context. Pure pass-through: the modal forwards it to
+   * BuzzPurchaseLayout → BuzzPurchaseImproved → metadata. Webhook
+   * handlers read attribution back off the payment-provider metadata
+   * and write a block_buzz_attribution row.
+   */
+  attribution?: BlockAttribution;
 };
 
 const ALERT_ID = 'earn-blue-buzz-rewards';
@@ -136,6 +147,7 @@ export default function BuyBuzzModal({
   onPurchaseSuccess,
   minBuzzAmount,
   initialBuzzType,
+  attribution,
 }: BuyBuzzModalProps) {
   const dialog = useDialogContext();
   const { trackAction } = useTrackEvent();
@@ -176,6 +188,7 @@ export default function BuyBuzzModal({
           purchaseSuccessMessage={purchaseSuccessMessage}
           onCancel={handleClose}
           initialBuzzType={initialBuzzType}
+          attribution={attribution}
         />
       </Stack>
     </Modal>

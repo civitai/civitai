@@ -9,7 +9,7 @@ import { getDownloadUrl } from '~/utils/delivery-worker';
 import { getLoginLink } from '~/utils/login-helpers';
 import { getFileWithPermission } from '~/server/services/file.service';
 import { Tracker } from '~/server/clickhouse/client';
-import { handleLogError } from '~/server/utils/errorHandling';
+import { handleLogError, isClientAbortError } from '~/server/utils/errorHandling';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({
@@ -30,6 +30,12 @@ const notFound = (req: NextApiRequest, res: NextApiResponse, message = 'Not Foun
 
 export default PublicEndpoint(
   async function downloadAttachment(req: NextApiRequest, res: NextApiResponse) {
+    // Per-user, permission-gated redirect to a short-lived signed file URL —
+    // never cache it. PublicEndpoint's `public, s-maxage` default would leak
+    // one user's signed redirect to others and keep serving a removed file from
+    // edge after the origin returns 404. Override with no-store.
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
+
     // Get ip so that we can block exploits we catch
     const ip = requestIp.getClientIp(req);
     const ipBlacklist = (
@@ -119,6 +125,10 @@ export default PublicEndpoint(
 
       res.redirect(url);
     } catch (err: unknown) {
+      if (isClientAbortError(err)) {
+        if (!res.headersSent) res.status(499).end();
+        return;
+      }
       const error = err as Error;
       console.error(`Error downloading file: ${file.url} - ${error.message}`);
       return res.status(500).json({ error: 'Error downloading file' });

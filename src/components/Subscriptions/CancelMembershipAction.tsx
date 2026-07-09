@@ -22,7 +22,7 @@ export function CancelMembershipAction({
 
   const { refreshSubscription } = useMutatePaddle();
   const { vault } = useQueryVault();
-  const { subscription } = useActiveSubscription();
+  const { subscription } = useActiveSubscription({ checkWhenInBadState: true });
 
   const handleRefresh = useCallback(async () => {
     try {

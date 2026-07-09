@@ -1639,4 +1639,33 @@ clickhouse client -n <<-EOSQL
     engine = MergeTree()
         ORDER BY (bugId, createdAt)
         SETTINGS index_granularity = 8192;
+
+    create table if not exists default.articles
+    (
+        type Enum8('Create' = 1, 'Publish' = 2, 'Update' = 3, 'Unpublish' = 4, 'Delete' = 5),
+        time        DateTime default now(),
+        userId      Int32    default 0,
+        articleId   Int32,
+        nsfw        Bool     default false,
+        ip          String   default '',
+        userAgent   String   default '',
+        createdDate Date materialized toDate(time),
+        deviceId    String   default '',
+        via         LowCardinality(String) default 'web',
+        viaClientId String   default '',
+        viaApiKeyId Int32    default 0
+    )
+        engine = MergeTree()
+            ORDER BY (time, articleId, userId)
+            SETTINGS index_granularity = 8192;
+
+    -- Agent/API provenance columns on content-creation event tables (see PR).
+    ALTER TABLE default.posts             ADD COLUMN IF NOT EXISTS via LowCardinality(String) DEFAULT 'web', ADD COLUMN IF NOT EXISTS viaClientId String DEFAULT '', ADD COLUMN IF NOT EXISTS viaApiKeyId Int32 DEFAULT 0;
+    ALTER TABLE default.images            ADD COLUMN IF NOT EXISTS via LowCardinality(String) DEFAULT 'web', ADD COLUMN IF NOT EXISTS viaClientId String DEFAULT '', ADD COLUMN IF NOT EXISTS viaApiKeyId Int32 DEFAULT 0;
+    ALTER TABLE default.comments          ADD COLUMN IF NOT EXISTS via LowCardinality(String) DEFAULT 'web', ADD COLUMN IF NOT EXISTS viaClientId String DEFAULT '', ADD COLUMN IF NOT EXISTS viaApiKeyId Int32 DEFAULT 0;
+    ALTER TABLE default.bounties          ADD COLUMN IF NOT EXISTS via LowCardinality(String) DEFAULT 'web', ADD COLUMN IF NOT EXISTS viaClientId String DEFAULT '', ADD COLUMN IF NOT EXISTS viaApiKeyId Int32 DEFAULT 0;
+    ALTER TABLE default.bountyEntries     ADD COLUMN IF NOT EXISTS via LowCardinality(String) DEFAULT 'web', ADD COLUMN IF NOT EXISTS viaClientId String DEFAULT '', ADD COLUMN IF NOT EXISTS viaApiKeyId Int32 DEFAULT 0;
+    ALTER TABLE default.modelEvents       ADD COLUMN IF NOT EXISTS via LowCardinality(String) DEFAULT 'web', ADD COLUMN IF NOT EXISTS viaClientId String DEFAULT '', ADD COLUMN IF NOT EXISTS viaApiKeyId Int32 DEFAULT 0;
+    ALTER TABLE default.modelVersionEvents ADD COLUMN IF NOT EXISTS via LowCardinality(String) DEFAULT 'web', ADD COLUMN IF NOT EXISTS viaClientId String DEFAULT '', ADD COLUMN IF NOT EXISTS viaApiKeyId Int32 DEFAULT 0;
+    ALTER TABLE default.resourceReviews   ADD COLUMN IF NOT EXISTS via LowCardinality(String) DEFAULT 'web', ADD COLUMN IF NOT EXISTS viaClientId String DEFAULT '', ADD COLUMN IF NOT EXISTS viaApiKeyId Int32 DEFAULT 0;
 EOSQL

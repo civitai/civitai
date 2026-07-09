@@ -14,6 +14,7 @@ import { isDefined } from '~/utils/type-guards';
 import { enqueueImageIngestion } from '~/server/services/image.service';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { getUserBanDetails } from '~/utils/user-helpers';
+import { throwNotFoundError } from '~/server/utils/errorHandling';
 import {
   getUserContentOverview as getUserContentOverviewFromCache,
   getUserContentOverviewPublic as getUserContentOverviewPublicFromCache,
@@ -45,7 +46,7 @@ export const getUserContentOverview = async ({
     });
 
     if (!user) {
-      throw new Error('User not found');
+      throw throwNotFoundError('User not found');
     }
 
     userId = user.id;

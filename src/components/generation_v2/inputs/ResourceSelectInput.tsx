@@ -178,7 +178,13 @@ function ResourceCard({
               </Button>
             )}
             {onRemove && (
-              <LegacyActionIcon size="sm" variant="subtle" onClick={onRemove} disabled={disabled}>
+              <LegacyActionIcon
+                aria-label="Remove resource"
+                size="sm"
+                variant="subtle"
+                onClick={onRemove}
+                disabled={disabled}
+              >
                 <IconX size={16} />
               </LegacyActionIcon>
             )}

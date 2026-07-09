@@ -4,7 +4,6 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
 import type { UploadType } from '~/server/common/enums';
-import { bytesToKB } from '~/utils/number-helpers';
 
 import { useCatchNavigationStore } from './catch-navigation.store';
 
@@ -208,7 +207,14 @@ export const useS3UploadStore = create<StoreProps>()(
           const trackedFile = {
             ...pendingTrackedFile,
             file,
-            size: file.size ? bytesToKB(file.size) : 0,
+            // `size` is tracked in BYTES throughout the store: progress math
+            // (uploaded/size) and updateProgress() both use raw bytes, and every
+            // consumer of the upload-result `size` (FilesProvider, MultiFileInputUpload)
+            // applies bytesToKB() itself. Initializing in KB here let a stale KB value
+            // leak into the upload result when progress never overwrote it before
+            // completion, causing the consumer to divide by 1024 a second time and
+            // store ModelFile.sizeKB as MB (~1024x too small). Keep it bytes.
+            size: file.size ?? 0,
             uuid,
             meta,
             name: file.name,
@@ -248,6 +254,24 @@ export const useS3UploadStore = create<StoreProps>()(
               timeRemaining,
               status: 'uploading',
             });
+          };
+
+          // Coalesce progress writes to one store update per animation frame. Concurrent
+          // parts/files fire 'progress' events far faster than the screen refreshes, so
+          // without this each byte event triggers a zustand set + re-render of every row.
+          let rafId: number | null = null;
+          const scheduleProgress = () => {
+            if (rafId !== null) return;
+            rafId = requestAnimationFrame(() => {
+              rafId = null;
+              updateProgress();
+            });
+          };
+          const cancelProgress = () => {
+            if (rafId !== null) {
+              cancelAnimationFrame(rafId);
+              rafId = null;
+            }
           };
 
           // Prepare abort
@@ -291,7 +315,7 @@ export const useS3UploadStore = create<StoreProps>()(
               activeXhrs.add(xhr);
               xhr.upload.addEventListener('progress', ({ loaded }) => {
                 partProgress.set(i, loaded);
-                updateProgress();
+                scheduleProgress();
               });
               xhr.upload.addEventListener('loadend', ({ loaded }) => {
                 partProgress.set(i, loaded);
@@ -339,6 +363,7 @@ export const useS3UploadStore = create<StoreProps>()(
           try {
             updateFile(pendingItem.uuid, {
               abort: () => {
+                cancelProgress();
                 cancelController.abort();
                 for (const x of activeXhrs) x.abort();
               },
@@ -382,6 +407,10 @@ export const useS3UploadStore = create<StoreProps>()(
           await Promise.all(
             Array.from({ length: Math.min(CONCURRENT_PARTS, urls.length) }, () => runWorker())
           );
+
+          // No more progress events past this point; drop any queued frame so it can't
+          // clobber the terminal status written below.
+          cancelProgress();
 
           if (failureStatus) {
             try {

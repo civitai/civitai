@@ -8,7 +8,8 @@ import {
   IconBookmarkEdit,
   IconBrush,
   IconCloudLock,
-  // IconClubs,
+  IconCode,
+  IconCube,
   IconCrown,
   IconGift,
   IconGavel,
@@ -17,6 +18,7 @@ import {
   IconMoneybag,
   IconPhotoUp,
   IconPlayerPlayFilled,
+  IconPlugConnected,
   IconProgressBolt,
   IconSword,
   IconThumbUp,
@@ -29,6 +31,7 @@ import {
 } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
+import { appsNavVisibility } from '~/components/AppLayout/AppHeader/appsNavVisibility';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -74,6 +77,10 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
     },
   } = useSystemCollections();
 
+  // App Blocks nav entries: public get-started vs mod-only marketplace. Pure
+  // helper (unit-tested in appsNavVisibility.test.ts) is the source of truth.
+  const appsNav = appsNavVisibility(features);
+
   return [
     {
       visible: !!currentUser,
@@ -118,14 +125,6 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'My Bounties',
         },
-        // {
-        //   href: '/clubs?engagement=engaged',
-        //   as: '/clubs',
-        //   visible: features.clubs,
-        //   icon: IconClubs,
-        //   color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
-        //   label: 'My Clubs',
-        // },
         {
           href: '/user/buzz-dashboard',
           visible: features.buzz,
@@ -147,6 +146,32 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Referrals',
           newUntil: new Date('2026-07-20'),
+        },
+        {
+          // PUBLIC "App builders" get-started landing page (Scope A soft launch).
+          // Gated on the separate public `appBlocksGetStarted` flag (kill switch),
+          // NOT the mod-only `appBlocks` gate — this is the only `/apps/*` surface
+          // visible to non-mods. Distinct label ("Build apps") from the mod-only
+          // marketplace entry below so a moderator never sees two identical labels.
+          // Visibility comes from the pure `appsNavVisibility` helper (unit-tested).
+          href: '/apps/get-started',
+          visible: appsNav.getStarted,
+          icon: IconCode,
+          color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'Build apps',
+          newUntil: new Date('2026-08-01'),
+        },
+        {
+          // Mod-only App Blocks marketplace + in-page AppsSubNav hub (installed,
+          // submit, my-submissions, revenue, review). Stays gated on `appBlocks`
+          // (mod-only today). Relabeled "Apps Marketplace" so it reads distinctly
+          // from the public "Build apps" entry above.
+          href: '/apps',
+          visible: appsNav.marketplace,
+          icon: IconPlugConnected,
+          color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'Apps Marketplace',
+          newUntil: new Date('2026-07-01'),
         },
       ],
     },
@@ -283,6 +308,16 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       label: ' Upload a Model',
     },
     {
+      // Opens the generation panel with the 3D Model tab selected. The
+      // Model3D generator surface is gated separately by `model3dGenerator`.
+      href: '/generate?type=model3d',
+      visible: !isMuted && features.model3dGenerator,
+      rel: 'nofollow',
+      icon: IconCube,
+      color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
+      label: 'Generate 3D Model',
+    },
+    {
       href: '/models/train',
       visible: !isMuted && features.imageTraining,
       redirectReason: 'train-model',
@@ -320,15 +355,6 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       label: 'Create a Bounty',
       currency: true,
     },
-    // {
-    //   href: '/clubs/create',
-    //   visible: !isMuted && canCreate && features.clubs,
-    //   redirectReason: 'create-club',
-    //   rel: 'nofollow',
-    //   icon: IconClubs,
-    //   color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
-    //   label: 'Create a Club',
-    // },
   ];
 }
 

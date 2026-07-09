@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { env } from '~/env/server';
@@ -39,7 +39,7 @@ import {
 } from '~/server/services/collection.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
-import { getGenerationStatus } from '~/server/services/generation/generation.service';
+import { canViewCollectionPost } from '~/server/services/post-collection-visibility';
 import {
   createImage,
   createImageResources,
@@ -73,18 +73,20 @@ import {
   Availability,
   CollectionContributorPermission,
   CollectionMode,
-  CollectionReadConfiguration,
   CollectionType,
   MediaType,
+  Model3DStatus,
   ModelHashType,
   TagTarget,
   TagType,
 } from '~/shared/utils/prisma/enums';
 import { isValidAIGeneration } from '~/utils/image-utils';
 import type { PreprocessFileReturnType } from '~/utils/media-preprocessors';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getMetadata } from '~/utils/metadata';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { CacheTTL } from '../common/constants';
+import { CacheTTL, MAX_RESOURCES_PER_IMAGE } from '../common/constants';
 import type {
   AddPostTagInput,
   AddResourceToPostImageInput,
@@ -155,12 +157,11 @@ const getPostStatsObject = async (data: { id: number }[]) => {
  * - user: Internal (session user from context)
  * - tags: src/components/Post/post.utils.ts:30, src/components/Post/Infinite/PostsInfinite.tsx:20, src/components/Collections/Collection.tsx:378
  * - modelVersionId: src/components/ResourceReview/ResourceReviewDetail.tsx:47, src/components/Post/post.utils.ts:32, src/components/Post/Infinite/PostsInfinite.tsx:19, src/components/Collections/Collection.tsx:377
- * - ids: src/server/services/collection.service.ts:1347, src/server/services/clubPost.service.ts:321 (internal server-side use only)
+ * - ids: src/server/services/collection.service.ts:1347 (internal server-side use only)
  * - collectionId: src/components/Post/post.utils.ts:37, src/components/Post/Infinite/PostsInfinite.tsx:24, src/components/Collections/Collection.tsx:384,390
  * - include: Internal use (cosmetics, detail)
  * - draftOnly: src/pages/user/[username]/posts.tsx:90, src/components/Post/Infinite/PostsInfinite.tsx:25, src/components/Collections/Collection.tsx:380,391
  * - followed: src/pages/user/[username]/posts.tsx:90, src/components/Post/post.utils.ts:39, src/components/Collections/Collection.tsx:381,391
- * - clubId: src/pages-old/clubs/[id]/posts.tsx:41
  * - browsingLevel: src/components/Post/post.utils.ts:24,49,61, src/components/ResourceReview/ResourceReviewDetail.tsx:43,49
  * - pending: src/pages/user/[username]/posts.tsx:90, src/components/Post/Infinite/PostsInfinite.tsx:27
  * - excludedTagIds: src/components/Post/post.utils.ts:51-56,62 (from browsing settings addons)
@@ -188,7 +189,6 @@ export const getPostsInfinite = async ({
   draftOnly,
   scheduled,
   followed,
-  clubId,
   browsingLevel,
   pending,
   excludedTagIds,
@@ -201,7 +201,6 @@ export const getPostsInfinite = async ({
   include?: string[];
 }) => {
   const AND = [Prisma.sql`1 = 1`];
-  const WITH: Prisma.Sql[] = [];
   const cacheTags: string[] = [];
   let cacheTime = CacheTTL.xs;
   const userId = user?.id;
@@ -405,34 +404,7 @@ export const getPostsInfinite = async ({
     }
   }
 
-  if (clubId) {
-    cacheTime = 0; //CacheTTL.day;
-    cacheTags.push(`posts-club:${clubId}`);
-
-    WITH.push(Prisma.sql`
-      "clubPosts" AS (
-        SELECT DISTINCT ON (p."id") p."id" as "postId"
-        FROM "EntityAccess" ea
-        JOIN "Post" p ON p."id" = ea."accessToId"
-        LEFT JOIN "ClubTier" ct ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = ct."id" AND ct."clubId" = ${clubId}
-        WHERE (
-            (
-             ea."accessorType" = 'Club' AND ea."accessorId" = ${clubId}
-            )
-            OR (
-              ea."accessorType" = 'ClubTier' AND ct."clubId" = ${clubId}
-            )
-          )
-          AND ea."accessToType" = 'Post'
-      )
-    `);
-
-    joins.push(`JOIN "clubPosts" cp ON cp."postId" = p."id"`);
-  }
-
-  const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
   const postsRawQuery = Prisma.sql`
-    ${queryWith}
     SELECT
       p.id,
       p."nsfwLevel",
@@ -548,12 +520,7 @@ export const getPostsInfinite = async ({
             const collection = collections.find((x) => x.id === p.collectionId);
             if (!collection) return false;
 
-            if (
-              collection.read !== CollectionReadConfiguration.Public &&
-              !collection?.contributors[0]?.permissions.includes(
-                CollectionContributorPermission.VIEW
-              )
-            ) {
+            if (!canViewCollectionPost(collection)) {
               return false;
             }
           }
@@ -654,10 +621,29 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
 
   if (!post) throw throwNotFoundError();
 
+  // Only fetch the unpublish-context JOIN when the post is currently
+  // unpublished (publishedAt = NULL). Public reads are the hot path and
+  // don't need this — default the fields and skip the query. Note: a small
+  // set of orphan rows can have `publishedAt != null` AND a `prevPublishedAt`
+  // stash (future-scheduled clamp orphans documented in the
+  // clamp-publishedat-bumps endpoint); we deliberately don't surface
+  // restore-only state for those — they're cleaned out-of-band.
+  // Pass the same `db` client used above so the stash JOIN shares
+  // `getDbWithoutLag`'s primary-routing right after an unpublish/republish.
+  const unpublishContext: PostUnpublishContext = post.publishedAt
+    ? {
+        wasPublished: false,
+        unpublishedAt: null,
+        unpublishedBy: null,
+        parentModelId: null,
+      }
+    : await getPostUnpublishContext({ id, db });
+
   return {
     ...post,
     detail: post.detail,
     tags: post.tags.flatMap((x) => x.tag),
+    ...unpublishContext,
   };
 };
 
@@ -684,8 +670,60 @@ export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: Ses
     collectionItemExists = !!collectionItem;
   }
 
+  // Unpublish context is already attached by getPostDetail above.
   return { ...post, collectionTagId, images, collectionItemExists };
 };
+
+export type PostUnpublishContext = {
+  // True when the post carries a `prevPublishedAt` stash — i.e. it was
+  // previously public, then unpublished via the parent model/version flow.
+  // Drives the restore-only UI in PostEditSidebar: when set, the post
+  // cannot be rescheduled, only republished at its original date.
+  wasPublished: boolean;
+  unpublishedAt: Date | null;
+  unpublishedBy: number | null;
+  // Surfaced via JOIN so the UI can build a link back to the parent model
+  // edit page (where the actual unpublish reason + custom message live).
+  // We deliberately don't surface the reason directly on the post —
+  // model-level reasons like "insufficient-description" don't always map
+  // onto the post itself, so showing them in the post alert is misleading.
+  parentModelId: number | null;
+};
+
+async function getPostUnpublishContext({
+  id,
+  db = dbRead,
+}: {
+  id: number;
+  db?: typeof dbRead | typeof dbWrite;
+}): Promise<PostUnpublishContext> {
+  const rows = await db.$queryRaw<
+    {
+      metadata: Record<string, unknown> | null;
+      modelId: number | null;
+    }[]
+  >`
+    SELECT
+      p.metadata                AS "metadata",
+      mv."modelId"              AS "modelId"
+    FROM "Post" p
+    LEFT JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+    WHERE p.id = ${id}
+  `;
+
+  const row = rows[0];
+  const metadata = (row?.metadata ?? {}) as Record<string, unknown>;
+  const prevPublishedAt = metadata.prevPublishedAt;
+  const rawUnpublishedAt = metadata.unpublishedAt;
+  const rawUnpublishedBy = metadata.unpublishedBy;
+
+  return {
+    wasPublished: !!prevPublishedAt,
+    unpublishedAt: typeof rawUnpublishedAt === 'string' ? new Date(rawUnpublishedAt) : null,
+    unpublishedBy: typeof rawUnpublishedBy === 'number' ? rawUnpublishedBy : null,
+    parentModelId: row?.modelId ?? null,
+  };
+}
 
 async function combinePostEditImageData(images: PostImageEditSelect[], user: SessionUser) {
   const imageIds = images.map((x) => x.id);
@@ -746,6 +784,23 @@ export const createPost = async ({
     availability = modelVersion?.model.availability ?? Availability.Public;
   }
 
+  // Anyone can post to any published 3D model (mirrors Models). Non-owners are
+  // still blocked from attaching to a draft/unpublished/deleted 3D model so a
+  // queue-card draft can't be hijacked before its owner ships it.
+  if (data.model3dId) {
+    const model3d = await dbWrite.model3D.findUnique({
+      where: { id: data.model3dId },
+      select: { id: true, userId: true, status: true, deletedAt: true },
+    });
+    if (!model3d || model3d.deletedAt) {
+      throw throwNotFoundError(`No 3D model with id ${data.model3dId}`);
+    }
+    const isOwner = model3d.userId === userId;
+    if (!isOwner && model3d.status !== Model3DStatus.Published) {
+      throw throwAuthorizationError('This 3D model is not available for posting.');
+    }
+  }
+
   const post = await dbWrite.post.create({
     data: {
       ...data,
@@ -779,6 +834,13 @@ export const createPost = async ({
     tags: post.tags.flatMap((x) => x.tag),
     images: [] as PostImageEditable[],
     collectionItemExists,
+    // A fresh post has never been unpublished — supply the
+    // PostUnpublishContext defaults so the type matches getPostEditDetail
+    // (which carries these via the getPostDetail spread).
+    wasPublished: false,
+    unpublishedAt: null,
+    unpublishedBy: null,
+    parentModelId: null,
   };
 };
 
@@ -789,16 +851,92 @@ export const updatePost = async ({
 }: PostUpdateInput & { user: SessionUser; availability?: Availability }) => {
   if (data.title) await throwOnBlockedLinkDomain(data.title);
   if (data.detail) await throwOnBlockedLinkDomain(data.detail);
-  const post = await dbWrite.post.update({
-    where: { id, userId: !user.isModerator ? user.id : undefined },
-    data: {
-      ...data,
-      title: !!data.title ? (data.title.length > 0 ? data.title : null) : undefined,
-      detail: !!data.detail ? (data.detail.length > 0 ? data.detail : null) : undefined,
-    },
+
+  // Peel off a plain-Date publishedAt so it can be routed through the
+  // anti-bump guard. Other update-input shapes (null, undefined,
+  // FieldUpdateOperations) flow through prisma .update() unchanged.
+  // Mirrors the pattern in updateModelVersion (model-version.service.ts).
+  const publishedAt = data.publishedAt instanceof Date ? data.publishedAt : undefined;
+  const restData = publishedAt !== undefined ? { ...data, publishedAt: undefined } : data;
+
+  let publishedAtWritten = false;
+  const post = await dbWrite.$transaction(async (tx) => {
+    const updated = await tx.post.update({
+      where: { id, userId: !user.isModerator ? user.id : undefined },
+      data: {
+        ...restData,
+        title: !!restData.title ? (restData.title.length > 0 ? restData.title : null) : undefined,
+        detail: !!restData.detail
+          ? restData.detail.length > 0
+            ? restData.detail
+            : null
+          : undefined,
+      },
+    });
+    if (publishedAt !== undefined) {
+      // Anti-bump guard: publishedAt is immutable once a post has gone
+      // public. Allowed transitions: NULL (Draft/Unpublished) -> set, or
+      // future (Scheduled) -> reschedule. Republish of an already-public
+      // post is a no-op for this column.
+      //
+      // Write-once-on-republish: if `metadata.prevPublishedAt` is set, the
+      // post was previously published then unpublished via the parent
+      // model/version unpublish flow. Restore the original date regardless
+      // of the submitted value — owners must not be able to bump a post to
+      // the top of feeds by unpublishing the parent, then picking a new
+      // `publishedAt` on the post edit page. Mirrors the CASE expressions
+      // used by `publishModelVersionById` (model-version.service.ts) and
+      // `publishModelById` (model.service.ts) when they fan out to attached
+      // posts. Strip the stash on success.
+      const writtenRows = await tx.$queryRaw<{ publishedAt: Date | null }[]>`
+        UPDATE "Post"
+        SET
+          "publishedAt" = CASE
+            WHEN "metadata"->>'prevPublishedAt' IS NOT NULL
+            THEN ("metadata"->>'prevPublishedAt')::timestamptz
+            ELSE ${publishedAt}
+          END,
+          "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
+        WHERE id = ${id}
+        AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+        RETURNING "publishedAt"
+      `;
+      // Reflect the actually-written timestamp (may be the stashed
+      // prevPublishedAt rather than the submitted value). The controller's
+      // wasPublished check (post.controller.ts: `!post?.publishedAt &&
+      // updatedPost.publishedAt`) needs this to fire reward / event-engine
+      // side-effects on a fresh publish. When no row matched, the guard
+      // blocked the write and the original returned value remains
+      // authoritative. Propagate the value faithfully — including null —
+      // rather than masking malformed stash data behind a truthy check.
+      if (writtenRows.length > 0) {
+        updated.publishedAt = writtenRows[0].publishedAt;
+        publishedAtWritten = true;
+      }
+    }
+    return updated;
   });
+
   await preventReplicationLag('post', post.id);
   await userPostCountCache.refresh(post.userId);
+
+  // A publishedAt change moves the images' feed sort position
+  // (GREATEST(publishedAt, scannedAt, createdAt)), but the DB-trigger-driven
+  // updatedAt bump isn't reliably picked up by the metrics_images index — so
+  // a reschedule would otherwise leave the index frozen at the original time.
+  // Enqueue an explicit reindex so sortAt/publishedAtUnix get recomputed.
+  if (publishedAtWritten) {
+    const images = await dbWrite.image.findMany({
+      where: { postId: post.id },
+      select: { id: true },
+    });
+    if (images.length) {
+      await queueImageSearchIndexUpdate({
+        ids: images.map((i) => i.id),
+        action: SearchIndexUpdateQueueAction.Update,
+      });
+    }
+  }
 
   return post;
 };
@@ -1001,6 +1139,20 @@ export const addPostImage = async ({
     meta = { ...meta, external: externalData };
   }
 
+  // If no meta was supplied (headless/MCP upload), try to extract it from the
+  // image EXIF. The image is already on the CDN at this point so we can fetch
+  // it by URL. We only do this when meta is absent to avoid overwriting
+  // caller-supplied values.
+  if (!meta && props.url && props.type !== MediaType.video) {
+    try {
+      const edgeUrl = getEdgeUrl(props.url, { original: true });
+      const extracted = await getMetadata(edgeUrl);
+      if (extracted && Object.keys(extracted).length > 0) meta = extracted;
+    } catch {
+      // Non-fatal — proceed without metadata rather than failing the upload
+    }
+  }
+
   let toolId: number | undefined;
   const { name: sourceName, homepage: sourceHomepage } = meta?.external?.source ?? {};
   if (meta && 'engine' in meta) {
@@ -1113,15 +1265,25 @@ export async function bustCachesForPosts(postIds: number | number[]) {
   const ids = Array.isArray(postIds) ? postIds : [postIds];
   // Use dbWrite — bustCachesForPosts runs immediately after image/post writes
   // so the replica may not yet reflect the post.modelVersionId we need.
+  // LEFT JOIN ModelVersion so Model3D-linked posts (modelVersionId = null,
+  // model3dId set) aren't filtered out by the join — without this we never
+  // bust `images-model3d:` and the gallery serves stale empty results until
+  // CacheTTL.md (10m) expires.
   const results = await dbWrite.$queryRaw<
-    { isShowcase: boolean; modelVersionId: number; modelId: number }[]
+    {
+      isShowcase: boolean | null;
+      modelVersionId: number | null;
+      modelId: number | null;
+      model3dId: number | null;
+    }[]
   >`
     SELECT m."userId" = p."userId" as "isShowcase",
            p."modelVersionId",
-           mv."modelId"
+           mv."modelId",
+           p."model3dId"
     FROM "Post" p
-           JOIN "ModelVersion" mv ON mv."id" = p."modelVersionId"
-           JOIN "Model" m ON m."id" = mv."modelId"
+           LEFT JOIN "ModelVersion" mv ON mv."id" = p."modelVersionId"
+           LEFT JOIN "Model" m ON m."id" = mv."modelId"
     WHERE p."id" IN (${Prisma.join(ids)})
   `;
 
@@ -1129,14 +1291,24 @@ export async function bustCachesForPosts(postIds: number | number[]) {
   // not just showcase posts. Deletion/moderation paths also call this, and stale
   // gallery results for deleted/blocked images would defeat fast removal (e.g.
   // DMCA, CSAM, policy moderation). Deduplicate to avoid redundant Redis ops.
-  const modelVersionIds = [...new Set(results.map((x) => x.modelVersionId))];
-  const modelIds = [...new Set(results.map((x) => x.modelId))];
+  const modelVersionIds = [
+    ...new Set(results.map((x) => x.modelVersionId).filter((x): x is number => x != null)),
+  ];
+  const modelIds = [
+    ...new Set(results.map((x) => x.modelId).filter((x): x is number => x != null)),
+  ];
+  const model3dIds = [
+    ...new Set(results.map((x) => x.model3dId).filter((x): x is number => x != null)),
+  ];
   await Promise.all([
     ...modelVersionIds.map((mvId) => bustCacheTag(`images-modelVersion:${mvId}`)),
     ...modelIds.map((mId) => bustCacheTag(`images-model:${mId}`)),
+    ...model3dIds.map((mId) => bustCacheTag(`images-model3d:${mId}`)),
   ]);
 
-  const showcaseVersionIds = results.filter((x) => x.isShowcase).map((x) => x.modelVersionId);
+  const showcaseVersionIds = results
+    .filter((x) => x.isShowcase && x.modelVersionId != null)
+    .map((x) => x.modelVersionId as number);
   if (!showcaseVersionIds.length) return;
 
   // Flag modelVersion-lag so imagesForModelVersionsCache.lookupFn (cache-miss
@@ -1251,39 +1423,11 @@ export const addResourceToPostImage = async ({
     throw throwBadRequestError('Cannot add resources to on-site generations.');
   }
 
-  const simpleResourceLimit = 8;
-  const baseAxiom = {
-    type: 'warning',
-    name: 'fetch-generation-status',
-    path: 'post.addResourceToImage',
-  };
-
-  let resourceLimit = simpleResourceLimit;
-  try {
-    const genStatus = await getGenerationStatus();
-    if (genStatus) {
-      const tier = user?.tier ?? 'free';
-      if (isDefined(genStatus.limits?.[tier]?.resources)) {
-        resourceLimit = genStatus.limits[tier].resources ?? simpleResourceLimit;
-      } else {
-        logToAxiom({
-          ...baseAxiom,
-          message: 'no resource limit found',
-        }).catch();
-      }
-    } else {
-      logToAxiom({
-        ...baseAxiom,
-        message: 'no gen status',
-      }).catch();
-    }
-  } catch (e: unknown) {
-    const error = e as Error;
-    logToAxiom({
-      ...baseAxiom,
-      message: error?.message,
-    }).catch();
-  }
+  // Manually crediting resources on an uploaded/external image is an attribution
+  // action with no GPU cost, so it uses a fixed cap rather than the per-tier
+  // generation limits (those are throttled during GPU crunches — see the
+  // MAX_RESOURCES_PER_IMAGE comment in server/common/constants).
+  const resourceLimit = MAX_RESOURCES_PER_IMAGE;
 
   images.forEach((img) => {
     const numExistingResources = img.resourceHelper.length;

@@ -1,6 +1,6 @@
 import { useCallback, useRef } from 'react';
 import { Button, Divider, Loader, Stack, Text, ThemeIcon } from '@mantine/core';
-import { IconChartBar, IconRocket } from '@tabler/icons-react';
+import { IconCalendarStats, IconChartBar, IconRocket } from '@tabler/icons-react';
 import Link from 'next/link';
 
 export type EmptyStateProps = {
@@ -10,9 +10,20 @@ export type EmptyStateProps = {
   buzzLabel: string;
   /** Show loading state instead of empty state */
   loading?: boolean;
+  /**
+   * `onboarding` — user has never published a resource; show the full "start earning" pitch.
+   * `noEarningsThisMonth` — user has published resources but earned nothing in the selected month;
+   * show a light message that preserves the widget height so the month selector doesn't jump.
+   */
+  mode?: 'onboarding' | 'noEarningsThisMonth';
 };
 
-export function GenerationBuzzEmptyState({ buzzColor, loading }: EmptyStateProps) {
+export function GenerationBuzzEmptyState({
+  buzzColor,
+  buzzLabel,
+  loading,
+  mode = 'onboarding',
+}: EmptyStateProps) {
   // Spotlight effect — uses refs + direct DOM manipulation to avoid re-renders on mouse move
   const spotlightRef = useRef<HTMLDivElement>(null);
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
@@ -28,6 +39,29 @@ export function GenerationBuzzEmptyState({ buzzColor, loading }: EmptyStateProps
     const el = spotlightRef.current;
     if (el) el.style.opacity = '0';
   }, []);
+
+  if (!loading && mode === 'noEarningsThisMonth') {
+    return (
+      <div className="mt-2">
+        <Divider />
+        <Stack gap="sm" p="lg" justify="center" align="center" style={{ minHeight: 300 }}>
+          <ThemeIcon size={48} variant="light" color="gray" radius="xl">
+            <IconCalendarStats size={24} />
+          </ThemeIcon>
+          <Text fw={700} size="lg" ta="center">
+            No {buzzLabel} Buzz earned this month
+          </Text>
+          <Text size="sm" c="dimmed" ta="center" maw={360}>
+            You didn&apos;t earn any {buzzLabel} Buzz from generations in this period. Pick another
+            month with the selector above to see your earnings.
+          </Text>
+          <Text size="xs" c="dimmed" ta="center">
+            Earnings can take up to 24 hours to appear
+          </Text>
+        </Stack>
+      </div>
+    );
+  }
 
   return (
     <div className="mt-2">
@@ -79,18 +113,34 @@ export function GenerationBuzzEmptyState({ buzzColor, loading }: EmptyStateProps
 
           <Stack gap="md" p="lg" pl="xl" justify="center" className="relative z-[1] h-full">
             <Stack gap={4}>
-              <Text size="xs" c="dimmed" tt="uppercase" fw={600} style={{ letterSpacing: '0.08em' }}>
+              <Text
+                size="xs"
+                c="dimmed"
+                tt="uppercase"
+                fw={600}
+                style={{ letterSpacing: '0.08em' }}
+              >
                 Start earning
               </Text>
-              <Text fw={600}>
-                Train &amp; publish models to earn Buzz
-              </Text>
+              <Text fw={600}>Train &amp; publish models to earn Buzz</Text>
             </Stack>
 
             <Stack gap={10}>
-              <StepRow number={1} text="Train a custom model (LoRA, checkpoint, etc.)" buzzColor={buzzColor} />
-              <StepRow number={2} text="Publish it on Civitai for the community" buzzColor={buzzColor} />
-              <StepRow number={3} text="Earn Buzz every time someone generates with it" buzzColor={buzzColor} />
+              <StepRow
+                number={1}
+                text="Train a custom model (LoRA, checkpoint, etc.)"
+                buzzColor={buzzColor}
+              />
+              <StepRow
+                number={2}
+                text="Publish it on Civitai for the community"
+                buzzColor={buzzColor}
+              />
+              <StepRow
+                number={3}
+                text="Earn Buzz every time someone generates with it"
+                buzzColor={buzzColor}
+              />
             </Stack>
 
             <Button

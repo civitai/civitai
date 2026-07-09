@@ -188,7 +188,7 @@ const BadgedIcon = ({
       className="ml-[-14px] rounded-l-none !pl-4"
       {...props}
     >
-      <Text size={textSize} fw="bold" inline title={numberWithCommas(value ?? 0)}>
+      <Text size={textSize} lh={1} fw="bold" inline title={numberWithCommas(value ?? 0)}>
         <AnimatedCount value={value ?? 0} />
       </Text>
     </IconBadge>

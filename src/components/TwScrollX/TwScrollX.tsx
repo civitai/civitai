@@ -48,7 +48,13 @@ export function TwScrollX({ children, className, ...props }: React.HTMLAttribute
             { ['hidden']: isMobile }
           )}
         >
-          <LegacyActionIcon variant="subtle" radius={0} onClick={scrollLeft} className="h-full">
+          <LegacyActionIcon
+            variant="subtle"
+            radius={0}
+            onClick={scrollLeft}
+            className="h-full"
+            aria-label="Scroll left"
+          >
             <IconChevronLeft stroke={2.5} size={28} />
           </LegacyActionIcon>
         </div>
@@ -63,7 +69,13 @@ export function TwScrollX({ children, className, ...props }: React.HTMLAttribute
             { ['hidden']: isMobile }
           )}
         >
-          <LegacyActionIcon variant="subtle" radius={0} onClick={scrollRight} className="h-full">
+          <LegacyActionIcon
+            variant="subtle"
+            radius={0}
+            onClick={scrollRight}
+            className="h-full"
+            aria-label="Scroll right"
+          >
             <IconChevronRight stroke={2.5} size={28} />
           </LegacyActionIcon>
         </div>

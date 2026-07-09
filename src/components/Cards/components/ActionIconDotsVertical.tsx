@@ -8,7 +8,7 @@ export const ActionIconDotsVertical = forwardRef<
   Omit<ActionIconProps, 'children'> & { onClick?: React.MouseEventHandler }
 >((props, ref) => {
   return (
-    <LegacyActionIcon ref={ref} color="gray" variant="transparent" {...props}>
+    <LegacyActionIcon ref={ref} color="gray" variant="transparent" aria-label="More options" {...props}>
       <IconDotsVertical
         size={26}
         color="#fff"

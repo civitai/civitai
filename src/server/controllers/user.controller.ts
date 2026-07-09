@@ -12,6 +12,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import type { Context, ProtectedContext } from '~/server/createContext';
+import { getStaticContent } from '~/server/services/content.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
 import { getUserFollows } from '~/server/redis/caches';
@@ -117,6 +118,7 @@ import {
   throwNotFoundError,
   withRetries,
 } from '~/server/utils/errorHandling';
+import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession, refreshSession } from '~/server/auth/session-invalidation';
 import { Flags } from '~/shared/utils/flags';
@@ -129,8 +131,8 @@ import { verifyCaptchaToken } from '../recaptcha/client';
 import { createBuzzTransaction } from '../services/buzz.service';
 import type { FeatureAccess } from '../services/feature-flags.service';
 import {
-  domainRestrictedToggleableKeys,
-  toggleableFeatures,
+  computeUserFeatureFlagsOverlay,
+  defaultToggleableFeatures,
 } from '../services/feature-flags.service';
 import { deleteImageById, getEntityCoverImage, ingestImage } from '../services/image.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -143,15 +145,22 @@ export const getAllUsersHandler = async ({
   ctx: Context;
 }) => {
   try {
-    const blockedUsersLists = await Promise.all([
+    const [blockedUsers, blockedByUsers] = await Promise.all([
       BlockedUsers.getCached({ userId: ctx.user?.id }),
       BlockedByUsers.getCached({ userId: ctx.user?.id }),
     ]);
 
-    const blockedUsers = [...new Set([...blockedUsersLists.flatMap((x) => x)].map((u) => u.id))];
-
-    if (blockedUsers.length)
-      input.excludedUserIds = [...(input.excludedUserIds ?? []), ...blockedUsers];
+    // Dedupe + cap the merged exclusion list before it feeds getUsers' raw `NOT IN`
+    // (Prisma) / getUsersWithSearch — a heavily-blocked viewer otherwise overflows the
+    // Postgres bind-param limit → P2029 → 500 (same class as comment.getAll). Ordering is a
+    // load-bearing safety priority: pre-existing excluded ids (hidden-user prefs) first,
+    // then the INVOLUNTARY blocked-by list, then the viewer's own block list (sacrificed
+    // first on overflow). See boundExcludedUserIds.
+    input.excludedUserIds = boundExcludedUserIds(
+      input.excludedUserIds ?? [],
+      blockedByUsers.map((u) => u.id),
+      blockedUsers.map((u) => u.id)
+    );
 
     const searchMethod =
       ctx.user?.isModerator && input.contestBanned ? getUsers : getUsersWithSearch;
@@ -278,6 +287,41 @@ const verifyAvatar = (avatar: string) => {
   return false;
 };
 
+/**
+ * Cheap "whoami" for the authenticated caller, sourced entirely from the
+ * session/JWT (ctx.user) — no DB round-trip. Works with API-key auth. Returns
+ * the fields a headless/agent (MCP) caller needs to reason about its own
+ * account: identity, onboarding state (raw bitflag + decoded steps + an
+ * isOnboarded boolean), moderation/account flags, and tier/membership when
+ * cheaply available on the session.
+ *
+ * Note: does NOT use simpleUserSelect (which omits muted / isModerator /
+ * onboarding) — these come straight off the SessionUser.
+ */
+export const getSelfStatusHandler = ({ ctx }: { ctx: ProtectedContext }) => {
+  const { user } = ctx;
+
+  const onboardingSteps = Flags.instanceToArray(user.onboarding)
+    .map((flag) => OnboardingSteps[flag] as keyof typeof OnboardingSteps | undefined)
+    .filter((name): name is keyof typeof OnboardingSteps => !!name);
+
+  return {
+    id: user.id,
+    username: user.username ?? null,
+    onboarding: {
+      raw: user.onboarding,
+      completedSteps: onboardingSteps,
+      isOnboarded: Flags.hasFlag(user.onboarding, OnboardingComplete),
+    },
+    muted: !!user.muted,
+    isModerator: !!user.isModerator,
+    bannedAt: user.bannedAt ?? null,
+    deletedAt: user.deletedAt ?? null,
+    tier: user.tier ?? null,
+    subscriptionId: user.subscriptionId ?? null,
+  };
+};
+
 export const completeOnboardingHandler = async ({
   input,
   ctx,
@@ -292,17 +336,24 @@ export const completeOnboardingHandler = async ({
     const changed = onboarding !== ctx.user.onboarding;
 
     switch (input.step) {
-      case OnboardingSteps.TOS:
+      case OnboardingSteps.TOS: {
         const now = new Date();
+        // Store the accepted content hash alongside the date so a freshly-onboarded
+        // user is hash-backed immediately and immune to stray `lastmod` bumps.
+        const tos = await getStaticContent({ slug: ['tos'], ctx: { domain } as Context });
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
         await setUserSetting(
           id,
-          domain === 'green' ? { tosGreenLastSeenDate: now } : { tosLastSeenDate: now }
+          domain === 'green'
+            ? { tosGreenLastSeenDate: now, tosGreenAcceptedHash: tos.hash }
+            : { tosLastSeenDate: now, tosAcceptedHash: tos.hash }
         );
         break;
+      }
       case OnboardingSteps.RedTOS: {
+        const tos = await getStaticContent({ slug: ['tos'], ctx: { domain } as Context });
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
-        await setUserSetting(id, { tosRedLastSeenDate: new Date() });
+        await setUserSetting(id, { tosRedLastSeenDate: new Date(), tosRedAcceptedHash: tos.hash });
         break;
       }
       case OnboardingSteps.Profile: {
@@ -357,6 +408,13 @@ export const completeOnboardingHandler = async ({
         break;
       }
     }
+
+    // The session user carries `onboarding` (and username/email) from the SHARED session cache: post-cutover the
+    // main app READS the cached SessionUser, it no longer recomputes it per request. Bust that cache so the
+    // client's next session read reflects the advanced step — without this the stale cached `onboarding` makes a
+    // NEW user repeat the same step forever ("can't get through account creation"). Mirrors updateUserHandler.
+    if (changed) await refreshSession(id);
+
     const isComplete = onboarding === OnboardingComplete;
     if (isComplete && changed && onboardingCompletedCounter) onboardingCompletedCounter.inc();
   } catch (e) {
@@ -384,7 +442,7 @@ export const updateUserHandler = async ({
     source,
     landingPage,
     userReferralCode,
-    profilePicture,
+    profilePicture: inputProfilePicture,
     ...data
   } = input;
   const currentUser = ctx.user;
@@ -396,6 +454,14 @@ export const updateUserHandler = async ({
     const valid = verifyAvatar(data.image);
     if (!valid) throw throwBadRequestError('Invalid avatar URL');
   }
+
+  // Drop invalid avatar references (e.g. a client-only `blob:` URL from a stale
+  // upload bundle) instead of persisting them. We don't throw here so the rest of
+  // the profile still saves — the avatar simply isn't updated with the bad value.
+  const profilePicture =
+    inputProfilePicture?.url && !verifyAvatar(inputProfilePicture.url)
+      ? undefined
+      : inputProfilePicture;
 
   try {
     const user = await getUserById({ id, select: { profilePictureId: true } });
@@ -652,7 +718,10 @@ export const getCreatorsHandler = async ({ input }: { input: Partial<GetAllSchem
       excludeIds: [-1], // Exclude civitai user
       select: {
         username: true,
-        models: { select: { id: true }, where: { status: 'Published' } },
+        // Count published models in the DB instead of fetching every published
+        // model id per creator just to take `.length`. The only consumer
+        // (src/pages/api/v1/creators.ts) reads modelCount, not the model rows.
+        _count: { select: { models: { where: { status: 'Published' } } } },
         image: true,
       },
     });
@@ -1288,35 +1357,14 @@ export const deleteUserPaymentMethodHandler = async ({
   }
 };
 
-const defaultToggleableFeatures = toggleableFeatures.reduce(
-  (acc, feature) => ({ ...acc, [feature.key]: feature.default }),
-  {} as FeatureAccess
-);
 export const getUserFeatureFlagsHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
   try {
     const { id } = ctx.user;
-    const { features = {} } = await getUserSettings(id);
+    const { features } = await getUserSettings(id);
 
-    // filter toggleable features from user settings
-    const filteredUserFeatures = Object.keys(features).reduce(
-      (acc, key) =>
-        toggleableFeatures.some((x) => x.key === key) ? { ...acc, [key]: features[key] } : acc,
-      {} as FeatureAccess
-    );
-
-    const result = {
-      ...defaultToggleableFeatures,
-      ...filteredUserFeatures,
-    } as FeatureAccess;
-
-    // Don't let toggleable defaults override domain restrictions
-    for (const key of domainRestrictedToggleableKeys) {
-      if (key in result && !ctx.features[key]) {
-        delete result[key];
-      }
-    }
-
-    return result;
+    // Shared pure overlay computation — also used by the SSR seed in _app
+    // getInitialProps so the injected initialData byte-matches this response.
+    return computeUserFeatureFlagsOverlay(features, ctx.features);
   } catch (error) {
     throw throwDbError(error);
   }

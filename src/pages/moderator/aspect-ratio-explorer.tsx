@@ -4,6 +4,7 @@ import { IconX } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { AspectRatio, AspectRatioMap } from '~/libs/generation/utils/AspectRatio';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export default function AspectRatioExplorer() {
   const [value, setValue] = useState('');
@@ -87,3 +88,5 @@ export default function AspectRatioExplorer() {
     </div>
   );
 }
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });

@@ -21,7 +21,7 @@ import { isDefined } from '~/utils/type-guards';
 
 async function getImageConnectedEntities(imageIds: number[]) {
   // these dbReads could be run concurrently
-  const [images, connections, articles, collectionItems] = await Promise.all([
+  const [images, connections, articles, collectionItems, model3ds] = await Promise.all([
     dbRead.image.findMany({
       where: { id: { in: imageIds } },
       select: { postId: true },
@@ -37,6 +37,10 @@ async function getImageConnectedEntities(imageIds: number[]) {
     dbRead.collectionItem.findMany({
       where: { imageId: { in: imageIds }, status: CollectionItemStatus.ACCEPTED },
       select: { collectionId: true },
+    }),
+    dbRead.model3D.findMany({
+      where: { thumbnailImageId: { in: imageIds } },
+      select: { id: true },
     }),
   ]);
 
@@ -63,6 +67,7 @@ async function getImageConnectedEntities(imageIds: number[]) {
       .map((x) => x.entityId),
     comicProjectIds: comicPanels.map((x) => x.projectId),
     collectionIds: collectionItems.map((x) => x.collectionId),
+    model3dIds: model3ds.map((x) => x.id),
   };
 }
 
@@ -136,6 +141,7 @@ export async function getNsfwLevelRelatedEntities(source: {
   let modelIds: number[] = [];
   let modelVersionIds: number[] = [];
   let comicProjectIds: number[] = [];
+  let model3dIds: number[] = [];
 
   function mergeRelated(
     data: Partial<{
@@ -147,6 +153,7 @@ export async function getNsfwLevelRelatedEntities(source: {
       modelIds: number[];
       modelVersionIds: number[];
       comicProjectIds: number[];
+      model3dIds: number[];
     }>
   ) {
     if (data.postIds) postIds = uniq(postIds.concat(data.postIds));
@@ -157,6 +164,7 @@ export async function getNsfwLevelRelatedEntities(source: {
     if (data.modelIds) modelIds = uniq(modelIds.concat(data.modelIds));
     if (data.modelVersionIds) modelVersionIds = uniq(modelVersionIds.concat(data.modelVersionIds));
     if (data.comicProjectIds) comicProjectIds = uniq(comicProjectIds.concat(data.comicProjectIds));
+    if (data.model3dIds) model3dIds = uniq(model3dIds.concat(data.model3dIds));
   }
 
   if (source.imageIds?.length) {
@@ -202,6 +210,7 @@ export async function getNsfwLevelRelatedEntities(source: {
     modelIds,
     modelVersionIds,
     comicProjectIds: uniq([...(source.comicProjectIds ?? []), ...comicProjectIds]),
+    model3dIds,
   };
 }
 
@@ -229,6 +238,7 @@ export async function updateNsfwLevels({
   modelIds,
   modelVersionIds,
   comicProjectIds = [],
+  model3dIds = [],
 }: {
   postIds: number[];
   articleIds: number[];
@@ -238,6 +248,7 @@ export async function updateNsfwLevels({
   modelIds: number[];
   modelVersionIds: number[];
   comicProjectIds?: number[];
+  model3dIds?: number[];
 }) {
   const updatePosts = batcher(postIds, updatePostNsfwLevels);
   const updateArticles = batcher(articleIds, updateArticleNsfwLevels);
@@ -247,11 +258,22 @@ export async function updateNsfwLevels({
   const updateModels = batcher(modelIds, updateModelNsfwLevels);
   const updateComicChapters = batcher(comicProjectIds, updateComicChapterNsfwLevels);
   const updateComicProjects = batcher(comicProjectIds, updateComicProjectNsfwLevels);
+  // Model3D nsfwLevel comes from the thumbnail Image alone — no aggregation
+  // across child entities, so it can run in the leaf batch alongside Posts /
+  // Articles / Bounties (none of those depend on Model3D either).
+  const updateModel3Ds = batcher(model3dIds, updateModel3DNsfwLevels);
   // Collections are processed by separate optimized job
   // const updateCollections = batcher(collectionIds, updateCollectionsNsfwLevels);
 
   const nsfwLevelChangeBatches = [
-    [updatePosts, updateArticles, updateBounties, updateBountyEntries, updateComicChapters],
+    [
+      updatePosts,
+      updateArticles,
+      updateBounties,
+      updateBountyEntries,
+      updateComicChapters,
+      updateModel3Ds,
+    ],
     [updateModelVersions, updateComicProjects],
     [updateModels],
     // Collections handled by dedicated job for performance
@@ -526,13 +548,64 @@ export async function updateModelNsfwLevels(modelIds: number[]) {
   );
 }
 
+/**
+ * Propagate the thumbnail Image's nsfwLevel up to the Model3D row and its
+ * denormalized copy on Model3DMetric. Only the thumbnail is scanned in v1
+ * (see plan §2.10), so the thumbnail's nsfwLevel is the single signal for
+ * the entire Model3D record.
+ *
+ * Mirrors the `updateModelNsfwLevels` / `updateArticleNsfwLevels` pattern:
+ * single SQL pass keyed off Model3D ids, only writes rows whose level has
+ * actually changed, returns the affected ids for downstream search-index
+ * fan-out (the dedicated `model3d` Meilisearch index lands in Phase 2).
+ */
+export async function updateModel3DNsfwLevels(model3dIds: number[]): Promise<void> {
+  if (!model3dIds.length) return;
+  // Honor `lockedProperties` — rows where a mod has manually locked the
+  // nsfwLevel (via `setModel3DNsfwLevel({ lock: true })`) must not be
+  // clobbered by the thumbnail-derived recompute. We filter at the CTE level
+  // so both the Model3D + Model3DMetric branches naturally exclude locked
+  // rows. (R8 in `docs/3d-models-followups.md`.)
+  await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
+    WITH level AS (
+      SELECT
+        m.id,
+        COALESCE(i."nsfwLevel", 0) AS "nsfwLevel"
+      FROM "Model3D" m
+      LEFT JOIN "Image" i ON i.id = m."thumbnailImageId"
+      WHERE m.id IN (${Prisma.join(model3dIds)})
+        AND NOT ('nsfwLevel' = ANY(m."lockedProperties"))
+    ), model_update AS (
+      UPDATE "Model3D" m
+      SET "nsfwLevel" = level."nsfwLevel"
+      FROM level
+      WHERE level.id = m.id AND level."nsfwLevel" != m."nsfwLevel"
+      RETURNING m.id
+    )
+    UPDATE "Model3DMetric" mm
+    SET "nsfwLevel" = level."nsfwLevel"
+    FROM level
+    WHERE mm."model3dId" = level.id AND mm."nsfwLevel" != level."nsfwLevel"
+    RETURNING mm."model3dId" AS id;
+  `);
+  // TODO(phase2): queue the dedicated `model3d` Meilisearch index for the
+  // affected ids once `model3dSearchIndex` lands (plan §2.9). Currently we
+  // intentionally do not surface Model3D via any of the existing search
+  // indexes, so there's no fan-out to do here.
+}
+
 export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
   if (!modelVersionIds.length) return;
-  const updateSystemNsfwLevel =
-    (await sysRedis.hGet(
-      REDIS_SYS_KEYS.SYSTEM.FEATURES,
-      'update-system-model-version-nsfw-level'
-    )) !== 'false';
+  // sysRedis.hGet is typed string but the HA/Sentinel client returns a
+  // Buffer for BLOB_STRING replies. `Buffer !== 'false'` is always true,
+  // so the kill-switch silently never fires in sentinel mode. Coerce to
+  // utf8 string before comparing. See PR #2697 for the canonical case.
+  const rawFlag = await sysRedis.hGet(
+    REDIS_SYS_KEYS.SYSTEM.FEATURES,
+    'update-system-model-version-nsfw-level'
+  );
+  const flag = Buffer.isBuffer(rawFlag) ? rawFlag.toString('utf8') : rawFlag;
+  const updateSystemNsfwLevel = flag !== 'false';
 
   await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
     WITH level as (
@@ -686,4 +759,34 @@ export async function queueComicsForPanelImages(imageIds: number[]) {
   await comicsSearchIndex.queueUpdate(
     projectIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
   );
+}
+
+/**
+ * Prompt inline recompute of a Model3D's nsfwLevel from its thumbnail Image,
+ * for the image scan/mod paths. Call it unconditionally with the image's
+ * `postId` — a Model3D thumbnail is always a standalone image (no post — see
+ * `ingestThumbnailImage`), so a posted image provably isn't a thumbnail and
+ * short-circuits before the lookup. Keeping that gate here (not at each call
+ * site) lets callers treat it as a plain fire-and-forget side effect. The
+ * `update-nsfw-levels` cron independently re-derives Model3Ds from changed
+ * images (`getImageConnectedEntities`), so a rare replica-lag miss here still
+ * heals on the next tick — no `dbWrite` needed.
+ *
+ * NB: the `postId` short-circuit is specific to Model3D. Do NOT copy it to the
+ * comic-panel lookups nearby — a comic panel's image CAN be posted (import mode
+ * links an existing image), so gating those on `!postId` would skip real work.
+ */
+export async function updateModel3DNsfwLevelForThumbnailImage({
+  imageId,
+  postId,
+}: {
+  imageId: number;
+  postId: number | null;
+}) {
+  if (postId != null) return;
+  const model3ds = await dbRead.model3D.findMany({
+    where: { thumbnailImageId: imageId },
+    select: { id: true },
+  });
+  if (model3ds.length) await updateModel3DNsfwLevels(model3ds.map((m) => m.id));
 }

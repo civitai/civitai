@@ -1,9 +1,8 @@
 import { Center, Loader, LoadingOverlay, Stack, Text, ThemeIcon } from '@mantine/core';
-import { useDebouncedValue } from '@mantine/hooks';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { IconCloudOff } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
-import React, { useEffect } from 'react';
+import React, { useRef } from 'react';
 
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { FeedWrapper } from '~/components/Feed/FeedWrapper';
@@ -50,22 +49,18 @@ function PostsInfiniteContent({
   disableStoreFilters,
 }: PostsInfiniteProps) {
   const postFilters = usePostFilters();
-  const filters = disableStoreFilters
+  const computedFilters = disableStoreFilters
     ? filterOverrides
     : removeEmpty({ ...postFilters, ...filterOverrides });
+  // Stabilize identity so query keys only update on real content change.
+  const filtersRef = useRef(computedFilters);
+  if (!isEqual(filtersRef.current, computedFilters)) filtersRef.current = computedFilters;
+  const filters = filtersRef.current;
   showEof = showEof && filters.period !== MetricTimeframe.AllTime;
-  const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
-  const { posts, fetchNextPage, hasNextPage, isRefetching, isFetching } = useQueryPosts(
-    debouncedFilters,
-    { keepPreviousData: true }
-  );
-
-  //#region [useEffect] cancel debounced filters
-  useEffect(() => {
-    if (isEqual(filters, debouncedFilters)) cancel();
-  }, [cancel, debouncedFilters, filters]);
-  //#endregion
+  const { posts, fetchNextPage, hasNextPage, isRefetching, isFetching } = useQueryPosts(filters, {
+    keepPreviousData: true,
+  });
 
   return (
     <>

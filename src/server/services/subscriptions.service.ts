@@ -370,8 +370,12 @@ export const deliverMonthlyCosmetics = async ({
       FROM users_affected p
       JOIN "Cosmetic" c ON
         c."productId" = p."productId"
-        AND (c."availableStart" IS NULL OR p."createdAt" >= c."availableStart")
-        AND (c."availableEnd" IS NULL OR p."createdAt" <= c."availableEnd")
+        -- Compare at date granularity: membership badges represent a whole month, and the
+        -- delivery cron runs at 01:00 UTC while badges are authored with an 11:00 UTC
+        -- availableStart. A timestamp comparison made day-1-anniversary subscribers miss
+        -- their badge (cron fired 10h before the window opened, then never retried).
+        AND (c."availableStart" IS NULL OR p."createdAt"::date >= c."availableStart"::date)
+        AND (c."availableEnd" IS NULL OR p."createdAt"::date <= c."availableEnd"::date)
       ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
     `;
 };
@@ -964,14 +968,14 @@ export const getHistoricalPrepaidDeliveries = async ({
   //      (date, fromAccountId, toAccountId); the date filter limits the scan. The byToAccount
   //      projection exists but can't be used with SharedReplacingMergeTree.
   // Cache aggressively since legacy txns are historical and don't change.
-  // const cacheKey =
-  //   `${REDIS_KEYS.SYSTEM.BLOCKLIST}:prepaid-deliveries:${userId}:${accountType}:v2` as RedisKeyTemplateCache;
-  // try {
-  //   const cached = await redis.get(cacheKey);
-  //   if (cached) return JSON.parse(cached) as PrepaidToken[];
-  // } catch {
-  //   // Redis down — fall through to ClickHouse
-  // }
+  const cacheKey =
+    `${REDIS_KEYS.SYSTEM.BLOCKLIST}:prepaid-deliveries:${userId}:${accountType}:v2` as RedisKeyTemplateCache;
+  try {
+    const cached = await redis.get(cacheKey);
+    if (cached) return JSON.parse(cached) as PrepaidToken[];
+  } catch {
+    // Redis down — fall through to ClickHouse
+  }
 
   const membershipPromise = clickhouse.$query<{
     date: string;
@@ -1017,7 +1021,6 @@ export const getHistoricalPrepaidDeliveries = async ({
       : Promise.resolve([] as never[]);
 
   const [membershipRows, legacyRows] = await Promise.all([membershipPromise, legacyPromise]);
-  console.log(legacyRows, 'asadasd');
   // Pull the YYYY-MM period out of `civitai-membership:YYYY-MM:...` or
   // `annual-sub-payment-YYYY-MM:...` so we can label the token by month.
   const formatPeriod = (yyyyMm: string | undefined): string | undefined => {
@@ -1135,11 +1138,11 @@ export const getHistoricalPrepaidDeliveries = async ({
   });
 
   // Cache for 1 hour — historical/migration txns don't change
-  // try {
-  //   await redis.set(cacheKey, JSON.stringify(tokens), { EX: CacheTTL.hour });
-  // } catch {
-  //   // Redis down — result still returned
-  // }
+  try {
+    await redis.set(cacheKey, JSON.stringify(tokens), { EX: CacheTTL.hour });
+  } catch {
+    // Redis down — result still returned
+  }
 
   return tokens;
 };

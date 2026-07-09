@@ -56,7 +56,7 @@ export function PresetHeaderButton() {
     >
       <Menu.Target>
         <Tooltip label="Presets" disabled={menuOpened}>
-          <LegacyActionIcon>
+          <LegacyActionIcon aria-label="Presets">
             <Text c="dimmed" inline>
               <IconBookmark
                 className={clsx(showGlow && 'animate-icon-glow')}

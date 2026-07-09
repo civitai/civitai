@@ -16,7 +16,14 @@ import {
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
-import { IconInfoCircle, IconPhoto, IconSparkles, IconUpload, IconX } from '@tabler/icons-react';
+import {
+  IconClockHour4,
+  IconInfoCircle,
+  IconPhoto,
+  IconSparkles,
+  IconUpload,
+  IconX,
+} from '@tabler/icons-react';
 import { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
@@ -40,7 +47,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { constants } from '~/server/common/constants';
 import { ImageSort, NsfwLevel } from '~/server/common/enums';
-import { ChallengeReviewCostType, Currency } from '~/shared/utils/prisma/enums';
+import { ChallengeReviewCostType, ChallengeStatus, Currency } from '~/shared/utils/prisma/enums';
 import {
   addSimpleImagePostInput,
   bulkSaveCollectionItemsInput,
@@ -62,7 +69,12 @@ import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types'
 import { isDefined } from '~/utils/type-guards';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import type { NormalizedStepMetadata } from '~/server/services/orchestrator';
-import type { BlobData } from '~/shared/orchestrator/workflow-data';
+import type {
+  AudioBlob,
+  BlobData,
+  ImageBlob,
+  VideoBlob,
+} from '~/shared/orchestrator/workflow-data';
 import clsx from 'clsx';
 
 // ---------------------------------------------------------------------------
@@ -166,6 +178,17 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
   const userEntryCount = userEntryData?.count ?? 0;
   const maxEntries = challenge?.maxEntriesPerUser ?? 20;
   const remainingEntries = Math.max(0, maxEntries - userEntryCount);
+
+  // Warn when under an hour remains — late entries may not be judged before the
+  // challenge closes (the participation prize is still awarded for compliant entries).
+  const minutesUntilClose = challenge
+    ? Math.floor((new Date(challenge.endsAt).getTime() - Date.now()) / 60000)
+    : null;
+  const nearDeadline =
+    challenge?.status === ChallengeStatus.Active &&
+    minutesUntilClose !== null &&
+    minutesUntilClose >= 0 &&
+    minutesUntilClose < 60;
 
   // Parse allowed NSFW levels for display
   const allowedLevels = useMemo(() => {
@@ -425,6 +448,21 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
           <CooldownBanner challengeId={challengeId} status={challenge.status} />
         )}
 
+        {nearDeadline && (
+          <AlertWithIcon
+            color="yellow"
+            iconColor="yellow"
+            size="sm"
+            icon={<IconClockHour4 size={16} />}
+          >
+            Less than an hour left in this challenge. Entries are judged only after an automated
+            content scan, which can lag behind submission when the queue is busy. If a scan
+            finishes after the challenge closes, that entry may not make it into judging in time —
+            but you&apos;ll still receive the participation prize for any entries that meet the
+            requirements.
+          </AlertWithIcon>
+        )}
+
         <Tabs value={activeTab} onChange={setActiveTab} classNames={{ panel: 'pt-4' }}>
           <Tabs.List>
             <Tabs.Tab value="library" leftSection={<IconPhoto size={16} />}>
@@ -660,7 +698,14 @@ function GeneratorTab({ challenge }: { challenge?: ChallengeDetail }) {
     useGetTextToImageRequests({ tags: [WORKFLOW_TAGS.IMAGE] }, { enabled: !!currentUser, ignoreFilters: true });
 
   const generatedMedia = useMemo(
-    () => data.flatMap((wf) => wf.succeededOutput.filter((x) => x.available)),
+    () =>
+      // Challenge submissions don't accept 3D models — strip PolyGen
+      // outputs here so the card grid stays 2D-only.
+      data.flatMap((wf) =>
+        wf.succeededOutput.filter(
+          (x): x is ImageBlob | VideoBlob | AudioBlob => x.available && x.type !== 'model3d'
+        )
+      ),
     [data]
   );
 
@@ -708,7 +753,9 @@ function GeneratorImageCard({
   image,
   challenge,
 }: {
-  image: BlobData;
+  // Challenges accept 2D submissions only; PolyGen outputs are filtered
+  // out upstream so this card never has to render a 3D model.
+  image: ImageBlob | VideoBlob | AudioBlob;
   challenge?: ChallengeDetail;
 }) {
   const stepParams = image.step.params;

@@ -83,7 +83,17 @@ const nameOverrides: Record<string, string> = {
   optimism: 'Optimism',
   UNet: 'UNet',
   CLIPVision: 'CLIP Vision',
+  VisionLanguage: 'VLM',
+  CLIP: 'CLIP',
+  LLM: 'LLM',
   ControlNet: 'ControlNet',
+  // ReportEntity enum value `'model3d'` would otherwise auto-split to
+  // "model 3 d" / "3 D Models". Same story for the review variant.
+  model3d: '3D Model',
+  Model3D: '3D Model',
+  model3dReview: '3D Model Review',
+  Model3DReview: '3D Model Review',
+  '3d-models': '3D Models',
 };
 
 export function getDisplayName(
@@ -127,6 +137,19 @@ export function camelCase(str: string) {
       return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
     })
     .join('');
+}
+
+const validModelExtensions = ['.ckpt', '.pt', '.safetensors', '.sft', '.bin', '.gguf', '.onnx'];
+
+export function sanitizeDownloadFilename(value: string, fallbackExtension = '.safetensors'): string {
+  let name = value
+    .trim()
+    .replace(/["\\\r\n\t]/g, '') // strip Content-Disposition-breaking chars
+    .replace(/\s+/g, ' '); // collapse internal whitespace
+
+  const hasValidExt = validModelExtensions.some((ext) => name.toLowerCase().endsWith(ext));
+  if (!hasValidExt) name = `${name}${fallbackExtension}`;
+  return name;
 }
 
 export function filenamize(value: string, length = 20) {
@@ -173,13 +196,25 @@ export function getModelUrl({
 }
 
 /**
+ * Build a canonical 3D-model detail URL. The `/3d-models/[id]/[[...slug]]`
+ * route ignores the slug segment (id is the source of truth), so this just
+ * appends the slugified name for pretty, index-friendly URLs. Falls back to
+ * the bare id path when the name is missing/empty.
+ */
+export function getModel3DUrl({ id, name }: { id: number; name?: string | null }): string {
+  const slug = name ? slugit(name) : null;
+  return slug ? `/3d-models/${id}/${slug}` : `/3d-models/${id}`;
+}
+
+/**
  * @see https://www.geeksforgeeks.org/how-to-strip-out-html-tags-from-a-string-using-javascript/
  */
 export function removeTags(str: string) {
   if (!str) return '';
 
-  // Replace all HTML tags with a single space
-  const stringWithoutTags = str.replace(/<[^>]*>/g, ' ');
+  // Replace all HTML tags with a single space. `[^<>]` (not `[^>]`) so an unterminated run of
+  // `<` can't force quadratic backtracking (ReDoS) — a `<` always starts a fresh potential tag.
+  const stringWithoutTags = str.replace(/<[^<>]*>/g, ' ');
 
   // Replace multiple spaces with a single space
   const stringWithoutExtraSpaces = stringWithoutTags.replace(/\s+/g, ' ');

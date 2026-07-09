@@ -36,10 +36,13 @@ import type {
   CosmeticShopItemMeta,
   GetPaginatedCosmeticShopItemInput,
 } from '~/server/schema/cosmetic-shop.schema';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default function CosmeticStoreProducts() {
   const [filters, setFilters] = useState<Omit<GetPaginatedCosmeticShopItemInput, 'limit'>>({

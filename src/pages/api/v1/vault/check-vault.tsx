@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { dbRead } from '~/server/db/client';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';

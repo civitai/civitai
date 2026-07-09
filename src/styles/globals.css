@@ -1,10 +1,22 @@
+/* Cascade layer ORDER is declared in src/pages/_document.tsx as the first node
+   in <head>, so layer priority registers before Turbopack injects any chunk
+   CSS (Next 16 / Turbopack wraps CSS Modules in `@layer modules`; webpack left
+   them unlayered). Effective order, lowest to highest priority:
+     tailwind-preflight  Tailwind reset — lowest, so it never clobbers Mantine.
+     theme               App-wide element defaults (`@layer theme` below).
+     mantine             Mantine components (`@mantine/core/styles.layer.css`).
+     modules             CSS Module (.module.css / .module.scss) styles.
+     (unlayered)         Tailwind components/utilities — kept UNLAYERED so they
+                         win over everything above. Wrapping `@tailwind
+                         utilities` in a named layer makes Tailwind v3
+                         mis-hoist utilities into the wrong layer, so we don't. */
 :root {
   --header-height: 60px;
   --footer-height: 45px;
   --buzz-color: 252, 156, 45;
 }
 
-@layer {
+@layer tailwind-preflight {
   @tailwind base;
 }
 
@@ -381,6 +393,14 @@ iframe {
   100% {
     background-position: 300% 50%;
   }
+}
+
+/* Used by an inline JS style in PanelCard.tsx (animation: 'pulse-outline ...'),
+   so it must be a global keyframes. Moved here from ProjectWorkspace.module.scss
+   because Turbopack does not support the `:global { @keyframes }` block form. */
+@keyframes pulse-outline {
+  0%, 100% { outline-color: var(--mantine-color-yellow-6); }
+  50% { outline-color: var(--mantine-color-yellow-3); }
 }
 
 @keyframes rotate {

@@ -45,6 +45,7 @@ import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.
 import {
   queueComicsForPanelImage,
   updateComicNsfwLevelsForImage,
+  updateModel3DNsfwLevelForThumbnailImage,
 } from '~/server/services/nsfwLevels.service';
 import { getImagesModRules, queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { signalClient } from '~/utils/signal-client';
@@ -995,6 +996,7 @@ async function applyIngestionSideEffects({
     // A previously-cached Blocked image can still satisfy the showcase query
     // filters (needsReview IS NULL, nsfwLevel != 0) so drop it from the showcase.
     if (image.postId) await bustCachesForPosts(image.postId);
+    await updateModel3DNsfwLevelForThumbnailImage({ imageId: image.id, postId: image.postId });
     // If this image belongs to a comic panel, the parent project may
     // have been search-indexed under the old (unblocked) state. Re-queue
     // it so the next index pass re-evaluates visibility against the
@@ -1018,6 +1020,7 @@ async function applyIngestionSideEffects({
       // Without this, the showcase cache stays empty until its 24h TTL for any model version whose images hadn't scanned yet on first read.
       await bustCachesForPosts(image.postId);
     }
+    await updateModel3DNsfwLevelForThumbnailImage({ imageId: image.id, postId: image.postId });
     await updateComicNsfwLevelsForImage(image.id);
     // Refresh the comic project in the search index — even on a clean
     // Scanned, `needsReview` may have been set, which the index treats
