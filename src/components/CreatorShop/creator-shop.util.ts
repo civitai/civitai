@@ -43,6 +43,13 @@ export const useQueryPublicShopItems = (filters: Partial<GetPublicShopItemsInput
   return { items, ...rest };
 };
 
+// The creator's own resell listings in saved order (for the manage/reorder UI).
+export type CreatorShopManageResoldItem = RouterOutput['creatorShop']['getResoldItems'][number];
+export const useQueryManageResoldItems = (enabled = true) => {
+  const { data = [], ...rest } = trpc.creatorShop.getResoldItems.useQuery(undefined, { enabled });
+  return { items: data, ...rest };
+};
+
 // Early Access download prices for the Models section, keyed by model version id.
 // As the infinite feed grows we only request ids we haven't resolved yet (in
 // batches), instead of re-fetching the whole growing set on every page.
@@ -133,6 +140,8 @@ export const useMutateCreatorShop = () => {
     async onSuccess() {
       await queryUtils.creatorShop.getSettings.invalidate();
       await queryUtils.creatorShop.getShop.invalidate();
+      await queryUtils.creatorShop.getResoldItems.invalidate();
+      await queryUtils.creatorShop.getPublicShopItems.invalidate();
       showSuccessNotification({ message: 'Added to your shop' });
     },
     onError: onError('Failed to add item'),
@@ -142,6 +151,8 @@ export const useMutateCreatorShop = () => {
     async onSuccess() {
       await queryUtils.creatorShop.getSettings.invalidate();
       await queryUtils.creatorShop.getShop.invalidate();
+      await queryUtils.creatorShop.getResoldItems.invalidate();
+      await queryUtils.creatorShop.getPublicShopItems.invalidate();
     },
     onError: onError('Failed to remove item'),
   });
@@ -151,9 +162,19 @@ export const useMutateCreatorShop = () => {
       await queryUtils.creatorShop.getSettings.invalidate();
       // The storefront reads settings (enabled, sections, resold) via getShop too.
       await queryUtils.creatorShop.getShop.invalidate();
+      await queryUtils.creatorShop.getResoldItems.invalidate();
       showSuccessNotification({ message: 'Shop settings saved' });
     },
     onError: onError('Failed to save settings'),
+  });
+
+  // Same endpoint as updateSettings, but quiet — reordering fires on every drop.
+  const reorderResoldItems = trpc.creatorShop.updateSettings.useMutation({
+    async onSuccess() {
+      await queryUtils.creatorShop.getShop.invalidate();
+      await queryUtils.creatorShop.getResoldItems.invalidate();
+    },
+    onError: onError('Failed to save order'),
   });
 
   const reviewItem = trpc.creatorShop.reviewItem.useMutation({
@@ -171,6 +192,7 @@ export const useMutateCreatorShop = () => {
     addResoldItem,
     removeResoldItem,
     updateSettings,
+    reorderResoldItems,
     reviewItem,
   };
 };

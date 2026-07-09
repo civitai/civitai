@@ -19,6 +19,7 @@ import {
   getEarlyAccessModelPrices,
   addResoldItem,
   getPublicShopItemsForResale,
+  getResoldItemsForManage,
   removeResoldItem,
   getCreatorShopReviewQueue,
   getCreatorShopSettings,
@@ -78,6 +79,9 @@ export const creatorShopRouter = router({
   getPublicShopItems: creatorShopProcedure
     .input(getPublicShopItemsSchema)
     .query(({ input, ctx }) => getPublicShopItemsForResale({ ...input, userId: ctx.user.id })),
+  getResoldItems: creatorShopProcedure.query(({ ctx }) =>
+    getResoldItemsForManage({ userId: ctx.user.id })
+  ),
   addResoldItem: creatorShopProcedure
     .input(resoldItemSchema)
     .mutation(({ input, ctx }) => addResoldItem({ ...input, userId: ctx.user.id })),

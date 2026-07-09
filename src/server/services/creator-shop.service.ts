@@ -538,7 +538,6 @@ export const getPublicShopItemsForResale = async ({
       addedById: { not: userId },
       // Only surface items from creators whose shop is public (enabled).
       addedBy: { settings: { path: ['creatorShop', 'enabled'], equals: true } },
-      ...(alreadyResold.length ? { id: { notIn: alreadyResold } } : {}),
       ...(query
         ? {
             OR: [
@@ -566,6 +565,8 @@ export const getPublicShopItemsForResale = async ({
   const items = raw.map(({ meta, ...i }) => ({
     ...i,
     sellerShare: (meta as CosmeticShopItemMeta | null)?.sellerShare ?? 0,
+    // Already in this creator's shop — the picker shows it as added/removable.
+    isResold: alreadyResold.includes(i.id),
   }));
   return { items, nextCursor };
 };
@@ -608,6 +609,33 @@ export const removeResoldItem = async ({
   const settings = await getCreatorShopSettings({ userId });
   const resoldItemIds = (settings.resoldItemIds ?? []).filter((id) => id !== shopItemId);
   return updateCreatorShopSettings({ userId, resoldItemIds });
+};
+
+// The creator's own resell listings, in their saved order — powers the manage
+// picker's reorder list. Unlike the storefront query this keeps items whose
+// source shop is currently private so the owner can still see and remove them.
+export const getResoldItemsForManage = async ({ userId }: { userId: number }) => {
+  const settings = await getCreatorShopSettings({ userId });
+  const resoldIds = settings.resoldItemIds ?? [];
+  if (!resoldIds.length) return [];
+  const rows = await dbRead.cosmeticShopItem.findMany({
+    where: { id: { in: resoldIds } },
+    select: {
+      id: true,
+      unitAmount: true,
+      meta: true,
+      cosmetic: { select: { id: true, name: true, type: true, data: true } },
+      addedBy: { select: { id: true, username: true, image: true } },
+    },
+  });
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return resoldIds
+    .map((id) => byId.get(id))
+    .filter((r): r is (typeof rows)[number] => !!r)
+    .map(({ meta, ...r }) => ({
+      ...r,
+      sellerShare: (meta as CosmeticShopItemMeta | null)?.sellerShare ?? 0,
+    }));
 };
 
 // ---------------------------------------------------------------------------
