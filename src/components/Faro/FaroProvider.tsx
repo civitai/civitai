@@ -11,6 +11,7 @@ import {
 } from '@grafana/faro-web-sdk';
 import { env } from '~/env/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { buildRumExperimentAttributes } from '~/utils/faro/experimentFlags';
 import { deepRedact } from '~/utils/faro/redact';
 import { resolveFaroSampling } from '~/utils/faro/traceSampler';
 import { buildResourceTimingInstrumentations } from './ResourceTimingInstrumentation';
@@ -126,9 +127,18 @@ interface InitFaroOptions {
    * gate on the whole SDK) — ramping the flag % takes effect on the next page load.
    */
   resourceTimingCohort: boolean;
+  /**
+   * Curated `exp_*` RUM-experiment session attributes (from `buildRumExperimentAttributes`),
+   * resolved from the SSR-seeded feature flags in the component so module-scope init never
+   * imports the flags hook. Set as `sessionTracking.session.attributes` so they ride on
+   * `meta.session.attributes` of EVERY beacon (→ Loki `session_attr_exp_*`) from session
+   * creation onward — before the first signal fires, so even LCP/CLS beacons carry them.
+   * Values are boolean-coerced strings (`"true"`/`"false"`); no PII. See experimentFlags.ts.
+   */
+  experimentAttributes: Record<string, string>;
 }
 
-function initFaro({ resourceTimingCohort }: InitFaroOptions) {
+function initFaro({ resourceTimingCohort, experimentAttributes }: InitFaroOptions) {
   if (faroInitStarted) return;
   if (typeof window === 'undefined') return;
   if ((window as unknown as Record<string, unknown>)[WINDOW_GUARD_KEY]) return;
@@ -167,7 +177,19 @@ function initFaro({ resourceTimingCohort }: InitFaroOptions) {
     // Session sampling gates ALL signals in Faro; keep at 1.0 so errors + web-vitals +
     // events + sessions stay at 100%. Browser traces are sub-sampled SEPARATELY by the OTel
     // sampler on SampledTracingInstrumentation below — this rate does NOT gate them.
-    sessionTracking: { samplingRate: sessionSamplingRate },
+    //
+    // `session.attributes` seeds the curated RUM-experiment flags (`exp_*`) onto the session
+    // meta at session CREATION — the Faro session manager merges them with the generated
+    // session id, so they ride on `meta.session.attributes` of every beacon (→ Loki
+    // `session_attr_exp_*`) from the first signal onward. Only set when non-empty. See
+    // experimentFlags.ts for the mechanism, the exact Loki field, the timing guarantee, and
+    // the PII rationale (boolean values only).
+    sessionTracking: {
+      samplingRate: sessionSamplingRate,
+      ...(Object.keys(experimentAttributes).length
+        ? { session: { attributes: experimentAttributes } }
+        : {}),
+    },
     // Error-storm guard: drop known browser noise so a broken deploy can't turn every
     // session into a flood.
     ignoreErrors: [
@@ -235,7 +257,10 @@ export function FaroProvider() {
   useEffect(() => {
     try {
       if (enabled) {
-        initFaro({ resourceTimingCohort: !!features.faroResourceTiming });
+        initFaro({
+          resourceTimingCohort: !!features.faroResourceTiming,
+          experimentAttributes: buildRumExperimentAttributes(features),
+        });
         // If a prior transition paused an already-initialised instance, resume it.
         if (faroInitStarted) faro?.unpause?.();
       } else if (faroInitStarted) {
