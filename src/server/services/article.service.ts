@@ -193,7 +193,7 @@ export const getArticles = async ({
     const AND: Prisma.Sql[] = [];
 
     if (query) {
-      AND.push(Prisma.raw(`a."title" ILIKE '%${query}%'`));
+      AND.push(Prisma.sql`a."title" ILIKE ${'%' + query + '%'}`);
     }
     if (!!tags?.length) {
       AND.push(
