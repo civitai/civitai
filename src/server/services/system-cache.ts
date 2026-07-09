@@ -16,7 +16,10 @@ import { createLogger } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
 import type { LiveFeatureFlags } from '../common/constants';
 import { DEFAULT_LIVE_FEATURE_FLAGS } from '../common/constants';
-import { DEFAULT_BROWSING_SETTINGS_ADDONS } from '~/shared/constants/browsing-settings-addons';
+import {
+  BLOCKED_BROWSING_TAG_IDS,
+  DEFAULT_BROWSING_SETTINGS_ADDONS,
+} from '~/shared/constants/browsing-settings-addons';
 import type { BrowsingSettingsAddon } from '~/shared/constants/browsing-settings-addons';
 
 const log = createLogger('system-cache', 'green');
@@ -220,23 +223,25 @@ export async function getCategoryTags(type: 'image' | 'model' | 'post' | 'articl
 //   return tags;
 // }
 
-// export async function getBlockedTags() {
-//   const cachedTags = await redis.get(REDIS_KEYS.SYSTEM.TAGS_BLOCKED);
-//   if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];
+// Hard navigation blocklist (W2). Seeded from BLOCKED_BROWSING_TAG_IDS; ops
+// override the live set by writing a JSON `{id, name}[]` to the redis key.
+// Names resolved from the DB (lowercase) so W2 name matching + tag-page 404 work.
+export async function getBlockedBrowsingTags(): Promise<{ id: number; name: string }[]> {
+  const cached = await redis.get(REDIS_KEYS.SYSTEM.BLOCKED_BROWSING_TAGS);
+  if (cached) return JSON.parse(cached) as { id: number; name: string }[];
 
-//   log('getting blocked tags');
-//   const tags = await dbWrite.tag.findMany({
-//     where: { nsfwLevel: NsfwLevel.Blocked },
-//     select: { id: true, name: true },
-//   });
+  log('getting blocked browsing tags');
+  const tags = await dbRead.tag.findMany({
+    where: { id: { in: BLOCKED_BROWSING_TAG_IDS } },
+    select: { id: true, name: true },
+  });
+  await redis.set(REDIS_KEYS.SYSTEM.BLOCKED_BROWSING_TAGS, JSON.stringify(tags), {
+    EX: SYSTEM_CACHE_EXPIRY,
+  });
 
-//   await redis.set(REDIS_KEYS.SYSTEM.TAGS_BLOCKED, JSON.stringify(tags), {
-//     EX: SYSTEM_CACHE_EXPIRY,
-//   });
-
-//   log('got blocked tags');
-//   return tags;
-// }
+  log('got blocked browsing tags');
+  return tags;
+}
 
 export async function getHomeExcludedTags() {
   const cachedTags = await redis.get(REDIS_KEYS.SYSTEM.HOME_EXCLUDED_TAGS);
@@ -272,9 +277,7 @@ export async function getBrowsingSettingAddons() {
     // the awaited get ~11min on EVERY page render; the try/catch below only
     // covers a fast DOWN reject. On timeout the deadline rejects into the
     // catch → fail open to defaults.
-    cached = await withSysReadDeadline(
-      sysRedis.get(REDIS_SYS_KEYS.SYSTEM.BROWSING_SETTING_ADDONS)
-    );
+    cached = await withSysReadDeadline(sysRedis.get(REDIS_SYS_KEYS.SYSTEM.BROWSING_SETTING_ADDONS));
   } catch (err) {
     logSysRedisFailOpen('read-degraded', 'getBrowsingSettingAddons', err);
     return DEFAULT_BROWSING_SETTINGS_ADDONS;
