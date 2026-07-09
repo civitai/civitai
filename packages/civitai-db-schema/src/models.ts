@@ -914,7 +914,7 @@ export interface ModelVersion {
   usageControl: ModelUsageControl;
   earlyAccessTimeFrame: number;
   flags: number;
-  licensingFee: number | null;
+  licensingFee: Decimal | null;
   licensingFeeType: LicensingFeeType | null;
   licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
   licensingSourceVersionId: number | null;

@@ -1415,7 +1415,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       </Group>
                     )}
                   {/* Generation License Fee */}
-                  {!!version.licensingFee && version.licensingFee > 0 && (
+                  {Number(version.licensingFee ?? 0) > 0 && (
                     <Group
                       justify="space-between"
                       px="md"
@@ -1431,7 +1431,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       </Text>
                       <Group gap={4} wrap="nowrap">
                         <CurrencyIcon currency="BUZZ" size={16} />
-                        <Text size="sm">{numberWithCommas(version.licensingFee)} / image</Text>
+                        <Text size="sm">{numberWithCommas(Number(version.licensingFee))} / image</Text>
                         <Popover
                           width={260}
                           shadow="md"

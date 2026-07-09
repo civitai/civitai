@@ -409,7 +409,7 @@ export const upsertModelVersionHandler = async ({
             select: { licensingFee: true, licensingFeeSettlementCurrency: true },
           })
         : null;
-      const hadExistingFee = !!existing?.licensingFee && existing.licensingFee > 0;
+      const hadExistingFee = existing?.licensingFee != null && Number(existing.licensingFee) > 0;
       if (!ctx.features.licensingFee && !ctx.user.isModerator && !hadExistingFee) {
         throw throwBadRequestError('License fees are not enabled for your account.');
       }
