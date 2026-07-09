@@ -1020,7 +1020,10 @@ export const addPostImage = async ({
   let techniqueId: number | undefined;
   if (meta && 'engine' in meta) {
     // older meta has type: string, but the updated meta has process: string
-    const process = (meta.process ?? meta.type ?? meta.workflow) as string | undefined;
+    const rawProcess = (meta.process ?? meta.type ?? meta.workflow) as string | undefined;
+    // Graph workflow keys carry a variant suffix (e.g. 'img2img:hires-fix'); techniques are
+    // keyed on the base ('img2img'), so match on the segment before the colon.
+    const process = rawProcess?.split(':')[0];
     if (process) {
       techniqueId = (await getTechniqueByName(process))?.id;
     }

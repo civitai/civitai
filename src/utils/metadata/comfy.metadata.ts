@@ -172,7 +172,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
         sampler,
         denoise,
         workflowId,
-        workflow,
+        workflow: workflowKey,
         resources,
         ...extra
       } = exif.extraMetadata;
@@ -183,11 +183,10 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       metadata.seed = seed;
       metadata.sampler = sampler;
       metadata.denoise = denoise;
-      let finalWorkflow = workflowId ?? workflow;
-      if (typeof finalWorkflow === 'string' && finalWorkflow.includes(':')) {
-        finalWorkflow = finalWorkflow.split(':')[0];
-      }
-      metadata.workflow = finalWorkflow;
+      // Newer generations put the workflow key in `workflow`; older ones used `workflowId`.
+      // Store the full value (e.g. 'img2img:hires-fix') — post.service normalizes it to a
+      // technique name at lookup time.
+      metadata.workflow = workflowId ?? workflowKey;
       metadata.civitaiResources = resources.map((x: any) => {
         if (x.strength) {
           x.weight = x.strength;
