@@ -135,8 +135,28 @@ export function useGetAnnouncements(type: AnnouncementType = 'site') {
     [typed, exposeSSR, isClient, dismissedStore, dismissedSeed]
   );
 
+  // `serverExposedCount` is the SERVER's dismissed-AWARE view: this type's seeded
+  // announcements MINUS the ones the server-read cookie (`dismissedSeed`) marks
+  // dismissed. Both inputs ride the SSR snapshot (`typed` from the query seed,
+  // `dismissedSeed` from AppProvider context), so this value is IDENTICAL on the
+  // server render and the first client paint — a hydration-STABLE signal the
+  // persistent CLS reserve can gate on without ever unmounting on a client
+  // transient. Unlike `seededCount` (dismissed-INDEPENDENT) it is 0 for a
+  // dismisser, so a server-side dismisser reserves NO dead space.
+  const serverExposedCount = useMemo(
+    () => typed.reduce((n, a) => (dismissedSeed.includes(a.id) ? n : n + 1), 0),
+    [typed, dismissedSeed]
+  );
+
   // `seededCount` is the SSR-seeded, dismissed-independent count of this type's
   // announcements — stable across the SSR→hydration boundary. Retained for
   // consumers that want the dismissed-independent count.
-  return { data: announcements, seededCount: typed.length, isClient, ...rest };
+  return {
+    data: announcements,
+    seededCount: typed.length,
+    serverExposedCount,
+    exposeSSR,
+    isClient,
+    ...rest,
+  };
 }
