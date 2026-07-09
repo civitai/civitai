@@ -79,6 +79,7 @@ import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deleteBidsForModel, getLastAuctionReset } from '~/server/services/auction.service';
+import { enforceBlockedBrowsingTagsForModels } from '~/server/services/blocked-browsing-tags.service';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import {
   getAvailableCollectionItemsFilterForUser,
@@ -252,6 +253,13 @@ export const getModelsRaw = async ({
   /** For testing only: force the ModelBaseModelMetric query path regardless of feature flag */
   _forceBaseModelMetrics?: boolean;
 }) => {
+  const blockedEnforcement = await enforceBlockedBrowsingTagsForModels(input, {
+    id: sessionUser?.id,
+    username: sessionUser?.username,
+    isModerator: sessionUser?.isModerator,
+  });
+  if (blockedEnforcement.emptyResult) return { items: [], isPrivate: false };
+
   const {
     user,
     take,
