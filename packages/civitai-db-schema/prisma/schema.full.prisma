@@ -1186,6 +1186,7 @@ model ModelFile {
   headerData        Json?
   visibility        ModelFileVisibility @default(Public)
   dataPurged        Boolean             @default(false)
+  replacedAt        DateTime?
 
   @@index([modelVersionId], type: Hash)
 }

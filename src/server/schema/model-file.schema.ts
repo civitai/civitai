@@ -174,6 +174,11 @@ export type LinkedComponent = {
 export type RecentTrainingDataInput = z.infer<typeof recentTrainingDataSchema>;
 export const recentTrainingDataSchema = infiniteQuerySchema.merge(imageSelectTrainingFilterSchema);
 
+export const hasOfficialFileOfSizeSchema = z.object({
+  size: z.number().int().positive(), // bytes (client file.size)
+});
+export type HasOfficialFileOfSizeInput = z.infer<typeof hasOfficialFileOfSizeSchema>;
+
 /**
  * Pick the most complete training file from a list.
  * When duplicate 'Training Data' files exist for a model version, this selects

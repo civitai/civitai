@@ -25,6 +25,20 @@ const SITEVERIFY = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
 // Client + server ship in the same image, so every real token carries this.
 const EXPECTED_ACTION = 'login';
 
+// Cloudflare's official TEST keys — they render/verify REAL Turnstile widgets on any host incl. localhost, so
+// the whole captcha flow (and the interactive fallback) is exercisable in dev. Gated behind CAPTCHA_DEV so a
+// normal dev server stays captcha-free. https://developers.cloudflare.com/turnstile/troubleshooting/testing/
+const TEST_INVISIBLE_SITEKEY = '1x00000000000000000000BB'; // always passes, invisible
+const TEST_MANAGED_SITEKEY = '3x00000000000000000000FF'; // forces an interactive challenge (visible)
+const TEST_SECRET_PASS = '1x0000000000000000000000000000000AA'; // always passes
+
+export type CaptchaMode = 'invisible' | 'managed';
+
+/** Dev-only opt-in: run real captcha locally with the CF test keys above. Off unless CAPTCHA_DEV=true. */
+function devCaptcha(): boolean {
+  return dev && env.CAPTCHA_DEV === 'true';
+}
+
 /** The hub's own hostname, derived from ORIGIN (e.g. https://auth.civitai.com → auth.civitai.com).
  *  Used to reject tokens solved on a DIFFERENT property that shares this sitekey+secret (the main
  *  civitai.com app uses the identical invisible key) — a narrow cross-property token replay. When
@@ -39,16 +53,30 @@ function expectedHostname(): string | undefined {
   }
 }
 
-/** Enforced only when the secret is set AND not in dev (mirrors the main app's dev bypass). When
+/** On in prod when the invisible secret is set; in dev only when CAPTCHA_DEV opts into the CF test keys. When
  *  disabled, verifyCaptchaToken passes through so local/un-configured envs aren't blocked. */
 export function isCaptchaEnabled(): boolean {
-  return !dev && !!env.CF_INVISIBLE_TURNSTILE_SECRET;
+  if (dev) return devCaptcha();
+  return !!env.CF_INVISIBLE_TURNSTILE_SECRET;
 }
 
-/** Public site key for the widget — server-read and handed to the page via load data (it's public
- *  by design; this just avoids a PUBLIC_ env var). Undefined → the page renders no widget. */
+/** Invisible widget sitekey (the ~99% background path) — server-read and handed to the page via load data
+ *  (public by design; avoids a PUBLIC_ env var). Undefined → no widget. Uses the CF test key under CAPTCHA_DEV. */
 export function captchaSiteKey(): string | undefined {
-  return env.CF_INVISIBLE_TURNSTILE_SITEKEY || undefined;
+  return env.CF_INVISIBLE_TURNSTILE_SITEKEY || (devCaptcha() ? TEST_INVISIBLE_SITEKEY : undefined);
+}
+
+/** Managed (interactive) widget sitekey — the fallback the client renders ONLY after the invisible widget
+ *  fails. Undefined when unprovisioned, so the client never renders the fallback (behavior == pre-fallback).
+ *  Uses the CF forced-challenge test key under CAPTCHA_DEV. */
+export function captchaManagedSiteKey(): string | undefined {
+  return env.CF_MANAGED_TURNSTILE_SITEKEY || (devCaptcha() ? TEST_MANAGED_SITEKEY : undefined);
+}
+
+/** The verify secret for a given widget mode, with the CF dummy-pass secret as the dev default. */
+function secretFor(mode: CaptchaMode): string | undefined {
+  const real = mode === 'managed' ? env.CF_MANAGED_TURNSTILE_SECRET : env.CF_INVISIBLE_TURNSTILE_SECRET;
+  return real || (devCaptcha() ? TEST_SECRET_PASS : undefined);
 }
 
 /** Verify a Turnstile token with Cloudflare. Returns true when captcha is disabled; false on a
@@ -60,19 +88,34 @@ export function captchaSiteKey(): string | undefined {
  *     skipped only when ORIGIN is unset/unparseable), and
  *   - action must equal "login" (the value the login widget tags its token with).
  *  Any rejection logs one structured line incl. CF's error-codes (never the token/secret). */
-export async function verifyCaptchaToken(token: string | undefined, ip?: string): Promise<boolean> {
+export async function verifyCaptchaToken(
+  token: string | undefined,
+  ip?: string,
+  opts: { mode?: CaptchaMode; failReason?: string } = {}
+): Promise<boolean> {
+  const mode = opts.mode ?? 'invisible';
   // Pass-through when captcha is disabled — NOT counted (no verification actually happened).
   if (!isCaptchaEnabled()) return true;
   if (!token) {
     captchaVerificationsTotal.inc({ result: 'no_token' });
-    logRejectAxiom({ reason: 'no_token', ip });
+    // failReason (client-supplied) splits no_token into widget-error / timeout / fallback-error, so we can size
+    // the RECOVERABLE (invisible-declined → the interactive fallback helps) vs UNRECOVERABLE (Turnstile fully
+    // blocked) populations: `['civitai-prod'] | where name=='captcha-reject' | summarize count() by failReason`.
+    logRejectAxiom({ reason: 'no_token', mode, failReason: opts.failReason, ip });
+    return false;
+  }
+  const secret = secretFor(mode);
+  if (!secret) {
+    // mode=managed but no managed secret configured — the client shouldn't have rendered the managed widget.
+    captchaVerificationsTotal.inc({ result: 'no_secret' });
+    logRejectAxiom({ reason: 'no-secret', mode, ip });
     return false;
   }
   try {
     const res = await fetch(SITEVERIFY, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ secret: env.CF_INVISIBLE_TURNSTILE_SECRET, response: token, remoteip: ip }),
+      body: JSON.stringify({ secret, response: token, remoteip: ip }),
     });
     if (!res.ok) {
       console.error('captcha verify rejected', { reason: 'siteverify-http', status: res.status });
@@ -100,6 +143,7 @@ export async function verifyCaptchaToken(token: string | undefined, ip?: string)
       captchaVerificationsTotal.inc({ result: reason.replace(/-/g, '_') });
       logRejectAxiom({
         reason,
+        mode,
         hostname: outcome.hostname,
         action: outcome.action,
         errorCodes: outcome['error-codes'],
@@ -113,7 +157,8 @@ export async function verifyCaptchaToken(token: string | undefined, ip?: string)
     }
 
     // Pin the token to this property — a token solved on the shared-secret main app must not log in here.
-    const wantHost = expectedHostname();
+    // Skipped in dev: the CF test tokens don't solve on the hub host, and dev has nothing to replay-protect.
+    const wantHost = dev ? undefined : expectedHostname();
     if (wantHost && outcome.hostname !== wantHost) {
       logReject('hostname-mismatch');
       return false;

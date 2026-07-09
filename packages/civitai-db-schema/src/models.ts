@@ -1002,6 +1002,7 @@ export interface ModelFile {
   headerData: JsonValue | null;
   visibility: ModelFileVisibility;
   dataPurged: boolean;
+  replacedAt: Date | null;
 }
 
 export interface File {

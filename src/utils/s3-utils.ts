@@ -211,12 +211,23 @@ function isAllowedModelFileBucket(bucket: string | undefined): bucket is string 
  * Reads from `dbWrite` (primary) — these helpers run after the destructive DB
  * op has committed, and we need post-commit consistency rather than a stale
  * replica view (which would over-skip and create orphans).
+ *
+ * `excludeId` lets a caller that KEEPS its own row (e.g. `purge-replaced-files`,
+ * which only sets `dataPurged: true` rather than deleting the row) exclude that
+ * row from the refcount check — otherwise the row always matches its own url
+ * and the guard self-vetoes the delete forever.
+ *
+ * Exported for direct test coverage of the refcount guard (see
+ * `src/utils/__tests__/s3-utils.refcount.test.ts`).
  */
-async function urlsSafeToDelete(urls: string[]): Promise<{ safe: string[]; skipped: number }> {
+export async function urlsSafeToDelete(
+  urls: string[],
+  excludeId?: number
+): Promise<{ safe: string[]; skipped: number }> {
   const candidates = urls.filter((u): u is string => typeof u === 'string' && u.length > 0);
   if (candidates.length === 0) return { safe: [], skipped: 0 };
   const referenced = await dbWrite.modelFile.findMany({
-    where: { url: { in: candidates } },
+    where: { url: { in: candidates }, ...(excludeId != null ? { id: { not: excludeId } } : {}) },
     select: { url: true, id: true },
   });
   if (referenced.length === 0) return { safe: candidates, skipped: 0 };
@@ -246,14 +257,17 @@ async function urlsSafeToDelete(urls: string[]): Promise<{ safe: string[]; skipp
  * Gated by MODEL_FILE_BUCKET_ALLOWLIST to prevent a user-supplied url from
  * pointing the delete at an arbitrary bucket (defense in depth — schema
  * validation is z.url() only).
+ *
+ * `excludeId` is for callers that keep their own row (e.g. `purge-replaced-files`)
+ * — see `urlsSafeToDelete`.
  */
-export async function deleteModelFileObject(url: string) {
+export async function deleteModelFileObject(url: string, excludeId?: number) {
   if (!url) return;
   // Refcount check: skip if any live ModelFile row still references this URL.
   // Closes the user-supplied-url hijack: an attacker plants a row with
   // url=victim's url, then deletes their own row. Without this check, the
   // S3 cleanup would delete the victim's bytes.
-  const { safe } = await urlsSafeToDelete([url]);
+  const { safe } = await urlsSafeToDelete([url], excludeId);
   if (safe.length === 0) return;
   const b2 = parseB2Url(url);
   if (b2) {

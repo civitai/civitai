@@ -337,6 +337,8 @@ export const constants = {
   altTruncateLength: 125,
   system: {
     user: { id: -1, username: 'civitai' },
+    // Public CivitaiOfficial content account (distinct from the system actor above).
+    officialUserId: 12042163,
   },
   creatorsProgram: {
     rewards: {

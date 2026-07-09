@@ -107,8 +107,10 @@ export type FirstPartyCallbackResult =
    * one) is the SHARED family device id; set it as the spoke's civ-device so its account switcher matches the
    * rest of the family. */
   | { token: string; returnUrl: string; deviceId?: string }
-  /** Failure — redirect to `/login?error=<error>` (e.g. `oauth_state`, `oauth_exchange`, or the hub's error). */
-  | { error: string; returnUrl: string };
+  /** Failure — redirect to `/login?error=<error>` (e.g. `oauth_state`, `oauth_exchange`, or the hub's error).
+   * `detail` (diagnostic only, not user-facing) sub-classifies the failure so a spoke can log WHICH cause it
+   * hit — the sub-causes of `oauth_state` in particular need different fixes (see below). */
+  | { error: string; returnUrl: string; detail?: string };
 
 /**
  * Complete first-party login: verify `state` against the bridge cookie, then exchange the code for a civ-token
@@ -145,10 +147,16 @@ export async function completeFirstPartyCallback(opts: {
 
   const code = opts.query.code ?? undefined;
   const state = opts.query.state ?? undefined;
-  // CSRF: the returned state must match the one we stashed (and we must have a verifier).
-  if (!code || !state || !stash?.v || !stash.s || state !== stash.s) {
-    return { error: 'oauth_state', returnUrl };
-  }
+  // CSRF: the returned state must match the one we stashed (and we must have a verifier). The single
+  // 'oauth_state' code hid three DISTINCT failures that each need a different fix, so `detail` splits them:
+  //   no_code        — the hub didn't return code+state (a hub-side or redirect problem, not the cookie)
+  //   no_cookie      — the bridge cookie didn't come back at all: the cross-site SameSite=Lax delivery failed
+  //                    (or it expired) — the likely `.red`-specific cause, since `.com` is same-site
+  //   state_mismatch — the cookie came back but its state ≠ the returned state: a CONCURRENT/stale login
+  //                    (multi-tab, retry) clobbered the single fixed-name bridge cookie
+  if (!code || !state) return { error: 'oauth_state', returnUrl, detail: 'no_code' };
+  if (!stash?.v || !stash.s) return { error: 'oauth_state', returnUrl, detail: 'no_cookie' };
+  if (state !== stash.s) return { error: 'oauth_state', returnUrl, detail: 'state_mismatch' };
 
   const origin = opts.selfOrigin.replace(/\/+$/, '');
   const headers: Record<string, string> = { 'content-type': 'application/json' };
@@ -165,8 +173,8 @@ export async function completeFirstPartyCallback(opts: {
       const data = (await res.json()) as { token?: string; deviceId?: string };
       if (data.token) return { token: data.token, returnUrl, deviceId: data.deviceId };
     }
+    return { error: 'oauth_exchange', returnUrl, detail: 'declined' }; // hub reachable but rejected the code
   } catch {
-    // network/hub error — fall through to the error result
+    return { error: 'oauth_exchange', returnUrl, detail: 'network' }; // hub unreachable / fetch threw
   }
-  return { error: 'oauth_exchange', returnUrl };
 }

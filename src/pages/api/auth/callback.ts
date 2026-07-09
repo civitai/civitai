@@ -66,7 +66,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   });
 
   if ('error' in result) {
-    logAuth(req, 'exchange-error', { error: result.error });
+    // `detail` sub-classifies oauth_state (no_code / no_cookie / state_mismatch) + oauth_exchange
+    // (declined / network) so the `.red` failure mode is queryable, not collapsed into one code.
+    logAuth(req, 'exchange-error', { error: result.error, detail: result.detail });
     res.redirect(302, `/login?error=${encodeURIComponent(result.error)}`);
     return;
   }

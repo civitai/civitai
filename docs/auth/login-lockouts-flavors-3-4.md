@@ -13,6 +13,16 @@ Login is no longer NextAuth in the main app. It's a **SvelteKit hub at `apps/aut
 - Redirect-loop breaker in `src/pages/api/auth/post-login.ts` (catches the "civ-token lands but won't verify" loop that `authorize.ts`'s presence-only probe can't) (flavor 2)
 - **#1** — `confirmEmailChange` now sets `emailVerified` (`src/server/services/email-verification.service.ts`) so the verified-email fallback actually satisfies the disconnect guard + hub magic-link login (flavor 3A)
 - **Auth-flow instrumentation** — `authorize.ts` / `callback.ts` / `post-login.ts` now emit `logToAxiom({ name: 'auth-flow', step, outcome, host })` to `civitai-prod`. Since these spoke endpoints run in the main app (which *does* ship to Axiom, unlike the hub), the `.red`-vs-`.com` return-leg outcomes become queryable **once this deploys** — see the telemetry note.
+- **#3 — interactive-CAPTCHA fallback** (hub, `apps/auth`) — when the invisible Turnstile widget can't issue a token, the client now renders a **managed (interactive) challenge** instead of un-gating a doomed tokenless submit (`+page.svelte`); the server verifies it against `CF_MANAGED_TURNSTILE_SECRET` by `captchaMode` (`captcha.ts` + `+page.server.ts`). Invisible path is untouched, and the whole thing is **gated on `CF_MANAGED_TURNSTILE_SITEKEY`** — unset ⇒ behavior == pre-fallback, so it's a no-op until the managed key is provisioned. Ships with **`CAPTCHA_DEV`** dev wiring (real captcha on localhost via CF test keys) and the **`no_token` split** (`failReason` = widget-error / timeout / fallback-error) to size the recoverable vs fully-blocked populations.
+- **#4 — `oauth_state` diagnostic split** (`packages/civitai-auth` first-party-bridge) — `completeFirstPartyCallback` now returns a `detail` sub-reason, logged by `callback.ts` on `exchange-error`, so the `.red` failure is no longer one opaque code. `oauth_state` → `no_code` (hub returned no code/state) / `no_cookie` (bridge cookie didn't survive the cross-site round-trip) / `state_mismatch` (a concurrent/stale login clobbered the single bridge cookie); `oauth_exchange` → `declined` / `network`. The three `oauth_state` sub-causes need DIFFERENT fixes, so this measures which one `.red` actually hits before we build it (the bridge cookie is already `SameSite=Lax; Secure; HttpOnly; Path`-scoped — correct — so a blind `SameSite` flip is the wrong move). **Next:** post-deploy, run the query below; the dominant `.red` detail picks the fix.
+
+  ```kusto
+  ['civitai-prod']
+  | where _time > ago(7d) and name == 'auth-flow' and outcome == 'exchange-error'
+  | summarize count() by tostring(error), tostring(detail), tostring(host)
+  ```
+
+  Likely outcomes → fix: `no_cookie` dominant ⇒ cross-site delivery (Safari ITP / privacy modes — hard; consider a non-cookie state carry); `state_mismatch` dominant ⇒ make the bridge cookie **concurrency-tolerant** (ring of recent PKCE/state entries instead of one fixed-name cookie); `no_code` dominant ⇒ hub-side redirect/`redirect_uri` issue.
 
 ---
 
@@ -123,9 +133,28 @@ Login resolves solely on `(provider, providerAccountId)` (`users.ts:78-89`) — 
 4. **#5** — needed to resolve the compromised-account tickets that mods currently can't fully fix.
 5. **#2, #6** — follow-ups.
 
-### Telemetry: where to pull the confirming data (checked 2026-07-08)
+### CONFIRMED from telemetry (post-deploy, first ~90min of prod data, 2026-07-08)
 
-**The auth hub (apps/auth) does NOT ship logs or metrics to Axiom.** Confirmed by probing `civitai-prod` and `civitai-next` over 14–30d: zero hits for every hub marker (`captcha verify rejected`, `hostname-mismatch`, `no_token`, `siteverify-failed`, `invalid_client`, `post-login`), and no `/api/auth/*` request logs.
+The `auth-flow` + `captcha-reject` instrumentation is live in `civitai-prod`. First read (`name in ('auth-flow','captcha-reject')`):
+
+- **Flavor 3B (CAPTCHA) — CONFIRMED.** Of 16 `captcha-reject` events, **15 = `no_token`, 1 = `siteverify-failed`, 0 = `hostname_mismatch`**. This is exactly the diagnosis: captcha fails because the client submits with **no token** (the invisible widget didn't produce one for that user) — NOT the `ORIGIN`/hostname config we ruled out. Low absolute volume (matches "a handful of tickets"), but each is a hard lockout with no fallback → the **interactive-Turnstile fallback (#3)** is the right fix.
+- **Flavor 4 (.red) — concrete lead found.** `.red` `callback:exchange-error` is dominated by **`oauth_state` (25 on `.red` vs 6 on `.com`)** + `oauth_exchange` (4 on `.red`). `oauth_state` = the callback's `state` failed to validate against the **OAuth bridge cookie** (`OAUTH_BRIDGE_COOKIE`, PKCE verifier + state, set by `authorize.ts` and read by `callback.ts`). So the `.red` failure is the **bridge cookie not round-tripping** on the cross-registrable-domain hop through the hub (~4× the `.com` rate) — the *outbound* leg, distinct from the civ-token session cookie. **Next step: audit the bridge cookie's SameSite/Domain on `.red`.**
+- **Flavor 2 (redirect loop) — essentially absent.** 0 `authorize:loop-terminal`, 0 `post-login:no-session-terminal`, 1 `post-login:no-session-retry` (self-healed). The infinite-loop/ERR_TOO_MANY_REDIRECTS class is rare or already handled by the breakers.
+- **Open (not yet a conclusion):** the `callback:success → post-login:success` gap is larger on `.red` (2330→1690, ~27%) than `.com` (999→930, ~7%), but with ~0 no-session events it's likely non-post-login returnUrls (connect/add-account) or abandonment, **not** cookie-verify failure. Needs a returnUrl breakdown before drawing a conclusion.
+
+Query used:
+
+```kusto
+['civitai-prod'] | where _time > ago(7d) and name == 'auth-flow'
+| summarize count() by step, outcome, tostring(host)
+['civitai-prod'] | where _time > ago(7d) and name == 'captcha-reject' | summarize count() by reason
+['civitai-prod'] | where _time > ago(7d) and name == 'auth-flow' and outcome == 'exchange-error'
+| summarize count() by tostring(error), tostring(host)
+```
+
+### Telemetry: where to pull the confirming data (checked 2026-07-08, pre-instrumentation)
+
+**At the time of this investigation the auth hub (apps/auth) did NOT ship logs or metrics to Axiom** (the `feat(auth-hub): log captcha rejections to Axiom` commit fixed captcha specifically). Confirmed by probing `civitai-prod` and `civitai-next` over 14–30d: zero hits for every hub marker (`captcha verify rejected`, `hostname-mismatch`, `no_token`, `siteverify-failed`, `invalid_client`, `post-login`), and no `/api/auth/*` request logs.
 
 **→ Fixed for the endpoints we control:** the `auth-flow` instrumentation (shipped, see above) makes the `.red`/`.com` return-leg queryable in Axiom **once deployed**. After the deploy, run:
 

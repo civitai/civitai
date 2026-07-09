@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { selectLiveLinkedComponents } from '~/server/utils/model-helpers';
 import type { BaseModelType } from '~/server/common/constants';
 import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
 import { baseModelLicenses, constants } from '~/server/common/constants';
@@ -146,7 +147,7 @@ const loadModelVersion = async ({
             availability: true,
           },
         },
-        files: withFiles ? { select: modelFileSelect } : false,
+        files: withFiles ? { select: modelFileSelect, where: { replacedAt: null } } : false,
         posts: withFiles ? { select: { id: true, userId: true } } : false,
         requireAuth: true,
         settings: true,
@@ -217,26 +218,29 @@ const loadModelVersion = async ({
         });
     }
 
-    const linkedComponents = linkedComponentResources.map((r) => {
-      const s = r.settings as LinkedComponentSettings;
-      const fileData = linkedFileDataMap.get(s.fileId);
-      return {
-        recommendedResourceId: r.id,
-        componentType: s.componentType,
-        modelId: s.modelId,
-        modelName: s.modelName,
-        versionId: r.resource?.id ?? 0,
-        versionName: s.versionName,
-        fileId: s.fileId,
-        fileName: fileData?.name ?? s.fileName,
-        sizeKB: fileData?.sizeKB,
-        fileType: fileData?.type,
-        fileMetadata: fileData?.metadata as
-          | { format?: string | null; size?: string | null; fp?: string | null }
-          | undefined,
-        isRequired: s.isRequired,
-      };
-    });
+    const linkedComponents = selectLiveLinkedComponents(
+      linkedComponentResources.map((r) => {
+        const s = r.settings as LinkedComponentSettings;
+        const fileData = linkedFileDataMap.get(s.fileId);
+        return {
+          recommendedResourceId: r.id,
+          componentType: s.componentType,
+          modelId: s.modelId,
+          modelName: s.modelName,
+          versionId: r.resource?.id ?? 0,
+          versionName: s.versionName,
+          fileId: s.fileId,
+          fileName: fileData?.name ?? s.fileName,
+          sizeKB: fileData?.sizeKB,
+          fileType: fileData?.type,
+          fileMetadata: fileData?.metadata as
+            | { format?: string | null; size?: string | null; fp?: string | null }
+            | undefined,
+          isRequired: s.isRequired,
+        };
+      }),
+      new Set(linkedFileDataMap.keys())
+    );
 
     const recommendedResourceIds = regularResources.map((x) => x.resource.id);
     const generationResources = await getResourceData(recommendedResourceIds, {
