@@ -139,35 +139,37 @@ function ChallengesPage() {
                 </Text>
               </div>
             </Group>
-            <Group gap="sm">
+            {currentUser?.isModerator && (
               <Button
                 component={Link}
-                href="/challenges/winners"
-                leftSection={<IconTrophy size={16} />}
+                href="/moderator/challenges"
+                leftSection={<IconSettings size={16} />}
                 variant="light"
-                color="yellow"
               >
-                Previous Winners
+                Manage
               </Button>
-              {currentUser?.isModerator && (
-                <Button
-                  component={Link}
-                  href="/moderator/challenges"
-                  leftSection={<IconSettings size={16} />}
-                  variant="light"
-                >
-                  Manage
-                </Button>
-              )}
-            </Group>
+            )}
           </Group>
 
           {/* Featured Challenge Events */}
           <FeaturedChallengeEvents />
 
-          {/* Daily Challenges — active + upcoming System challenges, horizontal scroll */}
+          {/* Daily Challenges — active + upcoming System challenges, horizontal scroll. Previous
+              Winners lives here (not the page header) since it's tightly linked to daily challenges. */}
           <Divider />
-          <Title order={3}>Daily Challenges</Title>
+          <Group justify="space-between" wrap="nowrap" gap="sm">
+            <Title order={3}>Daily Challenges</Title>
+            <Button
+              component={Link}
+              href="/challenges/winners"
+              leftSection={<IconTrophy size={16} />}
+              variant="light"
+              color="yellow"
+              className="shrink-0"
+            >
+              Previous Winners
+            </Button>
+          </Group>
           <DailyChallengesRow />
 
           {/* Community Challenges — user + staff-created, masonry (header filters drive this) */}
