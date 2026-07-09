@@ -206,7 +206,9 @@ export const comfyMetadataProcessor = createMetadataProcessor({
     }
     const customAdvancedSampler = nodes.find((x) => x.class_type == 'SamplerCustomAdvanced');
 
-    const workflow = exif.workflow ? (JSON.parse(exif.workflow as string) as any) : undefined;
+    // Default to an object (not undefined) so airs discovered in resource names below can be
+    // attached even when the image carries only a `prompt` chunk and no `workflow` chunk.
+    const workflow = exif.workflow ? (JSON.parse(exif.workflow as string) as any) : {};
     const versionIds: number[] = [];
     const modelIds: number[] = [];
     let isCivitComfy = workflow?.extra?.airs?.length > 0;
@@ -364,6 +366,9 @@ export const comfyMetadataProcessor = createMetadataProcessor({
 
       for (const air of workflow.extra.airs) {
         const { version, type } = parseAIR(air);
+        // Non-Civitai airs (e.g. huggingface checkpoints) have no numeric version — they stay in
+        // `models`/etc. as raw strings rather than becoming a bogus civitaiResource with a null id.
+        if (Number.isNaN(version)) continue;
         const resource: CivitaiResource = {
           modelVersionId: version,
           type,
