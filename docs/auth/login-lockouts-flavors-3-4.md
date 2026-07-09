@@ -14,15 +14,23 @@ Login is no longer NextAuth in the main app. It's a **SvelteKit hub at `apps/aut
 - **#1** — `confirmEmailChange` now sets `emailVerified` (`src/server/services/email-verification.service.ts`) so the verified-email fallback actually satisfies the disconnect guard + hub magic-link login (flavor 3A)
 - **Auth-flow instrumentation** — `authorize.ts` / `callback.ts` / `post-login.ts` now emit `logToAxiom({ name: 'auth-flow', step, outcome, host })` to `civitai-prod`. Since these spoke endpoints run in the main app (which *does* ship to Axiom, unlike the hub), the `.red`-vs-`.com` return-leg outcomes become queryable **once this deploys** — see the telemetry note.
 - **#3 — interactive-CAPTCHA fallback** (hub, `apps/auth`) — when the invisible Turnstile widget can't issue a token, the client now renders a **managed (interactive) challenge** instead of un-gating a doomed tokenless submit (`+page.svelte`); the server verifies it against `CF_MANAGED_TURNSTILE_SECRET` by `captchaMode` (`captcha.ts` + `+page.server.ts`). Invisible path is untouched, and the whole thing is **gated on `CF_MANAGED_TURNSTILE_SITEKEY`** — unset ⇒ behavior == pre-fallback, so it's a no-op until the managed key is provisioned. Ships with **`CAPTCHA_DEV`** dev wiring (real captcha on localhost via CF test keys) and the **`no_token` split** (`failReason` = widget-error / timeout / fallback-error) to size the recoverable vs fully-blocked populations.
-- **#4 — `oauth_state` diagnostic split** (`packages/civitai-auth` first-party-bridge) — `completeFirstPartyCallback` now returns a `detail` sub-reason, logged by `callback.ts` on `exchange-error`, so the `.red` failure is no longer one opaque code. `oauth_state` → `no_code` (hub returned no code/state) / `no_cookie` (bridge cookie didn't survive the cross-site round-trip) / `state_mismatch` (a concurrent/stale login clobbered the single bridge cookie); `oauth_exchange` → `declined` / `network`. The three `oauth_state` sub-causes need DIFFERENT fixes, so this measures which one `.red` actually hits before we build it (the bridge cookie is already `SameSite=Lax; Secure; HttpOnly; Path`-scoped — correct — so a blind `SameSite` flip is the wrong move). **Next:** post-deploy, run the query below; the dominant `.red` detail picks the fix.
+- **#4 — `oauth_state` diagnostic split → CONFIRMED `no_cookie` → `SameSite=None` fix** (`packages/civitai-auth` first-party-bridge, `callback.ts`). The split (`detail` = `no_code` / `no_cookie` / `state_mismatch`; `oauth_exchange` → `declined` / `network`) shipped, and **12h of post-deploy data was decisive**:
+
+  | `.red` `oauth_state` detail (12h) | count | `.com` |
+  |---|---|---|
+  | **`no_cookie`** | **305** | 25 |
+  | `state_mismatch` | 4 | 5 |
+
+  So the cause is **`no_cookie`** (the bridge cookie doesn't survive the cross-registrable-domain round-trip), **~5× the `.com` rate** — NOT concurrency (the earlier hunch; 4 events). Also **cleared a false alarm**: the big `.red` callback→post-login numeric gap is NOT a lockout — post-login `no-session` is negligible (21 retries, 0 terminals), so the civ-token lands fine; the gap is non-post-login returnUrls / abandonment.
+
+  **Fix:** flip the bridge cookie from `SameSite=Lax` to **`SameSite=None; Secure`** (falls back to `Lax` on dev/http where `None` without `Secure` is browser-rejected). Safe — it's the ONLY cross-site cookie in the flow, and it's HttpOnly, `Path`-scoped, 10-min, carrying just the PKCE verifier + state guarded by the state check (not a session), so `None` doesn't weaken it (the `state` check is the real CSRF gate). The session/device cookies stay `Lax` (they're same-site on `.red`).
+
+  **Shipped alongside a residual diagnostic** (`callback.ts` logs `userAgent` + `cookieCount` on `exchange-error`) because for a *top-level* nav both `Lax` and `None` deliver — so if `no_cookie` persists after this, the data says why: `cookieCount>0` (other `.red` cookies survived) would have meant bridge-specific → `None` fixes it; `cookieCount==0` + Safari ⇒ ITP full-block (needs the cookie-independent redesign: carry `{v,s,r}` in an encrypted `state` param); `cookieCount==0` + Chrome ⇒ host-canonicalization bug. **Next:** post-deploy, confirm `no_cookie` on `.red` drops; if not, read `by cookieCount, userAgent`.
 
   ```kusto
-  ['civitai-prod']
-  | where _time > ago(7d) and name == 'auth-flow' and outcome == 'exchange-error'
-  | summarize count() by tostring(error), tostring(detail), tostring(host)
+  ['civitai-prod'] | where name == 'auth-flow' and detail == 'no_cookie'
+  | summarize count() by tostring(host), cookieCount, tostring(userAgent)
   ```
-
-  Likely outcomes → fix: `no_cookie` dominant ⇒ cross-site delivery (Safari ITP / privacy modes — hard; consider a non-cookie state carry); `state_mismatch` dominant ⇒ make the bridge cookie **concurrency-tolerant** (ring of recent PKCE/state entries instead of one fixed-name cookie); `no_code` dominant ⇒ hub-side redirect/`redirect_uri` issue.
 
 ---
 

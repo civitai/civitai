@@ -45,7 +45,13 @@ function buildBridgeCookie(value: string, secure: boolean, maxAge: number): stri
     `${OAUTH_BRIDGE_COOKIE}=${value}`,
     `Path=${SPOKE_CALLBACK_PATH}`, // scoped to the callback — never sent elsewhere
     'HttpOnly',
-    'SameSite=Lax', // rides the top-level GET redirect back from the hub
+    // SameSite=None so the cookie survives the CROSS-REGISTRABLE-DOMAIN OAuth round-trip
+    // (civitai.red → auth.civitai.com → civitai.red). Prod telemetry showed Lax being dropped on that return
+    // for .red at ~5x the .com rate (oauth_state=no_cookie). Safe here: the cookie is HttpOnly, Path-scoped,
+    // 10-min, and carries only the PKCE verifier + state guarded by the state check — not a session. None
+    // REQUIRES Secure, so fall back to Lax when the cookie isn't Secure (dev/http, where the flow is same-site
+    // localhost and Lax works).
+    secure ? 'SameSite=None' : 'SameSite=Lax',
     ...(secure ? ['Secure'] : []),
     `Max-Age=${maxAge}`,
   ].join('; ');
