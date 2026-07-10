@@ -288,7 +288,7 @@ export const getLicensingRoots = async ({ baseModel }: { baseModel: string }) =>
       mv."modelId",
       m.name AS "modelName",
       mv.name AS "versionName",
-      mv."licensingFeeAmount"::float8 AS "licensingFee",
+      mv."licensingFee"::float8 AS "licensingFee",
       mv."licensingFeeType",
       mv."licensingFeeSettlementCurrency"
     FROM "ModelVersion" mv
@@ -296,8 +296,8 @@ export const getLicensingRoots = async ({ baseModel }: { baseModel: string }) =>
     WHERE mv."baseModel" = ${baseModel}
       AND (mv.flags & ${ModelVersionFlag.LicensingRoot}) = ${ModelVersionFlag.LicensingRoot}
       AND mv.status = ${ModelStatus.Published}::"ModelStatus"
-      AND mv."licensingFeeAmount" IS NOT NULL
-      AND mv."licensingFeeAmount" > 0
+      AND mv."licensingFee" IS NOT NULL
+      AND mv."licensingFee" > 0
       AND m.status = ${ModelStatus.Published}::"ModelStatus"
       AND m.availability = ${Availability.Public}::"Availability"
       AND m."deletedAt" IS NULL

@@ -2573,7 +2573,7 @@ export type ModelVersion = {
   usageControl: Generated<ModelUsageControl>;
   earlyAccessTimeFrame: Generated<number>;
   flags: Generated<number>;
-  licensingFeeAmount: string | null;
+  licensingFee: string | null;
   licensingFeeType: Generated<LicensingFeeType | null>;
   licensingFeeSettlementCurrency: Generated<LicensingFeeSettlementCurrency | null>;
   licensingSourceVersionId: number | null;
