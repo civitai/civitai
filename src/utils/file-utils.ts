@@ -3,6 +3,9 @@
 // (video/zip) pass a bigger timeoutMs rather than risk cutting off a slow-but-legit transfer.
 export async function fetchBlob(src: string | Blob | File, timeoutMs = 120_000) {
   if (src instanceof Blob) return src;
+  // Intentionally NOT behind the hot-path-fetch-timeouts Flipt kill-switch: this
+  // is isomorphic (bundled client-side) so it can't import the server-only
+  // isFliptSync, and its callers are background/media downloads where an abort is benign.
   else
     return await fetch(src, { signal: AbortSignal.timeout(timeoutMs) }).then((response) =>
       response.blob().catch(() => null)

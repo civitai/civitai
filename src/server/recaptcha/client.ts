@@ -5,6 +5,7 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 import * as z from 'zod';
 import { logToAxiom } from '~/server/logging/client';
+import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 
 // Taken from package as they don't export it :shrug:
 // enum ClassificationReason {
@@ -130,7 +131,7 @@ export async function verifyCaptchaToken({
       response: token,
       remoteip: ip,
     }),
-    signal: AbortSignal.timeout(30_000),
+    signal: fetchTimeoutSignal(30_000),
   });
   const verifyLatencyMs = Date.now() - startedAt;
   const cfRay = result.headers.get('cf-ray') ?? undefined;

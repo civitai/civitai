@@ -54,6 +54,10 @@ export enum FLIPT_FEATURE_FLAGS {
   HIGH_REPLICATION_LAG_MODE = 'high-replication-lag-mode',
   LICENSING_FEE = 'licensing-fee',
   WILDCARDS = 'wildcards',
+  // Global kill-switch for the anti-hang timeouts on server request-path fetches,
+  // DEFAULT-ON (apply the timeout unless explicitly disabled). Flip OFF to revert
+  // to the prior no-timeout behavior during an incident. See fetchTimeoutSignal.
+  HOT_PATH_FETCH_TIMEOUTS = 'hot-path-fetch-timeouts',
 }
 
 const FLIPT_INIT_TIMEOUT_MS = 5000;

@@ -3,6 +3,7 @@ import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
+import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 import { createLimiter } from '~/server/utils/rate-limiting';
 
 const historyLimiter = createLimiter({
@@ -36,7 +37,7 @@ export default AuthedEndpoint(async function handler(req, res, user) {
       callbackUrl: `${env.NEXTAUTH_URL}/api/generation/history/callback?userId=${user.id}`,
     });
 
-  const response = await fetch(url, { signal: AbortSignal.timeout(60_000) });
+  const response = await fetch(url, { signal: fetchTimeoutSignal(60_000) });
   if (!response.ok) throw new Error(`failed to get download url: ${response.statusText}`);
   const preSignedUrl = await response.json();
 

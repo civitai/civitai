@@ -1,4 +1,5 @@
 import { QS } from '~/utils/qs';
+import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 import { handleLogError } from '../utils/errorHandling';
 
 export abstract class HttpCaller {
@@ -38,7 +39,7 @@ export abstract class HttpCaller {
         ...this.baseHeaders,
         ...opts?.headers,
       },
-      signal: AbortSignal.timeout(this.timeout),
+      signal: fetchTimeoutSignal(this.timeout),
     });
   }
 
@@ -61,7 +62,7 @@ export abstract class HttpCaller {
       method: 'POST',
       body,
       headers: { ...this.baseHeaders, ...headers },
-      signal: AbortSignal.timeout(this.timeout),
+      signal: fetchTimeoutSignal(this.timeout),
     });
   }
 
@@ -94,7 +95,7 @@ export abstract class HttpCaller {
       method: 'PUT',
       body,
       headers: { ...this.baseHeaders, ...headers },
-      signal: AbortSignal.timeout(this.timeout),
+      signal: fetchTimeoutSignal(this.timeout),
     });
   }
 
@@ -119,7 +120,7 @@ export abstract class HttpCaller {
   public async deleteRaw(endpoint: string) {
     return await fetch(`${this.baseUrl}${endpoint}`, {
       method: 'DELETE',
-      signal: AbortSignal.timeout(this.timeout),
+      signal: fetchTimeoutSignal(this.timeout),
     });
   }
 
