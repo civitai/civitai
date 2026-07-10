@@ -1,6 +1,7 @@
 <script lang="ts">
   import '../global.css';
   import { page } from '$app/state';
+  import { invalidateAll } from '$app/navigation';
   import { buildWordmarkSvg } from '@civitai/brand';
   import {
     IconLayoutDashboard,
@@ -50,6 +51,19 @@
   // Exactly one active item — longest matching href wins so a parent (/earnings) doesn't also light up on a
   // child route (/earnings/analytics).
   const activeHref = $derived(activeNavHref(page.url.pathname));
+
+  // Moderator-only membership simulator. The `cs-test-membership` cookie is read (mod-gated) by the server
+  // resolver in $lib/server/membership; here we just set/clear it and re-run the loads.
+  const membershipOptions = [
+    { value: '', label: 'Real membership' },
+    { value: 'creator-program', label: 'Creator Program' },
+  ];
+  function setTestMembership(value: string) {
+    document.cookie = value
+      ? `cs-test-membership=${value}; path=/; max-age=86400; samesite=lax`
+      : 'cs-test-membership=; path=/; max-age=0; samesite=lax';
+    invalidateAll();
+  }
 </script>
 
 <SidebarProvider>
@@ -109,6 +123,26 @@
     </SidebarContent>
 
     <SidebarFooter>
+      {#if data.isModerator}
+        <div class="px-1 pb-1">
+          <label
+            for="cs-sim-membership"
+            class="mb-1 block text-[10px] font-medium uppercase tracking-wider text-dark-3"
+          >
+            Simulate membership (test)
+          </label>
+          <select
+            id="cs-sim-membership"
+            value={data.testMembership ?? ''}
+            onchange={(e) => setTestMembership(e.currentTarget.value)}
+            class="w-full rounded border border-dark-4 bg-dark-7 px-2 py-1 text-xs text-white"
+          >
+            {#each membershipOptions as opt (opt.value)}
+              <option value={opt.value}>{opt.label}</option>
+            {/each}
+          </select>
+        </div>
+      {/if}
       <div class="flex items-center gap-2 px-1 py-1">
         <Avatar class="size-8">
           {#if data.user.image}
