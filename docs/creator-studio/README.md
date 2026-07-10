@@ -6,11 +6,16 @@ Per-page design docs for `creator.civitai.com`. These sit **under** the umbrella
 - [../creator-studio-overview.md](../creator-studio-overview.md) — one-page packages + pages summary.
 - [../buzz-client-handoff.md](../buzz-client-handoff.md) — the `@civitai/buzz` client (built).
 
+**Implementation tracking:**
+
+- [implementation-checklist.md](implementation-checklist.md) — per-page progress checklist (what's built vs. blocked/deferred).
+
 **Pre-implementation review (open questions):**
 
 - [pre-implementation-decisions.md](pre-implementation-decisions.md) — every open question, grouped by owner (A/B/C), with what it blocks + a recommended default.
 - [questions-koen-backend.md](questions-koen-backend.md) — backend/data questions for **Koen** to answer inline (A1–A5).
 - [questions-justin-product.md](questions-justin-product.md) — product/business questions for **Justin** to answer inline (B1–B11).
+- [questions-justin-models-scope.md](questions-justin-models-scope.md) — follow-up `/models` scope questions for **Justin** (early-access config fields; publish/schedule in v1).
 
 Each page doc follows the same template: **Route & purpose → User story → Layout & components → Data (reads) →
 Actions (writes) → States → Gating → Shared/cross-refs → Open questions.**
