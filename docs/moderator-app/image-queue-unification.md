@@ -81,37 +81,40 @@ Fold `reported` / `appeals` / `csam` into `/images/[slug]` alongside the six rev
 
 Scope: small. Item shapes already exist; the gate change is one line + re-verify.
 
-## Plan B — Shared image-queue grid (the actual duplication)
+## Plan B — Shared image-queue grid (the actual duplication) — DONE
 
-Promote `ImageReviewGrid` to the single grid every image queue composes — **keeping each action page
-on its own route + actions.**
+**Correction from the survey:** the spoke's action pages don't use selection/bulk actions at all —
+they went with **per-card immediate actions + optimistic dimming** (a `SvelteMap` of actioned ids that
+dims the card, `invalidateAll:false`). So the legacy select-then-bulk toolbar isn't the shared need; a
+selection/bulk-bar would have been speculative. The real duplicated primitive is the **image-card
+shell + 300px grid + Next**, with a page-supplied card body.
 
-1. Extend `ImageReviewGrid` with optional, additive affordances (all off by default, so the read-only
-   review family passes nothing):
-   - **selection**: an optional bound `selected` set (`SvelteSet`) + a checkbox overlay. Per-view
-     only — no cross-view state (see legacy findings), so it lives in the page that owns the grid.
-   - **bulk-action bar shell**: an optional header region rendering select-all / clear / selected
-     count, into which the page injects its view-specific action(s) as a snippet. This is the shared
-     equivalent of the legacy toolbar; the *action* stays the page's (`image.moderate` /
-     `report.bulkUpdateStatus` / `resolve` / `setLevel`).
-   - **per-card action slot**: an optional `actions` snippet in the card footer for per-item actions
-     (the page supplies its `enhance` form).
-   - Reconcile the minor grid inconsistencies (`auto-fit 300px` vs `auto-fill minmax(300px,1fr)`,
-     `gap-5/6`) onto the standard (300px, see the card-sizing note).
-2. Migrate the five action pages onto it one at a time (each is independent): replace the hand-rolled
-   grid with `ImageReviewGrid`, keep the load + action untouched. Net: delete ~80–120 lines of
-   duplicated grid/filter/pagination per page.
+Done:
+1. Extracted `ImageQueueGrid.svelte` — the shared primitive: 300px auto-fill grid, `aspect-[4/5]` image
+   card linking to the main app (`EdgeMedia w=450`), empty-state, cursor-paged Next (number *or* string
+   cursor). Body via a `card` snippet; optional per-card `itemClass` for dimming; optional `keyOf`.
+2. Rewrote `ImageReviewGrid` to compose it (public props unchanged, so `[slug]` is untouched) — it now
+   only adds the title + browsing-level filter header and the user-header row.
+3. Migrated the three pages whose card matches exactly: **image-tags**, **image-rating-review**,
+   **downleveled-review** — hand-rolled grid/card/Next replaced by `ImageQueueGrid`; loads + actions
+   untouched. Card grid now defined in one place.
 
-Scope: larger, incremental, low-risk (one page at a time, behavior-preserving).
+**Deliberately NOT migrated** (would change UX for no real gain — the overreach line):
+- `ingestion-error-review` — bespoke layout with **actions above the image** and no aspect box; a
+  different grid (`auto-fit 300px`). Migrating would reshape its UX.
+- `images/to-ingest` — a dense small-card **browse gallery** (`grid-cols-2..5`, metadata aspect,
+  `object-cover`), read-only. Different purpose from the review card.
 
 ## Sequencing
 
-1. **Finish the current batch** (read foundation + unified nav + reported count + prompt-highlight) —
-   commit as-is. *(ready now)*
-2. **Plan A** — review-family `[slug]` unification + gate change. *(next, small)*
-3. **Plan B** — shared-grid extension, then migrate the five action pages incrementally. *(larger)*
-4. Layer per-view **mutations** onto the review family (they're still read-only) once Plan A lands —
-   they'll use the same `actions` slot Plan B introduces.
+1. ✅ Current batch (read foundation + unified nav + reported count + prompt-highlight) — `25ca66c4d5`.
+2. ✅ **Plan A** — review-family `[slug]` unification + pathname gate — `c2444bfea6`.
+3. ✅ **Plan B** — `ImageQueueGrid` primitive + migrate image-tags / image-rating-review /
+   downleveled-review; ingestion-error + to-ingest left as intentionally-divergent.
+4. **Next:** per-view **mutations** on the review family (still read-only) — approve/block/delete for
+   the review modes, `bulkSetReportStatus` for reported, `resolveEntityAppeal` for appeals. These are
+   per-card immediate actions (matching the action pages' pattern), rendered in the `[slug]` card
+   snippets. `ImageQueueGrid` already supports the dimming (`itemClass`) they'll want.
 
 ## Open questions
 
