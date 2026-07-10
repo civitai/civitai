@@ -8,26 +8,48 @@
  * net. Account 0 has NO balance floor, so a refund must reverse a REAL prior charge — never
  * issue a fresh credit, or that credit is minted Buzz.
  *
+ * Each entry fee is charged as TWO transactions per (challenge, image):
+ *   - house cut:  `challenge-entry-house-${challengeId}-${imageId}` — NEVER refunded
+ *   - pool part:  `challenge-entry-fee-${challengeId}-${imageId}`  — refunded only on void
+ * so voiding a challenge returns participants' pool contributions while the house keeps its
+ * cut, without any amount math at refund time (the prefix refund can only see pool charges).
+ *
  * Charges use deterministic externalTransactionId values so re-charge attempts are idempotent.
- * Cancellation reverses those actual charges (never mints a fresh credit): entry fees via a
- * prefix refund over `challenge-entry-fee-${challengeId}-`, the initial prize via a prefix refund
- * over `challenge-initial-prize-${challengeId}-creator`. Both prefixes end in a non-numeric token
- * so one challenge's refund can't collide with another's (5 vs 50, 51, ...).
+ * CRITICAL INVARIANT: an entry-fee charge is NEVER refunded outside of challenge cancellation.
+ * The buzz ledger keeps a refunded transaction's externalTransactionId occupied (a retry gets
+ * an idempotency `conflict` for it) and exposes no queryable refund state — so any refunded
+ * leg would look "already paid" to a later retry and the entry would commit for free. Instead
+ * of refunding on partial failure, we report exactly which images are fully paid and the
+ * caller commits only those; a half-paid image self-heals on retry (the paid leg conflicts,
+ * the missing leg is charged).
+ *
+ * Cancellation reverses the actual charges (never mints a fresh credit): pool parts via a
+ * prefix refund over `challenge-entry-fee-${challengeId}-`, the initial prize via a prefix
+ * refund over `challenge-initial-prize-${challengeId}-creator`. Both prefixes end in a
+ * non-numeric token so one challenge's refund can't collide with another's (5 vs 50, 51, ...).
  */
 import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import {
   createBuzzTransaction,
   createBuzzTransactionMany,
+  getTransactionByExternalId,
   refundMultiAccountTransaction,
-  refundTransaction,
 } from '~/server/services/buzz.service';
-import { throwInsufficientFundsError } from '~/server/utils/errorHandling';
 import { TransactionType } from '~/shared/constants/buzz.constants';
-import { getEntryPoolContribution } from '~/shared/constants/challenge.constants';
+import {
+  CHALLENGE_ENTRY_HOUSE_CUT,
+  getEntryPoolContribution,
+} from '~/shared/constants/challenge.constants';
 import { ChallengeSource } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
 
 const log = createLogger('challenge-funding', 'yellow');
+
+const houseFeeExternalId = (challengeId: number, imageId: number) =>
+  `challenge-entry-house-${challengeId}-${imageId}`;
+const poolFeeExternalId = (challengeId: number, imageId: number) =>
+  `challenge-entry-fee-${challengeId}-${imageId}`;
 
 /** Escrow the creator's optional initial prize when a user challenge is created. Idempotent. */
 export async function chargeInitialPrize({
@@ -54,12 +76,25 @@ export async function chargeInitialPrize({
   log(`Escrowed ${amount} buzz initial prize for challenge ${challengeId}`);
 }
 
+export type ChargeEntryFeesResult = {
+  /** Images whose house AND pool legs are both settled — safe to commit as entries. */
+  paidImageIds: number[];
+  /** Images with at least one leg missing — must NOT be committed. Retry self-heals. */
+  unpaidImageIds: number[];
+};
+
 /**
- * Charge a participant the entry fee for each newly accepted entry and grow the prize pool
- * by the net (fee minus house cut). The per-image charge is idempotent per (challenge, image)
- * via its deterministic externalTransactionId. If the payer can't afford every image, the
- * charges that DID succeed on this call are reversed before we abort, so no Buzz is stranded.
- * Intended to run inside the entry-submission flow BEFORE the entry is committed.
+ * Charge a participant the entry fee for each accepted entry and grow the prize pool by the
+ * net (fee minus house cut). Each leg is idempotent per (challenge, image) via its
+ * deterministic externalTransactionId.
+ *
+ * On a shortfall (insufficient funds mid-batch) nothing is refunded — see the header
+ * invariant. Instead the per-image ledger state is verified and the result partitions the
+ * images into fully-paid (commit them) and unpaid (reject them). A house-leg-only image is
+ * reported unpaid; its house charge stays in account 0 (logged below) and completes into a
+ * full payment if the user retries.
+ *
+ * Intended to run inside the entry-submission flow; callers commit ONLY `paidImageIds`.
  */
 export async function chargeEntryFees({
   challengeId,
@@ -71,60 +106,125 @@ export async function chargeEntryFees({
   userId: number;
   imageIds: number[];
   entryFee: number;
-}) {
-  if (entryFee <= 0 || imageIds.length === 0) return { charged: 0 };
+}): Promise<ChargeEntryFeesResult> {
+  if (entryFee <= 0 || imageIds.length === 0)
+    return { paidImageIds: imageIds, unpaidImageIds: [] };
 
-  // createBuzzTransactionMany SILENTLY DROPS insufficient-funds results (it does not throw),
-  // so we must reconcile: every entry must be either a new transaction or a benign idempotency
-  // conflict (already paid). Any shortfall means the payer couldn't afford an entry — throw so
-  // the caller aborts the submission and the unpaid entry is never committed/counted.
-  const result = await createBuzzTransactionMany(
+  const houseAmount = Math.min(entryFee, CHALLENGE_ENTRY_HOUSE_CUT);
+  const poolAmount = entryFee - houseAmount;
+
+  // House legs first: if the payer runs dry mid-submission the orphaned leg is the (small,
+  // non-refundable anyway) house cut rather than the pool contribution.
+  const houseResult = await createBuzzTransactionMany(
     imageIds.map((imageId) => ({
       fromAccountId: userId,
       toAccountId: 0,
       type: TransactionType.Purchase,
-      amount: entryFee,
-      description: 'Challenge entry fee',
-      externalTransactionId: `challenge-entry-fee-${challengeId}-${imageId}`,
+      amount: houseAmount,
+      description: 'Challenge entry fee (house)',
+      externalTransactionId: houseFeeExternalId(challengeId, imageId),
       details: { challengeId, imageId },
     }))
   );
+  const houseSettled = houseResult.transactions.length + houseResult.conflicts.length;
 
-  const settled = result.transactions.length + result.conflicts.length;
-  if (settled < imageIds.length) {
-    // Money DID move for the successful charges (result.transactions are their ids). The caller
-    // will abort and delete the CollectionItems, so without this the Buzz is orphaned (no entry ⇒
-    // never refunded on cancel). Reverse only THIS call's new charges (conflicts were prior, paid
-    // entries — leave them) before aborting.
-    for (const transactionId of result.transactions) {
-      await refundTransaction(transactionId, 'Challenge entry — partial charge reversed');
-    }
-    throw throwInsufficientFundsError('You do not have enough Buzz to pay the entry fee.');
+  // createBuzzTransactionMany SILENTLY DROPS insufficient-funds results (it does not throw)
+  // and successes come back as opaque ids, so when the counts don't reconcile the only
+  // reliable per-image source of truth is the ledger itself.
+  const housePaidIds =
+    houseSettled >= imageIds.length
+      ? imageIds
+      : await filterChargedImageIds(imageIds, (imageId) =>
+          houseFeeExternalId(challengeId, imageId)
+        );
+
+  // Pool legs only for images whose house leg is settled, so a fully-dropped image never
+  // ends up pool-only. entryFee <= house cut ⇒ no pool leg at all (fee is all house).
+  let poolPaidIds = housePaidIds;
+  let newPoolCharges = 0;
+  if (poolAmount > 0 && housePaidIds.length > 0) {
+    const poolResult = await createBuzzTransactionMany(
+      housePaidIds.map((imageId) => ({
+        fromAccountId: userId,
+        toAccountId: 0,
+        type: TransactionType.Purchase,
+        amount: poolAmount,
+        description: 'Challenge entry fee (prize pool)',
+        externalTransactionId: poolFeeExternalId(challengeId, imageId),
+        details: { challengeId, imageId },
+      }))
+    );
+    newPoolCharges = poolResult.transactions.length;
+    const poolSettled = newPoolCharges + poolResult.conflicts.length;
+    poolPaidIds =
+      poolSettled >= housePaidIds.length
+        ? housePaidIds
+        : await filterChargedImageIds(housePaidIds, (imageId) =>
+            poolFeeExternalId(challengeId, imageId)
+          );
   }
 
-  // Grow the pool only by entries charged for the FIRST time (conflicts were already counted
-  // on the original charge), so re-validation of the same images can't inflate the pool.
-  const poolDelta = getEntryPoolContribution(entryFee) * result.transactions.length;
+  const paidImageIds = poolPaidIds;
+  const paidSet = new Set(paidImageIds);
+  const unpaidImageIds = imageIds.filter((id) => !paidSet.has(id));
+
+  // Grow the pool only by pool legs charged for the FIRST time (conflicts were already counted
+  // on the original charge), so re-validation of the same images can't inflate the pool. A pool
+  // leg for an image the caller ends up not committing still backs the pool with real Buzz —
+  // safe direction (never minted), and the void refund returns it.
+  const poolDelta = getEntryPoolContribution(entryFee) * newPoolCharges;
   if (poolDelta > 0) {
     await dbWrite.challenge.update({
       where: { id: challengeId },
       data: { prizePool: { increment: poolDelta } },
     });
   }
-  return { charged: result.transactions.length };
+
+  if (unpaidImageIds.length > 0) {
+    const houseOrphans = paidSet.size < housePaidIds.length ? housePaidIds.filter((id) => !paidSet.has(id)) : [];
+    logToAxiom({
+      type: 'warning',
+      name: 'challenge-entry-fee-partial-charge',
+      message: 'Entry fee batch settled partially; unpaid images will not be committed',
+      challengeId,
+      userId,
+      paidImageIds,
+      unpaidImageIds,
+      // House leg charged but pool leg dropped: 25 buzz sits in account 0 until the user
+      // retries (completing the payment) or forever if they never do. Never refunded — see
+      // the header invariant for why a refund here would enable free entries.
+      houseOnlyImageIds: houseOrphans,
+    }).catch(() => {});
+  }
+
+  return { paidImageIds, unpaidImageIds };
+}
+
+/** Ledger truth for "was this image's leg charged?" — survives crashes and unknown batch results. */
+async function filterChargedImageIds(
+  imageIds: number[],
+  toExternalId: (imageId: number) => string
+) {
+  const charged: number[] = [];
+  for (const imageId of imageIds) {
+    const transaction = await getTransactionByExternalId(toExternalId(imageId));
+    if (transaction != null) charged.push(imageId);
+  }
+  return charged;
 }
 
 /**
- * Reverse the funds collected for a user-created challenge when it is cancelled/voided: only the
- * entry fees that were ACTUALLY charged, plus the creator's initial prize if one was charged.
- * Nothing is minted — each refund reverses a real prior charge, not a fresh credit.
+ * Reverse the funds collected for a user-created challenge when it is cancelled/voided: the
+ * POOL portion of every entry fee that was actually charged, plus the creator's initial prize
+ * if one was charged. House-cut legs (`challenge-entry-house-...`) are deliberately outside
+ * the refunded prefix — the house cut is non-refundable. Nothing is minted — each refund
+ * reverses a real prior charge, not a fresh credit.
  *
- * Re-runnable: entry fees are reversed by a single prefix refund over the actual
+ * Re-runnable: pool legs are reversed by a single prefix refund over the actual
  * `challenge-entry-fee-${challengeId}-` charges, and the initial prize by a prefix refund over the
  * actual `challenge-initial-prize-${challengeId}-creator` charge; the buzz refund endpoints do not
- * re-reverse an already-refunded transaction, and voidChallenge reaches here at most once
- * (Active/Scheduled → Cancelled). No-op for non-User challenges, entryFee <= 0, and challenges with
- * no initial prize.
+ * re-reverse an already-refunded transaction. No-op for non-User challenges, entryFee <= 0, and
+ * challenges with no initial prize.
  */
 export async function refundUserChallengeFunds(challengeId: number) {
   const challenge = await dbRead.challenge.findUnique({
@@ -161,7 +261,7 @@ export async function refundUserChallengeFunds(challengeId: number) {
   }
 
   log(
-    `Refunded ${refundedEntries} entry fees + initial prize for cancelled challenge ${challengeId}`
+    `Refunded ${refundedEntries} entry-fee pool contributions + initial prize for cancelled challenge ${challengeId}`
   );
   return { refundedEntries };
 }

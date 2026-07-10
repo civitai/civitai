@@ -31,12 +31,19 @@ const {
   mockUpdateChallengeStatus,
   mockRefundUserChallengeFunds,
   mockCreateNotification,
+  mockDbWriteChallengeFindUnique,
 } = vi.hoisted(() => ({
   mockDbReadQueryRaw: vi.fn(),
   mockDbReadChallengeFindUnique: vi.fn(),
   mockDbWriteQueryRaw: vi.fn(),
   mockDbWriteExecuteRaw: vi.fn().mockResolvedValue(1),
   mockDbWriteChallengeUpdate: vi.fn().mockResolvedValue(undefined),
+  // Final-prize recompute reads prizePool/prizeDistribution on the User path; null distribution
+  // skips the recompute so these tests exercise the judging gate unchanged.
+  mockDbWriteChallengeFindUnique: vi.fn().mockResolvedValue({
+    prizePool: 0,
+    prizeDistribution: null,
+  }),
   mockIsFlipt: vi.fn().mockResolvedValue(false),
   mockGetChallengeConfig: vi.fn(),
   mockGetJudgingConfig: vi.fn(),
@@ -60,7 +67,7 @@ vi.mock('~/server/db/client', () => ({
   dbWrite: {
     $queryRaw: mockDbWriteQueryRaw,
     $executeRaw: mockDbWriteExecuteRaw,
-    challenge: { update: mockDbWriteChallengeUpdate },
+    challenge: { update: mockDbWriteChallengeUpdate, findUnique: mockDbWriteChallengeFindUnique },
   },
 }));
 
@@ -207,6 +214,7 @@ beforeEach(() => {
   mockResolveEventContext.mockResolvedValue(undefined);
   mockUpdateChallengeStatus.mockResolvedValue(undefined);
   mockRefundUserChallengeFunds.mockResolvedValue({ refundedEntries: 0 });
+  mockDbWriteChallengeFindUnique.mockResolvedValue({ prizePool: 0, prizeDistribution: null });
   setDynamicCategoriesFlag(false);
 });
 
@@ -246,7 +254,7 @@ describe('getJudgedEntries — routes on categories presence, not source', () =>
 
   it('User source + categories present: still uses the weighted-category path (unchanged)', async () => {
     mockOneRow();
-    mockDbWriteQueryRaw.mockResolvedValueOnce([]); // winner-cooldown (global) query
+    // No winner-cooldown prime: user challenges skip the cooldown query entirely.
     const result = await getJudgedEntries(
       100,
       config,
@@ -255,6 +263,7 @@ describe('getJudgedEntries — routes on categories presence, not source', () =>
       [{ key: 'theme', weight: 100, label: 'Theme', criteria: 'x' }] as never
     );
     expect(result).toHaveLength(1);
+    expect(mockDbWriteQueryRaw).not.toHaveBeenCalled();
   });
 
   it('categories undefined (any source): falls back to the fixed rubric, deduped via SQL ROW_NUMBER', async () => {
@@ -269,7 +278,7 @@ describe('getJudgedEntries — routes on categories presence, not source', () =>
 
   it('empty categories array (defensive): treated as no categories -> fixed rubric', async () => {
     mockOneRow();
-    mockDbWriteQueryRaw.mockResolvedValueOnce([]);
+    // No winner-cooldown prime: user challenges skip the cooldown query entirely.
     const result = await getJudgedEntries(100, config, undefined, ChallengeSource.User, []);
     expect(result).toHaveLength(1);
     const sql = (mockDbReadQueryRaw.mock.calls[0][0] as unknown as string[]).join('');

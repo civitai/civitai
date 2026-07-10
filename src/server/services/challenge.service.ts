@@ -7,6 +7,7 @@ import {
   claimChallengeForCompletion,
   closeChallengeCollection,
   createChallengeWinner,
+  distributePrizes,
   getChallengeById,
   getChallengeWinners,
   getExistingWinnersForRetry,
@@ -773,13 +774,16 @@ async function buildChallengeDetail(
     winners,
     completionSummary,
     judgedTagId: challengeConfig.judgedTagId ?? null,
+    // Public by design: the upsert form promises entrants the rubric is shown publicly.
+    judgingCategories: parsed.success ? parsed.data : null,
     // Internal fields used only by getChallengeForEdit
     _internal: {
       judgingPrompt: challenge.judgingPrompt,
       reviewPercentage: challenge.reviewPercentage,
       operationBudget: challenge.operationBudget,
       themeElements,
-      judgingCategories: parsed.success ? parsed.data : null,
+      entryFee: challenge.entryFee,
+      maxParticipants: challenge.maxParticipants,
     },
   };
 }
@@ -1059,9 +1063,12 @@ export async function upsertChallenge({
       }
     }
 
-    // Judging categories lock once the challenge starts — entries are already judged against them.
+    // Judging categories lock once the challenge starts — entries are already judged against
+    // them. Locked for every post-Scheduled status (not just Active): rewriting them on a
+    // Completing/Completed/Cancelled challenge would make re-review rescore already-judged
+    // entries under a different rubric.
     const effectiveJudgingCategories =
-      challenge.status === ChallengeStatus.Active
+      challenge.status !== ChallengeStatus.Scheduled
         ? (challenge.judgingCategories as Prisma.InputJsonValue) ?? Prisma.JsonNull
         : judgingCategories
         ? (judgingCategories as unknown as Prisma.InputJsonValue)
@@ -1239,7 +1246,21 @@ export async function upsertUserChallenge({
   if (!id) await assertCanCreateUserChallenge(userId);
 
   // Cover image: reuse an existing Image or create one from the upload (like the mod path).
-  const coverImageId = coverImage.id ?? (await createImage({ ...coverImage, userId })).id;
+  // A reused id must belong to the caller — otherwise anyone could surface another user's
+  // (possibly unpublished/blocked) image on a public challenge card, and the challenge scan
+  // only covers text.
+  let coverImageId: number;
+  if (coverImage.id != null) {
+    const ownedImage = await dbRead.image.findFirst({
+      where: { id: coverImage.id, userId },
+      select: { id: true },
+    });
+    if (!ownedImage)
+      throw new TRPCError({ code: 'BAD_REQUEST', message: 'Cover image not found.' });
+    coverImageId = ownedImage.id;
+  } else {
+    coverImageId = (await createImage({ ...coverImage, userId })).id;
+  }
 
   // Fields shared by create + update. Entry-fee funded pools are modeled with the existing
   // Dynamic prize machinery: pool grows by `buzzPerAction` (net of the house cut) per entry.
@@ -1279,6 +1300,7 @@ export async function upsertUserChallenge({
         status: true,
         collectionId: true,
         basePrizePool: true,
+        metadata: true,
       },
     });
     if (!existing) throw throwNotFoundError('Challenge not found');
@@ -1304,8 +1326,12 @@ export async function upsertUserChallenge({
     }
 
     const updated = await dbWrite.$transaction(async (tx) => {
-      const saved = await tx.challenge.update({
-        where: { id },
+      // Conditional on status IN THE WRITE: the Scheduled/entry-count checks above ran on the
+      // read replica, so the hourly activation job (or a racing entry charge) could have flipped
+      // this challenge Active in between — an unconditional update would then rewrite prizePool
+      // over real collected contributions and hide a live challenge behind the scan gate.
+      const { count } = await tx.challenge.updateMany({
+        where: { id, status: ChallengeStatus.Scheduled },
         data: {
           ...commonData,
           // The initial prize is escrowed once at creation; never let an edit rewrite the
@@ -1316,9 +1342,17 @@ export async function upsertUserChallenge({
           // Any content edit requires a fresh scan before the challenge is public again.
           ingestion: ChallengeIngestionStatus.Pending,
           scannedAt: null,
-          ...(themeEls && { metadata: { themeElements: themeEls } }),
+          ...(themeEls && {
+            metadata: { ...parseChallengeMetadata(existing.metadata), themeElements: themeEls },
+          }),
         },
       });
+      if (count === 0)
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'A published challenge can no longer be edited.',
+        });
+      const saved = await tx.challenge.findUniqueOrThrow({ where: { id } });
 
       if (existing.collectionId) {
         const collection = await tx.collection.findUnique({
@@ -1478,7 +1512,7 @@ export async function updateChallengeStatus(id: number, status: ChallengeStatus)
 export async function deleteChallenge(id: number) {
   const challenge = await dbRead.challenge.findUnique({
     where: { id },
-    select: { id: true, status: true, collectionId: true },
+    select: { id: true, status: true, collectionId: true, source: true },
   });
 
   if (!challenge) {
@@ -1494,6 +1528,16 @@ export async function deleteChallenge(id: number) {
       code: 'PRECONDITION_FAILED',
       message: 'Cannot delete an active challenge. Cancel it first.',
     });
+  }
+
+  // Refund BEFORE deleting: refundUserChallengeFunds reads the Challenge row, so once the row
+  // is gone there is no code path left that can ever return the creator's escrowed prize or
+  // any collected entry fees. Scheduled only — a Cancelled challenge was already refunded by
+  // voidChallenge, and a Completing/Completed challenge's pool was (or is being) paid out to
+  // winners, so refunding it would double-spend from account 0 (minted Buzz). A failure here
+  // aborts the delete so it can be retried.
+  if (challenge.source === ChallengeSource.User && challenge.status === ChallengeStatus.Scheduled) {
+    await refundUserChallengeFunds(id);
   }
 
   const collectionId = challenge.collectionId;
@@ -1749,6 +1793,31 @@ export async function endChallengeAndPickWinners(challengeId: number) {
     // Close the collection
     await closeChallengeCollection(challenge);
     log('Collection closed');
+
+    // Entry fees charged since the last periodic review recompute grew prizePool but not the
+    // stored per-place breakdown; with the collection closed the pool is final, so recompute
+    // before winners are mapped/paid or the last window's fees stay stranded in account 0.
+    if (challenge.source === ChallengeSource.User) {
+      const fresh = await dbWrite.challenge.findUnique({
+        where: { id: challengeId },
+        select: { prizePool: true, prizeDistribution: true },
+      });
+      const distribution = Array.isArray(fresh?.prizeDistribution)
+        ? (fresh.prizeDistribution as number[])
+        : null;
+      if (fresh && distribution?.length) {
+        const finalPrizes = distributePrizes(fresh.prizePool, distribution);
+        await dbWrite.challenge.update({
+          where: { id: challengeId },
+          data: { prizes: finalPrizes as unknown as Prisma.InputJsonValue },
+        });
+        challenge.prizes = finalPrizes;
+        log('Final prize breakdown recomputed from collected pool:', {
+          prizePool: fresh.prizePool,
+          prizes: finalPrizes,
+        });
+      }
+    }
 
     // Check if winners already exist from a previous (failed) run.
     // If so, skip LLM generation entirely to avoid non-deterministic re-picks.
@@ -2034,16 +2103,17 @@ export async function voidChallenge(challengeId: number) {
   await closeChallengeCollection(challenge);
   log('Collection closed');
 
-  // Update challenge status to Cancelled
+  // Refund BEFORE flipping to Cancelled: the status guard above makes a Cancelled challenge
+  // un-re-voidable, so refund-after-flip would strand the funds permanently if the buzz call
+  // failed. The refund is idempotent, so a crash between refund and update safely re-runs.
+  const { refundedEntries } = await refundUserChallengeFunds(challengeId);
+  log(`Refunded ${refundedEntries} entry fees`);
+
   await dbWrite.challenge.update({
     where: { id: challengeId },
     data: { status: ChallengeStatus.Cancelled },
   });
   log('Challenge status updated to Cancelled');
-
-  // Refund entry fees + initial prize for user-created challenges (no-op otherwise).
-  const { refundedEntries } = await refundUserChallengeFunds(challengeId);
-  log(`Refunded ${refundedEntries} entry fees`);
 
   return { success: true };
 }

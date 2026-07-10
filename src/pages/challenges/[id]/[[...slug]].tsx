@@ -45,10 +45,13 @@ import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import {
   ChallengeReviewCostType,
   Currency,
+  ChallengeSource,
   ChallengeStatus,
   PrizeMode,
   PoolTrigger,
 } from '~/shared/utils/prisma/enums';
+import { openReportModal } from '~/components/Dialog/triggers/report';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import {
   IconBrush,
@@ -58,6 +61,7 @@ import {
   IconCube,
   IconDotsVertical,
   IconFilter,
+  IconFlag,
   IconGift,
   IconPencil,
   IconPhoto,
@@ -302,6 +306,8 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
   const isActive = challenge.status === ChallengeStatus.Active;
   const isCompleted = challenge.status === ChallengeStatus.Completed;
   const isScheduled = challenge.status === ChallengeStatus.Scheduled;
+  // Only User-source challenges carry user-authored text worth reporting
+  const canReport = !!currentUser && challenge.source === ChallengeSource.User;
 
   return (
     <Gated
@@ -328,7 +334,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                   <IconShare3 size={20} />
                 </ActionIcon>
               </ShareButton>
-              {currentUser?.isModerator && (
+              {(currentUser?.isModerator || canReport) && (
                 <Menu position="bottom-end" withArrow>
                   <Menu.Target>
                     <ActionIcon variant="light" size="lg">
@@ -336,71 +342,95 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                     </ActionIcon>
                   </Menu.Target>
                   <Menu.Dropdown>
-                    <Menu.Label>Actions</Menu.Label>
-                    <Menu.Item
-                      leftSection={<IconPencil size={14} stroke={1.5} />}
-                      component={Link}
-                      href={`/moderator/challenges/${challenge.id}/edit`}
-                    >
-                      Edit Challenge
-                    </Menu.Item>
-                    <ToggleLockComments entityId={challenge.id} entityType="challenge">
-                      {({ toggle, locked, isLoading }) => (
+                    {currentUser?.isModerator && (
+                      <>
+                        <Menu.Label>Actions</Menu.Label>
                         <Menu.Item
-                          leftSection={
-                            isLoading ? <Loader size={14} /> : <IconLock size={14} stroke={1.5} />
+                          leftSection={<IconPencil size={14} stroke={1.5} />}
+                          component={Link}
+                          href={`/moderator/challenges/${challenge.id}/edit`}
+                        >
+                          Edit Challenge
+                        </Menu.Item>
+                        <ToggleLockComments entityId={challenge.id} entityType="challenge">
+                          {({ toggle, locked, isLoading }) => (
+                            <Menu.Item
+                              leftSection={
+                                isLoading ? (
+                                  <Loader size={14} />
+                                ) : (
+                                  <IconLock size={14} stroke={1.5} />
+                                )
+                              }
+                              onClick={toggle}
+                              disabled={isLoading}
+                              closeMenuOnClick={false}
+                            >
+                              {locked ? 'Unlock' : 'Lock'} Comments
+                            </Menu.Item>
+                          )}
+                        </ToggleLockComments>
+
+                        {isActive && (
+                          <>
+                            <Menu.Divider />
+                            <Menu.Label>Quick Actions</Menu.Label>
+                            <Menu.Item
+                              leftSection={<IconTrophy size={14} />}
+                              onClick={handleEndAndPickWinners}
+                            >
+                              End & Pick Winners
+                            </Menu.Item>
+                            <Menu.Item
+                              leftSection={<IconX size={14} />}
+                              color="red"
+                              onClick={handleVoidChallenge}
+                            >
+                              Void Challenge
+                            </Menu.Item>
+                          </>
+                        )}
+
+                        {isScheduled && (
+                          <>
+                            <Menu.Divider />
+                            <Menu.Label>Quick Actions</Menu.Label>
+                            <Menu.Item
+                              leftSection={<IconX size={14} />}
+                              color="red"
+                              onClick={handleVoidChallenge}
+                            >
+                              Cancel Challenge
+                            </Menu.Item>
+                          </>
+                        )}
+
+                        <Menu.Divider />
+                        <Menu.Item
+                          leftSection={<IconTrash size={14} />}
+                          color="red"
+                          onClick={handleDelete}
+                        >
+                          Delete
+                        </Menu.Item>
+                      </>
+                    )}
+                    {canReport && (
+                      <>
+                        {currentUser?.isModerator && <Menu.Divider />}
+                        <Menu.Item
+                          leftSection={<IconFlag size={14} stroke={1.5} />}
+                          onClick={() =>
+                            openReportModal({
+                              entityType: ReportEntity.Challenge,
+                              entityId: challenge.id,
+                            })
                           }
-                          onClick={toggle}
-                          disabled={isLoading}
-                          closeMenuOnClick={false}
                         >
-                          {locked ? 'Unlock' : 'Lock'} Comments
-                        </Menu.Item>
-                      )}
-                    </ToggleLockComments>
-
-                    {isActive && (
-                      <>
-                        <Menu.Divider />
-                        <Menu.Label>Quick Actions</Menu.Label>
-                        <Menu.Item
-                          leftSection={<IconTrophy size={14} />}
-                          onClick={handleEndAndPickWinners}
-                        >
-                          End & Pick Winners
-                        </Menu.Item>
-                        <Menu.Item
-                          leftSection={<IconX size={14} />}
-                          color="red"
-                          onClick={handleVoidChallenge}
-                        >
-                          Void Challenge
+                          Report
                         </Menu.Item>
                       </>
                     )}
-
-                    {isScheduled && (
-                      <>
-                        <Menu.Divider />
-                        <Menu.Label>Quick Actions</Menu.Label>
-                        <Menu.Item
-                          leftSection={<IconX size={14} />}
-                          color="red"
-                          onClick={handleVoidChallenge}
-                        >
-                          Cancel Challenge
-                        </Menu.Item>
-                      </>
-                    )}
-
-                    <Menu.Divider />
-                    <Menu.Item
-                      leftSection={<IconTrash size={14} />}
-                      color="red"
-                      onClick={handleDelete}
-                    >
-                      Delete
-                    </Menu.Item>
                   </Menu.Dropdown>
                 </Menu>
               )}
@@ -1151,7 +1181,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
       <Accordion
         variant="separated"
         multiple
-        defaultValue={['details', 'models', 'prizes']}
+        defaultValue={['details', 'models', 'prizes', 'judging']}
         styles={(theme) => ({
           content: { padding: 0 },
           item: {
@@ -1183,6 +1213,34 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
             </ScrollArea.Autosize>
           </Accordion.Panel>
         </Accordion.Item>
+
+        {!!challenge.judgingCategories?.length && (
+          <Accordion.Item value="judging">
+            <Accordion.Control>
+              <Group justify="space-between">Judging</Group>
+            </Accordion.Control>
+            <Accordion.Panel>
+              <div className="flex flex-col bg-gray-0 dark:bg-[#1f2023]">
+                {challenge.judgingCategories.map((category) => (
+                  <div
+                    key={category.key}
+                    className="flex flex-col gap-1 border-b border-gray-3 px-4 py-2.5 last:border-b-0 dark:border-dark-4"
+                  >
+                    <Group justify="space-between" gap="xs" wrap="nowrap">
+                      <Text size="sm">{category.label}</Text>
+                      <Text size="sm" fw={500}>
+                        {category.weight}%
+                      </Text>
+                    </Group>
+                    <Text size="xs" c="dimmed">
+                      {category.criteria}
+                    </Text>
+                  </div>
+                ))}
+              </div>
+            </Accordion.Panel>
+          </Accordion.Item>
+        )}
 
         {challenge.models.length > 0 && (
           <Accordion.Item value="models">

@@ -58,7 +58,11 @@ async function getChallengeCategoryRows(): Promise<ChallengeCategoryRow[]> {
       orderBy: [{ sortOrder: 'asc' }, { label: 'asc' }],
     });
   } catch {
-    // Table may not exist in this env yet (migrations are applied manually).
+    // Table may not exist in this env yet (migrations are applied manually), or the read failed
+    // transiently. Serve the freshest data available WITHOUT caching, so a blip doesn't make
+    // resolveJudgingCategories reject DB-only category keys for a full TTL; an expired cache
+    // beats the preset fallback.
+    return cache?.rows ?? presetFallbackRows();
   }
   cache = { rows: rows.length ? rows : presetFallbackRows(), fetchedAt: Date.now() };
   return cache.rows;

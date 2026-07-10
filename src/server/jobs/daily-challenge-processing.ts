@@ -608,13 +608,14 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
           metadata: unknown;
           source: ChallengeSource;
           judgingCategories: unknown;
+          entryFee: number;
         }
       | undefined
     ]
   >`
     SELECT "allowedNsfwLevel", "judgeId", "judgingPrompt",
            "prizeMode", "prizePool", "basePrizePool", "buzzPerAction", "poolTrigger", "maxPrizePool", "prizeDistribution",
-           "metadata", "source", "judgingCategories"
+           "metadata", "source", "judgingCategories", "entryFee"
     FROM "Challenge"
     WHERE id = ${currentChallenge.challengeId}
     LIMIT 1
@@ -855,22 +856,34 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   `;
   log('Recent entries:', recentEntries.length);
 
-  // Randomly select entries to review up to the limit
-  let toReviewCount = getRandomInt(config.reviewAmount.min, config.reviewAmount.max);
-  const shuffledEntries = shuffle(recentEntries);
-  const toReview: typeof shuffledEntries = [];
-  const reviewingUsers = new Set<number>();
-  for (const entry of shuffledEntries) {
-    if (toReviewCount <= 0) break;
-    if (reviewingUsers.has(entry.userId)) continue;
-    // Skip users who have already hit the per-user scored cap
-    const userScored = scoredCountMap.get(entry.userId) ?? 0;
-    if (userScored >= config.maxScoredPerUser) continue;
-    toReview.push(entry);
-    reviewingUsers.add(entry.userId);
-    toReviewCount--;
+  // Paid user challenges judge EVERY new entry — participants paid a fee for a score, so the
+  // random sampling and per-user cap (both sized for free dailies) must not leave a paying
+  // entrant unjudged with no chance to win. Entry volume is bounded by maxEntriesPerUser and
+  // the participant cap. Free challenges keep the sampled selection below.
+  const judgeAllEntries =
+    challengeRecord?.source === ChallengeSource.User && (challengeRecord?.entryFee ?? 0) > 0;
+
+  let toReview: typeof recentEntries;
+  if (judgeAllEntries) {
+    toReview = [...recentEntries];
+  } else {
+    // Randomly select entries to review up to the limit
+    let toReviewCount = getRandomInt(config.reviewAmount.min, config.reviewAmount.max);
+    const shuffledEntries = shuffle(recentEntries);
+    toReview = [];
+    const reviewingUsers = new Set<number>();
+    for (const entry of shuffledEntries) {
+      if (toReviewCount <= 0) break;
+      if (reviewingUsers.has(entry.userId)) continue;
+      // Skip users who have already hit the per-user scored cap
+      const userScored = scoredCountMap.get(entry.userId) ?? 0;
+      if (userScored >= config.maxScoredPerUser) continue;
+      toReview.push(entry);
+      reviewingUsers.add(entry.userId);
+      toReviewCount--;
+    }
   }
-  log('Entries to review:', toReview.length);
+  log('Entries to review:', toReview.length, judgeAllEntries ? '(all — paid entries)' : '');
 
   // Get forced to review entries (also respecting per-user cap)
   const requestReview = await dbWrite.$queryRaw<RecentEntry[]>`
@@ -1213,6 +1226,33 @@ export async function pickWinnersForChallenge(
       await endChallenge(currentChallenge);
       log('Collection closed');
 
+      // Entry fees charged since the last 10-min review recompute grew prizePool but not the
+      // stored per-place breakdown — with the collection now closed the pool is final, so
+      // recompute the breakdown before winners are mapped/paid. Skipping this would underpay
+      // winners and strand the last window's fees in account 0 (and the residual alert below
+      // compares against the same stale breakdown, so it would never fire).
+      if (challengeJudgeRow?.source === ChallengeSource.User) {
+        const fresh = await dbWrite.challenge.findUnique({
+          where: { id: currentChallenge.challengeId },
+          select: { prizePool: true, prizeDistribution: true },
+        });
+        const distribution = Array.isArray(fresh?.prizeDistribution)
+          ? (fresh.prizeDistribution as number[])
+          : null;
+        if (fresh && distribution?.length) {
+          const finalPrizes = distributePrizes(fresh.prizePool, distribution);
+          await dbWrite.challenge.update({
+            where: { id: currentChallenge.challengeId },
+            data: { prizes: finalPrizes as unknown as Prisma.InputJsonValue },
+          });
+          currentChallenge.prizes = finalPrizes;
+          log('Final prize breakdown recomputed from collected pool:', {
+            prizePool: fresh.prizePool,
+            prizes: finalPrizes,
+          });
+        }
+      }
+
       // 3. Get judged entries + LLM judgment
       const judgedEntries = await getJudgedEntries(
         currentChallenge.collectionId,
@@ -1283,14 +1323,17 @@ export async function pickWinnersForChallenge(
       log('ChallengeWinner records created');
     }
 
-    // 5. Distribute winner buzz prizes
+    // 5. Distribute winner buzz prizes. Pay `entry.prize` (keyed to the entry's PLACE and equal
+    // to the recorded ChallengeWinner.buzzAwarded) — indexing prizes[] by array position would
+    // overpay when an unmatched LLM winner was filtered out above (place-2 entry at index 0
+    // would get place-1 buzz), and on the retry path the array order isn't tied to place at all.
     await withRetries(() =>
       createBuzzTransactionMany(
-        winningEntries.map((entry, i) => ({
+        winningEntries.map((entry) => ({
           type: TransactionType.Reward,
           toAccountId: entry.userId,
           fromAccountId: 0, // central bank
-          amount: currentChallenge.prizes[i]?.buzz ?? 0,
+          amount: entry.prize,
           description: `Challenge Winner Prize #${entry.position}: ${currentChallenge.title}`,
           externalTransactionId: `challenge-winner-prize-${currentChallenge.challengeId}-${entry.userId}-place-${entry.position}`,
           toAccountType: 'yellow',
@@ -1527,7 +1570,7 @@ export async function getJudgedEntries(
   collectionId: number,
   config: ChallengeConfig,
   eventContext?: EventContext,
-  _source: ChallengeSource = ChallengeSource.System,
+  source: ChallengeSource = ChallengeSource.System,
   categories?: ChallengeJudgingCategory[]
 ) {
   // Challenges scored against creator-defined category labels (User-source always, other
@@ -1590,7 +1633,11 @@ export async function getJudgedEntries(
 
   // Exclude users who won a challenge within the cooldown period, scoped by event
   let recentWinnerIds = new Set<number>();
-  if (eventContext?.winnerCooldownDays === 0) {
+  if (source === ChallengeSource.User) {
+    // Paid user challenges never apply the winner cooldown — a recent daily-challenge win
+    // must not silently disqualify someone from a pool they paid to enter.
+    log('Skipping winner cooldown — user-created challenge');
+  } else if (eventContext?.winnerCooldownDays === 0) {
     // Event allows consecutive wins — skip cooldown entirely
     log('Skipping winner cooldown — event cooldown set to 0', {
       eventId: eventContext.eventId,
@@ -1628,7 +1675,9 @@ export async function getJudgedEntries(
   const eligibleEntries = filterRecentWinners(userBestEntries, recentWinnerIds);
 
   const cooldownSource =
-    eventContext?.winnerCooldownDays === 0
+    source === ChallengeSource.User
+      ? 'none (user challenge)'
+      : eventContext?.winnerCooldownDays === 0
       ? 'none (no cooldown)'
       : eventContext?.winnerCooldownDays != null
       ? `${String(eventContext.winnerCooldownDays)} day (event override)`

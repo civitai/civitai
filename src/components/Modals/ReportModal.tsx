@@ -79,6 +79,7 @@ const reports = [
       ReportEntity.ComicProject,
       ReportEntity.Model3D,
       ReportEntity.Model3DReview,
+      ReportEntity.Challenge,
     ],
   },
   {
@@ -101,6 +102,7 @@ const reports = [
       ReportEntity.ComicProject,
       ReportEntity.Model3D,
       ReportEntity.Model3DReview,
+      ReportEntity.Challenge,
     ],
   },
   {
@@ -135,6 +137,7 @@ const reports = [
       ReportEntity.ComicProject,
       ReportEntity.Model3D,
       ReportEntity.Model3DReview,
+      ReportEntity.Challenge,
     ],
   },
 ];

@@ -140,6 +140,9 @@ type ChallengeForEdit = {
   prizeDistribution: number[] | null;
   themeElements: string[] | null;
   judgingCategories?: CategoryWeightRow[];
+  entryFee?: number;
+  initialPrizeBuzz?: number;
+  maxParticipants?: number | null;
 };
 
 type Props = {
@@ -253,9 +256,11 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
       dist1: challenge?.prizeDistribution?.[0] ?? 50,
       dist2: challenge?.prizeDistribution?.[1] ?? 30,
       dist3: challenge?.prizeDistribution?.[2] ?? 20,
-      entryFee: CHALLENGE_MIN_ENTRY_FEE,
-      initialPrizeBuzz: 0,
-      maxParticipants: undefined,
+      // `||` (not `??`): non-entry-fee challenges store entryFee 0, which would fail the min-fee
+      // schema check if used as a default.
+      entryFee: challenge?.entryFee || CHALLENGE_MIN_ENTRY_FEE,
+      initialPrizeBuzz: challenge?.initialPrizeBuzz ?? 0,
+      maxParticipants: challenge?.maxParticipants ?? undefined,
       // User variant + new mod challenges seed defaults immediately; a mod editing an existing
       // null-category challenge starts empty — CategoryWeights is hidden (toggle off) until the
       // mod opts in, at which point it's seeded on demand (see handleCustomizeCategoriesChange).
@@ -322,6 +327,11 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
         return;
       }
 
+      if (!data.judgeId) {
+        form.setError('judgeId', { message: 'Select a judge for your challenge' });
+        return;
+      }
+
       const categoriesResult = challengeJudgingCategoriesSchema.safeParse(data.judgingCategories);
       if (!categoriesResult.success) {
         showErrorNotification({
@@ -339,7 +349,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
         coverImage: data.coverImage,
         allowedNsfwLevel: data.allowedNsfwLevel,
         modelVersionIds: data.modelVersionIds,
-        judgeId: Number(data.judgeId ?? 0),
+        judgeId: Number(data.judgeId),
         judgingCategories: data.judgingCategories,
         entryFee: data.entryFee,
         initialPrizeBuzz: data.initialPrizeBuzz,
@@ -599,15 +609,18 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
               Times are snapped to the nearest hour (UTC).
             </Text>
 
-            <SimpleGrid cols={{ base: 1, sm: 3 }}>
-              <InputDateTimePicker
-                name="visibleAt"
-                label="Visible From (UTC)"
-                placeholder="When challenge appears in feed"
-                valueFormat="lll"
-                disabled={isTerminal}
-                timeInputProps={{ step: 3600 }}
-              />
+            <SimpleGrid cols={{ base: 1, sm: isUser ? 2 : 3 }}>
+              {/* User challenges become visible when the moderation scan passes — server forces visibleAt */}
+              {!isUser && (
+                <InputDateTimePicker
+                  name="visibleAt"
+                  label="Visible From (UTC)"
+                  placeholder="When challenge appears in feed"
+                  valueFormat="lll"
+                  disabled={isTerminal}
+                  timeInputProps={{ step: 3600 }}
+                />
+              )}
 
               <InputDateTimePicker
                 name="startsAt"
@@ -645,7 +658,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                     min={CHALLENGE_MIN_ENTRY_FEE}
                     max={CHALLENGE_MAX_ENTRY_FEE}
                     step={10}
-                    description={`Min ${CHALLENGE_MIN_ENTRY_FEE}. ${perEntryToPool} Buzz of each entry goes to the prize pool.`}
+                    description={`Min ${CHALLENGE_MIN_ENTRY_FEE}. ${perEntryToPool} Buzz of each entry goes to the prize pool. Entry fees are non-refundable once paid.`}
                     disabled={isTerminal}
                   />
                   <InputNumber
@@ -864,7 +877,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                 <InputNumber
                   name="maxParticipants"
                   label="Max Participants (optional)"
-                  description="Caps total entries — bounds your judging cost."
+                  description="Caps distinct participants. Once reached, no new participants can join; existing participants can still add entries up to the per-user limit."
                   min={1}
                   max={100_000}
                   disabled={isActive || isTerminal}

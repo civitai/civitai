@@ -18,7 +18,12 @@ const {
 } = vi.hoisted(() => {
   return {
     mockDbWrite: {
-      challenge: { update: vi.fn().mockResolvedValue(undefined) },
+      challenge: {
+        update: vi.fn().mockResolvedValue(undefined),
+        // Final-prize recompute reads prizePool/prizeDistribution on the User path; null
+        // distribution skips the recompute so these tests exercise the judging gate unchanged.
+        findUnique: vi.fn().mockResolvedValue({ prizePool: 0, prizeDistribution: null }),
+      },
     },
     mockIsFlipt: vi.fn().mockResolvedValue(false),
     mockGetJudgedEntries: vi.fn(),

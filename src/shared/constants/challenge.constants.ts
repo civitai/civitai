@@ -129,6 +129,7 @@ export const DEFAULT_CATEGORY_ROWS: CategoryWeightRow[] = [
   { ...makeRow('aesthetic'), weight: 20 },
 ];
 
-// Judges a public-challenge creator may pick. Keyed on NAME (env-stable; excludes "CivChan NSFW",
-// which shares CivChan's userId — public challenges are SFW-only).
+// Judges a public-challenge creator may pick. Keyed on NAME (env-stable). "CivChan NSFW" is
+// excluded even though user challenges can allow NSFW levels — it shares CivChan's userId, and
+// NSFW entries are judged with the standard rubrics for now (product call pending).
 export const USER_SELECTABLE_JUDGE_NAMES = ['CivBot', 'CivChan'] as const;

@@ -268,22 +268,27 @@ export async function getScheduledChallengesReadyToStart(): Promise<ChallengeDet
 }
 
 /**
- * Gets user-created challenges that are past their start time but were hard-blocked
- * by moderation scan. These can never be activated (getScheduledChallengesReadyToStart
- * excludes them) and must be voided so their entry fees / initial prize are refunded
- * instead of stranded. Returns challenge IDs ordered by startsAt ASC.
+ * Gets user-created challenges that are past their start time but never passed moderation scan
+ * (Blocked, or stuck Pending/Error). None of these can activate (getScheduledChallengesReadyToStart
+ * requires Scanned), so without intervention they sit Scheduled+hidden forever with the creator's
+ * initial prize escrowed. Blocked ones are voided; Pending/Error ones get a re-scan attempt and
+ * are voided once well past start. Returns id + ingestion ordered by startsAt ASC.
  */
-export async function getBlockedUserChallengesPastStart(): Promise<number[]> {
-  const rows = await dbRead.$queryRaw<{ id: number }[]>`
-    SELECT id
+export async function getUnscannedUserChallengesPastStart(): Promise<
+  { id: number; ingestion: ChallengeIngestionStatus; startsAt: Date }[]
+> {
+  const rows = await dbRead.$queryRaw<
+    { id: number; ingestion: ChallengeIngestionStatus; startsAt: Date }[]
+  >`
+    SELECT id, "ingestion", "startsAt"
     FROM "Challenge"
     WHERE status = ${ChallengeStatus.Scheduled}::"ChallengeStatus"
     AND source = ${ChallengeSource.User}::"ChallengeSource"
-    AND "ingestion" = ${ChallengeIngestionStatus.Blocked}::"ChallengeIngestionStatus"
+    AND "ingestion" != ${ChallengeIngestionStatus.Scanned}::"ChallengeIngestionStatus"
     AND "startsAt" <= now()
     ORDER BY "startsAt" ASC
   `;
-  return rows.map((row) => row.id);
+  return rows;
 }
 
 /**

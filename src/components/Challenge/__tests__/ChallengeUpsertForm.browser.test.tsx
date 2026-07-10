@@ -152,25 +152,6 @@ describe('ChallengeUpsertForm — mod judging-categories toggle', () => {
     await expect
       .element(page.getByText(/How well the entry fits and interprets the challenge theme/))
       .toBeInTheDocument();
-
-    // Task 3 capture: seeded (toggle-ON) state showing the category rows + total/progress footer,
-    // scoped to CategoryWeights' own root (via `data-testid`) rather than the whole multi-field form.
-    // component-setup.tsx deliberately doesn't load Mantine's stylesheet (keeps component tests
-    // CSS-free/fast) — without it, unsized icon <svg>s (e.g. the NumberInput steppers) fall back to
-    // the ~300x150 UA default and dwarf the real content. A full Mantine CSS import breaks other
-    // assertions in this file (cascade-layer ordering shifts click targets), so instead scope a
-    // tiny icon-sizing rule to just this capture and remove it immediately after.
-    const iconSizeFix = document.createElement('style');
-    iconSizeFix.textContent = 'svg { width: 1em; height: 1em; }';
-    document.head.appendChild(iconSizeFix);
-    try {
-      await page.screenshot({
-        element: page.getByTestId('category-weights'),
-        path: '/private/tmp/claude-501/-Users-hackstreetboy-Projects-civitai/becb6bca-2078-4ee0-93e2-7fbab59669c1/scratchpad/category-weights-ui.png',
-      });
-    } finally {
-      iconSizeFix.remove();
-    }
   });
 
   test('switching back OFF hides the editor again', async () => {

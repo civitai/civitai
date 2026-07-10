@@ -8,7 +8,10 @@ import {
   PrizeMode,
   PoolTrigger,
 } from '~/shared/utils/prisma/enums';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import {
   CHALLENGE_MAX_ENTRY_FEE,
   CHALLENGE_MAX_INITIAL_PRIZE,
@@ -199,6 +202,7 @@ export type ChallengeDetail = {
   }>;
   completionSummary: ChallengeCompletionSummary | null;
   judgedTagId: number | null;
+  judgingCategories: ChallengeJudgingCategory[] | null;
 };
 
 // Extended type with sensitive/internal fields for moderator edit form
@@ -207,7 +211,8 @@ export type ChallengeDetailForEdit = ChallengeDetail & {
   reviewPercentage: number;
   operationBudget: number;
   themeElements: string[] | null;
-  judgingCategories: ChallengeJudgingCategory[] | null;
+  entryFee: number;
+  maxParticipants: number | null;
 };
 
 export type ModeratorChallengeListItem = {
@@ -406,7 +411,9 @@ export const userChallengeUpsertBaseSchema = z.object({
   themeElements: z.array(z.string().max(100)).max(20).optional(),
   invitation: z.string().max(300).optional(),
   coverImage: imageSchema,
-  allowedNsfwLevel: z.number().min(1).max(63).default(sfwBrowsingLevelsFlag),
+  // Capped at the browsable-levels flag (31): 32 is NsfwLevel.Blocked, and accepting it would
+  // let a user create a Blocked-level challenge whose collection admits Blocked images.
+  allowedNsfwLevel: z.number().min(1).max(allBrowsingLevelsFlag).default(sfwBrowsingLevelsFlag),
   modelVersionIds: z.array(z.number().int().positive()).max(20).default([]),
   judgeId: z.number().int().positive(),
   judgingCategories: challengeJudgingCategoriesInputSchema,
