@@ -10,7 +10,7 @@ checkboxes. `@ai:` notes flag decisions/questions. Priority: **P1** foundational
 
 - [x] **A1 (P1)** Wrap the shop page in the same **container/max-width** the other profile tabs use. → `shop.tsx` now uses `MasonryProvider` + `MasonryContainer` like the models tab.
 - [x] **A2 (P1)** Rework the **shop header** overview-style → ringed `ThemeIcon` + larger `Title` + small clamped description (`ShopHeader.tsx`).
-- [~] **A3 (P2)** Enforce a **max length** on the description. Partial: settings Textarea already has `maxLength`, and the header clamps display to 2 lines. Tighten the limit + add a counter in the settings batch (F).
+- [x] **A3 (P2)** Description capped at **300 chars** with a live counter in the settings modal; the header clamps display to 2 lines.
 - [x] **A4 (P1)** **Section headers**: dropped the colored line + subtext; new shared `SectionHeader` = ringed icon + title. Icons come from a shared `section-meta.ts` map (also consumed by settings). `SectionAccent` deleted.
 - [x] **A5 (P1)** **Card sizing** — resolved by the A1 container (max-width bounds the grid).
 - [x] **A6 (P1)** **Featured section** — dropped the bordered/padded `Paper`; kept the gold header band standalone, grid now edge-to-edge (`FeaturedSection.tsx`).
@@ -25,12 +25,12 @@ checkboxes. `@ai:` notes flag decisions/questions. Priority: **P1** foundational
 
 ## C. Profile overview integration (P2)
 
-- [ ] **C1 (P2)** Add a **shop section on the profile overview** so users can surface it on their homepage (above/below the showcase), showcasing their featured items.
+- [x] **C1 (P2)** New `shop` profile-section type (`ProfileSectionTypeDef` + registry in `profile.utils`). `ShopSection` renders the creator's featured items with a "Visit shop" action; off by default, and shows nothing unless the shop is published with featured items. Users enable/place it via the profile editor.
 
 ## D. Profile editor / customize profile (P2)
 
-- [ ] **D1 (P2)** Profile-editor page sections: replace the **4-way drag** handle with an **up/down-only** drag handle.
-- [ ] **D2 (P2)** Section sorter should only allow **vertical** reordering (no left/right).
+- [x] **D1 (P2)** Drag handle changed from `IconArrowsMove` (4-way) to `IconArrowsMoveVertical`.
+- [x] **D2 (P2)** Added an inline `restrictToVerticalAxis` dnd modifier (no new dependency) so sections only reorder vertically.
 
 ## E. Publish gating (P1)
 
@@ -38,24 +38,24 @@ checkboxes. `@ai:` notes flag decisions/questions. Priority: **P1** foundational
 
 ## F. Shop settings sections (P2)
 
-- [ ] **F1 (P2)** Organize the settings sections like the overview customize-profile sections: **draggable** reorder instead of up/down arrows.
-- [ ] **F2 (P2)** **Remove the section icons** from settings (they belong on the page section headers — see A4).
+- [x] **F1 (P2)** Settings sections are now drag-to-reorder (dnd-kit + `SortableItem`, vertical-axis locked), matching the profile customize UI — replaced the up/down arrows.
+- [x] **F2 (P2)** Removed the per-section icons from the settings rows (they live on the page section headers via `section-meta`); rows now show a drag handle + label + visibility switch.
 
 ## G. Submit-item modal (`CreatorShopSubmitModal.tsx`, `useSubmitCreatorShopForm.ts`)
 
-- [ ] **G1 (P2)** Replace the plain "Pay 1,000 Buzz" button with the shared **BuzzPay button** (yellow, shows buzz color). Ideally upgrade it with a **dropdown to pick the buzz type**, consistent with other payment flows.
-- [ ] **G2 (P2)** Submission-fee callout: **yellow** instead of blue (more attention).
-- [ ] **G3 (P2)** **"Non-refundable"** should be **bold**.
-- [ ] **G4 (P2)** **Cancel** button: **left-aligned**, not right next to Pay.
-- [ ] **G5 (P2)** **Cancel confirmation** if the form is dirty (artwork uploaded / info entered).
-- [ ] **G6 (P2)** Rename the price label **"Price (Buzz)" → "Sell price"** for clarity.
+- [x] **G1 (P2)** Submit button is now the shared `BuzzTransactionButton` (`accountTypes={[buzzType]}`) — buzz-colored, shows the fee as a currency badge, and opens the buy-Buzz modal if short. Buzz-type is picked in the FeeSection segmented control (the "dropdown on the button" nicety left for later).
+- [x] **G2 (P2)** Fee callout is now **yellow** (was blue) when affordable.
+- [x] **G3 (P2)** **"Non-refundable"** is bold.
+- [x] **G4 (P2)** Cancel is left-aligned (footer is `justify="space-between"`).
+- [x] **G5 (P2)** Cancel triggers a `ConfirmDialog` when the form is dirty (art uploaded / info entered / edits made).
+- [x] **G6 (P2)** Price label is now **"Sell price"**.
 
 ## H. Manage list (`ManageHeader.tsx`, manage item list/table)
 
-- [ ] **H1 (P2)** Item-list **image badge**: remove its background + border; show just the image/icon.
-- [ ] **H2 (P2)** **Status is truncated** ("Pending review") — widen the column so it fits.
-- [ ] **H3 (P2)** Edit **"Save changes"** button still shows the **buzz bolt icon** — remove it (no payment on edit).
-- [ ] **H4 (P2)** Add a **back arrow** (top-left) from shop management back to the shop.
+- [x] **H1 (P2)** Item-list thumbnail uses `CosmeticThumb bare` — no background/border.
+- [x] **H2 (P2)** Status column widened (140→170) + badge `maxWidth: none` so "Pending review" isn't truncated.
+- [x] **H3 (P2)** Edit "Save changes" is a plain button with no bolt icon (only the submit-for-review button carries the fee).
+- [x] **H4 (P2)** `ManageHeader` has a back arrow (top-left) → the storefront.
 
 ## I. Review queue (`moderator/creator-shop.tsx`)
 

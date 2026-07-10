@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Button,
   Group,
   Modal,
@@ -11,12 +10,16 @@ import {
   Textarea,
   ThemeIcon,
 } from '@mantine/core';
-import { IconChevronDown, IconChevronUp, IconStar } from '@tabler/icons-react';
+import { IconArrowsMoveVertical, IconStar } from '@tabler/icons-react';
+import type { DragEndEvent, Modifier, UniqueIdentifier } from '@dnd-kit/core';
+import { DndContext, PointerSensor, rectIntersection, useSensor, useSensors } from '@dnd-kit/core';
+import { arrayMove, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { forwardRef, type ComponentPropsWithoutRef } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { CreatorShopFeaturePickerModal } from '~/components/CreatorShop/CreatorShopFeaturePickerModal';
 import { CREATOR_SHOP_BORDER } from '~/components/CreatorShop/creator-shop.constants';
-import { sectionIcons } from '~/components/CreatorShop/section-meta';
+import { SortableItem } from '~/components/ImageUpload/SortableItem';
 import {
   useMutateCreatorShop,
   useQueryCreatorShopSettings,
@@ -29,6 +32,9 @@ import {
 } from '~/server/schema/creator-shop.schema';
 
 type SectionState = { key: CreatorShopSectionKey; visible: boolean };
+
+// Lock dragging to the vertical axis (sections only reorder up/down).
+const restrictToVerticalAxis: Modifier = ({ transform }) => ({ ...transform, x: 0 });
 
 const sectionLabels: Record<CreatorShopSectionKey, string> = {
   featured: 'Featured',
@@ -60,67 +66,37 @@ function seedSections(settings?: SeedableSettings | null): SectionState[] {
   );
 }
 
-function SectionRow({
-  section,
-  isFirst,
-  isLast,
-  onMoveUp,
-  onMoveDown,
-  onToggle,
-}: {
-  section: SectionState;
-  isFirst: boolean;
-  isLast: boolean;
-  onMoveUp: () => void;
-  onMoveDown: () => void;
-  onToggle: () => void;
-}) {
+// forwardRef + prop spread so SortableItem's cloneElement can attach the drag
+// ref/listeners onto the Paper (a plain function component would drop them).
+const SectionRow = forwardRef<
+  HTMLDivElement,
+  { section: SectionState; onToggle: () => void } & ComponentPropsWithoutRef<'div'>
+>(({ section, onToggle, ...dragProps }, ref) => {
   const label = sectionLabels[section.key];
-  const SectionIcon = sectionIcons[section.key];
   return (
-    <Paper withBorder radius="md" p="sm">
+    <Paper ref={ref} withBorder radius="md" p="sm" {...dragProps}>
       <Group justify="space-between" wrap="nowrap">
         <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
-          <ThemeIcon
-            variant="light"
-            color={section.visible ? 'yellow' : 'gray'}
-            radius="md"
-            size="lg"
-          >
-            <SectionIcon size={18} />
-          </ThemeIcon>
+          <IconArrowsMoveVertical
+            size={18}
+            className="shrink-0 cursor-grab text-gray-6 dark:text-dark-2"
+          />
           <Text size="sm" fw={500} c={section.visible ? undefined : 'dimmed'} lineClamp={1}>
             {label}
           </Text>
         </Group>
-        <Group gap={4} wrap="nowrap">
-          <ActionIcon
-            variant="default"
-            onClick={onMoveUp}
-            disabled={isFirst}
-            aria-label={`Move ${label} up`}
-          >
-            <IconChevronUp size={16} />
-          </ActionIcon>
-          <ActionIcon
-            variant="default"
-            onClick={onMoveDown}
-            disabled={isLast}
-            aria-label={`Move ${label} down`}
-          >
-            <IconChevronDown size={16} />
-          </ActionIcon>
-          <Switch
-            ml={4}
-            checked={section.visible}
-            onChange={onToggle}
-            aria-label={`Show ${label} section`}
-          />
-        </Group>
+        {/* Stop the drag sensor from swallowing the switch toggle. */}
+        <Switch
+          checked={section.visible}
+          onChange={onToggle}
+          onPointerDown={(e) => e.stopPropagation()}
+          aria-label={`Show ${label} section`}
+        />
       </Group>
     </Paper>
   );
-}
+});
+SectionRow.displayName = 'SectionRow';
 
 export function CreatorShopSettingsModal({ targetUserId }: { targetUserId?: number }) {
   const dialog = useDialogContext();
@@ -135,14 +111,16 @@ export function CreatorShopSettingsModal({ targetUserId }: { targetUserId?: numb
   const toggleVisible = (key: CreatorShopSectionKey) =>
     setSections((prev) => prev.map((s) => (s.key === key ? { ...s, visible: !s.visible } : s)));
 
-  const move = (index: number, dir: -1 | 1) =>
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
     setSections((prev) => {
-      const next = [...prev];
-      const target = index + dir;
-      if (target < 0 || target >= next.length) return prev;
-      [next[index], next[target]] = [next[target], next[index]];
-      return next;
+      const ids = prev.map((s): UniqueIdentifier => s.key);
+      return arrayMove(prev, ids.indexOf(active.id), ids.indexOf(over.id));
     });
+  };
 
   const handleSave = async () => {
     const showModels = sections.find((s) => s.key === 'models')?.visible ?? false;
@@ -230,7 +208,7 @@ export function CreatorShopSettingsModal({ targetUserId }: { targetUserId?: numb
           <div>
             <Text fw={600}>Sections</Text>
             <Text size="xs" c="dimmed">
-              Toggle sections on or off, and use the arrows to reorder them.
+              Toggle sections on or off, and drag to reorder them.
             </Text>
           </div>
           {loading ? (
@@ -240,19 +218,25 @@ export function CreatorShopSettingsModal({ targetUserId }: { targetUserId?: numb
               ))}
             </Stack>
           ) : (
-            <Stack gap={8}>
-              {sections.map((section, index) => (
-                <SectionRow
-                  key={section.key}
-                  section={section}
-                  isFirst={index === 0}
-                  isLast={index === sections.length - 1}
-                  onMoveUp={() => move(index, -1)}
-                  onMoveDown={() => move(index, 1)}
-                  onToggle={() => toggleVisible(section.key)}
-                />
-              ))}
-            </Stack>
+            <DndContext
+              sensors={sensors}
+              collisionDetection={rectIntersection}
+              onDragEnd={handleDragEnd}
+              modifiers={[restrictToVerticalAxis]}
+            >
+              <SortableContext
+                items={sections.map((s) => s.key)}
+                strategy={verticalListSortingStrategy}
+              >
+                <Stack gap={8}>
+                  {sections.map((section) => (
+                    <SortableItem key={section.key} id={section.key}>
+                      <SectionRow section={section} onToggle={() => toggleVisible(section.key)} />
+                    </SortableItem>
+                  ))}
+                </Stack>
+              </SortableContext>
+            </DndContext>
           )}
         </Stack>
 
@@ -266,8 +250,10 @@ export function CreatorShopSettingsModal({ targetUserId }: { targetUserId?: numb
               onChange={(e) => setDescription(e.currentTarget.value)}
               autosize
               minRows={2}
-              maxLength={1000}
+              maxLength={300}
               placeholder="Tell shoppers about your shop (optional)"
+              description={`${description.length}/300`}
+              inputWrapperOrder={['label', 'input', 'description', 'error']}
             />
           )}
         </Stack>

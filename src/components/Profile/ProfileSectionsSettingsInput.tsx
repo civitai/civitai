@@ -12,13 +12,16 @@ import {
 import React, { useState } from 'react';
 import { useDidUpdate } from '@mantine/hooks';
 import type { ProfileSectionSchema } from '~/server/schema/user-profile.schema';
-import { IconArrowsMove } from '@tabler/icons-react';
+import { IconArrowsMoveVertical } from '@tabler/icons-react';
 import {
   getAllAvailableProfileSections,
   profileSectionLabels,
 } from '~/components/Profile/profile.utils';
-import type { DragEndEvent, UniqueIdentifier } from '@dnd-kit/core';
+import type { DragEndEvent, Modifier, UniqueIdentifier } from '@dnd-kit/core';
 import { rectIntersection, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+
+// Lock dragging to the vertical axis (sections only reorder up/down).
+const restrictToVerticalAxis: Modifier = ({ transform }) => ({ ...transform, x: 0 });
 import { arrayMove, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
 import { isEqual } from 'lodash-es';
@@ -82,6 +85,7 @@ export const ProfileSectionsSettingsInput = ({
           sensors={sensors}
           collisionDetection={rectIntersection}
           onDragEnd={handleDragEnd}
+          modifiers={[restrictToVerticalAxis]}
         >
           <SortableContext
             items={sections.map((s) => s.key)}
@@ -101,7 +105,7 @@ export const ProfileSectionsSettingsInput = ({
                     radius="md"
                   >
                     <Group wrap="nowrap">
-                      <IconArrowsMove />
+                      <IconArrowsMoveVertical />
                       <Text size="sm">{profileSectionLabels[s.key]}</Text>
                       <Switch
                         checked={s.enabled}
