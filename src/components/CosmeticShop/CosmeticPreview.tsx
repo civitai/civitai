@@ -20,8 +20,12 @@ import { trpc } from '~/utils/trpc';
  */
 export const CosmeticPreview = ({
   cosmetic,
+  hideHeader,
 }: {
   cosmetic: Pick<CosmeticGetById, 'id' | 'data' | 'type' | 'name' | 'source' | 'description'>;
+  // Callers that supply their own heading (e.g. the review queue) hide the
+  // built-in centered "Preview" label to avoid a duplicate header.
+  hideHeader?: boolean;
 }) => {
   const isProfileRelated =
     cosmetic.type === CosmeticType.Badge ||
@@ -71,9 +75,11 @@ export const CosmeticPreview = ({
 
       return (
         <Stack gap="xl">
-          <Text fw="bold" align="center">
-            Preview
-          </Text>
+          {!hideHeader && (
+            <Text fw="bold" align="center">
+              Preview
+            </Text>
+          )}
           <CreatorCardV2 user={userWithEquippedCosmetics} cosmeticOverwrites={[cosmetic]} />
         </Stack>
       );
@@ -85,9 +91,11 @@ export const CosmeticPreview = ({
       return (
         <Stack>
           <Stack gap="xl">
-            <Text fw="bold" align="center">
-              Preview
-            </Text>
+            {!hideHeader && (
+              <Text fw="bold" align="center">
+                Preview
+              </Text>
+            )}
             <Text size="sm" c="dimmed" align="center">
               You can apply this cosmetic to any image, model, article or post you own.
             </Text>

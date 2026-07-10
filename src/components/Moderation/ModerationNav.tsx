@@ -54,6 +54,11 @@ export function ModerationNav() {
         { label: 'Downleveled Review', href: '/moderator/downleveled-review' },
         { label: 'Ingestion Errors', href: '/moderator/ingestion-error-review' },
         { label: 'Cosmetic Shop', href: '/moderator/cosmetic-store' },
+        {
+          label: 'Creator Shop Review',
+          href: '/moderator/creator-shop',
+          hidden: !features.creatorShop,
+        },
         { label: 'Grant Cosmetics', href: '/moderator/cosmetics/grant' },
         // {
         //   label: 'Paddle Adjustments',
