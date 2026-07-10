@@ -1,4 +1,3 @@
-import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { templateHandler } from '~/server/db/db-helpers';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
@@ -42,7 +41,7 @@ export const baseModelMetrics = createMetricProcessor({
       const queuedModelVersions = await ctx.db.$queryRaw<{ id: number }[]>`
         SELECT id
         FROM "ModelVersion"
-        WHERE "modelId" IN (${Prisma.join(ctx.queue)})
+        WHERE "modelId" = ANY(${ctx.queue}::int[])
       `;
       ctx.queuedModelVersions = queuedModelVersions.map((x) => x.id);
       log(

@@ -2447,6 +2447,7 @@ export type ModelFile = {
   headerData: unknown | null;
   visibility: Generated<ModelFileVisibility>;
   dataPurged: Generated<boolean>;
+  replacedAt: Timestamp | null;
 };
 export type ModelFileHash = {
   fileId: number;
@@ -2572,9 +2573,10 @@ export type ModelVersion = {
   usageControl: Generated<ModelUsageControl>;
   earlyAccessTimeFrame: Generated<number>;
   flags: Generated<number>;
-  licensingFee: number | null;
+  licensingFee: string | null;
   licensingFeeType: Generated<LicensingFeeType | null>;
   licensingFeeSettlementCurrency: Generated<LicensingFeeSettlementCurrency | null>;
+  licensingSourceVersionId: number | null;
 };
 export type ModelVersionEngagement = {
   userId: number;

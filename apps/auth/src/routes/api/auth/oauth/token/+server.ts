@@ -5,6 +5,7 @@ import { db } from '$lib/server/db/db';
 import { oauthServer } from '$lib/server/oauth/server';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
+import { logAxiomError } from '$lib/server/axiom';
 import { OriginNotAllowedError } from '$lib/server/oauth/errors';
 import { ACCESS_TOKEN_TTL } from '$lib/server/oauth/constants';
 import { consumeOidcContext } from '$lib/server/oauth/oidc-nonce';
@@ -166,7 +167,7 @@ export const POST: RequestHandler = async ({ request }) => {
       // No CORS on a rejected origin — the browser surfaces a network error to the offending page.
       return json({ error: 'origin_not_allowed', error_description: err.message }, { status: 403 });
     }
-    console.error('[oauth/token] handler error:', err);
+    void logAxiomError(err, { event: '[oauth/token] handler error' });
     setWildcardCors(respHeaders);
     const e = err as { code?: number; statusCode?: number; name?: string; message?: string };
     const status =

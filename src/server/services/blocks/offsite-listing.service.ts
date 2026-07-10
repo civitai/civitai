@@ -10,10 +10,15 @@ import {
   OFFSITE_CONTENT_RATINGS,
   OFFSITE_REJECTION_REASON_MAX,
   OFFSITE_REJECTION_REASON_MIN,
+  type OffsiteContentRating,
   type PersistListingAssetImageInput,
   type SubmitExternalListingInput,
 } from '~/server/schema/blocks/offsite-listing.schema';
 import { assertListingAssetsComplete } from '~/server/services/blocks/app-listing-assets.service';
+import {
+  deriveContentRatingFromAssets,
+  nsfwLevelFromContentRating,
+} from '~/shared/constants/browsingLevel.constants';
 import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import {
   newAppListingId,
@@ -369,7 +374,7 @@ const MATERIAL_PATCH_FIELDS = ['externalUrl', 'name', 'contentRating'] as const;
  * (an omitted field is left untouched; an explicit `null` clears a nullable one).
  * `externalUrl` is normalized to the validator's canonical form.
  */
-function buildListingPatchData(patch: UpdateListingPatch): Prisma.AppListingUpdateInput {
+export function buildListingPatchData(patch: UpdateListingPatch): Prisma.AppListingUpdateInput {
   const data: Prisma.AppListingUpdateInput = {};
   if (patch.externalUrl !== undefined) {
     const url = validateExternalUrl(patch.externalUrl);
@@ -793,6 +798,268 @@ export async function submitListingRevision(opts: {
 }
 
 // ---------------------------------------------------------------------------
+// getMyListingForEdit / updateRevisionDraft (author) — the DUAL-MODE edit wizard
+// glue. `getMyListingForEdit` is the owner-gated PREFILL read for
+// `/apps/submit?edit=<listingId>` (scalars + current assets + status +
+// hasPendingRevision, resolving an approved parent's in-progress shadow so a
+// resumed revision prefills from the shadow's edited state). `updateRevisionDraft`
+// is the symmetric scalar-write to an owned draft shadow (the asset procs already
+// write to a shadow; this is the "direct once shadow exists" scalar path so the
+// approved flow can put ALL scalar edits on the shadow before submitting it for
+// re-review — never leaving a trivial edit on the live parent that the shadow
+// would revert on approval).
+// ---------------------------------------------------------------------------
+
+export type ListingEditScalars = {
+  name: string;
+  tagline: string | null;
+  description: string | null;
+  category: string | null;
+  contentRating: string | null;
+  externalUrl: string | null;
+};
+
+export type ListingEditAsset = { imageId: number | null; url: string | null };
+export type ListingEditScreenshot = {
+  id: string;
+  imageId: number | null;
+  url: string | null;
+  caption: string | null;
+  order: number;
+};
+
+export type GetMyListingForEditResult = {
+  /** The LIVE (parent) listing id — always the caller's edit target identity. */
+  parentId: string;
+  /** The parent's PUBLIC slug — immutable in edit mode (identity/URL). */
+  slug: string;
+  /** The parent's status (draft | pending | approved). */
+  status: string;
+  /** True when an in-flight shadow revision is already under review. */
+  hasPendingRevision: boolean;
+  /**
+   * The existing shadow id for an approved parent whose revision is in progress
+   * (else null). The client still calls `beginListingRevision` on entering edit
+   * for an approved listing (idempotent — returns this same shadow), so this is
+   * only a hint that the prefill below came from the shadow, not the parent.
+   */
+  shadowId: string | null;
+  /**
+   * Prefill scalars from the EFFECTIVE source: the in-progress shadow when one
+   * exists (resume the revision), else the parent. `slug` above always stays the
+   * public parent slug regardless.
+   */
+  scalars: ListingEditScalars;
+  /** Prefill assets (icon/cover/screenshots) from the effective source, edge-resolved. */
+  assets: {
+    icon: ListingEditAsset;
+    cover: ListingEditAsset;
+    screenshots: ListingEditScreenshot[];
+  };
+};
+
+/** Load a listing's scalars + current assets (edge-resolved URLs) for edit prefill. */
+async function loadListingEditView(listingId: string): Promise<{
+  scalars: ListingEditScalars;
+  assets: GetMyListingForEditResult['assets'];
+}> {
+  const { getEdgeUrl } = await import('~/client-utils/cf-images-utils');
+  const row = (await dbRead.appListing.findUnique({
+    where: { id: listingId },
+    select: {
+      name: true,
+      tagline: true,
+      description: true,
+      category: true,
+      contentRating: true,
+      externalUrl: true,
+      iconId: true,
+      coverId: true,
+      icon: { select: { url: true } },
+      cover: { select: { url: true } },
+      screenshots: {
+        select: {
+          id: true,
+          imageId: true,
+          order: true,
+          caption: true,
+          image: { select: { url: true } },
+        },
+        orderBy: { order: 'asc' },
+      },
+    },
+  })) as {
+    name: string;
+    tagline: string | null;
+    description: string | null;
+    category: string | null;
+    contentRating: string | null;
+    externalUrl: string | null;
+    iconId: number | null;
+    coverId: number | null;
+    icon: { url: string | null } | null;
+    cover: { url: string | null } | null;
+    screenshots: {
+      id: string;
+      imageId: number | null;
+      order: number;
+      caption: string | null;
+      image: { url: string | null } | null;
+    }[];
+  } | null;
+  if (!row) {
+    throw new OffsiteRequestError('NOT_FOUND', `listing ${listingId} not found`);
+  }
+  return {
+    scalars: {
+      name: row.name,
+      tagline: row.tagline,
+      description: row.description,
+      category: row.category,
+      contentRating: row.contentRating,
+      externalUrl: row.externalUrl,
+    },
+    assets: {
+      icon: {
+        imageId: row.iconId,
+        url: row.icon?.url ? getEdgeUrl(row.icon.url, { width: 256 }) : null,
+      },
+      cover: {
+        imageId: row.coverId,
+        url: row.cover?.url ? getEdgeUrl(row.cover.url, { width: 1200 }) : null,
+      },
+      screenshots: row.screenshots.map((s) => ({
+        id: s.id,
+        imageId: s.imageId,
+        url: s.image?.url ? getEdgeUrl(s.image.url, { width: 1200 }) : null,
+        caption: s.caption,
+        order: s.order,
+      })),
+    },
+  };
+}
+
+/**
+ * AUTHOR: owner-gated prefill read for the dual-mode edit wizard. Loads the
+ * caller's OWN listing (NOT_OWNED / NOT_FOUND), asserts it is EDITABLE
+ * (draft/pending/approved; rejected → MUST_RESUBMIT, removed → FORBIDDEN,
+ * an internal shadow → INVALID_REVISION), and returns the prefill scalars +
+ * current assets from the EFFECTIVE source: an approved parent's in-progress
+ * shadow when one exists (so a resumed revision prefills its edited state), else
+ * the listing itself. `slug` + `status` + `parentId` always describe the live
+ * parent; `shadowId` hints whether the prefill came from a shadow.
+ */
+export async function getMyListingForEdit(opts: {
+  listingId: string;
+  userId: number;
+}): Promise<GetMyListingForEditResult> {
+  const { listingId, userId } = opts;
+  const listing = await loadOwnedEditableListing(listingId, userId);
+
+  if (listing.revisionOfId != null) {
+    throw new OffsiteRequestError(
+      'INVALID_REVISION',
+      'this listing is an internal revision draft and cannot be edited directly'
+    );
+  }
+  switch (listing.status) {
+    case 'removed':
+      throw new OffsiteRequestError(
+        'FORBIDDEN',
+        'this listing has been removed by a moderator and can no longer be edited'
+      );
+    case 'rejected':
+      throw new OffsiteRequestError(
+        'MUST_RESUBMIT',
+        'this listing was rejected; submit a new listing instead of editing it'
+      );
+    case 'draft':
+    case 'pending':
+    case 'approved':
+      break;
+    default:
+      throw new OffsiteRequestError(
+        'INVALID_REVISION',
+        `cannot edit a listing in status ${listing.status}`
+      );
+  }
+
+  // For an approved parent, resolve the shadow SERVER-SIDE (idempotent: reuses an
+  // in-flight shadow, else clones the parent's scalars+assets into a fresh one) and
+  // prefill from IT, returning `effectiveId = shadowId` + the SHADOW's asset rows.
+  //
+  // 🔴 SECURITY (do not weaken): the edit UI mutates the EFFECTIVE listing's asset
+  // ROWS (add/remove screenshot, set icon/cover). For an approved listing those MUST
+  // be the shadow's rows — NEVER the live parent's. If the prefill returned the
+  // parent's `AppListingScreenshot` ids (as it did when the shadow was only begun
+  // client-side after mount), a "remove screenshot" on the first edit would delete
+  // the row from the LIVE served listing, bypassing moderator review. Resolving the
+  // shadow here — before any row id reaches the client — closes that window. (This
+  // is a query that performs an idempotent write; acceptable — begin is safe to
+  // repeat.) A pending revision REQUEST (not mere shadow existence) drives the badge.
+  let effectiveId = listingId;
+  let shadowId: string | null = null;
+  let hasPendingRevision = false;
+  if (listing.status === 'approved') {
+    const begun = await beginListingRevision({ listingId, userId });
+    shadowId = begun.shadowId;
+    effectiveId = begun.shadowId;
+    const pendingRevisionReq = await dbRead.appListingPublishRequest.findFirst({
+      where: {
+        status: 'pending',
+        kind: 'offsite',
+        appListing: { revisionOfId: listingId },
+      },
+      select: { id: true },
+    });
+    hasPendingRevision = !!pendingRevisionReq;
+  }
+
+  const view = await loadListingEditView(effectiveId);
+  return {
+    parentId: listingId,
+    slug: listing.slug,
+    status: listing.status,
+    hasPendingRevision,
+    shadowId,
+    scalars: view.scalars,
+    assets: view.assets,
+  };
+}
+
+/**
+ * AUTHOR: write a scalar patch to an owned DRAFT shadow revision (the "direct once
+ * shadow exists" scalar write for the approved edit flow). Symmetric with the
+ * asset procs, which already mutate a shadow the caller owns. Owner-bound; asserts
+ * the target is a draft shadow (revisionOfId set) so this can NEVER edit a live
+ * top-level listing — that path stays `updateListing` (state-routed). Validation
+ * mirrors the in-place path (`buildListingPatchData`).
+ */
+export async function updateRevisionDraft(opts: {
+  shadowId: string;
+  patch: UpdateListingPatch;
+  userId: number;
+}): Promise<{ shadowId: string }> {
+  const { shadowId, patch, userId } = opts;
+  const shadow = await loadOwnedEditableListing(shadowId, userId);
+  if (shadow.revisionOfId == null) {
+    throw new OffsiteRequestError(
+      'INVALID_REVISION',
+      'updateRevisionDraft targets a shadow revision draft, not a top-level listing'
+    );
+  }
+  if (shadow.status !== 'draft') {
+    throw new OffsiteRequestError(
+      'INVALID_REVISION',
+      `a revision draft can only be edited while draft (status is ${shadow.status})`
+    );
+  }
+  const data = buildListingPatchData(patch);
+  await dbWrite.appListing.update({ where: { id: shadowId }, data });
+  return { shadowId };
+}
+
+// ---------------------------------------------------------------------------
 // approveExternalRequest / rejectExternalRequest (moderator) — PR-b.
 //
 // Mirror the on-site `publish-request.service` approve/reject state machine over
@@ -808,6 +1075,46 @@ export type ApproveExternalRequestResult = {
   listingId: string;
   slug: string;
 };
+
+/**
+ * Compute the content rating to STAMP on an off-site listing at approve. The
+ * scanner's per-image rating is imprecise, so the AUTHOR is never blocked on it +
+ * the author's declared rating is only a hint — the authoritative rating is DERIVED
+ * from the assets' MAX detected `nsfwLevel` (icon + cover + real screenshots) at
+ * review, with an optional mod OVERRIDE.
+ *
+ * 🔴 SAFETY (floor-at-derived): an override whose ceiling is BELOW the derived value
+ * would publish mature assets under a too-low rating — so it is clamped UP to the
+ * derived rating (never silently under-rated). An override AT or ABOVE the derived
+ * value is honoured (a mod may always rate UP). Reads the backing Image levels from
+ * the PRIMARY (`tx`) so the derived rating is row-consistent with the approve flip.
+ */
+async function resolveApprovalContentRating(
+  tx: Prisma.TransactionClient,
+  args: {
+    appListingId: string;
+    iconId: number | null;
+    coverId: number | null;
+    override?: OffsiteContentRating | null;
+  }
+): Promise<OffsiteContentRating> {
+  const shots = await tx.appListingScreenshot.findMany({
+    where: { appListingId: args.appListingId, imageId: { not: null } },
+    select: { imageId: true },
+  });
+  const imageIds = [args.iconId, args.coverId, ...shots.map((s) => s.imageId)].filter(
+    (v): v is number => v != null
+  );
+  const images = imageIds.length
+    ? await tx.image.findMany({ where: { id: { in: imageIds } }, select: { nsfwLevel: true } })
+    : [];
+  const derived = deriveContentRatingFromAssets(images.map((i) => ({ nsfwLevel: i.nsfwLevel })));
+  const override = args.override ?? null;
+  if (override == null) return derived;
+  return nsfwLevelFromContentRating(override) < nsfwLevelFromContentRating(derived)
+    ? derived // floor: an under-rating override is clamped up to the derived value
+    : override;
+}
 
 /**
  * MOD approve of a pending off-site request. Loads the request + its draft
@@ -842,6 +1149,8 @@ export async function approveExternalRequest(opts: {
   publishRequestId: string;
   reviewerUserId: number;
   approvalNotes?: string | null;
+  /** Optional mod override of the final content rating (floored at the derived value). */
+  contentRating?: OffsiteContentRating | null;
 }): Promise<ApproveExternalRequestResult> {
   const { publishRequestId, reviewerUserId } = opts;
   const approvalNotes = opts.approvalNotes ?? null;
@@ -907,6 +1216,7 @@ export async function approveExternalRequest(opts: {
       parentId: listing.revisionOfId,
       reviewerUserId,
       approvalNotes,
+      contentRating: opts.contentRating,
     });
   }
 
@@ -984,9 +1294,18 @@ export async function approveExternalRequest(opts: {
         `cannot approve — the request is no longer pending`
       );
     }
+    // Derive (+ mod-override, floored) the content rating from the assets' max
+    // detected nsfwLevel and stamp it on the listing as it goes live. The author is
+    // never blocked on the scanner's rating — it is confirmed HERE at review.
+    const finalRating = await resolveApprovalContentRating(tx, {
+      appListingId,
+      iconId: primaryListing.iconId,
+      coverId: primaryListing.coverId,
+      override: opts.contentRating,
+    });
     const flipped = await tx.appListing.updateMany({
       where: { id: appListingId, status: 'draft' },
-      data: { status: 'approved' },
+      data: { status: 'approved', contentRating: finalRating },
     });
     if (flipped.count === 0) {
       // The draft was concurrently deleted / already flipped — abort (rolls back
@@ -1044,6 +1363,8 @@ async function applyApprovedRevision(opts: {
   parentId: string;
   reviewerUserId: number;
   approvalNotes: string | null;
+  /** Optional mod override of the final content rating (floored at the derived value). */
+  contentRating?: OffsiteContentRating | null;
 }): Promise<ApproveExternalRequestResult> {
   const { request, shadowId, parentId, reviewerUserId, approvalNotes } = opts;
 
@@ -1130,6 +1451,15 @@ async function applyApprovedRevision(opts: {
     }
 
     // (3) Copy scalars onto the parent (id / slug / appBlockId / status untouched).
+    // The content rating is DERIVED from the shadow's assets' max nsfwLevel (+ the
+    // mod override, floored) rather than trusting the shadow's declared value — same
+    // never-under-rate safety as the first-time approve path.
+    const finalRating = await resolveApprovalContentRating(tx, {
+      appListingId: shadowId,
+      iconId: shadow.iconId,
+      coverId: shadow.coverId,
+      override: opts.contentRating,
+    });
     await tx.appListing.update({
       where: { id: parentId },
       data: {
@@ -1137,7 +1467,7 @@ async function applyApprovedRevision(opts: {
         tagline: shadow.tagline,
         description: shadow.description,
         category: shadow.category,
-        contentRating: shadow.contentRating,
+        contentRating: finalRating,
         externalUrl: shadow.externalUrl,
         connectClientId: shadow.connectClientId,
         iconId: shadow.iconId,

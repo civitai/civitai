@@ -66,7 +66,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   });
 
   if ('error' in result) {
-    logAuth(req, 'exchange-error', { error: result.error });
+    // `detail` sub-classifies oauth_state (no_code / no_cookie / state_mismatch) + oauth_exchange
+    // (declined / network) so the `.red` failure mode is queryable, not collapsed into one code.
+    //
+    // For `no_cookie` specifically, two extra fields separate the three candidate causes so the fix is targeted
+    // rather than a guess: `userAgent` flags Safari/ITP (which fully blocks cross-site cookies — a SameSite flip
+    // wouldn't help, only a cookie-independent redesign would), and `cookieCount` = how many cookies reached this
+    // callback. cookieCount>0 (other `.red` cookies like civ-device survived, only the bridge cookie dropped) ⇒
+    // the drop is bridge-cookie-SPECIFIC, i.e. its SameSite=Lax — `SameSite=None` would fix it. cookieCount==0
+    // (every host cookie lost) ⇒ a full cross-site block or a host-only-cookie host mismatch, not SameSite.
+    logAuth(req, 'exchange-error', {
+      error: result.error,
+      detail: result.detail,
+      userAgent: req.headers['user-agent'],
+      cookieCount: Object.keys(req.cookies ?? {}).length,
+    });
     res.redirect(302, `/login?error=${encodeURIComponent(result.error)}`);
     return;
   }

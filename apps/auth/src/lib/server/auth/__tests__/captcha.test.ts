@@ -11,11 +11,15 @@ import { isCaptchaEnabled, captchaSiteKey, verifyCaptchaToken } from '../captcha
 beforeEach(() => {
   delete process.env.CF_INVISIBLE_TURNSTILE_SECRET;
   delete process.env.CF_INVISIBLE_TURNSTILE_SITEKEY;
+  delete process.env.CF_MANAGED_TURNSTILE_SECRET;
+  delete process.env.CF_MANAGED_TURNSTILE_SITEKEY;
   delete process.env.ORIGIN;
   vi.restoreAllMocks();
 });
 afterEach(() => {
   vi.unstubAllGlobals();
+  delete process.env.CF_MANAGED_TURNSTILE_SECRET;
+  delete process.env.CF_MANAGED_TURNSTILE_SITEKEY;
   delete process.env.ORIGIN;
 });
 
@@ -168,5 +172,33 @@ describe('verifyCaptchaToken', () => {
       })
     );
     expect(await verifyCaptchaToken('good-token')).toBe(false);
+  });
+});
+
+describe('verifyCaptchaToken — managed (interactive fallback) mode', () => {
+  it('verifies against the MANAGED secret when mode=managed', async () => {
+    process.env.CF_INVISIBLE_TURNSTILE_SECRET = 'inv-secret';
+    process.env.CF_MANAGED_TURNSTILE_SECRET = 'man-secret';
+    const fetchSpy = stubSiteverify({ success: true, hostname: HUB_HOST, action: 'login' });
+    expect(await verifyCaptchaToken('tok', undefined, { mode: 'managed' })).toBe(true);
+    const [, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(init.body as string).secret).toBe('man-secret');
+  });
+
+  it('defaults to the INVISIBLE secret when no mode is given', async () => {
+    process.env.CF_INVISIBLE_TURNSTILE_SECRET = 'inv-secret';
+    process.env.CF_MANAGED_TURNSTILE_SECRET = 'man-secret';
+    const fetchSpy = stubSiteverify({ success: true, hostname: HUB_HOST, action: 'login' });
+    expect(await verifyCaptchaToken('tok')).toBe(true);
+    const [, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(init.body as string).secret).toBe('inv-secret');
+  });
+
+  it('fails closed (no network) when mode=managed but the managed secret is unset', async () => {
+    process.env.CF_INVISIBLE_TURNSTILE_SECRET = 'inv-secret'; // captcha enabled, but no managed secret
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    expect(await verifyCaptchaToken('tok', undefined, { mode: 'managed' })).toBe(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

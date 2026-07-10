@@ -2,11 +2,17 @@ import { describe, expect, it } from 'vitest';
 import {
   allBrowsingLevelsFlag,
   allowMatureContentForCeiling,
+  contentRatingFromNsfwLevel,
+  deriveContentRatingFromAssets,
   domainBrowsingCeiling,
   nsfwBrowsingLevelsFlag,
+  nsfwLevelFromContentRating,
+  OFFSITE_CONTENT_RATING_LADDER,
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import { OFFSITE_CONTENT_RATINGS } from '~/server/schema/blocks/offsite-listing.schema';
+import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
 
 /**
@@ -91,5 +97,69 @@ describe('allowMatureContentForCeiling', () => {
     expect(allowMatureContentForCeiling(domainBrowsingCeiling('blue'))).toBe(false);
     expect(allowMatureContentForCeiling(domainBrowsingCeiling('red'))).toBeUndefined();
     expect(allowMatureContentForCeiling(domainBrowsingCeiling(undefined))).toBe(false);
+  });
+});
+
+/**
+ * Off-site content-rating derive (App Blocks W13). The scanner's per-image rating
+ * is imprecise, so the AUTHOR is never blocked on it — the authoritative rating is
+ * DERIVED from the assets' max detected nsfwLevel at review + a mod override
+ * (floored). The forward (`nsfwLevelFromContentRating`) + inverse
+ * (`contentRatingFromNsfwLevel`) must round-trip and fail CLOSED (never under-rate).
+ */
+describe('off-site content-rating derive', () => {
+  it('the ladder is kept in sync with the schema OFFSITE_CONTENT_RATINGS', () => {
+    expect([...OFFSITE_CONTENT_RATING_LADDER]).toEqual([...OFFSITE_CONTENT_RATINGS]);
+  });
+
+  it('nsfwLevelFromContentRating: g/pg → PG, and the rest via the orchestrator map', () => {
+    expect(nsfwLevelFromContentRating('g')).toBe(NsfwLevel.PG);
+    expect(nsfwLevelFromContentRating('pg')).toBe(NsfwLevel.PG);
+    expect(nsfwLevelFromContentRating('pg13')).toBe(NsfwLevel.PG13);
+    expect(nsfwLevelFromContentRating('r')).toBe(NsfwLevel.R);
+    expect(nsfwLevelFromContentRating('x')).toBe(NsfwLevel.X);
+    // null / unknown fail CLOSED to PG (never widen on ambiguity).
+    expect(nsfwLevelFromContentRating(null)).toBe(NsfwLevel.PG);
+    expect(nsfwLevelFromContentRating('bogus')).toBe(NsfwLevel.PG);
+  });
+
+  it('contentRatingFromNsfwLevel maps each level to the MINIMAL covering rating', () => {
+    expect(contentRatingFromNsfwLevel(NsfwLevel.PG)).toBe('g'); // g and pg share the PG ceiling → g is minimal
+    expect(contentRatingFromNsfwLevel(NsfwLevel.PG13)).toBe('pg13');
+    expect(contentRatingFromNsfwLevel(NsfwLevel.R)).toBe('r');
+    expect(contentRatingFromNsfwLevel(NsfwLevel.X)).toBe('x');
+    // No maturity signal → the lowest rating.
+    expect(contentRatingFromNsfwLevel(0)).toBe('g');
+  });
+
+  it('fails CLOSED for a level above the x ceiling (XXX / Blocked) → the TOP rating', () => {
+    expect(contentRatingFromNsfwLevel(NsfwLevel.XXX)).toBe('x');
+    expect(contentRatingFromNsfwLevel(NsfwLevel.Blocked)).toBe('x');
+  });
+
+  it('reads the HIGHEST bit of a composite level (never a lower one)', () => {
+    // Composite PG | R → the R bit governs → 'r' (not 'g').
+    expect(contentRatingFromNsfwLevel(NsfwLevel.PG | NsfwLevel.R)).toBe('r');
+  });
+
+  it('deriveContentRatingFromAssets picks the rating covering the MAX asset level', () => {
+    expect(
+      deriveContentRatingFromAssets([{ nsfwLevel: NsfwLevel.PG }, { nsfwLevel: NsfwLevel.R }])
+    ).toBe('r');
+    expect(
+      deriveContentRatingFromAssets([{ nsfwLevel: NsfwLevel.PG }, { nsfwLevel: NsfwLevel.PG13 }])
+    ).toBe('pg13');
+    // All PG → g (g/pg share the PG ceiling, g is minimal).
+    expect(deriveContentRatingFromAssets([{ nsfwLevel: NsfwLevel.PG }])).toBe('g');
+  });
+
+  it('deriveContentRatingFromAssets is fail-safe for empty / null / undefined levels → g', () => {
+    expect(deriveContentRatingFromAssets([])).toBe('g');
+    expect(deriveContentRatingFromAssets([{ nsfwLevel: null }, { nsfwLevel: undefined }])).toBe('g');
+    expect(deriveContentRatingFromAssets([{}])).toBe('g');
+  });
+
+  it('deriveContentRatingFromAssets fails CLOSED to the top rating for an XXX asset', () => {
+    expect(deriveContentRatingFromAssets([{ nsfwLevel: NsfwLevel.XXX }])).toBe('x');
   });
 });

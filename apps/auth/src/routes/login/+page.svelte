@@ -39,6 +39,65 @@
   // Gate the email submit only while captcha is configured, still loading, and not known-broken.
   const captchaPending = $derived(!!data.turnstileSiteKey && !captchaToken && !captchaUnavailable);
 
+  // INTERACTIVE FALLBACK: when the invisible widget can't issue a token, render the MANAGED (visible,
+  // interactive) widget instead of un-gating a doomed tokenless submit. `captchaToken` stays the single gate —
+  // set by whichever widget solves — so `captchaPending` and the submit button are unchanged; `captchaUnavailable`
+  // now flips only when we truly give up (no managed key configured, or the managed widget ALSO failed to load).
+  // The managed token rides its own hidden field so it never collides with the invisible auto-injected input.
+  type TurnstileApi = {
+    render: (el: HTMLElement, opts: Record<string, unknown>) => string;
+    reset: (id?: string) => void;
+  };
+  const turnstileApi = (): TurnstileApi | undefined =>
+    (globalThis as unknown as { turnstile?: TurnstileApi }).turnstile;
+
+  let managedToken = $state('');
+  let captchaMode = $state('invisible');
+  // Why there's no token, tagged on a tokenless submit so the server can split no_token into recoverable
+  // (widget-error / timeout → invisible declined) vs unrecoverable (fallback-error → Turnstile fully blocked).
+  let captchaFailReason = $state('');
+  let fallbackActive = $state(false);
+  let managedEl = $state<HTMLDivElement>();
+  let managedWidgetId: string | undefined;
+
+  // Invisible widget failed to produce a token. Show the managed challenge if a managed key is configured;
+  // otherwise keep the pre-existing soft-release (un-gate and let the server fail-closed decide).
+  function triggerFallback(reason: string) {
+    if (captchaToken || fallbackActive) return;
+    captchaFailReason = reason;
+    if (data.turnstileManagedSiteKey) fallbackActive = true; // $effect renders it once the slot is in the DOM
+    else captchaUnavailable = true;
+  }
+
+  // Render the managed widget once (after its slot mounts). Solving it sets the gate token + mode=managed.
+  $effect(() => {
+    if (!fallbackActive || !managedEl || managedWidgetId !== undefined) return;
+    const ts = turnstileApi();
+    if (!ts) {
+      captchaUnavailable = true; // Turnstile script never loaded (fully blocked) — soft-release, don't trap
+      return;
+    }
+    managedWidgetId = ts.render(managedEl, {
+      sitekey: data.turnstileManagedSiteKey,
+      action: 'login',
+      'response-field': false, // token carried via state → hidden field, not an auto-injected input
+      callback: (t: string) => {
+        managedToken = t;
+        captchaToken = t;
+        captchaMode = 'managed';
+      },
+      'expired-callback': () => {
+        managedToken = '';
+        captchaToken = '';
+      },
+      'error-callback': () => {
+        // The managed widget can't load either → the whole Turnstile challenge is blocked for this user.
+        captchaFailReason = 'fallback-error';
+        captchaUnavailable = true;
+      },
+    });
+  });
+
   // Framework-agnostic brand marks from @civitai/brand — no React, just SVG strings.
   const holiday = getHoliday();
   const badgeSvg = buildBadgeSvg({ holiday });
@@ -65,7 +124,11 @@
   // button until the invisible widget produces the new token.
   const resetTurnstile = () => {
     captchaToken = '';
-    (globalThis as unknown as { turnstile?: { reset: () => void } }).turnstile?.reset();
+    managedToken = '';
+    captchaMode = 'invisible';
+    const ts = turnstileApi();
+    ts?.reset(); // invisible widget → fresh background token
+    if (managedWidgetId) ts?.reset(managedWidgetId); // managed widget (if shown) → fresh solve
   };
 
   // Wire Turnstile's data-* callbacks (it invokes the named functions on `window`). Set them up
@@ -75,20 +138,22 @@
     w.onAuthCaptcha = (token) => {
       captchaToken = token ?? '';
       captchaUnavailable = false;
+      // An invisible token arrived (possibly LATE, after the fallback already showed) — submit via the invisible
+      // path so we don't POST captchaMode=managed with an empty managed token and eat a wasted rejection.
+      captchaMode = 'invisible';
     };
     w.onAuthCaptchaExpired = () => {
       // Token is single-use / TTL-bound; clear it. The invisible widget auto-renews.
       captchaToken = '';
     };
     w.onAuthCaptchaError = () => {
-      // Widget couldn't produce a token — fall back to server-side enforcement (see captchaPending).
+      // Invisible widget errored — offer the interactive fallback (or soft-release if no managed key).
       captchaToken = '';
-      captchaUnavailable = true;
+      triggerFallback('widget-error');
     };
-    // Last-resort fail-safe: if no token has arrived in time (script blocked, CF unreachable),
-    // stop gating so the user can still submit and let the server fail-closed decide.
+    // If no token has arrived in time, the invisible widget silently failed to auto-solve — offer the fallback.
     const timeout = setTimeout(() => {
-      if (!captchaToken) captchaUnavailable = true;
+      if (!captchaToken) triggerFallback('timeout');
     }, 8000);
     return () => {
       clearTimeout(timeout);
@@ -100,7 +165,7 @@
 </script>
 
 <svelte:head>
-  {#if data.turnstileSiteKey}
+  {#if data.turnstileSiteKey || data.turnstileManagedSiteKey}
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
   {/if}
 </svelte:head>
@@ -200,9 +265,30 @@
                 data-theme="dark"
               ></div>
             {/if}
+            {#if fallbackActive}
+              <!-- Interactive fallback: shown only after the invisible widget fails. The managed widget is
+                   rendered imperatively into this slot (see the $effect) so it can carry data-action + callbacks. -->
+              <p class="captcha-fallback-note">
+                Couldn't verify you automatically. Complete this quick check to continue.
+              </p>
+              <div class="managed-slot" bind:this={managedEl}></div>
+            {/if}
+            <!-- Token carriers: the invisible widget auto-injects `cf-turnstile-response`; the managed fallback
+                 rides `managed-turnstile-response` + `captchaMode`. `captchaFailReason` tags a tokenless submit. -->
+            <input type="hidden" name="captchaMode" value={captchaMode} />
+            <input type="hidden" name="managed-turnstile-response" value={managedToken} />
+            <input type="hidden" name="captchaFailReason" value={captchaFailReason} />
             <button type="submit" class="social email" disabled={submitting || captchaPending}>
               <IconMail size={20} stroke={2} />
-              <span>{submitting ? 'Sending…' : captchaPending ? 'Verifying…' : 'Email me a login link'}</span>
+              <span
+                >{submitting
+                  ? 'Sending…'
+                  : captchaPending
+                    ? fallbackActive
+                      ? 'Verify to continue'
+                      : 'Verifying…'
+                    : 'Email me a login link'}</span
+              >
             </button>
             {#if form?.invalid}<p class="error">Enter a valid email address.</p>{/if}
             {#if form?.rateLimited}
@@ -425,5 +511,18 @@
     padding: 0.5rem 0.75rem;
     border-radius: 6px;
     margin: 0 0 0.75rem;
+  }
+  .captcha-fallback-note {
+    font-size: 0.82rem;
+    color: #f59f00;
+    background: rgba(245, 159, 0, 0.1);
+    padding: 0.5rem 0.7rem;
+    border-radius: 6px;
+    margin: 0;
+    line-height: 1.4;
+  }
+  /* Reserve the managed widget's footprint so the card doesn't jump when it renders. */
+  .managed-slot {
+    min-height: 65px;
   }
 </style>

@@ -194,7 +194,7 @@ export const HiddenModel3Ds = createUserCache({
 });
 
 export const HiddenUsers = createUserCache({
-  key: 'hidden-users-4',
+  key: 'hidden-users-5',
   callback: async ({ userId }) =>
     await dbRead.$queryRaw<{ id: number; username: string | null }[]>`
         SELECT
@@ -203,6 +203,7 @@ export const HiddenUsers = createUserCache({
         FROM "UserEngagement" ue
         JOIN "User" u ON u."id" = ue."targetUserId"
         WHERE ue."userId" = ${userId} AND ue.type = ${UserEngagementType.Hide}::"UserEngagementType"
+        ORDER BY ue."createdAt" DESC
       `,
 });
 

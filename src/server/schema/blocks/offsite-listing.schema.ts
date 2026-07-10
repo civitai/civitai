@@ -147,6 +147,29 @@ export const beginListingRevisionSchema = z.object({
 export type BeginListingRevisionInput = z.infer<typeof beginListingRevisionSchema>;
 
 /**
+ * AUTHOR: owner-gated prefill read for the dual-mode edit wizard
+ * (`/apps/submit?edit=<listingId>`). Returns the listing's scalars + current
+ * assets + status + hasPendingRevision (resolving an approved parent's
+ * in-progress shadow). The service bounds it to the caller's own listing.
+ */
+export const getMyListingForEditSchema = z.object({
+  listingId: z.string().min(1).max(64),
+});
+export type GetMyListingForEditInput = z.infer<typeof getMyListingForEditSchema>;
+
+/**
+ * AUTHOR: write a scalar patch to an owned DRAFT shadow revision (the approved
+ * edit flow's "direct once shadow exists" scalar write). `patch` reuses the same
+ * shape/validation as `updateListing` (≥1 field required); the service asserts
+ * the target is a draft shadow the caller owns.
+ */
+export const updateRevisionDraftSchema = z.object({
+  shadowId: z.string().min(1).max(64),
+  patch: updateListingPatchSchema,
+});
+export type UpdateRevisionDraftInput = z.infer<typeof updateRevisionDraftSchema>;
+
+/**
  * AUTHOR: submit a prepared shadow-draft revision for mod re-approval. `shadowId`
  * is the id returned by `beginListingRevision` (the hidden draft clone). The
  * optional changelog is denormalized onto the pending publish request.
@@ -166,6 +189,11 @@ export type SubmitListingRevisionInput = z.infer<typeof submitListingRevisionSch
 export const approveExternalRequestSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
   approvalNotes: z.string().max(OFFSITE_APPROVAL_NOTES_MAX).optional(),
+  // Optional mod OVERRIDE of the final content rating stamped on approve. When
+  // omitted the service stamps the rating DERIVED from the assets' max detected
+  // nsfwLevel; when provided the service FLOORS it at the derived value (never
+  // publishes mature assets under a too-low rating). See `approveExternalRequest`.
+  contentRating: z.enum(OFFSITE_CONTENT_RATINGS).optional(),
 });
 export type ApproveExternalRequestInput = z.infer<typeof approveExternalRequestSchema>;
 

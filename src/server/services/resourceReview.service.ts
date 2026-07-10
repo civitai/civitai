@@ -87,12 +87,16 @@ export const getUserResourceReview = async ({
 export const getResourceReviewsByUserId = ({
   userId,
   recommended,
+  modelIds,
 }: {
   userId: number;
   recommended?: boolean;
+  // When provided, bound the scan to these models (membership queries). Omitted =
+  // unfiltered = existing behavior for the current whole-history callers.
+  modelIds?: number[];
 }) => {
   return dbRead.resourceReview.findMany({
-    where: { userId, recommended },
+    where: { userId, recommended, ...(modelIds ? { modelId: { in: modelIds } } : {}) },
     select: { modelId: true, modelVersionId: true },
   });
 };
@@ -502,7 +506,7 @@ export const getPagedResourceReviews = async ({
     blockedUsers.map((u) => u.id)
   );
   if (excludedUserIds.length) {
-    AND.push(Prisma.sql`rr."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
+    AND.push(Prisma.sql`rr."userId" != ALL(${excludedUserIds}::int[])`);
   }
 
   const [{ count }] = await dbRead.$queryRaw<{ count: number }[]>`

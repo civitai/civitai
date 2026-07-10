@@ -218,7 +218,7 @@ async function getEngagementTasks(ctx: MetricContext) {
       SELECT
         ae."articleId",
         'AllTime'::"MetricTimeframe" AS timeframe,
-        COUNT(ae.id)::int AS "hideCount"
+        COUNT(*)::int AS "hideCount"
       FROM "ArticleEngagement" ae
       WHERE ae."articleId" IN (${ids})
         AND ae."articleId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}

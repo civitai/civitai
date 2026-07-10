@@ -144,6 +144,7 @@ import {
   getUserCollectionPermissionsByIds,
   removeEntityFromAllCollections,
 } from '~/server/services/collection.service';
+import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import {
   getVisibleModel3DIdForPost,
@@ -161,7 +162,7 @@ import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import {
   queueComicsForPanelImages,
-  queueModel3DForThumbnailImage,
+  updateModel3DNsfwLevelForThumbnailImage,
 } from '~/server/services/nsfwLevels.service';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
 import { bulkSetReportStatus, resolveEntityAppeal } from '~/server/services/report.service';
@@ -1075,6 +1076,14 @@ export function enqueueImageIngestion({
 }) {
   if (!images.length) return;
 
+  logToAxiom({
+    name: `${name}:enqueue`,
+    type: 'info',
+    userId,
+    message: `Enqueuing ${images.length} images for ingestion`,
+    imageIds: images.map((img) => img.id),
+  }).catch(() => undefined);
+
   const tasks = images.map(
     (img) => () =>
       ingestImage({ image: img, lowPriority, userId }).catch((error) => {
@@ -1234,6 +1243,13 @@ export const getAllImages = async (
     userId?: number;
   }
 ) => {
+  const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
+    id: input.user?.id,
+    username: input.user?.username,
+    isModerator: input.user?.isModerator,
+  });
+  if (blockedEnforcement.emptyResult) return { nextCursor: undefined, items: [] };
+
   const {
     limit,
     cursor,
@@ -1271,6 +1287,7 @@ export const getAllImages = async (
     baseModels,
     collectionTagId,
     excludedUserIds,
+    excludedTagIds,
     disablePoi,
     disableMinor,
     poiOnly,
@@ -1436,6 +1453,15 @@ export const getAllImages = async (
   }
   if (disableMinor) {
     AND.push(Prisma.sql`(i."minor" != TRUE)`);
+  }
+  if (excludedTagIds?.length) {
+    const notExcluded = Prisma.sql`NOT EXISTS (
+      SELECT 1 FROM "TagsOnImageDetails" toi
+      WHERE toi."imageId" = i.id
+        AND toi."tagId" IN (${Prisma.join([...new Set(excludedTagIds)])})
+        AND toi."disabled" = FALSE
+    )`;
+    AND.push(userId ? Prisma.sql`(${notExcluded} OR i."userId" = ${userId})` : notExcluded);
   }
 
   if (isModerator) {
@@ -1631,7 +1657,7 @@ export const getAllImages = async (
   }
 
   if (excludedUserIds?.length) {
-    AND.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
+    AND.push(Prisma.sql`i."userId" != ALL(${excludedUserIds}::int[])`);
   }
 
   const isGallery = modelId || modelVersionId || model3dId || reviewId || userId;
@@ -1855,7 +1881,9 @@ export const getAllImages = async (
       i.poi,
       i."acceptableMinor",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
-      ${Prisma.raw(collectionId ? ', ct.note as "collectionItemNote", ct.status as "collectionItemStatus"' : '')}
+      ${Prisma.raw(
+        collectionId ? ', ct.note as "collectionItemNote", ct.status as "collectionItemStatus"' : ''
+      )}
       ${queryFrom}
       ORDER BY ${Prisma.raw(orderBy)}
       ${Prisma.raw(skip ? `OFFSET ${skip}` : '')}
@@ -2204,6 +2232,13 @@ export const getAllImagesIndex = async (
   // const { sort, browsingLevel } = input;
 
   const { include, user } = input;
+
+  const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
+    id: user?.id,
+    username: user?.username,
+    isModerator: user?.isModerator,
+  });
+  if (blockedEnforcement.emptyResult) return { nextCursor: undefined, items: [] };
 
   // - cursor uses "offset|entryTimestamp" like "500|1724677401898"
   const cursorParsed = input.cursor?.toString().split('|');
@@ -2833,6 +2868,12 @@ export async function getImagesFromFeedSearch(
   input: ImageSearchInput
 ): Promise<GetAllImagesIndexResult> {
   try {
+    const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
+      id: input.currentUserId,
+      isModerator: input.isModerator,
+    });
+    if (blockedEnforcement.emptyResult) return { nextCursor: undefined, items: [] };
+
     // Evaluate feature flags before creating feed. Routed through getFliptBoolean
     // (memoized once PR #2394's eval cache lands) instead of a direct per-request
     // wasm eval; it swallows errors and returns false on a missing/uninitialized
@@ -3838,9 +3879,10 @@ export async function getImagesFromBitdexPreFilter(
   if (nonRemixesOnly) filters.push(_eq('isRemix', _bool(false)));
 
   // --- Tag exclusions ---
-  // Per-user hidden tags handled client-side by useApplyHiddenPreferences.
-  // Excluding here breaks BitDex cache (every user gets a unique cache key).
-  // if (excludedTagIds?.length) filters.push(_notIn('tagIds', excludedTagIds.map(_int)));
+  // Server-enforced browsing-settings addon exclusions (uniform per browsing
+  // level, so BitDex cache keys stay stable across users). Per-user hidden tags
+  // are still applied client-side by useApplyHiddenPreferences.
+  if (excludedTagIds?.length) filters.push(_notIn('tagIds', excludedTagIds.map(_int)));
 
   // --- Metadata ---
   if (withMeta) filters.push(_eq('hasMeta', _bool(true)));
@@ -4734,24 +4776,19 @@ export const getImageMetricsObject = async (
     // is typed identically (no widening to the full metric union).
     const fetchPromise = getImageMetricService().fetch('Image', ids);
     type ImageMetricMap = Awaited<typeof fetchPromise>;
-    const metrics = await withTimeoutFallback(
-      fetchPromise,
-      timeoutMs,
-      {} as ImageMetricMap,
-      () => {
-        imageMetricsClickhouseTimeoutCounter.inc();
-        logToAxiom(
-          {
-            type: 'warning',
-            name: 'getImageMetrics timeout',
-            message: `ClickHouse image metrics read exceeded ${timeoutMs}ms`,
-            idCount: ids.length,
-            timeoutMs,
-          },
-          'clickhouse'
-        ).catch();
-      }
-    );
+    const metrics = await withTimeoutFallback(fetchPromise, timeoutMs, {} as ImageMetricMap, () => {
+      imageMetricsClickhouseTimeoutCounter.inc();
+      logToAxiom(
+        {
+          type: 'warning',
+          name: 'getImageMetrics timeout',
+          message: `ClickHouse image metrics read exceeded ${timeoutMs}ms`,
+          idCount: ids.length,
+          timeoutMs,
+        },
+        'clickhouse'
+      ).catch();
+    });
     const result: ImageMetricsObject = {};
     for (const id of ids) {
       const m = metrics[id];
@@ -5089,7 +5126,7 @@ export const getImagesForModelVersion = async ({
     imageWhere.push(Prisma.sql`i.id NOT IN (${Prisma.join(excludedIds)})`);
   }
   if (!!excludedUserIds?.length) {
-    imageWhere.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
+    imageWhere.push(Prisma.sql`i."userId" != ALL(${excludedUserIds}::int[])`);
   }
 
   if (browsingLevel) browsingLevel = onlySelectableLevels(browsingLevel);
@@ -6747,7 +6784,10 @@ export async function updateImageNsfwLevel({
 }) {
   if (!nsfwLevel) throw throwBadRequestError();
   if (isModerator) {
-    const image = await dbRead.image.findUnique({ where: { id }, select: { metadata: true } });
+    const image = await dbRead.image.findUnique({
+      where: { id },
+      select: { metadata: true, postId: true },
+    });
     if (!image) throw throwNotFoundError('Image not found');
 
     const metadata = (image.metadata as ImageMetadata) ?? undefined;
@@ -6768,13 +6808,7 @@ export async function updateImageNsfwLevel({
         data: { status },
       });
     }
-    // If this image is the thumbnail of a Model3D, enqueue the parent
-    // Model3D for nsfwLevel recompute. Without this, a moderator clamping
-    // the thumbnail's nsfwLevel via the image mod surface would leave
-    // `Model3D.nsfwLevel` (and the denormalized `Model3DMetric.nsfwLevel`)
-    // stale — the parent row's level is derived from the thumbnail alone
-    // (`updateModel3DNsfwLevels` in `nsfwLevels.service.ts`).
-    await queueModel3DForThumbnailImage(id);
+    await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId: image.postId });
     await trackModActivity(userId, {
       entityType: 'image',
       entityId: id,

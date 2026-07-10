@@ -79,6 +79,7 @@ import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deleteBidsForModel, getLastAuctionReset } from '~/server/services/auction.service';
+import { enforceBlockedBrowsingTagsForModels } from '~/server/services/blocked-browsing-tags.service';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import {
   getAvailableCollectionItemsFilterForUser,
@@ -117,6 +118,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import type { RuleDefinition } from '~/server/utils/mod-rules';
+import { capGetAllModelImages } from '~/server/utils/model-getall-images';
 import {
   DEFAULT_PAGE_SIZE,
   getCursorClauses,
@@ -251,6 +253,13 @@ export const getModelsRaw = async ({
   /** For testing only: force the ModelBaseModelMetric query path regardless of feature flag */
   _forceBaseModelMetrics?: boolean;
 }) => {
+  const blockedEnforcement = await enforceBlockedBrowsingTagsForModels(input, {
+    id: sessionUser?.id,
+    username: sessionUser?.username,
+    isModerator: sessionUser?.isModerator,
+  });
+  if (blockedEnforcement.emptyResult) return { items: [], isPrivate: false };
+
   const {
     user,
     take,
@@ -411,6 +420,14 @@ export const getModelsRaw = async ({
   }
   if (disableMinor) {
     AND.push(Prisma.sql`${pSql}."minor" = false`);
+  }
+  if (input.excludedTagIds?.length) {
+    const notExcluded = Prisma.sql`NOT EXISTS (
+      SELECT 1 FROM "TagsOnModels" tom
+      WHERE tom."modelId" = m."id"
+        AND tom."tagId" IN (${Prisma.join([...new Set(input.excludedTagIds)])})
+    )`;
+    AND.push(userId ? Prisma.sql`(${notExcluded} OR m."userId" = ${userId})` : notExcluded);
   }
 
   if (isModerator) {
@@ -663,7 +680,7 @@ export const getModelsRaw = async ({
 
   // Exclude user content
   if (excludedUserIds?.length) {
-    AND.push(Prisma.sql`mm."userId" NOT IN (${Prisma.join(excludedUserIds, ',')})`);
+    AND.push(Prisma.sql`mm."userId" != ALL(${excludedUserIds}::int[])`);
   }
 
   // Build ORDER BY - use pAlias for per-base-model stats (downloadCount, thumbsUpCount, imageCount)
@@ -1017,6 +1034,15 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   user?: SessionUser;
   count?: boolean;
 }) => {
+  const blockedEnforcement = await enforceBlockedBrowsingTagsForModels(input, {
+    id: sessionUser?.id,
+    username: sessionUser?.username,
+    isModerator: sessionUser?.isModerator,
+  });
+  if (blockedEnforcement.emptyResult) {
+    return count ? { items: [], count: 0 } : { items: [], isPrivate: false };
+  }
+
   const {
     take,
     skip,
@@ -1104,11 +1130,14 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   if (excludedUserIds && excludedUserIds.length && !username) {
     AND.push({ userId: { notIn: excludedUserIds } });
   }
-  // if (excludedTagIds && excludedTagIds.length && !username) {
-  //   AND.push({
-  //     tagsOnModels: { none: { tagId: { in: excludedTagIds } } },
-  //   });
-  // }
+  if (excludedTagIds && excludedTagIds.length) {
+    AND.push({
+      OR: [
+        { tagsOnModels: { none: { tagId: { in: excludedTagIds } } } },
+        ...(sessionUser?.id ? [{ userId: sessionUser.id }] : []),
+      ],
+    });
+  }
   if (excludedModelIds && !hidden && !username) {
     AND.push({ id: { notIn: excludedModelIds } });
   }
@@ -1362,7 +1391,13 @@ export const getModelsWithImagesAndModelVersions = async ({
           // images: model.nsfw
           //   ? versionImages.map((x) => ({ ...x, nsfwLevel: NsfwLevel.XXX }))
           //   : versionImages,
-          images: filteredImages,
+          // Cap the images in the getAll (browse feed) response — the browse
+          // ModelCard only renders images[0], but the shared image cache returns
+          // up to 20, bloating the tRPC payload (serialized synchronously on the
+          // event loop). `capGetAllModelImages` returns a new array, so the shared
+          // `imagesForModelVersionsCache` entries (still used at full 20 by
+          // model-detail pages, auctions, etc.) are untouched.
+          images: capGetAllModelImages(filteredImages),
           canGenerate,
         };
       })
@@ -2366,6 +2401,8 @@ export const unpublishModelById = async ({
 export const getVaeFiles = async ({ vaeIds }: { vaeIds: number[] }) => {
   const files = (
     await dbRead.modelFile.findMany({
+      // No replacedAt/visibility filter needed: only primary `Model` files are read here,
+      // and primary files are never quarantined (linked-component replace rejects them).
       where: {
         modelVersionId: { in: vaeIds },
         type: 'Model',

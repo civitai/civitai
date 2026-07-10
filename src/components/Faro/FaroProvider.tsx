@@ -6,11 +6,17 @@ import {
   NavigationInstrumentation,
   SessionInstrumentation,
   type TransportItem,
+  TransportItemType,
   ViewInstrumentation,
   WebVitalsInstrumentation,
 } from '@grafana/faro-web-sdk';
 import { env } from '~/env/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import {
+  type ClassifiableException,
+  classifyException,
+} from '~/utils/faro/classifyException';
+import { buildRumExperimentAttributes } from '~/utils/faro/experimentFlags';
 import { deepRedact } from '~/utils/faro/redact';
 import { resolveFaroSampling } from '~/utils/faro/traceSampler';
 import { buildResourceTimingInstrumentations } from './ResourceTimingInstrumentation';
@@ -62,7 +68,12 @@ import { SampledTracingInstrumentation } from './SampledTracingInstrumentation';
  *     layers are independent, a non-sampled trace does NOT drop that session's errors/vitals.
  *
  * Every outgoing beacon is run through the deterministic PII scrub (`beforeSend`), which
- * FAILS CLOSED (drops the beacon on any scrub error).
+ * FAILS CLOSED (drops the beacon on any scrub error). EXCEPTION beacons are additionally
+ * classified (`~/utils/faro/classifyException`): a conservative allowlist of known-benign noise
+ * (request aborts, ad-blocker/3p script blocks, autoplay, opaque `Script error.`,
+ * extension-injected, bare transient network) is DROPPED, and the rest is tagged
+ * `context.error_category` (bizlogic|chunkload|meili|real → Loki `context_error_category`) so the
+ * dashboard/alerts can isolate the real-app-bug stream from ~75% non-actionable noise.
  *
  * Must live inside `FeatureFlagsProvider` (for the flag) which is inside
  * `IsClientProvider` (client-only, high in the tree).
@@ -116,6 +127,45 @@ function scrubBeacon(item: TransportItem): TransportItem | null {
   }
 }
 
+/**
+ * `beforeSend` for a single beacon: redact (fail-closed), and for EXCEPTION beacons additionally
+ * classify — DROP a conservative allowlist of known-benign noise (aborts, ad-blocker/3p script
+ * blocks, autoplay, opaque `Script error.`, extension-injected, bare transient network) and TAG
+ * the rest with `context.error_category` (= bizlogic|chunkload|meili|real). Anything unmatched →
+ * `real`, kept. See `~/utils/faro/classifyException`.
+ *
+ * WHY THE TAG REACHES LOKI (verified against the Alloy faro.receiver source): the tag is written
+ * to the exception payload's `context` map (`ExceptionContext`, `Record<string,string>`). Alloy's
+ * `Exception.KeyVal()` merges that map with a `context_` prefix, so `context.error_category`
+ * lands as the logfmt field **`context_error_category`** — the same mechanism that surfaces a
+ * measurement's `context_route`.
+ *
+ * Classification runs on the ORIGINAL (pre-redact) payload — the structural type/value/stack the
+ * rules match on carry no PII, so redaction never alters them, and classifying the source of
+ * truth is the least surprising. The tag is then written onto the SCRUBBED clone that ships.
+ */
+function processBeacon(item: TransportItem): TransportItem | null {
+  if (item.type !== TransportItemType.EXCEPTION) return scrubBeacon(item);
+
+  // Classification FAILS OPEN: only redaction (scrubBeacon) may drop a beacon. A classifier
+  // bug / odd payload shape must NEVER swallow a real exception — on any throw, fall through to
+  // KEEPING it tagged `real` (the exact default-keep path). Redaction stays fail-closed below.
+  let category = 'real';
+  try {
+    const classification = classifyException(item.payload as ClassifiableException);
+    if (classification.drop) return null; // known-benign noise → never sent
+    category = classification.category;
+  } catch {
+    // keep with category 'real'
+  }
+
+  const scrubbed = scrubBeacon(item);
+  if (!scrubbed) return null; // redaction failed closed
+  const payload = scrubbed.payload as { context?: Record<string, string> };
+  payload.context = { ...(payload.context ?? {}), error_category: category };
+  return scrubbed;
+}
+
 interface InitFaroOptions {
   /**
    * Whether THIS user is in the resource_timing cohort — the resolved value of the
@@ -126,9 +176,18 @@ interface InitFaroOptions {
    * gate on the whole SDK) — ramping the flag % takes effect on the next page load.
    */
   resourceTimingCohort: boolean;
+  /**
+   * Curated `exp_*` RUM-experiment session attributes (from `buildRumExperimentAttributes`),
+   * resolved from the SSR-seeded feature flags in the component so module-scope init never
+   * imports the flags hook. Set as `sessionTracking.session.attributes` so they ride on
+   * `meta.session.attributes` of EVERY beacon (→ Loki `session_attr_exp_*`) from session
+   * creation onward — before the first signal fires, so even LCP/CLS beacons carry them.
+   * Values are boolean-coerced strings (`"true"`/`"false"`); no PII. See experimentFlags.ts.
+   */
+  experimentAttributes: Record<string, string>;
 }
 
-function initFaro({ resourceTimingCohort }: InitFaroOptions) {
+function initFaro({ resourceTimingCohort, experimentAttributes }: InitFaroOptions) {
   if (faroInitStarted) return;
   if (typeof window === 'undefined') return;
   if ((window as unknown as Record<string, unknown>)[WINDOW_GUARD_KEY]) return;
@@ -167,7 +226,19 @@ function initFaro({ resourceTimingCohort }: InitFaroOptions) {
     // Session sampling gates ALL signals in Faro; keep at 1.0 so errors + web-vitals +
     // events + sessions stay at 100%. Browser traces are sub-sampled SEPARATELY by the OTel
     // sampler on SampledTracingInstrumentation below — this rate does NOT gate them.
-    sessionTracking: { samplingRate: sessionSamplingRate },
+    //
+    // `session.attributes` seeds the curated RUM-experiment flags (`exp_*`) onto the session
+    // meta at session CREATION — the Faro session manager merges them with the generated
+    // session id, so they ride on `meta.session.attributes` of every beacon (→ Loki
+    // `session_attr_exp_*`) from the first signal onward. Only set when non-empty. See
+    // experimentFlags.ts for the mechanism, the exact Loki field, the timing guarantee, and
+    // the PII rationale (boolean values only).
+    sessionTracking: {
+      samplingRate: sessionSamplingRate,
+      ...(Object.keys(experimentAttributes).length
+        ? { session: { attributes: experimentAttributes } }
+        : {}),
+    },
     // Error-storm guard: drop known browser noise so a broken deploy can't turn every
     // session into a flood.
     ignoreErrors: [
@@ -216,11 +287,12 @@ function initFaro({ resourceTimingCohort }: InitFaroOptions) {
         maxPerWindowEnv: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_MAX_PER_WINDOW,
       }),
     ],
-    // Defensive outer wrapper: scrubBeacon already fails closed, but guarantee that any
-    // unexpected throw still drops the beacon (null) rather than emitting it unscrubbed.
+    // Defensive outer wrapper: processBeacon (redact + exception classify/tag) already fails
+    // closed, but guarantee that any unexpected throw still drops the beacon (null) rather than
+    // emitting it unscrubbed.
     beforeSend: (item) => {
       try {
-        return scrubBeacon(item);
+        return processBeacon(item);
       } catch {
         return null;
       }
@@ -235,7 +307,10 @@ export function FaroProvider() {
   useEffect(() => {
     try {
       if (enabled) {
-        initFaro({ resourceTimingCohort: !!features.faroResourceTiming });
+        initFaro({
+          resourceTimingCohort: !!features.faroResourceTiming,
+          experimentAttributes: buildRumExperimentAttributes(features),
+        });
         // If a prior transition paused an already-initialised instance, resume it.
         if (faroInitStarted) faro?.unpause?.();
       } else if (faroInitStarted) {
