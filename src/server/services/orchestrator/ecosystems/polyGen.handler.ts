@@ -14,12 +14,7 @@
  * `generate3DWhatIf` tRPC mutations.
  */
 
-import type {
-  ImageBlob,
-  Model3dBlob,
-  PolyGenOutput,
-  Workflow,
-} from '@civitai/client';
+import type { ImageBlob, Model3dBlob, PolyGenOutput, Workflow } from '@civitai/client';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
 import { env } from '~/env/server';
@@ -61,6 +56,13 @@ export type HandlePolyGenResultArgs = {
   sourceImageId?: number;
   /** Optional Model3DLicense id; falls back to the seed default if omitted. */
   licenseId?: number;
+  /**
+   * Preferred thumbnail source — the chained `model3DPreview` step's rendered
+   * image. When present it's ingested instead of the polyGen-emitted
+   * `output.thumbnail` (an uncontrollable, off-angle auto-render), so the saved
+   * Model3D's thumbnail matches the centered preview the user saw in the queue.
+   */
+  thumbnailOverride?: ImageBlob;
 };
 
 export type PolyGenResult = {
@@ -147,22 +149,38 @@ export async function handlePolyGenWorkflowResult(
   }
 
   if (copiedFiles.length === 0) {
-    throw new Error(
-      `PolyGen workflow ${workflowId} had blobs but none could be copied to S3`
-    );
+    throw new Error(`PolyGen workflow ${workflowId} had blobs but none could be copied to S3`);
   }
 
   // ---------------------------------------------------------------------------
-  // 3. Ingest the thumbnail image (if any) into the standard Image pipeline
+  // 3. Ingest the thumbnail image (if any) into the standard Image pipeline.
+  //    Prefer the model3DPreview render over the polyGen auto-thumbnail.
   // ---------------------------------------------------------------------------
+  const thumbnailSource = args.thumbnailOverride ?? output.thumbnail;
   let thumbnailImageId: number | undefined;
-  if (output.thumbnail) {
-    thumbnailImageId = await ingestThumbnailImage(output.thumbnail, userId, workflowId);
+  if (thumbnailSource) {
+    thumbnailImageId = await ingestThumbnailImage(thumbnailSource, userId, workflowId);
   }
 
   // ---------------------------------------------------------------------------
   // 4. Upsert the Model3D draft row + Model3DFile rows (idempotent on workflowId)
   // ---------------------------------------------------------------------------
+  // Choose the single primary file. The base GLB is preferred (the inline
+  // viewer mounts it and the gallery thumbnail derives from it). Some
+  // ecosystems don't emit a GLB — e.g. Tripo with `quad: true` outputs FBX
+  // only — so fall back to the first primary-variant file (any format) so the
+  // record still has a coherent primary; the viewer degrades to its
+  // "download to view" panel for non-GLB. Rigged/animated/template files are
+  // never primary.
+  const primaryVariant = (variant?: string) => (variant ?? 'primary') === 'primary';
+  const glbPrimaryIndex = copiedFiles.findIndex(
+    (f) => f.format === PRIMARY_FORMAT && primaryVariant(f.variant)
+  );
+  const primaryIndex =
+    glbPrimaryIndex >= 0
+      ? glbPrimaryIndex
+      : copiedFiles.findIndex((f) => primaryVariant(f.variant));
+
   const { id, created } = await upsertModel3DFromWorkflow({
     workflowId,
     userId,
@@ -170,7 +188,7 @@ export async function handlePolyGenWorkflowResult(
     sourceImageId,
     licenseId,
     generationParams: generationParams as Prisma.InputJsonValue,
-    files: copiedFiles.map(({ url, format, sizeKB, variant }) => ({
+    files: copiedFiles.map(({ url, format, sizeKB, variant }, index) => ({
       // File name includes the variant so the Save-to-Library download
       // dropdown doesn't end up with multiple "<wf>.glb" entries — the
       // ones from rigged/animated/walking/running need to be
@@ -179,10 +197,7 @@ export async function handlePolyGenWorkflowResult(
       url,
       format,
       sizeKB,
-      // The textured base GLB is the only file that should sign in as
-      // primary — the viewer mounts it and the gallery thumbnail is
-      // derived from it. Rigged/animated/template glbs are NOT primary.
-      isPrimary: format === PRIMARY_FORMAT && (variant ?? 'primary') === 'primary',
+      isPrimary: index === primaryIndex,
       variant: variant ?? 'primary',
     })),
   });
@@ -190,7 +205,9 @@ export async function handlePolyGenWorkflowResult(
   logToAxiom({
     name: POLYGEN_LOG,
     type: 'info',
-    message: created ? 'PolyGen Model3D draft created' : 'PolyGen Model3D draft already exists (idempotent)',
+    message: created
+      ? 'PolyGen Model3D draft created'
+      : 'PolyGen Model3D draft already exists (idempotent)',
     workflowId,
     model3dId: id,
     userId,
@@ -219,7 +236,9 @@ const DEFAULT_MODEL3D_LICENSE_ID = 5;
  * "GLB", ".glb", and "glb" all hash to the same DB row.
  */
 export function normalizeFormat(format: string): string {
-  return String(format ?? '').toLowerCase().replace(/^\./, '');
+  return String(format ?? '')
+    .toLowerCase()
+    .replace(/^\./, '');
 }
 
 /** A model3d blob that has been copied to our S3, ready for a Model3DFile row. */

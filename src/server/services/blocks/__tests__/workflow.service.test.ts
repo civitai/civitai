@@ -142,6 +142,81 @@ describe('snapshotFromWorkflow', () => {
     expect(snap.imageUrls).toBeUndefined();
   });
 
+  // ---- image extraction across ALL image-producing step types --------------
+  // The extractor accepts THREE step types (textToImage / imageGen / comfy);
+  // the happy-path test above only exercises textToImage. These pin the other
+  // two branches + the cross-step concatenation order.
+  it('surfaces images from an imageGen step', () => {
+    const wf = fakeWorkflow({
+      steps: [
+        {
+          $type: 'imageGen',
+          name: 's1',
+          status: 'succeeded',
+          metadata: {},
+          output: { images: [{ id: 'g1', url: 'https://cdn/gen.png', available: true }] },
+        },
+      ],
+    });
+    const snap = snapshotFromWorkflow(wf as never);
+    expect(snap.imageUrls).toEqual(['https://cdn/gen.png']);
+  });
+
+  it('surfaces images from a comfy step', () => {
+    const wf = fakeWorkflow({
+      steps: [
+        {
+          $type: 'comfy',
+          name: 's1',
+          status: 'succeeded',
+          metadata: {},
+          output: { images: [{ id: 'c1', url: 'https://cdn/comfy.png', available: true }] },
+        },
+      ],
+    });
+    const snap = snapshotFromWorkflow(wf as never);
+    expect(snap.imageUrls).toEqual(['https://cdn/comfy.png']);
+  });
+
+  it('concatenates available images across mixed image-producing steps in step order', () => {
+    const wf = fakeWorkflow({
+      steps: [
+        {
+          $type: 'textToImage',
+          name: 's1',
+          status: 'succeeded',
+          metadata: {},
+          output: { images: [{ id: 'a', url: 'https://cdn/a.png', available: true }] },
+        },
+        {
+          // A non-image step interleaved — must be skipped, not break ordering.
+          $type: 'chatCompletion',
+          name: 's2',
+          status: 'succeeded',
+          metadata: {},
+          output: { images: [{ id: 'leak', url: 'https://leak/', available: true }] },
+        },
+        {
+          $type: 'comfy',
+          name: 's3',
+          status: 'succeeded',
+          metadata: {},
+          output: { images: [{ id: 'b', url: 'https://cdn/b.png', available: true }] },
+        },
+      ],
+    });
+    const snap = snapshotFromWorkflow(wf as never);
+    expect(snap.imageUrls).toEqual(['https://cdn/a.png', 'https://cdn/b.png']);
+  });
+
+  it('tolerates an image-producing step that carries no output (undefined images)', () => {
+    const wf = fakeWorkflow({
+      steps: [{ $type: 'textToImage', name: 's1', status: 'processing', metadata: {} }],
+    });
+    const snap = snapshotFromWorkflow(wf as never);
+    expect(snap.imageUrls).toBeUndefined();
+  });
+
   // ---- spentAccountType (money page blocks) --------------------------------
   // The snapshot surfaces the account that PRIMARILY funded the generation:
   // the accountType of the LARGEST realized debit on transactions.list.
@@ -205,6 +280,69 @@ describe('snapshotFromWorkflow', () => {
       const snap = snapshotFromWorkflow(
         fakeWorkflow({
           transactions: { list: [{ type: 'debit', amount: 50, accountType: 'fakeRed' }] },
+        }) as never
+      );
+      expect(snap.spentAccountType).toBeUndefined();
+    });
+
+    it('compares debits by MAGNITUDE, so negatively-signed debit amounts still rank (Math.abs)', () => {
+      // The orchestrator may represent a debit as a negative amount. The picker
+      // ranks by absolute value, so a -90 green debit must outrank a -10 blue one
+      // (existing tests only use positive amounts — this pins the sign-agnostic
+      // branch).
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({
+          transactions: {
+            list: [
+              { type: 'debit', amount: -10, accountType: 'blue' },
+              { type: 'debit', amount: -90, accountType: 'green' },
+            ],
+          },
+        }) as never
+      );
+      expect(snap.spentAccountType).toBe('green');
+    });
+
+    it('breaks an equal-magnitude tie deterministically toward the FIRST debit (reduce keeps the accumulator)', () => {
+      // Two debits of equal magnitude: the reduce keeps `a` on a non-strict-greater
+      // `b`, so the FIRST-listed debit wins. Pinning this guards against a flip to
+      // `>=` that would silently change which account gets reported.
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({
+          transactions: {
+            list: [
+              { type: 'debit', amount: 50, accountType: 'green' },
+              { type: 'debit', amount: 50, accountType: 'yellow' },
+            ],
+          },
+        }) as never
+      );
+      expect(snap.spentAccountType).toBe('green');
+    });
+
+    it('treats a debit with no amount as 0, so a real debit outranks it', () => {
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({
+          transactions: {
+            list: [
+              { type: 'debit', accountType: 'blue' }, // amount omitted → 0
+              { type: 'debit', amount: 5, accountType: 'green' },
+            ],
+          },
+        }) as never
+      );
+      expect(snap.spentAccountType).toBe('green');
+    });
+
+    it('omits spentAccountType when the ONLY entries are credits (no debit to attribute)', () => {
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({
+          transactions: {
+            list: [
+              { type: 'credit', amount: 30, accountType: 'green' },
+              { type: 'credit', amount: 5, accountType: 'yellow' },
+            ],
+          },
         }) as never
       );
       expect(snap.spentAccountType).toBeUndefined();

@@ -3,6 +3,7 @@ import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-strategies';
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
+import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
 import { applyNsfwBaseline } from '~/server/jobs/apply-nsfw-baseline';
@@ -21,8 +22,10 @@ import { checkImageExistence } from '~/server/jobs/confirm-image-existence';
 import { confirmMutes } from '~/server/jobs/confirm-mutes';
 import { confirmPendingBlockAttributions } from '~/server/jobs/confirm-pending-block-attributions';
 import { bulkPayoutBlockAttributions } from '~/server/jobs/bulk-payout-block-attributions';
+import { reapDevTunnelsJob } from '~/server/jobs/reap-dev-tunnels';
 import { custodySweepJob } from '~/server/jobs/custody-sweep';
 import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
+import { notifyStuckCryptoDepositsJob } from '~/server/jobs/notify-stuck-crypto-deposits';
 import { countReviewImages } from '~/server/jobs/count-review-images';
 import { creatorProgramJobs } from '~/server/jobs/creators-program-jobs';
 import { challengeActivationJob } from '~/server/jobs/challenge-activation';
@@ -31,6 +34,7 @@ import { challengeCompletionJob } from '~/server/jobs/challenge-completion';
 import { dailyChallengeJobs } from '~/server/jobs/daily-challenge-processing';
 import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
 import { deliverAnnualSubscriptionBuzz } from '~/server/jobs/deliver-annual-sub-buzz';
+import { purgeReplacedFilesJob } from '~/server/jobs/purge-replaced-files';
 import {
   advanceReferralSubs,
   expireReferralTokens,
@@ -58,7 +62,6 @@ import { nextauthCleanup } from '~/server/jobs/next-auth-cleanup';
 import { syncEmailBlocklist } from '~/server/jobs/sync-email-blocklist';
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
 import { leaderboardJobs } from '~/server/jobs/prepare-leaderboard';
-// import { processClubMembershipRecurringPayments } from '~/server/jobs/process-club-membership-recurring-payments';
 // import { processCreatorProgramImageGenerationRewards } from '~/server/jobs/process-creator-program-image-generation-rewards';
 import { csamJobs } from '~/server/jobs/process-csam';
 import { processingEngingEarlyAccess } from '~/server/jobs/process-ending-early-access';
@@ -127,6 +130,7 @@ export const jobs: Job[] = [
   // refreshImageGenerationCoverage,
   cleanImageResources,
   deleteOldTrainingData,
+  purgeReplacedFilesJob,
   updateCollectionItemRandomId,
   refreshFeaturedCollectionsEligibility,
   ...metricJobs,
@@ -138,7 +142,6 @@ export const jobs: Job[] = [
   ...bountyJobs,
   eventEngineDailyReset,
   eventEngineLeaderboardUpdate,
-  // processClubMembershipRecurringPayments,
   ...csamJobs,
   resourceGenerationAvailability,
   cacheCleanup,
@@ -162,6 +165,7 @@ export const jobs: Job[] = [
   confirmMutes,
   confirmPendingBlockAttributions,
   bulkPayoutBlockAttributions,
+  reapDevTunnelsJob,
   checkImageExistence,
   fullImageExistence,
   rewardsAdImpressions,
@@ -194,8 +198,10 @@ export const jobs: Job[] = [
   processTimedUnmutesJob,
   custodySweepJob,
   reconcileNowpaymentsJob,
+  notifyStuckCryptoDepositsJob,
   processEnqueuedComicPanelsJob,
   auditRemixSourcesJob,
+  dedupeOfficialUploadsJob,
 ];
 
 const log = createLogger('jobs', 'green');

@@ -436,6 +436,7 @@ export interface CryptoDeposit {
   paidFiat: number | null;
   chain: string | null;
   retryCount: number;
+  stuckNotifiedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -635,6 +636,9 @@ export interface User {
   appListingReviews?: AppListingReview[];
   appListingPublishRequestsSubmitted?: AppListingPublishRequest[];
   appListingPublishRequestsReviewed?: AppListingPublishRequest[];
+  appListingReportsReported?: AppListingReport[];
+  appListingReportsResolved?: AppListingReport[];
+  appListingModerationEvents?: AppListingModerationEvent[];
 }
 
 export interface CustomerSubscription {
@@ -913,9 +917,11 @@ export interface ModelVersion {
   usageControl: ModelUsageControl;
   earlyAccessTimeFrame: number;
   flags: number;
-  licensingFee: number | null;
+  licensingFee: Decimal | null;
   licensingFeeType: LicensingFeeType | null;
   licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
+  licensingSourceVersionId: number | null;
+  licensingSource?: ModelVersion | null;
   monetization?: ModelVersionMonetization | null;
   metrics?: ModelVersionMetric[];
   files?: ModelFile[];
@@ -929,6 +935,7 @@ export interface ModelVersion {
   metricsDaily?: ModelMetricDaily[];
   modelVersionExploration?: ModelVersionExploration[];
   vaeFor?: ModelVersion[];
+  licensingDerivatives?: ModelVersion[];
   generationCoverage?: GenerationCoverage | null;
   recommendedResources?: RecommendedResource[];
   recommendedTo?: RecommendedResource[];
@@ -998,6 +1005,7 @@ export interface ModelFile {
   headerData: JsonValue | null;
   visibility: ModelFileVisibility;
   dataPurged: boolean;
+  replacedAt: Date | null;
 }
 
 export interface File {
@@ -1876,6 +1884,9 @@ export interface AppListing {
   connectClient?: OauthClient | null;
   appBlockId: string | null;
   appBlock?: AppBlock | null;
+  revisionOfId: string | null;
+  revisionOf?: AppListing | null;
+  revisions?: AppListing[];
   featured: boolean;
   featuredOrder: number | null;
   userId: number;
@@ -1886,6 +1897,8 @@ export interface AppListing {
   reviews?: AppListingReview[];
   metric?: AppListingMetric | null;
   publishRequests?: AppListingPublishRequest[];
+  reports?: AppListingReport[];
+  moderationEvents?: AppListingModerationEvent[];
 }
 
 export interface AppListingScreenshot {
@@ -1947,6 +1960,40 @@ export interface AppListingPublishRequest {
   changelog: string | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface AppListingReport {
+  id: string;
+  appListingId: string;
+  appListing?: AppListing;
+  reporterUserId: number;
+  reporter?: User;
+  reason: string;
+  details: string | null;
+  status: string;
+  resolvedByUserId: number | null;
+  resolvedBy?: User | null;
+  resolvedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  moderationEvents?: AppListingModerationEvent[];
+}
+
+export interface AppListingModerationEvent {
+  id: string;
+  appListingId: string | null;
+  appListing?: AppListing | null;
+  slug: string;
+  actorUserId: number | null;
+  actor?: User | null;
+  reportId: string | null;
+  report?: AppListingReport | null;
+  action: string;
+  reason: string | null;
+  detail: string | null;
+  before: JsonValue | null;
+  after: JsonValue | null;
+  createdAt: Date;
 }
 
 export interface BlockUserSettings {
@@ -2108,8 +2155,9 @@ export interface BlockScopeInvocation {
   id: bigint;
   userId: number;
   user?: User;
-  appBlockId: string;
-  appBlock?: AppBlock;
+  appBlockId: string | null;
+  appBlock?: AppBlock | null;
+  syntheticAppId: string | null;
   blockInstanceId: string;
   scope: string;
   endpoint: string;

@@ -16,7 +16,10 @@ import { createLogger } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
 import type { LiveFeatureFlags } from '../common/constants';
 import { DEFAULT_LIVE_FEATURE_FLAGS } from '../common/constants';
-import { DEFAULT_BROWSING_SETTINGS_ADDONS } from '~/shared/constants/browsing-settings-addons';
+import {
+  BLOCKED_BROWSING_TAG_IDS,
+  DEFAULT_BROWSING_SETTINGS_ADDONS,
+} from '~/shared/constants/browsing-settings-addons';
 import type { BrowsingSettingsAddon } from '~/shared/constants/browsing-settings-addons';
 
 const log = createLogger('system-cache', 'green');
@@ -220,23 +223,36 @@ export async function getCategoryTags(type: 'image' | 'model' | 'post' | 'articl
 //   return tags;
 // }
 
-// export async function getBlockedTags() {
-//   const cachedTags = await redis.get(REDIS_KEYS.SYSTEM.TAGS_BLOCKED);
-//   if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];
+// Hard navigation blocklist (W2). Seeded from BLOCKED_BROWSING_TAG_IDS; ops
+// override the live set by writing a JSON `{id, name}[]` to the redis key.
+// Names resolved from the DB (lowercase) so W2 name matching + tag-page 404 work.
+export async function getBlockedBrowsingTags(): Promise<{ id: number; name: string }[]> {
+  const cached = await redis.get(REDIS_KEYS.SYSTEM.BLOCKED_BROWSING_TAGS);
+  if (cached) {
+    // Fail open on a corrupt ops-set value (this getter is on the hot feed +
+    // tag-page path); fall through to the DB fetch, which rewrites the key.
+    try {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed)) return parsed as { id: number; name: string }[];
+    } catch (err) {
+      logSysRedisFailOpen('read-degraded', 'getBlockedBrowsingTags', err, {
+        cachedSample: cached.slice(0, 64),
+      });
+    }
+  }
 
-//   log('getting blocked tags');
-//   const tags = await dbWrite.tag.findMany({
-//     where: { nsfwLevel: NsfwLevel.Blocked },
-//     select: { id: true, name: true },
-//   });
+  log('getting blocked browsing tags');
+  const tags = await dbRead.tag.findMany({
+    where: { id: { in: BLOCKED_BROWSING_TAG_IDS } },
+    select: { id: true, name: true },
+  });
+  await redis.set(REDIS_KEYS.SYSTEM.BLOCKED_BROWSING_TAGS, JSON.stringify(tags), {
+    EX: SYSTEM_CACHE_EXPIRY,
+  });
 
-//   await redis.set(REDIS_KEYS.SYSTEM.TAGS_BLOCKED, JSON.stringify(tags), {
-//     EX: SYSTEM_CACHE_EXPIRY,
-//   });
-
-//   log('got blocked tags');
-//   return tags;
-// }
+  log('got blocked browsing tags');
+  return tags;
+}
 
 export async function getHomeExcludedTags() {
   const cachedTags = await redis.get(REDIS_KEYS.SYSTEM.HOME_EXCLUDED_TAGS);
@@ -265,9 +281,14 @@ export async function getLiveNow() {
 }
 
 export async function getBrowsingSettingAddons() {
-  let cached: string | null;
+  let cached: string | null = null;
   try {
-    cached = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.BROWSING_SETTING_ADDONS);
+    // Wall-clock deadline: this is an SSR every-render read (via _app.tsx
+    // getInitialProps). Without the race a silent sysRedis half-open parks
+    // the awaited get ~11min on EVERY page render; the try/catch below only
+    // covers a fast DOWN reject. On timeout the deadline rejects into the
+    // catch → fail open to defaults.
+    cached = await withSysReadDeadline(sysRedis.get(REDIS_SYS_KEYS.SYSTEM.BROWSING_SETTING_ADDONS));
   } catch (err) {
     logSysRedisFailOpen('read-degraded', 'getBrowsingSettingAddons', err);
     return DEFAULT_BROWSING_SETTINGS_ADDONS;
@@ -302,9 +323,14 @@ export async function getCreationBlockedTags(): Promise<CreationBlockedTag[]> {
   // from model.controller.ts. A sysRedis outage would otherwise 500
   // every model upload. Empty list matches the unset-key behavior — no
   // tags blocked during the outage window.
-  let raw: string | null;
+  let raw: string | null = null;
   try {
-    raw = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.CREATION_BLOCKED_TAGS);
+    // Wall-clock deadline: called on every model upsert (ModelUpsertForm
+    // tRPC) + model.controller.ts, so a silent sysRedis half-open would park
+    // this awaited get ~11min on the upload path; the try/catch only covers a
+    // fast DOWN reject. On timeout the deadline rejects into the catch →
+    // fail open to the empty (no-tags-blocked) list.
+    raw = await withSysReadDeadline(sysRedis.get(REDIS_SYS_KEYS.SYSTEM.CREATION_BLOCKED_TAGS));
   } catch (err) {
     logSysRedisFailOpen('defaults-firing', 'getCreationBlockedTags', err);
     return [];
@@ -369,7 +395,9 @@ export async function removeCreationBlockedTags(tagIds: number[]): Promise<Creat
 export async function getLiveFeatureFlags() {
   let cached: string | null;
   try {
-    cached = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.LIVE_FEATURE_FLAGS);
+    // Wall-clock deadline so a silent sysRedis half-open can't park this read
+    // (evaluated on the generation/feature-flag hot path) ~11min.
+    cached = await withSysReadDeadline(sysRedis.get(REDIS_SYS_KEYS.SYSTEM.LIVE_FEATURE_FLAGS));
   } catch (err) {
     logSysRedisFailOpen('read-degraded', 'getLiveFeatureFlags', err);
     return DEFAULT_LIVE_FEATURE_FLAGS;

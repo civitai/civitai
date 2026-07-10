@@ -11,18 +11,17 @@ import {
   comicsSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
-import { enqueueJobs } from '~/server/services/job-queue.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
   nsfwBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { CollectionItemStatus, EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
+import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 
 async function getImageConnectedEntities(imageIds: number[]) {
   // these dbReads could be run concurrently
-  const [images, connections, articles, collectionItems] = await Promise.all([
+  const [images, connections, articles, collectionItems, model3ds] = await Promise.all([
     dbRead.image.findMany({
       where: { id: { in: imageIds } },
       select: { postId: true },
@@ -38,6 +37,10 @@ async function getImageConnectedEntities(imageIds: number[]) {
     dbRead.collectionItem.findMany({
       where: { imageId: { in: imageIds }, status: CollectionItemStatus.ACCEPTED },
       select: { collectionId: true },
+    }),
+    dbRead.model3D.findMany({
+      where: { thumbnailImageId: { in: imageIds } },
+      select: { id: true },
     }),
   ]);
 
@@ -64,6 +67,7 @@ async function getImageConnectedEntities(imageIds: number[]) {
       .map((x) => x.entityId),
     comicProjectIds: comicPanels.map((x) => x.projectId),
     collectionIds: collectionItems.map((x) => x.collectionId),
+    model3dIds: model3ds.map((x) => x.id),
   };
 }
 
@@ -137,6 +141,7 @@ export async function getNsfwLevelRelatedEntities(source: {
   let modelIds: number[] = [];
   let modelVersionIds: number[] = [];
   let comicProjectIds: number[] = [];
+  let model3dIds: number[] = [];
 
   function mergeRelated(
     data: Partial<{
@@ -148,6 +153,7 @@ export async function getNsfwLevelRelatedEntities(source: {
       modelIds: number[];
       modelVersionIds: number[];
       comicProjectIds: number[];
+      model3dIds: number[];
     }>
   ) {
     if (data.postIds) postIds = uniq(postIds.concat(data.postIds));
@@ -158,6 +164,7 @@ export async function getNsfwLevelRelatedEntities(source: {
     if (data.modelIds) modelIds = uniq(modelIds.concat(data.modelIds));
     if (data.modelVersionIds) modelVersionIds = uniq(modelVersionIds.concat(data.modelVersionIds));
     if (data.comicProjectIds) comicProjectIds = uniq(comicProjectIds.concat(data.comicProjectIds));
+    if (data.model3dIds) model3dIds = uniq(model3dIds.concat(data.model3dIds));
   }
 
   if (source.imageIds?.length) {
@@ -203,6 +210,7 @@ export async function getNsfwLevelRelatedEntities(source: {
     modelIds,
     modelVersionIds,
     comicProjectIds: uniq([...(source.comicProjectIds ?? []), ...comicProjectIds]),
+    model3dIds,
   };
 }
 
@@ -754,56 +762,31 @@ export async function queueComicsForPanelImages(imageIds: number[]) {
 }
 
 /**
- * Enqueue the Model3D row(s) whose `thumbnailImageId === imageId` for an
- * `UpdateNsfwLevel` job. Called by the image-scan side-effects path so a
- * fresh thumbnail nsfwLevel propagates up to `Model3D.nsfwLevel` /
- * `Model3DMetric.nsfwLevel` on the next `update-nsfw-levels` cron tick
- * (`src/server/jobs/job-queue.ts`).
+ * Prompt inline recompute of a Model3D's nsfwLevel from its thumbnail Image,
+ * for the image scan/mod paths. Call it unconditionally with the image's
+ * `postId` — a Model3D thumbnail is always a standalone image (no post — see
+ * `ingestThumbnailImage`), so a posted image provably isn't a thumbnail and
+ * short-circuits before the lookup. Keeping that gate here (not at each call
+ * site) lets callers treat it as a plain fire-and-forget side effect. The
+ * `update-nsfw-levels` cron independently re-derives Model3Ds from changed
+ * images (`getImageConnectedEntities`), so a rare replica-lag miss here still
+ * heals on the next tick — no `dbWrite` needed.
  *
- * Cheap single-row read — the FK is `@unique`, so this matches at most one
- * Model3D row. We still loop in case the lookup widens in the future.
- * Safe to fire-and-forget — no-op when the image isn't a Model3D thumbnail.
+ * NB: the `postId` short-circuit is specific to Model3D. Do NOT copy it to the
+ * comic-panel lookups nearby — a comic panel's image CAN be posted (import mode
+ * links an existing image), so gating those on `!postId` would skip real work.
  */
-export async function queueModel3DForThumbnailImage(imageId: number) {
-  // Use the primary, NOT the read replica: the polyGen handler creates the
-  // Image row first (which kicks off scanning) and the Model3D row a few ms
-  // later. Replica lag can make the freshly-created Model3D invisible to
-  // this lookup at the moment the scan webhook fires, which silently drops
-  // the enqueue and leaves `Model3D.nsfwLevel = 0` for a thumbnail that
-  // actually got rated (the bug surfaced in prod: image PG13, model3d 0).
-  // The query is a single `thumbnailImageId` index hit, so the primary load
-  // is negligible.
-  const model3ds = await dbWrite.model3D.findMany({
+export async function updateModel3DNsfwLevelForThumbnailImage({
+  imageId,
+  postId,
+}: {
+  imageId: number;
+  postId: number | null;
+}) {
+  if (postId != null) return;
+  const model3ds = await dbRead.model3D.findMany({
     where: { thumbnailImageId: imageId },
     select: { id: true },
   });
-  if (!model3ds.length) return;
-  await enqueueJobs(
-    model3ds.map((m) => ({
-      entityId: m.id,
-      entityType: EntityType.Model3D,
-      type: JobQueueType.UpdateNsfwLevel,
-    }))
-  );
-}
-
-/**
- * Batched variant of {@link queueModel3DForThumbnailImage}. Used by
- * moderator bulk paths (block/unblock/appeal) that touch many images at once.
- */
-export async function queueModel3DsForThumbnailImages(imageIds: number[]) {
-  if (!imageIds.length) return;
-  // Same replica-lag hazard as `queueModel3DForThumbnailImage` — see there.
-  const model3ds = await dbWrite.model3D.findMany({
-    where: { thumbnailImageId: { in: imageIds } },
-    select: { id: true },
-  });
-  if (!model3ds.length) return;
-  await enqueueJobs(
-    model3ds.map((m) => ({
-      entityId: m.id,
-      entityType: EntityType.Model3D,
-      type: JobQueueType.UpdateNsfwLevel,
-    }))
-  );
+  if (model3ds.length) await updateModel3DNsfwLevels(model3ds.map((m) => m.id));
 }

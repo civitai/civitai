@@ -28,6 +28,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { requireAppsDb } from '~/server/db/appsDb';
 import { appSchemaIdent, sanitizeAppSlug } from '~/server/utils/apps-slug';
 import { middleware, publicProcedure, router } from '~/server/trpc';
+import { appsSharedRouter, appsModRouter } from '~/server/routers/apps-shared.router';
 
 /**
  * App Blocks authoring gate: storage procedures are `publicProcedure` +
@@ -44,7 +45,7 @@ async function assertViewerIsAppDeveloper(userId: number): Promise<void> {
   if (!(await isAppBlocksAuthorEnabled({ user: user ?? undefined }))) {
     throw new TRPCError({
       code: 'FORBIDDEN',
-      message: 'App Blocks authoring is not enabled for this account',
+      message: 'Apps authoring is not enabled for this account',
     });
   }
 }
@@ -74,9 +75,9 @@ const enforceAppBlocksFlag = middleware(async ({ ctx, next, type }) => {
   // gives the block a misleading-success path. The block already gates
   // its own UI on host signals, so a clean UNAUTHORIZED is fine.
   if (type === 'query') {
-    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
   }
-  throw new TRPCError({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
+  throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
 });
 
 /**
@@ -522,6 +523,14 @@ export const appsStorageRouter = router({
 
 export const appsRouter = router({
   storage: appsStorageRouter,
+  // SHARED (app-global / cross-user) storage — the public-write surface (voting +
+  // community lists). Block-token authed with its OWN resolver (resolveSharedContext:
+  // trust gate, NOT the app-author gate) + dedicated fail-closed flag. See
+  // apps-shared.router.ts.
+  shared: appsSharedRouter,
+  // Cross-app moderator surface for shared storage (session moderatorProcedure —
+  // NOT block-token reachable). Purge/hide any shared row + file a report.
+  mod: appsModRouter,
 });
 
 // Postgres literal quoting — used ONLY for the regex-validated appBlockId

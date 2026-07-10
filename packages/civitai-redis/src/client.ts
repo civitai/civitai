@@ -15,9 +15,10 @@ import {
   incClusterInflight,
   resetClusterInflight,
 } from './cluster-inflight';
+import { decSysInflight, getSysInflight, incSysInflight, resetSysInflight } from './sys-inflight';
 import {
   countClusterDeadlineHits,
-  recordClusterDeadlineHit,
+  recordClusterCommandSettle,
   resetClusterDeadlineHits,
 } from './cluster-deadline-hits';
 import { compressPacked, decompressPacked } from './packed-compression';
@@ -237,13 +238,14 @@ let isEnhancedFailoverEnabled: RedisFailoverResolver = async () => false;
 // Track topology refresh intervals for cleanup
 const clusterRefreshIntervals = new Map<string, ReturnType<typeof setInterval>>();
 
-// In-process count of in-flight CLUSTER commands lives in `./cluster-inflight` so EVERY
-// mutation goes through a single floored helper (the counter can never go negative — see
-// FIX #2 there). instrumentCommands inc/decs it in lockstep with the
-// redis_commands_inflight{client="cluster"} gauge — the same signal the gauge exposes, read
-// locally (the prom-client Gauge doesn't cheaply surface its value) so the self-heal watchdog
-// (FIX #1) can sample it without a prom dependency. (The sys client uses 'sys' and is NOT
-// tracked — the watchdog only ever acts on the cluster client.)
+// In-process counts of in-flight commands live in `./cluster-inflight` (CLUSTER) and
+// `./sys-inflight` (SYS) so EVERY mutation goes through a single floored helper (the counter
+// can never go negative). instrumentCommands inc/decs each in lockstep with the matching
+// redis_commands_inflight{client=...} gauge — the same signal the gauge exposes, read locally
+// (the prom-client Gauge doesn't cheaply surface its value) so each client's self-heal watchdog
+// can sample it without a prom dependency. Both the cluster client AND the sysRedis Sentinel
+// client now have a self-heal watchdog (the latter added after the 2026-07-03 sentinel-flap
+// inflight-leak incident).
 
 /**
  * Trigger topology rediscovery on a cluster client.
@@ -292,6 +294,11 @@ function triggerTopologyRediscovery(clusterClient: any, reason: string) {
 // Hold the watchdog interval so it can be cleared on client close (mirrors
 // clusterRefreshIntervals). Module-scoped: one cluster client per process.
 let clusterSelfHealInterval: ReturnType<typeof setInterval> | undefined;
+
+// Same, for the sys (sysRedis / Sentinel) self-heal watchdog. Module-scoped + guarded so the
+// watchdog interval is started exactly once per process regardless of how many sys base
+// connections getClient builds (serving + Buffer-mode on the sentinel path).
+let sysSelfHealInterval: ReturnType<typeof setInterval> | undefined;
 
 /**
  * FIX #2: decide whether the periodic `_slots.rediscover()` should be scheduled, from the
@@ -454,7 +461,7 @@ function startClusterSelfHeal(
         // Labeled by trigger so a rising `trigger="deadline"` series at the next prod wave is the
         // direct confirmation that the fix's new path fired (the one the inflight path could
         // never reach). See cluster-selfheal.ts and prom/client.ts.
-        getRedisMetrics()?.redisSelfHealReconnectCounter?.inc({ trigger });
+        getRedisMetrics()?.redisSelfHealReconnectCounter?.inc({ trigger, client: 'cluster' });
         log(
           `Cluster self-heal RECONNECT fired [trigger=${trigger}, inflight=${inflightAtTrigger}, inflightThreshold=${config.clusterSelfHealInflightThreshold}, sustainedMs=${config.clusterSelfHealSustainedMs}, deadlineHitThreshold=${config.clusterSelfHealDeadlineHitThreshold}, deadlineHitWindowMs=${config.clusterSelfHealDeadlineHitWindowMs}]`
         );
@@ -470,6 +477,14 @@ function startClusterSelfHeal(
   const interval = Math.max(250, config.clusterSelfHealCheckIntervalMs);
   clusterSelfHealInterval = setInterval(() => {
     try {
+      // Publish what the watchdog SEES (its own in-process slow-settle window) BEFORE ticking, so
+      // the gauge reflects the same value the trigger evaluates. Distinct from the duration
+      // histogram — this is the watchdog's own observation, the signal that was invisible during
+      // the 2026-07-06 wedge. Cheap: an O(ring) windowed count. No-op until the prom bridge loads.
+      getRedisMetrics()?.redisSelfHealDeadlineHitsWindow?.set(
+        { client: 'cluster' },
+        countClusterDeadlineHits(config.clusterSelfHealDeadlineHitWindowMs)
+      );
       watchdog.tick();
     } catch (err) {
       log(`Cluster self-heal tick error: ${err instanceof Error ? err.message : String(err)}`);
@@ -479,6 +494,140 @@ function startClusterSelfHeal(
   clusterSelfHealInterval.unref?.();
   log(
     `Cluster self-heal watchdog ENABLED [inflightThreshold=${config.clusterSelfHealInflightThreshold}, sustainedMs=${config.clusterSelfHealSustainedMs}, deadlineHitThreshold=${config.clusterSelfHealDeadlineHitThreshold}, deadlineHitWindowMs=${config.clusterSelfHealDeadlineHitWindowMs}, reconnectJitterMs=${config.clusterSelfHealReconnectJitterMs}, cooldownMs=${config.clusterSelfHealCooldownMs}, checkMs=${interval}]`
+  );
+  return watchdog;
+}
+
+/**
+ * Force a FULL reconnect of the sysRedis client(s) — the mirror of forceClusterReconnect for
+ * the OTHER node-redis client (incident 2026-07-03). A sentinel flap orphaned in-flight commands
+ * on the RedisSentinel client and the client never self-healed; a full destroy → connect is the
+ * only thing (short of a pod restart) that clears the orphaned in-flight promises.
+ *
+ * WHY `destroy()`, NOT `close()` (verified against @redis/client@5.8.3 sentinel/index.js):
+ *   - RedisSentinel `close()` → `#internal.close()` waits for the per-node reply queues to drain;
+ *     the whole reason we're reconnecting is that commands are ORPHANED and never get a reply, so
+ *     the queue never empties → `close()` can HANG. Because the watchdog single-flights on
+ *     `reconnecting=true` until reconnect settles, a hung close pins it forever — the watchdog
+ *     would be permanently dead after its first trigger, failing exactly when it's needed.
+ *   - RedisSentinel `destroy()` → `#internal.destroy()` (async) destroys the sentinel client +
+ *     master-pool clients + replica-pool clients; each per-node `RedisClient.destroy()` =
+ *     `flushAll(new DisconnectsClientError())` + `socket.destroy()`, REJECTING every in-flight
+ *     command immediately, and resets its internal `#destroy` flag so the client is reconnectable.
+ *     `connect()` then re-runs sentinel discovery (re-resolving the master via the sentinels) and,
+ *     with reserveClient:true, re-acquires the reserved master lease — so this is the client's
+ *     PROPER reconnect, never a raw socket poke, and the Buffer-mode quirk is untouched (the
+ *     derived buffer client shares the same reconnected base).
+ *
+ * ALL sys base connections are reconnected: on the sentinel path getClient builds TWO 'sys' base
+ * clients (serving + the dedicated Buffer-mode one), BOTH feed the aggregate sys inflight counter,
+ * so healing only one could leave the counter pinned by the other and the watchdog would never
+ * clear the wedge. Each rejected in-flight command runs its done() → decSysInflight() (floored at
+ * 0), so the counter drains to ~0; we also reset it up front so the sampled value snaps clean.
+ *
+ * Any teardown/connect error on one client is non-fatal — the others are still attempted and the
+ * watchdog re-arms after the cooldown regardless.
+ *
+ * Exported (like resolvePeriodicRefresh) so the sentinel destroy→connect correctness can be
+ * unit-tested directly without booting a real client.
+ */
+export async function forceSysReconnect(sysClients: any[]): Promise<void> {
+  // Reset the local inflight counter up front — destroy() rejects every in-flight command, so
+  // their done() closures fire as the rejections settle and EACH floored-decrements toward 0.
+  // The reset just snaps the watchdog's sampled value clean at the trigger instant.
+  resetSysInflight();
+
+  for (const client of sysClients) {
+    if (!client) continue;
+    try {
+      if (typeof client.destroy === 'function') {
+        // RedisSentinel.destroy() returns the async #internal.destroy() promise (rejects in-flight
+        // commands + tears sockets down); await it so connect() runs on a fully-destroyed client.
+        await client.destroy();
+      } else if (typeof client.disconnect === 'function') {
+        await client.disconnect();
+      } else if (typeof client.close === 'function') {
+        // Last resort only: close() can HANG on the wedged queue (see WHY above). Bound it so a
+        // hang can't pin reconnecting=true forever; fall through to connect() regardless.
+        await Promise.race([
+          client.close(),
+          new Promise<void>((resolve) => setTimeout(resolve, 2000)),
+        ]);
+      }
+    } catch (err) {
+      log(
+        `Sys self-heal: teardown threw (continuing to reconnect): ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
+    try {
+      await client.connect();
+    } catch (err) {
+      // Non-fatal: node-redis keeps retrying the connection in the background via its
+      // reconnectStrategy, and the watchdog re-arms after the cooldown.
+      log(
+        `Sys self-heal: reconnect() threw (background retry continues): ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
+  }
+}
+
+/**
+ * Start the sys (sysRedis / Sentinel) self-heal watchdog — the mirror of startClusterSelfHeal for
+ * the OTHER node-redis client. REUSES the generic ClusterSelfHealWatchdog (it's client-agnostic:
+ * a config + injected getInflight/reconnect/onReconnect). The DEADLINE-hit trigger is left OFF
+ * (deadlineHitThreshold 0, no getDeadlineHits dep) because the sys client has no per-command
+ * deadline — the incident wedge climbs inflight monotonically (no sawtooth), so the sustained-
+ * inflight path is exactly the right and only trigger. REDIS_SYS_SELFHEAL_ENABLED=false disables
+ * it entirely. Started once per process (guarded by sysSelfHealInterval).
+ */
+function startSysSelfHeal(sysClients: any[]): ClusterSelfHealWatchdog {
+  const watchdog = new ClusterSelfHealWatchdog(
+    {
+      enabled: config.sysSelfHealEnabled,
+      inflightThreshold: config.sysSelfHealInflightThreshold,
+      sustainedMs: config.sysSelfHealSustainedMs,
+      cooldownMs: config.sysSelfHealCooldownMs,
+      // Sys has no command deadline → no sawtooth/deadline-hit path. Disable that trigger.
+      deadlineHitThreshold: 0,
+      deadlineHitWindowMs: 0,
+      reconnectJitterMs: config.sysSelfHealReconnectJitterMs,
+    },
+    {
+      getInflight: () => getSysInflight(),
+      // getDeadlineHits intentionally omitted (deadline trigger inert for the sys client).
+      reconnect: () => forceSysReconnect(sysClients),
+      log,
+      onReconnect: (inflightAtTrigger: number, trigger: ClusterSelfHealTrigger) => {
+        // client="sys" label so a rising series confirms the SENTINEL client healed (vs cluster).
+        getRedisMetrics()?.redisSelfHealReconnectCounter?.inc({ trigger, client: 'sys' });
+        log(
+          `Sys self-heal RECONNECT fired [trigger=${trigger}, inflight=${inflightAtTrigger}, inflightThreshold=${config.sysSelfHealInflightThreshold}, sustainedMs=${config.sysSelfHealSustainedMs}, clients=${sysClients.length}]`
+        );
+      },
+    }
+  );
+
+  if (!config.sysSelfHealEnabled) {
+    log('Sys self-heal watchdog DISABLED (REDIS_SYS_SELFHEAL_ENABLED=false)');
+    return watchdog;
+  }
+
+  const interval = Math.max(250, config.sysSelfHealCheckIntervalMs);
+  sysSelfHealInterval = setInterval(() => {
+    try {
+      watchdog.tick();
+    } catch (err) {
+      log(`Sys self-heal tick error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, interval);
+  // Don't keep the event loop alive for the watchdog on a graceful process exit.
+  sysSelfHealInterval.unref?.();
+  log(
+    `Sys self-heal watchdog ENABLED [inflightThreshold=${config.sysSelfHealInflightThreshold}, sustainedMs=${config.sysSelfHealSustainedMs}, reconnectJitterMs=${config.sysSelfHealReconnectJitterMs}, cooldownMs=${config.sysSelfHealCooldownMs}, checkMs=${interval}, clients=${sysClients.length}]`
   );
   return watchdog;
 }
@@ -528,7 +677,12 @@ type RedisMetricsBridge = {
   // FIX #1 self-heal reconnect counter (labeled by `trigger`: 'deadline' | 'inflight'). Read via the
   // globalThis bridge so this client-bundle-reachable module avoids a static prom-client import (which
   // drags in fs/cluster). May be undefined until prom/client loads server-side; callers null-check.
-  redisSelfHealReconnectCounter?: { inc: (labels: { trigger: string }) => void };
+  redisSelfHealReconnectCounter?: { inc: (labels: { trigger: string; client: string }) => void };
+  // The watchdog's OWN observation: the in-process slow-settle count it samples each tick (the
+  // deadline-hit window). Exposed so we can SEE what the watchdog sees, distinct from the
+  // redis_command_duration histogram — diagnosing the 2026-07-06 wedge was hard precisely because
+  // this was invisible. Set each watchdog tick (client="cluster").
+  redisSelfHealDeadlineHitsWindow?: { set: (labels: { client: string }, value: number) => void };
   // Cluster routing retry-after-rediscover counter (the topology-churn 500 wave). Read via the
   // same globalThis bridge so this client-bundle-reachable module avoids a static prom import.
   redisRoutingRetryCounter?: { inc: (labels: { result: 'recovered' | 'exhausted' }) => void };
@@ -590,13 +744,35 @@ export function attachSysSentinelListeners(
 }
 
 /**
+ * Per-command chokepoint knobs. Default to the module `config` in production; a test can inject
+ * them so `instrumentCommands` is exercisable against a fake client WITHOUT booting the factory
+ * (which eagerly connects). All optional — omitted values fall back to `config` (then a safe 0).
+ */
+export interface InstrumentCommandsOptions {
+  deadlineMs?: number;
+  slowCommandMs?: number;
+  routingRetryEnabled?: boolean;
+  routingRetryMax?: number;
+  routingRetryBackoffMs?: number;
+  routingRetryBackoffMaxMs?: number;
+}
+
+/**
  * Wrap the per-client command chokepoint so EVERY command is counted in the inflight gauge
  * and timed. The chokepoint differs by kind: SINGLE client -> `sendCommand`; CLUSTER client
  * -> `_execute` (typed methods route through it, not the top-level sendCommand). The cluster
  * command is additionally raced against `withCommandDeadline` so a never-settling `_execute`
- * still reaches done() (gauge dec'd, handler unparked).
+ * still reaches done() (gauge dec'd, handler unparked) AND records a self-heal slow-settle hit
+ * from done() when its observed duration crosses the slow threshold.
+ *
+ * Exported (with injectable `opts`) so the self-heal SLOW-SETTLE recording path can be unit-tested
+ * end-to-end against a fake `_execute` — the 2026-07-06 regression driver.
  */
-function instrumentCommands(client: any, clientLabel: 'cluster' | 'sys') {
+export function instrumentCommands(
+  client: any,
+  clientLabel: 'cluster' | 'sys',
+  opts: InstrumentCommandsOptions = {}
+) {
   const self = client?._self ?? client;
   if (!self) return;
   const labels = { client: clientLabel } as const;
@@ -610,27 +786,53 @@ function instrumentCommands(client: any, clientLabel: 'cluster' | 'sys') {
     return;
   }
   const wrapWithDeadline = isClusterClient && clientLabel === 'cluster';
-  const deadlineMs = config.clusterCommandTimeoutMs;
+  const deadlineMs = opts.deadlineMs ?? config?.clusterCommandTimeoutMs ?? 0;
+  // Self-heal SLOW-SETTLE threshold (cluster only): a command whose observed settle duration
+  // reaches this counts as a wedge hit for the deadline-hit trigger. Sourced at SETTLE time (done)
+  // so it can't diverge from redis_command_duration_seconds the way the old onTimeout-only path did.
+  const slowCommandMs = opts.slowCommandMs ?? config?.clusterSelfHealSlowCommandMs ?? 0;
+  const routingRetryEnabled =
+    opts.routingRetryEnabled ?? config?.clusterRoutingRetryEnabled ?? false;
+  const routingRetryMax = opts.routingRetryMax ?? config?.clusterRoutingRetryMax ?? 0;
+  const routingRetryBackoffMs =
+    opts.routingRetryBackoffMs ?? config?.clusterRoutingRetryBackoffMs ?? 0;
+  const routingRetryBackoffMaxMs =
+    opts.routingRetryBackoffMaxMs ?? config?.clusterRoutingRetryBackoffMaxMs ?? 0;
   self[methodName] = function (this: any, ...args: any[]) {
     // Capture the metric handles ONCE per command so inc/dec stay balanced even if the app's
     // prom module loads mid-flight (a dec without its inc would drive the gauge negative).
     const metrics = getRedisMetrics();
     metrics?.redisCommandsInflight.inc(labels);
-    // Mirror the gauge into the local counter for the self-heal watchdog (cluster only).
+    // Mirror the gauge into the local counter the self-heal watchdog samples. Each client kind
+    // has its OWN floored counter (cluster / sys) so its watchdog can sample it without a prom dep.
     if (clientLabel === 'cluster') incClusterInflight();
+    else incSysInflight();
     const start = Date.now();
     let dec = false; // per-closure guard so a double-settle (shouldn't happen) can't double-dec
     const done = () => {
-      if (clientLabel === 'cluster' && !dec) {
-        // FLOORED decrement (decClusterInflight clamps at 0). The per-closure `dec` guard above
-        // only stops THIS closure decrementing twice — it does NOT stop N distinct rejected
-        // closures (e.g. the burst destroy() rejects after a heal) decrementing past 0. The
-        // floor is what keeps the counter accurate post-heal so the watchdog can re-arm (FIX #2).
-        decClusterInflight();
+      const durationMs = Date.now() - start;
+      if (!dec) {
+        // FLOORED decrement (dec{Cluster,Sys}Inflight clamp at 0). The per-closure `dec` guard
+        // above only stops THIS closure decrementing twice — it does NOT stop N distinct rejected
+        // closures (e.g. the burst destroy() rejects after a heal) decrementing past 0. The floor
+        // is what keeps the counter accurate post-heal so the watchdog can re-arm.
+        if (clientLabel === 'cluster') decClusterInflight();
+        else decSysInflight();
         dec = true;
       }
       metrics?.redisCommandsInflight.dec(labels);
-      metrics?.redisCommandDuration.observe(labels, (Date.now() - start) / 1000);
+      metrics?.redisCommandDuration.observe(labels, durationMs / 1000);
+      // SELF-HEAL SIGNAL (cluster client only): record a wedge "hit" whenever a cluster command's
+      // OBSERVED settle duration reaches the slow threshold — the SAME settle-time observation as
+      // the duration histogram above. This is the 2026-07-06 fix: it REPLACES the old
+      // withCommandDeadline.onTimeout recorder, which fired only when the 15s deadline REAPED a
+      // still-hanging command. During that fleet wedge the slow cluster commands settled on their
+      // own past the deadline (~29s), so onTimeout never fired and the deadline-hit trigger stayed
+      // silent while the histogram plainly showed ~4/s > 15s commands. Recording at settle time is
+      // sawtooth-immune (a rate of slow settles, not an inflight level) and covers BOTH wedge
+      // shapes: a deadline-reaped orphan settles at ~deadlineMs, a self-settling command at ~29s —
+      // both >= the slow threshold. sysRedis (single-node) is deliberately untouched (#2556/#2586).
+      if (clientLabel === 'cluster') recordClusterCommandSettle(durationMs, slowCommandMs);
     };
 
     // Run the underlying command, capturing a SYNCHRONOUS routing throw (the getSlotRandomNode
@@ -659,10 +861,11 @@ function instrumentCommands(client: any, clientLabel: 'cluster' | 'sys') {
     // is what gives the in-flight slot-map refresh time to settle before the retry.
     const executed: Promise<any> = wrapWithDeadline
       ? withClusterRoutingRetry(runOnce, {
-          // Env-driven knobs (a pure module can't read env itself; client.ts injects config here).
-          enabled: config.clusterRoutingRetryEnabled,
-          maxRetries: config.clusterRoutingRetryMax,
-          backoffMs: [config.clusterRoutingRetryBackoffMs, config.clusterRoutingRetryBackoffMaxMs],
+          // Env-driven knobs (a pure module can't read env itself; client.ts injects config here,
+          // resolved once above so instrumentCommands stays testable with injected opts).
+          enabled: routingRetryEnabled,
+          maxRetries: routingRetryMax,
+          backoffMs: [routingRetryBackoffMs, routingRetryBackoffMaxMs],
           rediscover: () => triggerTopologyRediscovery(self, 'routing-retry'),
           onResult: (result) => getRedisMetrics()?.redisRoutingRetryCounter?.inc({ result }),
         })
@@ -673,10 +876,11 @@ function instrumentCommands(client: any, clientLabel: 'cluster' | 'sys') {
     // the sys client (wrapWithDeadline=false). withCommandDeadline reaps the late
     // rejection of the orphaned command so it can't surface as an unhandledRejection.
     // Layered OUTSIDE the routing retry so the 15s deadline bounds the WHOLE retried sequence
-    // (the bounded ~50ms+150ms backoff is well inside it).
-    const settled = wrapWithDeadline
-      ? withCommandDeadline(executed, deadlineMs, recordClusterDeadlineHit)
-      : executed;
+    // (the bounded ~50ms+150ms backoff is well inside it). The self-heal wedge signal is NO
+    // LONGER sourced from this deadline's reap (onTimeout) — done() records it from the observed
+    // settle duration instead (see the recordClusterCommandSettle call above), so the trigger
+    // fires whether or not the deadline actually reaps the command (2026-07-06 fix).
+    const settled = wrapWithDeadline ? withCommandDeadline(executed, deadlineMs) : executed;
     return settled.finally(done);
   };
 }
@@ -767,7 +971,21 @@ function getBaseClient(type: 'cache' | 'system') {
         scanInterval: 10_000,
         // Keep sub-client errors local; we surface them via the client-error listener instead.
         passthroughClientErrorEvents: false,
-        reserveClient: false,
+        // reserveClient: true pins ONE master lease at connect() (#reservedClientInfo) and routes
+        // every master command through it, fully bypassing node-redis's racy shared-lease path:
+        //   this.#masterClientInfo ??= await this.#internal.getClientLease();
+        // The `??=` checks nullish BEFORE awaiting, so a COLD concurrent burst (no master command
+        // in flight → #masterClientInfo undefined) lets multiple callers all pass the check and each
+        // call getClientLease(). Extra leases orphan (release guard uses `===`, so only the last
+        // writer's lease is ever returned) and pin pool slots → with masterPoolSize:2 the pool
+        // exhausts and any code needing a fresh master lease hangs (deadlock). This bug is present
+        // and UNFIXED upstream through at least node-redis 6.1.0 (verified byte-identical in
+        // 5.8.3 / 5.12.1 / 6.1.0) — it is version-independent, so pinning the reserved client is the
+        // durable sidestep. The reserved lease is just an integer index into the master pool, which
+        // transform() rebuilds IN PLACE (same ids) on a switch-master, so it repoints to the new
+        // master on failover — no failover regression, and zero net connection delta (the pool still
+        // opens masterPoolSize connections either way).
+        reserveClient: true,
       })
     : isCluster
     ? createCluster({
@@ -999,12 +1217,55 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
   // cluster client (wrap `_execute`), 'system' is the single sysRedis client (wrap `sendCommand`).
   instrumentCommands(client, type === 'cache' ? 'cluster' : 'sys');
 
-  // Create a separate client instance with Buffer type mapping for packed operations
-  // `withTypeMapping` creates a NEW client instance - it doesn't modify the original client.
-  // So `bufferClient` returns Buffers, while `client` still returns strings.
-  const bufferClient = client.withTypeMapping({
-    [RESP_TYPES.BLOB_STRING]: Buffer,
-  }) as CustomRedisClient<K>;
+  // Create a Buffer-typed client for the packed operations (get<Buffer>/sMembers<Buffer>/…).
+  //
+  // `withTypeMapping` is *supposed* to return a NEW client that returns Buffers while the
+  // original keeps returning strings. That holds for the single-node (RedisClient) and cluster
+  // (RedisCluster) paths — both `_commandOptionsProxy` implementations set a proxy-LOCAL
+  // `_commandOptions` and never touch the base client (verified in @redis/client
+  // client/index.js:445 and cluster/index.js:144).
+  //
+  // But node-redis v5.8.3 has a Sentinel-specific defect: `RedisSentinel._commandOptionsProxy`
+  // (sentinel/index.js:220-228) writes `proxy._self.#commandOptions = { …, [key]: value }`, and
+  // `_self` IS the shared base sentinel client. So on the Sentinel path (prod sysRedis) a SINGLE
+  // `withTypeMapping(...)` call permanently rewrites the base client's DEFAULT command options —
+  // every subsequent plain `sMembers`/`get`/`hGet`/… on `client` returns Buffers instead of
+  // strings, 100% deterministically from process start. That silently broke session revocation
+  // (session-verifier's `Buffer === 'invalid'` is always false → fail-open), feature-flag string
+  // compares, and crashed New Order (`.split` on a Buffer). See the 14-site `decodeRedisString`
+  // band-aid that shipped earlier — this is the structural fix that retires the whole class.
+  //
+  // Fix: on the Sentinel path, derive the buffer client from its OWN dedicated base connection
+  // (same `getBaseClient` path → identical Sentinel discovery/failover/auth/socket config) so the
+  // poisoning mutation lands on a PRIVATE base that is only ever used in Buffer mode (harmless),
+  // leaving the shared serving `client` completely untouched. Cluster + single-node keep the
+  // cheap shared derivation — their `withTypeMapping` is side-effect-free, and a cluster client is
+  // many sockets, so a second one would double them for no benefit.
+  //
+  // TODO(upstream): file the RedisSentinel._commandOptionsProxy shared-`_self` mutation bug with
+  // node-redis — the correct behavior mirrors RedisClient (proxy-local `_commandOptions`).
+  const isSysSentinel = type === 'system' && !!config.sysSentinels;
+  let bufferClient: CustomRedisClient<K>;
+  // Hoisted so the sys self-heal watchdog below can reconnect this dedicated Buffer-mode base
+  // connection alongside the serving one (both feed the aggregate sys inflight counter).
+  let sysBufferBaseClient: CustomRedisClient<K> | undefined;
+  if (isSysSentinel) {
+    const bufferBaseClient = getBaseClient(type) as unknown as CustomRedisClient<K>;
+    sysBufferBaseClient = bufferBaseClient;
+    // This dedicated connection issues real reads (GET/SMEMBERS/HGET/…) to the SAME sysRedis
+    // backend, so instrument it under the same 'sys' label — its in-flight + duration metrics
+    // belong alongside `client`'s (dropping them would under-count sysRedis load). Note: this
+    // adds one extra sysRedis connection (+ a Sentinel master-pool lease); acceptable per the
+    // investigation, and the pool stays small (masterPoolSize 2 in getBaseClient).
+    instrumentCommands(bufferBaseClient, 'sys');
+    bufferClient = bufferBaseClient.withTypeMapping({
+      [RESP_TYPES.BLOB_STRING]: Buffer,
+    }) as CustomRedisClient<K>;
+  } else {
+    bufferClient = client.withTypeMapping({
+      [RESP_TYPES.BLOB_STRING]: Buffer,
+    }) as CustomRedisClient<K>;
+  }
 
   // Decode a packed Buffer, evicting the bad entry if msgpack fails so the next
   // read falls through to source. Returns null on decode failure, treated as cache miss.
@@ -1243,6 +1504,27 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
     return results.reduce((sum, count) => sum + count, 0);
   };
 
+  // Start the sys (sysRedis / Sentinel) self-heal watchdog ONCE per process (incident 2026-07-03),
+  // mirroring the cluster watchdog started in getBaseClient's cluster connect() callback. It
+  // reconnects ALL sys base connections when the aggregate sys inflight counter stays wedged: the
+  // serving `client` always, plus the dedicated Buffer-mode base on the sentinel path (both feed
+  // the counter). The watchdog only samples a counter + reconnects on a wedge, so starting it here
+  // (before the background connect() settles) is safe. Guarded by sysSelfHealInterval so re-entry /
+  // the buffer-base build can't stack a second interval.
+  //
+  // SINGLE-SINGLETON INVARIANT — registering only the FIRST getClient('system') set is sufficient
+  // because the app builds exactly ONE sys client per process: `createRedisClients` is called once
+  // (src/server/redis/client.ts `make()`, memoized — prod evaluates the module const once, dev
+  // caches on global.__civitaiRedisClients, build builds nothing), and `createSysRedis` has zero
+  // callers (civitai-auth uses createCacheRedis → cache-only). So there is never a second, unwatched
+  // sys client. If a future caller builds an ADDITIONAL sys client, this guard would leave it
+  // unwatched — revisit the guard (key it per client set) at that point.
+  if (type === 'system' && !sysSelfHealInterval) {
+    const sysBaseClients: any[] = [client];
+    if (sysBufferBaseClient) sysBaseClients.push(sysBufferBaseClient);
+    startSysSelfHeal(sysBaseClients);
+  }
+
   return client;
 }
 
@@ -1376,6 +1658,26 @@ export const REDIS_SYS_KEYS = {
      * window than the submissions read since this is a write.
      */
     WITHDRAW_RATE_LIMIT: 'system:blocks:withdraw-rate-limit',
+    /**
+     * APP DEV TUNNEL — root prefix for the short-TTL dev-tunnel control-plane
+     * state (credential index, session record, host/user indexes, per-session
+     * spend counter). Sub-keyed as `${DEV_TUNNEL}:cred:<fp>` /
+     * `${DEV_TUNNEL}:session:<id>` / `${DEV_TUNNEL}:host:<host>` /
+     * `${DEV_TUNNEL}:user:<uid>:<blockId>` / `${DEV_TUNNEL}:spend:<id>`. All
+     * carry a hard-TTL EX so they self-expire (dev-tunnel.service.ts). On
+     * `sysRedis`, like the sibling BLOCKS caps/limiters.
+     */
+    DEV_TUNNEL: 'system:blocks:dev-tunnel',
+    /**
+     * Per-user rate-limit counter for EPHEMERAL (pre-submit) dev-tunnel starts —
+     * `startDevTunnel` when the caller owns NO AppBlock row for the slug yet
+     * (block-registry.service.ts resolveEphemeralDevPageBlock). Keyed
+     * `${DEV_TUNNEL_EPHEMERAL_RATE_LIMIT}:<userId>`. Same `INCR` + first-hit `EX`
+     * shape as the sibling BLOCKS limiters, on `sysRedis`. Blunts host-pool
+     * enumeration / DoS via ephemeral tunnel starts across many unclaimed slugs;
+     * the approved/owned path is unaffected (only the ephemeral branch increments).
+     */
+    DEV_TUNNEL_EPHEMERAL_RATE_LIMIT: 'system:blocks:dev-tunnel-ephemeral-rate-limit',
   },
   DOWNLOAD: {
     LIMITS: 'download:limits',
@@ -1656,6 +1958,7 @@ export const REDIS_KEYS = {
     PROMPT_ALLOWLIST: 'packed:system:prompt-allowlist',
     NOTIFICATION_COUNTS: 'system:notification-counts',
     CATEGORIES: 'system:categories',
+    BLOCKED_BROWSING_TAGS: 'system:blocked-browsing-tags',
   },
   CACHES: {
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
@@ -1674,6 +1977,7 @@ export const REDIS_KEYS = {
     BLOCKED_BY_USERS: 'packed:caches:blocked-by-users',
     BASIC_USERS: 'packed:caches:basic-users',
     BASIC_TAGS: 'packed:caches:basic-tags',
+    BASIC_TAGS_BY_NAME: 'packed:caches:basic-tags-by-name',
     ENTITY_AVAILABILITY: {
       MODEL_VERSIONS: 'packed:caches:entity-availability:model-versions',
     },

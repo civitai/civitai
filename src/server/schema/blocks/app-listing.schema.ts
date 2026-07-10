@@ -42,6 +42,15 @@ export const LISTING_SCREENSHOT_ASPECT_MIN = 0.4;
 export const LISTING_SCREENSHOT_ASPECT_MAX = 2.6;
 export const LISTING_SCREENSHOT_MIN_PX = 320;
 
+/**
+ * Absolute upper bound on either side of ANY ingested listing asset. A ceiling
+ * (the per-kind checks above only enforce MINIMUMS / aspect) that stops a
+ * decompression-bomb / absurd-dimension image (e.g. 100000×100000) from reaching
+ * the CF upload + `createImage` scan pipeline on the OG-pull path. 8192px is
+ * comfortably above any real store icon/cover/screenshot.
+ */
+export const LISTING_ASSET_MAX_DIMENSION_PX = 8192;
+
 /** Only real raster image MIME types (mirrors E5 SCREENSHOT_EXTENSIONS). */
 export const LISTING_ASSET_ALLOWED_MIME = ['image/png', 'image/jpeg', 'image/webp'] as const;
 

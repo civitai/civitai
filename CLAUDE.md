@@ -200,6 +200,13 @@ Comments are not type-checked, so they rot silently and become misleading. Write
 2. Generate Prisma client: `pnpm run db:generate`
 3. Start dev server: Use `/dev-server` skill
 
+### Git Worktrees
+When you create a new worktree (`git worktree add …`), **always initialize the `event-engine-common` submodule
+in it**: `git submodule update --init event-engine-common`. Worktrees don't check out submodules automatically,
+and without it `pnpm typecheck`/`build` fail with a wall of `Cannot find module '.../event-engine-common/...'`
+errors (and the missing types cascade into unrelated `implicitly has an 'any' type` errors) — noise that looks
+like your change broke something when it didn't.
+
 ## Important Notes
 
 - Read the full file before editing. Plan all changes, then make ONE complete edit. If you've edited a file 3+ times, stop and re-read the user's requirements.

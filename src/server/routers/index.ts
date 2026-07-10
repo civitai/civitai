@@ -20,10 +20,6 @@ export const appRouter = router({
   bountyEntry: lazy(() => import('./bountyEntry.router').then((m) => m.bountyEntryRouter)),
   buzz: lazy(() => import('./buzz.router').then((m) => m.buzzRouter)),
   chat: lazy(() => import('./chat.router').then((m) => m.chatRouter)),
-  club: lazy(() => import('~/server/routers/club.router').then((m) => m.clubRouter)),
-  clubPost: lazy(() => import('~/server/routers/clubPost.router').then((m) => m.clubPostRouter)),
-  clubMembership: lazy(() => import('~/server/routers/clubMembership.router').then((m) => m.clubMembershipRouter)),
-  clubAdmin: lazy(() => import('./clubAdmin.router').then((m) => m.clubAdminRouter)),
   collection: lazy(() => import('./collection.router').then((m) => m.collectionRouter)),
   comment: lazy(() => import('./comment.router').then((m) => m.commentRouter)),
   commentv2: lazy(() => import('./commentv2.router').then((m) => m.commentv2Router)),
@@ -46,51 +42,81 @@ export const appRouter = router({
   resourceReview: lazy(() => import('./resourceReview.router').then((m) => m.resourceReviewRouter)),
   signals: lazy(() => import('./signals.router').then((m) => m.signalsRouter)),
   stripe: lazy(() => import('./stripe.router').then((m) => m.stripeRouter)),
-  subscriptions: lazy(() => import('~/server/routers/subscriptions.router').then((m) => m.subscriptionsRouter)),
+  subscriptions: lazy(() =>
+    import('~/server/routers/subscriptions.router').then((m) => m.subscriptionsRouter)
+  ),
   tag: lazy(() => import('./tag.router').then((m) => m.tagRouter)),
   track: lazy(() => import('./track.router').then((m) => m.trackRouter)),
   training: lazy(() => import('./training.router').then((m) => m.trainingRouter)),
   user: lazy(() => import('./user.router').then((m) => m.userRouter)),
-  userRestriction: lazy(() => import('~/server/routers/user-restriction.router').then((m) => m.userRestrictionRouter)),
+  userRestriction: lazy(() =>
+    import('~/server/routers/user-restriction.router').then((m) => m.userRestrictionRouter)
+  ),
   userLink: lazy(() => import('./user-link.router').then((m) => m.userLinkRouter)),
   leaderboard: lazy(() => import('./leaderboard.router').then((m) => m.leaderboardRouter)),
   generation: lazy(() => import('./generation.router').then((m) => m.generationRouter)),
-  generationPreset: lazy(() => import('./generation-preset.router').then((m) => m.generationPresetRouter)),
+  generationPreset: lazy(() =>
+    import('./generation-preset.router').then((m) => m.generationPresetRouter)
+  ),
   wildcardSet: lazy(() => import('./wildcard-set.router').then((m) => m.wildcardSetRouter)),
   newsletter: lazy(() => import('./newsletter.router').then((m) => m.newsletterRouter)),
   system: lazy(() => import('./system.router').then((m) => m.systemRouter)),
-  hiddenPreferences: lazy(() => import('./hidden-preferences.router').then((m) => m.hiddenPreferencesRouter)),
-  userReferralCode: lazy(() => import('~/server/routers/user-referral-code.router').then((m) => m.userReferralCodeRouter)),
+  hiddenPreferences: lazy(() =>
+    import('./hidden-preferences.router').then((m) => m.hiddenPreferencesRouter)
+  ),
+  userReferralCode: lazy(() =>
+    import('~/server/routers/user-referral-code.router').then((m) => m.userReferralCodeRouter)
+  ),
   referral: lazy(() => import('~/server/routers/referral.router').then((m) => m.referralRouter)),
-  userProfile: lazy(() => import('~/server/routers/user-profile.router').then((m) => m.userProfileRouter)),
+  userProfile: lazy(() =>
+    import('~/server/routers/user-profile.router').then((m) => m.userProfileRouter)
+  ),
   cosmetic: lazy(() => import('~/server/routers/cosmetic.router').then((m) => m.cosmeticRouter)),
   event: lazy(() => import('~/server/routers/event.router').then((m) => m.eventRouter)),
   csam: lazy(() => import('~/server/routers/csam.router').then((m) => m.csamRouter)),
-  userPaymentConfiguration: lazy(() => import('./user-payment-configuration.router').then((m) => m.userPaymentConfigurationRouter)),
-  buzzWithdrawalRequest: lazy(() => import('./buzz-withdrawal-request.router').then((m) => m.buzzWithdrawalRequestRouter)),
+  userPaymentConfiguration: lazy(() =>
+    import('./user-payment-configuration.router').then((m) => m.userPaymentConfigurationRouter)
+  ),
+  buzzWithdrawalRequest: lazy(() =>
+    import('./buzz-withdrawal-request.router').then((m) => m.buzzWithdrawalRequestRouter)
+  ),
   integration: lazy(() => import('./integration.router').then((m) => m.integrationRouter)),
   paypal: lazy(() => import('./paypal.router').then((m) => m.paypalRouter)),
   buildGuide: lazy(() => import('./build-guide.router').then((m) => m.buildGuideRouter)),
-  purchasableReward: lazy(() => import('./purchasable-reward.router').then((m) => m.purchasableRewardRouter)),
+  purchasableReward: lazy(() =>
+    import('./purchasable-reward.router').then((m) => m.purchasableRewardRouter)
+  ),
   vault: lazy(() => import('./vault.router').then((m) => m.vaultRouter)),
   research: lazy(() => import('~/server/routers/research.router').then((m) => m.researchRouter)),
-  redeemableCode: lazy(() => import('~/server/routers/redeemableCode.router').then((m) => m.redeemableCodeRouter)),
+  redeemableCode: lazy(() =>
+    import('~/server/routers/redeemableCode.router').then((m) => m.redeemableCodeRouter)
+  ),
   tool: lazy(() => import('~/server/routers/tool.router').then((m) => m.toolRouter)),
   cosmeticShop: lazy(() => import('~/server/routers/cosmetic-shop.router').then((m) => m.cosmeticShopRouter)),
   creatorShop: lazy(() => import('~/server/routers/creator-shop.router').then((m) => m.creatorShopRouter)),
   productBadge: lazy(() => import('~/server/routers/product-badge.router').then((m) => m.productBadgeRouter)),
   technique: lazy(() => import('~/server/routers/technique.router').then((m) => m.techniqueRouter)),
-  donationGoal: lazy(() => import('~/server/routers/donation-goal.router').then((m) => m.donationGoalRouter)),
-  orchestrator: lazy(() => import('~/server/routers/orchestrator.router').then((m) => m.orchestratorRouter)),
+  donationGoal: lazy(() =>
+    import('~/server/routers/donation-goal.router').then((m) => m.donationGoalRouter)
+  ),
+  orchestrator: lazy(() =>
+    import('~/server/routers/orchestrator.router').then((m) => m.orchestratorRouter)
+  ),
   moderator: lazy(() => import('~/server/routers/moderator').then((m) => m.modRouter)),
-  entityCollaborator: lazy(() => import('~/server/routers/entity-collaborator.router').then((m) => m.entityCollaboratorRouter)),
+  entityCollaborator: lazy(() =>
+    import('~/server/routers/entity-collaborator.router').then((m) => m.entityCollaboratorRouter)
+  ),
   games: lazy(() => import('~/server/routers/games.router').then((m) => m.gamesRouter)),
   paddle: lazy(() => import('~/server/routers/paddle.router').then((m) => m.paddleRouter)),
   blocklist: lazy(() => import('~/server/routers/blocklist.router').then((m) => m.blocklistRouter)),
   challenge: lazy(() => import('~/server/routers/challenge.router').then((m) => m.challengeRouter)),
-  dailyChallenge: lazy(() => import('~/server/routers/daily-challenge.router').then((m) => m.dailyChallengeRouter)),
+  dailyChallenge: lazy(() =>
+    import('~/server/routers/daily-challenge.router').then((m) => m.dailyChallengeRouter)
+  ),
   vimeo: lazy(() => import('~/server/routers/vimeo.router').then((m) => m.vimeoRouter)),
-  creatorProgram: lazy(() => import('~/server/routers/creator-program.router').then((m) => m.creatorProgramRouter)),
+  creatorProgram: lazy(() =>
+    import('~/server/routers/creator-program.router').then((m) => m.creatorProgramRouter)
+  ),
   auction: lazy(() => import('~/server/routers/auction.router').then((m) => m.auctionRouter)),
   changelog: lazy(() => import('~/server/routers/changelog.router').then((m) => m.changelogRouter)),
   bug: lazy(() => import('~/server/routers/bug.router').then((m) => m.bugRouter)),
@@ -99,11 +125,21 @@ export const appRouter = router({
   emerchantpay: lazy(() => import('./emerchantpay.router').then((m) => m.emerchantpayRouter)),
   comics: lazy(() => import('./comics.router').then((m) => m.comicsRouter)),
   strike: lazy(() => import('~/server/routers/strike.router').then((m) => m.strikeRouter)),
-  rewardsBonusEvent: lazy(() => import('./rewards-bonus-event.router').then((m) => m.rewardsBonusEventRouter)),
-  oauthClient: lazy(() => import('~/server/routers/oauth-client.router').then((m) => m.oauthClientRouter)),
-  oauthConsent: lazy(() => import('~/server/routers/oauth-consent.router').then((m) => m.oauthConsentRouter)),
-  scannerReview: lazy(() => import('~/server/routers/scanner-review.router').then((m) => m.scannerReviewRouter)),
-  scannerPolicies: lazy(() => import('~/server/routers/scanner-policies.router').then((m) => m.scannerPoliciesRouter)),
+  rewardsBonusEvent: lazy(() =>
+    import('./rewards-bonus-event.router').then((m) => m.rewardsBonusEventRouter)
+  ),
+  oauthClient: lazy(() =>
+    import('~/server/routers/oauth-client.router').then((m) => m.oauthClientRouter)
+  ),
+  oauthConsent: lazy(() =>
+    import('~/server/routers/oauth-consent.router').then((m) => m.oauthConsentRouter)
+  ),
+  scannerReview: lazy(() =>
+    import('~/server/routers/scanner-review.router').then((m) => m.scannerReviewRouter)
+  ),
+  scannerPolicies: lazy(() =>
+    import('~/server/routers/scanner-policies.router').then((m) => m.scannerPoliciesRouter)
+  ),
 });
 
 // export type definition of API

@@ -62,7 +62,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // H-2: gate manifest registration on the feature flag. Even with
   // JOB_TOKEN, we don't want manifests landing while the substrate is dark.
   if (!(await isAppBlocksEnabled())) {
-    res.status(503).json({ error: 'App Blocks not enabled' });
+    res.status(503).json({ error: 'Apps are not enabled' });
     return;
   }
 

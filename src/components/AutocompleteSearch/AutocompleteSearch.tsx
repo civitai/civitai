@@ -28,6 +28,11 @@ import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/Cleara
 import { getModelUrl, slugit } from '~/utils/string-helpers';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { env } from '~/env/client';
+import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
+import {
+  autocompleteAvailability,
+  useAutocompleteAvailabilityStore,
+} from '~/components/Search/search-availability.store';
 import { ModelSearchItem } from '~/components/AutocompleteSearch/renderItems/models';
 import { ArticlesSearchItem } from '~/components/AutocompleteSearch/renderItems/articles';
 import { UserSearchItem } from '~/components/AutocompleteSearch/renderItems/users';
@@ -71,31 +76,41 @@ type Props = Omit<AutocompleteProps, 'data' | 'onSubmit'> & {
   searchBoxProps?: SearchBoxProps;
 };
 
-const searchClient: InstantSearchProps['searchClient'] = {
-  ...meilisearch,
-  search(requests) {
-    // Prevent making a request if there is no query
-    // @see https://www.algolia.com/doc/guides/building-search-ui/going-further/conditional-requests/react/#detecting-empty-search-requests
-    // @see https://github.com/algolia/react-instantsearch/issues/1111#issuecomment-496132977
-    if (requests.every(({ params }) => !params?.query)) {
-      return Promise.resolve({
-        results: requests.map(() => ({
-          hits: [],
-          nbHits: 0,
-          nbPages: 0,
-          page: 0,
-          processingTimeMS: 0,
-          hitsPerPage: 0,
-          exhaustiveNbHits: false,
-          query: '',
-          params: '',
-        })),
-      });
-    }
+// Wrapped so a Meili outage degrades to empty results instead of an uncaught
+// `MeiliSearchCommunicationError`. On fallback it flips the autocomplete
+// availability flag so the dropdown shows its "Error" item (the swallowed error
+// never reaches `useInstantSearch().status`, so we can't key off that).
+const searchClient: InstantSearchProps['searchClient'] = createResilientSearchClient(
+  {
+    ...meilisearch,
+    search(requests) {
+      // Prevent making a request if there is no query
+      // @see https://www.algolia.com/doc/guides/building-search-ui/going-further/conditional-requests/react/#detecting-empty-search-requests
+      // @see https://github.com/algolia/react-instantsearch/issues/1111#issuecomment-496132977
+      if (requests.every(({ params }) => !params?.query)) {
+        return Promise.resolve({
+          results: requests.map(() => ({
+            hits: [],
+            nbHits: 0,
+            nbPages: 0,
+            page: 0,
+            processingTimeMS: 0,
+            hitsPerPage: 0,
+            exhaustiveNbHits: false,
+            query: '',
+            params: '',
+          })),
+        });
+      }
 
-    return meilisearch.search(requests);
+      return meilisearch.search(requests);
+    },
   },
-};
+  {
+    onError: () => autocompleteAvailability.setUnavailable(true),
+    onSuccess: () => autocompleteAvailability.setUnavailable(false),
+  }
+);
 
 const DEFAULT_DROPDOWN_ITEM_LIMIT = 6;
 
@@ -224,7 +239,11 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
   const { trackSearch, trackAction } = useTrackEvent();
-  const searchErrorState = status === 'error';
+  // The resilient search client swallows Meili comm errors (so they never reach
+  // `useInstantSearch().status === 'error'`); it flips this flag on fallback
+  // instead, which keeps the dropdown's "Error" item + the AIR-redirect gate
+  // working during a Meili blip.
+  const searchErrorState = useAutocompleteAvailabilityStore((state) => state.unavailable);
 
   const { key, value } = paired<SearchIndexDataMap>(indexName, hits as SearchIndexDataMap[TKey]);
   const { items: filtered } = useApplyHiddenPreferences({
@@ -334,7 +353,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       items.push({ key: 'view-more', value: query, hit: null as any, label: 'View more results' });
 
     return items;
-  }, [status, filtered, results?.nbHits, query]);
+  }, [status, searchErrorState, filtered, results?.nbHits, query]);
 
   // Track profanity search separately to avoid side effects in useMemo
   useEffect(() => {

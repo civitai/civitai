@@ -22,6 +22,74 @@ function cleanBadJson(str: string) {
     .replace(/\[Infinity\]/g, '[]');
 }
 
+// Resource-name widgets (checkpoint/lora/vae/... names) whose links we resolve to a name/AIR
+// rather than to a node object. Their links are left un-resolved by the generic pass above so
+// resolveResourceName still sees the [nodeId, outputSlot] link and can honor the output slot.
+const RESOURCE_NAME_KEYS = [
+  'ckpt_name',
+  'unet_name',
+  'model_name',
+  'vae_name',
+  'control_net_name',
+  'lora_name',
+];
+const NAME_WIDGET_KEYS = ['value', 'string'];
+
+// A CivitaiModelSelector can supply several resources on different output slots; resources_json
+// maps each output slot to its AIR. Resolve the specific slot the loader is wired to, falling
+// back to the node's primary `air` when the slot isn't mapped.
+function getSelectorAir(node: ComfyNode, slot: number | string | undefined): string | undefined {
+  const raw = node.inputs?.resources_json;
+  if (typeof raw === 'string' && slot != null) {
+    try {
+      const bySlot = (JSON.parse(raw) as { bySlot?: Record<string, string> }).bySlot;
+      const air = bySlot?.[String(slot)];
+      if (air) return air;
+    } catch {}
+  }
+  return typeof node.inputs?.air === 'string' ? node.inputs.air : undefined;
+}
+
+// Recover a resource name/AIR from a widget value that may be a literal string or a node link.
+// Civitai's ComfyUI resource picker (CivitaiModelSelector) carries AIRs; primitive/string nodes
+// expose the value under a `value`/`string` widget. Returns undefined when nothing usable exists.
+function resolveResourceName(
+  value: unknown,
+  widgetKey: string,
+  prompt: Record<string, ComfyNode>,
+  depth = 0
+): string | undefined {
+  if (typeof value === 'string') return value;
+  if (depth >= 5 || value == null) return undefined;
+
+  // Un-resolved node link: [nodeId, outputSlot]
+  if (Array.isArray(value)) {
+    const node = prompt[value[0]];
+    if (!node) return undefined;
+    if (node.class_type === 'CivitaiModelSelector') return getSelectorAir(node, value[1]);
+    return resolveResourceName(node, widgetKey, prompt, depth + 1);
+  }
+
+  if (typeof value !== 'object') return undefined;
+  const node = value as ComfyNode;
+  if (node.class_type === 'CivitaiModelSelector') return getSelectorAir(node, undefined);
+  for (const key of [widgetKey, ...NAME_WIDGET_KEYS]) {
+    const nested = resolveResourceName(node.inputs?.[key], widgetKey, prompt, depth + 1);
+    if (nested) return nested;
+  }
+  return undefined;
+}
+
+function pushResourceName(
+  names: string[],
+  value: unknown,
+  widgetKey: string,
+  prompt: Record<string, ComfyNode>
+) {
+  const name = resolveResourceName(value, widgetKey, prompt);
+  if (name) names.push(name);
+}
+
 export const comfyMetadataProcessor = createMetadataProcessor({
   canParse: (exif) => {
     const isStandardComfy = exif.prompt || exif.workflow;
@@ -89,7 +157,8 @@ export const comfyMetadataProcessor = createMetadataProcessor({
     const nodes = Object.values(prompt);
     for (const node of nodes) {
       for (const [key, value] of Object.entries(node.inputs)) {
-        if (Array.isArray(value)) node.inputs[key] = prompt[value[0]];
+        if (Array.isArray(value) && !RESOURCE_NAME_KEYS.includes(key))
+          node.inputs[key] = prompt[value[0]];
       }
 
       if (node.class_type == 'KSamplerAdvanced') {
@@ -109,8 +178,11 @@ export const comfyMetadataProcessor = createMetadataProcessor({
         const strength = node.inputs.strength_model as number;
         if (strength < 0.001 && strength > -0.001) continue;
 
+        const loraName = resolveResourceName(node.inputs.lora_name, 'lora_name', prompt);
+        if (!loraName) continue;
+
         additionalResources.push({
-          name: node.inputs.lora_name as string,
+          name: loraName,
           type: 'lora',
           strength,
           strengthClip: node.inputs.strength_clip as number,
@@ -118,20 +190,25 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       }
 
       if (['CheckpointLoaderSimple', 'CheckpointLoader'].includes(node.class_type))
-        models.push(node.inputs.ckpt_name as string);
+        pushResourceName(models, node.inputs.ckpt_name, 'ckpt_name', prompt);
 
-      if (node.class_type === 'UNETLoader') models.push(node.inputs.unet_name as string);
+      if (node.class_type === 'UNETLoader')
+        pushResourceName(models, node.inputs.unet_name, 'unet_name', prompt);
 
-      if (node.class_type == 'UpscaleModelLoader') upscalers.push(node.inputs.model_name as string);
+      if (node.class_type == 'UpscaleModelLoader')
+        pushResourceName(upscalers, node.inputs.model_name, 'model_name', prompt);
 
-      if (node.class_type == 'VAELoader') vaes.push(node.inputs.vae_name as string);
+      if (node.class_type == 'VAELoader')
+        pushResourceName(vaes, node.inputs.vae_name, 'vae_name', prompt);
 
       if (node.class_type == 'ControlNetLoader')
-        controlNets.push(node.inputs.control_net_name as string);
+        pushResourceName(controlNets, node.inputs.control_net_name, 'control_net_name', prompt);
     }
     const customAdvancedSampler = nodes.find((x) => x.class_type == 'SamplerCustomAdvanced');
 
-    const workflow = exif.workflow ? (JSON.parse(exif.workflow as string) as any) : undefined;
+    // Default to an object (not undefined) so airs discovered in resource names below can be
+    // attached even when the image carries only a `prompt` chunk and no `workflow` chunk.
+    const workflow = exif.workflow ? (JSON.parse(exif.workflow as string) as any) : {};
     const versionIds: number[] = [];
     const modelIds: number[] = [];
     let isCivitComfy = workflow?.extra?.airs?.length > 0;
@@ -150,6 +227,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
     }
 
     const metadata: ImageMetaProps = {
+      engine: isCivitComfy ? 'Civitai' : 'ComfyUI',
       models,
       upscalers,
       vaes,
@@ -171,6 +249,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
         sampler,
         denoise,
         workflowId,
+        workflow: workflowKey,
         resources,
         ...extra
       } = exif.extraMetadata;
@@ -181,7 +260,10 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       metadata.seed = seed;
       metadata.sampler = sampler;
       metadata.denoise = denoise;
-      metadata.workflow = workflowId;
+      // Newer generations put the workflow key in `workflow`; older ones used `workflowId`.
+      // Store the full value (e.g. 'img2img:hires-fix') — post.service normalizes it to a
+      // technique name at lookup time.
+      metadata.workflow = workflowId ?? workflowKey;
       metadata.civitaiResources = resources.map((x: any) => {
         if (x.strength) {
           x.weight = x.strength;
@@ -278,7 +360,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       ...upscalers,
       ...vaes,
       ...additionalResources.map((x) => x.name),
-    ].filter((x) => x.startsWith('urn:air:'));
+    ].filter((x): x is string => typeof x === 'string' && x.startsWith('urn:air:'));
     if (workflowAirs.length > 0) {
       workflow.extra = { airs: workflowAirs };
       isCivitComfy = true;
@@ -289,6 +371,9 @@ export const comfyMetadataProcessor = createMetadataProcessor({
 
       for (const air of workflow.extra.airs) {
         const { version, type } = parseAIR(air);
+        // Non-Civitai airs (e.g. huggingface checkpoints) have no numeric version — they stay in
+        // `models`/etc. as raw strings rather than becoming a bogus civitaiResource with a null id.
+        if (Number.isNaN(version)) continue;
         const resource: CivitaiResource = {
           modelVersionId: version,
           type,

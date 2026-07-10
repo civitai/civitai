@@ -12,6 +12,7 @@ import {
 import { trpcProcedureDuration } from '~/server/prom/client';
 import { maybeLogTrpcSlow } from '~/server/logging/trpc-slow-log';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
+import { instrumentSerialize } from '~/server/logging/trpc-serialize-log';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
@@ -44,8 +45,14 @@ const t = initTRPC
   .meta<TRPCMeta>()
   .create({
     transformer: {
+      // instrumentSerialize times the serialize (the exact frame that pegs the
+      // loop on an oversized response — see trpc-serialize-log.ts) and, only above
+      // a cheap duration floor, logs the offending procedure + byte size. Disarmed
+      // by default: a single boolean branch, then the original withSpan+superjson.
       serialize: (data: any) =>
-        withSpan('trpc:serialize:superjson', () => superjson.serialize(data)),
+        instrumentSerialize(() =>
+          withSpan('trpc:serialize:superjson', () => superjson.serialize(data))
+        ),
       deserialize: superjson.deserialize.bind(superjson),
     },
     errorFormatter({ shape }) {
@@ -409,7 +416,7 @@ const hasAppBlocksAuthor = t.middleware(({ ctx, next }) => {
   if (!features.appBlocksAuthor)
     throw new TRPCError({
       code: 'FORBIDDEN',
-      message: 'You do not have access to App Blocks authoring',
+      message: 'You do not have access to Apps authoring',
     });
   return next();
 });

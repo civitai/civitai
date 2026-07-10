@@ -3,6 +3,11 @@ import {
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
 import { isKnownSlotId, isPageSlot } from '~/shared/constants/slot-registry';
+// The lexical SSRF hostname guards were EXTRACTED to a shared, dependency-free
+// module (no `node:dns`, so this validator stays client-bundle-safe — it is
+// imported by `ManifestEditForm.tsx`). `safe-fetch.ts` imports the same helpers,
+// so the manifest validator and the fetch-time guard share ONE source of truth.
+import { isPublicHttpsUrl } from '~/server/utils/ssrf-hostname';
 
 type ValidationResult = { valid: true } | { valid: false; errors: string[] };
 
@@ -114,89 +119,12 @@ const SHELL_METACHAR_RE = /[;|&$`<>(){}\\!*?\[\]'"\n\r]/;
 const HEIGHT_MIN_FLOOR = 40;
 const HEIGHT_MAX_CEILING = 4000;
 
-// SSRF gate for iframe.src and assetBundleUrl. The migrate-once-fix-forever
-// move is to reject hostnames that resolve to private/loopback ranges. We
-// can't DNS-resolve at validation time, so we use a hostname allowlist of
-// shapes we know are public: must have a dot, can't be an IP, can't be a
-// reserved hostname (localhost / metadata service endpoints).
-const PRIVATE_HOSTNAME_PATTERNS = [
-  /^localhost$/i,
-  /^127\./,
-  /^10\./,
-  /^172\.(1[6-9]|2\d|3[01])\./,
-  /^192\.168\./,
-  /^169\.254\./,
-  /^0\./,
-  /^::1$/,
-  // Full IPv6 ULA range fc00::/7 — the spec is fc00::/7, not fc00::/8.
-  // Previously only fc00: matched; widen to fc00-fdff.
-  /^f[cd][0-9a-f]{2}:/i,
-  /^fe80:/i,
-  // IPv6 with a zone identifier (RFC 6874 `%`-encoded) — sometimes accepted
-  // by URL parsers and lets an attacker pin a literal zone like %eth0.
-  /%/,
-  // Reserved internal infrastructure names commonly used internally.
-  /\.internal$/i,
-  /\.local$/i,
-  /^metadata\.google\.internal$/i,
-  // Note: punycode/IDN homograph attacks (e.g. `xn--...` registered as a
-  // look-alike) and DNS-rebinding (public name flipped to 127.0.0.1 at
-  // fetch time) are NOT caught by lexical validation. Phase 2's
-  // assetBundleUrl fetch must re-validate at fetch time and disable
-  // redirect-follow. v1 doesn't fetch either URL server-side so the
-  // exposure is bounded.
-];
-
-function isPublicHttpsUrl(raw: string): { ok: true } | { ok: false; reason: string } {
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    return { ok: false, reason: 'malformed URL' };
-  }
-  if (url.protocol !== 'https:') return { ok: false, reason: 'must be https' };
-  const hostname = url.hostname;
-
-  // Single-string IPv4 literals (audit B4): WHATWG URL accepts dot-less
-  // forms like `0x7f000001` and `2130706433` (the integer form of 127.0.0.1)
-  // and parses them to the corresponding IPv4 address. Reject these BEFORE
-  // the dotted-name check below, because they don't contain dots.
-  if (/^0x[0-9a-f]+$/i.test(hostname)) {
-    return { ok: false, reason: 'hex IPv4 literal not permitted' };
-  }
-  if (/^[0-9]+$/.test(hostname)) {
-    // Pure-integer form. Includes `2130706433` (= 127.0.0.1) and similar.
-    return { ok: false, reason: 'integer IPv4 literal not permitted' };
-  }
-
-  // IPv4-mapped IPv6 ([::ffff:127.0.0.1] and similar) — WHATWG URL surfaces
-  // these as `[::ffff:7f00:1]` style in `hostname` (lowercased, square
-  // brackets kept when URL.host includes them — URL.hostname strips them).
-  // Reject anything containing `::ffff:` (the IPv4-mapped prefix).
-  if (/::ffff:/i.test(hostname)) {
-    return { ok: false, reason: 'IPv4-mapped IPv6 not permitted' };
-  }
-
-  if (!hostname.includes('.') || hostname.endsWith('.')) {
-    return { ok: false, reason: 'hostname must be a public dotted name' };
-  }
-  for (const re of PRIVATE_HOSTNAME_PATTERNS) {
-    if (re.test(hostname)) return { ok: false, reason: 'private/internal hostname' };
-  }
-  // Pure-decimal-dotted IPv4 literals — keep the surface narrow even for
-  // public addresses; manifests should always load by DNS name.
-  if (/^[0-9.]+$/.test(hostname)) {
-    return { ok: false, reason: 'literal IPv4 addresses are not permitted' };
-  }
-  // Dotted hex/octal IPv4 literals (e.g. 0x7f.0x0.0x0.0x1, 0177.0.0.1).
-  if (/^0x[0-9a-f]+(\.0x[0-9a-f]+)+$/i.test(hostname)) {
-    return { ok: false, reason: 'hex IPv4 literals are not permitted' };
-  }
-  if (/^0[0-7]+(\.[0-7]+)+$/.test(hostname)) {
-    return { ok: false, reason: 'octal IPv4 literals are not permitted' };
-  }
-  return { ok: true };
-}
+// SSRF gate for iframe.src and assetBundleUrl. `isPublicHttpsUrl` (and the
+// `PRIVATE_HOSTNAME_PATTERNS` it uses) live in `~/server/utils/ssrf-hostname` (a
+// shared, dependency-free module) so this validator, the read-path anchors, and
+// the fetch-time guard in `safe-fetch.ts` can't drift. It is PURELY LEXICAL — a
+// server-side fetch of one of these URLs must additionally DNS-resolve + check
+// every address at fetch time (see safe-fetch.ts).
 
 // Sandbox is a positive allowlist gated by trust tier. Anything not listed
 // is rejected even if HTML's iframe sandbox accepts it. This stops the

@@ -34,6 +34,11 @@ import { renderWithProviders } from '../../../test/component-setup';
  */
 
 vi.mock('~/utils/trpc', () => ({
+  // FeatureFlagsProvider (in PageBlockHost's real render graph) statically imports
+  // `setTrpcBatchingEnabled` from this module (#2946). vi.mock replaces the module
+  // wholesale, so the factory must re-declare it or the ESM link fails and the whole
+  // test file fails to import.
+  setTrpcBatchingEnabled: vi.fn(),
   trpc: {
     // PageBlockHost wires the workflow + storage bridges at render; stub so it
     // mounts network-free. SET_USER_CHECKPOINT makes NO tRPC call on a page (it
@@ -46,6 +51,12 @@ vi.mock('~/utils/trpc', () => ({
       cancelWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {
+      shared: {
+        append: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        vote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        unvote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        withdraw: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      },
       storage: {
         set: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         delete: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -53,6 +64,11 @@ vi.mock('~/utils/trpc', () => ({
     },
     useUtils: () => ({
       apps: {
+        shared: {
+          list: { fetch: vi.fn() },
+          getCount: { fetch: vi.fn() },
+          getCounts: { fetch: vi.fn() },
+        },
         storage: {
           get: { fetch: vi.fn() },
           list: { fetch: vi.fn() },

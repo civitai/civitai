@@ -698,6 +698,9 @@ const words = {
     }),
     negativeNouns: checkable(youngWords.negativeNouns, {
       pluralize: true,
+      // "mature content" is a boilerplate NSFW-avoidance tag, not an attempt to
+      // steer the subject younger — drop it so its bare "mature" doesn't flag minor.
+      preprocessor: (prompt) => prompt.replace(/mature[^a-zA-Z0-9]+content[s|z]*/gi, ' '),
     }),
   },
   poi: checkable(poiWords, {

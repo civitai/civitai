@@ -219,24 +219,37 @@ export const serverSchema = z
     // trigger (falls back to the inflight-continuity path only).
     REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_THRESHOLD: z.coerce.number().default(10),
     REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_WINDOW_MS: z.coerce.number().default(20000),
+    // A cluster command whose OBSERVED settle duration reaches this many ms counts as a wedge hit
+    // (recordClusterCommandSettle, wired from instrumentCommands' done() — the SAME settle-time
+    // observation as redis_command_duration_seconds). 2026-07-06: the deadline-hit trigger used to
+    // key off withCommandDeadline's onTimeout (the deadline REAP), which never fires when slow
+    // commands COMPLETE in the 10–15s band under the reaper (or settle on their own past it), so the
+    // ring stayed empty and self-heal 0-fired during a fleet wedge. Set BELOW the command deadline
+    // (15s) so it catches the invisible 10–15s band and works even if the reaper is disabled;
+    // healthy p99 ≈ 23ms so 10s is ~400× p99. <= 0 disables slow-settle recording. MUST be <
+    // REDIS_CLUSTER_COMMAND_TIMEOUT_MS (enforced in the superRefine below).
+    REDIS_CLUSTER_SELFHEAL_SLOW_COMMAND_MS: z.coerce.number().default(10000),
     // ── PER-POD RECONNECT JITTER (fleet-stampede brake) ──────────────────────────────
     //
-    // The deadline-hit trigger fires within seconds of a half-open park. That's the point
-    // for a pod-LOCAL wedge, but it has a correlated-failure edge: if next-redis-cluster
-    // ITSELF has a genuine >=15s event (master failover, network blip), EVERY pod's cluster
-    // commands deadline-reject at once → the whole fleet (~80-100 pods) trips the deadline-hit
-    // trigger inside the same ~1s watchdog tick and fires forceClusterReconnect (destroy() +
-    // connect()) simultaneously → a connection thundering-herd against an already-unhealthy
-    // cluster, right when it can least absorb it.
+    // The self-heal trigger fires within seconds of a wedge. That's the point for a pod-LOCAL
+    // wedge, but it has a correlated-failure edge: if next-redis-cluster ITSELF has a genuine
+    // slow event (master failover, network blip), EVERY pod's cluster commands cross the
+    // slow-settle threshold at once → the whole fleet (~80-100 pods) trips the trigger inside
+    // the same ~1s watchdog tick and fires forceClusterReconnect (destroy() + connect())
+    // simultaneously → a connection thundering-herd against an already-unhealthy cluster, right
+    // when it can least absorb it.
     //
     // This spreads each pod's reconnect over a random [0, jitter) delay AFTER the trigger
     // decision (the cooldown/single-flight guards are taken up front, so the jitter cannot
     // queue a second reconnect or restart the cooldown). A synchronized fleet event then
     // smears its reconnects across the jitter window instead of all landing on one tick.
-    // 0 disables jitter (reconnect fires immediately — the prior behavior). 1000ms (1s) is
-    // ~the watchdog tick, enough to de-correlate the fleet without materially delaying a
-    // single-pod self-heal (1s on top of the multi-second deadline-hit accumulation).
-    REDIS_CLUSTER_SELFHEAL_RECONNECT_JITTER_MS: z.coerce.number().default(1000),
+    // 0 disables jitter (reconnect fires immediately — the prior behavior). WIDENED to 3000ms
+    // (was 1000) for the settle-time trigger: it fires on a BROADER envelope than the old
+    // reaper-only signal (any command completing >= REDIS_CLUSTER_SELFHEAL_SLOW_COMMAND_MS = 10s,
+    // not just those reaped at 15s), so a >10s cluster event can trip ~100 pods on nearly the
+    // same tick; 1s was too thin to de-correlate that many destroy()+connect()s. 3s still keeps a
+    // single-pod heal well inside the ~60s kubelet readiness-shed window (3–5s reasonable).
+    REDIS_CLUSTER_SELFHEAL_RECONNECT_JITTER_MS: z.coerce.number().default(3000),
 
     // ── CLUSTER ROUTING RETRY-AFTER-REDISCOVER (the topology-churn 500 wave) ─────────
     //
@@ -416,7 +429,9 @@ export const serverSchema = z
     SIGNALS_ENDPOINT: isProd ? z.url() : z.url().optional(),
     // The in-repo notifications app (apps/notifications) — the monolith creates/reads/marks notifications
     // through it via @civitai/notifications rather than touching the notification DB directly.
-    NOTIFICATIONS_ENDPOINT: isProd ? z.url() : z.url().optional(),
+    NOTIFICATIONS_ENDPOINT: isProd
+      ? z.url()
+      : z.preprocess((v) => v || undefined, z.url().optional()),
     // Prod-required + non-empty: the app disables its auth gate on an empty token, so a blank value here
     // would produce an unauthenticated producer API. Fail-fast at monolith boot instead.
     NOTIFICATIONS_TOKEN: isProd ? z.string().min(1) : z.string().optional(),
@@ -585,6 +600,7 @@ export const serverSchema = z
     NOW_PAYMENTS_PASSWORD: z.string().optional(),
     NOW_PAYMENTS_PAYOUT_ADDRESS: z.string().optional(),
     NOWPAYMENTS_IPN_URL: z.string().optional(), // Override IPN callback URL (e.g., webhook.site for dev)
+    NOWPAYMENTS_SUPPORT_EMAIL: z.string().optional(), // NP support inbox for stuck-deposit tickets; unset disables the notifier
 
     // Coinbase Related:
     COINBASE_API_URL: z.string().optional(),
@@ -757,6 +773,64 @@ export const serverSchema = z
     BUNDLE_S3_BUCKET: z.string().optional(),
     BUNDLE_S3_ACCESS_KEY_ID: z.string().optional(),
     BUNDLE_S3_SECRET_ACCESS_KEY: z.string().optional(),
+
+    // APP DEV TUNNEL (on-site dev via hardened sish tunnel — P1 control plane).
+    // ALL optional so envs without the feature still boot; the feature is dark
+    // behind the `app-blocks-dev-tunnel` Flipt flag regardless.
+    //
+    // APPS_DEV_TUNNEL_SISH_SECRET   shared secret the sish server presents on the
+    //   authz callback so random internet cannot POST it. Carried as the trailing
+    //   PATH segment of the callback URL
+    //   (`POST /api/apps/dev-tunnel/authz/<secret>`) because sish v2.23.0's
+    //   `authentication-key-request-url` does a bare POST and CANNOT attach a
+    //   custom header (F5). MUST be a URL-PATH-SAFE token (no `/`, no whitespace,
+    //   no reserved chars) — generate as hex/base64url. When UNSET the callback
+    //   fail-closes (503) — the sish integration is inert until provisioned (P3).
+    APPS_DEV_TUNNEL_SISH_SECRET: z.string().optional(),
+    // APPS_DEV_TUNNEL_FORWARDAUTH_URL   in-cluster address of the dev-tunnel-gate
+    //   forwardAuth endpoint the ephemeral Middleware points Traefik at. When
+    //   unset, derived from the civitai-web Service default.
+    APPS_DEV_TUNNEL_FORWARDAUTH_URL: z.string().url().optional(),
+    // APPS_DEV_TUNNEL_SISH_BACKEND   the sish HTTP backend the reverse tunnel is
+    //   bound behind, as `service.namespace:port` (or a full URL). Default is the
+    //   P0 sish Service.
+    APPS_DEV_TUNNEL_SISH_BACKEND: z
+      .string()
+      // Port 80 = the sish-http SERVICE port (targetPort 8080 on the pod). A Traefik
+      // IngressRoute service ref must match a Service port, not the pod targetPort.
+      .default('http://sish-http.apps-dev-tunnel.svc.cluster.local:80'),
+    // APPS_DEV_TUNNEL_INGRESS_TARGET   the Traefik LB IP the ephemeral
+    //   `dev-<hex>.<APPS_DOMAIN>` DNS record points at. Set PER-ENVIRONMENT (e.g. the
+    //   dp-prod SOPS env) — intentionally NO default so the origin IP is not committed
+    //   to the repo. When set, the dev-tunnel IngressRoute carries external-dns
+    //   annotations and the host resolves (CF-proxied); when unset, no record is
+    //   created (the tunnel host is NXDOMAIN). external-dns runs source=traefik-proxy,
+    //   domain civit.ai.
+    APPS_DEV_TUNNEL_INGRESS_TARGET: z.string().optional(),
+    // APPS_DEV_TUNNEL_ROUTE_NAMESPACE   the namespace the ephemeral dev-tunnel
+    //   IngressRoute + forwardAuth Middleware are created in. MUST match the sish
+    //   backend's namespace (apps-dev-tunnel) — Traefik rejects a cross-namespace
+    //   service reference. The apply Job still runs in APPS_KUBE_NAMESPACE.
+    APPS_DEV_TUNNEL_ROUTE_NAMESPACE: z.string().default('apps-dev-tunnel'),
+    // APPS_DEV_TUNNEL_SSH_HOST_PUBKEY   the sish server's SSH HOST public key, as a
+    //   NON-SECRET OpenSSH line (`ssh-ed25519 AAAA...`). Returned by
+    //   startDevTunnel so the CLI can PIN it on the `ssh -R` hop (R1 — closes the
+    //   MITM window; see design Revision-2 gate #6). Unset → startDevTunnel returns
+    //   an empty string and the CLI must fail closed (refuse to connect without a
+    //   pin) rather than fall back to InsecureIgnoreHostKey.
+    APPS_DEV_TUNNEL_SSH_HOST_PUBKEY: z.string().optional(),
+    // APPS_DEV_TUNNEL_CF_API_TOKEN   Cloudflare API token (DNS:Edit on the civit.ai
+    //   zone) used to DELETE the ephemeral `dev-<hex>.civit.ai` DNS records when a
+    //   dev-tunnel is torn down or reaped. external-dns runs `policy: upsert-only`, so
+    //   it NEVER removes a record on route deletion — the A record + its external-dns
+    //   ownership TXT records would otherwise accumulate forever (a CF zone record-cap
+    //   risk at scale). OPT-IN: unset ⇒ orphan-DNS GC is skipped (records linger exactly
+    //   as today). MUST be set on dp-prod for the cleanup to activate.
+    APPS_DEV_TUNNEL_CF_API_TOKEN: z.string().optional(),
+    // APPS_DEV_TUNNEL_CF_ZONE_ID   the civit.ai Cloudflare zone id. When set it is used
+    //   directly; when unset (but the token IS set) the zone is looked up by name
+    //   (GET /zones?name=civit.ai) and cached in-process. Optional.
+    APPS_DEV_TUNNEL_CF_ZONE_ID: z.string().optional(),
   })
   .superRefine((env, ctx) => {
     // Sentinel-mode for the system Redis client requires an explicit master group
@@ -770,6 +844,27 @@ export const serverSchema = z
         path: ['REDIS_SYS_SENTINEL_NAME'],
         message:
           'REDIS_SYS_SENTINEL_NAME is required when REDIS_SYS_SENTINELS is set (cluster uses "sysmaster")',
+      });
+    }
+    // Self-heal invariant: the slow-settle threshold MUST stay BELOW the per-command deadline
+    // reaper. When the reaper is active at T and a command orphans, the deadline reaps it at ~T, so
+    // done() observes ~T; if the slow threshold S >= T, that reaped orphan is NOT recorded (T < S)
+    // and the cluster self-heal goes BLIND to the exact deadline-park wedge this trigger exists to
+    // catch (2026-07-06). Only enforced when BOTH are active (>0): the reaper can be disabled (T=0)
+    // — the settle-time signal still works without it — and slow-settle recording can be off (S=0).
+    if (
+      env.REDIS_CLUSTER_COMMAND_TIMEOUT_MS > 0 &&
+      env.REDIS_CLUSTER_SELFHEAL_SLOW_COMMAND_MS > 0 &&
+      env.REDIS_CLUSTER_SELFHEAL_SLOW_COMMAND_MS >= env.REDIS_CLUSTER_COMMAND_TIMEOUT_MS
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['REDIS_CLUSTER_SELFHEAL_SLOW_COMMAND_MS'],
+        message:
+          `REDIS_CLUSTER_SELFHEAL_SLOW_COMMAND_MS (${env.REDIS_CLUSTER_SELFHEAL_SLOW_COMMAND_MS}) must be < ` +
+          `REDIS_CLUSTER_COMMAND_TIMEOUT_MS (${env.REDIS_CLUSTER_COMMAND_TIMEOUT_MS}): the slow-settle self-heal ` +
+          `threshold has to stay below the deadline reaper, else deadline-reaped orphans settle just under the ` +
+          `reaper and never record a hit → the cluster self-heal goes blind to the deadline-park wedge.`,
       });
     }
   });

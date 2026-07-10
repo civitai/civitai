@@ -308,15 +308,29 @@ export const redisCommandDuration = registerHistogram({
   buckets: [0.001, 0.005, 0.025, 0.1, 0.5, 1, 2, 5, 10, 30],
 });
 
-// Cluster-client SELF-HEAL reconnect counter (FIX #1). Incremented once each time the inflight-leak
-// watchdog forces a full cluster reconnect. Healthy pods never touch this; a nonzero rate flags a pod
-// that hit the binary-wedge state and was auto-recovered (vs needing a human rolling-restart). `trigger`
-// distinguishes the two watchdog paths: 'deadline' = the sawtooth-immune deadline-hit-rate trigger,
-// 'inflight' = the legacy sustained-inflight breach. (See @civitai/redis cluster-selfheal.)
+// SELF-HEAL reconnect counter. Incremented once each time an inflight-leak self-heal watchdog forces
+// a full client reconnect. Healthy pods never touch this; a nonzero rate flags a pod that hit the
+// binary-wedge state and was auto-recovered (vs needing a human rolling-restart). `client`
+// distinguishes which node-redis client healed: 'cluster' = the cache cluster client, 'sys' = the
+// sysRedis Sentinel client (incident 2026-07-03). `trigger` distinguishes the watchdog path:
+// 'deadline' = the sawtooth-immune deadline-hit-rate trigger (cluster only), 'inflight' = the
+// sustained-inflight breach (both clients). (See @civitai/redis cluster-selfheal / sys-inflight.)
 export const redisSelfHealReconnectCounter = registerCounterWithLabels({
   name: 'redis_selfheal_reconnect_total',
-  help: 'Forced cluster-client reconnects by the inflight-leak self-heal watchdog',
-  labelNames: ['trigger'] as const,
+  help: 'Forced node-redis client reconnects by the inflight-leak self-heal watchdog, by client (cluster|sys) and trigger',
+  labelNames: ['trigger', 'client'] as const,
+});
+
+// The self-heal watchdog's OWN observation of the wedge: the in-process count of cluster command
+// SLOW-SETTLES in its sliding window (the deadline-hit trigger's input), sampled + published each
+// watchdog tick. This is DISTINCT from redis_command_duration_seconds — it is exactly what the
+// watchdog evaluates against REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_THRESHOLD, so a rising series that
+// crosses the threshold is the leading indicator of an imminent self-heal reconnect. Added after
+// the 2026-07-06 fleet wedge, where the watchdog's own signal was invisible and the trigger 0-fired.
+export const redisSelfHealDeadlineHitsWindow = registerGaugeWithLabels({
+  name: 'redis_selfheal_deadline_hits_window',
+  help: "The self-heal watchdog's in-process cluster slow-settle count over its sliding window, by client; the deadline-hit trigger fires when this crosses the threshold",
+  labelNames: ['client'] as const,
 });
 
 // Cluster ROUTING retry-after-rediscover counter (the topology-churn 500 wave). Incremented when a cluster

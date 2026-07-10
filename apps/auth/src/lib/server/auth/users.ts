@@ -121,7 +121,11 @@ export async function findOrCreateUser(
     const created = await db
       .insertInto('User')
       .values({
-        email: profile.email ?? null,
+        // Persist a provider email as the account's canonical (citext-UNIQUE) email ONLY when the provider
+        // VERIFIED it. An unverified provider email (e.g. Discord verified:false) is untrustworthy: storing it
+        // both squats the victim's unique-email slot AND lets step 2's verified-email link later fold the
+        // victim's real login into this account (takeover). Mirrors the emailVerified gate just below.
+        email: profile.email && profile.emailVerified ? profile.email : null,
         username: null,
         name: profile.name ?? null,
         // Legacy behavior: never store the provider's avatar — users set their own profile picture, and an

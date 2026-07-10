@@ -56,7 +56,7 @@ import { Model3DSort } from '~/server/schema/model3d.schema';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { handlePolyGenWorkflowResult } from '~/server/services/orchestrator/ecosystems/polyGen.handler';
-import type { PolyGenStep, Workflow, WorkflowStep } from '@civitai/client';
+import type { ImageBlob, PolyGenStep, Workflow, WorkflowStep } from '@civitai/client';
 import type { Context } from '~/server/createContext';
 
 type SessionUser = {
@@ -318,6 +318,15 @@ export const ensureModel3DFromWorkflow = async ({
       );
     }
 
+    // The chained `model3DPreview` step (see polygen-graph.handler) renders the
+    // centered 2D preview the user actually saw in the queue card. Prefer it as
+    // the saved thumbnail over the polyGen auto-thumbnail. It's not in the
+    // client's WorkflowStep union, so reach into its image output structurally.
+    const previewStep = workflow.steps.find((s: WorkflowStep) => s.$type === 'model3DPreview') as
+      | { output?: { images?: ImageBlob[] } }
+      | undefined;
+    const thumbnailOverride = previewStep?.output?.images?.find((img) => !!img?.url);
+
     const meta = (workflow.metadata ?? {}) as Record<string, unknown>;
     const generationParams = (meta.params ?? {}) as Record<string, unknown>;
     const sourceImageId =
@@ -332,6 +341,7 @@ export const ensureModel3DFromWorkflow = async ({
       // safe.
       generationParams: generationParams as never,
       sourceImageId,
+      thumbnailOverride,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;

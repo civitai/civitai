@@ -3,7 +3,7 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { createNotification } from '~/server/services/notification.service';
 import { updateUserById } from '~/server/services/user.service';
@@ -30,6 +30,11 @@ export interface BlockedPromptEntry {
   matchedRegex?: string;
   imageId: number | null;
   remixOfId: number | null;
+  // Base/source media attached to the blocked job, surfaced in the moderator
+  // restriction-review UI so a deepfake against a real photo can be told apart
+  // from a transform of AI content.
+  inputImages?: string[];
+  inputVideo?: string;
   time: string;
 }
 
@@ -64,9 +69,11 @@ async function seedBlockedPromptsFromClickHouse(userId: number): Promise<void> {
     negativePrompt: string;
     source: string;
     remixOfId: number | null;
+    inputImages: string[];
+    inputVideo: string | null;
     time: string;
   }>`
-    SELECT prompt, negativePrompt, source, remixOfId, time
+    SELECT prompt, negativePrompt, source, remixOfId, inputImages, inputVideo, time
     FROM prohibitedRequests
     WHERE time > subtractDays(now(), ${BLOCKED_PROMPTS_WINDOW_DAYS}) AND userId = ${userId}
     ORDER BY time ASC
@@ -87,6 +94,8 @@ async function seedBlockedPromptsFromClickHouse(userId: number): Promise<void> {
         matchedRegex: undefined,
         imageId: null,
         remixOfId: row.remixOfId ?? null,
+        inputImages: row.inputImages?.length ? row.inputImages : undefined,
+        inputVideo: row.inputVideo || undefined,
         time: row.time,
       };
       await sysRedis.rPush(key, JSON.stringify(entry));
@@ -112,7 +121,14 @@ async function getBlockedPromptCount(userId: number): Promise<number> {
 /** Add a blocked prompt and return the new count */
 async function addBlockedPrompt(userId: number, entry: BlockedPromptEntry): Promise<number> {
   const key = getBlockedPromptsKey(userId);
-  const exists = await sysRedis.exists(key);
+  // SAFETY-SENSITIVE: this runs only AFTER a prompt is flagged (inside
+  // auditPromptServer's catch), on the way to auto-mute accounting. A sysRedis
+  // error MUST keep propagating so auditPromptServer fails CLOSED (the generation
+  // request aborts) rather than silently proceeding — do NOT add a fail-open catch.
+  // The deadline only BOUNDS a silent half-open (which would otherwise park each
+  // awaited read ~11min): it rejects at ~2s, preserving the same fail-closed
+  // direction. See STEP-6 report's promptAuditing note.
+  const exists = await withSysReadDeadline(sysRedis.exists(key));
 
   if (!exists) {
     await seedBlockedPromptsFromClickHouse(userId);
@@ -124,19 +140,30 @@ async function addBlockedPrompt(userId: number, entry: BlockedPromptEntry): Prom
 
   // If the seeded list was just a reset marker, drop the marker now that we
   // have a real entry. Using lRem (not del) preserves the TTL set by the seed.
-  const currentEntries = (await sysRedis.lRange(key, 0, -1)).map((e) => decodeRedisString(e));
+  const currentEntries = (await withSysReadDeadline(sysRedis.lRange(key, 0, -1))).map((e) =>
+    decodeRedisString(e)
+  );
   if (currentEntries.includes(RESET_MARKER)) {
     await sysRedis.lRem(key, 0, RESET_MARKER);
   }
 
   // Marker has been removed above, so lLen now equals the real violation count.
-  return await sysRedis.lLen(key);
+  return await withSysReadDeadline(sysRedis.lLen(key));
 }
 
 /** Get all blocked prompts (excludes reset marker) */
 async function getBlockedPrompts(userId: number): Promise<BlockedPromptEntry[]> {
   const key = getBlockedPromptsKey(userId);
-  const entries = (await sysRedis.lRange(key, 0, -1)).map((e) => decodeRedisString(e));
+  // Park-bounding only. This read is on the auto-mute sub-path — called from
+  // reportProhibitedRequest INSIDE its `try { … } catch (banError)` block, so a
+  // throw here is caught there (auto-mute is skipped + logged as
+  // `user-ban-creation-error`; the current prompt is still blocked upstream).
+  // Deadline the read so a silent half-open rejects at ~2s instead of parking
+  // ~11min; we add no fail-open catch of our own — the existing banError handler
+  // already bounds the blast to "mute skipped this once."
+  const entries = (await withSysReadDeadline(sysRedis.lRange(key, 0, -1))).map((e) =>
+    decodeRedisString(e)
+  );
   return entries
     .filter((e) => e !== RESET_MARKER)
     .map((entry) => JSON.parse(entry) as BlockedPromptEntry);
@@ -210,6 +237,8 @@ export interface AuditPromptOptions {
   track?: any; // Tracker
   imageId?: number; // Source image ID when triggered during a remix
   remixOfId?: number; // The original image being remixed
+  inputImages?: string[]; // Base/source image URLs attached to the job
+  inputVideo?: string; // Source video URL (vid2vid)
 }
 
 /**
@@ -224,8 +253,18 @@ export interface AuditPromptOptions {
  * - Tracks blocked attempts and escalates warnings based on user's violation count
  */
 export async function auditPromptServer(options: AuditPromptOptions): Promise<void> {
-  const { prompt, negativePrompt, userId, isGreen, isModerator, track, imageId, remixOfId } =
-    options;
+  const {
+    prompt,
+    negativePrompt,
+    userId,
+    isGreen,
+    isModerator,
+    track,
+    imageId,
+    remixOfId,
+    inputImages,
+    inputVideo,
+  } = options;
 
   // Skip auditing if prompt is empty (will be caught by validation elsewhere)
   if (!prompt || !prompt.trim()) {
@@ -303,6 +342,8 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
         matchedWord: error.triggers[0]?.matchedWord,
         imageId: imageId ?? null,
         remixOfId: remixOfId ?? null,
+        inputImages,
+        inputVideo,
         time: new Date().toISOString(),
       };
 
@@ -319,6 +360,8 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
         source,
         count,
         remixOfId,
+        inputImages,
+        inputVideo,
       });
 
       // civitai.com/civitai.red - standard escalating warnings
@@ -352,8 +395,21 @@ async function reportProhibitedRequest(options: {
   source: string;
   count: number;
   remixOfId?: number;
+  inputImages?: string[];
+  inputVideo?: string;
 }) {
-  const { prompt, negativePrompt, userId, isModerator, track, source, count, remixOfId } = options;
+  const {
+    prompt,
+    negativePrompt,
+    userId,
+    isModerator,
+    track,
+    source,
+    count,
+    remixOfId,
+    inputImages,
+    inputVideo,
+  } = options;
 
   // Track the prohibited request in ClickHouse (audit log only)
   if (track) {
@@ -363,6 +419,8 @@ async function reportProhibitedRequest(options: {
         negativePrompt: negativePrompt ?? '{error capturing negativePrompt}',
         source,
         remixOfId,
+        inputImages,
+        inputVideo,
       });
     } catch {
       // Continue with muting even if tracking fails

@@ -147,4 +147,49 @@ describe('device-token +server — AppBlocksSubmit scope survives into the minte
     expect(((await res.json()) as { error: string }).error).toBe('invalid_grant');
     expect(h.createPair).not.toHaveBeenCalled();
   });
+
+  // The opt-in AppBlocksDevTunnel bit (1<<26, EXCLUDED from Full) must survive the
+  // ALL_SCOPES bound + per-client allowedScopes intersection when the widened
+  // civitai-cli client requests it — the migration that widens allowedScopes is what
+  // makes this pass in prod. Mirrors the AppBlocksSubmit coverage above.
+  const WIDENED_CLI_SCOPE =
+    TokenScope.UserRead | TokenScope.AppBlocksSubmit | TokenScope.AppBlocksDevTunnel; // 100663297
+
+  it('mints a token carrying AppBlocksDevTunnel when the widened client allows it', async () => {
+    h.hGet.mockResolvedValueOnce({ ...approvedCode, scope: WIDENED_CLI_SCOPE.toString() });
+    h.clientRow = { allowedScopes: WIDENED_CLI_SCOPE }; // civitai-cli AFTER the widen migration
+
+    const res = await POST(
+      makeEvent({
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        device_code: 'devcode',
+        client_id: 'civitai-cli',
+      })
+    );
+
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as Record<string, unknown>;
+    expect(json.scope).toBe(WIDENED_CLI_SCOPE.toString());
+    // bit 26 survived the bound + intersection into the minted token pair.
+    expect(h.createPair).toHaveBeenCalledWith(7, 'civitai-cli', WIDENED_CLI_SCOPE);
+  });
+
+  it('rejects with invalid_scope when the client allowedScopes does NOT include AppBlocksDevTunnel', async () => {
+    h.hGet.mockResolvedValueOnce({ ...approvedCode, scope: WIDENED_CLI_SCOPE.toString() });
+    // Pre-widen client: allows UserRead|AppBlocksSubmit but NOT the DevTunnel bit —
+    // this is exactly the state that 400s `civitai login` if the CLI ships before the migration.
+    h.clientRow = { allowedScopes: CLI_SCOPE };
+
+    const res = await POST(
+      makeEvent({
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        device_code: 'devcode',
+        client_id: 'civitai-cli',
+      })
+    );
+
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_scope');
+    expect(h.createPair).not.toHaveBeenCalled();
+  });
 });

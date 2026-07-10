@@ -52,6 +52,71 @@ const featureFlags = createFeatureFlags({
   apiKeys: ['public'],
   apiKeyBuzzLimit: { availability: ['mod'], fliptKey: 'api-key-buzz-limit' },
   oauthApps: { availability: ['mod'], fliptKey: 'oauth-apps' },
+  // Faro RUM frontend observability. Default OFF (mods only); widen the cohort via
+  // Flipt (`faro`). Runtime kill-switch for the Faro Web SDK — the FaroProvider only
+  // initialises when this flag is on AND the NEXT_PUBLIC_FARO_* build-args are set.
+  faro: { availability: ['mod'], fliptKey: 'faro' },
+  // Cohort-ramp gate for the Faro resource_timing decomposition. SEPARATE from `faro` so the
+  // network-phase measurements can be ramped by % of users at runtime (via Flipt) independently
+  // of the main RUM signals — the FaroProvider includes ResourceTimingInstrumentation only when
+  // this flag is on AND the NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED build-arg is set.
+  // availability ['mod'] is the Flipt-DOWN fallback (mirrors `faro`); Flipt is authoritative
+  // when the flag exists — ramp by bumping its % rollout, never all-at-once.
+  faroResourceTiming: { availability: ['mod'], fliptKey: 'faro-resource-timing' },
+  // Cohort-ramp gate for tRPC request batching (httpBatchStreamLink). Default OFF
+  // (mods only) so batching is dark until ramped via Flipt (`trpc-batching`). Batching
+  // is applied ONLY to AUTHENTICATED-browser queries — anonymous tRPC GETs stay
+  // unbatched so they remain CF edge-cacheable (verified: anon `model.getAll` GET
+  // returns cf-cache-status HIT with s-maxage=60; authed requests have edgeTTL forced
+  // to 0 in createContext, so batching them loses no edge cache). availability ['mod']
+  // is the Flipt-DOWN fallback (mirrors `faro`); Flipt is authoritative when the flag
+  // exists — ramp by bumping its % rollout, never all-at-once. See `src/utils/trpc.ts`.
+  trpcBatching: { availability: ['mod'], fliptKey: 'trpc-batching' },
+  // Feed-page CLS fix. Reserves vertical space for the above-feed announcements
+  // banner during the pre-hydration window so the isClient-gated / dynamically
+  // imported carousel mount doesn't shove the (very tall) masonry feed down — the
+  // shift production RUM attributes to `MasonryContainer .queries`, which is the
+  // DISPLACED VICTIM (largest moved element), not the cause. Default OFF (mods
+  // only = the Flipt-DOWN fallback); ramp a % of ALL
+  // users via Flipt (`feed-reserve-cls`) as a THRESHOLD rollout — CLS is an
+  // all-user route metric, so a mod cohort can't move the aggregate. Purely
+  // cosmetic space reservation (worst case = a little dead space, never a
+  // functional break), so flipping the flag off is an instant, safe rollback.
+  feedReserveCls: { availability: ['mod'], fliptKey: 'feed-reserve-cls' },
+  // Perf: emit the COMPACT wire shape for `hiddenPreferences.getHidden` (id-only
+  // arrays for the model / model3d / explicit-image sets instead of
+  // `{ id, hidden: true }` objects). `getHidden` returns a user's ENTIRE hidden
+  // set; for a whale it superjson-serializes ~12.4MB / ~1.15s SYNCHRONOUSLY on
+  // every response (incl. cache hits) — the single worst event-loop freeze in
+  // the `trpc-response-oversized` dataset (twin of `user.getEngagedModels`). The
+  // client re-expands to the legacy shape so downstream data is identical —
+  // BUT ONLY a client bundle that ships with this PR (which contains
+  // `expandHiddenPreferences`). A PRE-PR bundle reads the compact `number[]` as
+  // `{ id }[]`, gets `x.id === undefined`, and UN-HIDES the user's entire hidden
+  // set (incl. NSFW/moderated) until a hard reload.
+  //
+  // 🔴 RAMP DISCIPLINE: `availability: []` = DARK by default and FAILS CLOSED
+  // (empty availability → static eval false when Flipt is absent/down), so the
+  // Flipt `hidden-prefs-compact` threshold is the ONLY on-switch. NOT `['mod']`:
+  // that would turn compact ON for every mod the instant the server deploys,
+  // while their tabs may still run the OLD bundle → guaranteed un-hide exposure
+  // window on every deploy. Deploy dark, CONFIRM the new bundle is serving
+  // everywhere (hours — see the SPA-cache rollout pattern), THEN ramp the Flipt
+  // threshold; never ramp during/immediately-after a deploy. Instant rollback =
+  // set the threshold to 0. Verify via
+  // `trpc-response-oversized {path="hiddenPreferences.getHidden"}` serializeMs tail.
+  // (Mirrors the `genTabDeferView` / `coinbasePayments` `availability: []` precedent.)
+  hiddenPrefsCompact: { availability: [], fliptKey: 'hidden-prefs-compact' },
+  // Perf experiment: defer the generation-tab-switch remount (useDeferredValue) to fix
+  // mobile INP (p75 ~304ms, dominant phase = processing_duration; the gen-tab switch is
+  // the single hottest interaction). `availability: []` = DARK by default and fails CLOSED when
+  // the Flipt flag is absent or Flipt is down (empty availability → static eval false), so the
+  // deferral only turns on via the Flipt `gen-tab-defer-view` THRESHOLD rollout — a clean all-user
+  // A/B with NO mod segment (a mod cohort contaminated a prior A/B). NOT `['public']`: that would
+  // fail OPEN (true for 100% of users) whenever the Flipt key is missing/unreachable, defeating
+  // the A/B (no flag-off cohort) and shipping the deferral fleet-wide unmeasured. OFF =
+  // byte-identical to today. Measured via RUM `exp_gen_tab_defer_view`. Instant safe rollback.
+  genTabDeferView: { availability: [], fliptKey: 'gen-tab-defer-view' },
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },
@@ -97,6 +162,11 @@ const featureFlags = createFeatureFlags({
     availability: ['public'],
     fliptKey: 'enhanced-compatibility-sdcpp',
   },
+  // Anima ControlNet kill-switch. Default ON (public + fail-open when Flipt is
+  // down); the `anima-controlnet` Flipt flag is the lever — flip it OFF to hide
+  // the Anima ControlNet input (and strip controlNets server-side) without a
+  // deploy if the orchestrator side misbehaves.
+  animaControlnet: { availability: ['public'], fliptKey: 'anima-controlnet' },
   questions: ['dev', 'mod'],
   imageGeneration: ['public'],
   largerGenerationImages: {
@@ -154,8 +224,6 @@ const featureFlags = createFeatureFlags({
   csamReports: isDev ? ['mod'] : ['granted'],
   appealReports: isDev ? ['mod'] : ['granted'],
   reviewTrainingData: isDev ? ['mod'] : ['granted'],
-  clubs: ['mod'],
-  createClubs: ['mod', 'granted'],
   moderateTags: ['granted'],
   chat: {
     toggleable: true,
@@ -229,6 +297,12 @@ const featureFlags = createFeatureFlags({
   // Both mod-only at launch; Flipt key allows broadening without a code change.
   model3dFeed: { availability: ['mod'], fliptKey: 'model3d-feed' },
   model3dGenerator: { availability: ['mod'], fliptKey: 'model3d-generator' },
+  // Per-model 3D generator gates, layered UNDER `model3dGenerator` (which gates
+  // the whole 3D surface). Let Tripo & Hunyuan3D ship dark and roll out
+  // independently of Meshy (PolyGen) via Flipt. Off ⇒ the ecosystem is hidden
+  // from the img2model3d picker and rejected on submit (see ecosystem-graph.ts).
+  tripoGenerator: { availability: ['mod'], fliptKey: 'tripo-generator' },
+  hunyuan3dGenerator: { availability: ['mod'], fliptKey: 'hunyuan3d-generator' },
   // Retool privileged endpoints — `granted` means the moderator must carry the
   // matching permission key in user.permissions. Endpoints lookup the key
   // directly from `RetoolAction.privileged`, so the permission name MUST stay
@@ -239,6 +313,16 @@ const featureFlags = createFeatureFlags({
   // default until we ship publisher install UX + moderator approval workflow.
   // When off, BlockSlot renders nothing and no token-issuance traffic fires.
   appBlocks: { availability: ['mod'], fliptKey: 'app-blocks-enabled' },
+  // App Blocks W13 — dedicated App Store VISIBILITY flag, decoupled from
+  // `app-blocks-enabled` (which doubles as the block-runtime kill-switch) so the
+  // store catalog can widen to public INDEPENDENTLY of the held block-runtime GA.
+  // Store-visibility surfaces gate on `appListings || appBlocks` (client) /
+  // `isAppListingsEnabled()` which falls back to `isAppBlocksEnabled()` (server),
+  // so while the `app-listings` Flipt flag does not yet exist this resolves via
+  // the `availability: ['mod']` Flipt-down fallback (mods only) + the OR-fallback
+  // to `app-blocks-enabled` — i.e. ZERO behavior change today (the currently
+  // mod+app-dev-testers cohort keeps identical store access).
+  appListings: { availability: ['mod'], fliptKey: 'app-listings' },
   // App Blocks W10 — full-page apps (`/apps/run/<slug>`). A SEPARATE dark flag
   // so the page surface enables independently of the master `app-blocks-enabled`
   // gate. The page route + page-token mint require BOTH `appBlocks` AND

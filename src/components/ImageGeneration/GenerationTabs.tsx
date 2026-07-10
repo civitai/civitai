@@ -13,7 +13,7 @@ import { Queue } from './Queue';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { ForwardRefExoticComponent, RefAttributes } from 'react';
-import React, { useEffect, useMemo } from 'react';
+import React, { useDeferredValue, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
 import { GeneratedRequestsProvider } from '~/components/ImageGeneration/GeneratedRequestsProvider';
@@ -66,6 +66,19 @@ function GenerationTabsContent({ fullScreen }: { fullScreen?: boolean }) {
     if (isImageFeedSeparate && view === 'generate') generationGraphPanel.setView('queue');
   }, [isImageFeedSeparate, view]);
 
+  // Perf experiment: defer the generation-tab-switch remount to fix mobile INP.
+  // Switching tabs swaps `View` to a DIFFERENT component, so React synchronously
+  // unmounts the whole GenerationFormV2 tree and mounts Queue/Feed inside the tap's
+  // onChange handler (~1s of processing_duration counted against INP). `useDeferredValue`
+  // moves that heavy remount off the urgent path; the SegmentedControl highlight stays on
+  // the live `view` for instant tap feedback. startTransition does NOT work here — zustand
+  // external-store updates via useSyncExternalStore are always urgent and can't be deferred.
+  // Flag OFF => contentView === view => behavior is byte-identical to today.
+  // Measured via RUM `session_attr_exp_gen_tab_defer_view` mobile-INP A/B.
+  const deferGenTabView = features.genTabDeferView;
+  const deferredView = useDeferredValue(view);
+  const contentView = deferGenTabView ? deferredView : view;
+
   const GenerationFormComponent = GenerationFormV2;
 
   const tabs = useMemo<Tabs>(
@@ -89,9 +102,9 @@ function GenerationTabsContent({ fullScreen }: { fullScreen?: boolean }) {
     [GenerationFormComponent]
   );
 
-  const View = isImageFeedSeparate ? tabs.generate.Component : tabs[view].Component;
+  const View = isImageFeedSeparate ? tabs.generate.Component : tabs[contentView].Component;
   // The Queue/Feed views share one workflow fetch + selection order via the provider.
-  const showResults = !isImageFeedSeparate && view !== 'generate';
+  const showResults = !isImageFeedSeparate && contentView !== 'generate';
   const tabEntries = Object.entries(tabs).filter(([key]) =>
     isImageFeedSeparate ? key !== 'generate' : true
   );
@@ -201,7 +214,7 @@ function GenerationTabsContent({ fullScreen }: { fullScreen?: boolean }) {
             />
           </div>
         </div>
-        {view !== 'generate' && !isGeneratePage && <GeneratedImageActions />}
+        {contentView !== 'generate' && !isGeneratePage && <GeneratedImageActions />}
       </div>
       {showResults ? (
         <GeneratedRequestsProvider>

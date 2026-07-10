@@ -171,7 +171,6 @@ export const getArticles = async ({
   ids,
   collectionId,
   followed,
-  clubId,
   pending,
   browsingLevel,
   include,
@@ -188,23 +187,13 @@ export const getArticles = async ({
     const isOwnerRequest =
       !!sessionUser?.username &&
       postgresSlugify(sessionUser.username) === postgresSlugify(username);
-    // TODO.clubs: This is temporary until we are fine with displaying club stuff in public feeds.
-    // At that point, we should be relying more on unlisted status which is set by the owner.
     const hidePrivateArticles =
-      !ids &&
-      !clubId &&
-      !username &&
-      !collectionId &&
-      !followed &&
-      !hidden &&
-      !favorites &&
-      !userIds;
+      !ids && !username && !collectionId && !followed && !hidden && !favorites && !userIds;
 
     const AND: Prisma.Sql[] = [];
-    const WITH: Prisma.Sql[] = [];
 
     if (query) {
-      AND.push(Prisma.raw(`a."title" ILIKE '%${query}%'`));
+      AND.push(Prisma.sql`a."title" ILIKE ${'%' + query + '%'}`);
     }
     if (!!tags?.length) {
       AND.push(
@@ -285,7 +274,7 @@ export const getArticles = async ({
         }
       }
       if (!!excludedUserIds?.length) {
-        AND.push(Prisma.sql`a."userId" NOT IN (${Prisma.join(excludedUserIds, ',')})`);
+        AND.push(Prisma.sql`a."userId" != ALL(${excludedUserIds}::int[])`);
       }
       if (!!excludedIds?.length) {
         AND.push(Prisma.sql`a.id NOT IN (${Prisma.join(excludedIds, ',')})`);
@@ -407,35 +396,13 @@ export const getArticles = async ({
       )`);
     }
 
-    if (clubId) {
-      WITH.push(Prisma.sql`
-      "clubArticles" AS (
-        SELECT DISTINCT ON (a."id") a."id" as "articleId"
-        FROM "EntityAccess" ea
-        JOIN "Article" a ON a."id" = ea."accessToId"
-        LEFT JOIN "ClubTier" ct ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = ct."id" AND ct."clubId" = ${clubId}
-        WHERE (
-            (
-             ea."accessorType" = 'Club' AND ea."accessorId" = ${clubId}
-            )
-            OR (
-              ea."accessorType" = 'ClubTier' AND ct."clubId" = ${clubId}
-            )
-          )
-          AND ea."accessToType" = 'Article'
-      )
-    `);
-    }
-    const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
     const queryFrom = Prisma.sql`
       FROM "Article" a
       LEFT JOIN "User" u ON a."userId" = u.id
       LEFT JOIN "ArticleRank" rank ON rank."articleId" = a.id
-      ${clubId ? Prisma.sql`JOIN "clubArticles" ca ON ca."articleId" = a."id"` : Prisma.sql``}
       WHERE ${Prisma.join(AND, ' AND ')}
     `;
     const articles = await dbRead.$queryRaw<(ArticleRaw & { cursorV: number })[]>`
-      ${queryWith}
       SELECT
         a.id,
         a.cover,
@@ -2814,9 +2781,7 @@ export async function resolveArticleRatingReview({
     }
 
     const derivedStatus =
-      appliedLevel === reviewRow.suggestedLevel
-        ? ReportStatus.Actioned
-        : ReportStatus.Unactioned;
+      appliedLevel === reviewRow.suggestedLevel ? ReportStatus.Actioned : ReportStatus.Unactioned;
 
     const claim = await tx.articleRatingReview.updateMany({
       where: { id: reviewId, status: ReportStatus.Pending },
@@ -2847,7 +2812,8 @@ export async function resolveArticleRatingReview({
     // genuinely drops below this basis (see evaluateAutoApproveGate gate #6).
     // A mod actioning above the images encodes judgment the scanners can't
     // reproduce; the basis is what keeps that from being auto-erased.
-    const moderatorNsfwLevelBasis = (await computeArticleDerivedNsfwLevel(reviewRow.articleId)) ?? 0;
+    const moderatorNsfwLevelBasis =
+      (await computeArticleDerivedNsfwLevel(reviewRow.articleId)) ?? 0;
 
     // Write `moderatorNsfwLevel` (override signal), `nsfwLevel` (effective
     // level) and the basis snapshot in a single update. The CTE in

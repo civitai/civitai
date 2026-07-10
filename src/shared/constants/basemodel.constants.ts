@@ -195,6 +195,8 @@ export const ECO = {
   //   (main-line); bumped again to 73 to dodge Ideogram (main-line, also
   //   landed on 72). Same renumber-cascade as BM.PolyGen (see BM block).
   PolyGen: 73,
+  Tripo: 75,
+  Hunyuan3D: 76,
 
   // Utility ecosystems
   Upscaler: 66,
@@ -778,10 +780,36 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'PolyGen (Meshy)',
     sortOrder: 301,
   },
+  {
+    id: ECO.Tripo,
+    key: 'Tripo',
+    displayName: 'Tripo',
+    sortOrder: 302,
+  },
+  {
+    id: ECO.Hunyuan3D,
+    key: 'Hunyuan3D',
+    displayName: 'Hunyuan3D',
+    sortOrder: 303,
+  },
 ];
 
 export const ecosystemById = new Map(ecosystems.map((e) => [e.id, e]));
 export const ecosystemByKey = new Map(ecosystems.map((e) => [e.key, e]));
+
+/**
+ * Ecosystems whose generation output is a 3D model (`polyGen` step). These
+ * share the `model3d` output type, are resource-less, and are enumerated
+ * explicitly because the Prisma `MediaType` enum has no `model3d` variant
+ * (their `BaseModelRecord`s register as `type: 'image'`). Single source of
+ * truth for the 3D ecosystem picker filter in `getEcosystemDisplayItems`.
+ */
+export const MODEL3D_ECOSYSTEM_IDS = new Set<number>([ECO.PolyGen, ECO.Tripo, ECO.Hunyuan3D]);
+
+/** Ecosystem keys for the 3D-model ecosystems (`model3d` output). */
+export const MODEL3D_ECOSYSTEM_KEYS = new Set<string>(
+  [...MODEL3D_ECOSYSTEM_IDS].map((id) => ecosystemById.get(id)?.key).filter((k): k is string => !!k)
+);
 
 /**
  * Ecosystem keys whose generation routes to Civitai-hosted GPUs/workers rather
@@ -834,6 +862,8 @@ export const SELF_HOSTED_ECOSYSTEM_KEYS = [
   'LTXV23',
   // AceStepAudioInput
   'Ace',
+  // Hunyuan3dComfyPolyGenInput (3D; Meshy/Tripo are FAL and stay external)
+  'Hunyuan3D',
 ] as const;
 
 const selfHostedEcosystemKeySet = new Set<string>(SELF_HOSTED_ECOSYSTEM_KEYS);
@@ -1051,6 +1081,12 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // entry exists so the unified generator picker can route 3D-Models workflows
   // and the dev-time `getEcosystemSupport` audit in workflows.ts stays clean.
   { ecosystemId: ECO.PolyGen, supportType: 'generation', modelTypes: [] },
+
+  // Tripo / Hunyuan3D - remote 3D generators (Fal / Comfy). Like PolyGen, no
+  // Civitai checkpoint/LoRA; entries exist so the unified generator picker can
+  // route the img2model3d workflow to these ecosystems.
+  { ecosystemId: ECO.Tripo, supportType: 'generation', modelTypes: [] },
+  { ecosystemId: ECO.Hunyuan3D, supportType: 'generation', modelTypes: [] },
 
   // Upscaler - upscaler models only
   { ecosystemId: ECO.Upscaler, supportType: 'generation', modelTypes: [ModelType.Upscaler] },
@@ -1364,7 +1400,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.Seedream,
     defaults: {
-      model: { id: 2208278 },
+      model: { id: 3110984 },
       modelLocked: true,
     },
   },
@@ -1936,6 +1972,8 @@ export const BM = {
   // MAI (main-line), then bumped again to 92 on the main merge to dodge
   // Ideogram (also main-line).
   PolyGen: 92,
+  Tripo: 94,
+  Hunyuan3D: 95,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -3214,6 +3252,24 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.PolyGen,
     hidden: true,
   },
+  // Tripo / Hunyuan3D — remote image-to-3D generators. Same `type: 'image'`,
+  // resource-less, hidden-from-picker convention as PolyGen above.
+  {
+    id: BM.Tripo,
+    name: 'Tripo',
+    description: 'Tripo image-to-3D generation (via Fal)',
+    type: 'image',
+    ecosystemId: ECO.Tripo,
+    hidden: true,
+  },
+  {
+    id: BM.Hunyuan3D,
+    name: 'Hunyuan3D',
+    description: 'Hunyuan3D image-to-3D generation (via Comfy)',
+    type: 'image',
+    ecosystemId: ECO.Hunyuan3D,
+    hidden: true,
+  },
 ];
 
 export const baseModelById = new Map(baseModelRecords.map((m) => [m.id, m]));
@@ -3942,7 +3998,7 @@ export function getEcosystemDisplayItems(
   const outputTypeEcosystems = !outputType
     ? null
     : outputType === 'model3d'
-    ? new Set(ecosystems.filter((e) => e.id === ECO.PolyGen).map((e) => e.key))
+    ? new Set(ecosystems.filter((e) => MODEL3D_ECOSYSTEM_IDS.has(e.id)).map((e) => e.key))
     : new Set(getGenerationEcosystemsForMediaType(outputType));
 
   const groupedEcosystemIds = new Set(ecosystemGroups.flatMap((g) => g.ecosystemIds));

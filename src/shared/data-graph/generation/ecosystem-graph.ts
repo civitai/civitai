@@ -30,6 +30,7 @@ import {
 } from './config';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import {
   pickStrongerGate,
   rulesToStates,
@@ -73,6 +74,8 @@ import { seedanceGraph } from './seedance-graph';
 import { happyHorseGraph } from './happy-horse-graph';
 import { aceAudioGraph } from './ace-audio-graph';
 import { polyGenGraph } from './polygen-graph';
+import { tripoGraph } from './tripo-graph';
+import { hunyuan3dGraph } from './hunyuan3d-graph';
 
 // =============================================================================
 // Helper Functions
@@ -122,8 +125,20 @@ function getValidEcosystemForWorkflow(workflowId: string, currentValue?: string)
 
 type EcosystemGateExt = Pick<
   GenerationCtx,
-  'selfHostedDisabledEcosystems' | 'selfHostedMode' | 'gateRules'
+  'selfHostedDisabledEcosystems' | 'selfHostedMode' | 'gateRules' | 'flags'
 >;
+
+/**
+ * Ecosystems hidden unless their feature flag is explicitly enabled — the deploy
+ * gate for newer generators. Fail-closed: an absent/false flag hides the
+ * ecosystem from the picker (client) and rejects it on submit (server). Meshy
+ * (PolyGen) is intentionally NOT here — it rides the workflow-level
+ * `model3dGenerator` gate like the original 3D launch.
+ */
+const FEATURE_FLAG_GATED_ECOSYSTEMS: Array<{ key: string; flag: keyof FeatureAccess }> = [
+  { key: 'Tripo', flag: 'tripoGenerator' },
+  { key: 'Hunyuan3D', flag: 'hunyuan3dGenerator' },
+];
 
 /**
  * Resolve the unified gate state for the workflow's ecosystems. Folds the gate
@@ -155,6 +170,14 @@ function getEcosystemStates(
     states.set(key, pickStrongerGate(states.get(key), { state: selfHostedState }));
   for (const [key, res] of rulesToStates(ext.gateRules ?? []).ecosystems)
     states.set(key, pickStrongerGate(states.get(key), res));
+
+  // Feature-flag deploy gate — hide any flag-gated ecosystem whose flag isn't
+  // explicitly on (fail-closed). `ext.flags` is populated on the client from
+  // FeatureFlagsProvider and on the server from `buildGenerationContext`.
+  for (const { key, flag } of FEATURE_FLAG_GATED_ECOSYSTEMS) {
+    if (ext.flags?.[flag] !== true)
+      states.set(key, pickStrongerGate(states.get(key), { state: 'hidden' }));
+  }
 
   const hiddenEcosystems = [...states].filter(([, r]) => r.state === 'hidden').map(([key]) => key);
   const hiddenSet = new Set(hiddenEcosystems);
@@ -399,6 +422,11 @@ export const ecosystemGraph = new DataGraph<
     // PolyGen graph lives in `GenerationForm.tsx`, auto-hidden via Controller
     // when the active ecosystem isn't PolyGen (same pattern as ACE audio).
     { values: ['PolyGen'] as const, graph: polyGenGraph },
+    // Tripo (via Fal) + Hunyuan3D (via Comfy) — image-to-3D only. Field
+    // rendering lives in `GenerationForm.tsx`, auto-hidden via Controller when
+    // the active ecosystem isn't the matching one (same pattern as PolyGen).
+    { values: ['Tripo'] as const, graph: tripoGraph },
+    { values: ['Hunyuan3D'] as const, graph: hunyuan3dGraph },
   ])
   // Enhanced compatibility mode - txt2img only, supported ecosystems, hidden for Flux Ultra
   .node(

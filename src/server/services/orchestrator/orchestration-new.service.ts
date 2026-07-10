@@ -46,7 +46,13 @@ import {
 } from '~/server/services/generation/generation.service';
 import { applicableRulesFor } from '~/shared/data-graph/generation/gates';
 import type { GenerationResource } from '~/shared/types/generation.types';
-import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import {
+  redis,
+  REDIS_KEYS,
+  REDIS_SYS_KEYS,
+  sysRedis,
+  withSysReadDeadline,
+} from '~/server/redis/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
@@ -169,7 +175,7 @@ type EcosystemGraphOutput = Extract<GenerationGraphOutput, { ecosystem: string }
  * A Map that throws an error when getting a value that doesn't exist.
  * Used for AIR lookups where a missing value indicates a data problem.
  */
-class StrictAirMap extends Map<number, string> {
+export class StrictAirMap extends Map<number, string> {
   /**
    * Gets the AIR string for a resource ID.
    * @throws Error if the resource ID is not found in the map.
@@ -177,7 +183,15 @@ class StrictAirMap extends Map<number, string> {
   getOrThrow(resourceId: number): string {
     const air = this.get(resourceId);
     if (!air) {
-      throw new Error(
+      // A missing AIR means the submitted form data references a resource that did
+      // NOT enrich (a deleted/unavailable resource, or a form↔enrichment mismatch)
+      // — a CLIENT/DATA fault, not a server failure. Throw a BAD_REQUEST TRPCError
+      // (via throwBadRequestError) so `classifyErrorFault` treats it as a client
+      // fault → logged at info, surfaced as HTTP 400 — instead of a plain Error that
+      // tRPC wraps into a generic INTERNAL_SERVER_ERROR (500). This was ~10% of the
+      // orchestrator.whatIfFromGraph / generateFromGraph 500s (the loudest single
+      // instance being the dead resource 3005242). Message preserved verbatim.
+      throw throwBadRequestError(
         `AIR not found for resource ID ${resourceId}. ` +
           `This indicates a mismatch between form data and enriched resources.`
       );
@@ -230,7 +244,11 @@ async function getGenerationStatus(): Promise<GenerationStatus> {
   // Fail open: a sysRedis outage shouldn't crash generation context build.
   let raw: string | null | undefined;
   try {
-    raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS);
+    // Wall-clock deadline so a silent sysRedis half-open can't park this read
+    // (runs while building the generation context) ~11min.
+    raw = await withSysReadDeadline(
+      sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS)
+    );
   } catch (err) {
     logSysRedisFailOpen('defaults-firing', 'getGenerationStatus orchestration-new', err);
     raw = undefined;
@@ -486,6 +504,13 @@ function normalizeVideoWorkflow(input: Record<string, unknown>): Record<string, 
  * Handles txt2img ↔ img2img:edit and video workflow corrections.
  */
 function normalizeInput(input: Record<string, unknown>): Record<string, unknown> {
+  // Back-compat: older stored/remixed inputs carry a singular `sourceImage`;
+  // fold it into `images[]` so normalization and the graph nodes see one shape.
+  if (input.sourceImage && !input.images) {
+    const { sourceImage, ...rest } = input;
+    input = { ...rest, images: [sourceImage] };
+  }
+
   // Resolve workflow variants to their base workflow before processing.
   // e.g., 'img2vid:first-last' → 'img2vid' so handlers don't need to know about variants.
   const config = workflowConfigByKey.get(input.workflow as string);
@@ -685,6 +710,9 @@ async function createImagePreprocessInput(
 const STEP_TYPES_WITHOUT_IMAGE_METADATA: readonly string[] = [
   'promptEnhancement',
   'chatCompletion',
+  // Renders a 2D preview of a prior polyGen mesh — its input has no image to
+  // tag, so injecting imageMetadata would only pollute the request payload.
+  'model3DPreview',
 ];
 
 function withImageMetadata(input: object, type: string, imageMetadata: string): object {
@@ -1016,122 +1044,122 @@ export async function createWorkflowStepsFromGraph({
   // workflow-level metadata, and the extra tags from the resolved data.
   // Return the assembled result directly as this function's result so the span
   // wraps the whole assembly and no fragile re-destructure/rename is needed.
-  return withSpan(
-    'gen:createSteps:assemble',
-    async () => {
-      const steps: StepInput[] = [];
-      for (const overlay of overlays) {
-        const isSnippetVariant = !isEmptyObject(overlay);
-        const variantData = isSnippetVariant
-          ? ({ ...resolvedData, ...overlay } as typeof resolvedData)
-          : resolvedData;
-        const variantStepMetadata = isSnippetVariant
-          ? buildVariantStepMetadata(variantData, computedKeys)
-          : stepMetadata;
+  return withSpan('gen:createSteps:assemble', async () => {
+    const steps: StepInput[] = [];
+    for (const overlay of overlays) {
+      const isSnippetVariant = !isEmptyObject(overlay);
+      const variantData = isSnippetVariant
+        ? ({ ...resolvedData, ...overlay } as typeof resolvedData)
+        : resolvedData;
+      const variantStepMetadata = isSnippetVariant
+        ? buildVariantStepMetadata(variantData, computedKeys)
+        : stepMetadata;
 
-        // Advance baseStepIndex per variant so cross-step `$ref` objects (e.g.
-        // preprocess → gen wiring inside controlnet handlers) resolve to the
-        // correct global step position after concatenation.
-        const variantSteps = await createStepInputs(
-          variantData,
-          { ...handlerCtx, baseStepIndex: steps.length },
-          {
-            stepMetadata: variantStepMetadata,
-            isWhatIf,
-            sourceCtx,
-          }
-        );
-
-        // Per-step metadata for snippet variants records ONLY the substituted
-        // snippet-target fields (e.g. `prompt`, `negativePrompt`) — a small DELTA — in
-        // `params`, plus `partialParams: true` to flag it as such. The workflow-level
-        // metadata already carries the full template + params snapshot, so we keep the
-        // per-step payload tiny (no full params duplicated per variant) and let the
-        // client spread the delta over the workflow params when reading.
-        // See docs/generation-metadata-architecture.md.
-        if (isSnippetVariant) {
-          for (const step of variantSteps) {
-            const existingMeta = (step.metadata ?? {}) as Record<string, unknown>;
-            const existingParams =
-              (existingMeta.params as Record<string, unknown> | undefined) ?? {};
-            step.metadata = {
-              ...existingMeta,
-              params: { ...existingParams, ...overlay },
-              partialParams: true,
-            };
-          }
+      // Advance baseStepIndex per variant so cross-step `$ref` objects (e.g.
+      // preprocess → gen wiring inside controlnet handlers) resolve to the
+      // correct global step position after concatenation.
+      const variantSteps = await createStepInputs(
+        variantData,
+        { ...handlerCtx, baseStepIndex: steps.length },
+        {
+          stepMetadata: variantStepMetadata,
+          isWhatIf,
+          sourceCtx,
         }
+      );
 
-        steps.push(...variantSteps);
+      // Per-step metadata for snippet variants records ONLY the substituted
+      // snippet-target fields (e.g. `prompt`, `negativePrompt`) — a small DELTA — in
+      // `params`, plus `partialParams: true` to flag it as such. The workflow-level
+      // metadata already carries the full template + params snapshot, so we keep the
+      // per-step payload tiny (no full params duplicated per variant) and let the
+      // client spread the delta over the workflow params when reading.
+      // See docs/generation-metadata-architecture.md.
+      if (isSnippetVariant) {
+        for (const step of variantSteps) {
+          const existingMeta = (step.metadata ?? {}) as Record<string, unknown>;
+          const existingParams = (existingMeta.params as Record<string, unknown> | undefined) ?? {};
+          step.metadata = {
+            ...existingMeta,
+            params: { ...existingParams, ...overlay },
+            partialParams: true,
+          };
+        }
       }
 
-      // Wrap with request-level concerns: priority, timeout, outputFormat
-      // isPrivateGeneration lives on workflow.metadata, not per-step.
-      // `remixOfId` is ALSO copied onto each step's metadata: the orchestrator's
-      // `WorkflowStepHandler.GenerateJobsAsync` reads `workflowStep.Metadata["remixOfId"]`
-      // (not workflow-level metadata) to thread the remix source id into the job
-      // record → MongoDB `prod.jobs.Properties.remixOfId` → CDC → ClickHouse
-      // `orchestration.jobs`, which is what makes the remix product loop measurable.
-      // See civitai-orchestration#216. Kept on workflow.metadata as well for the
-      // app's own replay/normalization path (NormalizedWorkflowMetadata.remixOfId).
-      // Intermediate steps (videoInterpolation) don't get outputFormat injected.
-      const wrappedSteps = steps.map((step) => ({
-        $type: step.$type,
-        input: {
-          ...(step.input as object),
-          outputFormat: data.outputFormat,
-        },
-        priority: data.priority,
-        timeout,
-        metadata: isWhatIf
-          ? undefined
-          : ({
-              ...((step.metadata as object) ?? {}),
-              ...(remixOfId != null ? { remixOfId } : {}),
-            } as object),
-      })) as WorkflowStepTemplate[];
-
-      // Build workflow-level metadata — the form input snapshot for workflow-level
-      // replay. `params.snippets` rides along automatically because it's a
-      // graph-level node captured by `toStepMetadata`.
-      //
-      // Snippet-specific persistence cleanup:
-      // - When the resolver didn't fire (snippets node at defaults, no refs, no
-      //   batch request), strip the entire `snippets` entry so non-snippet
-      //   generations don't carry an unused blob. The `wildcards` workflow tag
-      //   remains the canonical "did this use snippets" signal.
-      // - When the resolver did fire, overwrite `snippets.targets` with the
-      //   parsed-refs snapshot (each `#ref` as `{ category, selections: [] }`)
-      //   so workflow.metadata records exactly which refs the submission used.
-      //   And drop `snippets.seed` — that field is preview-only and remixes
-      //   should re-roll the random picks.
-      const persistedParams = removeEmpty(stepMetadata.params as Record<string, unknown>);
-      if (!snippetsExpanded) {
-        delete persistedParams.snippets;
-      } else if (persistedParams.snippets && typeof persistedParams.snippets === 'object') {
-        const persistedSnippets = persistedParams.snippets as Record<string, unknown>;
-        persistedSnippets.targets = parsedTargets;
-        delete persistedSnippets.seed;
-      }
-      const workflowMetadata = isWhatIf
-        ? undefined
-        : removeEmpty({
-            params: persistedParams,
-            resources: stepMetadata.resources,
-            remixOfId,
-            isPrivateGeneration,
-          });
-
-      const extraTags: string[] = [];
-      if (snippetsExpanded) extraTags.push(WORKFLOW_TAGS.WILDCARDS);
-
-      return {
-        steps: wrappedSteps,
-        workflowMetadata,
-        tags: extraTags,
-      };
+      steps.push(...variantSteps);
     }
-  );
+
+    // Wrap with request-level concerns: priority, timeout, outputFormat
+    // isPrivateGeneration lives on workflow.metadata, not per-step.
+    // `remixOfId` is ALSO copied onto each step's metadata: the orchestrator's
+    // `WorkflowStepHandler.GenerateJobsAsync` reads `workflowStep.Metadata["remixOfId"]`
+    // (not workflow-level metadata) to thread the remix source id into the job
+    // record → MongoDB `prod.jobs.Properties.remixOfId` → CDC → ClickHouse
+    // `orchestration.jobs`, which is what makes the remix product loop measurable.
+    // See civitai-orchestration#216. Kept on workflow.metadata as well for the
+    // app's own replay/normalization path (NormalizedWorkflowMetadata.remixOfId).
+    // Intermediate steps (videoInterpolation) don't get outputFormat injected.
+    const wrappedSteps = steps.map((step) => ({
+      $type: step.$type,
+      input: {
+        ...(step.input as object),
+        // A handler-set outputFormat wins (e.g. model3DPreview pins 'png');
+        // otherwise inherit the workflow's image outputFormat choice. For
+        // non-image workflows `data.outputFormat` is undefined, so this also
+        // avoids clobbering an intermediate step's own format with undefined.
+        outputFormat: (step.input as { outputFormat?: string }).outputFormat ?? data.outputFormat,
+      },
+      priority: data.priority,
+      timeout,
+      metadata: isWhatIf
+        ? undefined
+        : ({
+            ...((step.metadata as object) ?? {}),
+            ...(remixOfId != null ? { remixOfId } : {}),
+          } as object),
+    })) as WorkflowStepTemplate[];
+
+    // Build workflow-level metadata — the form input snapshot for workflow-level
+    // replay. `params.snippets` rides along automatically because it's a
+    // graph-level node captured by `toStepMetadata`.
+    //
+    // Snippet-specific persistence cleanup:
+    // - When the resolver didn't fire (snippets node at defaults, no refs, no
+    //   batch request), strip the entire `snippets` entry so non-snippet
+    //   generations don't carry an unused blob. The `wildcards` workflow tag
+    //   remains the canonical "did this use snippets" signal.
+    // - When the resolver did fire, overwrite `snippets.targets` with the
+    //   parsed-refs snapshot (each `#ref` as `{ category, selections: [] }`)
+    //   so workflow.metadata records exactly which refs the submission used.
+    //   And drop `snippets.seed` — that field is preview-only and remixes
+    //   should re-roll the random picks.
+    const persistedParams = removeEmpty(stepMetadata.params as Record<string, unknown>);
+    if (!snippetsExpanded) {
+      delete persistedParams.snippets;
+    } else if (persistedParams.snippets && typeof persistedParams.snippets === 'object') {
+      const persistedSnippets = persistedParams.snippets as Record<string, unknown>;
+      persistedSnippets.targets = parsedTargets;
+      delete persistedSnippets.seed;
+    }
+    const workflowMetadata = isWhatIf
+      ? undefined
+      : removeEmpty({
+          params: persistedParams,
+          resources: stepMetadata.resources,
+          remixOfId,
+          isPrivateGeneration,
+        });
+
+    const extraTags: string[] = [];
+    if (snippetsExpanded) extraTags.push(WORKFLOW_TAGS.WILDCARDS);
+
+    return {
+      steps: wrappedSteps,
+      workflowMetadata,
+      tags: extraTags,
+    };
+  });
 }
 
 /**
@@ -1328,6 +1356,26 @@ function buildVariantStepMetadata(
 // =============================================================================
 
 /**
+ * Collect base/source image URLs from validated graph input — used to capture
+ * what a (blocked) prompt was operating on for the moderator restriction-review
+ * UI. Covers the standard `images` array plus, defensively, a legacy singular
+ * `sourceImage`.
+ */
+function extractInputImageUrls(data: Record<string, unknown>): string[] | undefined {
+  const urls: string[] = [];
+  const images = data.images;
+  if (Array.isArray(images)) {
+    for (const img of images) {
+      const url = (img as { url?: string } | null | undefined)?.url;
+      if (typeof url === 'string') urls.push(url);
+    }
+  }
+  const sourceImageUrl = (data.sourceImage as { url?: string } | null | undefined)?.url;
+  if (typeof sourceImageUrl === 'string') urls.push(sourceImageUrl);
+  return urls.length ? urls : undefined;
+}
+
+/**
  * Submits a generation workflow using generation-graph input.
  *
  * Validates:
@@ -1361,6 +1409,10 @@ export async function generateFromGraph({
   // Audit prompt before generation
   if ('prompt' in data && typeof data.prompt === 'string' && data.prompt.trim()) {
     const negativePrompt = 'negativePrompt' in data ? (data.negativePrompt as string) : undefined;
+    const inputImages = extractInputImageUrls(data as unknown as Record<string, unknown>);
+    const inputVideo = (
+      'video' in data ? (data.video as { url?: string } | null | undefined) : undefined
+    )?.url;
     try {
       await auditPromptServer({
         prompt: data.prompt,
@@ -1370,6 +1422,8 @@ export async function generateFromGraph({
         isModerator,
         track,
         remixOfId,
+        inputImages,
+        inputVideo,
       });
     } catch (err) {
       // Legacy regex/external audit blocked the prompt. Fire-and-forget an
@@ -1956,6 +2010,10 @@ function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] {
       return output.blobs?.map((blob) => ({ ...blob, type: 'image' as const })) ?? [];
     case 'imageGen':
     case 'textToImage':
+    // model3DPreview renders 2D preview image(s) of a prior polyGen mesh; its
+    // output shape mirrors an image step. The queue card reads these as the
+    // 3D thumbnail (the step is suppressOutput, so they don't render as cards).
+    case 'model3DPreview':
       return output.images?.map((img) => ({ ...img, type: 'image' as const })) ?? [];
     case 'imageUpscaler':
     case 'preprocessImage':
@@ -2069,16 +2127,8 @@ export function formatStepOutputs(
       };
 
       const ba = item.basicAnimations ?? undefined;
-      const walking = toAsset(
-        ba?.walkingModel,
-        ba?.walkingFbxModel,
-        ba?.walkingArmatureModel
-      );
-      const running = toAsset(
-        ba?.runningModel,
-        ba?.runningFbxModel,
-        ba?.runningArmatureModel
-      );
+      const walking = toAsset(ba?.walkingModel, ba?.walkingFbxModel, ba?.walkingArmatureModel);
+      const running = toAsset(ba?.runningModel, ba?.runningFbxModel, ba?.runningArmatureModel);
 
       return {
         ...base,
@@ -2094,8 +2144,7 @@ export function formatStepOutputs(
         thumbnailNsfwLevel: thumb?.nsfwLevel,
         rigged: toAsset(item.riggedModel, item.riggedFbxModel, null),
         animated: toAsset(item.animatedModel, item.animatedFbxModel, null),
-        basicAnimations:
-          walking || running ? { walking, running } : undefined,
+        basicAnimations: walking || running ? { walking, running } : undefined,
       } satisfies NormalizedModel3DOutput;
     }
 

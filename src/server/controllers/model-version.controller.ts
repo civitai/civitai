@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { selectLiveLinkedComponents } from '~/server/utils/model-helpers';
 import type { BaseModelType } from '~/server/common/constants';
 import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
 import { baseModelLicenses, constants } from '~/server/common/constants';
@@ -77,6 +78,8 @@ import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { updateTrainingWorkflowRecords } from '~/server/services/training.service';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { Flags } from '~/shared/utils/flags';
+import { ModelVersionFlag } from '~/shared/constants/model-version-flags.constants';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -129,6 +132,7 @@ const loadModelVersion = async ({
         licensingFee: true,
         licensingFeeType: true,
         licensingFeeSettlementCurrency: true,
+        licensingSourceVersionId: true,
         meta: true,
         model: {
           select: {
@@ -143,7 +147,7 @@ const loadModelVersion = async ({
             availability: true,
           },
         },
-        files: withFiles ? { select: modelFileSelect } : false,
+        files: withFiles ? { select: modelFileSelect, where: { replacedAt: null } } : false,
         posts: withFiles ? { select: { id: true, userId: true } } : false,
         requireAuth: true,
         settings: true,
@@ -214,26 +218,29 @@ const loadModelVersion = async ({
         });
     }
 
-    const linkedComponents = linkedComponentResources.map((r) => {
-      const s = r.settings as LinkedComponentSettings;
-      const fileData = linkedFileDataMap.get(s.fileId);
-      return {
-        recommendedResourceId: r.id,
-        componentType: s.componentType,
-        modelId: s.modelId,
-        modelName: s.modelName,
-        versionId: r.resource?.id ?? 0,
-        versionName: s.versionName,
-        fileId: s.fileId,
-        fileName: fileData?.name ?? s.fileName,
-        sizeKB: fileData?.sizeKB,
-        fileType: fileData?.type,
-        fileMetadata: fileData?.metadata as
-          | { format?: string | null; size?: string | null; fp?: string | null }
-          | undefined,
-        isRequired: s.isRequired,
-      };
-    });
+    const linkedComponents = selectLiveLinkedComponents(
+      linkedComponentResources.map((r) => {
+        const s = r.settings as LinkedComponentSettings;
+        const fileData = linkedFileDataMap.get(s.fileId);
+        return {
+          recommendedResourceId: r.id,
+          componentType: s.componentType,
+          modelId: s.modelId,
+          modelName: s.modelName,
+          versionId: r.resource?.id ?? 0,
+          versionName: s.versionName,
+          fileId: s.fileId,
+          fileName: fileData?.name ?? s.fileName,
+          sizeKB: fileData?.sizeKB,
+          fileType: fileData?.type,
+          fileMetadata: fileData?.metadata as
+            | { format?: string | null; size?: string | null; fp?: string | null }
+            | undefined,
+          isRequired: s.isRequired,
+        };
+      }),
+      new Set(linkedFileDataMap.keys())
+    );
 
     const recommendedResourceIds = regularResources.map((x) => x.resource.id);
     const generationResources = await getResourceData(recommendedResourceIds, {
@@ -402,7 +409,7 @@ export const upsertModelVersionHandler = async ({
             select: { licensingFee: true, licensingFeeSettlementCurrency: true },
           })
         : null;
-      const hadExistingFee = !!existing?.licensingFee && existing.licensingFee > 0;
+      const hadExistingFee = existing?.licensingFee != null && Number(existing.licensingFee) > 0;
       if (!ctx.features.licensingFee && !ctx.user.isModerator && !hadExistingFee) {
         throw throwBadRequestError('License fees are not enabled for your account.');
       }
@@ -416,6 +423,20 @@ export const upsertModelVersionHandler = async ({
       if (!input.licensingFeeType) input.licensingFeeType = LicensingFeeType.PerImageBuzz;
       if (!input.licensingFeeSettlementCurrency)
         input.licensingFeeSettlementCurrency = LicensingFeeSettlementCurrency.Buzz;
+    }
+
+    // Licensing lineage: the chosen source must be a LicensingRoot for the same
+    // base model. Guards against pointing at an arbitrary (or zero-fee) version
+    // to dodge the base-model rule.
+    if (input.licensingSourceVersionId != null) {
+      const source = await dbRead.modelVersion.findUnique({
+        where: { id: input.licensingSourceVersionId },
+        select: { flags: true, baseModel: true },
+      });
+      if (!source || !Flags.hasFlag(source.flags, ModelVersionFlag.LicensingRoot))
+        throw throwBadRequestError('Invalid licensing source: not a licensing lineage root.');
+      if (source.baseModel !== input.baseModel)
+        throw throwBadRequestError('Licensing source must share the same base model.');
     }
 
     const version = await upsertModelVersion({
@@ -496,9 +517,15 @@ export const upsertModelVersionHandler = async ({
   }
 };
 
-export const deleteModelVersionHandler = async ({ input }: { input: GetByIdInput }) => {
+export const deleteModelVersionHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: ProtectedContext;
+}) => {
   try {
-    const version = await deleteVersionById(input);
+    const version = await deleteVersionById({ ...input, isModerator: ctx.user.isModerator });
     if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
 
     await updateModelEarlyAccessDeadline({ id: version.modelId }).catch((e) => {

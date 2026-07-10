@@ -1,4 +1,4 @@
-import { Button, Group, LoadingOverlay, Popover, Stack, Stepper, Text, Title } from '@mantine/core';
+import { Button, Group, LoadingOverlay, Popover, Stack, Stepper, Text, TextInput, Title } from '@mantine/core';
 import type { NextRouter } from 'next/router';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
@@ -15,9 +15,11 @@ import TrainingSelectFile from '~/components/Resource/Forms/TrainingSelectFile';
 import { useIsChangingLocation } from '~/components/RouterTransition/RouterTransition';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ModelUploadType, ModelUsageControl, TrainingStatus } from '~/shared/utils/prisma/enums';
+import { showErrorNotification } from '~/utils/notifications';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import type { ModelById } from '~/types/router';
 import { QS } from '~/utils/qs';
+import { sanitizeDownloadFilename } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { TemplateSelect } from './TemplateSelect';
@@ -207,6 +209,29 @@ const CreateSteps = ({
   );
 };
 
+export function TrainStepModelFileRename({
+  modelVersion,
+  value,
+  onChange,
+}: {
+  modelVersion: ModelWithTags['modelVersions'][number];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const modelFile = modelVersion.files.find((f) => f.type === 'Model');
+  if (!modelFile?.id) return null;
+
+  return (
+    <TextInput
+      label="Download filename"
+      description="The name users will see when downloading this model file"
+      placeholder={`${modelVersion.name || 'model'}.safetensors`}
+      value={value}
+      onChange={(e) => onChange(e.currentTarget.value)}
+    />
+  );
+}
+
 const TrainSteps = ({
   step,
   model,
@@ -248,6 +273,30 @@ const TrainSteps = ({
       .then();
   const { formId, handleStepSelect, withSavedNav, clearPendingStep } =
     useWizardStepSave(navigateToStep);
+
+  const modelFile = modelVersion.files.find((f) => f.type === 'Model');
+  const [fileName, setFileName] = useState<string>(
+    modelFile?.overrideName ?? (modelVersion.name ? `${modelVersion.name}.safetensors` : '')
+  );
+  const updateFileMutation = trpc.modelFile.update.useMutation();
+
+  const handleVersionNext = async () => {
+    if (modelFile?.id) {
+      const next = fileName.trim() ? sanitizeDownloadFilename(fileName) : null;
+      const current = modelFile.overrideName ?? null;
+      if (next !== current) {
+        try {
+          await updateFileMutation.mutateAsync({ id: modelFile.id, overrideName: next });
+        } catch {
+          showErrorNotification({
+            error: new Error('Could not save the download filename, please try again'),
+          });
+          return;
+        }
+      }
+    }
+    goNext();
+  };
 
   return (
     <Stepper
@@ -317,14 +366,26 @@ const TrainSteps = ({
             id={formId}
             model={model}
             version={modelVersion}
-            onSubmit={withSavedNav(() => goNext())}
+            onSubmit={withSavedNav(() => handleVersionNext())}
+            afterName={
+              <TrainStepModelFileRename
+                modelVersion={modelVersion}
+                value={fileName}
+                onChange={setFileName}
+              />
+            }
           >
             {({ loading, canSave }) => (
               <Group mt="xl" justify="flex-end">
                 <Button variant="default" onClick={goBack}>
                   Back
                 </Button>
-                <Button type="submit" loading={loading} disabled={!canSave} onClick={clearPendingStep}>
+                <Button
+                  type="submit"
+                  loading={loading || updateFileMutation.isPending}
+                  disabled={!canSave}
+                  onClick={clearPendingStep}
+                >
                   Next
                 </Button>
               </Group>

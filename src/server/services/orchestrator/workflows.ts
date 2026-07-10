@@ -3,6 +3,7 @@ import type {
   Options,
   SubmitWorkflowData,
   UpdateWorkflowRequest,
+  WorkflowTemplate,
 } from '@civitai/client';
 import {
   addWorkflowTag,
@@ -14,9 +15,11 @@ import {
   submitWorkflow as clientSubmitWorkflow,
   updateWorkflow as clientUpdateWorkflow,
   handleError,
+  refreshBlob,
 } from '@civitai/client';
 import type * as z from 'zod';
 import { isDev, isProd } from '~/env/other';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import type {
   PatchWorkflowParams,
   TagsPatchSchema,
@@ -275,6 +278,9 @@ export async function submitWorkflow({
   const client = createOrchestratorClient(token);
   if (!body) throw throwBadRequestError();
 
+  // Refresh any expired or unsigned consumer blob URLs in the workflow steps
+  await refreshBlobUrlsInBody(body, client);
+
   // const steps = body.steps;
   // if (steps.length > 0) {
   //   // At the moment, we mainly have 1 step, but in the future, we might wanna look at the minimum and maximum nsfw level.
@@ -329,7 +335,13 @@ export async function submitWorkflow({
   // `result.data` to defined for the `return` below.
   if (!result.data) {
     const { error, response } = result;
-    const { messages } = (typeof error !== 'string' ? error.errors ?? {} : {}) as {
+    // Null-guard `error`: on a status-less resolve the client can hand back
+    // `{ data: undefined, error: undefined, response: undefined }`, and a bare
+    // `error.errors` would then throw a TypeError ("Cannot read properties of
+    // undefined") BEFORE the `!response` 503 guard below — surfacing as a raw 500
+    // (the exact metric this targets). The `&& error` lets that shape fall through
+    // to the 503 mapping instead of crashing.
+    const { messages } = (typeof error !== 'string' && error ? error.errors ?? {} : {}) as {
       messages?: string[];
     };
     let message = messages?.length ? messages.join(',\n') : handleError(error);
@@ -376,20 +388,44 @@ export async function submitWorkflow({
         // BAD_REQUEST), so the client can back off AND the tRPC onError Axiom-skip
         // for TOO_MANY_REQUESTS keeps a 429 storm off the event loop.
         throw throwRateLimitError(message);
-      case 500:
-        throw throwInternalServerError(message);
       default:
-        if (message?.startsWith('<!DOCTYPE'))
-          throw throwInternalServerError('Generation services down');
         // An unhandled 4xx from the orchestrator is a client/validation fault
         // (e.g. "<resource> is not enabled for generation. Please contact …"),
         // not a server error. Surface it as a 4xx instead of re-throwing a raw
         // error that tRPC maps to INTERNAL_SERVER_ERROR (500) — that misclassified
-        // generate/whatIf validation rejections as the app's own 500s. Genuine
-        // upstream 5xx / status-less failures still fall through to a server error.
+        // generate/whatIf validation rejections as the app's own 500s.
         if (typeof response.status === 'number' && response.status >= 400 && response.status < 500)
           throw throwBadRequestError(message);
-        throw error;
+        // A genuine upstream 5xx — an orchestrator HTTP 500, or a gateway/LB HTML
+        // error page (which arrives as a 5xx body starting with `<!DOCTYPE`) — is a
+        // TRANSIENT dependency outage, NOT this app's own fault. Mirror the read
+        // paths (queryWorkflows/getWorkflow, above): map it to a retry-able 503
+        // SERVICE_UNAVAILABLE, guarded on the SAME `isUpstreamServerOrNetworkError`
+        // predicate, with the ORIGINAL client error preserved as `cause`.
+        //
+        // Before this the submit switch had NO 503 branch: the old `case 500` and
+        // the 5xx `default` both threw `throwInternalServerError(<string>)`, which
+        // (a) counted a transient orchestrator blip against our 500 SLO and (b)
+        // dropped the structured client error — only a derived STRING survived as
+        // `cause`, which `buildServerFaultErrorLog` renders EMPTY. That is the
+        // causeless-generic-500 signature seen on orchestrator.whatIfFromGraph /
+        // generateFromGraph; this is its submit-path fix and the read-path analogue.
+        if (isUpstreamServerOrNetworkError({ clientError: { status: response.status }, thrown: error }))
+          throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, error);
+        // Anything else (a non-4xx/5xx anomaly with no `data` — e.g. a malformed
+        // "success", a genuine bug) stays a 500 so real problems remain visible, but
+        // carry the ORIGINAL client error as `cause` (not a bare string) so
+        // `buildServerFaultErrorLog` can un-mask the real message/stack. We do NOT
+        // blanket-convert to 503 — only recognized transient upstream failures above.
+        // When `error` is nullish here (a 2xx/empty-body anomaly: `!data` +
+        // truthy `response` + `status < 400` + no `error`), synthesize a defined
+        // Error so `throwInternalServerError`'s `(error as any).message` read
+        // (errorHandling.ts) can't itself throw a spurious TypeError — the very
+        // causeless-500 shape this PR exists to kill. A non-nullish `error` flows
+        // through unchanged, cause preserved (Item B).
+        throw throwInternalServerError(
+          error ?? new Error('orchestrator returned no data', { cause: error })
+        );
     }
   }
 
@@ -581,4 +617,86 @@ export async function patchWorkflowTags({
       if (op === 'remove') await removeWorkflowTag({ client, path: { workflowId, tag } });
     })
   );
+}
+
+const CONSUMER_BLOB_RE = /\/v\d+\/consumer\/blobs\/(?<blobId>[a-zA-Z0-9_.-]+)/;
+const BLOB_REFRESH_BUFFER_MS = 5 * 60 * 1000;
+const MAX_BLOB_DEPTH = 20;
+
+type BlobRef = { blobId: string; apply: (url: string) => void };
+
+export async function refreshBlobUrlsInBody(
+  body: WorkflowTemplate,
+  client: ReturnType<typeof createOrchestratorClient>
+) {
+  const refs = collectBlobRefs(body);
+  if (refs.length === 0) return;
+
+  // Refresh each distinct blob once, then apply the fresh URL to every occurrence.
+  const refsByBlobId = new Map<string, BlobRef[]>();
+  for (const ref of refs) {
+    const group = refsByBlobId.get(ref.blobId);
+    if (group) group.push(ref);
+    else refsByBlobId.set(ref.blobId, [ref]);
+  }
+
+  await Promise.all(
+    [...refsByBlobId].map(async ([blobId, group]) => {
+      try {
+        const { data } = await refreshBlob({ client, path: { blobId } });
+        if (!data?.url) throw new Error('Refresh endpoint returned no URL data');
+        for (const ref of group) ref.apply(data.url);
+      } catch (error) {
+        logToAxiom({ type: 'error', name: 'blob-refresh-failed', blobId, error: safeError(error) });
+        throw throwBadRequestError(
+          `Failed to refresh image URL for blob: ${blobId}. Please try uploading the image again.`
+        );
+      }
+    })
+  );
+}
+
+// Walk the workflow body and, for each consumer blob URL that needs refreshing, capture a
+// setter that writes the fresh URL back at the spot it was found — no path bookkeeping.
+export function collectBlobRefs(body: unknown): BlobRef[] {
+  const refs: BlobRef[] = [];
+
+  const visit = (value: unknown, apply: (url: string) => void, depth: number) => {
+    if (depth > MAX_BLOB_DEPTH || !value) return;
+
+    if (typeof value === 'string') {
+      const blobId = refreshableBlobId(value);
+      if (blobId) refs.push({ blobId, apply });
+    } else if (Array.isArray(value)) {
+      value.forEach((item, i) => visit(item, (url) => (value[i] = url), depth + 1));
+    } else if (typeof value === 'object') {
+      const obj = value as Record<string, unknown>;
+      for (const key of Object.keys(obj)) visit(obj[key], (url) => (obj[key] = url), depth + 1);
+    }
+  };
+
+  visit(body, () => undefined, 0);
+  return refs;
+}
+
+// blobId if this is a consumer blob URL that needs refreshing, else undefined.
+function refreshableBlobId(url: string): string | undefined {
+  const blobId = url.match(CONSUMER_BLOB_RE)?.groups?.blobId;
+  return blobId && shouldRefreshBlobUrl(url) ? blobId : undefined;
+}
+
+export function shouldRefreshBlobUrl(url: string): boolean {
+  try {
+    if (!CONSUMER_BLOB_RE.test(url)) return false;
+    const urlObj = new URL(url);
+    const sig = urlObj.searchParams.get('sig');
+    const exp = urlObj.searchParams.get('exp');
+    if (!sig || !exp) return true;
+
+    const expiryDate = new Date(exp);
+    if (isNaN(expiryDate.getTime())) return true; // Unparseable exp → treat as expired
+    return expiryDate.getTime() - Date.now() < BLOB_REFRESH_BUFFER_MS;
+  } catch {
+    return false;
+  }
 }

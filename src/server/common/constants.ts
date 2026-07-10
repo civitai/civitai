@@ -148,7 +148,6 @@ export const constants = {
     image: 320,
     articles: 320,
     bounty: 320,
-    club: 320,
   },
   modPublishOnlyStatuses: [ModelStatus.UnpublishedViolation, ModelStatus.Deleted] as ModelStatus[],
   cacheTime: {
@@ -311,20 +310,6 @@ export const constants = {
     messageMaxLength: 1200,
     locationMaxLength: 30,
   },
-  clubs: {
-    tierMaxMemberLimit: 9999,
-    tierImageAspectRatio: 1 / 1,
-    tierImageDisplayWidth: 124,
-    tierImageSidebarDisplayWidth: 84,
-    avatarDisplayWidth: 124,
-    minMonthlyBuzz: 5,
-    minStripeCharge: 3000, // 3000 Buzz = $3.00 USD
-    headerImageAspectRatio: 1 / 4,
-    postCoverImageAspectRatio: 1 / 4,
-    engagementTypes: ['engaged'],
-    coverImageHeight: 400,
-    coverImageWidth: 1600,
-  },
   article: {
     coverImageHeight: 400,
     coverImageWidth: 850,
@@ -352,6 +337,8 @@ export const constants = {
   altTruncateLength: 125,
   system: {
     user: { id: -1, username: 'civitai' },
+    // Public CivitaiOfficial content account (distinct from the system actor above).
+    officialUserId: 12042163,
   },
   creatorsProgram: {
     rewards: {
@@ -1465,6 +1452,10 @@ export const generation = {
   },
 } as const;
 export const maxRandomSeed = 2147483647;
+// Postgres INT4 (integer) column bounds — the ceiling any value written to an
+// `integer` column (e.g. metric counts) must fit under.
+export const PG_INT4_MAX = 2_147_483_647;
+export const PG_INT4_MIN = -2_147_483_648;
 export const maxUpscaleSize = 3840;
 export const minDownscaleSize = 320;
 export const minUploadSize = 300;

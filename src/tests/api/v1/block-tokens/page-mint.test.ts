@@ -48,6 +48,9 @@ const {
   const blockRegistry = {
     resolveBlockInstance: vi.fn<(...args: any[]) => Promise<any>>(),
     resolvePageBlock: vi.fn<(...args: any[]) => Promise<any>>(),
+    // Phase 2 dev-tunnel author-own mint resolver — default null (not owned), so
+    // the dev branch cleanly `continue`s to the bare 404 in this suite.
+    resolveDevPageBlockForAuthor: vi.fn<(...args: any[]) => Promise<any>>(async () => null),
   };
   // Flag mock that both the master + pages flag default ON for a mod.
   const flags = {
@@ -97,6 +100,15 @@ vi.mock('~/server/utils/server-domain', () => ({
   getRequestDomainColor: () => undefined,
 }));
 vi.mock('~/server/services/feature-flags.service', () => mockFlags);
+// Phase 2 dev-tunnel flag helpers (dynamically imported by the mint's dev branch).
+// Default OFF in this suite so the dev branch `continue`s → the bare 404 path the
+// W10 page-mint tests assert. The dev-mint behaviour has its own suite
+// (dev-tunnel-mint.test.ts).
+vi.mock('~/server/services/app-blocks-flag', () => ({
+  isAppBlocksAuthorEnabled: vi.fn(async () => false),
+  isAppBlocksDevTunnelEnabled: vi.fn(async () => false),
+  isAppBlocksDevTunnelUnsubmittedSpendEnabled: vi.fn(async () => false),
+}));
 
 function makeReq(opts: {
   method?: string;
@@ -348,6 +360,33 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
     expect(res._status).toBe(404);
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
+  });
+
+  it('treats a synthetic ephemeral-<slug> page instance id as non-approved → 404 when the dev-tunnel gate does not apply', async () => {
+    // A synthetic `ephemeral-<slug>` id never names a real approved AppBlock.id,
+    // so `resolvePageBlock` yields null. Phase 2 then tries the author-own dev
+    // mint, but here the dev-tunnel flags are OFF (this suite) so that branch
+    // `continue`s → the SAME bare 404. (The author-own dev mint that DOES issue a
+    // scoped token for the OWNER is covered by dev-tunnel-mint.test.ts.)
+    mockBlockRegistry.resolvePageBlock.mockResolvedValue(null);
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(
+      makeReq({
+        origin: 'https://civitai.com',
+        body: {
+          blockInstanceId: 'page_ephemeral-my-app',
+          slotContext: { entityType: 'none', slotId: 'app.page' },
+        },
+      }),
+      res
+    );
+    expect(res._status).toBe(404);
+    // The synthetic id is passed through verbatim to the (null-yielding) lookup.
+    expect(mockBlockRegistry.resolvePageBlock).toHaveBeenCalledWith('ephemeral-my-app', {
+      db: 'write',
+    });
     expect(mockTokenService.sign).not.toHaveBeenCalled();
   });
 

@@ -2,7 +2,6 @@ import {
   claimDailyBoostRewardHandler,
   completeStripeBuzzPurchaseHandler,
   createBuzzTipTransactionHandler,
-  depositClubFundsHandler,
   getBuzzAccountHandler,
   getBuzzAccountTransactionsHandler,
   getDailyCompensationRewardHandler,
@@ -11,12 +10,10 @@ import {
   getUserMultipliersHandler,
   getUserTransactionsHandler,
   previewMultiAccountTransactionHandler,
-  withdrawClubFundsHandler,
 } from '~/server/controllers/buzz.controller';
 import { getByIdStringSchema } from '~/server/schema/base.schema';
 import {
   claimWatchedAdRewardSchema,
-  clubTransactionSchema,
   completeStripeBuzzPurchaseTransactionInput,
   getBuzzAccountSchema,
   getBuzzAccountTransactionsSchema,
@@ -66,16 +63,6 @@ export const buzzRouter = router({
     .meta({ requiredScope: TokenScope.BuzzRead })
     .input(getBuzzAccountTransactionsSchema)
     .query(getBuzzAccountTransactionsHandler),
-  withdrawClubFunds: buzzProcedure
-    .meta({ requiredScope: TokenScope.Full })
-    .input(clubTransactionSchema)
-    .use(isFlagProtected('clubs'))
-    .mutation(withdrawClubFundsHandler),
-  depositClubFunds: buzzProcedure
-    .meta({ blockApiKeys: true })
-    .input(clubTransactionSchema)
-    .use(isFlagProtected('clubs'))
-    .mutation(depositClubFundsHandler),
   getClaimStatus: buzzProcedure
     .meta({ requiredScope: TokenScope.BuzzRead })
     .input(getByIdStringSchema)

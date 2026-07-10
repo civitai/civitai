@@ -11,6 +11,13 @@ import type {
 } from '~/server/schema/resourceReview.schema';
 import type { ResourceReviewPaged, ResourceReviewRatingTotals } from '~/types/router';
 import { queryClient, trpc } from '~/utils/trpc';
+import { restoreMembership, snapshotMembership } from '~/store/engaged-models.store';
+import {
+  applyFavoriteToggled,
+  applyReviewCreated,
+  applyReviewDeleted,
+  applyReviewUpdated,
+} from '~/store/engaged-models.optimistic';
 
 export const useCreateResourceReview = () => {
   const queryUtils = trpc.useUtils();
@@ -48,6 +55,21 @@ export const useCreateResourceReview = () => {
 
         return { Recommended: [...Recommended, modelId], Notify: [...Notify, modelId], ...rest };
       });
+
+      // Normalized store (PR2): mirror the same Recommended+Notify toggle for the
+      // per-visible-set surfaces. Dual-written alongside the getEngagedModels cache
+      // above until the feed callers migrate (PR3) and the old endpoint is dropped (PR4).
+      // F3: derive the direction from the SAME `previousEngaged.Recommended` snapshot
+      // the legacy setData above consumed — deliberately NOT the normalized store.
+      // Passing the one shared snapshot keeps the two dual-writes CONSISTENT with each
+      // other (the Preserve invariant). PR3 removed this page's own getEngagedModels
+      // query, so on a directly-loaded model page that legacy cache is cold and this
+      // reads false; both writes then agree (both add), so they never diverge. Accepted
+      // narrow edge: re-affirming an ALREADY-recommended model won't toggle it off until
+      // a feed has warmed the cache. Sourcing direction from the store instead would warm
+      // this case but split the two writes' direction (store warm / legacy cold) — a
+      // worse divergence bug — so we keep the shared-snapshot source.
+      applyReviewCreated(modelId, recommended, previousEngaged.Recommended?.includes(modelId) ?? false);
 
       queryUtils.model.getById.setData({ id: modelId }, (old) => {
         if (!old) return;
@@ -158,6 +180,12 @@ export const useUpdateResourceReview = () => {
         return { Recommended: [...Recommended, modelId], ...rest };
       });
 
+      // Normalized store (PR2): mirror the Recommended toggle for per-visible-set surfaces.
+      // F3: direction from the SAME `previousEngaged` snapshot the legacy setData used
+      // (not the store), so both dual-writes stay consistent. See the create handler for
+      // the accepted cold-cache edge (this page's getEngagedModels query was removed in PR3).
+      applyReviewUpdated(modelId, request.recommended, alreadyReviewed > -1);
+
       queryUtils.model.getById.setData({ id: modelId }, (old) => {
         if (!old) return;
 
@@ -230,6 +258,9 @@ export const useDeleteResourceReview = () => {
           ...rest,
         };
       });
+
+      // Normalized store (PR2): mirror the Recommended+Notify removal for per-visible-set surfaces.
+      applyReviewDeleted(modelId);
 
       queryUtils.model.getById.setData({ id: modelId }, (old) => {
         if (!old) return;
@@ -311,6 +342,8 @@ export function useToggleFavoriteMutation() {
       const engagedModels = queryUtils.user.getEngagedModels.getData();
       const bookmarkedModels = queryUtils.user.getBookmarkedModels.getData();
       const modelDetails = queryUtils.model.getById.getData({ id: modelId });
+      // Normalized store (PR2): snapshot for rollback, then apply the same toggle.
+      const engagedMembership = snapshotMembership(modelId);
 
       // update liked models
       // nb: should technically update the "liked models" collection too
@@ -339,6 +372,9 @@ export function useToggleFavoriteMutation() {
         }
         return old;
       });
+
+      // Normalized store (PR2): mirror the favorite toggle for per-visible-set surfaces.
+      applyFavoriteToggled(modelId, setTo);
 
       // Update model details
       queryUtils.model.getById.setData({ id: modelId }, (old) => {
@@ -406,12 +442,14 @@ export function useToggleFavoriteMutation() {
         }
       });
 
-      return { prevData: { engagedModels, modelDetails, userReviews, bookmarkedModels } };
+      return { prevData: { engagedModels, modelDetails, userReviews, bookmarkedModels }, engagedMembership };
     },
     onError: (error, { modelId }, context) => {
       queryUtils.user.getEngagedModels.setData(undefined, context?.prevData?.engagedModels);
       queryUtils.user.getBookmarkedModels.setData(undefined, context?.prevData?.bookmarkedModels);
       queryUtils.model.getById.setData({ id: modelId }, context?.prevData?.modelDetails);
+      // Normalized store (PR2): restore the snapshotted membership.
+      if (context?.engagedMembership) restoreMembership(modelId, context.engagedMembership);
     },
     onSettled: async (result, error, { modelId }) => {
       await queryUtils.resourceReview.getUserResourceReview.invalidate({ modelId });

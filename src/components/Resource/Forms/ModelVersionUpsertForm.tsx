@@ -7,6 +7,7 @@ import {
   Input,
   Popover,
   SegmentedControl,
+  Select,
   Stack,
   Switch,
   Text,
@@ -17,7 +18,7 @@ import { IconAlertTriangle, IconInfoCircle } from '@tabler/icons-react';
 import { getQueryKey } from '@trpc/react-query';
 import { isEqual, uniq } from 'lodash-es';
 import { useRouter } from 'next/router';
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import * as z from 'zod';
 
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
@@ -50,7 +51,6 @@ import {
   baseModelSupportsClipSkip,
   getActiveBaseModels,
 } from '~/shared/constants/basemodel.constants';
-import type { ClubResourceSchema } from '~/server/schema/club.schema';
 import type { GenerationResourceSchema } from '~/server/schema/generation.schema';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
 import type {
@@ -147,7 +147,14 @@ const querySchema = z.object({
   bountyId: z.coerce.number().optional(),
 });
 
-export function ModelVersionUpsertForm({ id, model, version, children, onSubmit }: Props) {
+export function ModelVersionUpsertForm({
+  id,
+  model,
+  version,
+  children,
+  onSubmit,
+  afterName,
+}: Props) {
   const features = useFeatureFlags();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
@@ -200,9 +207,10 @@ export function ModelVersionUpsertForm({ id, model, version, children, onSubmit 
     clipSkip: version?.clipSkip ?? null,
     useMonetization: !!version?.monetization,
     monetization: version?.monetization ?? null,
-    licensingFee: version?.licensingFee ?? 0,
+    licensingFee: Number(version?.licensingFee ?? 0),
     licensingFeeType: version?.licensingFeeType ?? null,
     licensingFeeSettlementCurrency: version?.licensingFeeSettlementCurrency ?? null,
+    licensingSourceVersionId: version?.licensingSourceVersionId ?? null,
     requireAuth: version?.requireAuth ?? true,
     recommendedResources: version?.recommendedResources ?? [],
     // Being extra safe here and ensuring this value exists.
@@ -234,7 +242,7 @@ export function ModelVersionUpsertForm({ id, model, version, children, onSubmit 
   const usageControl = form.watch('usageControl');
   const currentLicensingFee = form.watch('licensingFee') ?? 0;
   const existingSettlementCurrency = version?.licensingFeeSettlementCurrency ?? null;
-  const hasExistingLicensingFee = (version?.licensingFee ?? 0) > 0;
+  const hasExistingLicensingFee = Number(version?.licensingFee ?? 0) > 0;
   const showLicensingFeeBlock =
     !isNonCommercial &&
     (!!features.licensingFee ||
@@ -243,6 +251,27 @@ export function ModelVersionUpsertForm({ id, model, version, children, onSubmit 
   const showLicensingFeeSettlementCurrency =
     existingSettlementCurrency === LicensingFeeSettlementCurrency.Cash ||
     !!currentUser?.isModerator;
+
+  const licensingSourceVersionId = form.watch('licensingSourceVersionId') ?? null;
+  const { data: licensingRootsData = [] } = trpc.modelVersion.getLicensingRoots.useQuery(
+    { baseModel },
+    { enabled: !!baseModel }
+  );
+  // Exclude the version being edited — a root defines its own fee and must not
+  // point at itself. The picker always carries an implicit "Default (base model
+  // standard fee)" option, so a single remaining root is still a real choice
+  // (default vs that lineage); we only hide it when there are no roots at all.
+  const licensingRoots = licensingRootsData.filter((r) => r.id !== version?.id);
+
+  // A licensing lineage root is scoped to a base model, so a base-model change
+  // invalidates any selected source. Skip the initial value (edit pre-fill).
+  const prevBaseModelRef = useRef(baseModel);
+  useEffect(() => {
+    if (prevBaseModelRef.current === baseModel) return;
+    prevBaseModelRef.current = baseModel;
+    if (form.getValues('licensingSourceVersionId') != null)
+      form.setValue('licensingSourceVersionId', null, { shouldDirty: true });
+  }, [baseModel]);
 
   // handle mismatched baseModels in training data
   useEffect(() => {
@@ -364,6 +393,7 @@ export function ModelVersionUpsertForm({ id, model, version, children, onSubmit 
     if (version)
       form.reset({
         ...version,
+        licensingFee: Number(version.licensingFee ?? 0),
         modelId: version.modelId ?? model?.id ?? -1,
         baseModel: version.baseModel,
         skipTrainedWords: isTextualInversion
@@ -432,6 +462,7 @@ export function ModelVersionUpsertForm({ id, model, version, children, onSubmit 
             withAsterisk
             maxLength={25}
           />
+          {afterName}
 
           {features.generationOnlyModels && (!isPrivateModel || currentUser?.isModerator) && (
             <>
@@ -794,6 +825,30 @@ export function ModelVersionUpsertForm({ id, model, version, children, onSubmit 
               <Divider my="md" />
             </Stack>
           )}
+          {(showLicensingFeeBlock || !!currentUser?.isModerator) && licensingRoots.length > 0 && (
+            <Stack gap="xs">
+              <Select
+                label="Licensing base"
+                description="If this model is built on a specific base, pick it so generations inherit that base's licensing fee. Leave as default to use the base model's standard fee."
+                placeholder="Default (base model standard fee)"
+                clearable
+                value={licensingSourceVersionId ? String(licensingSourceVersionId) : null}
+                onChange={(val) =>
+                  form.setValue('licensingSourceVersionId', val ? Number(val) : null, {
+                    shouldDirty: true,
+                  })
+                }
+                data={licensingRoots.map((r) => ({
+                  value: String(r.id),
+                  label: `${r.modelName} — ${r.versionName} (${Number(r.licensingFee)} Buzz${
+                    r.licensingFeeSettlementCurrency === LicensingFeeSettlementCurrency.Cash
+                      ? ', cash'
+                      : ''
+                  })`,
+                }))}
+              />
+            </Stack>
+          )}
           {showLicensingFeeBlock && (
             <Stack gap="xs">
               <InputNumber
@@ -802,7 +857,8 @@ export function ModelVersionUpsertForm({ id, model, version, children, onSubmit 
                 description={`Charge a per-image fee for generations using this version. If this is a derivative of a base model that already charges a licensing fee, your fee is added on top of it. Set to 0 to disable. Max ${MAX_LICENSING_FEE} Buzz per image.`}
                 min={0}
                 max={MAX_LICENSING_FEE}
-                step={1}
+                step={0.01}
+                decimalScale={2}
                 leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
               />
               {showLicensingFeeSettlementCurrency && (
@@ -1038,7 +1094,6 @@ type VersionInput = Omit<ModelVersionUpsertInput, 'recommendedResources'> & {
     'strength' | 'minStrength' | 'maxStrength'
   > &
     RecommendedSettingsSchema)[];
-  clubs?: ClubResourceSchema[];
   earlyAccessEndsAt: Date | null;
   earlyAccessConfig: ModelVersionEarlyAccessConfig | null;
 };
@@ -1047,5 +1102,9 @@ type Props = {
   onSubmit: (version?: ModelVersionUpsertInput) => void;
   children: (data: { loading: boolean; canSave: boolean }) => React.ReactNode;
   model?: Partial<ModelUpsertInput & { publishedAt: Date | null }>;
-  version?: Partial<VersionInput>;
+  // licensingFee comes off a Prisma read as a Decimal; the form coerces it to a number in defaultValues.
+  version?: Omit<Partial<VersionInput>, 'licensingFee'> & {
+    licensingFee?: number | { valueOf(): string } | null;
+  };
+  afterName?: React.ReactNode;
 };

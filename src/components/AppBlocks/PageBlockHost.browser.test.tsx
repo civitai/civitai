@@ -14,6 +14,12 @@ import { renderWithProviders } from '../../../test/component-setup';
 // PageBlockHostWorkflow / PageBlockHostStorage.browser.test.tsx; here they're
 // inert stubs.
 vi.mock('~/utils/trpc', () => ({
+  // FeatureFlagsProvider (pulled into PageBlockHost's real render graph) statically
+  // imports `setTrpcBatchingEnabled` from this module (added in #2946). Because
+  // `vi.mock` replaces the module wholesale, the factory MUST re-declare that named
+  // export or the ESM link fails ("does not provide an export named …") and the whole
+  // test file fails to import — silently, since this suite is report-only.
+  setTrpcBatchingEnabled: vi.fn(),
   trpc: {
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -23,6 +29,12 @@ vi.mock('~/utils/trpc', () => ({
       cancelWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {
+      shared: {
+        append: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        vote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        unvote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        withdraw: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      },
       storage: {
         set: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         delete: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -30,6 +42,11 @@ vi.mock('~/utils/trpc', () => ({
     },
     useUtils: () => ({
       apps: {
+        shared: {
+          list: { fetch: vi.fn() },
+          getCount: { fetch: vi.fn() },
+          getCounts: { fetch: vi.fn() },
+        },
         storage: {
           get: { fetch: vi.fn() },
           list: { fetch: vi.fn() },

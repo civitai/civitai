@@ -614,6 +614,24 @@ export function enforceContextBinding(
         }
         break;
       }
+      case 'apps:storage:shared:read': {
+        // SHARED (app-global) READS are allowed for anon — the shared list +
+        // counts are public within the app (the real per-op authorization + the
+        // min-trust gate live in `resolveSharedContext`, apps-shared.router). No
+        // extra request-shape binding here; presence of the scope is the check.
+        break;
+      }
+      case 'apps:storage:shared:write': {
+        // SHARED WRITES (append / vote / withdraw / report) are NEVER anonymous —
+        // they are attributed to the subject and pass the min-trust gate. Reject an
+        // anon subject here so wiring this scope can't silently fail open (mirrors
+        // the apps:storage:write case). The trust gate itself is enforced in
+        // `resolveSharedContext`.
+        if (claims.sub === 'anon') {
+          throw forbidden(`${scope} requires authenticated subject`);
+        }
+        break;
+      }
       default:
         // Fail closed (L-M6). Reaching here means a scope passed the
         // `isKnownBlockScope` gate above (it's in BLOCK_SCOPE_TO_OAUTH_BIT)
@@ -805,6 +823,10 @@ export function withBlockScope(
             scope: opts.requiredScope ?? '(any-token)',
               endpoint: endpointForLog,
               statusCode: res.statusCode,
+              // Phase 2: a dev token MAY carry a synthetic non-FK appBlockId (a
+              // pre-approval dev-tunnel app) — let the audit write persist it via
+              // the nullable-appBlockId path instead of FK-failing + swallowing.
+              dev: claims.dev === true,
             })
           )
           .catch(() => {

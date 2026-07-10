@@ -19,7 +19,9 @@ import {
   inferGgufQuantType,
   inferSafetensorsPrecision,
 } from '~/utils/file-helpers';
-import { showErrorNotification } from '~/utils/notifications';
+import { resolveOfficialFileHash } from '~/components/Resource/official-match';
+import { useFileHash } from '~/hooks/useFileHash';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { bytesToKB } from '~/utils/number-helpers';
 import { getFileExtension, getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -34,9 +36,25 @@ type SchemaError = {
   quantType?: ZodErrorSchema;
 };
 
+// Both link mutations (the Meili picker and linkOfficialFileByHash) return the
+// same server shape; map it to a client LinkedComponent in one place.
+function toLinkedComponent(
+  result: Omit<LinkedComponent, 'componentType' | 'fileMetadata'> & {
+    componentType: string;
+    fileMetadata: LinkedComponent['fileMetadata'] | null;
+  }
+): LinkedComponent {
+  return {
+    ...result,
+    componentType: result.componentType as ModelFileComponentType,
+    fileMetadata: result.fileMetadata ?? undefined,
+  };
+}
+
 export type FileFromContextProps = {
   id?: number;
   name: string;
+  overrideName?: string | null;
   modelType?: ModelType | null;
   type?: ModelFileType | null;
   sizeKB?: number;
@@ -50,6 +68,9 @@ export type FileFromContextProps = {
   uuid: string;
   isPending?: boolean;
   isUploading?: boolean;
+  // True while the file is being hashed + checked against official copies before
+  // any upload starts. Cleared when the check resolves (link or upload).
+  isCheckingOfficial?: boolean;
   status: 'pending' | 'uploading' | 'error' | 'aborted' | 'success';
 };
 
@@ -92,6 +113,7 @@ export const useFilesContext = () => {
 
 export function FilesProvider({ model, version, children }: FilesProviderProps) {
   const queryUtils = trpc.useUtils();
+  const { hashFile } = useFileHash();
   const upload = useS3UploadStore((state) => state.upload);
   const setItems = useS3UploadStore((state) => state.setItems);
 
@@ -100,6 +122,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     const initialFiles = (version?.files?.map((file) => ({
       id: file.id,
       name: file.name,
+      overrideName: file.overrideName ?? null,
       type: file.type as ModelFileType,
       sizeKB: file.sizeKB,
       size: file.metadata?.size,
@@ -165,6 +188,8 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     },
   });
 
+  const linkOfficialMutation = trpc.modelVersion.linkOfficialFileByHash.useMutation();
+
   const addLinkedComponentMutation = trpc.modelVersion.addLinkedComponent.useMutation({
     onError(error) {
       showErrorNotification({
@@ -221,24 +246,9 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       isRequired: component.isRequired ?? true,
     });
 
-    const enriched: LinkedComponent = {
-      recommendedResourceId: result.recommendedResourceId,
-      componentType: result.componentType as ModelFileComponentType,
-      modelId: result.modelId,
-      modelName: result.modelName,
-      versionId: result.versionId,
-      versionName: result.versionName,
-      fileId: result.fileId,
-      fileName: result.fileName,
-      sizeKB: result.sizeKB,
-      fileType: result.fileType,
-      fileMetadata: result.fileMetadata ?? undefined,
-      isRequired: result.isRequired,
-    };
-
     setLinkedComponents((prev) => [
       ...prev.filter((c) => c.versionId !== component.versionId),
-      enriched,
+      toLinkedComponent(result),
     ]);
   };
 
@@ -561,8 +571,55 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
   }: FileFromContextProps) => {
     if (!file || !type) return;
 
+    let officialSha256: string | null = null;
+    try {
+      officialSha256 = await resolveOfficialFileHash({
+        file,
+        findBySize: (size) => queryUtils.modelFile.hasOfficialFileOfSize.fetch({ size }),
+        hashFile,
+        onHashStart: () =>
+          setFiles((state) =>
+            state.map((x) => (x.uuid === uuid ? { ...x, isCheckingOfficial: true } : x))
+          ),
+      });
+    } catch {
+      // network/server error — fall through to normal upload
+    }
+
+    if (officialSha256 && versionId) {
+      // Bytes already exist on the official account — re-verify server-side, skip upload,
+      // and create a linked-component pointer instead.
+      try {
+        const result = await linkOfficialMutation.mutateAsync({
+          id: versionId,
+          sha256: officialSha256,
+        });
+        if (result) {
+          setLinkedComponents((prev) => [...prev, toLinkedComponent(result)]);
+          setFiles((state) => state.filter((x) => x.uuid !== uuid));
+          showSuccessNotification({
+            title: 'Linked to official file',
+            message: `${result.modelName} already hosts this file — upload skipped.`,
+          });
+          return;
+        }
+        // no match → fall through to normal upload
+      } catch (e) {
+        showErrorNotification({
+          title: 'Failed to link official file',
+          reason: 'Uploading normally instead.',
+          error: e as Error,
+        });
+        // fall through to normal upload
+      }
+    }
+
     setFiles((state) =>
-      state.map((x) => (x.uuid === uuid ? { ...x, isPending: false, isUploading: true } : x))
+      state.map((x) =>
+        x.uuid === uuid
+          ? { ...x, isPending: false, isUploading: true, isCheckingOfficial: false }
+          : x
+      )
     );
 
     try {
@@ -680,7 +737,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         onDrop,
         startUpload,
         errors: errors,
-        hasPending: files.some((x) => x.isPending),
+        hasPending: files.some((x) => x.isPending || x.isCheckingOfficial),
         retry,
         updateFile: handleUpdateFile,
         removeFile,

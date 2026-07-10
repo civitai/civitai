@@ -86,16 +86,18 @@ export function DailyCreatorCompReward({
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
-  const { data: resources = [], isLoading } = trpc.buzz.getDailyBuzzCompensation.useQuery(
+  const { data, isLoading } = trpc.buzz.getDailyBuzzCompensation.useQuery(
     { date: selectedDate, accountType: buzzAccountType, source },
     { enabled: features.buzz }
   );
+  const resources = data?.resources ?? [];
+  const hasPublishedResources = data?.hasPublishedResources ?? false;
 
-  const { data: licenseProbe = [] } = trpc.buzz.getDailyBuzzCompensation.useQuery(
+  const { data: licenseProbe } = trpc.buzz.getDailyBuzzCompensation.useQuery(
     { date: selectedDate, source: 'licenseFee' },
     { enabled: features.buzz && source === 'compensation' }
   );
-  const hasLicenseEarnings = licenseProbe.length > 0 || source === 'licenseFee';
+  const hasLicenseEarnings = (licenseProbe?.resources.length ?? 0) > 0 || source === 'licenseFee';
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const labelColor = colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
@@ -280,6 +282,9 @@ export function DailyCreatorCompReward({
     { totalBuzz: 0, totalCashCents: 0 }
   );
   const showCashTotal = source === 'licenseFee' && totalCashCents > 0;
+  // Established creators (any published resource) keep the two-column layout even on a
+  // zero-earning month, so the month selector doesn't jump between months.
+  const useTwoColLayout = !isLoading && (resources.length > 0 || hasPublishedResources);
 
   return (
     <>
@@ -287,10 +292,7 @@ export function DailyCreatorCompReward({
         className={classes.dashboardGrid}
         style={
           {
-            '--grid-cols':
-              !isLoading && resources.length > 0
-                ? 'minmax(0, 8fr) minmax(0, 4fr)'
-                : 'minmax(0, 1fr)',
+            '--grid-cols': useTwoColLayout ? 'minmax(0, 8fr) minmax(0, 4fr)' : 'minmax(0, 1fr)',
           } as React.CSSProperties
         }
       >
@@ -385,10 +387,11 @@ export function DailyCreatorCompReward({
               buzzColor={buzzConfig.color}
               buzzLabel={getAccountTypeLabel(buzzAccountType)}
               loading={isLoading}
+              mode={hasPublishedResources ? 'noEarningsThisMonth' : 'onboarding'}
             />
           )}
         </Paper>
-        {!isLoading && resources.length > 0 && (
+        {useTwoColLayout && (
           <Paper
             className={classes.tileCard}
             h="100%"

@@ -1061,7 +1061,8 @@ export const getDailyCompensationRewardByUser = async ({
     },
   });
 
-  if (!clickhouse || !modelVersions.length) return [];
+  const hasPublishedResources = modelVersions.length > 0;
+  if (!clickhouse || !modelVersions.length) return { resources: [], hasPublishedResources };
 
   const minDate = dayjs.utc(date).startOf('day').startOf('month').toDate();
   const maxDate = dayjs.utc(date).endOf('day').endOf('month').toDate();
@@ -1089,11 +1090,11 @@ export const getDailyCompensationRewardByUser = async ({
     ORDER BY date DESC, total DESC
   `;
 
-  if (!generationData.length) return [];
+  if (!generationData.length) return { resources: [], hasPublishedResources };
 
   // cashData totals are in pennies — CH stores cashSettled amounts in
   // tenths-of-a-penny, so divide by 10.
-  return modelVersions
+  const resources = modelVersions
     .map(({ model, ...version }) => {
       const versionRows = generationData.filter((x) => x.modelVersionId === version.id);
       const buzzByDate = new Map<string, number>();
@@ -1127,6 +1128,8 @@ export const getDailyCompensationRewardByUser = async ({
     })
     .filter((v) => v.data.length > 0 || v.cashCents > 0)
     .sort((a, b) => b.totalSum + b.cashCents - (a.totalSum + a.cashCents));
+
+  return { resources, hasPublishedResources };
 };
 
 export async function claimWatchedAdReward({
