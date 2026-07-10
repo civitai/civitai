@@ -44,18 +44,15 @@
   </div>
 </header>
 
-{#snippet userHeader(item: { username: string | null; nsfwLevel: number })}
-  <div class="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-    <a
-      href={`${data.civitaiUrl}/user/${item.username}`}
-      target="_blank"
-      rel="noreferrer"
-      class="truncate hover:text-foreground"
-    >
-      {item.username ?? '[deleted]'}
-    </a>
-    <span class="shrink-0">{getBrowsingLevelLabel(item.nsfwLevel)}</span>
-  </div>
+{#snippet userHeader(item: { username: string | null })}
+  <a
+    href={`${data.civitaiUrl}/user/${item.username}`}
+    target="_blank"
+    rel="noreferrer"
+    class="block truncate text-xs text-muted-foreground hover:text-foreground"
+  >
+    {item.username ?? '[deleted]'}
+  </a>
 {/snippet}
 
 <!-- One grid per distinct item shape; `data.view` narrows `data.items` (its values are unique per
