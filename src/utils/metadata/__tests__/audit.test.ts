@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { includesMinorAge } from '~/utils/metadata/audit';
+import { includesInappropriate, includesMinor, includesMinorAge } from '~/utils/metadata/audit';
 
 describe('includesMinorAge', () => {
   describe('danbooru/pony tag false positives', () => {
@@ -66,5 +66,23 @@ describe('includesMinorAge', () => {
         age: undefined,
       });
     });
+  });
+});
+
+describe('negative-prompt minor detection', () => {
+  it('does not flag "mature content" in the negative prompt as a minor signal', () => {
+    for (const negativePrompt of ['mature content', 'mature_content', 'mature-content, blurry']) {
+      expect(includesMinor('a woman', negativePrompt), negativePrompt).toBeFalsy();
+      expect(
+        includesInappropriate({ prompt: 'nude woman', negativePrompt }, true),
+        negativePrompt
+      ).toBe(false);
+    }
+  });
+
+  it('still flags genuine minor-steering negative nouns', () => {
+    expect(includesMinor('a woman', 'mature body')).toBeTruthy();
+    expect(includesMinor('a woman', 'adult body')).toBeTruthy();
+    expect(includesMinor('a woman', 'mature')).toBeTruthy();
   });
 });
