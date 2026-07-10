@@ -277,4 +277,69 @@ describe('upsertChallenge (moderator path) — judgingCategories', () => {
     const callArg = mockTx.challenge.update.mock.calls[0][0];
     expect(callArg.data.judgingCategories).toBe(Prisma.JsonNull);
   });
+
+  // Categories lock once a challenge starts: entries are already judged against them, so an
+  // Active-challenge save must keep the stored value regardless of what the client submits.
+  it('update (Active): keeps stored judgingCategories, ignoring submitted changes', async () => {
+    const stored = [{ key: 'theme', weight: 100, label: 'Theme', criteria: 'stored' }];
+    mockDbRead.challenge.findUnique.mockResolvedValue({
+      collectionId: null,
+      metadata: null,
+      status: ChallengeStatus.Active,
+      startsAt: new Date(Date.now() - 86400000),
+      modelVersionIds: [],
+      allowedNsfwLevel: 1,
+      source: 'Mod',
+      maxEntriesPerUser: 20,
+      entryPrizeRequirement: 10,
+      prizeMode: 'Fixed',
+      basePrizePool: 0,
+      buzzPerAction: 0,
+      poolTrigger: null,
+      maxPrizePool: null,
+      prizeDistribution: null,
+      judgingCategories: stored,
+    });
+
+    await upsertChallenge({
+      ...baseInput,
+      id: 1,
+      status: ChallengeStatus.Active,
+      judgingCategories: VALID_CATEGORIES,
+    } as never);
+
+    const callArg = mockTx.challenge.update.mock.calls[0][0];
+    expect(callArg.data.judgingCategories).toEqual(stored);
+  });
+
+  it('update (Active): a null-category challenge stays null even if categories are submitted', async () => {
+    mockDbRead.challenge.findUnique.mockResolvedValue({
+      collectionId: null,
+      metadata: null,
+      status: ChallengeStatus.Active,
+      startsAt: new Date(Date.now() - 86400000),
+      modelVersionIds: [],
+      allowedNsfwLevel: 1,
+      source: 'Mod',
+      maxEntriesPerUser: 20,
+      entryPrizeRequirement: 10,
+      prizeMode: 'Fixed',
+      basePrizePool: 0,
+      buzzPerAction: 0,
+      poolTrigger: null,
+      maxPrizePool: null,
+      prizeDistribution: null,
+      judgingCategories: null,
+    });
+
+    await upsertChallenge({
+      ...baseInput,
+      id: 1,
+      status: ChallengeStatus.Active,
+      judgingCategories: VALID_CATEGORIES,
+    } as never);
+
+    const callArg = mockTx.challenge.update.mock.calls[0][0];
+    expect(callArg.data.judgingCategories).toBe(Prisma.JsonNull);
+  });
 });

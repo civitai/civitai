@@ -1017,6 +1017,7 @@ export async function upsertChallenge({
         poolTrigger: true,
         maxPrizePool: true,
         prizeDistribution: true,
+        judgingCategories: true,
       },
     });
     if (!challenge) throw throwNotFoundError('Challenge not found');
@@ -1058,6 +1059,14 @@ export async function upsertChallenge({
       }
     }
 
+    // Judging categories lock once the challenge starts — entries are already judged against them.
+    const effectiveJudgingCategories =
+      challenge.status === ChallengeStatus.Active
+        ? (challenge.judgingCategories as Prisma.InputJsonValue) ?? Prisma.JsonNull
+        : judgingCategories
+        ? (judgingCategories as unknown as Prisma.InputJsonValue)
+        : Prisma.JsonNull;
+
     // Resolve theme elements: use provided ones, keep existing, or auto-generate
     const existingMetadata = parseChallengeMetadata(challenge.metadata);
     const existingThemeElements = existingMetadata.themeElements;
@@ -1087,9 +1096,7 @@ export async function upsertChallenge({
           prizeDistribution: data.prizeDistribution
             ? (data.prizeDistribution as unknown as Prisma.InputJsonValue)
             : Prisma.JsonNull,
-          judgingCategories: judgingCategories
-            ? (judgingCategories as unknown as Prisma.InputJsonValue)
-            : Prisma.JsonNull,
+          judgingCategories: effectiveJudgingCategories,
           ...(themeElements && {
             metadata: { ...existingMetadata, themeElements },
           }),

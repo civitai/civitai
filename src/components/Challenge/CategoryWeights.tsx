@@ -46,7 +46,7 @@ function keyOptionsFor(index: number, rows: CategoryWeightRow[], addable: Catego
  * of truth. Renders only the row list + add/total controls — the parent supplies the surrounding
  * "Judging" card.
  */
-export default function CategoryWeights() {
+export default function CategoryWeights({ disabled = false }: { disabled?: boolean }) {
   const { control } = useFormContext();
   const { fields, append, remove } = useFieldArray({ control, name: 'judgingCategories' });
   const rows = (useWatch({ control, name: 'judgingCategories' }) as CategoryWeightRow[]) ?? [];
@@ -91,7 +91,7 @@ export default function CategoryWeights() {
                     ? [{ value: 'theme', label: categoryByKey.get('theme')?.label ?? 'Theme' }]
                     : keyOptionsFor(index, rows, addable)
                 }
-                disabled={isTheme}
+                disabled={isTheme || disabled}
                 allowDeselect={false}
                 searchable={!isTheme}
                 className="flex-1"
@@ -106,6 +106,7 @@ export default function CategoryWeights() {
                 allowNegative={false}
                 clampBehavior="blur"
                 className="w-24 shrink-0"
+                disabled={disabled}
               />
               {isTheme ? (
                 <Tooltip label="Theme is required and can't be removed" withArrow>
@@ -120,6 +121,7 @@ export default function CategoryWeights() {
                     variant="subtle"
                     onClick={() => remove(index)}
                     aria-label="Remove category"
+                    disabled={disabled}
                   >
                     <IconX size={16} />
                   </ActionIcon>
@@ -142,7 +144,7 @@ export default function CategoryWeights() {
             size="sm"
             leftSection={<IconPlus size={16} />}
             onClick={addRow}
-            disabled={!canAdd}
+            disabled={!canAdd || disabled}
           >
             Add category
           </Button>

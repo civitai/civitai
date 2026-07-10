@@ -976,11 +976,16 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   disabled={isActive || isTerminal}
                 />
                 {customizeCategories ? (
-                  <CategoryWeights />
+                  <CategoryWeights disabled={isActive || isTerminal} />
                 ) : (
                   <Text size="sm" c="dimmed">
                     This challenge is judged against the default rubric until categories are
                     customized.
+                  </Text>
+                )}
+                {(isActive || isTerminal) && (
+                  <Text size="xs" c="dimmed">
+                    Judging categories can no longer be changed once the challenge has started.
                   </Text>
                 )}
               </>
@@ -993,7 +998,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   exactly how they&apos;ll be judged. The defaults below are a sensible starting point
                   — adjust or replace them however you like (weights must total 100%).
                 </Text>
-                <CategoryWeights />
+                <CategoryWeights disabled={isActive || isTerminal} />
               </>
             )}
           </Stack>
