@@ -105,7 +105,8 @@ export async function assertSharedTextSafe(
     throw new SharedContentBlockedError('poi', 'Content flagged for review');
   }
 
-  // M1 — blocked link domains. `throwOnBlockedLinkDomain` throws a plain Error.
+  // M1 — blocked link domains. `throwOnBlockedLinkDomain` throws (a BAD_REQUEST
+  // TRPCError); the bare catch re-wraps any throw into SharedContentBlockedError.
   try {
     await throwOnBlockedLinkDomain(combined);
   } catch {

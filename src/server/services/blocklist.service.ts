@@ -7,7 +7,7 @@ import type {
   RemoveBlocklistItemSchema,
   UpsertBlocklistSchema,
 } from '~/server/schema/blocklist.schema';
-import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 
 export type BlocklistDTO = {
   id?: number;
@@ -98,12 +98,24 @@ export async function throwOnBlockedLinkDomain(value: string) {
   const blockedFor: string[] = [];
   if (matches) {
     for (const match of matches) {
-      const url = new URL(match);
+      let url: URL;
+      try {
+        url = new URL(match);
+      } catch {
+        // A regex-matched substring that `new URL()` can't parse isn't a URL we
+        // can attribute to a host, so it can't be a blocked-domain hit. Skip it
+        // (rather than block) — and, critically, never let a raw TypeError escape
+        // as a 500 on user input. This IS reachable: e.g. `http://1.1.1.256/x`
+        // matches the link regex but `new URL()` rejects the invalid IPv4 octet.
+        continue;
+      }
       if (blockedDomains.some((x) => x === url.host)) blockedFor.push(match);
     }
   }
 
-  if (blockedFor.length) throw new Error(`invalid urls: ${blockedFor.join(', ')}`);
+  // User-input validation rejection → BAD_REQUEST (400), not a plain Error (which
+  // the tRPC layer would wrap as INTERNAL_SERVER_ERROR / 500).
+  if (blockedFor.length) throwBadRequestError(`invalid urls: ${blockedFor.join(', ')}`);
 }
 // #endregion
 
