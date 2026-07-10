@@ -4,7 +4,12 @@ import type { SessionUser } from '~/types/session';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
-import { MeiliCallTimeoutError, searchClient, withMeili } from '~/server/meilisearch/client';
+import {
+  isTransientMeiliError,
+  MeiliCallTimeoutError,
+  searchClient,
+  withMeili,
+} from '~/server/meilisearch/client';
 import type { GetAllModelsOutput } from '~/server/schema/model.schema';
 import { getDownloadFilename } from '~/server/services/file.service';
 import { getModelsWithVersions } from '~/server/services/model.service';
@@ -115,7 +120,22 @@ export async function resolveModelSearchIds(opts: {
         )
       : undefined;
   } catch (e) {
-    if (e instanceof MeiliCallTimeoutError) throw new ModelSearchMeiliTimeoutError();
+    // Widened from `instanceof MeiliCallTimeoutError` to also cover
+    // isTransientMeiliError: the timeout-wrapper only catches civitai's own
+    // MeiliCallTimeoutError, but a Meilisearch brownout ALSO throws the SDK's
+    // OWN transient error types (MeiliSearchCommunicationError statusCode
+    // 408/429/5xx, MeiliSearchApiError with a gateway 502/503/504, the wrapped
+    // SERVICE_UNAVAILABLE, MeiliSearchTimeOutError, network ECONNRESET, …).
+    // Those previously fell through `throw e` as raw Errors → the REST handler
+    // (whose resolveModelSearchIds try/catch sits BEFORE the outer try) left
+    // them UNHANDLED → a raw HTTP 500 (the top REST 500 source on the ?query=
+    // path; the same query retried immediately returns 200 — a transient
+    // backend flap). Converting them to ModelSearchMeiliTimeoutError here lets
+    // the caller map a transient upstream to a retryable 503 (no-store +
+    // Retry-After). A non-transient error (malformed filter / auth / real app
+    // bug) is NOT matched and still surfaces as its real status.
+    if (e instanceof MeiliCallTimeoutError || isTransientMeiliError(e))
+      throw new ModelSearchMeiliTimeoutError();
     throw e;
   }
 
