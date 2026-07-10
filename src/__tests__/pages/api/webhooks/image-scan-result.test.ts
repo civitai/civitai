@@ -34,6 +34,9 @@ const {
         findMany: vi.fn(),
         createMany: vi.fn(),
       },
+      model3D: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
       $queryRawUnsafe: vi.fn(),
       $queryRaw: vi.fn(),
     },
