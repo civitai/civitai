@@ -1,6 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
-  import { SvelteMap } from 'svelte/reactivity';
+  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import type { SubmitFunction } from '@sveltejs/kit';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
   import type { PageData } from './$types';
@@ -10,25 +10,42 @@
 
   // `${imageId}:${tagId}` → the mod's decision (optimistic; dims the chip / card).
   const resolved = new SvelteMap<string, 'removed' | 'kept'>();
+  // Multiselect for the bulk bar — selected image ids.
+  const selected = new SvelteSet<string | number>();
   $effect(() => {
     data.items;
     resolved.clear();
+    selected.clear();
   });
 
   const key = (imageId: number, tagId: number) => `${imageId}:${tagId}`;
+  const selectedImageIds = $derived([...selected].join(','));
+
+  function markResolved(imageId: number, outcome: 'removed' | 'kept') {
+    data.items
+      .find((i) => i.id === imageId)
+      ?.tags.filter((t) => t.needsReview)
+      .forEach((t) => resolved.set(key(imageId, t.tagId), outcome));
+  }
 
   const submit: SubmitFunction = ({ formData }) => {
     const imageId = Number(formData.get('imageId'));
     const outcome = formData.get('disable') === 'true' ? 'removed' : 'kept';
     const rawTagId = formData.get('tagId');
-    if (rawTagId) {
-      resolved.set(key(imageId, Number(rawTagId)), outcome);
-    } else {
-      const img = data.items.find((i) => i.id === imageId);
-      img?.tags
-        .filter((t) => t.needsReview)
-        .forEach((t) => resolved.set(key(imageId, t.tagId), outcome));
-    }
+    if (rawTagId) resolved.set(key(imageId, Number(rawTagId)), outcome);
+    else markResolved(imageId, outcome);
+    return async ({ update }) => update({ invalidateAll: false });
+  };
+
+  // Bulk bar — apply one verdict to every flagged tag on all selected images.
+  const bulkSubmit: SubmitFunction = ({ formData }) => {
+    const outcome = formData.get('disable') === 'true' ? 'removed' : 'kept';
+    selectedImageIds
+      .split(',')
+      .map(Number)
+      .filter(Boolean)
+      .forEach((id) => markResolved(id, outcome));
+    selected.clear();
     return async ({ update }) => update({ invalidateAll: false });
   };
 
@@ -129,5 +146,46 @@
   nextCursor={data.nextCursor}
   itemClass={cardClass}
   card={tagCard}
+  {selected}
   empty="No tags to review."
 />
+
+{#if selected.size > 0}
+  <!-- spacer so the fixed bar can't cover the last row / Next button -->
+  <div class="h-20"></div>
+  <div
+    class="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-background/95 px-4 py-3 backdrop-blur"
+  >
+    <div class="mx-auto flex max-w-6xl flex-wrap items-center gap-3">
+      <span class="text-sm font-semibold">{selected.size} selected</span>
+      <button
+        onclick={() => selected.clear()}
+        class="text-xs text-muted-foreground hover:text-foreground">Clear</button
+      >
+      <div class="ml-auto flex flex-wrap gap-2">
+        <form method="POST" action="?/bulkModerate" use:enhance={bulkSubmit}>
+          <input type="hidden" name="imageIds" value={selectedImageIds} />
+          <button
+            type="submit"
+            name="disable"
+            value="true"
+            class="rounded border border-rose-500/40 px-3 py-1 text-xs font-semibold text-rose-400 transition hover:bg-rose-500/10"
+          >
+            Remove all flagged
+          </button>
+        </form>
+        <form method="POST" action="?/bulkModerate" use:enhance={bulkSubmit}>
+          <input type="hidden" name="imageIds" value={selectedImageIds} />
+          <button
+            type="submit"
+            name="disable"
+            value="false"
+            class="rounded border border-teal-600/40 px-3 py-1 text-xs font-semibold text-teal-400 transition hover:bg-teal-500/10"
+          >
+            Keep all flagged
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+{/if}

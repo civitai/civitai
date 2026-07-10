@@ -11,7 +11,7 @@ export const load: PageServerLoad = async ({ url }) => {
   const cursor = Number(url.searchParams.get('cursor')) || undefined;
 
   const data = await getIngestionErrorImages({ limit, cursor });
-  return { limit, limitOptions: LIMIT_OPTIONS, ...data };
+  return { limit, limitOptions: LIMIT_OPTIONS, wide: true, ...data };
 };
 
 // Access is enforced globally (hooks.server.ts). Resolve runs internally via Kysely.

@@ -38,4 +38,19 @@ export const actions: Actions = {
     });
     return { success: true, imageId, tagIds, disable };
   },
+
+  // Bulk verdict over the selected cards — acts on every needsReview tag of each image.
+  bulkModerate: async ({ request, locals }) => {
+    const form = await request.formData();
+    const disable = form.get('disable') === 'true';
+    const imageIds = String(form.get('imageIds') ?? '')
+      .split(',')
+      .map(Number)
+      .filter((n) => Number.isInteger(n) && n > 0);
+
+    await Promise.all(
+      imageIds.map((imageId) => moderateImageTags({ imageId, disable, userId: locals.user.id }))
+    );
+    return { success: true };
+  },
 };
