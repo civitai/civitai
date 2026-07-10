@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   POST_GETINFINITE_IMAGES_PER_POST,
   capPostGetInfiniteImages,
+  stripPostGetInfiniteImageFields,
 } from '~/server/utils/post-getinfinite-images';
 
 // The browse-feed (`post.getInfinite`) response caps each post's embedded images
@@ -45,5 +46,74 @@ describe('post-getinfinite-images', () => {
     expect(source).toHaveLength(50);
     expect(source).toEqual(before);
     expect(out).not.toBe(source); // a new array, not the same reference
+  });
+});
+
+describe('stripPostGetInfiniteImageFields', () => {
+  // A representative post.getInfinite image row: the server-only grouping field
+  // `postId` alongside the fields consumers DO read (cover render +
+  // hidden-preferences filter).
+  const makeRow = (id: number) => ({
+    id,
+    postId: 999,
+    userId: 42,
+    url: `url-${id}`,
+    name: `img-${id}`,
+    nsfwLevel: 1,
+    width: 512,
+    height: 512,
+    hash: 'abc',
+    type: 'image',
+    metadata: { width: 512, height: 512 },
+    onSite: true,
+    remixOfId: null,
+    poi: false,
+    minor: false,
+    tagIds: [1, 2, 3],
+  });
+
+  it('drops postId from every image', () => {
+    const out = stripPostGetInfiniteImageFields([makeRow(1), makeRow(2)]);
+    expect(out).toHaveLength(2);
+    for (const img of out) {
+      expect('postId' in img).toBe(false);
+    }
+  });
+
+  it('preserves every field a consumer reads (cover render + hidden-preferences)', () => {
+    const [out] = stripPostGetInfiniteImageFields([makeRow(7)]);
+    // cover render path (PostsCard / PostCard / EdgeMedia2 / MediaHash / OnsiteIndicator)
+    for (const key of [
+      'id',
+      'url',
+      'name',
+      'nsfwLevel',
+      'width',
+      'height',
+      'hash',
+      'type',
+      'metadata',
+      'onSite',
+      'remixOfId',
+    ]) {
+      expect(out).toHaveProperty(key);
+    }
+    // hidden-preferences filter (useApplyHiddenPreferences, posts path)
+    for (const key of ['id', 'userId', 'nsfwLevel', 'tagIds', 'poi', 'minor']) {
+      expect(out).toHaveProperty(key);
+    }
+    expect(out.url).toBe('url-7');
+    expect(out.tagIds).toEqual([1, 2, 3]);
+  });
+
+  it('returns NEW objects and does not mutate the input', () => {
+    const source = [makeRow(1)];
+    const out = stripPostGetInfiniteImageFields(source);
+    expect(out[0]).not.toBe(source[0]);
+    expect('postId' in source[0]).toBe(true); // input untouched
+  });
+
+  it('handles an empty array', () => {
+    expect(stripPostGetInfiniteImageFields([])).toEqual([]);
   });
 });
