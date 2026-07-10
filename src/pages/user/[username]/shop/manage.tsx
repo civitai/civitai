@@ -72,7 +72,11 @@ function ManageShopPage() {
 
   return (
     <Stack gap="lg" mt="md" pb="xl">
-      <ManageHeader canAddItems={isOwner} targetUserId={manageUserId} />
+      <ManageHeader
+        canAddItems={isOwner}
+        targetUserId={manageUserId}
+        backHref={`/user/${username}/shop`}
+      />
 
       {settings && settings.enabled !== true && (
         <ShopDraftBanner

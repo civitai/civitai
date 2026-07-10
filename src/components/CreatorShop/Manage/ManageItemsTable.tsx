@@ -16,7 +16,7 @@ export function ManageItemsTable({
 
   return (
     <Paper withBorder radius="md" className="overflow-hidden">
-      <Table.ScrollContainer minWidth={820}>
+      <Table.ScrollContainer minWidth={860}>
         <Table verticalSpacing="sm" horizontalSpacing="md" highlightOnHover layout="fixed">
           <Table.Thead className="bg-gray-1 dark:bg-dark-6">
             <Table.Tr>

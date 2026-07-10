@@ -29,7 +29,7 @@ export type ManageColumn = {
 function ItemCell({ item }: { item: CreatorShopManageItem }) {
   return (
     <Group gap="sm" wrap="nowrap" align="center">
-      <CosmeticThumb data={item.cosmetic.data} name={item.title} />
+      <CosmeticThumb data={item.cosmetic.data} name={item.title} bare />
       <Stack gap={0} className="min-w-0">
         <Text size="sm" fw={600} lineClamp={1}>
           {item.title}
@@ -138,11 +138,11 @@ export function useManageColumns(
       {
         key: 'status',
         header: 'Status',
-        width: 140,
+        width: 170,
         render: (item) => {
           const meta = statusMeta[item.status];
           return (
-            <Badge color={meta.color} variant="dot">
+            <Badge color={meta.color} variant="dot" style={{ maxWidth: 'none' }}>
               {meta.label}
             </Badge>
           );

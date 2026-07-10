@@ -34,12 +34,16 @@ export function FeeSection({
           ]}
         />
       </Group>
-      <Alert color={canAffordFee ? 'blue' : 'red'} icon={<IconWallet size={18} />}>
+      <Alert color={canAffordFee ? 'yellow' : 'red'} icon={<IconWallet size={18} />}>
         <Text size="sm" fw={600}>
           {numberWithCommas(CREATOR_SHOP_SUBMISSION_FEE)} Buzz submission fee
         </Text>
         <Text size="xs" c="dimmed">
-          Charged when you submit for review. Non-refundable, even if the item isn&apos;t approved.
+          Charged when you submit for review.{' '}
+          <Text span fw={700} c="dimmed">
+            Non-refundable
+          </Text>
+          , even if the item isn&apos;t approved.
         </Text>
         {!canAffordFee && (
           <Text size="xs" c="red" fw={600} mt={4}>

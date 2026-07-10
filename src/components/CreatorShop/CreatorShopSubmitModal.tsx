@@ -14,7 +14,10 @@ import {
   TextInput,
 } from '@mantine/core';
 import { IconBolt, IconInfoCircle } from '@tabler/icons-react';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { CosmeticPreview } from '~/components/CosmeticShop/CosmeticPreview';
+import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import type { CreatorShopManageItem } from '~/components/CreatorShop/creator-shop.util';
 import { ArtworkField } from '~/components/CreatorShop/Submit/ArtworkField';
@@ -71,6 +74,30 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
     creatorAmount: resaleCreatorAmount,
     platformCut: resalePlatformCut,
   } = computeCreatorShopSplit(price, sellerShare);
+
+  // Dirty = the creator has entered something worth confirming before discarding.
+  const isDirty = isEdit
+    ? name !== (item?.title ?? '') ||
+      description !== (item?.description ?? '') ||
+      price !== (item?.unitAmount ?? COSMETIC_PRICE_FLOOR) ||
+      !!localUrl
+    : !!imageId || !!name.trim() || !!description.trim() || sellableByOthers;
+
+  const handleCancel = () => {
+    if (!isDirty) return dialog.onClose();
+    dialogStore.trigger({
+      component: ConfirmDialog,
+      props: {
+        title: 'Discard changes?',
+        message: isEdit
+          ? 'Your changes to this item will be lost.'
+          : 'Your uploaded artwork and details will be lost.',
+        labels: { cancel: 'Keep editing', confirm: 'Discard' },
+        confirmProps: { color: 'red' },
+        onConfirm: () => dialog.onClose(),
+      },
+    });
+  };
 
   return (
     <Modal {...dialog} size="lg" title={isEdit ? 'Edit item' : 'Submit an item'}>
@@ -148,7 +175,7 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
 
         <Group grow align="flex-end">
           <NumberInput
-            label="Price (Buzz)"
+            label="Sell price"
             withAsterisk
             min={COSMETIC_PRICE_FLOOR}
             value={price}
@@ -241,20 +268,25 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
           </Alert>
         )}
 
-        <Group justify="flex-end">
-          <Button variant="default" onClick={dialog.onClose}>
+        <Group justify="space-between">
+          <Button variant="default" onClick={handleCancel}>
             Cancel
           </Button>
-          <Button
-            leftSection={<IconBolt size={16} />}
-            loading={pending}
-            disabled={!canSubmit}
-            onClick={form.handleSubmit}
-          >
-            {isEdit
-              ? 'Save changes'
-              : `Pay ${numberWithCommas(CREATOR_SHOP_SUBMISSION_FEE)} Buzz & Submit`}
-          </Button>
+          {isEdit ? (
+            <Button loading={pending} disabled={!canSubmit} onClick={form.handleSubmit}>
+              Save changes
+            </Button>
+          ) : (
+            <BuzzTransactionButton
+              buzzAmount={CREATOR_SHOP_SUBMISSION_FEE}
+              accountTypes={[buzzType]}
+              label="Submit for review"
+              loading={pending}
+              disabled={!canSubmit}
+              onPerformTransaction={form.handleSubmit}
+              showPurchaseModal
+            />
+          )}
         </Group>
       </Stack>
     </Modal>
