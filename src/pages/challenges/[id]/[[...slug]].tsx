@@ -74,7 +74,6 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { useQueryChallenge } from '~/components/Challenge/challenge.utils';
 import { WinnerPodiumCard } from '~/components/Challenge/WinnerPodiumCard';
 import type { Props as DescriptionTableProps } from '~/components/DescriptionTable/DescriptionTable';
-import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { buildPassthroughQuery } from '~/utils/query-string-helpers';
 import { getModelUrl, slugit } from '~/utils/string-helpers';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -602,6 +601,31 @@ function SpotlightCard({
   );
 }
 
+/** Flat label/value rows matching the model details sidebar style. */
+function DetailRows({ items }: { items: DescriptionTableProps['items'] }) {
+  return (
+    <div className="flex flex-col bg-gray-0 dark:bg-[#1f2023]">
+      {items
+        .filter((item) => item.visible !== false)
+        .map((item, index) => (
+          <div
+            key={index}
+            className="flex items-center justify-between gap-3 border-b border-gray-3 px-4 py-2.5 last:border-b-0 dark:border-dark-4"
+          >
+            {typeof item.label === 'string' ? (
+              <Text size="sm" c="dimmed">
+                {item.label}
+              </Text>
+            ) : (
+              item.label
+            )}
+            <div className="text-right">{item.value}</div>
+          </div>
+        ))}
+    </div>
+  );
+}
+
 function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
   useInjectKeyframes();
   const colorScheme = useComputedColorScheme('dark');
@@ -719,27 +743,15 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
         >
           <IconTrophy size={14} />
         </ThemeIcon>
-        <Text size="sm">{getPlaceLabel(index + 1)}</Text>
+        <Text size="sm" c="dimmed">
+          {getPlaceLabel(index + 1)}
+        </Text>
       </Group>
     ),
     value: (
-      <CurrencyBadge
-        size="sm"
-        currency={Currency.BUZZ}
-        unitAmount={prize.buzz}
-        variant="transparent"
-      />
+      <CurrencyBadge size="sm" currency={Currency.BUZZ} unitAmount={prize.buzz} />
     ),
   }));
-
-  // Shared props for DescriptionTable inside accordion panels (no outer borders)
-  const accordionTableProps = {
-    withBorder: true,
-    paperProps: {
-      style: { borderLeft: 0, borderRight: 0, borderBottom: 0 },
-      radius: 0,
-    },
-  } as const;
 
   if (challenge.entryPrize) {
     prizeItems.push({
@@ -748,7 +760,9 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
           <ThemeIcon size="sm" color="blue" variant="light">
             <IconGift size={14} />
           </ThemeIcon>
-          <Text size="sm">Participation</Text>
+          <Text size="sm" c="dimmed">
+            Participation
+          </Text>
         </Group>
       ),
       value: (
@@ -757,7 +771,6 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
           currency={Currency.BUZZ}
           type="blue"
           unitAmount={challenge.entryPrize.buzz}
-          variant="transparent"
         />
       ),
     });
@@ -1156,7 +1169,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
             <Group justify="space-between">Overview</Group>
           </Accordion.Control>
           <Accordion.Panel>
-            <DescriptionTable items={challengeDetails} labelWidth="40%" {...accordionTableProps} />
+            <DetailRows items={challengeDetails} />
           </Accordion.Panel>
         </Accordion.Item>
 
@@ -1166,7 +1179,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
           </Accordion.Control>
           <Accordion.Panel>
             <ScrollArea.Autosize mah={300}>
-              <DescriptionTable items={prizeItems} labelWidth="50%" {...accordionTableProps} />
+              <DetailRows items={prizeItems} />
             </ScrollArea.Autosize>
           </Accordion.Panel>
         </Accordion.Item>
