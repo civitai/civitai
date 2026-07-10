@@ -21,10 +21,18 @@
 // The client (`useQueryHiddenPreferences`) EXPANDS this back to the legacy
 // `HiddenPreferenceTypes` shape so the ~30 downstream consumers are untouched.
 // A `__v` discriminator lets both the read-expander and the optimistic-update
-// path detect the shape unambiguously (empty arrays are otherwise ambiguous),
-// and lets a stale client bundle from a rolling deploy keep working against
-// either shape. Emission is flag-gated (`hiddenPrefsCompact`) so it can be
-// ramped via Flipt and rolled back instantly.
+// path detect the shape unambiguously (empty arrays are otherwise ambiguous).
+//
+// 🔴 The `__v` guard protects NEW clients (this PR or later — the ones that ship
+// `expandHiddenPreferences`) reading EITHER shape, in either rolling-deploy
+// direction. It does NOT protect a PRE-PR bundle: that bundle has no expander,
+// reads the compact `number[]` as `{ id }[]`, gets `x.id === undefined`, and
+// UN-HIDES the user's entire hidden set (incl. NSFW/moderated) until a hard
+// reload. Emission is therefore flag-gated (`hiddenPrefsCompact`) and DARK by
+// default: the Flipt threshold MUST NOT be ramped until the new client bundle is
+// deployed EVERYWHERE (hours — see the SPA-cache rollout pattern). Ramping during
+// or immediately after a deploy is the exposure window this design forbids.
+// Rollback = set the Flipt threshold to 0.
 
 import produce from 'immer';
 import type {

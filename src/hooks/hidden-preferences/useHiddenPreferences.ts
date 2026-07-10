@@ -13,7 +13,10 @@ export const useQueryHiddenPreferences = () => {
   // untouched. Per-field coalescing (every key defaults to `[]`) is preserved:
   // rolling deploys / stale SSR hydration can serve a response that predates a
   // field (e.g. `hiddenModel3Ds`), which would otherwise crash a consumer on
-  // `.map(...)`. Robust to either shape in both rolling-deploy directions.
+  // `.map(...)`. This makes THIS bundle (and any later one) robust to either
+  // shape — but a PRE-PR bundle has no expander and breaks on the compact shape,
+  // so the `hiddenPrefsCompact` Flipt ramp must wait until this bundle is
+  // deployed everywhere (see `~/shared/hidden-preferences/compact`).
   const _data = useMemo(() => expandHiddenPreferences(data), [data]);
   return { data: _data, ...rest };
 };
