@@ -641,6 +641,8 @@ export const playgroundReviewImageSchema = z.object({
     .optional(),
   reviewTemplate: z.string().optional(),
   aiModel: z.string().min(1).optional(),
+  judgingCategories: challengeJudgingCategoriesInputSchema.optional(),
+  nsfw: z.boolean().optional(),
 });
 
 // Playground: Pick winners from a challenge

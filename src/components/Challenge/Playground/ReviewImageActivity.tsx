@@ -7,12 +7,17 @@ import {
   Progress,
   ScrollArea,
   Stack,
+  Switch,
   Text,
   TextInput,
   Textarea,
 } from '@mantine/core';
 import { IconPlayerPlay } from '@tabler/icons-react';
 import { useState } from 'react';
+import { FormProvider, useForm, useWatch } from 'react-hook-form';
+import CategoryWeights from '~/components/Challenge/CategoryWeights';
+import type { CategoryWeightRow } from '~/shared/constants/challenge.constants';
+import { DEFAULT_CATEGORY_ROWS } from '~/shared/constants/challenge.constants';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { usePlaygroundStore } from './playground.store';
@@ -64,6 +69,20 @@ export function ReviewImageActivity() {
   const updateInputs = usePlaygroundStore((s) => s.updateReviewImageInputs);
 
   const [result, setResult] = useState<ReviewResult | null>(null);
+  const [useCategories, setUseCategories] = useState(false);
+  const [nsfwRubrics, setNsfwRubrics] = useState(false);
+  const categoriesForm = useForm({
+    defaultValues: { judgingCategories: DEFAULT_CATEGORY_ROWS },
+  });
+  const categoryRows =
+    (useWatch({
+      control: categoriesForm.control,
+      name: 'judgingCategories',
+    }) as CategoryWeightRow[]) ?? [];
+  const categoryTotal = categoryRows.reduce((sum, row) => sum + (row.weight || 0), 0);
+  const categoriesValid =
+    !useCategories ||
+    (categoryTotal === 100 && categoryRows.every((row) => (row.weight || 0) >= 1));
 
   const draft =
     selectedJudgeId != null && selectedJudgeId > 0 ? drafts[selectedJudgeId] : undefined;
@@ -103,6 +122,10 @@ export function ReviewImageActivity() {
           : undefined,
       reviewTemplate: draft?.reviewTemplate ?? undefined,
       aiModel: aiModel || undefined,
+      judgingCategories: useCategories
+        ? categoryRows.map(({ key, weight }) => ({ key, weight }))
+        : undefined,
+      nsfw: useCategories && nsfwRubrics ? true : undefined,
     });
   };
 
@@ -142,6 +165,24 @@ export function ReviewImageActivity() {
         value={creator}
         onChange={(e) => updateInputs({ creator: e.currentTarget.value })}
       />
+      <Switch
+        label="Judge with categories"
+        description="Builds the review schema from the selected categories and injects their rich rubrics at {{SCORING_RUBRICS}}. Weights only affect ranking (Pick Winners), not a single review."
+        checked={useCategories}
+        onChange={(e) => setUseCategories(e.currentTarget.checked)}
+      />
+      {useCategories && (
+        <FormProvider {...categoriesForm}>
+          <CategoryWeights />
+          <Switch
+            size="sm"
+            label="Use NSFW rubric variants"
+            description="Falls back to the SFW rubric for categories without an NSFW variant"
+            checked={nsfwRubrics}
+            onChange={(e) => setNsfwRubrics(e.currentTarget.checked)}
+          />
+        </FormProvider>
+      )}
       <Textarea
         label="Review Prompt (override)"
         placeholder="Leave empty to use judge's default"
@@ -174,7 +215,7 @@ export function ReviewImageActivity() {
         leftSection={<IconPlayerPlay size={16} />}
         onClick={handleRun}
         loading={mutation.isPending}
-        disabled={!parsedImageId || !theme}
+        disabled={!parsedImageId || !theme || !categoriesValid}
       >
         Review Image
       </Button>

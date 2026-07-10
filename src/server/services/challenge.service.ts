@@ -2610,12 +2610,22 @@ export async function playgroundReviewImage(input: PlaygroundReviewImageInput) {
 
   const imageUrl = getEdgeUrl(image.url, { width: 1200, name: 'image', optimized: true });
 
+  const categories = input.judgingCategories?.length
+    ? (await resolveJudgingCategories(input.judgingCategories)).map((c) => ({
+        key: c.key,
+        name: c.label,
+        criteria: c.criteria,
+      }))
+    : undefined;
+
   const result = await generateReview({
     theme: input.theme,
     themeElements: input.themeElements,
     creator: input.creator ?? image.user?.username ?? 'Unknown',
     imageUrl,
     config: judgingConfig,
+    categories,
+    nsfw: input.nsfw,
     model: (input.aiModel || undefined) as AIModel | undefined,
   });
 
