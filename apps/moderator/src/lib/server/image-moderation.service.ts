@@ -37,13 +37,21 @@ export async function acceptImage({
   if (!img) return;
   const nr = img.needsReview;
 
+  // Strip the rule keys; on remixSource also stamp remixSourceReviewed so the audit job doesn't re-flag
+  // it. COALESCE because remixSource images usually have metadata=NULL (the audit job never writes it),
+  // and both `-` and `||` NULL-propagate — without it the stamp silently vanishes.
+  const metadataExpr =
+    nr === 'remixSource'
+      ? sql`(COALESCE("metadata", '{}'::jsonb) - 'ruleId' - 'ruleReason') || '{"remixSourceReviewed": true}'::jsonb`
+      : sql`"metadata" - 'ruleId' - 'ruleReason'`;
+
   await dbWrite
     .updateTable('Image')
     .set({
       needsReview: null,
       blockedFor: null,
       ingestion: 'Scanned',
-      metadata: sql`"metadata" - 'ruleId' - 'ruleReason'`,
+      metadata: metadataExpr,
       ...(nr === 'poi' ? { poi: false } : {}),
       ...(nr === 'minor'
         ? {
@@ -94,6 +102,12 @@ export async function blockImage({
   imageId: number;
   userId: number;
 }): Promise<void> {
+  const img = await dbRead
+    .selectFrom('Image')
+    .select('needsReview')
+    .where('id', '=', imageId)
+    .executeTakeFirst();
+
   await dbWrite
     .updateTable('Image')
     .set({
@@ -102,6 +116,11 @@ export async function blockImage({
       nsfwLevel: NsfwLevel.Blocked,
       blockedFor: BLOCKED_REASON_MODERATED,
       updatedAt: new Date(),
+      // On remixSource, stamp remixSourceReviewed so the audit job doesn't re-flag it (COALESCE — the
+      // column is usually NULL and `||` NULL-propagates).
+      ...(img?.needsReview === 'remixSource'
+        ? { metadata: sql`COALESCE("metadata", '{}'::jsonb) || '{"remixSourceReviewed": true}'::jsonb` }
+        : {}),
     })
     .where('id', '=', imageId)
     .execute();

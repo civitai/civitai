@@ -7,6 +7,7 @@ import {
   getImageReviewQueue,
   getReportedImageQueue,
   getAppealImageQueue,
+  getModerationRuleDefinitions,
 } from '$lib/server/image-review.service';
 import {
   acceptImage,
@@ -79,11 +80,21 @@ export const load: PageServerLoad = async ({ params, url }) => {
     cursor,
     limit,
   });
+  const stripped = items.map(({ prompt, negativePrompt, ...item }) => item);
+  const rules =
+    view === 'modRule'
+      ? await getModerationRuleDefinitions(
+          stripped.map((i) => i.ruleId).filter((x): x is number => x != null)
+        )
+      : {};
   return {
     ...base,
     view,
     kind: 'review' as const,
-    items: items.map(({ prompt, negativePrompt, ...item }) => item),
+    items: stripped.map((item) => ({
+      ...item,
+      ruleDefinition: item.ruleId != null ? (rules[item.ruleId] ?? null) : null,
+    })),
     nextCursor,
   };
 };
@@ -122,7 +133,10 @@ export const actions: Actions = {
     const imageId = Number(form.get('imageId'));
     if (!imageId) return fail(400, { error: 'Missing image id.' });
     const status = form.get('status') === 'Approved' ? 'Approved' : 'Rejected';
-    const resolvedMessage = String(form.get('resolvedMessage') ?? '').trim() || undefined;
+    const resolvedMessage =
+      String(form.get('resolvedMessage') ?? '')
+        .trim()
+        .slice(0, 1000) || undefined;
 
     await resolveImageAppeal({ imageId, status, resolvedMessage, userId: locals.user.id });
     return { success: true, imageId };

@@ -5,6 +5,7 @@
   import { SvelteMap } from 'svelte/reactivity';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
+  import * as Popover from '@civitai/ui/components/ui/popover/index.js';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
   import PromptHighlight from '$lib/components/PromptHighlight.svelte';
   import { browsingLevels, getBrowsingLevelLabel, NsfwLevel } from '@civitai/shared';
@@ -23,9 +24,12 @@
 
   // imageId → verdict label; optimistic (dims the card + shows the outcome) and cleared on a new page.
   const acted = new SvelteMap<number, string>();
+  // imageId → appeal resolution message (bound to each appeal card's textarea).
+  const messages = new SvelteMap<number, string>();
   $effect(() => {
     data.items;
     acted.clear();
+    messages.clear();
   });
 
   const submit: SubmitFunction = ({ action, formData }) => {
@@ -46,10 +50,19 @@
 
   const fmt = (d: Date | string | null) => (d ? new Date(d).toLocaleDateString() : '');
 
-  // Report.details is free-form JSON; surface a `comment` if the reporter left one.
-  const comment = (details: unknown): string | null => {
-    const c = (details as { comment?: unknown } | null)?.comment;
-    return typeof c === 'string' && c.trim() ? c : null;
+  // camelCase / snake_case enum → "Title Case" (the main app's getDisplayName/splitUppercase).
+  const formatEnum = (s: string) =>
+    s
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .replace(/_/g, ' ')
+      .replace(/^\w/, (c) => c.toUpperCase());
+
+  // Report.details is free-form JSON; list its primitive key/value pairs for the moderator.
+  const detailEntries = (details: unknown): [string, string][] => {
+    if (!details || typeof details !== 'object') return [];
+    return Object.entries(details as Record<string, unknown>)
+      .filter(([, v]) => v != null && typeof v !== 'object' && String(v).trim() !== '')
+      .map(([k, v]) => [k, String(v)]);
   };
 </script>
 
@@ -70,15 +83,20 @@
   </div>
 </header>
 
-{#snippet userHeader(item: { username: string | null })}
-  <a
-    href={`${data.civitaiUrl}/user/${item.username}`}
-    target="_blank"
-    rel="noreferrer"
-    class="block truncate text-xs text-muted-foreground hover:text-foreground"
-  >
-    {item.username ?? '[deleted]'}
-  </a>
+{#snippet userHeader(item: { username: string | null; profilePicture?: boolean | null })}
+  <div class="flex items-center gap-1.5">
+    <a
+      href={`${data.civitaiUrl}/user/${item.username}`}
+      target="_blank"
+      rel="noreferrer"
+      class="truncate text-xs text-muted-foreground hover:text-foreground"
+    >
+      {item.username ?? '[deleted]'}
+    </a>
+    {#if item.profilePicture}
+      <Badge class="shrink-0 bg-indigo-500/15 text-indigo-400">Avatar</Badge>
+    {/if}
+  </div>
 {/snippet}
 
 {#snippet verdictBadge(verdict: string)}
@@ -134,34 +152,46 @@
   {#if verdict}
     {@render verdictBadge(verdict)}
   {:else}
-    <div class="flex flex-wrap gap-1.5">
-      <form method="POST" action="?/resolveAppeal" use:enhance={submit}>
-        <input type="hidden" name="imageId" value={item.id} />
-        <input type="hidden" name="status" value="Approved" />
-        <button
-          type="submit"
-          class="rounded border border-emerald-600/40 px-2 py-0.5 text-xs font-semibold text-emerald-400 transition hover:bg-emerald-500/10"
-        >
-          Approve
-        </button>
-      </form>
-      <form method="POST" action="?/resolveAppeal" use:enhance={submit}>
-        <input type="hidden" name="imageId" value={item.id} />
-        <input type="hidden" name="status" value="Rejected" />
-        <button
-          type="submit"
-          class="rounded border border-rose-500/40 px-2 py-0.5 text-xs font-semibold text-rose-400 transition hover:bg-rose-500/10"
-        >
-          Reject
-        </button>
-      </form>
+    <div class="flex flex-col gap-1.5">
+      <textarea
+        placeholder="Resolution message (optional)"
+        value={messages.get(item.id) ?? ''}
+        oninput={(e) => messages.set(item.id, e.currentTarget.value)}
+        rows="2"
+        maxlength={1000}
+        class="w-full resize-none rounded border border-border bg-background px-2 py-1 text-xs"
+      ></textarea>
+      <div class="flex flex-wrap gap-1.5">
+        <form method="POST" action="?/resolveAppeal" use:enhance={submit}>
+          <input type="hidden" name="imageId" value={item.id} />
+          <input type="hidden" name="status" value="Approved" />
+          <input type="hidden" name="resolvedMessage" value={messages.get(item.id) ?? ''} />
+          <button
+            type="submit"
+            class="rounded border border-emerald-600/40 px-2 py-0.5 text-xs font-semibold text-emerald-400 transition hover:bg-emerald-500/10"
+          >
+            Approve
+          </button>
+        </form>
+        <form method="POST" action="?/resolveAppeal" use:enhance={submit}>
+          <input type="hidden" name="imageId" value={item.id} />
+          <input type="hidden" name="status" value="Rejected" />
+          <input type="hidden" name="resolvedMessage" value={messages.get(item.id) ?? ''} />
+          <button
+            type="submit"
+            class="rounded border border-rose-500/40 px-2 py-0.5 text-xs font-semibold text-rose-400 transition hover:bg-rose-500/10"
+          >
+            Reject
+          </button>
+        </form>
+      </div>
     </div>
   {/if}
 {/snippet}
 
-<!-- One grid per distinct item shape; `data.view` narrows `data.items` (its values are unique per
-     payload member), so the card body reads straight from the server types — no casts, no aliases. -->
-{#if data.view === 'minor' || data.view === 'remixSource'}
+<!-- One grid per distinct item shape (discriminated by `kind`); the card body then dispatches on
+     `data.view`. Both read straight from the server types — no casts, no aliases. -->
+{#if data.kind === 'review-highlight'}
   <ImageQueueGrid
     items={data.items}
     civitaiUrl={data.civitaiUrl}
@@ -199,7 +229,7 @@
       {/if}
     {/snippet}
   </ImageQueueGrid>
-{:else if data.view === 'reported'}
+{:else if data.kind === 'reported'}
   <ImageQueueGrid
     items={data.items}
     civitaiUrl={data.civitaiUrl}
@@ -213,7 +243,7 @@
       <div class="rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-xs">
         <div class="flex items-center justify-between gap-2">
           <span class="font-semibold text-amber-400">{item.report.reason}</span>
-          {#if item.report.count > 1}
+          {#if item.report.count > 0}
             <span class="shrink-0 text-muted-foreground">+{item.report.count} others</span>
           {/if}
         </div>
@@ -227,14 +257,17 @@
           >
           · {new Date(item.report.createdAt).toLocaleDateString()}
         </div>
-        {#if comment(item.report.details)}
-          <p class="mt-1 line-clamp-3 text-muted-foreground/90">{comment(item.report.details)}</p>
-        {/if}
+        {#each detailEntries(item.report.details) as [k, v] (k)}
+          <p class="mt-1 text-muted-foreground/90">
+            <span class="font-semibold">{formatEnum(k)}:</span>
+            {v}
+          </p>
+        {/each}
       </div>
       {@render reviewActions(item, { reportId: item.report.id })}
     {/snippet}
   </ImageQueueGrid>
-{:else if data.view === 'appeals'}
+{:else if data.kind === 'appeal'}
   <ImageQueueGrid
     items={data.items}
     civitaiUrl={data.civitaiUrl}
@@ -247,7 +280,7 @@
       <div class="flex flex-col gap-1.5 rounded-md border border-sky-500/30 bg-sky-500/5 p-2 text-xs">
         <div>
           <span class="font-semibold text-rose-400">Removed:</span>
-          {item.tosReason ?? item.blockedFor ?? 'TOS violation'}
+          {formatEnum(item.tosReason ?? item.blockedFor ?? 'TOS violation')}
           {#if item.removedAt}
             <span class="text-muted-foreground">
               · by {item.moderatorUsername ?? 'moderator'} · {fmt(item.removedAt)}
@@ -269,8 +302,19 @@
           · {fmt(item.appeal.createdAt)}
         </div>
         {#if item.reports.length > 0}
-          <div class="text-muted-foreground">
-            Triggered by: {item.reports.map((r) => r.reason).join(', ')}
+          <div class="flex flex-col gap-1">
+            <span class="text-muted-foreground">Triggered by</span>
+            {#each item.reports as report (report.id)}
+              <div class="flex flex-col gap-0.5">
+                <Badge class="w-fit bg-orange-500/15 text-orange-400">{report.reason}</Badge>
+                {#each detailEntries(report.details) as [k, v] (k)}
+                  <p class="ml-1 text-muted-foreground/90">
+                    <span class="font-semibold">{formatEnum(k)}:</span>
+                    {v}
+                  </p>
+                {/each}
+              </div>
+            {/each}
           </div>
         {/if}
       </div>
@@ -308,7 +352,24 @@
           {#if item.blockedFor}<Badge class="bg-muted">{item.blockedFor}</Badge>{/if}
         </div>
       {:else if data.view === 'modRule'}
-        <p class="text-xs text-amber-400">{item.ruleReason ?? 'Rule violation'}</p>
+        <div class="flex flex-col items-start gap-1">
+          <p class="text-xs text-amber-400">{item.ruleReason ?? 'Rule violation'}</p>
+          {#if item.ruleDefinition}
+            <Popover.Root>
+              <Popover.Trigger class="text-[11px] font-medium text-primary hover:underline">
+                View rule definition
+              </Popover.Trigger>
+              <Popover.Content align="start" class="w-[min(28rem,calc(100vw-2rem))]">
+                <pre
+                  class="max-h-[50vh] overflow-auto whitespace-pre-wrap break-words text-xs">{JSON.stringify(
+                    item.ruleDefinition,
+                    null,
+                    2
+                  )}</pre>
+              </Popover.Content>
+            </Popover.Root>
+          {/if}
+        </div>
       {:else}
         <Badge class="w-fit bg-rose-600/20 font-semibold text-rose-500">CSAM — flagged for review</Badge>
       {/if}

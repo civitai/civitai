@@ -19,6 +19,8 @@ export type ImageReviewItem = {
   poi: boolean;
   acceptableMinor: boolean;
   ruleReason: string | null;
+  ruleId: number | null;
+  profilePicture: boolean | null;
   prompt: string | null;
   negativePrompt: string | null;
   createdAt: Date;
@@ -82,6 +84,8 @@ export async function getImageReviewQueue({
       'i.poi',
       'i.acceptableMinor',
       sql<string | null>`i.metadata ->> 'ruleReason'`.as('ruleReason'),
+      sql<number | null>`(i.metadata ->> 'ruleId')::int`.as('ruleId'),
+      sql<boolean | null>`(i.metadata ->> 'profilePicture')::boolean`.as('profilePicture'),
       sql<string | null>`i.meta ->> 'prompt'`.as('prompt'),
       sql<string | null>`i.meta ->> 'negativePrompt'`.as('negativePrompt'),
       'i.createdAt',
@@ -140,6 +144,20 @@ export async function getImageReviewQueue({
     items: rows.map((r) => ({ ...r, reviewTags: tagsByImage.get(r.id) ?? [] })),
     nextCursor,
   };
+}
+
+// ModerationRule.definition (jsonb) keyed by id, for the modRule card's "rule definition" popover.
+export async function getModerationRuleDefinitions(
+  ruleIds: number[]
+): Promise<Record<number, unknown>> {
+  const ids = [...new Set(ruleIds)];
+  if (!ids.length) return {};
+  const rows = await dbRead
+    .selectFrom('ModerationRule')
+    .select(['id', 'definition'])
+    .where('id', 'in', ids)
+    .execute();
+  return Object.fromEntries(rows.map((r) => [r.id, r.definition]));
 }
 
 // Tab badge counts for the /images sub-tabs only — the needsReview values. The main app's counts query
@@ -257,6 +275,7 @@ export type AppealReportRow = {
   id: number;
   reason: string;
   status: string;
+  details: unknown;
   createdAt: Date;
   username: string | null;
   userId: number;
@@ -372,6 +391,7 @@ export async function getAppealImageQueue({
         'r.id',
         'r.reason',
         'r.status',
+        'r.details',
         'r.createdAt',
         'ru.username',
         'ru.id as userId',
@@ -386,6 +406,7 @@ export async function getAppealImageQueue({
           id: row.id,
           reason: String(row.reason),
           status: String(row.status),
+          details: row.details,
           createdAt: row.createdAt,
           username: row.username,
           userId: row.userId,
