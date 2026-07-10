@@ -2,10 +2,11 @@
  * Boogu Family Handler
  *
  * Handles the Boogu ecosystem (comfy engine, ecosystem 'boogu') using the
- * imageGen step type. One ecosystem, three checkpoints routed by model.id:
- *  - base  -> ComfyBooguBaseCreateImageGenInput  (operation: createImage)
- *  - turbo -> ComfyBooguTurboCreateImageGenInput (operation: createImage)
- *  - edit  -> ComfyBooguEditImageInput           (operation: editImage, + images)
+ * imageGen step type. One ecosystem, checkpoints routed by model.id:
+ *  - base      -> ComfyBooguBaseCreateImageGenInput  (operation: createImage)
+ *  - turbo     -> ComfyBooguTurboCreateImageGenInput (operation: createImage)
+ *  - edit      -> ComfyBooguEditImageInput           (operation: editImage, + images)
+ *  - editTurbo -> ComfyBooguEditTurboImageInput      (operation: editImage, + images)
  *
  * Supports community LoRAs (mapped AIR -> strength).
  */
@@ -14,6 +15,7 @@ import type {
   ComfyBooguBaseCreateImageGenInput,
   ComfyBooguTurboCreateImageGenInput,
   ComfyBooguEditImageInput,
+  ComfyBooguEditTurboImageInput,
   ImageGenStepTemplate,
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -26,16 +28,19 @@ type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: st
 type BooguCtx = EcosystemGraphOutput & { ecosystem: 'Boogu' };
 
 /** Map model version ID -> orchestrator model string */
-const versionIdToModel = new Map<number, 'base' | 'turbo' | 'edit'>([
+const versionIdToModel = new Map<number, 'base' | 'turbo' | 'edit' | 'editTurbo'>([
   [3049541, 'base'],
   [3050010, 'turbo'],
   [3049824, 'edit'],
+  [3113427, 'editTurbo'],
 ]);
 
 export const createBooguInput = defineHandler<BooguCtx, [ImageGenStepTemplate]>((data, ctx) => {
   const quantity = data.quantity ?? 1;
 
-  let model: 'base' | 'turbo' | 'edit' = data.workflow.startsWith('txt') ? 'base' : 'edit';
+  let model: 'base' | 'turbo' | 'edit' | 'editTurbo' = data.workflow.startsWith('txt')
+    ? 'base'
+    : 'edit';
   if (data.model) {
     const match = versionIdToModel.get(data.model.id);
     if (match) model = match;
@@ -61,6 +66,20 @@ export const createBooguInput = defineHandler<BooguCtx, [ImageGenStepTemplate]>(
     seed: data.seed,
     loras: Object.keys(loras).length > 0 ? loras : undefined,
   };
+
+  if (model === 'editTurbo') {
+    return [
+      {
+        $type: 'imageGen',
+        input: removeEmpty({
+          ...baseInput,
+          model: 'editTurbo',
+          operation: 'editImage',
+          images: data.images?.map((x) => x.url) ?? [],
+        }) as ComfyBooguEditTurboImageInput,
+      },
+    ];
+  }
 
   if (model === 'edit') {
     return [
