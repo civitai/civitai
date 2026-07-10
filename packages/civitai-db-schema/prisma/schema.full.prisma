@@ -1044,9 +1044,7 @@ model ModelVersion {
   earlyAccessTimeFrame Int               @default(0)
   flags                Int               @default(0)
 
-  // Expand phase (A2): the field keeps its name but points at a NEW decimal column, so old pods keep reading
-  // the untouched Int `licensingFee` column (kept in sync by a DB trigger). See the migration.
-  licensingFee                   Decimal?                        @db.Decimal(10, 2) @map("licensingFeeAmount")
+  licensingFee                   Decimal?                        @db.Decimal(10, 2)
   licensingFeeType               LicensingFeeType?               @default(PerImageBuzz)
   licensingFeeSettlementCurrency LicensingFeeSettlementCurrency? @default(Buzz)
 
