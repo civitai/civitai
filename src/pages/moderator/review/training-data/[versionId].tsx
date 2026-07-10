@@ -50,7 +50,7 @@ function ReviewTrainingData() {
     if (requestedRef.current || urls.length > 0) return;
     requestedRef.current = true;
     setLoading(true);
-    fetchBlob(`/api/download/training-data/${versionId}`)
+    fetchBlob(`/api/download/training-data/${versionId}`, 300_000)
       .then(async (zip) => {
         if (zip) {
           const zipReader = await getJSZip();

@@ -63,6 +63,10 @@ type VersionRow = {
   baseLicensingFee: number | null;
   baseLicensingFeeType: LicensingFeeType | null;
   baseLicensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
+  licensingSourceVersionId: number | null;
+  sourceLicensingFee: number | null;
+  sourceLicensingFeeType: LicensingFeeType | null;
+  sourceLicensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
   versionFlags: number;
   userFlags: number;
 };
@@ -109,13 +113,17 @@ export default MixedAuthEndpoint(async function handler(
       mv."earlyAccessEndsAt",
       mv."requireAuth",
       mv."usageControl",
-      mv."licensingFee",
+      mv."licensingFee"::float8 AS "licensingFee",
       mv."licensingFeeType",
       mv."licensingFeeSettlementCurrency",
       bmlf."modelVersionId" AS "baseLicensingFeeRecipientId",
-      rmv."licensingFee" AS "baseLicensingFee",
+      rmv."licensingFee"::float8 AS "baseLicensingFee",
       rmv."licensingFeeType" AS "baseLicensingFeeType",
       rmv."licensingFeeSettlementCurrency" AS "baseLicensingFeeSettlementCurrency",
+      mv."licensingSourceVersionId",
+      lsv."licensingFee"::float8 AS "sourceLicensingFee",
+      lsv."licensingFeeType" AS "sourceLicensingFeeType",
+      lsv."licensingFeeSettlementCurrency" AS "sourceLicensingFeeSettlementCurrency",
       mv."flags" AS "versionFlags",
       u."flags" AS "userFlags",
       (
@@ -148,6 +156,7 @@ export default MixedAuthEndpoint(async function handler(
     LEFT JOIN "BaseModelLicensingFee" bmlf
       ON bmlf."baseModel" = mv."baseModel" AND bmlf."modelType" = m."type"
     LEFT JOIN "ModelVersion" rmv ON rmv.id = bmlf."modelVersionId"
+    LEFT JOIN "ModelVersion" lsv ON lsv.id = mv."licensingSourceVersionId"
     WHERE ${Prisma.join(where, ' AND ')}
   `;
   if (!modelVersion) return res.status(404).json({ error: 'Model not found' });
@@ -267,18 +276,39 @@ export default MixedAuthEndpoint(async function handler(
     .map((fm) => fm.modelId)
     .includes(modelVersion.modelId);
 
-  // A base-model rule and the version's own fee now stack: a derivative on a
-  // base model that charges a licensing fee can add its own fee on top, and each
-  // fee settles to its own recipient. `fees` carries the full breakdown; the
-  // orchestrator charges the sum and pays out each entry separately.
+  // Licensing-fee resolution (per resource). One "base/lineage" component — the
+  // fee owed to the licensor of whatever this version derives from — plus an
+  // optional "version" surcharge the creator stacks on top; each settles to its
+  // own recipient. `fees` carries the full breakdown; the orchestrator charges
+  // the sum and pays out each entry separately. The base/lineage component is
+  // resolved most-specific first:
+  //   1. this version is a LicensingRoot -> its own fee IS the lineage fee,
+  //      settled to itself, and it escapes the (baseModel, modelType) rule
+  //      (e.g. an ecosystem's Turbo checkpoint charges its rate, not the base's).
+  //   2. licensingSourceVersionId set -> the chosen root's fee, settled to it
+  //      (a checkpoint built on Turbo inherits the Turbo rate).
+  //   3. otherwise the (baseModel, modelType) BaseModelLicensingFee rule.
+  const isLicensingRoot =
+    Flags.hasFlag(modelVersion.versionFlags, ModelVersionFlag.LicensingRoot) &&
+    modelVersion.licensingFee != null &&
+    modelVersion.licensingFee > 0;
+  const hasSourceRule =
+    !isLicensingRoot &&
+    modelVersion.licensingSourceVersionId != null &&
+    modelVersion.sourceLicensingFee != null &&
+    modelVersion.sourceLicensingFee > 0;
   const hasBaseRule =
+    !isLicensingRoot &&
+    !hasSourceRule &&
     modelVersion.baseLicensingFeeRecipientId != null &&
     modelVersion.baseLicensingFee != null &&
     modelVersion.baseLicensingFee > 0;
-  // A base version resolves to its own row via the rule, so don't double-count
-  // its fee as both the base rule and an own fee.
+
+  // When the base/lineage component already settles to this version itself (it's
+  // the root), its own fee IS that component — don't double-count it as a surcharge.
   const isBaseRecipientItself =
-    hasBaseRule && modelVersion.baseLicensingFeeRecipientId === modelVersion.id;
+    isLicensingRoot ||
+    (hasBaseRule && modelVersion.baseLicensingFeeRecipientId === modelVersion.id);
   const hasOwnFee =
     modelVersion.licensingFee != null && modelVersion.licensingFee > 0 && !isBaseRecipientItself;
 
@@ -289,7 +319,23 @@ export default MixedAuthEndpoint(async function handler(
     settlementCurrency: string;
     recipientModelVersionId: number;
   }> = [];
-  if (hasBaseRule) {
+  if (isLicensingRoot) {
+    fees.push({
+      role: 'baseModel',
+      amount: modelVersion.licensingFee!,
+      type: lowerFirst(modelVersion.licensingFeeType ?? 'PerImageBuzz'),
+      settlementCurrency: lowerFirst(modelVersion.licensingFeeSettlementCurrency ?? 'Buzz'),
+      recipientModelVersionId: modelVersion.id,
+    });
+  } else if (hasSourceRule) {
+    fees.push({
+      role: 'baseModel',
+      amount: modelVersion.sourceLicensingFee!,
+      type: lowerFirst(modelVersion.sourceLicensingFeeType ?? 'PerImageBuzz'),
+      settlementCurrency: lowerFirst(modelVersion.sourceLicensingFeeSettlementCurrency ?? 'Buzz'),
+      recipientModelVersionId: modelVersion.licensingSourceVersionId!,
+    });
+  } else if (hasBaseRule) {
     fees.push({
       role: 'baseModel',
       amount: modelVersion.baseLicensingFee!,

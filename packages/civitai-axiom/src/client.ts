@@ -12,8 +12,13 @@ import { loadAxiomEnv, type AxiomConfig } from './env';
 export function safeError(e: unknown): MixedObject | undefined {
   if (e == null) return undefined;
   if (e instanceof Error) {
-    const anyErr = e as { code?: unknown; cause?: unknown };
+    const anyErr = e as { code?: unknown; cause?: unknown; inner?: unknown };
     const cause = anyErr.cause;
+    // `@node-oauth/oauth2-server` nests the underlying failure in `.inner` (NOT `.cause`) — its
+    // `ServerError` wraps the real error, so the top-level name/message/stack are the generic library
+    // frame. Capture the inner name/message + its stack (the real failing line) so wrapped auth 500s
+    // stay triageable. Kept to primitives only, same as the rest of this helper.
+    const inner = anyErr.inner;
     return {
       name: e.name,
       message: e.message,
@@ -21,6 +26,10 @@ export function safeError(e: unknown): MixedObject | undefined {
       code: anyErr.code,
       causeMessage:
         cause instanceof Error ? cause.message : cause != null ? String(cause) : undefined,
+      innerName: inner instanceof Error ? inner.name : undefined,
+      innerMessage:
+        inner instanceof Error ? inner.message : inner != null ? String(inner) : undefined,
+      innerStack: inner instanceof Error ? inner.stack : undefined,
     };
   }
   return { message: String(e) };

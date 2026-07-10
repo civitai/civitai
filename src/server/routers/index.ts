@@ -92,12 +92,9 @@ export const appRouter = router({
     import('~/server/routers/redeemableCode.router').then((m) => m.redeemableCodeRouter)
   ),
   tool: lazy(() => import('~/server/routers/tool.router').then((m) => m.toolRouter)),
-  cosmeticShop: lazy(() =>
-    import('~/server/routers/cosmetic-shop.router').then((m) => m.cosmeticShopRouter)
-  ),
-  productBadge: lazy(() =>
-    import('~/server/routers/product-badge.router').then((m) => m.productBadgeRouter)
-  ),
+  cosmeticShop: lazy(() => import('~/server/routers/cosmetic-shop.router').then((m) => m.cosmeticShopRouter)),
+  creatorShop: lazy(() => import('~/server/routers/creator-shop.router').then((m) => m.creatorShopRouter)),
+  productBadge: lazy(() => import('~/server/routers/product-badge.router').then((m) => m.productBadgeRouter)),
   technique: lazy(() => import('~/server/routers/technique.router').then((m) => m.techniqueRouter)),
   donationGoal: lazy(() =>
     import('~/server/routers/donation-goal.router').then((m) => m.donationGoalRouter)

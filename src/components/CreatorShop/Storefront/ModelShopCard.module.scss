@@ -1,0 +1,53 @@
+.card {
+  height: 100%;
+  background: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-6));
+  border-radius: var(--mantine-radius-md);
+  padding: var(--mantine-spacing-md);
+  position: relative;
+}
+
+.cardHeader {
+  background: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-9));
+  margin: calc(-1 * var(--mantine-spacing-md));
+  margin-bottom: var(--mantine-spacing-md);
+  border-radius: var(--mantine-radius-md);
+  border-bottom-right-radius: 0;
+  border-bottom-left-radius: 0;
+  height: 250px;
+  position: relative;
+  overflow: hidden;
+}
+
+.image {
+  height: 100%;
+  width: 100%;
+  object-fit: cover;
+}
+
+.availability {
+  position: absolute;
+  // Top-right so it doesn't collide with the ImageGuard NSFW/blur toggle (top-left).
+  right: var(--mantine-spacing-md);
+  top: var(--mantine-spacing-md);
+  z-index: 2;
+}
+
+.countdown {
+  position: absolute;
+  left: var(--mantine-spacing-md);
+  right: var(--mantine-spacing-md);
+  bottom: var(--mantine-spacing-md);
+  display: flex;
+  align-items: stretch;
+  text-align: center;
+  z-index: 2;
+
+  :global(.mantine-Badge-label) {
+    display: block;
+    width: 100%;
+  }
+
+  :global(.mantine-Text-root) {
+    margin: 0 auto;
+  }
+}

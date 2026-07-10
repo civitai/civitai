@@ -94,7 +94,7 @@ export async function runPayout(lastUpdate: Date) {
       modelVersionId,
 	    accountType,
 	    source,
-	    SUM(FLOOR(amount))::int AS amount
+	    SUM(amount) AS amount
     FROM orchestration.resourceCompensations
     WHERE date = ${date}
     GROUP BY modelVersionId, accountType, source
@@ -166,7 +166,10 @@ export async function runPayout(lastUpdate: Date) {
         toAccountId: userId,
         fromAccountType: accountType as BuzzAccountType,
         toAccountType: accountType as BuzzAccountType,
-        amount,
+        // Sum-then-floor once at the daily boundary (amounts arrive fractional from the query now that we no
+        // longer floor per row — required so sub-buzz license fees accumulate instead of flooring to 0).
+        // No-op for already-integer comp/tip amounts.
+        amount: Math.floor(amount),
         description: `Creator tip compensation (${formatDate(date, 'MMM D, YYYY', true)})`,
         type: TransactionType.Compensation,
         externalTransactionId: `creator-tip-comp-${dateStr}-${userId}-${accountType}`,
@@ -178,7 +181,10 @@ export async function runPayout(lastUpdate: Date) {
         toAccountId: userId,
         fromAccountType: accountType as BuzzAccountType,
         toAccountType: accountType as BuzzAccountType,
-        amount,
+        // Fractional per-image fees (0.01/image, A2) accumulate across the day; settle the buzz total at
+        // this daily boundary by flooring. Sub-buzz remainder is dropped, not carried. FINANCE REVIEW: confirm
+        // floor vs round, and whether the sub-buzz remainder should roll over instead of being forfeited.
+        amount: Math.floor(amount),
         description: `License fee payout (${formatDate(date, 'MMM D, YYYY', true)})`,
         type: TransactionType.LicenseFee,
         externalTransactionId: `license-fee-${dateStr}-${userId}-${accountType}`,

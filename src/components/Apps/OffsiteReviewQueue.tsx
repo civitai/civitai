@@ -12,6 +12,7 @@ import {
   Modal,
   NumberInput,
   SegmentedControl,
+  Select,
   Stack,
   Table,
   Text,
@@ -41,7 +42,15 @@ import {
   type ReportRowAction,
 } from '~/components/Apps/appListingModerationView';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
+import {
+  OFFSITE_CONTENT_RATINGS,
+  type OffsiteContentRating,
+} from '~/server/schema/blocks/offsite-listing.schema';
 import { validateExternalUrl } from '~/server/schema/blocks/external-app.schema';
+import {
+  deriveContentRatingFromAssets,
+  nsfwLevelFromContentRating,
+} from '~/shared/constants/browsingLevel.constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatDate as formatDateHelper } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -218,6 +227,10 @@ function OffsiteReviewModal({
   // own notes textarea + confirm (approve gated behind an explicit "Approve…" click,
   // mirroring reject — so a stray click can't approve with un-reviewed notes).
   const [actionMode, setActionMode] = useState<'view' | 'reject' | 'approve'>('view');
+  // The mod's chosen final content rating. `null` = "follow the derived value" (the
+  // Select shows the derived rating as its default); a non-null value is an explicit
+  // override. The server FLOORS an under-rating override at the derived value.
+  const [ratingOverride, setRatingOverride] = useState<OffsiteContentRating | null>(null);
 
   // Asset presence for the content checklist (author/mod-gated; a mod passes the
   // author floor). Only enabled once a row with a draft listing is open.
@@ -255,16 +268,37 @@ function OffsiteReviewModal({
     setRejectionReason('');
     setApprovalNotes('');
     setActionMode('view');
+    setRatingOverride(null);
     onClose();
   }
 
   if (!request) return null;
 
-  const screenshotCount = (assetsQuery.data?.screenshots ?? []).filter(
-    (s: { imageId: number | null }) => s.imageId != null
-  ).length;
+  const screenshots = (assetsQuery.data?.screenshots ?? []) as {
+    imageId: number | null;
+    nsfwLevel?: number | null;
+  }[];
+  const screenshotCount = screenshots.filter((s) => s.imageId != null).length;
   const hasIcon = assetsQuery.data?.iconId != null;
   const hasCover = assetsQuery.data?.coverId != null;
+
+  // Content rating: DERIVE from the assets' max detected nsfwLevel (icon + cover +
+  // screenshots), surface it ALONGSIDE the author-declared rating, and FLAG when the
+  // assets are more mature than declared. The Select defaults to the derived value;
+  // the mod may rate UP (an under-rating is floored server-side).
+  const assetLevels: (number | null | undefined)[] = [
+    (assetsQuery.data as { iconNsfwLevel?: number | null } | undefined)?.iconNsfwLevel,
+    (assetsQuery.data as { coverNsfwLevel?: number | null } | undefined)?.coverNsfwLevel,
+    ...screenshots.map((s) => s.nsfwLevel),
+  ];
+  const derivedRating = deriveContentRatingFromAssets(
+    assetLevels.map((nsfwLevel) => ({ nsfwLevel: nsfwLevel ?? null }))
+  );
+  const declaredRating = request.appListing?.contentRating ?? null;
+  const ratingMismatch =
+    !assetsQuery.isLoading &&
+    nsfwLevelFromContentRating(derivedRating) > nsfwLevelFromContentRating(declaredRating);
+  const selectedRating: OffsiteContentRating = ratingOverride ?? derivedRating;
 
   const checklist = getOffsiteReviewChecklist({
     name: request.appListing?.name,
@@ -359,6 +393,24 @@ function OffsiteReviewModal({
                   <Badge size="sm" color="gray" variant="light">
                     {request.appListing.contentRating}
                   </Badge>
+                  <Text size="xs" c="dimmed">
+                    declared
+                  </Text>
+                </Group>
+              )}
+              {!assetsQuery.isLoading && (
+                <Group gap={6}>
+                  <Text size="xs" c="dimmed">
+                    Detected from assets
+                  </Text>
+                  <Badge
+                    size="sm"
+                    color={ratingMismatch ? 'red' : 'blue'}
+                    variant="light"
+                    data-testid="apps-offsite-derived-rating"
+                  >
+                    {derivedRating}
+                  </Badge>
                 </Group>
               )}
             </Group>
@@ -418,6 +470,21 @@ function OffsiteReviewModal({
           </Alert>
         )}
 
+        {ratingMismatch && (
+          <Alert
+            color="red"
+            variant="light"
+            icon={<IconAlertTriangle size={16} />}
+            data-testid="apps-offsite-rating-mismatch"
+          >
+            <Text size="sm">
+              Assets contain higher-maturity content ({derivedRating}) than the declared rating (
+              {declaredRating ?? '—'}). The final rating defaults to the detected value; rate it at
+              least that high.
+            </Text>
+          </Alert>
+        )}
+
         {actionMode === 'reject' ? (
           <Stack gap="xs">
             <Text size="sm" fw={600}>
@@ -456,6 +523,16 @@ function OffsiteReviewModal({
           </Stack>
         ) : actionMode === 'approve' ? (
           <Stack gap="xs">
+            <Select
+              label="Final content rating"
+              description="Defaults to the rating detected from the assets. You may rate up; an under-rating is floored to the detected value on save."
+              data={OFFSITE_CONTENT_RATINGS.map((r) => ({ value: r, label: r }))}
+              value={selectedRating}
+              onChange={(v) => setRatingOverride((v as OffsiteContentRating) ?? null)}
+              disabled={busy}
+              allowDeselect={false}
+              data-testid="apps-offsite-approve-rating"
+            />
             <Text size="sm" fw={600}>
               Approval notes (optional)
             </Text>
@@ -480,6 +557,7 @@ function OffsiteReviewModal({
                   approveMut.mutate({
                     publishRequestId: request.id,
                     approvalNotes: approvalNotes.trim() || undefined,
+                    contentRating: selectedRating,
                   })
                 }
                 disabled={busy}

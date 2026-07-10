@@ -2,7 +2,7 @@
  * Seedream Ecosystem Handler
  *
  * Handles Seedream workflows using imageGen step type.
- * Supports v3, v4, v4.5, and v5.0-lite model versions.
+ * Supports v3, v4, v4.5, v5.0-lite, and v5.0-pro model versions.
  */
 
 import type { SeedreamImageGenInput, SeedreamVersion, ImageGenStepTemplate } from '@civitai/client';
@@ -29,7 +29,7 @@ export const createSeedreamInput = defineHandler<SeedreamCtx, [ImageGenStepTempl
     const quantity = data.quantity ?? 1;
 
     // Determine version from model
-    let version: SeedreamVersion = 'v4.5';
+    let version: SeedreamVersion = 'v5.0-pro';
     if (data.model) {
       const match = versionIdToVersion.get(data.model.id);
       if (match) version = match;

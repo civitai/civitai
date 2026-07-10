@@ -521,6 +521,7 @@ model User {
   addedCosmeticShopSections  CosmeticShopSection[]
   addedCosmeticShopItems     CosmeticShopItem[]
   purchasedCosmetics         UserCosmeticShopPurchases[]
+  createdCosmetics           Cosmetic[]                  @relation("CosmeticCreator")
   donationGoals              DonationGoal[]
   donations                  Donation[]
   collaboratingOn            EntityCollaborator[]           @relation("entityCollaboratorParticipant")
@@ -1044,9 +1045,16 @@ model ModelVersion {
   earlyAccessTimeFrame Int               @default(0)
   flags                Int               @default(0)
 
-  licensingFee                   Int?
+  licensingFee                   Decimal?                        @db.Decimal(10, 2)
   licensingFeeType               LicensingFeeType?               @default(PerImageBuzz)
   licensingFeeSettlementCurrency LicensingFeeSettlementCurrency? @default(Buzz)
+
+  // Licensing lineage: the root version whose fee this version inherits (e.g. a
+  // checkpoint built on Anima-Turbo points at the turbo version). Null falls
+  // back to the (baseModel, modelType) BaseModelLicensingFee rule. Decoupled
+  // from baseModel so it never affects gen-compat / leaderboards / filters.
+  licensingSourceVersionId Int?
+  licensingSource          ModelVersion?  @relation("licensingSource", fields: [licensingSourceVersionId], references: [id], onDelete: SetNull)
 
   monetization            ModelVersionMonetization?
   metrics                 ModelVersionMetric[]
@@ -1061,6 +1069,7 @@ model ModelVersion {
   metricsDaily            ModelMetricDaily[]
   modelVersionExploration ModelVersionExploration[]
   vaeFor                  ModelVersion[]            @relation("vae")
+  licensingDerivatives    ModelVersion[]            @relation("licensingSource")
   generationCoverage      GenerationCoverage?
   recommendedResources    RecommendedResource[]     @relation("recommendedResources")
   recommendedTo           RecommendedResource[]     @relation("recommendedTo")
@@ -1072,6 +1081,7 @@ model ModelVersion {
   baseModelLicensingFees  BaseModelLicensingFee[]
 
   @@index([modelId], type: Hash)
+  @@index([licensingSourceVersionId])
 }
 
 model BaseModelLicensingFee {
@@ -1177,6 +1187,7 @@ model ModelFile {
   headerData        Json?
   visibility        ModelFileVisibility @default(Public)
   dataPurged        Boolean             @default(false)
+  replacedAt        DateTime?
 
   @@index([modelVersionId], type: Hash)
 }
@@ -3629,6 +3640,15 @@ enum CosmeticSource {
   Claim
 }
 
+enum CosmeticShopItemStatus {
+  Draft
+  PendingReview
+  Published
+  Rejected
+  RequestedChanges
+  Archived
+}
+
 model Cosmetic {
   id                  Int                         @id @default(autoincrement())
   name                String
@@ -3646,9 +3666,13 @@ model Cosmetic {
   productId           String?
   leaderboardId       String?
   leaderboardPosition Int?
+  createdById         Int?
+  creator             User?                       @relation("CosmeticCreator", fields: [createdById], references: [id], onDelete: SetNull)
   UserCosmetic        UserCosmetic[]
   purchases           UserCosmeticShopPurchases[]
   cosmeticShopItems   CosmeticShopItem[]
+
+  @@index([createdById])
 }
 
 enum CosmeticEntity {
@@ -3705,6 +3729,10 @@ model CosmeticShopItem {
   title             String
   description       String?
   archivedAt        DateTime?
+  status            CosmeticShopItemStatus @default(Published)
+  reviewedById      Int?
+  reviewedAt        DateTime?
+  rejectionReason   String?
 
   purchases UserCosmeticShopPurchases[]
   sections  CosmeticShopSectionItem[]

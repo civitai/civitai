@@ -11,6 +11,7 @@ import {
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
 import type { ModelFileType } from '~/server/common/constants';
+import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import {
   EntityAccessPermission,
   NotificationCategory,
@@ -58,7 +59,9 @@ import type {
   RecommendedSettingsSchema,
   AddLinkedComponentInput,
   LinkedComponentSettings,
+  LinkOfficialFileByHashInput,
   SetLinkedComponentsInput,
+  UpdateEarlyAccessConfigInput,
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
 import type { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
@@ -69,6 +72,7 @@ import {
 } from '~/server/search-index';
 import { deleteBidsForModelVersion } from '~/server/services/auction.service';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { findOfficialFileByHash } from '~/server/services/model-file.service';
 import {
   createMultiAccountBuzzTransaction,
   refundMultiAccountTransaction,
@@ -90,10 +94,17 @@ import type {
   ModelVersionEngagementType,
   TrainingStatus,
 } from '~/shared/utils/prisma/enums';
-import { Availability, CommercialUse, ModelStatus } from '~/shared/utils/prisma/enums';
+import {
+  Availability,
+  CommercialUse,
+  LicensingFeeSettlementCurrency,
+  LicensingFeeType,
+  ModelStatus,
+  ModelUsageControl,
+} from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
-import { filesForModelVersionCache } from './model-file.service';
+import { markFileReplaced, filesForModelVersionCache } from './model-file.service';
 import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
 import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
@@ -259,6 +270,106 @@ export const getUserEarlyAccessModelVersions = async ({ userId }: { userId: numb
   });
 };
 
+// Licensing lineage roots selectable for a given base model — the versions
+// flagged LicensingRoot that define a fee others can inherit (e.g. an
+// ecosystem's Base / Turbo checkpoints). Feeds the version-form picker.
+export const getLicensingRoots = async ({ baseModel }: { baseModel: string }) => {
+  return dbRead.$queryRaw<
+    Array<{
+      id: number;
+      modelId: number;
+      modelName: string;
+      versionName: string;
+      licensingFee: number | null;
+      licensingFeeType: LicensingFeeType | null;
+      licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
+    }>
+  >`
+    SELECT
+      mv.id,
+      mv."modelId",
+      m.name AS "modelName",
+      mv.name AS "versionName",
+      mv."licensingFee"::float8 AS "licensingFee",
+      mv."licensingFeeType",
+      mv."licensingFeeSettlementCurrency"
+    FROM "ModelVersion" mv
+    JOIN "Model" m ON m.id = mv."modelId"
+    WHERE mv."baseModel" = ${baseModel}
+      AND (mv.flags & ${ModelVersionFlag.LicensingRoot}) = ${ModelVersionFlag.LicensingRoot}
+      AND mv.status = ${ModelStatus.Published}::"ModelStatus"
+      AND mv."licensingFee" IS NOT NULL
+      AND mv."licensingFee" > 0
+      AND m.status = ${ModelStatus.Published}::"ModelStatus"
+      AND m.availability = ${Availability.Public}::"Availability"
+      AND m."deletedAt" IS NULL
+    ORDER BY m.name, mv.index
+  `;
+};
+
+// Field-level early-access requirements (status-independent): a timeframe needs
+// a charge, and each enabled charge needs a price.
+function assertEarlyAccessChargeConfig(
+  config: ModelVersionEarlyAccessConfig | null | undefined
+) {
+  if (config?.timeframe && !config.chargeForDownload && !config.chargeForGeneration) {
+    throw throwBadRequestError(
+      'You must charge for downloads or generations if you set an early access time frame.'
+    );
+  }
+  if (config?.chargeForDownload && !config.downloadPrice) {
+    throw throwBadRequestError('You must provide a download price when charging for downloads.');
+  }
+  if (config?.chargeForGeneration && !config.generationPrice) {
+    throw throwBadRequestError('You must provide a generation price when charging for generations.');
+  }
+}
+
+// Post-publish guards + merge. Once published a creator can only loosen terms
+// (can't add EA, raise price/timeframe, or change donation goals), and the merge
+// preserves hidden fields the UI never sends back (e.g. buzzTransactionId).
+function mergeEarlyAccessConfigUpdate({
+  existingConfig,
+  updatedConfig,
+  status,
+}: {
+  existingConfig: ModelVersionEarlyAccessConfig | null;
+  updatedConfig: ModelVersionEarlyAccessConfig | null | undefined;
+  status: ModelStatus;
+}): ModelVersionEarlyAccessConfig | null | undefined {
+  if (status === ModelStatus.Published && !!updatedConfig && !existingConfig) {
+    throw throwBadRequestError('You cannot add early access on a model after it has been published.');
+  }
+
+  if (status === ModelStatus.Published && updatedConfig && existingConfig) {
+    if (
+      updatedConfig.chargeForDownload &&
+      (updatedConfig.downloadPrice as number) > (existingConfig.downloadPrice as number)
+    ) {
+      throw throwBadRequestError(
+        'You cannot increase the download price on a model after it has been published.'
+      );
+    }
+
+    if (updatedConfig.timeframe > existingConfig.timeframe) {
+      throw throwBadRequestError(
+        'You cannot increase the early access time frame for a published early access model version.'
+      );
+    }
+
+    if (
+      updatedConfig.donationGoalEnabled !== existingConfig.donationGoalEnabled ||
+      updatedConfig.donationGoal !== existingConfig.donationGoal
+    ) {
+      throw throwBadRequestError(
+        'You cannot update donation goals on a published early access model version.'
+      );
+    }
+  }
+
+  return updatedConfig ? { ...existingConfig, ...updatedConfig } : updatedConfig;
+}
+
 export const upsertModelVersion = async ({
   id,
   monetization,
@@ -329,25 +440,7 @@ export const upsertModelVersion = async ({
     );
   }
 
-  if (
-    updatedEarlyAccessConfig?.timeframe &&
-    !updatedEarlyAccessConfig?.chargeForDownload &&
-    !updatedEarlyAccessConfig?.chargeForGeneration
-  ) {
-    throw throwBadRequestError(
-      'You must charge for downloads or generations if you set an early access time frame.'
-    );
-  }
-
-  if (updatedEarlyAccessConfig?.chargeForDownload && !updatedEarlyAccessConfig.downloadPrice) {
-    throw throwBadRequestError('You must provide a download price when charging for downloads.');
-  }
-
-  if (updatedEarlyAccessConfig?.chargeForGeneration && !updatedEarlyAccessConfig.generationPrice) {
-    throw throwBadRequestError(
-      'You must provide a generation price when charging for generations.'
-    );
-  }
+  assertEarlyAccessChargeConfig(updatedEarlyAccessConfig);
 
   if (!id || templateId) {
     const existingVersions = await dbWrite.modelVersion.findMany({
@@ -465,53 +558,11 @@ export const upsertModelVersion = async ({
         ? (existingVersion.earlyAccessConfig as unknown as ModelVersionEarlyAccessConfig)
         : null;
 
-    if (
-      existingVersion.status === ModelStatus.Published &&
-      !!updatedEarlyAccessConfig &&
-      !earlyAccessConfig
-    ) {
-      throw throwBadRequestError(
-        'You cannot add early access on a model after it has been published.'
-      );
-    }
-
-    if (
-      existingVersion.status === ModelStatus.Published &&
-      updatedEarlyAccessConfig &&
-      earlyAccessConfig
-    ) {
-      // Check all changes related now:
-
-      if (
-        updatedEarlyAccessConfig.chargeForDownload &&
-        (updatedEarlyAccessConfig.downloadPrice as number) >
-          (earlyAccessConfig.downloadPrice as number)
-      ) {
-        throw throwBadRequestError(
-          'You cannot increase the download price on a model after it has been published.'
-        );
-      }
-
-      if (updatedEarlyAccessConfig.timeframe > earlyAccessConfig?.timeframe) {
-        throw throwBadRequestError(
-          'You cannot increase the early access time frame for a published early access model version.'
-        );
-      }
-
-      if (
-        updatedEarlyAccessConfig.donationGoalEnabled !== earlyAccessConfig.donationGoalEnabled ||
-        updatedEarlyAccessConfig.donationGoal !== earlyAccessConfig.donationGoal
-      ) {
-        throw throwBadRequestError(
-          'You cannot update donation goals on a published early access model version.'
-        );
-      }
-    }
-
-    updatedEarlyAccessConfig = updatedEarlyAccessConfig
-      ? // Ensures we keep relevant data such as buzzTransactionId even if the user changes something.
-        { ...earlyAccessConfig, ...updatedEarlyAccessConfig }
-      : updatedEarlyAccessConfig;
+    updatedEarlyAccessConfig = mergeEarlyAccessConfigUpdate({
+      existingConfig: earlyAccessConfig,
+      updatedConfig: updatedEarlyAccessConfig,
+      status: existingVersion.status,
+    });
 
     // Check if trying to publish a model version when model is marked as cannotPublish
     const existingModelMeta = existingVersion.model.meta as ModelMeta | null;
@@ -622,7 +673,78 @@ export const upsertModelVersion = async ({
   }
 };
 
-export const deleteVersionById = async ({ id }: GetByIdInput) => {
+// Narrow write for just the early-access config — the studio (and any caller
+// that only wants to edit monetization) doesn't have to round-trip the whole
+// version payload through `upsertModelVersion`. Shares the same guards + merge.
+export const updateModelVersionEarlyAccessConfig = async ({
+  id,
+  earlyAccessConfig: updatedEarlyAccessConfig,
+}: UpdateEarlyAccessConfigInput) => {
+  const existingVersion = await dbWrite.modelVersion.findUniqueOrThrow({
+    where: { id },
+    select: {
+      id: true,
+      status: true,
+      baseModel: true,
+      usageControl: true,
+      earlyAccessConfig: true,
+      modelId: true,
+    },
+  });
+
+  if (isNonCommercialBaseModel(existingVersion.baseModel) && !!updatedEarlyAccessConfig) {
+    throw throwBadRequestError(
+      `The base model "${existingVersion.baseModel}" is licensed for non-commercial use and cannot be monetized.`
+    );
+  }
+
+  if (
+    existingVersion.usageControl !== ModelUsageControl.Download &&
+    updatedEarlyAccessConfig?.chargeForDownload
+  ) {
+    throw throwBadRequestError(
+      'Cannot charge for download if downloads are disabled for this model version'
+    );
+  }
+
+  assertEarlyAccessChargeConfig(updatedEarlyAccessConfig);
+
+  const existingConfig =
+    existingVersion.earlyAccessConfig !== null
+      ? (existingVersion.earlyAccessConfig as unknown as ModelVersionEarlyAccessConfig)
+      : null;
+
+  const mergedConfig = mergeEarlyAccessConfigUpdate({
+    existingConfig,
+    updatedConfig: updatedEarlyAccessConfig,
+    status: existingVersion.status,
+  });
+
+  const version = await dbWrite.modelVersion.update({
+    where: { id },
+    data: {
+      earlyAccessConfig: mergedConfig !== null ? mergedConfig : Prisma.JsonNull,
+    },
+    select: { id: true, modelId: true, earlyAccessConfig: true },
+  });
+
+  await Promise.all([
+    preventModelVersionLag(version.modelId, version.id),
+    bustMvCache(version.id, version.modelId),
+    dataForModelsCache.refresh(version.modelId),
+  ]);
+
+  ingestModelById({ id: version.modelId }).catch((error) =>
+    logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: version.modelId })
+  );
+
+  return version;
+};
+
+export const deleteVersionById = async ({
+  id,
+  isModerator,
+}: GetByIdInput & { isModerator?: boolean }) => {
   // Populated inside the tx so the snapshot is consistent with the cascade.
   let modelFileUrls: string[] = [];
 
@@ -642,16 +764,32 @@ export const deleteVersionById = async ({ id }: GetByIdInput) => {
         modelId: true,
         status: true,
         earlyAccessConfig: true,
+        earlyAccessEndsAt: true,
         meta: true,
       },
     });
 
     const meta = data.meta as ModelVersionMeta;
     if (meta?.hadEarlyAccessPurchase) {
-      throw throwBadRequestError(
-        'Cannot delete a model version that has had early access purchases.'
-      );
+      if (!isModerator) {
+        throw throwBadRequestError(
+          'Cannot delete a model version that has had early access purchases.'
+        );
+      }
+      // Moderators may only delete once the early access period is over —
+      // deleting mid-period would strip buyers of paid access with no refund.
+      if (data.earlyAccessEndsAt && data.earlyAccessEndsAt > new Date()) {
+        throw throwBadRequestError(
+          'Cannot delete a model version while its early access period is still active.'
+        );
+      }
     }
+
+    // EntityAccess is polymorphic (no FK), so the version cascade won't remove
+    // purchased-access rows — clean them up here or they orphan.
+    await tx.entityAccess.deleteMany({
+      where: { accessToId: id, accessToType: 'ModelVersion' },
+    });
 
     const deleted = await tx.modelVersion.delete({ where: { id } });
     await updateModelLastVersionAt({ id: deleted.modelId, tx });
@@ -2075,43 +2213,124 @@ export const setLinkedComponents = async ({ id, components }: SetLinkedComponent
   if (source) await preventModelVersionLag(source.modelId, id);
 };
 
-export const addLinkedComponent = async (input: AddLinkedComponentInput) => {
-  // Find all files and pick the primary one using modelFileOrder priority
-  const files = await dbRead.modelFile.findMany({
-    where: { modelVersionId: input.targetVersionId },
-    select: { id: true, name: true, sizeKB: true, type: true, metadata: true },
-  });
+export const addLinkedComponent = async (
+  input: AddLinkedComponentInput & { userId: number; isModerator?: boolean }
+) => {
+  const { userId, isModerator } = input;
 
-  if (files.length === 0) {
-    throw new TRPCError({
-      code: 'NOT_FOUND',
-      message: 'No files found for the target model version',
+  type LinkedFile = {
+    id: number;
+    name: string;
+    sizeKB: number;
+    type: string;
+    metadata: unknown;
+  };
+
+  let linkedFile: LinkedFile;
+  // `resourceId` is the linked/canonical version stored on the row. When an
+  // explicit file is given we take it from the file itself (authoritative);
+  // otherwise it's the version the caller passed.
+  let resourceId = input.targetVersionId;
+
+  if (input.targetFileId != null) {
+    const file = await dbRead.modelFile.findUnique({
+      where: { id: input.targetFileId },
+      select: {
+        id: true,
+        name: true,
+        sizeKB: true,
+        type: true,
+        metadata: true,
+        modelVersionId: true,
+        modelVersion: { select: { model: { select: { userId: true } } } },
+      },
     });
+
+    if (!file) throw new TRPCError({ code: 'NOT_FOUND', message: 'Linked file not found' });
+
+    // The version being edited (`input.id`) already passed isOwnerOrModerator;
+    // this guards the *referenced* file's owner.
+    if (!isModerator && file.modelVersion.model.userId !== userId)
+      throw new TRPCError({
+        code: 'FORBIDDEN',
+        message: 'You do not own the file you are trying to link',
+      });
+
+    // resourceId + returned version data come from the file's parent version, so a
+    // targetVersionId that disagrees would produce inconsistent denormalized data
+    // (versionName/modelName). Reject the mismatch instead of silently ignoring it.
+    if (input.targetVersionId !== file.modelVersionId)
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'targetVersionId must match the parent version of targetFileId',
+      });
+
+    linkedFile = file;
+    resourceId = file.modelVersionId;
+  } else {
+    // No explicit file requested — auto-pick the primary by modelFileOrder priority.
+    const files = await dbRead.modelFile.findMany({
+      where: { modelVersionId: input.targetVersionId },
+      select: { id: true, name: true, sizeKB: true, type: true, metadata: true },
+    });
+
+    if (files.length === 0)
+      throw new TRPCError({
+        code: 'NOT_FOUND',
+        message: 'No files found for the target model version',
+      });
+
+    linkedFile = files.sort(
+      (a, b) =>
+        (constants.modelFileOrder[a.type as ModelFileType] ?? 99) -
+        (constants.modelFileOrder[b.type as ModelFileType] ?? 99)
+    )[0];
   }
 
-  const primaryFile = files.sort(
-    (a, b) =>
-      (constants.modelFileOrder[a.type as ModelFileType] ?? 99) -
-      (constants.modelFileOrder[b.type as ModelFileType] ?? 99)
-  )[0];
+  // Validate the redundant file up front (before any write) so a bad
+  // replaceFileId can't leave a dangling pointer: it must live on the version
+  // being edited and must not be a primary model file (never delete weights).
+  if (input.replaceFileId != null) {
+    const replaceFile = await dbRead.modelFile.findUnique({
+      where: { id: input.replaceFileId },
+      select: { modelVersionId: true, type: true },
+    });
+    if (!replaceFile || replaceFile.modelVersionId !== input.id)
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'replaceFileId must be a file on the version being edited',
+      });
+    if (
+      primaryModelFileTypes.includes(replaceFile.type as ModelFileType) ||
+      replaceFile.type === 'Training Data'
+    )
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'Cannot replace a primary model or training-data file',
+      });
+  }
 
   const settings = {
     isLinkedComponent: true as const,
     componentType: input.componentType,
-    fileId: primaryFile.id,
+    fileId: linkedFile.id,
     modelId: input.modelId,
     modelName: input.modelName,
     versionName: input.versionName,
-    fileName: primaryFile.name,
+    fileName: linkedFile.name,
     isRequired: input.isRequired ?? true,
   };
 
-  // Check for existing linked component with same source + target
+  // Dedupe on (sourceId, resourceId, fileId) so two distinct files from the
+  // same target version coexist instead of overwriting each other.
   const existing = await dbWrite.recommendedResource.findFirst({
     where: {
       sourceId: input.id,
-      resourceId: input.targetVersionId,
-      settings: { path: ['isLinkedComponent'], equals: true },
+      resourceId,
+      AND: [
+        { settings: { path: ['isLinkedComponent'], equals: true } },
+        { settings: { path: ['fileId'], equals: linkedFile.id } },
+      ],
     },
     select: { id: true },
   });
@@ -2122,12 +2341,15 @@ export const addLinkedComponent = async (input: AddLinkedComponentInput) => {
         data: { settings },
       })
     : await dbWrite.recommendedResource.create({
-        data: {
-          sourceId: input.id,
-          resourceId: input.targetVersionId,
-          settings,
-        },
+        data: { sourceId: input.id, resourceId, settings },
       });
+
+  // Quarantine the now-redundant local file instead of hard-deleting it: bytes
+  // are retained for 30 days (restorable) and freed later by the
+  // purge-replaced-files job. Requires the created pointer's id.
+  if (input.replaceFileId != null) {
+    await markFileReplaced({ fileId: input.replaceFileId, recommendedResourceId: result.id });
+  }
 
   const source = await dbWrite.modelVersion.findUnique({
     where: { id: input.id },
@@ -2135,19 +2357,19 @@ export const addLinkedComponent = async (input: AddLinkedComponentInput) => {
   });
   if (source) await preventModelVersionLag(source.modelId, input.id);
 
-  const meta = primaryFile.metadata as Record<string, unknown> | null;
+  const meta = linkedFile.metadata as Record<string, unknown> | null;
 
   return {
     recommendedResourceId: result.id,
     componentType: input.componentType,
     modelId: input.modelId,
     modelName: input.modelName,
-    versionId: input.targetVersionId,
+    versionId: resourceId,
     versionName: input.versionName,
-    fileId: primaryFile.id,
-    fileName: primaryFile.name,
-    sizeKB: primaryFile.sizeKB,
-    fileType: primaryFile.type,
+    fileId: linkedFile.id,
+    fileName: linkedFile.name,
+    sizeKB: linkedFile.sizeKB,
+    fileType: linkedFile.type,
     fileMetadata: meta
       ? {
           format: meta.format as string | null,
@@ -2554,4 +2776,27 @@ export const mergeVersions = async ({
       });
     }
   }
+};
+
+export const linkOfficialFileByHash = async (
+  input: LinkOfficialFileByHashInput & { userId: number; isModerator?: boolean }
+) => {
+  // Host-version ownership is enforced by the router middleware (isOwnerOrModerator on input.id).
+  // Re-verify the byte match server-side — never trust a client-claimed match.
+  const match = await findOfficialFileByHash({ sha256: input.sha256 });
+  if (!match) return null;
+
+  // Link with OFFICIAL credentials so addLinkedComponent's target-ownership guard passes.
+  return addLinkedComponent({
+    id: input.id,
+    targetVersionId: match.versionId,
+    targetFileId: match.fileId,
+    componentType: match.componentType,
+    modelId: match.modelId,
+    modelName: match.modelName,
+    versionName: match.versionName,
+    isRequired: true,
+    userId: constants.system.officialUserId,
+    isModerator: true,
+  });
 };

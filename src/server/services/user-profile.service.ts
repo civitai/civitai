@@ -86,7 +86,13 @@ export const getUserWithProfile = async ({
         username,
         deletedAt: null,
       },
-      select: { ...userWithProfileSelect, bannedAt: true, meta: true, publicSettings: true },
+      select: {
+        ...userWithProfileSelect,
+        bannedAt: true,
+        meta: true,
+        publicSettings: true,
+        settings: true,
+      },
     });
 
     // Becuase this is a view, it might be slow and we prefer to get the stats in a separate query
@@ -115,6 +121,11 @@ export const getUserWithProfile = async ({
     return {
       ...user,
       meta: undefined,
+      // Never leak the private settings blob; expose only whether the shop is public.
+      settings: undefined,
+      creatorShopEnabled:
+        (user.settings as { creatorShop?: { enabled?: boolean } } | null)?.creatorShop?.enabled ===
+        true,
       ...getUserBanDetails({
         meta: userMeta,
         isModerator: isModerator ?? false,

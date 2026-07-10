@@ -355,6 +355,12 @@ export enum BlocklistType {
   MessagePattern = 'MessagePattern',
   UsernameExact = 'UsernameExact',
   UsernamePartial = 'UsernamePartial',
+  // Whole-word proper nouns / technical phrases that coincidentally contain a
+  // young-word token (e.g. "teen titans", "minor barrel distortion"). Blanked from
+  // the prompt/negative prompt before the minor-review audit runs so they don't
+  // false-flag `needsReview='minor'`. Edited by moderators at /moderator/blocklists.
+  PromptBenignPhrase = 'PromptBenignPhrase',
+  NegativeBenignPhrase = 'NegativeBenignPhrase',
 }
 
 export enum ToolSort {

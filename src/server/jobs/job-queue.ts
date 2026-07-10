@@ -107,10 +107,7 @@ const updateNsfwLevelJob = createJob('update-nsfw-levels', '*/1 * * * *', async 
     // }
 
     const comicProjectIds = relatedEntities.comicProjectIds;
-    // Model3D rows enqueue directly via JobQueue (no derived discovery yet — the
-    // thumbnail-Image-driven mod flow enqueues the Model3D side-by-side with
-    // the Image). Pass them straight through to the master updater.
-    const model3dIds = jobQueueIds.model3dIds;
+    const model3dIds = uniq([...jobQueueIds.model3dIds, ...relatedEntities.model3dIds]);
 
     await updateNsfwLevels({
       postIds,

@@ -1,8 +1,10 @@
 import { Code, Group, Stack, Text, UnstyledButton } from '@mantine/core';
 import { IconArrowLeft } from '@tabler/icons-react';
+import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
+import { AppsSubmitEditView } from '~/components/Apps/AppsSubmitEditView';
 import { CliSubmitCta } from '~/components/Apps/CliSubmitCta';
 import { ExternalSubmitForm } from '~/components/Apps/ExternalSubmitForm';
 import {
@@ -53,10 +55,18 @@ export const getServerSideProps = createServerSideProps({
 
 export default function SubmitAppPage() {
   const features = useFeatureFlags();
+  const router = useRouter();
   // `null` = no type picked yet (the default — both cards shown).
   const [mode, setMode] = useState<SubmitMode | null>(null);
 
+  // EDIT mode: `/apps/submit?edit=<listingId>` reuses this page + the External
+  // wizard to edit an EXISTING off-site listing. When the param is present the
+  // mode selector is bypassed entirely (an on-site App isn't edited here).
+  const editId = typeof router.query.edit === 'string' ? router.query.edit : null;
+
   if (!features?.appBlocks) return <NotFound />;
+
+  if (editId) return <AppsSubmitEditView listingId={editId} />;
 
   return (
     <>

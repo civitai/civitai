@@ -531,3 +531,36 @@ export async function isAppBlocksReviewSandboxEnabled(opts?: {
   const user = opts.user;
   return isFlipt(APP_BLOCKS_REVIEW_SANDBOX_FLAG, String(user.id), buildFliptContext(user));
 }
+
+/**
+ * Dedicated fail-closed flag for App Blocks SHARED (app-global / cross-user)
+ * storage — the FIRST surface that opens the per-app datastore to PUBLIC
+ * cross-user writes (previously mod + app-dev-tester only). Mirrors
+ * `app-blocks-dev-tunnel`: a brand-new surface with NO existing access to
+ * preserve, so there is deliberately NO moderator static floor — an absent flag
+ * resolves `false` for EVERYONE (mods included). This is the cluster-wide
+ * kill-switch: flip it off and every shared read/write/vote refuses immediately
+ * (the `resolveSharedContext` gate), independent of the block-runtime rollout.
+ *
+ * Evaluated WITH the caller's context (entityId = user id, context carries
+ * server-side `isModerator`) so the `moderators` / community segments can match.
+ * On the block-token path the "caller" is the HYDRATED TOKEN SUBJECT
+ * (`getSessionUserById`), not a session — anon reads pass no user → global eval
+ * that can never match a segment → fail-closed (anon shared access is a GA-only
+ * widening, safe to stay dark until a base-`enabled` flip).
+ *
+ * Create it in Flipt as base `enabled: false` with the `moderators` segment (+
+ * any community-cohort segment) exactly like `app-blocks-dev-tunnel`. The flag
+ * does NOT exist in Flipt at merge time — the companion `flipt-state` entry is a
+ * SEPARATE follow-up PR — so the as-merged posture is fully dark and cannot
+ * regress the gate open.
+ */
+export const APP_BLOCKS_SHARED_STORAGE_FLAG = 'app-blocks-shared-storage';
+
+export async function isAppBlocksSharedStorageEnabled(opts?: {
+  user?: SessionUser;
+}): Promise<boolean> {
+  if (!opts?.user) return isFlipt(APP_BLOCKS_SHARED_STORAGE_FLAG);
+  const user = opts.user;
+  return isFlipt(APP_BLOCKS_SHARED_STORAGE_FLAG, String(user.id), buildFliptContext(user));
+}

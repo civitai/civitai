@@ -649,6 +649,8 @@ export class Tracker {
     negativePrompt: string;
     source?: ProhibitedSources;
     remixOfId?: number;
+    inputImages?: string[];
+    inputVideo?: string;
   }) {
     return this.track('prohibitedRequests', values);
   }

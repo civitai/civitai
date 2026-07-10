@@ -38,8 +38,8 @@ importers:
         specifier: workspace:*
         version: link:packages/civitai-buzz
       '@civitai/client':
-        specifier: 0.2.0-beta.78
-        version: 0.2.0-beta.78
+        specifier: 0.2.0-beta.80
+        version: 0.2.0-beta.80
       '@civitai/cybertipline-tools':
         specifier: ^0.1.0
         version: 0.1.0
@@ -860,6 +860,9 @@ importers:
       '@civitai/auth':
         specifier: workspace:*
         version: link:../../packages/civitai-auth
+      '@civitai/axiom':
+        specifier: workspace:*
+        version: link:../../packages/civitai-axiom
       '@civitai/brand':
         specifier: workspace:*
         version: link:../../packages/civitai-brand
@@ -1673,6 +1676,10 @@ packages:
 
   '@civitai/client@0.2.0-beta.78':
     resolution: {integrity: sha512-dSXkI8hVoozzlPS9DymzoyncWz8eapH3wkSDzDVGWjjqamXn8Dbcq1hWu5xUZkZmqCaR76F7BS9BQNqvOJ++Sw==}
+    engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
+
+  '@civitai/client@0.2.0-beta.80':
+    resolution: {integrity: sha512-ybiAFk8TtwrULTwEhQPEfhWTtK7T90YUX/tBJ/t53PLisWWWJPuwC8Ux9A1P+WYhTGMQHg84utpYbQtlm41qUA==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
   '@civitai/cybertipline-tools@0.1.0':
@@ -12743,6 +12750,12 @@ snapshots:
   '@civitai/app-sdk@0.14.0': {}
 
   '@civitai/client@0.2.0-beta.78':
+    dependencies:
+      '@hey-api/client-fetch': 0.1.14
+      rfc6902: 5.2.0
+      tslib: 2.8.1
+
+  '@civitai/client@0.2.0-beta.80':
     dependencies:
       '@hey-api/client-fetch': 0.1.14
       rfc6902: 5.2.0

@@ -110,6 +110,7 @@ import { FilterButton } from '~/components/Buttons/FilterButton';
 import { FilterChip } from '~/components/Filters/FilterChip';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { useDomainColor } from '~/hooks/useDomainColor';
 import {
   getBorder,
   getBackground,
@@ -1419,10 +1420,16 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
   const currentUser = useCurrentUser();
   const mobile = useIsMobile();
   const isModerator = currentUser?.isModerator ?? false;
+  const domainColor = useDomainColor();
+  // On green (SFW) the domain caps entries to PG. Logged-in users can opt into
+  // PG-13, mirroring the images feed filter. Anonymous users are hard-capped by
+  // the domain rule, so the toggle would be a no-op for them.
+  const showPG13Toggle = domainColor === 'green' && !!currentUser;
 
   const [judgeReviewedOnly, setJudgeReviewedOnly] = useState(false);
   const [myEntriesOnly, setMyEntriesOnly] = useState(false);
   const [pendingReviewOnly, setPendingReviewOnly] = useState(false);
+  const [includePG13, setIncludePG13] = useState(false);
   const [opened, setOpened] = useState(false);
   const isActive = challenge.status === ChallengeStatus.Active;
   const hasCollection = !!challenge.collectionId;
@@ -1431,7 +1438,8 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
   const filterCount =
     (judgeReviewedOnly ? 1 : 0) +
     (myEntriesOnly ? 1 : 0) +
-    (isModerator && pendingReviewOnly ? 1 : 0);
+    (isModerator && pendingReviewOnly ? 1 : 0) +
+    (showPG13Toggle && includePG13 ? 1 : 0);
 
   const judgeInfo = useMemo(
     () =>
@@ -1476,6 +1484,11 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
       <Stack gap={0}>
         <Divider label="Modifiers" className="text-sm font-bold" mb={4} />
         <Group gap={8} mb={4}>
+          {showPG13Toggle && (
+            <FilterChip checked={includePG13} onChange={() => setIncludePG13((v) => !v)}>
+              <span>Include PG-13</span>
+            </FilterChip>
+          )}
           <FilterChip checked={judgeReviewedOnly} onChange={() => setJudgeReviewedOnly((v) => !v)}>
             <span>Judge Reviewed</span>
           </FilterChip>
@@ -1501,6 +1514,7 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
             setJudgeReviewedOnly(false);
             setMyEntriesOnly(false);
             setPendingReviewOnly(false);
+            setIncludePG13(false);
           }}
           fullWidth
         >
@@ -1617,6 +1631,7 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
                     : undefined,
                   userId: myEntriesOnly ? currentUser?.id : undefined,
                   pendingReviewOnly: isModerator && pendingReviewOnly ? true : undefined,
+                  includePG13: showPG13Toggle && includePG13 ? true : undefined,
                   period: 'AllTime',
                   sort: ImageSort.Random,
                 }}

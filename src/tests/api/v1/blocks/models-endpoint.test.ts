@@ -223,9 +223,12 @@ describe('/api/v1/blocks/models — authoritative clamp wiring', () => {
     expect(input.types).toEqual(['Checkpoint']);
     expect(input.baseModels).toEqual(['SDXL 1.0']);
     expect(input.limit).toBe(20);
-    // The Meili pre-step must be called with the CLAMPED level too.
+    // The Meili pre-step must be called with the CLAMPED level too, and the
+    // type filter must reach it (filtering only post-Meili in the DB returns
+    // empty pages for sparse types like Wildcards).
     expect(mockResolveModelSearchIds).toHaveBeenCalledTimes(1);
     expect(mockResolveModelSearchIds.mock.calls[0][0].browsingLevel).toBe(sfwBrowsingLevelsFlag);
+    expect(mockResolveModelSearchIds.mock.calls[0][0].types).toEqual(['Checkpoint']);
   });
 
   it('401s when no block claims were stamped (defense-in-depth; e.g. no token)', async () => {

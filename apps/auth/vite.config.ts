@@ -16,6 +16,7 @@ export default defineConfig(({ mode }) => {
     ssr: {
       noExternal: [
         '@civitai/auth',
+        '@civitai/axiom',
         '@civitai/db',
         '@civitai/db-schema',
         '@civitai/email',

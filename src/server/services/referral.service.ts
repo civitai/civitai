@@ -10,7 +10,12 @@ import { createBuzzTransaction } from '~/server/services/buzz.service';
 import type { ProductTier } from '~/server/schema/subscriptions.schema';
 import { logToAxiom } from '~/server/logging/client';
 
-export const REFERRAL_SYSTEM_ACCOUNT_ID = -1;
+// Central bank account. Referral rewards must mint from the bank (id 0), which
+// the Buzz service's insufficient-funds check bypasses (`fromAccountId !== 0`),
+// exactly like every other reward path (see base.reward.ts). Account -1 (blue)
+// is a normal balance-checked account and stranded ~190 rewards once its
+// incidental dust was spent — a regression-by-design since referral-v2 (#2178).
+export const REFERRAL_SYSTEM_ACCOUNT_ID = 0;
 // Distinct CustomerSubscription.buzzType so referral grants stack with paid
 // yellow/green/blue subscriptions without tripping @@unique([userId, buzzType]).
 const REFERRAL_BUZZ_TYPE = 'referral';
@@ -486,15 +491,21 @@ async function settleRewardRow(reward: SettleableReward) {
   // runs of the cron — only one caller will see count > 0.
   const claimed = await dbWrite.referralReward.updateMany({
     where: { id: reward.id, status: ReferralRewardStatus.Pending },
-    data: { status: ReferralRewardStatus.Settled, settledAt: new Date() },
+    // Clear any stale revokedReason left by a prior failed-grant revert (the
+    // ~190 rewards stuck by the account-0 bug carry the old insufficient-funds
+    // string) so a successfully-settled reward has a clean reason. The revert
+    // path below re-sets it if the grant fails.
+    data: { status: ReferralRewardStatus.Settled, settledAt: new Date(), revokedReason: null },
   });
   if (claimed.count === 0) return;
 
   if (reward.buzzAmount > 0) {
     try {
       await createBuzzTransaction({
+        // Mint from the central bank (id 0). Omit fromAccountType to match the
+        // canonical bank-grant pattern (base.reward.ts / merch.service.ts): the
+        // recipient's blue ledger is credited via toAccountType below.
         fromAccountId: REFERRAL_SYSTEM_ACCOUNT_ID,
-        fromAccountType: 'blue',
         toAccountId: reward.userId,
         toAccountType: 'blue',
         amount: reward.buzzAmount,
@@ -569,10 +580,13 @@ export async function revokeForChargeback(params: { sourceEventId: string; reaso
   for (const reward of affected) {
     if (reward.status === ReferralRewardStatus.Settled && reward.buzzAmount > 0) {
       await createBuzzTransaction({
+        // Debit the referrer's blue ledger; return to the central bank (id 0)
+        // untyped, matching the payout + every other "send to bank" call in the
+        // repo (cosmetic-shop/report/purchasable-reward all omit the bank-side
+        // toAccountType).
         fromAccountId: reward.userId,
         fromAccountType: 'blue',
         toAccountId: REFERRAL_SYSTEM_ACCOUNT_ID,
-        toAccountType: 'blue',
         amount: reward.buzzAmount,
         type: TransactionType.ChargeBack,
         description: `Referral reward clawback (${reason})`,

@@ -274,6 +274,64 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // ── SHARED (cross-user / app-global) storage (Phase 2b) ────────────────────
+  // The public-write sibling of the per-user APP_STORAGE_* bridge. REQUEST-style
+  // (each awaits its SHARED_*_RESULT ⇒ unhandled HANGS the block). The shared
+  // voting/requests app is a PAGE app (entity=none) so PageBlockHost is the
+  // primary target, but the shared datastore is a per-APP surface an app's
+  // model-slot block could also read, so BOTH real hosts wire it (matching the
+  // per-user APP_STORAGE_* placement). Ahead of the published SDK dist union
+  // (forward-looking coverage, like APP_STORAGE_* were) — the compile-time gate
+  // is one-directional so extra keys here are fine.
+  SHARED_LIST: {
+    request: true,
+    reply: 'SHARED_LIST_RESULT',
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  SHARED_GET_COUNT: {
+    request: true,
+    reply: 'SHARED_GET_COUNT_RESULT',
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  SHARED_GET_COUNTS: {
+    request: true,
+    reply: 'SHARED_GET_COUNTS_RESULT',
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  SHARED_APPEND: {
+    request: true,
+    reply: 'SHARED_APPEND_RESULT',
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  SHARED_VOTE: {
+    request: true,
+    reply: 'SHARED_VOTE_RESULT',
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  SHARED_UNVOTE: {
+    request: true,
+    reply: 'SHARED_UNVOTE_RESULT',
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  SHARED_WITHDRAW: {
+    request: true,
+    reply: 'SHARED_WITHDRAW_RESULT',
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
 } satisfies Record<string, MessageSpec>;
 
 /**
