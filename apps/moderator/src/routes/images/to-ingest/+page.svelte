@@ -14,7 +14,7 @@
 
 <header class="page-header">
   <h1>Images to Ingest</h1>
-  <p>{data.images.length} images pending ingestion</p>
+  <p>{data.total} images pending ingestion</p>
 </header>
 
 {#snippet card(image: Item)}
@@ -27,6 +27,7 @@
 <ImageQueueGrid
   items={data.images}
   civitaiUrl={data.civitaiUrl}
+  nextCursor={data.nextCursor}
   {card}
   empty="No images pending ingestion."
 />

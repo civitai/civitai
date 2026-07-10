@@ -13,19 +13,45 @@ export type PendingIngestionImage = {
   metadata: unknown;
 };
 
-// Images stuck in 'Pending' ingestion within the last 5 days (mirrors the main app's
-// getImagesPendingIngestion). Read-only.
-export async function getImagesPendingIngestion(): Promise<PendingIngestionImage[]> {
+const pendingCutoff = () => {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - 5);
+  return cutoff;
+};
 
-  return dbRead
+// Images stuck in 'Pending' ingestion within the last 5 days (mirrors the main app's
+// getImagesPendingIngestion). Keyset-paginated on id desc. Read-only.
+export async function getImagesPendingIngestion({
+  cursor,
+  limit,
+}: {
+  cursor?: number;
+  limit: number;
+}): Promise<{ items: PendingIngestionImage[]; nextCursor?: number }> {
+  const rows = await dbRead
     .selectFrom('Image')
     .select(['id', 'name', 'url', 'type', 'createdAt', 'metadata'])
     .where('ingestion', '=', 'Pending')
-    .where('createdAt', '>', cutoff)
+    .where('createdAt', '>', pendingCutoff())
+    .$if(cursor != null, (qb) => qb.where('id', '<', cursor!))
     .orderBy('id', 'desc')
+    .limit(limit + 1)
     .execute();
+
+  let nextCursor: number | undefined;
+  if (rows.length > limit) nextCursor = rows.pop()?.id;
+  return { items: rows, nextCursor };
+}
+
+// Total pending count for the page header (the queue's whole size, not just the current page).
+export async function countImagesPendingIngestion(): Promise<number> {
+  const row = await dbRead
+    .selectFrom('Image')
+    .select((eb) => eb.fn.countAll<number>().as('count'))
+    .where('ingestion', '=', 'Pending')
+    .where('createdAt', '>', pendingCutoff())
+    .executeTakeFirst();
+  return Number(row?.count ?? 0);
 }
 
 export type IngestionErrorImage = {
