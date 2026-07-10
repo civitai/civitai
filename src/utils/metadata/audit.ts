@@ -101,7 +101,11 @@ export const auditPromptEnriched = (
     prompt.length > MAX_AUDIT_PROMPT_LENGTH ||
     (negativePrompt != null && negativePrompt.length > MAX_AUDIT_PROMPT_LENGTH)
   ) {
-    return { blockedFor: ['Prompt exceeds the maximum allowed length'], triggers: [], success: false };
+    return {
+      blockedFor: ['Prompt exceeds the maximum allowed length'],
+      triggers: [],
+      success: false,
+    };
   }
   prompt = capAuditLength(prompt);
   negativePrompt = capAuditLength(negativePrompt);
@@ -698,9 +702,6 @@ const words = {
     }),
     negativeNouns: checkable(youngWords.negativeNouns, {
       pluralize: true,
-      // "mature content" is a boilerplate NSFW-avoidance tag, not an attempt to
-      // steer the subject younger — drop it so its bare "mature" doesn't flag minor.
-      preprocessor: (prompt) => prompt.replace(/mature[^a-zA-Z0-9]+content[s|z]*/gi, ' '),
     }),
   },
   poi: checkable(poiWords, {
