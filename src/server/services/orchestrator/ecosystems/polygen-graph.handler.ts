@@ -62,10 +62,15 @@ const MODEL_3D_PREVIEW_CAMERA_POSE = {
 export const createPolyGenInput = defineHandler<PolyGenCtx, StepInput[]>((data, ctx) => {
   const { polygenMode, ...rest } = data as PolyGenCtx & { polygenMode?: 'preview' | 'full' };
 
-  // Synthesize the schema shape `toMeshyPolyGenInput` expects.
+  // The orchestrator schema discriminates on `process` and speaks `sourceImage`;
+  // derive both from `workflow` + `images[0]` (the graph carries neither).
+  const process = data.workflow.startsWith('txt') ? 'textTo3D' : 'imageTo3D';
+  const sourceImage = process === 'imageTo3D' ? data.images?.[0] : undefined;
   const schemaShape = {
     ...rest,
+    process,
     ...(polygenMode !== undefined ? { mode: polygenMode } : {}),
+    ...(sourceImage ? { sourceImage } : {}),
   } as unknown as Model3DGenerationSchema;
 
   const input = toMeshyPolyGenInput(schemaShape) as
