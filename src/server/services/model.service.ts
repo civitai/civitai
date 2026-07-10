@@ -79,6 +79,7 @@ import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deleteBidsForModel, getLastAuctionReset } from '~/server/services/auction.service';
+import { enforceBlockedBrowsingTagsForModels } from '~/server/services/blocked-browsing-tags.service';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import {
   getAvailableCollectionItemsFilterForUser,
@@ -252,6 +253,13 @@ export const getModelsRaw = async ({
   /** For testing only: force the ModelBaseModelMetric query path regardless of feature flag */
   _forceBaseModelMetrics?: boolean;
 }) => {
+  const blockedEnforcement = await enforceBlockedBrowsingTagsForModels(input, {
+    id: sessionUser?.id,
+    username: sessionUser?.username,
+    isModerator: sessionUser?.isModerator,
+  });
+  if (blockedEnforcement.emptyResult) return { items: [], isPrivate: false };
+
   const {
     user,
     take,
@@ -412,6 +420,14 @@ export const getModelsRaw = async ({
   }
   if (disableMinor) {
     AND.push(Prisma.sql`${pSql}."minor" = false`);
+  }
+  if (input.excludedTagIds?.length) {
+    const notExcluded = Prisma.sql`NOT EXISTS (
+      SELECT 1 FROM "TagsOnModels" tom
+      WHERE tom."modelId" = m."id"
+        AND tom."tagId" IN (${Prisma.join([...new Set(input.excludedTagIds)])})
+    )`;
+    AND.push(userId ? Prisma.sql`(${notExcluded} OR m."userId" = ${userId})` : notExcluded);
   }
 
   if (isModerator) {
@@ -1018,6 +1034,15 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   user?: SessionUser;
   count?: boolean;
 }) => {
+  const blockedEnforcement = await enforceBlockedBrowsingTagsForModels(input, {
+    id: sessionUser?.id,
+    username: sessionUser?.username,
+    isModerator: sessionUser?.isModerator,
+  });
+  if (blockedEnforcement.emptyResult) {
+    return count ? { items: [], count: 0 } : { items: [], isPrivate: false };
+  }
+
   const {
     take,
     skip,
@@ -1105,11 +1130,14 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   if (excludedUserIds && excludedUserIds.length && !username) {
     AND.push({ userId: { notIn: excludedUserIds } });
   }
-  // if (excludedTagIds && excludedTagIds.length && !username) {
-  //   AND.push({
-  //     tagsOnModels: { none: { tagId: { in: excludedTagIds } } },
-  //   });
-  // }
+  if (excludedTagIds && excludedTagIds.length) {
+    AND.push({
+      OR: [
+        { tagsOnModels: { none: { tagId: { in: excludedTagIds } } } },
+        ...(sessionUser?.id ? [{ userId: sessionUser.id }] : []),
+      ],
+    });
+  }
   if (excludedModelIds && !hidden && !username) {
     AND.push({ id: { notIn: excludedModelIds } });
   }

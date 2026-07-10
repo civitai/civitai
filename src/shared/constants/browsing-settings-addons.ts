@@ -81,6 +81,31 @@ export function resolveBrowsingSettingsAddons(
   }, emptyResolvedAddons());
 }
 
+// Seed for the hard navigation blocklist (W2). The redis key
+// `system:blocked-browsing-tags` overrides this when present; ops manage the
+// live list there without a deploy. Kept in sync with the POI + minor
+// `excludedTagIds` in DEFAULT_BROWSING_SETTINGS_ADDONS below.
+export const BLOCKED_BROWSING_TAG_IDS: number[] = [
+  5161, //actor
+  5162, //actress
+  5188, //celebrity
+  5249, //real person
+  130818, //porn actress
+  130820, //adult actress
+  133182, //porn star
+  130401, //deepfake
+  110980, //public figure
+  5351, //child
+  306619, //child present
+  154326, //toddler
+  161829, //male child
+  163032, //female child
+  114467, //loli
+  6641, //shota
+  250436, //minor
+  115249, //teenager
+];
+
 export const DEFAULT_BROWSING_SETTINGS_ADDONS: BrowsingSettingsAddon[] = [
   {
     type: 'none',
@@ -99,6 +124,8 @@ export const DEFAULT_BROWSING_SETTINGS_ADDONS: BrowsingSettingsAddon[] = [
       130818, //porn actress
       130820, //adult actress
       133182, //porn star
+      130401, //deepfake
+      110980, //public figure
     ],
   },
   {
@@ -111,6 +138,16 @@ export const DEFAULT_BROWSING_SETTINGS_ADDONS: BrowsingSettingsAddon[] = [
       154326, //toddler
       161829, //male child
       163032, //female child
+    ],
+  },
+  {
+    type: 'some',
+    nsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
+    excludedTagIds: [
+      114467, //loli
+      6641, //shota
+      250436, //minor
+      115249, //teenager
     ],
   },
 ] as const;

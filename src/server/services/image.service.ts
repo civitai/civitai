@@ -144,6 +144,7 @@ import {
   getUserCollectionPermissionsByIds,
   removeEntityFromAllCollections,
 } from '~/server/services/collection.service';
+import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import {
   getVisibleModel3DIdForPost,
@@ -1242,6 +1243,13 @@ export const getAllImages = async (
     userId?: number;
   }
 ) => {
+  const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
+    id: input.user?.id,
+    username: input.user?.username,
+    isModerator: input.user?.isModerator,
+  });
+  if (blockedEnforcement.emptyResult) return { nextCursor: undefined, items: [] };
+
   const {
     limit,
     cursor,
@@ -1279,6 +1287,7 @@ export const getAllImages = async (
     baseModels,
     collectionTagId,
     excludedUserIds,
+    excludedTagIds,
     disablePoi,
     disableMinor,
     poiOnly,
@@ -1444,6 +1453,15 @@ export const getAllImages = async (
   }
   if (disableMinor) {
     AND.push(Prisma.sql`(i."minor" != TRUE)`);
+  }
+  if (excludedTagIds?.length) {
+    const notExcluded = Prisma.sql`NOT EXISTS (
+      SELECT 1 FROM "TagsOnImageDetails" toi
+      WHERE toi."imageId" = i.id
+        AND toi."tagId" IN (${Prisma.join([...new Set(excludedTagIds)])})
+        AND toi."disabled" = FALSE
+    )`;
+    AND.push(userId ? Prisma.sql`(${notExcluded} OR i."userId" = ${userId})` : notExcluded);
   }
 
   if (isModerator) {
@@ -2215,6 +2233,13 @@ export const getAllImagesIndex = async (
 
   const { include, user } = input;
 
+  const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
+    id: user?.id,
+    username: user?.username,
+    isModerator: user?.isModerator,
+  });
+  if (blockedEnforcement.emptyResult) return { nextCursor: undefined, items: [] };
+
   // - cursor uses "offset|entryTimestamp" like "500|1724677401898"
   const cursorParsed = input.cursor?.toString().split('|');
   const offset = isNumber(cursorParsed?.[0]) ? Number(cursorParsed?.[0]) : 0;
@@ -2843,6 +2868,12 @@ export async function getImagesFromFeedSearch(
   input: ImageSearchInput
 ): Promise<GetAllImagesIndexResult> {
   try {
+    const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
+      id: input.currentUserId,
+      isModerator: input.isModerator,
+    });
+    if (blockedEnforcement.emptyResult) return { nextCursor: undefined, items: [] };
+
     // Evaluate feature flags before creating feed. Routed through getFliptBoolean
     // (memoized once PR #2394's eval cache lands) instead of a direct per-request
     // wasm eval; it swallows errors and returns false on a missing/uninitialized
@@ -3848,9 +3879,10 @@ export async function getImagesFromBitdexPreFilter(
   if (nonRemixesOnly) filters.push(_eq('isRemix', _bool(false)));
 
   // --- Tag exclusions ---
-  // Per-user hidden tags handled client-side by useApplyHiddenPreferences.
-  // Excluding here breaks BitDex cache (every user gets a unique cache key).
-  // if (excludedTagIds?.length) filters.push(_notIn('tagIds', excludedTagIds.map(_int)));
+  // Server-enforced browsing-settings addon exclusions (uniform per browsing
+  // level, so BitDex cache keys stay stable across users). Per-user hidden tags
+  // are still applied client-side by useApplyHiddenPreferences.
+  if (excludedTagIds?.length) filters.push(_notIn('tagIds', excludedTagIds.map(_int)));
 
   // --- Metadata ---
   if (withMeta) filters.push(_eq('hasMeta', _bool(true)));

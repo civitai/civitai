@@ -15,12 +15,7 @@ import {
   incClusterInflight,
   resetClusterInflight,
 } from './cluster-inflight';
-import {
-  decSysInflight,
-  getSysInflight,
-  incSysInflight,
-  resetSysInflight,
-} from './sys-inflight';
+import { decSysInflight, getSysInflight, incSysInflight, resetSysInflight } from './sys-inflight';
 import {
   countClusterDeadlineHits,
   recordClusterCommandSettle,
@@ -796,9 +791,11 @@ export function instrumentCommands(
   // reaches this counts as a wedge hit for the deadline-hit trigger. Sourced at SETTLE time (done)
   // so it can't diverge from redis_command_duration_seconds the way the old onTimeout-only path did.
   const slowCommandMs = opts.slowCommandMs ?? config?.clusterSelfHealSlowCommandMs ?? 0;
-  const routingRetryEnabled = opts.routingRetryEnabled ?? config?.clusterRoutingRetryEnabled ?? false;
+  const routingRetryEnabled =
+    opts.routingRetryEnabled ?? config?.clusterRoutingRetryEnabled ?? false;
   const routingRetryMax = opts.routingRetryMax ?? config?.clusterRoutingRetryMax ?? 0;
-  const routingRetryBackoffMs = opts.routingRetryBackoffMs ?? config?.clusterRoutingRetryBackoffMs ?? 0;
+  const routingRetryBackoffMs =
+    opts.routingRetryBackoffMs ?? config?.clusterRoutingRetryBackoffMs ?? 0;
   const routingRetryBackoffMaxMs =
     opts.routingRetryBackoffMaxMs ?? config?.clusterRoutingRetryBackoffMaxMs ?? 0;
   self[methodName] = function (this: any, ...args: any[]) {
@@ -1961,6 +1958,7 @@ export const REDIS_KEYS = {
     PROMPT_ALLOWLIST: 'packed:system:prompt-allowlist',
     NOTIFICATION_COUNTS: 'system:notification-counts',
     CATEGORIES: 'system:categories',
+    BLOCKED_BROWSING_TAGS: 'system:blocked-browsing-tags',
   },
   CACHES: {
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
