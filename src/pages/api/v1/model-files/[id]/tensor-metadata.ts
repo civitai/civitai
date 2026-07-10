@@ -1,13 +1,13 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from '~/types/session';
 import * as z from 'zod';
-import { CacheTTL } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_KEYS } from '~/server/redis/client';
 import { getFileForModelVersion } from '~/server/services/file.service';
-import { getFullTensorAnalysisCached } from '~/server/services/tensor-metadata.service';
-import { fetchThroughCache } from '~/server/utils/cache-helpers';
+import {
+  getModelTensorAnalysisCached,
+  getModelTensorSummaryCached,
+} from '~/server/services/tensor-metadata-cache.service';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import {
   inferTensorMetadataFormat,
@@ -39,6 +39,7 @@ export default MixedAuthEndpoint(async function handler(
       id: true,
       modelVersionId: true,
       name: true,
+      url: true,
       type: true,
       sizeKB: true,
       metadata: true,
@@ -71,56 +72,25 @@ export default MixedAuthEndpoint(async function handler(
       fileType: file.type,
     });
 
-    // Tensor metadata is derived purely from immutable file content, so cache the parsed
-    // analysis by file id. Auth is still re-checked per request above via getFileForModelVersion.
-    //
-    // Two separate caches, by access pattern:
-    //  - FULL: the whole `analysis` incl. the ~335 KB `tensors[]` array. Highly
-    //    compressible repetitive tensor-name strings, so stored brotli-compressed at rest
-    //    (~65x). Only touched on accordion expand (!summaryOnly), or on a summary MISS.
-    //  - SUMMARY: the tiny summary fields (~256 B) with `tensors` dropped. Fired on EVERY
-    //    model-version view (the badge). A summary cache HIT must never read/decompress the
-    //    big blob — it only falls through to the full fetch on a summary MISS.
-    //
-    // HOT-PATH DECODE GUARD: even with the summary/full split, a panel-open viewer hits
-    // the FULL path on every model-page view, and the redis blob is brotli-compressed
-    // (#2649) so each full read pays an async brotli-decompress + a SYNCHRONOUS ~335 KB
-    // msgpack `unpack()` on the shared event loop. For a popular file that repeats per
-    // request and concentrates into the api-primary 504 waves. `getFullTensorAnalysisCached`
-    // wraps the redis-backed fetch in a bounded in-process LRU of the DECODED object, so a
-    // hot model is decoded at most once per pod (the redis memory win is preserved — the
-    // blob stays compressed+split in redis; we only remove the repeated hot-path decode).
-    const fetchFull = () =>
-      getFullTensorAnalysisCached(id, () =>
-        fetchThroughCache(
-          `${REDIS_KEYS.CACHES.TENSOR_METADATA}:${id}`,
-          () =>
-            parseModelTensorMetadata({
-              url: fileResult.url,
-              format,
-              fileSizeBytes: file.sizeKB * 1024,
-              estimateVram,
-            }),
-          { ttl: CacheTTL.month, compress: true }
-        )
-      );
+    // Keep the content loader lazy. The shared summary cache checks its small
+    // entry before it ever invokes this loader or touches the full decoded blob.
+    const loadAnalysis = () =>
+      parseModelTensorMetadata({
+        url: fileResult.url,
+        format,
+        fileSizeBytes: file.sizeKB * 1024,
+        estimateVram,
+      });
+    const cacheSource = { fileId: id, fileUrl: file.url };
 
     res.setHeader('Cache-Control', TENSOR_METADATA_CACHE_CONTROL);
 
     if (summaryOnly) {
-      const summary = await fetchThroughCache(
-        `${REDIS_KEYS.CACHES.TENSOR_METADATA_SUMMARY}:${id}`,
-        async () => {
-          const analysis = await fetchFull();
-          const { tensors, ...rest } = analysis;
-          return rest;
-        },
-        { ttl: CacheTTL.month }
-      );
+      const summary = await getModelTensorSummaryCached(cacheSource, loadAnalysis);
       return res.status(200).json(summary);
     }
 
-    const analysis = await fetchFull();
+    const analysis = await getModelTensorAnalysisCached(cacheSource, loadAnalysis);
     res.status(200).json(analysis);
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));

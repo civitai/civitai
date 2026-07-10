@@ -29,6 +29,8 @@ export type ModelTensorDtypeSummary = {
   bytes: number;
 };
 
+export type ModelWeightPrecision = 'fp8' | 'bf16-fp16';
+
 export type ModelTensorDisplayGroup = {
   id: string;
   name: string;
@@ -119,6 +121,34 @@ export function analyzeModelTensors(
     vramEstimate: estimateVram ? estimateComfyDynamicOffloadVram(tensors) : null,
     tensors,
   };
+}
+
+/**
+ * Classify the dominant weight precision by tensor bytes. FP16 and BF16 are
+ * grouped because they have the same pricing class, while every float8 dtype
+ * variant contributes to the FP8 class. Unknown/quantized/full-precision bytes
+ * form a third bucket so a small FP8 or FP16 fragment cannot classify a model
+ * whose weights are predominantly something else.
+ */
+export function classifyModelWeightPrecision(
+  dtypeCounts: ModelTensorDtypeSummary[]
+): ModelWeightPrecision | null {
+  let fp8Bytes = 0;
+  let bf16Fp16Bytes = 0;
+  let otherBytes = 0;
+
+  for (const { dtype, bytes } of dtypeCounts) {
+    if (!Number.isFinite(bytes) || bytes <= 0) continue;
+
+    const normalized = dtype.toUpperCase();
+    if (normalized.startsWith('F8')) fp8Bytes += bytes;
+    else if (normalized === 'F16' || normalized === 'BF16') bf16Fp16Bytes += bytes;
+    else otherBytes += bytes;
+  }
+
+  if (fp8Bytes > bf16Fp16Bytes && fp8Bytes > otherBytes) return 'fp8';
+  if (bf16Fp16Bytes > fp8Bytes && bf16Fp16Bytes > otherBytes) return 'bf16-fp16';
+  return null;
 }
 
 export function supportsTensorVramEstimate({ modelType, fileType }: ModelTensorVramSupport) {

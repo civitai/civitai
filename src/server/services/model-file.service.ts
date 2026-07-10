@@ -14,6 +14,7 @@ import type {
   RecentTrainingDataInput,
 } from '~/server/schema/model-file.schema';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
+import { bustModelTensorMetadataCaches } from '~/server/services/tensor-metadata-cache.service';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import {
   throwBadRequestError,
@@ -160,6 +161,17 @@ export async function updateFile({
   }
 
   await deleteFilesForModelVersionCache(modelFile.modelVersionId);
+
+  if (oldUrl) {
+    await bustModelTensorMetadataCaches(id, oldUrl).catch((error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'model-file-tensor-metadata-cache-bust',
+        message: `Failed to invalidate tensor metadata caches for file ${id}`,
+        error,
+      }).catch(() => undefined)
+    );
+  }
 
   // Clean up old S3 object after DB update succeeds (best-effort).
   // Only fires when we actually swapped the URL on this call — pure-metadata
