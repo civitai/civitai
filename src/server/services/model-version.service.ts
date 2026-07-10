@@ -61,6 +61,7 @@ import type {
   LinkedComponentSettings,
   LinkOfficialFileByHashInput,
   SetLinkedComponentsInput,
+  UpdateEarlyAccessConfigInput,
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
 import type { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
@@ -99,6 +100,7 @@ import {
   LicensingFeeSettlementCurrency,
   LicensingFeeType,
   ModelStatus,
+  ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
@@ -305,6 +307,69 @@ export const getLicensingRoots = async ({ baseModel }: { baseModel: string }) =>
   `;
 };
 
+// Field-level early-access requirements (status-independent): a timeframe needs
+// a charge, and each enabled charge needs a price.
+function assertEarlyAccessChargeConfig(
+  config: ModelVersionEarlyAccessConfig | null | undefined
+) {
+  if (config?.timeframe && !config.chargeForDownload && !config.chargeForGeneration) {
+    throw throwBadRequestError(
+      'You must charge for downloads or generations if you set an early access time frame.'
+    );
+  }
+  if (config?.chargeForDownload && !config.downloadPrice) {
+    throw throwBadRequestError('You must provide a download price when charging for downloads.');
+  }
+  if (config?.chargeForGeneration && !config.generationPrice) {
+    throw throwBadRequestError('You must provide a generation price when charging for generations.');
+  }
+}
+
+// Post-publish guards + merge. Once published a creator can only loosen terms
+// (can't add EA, raise price/timeframe, or change donation goals), and the merge
+// preserves hidden fields the UI never sends back (e.g. buzzTransactionId).
+function mergeEarlyAccessConfigUpdate({
+  existingConfig,
+  updatedConfig,
+  status,
+}: {
+  existingConfig: ModelVersionEarlyAccessConfig | null;
+  updatedConfig: ModelVersionEarlyAccessConfig | null | undefined;
+  status: ModelStatus;
+}): ModelVersionEarlyAccessConfig | null | undefined {
+  if (status === ModelStatus.Published && !!updatedConfig && !existingConfig) {
+    throw throwBadRequestError('You cannot add early access on a model after it has been published.');
+  }
+
+  if (status === ModelStatus.Published && updatedConfig && existingConfig) {
+    if (
+      updatedConfig.chargeForDownload &&
+      (updatedConfig.downloadPrice as number) > (existingConfig.downloadPrice as number)
+    ) {
+      throw throwBadRequestError(
+        'You cannot increase the download price on a model after it has been published.'
+      );
+    }
+
+    if (updatedConfig.timeframe > existingConfig.timeframe) {
+      throw throwBadRequestError(
+        'You cannot increase the early access time frame for a published early access model version.'
+      );
+    }
+
+    if (
+      updatedConfig.donationGoalEnabled !== existingConfig.donationGoalEnabled ||
+      updatedConfig.donationGoal !== existingConfig.donationGoal
+    ) {
+      throw throwBadRequestError(
+        'You cannot update donation goals on a published early access model version.'
+      );
+    }
+  }
+
+  return updatedConfig ? { ...existingConfig, ...updatedConfig } : updatedConfig;
+}
+
 export const upsertModelVersion = async ({
   id,
   monetization,
@@ -375,25 +440,7 @@ export const upsertModelVersion = async ({
     );
   }
 
-  if (
-    updatedEarlyAccessConfig?.timeframe &&
-    !updatedEarlyAccessConfig?.chargeForDownload &&
-    !updatedEarlyAccessConfig?.chargeForGeneration
-  ) {
-    throw throwBadRequestError(
-      'You must charge for downloads or generations if you set an early access time frame.'
-    );
-  }
-
-  if (updatedEarlyAccessConfig?.chargeForDownload && !updatedEarlyAccessConfig.downloadPrice) {
-    throw throwBadRequestError('You must provide a download price when charging for downloads.');
-  }
-
-  if (updatedEarlyAccessConfig?.chargeForGeneration && !updatedEarlyAccessConfig.generationPrice) {
-    throw throwBadRequestError(
-      'You must provide a generation price when charging for generations.'
-    );
-  }
+  assertEarlyAccessChargeConfig(updatedEarlyAccessConfig);
 
   if (!id || templateId) {
     const existingVersions = await dbWrite.modelVersion.findMany({
@@ -511,53 +558,11 @@ export const upsertModelVersion = async ({
         ? (existingVersion.earlyAccessConfig as unknown as ModelVersionEarlyAccessConfig)
         : null;
 
-    if (
-      existingVersion.status === ModelStatus.Published &&
-      !!updatedEarlyAccessConfig &&
-      !earlyAccessConfig
-    ) {
-      throw throwBadRequestError(
-        'You cannot add early access on a model after it has been published.'
-      );
-    }
-
-    if (
-      existingVersion.status === ModelStatus.Published &&
-      updatedEarlyAccessConfig &&
-      earlyAccessConfig
-    ) {
-      // Check all changes related now:
-
-      if (
-        updatedEarlyAccessConfig.chargeForDownload &&
-        (updatedEarlyAccessConfig.downloadPrice as number) >
-          (earlyAccessConfig.downloadPrice as number)
-      ) {
-        throw throwBadRequestError(
-          'You cannot increase the download price on a model after it has been published.'
-        );
-      }
-
-      if (updatedEarlyAccessConfig.timeframe > earlyAccessConfig?.timeframe) {
-        throw throwBadRequestError(
-          'You cannot increase the early access time frame for a published early access model version.'
-        );
-      }
-
-      if (
-        updatedEarlyAccessConfig.donationGoalEnabled !== earlyAccessConfig.donationGoalEnabled ||
-        updatedEarlyAccessConfig.donationGoal !== earlyAccessConfig.donationGoal
-      ) {
-        throw throwBadRequestError(
-          'You cannot update donation goals on a published early access model version.'
-        );
-      }
-    }
-
-    updatedEarlyAccessConfig = updatedEarlyAccessConfig
-      ? // Ensures we keep relevant data such as buzzTransactionId even if the user changes something.
-        { ...earlyAccessConfig, ...updatedEarlyAccessConfig }
-      : updatedEarlyAccessConfig;
+    updatedEarlyAccessConfig = mergeEarlyAccessConfigUpdate({
+      existingConfig: earlyAccessConfig,
+      updatedConfig: updatedEarlyAccessConfig,
+      status: existingVersion.status,
+    });
 
     // Check if trying to publish a model version when model is marked as cannotPublish
     const existingModelMeta = existingVersion.model.meta as ModelMeta | null;
@@ -666,6 +671,74 @@ export const upsertModelVersion = async ({
 
     return version;
   }
+};
+
+// Narrow write for just the early-access config — the studio (and any caller
+// that only wants to edit monetization) doesn't have to round-trip the whole
+// version payload through `upsertModelVersion`. Shares the same guards + merge.
+export const updateModelVersionEarlyAccessConfig = async ({
+  id,
+  earlyAccessConfig: updatedEarlyAccessConfig,
+}: UpdateEarlyAccessConfigInput) => {
+  const existingVersion = await dbWrite.modelVersion.findUniqueOrThrow({
+    where: { id },
+    select: {
+      id: true,
+      status: true,
+      baseModel: true,
+      usageControl: true,
+      earlyAccessConfig: true,
+      modelId: true,
+    },
+  });
+
+  if (isNonCommercialBaseModel(existingVersion.baseModel) && !!updatedEarlyAccessConfig) {
+    throw throwBadRequestError(
+      `The base model "${existingVersion.baseModel}" is licensed for non-commercial use and cannot be monetized.`
+    );
+  }
+
+  if (
+    existingVersion.usageControl !== ModelUsageControl.Download &&
+    updatedEarlyAccessConfig?.chargeForDownload
+  ) {
+    throw throwBadRequestError(
+      'Cannot charge for download if downloads are disabled for this model version'
+    );
+  }
+
+  assertEarlyAccessChargeConfig(updatedEarlyAccessConfig);
+
+  const existingConfig =
+    existingVersion.earlyAccessConfig !== null
+      ? (existingVersion.earlyAccessConfig as unknown as ModelVersionEarlyAccessConfig)
+      : null;
+
+  const mergedConfig = mergeEarlyAccessConfigUpdate({
+    existingConfig,
+    updatedConfig: updatedEarlyAccessConfig,
+    status: existingVersion.status,
+  });
+
+  const version = await dbWrite.modelVersion.update({
+    where: { id },
+    data: {
+      earlyAccessConfig: mergedConfig !== null ? mergedConfig : Prisma.JsonNull,
+    },
+    select: { id: true, modelId: true, earlyAccessConfig: true },
+  });
+
+  await Promise.all([
+    preventModelVersionLag(version.modelId, version.id),
+    bustMvCache(version.id, version.modelId),
+    dataForModelsCache.refresh(version.modelId),
+  ]);
+
+  ingestModelById({ id: version.modelId }).catch((error) =>
+    logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: version.modelId })
+  );
+
+  return version;
 };
 
 export const deleteVersionById = async ({
