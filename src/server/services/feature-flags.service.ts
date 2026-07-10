@@ -83,6 +83,30 @@ const featureFlags = createFeatureFlags({
   // cosmetic space reservation (worst case = a little dead space, never a
   // functional break), so flipping the flag off is an instant, safe rollback.
   feedReserveCls: { availability: ['mod'], fliptKey: 'feed-reserve-cls' },
+  // Perf: emit the COMPACT wire shape for `hiddenPreferences.getHidden` (id-only
+  // arrays for the model / model3d / explicit-image sets instead of
+  // `{ id, hidden: true }` objects). `getHidden` returns a user's ENTIRE hidden
+  // set; for a whale it superjson-serializes ~12.4MB / ~1.15s SYNCHRONOUSLY on
+  // every response (incl. cache hits) — the single worst event-loop freeze in
+  // the `trpc-response-oversized` dataset (twin of `user.getEngagedModels`). The
+  // client re-expands to the legacy shape so downstream data is identical —
+  // BUT ONLY a client bundle that ships with this PR (which contains
+  // `expandHiddenPreferences`). A PRE-PR bundle reads the compact `number[]` as
+  // `{ id }[]`, gets `x.id === undefined`, and UN-HIDES the user's entire hidden
+  // set (incl. NSFW/moderated) until a hard reload.
+  //
+  // 🔴 RAMP DISCIPLINE: `availability: []` = DARK by default and FAILS CLOSED
+  // (empty availability → static eval false when Flipt is absent/down), so the
+  // Flipt `hidden-prefs-compact` threshold is the ONLY on-switch. NOT `['mod']`:
+  // that would turn compact ON for every mod the instant the server deploys,
+  // while their tabs may still run the OLD bundle → guaranteed un-hide exposure
+  // window on every deploy. Deploy dark, CONFIRM the new bundle is serving
+  // everywhere (hours — see the SPA-cache rollout pattern), THEN ramp the Flipt
+  // threshold; never ramp during/immediately-after a deploy. Instant rollback =
+  // set the threshold to 0. Verify via
+  // `trpc-response-oversized {path="hiddenPreferences.getHidden"}` serializeMs tail.
+  // (Mirrors the `genTabDeferView` / `coinbasePayments` `availability: []` precedent.)
+  hiddenPrefsCompact: { availability: [], fliptKey: 'hidden-prefs-compact' },
   // Perf experiment: defer the generation-tab-switch remount (useDeferredValue) to fix
   // mobile INP (p75 ~304ms, dominant phase = processing_duration; the gen-tab switch is
   // the single hottest interaction). `availability: []` = DARK by default and fails CLOSED when
