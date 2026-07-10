@@ -29,6 +29,7 @@
     SidebarTrigger,
   } from '@civitai/ui/components/ui/sidebar/index.js';
   import { Avatar, AvatarImage, AvatarFallback } from '@civitai/ui/components/ui/avatar/index.js';
+  import { Toaster } from '@civitai/ui/components/ui/sonner/index.js';
   import { activeNavHref } from '$lib/nav';
   import type { LayoutData } from './$types';
 
@@ -174,3 +175,5 @@
     </div>
   </SidebarInset>
 </SidebarProvider>
+
+<Toaster richColors position="bottom-right" />

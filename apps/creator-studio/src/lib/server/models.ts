@@ -1,4 +1,5 @@
 import { dbRead } from '$lib/server/db';
+import type { EarlyAccessConfig } from '$lib/monetization/early-access';
 
 export type CreatorModelVersion = {
   id: number;
@@ -8,6 +9,7 @@ export type CreatorModelVersion = {
   publishedAt: Date | null;
   licensingFee: number | null;
   hasEarlyAccess: boolean;
+  earlyAccessConfig: EarlyAccessConfig | null;
 };
 
 export type CreatorModel = {
@@ -18,22 +20,88 @@ export type CreatorModel = {
   versions: CreatorModelVersion[];
 };
 
-// The creator's models with versions nested (drafts included). Two queries + in-memory grouping rather than a
-// json-agg so the columns stay typed against the schema.
-export async function getCreatorModels(userId: number): Promise<CreatorModel[]> {
-  const models = await dbRead
+export type ModelsSort = 'recent' | 'name';
+export type FeeFilter = 'set' | 'off';
+
+export type ModelsQuery = {
+  userId: number;
+  q?: string;
+  fee?: FeeFilter;
+  sort?: ModelsSort;
+  page?: number;
+};
+
+export type CreatorModelsResult = {
+  models: CreatorModel[];
+  total: number;
+  page: number;
+  pageCount: number;
+};
+
+export const MODELS_PER_PAGE = 20;
+
+// The creator's models with versions nested (drafts included), with URL-driven search / fee filter / sort /
+// pagination. Two queries + in-memory grouping so the columns stay typed against the schema.
+export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModelsResult> {
+  const { userId, q, fee, sort = 'recent' } = query;
+  const page = Math.max(1, query.page ?? 1);
+  const perPage = MODELS_PER_PAGE;
+
+  // Filters shared between the count and the page query (kysely builders are immutable, so we branch off one).
+  let filtered = dbRead
     .selectFrom('Model')
-    .select(['id', 'name', 'type', 'status'])
     .where('userId', '=', userId)
-    .where('deletedAt', 'is', null)
-    .orderBy('lastVersionAt', 'desc')
+    .where('deletedAt', 'is', null);
+  if (q) filtered = filtered.where('name', 'ilike', `%${q}%`);
+  if (fee === 'set')
+    filtered = filtered.where((eb) =>
+      eb.exists(
+        eb
+          .selectFrom('ModelVersion as mv')
+          .select('mv.id')
+          .whereRef('mv.modelId', '=', 'Model.id')
+          .where('mv.licensingFee', 'is not', null)
+      )
+    );
+  if (fee === 'off')
+    filtered = filtered.where((eb) =>
+      eb.not(
+        eb.exists(
+          eb
+            .selectFrom('ModelVersion as mv')
+            .select('mv.id')
+            .whereRef('mv.modelId', '=', 'Model.id')
+            .where('mv.licensingFee', 'is not', null)
+        )
+      )
+    );
+
+  const totalRow = await filtered.select((eb) => eb.fn.countAll().as('count')).executeTakeFirst();
+  const total = Number(totalRow?.count ?? 0);
+
+  const models = await filtered
+    .select(['id', 'name', 'type', 'status'])
+    .orderBy(sort === 'name' ? 'name' : 'lastVersionAt', sort === 'name' ? 'asc' : 'desc')
+    .limit(perPage)
+    .offset((page - 1) * perPage)
     .execute();
 
-  if (models.length === 0) return [];
+  const pageCount = Math.max(1, Math.ceil(total / perPage));
+  if (models.length === 0) return { models: [], total, page, pageCount };
 
   const versions = await dbRead
     .selectFrom('ModelVersion')
-    .select(['id', 'modelId', 'name', 'baseModel', 'status', 'publishedAt', 'licensingFee', 'earlyAccessEndsAt'])
+    .select([
+      'id',
+      'modelId',
+      'name',
+      'baseModel',
+      'status',
+      'publishedAt',
+      'licensingFee',
+      'earlyAccessEndsAt',
+      'earlyAccessConfig',
+    ])
     .where(
       'modelId',
       'in',
@@ -51,18 +119,24 @@ export async function getCreatorModels(userId: number): Promise<CreatorModel[]> 
       baseModel: v.baseModel,
       status: v.status,
       publishedAt: v.publishedAt,
-      // kysely types the DECIMAL column as string (prisma-kysely maps Decimal→string); the app carries it as a number.
+      // kysely types the DECIMAL column as string (prisma-kysely maps Decimal→string); the app carries a number.
       licensingFee: v.licensingFee == null ? null : Number(v.licensingFee),
       hasEarlyAccess: v.earlyAccessEndsAt !== null,
+      earlyAccessConfig: (v.earlyAccessConfig as EarlyAccessConfig | null) ?? null,
     });
     byModel.set(v.modelId, list);
   }
 
-  return models.map((m) => ({
-    id: m.id,
-    name: m.name,
-    type: m.type,
-    status: m.status,
-    versions: byModel.get(m.id) ?? [],
-  }));
+  return {
+    models: models.map((m) => ({
+      id: m.id,
+      name: m.name,
+      type: m.type,
+      status: m.status,
+      versions: byModel.get(m.id) ?? [],
+    })),
+    total,
+    page,
+    pageCount,
+  };
 }
