@@ -1,6 +1,9 @@
 <script lang="ts">
+  import { enhance } from '$app/forms';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
+  import { SvelteMap } from 'svelte/reactivity';
+  import type { SubmitFunction } from '@sveltejs/kit';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
   import PromptHighlight from '$lib/components/PromptHighlight.svelte';
@@ -17,6 +20,29 @@
     url.searchParams.delete('cursor');
     goto(url.pathname + url.search);
   }
+
+  // imageId → verdict label; optimistic (dims the card + shows the outcome) and cleared on a new page.
+  const acted = new SvelteMap<number, string>();
+  $effect(() => {
+    data.items;
+    acted.clear();
+  });
+
+  const submit: SubmitFunction = ({ action, formData }) => {
+    const imageId = Number(formData.get('imageId'));
+    const a = action.search;
+    const verdict = a.includes('accept')
+      ? 'Accepted'
+      : a.includes('block')
+        ? 'Deleted'
+        : formData.get('status') === 'Approved'
+          ? 'Approved'
+          : 'Rejected';
+    acted.set(imageId, verdict);
+    return async ({ update }) => update({ invalidateAll: false });
+  };
+
+  const cardClass = (item: { id: number }) => (acted.has(item.id) ? 'opacity-60' : '');
 
   const fmt = (d: Date | string | null) => (d ? new Date(d).toLocaleDateString() : '');
 
@@ -55,6 +81,84 @@
   </a>
 {/snippet}
 
+{#snippet verdictBadge(verdict: string)}
+  <span class="text-xs font-semibold text-teal-500">✓ {verdict}</span>
+{/snippet}
+
+<!-- Accept / Delete for the review + reported queues. A `reportId` couples the report status
+     (accept → Unactioned, block → Actioned). `minor` adds the "clear minor flag" accept. -->
+{#snippet reviewActions(item: { id: number }, opts: { reportId?: number; minor?: boolean })}
+  {@const verdict = acted.get(item.id)}
+  {#if verdict}
+    {@render verdictBadge(verdict)}
+  {:else}
+    <div class="flex flex-wrap gap-1.5">
+      <form method="POST" action="?/accept" use:enhance={submit}>
+        <input type="hidden" name="imageId" value={item.id} />
+        {#if opts.reportId}<input type="hidden" name="reportId" value={opts.reportId} />{/if}
+        <button
+          type="submit"
+          class="rounded border border-teal-600/40 px-2 py-0.5 text-xs font-semibold text-teal-400 transition hover:bg-teal-500/10"
+        >
+          Accept
+        </button>
+      </form>
+      {#if opts.minor}
+        <form method="POST" action="?/accept" use:enhance={submit}>
+          <input type="hidden" name="imageId" value={item.id} />
+          <input type="hidden" name="removeMinorFlag" value="true" />
+          <button
+            type="submit"
+            class="rounded border border-cyan-600/40 px-2 py-0.5 text-xs font-semibold text-cyan-400 transition hover:bg-cyan-500/10"
+          >
+            Accept + clear minor
+          </button>
+        </form>
+      {/if}
+      <form method="POST" action="?/block" use:enhance={submit}>
+        <input type="hidden" name="imageId" value={item.id} />
+        {#if opts.reportId}<input type="hidden" name="reportId" value={opts.reportId} />{/if}
+        <button
+          type="submit"
+          class="rounded border border-rose-500/40 px-2 py-0.5 text-xs font-semibold text-rose-400 transition hover:bg-rose-500/10"
+        >
+          Delete
+        </button>
+      </form>
+    </div>
+  {/if}
+{/snippet}
+
+{#snippet appealActions(item: { id: number })}
+  {@const verdict = acted.get(item.id)}
+  {#if verdict}
+    {@render verdictBadge(verdict)}
+  {:else}
+    <div class="flex flex-wrap gap-1.5">
+      <form method="POST" action="?/resolveAppeal" use:enhance={submit}>
+        <input type="hidden" name="imageId" value={item.id} />
+        <input type="hidden" name="status" value="Approved" />
+        <button
+          type="submit"
+          class="rounded border border-emerald-600/40 px-2 py-0.5 text-xs font-semibold text-emerald-400 transition hover:bg-emerald-500/10"
+        >
+          Approve
+        </button>
+      </form>
+      <form method="POST" action="?/resolveAppeal" use:enhance={submit}>
+        <input type="hidden" name="imageId" value={item.id} />
+        <input type="hidden" name="status" value="Rejected" />
+        <button
+          type="submit"
+          class="rounded border border-rose-500/40 px-2 py-0.5 text-xs font-semibold text-rose-400 transition hover:bg-rose-500/10"
+        >
+          Reject
+        </button>
+      </form>
+    </div>
+  {/if}
+{/snippet}
+
 <!-- One grid per distinct item shape; `data.view` narrows `data.items` (its values are unique per
      payload member), so the card body reads straight from the server types — no casts, no aliases. -->
 {#if data.view === 'minor' || data.view === 'remixSource'}
@@ -63,6 +167,7 @@
     civitaiUrl={data.civitaiUrl}
     nextCursor={data.nextCursor}
     empty="No images to review in this queue."
+    itemClass={cardClass}
   >
     {#snippet card(item)}
       {@render userHeader(item)}
@@ -83,11 +188,13 @@
           {#if item.promptHighlight.includesInappropriate}
             <PromptHighlight result={item.promptHighlight} />
           {/if}
+          {@render reviewActions(item, { minor: true })}
         </div>
       {:else}
         <div class="flex flex-col gap-1.5">
           <Badge class="w-fit bg-fuchsia-500/15 text-fuchsia-400">Remix source — prompt flagged</Badge>
           <PromptHighlight result={item.promptHighlight} />
+          {@render reviewActions(item, {})}
         </div>
       {/if}
     {/snippet}
@@ -99,6 +206,7 @@
     nextCursor={data.nextCursor}
     keyOf={(item) => item.report.id}
     empty="No images to review in this queue."
+    itemClass={cardClass}
   >
     {#snippet card(item)}
       {@render userHeader(item)}
@@ -123,6 +231,7 @@
           <p class="mt-1 line-clamp-3 text-muted-foreground/90">{comment(item.report.details)}</p>
         {/if}
       </div>
+      {@render reviewActions(item, { reportId: item.report.id })}
     {/snippet}
   </ImageQueueGrid>
 {:else if data.view === 'appeals'}
@@ -131,6 +240,7 @@
     civitaiUrl={data.civitaiUrl}
     nextCursor={data.nextCursor}
     empty="No images to review in this queue."
+    itemClass={cardClass}
   >
     {#snippet card(item)}
       {@render userHeader(item)}
@@ -164,6 +274,7 @@
           </div>
         {/if}
       </div>
+      {@render appealActions(item)}
     {/snippet}
   </ImageQueueGrid>
 {:else}
@@ -172,11 +283,17 @@
     civitaiUrl={data.civitaiUrl}
     nextCursor={data.nextCursor}
     empty="No images to review in this queue."
+    itemClass={cardClass}
   >
     {#snippet card(item)}
       {@render userHeader(item)}
       {#if data.view === 'poi'}
-        <Badge class="w-fit bg-orange-500/15 text-orange-400">POI</Badge>
+        <div class="flex flex-wrap gap-1">
+          <Badge class="bg-orange-500/15 text-orange-400">POI</Badge>
+          {#each item.reviewTags as reviewTag (reviewTag.id)}
+            <Badge class="bg-orange-500/15 font-medium text-orange-300">{reviewTag.name}</Badge>
+          {/each}
+        </div>
       {:else if data.view === 'tag'}
         <div class="flex flex-wrap gap-1">
           {#each item.reviewTags as reviewTag (reviewTag.id)}
@@ -195,6 +312,7 @@
       {:else}
         <Badge class="w-fit bg-rose-600/20 font-semibold text-rose-500">CSAM — flagged for review</Badge>
       {/if}
+      {@render reviewActions(item, {})}
     {/snippet}
   </ImageQueueGrid>
 {/if}

@@ -1,6 +1,5 @@
 <script lang="ts">
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
-  import { ScrollArea } from '@civitai/ui/components/ui/scroll-area/index.js';
   import type {
     PromptHighlightCategory,
     PromptHighlightResult,
@@ -67,26 +66,24 @@
       class="w-[min(32rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)]"
     >
       <p class="text-xs font-semibold uppercase text-muted-foreground">Full {label}</p>
-      <ScrollArea class="max-h-[60vh] pr-3">
-        <div class="flex flex-col gap-3">
+      <div class="flex max-h-[60vh] flex-col gap-3 overflow-y-auto pr-1">
+        <div>
+          <p class="mb-1 text-xs font-semibold uppercase text-muted-foreground">Prompt</p>
+          <p class="whitespace-pre-wrap break-words text-sm leading-relaxed">
+            {@render segs(result.prompt)}
+          </p>
+        </div>
+        {#if hasNeg && result.negativePrompt}
           <div>
-            <p class="mb-1 text-xs font-semibold uppercase text-muted-foreground">Prompt</p>
-            <p class="whitespace-pre-wrap break-words text-sm leading-relaxed">
-              {@render segs(result.prompt)}
+            <p class="mb-1 text-xs font-semibold uppercase text-muted-foreground">
+              Negative prompt
+            </p>
+            <p class="whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground">
+              {@render segs(result.negativePrompt)}
             </p>
           </div>
-          {#if hasNeg && result.negativePrompt}
-            <div>
-              <p class="mb-1 text-xs font-semibold uppercase text-muted-foreground">
-                Negative prompt
-              </p>
-              <p class="whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground">
-                {@render segs(result.negativePrompt)}
-              </p>
-            </div>
-          {/if}
-        </div>
-      </ScrollArea>
+        {/if}
+      </div>
     </Popover.Content>
   </Popover.Root>
 </div>

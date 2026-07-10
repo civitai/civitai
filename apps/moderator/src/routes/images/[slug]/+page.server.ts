@@ -1,13 +1,20 @@
-import { error } from '@sveltejs/kit';
+import { error, fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import { env } from '$env/dynamic/private';
-import type { PageServerLoad } from './$types';
+import type { Actions, PageServerLoad } from './$types';
 import { parseQuery } from '$lib/server/query';
 import {
   getImageReviewQueue,
   getReportedImageQueue,
   getAppealImageQueue,
 } from '$lib/server/image-review.service';
+import {
+  acceptImage,
+  blockImage,
+  resolveImageAppeal,
+} from '$lib/server/image-moderation.service';
+import { setReportStatus } from '$lib/server/reports.service';
+import { ReportStatus } from '$lib/reports';
 import { IMAGE_VIEW_SLUGS, type ImageViewSlug } from '$lib/image-review';
 import { allBrowsingLevelsFlag } from '@civitai/shared';
 import { getPromptHighlightSegments } from '@civitai/mod-utils/prompt-audit';
@@ -79,4 +86,45 @@ export const load: PageServerLoad = async ({ params, url }) => {
     items: items.map(({ prompt, negativePrompt, ...item }) => item),
     nextCursor,
   };
+};
+
+// Per-card verdicts. Access is enforced globally (hooks.server.ts) on the pathname, so a staff mod can't
+// reach a senior view's action. `accept`/`block` also resolve the coupled report when a `reportId` is
+// posted (the Reported queue): accept → Unactioned, block → Actioned, matching the legacy toolbar.
+export const actions: Actions = {
+  accept: async ({ request, locals }) => {
+    const form = await request.formData();
+    const imageId = Number(form.get('imageId'));
+    if (!imageId) return fail(400, { error: 'Missing image id.' });
+    const removeMinorFlag = form.get('removeMinorFlag') === 'true';
+    const reportId = form.get('reportId') ? Number(form.get('reportId')) : undefined;
+
+    await acceptImage({ imageId, removeMinorFlag, userId: locals.user.id });
+    if (reportId)
+      await setReportStatus({ id: reportId, status: ReportStatus.Unactioned, userId: locals.user.id });
+    return { success: true, imageId };
+  },
+
+  block: async ({ request, locals }) => {
+    const form = await request.formData();
+    const imageId = Number(form.get('imageId'));
+    if (!imageId) return fail(400, { error: 'Missing image id.' });
+    const reportId = form.get('reportId') ? Number(form.get('reportId')) : undefined;
+
+    await blockImage({ imageId, userId: locals.user.id });
+    if (reportId)
+      await setReportStatus({ id: reportId, status: ReportStatus.Actioned, userId: locals.user.id });
+    return { success: true, imageId };
+  },
+
+  resolveAppeal: async ({ request, locals }) => {
+    const form = await request.formData();
+    const imageId = Number(form.get('imageId'));
+    if (!imageId) return fail(400, { error: 'Missing image id.' });
+    const status = form.get('status') === 'Approved' ? 'Approved' : 'Rejected';
+    const resolvedMessage = String(form.get('resolvedMessage') ?? '').trim() || undefined;
+
+    await resolveImageAppeal({ imageId, status, resolvedMessage, userId: locals.user.id });
+    return { success: true, imageId };
+  },
 };
