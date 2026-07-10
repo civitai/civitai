@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { createHash } from 'node:crypto';
 import sharp from 'sharp';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -114,10 +115,13 @@ const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
   let height = 0;
   let format: string | undefined;
   let hasTransparency = false;
+  let imageHash = '';
   try {
     const res = await fetch(getEdgeUrl(imageUrl, { original: true }));
     if (!res.ok) throw new Error(`fetch ${res.status}`);
-    const meta = await sharp(Buffer.from(await res.arrayBuffer())).metadata();
+    const buffer = Buffer.from(await res.arrayBuffer());
+    imageHash = createHash('sha256').update(buffer).digest('hex');
+    const meta = await sharp(buffer).metadata();
     width = meta.width ?? 0;
     height = meta.height ?? 0;
     format = meta.format;
@@ -144,7 +148,23 @@ const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
     checks.push({ key: 'transparency', label: 'Transparent background', passed: hasTransparency });
 
   const imageMeta: CosmeticImageMeta = { width, height, hasTransparency };
-  return { checks, imageMeta, allPassed: checks.every((c) => c.passed) };
+  return { checks, imageMeta, imageHash, allPassed: checks.every((c) => c.passed) };
+};
+
+// Blocks re-submitting artwork already in the shop. Exact-match (sha256) — a
+// re-encode/resize would slip past, but it catches accidental & copy re-uploads.
+const findDuplicateArtwork = async (imageHash: string, excludeId?: number) => {
+  if (!imageHash) return null;
+  return dbRead.cosmeticShopItem.findFirst({
+    where: {
+      meta: { path: ['imageHash'], equals: imageHash },
+      status: {
+        notIn: [CosmeticShopItemStatus.Archived, CosmeticShopItemStatus.Rejected],
+      },
+      ...(excludeId ? { id: { not: excludeId } } : {}),
+    },
+    select: { id: true },
+  });
 };
 
 // ---------------------------------------------------------------------------
@@ -170,9 +190,14 @@ export const submitCreatorShopItem = async ({
     throw throwAuthorizationError('The Creator Shop is available to Creator Program members only');
 
   // Validate the artwork server-side BEFORE charging anything.
-  const { checks, imageMeta, allPassed } = await validateArtwork(imageUrl, cosmeticType);
+  const { checks, imageMeta, imageHash, allPassed } = await validateArtwork(imageUrl, cosmeticType);
   if (!allPassed)
     throw throwBadRequestError('Artwork does not meet the requirements for this cosmetic type');
+
+  // Reject duplicate artwork before charging the fee.
+  if (await findDuplicateArtwork(imageHash))
+    throw throwBadRequestError('This artwork has already been submitted to the shop.');
+  checks.push({ key: 'duplicate', label: 'Original artwork', passed: true });
 
   // Charge the (non-refundable) submission fee; refunded only if the write fails.
   const feeTx = await createBuzzTransaction({
@@ -215,6 +240,7 @@ export const submitCreatorShopItem = async ({
             submissionTxId: feeTxId,
             autoChecks: checks,
             imageMeta,
+            imageHash,
             sellableByOthers,
             sellerShare: sellableByOthers ? sellerShare : 0,
           } satisfies CosmeticShopItemMeta,
@@ -291,19 +317,28 @@ export const updateCreatorShopItem = async ({
 
   // Validate + build replaced artwork server-side.
   let artwork:
-    | { data: Prisma.InputJsonValue; checks: AutoCheck[]; imageMeta: CosmeticImageMeta }
+    | {
+        data: Prisma.InputJsonValue;
+        checks: AutoCheck[];
+        imageMeta: CosmeticImageMeta;
+        imageHash: string;
+      }
     | undefined;
   if (artChanged && imageUrl) {
-    const { checks, imageMeta, allPassed } = await validateArtwork(
+    const { checks, imageMeta, imageHash, allPassed } = await validateArtwork(
       imageUrl,
       existing.cosmetic.type
     );
     if (!allPassed)
       throw throwBadRequestError('Artwork does not meet the requirements for this cosmetic type');
+    if (await findDuplicateArtwork(imageHash, id))
+      throw throwBadRequestError('This artwork has already been submitted to the shop.');
+    checks.push({ key: 'duplicate', label: 'Original artwork', passed: true });
     artwork = {
       data: buildCosmeticData(existing.cosmetic.type, imageUrl, animated) as Prisma.InputJsonValue,
       checks,
       imageMeta,
+      imageHash,
     };
   }
 
@@ -344,7 +379,13 @@ export const updateCreatorShopItem = async ({
       ...(backToReview ? { rejectionReason: null, reviewedById: null, reviewedAt: null } : {}),
       meta: {
         ...meta,
-        ...(artwork ? { autoChecks: artwork.checks, imageMeta: artwork.imageMeta } : {}),
+        ...(artwork
+          ? {
+              autoChecks: artwork.checks,
+              imageMeta: artwork.imageMeta,
+              imageHash: artwork.imageHash,
+            }
+          : {}),
       } as Prisma.InputJsonValue,
     },
     select: creatorShopItemSelect,

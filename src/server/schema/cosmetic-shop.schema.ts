@@ -40,6 +40,8 @@ export const cosmeticShopItemMeta = z.object({
   imageMeta: z
     .object({ width: z.number(), height: z.number(), hasTransparency: z.boolean() })
     .optional(),
+  // sha256 of the submitted artwork bytes — used to block duplicate submissions.
+  imageHash: z.string().optional(),
   // Cross-creator selling: whether other creators may resell this item, and the %
   // of price (0-70, out of the creator's 70% pool) the reseller keeps.
   sellableByOthers: z.boolean().optional(),
