@@ -31,7 +31,12 @@ import {
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
-import { MeiliCallTimeoutError, searchClient, withMeili } from '~/server/meilisearch/client';
+import {
+  isTransientMeiliError,
+  MeiliCallTimeoutError,
+  searchClient,
+  withMeili,
+} from '~/server/meilisearch/client';
 import { modelMetrics } from '~/server/metrics';
 import { withSpan } from '~/server/utils/otel-helpers';
 import {
@@ -321,7 +326,21 @@ export const getModelsRaw = async ({
         client.index(MODELS_SEARCH_INDEX).search(query, request)
       );
     } catch (err) {
-      if (err instanceof MeiliCallTimeoutError) {
+      // Widened from `instanceof MeiliCallTimeoutError` to isTransientMeiliError
+      // (same fix as /api/v1/models' resolveModelSearchIds + #2972's user
+      // search). getModelsRaw is the search path behind model.getAll (the tRPC
+      // getModelsInfiniteHandler); its timeout-wrapper only caught civitai's own
+      // MeiliCallTimeoutError. A Meilisearch brownout ALSO throws the SDK's own
+      // transient types (MeiliSearchCommunicationError 408/429/5xx,
+      // MeiliSearchApiError gateway 502/503/504, network ECONNRESET, …), which
+      // fell through `throw err` → getModelsInfiniteHandler's throwDbError
+      // wrapped them as TRPCError INTERNAL_SERVER_ERROR → a 500 (invisible in
+      // Axiom). Converting them to SERVICE_UNAVAILABLE here surfaces a transient
+      // brownout as a retryable 503 through getModelsInfiniteHandler's
+      // `if (error instanceof TRPCError) throw error` (which re-throws it
+      // unchanged). Non-transient errors (malformed filter / auth / real app
+      // bug) are NOT matched and still surface as their real status.
+      if (isTransientMeiliError(err)) {
         throw new TRPCError({
           code: 'SERVICE_UNAVAILABLE',
           message: 'Model search is temporarily overloaded — please retry.',
