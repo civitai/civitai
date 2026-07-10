@@ -9,6 +9,7 @@ import {
   useMutateCreatorShop,
   useQueryCreatorShop,
 } from '~/components/CreatorShop/creator-shop.util';
+import { ManageUpsell } from '~/components/CreatorShop/Manage/ManageUpsell';
 import { ShopDraftBanner } from '~/components/CreatorShop/Manage/ShopDraftBanner';
 import { EmptyShopState } from '~/components/CreatorShop/Storefront/EmptyShopState';
 import { ShopHeader } from '~/components/CreatorShop/Storefront/ShopHeader';
@@ -16,7 +17,9 @@ import { StorefrontSections } from '~/components/CreatorShop/Storefront/Storefro
 import { useOwnedCosmeticIds } from '~/components/CreatorShop/Storefront/storefront.util';
 import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { OnboardingSteps } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
+import { Flags } from '~/shared/utils/flags';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -51,9 +54,17 @@ function UserShopPage() {
     !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
   const canManage = isOwner || (currentUser?.isModerator ?? false);
 
+  // The Creator Shop is a Creator Program benefit — an owner who hasn't joined
+  // the program (a valid subscription alone isn't enough) sees the upsell here
+  // on their storefront rather than on the manage page.
+  const isCreatorProgramMember =
+    !!currentUser && Flags.hasFlag(currentUser.onboarding ?? 0, OnboardingSteps.CreatorProgram);
+
   if (!username) return <NotFound />;
   // A disabled shop returns NOT_FOUND to visitors — stay quiet about it.
   if (isError) return <NotFound />;
+  if (isOwner && !isCreatorProgramMember) return <ManageUpsell />;
+  if (!isOwner && !isCreatorProgramMember) return <NotFound />;
 
   const baseUrl = `/user/${username}`;
   const displayName = user?.username ?? username;

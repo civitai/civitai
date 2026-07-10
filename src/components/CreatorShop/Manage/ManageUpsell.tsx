@@ -2,7 +2,7 @@ import { Button, Paper, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconArrowRight, IconBuildingStore } from '@tabler/icons-react';
 import Link from 'next/link';
 
-// Shown on the manage page when the owner isn't a Creator Program member.
+// Shown on an owner's storefront when they aren't a Creator Program member.
 export function ManageUpsell() {
   return (
     <Stack gap="lg" mt="md" pb="xl">

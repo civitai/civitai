@@ -6,9 +6,9 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
-import { getCreatorRequirements } from '~/server/services/creator-program.service';
 import { createNotification } from '~/server/services/notification.service';
-import { NotificationCategory } from '~/server/common/enums';
+import { NotificationCategory, OnboardingSteps } from '~/server/common/enums';
+import { Flags } from '~/shared/utils/flags';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -171,6 +171,20 @@ const findDuplicateArtwork = async (imageHash: string, excludeId?: number) => {
 // Creator: submit & manage
 // ---------------------------------------------------------------------------
 
+// The shop is gated on Creator Program *membership* — i.e. the creator has
+// joined (OnboardingSteps.CreatorProgram), which requires a valid subscription,
+// the minimum creator score, and not being banned. A qualifying-but-not-joined
+// subscription is not enough.
+const assertCreatorProgramMember = async (userId: number) => {
+  const user = await dbRead.user.findUnique({
+    where: { id: userId },
+    select: { onboarding: true },
+  });
+  const joined = !!user && Flags.hasFlag(user.onboarding, OnboardingSteps.CreatorProgram);
+  if (!joined)
+    throw throwAuthorizationError('The Creator Shop is available to Creator Program members only');
+};
+
 export const submitCreatorShopItem = async ({
   userId,
   cosmeticType,
@@ -185,9 +199,7 @@ export const submitCreatorShopItem = async ({
   sellerShare,
 }: SubmitCreatorShopItemInput & { userId: number }) => {
   // The Creator Shop is a Creator Program member benefit.
-  const { validMembership } = await getCreatorRequirements(userId);
-  if (!validMembership)
-    throw throwAuthorizationError('The Creator Shop is available to Creator Program members only');
+  await assertCreatorProgramMember(userId);
 
   // Validate the artwork server-side BEFORE charging anything.
   const { checks, imageMeta, imageHash, allPassed } = await validateArtwork(imageUrl, cosmeticType);
@@ -632,9 +644,7 @@ export const addResoldItem = async ({
   userId,
   shopItemId,
 }: ResoldItemInput & { userId: number }) => {
-  const { validMembership } = await getCreatorRequirements(userId);
-  if (!validMembership)
-    throw throwAuthorizationError('The Creator Shop is available to Creator Program members only');
+  await assertCreatorProgramMember(userId);
   await getResellableItemOrThrow(shopItemId, userId);
   const settings = await getCreatorShopSettings({ userId });
   const resoldItemIds = settings.resoldItemIds ?? [];
