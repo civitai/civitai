@@ -47,6 +47,21 @@ vi.mock('~/server/services/image.service', () => ({
 }));
 vi.mock('~/server/flipt/client', () => ({ isFlipt: vi.fn().mockResolvedValue(false) }));
 
+// #3041 ("server-enforced blocked browsing tags") inserted a call to
+// enforceBlockedBrowsingTagsForModels(input, viewer) at the TOP of getModelsRaw,
+// BEFORE the Meili try/catch under test. Its real body runs redis.get /
+// safeError logging / system-cache / DB — orthogonal to the transient-error
+// path, but it would throw (or short-circuit) before the assertions here. Stub
+// it as a no-op that returns the "not empty" sentinel so getModelsRaw proceeds
+// into the Meili path exactly as before. Real return shape (origin/main):
+// `Promise<{ emptyResult: boolean }>` — getModelsRaw does
+// `if (blockedEnforcement.emptyResult) return { items: [], isPrivate: false }`,
+// so emptyResult:false lets it continue. This is the minimal seam (one
+// orthogonal service fn) — it won't rot on a future redis/db refactor.
+vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
+  enforceBlockedBrowsingTagsForModels: vi.fn().mockResolvedValue({ emptyResult: false }),
+}));
+
 // Stub the DB/redis surfaces model.service imports. None are reached on the
 // throw path (the Meili catch fires before any query), but importing the REAL
 // modules instantiates a Prisma client that fires a query at module load and
