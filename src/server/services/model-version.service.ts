@@ -668,7 +668,10 @@ export const upsertModelVersion = async ({
   }
 };
 
-export const deleteVersionById = async ({ id }: GetByIdInput) => {
+export const deleteVersionById = async ({
+  id,
+  isModerator,
+}: GetByIdInput & { isModerator?: boolean }) => {
   // Populated inside the tx so the snapshot is consistent with the cascade.
   let modelFileUrls: string[] = [];
 
@@ -688,16 +691,32 @@ export const deleteVersionById = async ({ id }: GetByIdInput) => {
         modelId: true,
         status: true,
         earlyAccessConfig: true,
+        earlyAccessEndsAt: true,
         meta: true,
       },
     });
 
     const meta = data.meta as ModelVersionMeta;
     if (meta?.hadEarlyAccessPurchase) {
-      throw throwBadRequestError(
-        'Cannot delete a model version that has had early access purchases.'
-      );
+      if (!isModerator) {
+        throw throwBadRequestError(
+          'Cannot delete a model version that has had early access purchases.'
+        );
+      }
+      // Moderators may only delete once the early access period is over —
+      // deleting mid-period would strip buyers of paid access with no refund.
+      if (data.earlyAccessEndsAt && data.earlyAccessEndsAt > new Date()) {
+        throw throwBadRequestError(
+          'Cannot delete a model version while its early access period is still active.'
+        );
+      }
     }
+
+    // EntityAccess is polymorphic (no FK), so the version cascade won't remove
+    // purchased-access rows — clean them up here or they orphan.
+    await tx.entityAccess.deleteMany({
+      where: { accessToId: id, accessToType: 'ModelVersion' },
+    });
 
     const deleted = await tx.modelVersion.delete({ where: { id } });
     await updateModelLastVersionAt({ id: deleted.modelId, tx });
