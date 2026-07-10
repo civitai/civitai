@@ -62,10 +62,7 @@ import type {
 } from '~/server/services/user.service';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 import { getPeriods } from '~/server/utils/enum-helpers';
-import {
-  capPostGetInfiniteImages,
-  stripPostGetInfiniteImageFields,
-} from '~/server/utils/post-getinfinite-images';
+import { capPostGetInfiniteImages } from '~/server/utils/post-getinfinite-images';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -562,7 +559,7 @@ export const getPostsInfinite = async ({
             // event loop. The cap keeps headroom for the client hidden-preferences
             // fall-through (see `post-getinfinite-images.ts`); `.slice` returns a
             // new array so nothing upstream is mutated.
-            images: stripPostGetInfiniteImageFields(capPostGetInfiniteImages(_images)),
+            images: capPostGetInfiniteImages(_images),
             cosmetic: cosmetics[post.id] ?? null,
           };
         })

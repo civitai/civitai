@@ -16,10 +16,11 @@
  * FLAT serializeMs — because typical published posts average ~7 images (measured),
  * i.e. already ≤ the cap, so the cap only trims the RARE >8-image gallery. The
  * real driver is the per-image FIELD COUNT applied to every one of those ~7
- * images × up-to-200 posts. The field-level trim (`stripPostGetInfiniteImageFields`
- * + the createdAt/hasMeta/hasPositivePrompt SQL drop in `getImagesForPosts`) is
- * what moves bytes AND serializeMs on the common case; this cap remains as the
- * gallery-tail guard.
+ * images × up-to-200 posts. The field-level trim (the createdAt/hasMeta/
+ * hasPositivePrompt SQL drop in `getImagesForPosts`, plus the post-level
+ * `cursorId` strip in post.service) is what moves bytes AND serializeMs on the
+ * common case; this cap remains as the gallery-tail guard. (`postId` is NOT
+ * trimmed — ImageContextMenu reads it off the response image.)
  *
  * Mirrors `model-getall-images.ts` (`GET_ALL_IMAGES_PER_MODEL`). Set to 8 (not 1)
  * as HEADROOM for the client-side filter (`useApplyHiddenPreferences`, posts
@@ -47,23 +48,10 @@ export function capPostGetInfiniteImages<T>(images: T[]): T[] {
   return images.slice(0, POST_GETINFINITE_IMAGES_PER_POST);
 }
 
-/**
- * Per-image response-field trim for the `post.getInfinite` browse feed.
- *
- * `getImagesForPosts` fetches `postId` only to group images under their post
- * server-side; NO `post.getInfinite` consumer reads it off the response (the
- * images are already nested under their post). Stripping it removes one field
- * PER IMAGE — and this endpoint's payload is ~85% images (~7 images/post), so
- * per-image field count is the dominant driver of both bytes and the
- * synchronous superjson `serializeMs` (the #3052 image CAP only trimmed the
- * rare >8-image gallery tail, hence its ~8% payload move). `createdAt`,
- * `hasMeta`, and `hasPositivePrompt` — likewise unread by every consumer — are
- * already dropped at the SQL layer in `getImagesForPosts`.
- *
- * Returns NEW image objects (object rest); never mutates the input.
- */
-export function stripPostGetInfiniteImageFields<T extends { postId?: unknown }>(
-  images: T[]
-): Omit<T, 'postId'>[] {
-  return images.map(({ postId: _postId, ...rest }) => rest);
-}
+// NOTE: `postId` is INTENTIONALLY kept on each response image. It's read by
+// ImageContextMenu → ImageMenuItems (destructured off the image) for the
+// "Save post to collection" / "View Post" / "Edit Post" / "Toggle Searchable"
+// menu items on the browse post cards — so it is NOT an unread field and must
+// survive serialization. The per-image trim is done at the SQL layer in
+// `getImagesForPosts` (dropping the genuinely-unread createdAt / hasMeta /
+// hasPositivePrompt).

@@ -5425,9 +5425,10 @@ export const getImagesForPosts = async ({
       width: number;
       height: number;
       hash: string;
-      // postId is fetched only to group images under their post server-side
-      // (post.service groups on `x.postId === post.id`); it is stripped from
-      // the response before serialization (see stripPostGetInfiniteImageFields).
+      // postId groups images under their post server-side (post.service groups
+      // on `x.postId === post.id`) AND is read on the response by
+      // ImageContextMenu → ImageMenuItems (collection/view/edit/searchable menu
+      // items on the browse post cards) — kept.
       postId: number;
       type: MediaType;
       metadata: ImageMetadata | VideoMetadata | null;
