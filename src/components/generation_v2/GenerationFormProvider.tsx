@@ -508,7 +508,7 @@ function InnerProvider({
           graph.reset({ exclude: ['quantity', 'priority', 'outputFormat'] });
           // PolyGen lives in a discriminated subgraph (activates only when
           // `ecosystem: 'PolyGen'`), and its child nodes — `polygenMode`,
-          // `targetPolycount`, `sourceImage`, `enableRigging`, etc. — only
+          // `targetPolycount`, `images`, `enableRigging`, etc. — only
           // exist while that subgraph is active. A single `graph.set` with
           // the full blob can drop those child keys because they're
           // evaluated before the discriminator has switched, so the remix
