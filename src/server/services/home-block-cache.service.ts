@@ -20,6 +20,7 @@ type HomeBlockForCache = {
   id: number;
   type: HomeBlockType;
   metadata: HomeBlockMetaSchema;
+  sourceId?: number | null;
 };
 
 const log = createLogger('home-block-cache', 'green');
