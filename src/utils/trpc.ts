@@ -201,7 +201,6 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
   'system.getDbKV',
   'system.getLiveNow',
   'tag.getHomeExcluded',
-  'tag.getTagsForReview',
   'technique.getAll',
   'tool.getAll',
   'training.getStatus',

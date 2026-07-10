@@ -19,13 +19,12 @@ import {
   adjustTagsSchema,
   deleteTagsSchema,
   getTagByNameSchema,
-  getTagsForReviewSchema,
   getTagsInput,
   getTrendingTagsSchema,
   getVotableTagsSchema,
   removeTagVotesSchema,
 } from '~/server/schema/tag.schema';
-import { getTag, getTagsForReview } from '~/server/services/tag.service';
+import { getTag } from '~/server/services/tag.service';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -53,10 +52,6 @@ export const tagRouter = router({
     .input(getTrendingTagsSchema)
     .use(applyUserPreferences)
     .query(getTrendingTagsHandler),
-  getTagsForReview: moderatorProcedure
-    .input(getTagsForReviewSchema)
-    .use(edgeCacheIt({ ttl: CacheTTL.day }))
-    .query(({ input }) => getTagsForReview(input)),
   getManagableTags: moderatorProcedure.query(getManagableTagsHandler),
   getVotableTags: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })

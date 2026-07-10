@@ -152,11 +152,6 @@ export const trackModel3DDownloadSchema = z.object({
   id: z.number().int().positive(),
 });
 
-export type GetModel3DByThumbnailImageIdInput = z.infer<typeof getModel3DByThumbnailImageIdSchema>;
-export const getModel3DByThumbnailImageIdSchema = z.object({
-  imageId: z.number().int().positive(),
-});
-
 // Public lookup used by the image viewers to surface the "Posted to 3D
 // Model" chip — given an image's postId, returns the linked `model3dId` (or
 // null when the post isn't tied to a Model3D). Cheap single-column read.

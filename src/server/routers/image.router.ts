@@ -18,7 +18,6 @@ import {
   getImageGenerationData,
   getImagesByUserIdForModeration,
   getImagesForModelVersionCache,
-  getModeratorPOITags,
   getMyImages,
   ingestArticleCoverImages,
   ingestImageById,
@@ -29,7 +28,6 @@ import {
   toggleImageFlag,
   updateImageTechniques,
   updateImageTools,
-  getImageModerationCounts,
   refreshImageResources,
 } from '~/server/services/image.service';
 import {
@@ -50,7 +48,6 @@ import {
   getImageResourcesHandler,
   getImagesAsPostsInfiniteHandler,
   getInfiniteImagesHandler,
-  getModeratorReviewQueueHandler,
 } from './../controllers/image.controller';
 import { cacheIt, edgeCacheIt } from './../middleware.trpc';
 import {
@@ -61,7 +58,6 @@ import {
   getInfiniteImagesSchema,
   getMyImagesInput,
   imageModerationSchema,
-  imageReviewQueueInputSchema,
   removeImageResourceSchema,
   reportCsamImagesSchema,
   setTosViolationSchema,
@@ -147,11 +143,6 @@ export const imageRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getEntitiesCoverImage)
     .query(getEntitiesCoverImageHandler),
-  getModeratorReviewQueue: moderatorProcedure
-    .input(imageReviewQueueInputSchema)
-    .query(getModeratorReviewQueueHandler),
-  getModeratorReviewQueueCounts: moderatorProcedure.query(getImageModerationCounts),
-  getModeratorPOITags: moderatorProcedure.query(() => getModeratorPOITags()),
   get404Images: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .use(edgeCacheIt({ ttl: CacheTTL.month }))

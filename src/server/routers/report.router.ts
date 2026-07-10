@@ -1,19 +1,15 @@
 import {
-  bulkUpdateReportStatusHandler,
   createEntityAppealHandler,
   createReportHandler,
   getRecentAppealsHandler,
   getReportsHandler,
-  resolveEntityAppealHandler,
 } from '~/server/controllers/report.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
-  bulkUpdateReportStatusSchema,
   createEntityAppealSchema,
   createReportInputSchema,
   getRecentAppealsSchema,
   getReportsSchema,
-  resolveAppealSchema,
 } from '~/server/schema/report.schema';
 import { getAppealDetails } from '~/server/services/report.service';
 import { guardedProcedure, moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
@@ -25,9 +21,6 @@ export const reportRouter = router({
     .input(createReportInputSchema)
     .mutation(createReportHandler),
   getAll: moderatorProcedure.input(getReportsSchema).query(getReportsHandler),
-  bulkUpdateStatus: moderatorProcedure
-    .input(bulkUpdateReportStatusSchema)
-    .mutation(bulkUpdateReportStatusHandler),
 
   // #region [appeal]
   getRecentAppeals: protectedProcedure
@@ -42,6 +35,5 @@ export const reportRouter = router({
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(createEntityAppealSchema)
     .mutation(createEntityAppealHandler),
-  resolveAppeal: moderatorProcedure.input(resolveAppealSchema).mutation(resolveEntityAppealHandler),
   // #endregion
 });

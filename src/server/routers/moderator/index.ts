@@ -23,16 +23,12 @@ import {
   modAdjustCashBalance,
   updateCashWithdrawal,
 } from '~/server/services/creator-program.service';
-import { getImagesModRules } from '~/server/services/image.service';
 import { getFlaggedModels, resolveFlaggedModel } from '~/server/services/model-flag.service';
 import {
-  getModelModRules,
   getTrainingModelsForModerators,
   transferModelOwnership,
 } from '~/server/services/model.service';
 import { moderatorProcedure, protectedProcedure, router, isFlagProtected } from '~/server/trpc';
-import { throwDbError } from '~/server/utils/errorHandling';
-import type { ModerationRule } from '~/shared/utils/prisma/models';
 
 const trainingModerationProcedure = protectedProcedure.use(
   isFlagProtected('trainingModelsModeration')
@@ -78,25 +74,6 @@ export const modRouter = router({
     updateWithdrawal: cashManagementProcedure
       .input(updateCashWithdrawalSchema)
       .mutation(({ input }) => updateCashWithdrawal(input)),
-  }),
-  rules: router({
-    getById: moderatorProcedure
-      .input(getByIdSchema.extend({ entityType: z.enum(['Model', 'Image']) }))
-      .query(async ({ input }) => {
-        const { id, entityType } = input;
-        let modRule: Pick<ModerationRule, 'id' | 'action' | 'definition'> | undefined;
-
-        if (entityType === 'Model') {
-          const modelModRules = await getModelModRules();
-          modRule = modelModRules.find((rule) => rule.id === id);
-        } else {
-          const imageModRules = await getImagesModRules();
-          modRule = imageModRules.find((rule) => rule.id === id);
-        }
-
-        if (!modRule) throw throwDbError('Rule not found');
-        return modRule;
-      }),
   }),
 });
 

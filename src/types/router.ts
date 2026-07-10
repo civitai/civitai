@@ -93,9 +93,6 @@ export type BountyEntryGetById = BountyEntryRouter['getById'];
 export type UserOverview = RouterOutput['userProfile']['overview'];
 export type UserWithProfile = RouterOutput['userProfile']['get'];
 
-export type ImageModerationReviewQueueImage =
-  RouterOutput['image']['getModeratorReviewQueue']['items'][number];
-
 export type UserPaymentMethod = RouterOutput['user']['getPaymentMethods'][number];
 
 type GenerationRouter = RouterOutput['generation'];

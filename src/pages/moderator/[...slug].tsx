@@ -13,7 +13,6 @@ const MIGRATED_ROUTES: Record<string, string> = {
   articles: 'articles',
   'article-rating-review': 'article-rating-review',
   'cosmetics/grant': 'cosmetics/grant',
-  'images/to-ingest': 'images/to-ingest',
   'ingestion-error-review': 'ingestion-error-review',
   'image-rating-review': 'image-rating-review',
   'downleveled-review': 'downleveled-review',
@@ -24,7 +23,7 @@ const MIGRATED_ROUTES: Record<string, string> = {
 // Whole subtrees that migrated (dynamic sub-routes). Any `/moderator/<prefix>/...` path redirects to the
 // same path on the spoke — used where the migrated area has dynamic segments (e.g. scanner-audit/[mode]
 // and scanner-audit/[mode]/[label]). The spoke mirrors the sub-path exactly.
-const MIGRATED_PREFIXES = ['scanner-audit'];
+const MIGRATED_PREFIXES = ['scanner-audit', 'images'];
 
 export const getServerSideProps: GetServerSideProps = async (ctx) => {
   const slug = ctx.params?.slug;

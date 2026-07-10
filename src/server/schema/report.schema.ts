@@ -111,12 +111,6 @@ export const createReportInputSchema = z.discriminatedUnion('reason', [
   reportSpamSchema,
 ]);
 
-export type BulkUpdateReportStatusInput = z.infer<typeof bulkUpdateReportStatusSchema>;
-export const bulkUpdateReportStatusSchema = z.object({
-  ids: z.number().array(),
-  status: z.enum(ReportStatus),
-});
-
 export type GetReportsInput = z.infer<typeof getReportsSchema>;
 export const getReportsSchema = getAllQuerySchema.extend({
   type: z.enum(ReportEntity),

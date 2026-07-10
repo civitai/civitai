@@ -1,7 +1,7 @@
 import { TagsOnTagsType, TagTarget, TagType } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
 import { taggableEntitySchema, tagVotableEntitySchema } from '~/libs/tags';
-import { ModReviewType, TagSort } from '~/server/common/enums';
+import { TagSort } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 
 export type GetTagByNameInput = z.infer<typeof getTagByNameSchema>;
@@ -42,10 +42,6 @@ export const getTagsInput = getAllQuerySchema.extend({
 });
 export type GetTagsInput = z.infer<typeof getTagsInput>;
 
-export type GetTagsForReviewInput = z.infer<typeof getTagsForReviewSchema>;
-export const getTagsForReviewSchema = getAllQuerySchema.extend({
-  reviewType: z.enum(ModReviewType),
-});
 
 export const getTrendingTagsSchema = z.object({
   limit: z.number().optional(),

@@ -62,7 +62,6 @@ import type {
   GetImageInput,
   GetInfiniteImagesOutput,
   ImageModerationSchema,
-  ImageReviewQueueInput,
   SetTosViolationSchema,
   SetVideoThumbnailInput,
   UpdateImageAcceptableMinorInput,
@@ -73,7 +72,6 @@ import {
   getEntityCoverImage,
   getImage,
   getImageContestCollectionDetails,
-  getImageModerationReviewQueue,
   getImageResources,
   getReportViolationDetailsForImages,
   getResourceIdsForImages,
@@ -697,23 +695,6 @@ export const getEntitiesCoverImageHandler = async ({ input }: { input: GetEntiti
 };
 
 // #endregion
-
-export const getModeratorReviewQueueHandler = async ({
-  input,
-  ctx,
-}: {
-  input: ImageReviewQueueInput;
-  ctx: Context;
-}) => {
-  try {
-    return await getImageModerationReviewQueue({
-      ...input,
-    });
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
-  }
-};
 
 export const getImageContestCollectionDetailsHandler = async ({
   input,

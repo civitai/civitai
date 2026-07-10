@@ -16,7 +16,6 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type {
   AdjustTagsSchema,
   DeleteTagsSchema,
-  GetTagsForReviewInput,
   GetTagsInput,
   GetVotableTagsSchema,
   GetVotableTagsSchema2,
@@ -808,29 +807,3 @@ export const getTypeCategories = async ({
   return categories;
 };
 
-export async function getTagsForReview({ limit, page, reviewType }: GetTagsForReviewInput) {
-  const pagination = getPagination(limit, page);
-  const fromClause = Prisma.sql`
-    FROM "ImageTagForReview" it
-      JOIN "Tag" t ON it."tagId" = t.id
-      JOIN "Image" i ON it."imageId" = i.id
-    WHERE i."needsReview" = ${reviewType}
-  `;
-
-  const [tags, { count }] = await dbRead.$transaction([
-    dbRead.$queryRaw<{ id: number; name: string }[]>`
-      SELECT DISTINCT ON (t.name)
-        t.id, t.name
-      ${fromClause}
-      ORDER BY t.name
-      LIMIT ${pagination.take} OFFSET ${pagination.skip}
-    `,
-    dbRead.$queryRaw<{ count: number }>`
-      SELECT
-        COUNT(DISTINCT t.id) AS count
-      ${fromClause}
-    `,
-  ]);
-
-  return getPagingData({ items: tags, count }, pagination.take, page);
-}

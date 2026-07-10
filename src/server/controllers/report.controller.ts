@@ -4,23 +4,18 @@ import dayjs from '~/shared/utils/dayjs';
 import type { ProtectedContext } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
 import type {
-  BulkUpdateReportStatusInput,
   CreateEntityAppealInput,
   CreateReportInput,
   GetRecentAppealsInput,
   GetReportsInput,
-  ResolveAppealInput,
 } from '~/server/schema/report.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getImageById } from '~/server/services/image.service';
-import { trackModActivity } from '~/server/services/moderator.service';
 import {
-  bulkSetReportStatus,
   createEntityAppeal,
   createReport,
   getAppealCount,
   getReports,
-  resolveEntityAppeal,
 } from '~/server/services/report.service';
 import {
   throwAuthorizationError,
@@ -58,22 +53,6 @@ export async function createReportHandler({
     return result;
   } catch (e) {
     throw throwDbError(e);
-  }
-}
-
-export async function bulkUpdateReportStatusHandler({
-  input,
-  ctx,
-}: {
-  input: BulkUpdateReportStatusInput;
-  ctx: ProtectedContext;
-}) {
-  try {
-    const { ids, status } = input;
-    await bulkSetReportStatus({ ids, status, userId: ctx.user.id });
-  } catch (e) {
-    if (e instanceof TRPCError) throw e;
-    else throw throwDbError(e);
   }
 }
 
@@ -344,26 +323,3 @@ export async function getRecentAppealsHandler({
   }
 }
 
-export async function resolveEntityAppealHandler({
-  input,
-  ctx,
-}: {
-  input: ResolveAppealInput;
-  ctx: ProtectedContext;
-}) {
-  try {
-    const { id: userId } = ctx.user;
-    const appeals = await resolveEntityAppeal({ ...input, userId });
-
-    await trackModActivity(userId, {
-      entityType: 'image',
-      entityId: input.ids,
-      activity: 'resolveAppeal',
-    });
-
-    return appeals;
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
-  }
-}
