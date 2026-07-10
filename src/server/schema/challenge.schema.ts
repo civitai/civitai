@@ -10,11 +10,9 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import {
-  CHALLENGE_CATEGORY_KEYS,
   CHALLENGE_MAX_ENTRY_FEE,
   CHALLENGE_MAX_INITIAL_PRIZE,
   CHALLENGE_MIN_ENTRY_FEE,
-  CHALLENGE_PRESET_CATEGORIES,
 } from '~/shared/constants/challenge.constants';
 import { infiniteQuerySchema } from './base.schema';
 import { imageSchema } from './image.schema';
@@ -309,37 +307,45 @@ export const getModeratorChallengesSchema = infiniteQuerySchema.merge(
   })
 );
 
-// Judging categories: preset-only category weights, shared by the moderator and user upsert
-// schemas. Derives label/criteria from the key server-side (see transform below) so client-sent
-// text can never reach the AI judge prompt.
-export const challengeJudgingCategorySchema = z
-  .object({
-    key: z.enum(CHALLENGE_CATEGORY_KEYS),
-    weight: z.number().int().min(1).max(100),
-  })
-  // Derive label + criteria from the key server-side so the client can never inject its own
-  // criteria text into the AI judge; any client-sent label/criteria are ignored/stripped.
-  .transform(({ key, weight }) => ({
-    key,
-    weight,
-    label: CHALLENGE_PRESET_CATEGORIES[key].label,
-    criteria: CHALLENGE_PRESET_CATEGORIES[key].criteria,
-  }));
+// Judging categories, shared by the moderator and user upsert schemas. The client submits only
+// `{ key, weight }` (any client-sent label/criteria are stripped here); the service derives
+// label + criteria from the ChallengeCategory library (resolveJudgingCategories) before persisting,
+// so client text can never reach the AI judge prompt. Keys are validated against the library at
+// resolve time — categories are DB-owned, so there is no static enum to check against.
+export const challengeJudgingCategoryInputSchema = z.object({
+  key: z.string().trim().min(1).max(50),
+  weight: z.number().int().min(1).max(100),
+});
+export type ChallengeJudgingCategoryInput = z.infer<typeof challengeJudgingCategoryInputSchema>;
+
+// Persisted shape: label + criteria were server-derived at write time and are trusted on read.
+export const challengeJudgingCategorySchema = challengeJudgingCategoryInputSchema.extend({
+  label: z.string(),
+  criteria: z.string(),
+});
 export type ChallengeJudgingCategory = z.infer<typeof challengeJudgingCategorySchema>;
+
+const judgingCategoryRefinements = (cats: { key: string; weight: number }[], ctx: z.RefinementCtx) => {
+  if (cats.filter((c) => c.key === 'theme').length !== 1)
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Theme is required exactly once' });
+  const keys = cats.map((c) => c.key);
+  if (new Set(keys).size !== keys.length)
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Each category can be used once' });
+  if (cats.reduce((s, c) => s + c.weight, 0) !== 100)
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Category weights must sum to 100%' });
+};
+
+export const challengeJudgingCategoriesInputSchema = z
+  .array(challengeJudgingCategoryInputSchema)
+  .min(1)
+  .max(4)
+  .superRefine(judgingCategoryRefinements);
 
 export const challengeJudgingCategoriesSchema = z
   .array(challengeJudgingCategorySchema)
   .min(1)
   .max(4)
-  .superRefine((cats, ctx) => {
-    if (cats.filter((c) => c.key === 'theme').length !== 1)
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Theme is required exactly once' });
-    const keys = cats.map((c) => c.key);
-    if (new Set(keys).size !== keys.length)
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Each category can be used once' });
-    if (cats.reduce((s, c) => s + c.weight, 0) !== 100)
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Category weights must sum to 100%' });
-  });
+  .superRefine(judgingCategoryRefinements);
 
 // Moderator: Create/Update challenge
 // Base schema is a ZodObject so the form can use .omit().extend()
@@ -356,7 +362,7 @@ export const upsertChallengeBaseSchema = z.object({
   modelVersionIds: z.array(z.number()).default([]),
   judgeId: z.number().optional().nullable(),
   judgingPrompt: z.string().optional().nullable(),
-  judgingCategories: challengeJudgingCategoriesSchema.optional().nullable(),
+  judgingCategories: challengeJudgingCategoriesInputSchema.optional().nullable(),
   reviewPercentage: z.number().min(0).max(100).default(100),
   maxReviews: z.number().optional().nullable(),
   maxEntriesPerUser: z.number().min(1).max(100).default(20),
@@ -403,7 +409,7 @@ export const userChallengeUpsertBaseSchema = z.object({
   allowedNsfwLevel: z.number().min(1).max(63).default(sfwBrowsingLevelsFlag),
   modelVersionIds: z.array(z.number().int().positive()).max(20).default([]),
   judgeId: z.number().int().positive(),
-  judgingCategories: challengeJudgingCategoriesSchema,
+  judgingCategories: challengeJudgingCategoriesInputSchema,
   entryFee: z.number().int().min(CHALLENGE_MIN_ENTRY_FEE).max(CHALLENGE_MAX_ENTRY_FEE),
   initialPrizeBuzz: z.number().int().min(0).max(CHALLENGE_MAX_INITIAL_PRIZE).default(0),
   prizeDistribution: prizeDistributionSchema,

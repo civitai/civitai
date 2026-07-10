@@ -153,10 +153,10 @@ const { FLIPT_FEATURE_FLAGS } = await import('~/server/flipt/client');
 const { ChallengeSource } = await import('~/shared/utils/prisma/enums');
 
 const VALID_CATEGORIES = [
-  { key: 'theme', weight: 60 },
-  { key: 'aesthetic', weight: 40 },
+  { key: 'theme', weight: 60, label: 'Theme', criteria: 'fits the theme' },
+  { key: 'aesthetic', weight: 40, label: 'Aesthetic', criteria: 'looks good' },
 ];
-const MALFORMED_CATEGORIES = [{ key: 'theme', weight: 150 }];
+const MALFORMED_CATEGORIES = [{ key: 'theme', weight: 150, label: 'Theme', criteria: 'x' }];
 
 const BASE_CONFIG = {
   challengeType: 'world-morph',

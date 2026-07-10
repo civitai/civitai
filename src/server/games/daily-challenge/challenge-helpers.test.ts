@@ -26,12 +26,13 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
 const { resolveChallengeReviewInputs } = await import('./challenge-helpers');
 const { ChallengeSource } = await import('~/shared/utils/prisma/enums');
 
+// Stored shape: label/criteria were derived server-side at write time and persisted.
 const VALID_CATEGORIES = [
-  { key: 'theme', weight: 60 },
-  { key: 'aesthetic', weight: 40 },
+  { key: 'theme', weight: 60, label: 'Theme', criteria: 'fits the theme' },
+  { key: 'aesthetic', weight: 40, label: 'Aesthetic', criteria: 'looks good' },
 ];
 // Weight out of range + doesn't sum to 100 -> challengeJudgingCategoriesSchema.safeParse fails.
-const MALFORMED_CATEGORIES = [{ key: 'theme', weight: 150 }];
+const MALFORMED_CATEGORIES = [{ key: 'theme', weight: 150, label: 'Theme', criteria: 'x' }];
 
 beforeEach(() => {
   vi.clearAllMocks();

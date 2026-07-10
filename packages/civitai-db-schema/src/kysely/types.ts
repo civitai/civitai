@@ -1318,6 +1318,18 @@ export type Challenge = {
   updatedAt: Timestamp;
   eventId: number | null;
 };
+export type ChallengeCategory = {
+  key: string;
+  label: string;
+  group: string;
+  criteria: string;
+  rubric: string | null;
+  rubricNsfw: string | null;
+  sortOrder: Generated<number>;
+  active: Generated<boolean>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
 export type ChallengeEvent = {
   id: Generated<number>;
   title: string;
@@ -3820,6 +3832,7 @@ export type DB = {
   BuzzWithdrawalRequestHistory: BuzzWithdrawalRequestHistory;
   CashWithdrawal: CashWithdrawal;
   Challenge: Challenge;
+  ChallengeCategory: ChallengeCategory;
   ChallengeEvent: ChallengeEvent;
   ChallengeJudge: ChallengeJudge;
   ChallengeReport: ChallengeReport;

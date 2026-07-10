@@ -29,7 +29,7 @@ function makeConfig(review: string): JudgingConfig {
   };
 }
 
-type ReviewCategory = { key: Parameters<typeof getCategoryRubric>[0]; name: string; criteria: string };
+type ReviewCategory = { key: string; name: string; criteria: string };
 
 function makeInput(config: JudgingConfig, categories?: ReviewCategory[]) {
   return {
@@ -54,17 +54,22 @@ const CATS: ReviewCategory[] = [
   { key: 'aesthetic', name: 'Aesthetic', criteria: 'looks good' },
 ];
 
+// The rubric block generateReview resolves (via resolveRubricBlock) before calling
+// buildFallbackMessages. Tests build it from the legacy code rubrics — the DB-less fallback.
+const CATS_BLOCK = [getCategoryRubric('theme'), getCategoryRubric('aesthetic')].join('\n\n');
+const DEFAULT_KEYS = ['theme', 'wittiness', 'humor', 'aesthetic'] as const;
+const DEFAULT_BLOCK = DEFAULT_KEYS.map((k) => getCategoryRubric(k)).join('\n\n');
+
 describe('injectRubrics', () => {
   it('returns the prompt unchanged (referentially) when the sentinel is absent', () => {
     const prompt = 'Score the entry fairly and strictly.';
-    expect(injectRubrics(prompt, CATS, false)).toBe(prompt);
+    expect(injectRubrics(prompt, CATS_BLOCK)).toBe(prompt);
   });
 
   it('replaces the sentinel with the joined rubric blocks when present', () => {
     const prompt = 'A {{SCORING_RUBRICS}} B';
-    const out = injectRubrics(prompt, CATS, false);
-    const block = [getCategoryRubric('theme'), getCategoryRubric('aesthetic')].join('\n\n');
-    expect(out).toBe(`A ${block} B`);
+    const out = injectRubrics(prompt, CATS_BLOCK);
+    expect(out).toBe(`A ${CATS_BLOCK} B`);
     expect(out).not.toContain('{{SCORING_RUBRICS}}');
   });
 });
@@ -73,7 +78,7 @@ describe('buildFallbackMessages — backward-compatibility invariant', () => {
   it('sentinel absent + categories present → injection is a no-op (review prompt appears raw)', () => {
     const review = 'Score the entry fairly and strictly.';
     const config = makeConfig(review);
-    const messages = buildFallbackMessages(makeInput(config, CATS));
+    const messages = buildFallbackMessages(makeInput(config, CATS), CATS_BLOCK);
     const text = systemText(messages);
 
     // The review prompt appears verbatim (no rubric spliced in) — the invariant that matters when
@@ -90,7 +95,7 @@ describe('buildFallbackMessages — backward-compatibility invariant', () => {
   it('no categories (fixed daily path) → review prompt untouched, fixed schema, no rubric text', () => {
     const review = 'Score the entry fairly and strictly.';
     const config = makeConfig(review);
-    const messages = buildFallbackMessages(makeInput(config, undefined));
+    const messages = buildFallbackMessages(makeInput(config, undefined), DEFAULT_BLOCK);
     const text = systemText(messages);
 
     const expected = `${config.prompts.systemMessage}\n\n${stripLeadingWhitespace(
@@ -104,7 +109,7 @@ describe('buildFallbackMessages — rubric injection', () => {
   it('sentinel present + categories → rubric blocks injected, sentinel gone', () => {
     const review = 'Judge the image below.\n\n{{SCORING_RUBRICS}}\n\nBe strict.';
     const config = makeConfig(review);
-    const messages = buildFallbackMessages(makeInput(config, CATS));
+    const messages = buildFallbackMessages(makeInput(config, CATS), CATS_BLOCK);
     const text = systemText(messages);
 
     expect(text).not.toContain('{{SCORING_RUBRICS}}');
@@ -126,8 +131,7 @@ describe('buildFallbackMessages — default-rubric fallback for the sentinel (Ta
   // A migrated judge prompt carries the sentinel, but a null/empty-category challenge (all current
   // daily/mod challenges) must still resolve it — to the canonical default blocks — while KEEPING the
   // fixed RESPONSE_SCHEMA (lowercase keys). It must NOT switch to the category schema.
-  const DEFAULT_KEYS = ['theme', 'wittiness', 'humor', 'aesthetic'] as const;
-  const defaultBlock = DEFAULT_KEYS.map((k) => getCategoryRubric(k)).join('\n\n');
+  const defaultBlock = DEFAULT_BLOCK;
 
   it.each<[string, ReviewCategory[] | undefined]>([
     ['null categories', undefined],
@@ -137,7 +141,7 @@ describe('buildFallbackMessages — default-rubric fallback for the sentinel (Ta
     (_label, categories) => {
       const review = 'Judge the image below.\n\n{{SCORING_RUBRICS}}\n\nBe strict.';
       const config = makeConfig(review);
-      const messages = buildFallbackMessages(makeInput(config, categories));
+      const messages = buildFallbackMessages(makeInput(config, categories), defaultBlock);
       const text = systemText(messages);
 
       // Sentinel fully resolved — the whole point of Task 9.
@@ -185,15 +189,16 @@ describe('buildCategoryReviewSchema', () => {
 describe('caller mapping — parsed judging categories carry key', () => {
   it('maps ChallengeJudgingCategory → { key, name, criteria } that resolves a rubric', () => {
     const parsed = challengeJudgingCategoriesSchema.parse([
-      { key: 'theme', weight: 60 },
-      { key: 'aesthetic', weight: 40 },
+      { key: 'theme', weight: 60, label: 'Theme', criteria: 'fits the theme' },
+      { key: 'aesthetic', weight: 40, label: 'Aesthetic', criteria: 'looks good' },
     ]);
     // Mirror the caller in daily-challenge-processing.ts.
     const mapped = parsed.map((c) => ({ key: c.key, name: c.label, criteria: c.criteria }));
     expect(mapped.map((c) => c.key)).toEqual(['theme', 'aesthetic']);
 
     const messages = buildFallbackMessages(
-      makeInput(makeConfig('Judge it.\n\n{{SCORING_RUBRICS}}'), mapped)
+      makeInput(makeConfig('Judge it.\n\n{{SCORING_RUBRICS}}'), mapped),
+      CATS_BLOCK
     );
     expect(systemText(messages)).toContain(getCategoryRubric('theme'));
   });

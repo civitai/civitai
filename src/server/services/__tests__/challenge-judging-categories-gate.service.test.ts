@@ -137,10 +137,10 @@ const { ChallengeSource, ChallengeStatus } = await import('~/shared/utils/prisma
 // A syntactically valid, weight-summing-to-100, single-theme category set — what
 // challengeJudgingCategoriesSchema.safeParse accepts.
 const VALID_CATEGORIES = [
-  { key: 'theme', weight: 60 },
-  { key: 'aesthetic', weight: 40 },
+  { key: 'theme', weight: 60, label: 'Theme', criteria: 'fits the theme' },
+  { key: 'aesthetic', weight: 40, label: 'Aesthetic', criteria: 'looks good' },
 ];
-const MALFORMED_CATEGORIES = [{ key: 'theme', weight: 150 }]; // weight out of range + doesn't sum to 100
+const MALFORMED_CATEGORIES = [{ key: 'theme', weight: 150, label: 'Theme', criteria: 'x' }]; // weight out of range + doesn't sum to 100
 
 const makeMockChallenge = (overrides: Record<string, unknown> = {}) => ({
   id: 1,

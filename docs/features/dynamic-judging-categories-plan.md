@@ -249,8 +249,7 @@ Tests: cover (a)/(b)/(c). For (b), assert the migrated-prompt-with-null-categori
 `THEME SCORING`…`AESTHETIC SCORING` blocks AND the fixed `RESPONSE_SCHEMA` score keys, and contains
 no unresolved `{{SCORING_RUBRICS}}`.
 
-After this lands, update the header note in
-`scripts/migrations/dynamic-judging-categories-judge-prompts.sql` to record that the code-side
-prerequisite is satisfied.
+After this lands, update the header note in the judge-prompt migration script (managed per env)
+to record that the code-side prerequisite is satisfied.
 
 Done: sentinel always resolves; migration is safe to apply; tests cover all three states.

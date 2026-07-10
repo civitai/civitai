@@ -11,7 +11,6 @@ import {
   getIsSafeBrowsingLevel,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import type { ChallengeCategoryKey } from '~/shared/constants/challenge.constants';
 import type { PoolTrigger } from '~/shared/utils/prisma/enums';
 import {
   ChallengeReviewCostType,
@@ -772,7 +771,7 @@ export async function resolveChallengeReviewInputs(challenge: {
   judgingCategories: unknown;
   allowedNsfwLevel: number;
 }): Promise<{
-  categories: { key: ChallengeCategoryKey; name: string; criteria: string }[] | undefined;
+  categories: { key: string; name: string; criteria: string }[] | undefined;
   nsfw: boolean;
 }> {
   const useCategories =

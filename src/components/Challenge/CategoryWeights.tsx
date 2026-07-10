@@ -1,42 +1,65 @@
 import { ActionIcon, Badge, Button, Group, Paper, Progress, Stack, Text, Tooltip } from '@mantine/core';
 import { IconLock, IconPlus, IconX } from '@tabler/icons-react';
+import { useMemo } from 'react';
 import { useFieldArray, useFormContext, useWatch } from 'react-hook-form';
 import { InputNumber, InputSelect } from '~/libs/form';
 import {
-  ADDABLE_PRESET_KEYS,
   type CategoryWeightRow,
-  CHALLENGE_CATEGORY_GROUPS,
+  CHALLENGE_CATEGORY_KEYS,
   CHALLENGE_PRESET_CATEGORIES,
-  makeRow,
   MAX_CATEGORIES,
 } from '~/shared/constants/challenge.constants';
+import { trpc } from '~/utils/trpc';
+
+type CategoryOption = { key: string; label: string; group: string; criteria: string };
+
+// Shown until the DB-backed library loads (and if the query fails) so the form is never empty.
+// The server falls back to the same presets when its ChallengeCategory table is unseeded.
+const PRESET_FALLBACK_OPTIONS: CategoryOption[] = CHALLENGE_CATEGORY_KEYS.map((key) => ({
+  key,
+  ...CHALLENGE_PRESET_CATEGORIES[key],
+}));
 
 // Build the grouped Select options for one row: every category the row may switch to — its own key
-// plus any preset not already used by another row — grouped by vibe. Empty groups are dropped.
-// Returns a flat, group-tagged list (InputSelect groups by the `group` field itself); iterating
-// CHALLENGE_CATEGORY_GROUPS in order keeps the group order stable.
-function keyOptionsFor(index: number, rows: CategoryWeightRow[]) {
-  const currentKey = rows[index]?.key;
+// plus any category not already used by another row. Returns a flat, group-tagged list (InputSelect
+// groups by the `group` field itself); the server returns rows in sortOrder, so first-seen group
+// order is stable. A row whose stored key is no longer in the library (deactivated category on an
+// old challenge) keeps a synthetic option so the Select doesn't blank out.
+function keyOptionsFor(index: number, rows: CategoryWeightRow[], addable: CategoryOption[]) {
+  const row = rows[index];
+  const currentKey = row?.key;
   const usedByOthers = new Set(rows.filter((_, i) => i !== index).map((r) => r.key));
-  return CHALLENGE_CATEGORY_GROUPS.flatMap((group) =>
-    ADDABLE_PRESET_KEYS.filter((key) => CHALLENGE_PRESET_CATEGORIES[key].group === group)
-      .filter((key) => key === currentKey || !usedByOthers.has(key))
-      .map((key) => ({ value: key, label: CHALLENGE_PRESET_CATEGORIES[key].label, group }))
-  );
+  const options = addable
+    .filter((c) => c.key === currentKey || !usedByOthers.has(c.key))
+    .map((c) => ({ value: c.key, label: c.label, group: c.group }));
+  if (currentKey && !options.some((o) => o.value === currentKey))
+    options.unshift({ value: currentKey, label: row?.label || currentKey, group: 'Other' });
+  return options;
 }
 
 /**
  * Judging-category editor: Theme is always present and locked; up to 3 more rows can be added,
- * each an unused preset from the curated library (grouped by vibe). `key` and `weight` are the only
- * per-row form state — label + criteria are derived from the key at render (and the server re-derives
- * them too), so no free text reaches the judge and the display can never desync from the selected
- * key. RHF's `judgingCategories` field array is the single source of truth. Renders only the row list
- * + add/total controls — the parent supplies the surrounding "Judging" card.
+ * each an unused category from the library (grouped by vibe, fetched from the server). `key` and
+ * `weight` are the only per-row form state — label + criteria are derived from the key at render
+ * (and the server re-derives them too), so no free text reaches the judge and the display can
+ * never desync from the selected key. RHF's `judgingCategories` field array is the single source
+ * of truth. Renders only the row list + add/total controls — the parent supplies the surrounding
+ * "Judging" card.
  */
 export default function CategoryWeights() {
   const { control } = useFormContext();
   const { fields, append, remove } = useFieldArray({ control, name: 'judgingCategories' });
   const rows = (useWatch({ control, name: 'judgingCategories' }) as CategoryWeightRow[]) ?? [];
+
+  const { data: fetchedCategories } = trpc.challenge.getJudgingCategories.useQuery(undefined, {
+    staleTime: 5 * 60 * 1000,
+  });
+  const categories = fetchedCategories ?? PRESET_FALLBACK_OPTIONS;
+  const categoryByKey = useMemo(
+    () => new Map(categories.map((c) => [c.key, c])),
+    [categories]
+  );
+  const addable = useMemo(() => categories.filter((c) => c.key !== 'theme'), [categories]);
 
   const total = rows.reduce((sum, row) => sum + (row.weight || 0), 0);
   const hasInvalidRow = rows.some((row) => (row.weight || 0) < 1);
@@ -45,8 +68,8 @@ export default function CategoryWeights() {
 
   const addRow = () => {
     const usedKeys = new Set(rows.map((row) => row.key));
-    const nextKey = ADDABLE_PRESET_KEYS.find((key) => !usedKeys.has(key));
-    if (nextKey) append(makeRow(nextKey));
+    const next = addable.find((c) => !usedKeys.has(c.key));
+    if (next) append({ key: next.key, label: next.label, criteria: next.criteria, weight: 0 });
   };
 
   return (
@@ -54,7 +77,9 @@ export default function CategoryWeights() {
       {fields.map((field, index) => {
         const row = rows[index];
         const isTheme = row?.key === 'theme';
-        const criteria = row?.key ? CHALLENGE_PRESET_CATEGORIES[row.key]?.criteria : undefined;
+        const criteria = row?.key
+          ? categoryByKey.get(row.key)?.criteria ?? row.criteria
+          : undefined;
         return (
           <Paper key={field.id} withBorder radius="md" p="sm">
             <Group align="flex-end" wrap="nowrap" gap="sm">
@@ -63,8 +88,8 @@ export default function CategoryWeights() {
                 label="Category"
                 data={
                   isTheme
-                    ? [{ value: 'theme', label: CHALLENGE_PRESET_CATEGORIES.theme.label }]
-                    : keyOptionsFor(index, rows)
+                    ? [{ value: 'theme', label: categoryByKey.get('theme')?.label ?? 'Theme' }]
+                    : keyOptionsFor(index, rows, addable)
                 }
                 disabled={isTheme}
                 allowDeselect={false}

@@ -12,9 +12,8 @@ import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import {
   DEFAULT_CATEGORY_ROWS,
   sanitizeCategoryLabel,
-  type ChallengeCategoryKey,
 } from '~/shared/constants/challenge.constants';
-import { getCategoryRubric } from './category-rubrics';
+import { resolveRubricBlock } from '~/server/services/challenge-category.service';
 import { findLastIndex } from '~/utils/array-helpers';
 import { markdownToHtml } from '~/utils/markdown-helpers';
 import { stripLeadingWhitespace } from '~/utils/string-helpers';
@@ -224,11 +223,11 @@ type GenerateReviewInput = {
   imageUrl: string;
   config: JudgingConfig;
   model?: AIModel;
-  // User-created challenges: creator-defined judging categories. When present the review
-  // JSON schema is built from these instead of the fixed theme/wittiness/humor/aesthetic set,
-  // and `key` selects each category's rich scoring rubric for `{{SCORING_RUBRICS}}` injection.
-  categories?: { key: ChallengeCategoryKey; name: string; criteria: string }[];
-  // Selects NSFW rubric variants (getCategoryRubric). No-op until CATEGORY_RUBRICS_NSFW is populated.
+  // Creator/mod-defined judging categories. When present the review JSON schema is built from
+  // these instead of the fixed theme/wittiness/humor/aesthetic set, and `key` selects each
+  // category's rich scoring rubric for `{{SCORING_RUBRICS}}` injection (resolveRubricBlock).
+  categories?: { key: string; name: string; criteria: string }[];
+  // Selects NSFW rubric variants (ChallengeCategory.rubricNsfw, falling back to the SFW rubric).
   nsfw?: boolean;
 };
 type GeneratedReview = {
@@ -276,16 +275,25 @@ ${scoreLines}
 }
 
 export async function generateReview(input: GenerateReviewInput): Promise<GeneratedReview> {
+  // Resolve the rubric block up front (it needs the DB-backed category library): the REAL
+  // categories when present, else the canonical defaults so a migrated prompt with no categories
+  // still gets the default blocks instead of a literal {{SCORING_RUBRICS}}. injectRubrics is a
+  // no-op when the sentinel is absent, so unmigrated prompts stay byte-identical.
+  const effectiveCategories = input.categories?.length
+    ? input.categories
+    : DEFAULT_CATEGORY_ROWS.map((c) => ({ key: c.key, name: c.label, criteria: c.criteria }));
+  const rubricBlock = await resolveRubricBlock(effectiveCategories, { nsfw: input.nsfw });
+
   let messages: SimpleMessage[];
   if (input.config.reviewTemplate && !input.categories?.length) {
     try {
       messages = buildMessagesFromTemplate(input);
     } catch (e) {
       console.warn('[generateReview] Invalid reviewTemplate, falling back to default prompts:', e);
-      messages = buildFallbackMessages(input);
+      messages = buildFallbackMessages(input, rubricBlock);
     }
   } else {
-    messages = buildFallbackMessages(input);
+    messages = buildFallbackMessages(input, rubricBlock);
   }
 
   const model = input.model ?? DEFAULT_REVIEW_MODEL;
@@ -364,36 +372,32 @@ function buildMessagesFromTemplate(input: GenerateReviewInput): SimpleMessage[] 
 const SCORING_RUBRICS_SENTINEL = '{{SCORING_RUBRICS}}';
 
 /**
- * Replace the `{{SCORING_RUBRICS}}` sentinel in a review prompt with the concatenated rich rubrics
- * for the selected categories. If the sentinel is absent the prompt is returned unchanged (byte for
- * byte) — no judge carries the sentinel today, so live review output is unaffected.
+ * Replace the `{{SCORING_RUBRICS}}` sentinel in a review prompt with the pre-resolved rubric
+ * block (resolveRubricBlock). If the sentinel is absent the prompt is returned unchanged (byte
+ * for byte), so unmigrated judge prompts are unaffected.
  */
-export function injectRubrics(
-  reviewPrompt: string,
-  categories: { key: ChallengeCategoryKey }[],
-  nsfw?: boolean
-): string {
+export function injectRubrics(reviewPrompt: string, rubricBlock: string): string {
   if (!reviewPrompt.includes(SCORING_RUBRICS_SENTINEL)) return reviewPrompt;
-  const block = categories.map((c) => getCategoryRubric(c.key, { nsfw })).join('\n\n');
-  return reviewPrompt.split(SCORING_RUBRICS_SENTINEL).join(block);
+  return reviewPrompt.split(SCORING_RUBRICS_SENTINEL).join(rubricBlock);
 }
 
 /**
  * Build simple 2-message array from systemPrompt + reviewPrompt fields (fallback path).
  */
-export function buildFallbackMessages(input: GenerateReviewInput): SimpleMessage[] {
+export function buildFallbackMessages(
+  input: GenerateReviewInput,
+  rubricBlock: string
+): SimpleMessage[] {
   const themeElementsLine = formatThemeElementsLine(input.themeElements);
   const userText = `Theme: ${input.theme}${themeElementsLine}\nCreator: ${input.creator}`;
   // Response schema keys on the REAL categories: a null/empty-category challenge keeps the fixed
-  // RESPONSE_SCHEMA (lowercase theme/wittiness/humor/aesthetic). Rubric injection, however, always
-  // resolves the sentinel — falling back to DEFAULT_CATEGORY_ROWS so a migrated prompt with no
-  // categories still gets the canonical default blocks instead of a literal {{SCORING_RUBRICS}}.
-  // injectRubrics is a no-op when the sentinel is absent, so unmigrated prompts stay byte-identical.
+  // RESPONSE_SCHEMA (lowercase theme/wittiness/humor/aesthetic). The rubric block was resolved by
+  // the caller (generateReview) — defaults included — so sentinel replacement never leaves a
+  // literal {{SCORING_RUBRICS}} behind.
   const responseSchema = input.categories?.length
     ? buildCategoryReviewSchema(input.categories)
     : RESPONSE_SCHEMA;
-  const effectiveCategories = input.categories?.length ? input.categories : DEFAULT_CATEGORY_ROWS;
-  const reviewText = injectRubrics(input.config.prompts.review, effectiveCategories, input.nsfw);
+  const reviewText = injectRubrics(input.config.prompts.review, rubricBlock);
 
   return [
     prepareSystemMessage(input.config, 'review', responseSchema, reviewText),

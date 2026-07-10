@@ -3655,6 +3655,19 @@ export interface ChallengeJudge {
   challenges?: Challenge[];
 }
 
+export interface ChallengeCategory {
+  key: string;
+  label: string;
+  group: string;
+  criteria: string;
+  rubric: string | null;
+  rubricNsfw: string | null;
+  sortOrder: number;
+  active: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface ChallengeWinner {
   id: number;
   challengeId: number;

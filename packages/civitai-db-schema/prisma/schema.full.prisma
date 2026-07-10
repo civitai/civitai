@@ -5317,6 +5317,25 @@ model ChallengeJudge {
   @@index([active])
 }
 
+// Judging-category library for challenges. label/group/criteria feed the client picker;
+// rubric/rubricNsfw are server-only LLM prompt content, managed directly in the DB per
+// environment (same handling as ChallengeJudge prompts).
+model ChallengeCategory {
+  key        String  @id @db.VarChar(50)
+  label      String  @db.VarChar(100)
+  group      String  @db.VarChar(100)
+  criteria   String  @db.Text
+  rubric     String? @db.Text
+  rubricNsfw String? @db.Text
+  sortOrder  Int     @default(0)
+  active     Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([active])
+}
+
 model ChallengeWinner {
   id          Int       @id @default(autoincrement())
   challengeId Int

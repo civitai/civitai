@@ -63,6 +63,7 @@ import {
   playgroundReviewImage,
   playgroundPickWinners,
 } from '~/server/services/challenge.service';
+import { getJudgingCategoryOptions } from '~/server/services/challenge-category.service';
 import { getJudgeCommentForImage } from '~/server/services/commentsv2.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -190,6 +191,11 @@ export const challengeRouter = router({
   getJudges: protectedProcedure
     .use(isFlagProtected('challengePlatform'))
     .query(({ ctx }) => getActiveJudges({ isModerator: !!ctx.user.isModerator })),
+
+  // Active judging categories for the challenge form picker (key/label/group/criteria only).
+  getJudgingCategories: protectedProcedure
+    .use(isFlagProtected('challengePlatform'))
+    .query(() => getJudgingCategoryOptions()),
 
   // Moderator: Get system challenge config
   getSystemConfig: moderatorProcedure

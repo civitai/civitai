@@ -58,6 +58,7 @@ import {
 import { createImage, imagesForModelVersionsCache } from '~/server/services/image.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { resolveJudgingCategories } from '~/server/services/challenge-category.service';
 import { assertCanCreateUserChallenge } from '~/server/services/challenge-eligibility.service';
 import { extModeration } from '~/server/integrations/moderation';
 import {
@@ -955,9 +956,15 @@ export async function upsertChallenge({
     judgeId,
     eventId,
     themeElements: inputThemeElements,
-    judgingCategories,
+    judgingCategories: judgingCategoriesInput,
     ...data
   } = input;
+
+  // Derive label + criteria from the ChallengeCategory library (throws on unknown keys) so only
+  // server-derived text is persisted / reaches the judge prompt.
+  const judgingCategories = judgingCategoriesInput?.length
+    ? await resolveJudgingCategories(judgingCategoriesInput)
+    : null;
 
   // Defense-in-depth: validate endsAt > startsAt (also validated by Zod schema)
   if (data.endsAt <= data.startsAt) {
@@ -1216,6 +1223,10 @@ export async function upsertUserChallenge({
   const allowedNsfwLevel = rest.allowedNsfwLevel ?? sfwBrowsingLevelsFlag;
   const themeEls = themeElements?.length ? themeElements : undefined;
 
+  // Derive label + criteria from the ChallengeCategory library (throws on unknown keys) so only
+  // server-derived text is persisted / reaches the judge prompt.
+  const resolvedJudgingCategories = await resolveJudgingCategories(judgingCategories);
+
   // Create — gate on eligibility (score + standing + tier concurrent cap) before creating any
   // resources, so an ineligible caller can't leave an orphan cover Image behind.
   if (!id) await assertCanCreateUserChallenge(userId);
@@ -1240,7 +1251,7 @@ export async function upsertUserChallenge({
     endsAt: rest.endsAt,
     judgeId,
     judgingPrompt: null,
-    judgingCategories: judgingCategories as unknown as Prisma.InputJsonValue,
+    judgingCategories: resolvedJudgingCategories as unknown as Prisma.InputJsonValue,
     entryFee,
     prizeMode: PrizeMode.Dynamic,
     poolTrigger: PoolTrigger.Entry,

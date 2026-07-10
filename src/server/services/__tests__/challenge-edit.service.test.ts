@@ -150,22 +150,9 @@ describe('getChallengeForEdit', () => {
 
     const result = await getChallengeForEdit(1);
 
-    expect(result?.judgingCategories).toEqual([
-      {
-        key: 'theme',
-        weight: 60,
-        label: 'Theme',
-        criteria:
-          'How well the entry fits and interprets the challenge theme; higher for a clear, strong, on-theme interpretation.',
-      },
-      {
-        key: 'creativity',
-        weight: 40,
-        label: 'Creativity',
-        criteria:
-          'Originality and inventiveness of the concept; higher for fresh, unexpected takes over clichés.',
-      },
-    ]);
+    // Stored label/criteria were server-derived at write time and are trusted on read (they are
+    // re-derived from the ChallengeCategory library on the next save).
+    expect(result?.judgingCategories).toEqual(storedCategories);
   });
 
   it('returns null when the challenge has no stored categories', async () => {

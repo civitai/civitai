@@ -96,10 +96,12 @@ export const CHALLENGE_CATEGORY_KEYS = Object.keys(CHALLENGE_PRESET_CATEGORIES) 
   ...ChallengeCategoryKey[]
 ];
 
-// Shape of one judging-category row in the creator form (RHF field-array item). label + criteria are
-// display-only copies of the preset — the server re-derives them from `key` at write time.
+// Shape of one judging-category row in the creator form (RHF field-array item). label + criteria
+// are display-only copies — the server re-derives them from `key` at write time. `key` is a plain
+// string: the category library is DB-owned (ChallengeCategory table) and may contain categories
+// beyond the presets baked into this file.
 export type CategoryWeightRow = {
-  key: ChallengeCategoryKey;
+  key: string;
   label: string;
   criteria: string;
   weight: number;

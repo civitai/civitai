@@ -40,6 +40,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       }),
       challenge: {
         getJudges: { useQuery: () => ({ data: [], isLoading: false }) },
+        // undefined data → CategoryWeights falls back to the preset constants
+        getJudgingCategories: { useQuery: noopQuery },
         getEvents: { useQuery: () => ({ data: [], isLoading: false }) },
         upsert: { useMutation: noopMutation },
         upsertUserChallenge: { useMutation: noopMutation },

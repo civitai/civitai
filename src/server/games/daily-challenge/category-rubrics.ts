@@ -1,4 +1,7 @@
-// Server-only: rich per-category scoring rubrics injected into the LLM judge prompt.
+// Server-only: default fallback rubrics for the LLM judge prompt. The source of truth is the
+// ChallengeCategory table (rubric/rubricNsfw columns) via challenge-category.service; this module
+// only covers an env whose table is missing or unseeded (migrations/seeds are applied manually).
+// Rubric content is managed directly in the DB — no need to add new entries here.
 // NEVER import this from client code — keep it out of ~/shared/constants.
 import {
   CHALLENGE_PRESET_CATEGORIES,

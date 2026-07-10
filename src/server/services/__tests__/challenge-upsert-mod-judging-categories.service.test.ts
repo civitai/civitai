@@ -131,9 +131,28 @@ vi.mock('~/utils/logging', () => ({
 const { upsertChallenge } = await import('~/server/services/challenge.service');
 const { ChallengeStatus } = await import('~/shared/utils/prisma/enums');
 
+const { CHALLENGE_PRESET_CATEGORIES } = await import('~/shared/constants/challenge.constants');
+
+// Client-submitted rows: key + weight only (label/criteria are derived server-side).
 const VALID_CATEGORIES = [
-  { key: 'theme', weight: 60, label: 'Theme', criteria: 'Fits the theme.' },
-  { key: 'aesthetic', weight: 40, label: 'Aesthetic', criteria: 'Looks good.' },
+  { key: 'theme', weight: 60 },
+  { key: 'aesthetic', weight: 40 },
+];
+// What resolveJudgingCategories derives from the category library (preset fallback in tests —
+// the mocked db client has no challengeCategory model).
+const RESOLVED_CATEGORIES = [
+  {
+    key: 'theme',
+    weight: 60,
+    label: CHALLENGE_PRESET_CATEGORIES.theme.label,
+    criteria: CHALLENGE_PRESET_CATEGORIES.theme.criteria,
+  },
+  {
+    key: 'aesthetic',
+    weight: 40,
+    label: CHALLENGE_PRESET_CATEGORIES.aesthetic.label,
+    criteria: CHALLENGE_PRESET_CATEGORIES.aesthetic.criteria,
+  },
 ];
 
 // Minimal moderator upsert payload. Cast at the call site (mirrors `as never` used elsewhere in
@@ -181,7 +200,7 @@ describe('upsertChallenge (moderator path) — judgingCategories', () => {
 
     expect(mockTx.challenge.create).toHaveBeenCalledTimes(1);
     const callArg = mockTx.challenge.create.mock.calls[0][0];
-    expect(callArg.data.judgingCategories).toEqual(VALID_CATEGORIES);
+    expect(callArg.data.judgingCategories).toEqual(RESOLVED_CATEGORIES);
     expect(callArg.data.judgingPrompt).toBe('Custom AI persona prompt');
   });
 
@@ -230,7 +249,7 @@ describe('upsertChallenge (moderator path) — judgingCategories', () => {
 
     expect(mockTx.challenge.update).toHaveBeenCalledTimes(1);
     const callArg = mockTx.challenge.update.mock.calls[0][0];
-    expect(callArg.data.judgingCategories).toEqual(VALID_CATEGORIES);
+    expect(callArg.data.judgingCategories).toEqual(RESOLVED_CATEGORIES);
     expect(callArg.data.judgingPrompt).toBe('Custom AI persona prompt');
   });
 
