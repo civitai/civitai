@@ -290,6 +290,12 @@ const featureFlags = createFeatureFlags({
   // Both mod-only at launch; Flipt key allows broadening without a code change.
   model3dFeed: { availability: ['mod'], fliptKey: 'model3d-feed' },
   model3dGenerator: { availability: ['mod'], fliptKey: 'model3d-generator' },
+  // Per-model 3D generator gates, layered UNDER `model3dGenerator` (which gates
+  // the whole 3D surface). Let Tripo & Hunyuan3D ship dark and roll out
+  // independently of Meshy (PolyGen) via Flipt. Off ⇒ the ecosystem is hidden
+  // from the img2model3d picker and rejected on submit (see ecosystem-graph.ts).
+  tripoGenerator: { availability: ['mod'], fliptKey: 'tripo-generator' },
+  hunyuan3dGenerator: { availability: ['mod'], fliptKey: 'hunyuan3d-generator' },
   // Retool privileged endpoints — `granted` means the moderator must carry the
   // matching permission key in user.permissions. Endpoints lookup the key
   // directly from `RetoolAction.privileged`, so the permission name MUST stay
