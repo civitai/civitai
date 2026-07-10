@@ -7,34 +7,37 @@ import { env } from '~/env/server';
 // the main app take routing precedence over this catchall, so only deleted/migrated (or unknown) paths
 // reach here.
 //
-// Key = path under `/moderator` (no leading slash); value = the corresponding path on the moderator app.
+// Key = path under `/moderator`; value = the corresponding base path on the moderator app. A request
+// matches a key when it equals the key OR is nested under it (`key/...`), and the trailing sub-path is
+// preserved (longest matching key wins). So one entry covers a whole subtree with dynamic segments
+// (`images` → the /images hub + every [slug] mode + to-ingest; `scanner-audit` → scanner-audit/[mode]/
+// [label]), and a renamed page maps cleanly (`image-tags` → `images/tags`).
 const MIGRATED_ROUTES: Record<string, string> = {
   reports: 'reports',
   articles: 'articles',
   'article-rating-review': 'article-rating-review',
   'cosmetics/grant': 'cosmetics/grant',
-  'ingestion-error-review': 'ingestion-error-review',
-  'image-rating-review': 'image-rating-review',
-  'downleveled-review': 'downleveled-review',
-  'image-tags': 'image-tags',
   blocklists: 'blocklists',
+  'scanner-audit': 'scanner-audit',
+  images: 'images',
+  // Renamed image task pages — legacy top-level path → new nested spoke path.
+  'image-tags': 'images/tags',
+  'image-rating-review': 'images/ratings',
+  'downleveled-review': 'images/downleveled',
+  'ingestion-error-review': 'images/ingestion-errors',
 };
-
-// Whole subtrees that migrated (dynamic sub-routes). Any `/moderator/<prefix>/...` path redirects to the
-// same path on the spoke — used where the migrated area has dynamic segments (e.g. scanner-audit/[mode]
-// and scanner-audit/[mode]/[label]). The spoke mirrors the sub-path exactly.
-const MIGRATED_PREFIXES = ['scanner-audit', 'images'];
 
 export const getServerSideProps: GetServerSideProps = async (ctx) => {
   const slug = ctx.params?.slug;
   const path = Array.isArray(slug) ? slug.join('/') : slug ?? '';
 
-  const target =
-    MIGRATED_ROUTES[path] ??
-    (MIGRATED_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`)) ? path : undefined);
-  if (!target) return { notFound: true };
+  const key = Object.keys(MIGRATED_ROUTES)
+    .filter((k) => path === k || path.startsWith(`${k}/`))
+    .sort((a, b) => b.length - a.length)[0];
+  if (!key) return { notFound: true };
 
   const base = env.MODERATOR_APP_URL.replace(/\/$/, '');
+  const target = MIGRATED_ROUTES[key] + path.slice(key.length);
   return {
     // Temporary during the transition — the route may come back or the mapping may change.
     redirect: { destination: `${base}/${target}`, permanent: false },

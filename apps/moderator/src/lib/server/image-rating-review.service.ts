@@ -74,3 +74,25 @@ export async function getImageRatingRequests({
 
   return { items: rows, nextCursor };
 }
+
+// Sidebar-badge count for the rating-review queue — the same predicate as getImageRatingRequests, sans
+// paging. Streamed with the other sidebar counts, so its cost stays off render.
+export async function getImageRatingReviewCount(): Promise<number> {
+  const { rows } = await sql<{ count: number }>`
+    WITH image_rating_requests AS (
+      SELECT "imageId", COALESCE(SUM(weight), 0) total
+      FROM "ImageRatingRequest"
+      WHERE status = 'Pending'
+      GROUP BY "imageId"
+    )
+    SELECT count(*)::int count
+    FROM image_rating_requests irr
+    JOIN "Image" i ON i.id = irr."imageId"
+    WHERE irr.total >= 3
+      AND i."blockedFor" IS NULL
+      AND i."nsfwLevelLocked" = FALSE
+      AND i.ingestion != 'PendingManualAssignment'::"ImageIngestionStatus"
+      AND i."nsfwLevel" < ${NsfwLevel.Blocked}
+  `.execute(dbRead);
+  return rows[0]?.count ?? 0;
+}

@@ -1,11 +1,13 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { getImageReviewCounts } from './image-review.service';
+import { getImageRatingReviewCount } from './image-rating-review.service';
 
 // Triage counts shown as sidebar badges, keyed to NavLink.countKey. Per-mode `/images` counts (minor, poi,
-// tag, newUser, modRule, remixSource) plus `imageTags`, `appeals`, and `reported`. A badge should mean
-// "this much needs action", so slow backlogs (ingestion errors ~50k) get none. Most are cheap + index-backed;
-// `reported` is ~270ms (rides the Report(status) partial index) but streamed, so it never blocks render.
+// tag, newUser, modRule, remixSource) plus `imageTags`, `imageRatings`, `appeals`, and `reported`. A badge
+// should mean "this much needs action", so slow backlogs (ingestion errors ~50k, images-to-ingest) get none.
+// Most are cheap + index-backed; `reported` is ~270ms (rides the Report(status) partial index) but streamed,
+// so it never blocks render.
 export type SidebarCounts = Record<string, number>;
 
 // The layout load runs on every navigation, so memoize briefly (counts move slowly) and stream the promise
@@ -25,7 +27,7 @@ export function getSidebarCounts(now = Date.now()): Promise<SidebarCounts> {
 }
 
 async function fetchCounts(): Promise<SidebarCounts> {
-  const [modes, imageTags, appeals, reported] = await Promise.all([
+  const [modes, imageTags, imageRatings, appeals, reported] = await Promise.all([
     // Per-needsReview-value counts (minor/poi/tag/…/csam) — keys already match the mode countKeys.
     getImageReviewCounts(),
     // The image-tags queue: images with a needsReview moderation tag. Bitmask predicates written to match
@@ -36,6 +38,8 @@ async function fetchCounts(): Promise<SidebarCounts> {
       .where(sql<boolean>`((attributes >> 9)::integer & 1) = 1`)
       .where(sql<boolean>`((attributes >> 10)::integer & 1) <> 1`)
       .executeTakeFirst(),
+    // The image-rating-review queue: pending ImageRatingRequest disagreements (weight >= 3).
+    getImageRatingReviewCount(),
     // Appeals — its own count (getImageReviewCounts excludes 'appeal'). Rides Image_needsReview_index.
     dbRead
       .selectFrom('Image')
@@ -54,6 +58,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
   return {
     ...modes,
     imageTags: Number(imageTags?.count ?? 0),
+    imageRatings,
     appeals: Number(appeals?.count ?? 0),
     reported: Number(reported?.count ?? 0),
   };
