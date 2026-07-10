@@ -1,6 +1,15 @@
-export async function fetchBlob(src: string | Blob | File) {
+// Anti-hang ceiling only: a hung upstream would otherwise park the request for
+// undici's ~300s default. Generous by design — callers downloading large media
+// (video/zip) pass a bigger timeoutMs rather than risk cutting off a slow-but-legit transfer.
+export async function fetchBlob(src: string | Blob | File, timeoutMs = 120_000) {
   if (src instanceof Blob) return src;
-  else return await fetch(src).then((response) => response.blob().catch(() => null));
+  // Intentionally NOT behind the hot-path-fetch-timeouts Flipt kill-switch: this
+  // is isomorphic (bundled client-side) so it can't import the server-only
+  // isFliptSync, and its callers are background/media downloads where an abort is benign.
+  else
+    return await fetch(src, { signal: AbortSignal.timeout(timeoutMs) }).then((response) =>
+      response.blob().catch(() => null)
+    );
 }
 
 /** Trigger a browser download for the given blob with the provided filename. */

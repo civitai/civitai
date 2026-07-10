@@ -182,6 +182,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import { getCursor } from '~/server/utils/pagination-helpers';
 import {
@@ -932,6 +933,7 @@ export const ingestImage = async ({
   const response = await fetch(scanUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    signal: fetchTimeoutSignal(60_000),
     body: JSON.stringify({
       imageId: id,
       imageKey: url,
@@ -1038,6 +1040,7 @@ export const ingestImageBulk = async ({
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: fetchTimeoutSignal(60_000),
       body: JSON.stringify(
         images.map((image) => ({
           imageId: image.id,
