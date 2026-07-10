@@ -7,6 +7,8 @@ import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { getDisplayName } from '~/utils/string-helpers';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
+import { OnboardingSteps } from '~/server/common/enums';
+import { Flags } from '~/shared/utils/flags';
 
 export type ServerAvailability = ColorDomain;
 
@@ -478,6 +480,9 @@ export function buildFliptContext(user?: SessionUser): Record<string, string> {
     ctx.tier = user.tier ?? 'free';
     ctx.isLoggedIn = 'true';
     ctx.isMember = String(!!user.tier && user.tier !== 'free');
+    // Creator Program membership is recorded as an onboarding-step bit
+    // (set on join in creator-program.service, cleared on leave).
+    ctx.isInCreatorProgram = String(Flags.hasFlag(user.onboarding, OnboardingSteps.CreatorProgram));
   } else {
     ctx.isLoggedIn = 'false';
   }
