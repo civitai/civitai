@@ -52,8 +52,18 @@ export const NAVIGATION: NavLink[] = [
       { path: '/images/ingestion-errors', label: 'Ingestion Errors' },
     ],
   },
-  { path: '/articles', label: 'Articles', role: 'moderator:staff' },
-  { path: '/article-rating-review', label: 'Article Ratings', role: 'moderator:staff' },
+  {
+    // Articles review area — the moderation list + rating disputes, grouped like Images. `path: '/articles'`
+    // gates the staff subtree + gives the group its icon; the list itself is the first child (a group
+    // header is a collapse toggle, not a link, so the index page needs its own child entry).
+    label: 'Articles',
+    path: '/articles',
+    role: 'moderator:staff',
+    children: [
+      { path: '/articles', label: 'Review' },
+      { path: '/articles/ratings', label: 'Ratings' },
+    ],
+  },
   { path: '/cosmetics/grant', label: 'Grant Cosmetics', role: 'moderator:staff' },
   { path: '/scanner-audit', label: 'Scanner Audit', role: 'moderator:staff' },
   { path: '/blocklists', label: 'Blocklists', role: 'moderator:staff' },

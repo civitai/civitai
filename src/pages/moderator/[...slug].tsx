@@ -15,7 +15,7 @@ import { env } from '~/env/server';
 const MIGRATED_ROUTES: Record<string, string> = {
   reports: 'reports',
   articles: 'articles',
-  'article-rating-review': 'article-rating-review',
+  'article-rating-review': 'articles/ratings',
   'cosmetics/grant': 'cosmetics/grant',
   blocklists: 'blocklists',
   'scanner-audit': 'scanner-audit',
