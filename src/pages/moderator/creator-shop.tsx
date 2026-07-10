@@ -1,4 +1,5 @@
 import {
+  Anchor,
   Badge,
   Button,
   Center,
@@ -23,6 +24,7 @@ import {
   IconCheck,
   IconCopyright,
   IconEyeOff,
+  IconFilter,
   IconPhotoOff,
   IconScan,
   IconSearch,
@@ -37,10 +39,12 @@ import type { ComponentProps, ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
+import { NextLink } from '~/components/NextLink/NextLink';
 import {
   useMutateCreatorShop,
   useQueryCreatorShopReviewQueue,
 } from '~/components/CreatorShop/creator-shop.util';
+import { InViewLoader } from '~/components/InView/InViewLoader';
 import { CheckRow, ChecksCard } from '~/components/CreatorShop/ChecksCard';
 import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
 import { CREATOR_SHOP_BORDER } from '~/components/CreatorShop/creator-shop.constants';
@@ -64,10 +68,29 @@ type PreviewCosmetic = ComponentProps<typeof CosmeticPreview>['cosmetic'];
 
 const statusFilterOptions: { label: string; value: StatusFilter }[] = [
   { label: 'Pending review', value: CosmeticShopItemStatus.PendingReview },
+  { label: 'Changes requested', value: CosmeticShopItemStatus.RequestedChanges },
   { label: 'Published', value: CosmeticShopItemStatus.Published },
   { label: 'Rejected', value: CosmeticShopItemStatus.Rejected },
-  { label: 'All types', value: 'all' },
+  { label: 'All statuses', value: 'all' },
 ];
+
+// Label + badge color for an item's review status.
+function statusMeta(status: CosmeticShopItemStatus): { label: string; color: string } {
+  switch (status) {
+    case CosmeticShopItemStatus.PendingReview:
+      return { label: 'Pending', color: 'yellow' };
+    case CosmeticShopItemStatus.RequestedChanges:
+      return { label: 'Changes requested', color: 'orange' };
+    case CosmeticShopItemStatus.Published:
+      return { label: 'Approved', color: 'green' };
+    case CosmeticShopItemStatus.Rejected:
+      return { label: 'Rejected', color: 'red' };
+    case CosmeticShopItemStatus.Archived:
+      return { label: 'Archived', color: 'gray' };
+    default:
+      return { label: getDisplayName(status), color: 'gray' };
+  }
+}
 
 // Quick-insert reasons a moderator can append to their note.
 const flagConcerns = [
@@ -105,6 +128,24 @@ function MoneyTile({
   );
 }
 
+function DetailRow({ label, value, last }: { label: string; value: ReactNode; last?: boolean }) {
+  return (
+    <Group
+      gap="md"
+      align="flex-start"
+      wrap="nowrap"
+      px="md"
+      py={9}
+      style={last ? undefined : { borderBottom: CREATOR_SHOP_BORDER }}
+    >
+      <Text size="sm" c="dimmed" style={{ width: 120, flexShrink: 0 }}>
+        {label}
+      </Text>
+      <div style={{ flex: 1, minWidth: 0 }}>{value}</div>
+    </Group>
+  );
+}
+
 export const getServerSideProps = createServerSideProps({
   useSSG: false,
   resolver: async ({ features }) => {
@@ -120,20 +161,30 @@ function CreatorShopReviewPage() {
   const [usernameInput, setUsernameInput] = useState('');
   const [debouncedUsername] = useDebouncedValue(usernameInput, 300);
 
-  const { data, isLoading } = useQueryCreatorShopReviewQueue({
-    enabled: !!currentUser?.isModerator,
-    status: statusFilter === 'all' ? undefined : statusFilter,
-    username: debouncedUsername,
-  });
+  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    useQueryCreatorShopReviewQueue({
+      enabled: !!currentUser?.isModerator,
+      status: statusFilter === 'all' ? undefined : statusFilter,
+      username: debouncedUsername,
+    });
   const { reviewItem } = useMutateCreatorShop();
 
   const items = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [reason, setReason] = useState('');
+  const [activeFlags, setActiveFlags] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
     setSelectedId((cur) => (cur && items.some((i) => i.id === cur) ? cur : items[0]?.id ?? null));
   }, [items]);
+
+  // Load any existing review note when the selection changes, and reset flags.
+  useEffect(() => {
+    const item = items.find((i) => i.id === selectedId);
+    setReason(item?.rejectionReason ?? '');
+    setActiveFlags(new Set());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
 
   const selected = items.find((i) => i.id === selectedId) ?? null;
   const selectedMeta = (selected?.meta ?? {}) as CosmeticShopItemMeta;
@@ -143,8 +194,25 @@ function CreatorShopReviewPage() {
 
   if (currentUser && !currentUser.isModerator) return <NotFound />;
 
-  const appendFlag = (label: string) =>
-    setReason((prev) => (prev.trim() ? `${prev.replace(/\s*$/, '')} ${label}` : label));
+  // Flags toggle their label in/out of the note and light up while active, so a
+  // moderator can't add the same concern twice.
+  const toggleFlag = (label: string) =>
+    setActiveFlags((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) {
+        next.delete(label);
+        setReason((r) =>
+          r
+            .replace(label, '')
+            .replace(/\s{2,}/g, ' ')
+            .trim()
+        );
+      } else {
+        next.add(label);
+        setReason((r) => (r.trim() ? `${r.trim()} ${label}` : label));
+      }
+      return next;
+    });
 
   const handleApprove = async () => {
     if (!selected) return;
@@ -193,11 +261,12 @@ function CreatorShopReviewPage() {
         <Group gap="sm" align="center">
           <Select
             size="sm"
-            w={170}
+            w={190}
             value={statusFilter}
             onChange={(v) => setStatusFilter((v as StatusFilter) ?? 'all')}
             data={statusFilterOptions}
             allowDeselect={false}
+            leftSection={<IconFilter size={16} />}
             comboboxProps={{ withinPortal: true }}
           />
           <TextInput
@@ -238,10 +307,7 @@ function CreatorShopReviewPage() {
                   return (
                     <UnstyledButton
                       key={item.id}
-                      onClick={() => {
-                        setSelectedId(item.id);
-                        setReason('');
-                      }}
+                      onClick={() => setSelectedId(item.id)}
                       className="w-full"
                       style={{
                         padding: '12px 14px',
@@ -253,7 +319,7 @@ function CreatorShopReviewPage() {
                       }}
                     >
                       <Group gap={10} wrap="nowrap" align="center">
-                        <CosmeticThumb data={item.cosmetic.data} name={item.title} />
+                        <CosmeticThumb data={item.cosmetic.data} name={item.title} bare />
                         <Stack gap={2} className="min-w-0" style={{ flex: 1 }}>
                           <Text size="sm" fw={600} lineClamp={1}>
                             {item.title}
@@ -263,13 +329,29 @@ function CreatorShopReviewPage() {
                             {getDisplayName(item.cosmetic.type)}
                           </Text>
                         </Stack>
-                        <Text size="xs" fw={700} className="whitespace-nowrap">
-                          {numberWithCommas(item.unitAmount)}
-                        </Text>
+                        {statusFilter === 'all' && (
+                          <Badge
+                            size="sm"
+                            variant="light"
+                            radius="sm"
+                            color={statusMeta(item.status).color}
+                          >
+                            {statusMeta(item.status).label}
+                          </Badge>
+                        )}
                       </Group>
                     </UnstyledButton>
                   );
                 })}
+                {hasNextPage && (
+                  <InViewLoader
+                    loadFn={fetchNextPage}
+                    loadCondition={!isFetchingNextPage}
+                    className="flex justify-center py-3"
+                  >
+                    <Loader size="sm" />
+                  </InViewLoader>
+                )}
               </Stack>
             </ScrollArea.Autosize>
           </div>
@@ -284,14 +366,29 @@ function CreatorShopReviewPage() {
                     <Badge variant="light" color="gray" radius="xl">
                       Cosmetic · {getDisplayName(selected.cosmetic.type)}
                     </Badge>
+                    <Badge variant="light" radius="xl" color={statusMeta(selected.status).color}>
+                      {statusMeta(selected.status).label}
+                    </Badge>
                   </Group>
                   <Group gap={6} align="center">
                     <Text size="sm" c="dimmed">
                       Submitted by
                     </Text>
-                    <Text size="sm" fw={600} c="blue">
-                      @{selected.cosmetic.creator?.username ?? 'unknown'}
-                    </Text>
+                    {selected.cosmetic.creator?.username ? (
+                      <Anchor
+                        component={NextLink}
+                        href={`/user/${selected.cosmetic.creator.username}`}
+                        target="_blank"
+                        size="sm"
+                        fw={600}
+                      >
+                        @{selected.cosmetic.creator.username}
+                      </Anchor>
+                    ) : (
+                      <Text size="sm" fw={600}>
+                        unknown
+                      </Text>
+                    )}
                     <Text size="sm" c="dimmed">
                       · {daysFromNow(selected.createdAt)}
                     </Text>
@@ -300,11 +397,11 @@ function CreatorShopReviewPage() {
 
                 <Group align="flex-start" gap="xl" wrap="nowrap" className="max-md:flex-wrap">
                   {/* Preview */}
-                  <Stack gap={10} style={{ width: 340, flexShrink: 0 }} className="max-md:w-full">
+                  <Stack gap={10} style={{ width: 420, flexShrink: 0 }} className="max-md:w-full">
                     <div
                       className="flex items-center justify-center overflow-hidden"
                       style={{
-                        height: 280,
+                        height: 320,
                         borderRadius: 8,
                         border: CREATOR_SHOP_BORDER,
                         background: 'linear-gradient(135deg, #1A1B1E, #101113)',
@@ -313,9 +410,9 @@ function CreatorShopReviewPage() {
                       {artUrl(selected.cosmetic.data) ? (
                         <EdgeMedia
                           src={artUrl(selected.cosmetic.data)!}
-                          width={240}
+                          width={340}
                           alt={selected.title}
-                          className="max-h-[240px] max-w-[85%] object-contain"
+                          className="max-h-[300px] max-w-[85%] object-contain"
                         />
                       ) : (
                         <Text size="sm" c="dimmed">
@@ -328,10 +425,13 @@ function CreatorShopReviewPage() {
                       {dims ? ` · ${dims.width}×${dims.height} PNG` : ''}
                     </Text>
                     <div>
-                      <Text size="xs" fw={600} c="dimmed" mb={4}>
+                      <Text size="sm" fw={600} mb={4}>
                         In-context preview
                       </Text>
-                      <CosmeticPreview cosmetic={selected.cosmetic as unknown as PreviewCosmetic} />
+                      <CosmeticPreview
+                        cosmetic={selected.cosmetic as unknown as PreviewCosmetic}
+                        hideHeader
+                      />
                     </div>
                   </Stack>
 
@@ -419,29 +519,52 @@ function CreatorShopReviewPage() {
                       )}
                     </ChecksCard>
 
-                    {!!selected.description && (
-                      <Text size="sm" c="dimmed">
-                        {selected.description}
+                    <Stack gap={8}>
+                      <Text size="sm" fw={600}>
+                        Details
                       </Text>
-                    )}
+                      <Paper withBorder radius="md">
+                        <DetailRow
+                          label="Cosmetic name"
+                          value={
+                            <Text size="sm" fw={500}>
+                              {selected.cosmetic.name}
+                            </Text>
+                          }
+                        />
+                        <DetailRow
+                          label="Description"
+                          last
+                          value={
+                            <Text size="sm" c={selected.description?.trim() ? undefined : 'dimmed'}>
+                              {selected.description?.trim() || 'No description provided.'}
+                            </Text>
+                          }
+                        />
+                      </Paper>
+                    </Stack>
 
                     <Stack gap={8}>
                       <Text size="sm" fw={600}>
                         Flag concerns
                       </Text>
                       <Group gap={8}>
-                        {flagConcerns.map(({ label, icon: Icon }) => (
-                          <Button
-                            key={label}
-                            variant="default"
-                            size="xs"
-                            radius="xl"
-                            leftSection={<Icon size={14} />}
-                            onClick={() => appendFlag(label)}
-                          >
-                            {label}
-                          </Button>
-                        ))}
+                        {flagConcerns.map(({ label, icon: Icon }) => {
+                          const active = activeFlags.has(label);
+                          return (
+                            <Button
+                              key={label}
+                              variant={active ? 'filled' : 'default'}
+                              color={active ? 'yellow' : undefined}
+                              size="xs"
+                              radius="xl"
+                              leftSection={active ? <IconCheck size={14} /> : <Icon size={14} />}
+                              onClick={() => toggleFlag(label)}
+                            >
+                              {label}
+                            </Button>
+                          );
+                        })}
                       </Group>
                     </Stack>
                   </Stack>

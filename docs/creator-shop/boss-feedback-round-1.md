@@ -59,19 +59,19 @@ checkboxes. `@ai:` notes flag decisions/questions. Priority: **P1** foundational
 
 ## I. Review queue (`moderator/creator-shop.tsx`)
 
-- [ ] **I1 (P2)** Left list shows a bare **"500"** (price, no icon) — **drop the price element** entirely.
-- [ ] **I2 (P2)** Remove the **image background** in the review list — just the icon.
-- [ ] **I3 (P2)** "Submitted by" creator name looks clickable (blue) but isn't — **make it a link** that opens the profile in a **new tab**.
-- [ ] **I4 (P2)** **Preview is cramped** / non-standard size — enlarge the sidebar so the preview renders at full/standard size.
-- [ ] **I5 (P2)** Cosmetic **description isn't labeled** — add a **details table** (cosmetic name + description).
-- [ ] **I6 (P2)** **"In context preview" + "Preview" duplicated** — keep the smaller **"In context preview"** header (size it like the "Flag concerns" header for consistency), drop the big "Preview" header, remove the big gap below, left-align the preview.
-- [ ] **I7 (P2)** **Flag-concern buttons**: light up when selected, track their state (in the note), and prevent re-clicking the same one (toggle instead of duplicate).
-- [ ] **I8 (P2)** Status filter (pending/published/rejected/…): add a **filter icon**.
-- [ ] **I9 (P1)** **RequestedChanges rework**: there must be a distinct **"Changes Requested" status** you can filter to. Bug today: requesting changes set the item to **Rejected** and the **notes vanished**. Actions must respect state, and notes must persist.
-- [ ] **I10 (P2)** Show the **status inside the review area** — a tag to the right of the type (Pending / Changes Requested / Rejected / Approved).
-- [ ] **I11 (P1)** **Save/load review notes** into the note area (load existing notes when reopening an item).
-- [ ] **I12 (P2)** **"All types" filter shows nothing** — bug fix. If "All" is selectable, show each item's **status** in the left list.
-- [ ] **I13 (P2)** Left list should be **infinite load** (confirm it is).
+- [x] **I1 (P2)** Dropped the bare price element from the left list row.
+- [x] **I2 (P2)** Left-list thumb uses `CosmeticThumb bare` — no box border/background.
+- [x] **I3 (P2)** "Submitted by" is now an `Anchor` → creator profile, opens in a new tab.
+- [x] **I4 (P2)** Preview sidebar widened (340→420) and artwork box enlarged (280→320).
+- [x] **I5 (P2)** Description replaced with a labeled **Details** table (cosmetic name + description).
+- [x] **I6 (P2)** `CosmeticPreview` gained `hideHeader`; the review page passes it (drops the duplicate centered "Preview"), and the "In-context preview" label is sized like "Flag concerns".
+- [x] **I7 (P2)** Flag buttons now toggle their label in/out of the note, light up (filled + check) while active, and can't double-add.
+- [x] **I8 (P2)** Status `Select` has an `IconFilter` leftSection.
+- [x] **I9 (P1)** Backend already stored `RequestedChanges` distinctly from `Rejected` (+ `rejectionReason`); the gap was frontend — added a **"Changes requested"** filter option and status badges. (No note loss: it was the notes-not-loading bug, see I11.)
+- [x] **I10 (P2)** Status badge shown next to the type badge in the review header.
+- [x] **I11 (P1)** Selecting an item now seeds the note field from its saved `rejectionReason` (loads existing notes).
+- [x] **I12 (P2)** "All statuses" now returns every status except Archived (service: no status filter instead of defaulting to Pending); left list shows a status badge when the "All" filter is active.
+- [x] **I13 (P2)** Left list now infinite-loads via `InViewLoader` + `fetchNextPage`.
 - [ ] **I14 (P3)** Ability to **sort** the review list — later.
 
 ---
