@@ -1284,28 +1284,6 @@ export function GenerationForm() {
               )}
             />
 
-            {/* PolyGen source image (image-to-3D only) */}
-            <Controller
-              graph={graph}
-              name="sourceImage"
-              render={({ value, onChange, error }) => {
-                const current = value as { url: string; width: number; height: number } | undefined;
-                return (
-                  <ImageUploadMultipleInput
-                    label="Starting image"
-                    description="The reference Meshy will use to build the 3D mesh"
-                    required
-                    max={1}
-                    aspect="square"
-                    imageLayout="wrap"
-                    value={current ? [current] : []}
-                    onChange={(v) => onChange((v[0] ?? undefined) as typeof value)}
-                    error={error?.message}
-                  />
-                );
-              }}
-            />
-
             {/* PolyGen: generate texture toggle (image-to-3D only) */}
             <Controller
               graph={graph}
@@ -2522,6 +2500,8 @@ function ImagesInput({
     <ImageUploadMultipleInput
       value={value}
       onChange={onChange}
+      label={meta?.label}
+      description={meta?.description}
       aspect="square"
       max={meta?.max}
       slots={meta?.slots}

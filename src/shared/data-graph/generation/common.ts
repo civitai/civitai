@@ -1292,6 +1292,10 @@ export interface ImagesNodeConfig {
   max?: number;
   /** Minimum number of images required (default: 1) */
   min?: number;
+  /** Input label shown above the dropzone */
+  label?: string;
+  /** Helper text shown under the label */
+  description?: string;
   /**
    * Named slots for fixed-position images (e.g., first/last frame).
    * When provided, renders side-by-side dropzones with labels.
@@ -1340,6 +1344,8 @@ export interface ImagesNodeConfig {
 export function imagesNode({
   min = 1,
   max = 1,
+  label,
+  description,
   slots,
   modes,
   warnOnMissingAiMetadata,
@@ -1383,6 +1389,8 @@ export function imagesNode({
     meta: {
       min: effectiveMin,
       max: effectiveMax,
+      label,
+      description,
       slots,
       modes,
       warnOnMissingAiMetadata,

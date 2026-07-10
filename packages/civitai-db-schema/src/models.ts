@@ -914,9 +914,11 @@ export interface ModelVersion {
   usageControl: ModelUsageControl;
   earlyAccessTimeFrame: number;
   flags: number;
-  licensingFee: number | null;
+  licensingFee: Decimal | null;
   licensingFeeType: LicensingFeeType | null;
   licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
+  licensingSourceVersionId: number | null;
+  licensingSource?: ModelVersion | null;
   monetization?: ModelVersionMonetization | null;
   metrics?: ModelVersionMetric[];
   files?: ModelFile[];
@@ -930,6 +932,7 @@ export interface ModelVersion {
   metricsDaily?: ModelMetricDaily[];
   modelVersionExploration?: ModelVersionExploration[];
   vaeFor?: ModelVersion[];
+  licensingDerivatives?: ModelVersion[];
   generationCoverage?: GenerationCoverage | null;
   recommendedResources?: RecommendedResource[];
   recommendedTo?: RecommendedResource[];
@@ -999,6 +1002,7 @@ export interface ModelFile {
   headerData: JsonValue | null;
   visibility: ModelFileVisibility;
   dataPurged: boolean;
+  replacedAt: Date | null;
 }
 
 export interface File {

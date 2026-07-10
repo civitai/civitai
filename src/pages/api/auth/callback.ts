@@ -13,6 +13,15 @@ import {
   OAUTH_BRIDGE_COOKIE,
   HUB_BASE_URL,
 } from '~/server/auth/oauth-bridge';
+import { logToAxiom } from '~/server/logging/client';
+
+// Fire-and-forget structured log — see the note in authorize.ts. `['civitai-prod'] | where name == 'auth-flow'`;
+// host distinguishes .red vs .com, so an exchange failing on one color but not the other is visible here.
+const logAuth = (req: NextApiRequest, outcome: string, extra?: Record<string, unknown>) =>
+  logToAxiom(
+    { name: 'auth-flow', step: 'callback', outcome, host: req.headers.host, ...extra },
+    'civitai-prod'
+  ).catch(() => undefined);
 
 // GET /api/auth/callback — RECEIVE the hub's authorization-code redirect. A THIN Next wrapper over the package
 // bridge: verify `state` against the bridge cookie + exchange the code for a civ-token SESSION at the hub's
@@ -25,11 +34,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   res.setHeader('Referrer-Policy', 'no-referrer');
 
   if (!HUB_BASE_URL) {
+    logAuth(req, 'hub-not-configured');
     res.status(500).json({ error: 'hub not configured' });
     return;
   }
   const selfOrigin = resolveSelfOrigin(req);
   if (!selfOrigin) {
+    logAuth(req, 'no-self-origin');
     res.status(500).json({ error: 'self origin not resolvable' });
     return;
   }
@@ -55,9 +66,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   });
 
   if ('error' in result) {
+    // `detail` sub-classifies oauth_state (no_code / no_cookie / state_mismatch) + oauth_exchange
+    // (declined / network) so the `.red` failure mode is queryable, not collapsed into one code.
+    //
+    // For `no_cookie` specifically, two extra fields separate the three candidate causes so the fix is targeted
+    // rather than a guess: `userAgent` flags Safari/ITP (which fully blocks cross-site cookies — a SameSite flip
+    // wouldn't help, only a cookie-independent redesign would), and `cookieCount` = how many cookies reached this
+    // callback. cookieCount>0 (other `.red` cookies like civ-device survived, only the bridge cookie dropped) ⇒
+    // the drop is bridge-cookie-SPECIFIC, i.e. its SameSite=Lax — `SameSite=None` would fix it. cookieCount==0
+    // (every host cookie lost) ⇒ a full cross-site block or a host-only-cookie host mismatch, not SameSite.
+    logAuth(req, 'exchange-error', {
+      error: result.error,
+      detail: result.detail,
+      userAgent: req.headers['user-agent'],
+      cookieCount: Object.keys(req.cookies ?? {}).length,
+    });
     res.redirect(302, `/login?error=${encodeURIComponent(result.error)}`);
     return;
   }
+  logAuth(req, 'success');
 
   // Set THIS domain's civ-token cookie (Domain derived from the serving host) and continue.
   // Set THIS domain's civ-token + civ-device (the shared family device id from the hub) so its session AND

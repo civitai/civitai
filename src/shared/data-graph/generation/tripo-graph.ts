@@ -16,7 +16,7 @@
 import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { enumNode, seedNode } from './common';
+import { enumNode, imagesNode, seedNode } from './common';
 
 // =============================================================================
 // Constants
@@ -42,30 +42,23 @@ const TRIPO_MIN_FACE_LIMIT = 1_000;
 const TRIPO_MAX_FACE_LIMIT = 500_000;
 
 // =============================================================================
-// Source image schema (image-to-3D)
-// =============================================================================
-
-const tripoSourceImageSchema = z.object({
-  url: z.string(),
-  width: z.number(),
-  height: z.number(),
-});
-
-export type TripoSourceImage = z.infer<typeof tripoSourceImageSchema>;
-
-// =============================================================================
 // Tripo Graph
 // =============================================================================
 
 type TripoCtx = { ecosystem: string; workflow: string };
 
 export const tripoGraph = new DataGraph<TripoCtx, GenerationCtx>()
-  .node('sourceImage', {
-    input: tripoSourceImageSchema.optional(),
-    output: tripoSourceImageSchema,
-    defaultValue: undefined,
-    meta: { required: true },
-  })
+  // Image-to-3D source — the standard `images` node (min/max 1), matching the
+  // polygen graph's img2model3d convention. The handler reads `images[0]`.
+  .node(
+    'images',
+    imagesNode({
+      min: 1,
+      max: 1,
+      label: 'Starting image',
+      description: 'The reference Tripo will use to build the 3D mesh',
+    })
+  )
   .node('texture', enumNode({ options: tripoTextureOptions, defaultValue: 'standard' }))
   .node('pbr', {
     input: z.boolean().optional(),

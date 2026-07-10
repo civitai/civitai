@@ -3,6 +3,7 @@ import type {
   Options,
   SubmitWorkflowData,
   UpdateWorkflowRequest,
+  WorkflowTemplate,
 } from '@civitai/client';
 import {
   addWorkflowTag,
@@ -14,9 +15,11 @@ import {
   submitWorkflow as clientSubmitWorkflow,
   updateWorkflow as clientUpdateWorkflow,
   handleError,
+  refreshBlob,
 } from '@civitai/client';
 import type * as z from 'zod';
 import { isDev, isProd } from '~/env/other';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import type {
   PatchWorkflowParams,
   TagsPatchSchema,
@@ -274,6 +277,9 @@ export async function submitWorkflow({
 }: Options<SubmitWorkflowData> & { token: string }) {
   const client = createOrchestratorClient(token);
   if (!body) throw throwBadRequestError();
+
+  // Refresh any expired or unsigned consumer blob URLs in the workflow steps
+  await refreshBlobUrlsInBody(body, client);
 
   // const steps = body.steps;
   // if (steps.length > 0) {
@@ -611,4 +617,86 @@ export async function patchWorkflowTags({
       if (op === 'remove') await removeWorkflowTag({ client, path: { workflowId, tag } });
     })
   );
+}
+
+const CONSUMER_BLOB_RE = /\/v\d+\/consumer\/blobs\/(?<blobId>[a-zA-Z0-9_.-]+)/;
+const BLOB_REFRESH_BUFFER_MS = 5 * 60 * 1000;
+const MAX_BLOB_DEPTH = 20;
+
+type BlobRef = { blobId: string; apply: (url: string) => void };
+
+export async function refreshBlobUrlsInBody(
+  body: WorkflowTemplate,
+  client: ReturnType<typeof createOrchestratorClient>
+) {
+  const refs = collectBlobRefs(body);
+  if (refs.length === 0) return;
+
+  // Refresh each distinct blob once, then apply the fresh URL to every occurrence.
+  const refsByBlobId = new Map<string, BlobRef[]>();
+  for (const ref of refs) {
+    const group = refsByBlobId.get(ref.blobId);
+    if (group) group.push(ref);
+    else refsByBlobId.set(ref.blobId, [ref]);
+  }
+
+  await Promise.all(
+    [...refsByBlobId].map(async ([blobId, group]) => {
+      try {
+        const { data } = await refreshBlob({ client, path: { blobId } });
+        if (!data?.url) throw new Error('Refresh endpoint returned no URL data');
+        for (const ref of group) ref.apply(data.url);
+      } catch (error) {
+        logToAxiom({ type: 'error', name: 'blob-refresh-failed', blobId, error: safeError(error) });
+        throw throwBadRequestError(
+          `Failed to refresh image URL for blob: ${blobId}. Please try uploading the image again.`
+        );
+      }
+    })
+  );
+}
+
+// Walk the workflow body and, for each consumer blob URL that needs refreshing, capture a
+// setter that writes the fresh URL back at the spot it was found — no path bookkeeping.
+export function collectBlobRefs(body: unknown): BlobRef[] {
+  const refs: BlobRef[] = [];
+
+  const visit = (value: unknown, apply: (url: string) => void, depth: number) => {
+    if (depth > MAX_BLOB_DEPTH || !value) return;
+
+    if (typeof value === 'string') {
+      const blobId = refreshableBlobId(value);
+      if (blobId) refs.push({ blobId, apply });
+    } else if (Array.isArray(value)) {
+      value.forEach((item, i) => visit(item, (url) => (value[i] = url), depth + 1));
+    } else if (typeof value === 'object') {
+      const obj = value as Record<string, unknown>;
+      for (const key of Object.keys(obj)) visit(obj[key], (url) => (obj[key] = url), depth + 1);
+    }
+  };
+
+  visit(body, () => undefined, 0);
+  return refs;
+}
+
+// blobId if this is a consumer blob URL that needs refreshing, else undefined.
+function refreshableBlobId(url: string): string | undefined {
+  const blobId = url.match(CONSUMER_BLOB_RE)?.groups?.blobId;
+  return blobId && shouldRefreshBlobUrl(url) ? blobId : undefined;
+}
+
+export function shouldRefreshBlobUrl(url: string): boolean {
+  try {
+    if (!CONSUMER_BLOB_RE.test(url)) return false;
+    const urlObj = new URL(url);
+    const sig = urlObj.searchParams.get('sig');
+    const exp = urlObj.searchParams.get('exp');
+    if (!sig || !exp) return true;
+
+    const expiryDate = new Date(exp);
+    if (isNaN(expiryDate.getTime())) return true; // Unparseable exp → treat as expired
+    return expiryDate.getTime() - Date.now() < BLOB_REFRESH_BUFFER_MS;
+  } catch {
+    return false;
+  }
 }

@@ -7,8 +7,9 @@
  * `polygen-graph.handler.ts`; the only differences are the model/engine
  * (`tripo`/`fal`) and the input builder (`toTripoPolyGenInput`).
  *
- * Tripo graph node names match the schema field names 1:1, so the snapshot is
- * fed straight into the converter with no remapping.
+ * Tripo graph field names match the schema 1:1 except the image source: the
+ * graph carries the standard `images` array (polygen img2model3d convention),
+ * which we map to the schema's `sourceImage` before handing off to the converter.
  */
 
 import type { PolyGenStepTemplate, TripoFalPolyGenInput } from '@civitai/client';
@@ -25,9 +26,12 @@ type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: st
 type TripoCtx = EcosystemGraphOutput & { ecosystem: 'Tripo' };
 
 export const createTripoInput = defineHandler<TripoCtx, StepInput[]>((data, ctx) => {
-  const input = toTripoPolyGenInput(
-    data as unknown as TripoGenerationSchema
-  ) as TripoFalPolyGenInput;
+  const sourceImage = (data as { images?: Array<{ url: string; width: number; height: number }> })
+    .images?.[0];
+  const input = toTripoPolyGenInput({
+    ...data,
+    ...(sourceImage ? { sourceImage } : {}),
+  } as unknown as TripoGenerationSchema) as TripoFalPolyGenInput;
 
   const polyGenStep: PolyGenStepTemplate = {
     $type: 'polyGen',

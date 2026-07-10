@@ -26,7 +26,9 @@ type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: st
 type Hunyuan3dCtx = EcosystemGraphOutput & { ecosystem: 'Hunyuan3D' };
 
 type Hunyuan3dGraphData = {
-  sourceImage: { url: string; width: number; height: number };
+  // The graph carries the standard `images` array (polygen img2model3d
+  // convention); mapped to the schema's `sourceImage` below.
+  images?: Array<{ url: string; width: number; height: number }>;
   hunyuanPrompt?: string;
   hunyuanModelVersion: 'v2' | 'v2.1' | 'v2-mini';
   shouldTexture: boolean;
@@ -40,6 +42,7 @@ type Hunyuan3dGraphData = {
 
 export const createHunyuan3dInput = defineHandler<Hunyuan3dCtx, StepInput[]>((data, ctx) => {
   const {
+    images,
     hunyuanPrompt,
     hunyuanModelVersion,
     hunyuanSteps,
@@ -50,6 +53,7 @@ export const createHunyuan3dInput = defineHandler<Hunyuan3dCtx, StepInput[]>((da
 
   const schemaShape = {
     ...rest,
+    ...(images?.[0] ? { sourceImage: images[0] } : {}),
     // Empty prompt ⇒ omit (Hunyuan3D treats the prompt as an optional hint).
     prompt: hunyuanPrompt ? hunyuanPrompt : undefined,
     modelVersion: hunyuanModelVersion,

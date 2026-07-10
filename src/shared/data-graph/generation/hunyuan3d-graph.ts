@@ -20,7 +20,7 @@
 import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { enumNode, seedNode, sliderNode, textNode } from './common';
+import { enumNode, imagesNode, seedNode, sliderNode, textNode } from './common';
 
 // =============================================================================
 // Constants
@@ -49,30 +49,23 @@ const HUNYUAN3D_DEFAULT_CFG_SCALE = 5;
 const HUNYUAN3D_MAX_PROMPT_LENGTH = 600;
 
 // =============================================================================
-// Source image schema (image-to-3D)
-// =============================================================================
-
-const hunyuan3dSourceImageSchema = z.object({
-  url: z.string(),
-  width: z.number(),
-  height: z.number(),
-});
-
-export type Hunyuan3dSourceImage = z.infer<typeof hunyuan3dSourceImageSchema>;
-
-// =============================================================================
 // Hunyuan3D Graph
 // =============================================================================
 
 type Hunyuan3dCtx = { ecosystem: string; workflow: string };
 
 export const hunyuan3dGraph = new DataGraph<Hunyuan3dCtx, GenerationCtx>()
-  .node('sourceImage', {
-    input: hunyuan3dSourceImageSchema.optional(),
-    output: hunyuan3dSourceImageSchema,
-    defaultValue: undefined,
-    meta: { required: true },
-  })
+  // Image-to-3D source — the standard `images` node (min/max 1), matching the
+  // polygen graph's img2model3d convention. The handler reads `images[0]`.
+  .node(
+    'images',
+    imagesNode({
+      min: 1,
+      max: 1,
+      label: 'Starting image',
+      description: 'The reference Hunyuan3D will use to build the 3D mesh',
+    })
+  )
   // Optional texture/style hint — Hunyuan3D derives geometry from the image.
   .node(
     'hunyuanPrompt',

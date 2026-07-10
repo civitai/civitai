@@ -47,6 +47,7 @@ const BaseModelIndicator: Partial<Record<BaseModel, React.ReactNode | string>> =
   ZImageTurbo: 'ZIT',
   Qwen: 'QW',
   Anima: 'ANI',
+  'Krea 2': 'KR2',
 };
 
 export function ModelTypeBadge({ type, baseModel, baseModels, ...badgeProps }: Props) {

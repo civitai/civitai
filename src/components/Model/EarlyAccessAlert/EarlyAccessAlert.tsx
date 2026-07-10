@@ -36,8 +36,6 @@ export function EarlyAccessAlert({ modelId, versionId, modelType, deadline }: Pr
 
   const toggleNotifyMutation = trpc.modelVersion.toggleNotifyEarlyAccess.useMutation({
     async onMutate() {
-      await queryUtils.user.getEngagedModels.cancel();
-
       const prevEngaged = queryUtils.user.getEngagedModelVersions.getData();
 
       // Toggle the model in the Notify list

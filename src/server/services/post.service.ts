@@ -62,6 +62,7 @@ import type {
 } from '~/server/services/user.service';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 import { getPeriods } from '~/server/utils/enum-helpers';
+import { capPostGetInfiniteImages } from '~/server/utils/post-getinfinite-images';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -545,7 +546,16 @@ export const getPostsInfinite = async ({
                 | null,
             },
             stats: postStats[post.id] ?? null,
-            images: _images,
+            // Cap the images embedded per post in the browse feed. The post cards
+            // render only `images[0]` (cover) + the `imageCount` field above
+            // (computed from the FULL list, so the count is unaffected), but
+            // `getImagesForPosts` returns the post's ENTIRE image list — a gallery
+            // post can carry dozens/hundreds of rows, the dominant contributor to
+            // this endpoint's ~1.6 MB payloads serialized synchronously on the
+            // event loop. The cap keeps headroom for the client hidden-preferences
+            // fall-through (see `post-getinfinite-images.ts`); `.slice` returns a
+            // new array so nothing upstream is mutated.
+            images: capPostGetInfiniteImages(_images),
             cosmetic: cosmetics[post.id] ?? null,
           };
         })
@@ -1172,7 +1182,10 @@ export const addPostImage = async ({
   let techniqueId: number | undefined;
   if (meta && 'engine' in meta) {
     // older meta has type: string, but the updated meta has process: string
-    const process = (meta.process ?? meta.type ?? meta.workflow) as string | undefined;
+    const rawProcess = (meta.process ?? meta.type ?? meta.workflow) as string | undefined;
+    // Graph workflow keys carry a variant suffix (e.g. 'img2img:hires-fix'); techniques are
+    // keyed on the base ('img2img'), so match on the segment before the colon.
+    const process = rawProcess?.split(':')[0];
     if (process) {
       techniqueId = (await getTechniqueByName(process))?.id;
     }

@@ -145,8 +145,24 @@ export type ToggleFavoriteInput = z.infer<typeof toggleFavoriteInput>;
 export const toggleModelEngagementInput = z.object({
   modelId: z.number(),
   type: z.enum(ModelEngagementType).optional(),
+  // Explicit toggle direction. When provided, the server sets the engagement to
+  // exactly this state (subscribe vs unsubscribe) instead of blind-toggling off
+  // the current row — so a caller acting on a stale/errored/fabricated client
+  // view can never fire the OPPOSITE of the user's intent (e.g. silently DELETE
+  // a genuinely-ON Notify because the client briefly read it as off). Optional
+  // for backward-compat: absent → legacy blind toggle.
+  setTo: z.boolean().optional(),
 });
 export type ToggleModelEngagementInput = z.infer<typeof toggleModelEngagementInput>;
+
+// Per-visible-set engagement membership. Bounded (max 200) so the response is small +
+// index-scannable — the additive replacement for the unbounded `getEngagedModels`, which
+// returns a user's ENTIRE engagement history (a whale's 3.75 MB / 482 ms serialize froze
+// an api-primary pod). Reject (do not truncate) over-cap so callers can't silently widen it.
+export const getEngagedModelsByIdsSchema = z.object({
+  modelIds: z.array(z.number()).min(1).max(200),
+});
+export type GetEngagedModelsByIdsInput = z.infer<typeof getEngagedModelsByIdsSchema>;
 
 export const toggleFollowUserSchema = z.object({
   targetUserId: z.number(),

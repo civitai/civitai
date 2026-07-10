@@ -25,6 +25,7 @@ import type {
   VideoInterpolationStepTemplate,
 } from '@civitai/client';
 import { maxRandomSeed } from '~/server/common/constants';
+import { EXPERIMENTAL_MODE_SUPPORTED_MODELS } from '~/shared/constants/generation.constants';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import type { GenerationHandlerCtx } from '../orchestration-new.service';
 
@@ -290,13 +291,19 @@ export async function createEcosystemStepInput(
 
   const steps = await createEcosystemStep(normalizedData, handlerCtx);
 
-  // Enhanced compatibility mode: set engine to 'comfyui' for textToImage steps
+  // Enhanced compatibility mode: set engine to 'comfyui' for every textToImage step
+  // in EXPERIMENTAL_MODE_SUPPORTED_MODELS ecosystems.
   if (
-    steps[0]?.$type === 'textToImage' &&
     'enhancedCompatibility' in data &&
-    data.enhancedCompatibility
+    data.enhancedCompatibility &&
+    // Belt-and-suspenders check in case data.ecosystem leaks an unsupported ecosystem through a non-UI path
+    EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(data.ecosystem)
   ) {
-    (steps[0] as { input: Record<string, unknown> }).input.engine = 'comfyui';
+    for (const step of steps) {
+      if (step.$type === 'textToImage') {
+        (step as { input: Record<string, unknown> }).input.engine = 'comfyui';
+      }
+    }
   }
 
   return steps;

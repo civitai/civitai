@@ -168,6 +168,7 @@ const TURBO_VARIANT_ECOSYSTEMS = new Set<string>([
   'ZImageBase',
   'Boogu',
   'Krea2',
+  'Anima',
 ]);
 
 const storageAdapter = createLocalStorageAdapter({
@@ -526,8 +527,9 @@ function InnerProvider({
           graph.reset({ exclude: ['quantity', 'priority', 'outputFormat'] });
           // Each 3D ecosystem lives in its own discriminated subgraph (activates
           // only when `ecosystem` matches, e.g. `PolyGen`/`Tripo`/`Hunyuan3D`),
-          // and its child nodes — `sourceImage`, `targetPolycount`, `texture`,
-          // etc. — only exist while that subgraph is active. A single `graph.set` with
+          // and its child nodes — `images`, `targetPolycount`, `texture`,
+          // `enableRigging`, etc. — only exist while that subgraph is active. A
+          // single `graph.set` with
           // the full blob can drop those child keys because they're
           // evaluated before the discriminator has switched, so the remix
           // lands the user on the default ecosystem with an empty form
