@@ -89,6 +89,7 @@ import { parsePromptSnippetReferences } from '~/utils/prompt-helpers';
 // Ecosystem handlers - unified router
 import { createEcosystemStepInput } from './ecosystems';
 import { createComfyInput, resourcesToImageMetadataResources } from './ecosystems/comfy-input';
+import { extractStepErrors, sanitizeProviderError } from './provider-errors';
 import { removeEmpty } from '~/utils/object-helpers';
 
 // =============================================================================
@@ -2278,19 +2279,11 @@ export function formatStepOutputs(
     } satisfies NormalizedImageOutput;
   });
 
-  // Collect errors
-  const errors: string[] = [];
-  const stepOutput = step.output;
-  if (stepOutput) {
-    if ('errors' in stepOutput && stepOutput.errors) errors.push(...stepOutput.errors);
-    if (
-      'externalTOSViolation' in stepOutput &&
-      'message' in stepOutput &&
-      typeof stepOutput.message === 'string'
-    ) {
-      errors.push(stepOutput.message);
-    }
-  }
+  // Collect step errors (including external-provider job.reason failures) and
+  // sanitize each before surfacing to the client.
+  const engine =
+    (params.engine as string | undefined) ?? ((step as { input?: { engine?: string } }).input?.engine);
+  const errors = extractStepErrors(step).map((msg) => sanitizeProviderError(msg, engine));
 
   return { output, errors };
 }
