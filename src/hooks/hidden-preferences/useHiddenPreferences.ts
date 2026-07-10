@@ -1,28 +1,20 @@
 import { useMemo } from 'react';
+import { expandHiddenPreferences } from '~/shared/hidden-preferences/compact';
 import { trpc } from '~/utils/trpc';
 
 export const useQueryHiddenPreferences = () => {
   const { data, ...rest } = trpc.hiddenPreferences.getHidden.useQuery(undefined, {
     trpc: { context: { skipBatch: true } },
   });
-  // Per-field coalesce. Rolling deploys can briefly serve responses that
-  // pre-date the `hiddenModel3Ds` field (and SSR-hydrated caches from an
-  // older render carry the same risk), so a missing top-level key would
-  // crash the consumer on `data.hiddenModel3Ds.map(...)`. Defaulting at the
-  // field level — rather than only when `data` is entirely undefined — keeps
-  // the provider resilient to any older-shape response.
-  const _data = useMemo(
-    () => ({
-      hiddenModels: data?.hiddenModels ?? [],
-      hiddenModel3Ds: data?.hiddenModel3Ds ?? [],
-      hiddenImages: data?.hiddenImages ?? [],
-      hiddenTags: data?.hiddenTags ?? [],
-      hiddenUsers: data?.hiddenUsers ?? [],
-      blockedUsers: data?.blockedUsers ?? [],
-      blockedByUsers: data?.blockedByUsers ?? [],
-    }),
-    [data]
-  );
+  // `getHidden` may return the COMPACT wire shape (id-only arrays, flag-gated by
+  // `hiddenPrefsCompact`) or the legacy object shape. `expandHiddenPreferences`
+  // normalizes BOTH — plus undefined and older-field-missing responses — into
+  // the legacy `HiddenPreferenceTypes` shape so downstream consumers are
+  // untouched. Per-field coalescing (every key defaults to `[]`) is preserved:
+  // rolling deploys / stale SSR hydration can serve a response that predates a
+  // field (e.g. `hiddenModel3Ds`), which would otherwise crash a consumer on
+  // `.map(...)`. Robust to either shape in both rolling-deploy directions.
+  const _data = useMemo(() => expandHiddenPreferences(data), [data]);
   return { data: _data, ...rest };
 };
 

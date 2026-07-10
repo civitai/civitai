@@ -83,6 +83,18 @@ const featureFlags = createFeatureFlags({
   // cosmetic space reservation (worst case = a little dead space, never a
   // functional break), so flipping the flag off is an instant, safe rollback.
   feedReserveCls: { availability: ['mod'], fliptKey: 'feed-reserve-cls' },
+  // Perf: emit the COMPACT wire shape for `hiddenPreferences.getHidden` (id-only
+  // arrays for the model / model3d / explicit-image sets instead of
+  // `{ id, hidden: true }` objects). `getHidden` returns a user's ENTIRE hidden
+  // set; for a whale it superjson-serializes ~12.4MB / ~1.15s SYNCHRONOUSLY on
+  // every response (incl. cache hits) — the single worst event-loop freeze in
+  // the `trpc-response-oversized` dataset (twin of `user.getEngagedModels`). The
+  // client re-expands to the legacy shape so downstream data is identical.
+  // Default OFF (mods only) so the change is DARK at deploy while client bundles
+  // that understand both shapes roll out; then ramp % via Flipt
+  // (`hidden-prefs-compact`). Instant rollback = flip OFF. Verify via
+  // `trpc-response-oversized {path="hiddenPreferences.getHidden"}` serializeMs tail.
+  hiddenPrefsCompact: { availability: ['mod'], fliptKey: 'hidden-prefs-compact' },
   // Perf experiment: defer the generation-tab-switch remount (useDeferredValue) to fix
   // mobile INP (p75 ~304ms, dominant phase = processing_duration; the gen-tab switch is
   // the single hottest interaction). `availability: []` = DARK by default and fails CLOSED when

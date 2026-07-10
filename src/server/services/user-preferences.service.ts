@@ -5,6 +5,8 @@ import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.schema';
 import { getModeratedTags } from '~/server/services/system-cache';
+import type { HiddenPreferencesCompact } from '~/shared/hidden-preferences/compact';
+import { toCompactHiddenPreferences } from '~/shared/hidden-preferences/compact';
 import { isPrismaUniqueViolation } from '~/server/utils/errorHandling';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { TagEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
@@ -248,7 +250,7 @@ export interface HiddenTag extends HiddenPreferenceBase {
   hidden?: boolean;
 }
 
-interface HiddenUser extends HiddenPreferenceBase {
+export interface HiddenUser extends HiddenPreferenceBase {
   id: number;
   username?: string | null;
   hidden: boolean;
@@ -264,7 +266,7 @@ interface HiddenModel3D extends HiddenPreferenceBase {
   hidden: boolean;
 }
 
-interface HiddenImage extends HiddenPreferenceBase {
+export interface HiddenImage extends HiddenPreferenceBase {
   id: number;
   /** the presence of a tagId indicates that this image is hidden due to a user's tag vote */
   tagId?: number;
@@ -447,13 +449,38 @@ const getAllHiddenForUserFresh = async ({ userId }: { userId: number }) => {
   };
 };
 
+export async function getAllHiddenForUser(args: {
+  userId?: number;
+  refreshCache?: boolean;
+  compact?: false;
+}): Promise<HiddenPreferenceTypes>;
+export async function getAllHiddenForUser(args: {
+  userId?: number;
+  refreshCache?: boolean;
+  compact: true;
+}): Promise<HiddenPreferencesCompact>;
+// Non-literal (runtime flag) callers — the router passes a boolean; the client
+// handles either shape.
+export async function getAllHiddenForUser(args: {
+  userId?: number;
+  refreshCache?: boolean;
+  compact: boolean;
+}): Promise<HiddenPreferenceTypes | HiddenPreferencesCompact>;
 export async function getAllHiddenForUser({
   userId = -1, // Default to civitai account
   refreshCache,
+  compact = false,
 }: {
   userId?: number;
   refreshCache?: boolean;
-}): Promise<HiddenPreferenceTypes> {
+  // When true, return the compact wire shape (id-only arrays for the model /
+  // model3d / explicit-image sets) instead of the object-wrapped legacy shape.
+  // Cuts the synchronous superjson serialize cost that freezes the event loop
+  // for power-users with huge hidden sets. Flag-gated at the router
+  // (`hiddenPrefsCompact`); the client re-expands to the legacy shape so
+  // downstream consumers are unaffected. See `~/shared/hidden-preferences/compact`.
+  compact?: boolean;
+}): Promise<HiddenPreferenceTypes | HiddenPreferencesCompact> {
   const {
     moderatedTags,
     hiddenTags,
@@ -478,7 +505,7 @@ export async function getAllHiddenForUser({
     blockedByUsers: blockedByUsers.map((user) => ({ ...user, hidden: true })),
   } as HiddenPreferenceTypes;
 
-  return result;
+  return compact ? toCompactHiddenPreferences(result) : result;
 }
 
 export async function toggleHidden({
