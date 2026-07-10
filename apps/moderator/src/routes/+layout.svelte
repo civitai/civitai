@@ -39,6 +39,7 @@
   import { Avatar, AvatarImage, AvatarFallback } from '@civitai/ui/components/ui/avatar/index.js';
   import type { LayoutData } from './$types';
   import type { NavLink } from '$lib/server/access';
+  import { sidebarCounts, refreshSidebarCounts } from '$lib/sidebar-counts.svelte';
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
@@ -57,13 +58,16 @@
   const iconFor = (item: NavLink) =>
     (item.path ? icons[item.path] : groupIcons[item.label]) ?? IconCircle;
 
-  // Sidebar triage counts stream in after the shell renders — hold the resolved value reactively so the
-  // nav paints immediately and badges fill in.
-  let counts = $state<Record<string, number> | null>(null);
+  // Sidebar triage counts are fetched client-side (see $lib/sidebar-counts.svelte) so the aggregates never
+  // sit in the page-load path — the nav paints immediately and badges fill in when the fetch resolves.
+  const counts = sidebarCounts();
+  // Refetch (TTL-deduped) on each navigation so badges drop as queues are cleared.
   $effect(() => {
-    data.sidebarCounts?.then((c) => (counts = c)).catch(() => {});
+    page.url.pathname;
+    refreshSidebarCounts();
   });
-  const countFor = (key: string | undefined) => (key && counts ? (counts[key] ?? null) : null);
+  const countFor = (key: string | undefined) =>
+    key && counts.value ? (counts.value[key] ?? null) : null;
   const rollupFor = (item: NavLink) =>
     item.children ? (item.children.reduce((sum, c) => sum + (countFor(c.countKey) ?? 0), 0) || null) : null;
 
@@ -130,7 +134,9 @@
                             {/if}
                             <IconChevronRight
                               size={15}
-                              class="ml-1 shrink-0 text-sidebar-foreground/50 transition-transform {isOpen(
+                              class="{rollup !== null
+                                ? 'ml-1'
+                                : 'ml-auto'} shrink-0 text-sidebar-foreground/50 transition-transform {isOpen(
                                 item.label
                               )
                                 ? 'rotate-90'

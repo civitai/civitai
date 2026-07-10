@@ -1,14 +1,13 @@
 <script lang="ts">
+  import { sidebarCounts } from '$lib/sidebar-counts.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
 
-  // Streamed sidebar counts (from the root layout) — badge the hub cards too.
-  let counts = $state<Record<string, number> | null>(null);
-  $effect(() => {
-    data.sidebarCounts?.then((c) => (counts = c)).catch(() => {});
-  });
-  const countFor = (key: string | undefined) => (key && counts ? (counts[key] ?? null) : null);
+  // Client-fetched sidebar counts (shared with the sidebar) — badge the hub cards too.
+  const counts = sidebarCounts();
+  const countFor = (key: string | undefined) =>
+    key && counts.value ? (counts.value[key] ?? null) : null;
 </script>
 
 <header class="page-header">

@@ -37,7 +37,9 @@ export const handle: Handle = async ({ event, resolve }) => {
   // senior, /images/minor → staff. canAccess's prefix match resolves `__data.json` data requests and
   // sub-path endpoints to the right nav entry too. The `route.id &&` guard keeps static assets ungated.
   // A matched route above the user's tier bounces to the dashboard; unmatched routes fall through to 404.
-  if (event.route.id && !canAccess(result.user, event.url.pathname)) {
+  // `/api/*` endpoints are exempt: they aren't NAVIGATION paths (canAccess would deny them), they're
+  // already moderator-authenticated by the guard above, and any that need a finer tier self-check.
+  if (event.route.id && !event.url.pathname.startsWith('/api/') && !canAccess(result.user, event.url.pathname)) {
     return new Response(null, { status: 303, headers: { location: '/' } });
   }
 
