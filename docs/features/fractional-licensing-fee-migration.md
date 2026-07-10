@@ -10,7 +10,7 @@ two in sync during the rollout window. Contract drops the old column + trigger. 
 column to `licensingFee` and removes the `@map` — itself an expand/contract pair, since a bare `RENAME` isn't
 rolling-safe either.
 
-**Progress:** Phase 1 ✅ · Phase 2 ✅ (applied) · Phase 3 (rename) — code ready in this tree, deploy pending.
+**Progress:** Phase 1 ✅ · Phase 2 ✅ · Phase 3a (rename-expand) ✅ merged · Phase 3b (rename-contract) — this tree, final drop.
 
 ---
 
@@ -47,23 +47,19 @@ Clean final schema: the decimal column should be named `licensingFee`, not `lice
 invisible `@map`. A bare `RENAME COLUMN` can't run under a rolling deploy, so the rename is itself an
 expand/contract pair.
 
-### 3a — Rename-expand (code + additive migration)
+### 3a — Rename-expand ✅ (merged to main)
 `…_licensing_fee_rename_expand/migration.sql` adds the target-named `licensingFee` decimal column, backfills it,
 and installs a bidirectional **exact** sync trigger; the code drops the `@map` and repoints raw SQL to
 `licensingFee`.
-- [ ] Apply the rename-expand migration **before** the code deploys (additive; old pods keep using `licensingFeeAmount`).
-- [ ] Ship the code (normal rolling deploy — no window). New pods use `licensingFee`; the trigger keeps both columns identical.
-- [ ] Confirm the whole fleet rolled over and the two columns stay in sync.
+- [x] Apply the rename-expand migration before the code deploys (additive; old pods keep using `licensingFeeAmount`).
+- [x] Ship the code (normal rolling deploy — no window). New pods use `licensingFee`; the trigger keeps both columns identical.
+- [ ] Confirm the whole fleet rolled over and the two columns stay in sync (before running 3b).
 
-### 3b — Rename-contract (a SEPARATE, later migration — after 3a is 100% rolled out)
-```sql
-DROP TRIGGER IF EXISTS "modelVersionLicensingFeeRenameSync" ON "ModelVersion";
-DROP FUNCTION IF EXISTS "syncModelVersionLicensingFeeRename"();
-SET lock_timeout = '5s';
-ALTER TABLE "ModelVersion" DROP COLUMN IF EXISTS "licensingFeeAmount";
-```
+### 3b — Rename-contract — `feat/fractional-licensing-fee-rename-contract`
+`…_licensing_fee_rename_contract/migration.sql` drops the rename sync trigger + function and the now-unused
+`licensingFeeAmount` column. Migration-only, no code change.
 - [ ] Confirm 3a fully rolled out; confirm no ClickPipe/CDC consumer depends on `licensingFeeAmount`.
-- [ ] Apply manually. **End state:** clean schema — field `licensingFee` → column `licensingFee`, no `@map`.
+- [ ] Apply manually. **End state:** clean schema — field `licensingFee` → column `licensingFee`, no `@map`. **Migration complete.**
 
 ---
 
