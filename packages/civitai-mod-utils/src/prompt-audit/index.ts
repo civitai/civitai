@@ -425,17 +425,27 @@ export function includesInappropriate(
 // #endregion
 
 // #region [segment highlighting]
-export type PromptHighlightCategory = 'minor' | 'young' | 'poi' | 'blocked' | 'nsfw';
+// `age` is an explicit age mention of ANY age ("18yo", "21 years old") — not in the legacy, added for
+// minor review where a claimed age (even 18+) is exactly what the moderator scrutinizes. `minor` still
+// wins over `age` for sub-18 ages (both match, priority resolves).
+export type PromptHighlightCategory = 'minor' | 'age' | 'young' | 'poi' | 'blocked' | 'nsfw';
 export type PromptSegment = { text: string; category: PromptHighlightCategory | null };
 
-// Higher wins where flagged spans overlap (legacy applies these highlighters in this order).
+// Higher wins where flagged spans overlap.
 const CATEGORY_PRIORITY: Record<PromptHighlightCategory, number> = {
-  minor: 5,
+  minor: 6,
+  age: 5,
   young: 4,
   poi: 3,
   blocked: 2,
   nsfw: 1,
 };
+
+// Any explicit age mention: "18yo", "21 yo", "16yrs", "18 years old", "8 y/o".
+const AGE_MENTION = /\b\d{1,3}\s?(?:y\/?o|years?\s?old|yrs?)\b/gi;
+function ageMentionTerms(text: string): string[] {
+  return text.match(AGE_MENTION) ?? [];
+}
 
 function blockedTerms(prompt: string): string[] {
   const out: string[] = [];
@@ -498,33 +508,41 @@ export type PromptHighlightResult = {
   hasHighlights: boolean;
 };
 
-// Segment-highlight a prompt/negativePrompt for moderator review. Positive prompt is highlighted for
-// minor-age/young/poi/blocked/nsfw; negative prompt for young-negative-nouns only (matching the legacy
-// PromptHighlight). Runs SERVER-SIDE (pulls ~50KB of word lists) — never import into client bundles.
+// Segment-highlight a prompt/negativePrompt for moderator review. By default highlights all categories
+// (minor-age/young/poi/blocked/nsfw), matching the legacy highlightInappropriate. Pass `categories` to
+// restrict which detectors run — e.g. the minor queue only wants minor-relevant terms (`['minor',
+// 'young']`), not every nsfw/poi word in a spicy prompt. Runs SERVER-SIDE (pulls ~50KB of word lists) —
+// never import into client bundles.
 export function getPromptHighlightSegments(
   rawPrompt?: string | null,
-  rawNegativePrompt?: string | null
+  rawNegativePrompt?: string | null,
+  options?: { categories?: PromptHighlightCategory[] }
 ): PromptHighlightResult {
   const prompt = normalizeText(cap(rawPrompt ?? undefined));
   const negativePrompt = normalizeText(cap(rawNegativePrompt ?? undefined));
 
   const includesFlag = includesInappropriate({ prompt, negativePrompt }) !== false;
 
-  const promptSegments = prompt
-    ? buildSegments(prompt, [
-        { category: 'minor', terms: minorAgeTerms(prompt) },
-        { category: 'young', terms: words.young.nouns.terms(prompt) },
-        { category: 'poi', terms: words.poi.terms(prompt) },
-        { category: 'blocked', terms: blockedTerms(prompt) },
-        { category: 'nsfw', terms: words.nsfw.terms(prompt) },
-      ])
-    : [];
+  const cats = options?.categories;
+  const wants = (c: PromptHighlightCategory) => !cats || cats.includes(c);
 
-  const negativeSegments = negativePrompt
-    ? buildSegments(negativePrompt, [
-        { category: 'young', terms: words.young.negativeNouns.terms(negativePrompt) },
-      ])
-    : null;
+  const sources: Array<{ category: PromptHighlightCategory; terms: string[] }> = [];
+  if (prompt) {
+    if (wants('minor')) sources.push({ category: 'minor', terms: minorAgeTerms(prompt) });
+    if (wants('age')) sources.push({ category: 'age', terms: ageMentionTerms(prompt) });
+    if (wants('young')) sources.push({ category: 'young', terms: words.young.nouns.terms(prompt) });
+    if (wants('poi')) sources.push({ category: 'poi', terms: words.poi.terms(prompt) });
+    if (wants('blocked')) sources.push({ category: 'blocked', terms: blockedTerms(prompt) });
+    if (wants('nsfw')) sources.push({ category: 'nsfw', terms: words.nsfw.terms(prompt) });
+  }
+  const promptSegments = prompt ? buildSegments(prompt, sources) : [];
+
+  const negativeSegments =
+    negativePrompt && wants('young')
+      ? buildSegments(negativePrompt, [
+          { category: 'young', terms: words.young.negativeNouns.terms(negativePrompt) },
+        ])
+      : null;
 
   const hasHighlights =
     promptSegments.some((s) => s.category !== null) ||

@@ -2,7 +2,7 @@
   import { enhance } from '$app/forms';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { SvelteMap } from 'svelte/reactivity';
+  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
@@ -22,15 +22,64 @@
     goto(url.pathname + url.search);
   }
 
+  // Include/exclude a review tag (mutually exclusive per tag; toggles off when re-clicked). URL-driven.
+  function toggleTag(id: number, mode: 'include' | 'exclude') {
+    const inc = new Set(data.tagIds);
+    const exc = new Set(data.excludedTagIds);
+    const [self, other] = mode === 'include' ? [inc, exc] : [exc, inc];
+    other.delete(id);
+    if (self.has(id)) self.delete(id);
+    else self.add(id);
+    const url = new URL(page.url);
+    for (const [k, s] of [
+      ['tags', inc],
+      ['notags', exc],
+    ] as const)
+      s.size ? url.searchParams.set(k, [...s].join(',')) : url.searchParams.delete(k);
+    url.searchParams.delete('cursor');
+    goto(url.pathname + url.search);
+  }
+
   // imageId → verdict label; optimistic (dims the card + shows the outcome) and cleared on a new page.
   const acted = new SvelteMap<number, string>();
   // imageId → appeal resolution message (bound to each appeal card's textarea).
   const messages = new SvelteMap<number, string>();
+  // Multiselect: selected card keys (image id, or report id on the reported queue).
+  const selected = new SvelteSet<string | number>();
   $effect(() => {
     data.items;
     acted.clear();
     messages.clear();
+    selected.clear();
   });
+
+  const selectedItems = $derived(
+    data.items.filter((i) => selected.has('report' in i ? i.report.id : i.id))
+  );
+  const selectedImageIds = $derived(selectedItems.map((i) => i.id).join(','));
+  const selectedReportIds = $derived(
+    selectedItems
+      .map((i) => ('report' in i ? i.report.id : 0))
+      .filter(Boolean)
+      .join(',')
+  );
+
+  const bulkSubmit: SubmitFunction = ({ action, formData }) => {
+    const ids = String(formData.get('imageIds') ?? '')
+      .split(',')
+      .map(Number)
+      .filter(Boolean);
+    const verdict = action.search.includes('bulkAccept')
+      ? 'Accepted'
+      : action.search.includes('bulkBlock')
+        ? 'Deleted'
+        : formData.get('status') === 'Approved'
+          ? 'Approved'
+          : 'Rejected';
+    for (const id of ids) acted.set(id, verdict);
+    selected.clear();
+    return async ({ update }) => update({ invalidateAll: false });
+  };
 
   const submit: SubmitFunction = ({ action, formData }) => {
     const imageId = Number(formData.get('imageId'));
@@ -43,6 +92,13 @@
           ? 'Approved'
           : 'Rejected';
     acted.set(imageId, verdict);
+    return async ({ update }) => update({ invalidateAll: false });
+  };
+
+  // Optimistically-unpublished parent Model3D ids (the thumbnail affordance).
+  const unpublishedModel3ds = new SvelteSet<number>();
+  const unpublishSubmit: SubmitFunction = ({ formData }) => {
+    unpublishedModel3ds.add(Number(formData.get('model3dId')));
     return async ({ update }) => update({ invalidateAll: false });
   };
 
@@ -80,6 +136,45 @@
         {getBrowsingLevelLabel(bit)}
       </button>
     {/each}
+
+    {#if data.tagOptions.length > 0}
+      {@const activeCount = data.tagIds.length + data.excludedTagIds.length}
+      <Popover.Root>
+        <Popover.Trigger
+          class="rounded border border-border px-2 py-1 text-xs font-semibold text-muted-foreground transition hover:border-muted-foreground"
+        >
+          Tags{activeCount > 0 ? ` (${activeCount})` : ''}
+        </Popover.Trigger>
+        <Popover.Content align="end" class="max-h-[60vh] w-64 overflow-y-auto">
+          <p class="mb-1 text-xs font-semibold uppercase text-muted-foreground">
+            Filter by review tag
+          </p>
+          <div class="flex flex-col gap-0.5">
+            {#each data.tagOptions as tag (tag.id)}
+              {@const inc = data.tagIds.includes(tag.id)}
+              {@const exc = data.excludedTagIds.includes(tag.id)}
+              <div class="flex items-center gap-2 text-xs">
+                <span class="flex-1 truncate">{tag.name}</span>
+                <button
+                  title="Include"
+                  onclick={() => toggleTag(tag.id, 'include')}
+                  class="rounded border px-1.5 font-semibold transition {inc
+                    ? 'border-emerald-600 bg-emerald-600 text-white'
+                    : 'border-border text-emerald-500 hover:bg-emerald-500/10'}">+</button
+                >
+                <button
+                  title="Exclude"
+                  onclick={() => toggleTag(tag.id, 'exclude')}
+                  class="rounded border px-1.5 font-semibold transition {exc
+                    ? 'border-rose-600 bg-rose-600 text-white'
+                    : 'border-border text-rose-500 hover:bg-rose-500/10'}">−</button
+                >
+              </div>
+            {/each}
+          </div>
+        </Popover.Content>
+      </Popover.Root>
+    {/if}
   </div>
 </header>
 
@@ -189,6 +284,38 @@
   {/if}
 {/snippet}
 
+<!-- When the image is a Model3D's @unique thumbnail: link the parent + one-click unpublish it. -->
+{#snippet model3dAffordance(item: { model3d: { id: number; name: string; status: string } | null })}
+  {#if item.model3d}
+    {@const m = item.model3d}
+    {@const unpublished = unpublishedModel3ds.has(m.id) || m.status === 'Unpublished'}
+    <div
+      class="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-indigo-500/30 bg-indigo-500/5 p-2 text-xs"
+    >
+      <span class="font-semibold text-indigo-400">3D Model thumbnail</span>
+      <a
+        href={`${data.civitaiUrl}/3d-models/${m.id}`}
+        target="_blank"
+        rel="noreferrer"
+        class="text-muted-foreground hover:text-foreground">view parent</a
+      >
+      {#if unpublished}
+        <span class="text-muted-foreground">· unpublished</span>
+      {:else}
+        <form method="POST" action="?/unpublishModel3d" use:enhance={unpublishSubmit}>
+          <input type="hidden" name="model3dId" value={m.id} />
+          <button
+            type="submit"
+            class="rounded border border-rose-500/40 px-2 py-0.5 font-semibold text-rose-400 transition hover:bg-rose-500/10"
+          >
+            Unpublish parent
+          </button>
+        </form>
+      {/if}
+    </div>
+  {/if}
+{/snippet}
+
 <!-- One grid per distinct item shape (discriminated by `kind`); the card body then dispatches on
      `data.view`. Both read straight from the server types — no casts, no aliases. -->
 {#if data.kind === 'review-highlight'}
@@ -198,6 +325,7 @@
     nextCursor={data.nextCursor}
     empty="No images to review in this queue."
     itemClass={cardClass}
+    {selected}
   >
     {#snippet card(item)}
       {@render userHeader(item)}
@@ -215,7 +343,7 @@
               <Badge class="bg-pink-500/15 text-pink-400">Acceptable minor</Badge>
             {/if}
           </div>
-          {#if item.promptHighlight.includesInappropriate}
+          {#if item.promptHighlight.hasHighlights}
             <PromptHighlight result={item.promptHighlight} />
           {/if}
           {@render reviewActions(item, { minor: true })}
@@ -227,6 +355,7 @@
           {@render reviewActions(item, {})}
         </div>
       {/if}
+      {@render model3dAffordance(item)}
     {/snippet}
   </ImageQueueGrid>
 {:else if data.kind === 'reported'}
@@ -237,6 +366,7 @@
     keyOf={(item) => item.report.id}
     empty="No images to review in this queue."
     itemClass={cardClass}
+    {selected}
   >
     {#snippet card(item)}
       {@render userHeader(item)}
@@ -265,6 +395,7 @@
         {/each}
       </div>
       {@render reviewActions(item, { reportId: item.report.id })}
+      {@render model3dAffordance(item)}
     {/snippet}
   </ImageQueueGrid>
 {:else if data.kind === 'appeal'}
@@ -274,6 +405,7 @@
     nextCursor={data.nextCursor}
     empty="No images to review in this queue."
     itemClass={cardClass}
+    {selected}
   >
     {#snippet card(item)}
       {@render userHeader(item)}
@@ -319,6 +451,7 @@
         {/if}
       </div>
       {@render appealActions(item)}
+      {@render model3dAffordance(item)}
     {/snippet}
   </ImageQueueGrid>
 {:else}
@@ -328,6 +461,7 @@
     nextCursor={data.nextCursor}
     empty="No images to review in this queue."
     itemClass={cardClass}
+    {selected}
   >
     {#snippet card(item)}
       {@render userHeader(item)}
@@ -374,6 +508,48 @@
         <Badge class="w-fit bg-rose-600/20 font-semibold text-rose-500">CSAM — flagged for review</Badge>
       {/if}
       {@render reviewActions(item, {})}
+      {@render model3dAffordance(item)}
     {/snippet}
   </ImageQueueGrid>
+{/if}
+
+{#snippet bulkButton(action: string, label: string, cls: string, extra: Record<string, string> = {})}
+  <form method="POST" {action} use:enhance={bulkSubmit}>
+    <input type="hidden" name="imageIds" value={selectedImageIds} />
+    <input type="hidden" name="reportIds" value={selectedReportIds} />
+    {#each Object.entries(extra) as [k, v] (k)}
+      <input type="hidden" name={k} value={v} />
+    {/each}
+    <button type="submit" class="rounded border px-3 py-1 text-xs font-semibold transition {cls}">
+      {label}
+    </button>
+  </form>
+{/snippet}
+
+{#if selected.size > 0}
+  <!-- spacer so the fixed bar can't cover the last row / Next button -->
+  <div class="h-20"></div>
+  <div
+    class="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-background/95 px-4 py-3 backdrop-blur"
+  >
+    <div class="mx-auto flex max-w-6xl flex-wrap items-center gap-3">
+      <span class="text-sm font-semibold">{selected.size} selected</span>
+      <button
+        onclick={() => selected.clear()}
+        class="text-xs text-muted-foreground hover:text-foreground">Clear</button
+      >
+      <div class="ml-auto flex flex-wrap gap-2">
+        {#if data.kind === 'appeal'}
+          {@render bulkButton('?/bulkResolveAppeal', 'Approve', 'border-emerald-600/40 text-emerald-400 hover:bg-emerald-500/10', { status: 'Approved' })}
+          {@render bulkButton('?/bulkResolveAppeal', 'Reject', 'border-rose-500/40 text-rose-400 hover:bg-rose-500/10', { status: 'Rejected' })}
+        {:else}
+          {@render bulkButton('?/bulkAccept', 'Accept', 'border-teal-600/40 text-teal-400 hover:bg-teal-500/10')}
+          {#if data.view === 'minor'}
+            {@render bulkButton('?/bulkAccept', 'Accept + clear minor', 'border-cyan-600/40 text-cyan-400 hover:bg-cyan-500/10', { removeMinorFlag: 'true' })}
+          {/if}
+          {@render bulkButton('?/bulkBlock', 'Delete', 'border-rose-500/40 text-rose-400 hover:bg-rose-500/10')}
+        {/if}
+      </div>
+    </div>
+  </div>
 {/if}

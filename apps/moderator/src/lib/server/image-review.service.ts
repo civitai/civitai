@@ -160,6 +160,23 @@ export async function getModerationRuleDefinitions(
   return Object.fromEntries(rows.map((r) => [r.id, r.definition]));
 }
 
+// Distinct review tags present on images in a given review queue — the include/exclude filter options
+// (ported from tag.getTagsForReview). Capped at 100 like the legacy.
+export async function getReviewQueueTags(
+  needsReview: ImageReviewType
+): Promise<{ id: number; name: string }[]> {
+  return dbRead
+    .selectFrom('ImageTagForReview as itr')
+    .innerJoin('Tag as t', 't.id', 'itr.tagId')
+    .innerJoin('Image as i', 'i.id', 'itr.imageId')
+    .where('i.needsReview', '=', needsReview)
+    .select(['t.id', 't.name'])
+    .distinct()
+    .orderBy('t.name')
+    .limit(100)
+    .execute();
+}
+
 // Tab badge counts for the /images sub-tabs only — the needsReview values. The main app's counts query
 // also UNIONs a `reported` bucket (a ~200K-row seq scan on Report — no status index) and `appeal`; those
 // live on their own pages now, so dropping them here takes this from ~445ms to ~2ms.
