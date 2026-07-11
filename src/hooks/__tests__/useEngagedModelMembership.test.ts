@@ -22,6 +22,7 @@ vi.mock('~/hooks/useCurrentUser', () => ({
 
 import {
   __resetEngagedMembershipBatcher,
+  ENGAGED_MEMBERSHIP_DEBOUNCE_MS,
   engagedMembershipBatcher,
   requestEngagedMembership,
   useEngagedModelsMembership,
@@ -29,6 +30,11 @@ import {
 } from '~/hooks/useEngagedModelMembership';
 import { useEngagedModelsStore } from '~/store/engaged-models.store';
 import { applyNotifyToggled } from '~/store/engaged-models.optimistic';
+
+// The REAL production scheduler (an ~80ms setTimeout debounce), captured before
+// beforeEach swaps in the deterministic test scheduler. The debounce-window
+// suite below restores this and drives it with fake timers.
+const productionSchedule = engagedMembershipBatcher.schedule;
 
 // deterministic scheduler: capture the flush callback, fire it on demand.
 let scheduledFlush: (() => void) | null = null;
@@ -507,5 +513,124 @@ describe('notify silent-unsubscribe fix — genuinely-ON model whose by-ids read
     expect(m?.has('Mute')).toBe(false);
 
     act(() => root.unmount());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Debounce window — exercises the REAL production scheduler (an ~80ms
+// setTimeout coalesce), driven with fake timers. This is the request-count
+// reduction this PR ships: ids arriving across many render ticks inside the
+// window fold into ONE getEngagedModelsByIds call; ids after the window fire a
+// new call. (The suites above override `schedule` to a synchronous seam and so
+// do NOT cover the timing — this one does.)
+// ---------------------------------------------------------------------------
+describe('debounce window (real ~80ms scheduler)', () => {
+  // Let queued fetch `.then`/`.catch` microtasks settle. Promises are NOT faked
+  // by vi.useFakeTimers() (only the timer functions are), so awaiting real
+  // microtasks still drains the fold-into-store continuations.
+  const drain = async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  };
+
+  beforeEach(() => {
+    // Outer beforeEach swapped in the synchronous test scheduler; restore the
+    // real ~80ms setTimeout one and fake the clock so we can drive the window.
+    engagedMembershipBatcher.schedule = productionSchedule;
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('window constant is the documented ~80ms', () => {
+    expect(ENGAGED_MEMBERSHIP_DEBOUNCE_MS).toBe(80);
+  });
+
+  it('coalesces ids arriving across MULTIPLE ticks within the window into ONE call (deduped union)', async () => {
+    queryMock.mockResolvedValue({ Recommended: [2] });
+
+    requestEngagedMembership([1, 2]);
+    vi.advanceTimersByTime(30); // still inside the window
+    requestEngagedMembership([2, 3]); // 2 is a dup
+    vi.advanceTimersByTime(30); // still inside the window (60ms total)
+    requestEngagedMembership([3, 4]);
+
+    // Nothing has fired yet — the window (anchored at the first id) is still open.
+    expect(queryMock).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(ENGAGED_MEMBERSHIP_DEBOUNCE_MS); // close the window
+    await drain();
+
+    expect(queryMock).toHaveBeenCalledTimes(1);
+    expect(queryMock.mock.calls[0][0].modelIds.slice().sort((a, b) => a - b)).toEqual([1, 2, 3, 4]);
+    // (c) every requested id resolves in the store (present-or-absent).
+    const s = useEngagedModelsStore.getState();
+    for (const id of [1, 2, 3, 4]) expect(s.queried.has(id)).toBe(true);
+    expect(s.membership[2]?.has('Recommended')).toBe(true); // present
+    expect(s.membership[1]?.size ?? 0).toBe(0); // absent → known-not-engaged
+  });
+
+  it('ids requested AFTER the window fire a SECOND call', async () => {
+    requestEngagedMembership([1]);
+    vi.advanceTimersByTime(ENGAGED_MEMBERSHIP_DEBOUNCE_MS);
+    await drain();
+    expect(queryMock).toHaveBeenCalledTimes(1);
+    expect(queryMock.mock.calls[0][0].modelIds).toEqual([1]);
+
+    // A new id after the first window closed opens a fresh window → new call.
+    requestEngagedMembership([2]);
+    expect(queryMock).toHaveBeenCalledTimes(1); // not yet — window still open
+    vi.advanceTimersByTime(ENGAGED_MEMBERSHIP_DEBOUNCE_MS);
+    await drain();
+    expect(queryMock).toHaveBeenCalledTimes(2);
+    expect(queryMock.mock.calls[1][0].modelIds).toEqual([2]);
+  });
+
+  it('a wide window that accumulates >cap ids still splits into ≤200-id calls', async () => {
+    queryMock.mockResolvedValue({});
+    // 450 ids dribble in across ticks inside one window → one flush, three chunks.
+    requestEngagedMembership(Array.from({ length: 200 }, (_, i) => i + 1));
+    vi.advanceTimersByTime(40);
+    requestEngagedMembership(Array.from({ length: 250 }, (_, i) => i + 201));
+    vi.advanceTimersByTime(ENGAGED_MEMBERSHIP_DEBOUNCE_MS);
+    await drain();
+
+    expect(queryMock).toHaveBeenCalledTimes(3); // 200 + 200 + 50
+    expect(queryMock.mock.calls.map((c) => c[0].modelIds.length)).toEqual([200, 200, 50]);
+    // Every one of the 450 ids ends up resolved — none dropped.
+    const s = useEngagedModelsStore.getState();
+    for (let id = 1; id <= 450; id++) expect(s.queried.has(id)).toBe(true);
+  });
+
+  it('an id whose requester unmounts before the window closes is still resolved (no hang, no leak, no unhandled rejection)', async () => {
+    queryMock.mockResolvedValue({ Notify: [11] });
+    const { unmount } = renderHook(() => useEngagedModelsMembership([11]));
+
+    // Component goes away BEFORE the ~80ms window closes.
+    unmount();
+    expect(queryMock).not.toHaveBeenCalled();
+
+    // The fire-and-forget batcher still flushes and folds the answer into the
+    // store — the id is resolved (not left permanently unknown), and the
+    // resolved promise had a rejection handler so nothing leaks.
+    vi.advanceTimersByTime(ENGAGED_MEMBERSHIP_DEBOUNCE_MS);
+    await drain();
+
+    expect(queryMock).toHaveBeenCalledTimes(1);
+    expect(queryMock.mock.calls[0][0].modelIds).toEqual([11]);
+    expect(useEngagedModelsStore.getState().queried.has(11)).toBe(true);
+  });
+
+  it('a rejected fetch still resolves the ids (known-not-engaged) — no id left hung', async () => {
+    queryMock.mockRejectedValueOnce(new Error('boom'));
+    requestEngagedMembership([21, 22]);
+    vi.advanceTimersByTime(ENGAGED_MEMBERSHIP_DEBOUNCE_MS);
+    await drain();
+
+    const s = useEngagedModelsStore.getState();
+    expect(s.queried.has(21)).toBe(true);
+    expect(s.queried.has(22)).toBe(true);
   });
 });
