@@ -1399,9 +1399,9 @@ export const getAllImages = async (
   const prioritizeUser = !!prioritizedUserIds?.length;
   const useModelVersionCache = prioritizeUser && prefetchedIsFlipt;
   if (prioritizeUser && useModelVersionCache) {
-    if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
+    if (cursor) throw throwBadRequestError('Cannot use cursor with prioritizedUserIds');
     if (!modelVersionId)
-      throw new Error('modelVersionId is required when using prioritizedUserIds');
+      throw throwBadRequestError('modelVersionId is required when using prioritizedUserIds');
 
     const cachedData = await imagesForModelVersionsCache.fetch([modelVersionId]);
     const versionData = cachedData[modelVersionId];
@@ -1740,7 +1740,7 @@ export const getAllImages = async (
 
   if (prioritizeUser && !useModelVersionCache) {
     // [x]
-    if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
+    if (cursor) throw throwBadRequestError('Cannot use cursor with prioritizedUserIds');
     isPersonalized = true; // prioritizedUserIds reorders/filters per-caller
     if (modelVersionId) AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
 
