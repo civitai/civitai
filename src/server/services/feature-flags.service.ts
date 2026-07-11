@@ -119,17 +119,26 @@ const featureFlags = createFeatureFlags({
   // the A/B (no flag-off cohort) and shipping the deferral fleet-wide unmeasured. OFF =
   // byte-identical to today. Measured via RUM `exp_gen_tab_defer_view`. Instant safe rollback.
   genTabDeferView: { availability: [], fliptKey: 'gen-tab-defer-view' },
-  // Serialize-perf: cap each post's embedded image list on `image.getImagesAsPostsInfinite`
-  // (the #2 producer of oversized/event-loop-freezing tRPC responses). Model galleries carry
-  // multi-image showcase posts (p90 14 imgs/post), so the cap cuts ~15% of serialized images
-  // at 12/post. 🔴 USER-VISIBLE (this card renders the FULL carousel AND seeds the detail
-  // modal from `data.images` WITHOUT refetch, so a cap hides a post's tail images from both) —
-  // hence `availability: []` = DARK by default, fails CLOSED (no cap) when Flipt is absent/down.
-  // The Flipt `images-as-posts-per-post-cap` threshold is the ONLY on-switch; ramp only after a
-  // product call on the carousel/modal truncation, and confirm the new bundle is serving first.
-  // OFF = byte-identical to today. Verify via `trpc-response-oversized {path=
-  // "image.getImagesAsPostsInfinite"}` serializeMs/bytes tail. (Mirrors the genTabDeferView precedent.)
-  imagesAsPostsPerPostCap: { availability: [], fliptKey: 'images-as-posts-per-post-cap' },
+  // Serialize-perf: LAZY per-post image load on `image.getImagesAsPostsInfinite` (the #2
+  // producer of oversized/event-loop-freezing tRPC responses). Model galleries carry
+  // multi-image showcase posts (17% have >12 images; p90/p99 ≈ 20). When ON the server
+  // returns only the first `GALLERY_POST_IMAGE_SLICE` (6) images per post PLUS the true
+  // `imageCount`; the card carousel lazy-loads the remainder on approach via
+  // `trpc.image.getInfinite({ postId })`. So the gallery is NOT truncated — only the initial
+  // payload shrinks (a large cut on the heavy tail). OFF = byte-identical to today (all
+  // images inline, no `imageCount`).
+  //
+  // 🔴 SERVER-SIDE flag → STALE-CLIENT RAMP DISCIPLINE (same class as the shape-swap flags):
+  // a PRE-this-PR bundle (no lazy-load code) would render only the 6-image slice with
+  // `total = slice.length` → "6 of 6" instead of "1 of 20" until the user reloads. That's a
+  // UX-truncation regression (NOT content-unsafe; browsing-level filtering is unchanged),
+  // self-healing on reload. Hence `availability: []` = DARK by default, fails CLOSED (no
+  // slice) when Flipt is absent/down; the Flipt `gallery-lazy-post-images` THRESHOLD is the
+  // ONLY on-switch. Ramp ONLY after the new bundle is serving everywhere (confirm via RUM
+  // app_version — hours, per the SPA-cache rollout pattern); threshold-only; instant rollback =
+  // drop the threshold to 0. Supersedes the retired `imagesAsPostsPerPostCap` cap flag (which
+  // truncated the gallery and was never ramped). (Mirrors the genTabDeferView precedent.)
+  galleryLazyPostImages: { availability: [], fliptKey: 'gallery-lazy-post-images' },
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },

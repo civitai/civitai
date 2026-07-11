@@ -221,8 +221,30 @@ export function ImagesAsPostsInfinite({
         !!gallerySettings?.hiddenTags.length;
 
   const providerValue = useMemo(
-    () => ({ filters, modelVersions, showModerationOptions, source }),
-    [filters, modelVersions, showModerationOptions, source]
+    () => ({
+      filters,
+      modelVersions,
+      showModerationOptions,
+      source,
+      // Forwarded so the lazy per-post carousel (`galleryLazyPostImages`) can
+      // reproduce the gallery's visibility for its `getInfinite({ postId })` tail
+      // fetch and re-apply the same hidden preferences to the fetched tail.
+      browsingLevel: intersection,
+      hiddenImageIds: !showHidden ? hiddenImageIds : undefined,
+      hiddenTags: !showHidden ? hiddenTags : undefined,
+      hiddenUsers: !showHidden ? hiddenUsers : undefined,
+    }),
+    [
+      filters,
+      modelVersions,
+      showModerationOptions,
+      source,
+      intersection,
+      showHidden,
+      hiddenImageIds,
+      hiddenTags,
+      hiddenUsers,
+    ]
   );
 
   return (
