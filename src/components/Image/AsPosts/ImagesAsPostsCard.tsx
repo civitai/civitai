@@ -559,7 +559,7 @@ export function LazyPostImagesCarousel({
   // The tail = the WHOLE post (≤ POST_IMAGE_LIMIT), same version/browsing-level
   // filters the gallery used, so the returned set matches `imageCount`. postId
   // forces the DB path server-side (covered index, ~2ms).
-  const { data: tailData } = trpc.image.getInfinite.useQuery(
+  const { data: tailData, isError: tailError } = trpc.image.getInfinite.useQuery(
     {
       ...filters,
       postId,
@@ -568,7 +568,9 @@ export function LazyPostImagesCarousel({
       include: ['cosmetics', 'tagIds'],
     },
     {
-      enabled: fetchTail,
+      // `postId != null` is the explicit invariant: a null postId must never broaden
+      // `getInfinite` to the model's general feed (it would append unrelated images).
+      enabled: fetchTail && postId != null,
       trpc: { context: { skipBatch: true } },
       staleTime: 5 * 60 * 1000,
     }
@@ -601,7 +603,13 @@ export function LazyPostImagesCarousel({
   // Before the tail resolves, advertise the true count so indicators read "1 of N".
   // After, use the actual loaded length so navigation never dead-ends if the tail
   // came back short (a hidden-pref drop) — self-correcting.
-  const effectiveTotal = fetched ? loaded.length : total;
+  //
+  // On a persistent tail-fetch ERROR the tail never arrives (`fetched` stays false),
+  // so fall back to `loaded.length` (the seed) too — otherwise `effectiveTotal` would
+  // stay at the true count while `loaded` holds only the seed, stranding the unloaded
+  // slots on an unreachable `<Loader/>` at a dead-end "1 of N". Degrade only on error;
+  // the normal in-flight case keeps the true count so the loaders show while fetching.
+  const effectiveTotal = fetched || tailError ? loaded.length : total;
 
   return (
     <SimpleImageCarousel
