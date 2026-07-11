@@ -4,6 +4,7 @@ import { userFollowsCache } from '~/server/redis/caches';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.schema';
+import { bustEngagedModelsCache } from '~/server/services/engaged-models.cache';
 import { getModeratedTags } from '~/server/services/system-cache';
 import type { HiddenPreferencesCompact } from '~/shared/hidden-preferences/compact';
 import { toCompactHiddenPreferences } from '~/shared/hidden-preferences/compact';
@@ -651,6 +652,10 @@ async function toggleHideModel({
     });
 
   await HiddenModels.refreshCache({ userId });
+  // This path mutates the same `modelEngagement` Hide rows that back the engaged-models
+  // cache (via hidden-preferences.toggleHidden), so bust it too — the user.controller
+  // toggleHideModelHandler is a DIFFERENT entry point that already busts.
+  await bustEngagedModelsCache(userId);
 
   // const addedOrUpdated = !engagement || engagement.type !== 'Hide';
   // const toReturn = { id: modelId, kind: 'model' } as HiddenPreferencesKind;
