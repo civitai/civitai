@@ -20,6 +20,7 @@ import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import { instrumentB2Client, recordB2PresignIssued } from '~/server/prom/b2-put.metrics';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
+import { isUpstreamNetworkError } from '~/server/utils/errorHandling';
 
 const missingEnvs = (): string[] => {
   const keys = [];
@@ -546,6 +547,61 @@ export async function abortMultipartUpload(
       UploadId: uploadId,
     })
   );
+}
+
+/**
+ * Classification of an S3/AWS-SDK error thrown while finalizing (complete) or
+ * aborting a multipart upload, so the `/api/upload/{complete,abort}` handlers can
+ * map it to the RIGHT HTTP status instead of a blind raw 500.
+ *
+ *  - `not-found`  — the multipart upload no longer exists: it was ALREADY completed
+ *    or aborted (a client double-submit / retry-after-success). The AWS-SDK v3
+ *    surfaces this as `NoSuchUpload` (HTTP 404). This is a client/STATE fault, not a
+ *    server fault: "The specified upload does not exist. The upload ID may be
+ *    invalid, or the upload may have been aborted or completed." Retrying it is
+ *    futile — the caller should STOP. (This was ~27 raw-500s/12h on dp-prod, the
+ *    same `key`+`uploadId` repeating across pods as the client kept retrying.)
+ *  - `transient` — a retry-able storage-backend blip: an S3/B2 HTTP 5xx, a throttle
+ *    / timing signal (`SlowDown` / `RequestTimeout` / `RequestTimeTooSkewed` /
+ *    `ServiceUnavailable` / `InternalError`), or a status-less network failure
+ *    (`ECONNRESET` / `ETIMEDOUT` / …). Mirror #2972/#3049 → 503 + Retry-After.
+ *  - `other`     — anything unrecognized, INCLUDING a genuine server-side bug. Left
+ *    to surface as a hard 500 so a real failed upload fails LOUD (never masked as a
+ *    silent 409/503).
+ *
+ * AWS-SDK v3 errors carry `error.name` (e.g. `'NoSuchUpload'`, `'SlowDown'`) and
+ * `error.$metadata.httpStatusCode`; a pre-response network failure has neither, so
+ * it is matched by {@link isUpstreamNetworkError}.
+ */
+export type S3MultipartErrorClass = 'not-found' | 'transient' | 'other';
+
+const S3_TRANSIENT_ERROR_NAMES: ReadonlySet<string> = new Set([
+  'SlowDown',
+  'RequestTimeout',
+  'RequestTimeTooSkewed',
+  'ServiceUnavailable',
+  'InternalError',
+]);
+
+export function classifyS3MultipartError(error: unknown): S3MultipartErrorClass {
+  const err = error as
+    | { name?: unknown; $metadata?: { httpStatusCode?: unknown } | null }
+    | null
+    | undefined;
+  const name = typeof err?.name === 'string' ? err.name : undefined;
+  const httpStatusCode =
+    typeof err?.$metadata?.httpStatusCode === 'number' ? err.$metadata.httpStatusCode : undefined;
+
+  // Terminal state fault: the upload is already finalized/aborted → stop retrying.
+  if (name === 'NoSuchUpload' || httpStatusCode === 404) return 'not-found';
+
+  // Retry-able storage-backend failure.
+  if (typeof httpStatusCode === 'number' && httpStatusCode >= 500) return 'transient';
+  if (name && S3_TRANSIENT_ERROR_NAMES.has(name)) return 'transient';
+  if (isUpstreamNetworkError(error)) return 'transient';
+
+  // Unrecognized — keep surfacing as a hard 500 (do NOT mask a real server fault).
+  return 'other';
 }
 
 type GetObjectOptions = {
