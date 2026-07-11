@@ -81,6 +81,7 @@ import {
   moderateImages,
 } from './../services/image.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
+import { capImagesPerPost, stripImageForAsPostsWire } from '~/server/utils/images-as-posts-wire';
 import { imagesFeedWithoutIndexCounter } from '~/server/prom/client';
 import { constants, POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
@@ -576,7 +577,15 @@ export const getImagesAsPostsInfiniteHandler = async ({
         sortAt: image.sortAt,
         createdAt,
         user,
-        images,
+        // Serialize-cost reduction (this endpoint is the #2 oversized-tRPC-response
+        // producer): (1) OPTIONALLY cap each post's images when the DARK, user-visible
+        // `imagesAsPostsPerPostCap` flag is on — the material lever (~15% fewer images);
+        // (2) always strip per-image fields no consumer reads (zero-UX). Both run AFTER
+        // the per-post `index` sort above and after the post-level fields are read off
+        // `image`/`images[0]`, so nothing server-side needs the dropped data.
+        images: (features.imagesAsPostsPerPostCap ? capImagesPerPost(images) : images).map(
+          stripImageForAsPostsWire
+        ),
         review: review
           ? {
               rating: review.rating,
