@@ -11,7 +11,7 @@ import type {
 } from '~/server/schema/resourceReview.schema';
 import type { ResourceReviewPaged, ResourceReviewRatingTotals } from '~/types/router';
 import { queryClient, trpc } from '~/utils/trpc';
-import { restoreMembership, snapshotMembership } from '~/store/engaged-models.store';
+import { isModelEngaged, restoreMembership, snapshotMembership } from '~/store/engaged-models.store';
 import {
   applyFavoriteToggled,
   applyReviewCreated,
@@ -35,41 +35,14 @@ export const useCreateResourceReview = () => {
         return { ...old, down: old.down + 1 };
       });
 
-      const previousEngaged = queryUtils.user.getEngagedModels.getData() ?? {
-        Recommended: [] as number[],
-      };
-      const shouldRemove =
-        !recommended || (previousEngaged.Recommended?.includes(modelId) ?? false);
-
-      queryUtils.user.getEngagedModels.setData(undefined, (old) => {
-        if (!old) return;
-
-        const { Recommended = [], Notify = [], ...rest } = old;
-        if (shouldRemove) {
-          return {
-            Recommended: Recommended.filter((id) => id !== modelId),
-            Notify: Notify.filter((id) => id !== modelId),
-            ...rest,
-          };
-        }
-
-        return { Recommended: [...Recommended, modelId], Notify: [...Notify, modelId], ...rest };
-      });
-
-      // Normalized store (PR2): mirror the same Recommended+Notify toggle for the
-      // per-visible-set surfaces. Dual-written alongside the getEngagedModels cache
-      // above until the feed callers migrate (PR3) and the old endpoint is dropped (PR4).
-      // F3: derive the direction from the SAME `previousEngaged.Recommended` snapshot
-      // the legacy setData above consumed — deliberately NOT the normalized store.
-      // Passing the one shared snapshot keeps the two dual-writes CONSISTENT with each
-      // other (the Preserve invariant). PR3 removed this page's own getEngagedModels
-      // query, so on a directly-loaded model page that legacy cache is cold and this
-      // reads false; both writes then agree (both add), so they never diverge. Accepted
-      // narrow edge: re-affirming an ALREADY-recommended model won't toggle it off until
-      // a feed has warmed the cache. Sourcing direction from the store instead would warm
-      // this case but split the two writes' direction (store warm / legacy cold) — a
-      // worse divergence bug — so we keep the shared-snapshot source.
-      applyReviewCreated(modelId, recommended, previousEngaged.Recommended?.includes(modelId) ?? false);
+      // Engaged-models store (single source since PR4 dropped the legacy
+      // user.getEngagedModels cache). Re-source the re-affirm DIRECTION bit from the
+      // store's membership snapshot (read BEFORE the mutator applies).
+      // F3 accepted cold-read edge: on a directly-loaded model page no feed has warmed
+      // membership, so the store reads not-recommended and re-affirming an
+      // ALREADY-recommended model adds instead of toggling it off until a feed warms it.
+      const alreadyRecommended = isModelEngaged(modelId, 'Recommended');
+      applyReviewCreated(modelId, recommended, alreadyRecommended);
 
       queryUtils.model.getById.setData({ id: modelId }, (old) => {
         if (!old) return;
@@ -160,38 +133,20 @@ export const useUpdateResourceReview = () => {
         await queryUtils.resourceReview.getPaged.invalidate();
       }
 
-      await queryUtils.user.getEngagedModels.cancel();
-
-      // Update model engagements
-      const previousEngaged = queryUtils.user.getEngagedModels.getData() ?? {
-        Recommended: [] as number[],
-        Notify: [] as number[],
-      };
-      const alreadyNotified = previousEngaged.Notify?.indexOf(modelId) ?? -1;
-      const alreadyReviewed = previousEngaged.Recommended?.indexOf(modelId) ?? -1;
-      const shouldRemove = !request.recommended || alreadyReviewed > -1;
-      // Remove from recommended list
-      queryUtils.user.getEngagedModels.setData(undefined, (old) => {
-        if (!old) return;
-
-        const { Recommended = [], ...rest } = old;
-        if (shouldRemove)
-          return { Recommended: Recommended.filter((id) => id !== modelId), ...rest };
-        return { Recommended: [...Recommended, modelId], ...rest };
-      });
-
-      // Normalized store (PR2): mirror the Recommended toggle for per-visible-set surfaces.
-      // F3: direction from the SAME `previousEngaged` snapshot the legacy setData used
-      // (not the store), so both dual-writes stay consistent. See the create handler for
-      // the accepted cold-cache edge (this page's getEngagedModels query was removed in PR3).
-      applyReviewUpdated(modelId, request.recommended, alreadyReviewed > -1);
+      // Model engagements — re-source the pre-toggle membership bits from the
+      // engaged-models store (single source since PR4 dropped the legacy cache). Read
+      // BEFORE the mutator applies; `alreadyNotified` also drives the getById collected-
+      // count math below. See the create handler for the accepted F3 cold-read edge.
+      const alreadyNotified = isModelEngaged(modelId, 'Notify');
+      const alreadyReviewed = isModelEngaged(modelId, 'Recommended');
+      applyReviewUpdated(modelId, request.recommended, alreadyReviewed);
 
       queryUtils.model.getById.setData({ id: modelId }, (old) => {
         if (!old) return;
 
         if (request.recommended === true) {
           old.rank.thumbsUpCountAllTime += 1;
-          if (alreadyNotified === -1) old.rank.collectedCountAllTime += 1;
+          if (!alreadyNotified) old.rank.collectedCountAllTime += 1;
           if (old.rank.thumbsDownCountAllTime > 0) old.rank.thumbsDownCountAllTime -= 1;
 
           if (modelVersionId) {
@@ -247,19 +202,8 @@ export const useDeleteResourceReview = () => {
         })
       );
 
-      // Update engaged models
-      queryUtils.user.getEngagedModels.setData(undefined, (old) => {
-        if (!old) return;
-
-        const { Recommended = [], Notify = [], ...rest } = old;
-        return {
-          Recommended: Recommended.filter((id) => id !== modelId),
-          Notify: Notify.filter((id) => id !== modelId),
-          ...rest,
-        };
-      });
-
-      // Normalized store (PR2): mirror the Recommended+Notify removal for per-visible-set surfaces.
+      // Update engaged models — remove Recommended + Notify in the engaged-models store
+      // (single source since PR4 dropped the legacy user.getEngagedModels cache).
       applyReviewDeleted(modelId);
 
       queryUtils.model.getById.setData({ id: modelId }, (old) => {
@@ -339,7 +283,6 @@ export function useToggleFavoriteMutation() {
 
   const mutation = trpc.user.toggleFavorite.useMutation({
     onMutate: async ({ modelId, modelVersionId, setTo }) => {
-      const engagedModels = queryUtils.user.getEngagedModels.getData();
       const bookmarkedModels = queryUtils.user.getBookmarkedModels.getData();
       const modelDetails = queryUtils.model.getById.getData({ id: modelId });
       // Normalized store (PR2): snapshot for rollback, then apply the same toggle.
@@ -356,33 +299,23 @@ export function useToggleFavoriteMutation() {
         }
       });
 
-      // Update model engagements
-      const alreadyNotified = engagedModels?.Notify?.indexOf(modelId) ?? -1;
-      const alreadyReviewed = engagedModels?.Recommended?.indexOf(modelId) ?? -1;
-      queryUtils.user.getEngagedModels.setData(undefined, (old) => {
-        if (!old) return;
-        if (setTo) {
-          if (alreadyNotified === -1) old.Notify = [...(old.Notify ?? []), modelId];
-          if (alreadyReviewed === -1) old.Recommended = [...(old.Recommended ?? []), modelId];
-        } else {
-          // We don't want to remove from notify on favorite toggle
-          // if (alreadyNotified !== -1) old.Notify = old.Notify.filter((id) => id !== modelId);
-          if (alreadyReviewed !== -1)
-            old.Recommended = old.Recommended.filter((id) => id !== modelId);
-        }
-        return old;
-      });
+      // Update model engagements — re-source the pre-toggle membership bits from the
+      // engaged-models store (single source since PR4 dropped the legacy cache). Read
+      // BEFORE the mutator applies; both drive the getById optimistic count math below.
+      // See the create handler for the accepted F3 cold-read edge.
+      const alreadyNotified = isModelEngaged(modelId, 'Notify');
+      const alreadyReviewed = isModelEngaged(modelId, 'Recommended');
 
-      // Normalized store (PR2): mirror the favorite toggle for per-visible-set surfaces.
+      // Mirror the favorite toggle into the engaged-models store.
       applyFavoriteToggled(modelId, setTo);
 
       // Update model details
       queryUtils.model.getById.setData({ id: modelId }, (old) => {
         if (!old) return;
-        if (setTo && alreadyReviewed === -1) {
+        if (setTo && !alreadyReviewed) {
           old.rank.thumbsUpCountAllTime += 1;
-          if (alreadyNotified === -1) old.rank.collectedCountAllTime += 1;
-        } else if (!setTo && alreadyReviewed !== -1) {
+          if (!alreadyNotified) old.rank.collectedCountAllTime += 1;
+        } else if (!setTo && alreadyReviewed) {
           old.rank.thumbsUpCountAllTime -= 1;
           // We don't want to remove from collected on favorite toggle
           // old.rank.collectedCountAllTime -= 1;
@@ -442,13 +375,12 @@ export function useToggleFavoriteMutation() {
         }
       });
 
-      return { prevData: { engagedModels, modelDetails, userReviews, bookmarkedModels }, engagedMembership };
+      return { prevData: { modelDetails, userReviews, bookmarkedModels }, engagedMembership };
     },
     onError: (error, { modelId }, context) => {
-      queryUtils.user.getEngagedModels.setData(undefined, context?.prevData?.engagedModels);
       queryUtils.user.getBookmarkedModels.setData(undefined, context?.prevData?.bookmarkedModels);
       queryUtils.model.getById.setData({ id: modelId }, context?.prevData?.modelDetails);
-      // Normalized store (PR2): restore the snapshotted membership.
+      // Restore the snapshotted engaged-models membership on rollback.
       if (context?.engagedMembership) restoreMembership(modelId, context.engagedMembership);
     },
     onSettled: async (result, error, { modelId }) => {

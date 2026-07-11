@@ -1,6 +1,5 @@
 import type { ProtectedContext } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
-import { redis, REDIS_KEYS, REDIS_SUB_KEYS } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { GetByUsernameSchema } from '~/server/schema/user.schema';
 import {
@@ -75,9 +74,6 @@ export const createResourceReviewHandler = async ({
       rating: result.recommended ? 5 : 1,
       nsfw: false,
     });
-    await redis.del(
-      `${REDIS_KEYS.USER.BASE}:${ctx.user.id}:${REDIS_SUB_KEYS.USER.MODEL_ENGAGEMENTS}`
-    );
     return result;
   } catch (error) {
     throw throwDbError(error);
@@ -100,9 +96,6 @@ export const updateResourceReviewHandler = async ({
       rating: result.rating,
       nsfw: result.nsfw,
     });
-    await redis.del(
-      `${REDIS_KEYS.USER.BASE}:${ctx.user.id}:${REDIS_SUB_KEYS.USER.MODEL_ENGAGEMENTS}`
-    );
     return result;
   } catch (error) {
     throw throwDbError(error);

@@ -2,10 +2,10 @@ import { useEngagedModelsStore } from '~/store/engaged-models.store';
 
 /**
  * Semantic optimistic mutators for the engaged-models store, one per user
- * action. Each mirrors — EXACTLY — the engagement-type bookkeeping the legacy
- * React-Query `user.getEngagedModels.setData(undefined, …)` handlers performed
- * in `resourceReview.utils.ts`, so the migrated (per-visible-set) surfaces stay
- * behaviourally identical to the still-on-old-endpoint feed surfaces.
+ * action. Each performs the engagement-type bookkeeping that the removed
+ * React-Query `user.getEngagedModels.setData(undefined, …)` handlers in
+ * `resourceReview.utils.ts` used to do — the store is now the single source for
+ * per-visible-set engagement membership (PR4 deleted the legacy endpoint + cache).
  *
  * Notes on the (non-obvious) current semantics these preserve:
  *   - A "favorite"/"like" on the client IS a `Recommended` resource review — the
@@ -24,10 +24,11 @@ const store = () => useEngagedModelsStore.getState();
  * resourceReview.create — toggles `Recommended` + `Notify` together.
  *
  * F3: the toggle DIRECTION (`shouldRemove`) is derived from `alreadyRecommended`
- * supplied by the caller — the reliable, warm `previousEngaged.Recommended`
- * React-Query snapshot — NOT from the normalized store, which may be cold for
- * this model (mid by-ids fetch) and would then read as not-recommended and flip
- * the direction. This keeps exact parity with the legacy dual-write.
+ * supplied by the caller, which now reads the store's pre-toggle membership via
+ * `isModelEngaged(modelId, 'Recommended')`. Accepted cold-read edge: on a
+ * directly-loaded model page no feed has warmed membership, so the store reads
+ * not-recommended and re-affirming an ALREADY-recommended model adds instead of
+ * toggling it off until a feed warms the model's membership.
  */
 export function applyReviewCreated(
   modelId: number,
@@ -41,7 +42,8 @@ export function applyReviewCreated(
 
 /**
  * resourceReview.update — toggles `Recommended` only. Direction comes from the
- * caller's `alreadyRecommended` (see `applyReviewCreated`), not the cold store.
+ * caller's `alreadyRecommended` (see `applyReviewCreated`), read from the store's
+ * pre-toggle membership; same accepted cold-read edge applies.
  */
 export function applyReviewUpdated(
   modelId: number,

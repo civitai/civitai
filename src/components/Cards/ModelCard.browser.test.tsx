@@ -1,17 +1,16 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 
 // =============================================================================
-// ModelCard — feed review-indicator now reads batched membership, not the
-// unbounded `user.getEngagedModels` endpoint (PR3 of the engaged-feed arc).
+// ModelCard — feed review-indicator reads batched membership
+// (`useEngagedModelMembership`). The legacy unbounded `user.getEngagedModels`
+// endpoint it replaced was deleted in PR4, so there is no longer a symbol to
+// spy on for a negative regression guard.
 // =============================================================================
 //
 // What this test pins (the point of the migration):
 //   * `ModelCardStats` derives its "reviewed" indicator from
 //     `useEngagedModelMembership(id).isEngaged('Recommended')` — TRUE lights the
 //     success-colored thumb (`data-reviewed="true"`), FALSE the neutral one.
-//   * the legacy `trpc.user.getEngagedModels.useQuery` is NEVER called by the
-//     card — a regression guard against reverting to the unbounded read that
-//     drives the dp-prod event-loop-freeze.
 //
 // The card is a heavy feed leaf (~10 context/child deps). We render the REAL
 // `ModelCardContent` + `ModelCardStats` and BOUNDARY-STUB the heavy children so
@@ -29,18 +28,12 @@ const mocks = vi.hoisted(() => {
     isLoading: false,
     isKnown: true,
   }));
-  const getEngagedModelsUseQuery = vi.fn(() => ({ data: undefined }));
-  return { state, membershipMock, getEngagedModelsUseQuery };
+  return { state, membershipMock };
 });
 
 // --- controllable membership hook -------------------------------------------
 vi.mock('~/hooks/useEngagedModelMembership', () => ({
   useEngagedModelMembership: (id: number) => mocks.membershipMock(id),
-}));
-
-// --- legacy endpoint spy (must never fire) ----------------------------------
-vi.mock('~/utils/trpc', () => ({
-  trpc: { user: { getEngagedModels: { useQuery: mocks.getEngagedModelsUseQuery } } },
 }));
 
 // --- boundary stubs for heavy children --------------------------------------
@@ -129,22 +122,19 @@ describe('ModelCard review indicator (batched membership)', () => {
   beforeEach(() => {
     mocks.state.engaged = false;
     mocks.membershipMock.mockClear();
-    mocks.getEngagedModelsUseQuery.mockClear();
   });
 
   test('renders the reviewed indicator when the model is Recommended by the user', async () => {
     mocks.state.engaged = true;
     renderWithProviders(<ModelCard data={makeData()} />);
     expect(await reviewedAttr()).toBe('true');
-    // reads membership for THIS model id, never the unbounded endpoint
+    // reads batched membership for THIS model id
     expect(mocks.membershipMock).toHaveBeenCalledWith(123);
-    expect(mocks.getEngagedModelsUseQuery).not.toHaveBeenCalled();
   });
 
   test('does NOT mark reviewed when the model is not Recommended', async () => {
     mocks.state.engaged = false;
     renderWithProviders(<ModelCard data={makeData()} />);
     expect(await reviewedAttr()).toBe('false');
-    expect(mocks.getEngagedModelsUseQuery).not.toHaveBeenCalled();
   });
 });

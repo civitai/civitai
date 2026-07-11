@@ -1,8 +1,10 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 
 // =============================================================================
-// ModelCategoryCard — review indicator now reads batched membership, not the
-// unbounded `user.getEngagedModels` endpoint (PR3 of the engaged-feed arc).
+// ModelCategoryCard — review indicator reads batched membership
+// (`useEngagedModelMembership`). The legacy unbounded `user.getEngagedModels`
+// endpoint it replaced was deleted in PR4, so there is no longer a symbol to
+// spy on for a negative regression guard.
 // =============================================================================
 //
 // What this pins (the migration contract):
@@ -12,8 +14,6 @@ import { describe, expect, test, vi, beforeEach } from 'vitest';
 //     ThumbsIcon stub so the isEngaged -> hasReview -> ThumbsUpIcon wiring is
 //     directly observable.
 //   * membership is requested for THIS model id (not a whole-history read).
-//   * the legacy `trpc.user.getEngagedModels.useQuery` is NEVER called — the
-//     regression guard against reverting to the unbounded endpoint.
 //
 // We render the REAL exported `ModelCategoryCard`. To keep the mount tractable
 // we pass `images: []` (skips the ImageGuard/menu/EdgeMedia block entirely) and
@@ -31,18 +31,12 @@ const mocks = vi.hoisted(() => {
     isLoading: false,
     isKnown: true,
   }));
-  const getEngagedModelsUseQuery = vi.fn(() => ({ data: undefined }));
-  return { state, membershipMock, getEngagedModelsUseQuery };
+  return { state, membershipMock };
 });
 
 // --- controllable membership hook -------------------------------------------
 vi.mock('~/hooks/useEngagedModelMembership', () => ({
   useEngagedModelMembership: (id: number) => mocks.membershipMock(id),
-}));
-
-// --- legacy endpoint spy (must never fire) ----------------------------------
-vi.mock('~/utils/trpc', () => ({
-  trpc: { user: { getEngagedModels: { useQuery: mocks.getEngagedModelsUseQuery } } },
 }));
 
 // --- context hooks ----------------------------------------------------------
@@ -120,7 +114,6 @@ describe('ModelCategoryCard review indicator (batched membership)', () => {
   beforeEach(() => {
     mocks.state.engaged = false;
     mocks.membershipMock.mockClear();
-    mocks.getEngagedModelsUseQuery.mockClear();
   });
 
   test('fills the review thumb when the model is Recommended by the user', async () => {
@@ -128,13 +121,11 @@ describe('ModelCategoryCard review indicator (batched membership)', () => {
     renderWithProviders(<ModelCategoryCard data={makeData()} height={300} />);
     expect(await thumbsFilled()).toBe('true');
     expect(mocks.membershipMock).toHaveBeenCalledWith(321);
-    expect(mocks.getEngagedModelsUseQuery).not.toHaveBeenCalled();
   });
 
   test('leaves the thumb unfilled when the model is not Recommended', async () => {
     mocks.state.engaged = false;
     renderWithProviders(<ModelCategoryCard data={makeData()} height={300} />);
     expect(await thumbsFilled()).toBe('false');
-    expect(mocks.getEngagedModelsUseQuery).not.toHaveBeenCalled();
   });
 });

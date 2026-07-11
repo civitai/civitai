@@ -75,22 +75,20 @@ describe('optimistic — update review', () => {
   });
 });
 
-// F3: the toggle DIRECTION must come from the caller-supplied `alreadyRecommended`
-// (the warm legacy snapshot), NOT the normalized store — which can be cold for
-// this model while a by-ids fetch is in flight and would otherwise flip intent.
-describe('optimistic — create/update derive direction from the caller, not the (cold) store', () => {
-  it('create: cold store (unknown) + alreadyRecommended=false → ADDS (does not read store)', () => {
-    // Store has NO knowledge of model 1 (never seeded) — the legacy self-branch
-    // would read not-recommended and add; here we prove the param drives it.
+// The toggle DIRECTION is a caller-supplied param, decoupled from whatever the
+// store holds when the mutator runs. The caller (resourceReview.utils.ts) now
+// reads that bit from the store's PRE-toggle membership via isModelEngaged
+// (PR4 removed the legacy getEngagedModels cache that used to supply it). These
+// cases pin that the mutator honors the param even when the store disagrees.
+describe('optimistic — create/update honor the caller-supplied direction param', () => {
+  it('create: alreadyRecommended=false → ADDS regardless of store state', () => {
     applyReviewCreated(1, true, false);
     expect(types(1)).toEqual(['Notify', 'Recommended']);
   });
 
-  it('create: cold store but caller says alreadyRecommended=true → REMOVES', () => {
-    // The store is cold (reads not-recommended) yet the warm snapshot knows the
-    // user already recommended → direction must be "remove", not "add".
+  it('create: alreadyRecommended=true → REMOVES (re-affirm toggles off)', () => {
     applyReviewCreated(1, true, true);
-    expect(types(1)).toEqual([]); // toggled off despite the cold store
+    expect(types(1)).toEqual([]); // toggled off
   });
 
   it('update: store says Recommended but caller says alreadyRecommended=false → ADDS (param wins)', () => {
@@ -102,6 +100,49 @@ describe('optimistic — create/update derive direction from the caller, not the
   it('update: store cold but caller says alreadyRecommended=true → REMOVES (param wins)', () => {
     applyReviewUpdated(1, true, true);
     expect(types(1)).toEqual([]); // removed despite the cold store
+  });
+});
+
+// PR4: the caller (resourceReview.utils.ts) now derives the "already engaged" bits
+// from the store's PRE-toggle membership via isModelEngaged, replacing the reads it
+// used to make against the deleted user.getEngagedModels React-Query cache. These
+// pin the exact SOURCE→direction seam: read isModelEngaged BEFORE the mutator, then
+// feed it in. The getById optimistic count math (thumbsUp/collected ±1) branches on
+// these same booleans, so their correctness is what guards the double-count risk.
+describe('optimistic — direction/count bits re-sourced from the store (PR4 caller seam)', () => {
+  it('create: re-affirming an ALREADY-recommended model does NOT double-add (toggles off)', () => {
+    seed(7, ['Recommended', 'Notify']);
+    // caller reads the pre-toggle bit exactly as resourceReview.utils.ts does
+    const alreadyRecommended = isModelEngaged(7, 'Recommended');
+    expect(alreadyRecommended).toBe(true);
+    applyReviewCreated(7, true, alreadyRecommended);
+    expect(types(7)).toEqual([]); // re-affirm path removes, no duplicate membership
+  });
+
+  it('create: warm store not-recommended → ADDS (re-source reads false)', () => {
+    seed(7, ['Mute']); // known to store but not Recommended
+    const alreadyRecommended = isModelEngaged(7, 'Recommended');
+    expect(alreadyRecommended).toBe(false);
+    applyReviewCreated(7, true, alreadyRecommended);
+    expect(types(7)).toEqual(['Mute', 'Notify', 'Recommended']);
+  });
+
+  it('favorite: alreadyReviewed/alreadyNotified bits match seeded membership (drive getById ±1)', () => {
+    // The favorite path gates thumbsUp += 1 on !alreadyReviewed and collected += 1 on
+    // !alreadyNotified. Prove the re-sourced booleans reflect the store truthfully so
+    // the count deltas fire exactly once.
+    seed(7, ['Recommended']); // reviewed, NOT notified
+    expect(isModelEngaged(7, 'Recommended')).toBe(true); // → thumbsUp delta suppressed
+    expect(isModelEngaged(7, 'Notify')).toBe(false); //     → collected delta would fire
+    applyFavoriteToggled(7, true);
+    expect(types(7)).toEqual(['Notify', 'Recommended']);
+  });
+
+  it('update: alreadyReviewed re-sourced from store drives the toggle-off direction', () => {
+    seed(7, ['Recommended', 'Notify']);
+    const alreadyReviewed = isModelEngaged(7, 'Recommended');
+    applyReviewUpdated(7, true, alreadyReviewed);
+    expect(types(7)).toEqual(['Notify']); // Recommended toggled off, Notify untouched
   });
 });
 

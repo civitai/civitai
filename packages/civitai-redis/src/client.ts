@@ -2108,7 +2108,6 @@ export const REDIS_KEYS = {
 // we should probably be flipping all redis keys to have any dynamic keys come at the end
 export const REDIS_SUB_KEYS = {
   USER: {
-    MODEL_ENGAGEMENTS: 'model-engagements', // cache
     PRIVATE_ENTITY_ACCESS: 'private-entity-access', // cache
   },
   EVENT: {

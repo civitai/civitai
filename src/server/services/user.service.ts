@@ -595,20 +595,14 @@ export const updateUserById = async ({
   return user;
 };
 
-export const getUserEngagedModels = ({ id, type }: { id: number; type?: ModelEngagementType }) => {
-  return dbRead.modelEngagement.findMany({
-    where: { userId: id, type },
-    select: { modelId: true, type: true },
-  });
-};
-
 export type EngagedModelType = ModelEngagementType | 'Recommended';
 
 /**
  * Per-visible-set engagement membership: given a bounded set of `modelIds`, return which of
- * them the user has engaged with, keyed by engagement type. The additive, index-bounded
- * replacement for `getUserEngagedModels` (whose caller returns a user's ENTIRE engagement
- * history — a whale's 3.75 MB / 482 ms synchronous serialize froze an api-primary pod).
+ * them the user has engaged with, keyed by engagement type. The index-bounded membership
+ * primitive that replaced the removed whole-history `getUserEngagedModels` (whose caller
+ * returned a user's ENTIRE engagement history — a whale's 3.75 MB / 482 ms synchronous
+ * serialize froze an api-primary pod).
  *
  * Every returned array is a subset of the input `modelIds` (the intersection of the user's
  * engagements ∩ input), so the response is bounded by |modelIds| × (#types) — no cache needed.
