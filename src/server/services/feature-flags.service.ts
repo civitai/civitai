@@ -119,6 +119,17 @@ const featureFlags = createFeatureFlags({
   // the A/B (no flag-off cohort) and shipping the deferral fleet-wide unmeasured. OFF =
   // byte-identical to today. Measured via RUM `exp_gen_tab_defer_view`. Instant safe rollback.
   genTabDeferView: { availability: [], fliptKey: 'gen-tab-defer-view' },
+  // Serialize-perf: cap each post's embedded image list on `image.getImagesAsPostsInfinite`
+  // (the #2 producer of oversized/event-loop-freezing tRPC responses). Model galleries carry
+  // multi-image showcase posts (p90 14 imgs/post), so the cap cuts ~15% of serialized images
+  // at 12/post. 🔴 USER-VISIBLE (this card renders the FULL carousel AND seeds the detail
+  // modal from `data.images` WITHOUT refetch, so a cap hides a post's tail images from both) —
+  // hence `availability: []` = DARK by default, fails CLOSED (no cap) when Flipt is absent/down.
+  // The Flipt `images-as-posts-per-post-cap` threshold is the ONLY on-switch; ramp only after a
+  // product call on the carousel/modal truncation, and confirm the new bundle is serving first.
+  // OFF = byte-identical to today. Verify via `trpc-response-oversized {path=
+  // "image.getImagesAsPostsInfinite"}` serializeMs/bytes tail. (Mirrors the genTabDeferView precedent.)
+  imagesAsPostsPerPostCap: { availability: [], fliptKey: 'images-as-posts-per-post-cap' },
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },
