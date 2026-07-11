@@ -14,6 +14,10 @@ import { createJob, getJobDate } from './job';
 import { userUpdateCounter } from '~/server/prom/client';
 
 const BATCH_SIZE = 500;
+// Owners per computeImageScores call. Caps the in-memory imageId->owner Map so a
+// wide checkpoint window can't exceed V8's ~16.7M Map-entry limit — the crash that
+// froze this job nightly from 2026-06-22.
+const IMAGE_SCORE_OWNER_BATCH = 2000;
 const log = createLogger('update-user-score');
 const jobKey = 'update-user-score';
 export const updateUserScore = createJob(
@@ -24,14 +28,17 @@ export const updateUserScore = createJob(
 
     // Build Context
     //-------------------------------------
-    const [lastUpdate, setLastUpdate] = await getJobDate(jobKey);
+    // Legacy combined checkpoint. Seeds each per-category checkpoint on first run
+    // after this change so the cutover doesn't rescan from epoch; ignored once the
+    // per-category keys exist and own their own progress.
+    const [legacyLastUpdate] = await getJobDate(jobKey);
     const ctx: Context = {
       db: dbWrite,
       ch: clickhouse,
       pg: pgDbWrite,
       jobContext,
       scoreMultipliers: await getScoreMultipliers(),
-      lastUpdate,
+      lastUpdate: legacyLastUpdate,
       toUpdate: {},
       setScore: (id, category, score) => {
         if (!ctx.toUpdate[id]) ctx.toUpdate[id] = {};
@@ -41,17 +48,36 @@ export const updateUserScore = createJob(
 
     // Update scores
     //-------------------------------------
+    // Each category advances its own checkpoint. A fetcher that throws is isolated:
+    // its checkpoint stays frozen (retried next run) while the others still persist
+    // and advance — one broken category can't freeze all six (as images did nightly
+    // from 2026-06-22). Failures are collected and re-thrown after the good work is
+    // committed, so the run still surfaces as failed for alerting.
     const scoreFetchers = {
-      getModelScore,
-      getArticleScore,
-      getUserScore,
-      getReportedActionedScore,
-      getReportAgainstScore,
-      getImageScore,
-    };
-    for (const [key, fetcher] of Object.entries(scoreFetchers)) {
-      log('getting score', key);
-      await fetcher(ctx);
+      models: getModelScore,
+      articles: getArticleScore,
+      users: getUserScore,
+      reportsActioned: getReportedActionedScore,
+      reportsAgainst: getReportAgainstScore,
+      images: getImageScore,
+    } as const;
+
+    const advanceCheckpoint: Array<() => Promise<void>> = [];
+    const failures: Array<{ category: string; error: unknown }> = [];
+    for (const [category, fetcher] of Object.entries(scoreFetchers)) {
+      const [lastUpdate, setLastUpdate] = await getJobDate(
+        `${jobKey}:${category}`,
+        legacyLastUpdate
+      );
+      ctx.lastUpdate = lastUpdate;
+      try {
+        log('getting score', category);
+        await fetcher(ctx);
+        advanceCheckpoint.push(setLastUpdate);
+      } catch (e) {
+        log('score category failed; leaving its checkpoint frozen', category, e);
+        failures.push({ category, error: e });
+      }
     }
 
     // Update score totals
@@ -60,7 +86,28 @@ export const updateUserScore = createJob(
     log('updating scores', Object.keys(ctx.toUpdate).length, 'batches', totalTasks.length);
     await limitConcurrency(totalTasks, 5);
 
-    await setLastUpdate();
+    // Advance only the categories that fetched cleanly, and only after their scores
+    // are persisted.
+    for (const setLastUpdate of advanceCheckpoint) await setLastUpdate();
+
+    // Re-throw so the run still surfaces as failed. Each category's original stack
+    // is embedded into the thrown error's own stack: the job runner logs
+    // `error.stack` to Axiom (job.ts) and ignores `.cause`/AggregateError.errors,
+    // so embedding is the only way the real failure site survives.
+    if (failures.length) {
+      const summary = `update-user-score: ${failures.length} categor${
+        failures.length > 1 ? 'ies' : 'y'
+      } failed (${failures.map((f) => f.category).join(', ')})`;
+      const err = new Error(summary);
+      err.stack = [
+        summary,
+        ...failures.map(({ category, error }) => {
+          const detail = error instanceof Error ? error.stack ?? error.message : String(error);
+          return `\n--- ${category} ---\n${detail}`;
+        }),
+      ].join('');
+      throw err;
+    }
   },
   {
     lockExpiration: 30 * 60,
@@ -143,18 +190,21 @@ async function getImageScore(ctx: Context) {
   }
   if (!affectedUserIds.size) return;
 
-  // 3. Recompute each affected owner's FULL all-time image score (including
-  // owners who now total 0, so a previously-stale score is corrected downward).
-  const scores = await computeImageScores(
-    {
-      ch: ctx.ch,
-      pg: ctx.pg,
-      scoreMultipliers: ctx.scoreMultipliers,
-      onCancel: (cancel) => ctx.jobContext.on('cancel', cancel),
-    },
-    [...affectedUserIds]
-  );
-  for (const [userId, { score }] of scores) ctx.setScore(userId, 'images', score);
+  // 3. Recompute each affected owner's FULL all-time image score (including owners
+  // who now total 0, so a previously-stale score is corrected downward). Batched by
+  // owner: computeImageScores holds an imageId->owner Map of every image the batch
+  // owns, so an unbounded owner set (e.g. after a stale, wide checkpoint window)
+  // would exceed V8's Map cap. Batching bounds that Map to one chunk of owners.
+  const deps: ImageScoreDeps = {
+    ch: ctx.ch,
+    pg: ctx.pg,
+    scoreMultipliers: ctx.scoreMultipliers,
+    onCancel: (cancel) => ctx.jobContext.on('cancel', cancel),
+  };
+  for (const userIds of chunk([...affectedUserIds], IMAGE_SCORE_OWNER_BATCH)) {
+    const scores = await computeImageScores(deps, userIds);
+    for (const [userId, { score }] of scores) ctx.setScore(userId, 'images', score);
+  }
 }
 
 type ImageScoreDeps = {
@@ -377,16 +427,6 @@ export async function getScoreMultipliers(): Promise<ScoreMultipliers> {
 
   log('score multipliers: sysRedis + KeyValue unavailable, using hardcoded default');
   return DEFAULT_SCORE_MULTIPLIERS;
-}
-
-function getAffected(ctx: Context) {
-  return templateHandler(async (sql) => {
-    const affectedQuery = await ctx.pg.cancellableQuery<{ id: number }>(sql);
-    ctx.jobContext.on('cancel', affectedQuery.cancel);
-    const affected = await affectedQuery.result();
-    const ids = affected.map((x) => x.id);
-    return ids;
-  });
 }
 
 function getScores(ctx: Context, category: ScoreCategory) {

@@ -110,6 +110,8 @@ export type CosmeticType = "Badge" | "NamePlate" | "ContentDecoration" | "Profil
 
 export type CosmeticSource = "Trophy" | "Purchase" | "Event" | "Membership" | "Claim";
 
+export type CosmeticShopItemStatus = "Draft" | "PendingReview" | "Published" | "Rejected" | "RequestedChanges" | "Archived";
+
 export type CosmeticEntity = "Model" | "Image" | "Article" | "Post" | "Model3D";
 
 export type BuzzAccountType = "user" | "generation" | "club" | "green" | "fakered";
@@ -579,6 +581,7 @@ export interface User {
   addedCosmeticShopSections?: CosmeticShopSection[];
   addedCosmeticShopItems?: CosmeticShopItem[];
   purchasedCosmetics?: UserCosmeticShopPurchases[];
+  createdCosmetics?: Cosmetic[];
   donationGoals?: DonationGoal[];
   donations?: Donation[];
   collaboratingOn?: EntityCollaborator[];
@@ -916,7 +919,7 @@ export interface ModelVersion {
   usageControl: ModelUsageControl;
   earlyAccessTimeFrame: number;
   flags: number;
-  licensingFee: number | null;
+  licensingFee: Decimal | null;
   licensingFeeType: LicensingFeeType | null;
   licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
   licensingSourceVersionId: number | null;
@@ -2518,6 +2521,8 @@ export interface Cosmetic {
   productId: string | null;
   leaderboardId: string | null;
   leaderboardPosition: number | null;
+  createdById: number | null;
+  creator?: User | null;
   UserCosmetic?: UserCosmetic[];
   purchases?: UserCosmeticShopPurchases[];
   cosmeticShopItems?: CosmeticShopItem[];
@@ -2567,6 +2572,10 @@ export interface CosmeticShopItem {
   title: string;
   description: string | null;
   archivedAt: Date | null;
+  status: CosmeticShopItemStatus;
+  reviewedById: number | null;
+  reviewedAt: Date | null;
+  rejectionReason: string | null;
   purchases?: UserCosmeticShopPurchases[];
   sections?: CosmeticShopSectionItem[];
 }

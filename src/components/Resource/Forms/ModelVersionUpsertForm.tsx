@@ -207,7 +207,7 @@ export function ModelVersionUpsertForm({
     clipSkip: version?.clipSkip ?? null,
     useMonetization: !!version?.monetization,
     monetization: version?.monetization ?? null,
-    licensingFee: version?.licensingFee ?? 0,
+    licensingFee: Number(version?.licensingFee ?? 0),
     licensingFeeType: version?.licensingFeeType ?? null,
     licensingFeeSettlementCurrency: version?.licensingFeeSettlementCurrency ?? null,
     licensingSourceVersionId: version?.licensingSourceVersionId ?? null,
@@ -242,7 +242,7 @@ export function ModelVersionUpsertForm({
   const usageControl = form.watch('usageControl');
   const currentLicensingFee = form.watch('licensingFee') ?? 0;
   const existingSettlementCurrency = version?.licensingFeeSettlementCurrency ?? null;
-  const hasExistingLicensingFee = (version?.licensingFee ?? 0) > 0;
+  const hasExistingLicensingFee = Number(version?.licensingFee ?? 0) > 0;
   const showLicensingFeeBlock =
     !isNonCommercial &&
     (!!features.licensingFee ||
@@ -393,6 +393,7 @@ export function ModelVersionUpsertForm({
     if (version)
       form.reset({
         ...version,
+        licensingFee: Number(version.licensingFee ?? 0),
         modelId: version.modelId ?? model?.id ?? -1,
         baseModel: version.baseModel,
         skipTrainedWords: isTextualInversion
@@ -839,7 +840,7 @@ export function ModelVersionUpsertForm({
                 }
                 data={licensingRoots.map((r) => ({
                   value: String(r.id),
-                  label: `${r.modelName} — ${r.versionName} (${r.licensingFee} Buzz${
+                  label: `${r.modelName} — ${r.versionName} (${Number(r.licensingFee)} Buzz${
                     r.licensingFeeSettlementCurrency === LicensingFeeSettlementCurrency.Cash
                       ? ', cash'
                       : ''
@@ -856,7 +857,8 @@ export function ModelVersionUpsertForm({
                 description={`Charge a per-image fee for generations using this version. If this is a derivative of a base model that already charges a licensing fee, your fee is added on top of it. Set to 0 to disable. Max ${MAX_LICENSING_FEE} Buzz per image.`}
                 min={0}
                 max={MAX_LICENSING_FEE}
-                step={1}
+                step={0.01}
+                decimalScale={2}
                 leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
               />
               {showLicensingFeeSettlementCurrency && (
@@ -1100,6 +1102,9 @@ type Props = {
   onSubmit: (version?: ModelVersionUpsertInput) => void;
   children: (data: { loading: boolean; canSave: boolean }) => React.ReactNode;
   model?: Partial<ModelUpsertInput & { publishedAt: Date | null }>;
-  version?: Partial<VersionInput>;
+  // licensingFee comes off a Prisma read as a Decimal; the form coerces it to a number in defaultValues.
+  version?: Omit<Partial<VersionInput>, 'licensingFee'> & {
+    licensingFee?: number | { valueOf(): string } | null;
+  };
   afterName?: React.ReactNode;
 };

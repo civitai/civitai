@@ -4,32 +4,24 @@
  * Controls for the PolyGen (Meshy via Fal) 3D-model generation ecosystem.
  *
  * Supports two workflows:
- * - txt2model3d (process = 'textTo3D'): prompt → 3D model
- * - img2model3d (process = 'imageTo3D'): source image → 3D model
+ * - txt2model3d: prompt → 3D model
+ * - img2model3d: source image → 3D model
  *
- * Shape mirrors `ace-audio-graph.ts`: a top-level discriminator (`process`)
- * gates per-process subgraphs while shared Meshy controls (targetPolycount,
- * topology, symmetryMode, etc.) live above the discriminator so both branches
- * inherit them via the subgraph ctx.
- *
- * The corresponding handler (`polygen.handler.ts`) consumes the validated
- * snapshot and emits a `PolyGenStepTemplate` matching the schema in
- * `src/server/orchestrator/polygen/polygen.schema.ts`.
+ * Follows the standard convention (happy-horse/kling/wan): a single flat set of
+ * nodes whose per-workflow fields are gated by `when` on `workflow`, rather than
+ * an internal discriminator. The orchestrator schema
+ * (`src/server/orchestrator/polygen/polygen.schema.ts`) discriminates on
+ * `process` (textTo3D/imageTo3D), which the handler derives from `workflow`.
  */
 
 import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { seedNode, sliderNode, textNode } from './common';
+import { imagesNode, seedNode, sliderNode, textNode } from './common';
 
 // =============================================================================
 // Constants
 // =============================================================================
-
-export const polygenProcessOptions = [
-  { label: 'Text to 3D', value: 'textTo3D' as const },
-  { label: 'Image to 3D', value: 'imageTo3D' as const },
-];
 
 export const polygenTextModeOptions = [
   { label: 'Preview', value: 'preview' as const },
@@ -62,119 +54,77 @@ const polygenPolycountPresets = [
 ];
 
 // =============================================================================
-// Source image schema (image-to-3D)
-// =============================================================================
-
-/**
- * Minimal source-image shape — matches what `ImageUploadMultipleInput` emits.
- * The orchestrator submission layer extracts `.url` only; width/height ride
- * along for UI sanity (preview render) but the orchestrator only requires
- * the URL.
- */
-const polygenSourceImageSchema = z.object({
-  url: z.string(),
-  width: z.number(),
-  height: z.number(),
-});
-
-export type PolygenSourceImage = z.infer<typeof polygenSourceImageSchema>;
-
-// =============================================================================
-// Subgraph context
-// =============================================================================
-
-/** Context shape inherited by polygen process subgraphs. */
-type PolyGenProcessCtx = {
-  ecosystem: string;
-  workflow: string;
-  process: 'textTo3D' | 'imageTo3D';
-};
-
-// =============================================================================
-// Text-to-3D subgraph
-// =============================================================================
-
-const textTo3DGraph = new DataGraph<PolyGenProcessCtx, GenerationCtx>()
-  // Use the shared `textNode` factory so the prompt's meta shape matches the
-  // single-source-of-truth in `common.ts` (`{ required, targetKey, snippets,
-  // triggerWords, placeholder, info }`). This keeps the meta union
-  // compatible with the existing prompt Controller in GenerationForm.tsx.
-  .node(
-    'prompt',
-    textNode({
-      name: 'prompt',
-      required: true,
-      emptyMessage: 'Prompt is required',
-      maxLength: POLYGEN_MAX_PROMPT_LENGTH,
-      placeholder: 'A low-poly fantasy treasure chest…',
-    })
-  )
-  // Named `polygenMode` (not `mode`) to avoid colliding with the standard
-  // `mode` Radio.Group Controller in `GenerationForm.tsx` (Kling
-  // standard/professional). The handler maps this back to the schema's
-  // `mode` field before forwarding to `toMeshyPolyGenInput`.
-  .node('polygenMode', {
-    input: z.enum(['preview', 'full']).optional(),
-    output: z.enum(['preview', 'full']),
-    defaultValue: 'full' as const,
-    meta: { options: polygenTextModeOptions },
-  })
-  .node('enablePromptExpansion', {
-    input: z.boolean().optional(),
-    output: z.boolean(),
-    defaultValue: false,
-  });
-
-// =============================================================================
-// Image-to-3D subgraph
-// =============================================================================
-
-const imageTo3DGraph = new DataGraph<PolyGenProcessCtx, GenerationCtx>()
-  .node('sourceImage', {
-    input: polygenSourceImageSchema.optional(),
-    output: polygenSourceImageSchema,
-    defaultValue: undefined,
-    meta: {
-      required: true,
-    },
-  })
-  .node('shouldTexture', {
-    input: z.boolean().optional(),
-    output: z.boolean(),
-    defaultValue: true,
-  });
-
-// =============================================================================
-// PolyGen Graph (top-level)
+// PolyGen Graph
 // =============================================================================
 
 type PolyGenCtx = { ecosystem: string; workflow: string };
 
 export const polyGenGraph = new DataGraph<PolyGenCtx, GenerationCtx>()
-  // Process is driven entirely by `workflow` — the V2 form collapses
-  // "workflow" and "process" into the single Text-to-3D / Image-to-3D
-  // toggle at the top of the panel (mirrors the Image segment's
-  // txt2img/img2img toggle). The `transform` re-syncs process whenever
-  // workflow changes so the user can't get them out-of-step, and the
-  // process Controller is intentionally NOT rendered in the form.
+  // --- Text-to-3D fields (hidden for img2model3d) ---
   .node(
-    'process',
-    (ctx) => {
-      const processForWorkflow = ctx.workflow === 'img2model3d' ? 'imageTo3D' : 'textTo3D';
-      return {
-        input: z.enum(['textTo3D', 'imageTo3D']).optional(),
-        output: z.enum(['textTo3D', 'imageTo3D']),
-        defaultValue: processForWorkflow as 'textTo3D' | 'imageTo3D',
-        meta: { options: polygenProcessOptions },
-        // Force process to follow workflow on workflow-change so the
-        // graph stays consistent with whichever segment is active.
-        transform: () => processForWorkflow as 'textTo3D' | 'imageTo3D',
-      };
-    },
+    'prompt',
+    (ctx) => ({
+      ...textNode({
+        name: 'prompt',
+        required: true,
+        emptyMessage: 'Prompt is required',
+        maxLength: POLYGEN_MAX_PROMPT_LENGTH,
+        placeholder: 'A low-poly fantasy treasure chest…',
+      }),
+      when: ctx.workflow.startsWith('txt'),
+    }),
+    ['workflow']
+  )
+  // Named `polygenMode` (not `mode`) to avoid colliding with the standard `mode`
+  // Controller in GenerationForm.tsx; the handler maps it back to `mode`.
+  .node(
+    'polygenMode',
+    (ctx) => ({
+      input: z.enum(['preview', 'full']).optional(),
+      output: z.enum(['preview', 'full']),
+      defaultValue: 'full' as const,
+      meta: { options: polygenTextModeOptions },
+      when: ctx.workflow.startsWith('txt'),
+    }),
+    ['workflow']
+  )
+  .node(
+    'enablePromptExpansion',
+    (ctx) => ({
+      input: z.boolean().optional(),
+      output: z.boolean(),
+      defaultValue: false,
+      when: ctx.workflow.startsWith('txt'),
+    }),
     ['workflow']
   )
 
-  // Shared Meshy controls — both processes consume these.
+  // --- Image-to-3D fields (hidden for txt2model3d) ---
+  .node(
+    'images',
+    (ctx) => ({
+      ...imagesNode({
+        min: 1,
+        max: 1,
+        label: 'Starting image',
+        description: 'The reference Meshy will use to build the 3D mesh',
+      }),
+      when: !ctx.workflow.startsWith('txt'),
+    }),
+    ['workflow']
+  )
+  .node(
+    'shouldTexture',
+    (ctx) => ({
+      input: z.boolean().optional(),
+      output: z.boolean(),
+      defaultValue: true,
+      when: !ctx.workflow.startsWith('txt'),
+    }),
+    ['workflow']
+  )
+
+  // --- Shared Meshy controls (both workflows) ---
   .node(
     'targetPolycount',
     () =>
@@ -234,13 +184,7 @@ export const polyGenGraph = new DataGraph<PolyGenCtx, GenerationCtx>()
   })
   // Meshy accepts a 32-bit signed int seed; we keep it optional so the
   // workflow handler can randomize when omitted.
-  .node('seed', seedNode())
-
-  // Discriminate per process. Per-process fields live in the subgraphs above.
-  .discriminator('process', {
-    textTo3D: textTo3DGraph,
-    imageTo3D: imageTo3DGraph,
-  });
+  .node('seed', seedNode());
 
 export type PolyGenGraphCtx = ReturnType<typeof polyGenGraph.init>;
 

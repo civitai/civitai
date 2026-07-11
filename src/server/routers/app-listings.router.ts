@@ -605,6 +605,7 @@ export const appListingsRouter = router({
           publishRequestId: input.publishRequestId,
           reviewerUserId: ctx.user.id,
           approvalNotes: input.approvalNotes,
+          contentRating: input.contentRating,
         });
       } catch (err) {
         throw mapOffsiteError(err);

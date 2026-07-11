@@ -14,7 +14,7 @@ import { isDefined } from '~/utils/type-guards';
 import { enqueueImageIngestion } from '~/server/services/image.service';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { getUserBanDetails } from '~/utils/user-helpers';
-import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import {
   getUserContentOverview as getUserContentOverviewFromCache,
   getUserContentOverviewPublic as getUserContentOverviewPublicFromCache,
@@ -36,7 +36,7 @@ export const getUserContentOverview = async ({
   variant?: UserContentOverviewVariant;
 }) => {
   if (!username && !userId) {
-    throw new Error('Either username or id must be provided');
+    throwBadRequestError('Either username or id must be provided');
   }
 
   if (!userId) {
@@ -77,7 +77,7 @@ export const getUserWithProfile = async ({
   // Use write to get the latest most accurate user here since we'll need to create the profile
   // if it doesn't exist.
   if (!username && !id) {
-    throw new Error('Either username or id must be provided');
+    throwBadRequestError('Either username or id must be provided');
   }
   const getUser = async () => {
     const user = await dbClient.user.findUniqueOrThrow({
@@ -86,7 +86,13 @@ export const getUserWithProfile = async ({
         username,
         deletedAt: null,
       },
-      select: { ...userWithProfileSelect, bannedAt: true, meta: true, publicSettings: true },
+      select: {
+        ...userWithProfileSelect,
+        bannedAt: true,
+        meta: true,
+        publicSettings: true,
+        settings: true,
+      },
     });
 
     // Becuase this is a view, it might be slow and we prefer to get the stats in a separate query
@@ -115,6 +121,11 @@ export const getUserWithProfile = async ({
     return {
       ...user,
       meta: undefined,
+      // Never leak the private settings blob; expose only whether the shop is public.
+      settings: undefined,
+      creatorShopEnabled:
+        (user.settings as { creatorShop?: { enabled?: boolean } } | null)?.creatorShop?.enabled ===
+        true,
       ...getUserBanDetails({
         meta: userMeta,
         isModerator: isModerator ?? false,

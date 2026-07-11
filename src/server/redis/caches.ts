@@ -8,7 +8,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import { REDIS_KEYS } from '~/server/redis/client';
+import { REDIS_KEYS, redis, type RedisKeyTemplateCache } from '~/server/redis/client';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
@@ -386,7 +386,7 @@ export const modelVersionAccessCache = createCachedObject<ModelVersionAccessCach
 
 type TagLookup = {
   id: number;
-  name: string | null;
+  name: string;
   type: TagType;
   nsfwLevel: NsfwLevel;
   unlisted?: true;
@@ -412,6 +412,51 @@ export const tagCache = createCachedObject<TagLookup>({
   },
   ttl: CacheTTL.day,
 });
+
+export const tagCacheByName = {
+  async fetch(names: string[]): Promise<{ found: Map<string, TagLookup>; missing: string[] }> {
+    if (!names.length) return { found: new Map(), missing: [] };
+    const keys = names.map(
+      (name) => `${REDIS_KEYS.CACHES.BASIC_TAGS_BY_NAME}:${name}` as RedisKeyTemplateCache
+    );
+    const cached = await redis.packed.mGet<TagLookup>(keys);
+
+    const found = new Map<string, TagLookup>();
+    const missing: string[] = [];
+
+    for (let i = 0; i < names.length; i++) {
+      const name = names[i];
+      const data = cached[i];
+      if (data) {
+        found.set(name, data);
+      } else {
+        missing.push(name);
+      }
+    }
+
+    return { found, missing };
+  },
+
+  async setMany(entries: Array<{ key: string; data: TagLookup }>) {
+    if (entries.length === 0) return;
+    // packed.mSet is intentionally disabled in client.ts (CROSSSLOT / format complexity),
+    // so we fan out individual SETs in parallel. Tag writes are infrequent (cache-miss
+    // backfill only), so the extra roundtrips are acceptable.
+    await Promise.all(
+      entries.map(({ key, data }) =>
+        redis.packed.set(
+          `${REDIS_KEYS.CACHES.BASIC_TAGS_BY_NAME}:${key}`,
+          data,
+          { EX: CacheTTL.day }
+        )
+      )
+    );
+  },
+
+  async bust(name: string) {
+    await redis.del(`${REDIS_KEYS.CACHES.BASIC_TAGS_BY_NAME}:${name}`);
+  },
+};
 
 type ModelVersionDetails = {
   id: number;

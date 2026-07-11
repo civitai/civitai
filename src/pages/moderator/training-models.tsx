@@ -304,7 +304,7 @@ export default function TrainingModerationFeedPage() {
     requestedRef.current = false;
 
     try {
-      const zip = await fetchBlob(`/api/download/training-data/${versionId}`);
+      const zip = await fetchBlob(`/api/download/training-data/${versionId}`, 300_000);
       if (zip) {
         const zipReader = await getJSZip();
         const zData = await zipReader.loadAsync(zip);

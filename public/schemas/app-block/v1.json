@@ -64,7 +64,9 @@
           "block:settings:write",
           "social:tip:self",
           "apps:storage:read",
-          "apps:storage:write"
+          "apps:storage:write",
+          "apps:storage:shared:read",
+          "apps:storage:shared:write"
         ]
       }
     },

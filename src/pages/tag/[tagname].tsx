@@ -19,6 +19,14 @@ export const getServerSideProps = createServerSideProps({
   useSSG: true,
   resolver: async ({ ctx, ssg }) => {
     const tagname = ctx.query.tagname as string;
+
+    if (tagname) {
+      const { getBlockedBrowsingTags } = await import('~/server/services/system-cache');
+      const blocked = await getBlockedBrowsingTags();
+      const normalized = tagname.toLowerCase();
+      if (blocked.some((t) => t.name.toLowerCase() === normalized)) return { notFound: true };
+    }
+
     if (tagname) await ssg?.tag.getTagWithModelCount.prefetch({ name: tagname });
 
     let seoData: TagPageSeoData = { count: 0, models: [] };

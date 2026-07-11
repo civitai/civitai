@@ -101,7 +101,11 @@ export const auditPromptEnriched = (
     prompt.length > MAX_AUDIT_PROMPT_LENGTH ||
     (negativePrompt != null && negativePrompt.length > MAX_AUDIT_PROMPT_LENGTH)
   ) {
-    return { blockedFor: ['Prompt exceeds the maximum allowed length'], triggers: [], success: false };
+    return {
+      blockedFor: ['Prompt exceeds the maximum allowed length'],
+      triggers: [],
+      success: false,
+    };
   }
   prompt = capAuditLength(prompt);
   negativePrompt = capAuditLength(negativePrompt);

@@ -41,6 +41,7 @@ import {
   throwBadRequestError,
   throwNotFoundError,
   throwRateLimitError,
+  throwServiceUnavailableError,
   withRetries,
 } from '~/server/utils/errorHandling';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
@@ -792,7 +793,7 @@ async function assertModelOwnership(modelId: number, userId: number) {
   }
 }
 
-function toOrchestratorError(error: unknown): never {
+export function toOrchestratorError(error: unknown): never {
   const status =
     typeof error === 'object' && error !== null && 'status' in error
       ? (error as { status?: number }).status
@@ -807,6 +808,23 @@ function toOrchestratorError(error: unknown): never {
     case 429:
       throw throwRateLimitError(messages);
     default:
+      // A genuine upstream 5xx (orchestrator HTTP 500/502/503/504) OR a status-less
+      // network/timeout failure (no HTTP status — the TCP/DNS/TLS layer failed
+      // before any response) is a TRANSIENT dependency outage, NOT this app's own
+      // fault. Mirror #2978's orchestrator submit-path fix: surface it as a
+      // retry-able 503 SERVICE_UNAVAILABLE with the ORIGINAL error preserved as
+      // `cause`, instead of a plain `Error` that tRPC wraps into a generic
+      // INTERNAL_SERVER_ERROR (500) with an EMPTY cause chain. That masked-cause 500
+      // is exactly what surfaced ~11×/2h on training.submitAutoLabelWorkflow: a
+      // transient orchestrator brownout mis-counted against our 500 SLO AND
+      // non-retryable to the client. `toOrchestratorError` is only reached on a
+      // `!data` result from an orchestrator round-trip (getConsumerBlobUploadUrl /
+      // clientSubmitWorkflow / clientGetWorkflow), so a local/logic bug thrown
+      // BEFORE the call never reaches here — only real upstream failures do.
+      if (status === undefined || status >= 500)
+        throw throwServiceUnavailableError(messages ?? null, error);
+      // Any OTHER unexpected non-5xx status is a real, non-transient anomaly — keep
+      // it a hard error so a genuine bug is NOT silently masked as a retry-able 503.
       throw new Error(messages || 'Orchestrator request failed');
   }
 }

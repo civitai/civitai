@@ -14,11 +14,13 @@ import {
 } from '~/shared/utils/prisma/enums';
 import {
   BlockedReason,
+  BlocklistType,
   NotificationCategory,
   NsfwLevel,
   SearchIndexUpdateQueueAction,
   SignalMessages,
 } from '~/server/common/enums';
+import { stripBenignPhrases } from '~/server/services/blocklist.service';
 import {
   auditMetaData,
   getTagsFromPrompt,
@@ -27,7 +29,6 @@ import {
 } from '~/utils/metadata/audit';
 import { getComputedTags, getConditionalTagsForReview } from '~/server/utils/tag-rules';
 import { getTagRules } from '~/server/services/system-cache';
-import { TtlCache } from '~/server/utils/ttl-cache';
 import { Prisma } from '@prisma/client';
 import { insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import { isDefined } from '~/utils/type-guards';
@@ -38,7 +39,7 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { createImageTagsForReview } from '~/server/services/image-review.service';
-import { tagIdsForImagesCache } from '~/server/redis/caches';
+import { tagIdsForImagesCache, tagCacheByName } from '~/server/redis/caches';
 import type { MediaMetadata } from '~/server/schema/media.schema';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
@@ -114,8 +115,6 @@ type ProcessedTag = {
   nsfwLevel: number;
   type: TagType;
 };
-
-const tagCache = new TtlCache<TagWithId>({});
 
 export async function processImageScanResult(req: NextApiRequest) {
   const event: WorkflowEvent = req.body;
@@ -570,14 +569,14 @@ async function processTags({
   }
   const deduped: NormalizedTag[] = Object.values(tagMap);
 
-  const { found, missing } = tagCache.getMany(deduped.map((x) => x.name));
+  const { found, missing } = await tagCacheByName.fetch(deduped.map((x) => x.name));
   let queriedTags: TagWithId[] = [];
   if (missing.length > 0) {
     queriedTags = await dbWrite.tag.findMany({
       where: { name: { in: missing } },
       select: { id: true, name: true, nsfwLevel: true, type: true },
     });
-    tagCache.setMany(queriedTags.map((data) => ({ key: data.name, data })));
+    await tagCacheByName.setMany(queriedTags.map((data) => ({ key: data.name, data })));
   }
   const queriedNames = new Set(queriedTags.map((t) => t.name));
   const tagsToCreate = missing.filter((name) => !queriedNames.has(name));
@@ -594,7 +593,7 @@ async function processTags({
       ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
       RETURNING id, name, "nsfwLevel", type
     `;
-    tagCache.setMany(createdTags.map((data) => ({ key: data.name, data })));
+    await tagCacheByName.setMany(createdTags.map((data) => ({ key: data.name, data })));
   }
 
   const allTags = [...found.values(), ...queriedTags, ...createdTags]
@@ -769,8 +768,14 @@ async function auditScanResults(args: {
   prompt?: string;
   negativePrompt?: string;
 }) {
-  const prompt = normalizeText(args.prompt);
-  const negativePrompt = normalizeText(args.negativePrompt);
+  // Moderator-managed benign phrases (proper nouns / technical terms that coincidentally
+  // contain a detection token) are blanked up front so every downstream check — minor,
+  // poi, blockedFor — sees the same cleaned text. A benign phrase is innocent content, so
+  // it shouldn't feed any detector.
+  const [prompt, negativePrompt] = await Promise.all([
+    stripBenignPhrases(normalizeText(args.prompt), BlocklistType.PromptBenignPhrase),
+    stripBenignPhrases(normalizeText(args.negativePrompt), BlocklistType.NegativeBenignPhrase),
+  ]);
   const tags = await dbWrite.$queryRaw<
     { id: number; name: string; type: TagType; nsfwLevel: number; confidence: number }[]
   >`

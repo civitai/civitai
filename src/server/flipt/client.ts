@@ -54,6 +54,10 @@ export enum FLIPT_FEATURE_FLAGS {
   HIGH_REPLICATION_LAG_MODE = 'high-replication-lag-mode',
   LICENSING_FEE = 'licensing-fee',
   WILDCARDS = 'wildcards',
+  // Global flag for the anti-hang timeouts on server request-path fetches,
+  // DEFAULT-OFF (feature ships dormant; the timeout applies only when this is
+  // explicitly ON). Flip ON to activate. See fetchTimeoutSignal.
+  HOT_PATH_FETCH_TIMEOUTS = 'hot-path-fetch-timeouts',
   // Lets non-User-source challenges (daily/mod/system) use creator-defined judgingCategories
   // instead of the fixed theme/wittiness/humor/aesthetic rubric. Default OFF per environment —
   // flip on once an environment's daily challenge is ready to run category-based judging.

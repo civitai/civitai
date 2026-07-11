@@ -19,6 +19,12 @@ const civitaiWorkspacePkgs = [
   // src/server/common/enums.ts; without this alias Vitest can't resolve it and
   // the whole server suite cascades (enums.ts → BlockRegistry undefined → …).
   'notifications',
+  // `@civitai/buzz` (packages/civitai-buzz) is imported by
+  // src/shared/constants/buzz.constants.ts + src/server/services/buzz.service.ts —
+  // both pulled in transitively by blocks.router.ts and model-version.service.ts.
+  // Same story as notifications: not symlinked into root node_modules, so without
+  // this alias every suite touching the buzz chain fails to collect.
+  'buzz',
 ];
 const civitaiAlias = civitaiWorkspacePkgs.flatMap((p) => {
   const src = path.resolve(__dirname, `packages/civitai-${p}/src`).replace(/\\/g, '/');

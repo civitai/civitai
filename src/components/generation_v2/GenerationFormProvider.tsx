@@ -27,6 +27,7 @@ import {
   getBaseModelsByEcosystemId,
   ecosystemGroups,
   getEcosystemGroup,
+  MODEL3D_ECOSYSTEM_KEYS,
 } from '~/shared/constants/basemodel.constants';
 import { VID_QUANTITY_BY_TIER } from '~/shared/constants/generation.constants';
 import {
@@ -319,6 +320,15 @@ function InnerProvider({
       const storedWorkflow = globalValues.workflow as string | undefined;
       if (!storedWorkflow) return;
 
+      // 3D-model workflows pick their (resource-less) ecosystem explicitly via
+      // the inline picker; there's no silent auto-correction to surface. They're
+      // also output-type `model3d`, which the image/video heuristic below
+      // misclassifies as `image` — that reads the wrong stored ecosystem scope,
+      // sees a guaranteed mismatch vs the resolved 3D ecosystem, and (now that
+      // img2model3d exposes multiple ecosystems) spuriously fires the
+      // compatibility modal on panel open. Skip 3D entirely.
+      if (workflowConfigByKey.get(storedWorkflow)?.category === 'model3d') return;
+
       // Determine the output type from the stored workflow key prefix
       // (can't use getOutputTypeForWorkflow — it falls back to 'image' for unknown workflows)
       const storedOutputType = storedWorkflow.includes('2vid') ? 'video' : 'image';
@@ -428,20 +438,29 @@ function InnerProvider({
         // resolution quirk that has previously surfaced the ecosystem
         // picker on remix.
         const isPolyGenRemix =
-          remixEcosystemKey === 'PolyGen' ||
+          (!!remixEcosystemKey && MODEL3D_ECOSYSTEM_KEYS.has(remixEcosystemKey)) ||
           incomingWorkflow === 'txt2model3d' ||
           incomingWorkflow === 'img2model3d';
 
+        // The 3D ecosystem to land on — preserve the model (Meshy/Tripo/
+        // Hunyuan3D) the source was generated with. Falls back to PolyGen
+        // (Meshy) for legacy items whose metadata predates the model selector.
+        const model3dEcosystem: 'PolyGen' | 'Tripo' | 'Hunyuan3D' =
+          remixEcosystemKey && MODEL3D_ECOSYSTEM_KEYS.has(remixEcosystemKey)
+            ? (remixEcosystemKey as 'PolyGen' | 'Tripo' | 'Hunyuan3D')
+            : 'PolyGen';
+
         let resolvedWorkflow: string;
         if (isPolyGenRemix) {
-          // PolyGen path: keep an incoming `txt2model3d` / `img2model3d`
-          // verbatim, otherwise derive from `process` (which the polyGen
-          // graph stores alongside `workflow`). Falls back to `txt2model3d`
-          // so the user lands on the form even if both fields were lost.
+          // 3D path: keep an incoming `txt2model3d` / `img2model3d` verbatim.
+          // Tripo/Hunyuan3D are image-to-3D only; only PolyGen (Meshy) has a
+          // text branch, so consult `process` for it. Falls back to a sensible
+          // default so the user lands on the form even if both fields were lost.
           resolvedWorkflow =
             incomingWorkflow === 'txt2model3d' || incomingWorkflow === 'img2model3d'
               ? incomingWorkflow
-              : paramsWithoutOutputSettings.process === 'imageTo3D'
+              : model3dEcosystem !== 'PolyGen' ||
+                paramsWithoutOutputSettings.process === 'imageTo3D'
               ? 'img2model3d'
               : 'txt2model3d';
         } else if (incomingWorkflow && workflowConfigByKey.has(incomingWorkflow)) {
@@ -480,7 +499,7 @@ function InnerProvider({
         // doesn't snap back to whatever the discriminator defaulted to.
         const remixValues = {
           ...paramsWithoutOutputSettings,
-          ...(isPolyGenRemix ? { ecosystem: 'PolyGen' } : {}),
+          ...(isPolyGenRemix ? { ecosystem: model3dEcosystem } : {}),
           workflow: resolvedWorkflow,
           model: split.model,
           upscaler: split.upscaler,
@@ -506,10 +525,11 @@ function InnerProvider({
         } else {
           // Compatible — apply immediately.
           graph.reset({ exclude: ['quantity', 'priority', 'outputFormat'] });
-          // PolyGen lives in a discriminated subgraph (activates only when
-          // `ecosystem: 'PolyGen'`), and its child nodes — `polygenMode`,
-          // `targetPolycount`, `sourceImage`, `enableRigging`, etc. — only
-          // exist while that subgraph is active. A single `graph.set` with
+          // Each 3D ecosystem lives in its own discriminated subgraph (activates
+          // only when `ecosystem` matches, e.g. `PolyGen`/`Tripo`/`Hunyuan3D`),
+          // and its child nodes — `images`, `targetPolycount`, `texture`,
+          // `enableRigging`, etc. — only exist while that subgraph is active. A
+          // single `graph.set` with
           // the full blob can drop those child keys because they're
           // evaluated before the discriminator has switched, so the remix
           // lands the user on the default ecosystem with an empty form
@@ -524,7 +544,7 @@ function InnerProvider({
             (resolvedWorkflow === 'txt2model3d' || resolvedWorkflow === 'img2model3d')
           ) {
             graph.set({
-              ecosystem: 'PolyGen',
+              ecosystem: model3dEcosystem,
               workflow: resolvedWorkflow,
             });
           }

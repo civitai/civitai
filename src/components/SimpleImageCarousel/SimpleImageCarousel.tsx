@@ -1,7 +1,7 @@
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { CSSProperties, ReactNode } from 'react';
-import { createContext, useCallback, useContext, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 
 type SimpleCarouselContextType = {
   currentIndex: number;
@@ -30,6 +30,12 @@ type SimpleImageCarouselProps = {
   loop?: boolean;
   total: number;
   initialIndex?: number;
+  /**
+   * Fired (from a commit effect, not during render) whenever the active slide
+   * changes — including the initial mount. Used by the gallery's lazy per-post
+   * carousel to prefetch the tail on approach.
+   */
+  onIndexChange?: (index: number) => void;
 };
 
 export function SimpleImageCarousel({
@@ -39,8 +45,18 @@ export function SimpleImageCarousel({
   loop = false,
   total,
   initialIndex = 0,
+  onIndexChange,
 }: SimpleImageCarouselProps) {
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
+
+  // Notify on index change (and initial mount) from an effect so callers can
+  // trigger side effects (a tail fetch) without violating render purity. Ref-held
+  // so a changing `onIndexChange` identity doesn't refire for the same index.
+  const onIndexChangeRef = useRef(onIndexChange);
+  onIndexChangeRef.current = onIndexChange;
+  useEffect(() => {
+    onIndexChangeRef.current?.(currentIndex);
+  }, [currentIndex]);
 
   const canScrollNext = loop || currentIndex < total - 1;
   const canScrollPrev = loop || currentIndex > 0;

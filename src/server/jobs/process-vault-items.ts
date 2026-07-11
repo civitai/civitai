@@ -69,7 +69,7 @@ export const processVaultItems = createJob('process-vault-items', '*/10 * * * *'
         images.map(async (img, idx) => {
           try {
             const imageUrl = getEdgeUrl(img.url, { type: img.type });
-            const blob = await fetchBlob(imageUrl);
+            const blob = await fetchBlob(imageUrl, 300_000);
             const filename = img.name ?? imageUrl.split('/').pop();
 
             if (filename && blob) {

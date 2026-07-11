@@ -409,7 +409,7 @@ export const upsertModelVersionHandler = async ({
             select: { licensingFee: true, licensingFeeSettlementCurrency: true },
           })
         : null;
-      const hadExistingFee = !!existing?.licensingFee && existing.licensingFee > 0;
+      const hadExistingFee = existing?.licensingFee != null && Number(existing.licensingFee) > 0;
       if (!ctx.features.licensingFee && !ctx.user.isModerator && !hadExistingFee) {
         throw throwBadRequestError('License fees are not enabled for your account.');
       }
@@ -517,9 +517,15 @@ export const upsertModelVersionHandler = async ({
   }
 };
 
-export const deleteModelVersionHandler = async ({ input }: { input: GetByIdInput }) => {
+export const deleteModelVersionHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: ProtectedContext;
+}) => {
   try {
-    const version = await deleteVersionById(input);
+    const version = await deleteVersionById({ ...input, isModerator: ctx.user.isModerator });
     if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
 
     await updateModelEarlyAccessDeadline({ id: version.modelId }).catch((e) => {

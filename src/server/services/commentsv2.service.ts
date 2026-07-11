@@ -461,7 +461,7 @@ async function fetchCommentsPaginated({
       AND c."pinnedAt" IS NULL
       ${
         excludedUserIds.length
-          ? Prisma.sql`AND c."userId" NOT IN (${Prisma.join(excludedUserIds)})`
+          ? Prisma.sql`AND c."userId" != ALL(${excludedUserIds}::int[])`
           : Prisma.empty
       }
       AND c.hidden = ${hidden}

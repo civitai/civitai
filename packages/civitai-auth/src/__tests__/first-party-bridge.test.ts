@@ -57,6 +57,22 @@ describe('buildAuthorizeRedirect', () => {
     expect(setCookie).toContain('Path=/api/auth/callback');
   });
 
+  it('sets SameSite=None; Secure so the cookie survives the cross-site OAuth round-trip', () => {
+    // https issuer → secure → the cross-registrable-domain (.red) return needs None; Lax was dropped there.
+    const { setCookie } = buildAuthorizeRedirect({ selfOrigin: SELF, returnUrl: '/x' });
+    expect(setCookie).toContain('SameSite=None');
+    expect(setCookie).toContain('Secure');
+    expect(setCookie).not.toContain('SameSite=Lax');
+  });
+
+  it('falls back to SameSite=Lax (no Secure) when the cookie is not Secure (dev/http)', () => {
+    // None REQUIRES Secure — a None cookie without Secure is rejected by browsers, so http/dev uses Lax.
+    const { setCookie } = buildAuthorizeRedirect({ selfOrigin: SELF, returnUrl: '/x', secure: false });
+    expect(setCookie).toContain('SameSite=Lax');
+    expect(setCookie).not.toContain('SameSite=None');
+    expect(setCookie).not.toContain('Secure');
+  });
+
   it('collapses an unsafe returnUrl to /', () => {
     const { setCookie } = buildAuthorizeRedirect({
       selfOrigin: SELF,

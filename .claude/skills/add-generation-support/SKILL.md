@@ -312,6 +312,14 @@ Use this to avoid combinatorial rule duplication, but **be aware**: adding a rul
 
 ## Gotchas
 
+### Always use the `images` node — never `sourceImage` or a singular `image` node
+
+**Uniformity decision:** every image input in a generation graph uses the shared `imagesNode` (`.node('images', imagesNode({ min, max }))`), even when a workflow accepts exactly one image — cap it with `max: 1` instead of introducing a singular `sourceImage` (or `image`) node. Handlers read `data.images[0]`.
+
+- Single-image example: `.node('images', imagesNode({ min: 1, max: 1 }))` (see `image-preprocess-graph.ts`).
+- `normalizeInput` (in `orchestration-new.service.ts`) folds any legacy `sourceImage` into `images[]`, so older stored/remixed data still resolves — do **not** reintroduce or depend on `sourceImage`.
+- Exception: a per-entry `image` field *inside a list node* (controlnet entries, Krea2 style references — each `{ image, strength }`) is a different shape and stays `image`; those are not top-level source images.
+
 ### Don't use `.effect()` to reset slider values across variants
 
 Tempting pattern (DO NOT use):

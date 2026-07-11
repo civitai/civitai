@@ -7,12 +7,14 @@ import { styleTags, tagsNeedingReview, tagsToIgnore } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
 import {
   BlockedReason,
+  BlocklistType,
   ImageScanType,
   NotificationCategory,
   NsfwLevel,
   SearchIndexUpdateQueueAction,
   SignalMessages,
 } from '~/server/common/enums';
+import { stripBenignPhrases } from '~/server/services/blocklist.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getExplainSql } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
@@ -65,8 +67,6 @@ import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import type { NextApiRequest } from 'next';
 
 // const REQUIRED_SCANS = 2;
-
-const localTagCache: Record<string, { id: number; blocked?: true; ignored?: true }> = {};
 
 enum Status {
   Success = 0,
@@ -544,6 +544,8 @@ async function getTagsFromIncomingTags({
   tags: BodyProps['tags'];
   source: BodyProps['source'];
 }) {
+  const localTagCache: Record<string, { id: number; blocked?: true; ignored?: true }> = {};
+
   if (!incomingTags) {
     await logToAxiom({
       type: 'image-scan-result',
@@ -911,8 +913,19 @@ async function processScanResult({
 
 type AuditImageScanResultsReturn = AsyncReturnType<typeof auditImageScanResults>;
 async function auditImageScanResults({ image }: { image: GetImageReturn }) {
-  const prompt = normalizeText(image.meta?.['prompt'] as string | undefined);
-  const negativePrompt = normalizeText(image.meta?.['negativePrompt'] as string | undefined);
+  // Moderator-managed benign phrases (proper nouns / technical terms that coincidentally
+  // contain a detection token) are blanked up front so every downstream check — minor,
+  // poi, blockedFor — sees the same cleaned text.
+  const [prompt, negativePrompt] = await Promise.all([
+    stripBenignPhrases(
+      normalizeText(image.meta?.['prompt'] as string | undefined),
+      BlocklistType.PromptBenignPhrase
+    ),
+    stripBenignPhrases(
+      normalizeText(image.meta?.['negativePrompt'] as string | undefined),
+      BlocklistType.NegativeBenignPhrase
+    ),
+  ]);
 
   const tagsFromTagsOnImageDetails = await dbWrite.$queryRaw<
     { id: number; name: string; nsfwLevel: number; confidence: number }[]

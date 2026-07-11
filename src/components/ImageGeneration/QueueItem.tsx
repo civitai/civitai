@@ -102,6 +102,13 @@ const LONG_DELAY_TIME = 5; // minutes
 const EXPIRY_TIME = 10; // minutes
 const delayTimeouts = new Map<string, NodeJS.Timeout>();
 
+/** 3D ecosystem key → user-facing model name shown on the queue card. */
+const POLYGEN_ECOSYSTEM_MODEL_LABELS: Record<string, string> = {
+  PolyGen: 'Meshy',
+  Tripo: 'Tripo',
+  Hunyuan3D: 'Hunyuan3D',
+};
+
 export function QueueItem({
   request,
   id,
@@ -187,17 +194,23 @@ export function QueueItem({
     // metadata for source-lineage cases.
     const replayParams = request.params;
     const isTxt2Img = replayParams?.workflow === 'txt2img';
-    // PolyGen (3D Models) has no model selector — pin the ecosystem so the
-    // form's discriminator activates the polyGen subgraph (auto-hiding the
-    // checkpoint picker via Controller's null return) and lands the user
-    // directly on the 3D Models segment with all params pre-filled.
+    // 3D Models: pin the ecosystem so the form's discriminator activates the
+    // matching subgraph (auto-hiding the checkpoint picker via Controller's
+    // null return) and lands the user on the 3D Models segment with all params
+    // pre-filled and the SAME model (Meshy/Tripo/Hunyuan3D) they generated
+    // with. The ecosystem is carried in the params snapshot; fall back to
+    // PolyGen (Meshy) for legacy items generated before the model selector.
     const isPolyGenReplay = request.steps.some((s) => s.$type === 'polyGen');
+    const replayEcosystem = (replayParams?.ecosystem as string | undefined) ?? 'PolyGen';
     const polyGenOverrides = isPolyGenReplay
       ? {
-          ecosystem: 'PolyGen',
+          ecosystem: replayEcosystem,
           workflow:
             (replayParams?.workflow as string | undefined) ??
-            (request.steps.some(
+            // Tripo/Hunyuan3D are image-to-3D only; only PolyGen (Meshy) has a
+            // text-to-3D branch, so consult its `process` for those items.
+            (replayEcosystem !== 'PolyGen' ||
+            request.steps.some(
               (s) => s.$type === 'polyGen' && (s.params as any)?.process === 'imageTo3D'
             )
               ? 'img2model3d'
@@ -264,6 +277,13 @@ export function QueueItem({
       ? '3D Model'
       : null;
 
+  // The model (Meshy/Tripo/Hunyuan3D) that generated the mesh. Derived from the
+  // ecosystem carried in the params snapshot; legacy items predate the model
+  // selector, so any 3D item without an ecosystem is Meshy (PolyGen).
+  const polyGenModelLabel = isPolyGen
+    ? POLYGEN_ECOSYSTEM_MODEL_LABELS[params.ecosystem as string] ?? 'Meshy'
+    : null;
+
   const engine = params.engine as string | undefined;
   const version = params.version as string | undefined;
 
@@ -322,6 +342,16 @@ export function QueueItem({
                   classNames={{ label: 'overflow-hidden' }}
                 >
                   {polyGenChipLabel}
+                </Badge>
+              )}
+              {polyGenModelLabel && (
+                <Badge
+                  radius="sm"
+                  color="violet"
+                  size="sm"
+                  classNames={{ label: 'overflow-hidden' }}
+                >
+                  {polyGenModelLabel}
                 </Badge>
               )}
               {engine && (
