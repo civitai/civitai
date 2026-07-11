@@ -8,10 +8,18 @@ import { trpcVanilla } from '~/utils/trpc';
 /**
  * Batched dataloader for engagement membership (PR2). Components register the
  * model ids currently on screen; a module-level batcher coalesces every id
- * requested within one microtask, drops the ones already known to the store,
- * chunks the remainder to the endpoint's ≤200 cap, and issues ONE
+ * requested within a short debounce WINDOW, drops the ones already known to the
+ * store, chunks the remainder to the endpoint's ≤200 cap, and issues ONE
  * `user.getEngagedModelsByIds` query per chunk — folding the result back into
  * the store. Classic DataLoader-in-React.
+ *
+ * The window is anchored at the FIRST pending id and does NOT reset on later
+ * ids (the `scheduled` flag blocks re-scheduling until `flush` runs), so under
+ * continuous scrolling the batcher still flushes every ~80ms — bounded latency,
+ * no starvation. Widening from the original single-microtask coalesce to ~80ms
+ * folds ids that arrive across many render ticks / scroll frames into a single
+ * request, cutting the number of `user.getEngagedModelsByIds` calls (and the
+ * fixed per-request middleware CPU each one carries).
  *
  * Reads come straight off the reactive store (`useIsEngaged` etc.), so an
  * optimistic mutation is reflected instantly without any refetch.
@@ -19,18 +27,31 @@ import { trpcVanilla } from '~/utils/trpc';
 
 const MAX_IDS_PER_QUERY = 200; // must match getEngagedModelsByIdsSchema.max(200)
 
+/**
+ * Client-side coalescing window for the engaged-membership batcher. Tunable.
+ * Trade-off: up to this many ms of extra latency before a model's membership
+ * (favorite-heart / notify-bell state) hydrates, in exchange for far fewer
+ * network calls. 80ms sits below the ~100ms "instant" perception threshold, so
+ * the heart/bell hydration is not perceptibly laggy, while being wide enough to
+ * absorb a burst of card mounts across several render ticks into one request.
+ */
+export const ENGAGED_MEMBERSHIP_DEBOUNCE_MS = 80;
+
 // Module-level batcher state.
 const pending = new Set<number>();
 const inFlight = new Set<number>();
 let scheduled = false;
 
 /**
- * Test/injection seam. Production uses the vanilla tRPC client + a microtask
- * flush; tests swap in a controllable fetcher and a synchronous scheduler.
+ * Test/injection seam. Production uses the vanilla tRPC client + an ~80ms
+ * debounce flush; tests swap in a controllable fetcher and a synchronous
+ * scheduler. `schedule` returns void so a test override may return void too.
  */
 export const engagedMembershipBatcher = {
   fetch: (modelIds: number[]) => trpcVanilla.user.getEngagedModelsByIds.query({ modelIds }),
-  schedule: (cb: () => void) => queueMicrotask(cb),
+  schedule: (cb: () => void): void => {
+    setTimeout(cb, ENGAGED_MEMBERSHIP_DEBOUNCE_MS);
+  },
 };
 
 function chunk<T>(arr: T[], size: number): T[][] {
