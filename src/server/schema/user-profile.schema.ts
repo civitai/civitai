@@ -5,10 +5,19 @@ import { LinkType } from '~/shared/utils/prisma/enums';
 import { creatorCardStatsPreferences, profilePictureSchema } from './user.schema';
 
 export type GetUserProfileSchema = z.infer<typeof getUserProfileSchema>;
-export const getUserProfileSchema = z.object({
-  username: z.string().optional(),
-  id: z.number().optional(),
-});
+export const getUserProfileSchema = z
+  .object({
+    // Reject an empty-string username at the input boundary. A profile page renders
+    // `userProfile.get`/`userProfile.overview` before the username route param resolves,
+    // sending `{ username: '' }`; that used to reach the service, fail the falsy
+    // `!username && !id` guard, and surface as a raw 500. An empty/absent username is
+    // invalid INPUT — reject it here so tRPC returns BAD_REQUEST (400).
+    username: z.string().min(1).optional(),
+    id: z.number().optional(),
+  })
+  .refine((d) => (d.username != null && d.username.length > 0) || d.id != null, {
+    message: 'username or id required',
+  });
 
 export const ProfileSectionTypeDef = {
   Showcase: 'showcase',

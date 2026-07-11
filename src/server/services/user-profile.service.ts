@@ -14,7 +14,7 @@ import { isDefined } from '~/utils/type-guards';
 import { enqueueImageIngestion } from '~/server/services/image.service';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { getUserBanDetails } from '~/utils/user-helpers';
-import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import {
   getUserContentOverview as getUserContentOverviewFromCache,
   getUserContentOverviewPublic as getUserContentOverviewPublicFromCache,
@@ -36,7 +36,7 @@ export const getUserContentOverview = async ({
   variant?: UserContentOverviewVariant;
 }) => {
   if (!username && !userId) {
-    throw new Error('Either username or id must be provided');
+    throwBadRequestError('Either username or id must be provided');
   }
 
   if (!userId) {
@@ -77,7 +77,7 @@ export const getUserWithProfile = async ({
   // Use write to get the latest most accurate user here since we'll need to create the profile
   // if it doesn't exist.
   if (!username && !id) {
-    throw new Error('Either username or id must be provided');
+    throwBadRequestError('Either username or id must be provided');
   }
   const getUser = async () => {
     const user = await dbClient.user.findUniqueOrThrow({
