@@ -37,7 +37,10 @@
  *    cap (flag-gated, user-visible), not this trim.
  *
  * So this trim only drops the OPTIONAL unread fields — a modest, strictly
- * zero-UX-risk reduction. The material lever is `IMAGES_AS_POSTS_PER_POST_CAP`.
+ * zero-UX-risk reduction. The material lever is the LAZY per-post image slice
+ * (`sliceImagesForPost` below), which cuts the heavy tail of showcase posts from
+ * the initial payload WITHOUT truncating the UX — the card carousel lazy-loads a
+ * post's remaining images on demand (`trpc.image.getInfinite({ postId })`).
  */
 
 // The per-image keys dropped from the wire. Exported so the unit test can assert
@@ -64,26 +67,60 @@ export const stripImageForAsPostsWire = <T extends Record<string, unknown>>(imag
 };
 
 /**
- * Per-post image cap for `image.getImagesAsPostsInfinite` — the MATERIAL serialize
- * lever. Model galleries carry genuinely multi-image showcase posts (measured on
- * the DB: avg 4.7 imgs/post, p90 14, p99 20), so capping each post's embedded image
- * list cuts a large fraction of serialized images (measured ~15% at cap 12, ~28% at
- * cap 8 across a 30-day model-gallery sample).
+ * First-slice size for the LAZY per-post image load — the MATERIAL serialize lever
+ * for `image.getImagesAsPostsInfinite`. Model galleries carry genuinely multi-image
+ * showcase posts (17% of posts have >12 images; avg ~5.7, p90/p99 ≈ 20 — the upload
+ * max). Serializing every image of every post inline is the event-loop-freeze cost.
  *
- * 🔴 USER-VISIBLE, so it is FLAG-GATED (off by default). Unlike the browse feed
- * (`post.getInfinite`, whose card renders only `images[0]`), this card renders the
- * FULL carousel AND seeds the detail modal from `data.images` WITHOUT refetch — so
- * a cap hides a showcase post's tail images from both the carousel and the modal.
- * Ship dark; ramp only after a product call on the carousel/modal truncation.
+ * Instead of CAPPING (which would truncate the gallery), the server returns only the
+ * first `GALLERY_POST_IMAGE_SLICE` images PLUS the post's true `imageCount`, and the
+ * card carousel lazy-loads the remainder on approach via
+ * `trpc.image.getInfinite({ postId })`. So the UX is complete; only the *initial*
+ * payload shrinks.
  *
- * Value chosen to match the `model.getAll` cap (12) — healthy carousel, ~15% cut.
+ * 🔴 Value = 6, deliberately > 1 for HIDDEN-PREFERENCES HEADROOM. The feed's
+ * `useApplyHiddenPreferences('posts')` filters each post's images CLIENT-side and
+ * DROPS the whole post if none survive. Browsing-level (the dominant filter) is
+ * already applied SERVER-side before this slice, so the residual client-side drops
+ * are only the per-user hidden-image/tag/user + poi/minor prefs — rare within a
+ * single post. Six leading images make "all of the slice hidden → post dropped"
+ * very unlikely (vs. a slice of 1). The residual risk (a post whose first 6 visible
+ * images are all user-hidden but image 7+ would survive gets dropped) is documented
+ * and measured; fully eliminating it would need a feed-level tail refetch (deferred).
+ *
+ * 🔴 FLAG-GATED (`galleryLazyPostImages`, DARK). OFF ⇒ byte-identical to today
+ * (all images inline, no `imageCount`). Verify via `trpc-response-oversized
+ * {path="image.getImagesAsPostsInfinite"}` serializeMs/bytes tail once ramped.
  */
-export const IMAGES_AS_POSTS_PER_POST_CAP = 12;
+export const GALLERY_POST_IMAGE_SLICE = 6;
 
 /**
- * Return `images` capped to the first `cap` (keeps leading order — cover stays
- * `images[0]`). Returns the SAME array when already within the cap (no needless
- * clone) and never mutates the input.
+ * Return the first `slice` images of a post (keeps leading order — cover stays
+ * `images[0]`). Returns the SAME array when already within the slice (no needless
+ * clone) and never mutates the input. The true full count is emitted separately as
+ * `imageCount`, so the client can show "1 of N" and lazy-load the tail.
  */
-export const capImagesPerPost = <T>(images: T[], cap = IMAGES_AS_POSTS_PER_POST_CAP): T[] =>
-  images.length > cap ? images.slice(0, cap) : images;
+export const sliceImagesForPost = <T>(images: T[], slice = GALLERY_POST_IMAGE_SLICE): T[] =>
+  images.length > slice ? images.slice(0, slice) : images;
+
+/**
+ * The exact per-post wire transform the `getImagesAsPostsInfinite` handler applies,
+ * extracted so it is unit-testable without booting the controller.
+ *
+ *  - `lazy: false` (flag OFF) → all images, field-trimmed, and NO `imageCount` →
+ *    byte-identical to today.
+ *  - `lazy: true` (flag ON) → the leading `GALLERY_POST_IMAGE_SLICE` images,
+ *    field-trimmed, PLUS `imageCount` computed from the FULL array BEFORE the slice
+ *    (so "1 of N" is the post's true visible count, matching a `getInfinite` tail).
+ *
+ * Both branches run the always-on `stripImageForAsPostsWire`, so every field a
+ * consumer reads (incl. the hidden-prefs `{id,userId,nsfwLevel,tagIds,poi,minor}`)
+ * survives in the returned slice.
+ */
+export function buildPostImagesWire<T extends Record<string, unknown>>(
+  images: T[],
+  { lazy }: { lazy: boolean }
+) {
+  const wireImages = (lazy ? sliceImagesForPost(images) : images).map(stripImageForAsPostsWire);
+  return lazy ? { imageCount: images.length, images: wireImages } : { images: wireImages };
+}

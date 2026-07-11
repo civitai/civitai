@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  capImagesPerPost,
+  buildPostImagesWire,
+  GALLERY_POST_IMAGE_SLICE,
   IMAGES_AS_POSTS_DROPPED_IMAGE_FIELDS,
-  IMAGES_AS_POSTS_PER_POST_CAP,
+  sliceImagesForPost,
   stripImageForAsPostsWire,
 } from '~/server/utils/images-as-posts-wire';
 
@@ -12,8 +13,9 @@ import {
 //  - `stripImageForAsPostsWire` drops the OPTIONAL per-image fields no consumer of
 //    this endpoint reads (zero-UX; the unread-but-required fields stay because the
 //    card seeds `data.images` into the detail modal whose type demands them);
-//  - `capImagesPerPost` caps a post's embedded images (material, flag-gated).
-// This test pins the contract: the drop set, the load-bearing retentions, the cap,
+//  - `sliceImagesForPost` returns only the first slice of a post's images (material,
+//    flag-gated) — the card carousel lazy-loads the tail, so the UX is NOT truncated.
+// This test pins the contract: the drop set, the load-bearing retentions, the slice,
 // and non-mutation.
 
 // A representative per-image object with every field the endpoint emits.
@@ -122,27 +124,79 @@ describe('images-as-posts-wire', () => {
     });
   });
 
-  describe('capImagesPerPost', () => {
+  describe('sliceImagesForPost', () => {
     const imgs = (n: number) => Array.from({ length: n }, (_, i) => ({ id: i + 1 }));
 
-    it('caps to IMAGES_AS_POSTS_PER_POST_CAP, keeping leading order (cover stays images[0])', () => {
-      expect(IMAGES_AS_POSTS_PER_POST_CAP).toBe(12);
+    it('slices to GALLERY_POST_IMAGE_SLICE, keeping leading order (cover stays images[0])', () => {
+      expect(GALLERY_POST_IMAGE_SLICE).toBe(6);
       const source = imgs(20);
-      const out = capImagesPerPost(source);
-      expect(out).toHaveLength(12);
-      expect(out.map((x) => x.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+      const out = sliceImagesForPost(source);
+      expect(out).toHaveLength(6);
+      expect(out.map((x) => x.id)).toEqual([1, 2, 3, 4, 5, 6]);
       expect(out[0]).toBe(source[0]);
       expect(source).toHaveLength(20); // not mutated
     });
 
-    it('returns the same array untouched when within the cap (typical posts)', () => {
+    it('returns the same array untouched when within the slice (typical posts)', () => {
       const source = imgs(3);
-      expect(capImagesPerPost(source)).toBe(source);
-      expect(capImagesPerPost([])).toEqual([]);
+      expect(sliceImagesForPost(source)).toBe(source);
+      expect(sliceImagesForPost([])).toEqual([]);
     });
 
-    it('honors a custom cap', () => {
-      expect(capImagesPerPost(imgs(20), 8)).toHaveLength(8);
+    it('is a no-op at exactly the slice size (boundary)', () => {
+      const source = imgs(6);
+      expect(sliceImagesForPost(source)).toBe(source);
+    });
+
+    it('honors a custom slice size', () => {
+      expect(sliceImagesForPost(imgs(20), 8)).toHaveLength(8);
+    });
+  });
+
+  describe('buildPostImagesWire (the handler transform)', () => {
+    // Images carrying the hidden-prefs fields + a dropped field, to prove both the
+    // slice and the trim behave together.
+    const imgs = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        id: i + 1,
+        userId: 500,
+        nsfwLevel: 1,
+        tagIds: [1, 2],
+        poi: false,
+        minor: false,
+        url: `img-${i + 1}.jpeg`,
+        meta: { seed: i }, // dropped by stripImageForAsPostsWire
+      }));
+
+    it('flag OFF → all images, field-trimmed, and NO imageCount (byte-identical shape)', () => {
+      const out = buildPostImagesWire(imgs(20), { lazy: false });
+      expect(out).not.toHaveProperty('imageCount');
+      expect(out.images).toHaveLength(20); // not sliced
+      // trim still runs (always-on)
+      expect(out.images[0]).not.toHaveProperty('meta');
+    });
+
+    it('flag ON → sliced to GALLERY_POST_IMAGE_SLICE + imageCount = the FULL count (before slice)', () => {
+      const out = buildPostImagesWire(imgs(20), { lazy: true });
+      expect(out.images).toHaveLength(GALLERY_POST_IMAGE_SLICE); // 6
+      // imageCount is the true full count, computed BEFORE the slice
+      expect((out as { imageCount: number }).imageCount).toBe(20);
+    });
+
+    it('flag ON, post within the slice → imageCount === images.length (no truncation)', () => {
+      const out = buildPostImagesWire(imgs(4), { lazy: true });
+      expect(out.images).toHaveLength(4);
+      expect((out as { imageCount: number }).imageCount).toBe(4);
+    });
+
+    it('flag ON → the hidden-prefs fields survive in the slice (the #3055 lesson)', () => {
+      const out = buildPostImagesWire(imgs(20), { lazy: true });
+      for (const image of out.images) {
+        for (const field of ['id', 'userId', 'nsfwLevel', 'tagIds', 'poi', 'minor']) {
+          expect(image).toHaveProperty(field);
+        }
+        expect(image).not.toHaveProperty('meta'); // dropped field still gone
+      }
     });
   });
 });
