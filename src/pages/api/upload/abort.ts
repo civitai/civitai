@@ -1,7 +1,12 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
-import { abortMultipartUpload, getUploadS3Client, getB2ImageS3Client } from '~/utils/s3-utils';
+import {
+  abortMultipartUpload,
+  classifyS3MultipartError,
+  getUploadS3Client,
+  getB2ImageS3Client,
+} from '~/utils/s3-utils';
 import { logToAxiom } from '~/server/logging/client';
 
 const upload = async (req: NextApiRequest, res: NextApiResponse) => {
@@ -38,6 +43,27 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
       backend,
       error: error.message,
     });
+
+    // Classify the S3 error so a client/state fault or a transient storage blip is
+    // NOT mis-reported as a raw 500 (which the client then retries → amplification).
+    const errorClass = classifyS3MultipartError(e);
+    if (errorClass === 'not-found') {
+      // Aborting an upload that is already gone (completed/aborted) is IDEMPOTENT:
+      // the desired end-state — the upload no longer exists — already holds, so this
+      // is a success, not a conflict. 204 stops the client retry loop cleanly. (The
+      // sole caller, s3-upload.store.ts, fire-and-forgets abort and ignores the
+      // response, so 204 is safe and terminal.)
+      res.status(204).end();
+      return;
+    }
+    if (errorClass === 'transient') {
+      // Retry-able storage-backend blip (S3/B2 5xx, throttle/timing, or network).
+      res.setHeader('Retry-After', '2');
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(503).json({ error: 'Storage temporarily unavailable, please retry' });
+      return;
+    }
+    // Real server fault → surface loud as a 500.
     res.status(500).json({ error });
   }
 };
