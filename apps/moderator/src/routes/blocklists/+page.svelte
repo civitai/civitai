@@ -5,7 +5,7 @@
   import { Tabs, TabsList, TabsTrigger } from '@civitai/ui/components/ui/tabs/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { BLOCKLIST_TYPES, humanizeBlocklistType } from '$lib/blocklist';
+  import { BLOCKLIST_TYPES, BLOCKLIST_DESCRIPTIONS, humanizeBlocklistType } from '$lib/blocklist';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -53,6 +53,10 @@
     {/each}
   </TabsList>
 </Tabs>
+
+{#if BLOCKLIST_DESCRIPTIONS[data.type]}
+  <p class="mb-4 max-w-xl text-sm text-muted-foreground">{BLOCKLIST_DESCRIPTIONS[data.type]}</p>
+{/if}
 
 {#if form?.error}
   <div class="mb-4 max-w-xl rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300">
