@@ -528,7 +528,11 @@ export const getPostsInfinite = async ({
 
           return true;
         })
-        .map(({ userId: creatorId, ...post }) => {
+        // Strip `cursorId` from each item: it's the raw sort-key value selected
+        // for keyset pagination (surfaced via the page-level `nextCursor`), NOT
+        // a per-item field — no consumer reads `item.cursorId`. Dropping it
+        // removes one field (a superjson-typed Date/number node) PER POST.
+        .map(({ userId: creatorId, cursorId: _cursorId, ...post }) => {
           const _images = images.filter((x) => x.postId === post.id);
           const { username, image, deletedAt } = userData[creatorId] || {};
 

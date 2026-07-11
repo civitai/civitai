@@ -6,12 +6,21 @@
  * every `post.getInfinite` consumer found none that renders `images[1+]`. But
  * `getPostsInfinite` embeds the post's ENTIRE image list (`getImagesForPosts`
  * accepts a `coverOnly` flag that is currently UNUSED — the query has no per-post
- * LIMIT), so a gallery post can carry dozens–hundreds of image rows. This is the
- * dominant contributor to `post.getInfinite`'s ~1.6 MB payloads (the #2 total
- * serialize load in the system: ~80,000 serializeMs / 2h), serialized
+ * LIMIT), so a gallery post can carry dozens–hundreds of image rows, serialized
  * synchronously on the Node event loop — a source of the event-loop-freeze class.
  * Capping the RESPONSE sheds the heavy-gallery tail (a 100-image post → 8 rows)
  * while leaving typical posts (< cap) untouched.
+ *
+ * CORRECTION (measured live via the #3017 `trpc-response-oversized` instrument):
+ * capping ALONE moved this endpoint's payload only ~8% (max 1.20 → 1.10 MB) with
+ * FLAT serializeMs — because typical published posts average ~7 images (measured),
+ * i.e. already ≤ the cap, so the cap only trims the RARE >8-image gallery. The
+ * real driver is the per-image FIELD COUNT applied to every one of those ~7
+ * images × up-to-200 posts. The field-level trim (the createdAt/hasMeta/
+ * hasPositivePrompt SQL drop in `getImagesForPosts`, plus the post-level
+ * `cursorId` strip in post.service) is what moves bytes AND serializeMs on the
+ * common case; this cap remains as the gallery-tail guard. (`postId` is NOT
+ * trimmed — ImageContextMenu reads it off the response image.)
  *
  * Mirrors `model-getall-images.ts` (`GET_ALL_IMAGES_PER_MODEL`). Set to 8 (not 1)
  * as HEADROOM for the client-side filter (`useApplyHiddenPreferences`, posts
@@ -38,3 +47,11 @@ export const POST_GETINFINITE_IMAGES_PER_POST = 8;
 export function capPostGetInfiniteImages<T>(images: T[]): T[] {
   return images.slice(0, POST_GETINFINITE_IMAGES_PER_POST);
 }
+
+// NOTE: `postId` is INTENTIONALLY kept on each response image. It's read by
+// ImageContextMenu → ImageMenuItems (destructured off the image) for the
+// "Save post to collection" / "View Post" / "Edit Post" / "Toggle Searchable"
+// menu items on the browse post cards — so it is NOT an unread field and must
+// survive serialization. The per-image trim is done at the SQL layer in
+// `getImagesForPosts` (dropping the genuinely-unread createdAt / hasMeta /
+// hasPositivePrompt).

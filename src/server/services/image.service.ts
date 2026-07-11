@@ -5428,17 +5428,25 @@ export const getImagesForPosts = async ({
       width: number;
       height: number;
       hash: string;
-      createdAt: Date;
+      // postId groups images under their post server-side (post.service groups
+      // on `x.postId === post.id`) AND is read on the response by
+      // ImageContextMenu → ImageMenuItems (collection/view/edit/searchable menu
+      // items on the browse post cards) — kept.
       postId: number;
       type: MediaType;
       metadata: ImageMetadata | VideoMetadata | null;
-      hasMeta: boolean;
       onSite: boolean;
       remixOfId?: number | null;
-      hasPositivePrompt?: boolean;
       poi?: boolean;
       minor?: boolean;
     }[]
+    // NOTE: getImagesForPosts is used ONLY by getPostsInfinite. The browse
+    // cards render `images[0]` and the hidden-preferences filter reads
+    // {id,userId,nsfwLevel,tagIds,poi,minor}; NO consumer reads createdAt,
+    // hasMeta, or hasPositivePrompt — dropped here to cut per-image serialize
+    // weight (this endpoint's payload is ~85% images at ~7 images/post, so the
+    // per-image field COUNT — not the #3052 image CAP, which only trims the
+    // rare >8-image gallery tail — is what drives bytes + superjson serializeMs).
   >`
     SELECT
       i.id,
@@ -5451,22 +5459,7 @@ export const getImagesForPosts = async ({
       i.hash,
       i.type,
       i.metadata,
-      i."createdAt",
       i."postId",
-      (
-        CASE
-          WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
-          ELSE TRUE
-        END
-      ) AS "hasMeta",
-      (
-        CASE
-          WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
-            AND i.meta->>'prompt' IS NOT NULL
-          THEN TRUE
-          ELSE FALSE
-        END
-      ) AS "hasPositivePrompt",
       ${imageOnSiteSql()} as "onSite",
       i.metadata->>'remixOfId' as "remixOfId",
       i.minor,
