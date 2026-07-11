@@ -63,7 +63,7 @@ export const updateUserScore = createJob(
     } as const;
 
     const advanceCheckpoint: Array<() => Promise<void>> = [];
-    const failures: Array<{ category: string; error: string }> = [];
+    const failures: Array<{ category: string; error: unknown }> = [];
     for (const [category, fetcher] of Object.entries(scoreFetchers)) {
       const [lastUpdate, setLastUpdate] = await getJobDate(
         `${jobKey}:${category}`,
@@ -75,9 +75,8 @@ export const updateUserScore = createJob(
         await fetcher(ctx);
         advanceCheckpoint.push(setLastUpdate);
       } catch (e) {
-        const error = (e as Error).message;
-        log('score category failed; leaving its checkpoint frozen', category, error);
-        failures.push({ category, error });
+        log('score category failed; leaving its checkpoint frozen', category, e);
+        failures.push({ category, error: e });
       }
     }
 
@@ -91,12 +90,23 @@ export const updateUserScore = createJob(
     // are persisted.
     for (const setLastUpdate of advanceCheckpoint) await setLastUpdate();
 
+    // Re-throw so the run still surfaces as failed. Each category's original stack
+    // is embedded into the thrown error's own stack: the job runner logs
+    // `error.stack` to Axiom (job.ts) and ignores `.cause`/AggregateError.errors,
+    // so embedding is the only way the real failure site survives.
     if (failures.length) {
-      throw new Error(
-        `update-user-score: ${failures.length} categor${
-          failures.length > 1 ? 'ies' : 'y'
-        } failed: ${failures.map((f) => `${f.category} (${f.error})`).join('; ')}`
-      );
+      const summary = `update-user-score: ${failures.length} categor${
+        failures.length > 1 ? 'ies' : 'y'
+      } failed (${failures.map((f) => f.category).join(', ')})`;
+      const err = new Error(summary);
+      err.stack = [
+        summary,
+        ...failures.map(({ category, error }) => {
+          const detail = error instanceof Error ? error.stack ?? error.message : String(error);
+          return `\n--- ${category} ---\n${detail}`;
+        }),
+      ].join('');
+      throw err;
     }
   },
   {
