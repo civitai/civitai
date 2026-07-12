@@ -35,6 +35,7 @@ import {
   checkImageEligibility,
   deleteChallenge,
   deleteChallengeEvent,
+  deleteUserChallenge,
   endChallengeAndPickWinners,
   getActiveEvents,
   getChallengeDetail,
@@ -46,6 +47,7 @@ import {
   getInfiniteChallenges,
   getModeratorChallenges,
   getUpcomingThemes,
+  getUserChallengeForEdit,
   getUserEntryCount,
   getUserUnjudgedEntries,
   getWinnerCooldownStatus,
@@ -151,6 +153,13 @@ export const challengeRouter = router({
     .use(isFlagProtected('challengePlatform'))
     .query(({ input }) => getChallengeForEdit(input.id)),
 
+  // User: fetch own Scheduled challenge for editing (owner-guarded in the service).
+  getUserChallengeForEdit: protectedProcedure
+    .input(getByIdSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .use(isFlagProtected('userChallenges'))
+    .query(({ input, ctx }) => getUserChallengeForEdit({ id: input.id, userId: ctx.user.id })),
+
   // Moderator: Get all challenges (including drafts)
   getModeratorList: moderatorProcedure
     .input(getModeratorChallengesSchema)
@@ -172,6 +181,15 @@ export const challengeRouter = router({
     .use(isFlagProtected('challengePlatform'))
     .use(isFlagProtected('userChallenges'))
     .mutation(({ input, ctx }) => upsertUserChallenge({ ...input, userId: ctx.user.id })),
+
+  // User: delete own Scheduled, entry-free challenge (refunds escrowed prize). Owner/status guards
+  // enforced in the service.
+  deleteUserChallenge: protectedProcedure
+    .meta({ requiredScope: TokenScope.SocialWrite, blockApiKeys: true })
+    .input(getByIdSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .use(isFlagProtected('userChallenges'))
+    .mutation(({ input, ctx }) => deleteUserChallenge({ id: input.id, userId: ctx.user.id })),
 
   // Moderator: End challenge early and pick winners
   endAndPickWinners: moderatorProcedure

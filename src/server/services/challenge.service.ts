@@ -1558,6 +1558,58 @@ export async function deleteChallenge(id: number) {
   return { success: true };
 }
 
+// User-scoped delete: a creator may delete their own challenge only while it is still Scheduled
+// with no entries (no entry fees collected). Delegates to deleteChallenge, which already refunds
+// the creator's escrowed prize for Scheduled User challenges before removing challenge + collection.
+export async function deleteUserChallenge({ id, userId }: { id: number; userId: number }) {
+  const existing = await dbRead.challenge.findUnique({
+    where: { id },
+    select: { source: true, createdById: true, status: true, collectionId: true },
+  });
+  if (!existing) throw throwNotFoundError('Challenge not found');
+  if (existing.source !== ChallengeSource.User)
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'This challenge cannot be deleted here.' });
+  if (existing.createdById !== userId)
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'You can only delete your own challenges.' });
+  if (existing.status !== ChallengeStatus.Scheduled)
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: 'A published challenge can no longer be deleted.',
+    });
+  if (existing.collectionId) {
+    const entryCount = await dbRead.collectionItem.count({
+      where: { collectionId: existing.collectionId },
+    });
+    if (entryCount > 0)
+      throw new TRPCError({
+        code: 'PRECONDITION_FAILED',
+        message: 'This challenge already has entries and can no longer be deleted.',
+      });
+  }
+  // deleteChallenge re-reads status and only refunds/deletes a Scheduled row, so a race with the
+  // activation job fails safe (blocks Active) rather than double-refunding.
+  return deleteChallenge(id);
+}
+
+// User-safe fetch for the edit form. getChallengeForEdit is moderator-only; this guards ownership
+// first, then returns the same shape. User challenges have judgingPrompt = null, so nothing
+// moderator-sensitive is exposed.
+export async function getUserChallengeForEdit({ id, userId }: { id: number; userId: number }) {
+  const existing = await dbRead.challenge.findUnique({
+    where: { id },
+    select: { source: true, createdById: true, status: true },
+  });
+  if (!existing) throw throwNotFoundError('Challenge not found');
+  if (existing.source !== ChallengeSource.User || existing.createdById !== userId)
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'You can only edit your own challenges.' });
+  if (existing.status !== ChallengeStatus.Scheduled)
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: 'A published challenge can no longer be edited.',
+    });
+  return getChallengeForEdit(id);
+}
+
 export async function getUserEntryCount(challengeId: number, userId: number) {
   // Get the challenge's collection
   const challenge = await dbRead.challenge.findUnique({
