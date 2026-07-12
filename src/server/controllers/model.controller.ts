@@ -447,17 +447,19 @@ export const getModelsInfiniteHandler = async ({
     let nextCursor: string | bigint | undefined;
     // Serialize-freeze lever: the browse feed is the #1 producer of oversized tRPC
     // responses. When the DARK `getAllModelImagesSlim` flag is on, cap each model's
-    // images to the SLIM count; OFF ⇒ today's `GET_ALL_IMAGES_PER_MODEL`. The
-    // always-on per-image field trim applies either way (see model-getall-images).
-    const imagesPerModel = ctx.features.getAllModelImagesSlim
-      ? GET_ALL_IMAGES_PER_MODEL_SLIM
-      : GET_ALL_IMAGES_PER_MODEL;
+    // images to the SLIM count AND pick the nsfw-biased coverage slice (drives the
+    // browsing-level feed-drop regression of the smaller cap to ~0); OFF ⇒ today's
+    // `GET_ALL_IMAGES_PER_MODEL`, naive first-N. The always-on per-image field trim
+    // applies either way (see model-getall-images).
+    const slim = ctx.features.getAllModelImagesSlim;
+    const imagesPerModel = slim ? GET_ALL_IMAGES_PER_MODEL_SLIM : GET_ALL_IMAGES_PER_MODEL;
     const results: Awaited<ReturnType<typeof getModelsWithImagesAndModelVersions>>['items'] = [];
     while (results.length < (input.limit ?? 100) && loopCount < 3) {
       const result = await getModelsWithImagesAndModelVersions({
         input,
         user: ctx.user,
         imagesPerModel,
+        biasImageSlice: slim,
       });
       if (result.isPrivate) isPrivate = true;
       results.push(...result.items);

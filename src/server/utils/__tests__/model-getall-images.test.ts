@@ -5,6 +5,7 @@ import {
   GET_ALL_IMAGES_PER_MODEL,
   GET_ALL_IMAGES_PER_MODEL_SLIM,
   GETALL_DROPPED_IMAGE_FIELDS,
+  selectSlimGetAllModelImages,
   stripGetAllModelImage,
 } from '~/server/utils/model-getall-images';
 
@@ -154,5 +155,172 @@ describe('model-getall-images — buildGetAllModelImages (cap + strip)', () => {
     expect(out[0]).not.toBe(cached[0]);
     expect(cached).toHaveLength(20); // cache untouched
     expect(cached[0]).toHaveProperty('onSite'); // cache still full-fidelity
+  });
+});
+
+// -----------------------------------------------------------------------------
+// NSFW-biased slim slice (`selectSlimGetAllModelImages`) — the flag-ON selection.
+// An image `nsfwLevel` is ALWAYS a single bit (1/2/4/8/16/32 — ≤6 distinct levels),
+// which is what makes "one representative per distinct bit" a provable near-zero
+// feed-drop guarantee for BOTH client-filter nsfw branches:
+//   - model.nsfw    → keep if `nsfwLevel <= maxSelectedLevel`
+//   - otherwise     → keep if `(nsfwLevel & browsingLevel) != 0`
+// -----------------------------------------------------------------------------
+const PG = 1;
+const PG13 = 2;
+const R = 4;
+const X = 8;
+const XXX = 16;
+const BLOCKED = 32;
+
+// Build a per-model image array from a list of (single-bit) nsfwLevels, index-ordered
+// as the shared `postId,index` cache would deliver them.
+const makeLeveled = (levels: number[]) =>
+  levels.map((nsfwLevel, i) => ({ id: i + 1, url: `img-${i + 1}`, nsfwLevel }));
+
+// The two per-image nsfw filter branches, mirrored from useApplyHiddenPreferences
+// `case 'models'`. Returns whether ANY image in the set is visible to the viewer.
+const anyVisibleBrowsing = (imgs: { nsfwLevel: number }[], browsingLevel: number) =>
+  imgs.some((i) => (i.nsfwLevel & browsingLevel) !== 0);
+const anyVisibleMaxLevel = (imgs: { nsfwLevel: number }[], maxSelectedLevel: number) =>
+  imgs.some((i) => i.nsfwLevel <= maxSelectedLevel);
+
+describe('model-getall-images — nsfw-biased slim slice', () => {
+  it('(a) always contains images[0] (the curated lead)', () => {
+    const imgs = makeLeveled([XXX, XXX, XXX, XXX, XXX, XXX, PG, PG13, R, X]);
+    const out = selectSlimGetAllModelImages(imgs, GET_ALL_IMAGES_PER_MODEL_SLIM);
+    expect(out[0]).toBe(imgs[0]);
+  });
+
+  it('(a2) keeps images[0] even when its nsfwLevel is unset', () => {
+    const imgs = [
+      { id: 1, url: 'lead', nsfwLevel: undefined as number | undefined },
+      ...makeLeveled([XXX, XXX, XXX, XXX, XXX, PG, R]).map((x) => ({ ...x, id: x.id + 1 })),
+    ];
+    const out = selectSlimGetAllModelImages(imgs, GET_ALL_IMAGES_PER_MODEL_SLIM);
+    expect(out).toContain(imgs[0]);
+  });
+
+  it('(b) contains ≥1 image of EVERY distinct nsfwLevel present (coverage property)', () => {
+    // 5 distinct bits scattered past the naive-first-6 window.
+    const imgs = makeLeveled([XXX, XXX, XXX, XXX, XXX, XXX, R, PG13, PG, X, XXX, XXX]);
+    const out = selectSlimGetAllModelImages(imgs, GET_ALL_IMAGES_PER_MODEL_SLIM);
+    const distinct = new Set(imgs.map((i) => i.nsfwLevel));
+    const covered = new Set(out.map((i) => i.nsfwLevel));
+    for (const level of distinct) expect(covered.has(level)).toBe(true);
+  });
+
+  it('(b2) covers all 6 distinct bits when exactly 6 are present', () => {
+    const imgs = makeLeveled([XXX, XXX, XXX, XXX, XXX, XXX, PG, PG13, R, X, XXX, BLOCKED]);
+    const out = selectSlimGetAllModelImages(imgs, GET_ALL_IMAGES_PER_MODEL_SLIM);
+    expect(new Set(out.map((i) => i.nsfwLevel))).toEqual(
+      new Set([PG, PG13, R, X, XXX, BLOCKED])
+    );
+    expect(out).toHaveLength(GET_ALL_IMAGES_PER_MODEL_SLIM);
+  });
+
+  it('(c) returns ≤ limit images in ORIGINAL cache order', () => {
+    const imgs = makeLeveled([XXX, XXX, XXX, XXX, XXX, XXX, PG, PG13, R, X, XXX, XXX]);
+    const out = selectSlimGetAllModelImages(imgs, GET_ALL_IMAGES_PER_MODEL_SLIM);
+    expect(out.length).toBeLessThanOrEqual(GET_ALL_IMAGES_PER_MODEL_SLIM);
+    const ids = out.map((i) => i.id);
+    expect([...ids].sort((a, b) => a - b)).toEqual(ids); // ascending index/id => cache order
+  });
+
+  it('(d) with fewer than the cap distinct levels, fills remaining slots by cache order', () => {
+    // Only two distinct bits → coverage needs 2; the other 4 slots fill first-come.
+    const imgs = makeLeveled([PG, PG, PG, PG, PG, PG, XXX, PG, PG]);
+    const out = selectSlimGetAllModelImages(imgs, GET_ALL_IMAGES_PER_MODEL_SLIM);
+    expect(out).toHaveLength(GET_ALL_IMAGES_PER_MODEL_SLIM);
+    // covers both bits...
+    expect(new Set(out.map((i) => i.nsfwLevel))).toEqual(new Set([PG, XXX]));
+    // ...and the fill is the earliest PG images (ids 1..5) plus the XXX rep (id 7).
+    expect(out.map((i) => i.id).sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 7]);
+  });
+
+  it('(e) input at/under the cap is returned unchanged (same reference)', () => {
+    const five = makeLeveled([PG, PG13, R, X, XXX]);
+    expect(selectSlimGetAllModelImages(five, GET_ALL_IMAGES_PER_MODEL_SLIM)).toBe(five);
+    const six = makeLeveled([PG, PG13, R, X, XXX, BLOCKED]);
+    expect(selectSlimGetAllModelImages(six, GET_ALL_IMAGES_PER_MODEL_SLIM)).toBe(six);
+  });
+
+  it('does NOT mutate the source array (shared-cache safety)', () => {
+    const imgs = makeLeveled([XXX, XXX, XXX, XXX, XXX, XXX, PG, PG13, R, X]);
+    const before = [...imgs];
+    const out = selectSlimGetAllModelImages(imgs, GET_ALL_IMAGES_PER_MODEL_SLIM);
+    expect(imgs).toEqual(before);
+    expect(out).not.toBe(imgs);
+  });
+
+  describe('empty-rate property — the point of the bias', () => {
+    // A model whose leading 6 images are all high-nsfw, with a lone PG image at index 8.
+    const model = makeLeveled([XXX, XXX, XXX, XXX, XXX, XXX, XXX, XXX, PG, XXX]);
+    const naiveFirst6 = model.slice(0, GET_ALL_IMAGES_PER_MODEL_SLIM);
+    const biased = selectSlimGetAllModelImages(model, GET_ALL_IMAGES_PER_MODEL_SLIM);
+
+    it('a PG-only viewer is DROPPED by naive first-6 but KEPT by the biased slice', () => {
+      // PG-only viewer: browsingLevel = PG, maxSelectedLevel = PG.
+      expect(anyVisibleBrowsing(naiveFirst6, PG)).toBe(false); // naive → feed_noimages_drop
+      expect(anyVisibleBrowsing(biased, PG)).toBe(true); // biased → keeps a cover
+      // full set was visible to them, so the cap must not newly drop them:
+      expect(anyVisibleBrowsing(model, PG)).toBe(true);
+      // and the biased slice actually pulled the index-8 PG image forward:
+      expect(biased.some((i) => i.nsfwLevel === PG)).toBe(true);
+      expect(naiveFirst6.some((i) => i.nsfwLevel === PG)).toBe(false);
+    });
+
+    it('(symmetric) highest-bit coverage keeps a high-only viewer whose only high image is late', () => {
+      // Leading 6 all PG, the lone high image sits at index 8 — mirror case.
+      const model2 = makeLeveled([PG, PG, PG, PG, PG, PG, PG, PG, XXX, PG]);
+      const naive2 = model2.slice(0, GET_ALL_IMAGES_PER_MODEL_SLIM);
+      const biased2 = selectSlimGetAllModelImages(model2, GET_ALL_IMAGES_PER_MODEL_SLIM);
+      // high-only viewer: browsingLevel = XXX.
+      expect(anyVisibleBrowsing(naive2, XXX)).toBe(false); // naive drops them
+      expect(anyVisibleBrowsing(biased2, XXX)).toBe(true); // biased keeps the XXX rep
+    });
+
+    it('a permissive (see-everything) viewer still sees images[0] as the cover', () => {
+      // Order preserved => the first surviving image for a permissive viewer is the lead.
+      const seeAll = XXX | X | R | PG13 | PG | BLOCKED;
+      const firstSurvivor = biased.find((i) => (i.nsfwLevel & seeAll) !== 0);
+      expect(firstSurvivor).toBe(model[0]);
+    });
+
+    it('the max-level branch is covered by including the lowest bit present', () => {
+      // A see-nothing-but-PG viewer (maxSelectedLevel = PG) keeps a cover iff the
+      // slice carries the lowest bit (PG) — which the coverage step guarantees.
+      expect(anyVisibleMaxLevel(model, PG)).toBe(true);
+      expect(anyVisibleMaxLevel(naiveFirst6, PG)).toBe(false);
+      expect(anyVisibleMaxLevel(biased, PG)).toBe(true);
+    });
+  });
+});
+
+describe('model-getall-images — buildGetAllModelImages biased flag', () => {
+  const makeLeveledFull = (levels: number[]) =>
+    levels.map((nsfwLevel, i) => ({ ...makeFullImage(i + 1), nsfwLevel }));
+
+  it('OFF (default) path is the naive first-12, unchanged', () => {
+    const imgs = makeLeveledFull(Array.from({ length: 20 }, () => XXX));
+    // put a lone PG deep in the tail; the OFF path must NOT pull it forward.
+    imgs[15] = { ...imgs[15], nsfwLevel: PG };
+    const out = buildGetAllModelImages(imgs); // biased defaults to false
+    expect(out).toHaveLength(GET_ALL_IMAGES_PER_MODEL);
+    expect(out.map((i) => i.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  });
+
+  it('biased slim path pulls the coverage image forward and still field-trims', () => {
+    const imgs = makeLeveledFull([XXX, XXX, XXX, XXX, XXX, XXX, XXX, XXX, PG, XXX]);
+    const out = buildGetAllModelImages(imgs, GET_ALL_IMAGES_PER_MODEL_SLIM, true);
+    expect(out).toHaveLength(GET_ALL_IMAGES_PER_MODEL_SLIM);
+    expect(out.some((i) => i.nsfwLevel === PG)).toBe(true); // coverage
+    for (const dropped of GETALL_DROPPED_IMAGE_FIELDS) {
+      expect(out[0]).not.toHaveProperty(dropped); // field trim still applied
+    }
+    expect(out[0]).toHaveProperty('url');
+    // shared cache untouched
+    expect(imgs).toHaveLength(10);
+    expect(imgs[0]).toHaveProperty('onSite');
   });
 });
