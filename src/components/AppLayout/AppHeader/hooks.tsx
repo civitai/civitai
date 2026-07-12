@@ -127,6 +127,14 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           label: 'My Bounties',
         },
         {
+          href: '/challenges?engagement=created',
+          as: '/challenges',
+          visible: features.challengePlatform && features.userChallenges,
+          icon: IconTrophy,
+          color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'My Challenges',
+        },
+        {
           href: '/user/buzz-dashboard',
           visible: features.buzz,
           icon: IconProgressBolt,
