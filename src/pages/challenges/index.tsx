@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   Stack,
   Title,
@@ -8,12 +9,14 @@ import {
   ActionIcon,
   Modal,
   Divider,
+  SegmentedControl,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconInfoCircle, IconSettings, IconTrophy } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
+import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
 import { ChallengesInfinite } from '~/components/Challenge/Infinite/ChallengesInfinite';
 import { DailyChallengesRow } from '~/components/Challenge/DailyChallengesRow';
@@ -26,6 +29,7 @@ import {
   parseParticipationQuery,
 } from '~/components/Challenge/Infinite/ChallengeFiltersDropdown';
 import { ChallengeSort } from '~/server/schema/challenge.schema';
+import type { GetInfiniteChallengesInput } from '~/server/schema/challenge.schema';
 import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -56,6 +60,40 @@ function ChallengesPage() {
     .filter((s): s is ChallengeStatus => s != null);
   const includeEnded = statusFilters.includes('completed');
   const participation = parseParticipationQuery(router.query.participation);
+
+  const mine = router.query.engagement === 'created';
+  const [myStatus, setMyStatus] = useState<'Scheduled' | 'Active' | 'Completed'>('Scheduled');
+
+  const myStatusFilters: Record<string, Partial<GetInfiniteChallengesInput>> = {
+    Scheduled: { status: [ChallengeStatus.Scheduled], includeEnded: false },
+    Active: { status: [ChallengeStatus.Active], includeEnded: false },
+    Completed: { status: [ChallengeStatus.Completed], includeEnded: true },
+  };
+
+  if (mine) {
+    if (!currentUser) return <NotFound />;
+    return (
+      <MasonryContainer>
+        <Stack gap="xl" align="flex-start">
+          <Title>My Challenges</Title>
+          <SegmentedControl
+            radius="xl"
+            data={['Scheduled', 'Active', 'Completed']}
+            value={myStatus}
+            onChange={(v) => setMyStatus(v as 'Scheduled' | 'Active' | 'Completed')}
+          />
+          <ChallengesInfinite
+            filters={{
+              userId: currentUser.id,
+              source: [ChallengeSource.User],
+              excludeEventChallenges: true,
+              ...myStatusFilters[myStatus],
+            }}
+          />
+        </Stack>
+      </MasonryContainer>
+    );
+  }
 
   return (
     <>
