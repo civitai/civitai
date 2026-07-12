@@ -22,9 +22,6 @@ vi.mock('~/env/server', () => ({
 const { logToAxiom } = vi.hoisted(() => ({ logToAxiom: vi.fn(() => Promise.resolve()) }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom }));
 
-// Keep the real fetch-timeout out of the picture (no dangling timers in tests).
-vi.mock('~/server/utils/fetch-timeout', () => ({ fetchTimeoutSignal: () => undefined }));
-
 import { deregisterFileLocations } from '~/utils/storage-resolver';
 
 const okResponse = (body: unknown) => ({
@@ -62,6 +59,8 @@ describe('deregisterFileLocations', () => {
     expect((init as RequestInit).method).toBe('POST');
     expect((init as any).headers.Authorization).toBe('Bearer test-token');
     expect(JSON.parse((init as RequestInit).body as string)).toEqual({ modelVersionId: 67890 });
+    // Unconditional abort signal so a hung resolver can't block the delete forever.
+    expect((init as RequestInit).signal).toBeInstanceOf(AbortSignal);
   });
 
   it('is a no-op returning null (and warns) when storage-resolver is not configured', async () => {
@@ -95,6 +94,21 @@ describe('deregisterFileLocations', () => {
     fetchMock.mockRejectedValue(new Error('ECONNREFUSED'));
 
     await expect(deregisterFileLocations(3)).resolves.toBeNull();
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'deregister-file-locations-error' })
+    );
+  });
+
+  it('returns null (and logs) when the request times out against a hung resolver', async () => {
+    // Simulate the AbortSignal.timeout firing: fetch rejects with an AbortError,
+    // exactly as it would when a resolver accepts the socket but never replies.
+    fetchMock.mockRejectedValue(
+      new DOMException('The operation was aborted due to timeout', 'TimeoutError')
+    );
+
+    // Must resolve (never throw) so the awaited call in deleteVersionById can't
+    // hang or fail the already-committed version delete.
+    await expect(deregisterFileLocations(4)).resolves.toBeNull();
     expect(logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'deregister-file-locations-error' })
     );

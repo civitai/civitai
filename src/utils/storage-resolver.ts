@@ -1,6 +1,5 @@
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
-import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 
 export async function registerFileLocation(params: {
   fileId: number;
@@ -80,7 +79,12 @@ export async function deregisterFileLocations(
         Authorization: `Bearer ${env.STORAGE_RESOLVER_INTERNAL_TOKEN}`,
       },
       body: JSON.stringify({ modelVersionId }),
-      signal: fetchTimeoutSignal(60_000),
+      // Unconditional timeout (NOT the flag-gated hot-path helper): deleteVersionById
+      // is awaited on the tRPC request path, and a hung resolver — one that accepts
+      // the socket but never replies — would otherwise block a user's delete
+      // indefinitely. Version-delete is a rare owner/mod action, so a fixed 30s cap
+      // is safe; best-effort semantics are unchanged (an abort is caught below).
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (!response.ok) {
