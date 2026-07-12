@@ -2032,11 +2032,10 @@ describe('approveRequest', () => {
 
     // TRANSACTION-BOUNDARY coverage. approveRequest is NOT a DB transaction (it
     // interleaves Forgejo/MinIO/Tekton I/O), so there is no literal rollback. The
-    // integrity mechanism is: the listing create runs WHILE THE REQUEST IS STILL
-    // 'pending' (the request is finalised 'approved' only AFTER the commit), and
-    // it is idempotent — so a mid-flow failure leaves the flow retryable and a
-    // retry never duplicates the listing. These two tests assert exactly that.
-    it('tx-boundary: a non-P2002 listing-create error aborts BEFORE finalisation (request stays pending, retry-safe — not orphaned as approved)', async () => {
+    // listing is a CONVENIENCE and must NEVER gate the approve/deploy: a non-P2002
+    // listing-create failure is logged and the approve CONTINUES. Idempotency
+    // (skip-if-exists + P2002-absorb) means a retry never duplicates it.
+    it('tx-boundary: a non-P2002 listing-create error does NOT abort the approve — commit/finalise/build still run, listing simply absent (backfill-recoverable)', async () => {
       const { approveRequest } = await import('../publish-request.service');
       mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
       mockDbRead.appBlock.findFirst.mockResolvedValue(null);
@@ -2045,18 +2044,39 @@ describe('approveRequest', () => {
         new Error('app_listings content_rating check violation')
       );
 
-      await expect(
-        approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
-      ).rejects.toThrow(/check violation/);
+      const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
 
-      // Ordering: the AppBlock existed before the listing create (the listing
-      // needs appBlockId). But because the listing create precedes the commit +
-      // the publish_request finalisation, that failure left BOTH un-run — the
-      // request is never flipped to 'approved', so the mod can simply re-approve
-      // and the idempotent guards converge (no permanently-orphaned approved row).
+      // The listing create was attempted and failed…
+      expect(mockDbWrite.appListing.create).toHaveBeenCalledTimes(1);
+      // …but the approve proceeded end-to-end: commit, request-finalise, build.
+      expect(result.forgejoCommitSha).toBe('commit_sha_abc');
       expect(mockDbWrite.appBlock.create).toHaveBeenCalledOnce();
-      expect(mockForgejo.commitFiles).not.toHaveBeenCalled();
-      expect(mockDbWrite.appBlockPublishRequest.update).not.toHaveBeenCalled();
+      expect(mockForgejo.commitFiles).toHaveBeenCalledOnce();
+      expect(mockDbWrite.appBlockPublishRequest.update).toHaveBeenCalledOnce();
+      expect(mockTriggerBuild).toHaveBeenCalledOnce();
+    });
+
+    // The specific owner-deleted class the audit flagged: the AppBlock's owner
+    // (OauthClient userId, which can differ from the submitter) deleted their
+    // account → user_id FK violation on the listing insert. This must NOT wedge
+    // the app's deploy forever — approve still succeeds, no listing minted.
+    it('owner-deleted class: a user_id FK violation on the listing insert never blocks the deploy (approve succeeds, no listing)', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle();
+      // Prisma P2003 = FK constraint failed (the deleted-owner user_id FK).
+      const fkErr = Object.assign(new Error('Foreign key constraint failed on user_id'), {
+        code: 'P2003',
+      });
+      mockDbWrite.appListing.create.mockRejectedValueOnce(fkErr);
+
+      const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      expect(result.isFirstVersion).toBe(true);
+      expect(result.forgejoCommitSha).toBe('commit_sha_abc');
+      expect(mockTriggerBuild).toHaveBeenCalledOnce();
+      expect(mockDbWrite.appBlockPublishRequest.update).toHaveBeenCalledOnce();
     });
 
     it('tx-boundary: listing is created once and survives a mid-flow commit failure without duplication on re-approve (retry convergence)', async () => {

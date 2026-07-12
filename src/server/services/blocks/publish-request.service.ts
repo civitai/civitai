@@ -2241,13 +2241,29 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       }
     }
   } catch (err) {
-    // P2002 = unique violation on appBlockId — a concurrent approve/backfill
-    // created the listing first. The invariant (one listing per app) still holds,
-    // so treat it as a no-op skip. Duck-type on the Prisma error `code` (matches
-    // this file's OauthClient/AppBlock P2002 handling). Any other error aborts the
-    // approve while the request is still pending → safe to re-approve.
+    // The store listing is a CONVENIENCE — it must NEVER gate the approve/deploy.
+    //   - P2002 = unique violation on appBlockId: a concurrent approve/backfill
+    //     created the listing first. The invariant (one listing per app) still
+    //     holds → silent no-op skip.
+    //   - ANY OTHER error (e.g. the app owner deleted their account → user_id FK
+    //     violation, an out-of-domain contentRating hitting the CHECK, a transient
+    //     DB error): log-and-CONTINUE. If we rethrew, that failure would abort the
+    //     whole approve BEFORE the commit/build — and because it re-fails
+    //     deterministically, the app could NEVER be re-approved/deployed over a
+    //     mere shelf-listing miss. Instead the approve proceeds, the app deploys,
+    //     and the listing is simply absent until a `blocks.backfillAppListings`
+    //     run mints it. Duck-type on the Prisma error `code` (matches this file's
+    //     OauthClient/AppBlock P2002 handling).
     const code = (err as { code?: unknown })?.code;
-    if (code !== 'P2002') throw err;
+    if (code !== 'P2002') {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[approveRequest] onsite AppListing auto-create failed (slug=${request.slug}, appBlockId=${appBlockId}); ` +
+          `approve/deploy CONTINUES — the app will not appear on /apps until a blocks.backfillAppListings run: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+      );
+    }
   }
 
   // (4) Obtain the bundle bytes. Two origins:
