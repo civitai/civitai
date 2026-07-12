@@ -14,10 +14,6 @@ import { createJob, getJobDate } from './job';
 import { userUpdateCounter } from '~/server/prom/client';
 
 const BATCH_SIZE = 500;
-// Owners per computeImageScores call. Caps the in-memory imageId->owner Map so a
-// wide checkpoint window can't exceed V8's ~16.7M Map-entry limit — the crash that
-// froze this job nightly from 2026-06-22.
-const IMAGE_SCORE_OWNER_BATCH = 2000;
 const log = createLogger('update-user-score');
 const jobKey = 'update-user-score';
 export const updateUserScore = createJob(
@@ -158,118 +154,63 @@ async function getArticleScore(ctx: Context) {
   `;
 }
 
-async function getImageScore(ctx: Context) {
-  // Image engagement now lives in the v2 entity-metric aggregate (the legacy
-  // `image_metrics_user` table is stale post-cutover). `entityMetricDailyAgg_v2`
-  // is keyed by imageId with no owner column, and the ClickHouse `images` event
-  // table is an incomplete owner source (event-sourced; missing Create rows for
-  // older images), so the imageId -> owner join must come from Postgres.
-
-  // 1. Images whose score-relevant engagement changed since the last run. Only
-  // reactions + comments feed the image score, so we ignore view/collection/tip
-  // events here to avoid rescoring owners whose score can't have changed.
-  const changed = await ctx.ch.$query<{ imageId: number }>`
-    SELECT DISTINCT entityId AS imageId
+// Incremental image score: fold each affected owner's engagement DELTA since the
+// last run onto their stored `images` score. Work scales with the images that
+// changed (~hundreds of thousands/day), NOT with each owner's full catalog (the
+// old full-recompute read tens of millions of `Image` rows nightly and timed the
+// job out). NOT idempotent — the images checkpoint must advance each run, and a
+// full recompute (`admin/temp/backfill-image-scores?force=true`) reconciles drift.
+export async function getImageScore(ctx: Context) {
+  // 1. Net engagement delta per image since the checkpoint. `metricValue` is
+  // signed (un-likes / removed comments are negative), so this is the exact change
+  // in each image's reaction/comment totals — no catalog read needed.
+  const deltas = await ctx.ch.$query<ImageEngagementDelta>`
+    SELECT entityId AS imageId,
+      sumIf(metricValue, metricType IN ('Like', 'Heart', 'Laugh', 'Cry')) AS dReactions,
+      sumIf(metricValue, metricType = 'commentCount') AS dComments
     FROM entityMetricEvents_month
     WHERE entityType = 'Image'
     AND metricType IN ('Like', 'Heart', 'Laugh', 'Cry', 'commentCount')
     AND createdAt > ${ctx.lastUpdate}
+    GROUP BY entityId
+    HAVING dReactions != 0 OR dComments != 0
   `;
-  if (!changed.length) return;
-  const changedImageIds = changed.map((x) => x.imageId);
+  if (!deltas.length) return;
 
-  // 2. Changed images -> affected owners (Postgres is the authoritative owner map).
-  const affectedUserIds = new Set<number>();
-  for (const ids of chunk(changedImageIds, 10000)) {
-    const query = await ctx.pg.cancellableQuery<{ userId: number }>(
-      `SELECT DISTINCT "userId" FROM "Image" WHERE id = ANY($1::int[]) AND "userId" IS NOT NULL`,
+  // 2. Changed image -> owner (Postgres is authoritative; deleted images and null
+  // owners drop out here and are skipped by the rollup).
+  const ownerByImage = new Map<number, number>();
+  for (const batch of chunk(deltas, 10000)) {
+    const ids = batch.map((d) => d.imageId);
+    const query = await ctx.pg.cancellableQuery<{ id: number; userId: number }>(
+      `SELECT id, "userId" FROM "Image" WHERE id = ANY($1::int[]) AND "userId" IS NOT NULL`,
       [ids]
     );
     ctx.jobContext.on('cancel', query.cancel);
-    for (const { userId } of await query.result()) affectedUserIds.add(userId);
-  }
-  if (!affectedUserIds.size) return;
-
-  // 3. Recompute each affected owner's FULL all-time image score (including owners
-  // who now total 0, so a previously-stale score is corrected downward). Batched by
-  // owner: computeImageScores holds an imageId->owner Map of every image the batch
-  // owns, so an unbounded owner set (e.g. after a stale, wide checkpoint window)
-  // would exceed V8's Map cap. Batching bounds that Map to one chunk of owners.
-  const deps: ImageScoreDeps = {
-    ch: ctx.ch,
-    pg: ctx.pg,
-    scoreMultipliers: ctx.scoreMultipliers,
-    onCancel: (cancel) => ctx.jobContext.on('cancel', cancel),
-  };
-  for (const userIds of chunk([...affectedUserIds], IMAGE_SCORE_OWNER_BATCH)) {
-    const scores = await computeImageScores(deps, userIds);
-    for (const [userId, { score }] of scores) ctx.setScore(userId, 'images', score);
-  }
-}
-
-type ImageScoreDeps = {
-  ch: CustomClickHouseClient;
-  pg: AugmentedPool;
-  scoreMultipliers: ScoreMultipliers;
-  onCancel?: (cancel: () => Promise<void>) => void;
-};
-
-export type ImageScoreBreakdown = { reactions: number; comments: number; score: number };
-
-// Compute each user's all-time image score from the v2 entity-metric aggregate.
-// `entityMetricDailyAgg_v2` is keyed by imageId with no owner, so the
-// imageId -> owner mapping comes from Postgres `Image` (the ClickHouse `images`
-// event table is an incomplete owner source). Every requested userId is present
-// in the result (score 0 when there's no engagement). Shared by the cron job and
-// the `admin/temp/backfill-image-scores` endpoint so both exercise the same logic.
-export async function computeImageScores(
-  deps: ImageScoreDeps,
-  userIds: number[]
-): Promise<Map<number, ImageScoreBreakdown>> {
-  const result = new Map<number, ImageScoreBreakdown>();
-  if (!userIds.length) return result;
-
-  // imageId -> userId for every image these users own.
-  const ownerByImage = new Map<number, number>();
-  for (const ids of chunk(userIds, 1000)) {
-    const query = await deps.pg.cancellableQuery<{ id: number; userId: number }>(
-      `SELECT id, "userId" FROM "Image" WHERE "userId" = ANY($1::int[])`,
-      [ids]
-    );
-    deps.onCancel?.(query.cancel);
     for (const { id, userId } of await query.result()) ownerByImage.set(id, userId);
   }
 
-  // Sum per-image reactions/comments from the v2 aggregate, roll up per owner.
-  const totals = new Map<number, { reactions: number; comments: number }>();
-  for (const ids of chunk([...ownerByImage.keys()], 5000)) {
-    const rows = await deps.ch.$query<{ imageId: number; reactions: number; comments: number }>(`
-      SELECT entityId AS imageId,
-        sumIf(total, metricType IN ('Like', 'Heart', 'Laugh', 'Cry')) AS reactions,
-        sumIf(total, metricType = 'commentCount') AS comments
-      FROM entityMetricDailyAgg_v2
-      WHERE entityType = 'Image'
-      AND entityId IN (${ids.join(',')})
-      GROUP BY entityId
-    `);
-    for (const { imageId, reactions, comments } of rows) {
-      const userId = ownerByImage.get(imageId);
-      if (!userId) continue;
-      const acc = totals.get(userId) ?? { reactions: 0, comments: 0 };
-      acc.reactions += Number(reactions);
-      acc.comments += Number(comments);
-      totals.set(userId, acc);
+  // 3. Roll deltas up per owner.
+  const scoreDeltaByUser = rollupImageScoreDeltas(deltas, ownerByImage, ctx.scoreMultipliers.images);
+  if (!scoreDeltaByUser.size) return;
+
+  // 4. Fold each delta onto the owner's stored images score -> new absolute value,
+  // handed to the shared persist path (which recomputes `total`).
+  const userIds = [...scoreDeltaByUser.keys()];
+  for (const ids of chunk(userIds, 5000)) {
+    const query = await ctx.pg.cancellableQuery<{ id: number; images: string | null }>(
+      `SELECT id, (meta->'scores'->>'images') AS images FROM "User" WHERE id = ANY($1::int[])`,
+      [ids]
+    );
+    ctx.jobContext.on('cancel', query.cancel);
+    const stored = new Map<number, number>();
+    for (const { id, images } of await query.result()) stored.set(id, images ? Number(images) : 0);
+
+    const partialDelta = new Map(ids.map((id) => [id, scoreDeltaByUser.get(id) ?? 0]));
+    for (const [userId, score] of foldImageDeltasOntoStored(partialDelta, stored)) {
+      ctx.setScore(userId, 'images', score);
     }
   }
-
-  for (const userId of userIds) {
-    const { reactions, comments } = totals.get(userId) ?? { reactions: 0, comments: 0 };
-    const score =
-      reactions * deps.scoreMultipliers.images.reactions +
-      comments * deps.scoreMultipliers.images.comments;
-    result.set(userId, { reactions, comments, score });
-  }
-  return result;
 }
 
 export type ImageEngagementDelta = { imageId: number; dReactions: number; dComments: number };
