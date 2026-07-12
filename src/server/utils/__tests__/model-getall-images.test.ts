@@ -219,6 +219,35 @@ describe('model-getall-images — nsfw-biased slim slice', () => {
     expect(out).toHaveLength(GET_ALL_IMAGES_PER_MODEL_SLIM);
   });
 
+  it('(b3) a falsy/null lead never crowds out a real bit (defensive precondition)', () => {
+    // UNREACHABLE on the real cache (SQL filters nsfwLevel != 0/NULL), but a future
+    // caller could pass a set with a null/0 lead. A falsy level is visible to NO
+    // viewer, so it must NOT consume a coverage slot: all 6 distinct REAL bits still
+    // get a representative. (6 real bits + a null lead = 7 items for 6 slots — the
+    // one omitted is the unseeable lead; browsing-level safety > keeping it.)
+    const imgs = [
+      { id: 1, url: 'lead', nsfwLevel: null as number | null },
+      ...makeLeveled([PG, PG13, R, X, XXX, BLOCKED]).map((x) => ({ ...x, id: x.id + 1 })),
+    ];
+    const out = selectSlimGetAllModelImages(imgs, GET_ALL_IMAGES_PER_MODEL_SLIM);
+    expect(out).toHaveLength(GET_ALL_IMAGES_PER_MODEL_SLIM);
+    expect(new Set(out.map((i) => i.nsfwLevel))).toEqual(
+      new Set([PG, PG13, R, X, XXX, BLOCKED])
+    );
+  });
+
+  it('(b4) a falsy-level lead IS kept when the real bits leave a free slot', () => {
+    // 3 distinct real bits + a 0-level lead + limit 6 → room to spare, so the curated
+    // lead fills in (behavior matches the real path, where the lead carries a real bit).
+    const imgs = [
+      { id: 1, url: 'lead', nsfwLevel: 0 },
+      ...makeLeveled([XXX, XXX, XXX, PG, R, XXX]).map((x) => ({ ...x, id: x.id + 1 })),
+    ];
+    const out = selectSlimGetAllModelImages(imgs, GET_ALL_IMAGES_PER_MODEL_SLIM);
+    expect(out).toContain(imgs[0]); // curated lead kept via fill
+    expect(new Set(out.map((i) => i.nsfwLevel))).toEqual(new Set([0, XXX, PG, R]));
+  });
+
   it('(c) returns ≤ limit images in ORIGINAL cache order', () => {
     const imgs = makeLeveled([XXX, XXX, XXX, XXX, XXX, XXX, PG, PG13, R, X, XXX, XXX]);
     const out = selectSlimGetAllModelImages(imgs, GET_ALL_IMAGES_PER_MODEL_SLIM);

@@ -131,18 +131,25 @@ export function capGetAllModelImages<T>(images: T[], limit = GET_ALL_IMAGES_PER_
  *     level they could see, and we always include a rep of every bit incl. `Lmin` →
  *     `Lmin <= maxSelectedLevel` → survives. (Covering every bit also covers the
  *     HIGHEST bit, so a high-only viewer keeps a cover too.)
- * Since there are ≤6 bits and the slim cap is 6, all distinct bits always fit. Any
- * per-image poi/minor/hidden-tag drops are viewer/image-specific and orthogonal to this
- * nsfwLevel coverage guarantee (they can drop the representative just as they'd drop the
- * naive first-6 image; the bias never makes coverage WORSE than first-6).
+ * Since there are ≤6 bits and the slim cap is 6, all distinct bits always fit. The
+ * guarantee is scoped to the nsfwLevel dimension (~0 NEW browsing-level drops): any
+ * per-image poi/minor/hidden-tag drops are viewer/image-specific and orthogonal — they
+ * can drop a coverage representative just as they'd drop the naive first-6 image, and
+ * they affect all cap policies alike.
  *
- * Algorithm:
- *   1. Always keep `images[0]` — the creator's curated lead (the cover a permissive
- *      viewer sees), even if its level is null/unset.
- *   2. Add the EARLIEST-cache-order image of each distinct `nsfwLevel` bit not yet
- *      selected (the coverage step).
- *   3. If slots remain, fill with the earliest not-yet-selected images.
- *   4. Return the selected set in ORIGINAL cache order, capped to `limit` — so a
+ * PRECONDITION: designed for the `model.getAll` image cache, where every `nsfwLevel` is
+ * a TRUTHY single bit (the shared-cache SQL filters `nsfwLevel != 0`/NULL). Falsy
+ * (0/null/undefined) levels are visible to no viewer and NEVER consume a bit-slot, so
+ * they can't crowd out a real bit even if a future caller passes such a set.
+ *
+ * Algorithm (coverage-first):
+ *   1. Coverage: add the EARLIEST-cache-order image of each distinct TRUTHY `nsfwLevel`
+ *      bit. Index 0 — the creator's curated lead — is the earliest rep of its own bit,
+ *      so it is covered on the real-data path (every level a truthy single bit).
+ *   2. Fill any remaining slots with the earliest not-yet-selected images (this reaches
+ *      index 0 first, so the curated lead is kept whenever a slot is free; a falsy /
+ *      invisible lead is omitted only when the real bits already fill the budget).
+ *   3. Return the selected set in ORIGINAL cache order, capped to `limit` — so a
  *      permissive viewer's cover stays `images[0]`, not the safest image (order does
  *      not affect the survives/drop test, only display).
  *
@@ -156,24 +163,28 @@ export function selectSlimGetAllModelImages<T extends { nsfwLevel?: number | nul
   if (images.length <= limit) return images;
 
   const selected = new Set<number>();
-  // 1. Always include the curated lead (guarded: its level may be unset).
-  selected.add(0);
-
-  // 2. One earliest-cache-order representative per distinct nsfwLevel bit present.
   const seenLevels = new Set<number>();
-  const lead = images[0]?.nsfwLevel;
-  if (lead != null) seenLevels.add(lead);
-  for (let i = 1; i < images.length && selected.size < limit; i++) {
+
+  // 1. Coverage: one EARLIEST-cache-order representative per distinct nsfwLevel bit.
+  //    A FALSY level (0 / null / undefined — not a browseable bit, so visible to NO
+  //    viewer) never claims a coverage slot, so it can never crowd out a real bit.
+  //    Because index 0 is the earliest image, a real-bit lead is its bit's earliest
+  //    representative here — so the creator's curated lead is always covered on the
+  //    real-data path (where every level is a truthy single bit).
+  for (let i = 0; i < images.length && selected.size < limit; i++) {
     const level = images[i]?.nsfwLevel;
-    if (level == null || seenLevels.has(level)) continue;
+    if (!level || seenLevels.has(level)) continue;
     seenLevels.add(level);
     selected.add(i);
   }
 
-  // 3. Fill any remaining slots with the earliest not-yet-selected images.
+  // 2. Fill remaining slots by cache order. This visits index 0 first, so the curated
+  //    lead is included whenever a slot is free (including a falsy/invisible lead) — it
+  //    is omitted ONLY when the distinct real bits already fill the budget, which loses
+  //    no viewer a cover (a falsy-level lead is visible to nobody).
   for (let i = 0; i < images.length && selected.size < limit; i++) selected.add(i);
 
-  // 4. Emit in original cache order, capped.
+  // 3. Emit in original cache order, capped.
   return [...selected]
     .sort((a, b) => a - b)
     .slice(0, limit)
