@@ -23,6 +23,7 @@ import {
   useMantineTheme,
   useComputedColorScheme,
 } from '@mantine/core';
+import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import type { InferGetServerSidePropsType } from 'next';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as z from 'zod';
@@ -75,7 +76,7 @@ import {
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { useQueryChallenge } from '~/components/Challenge/challenge.utils';
+import { useDeleteUserChallenge, useQueryChallenge } from '~/components/Challenge/challenge.utils';
 import { WinnerPodiumCard } from '~/components/Challenge/WinnerPodiumCard';
 import type { Props as DescriptionTableProps } from '~/components/DescriptionTable/DescriptionTable';
 import { buildPassthroughQuery } from '~/utils/query-string-helpers';
@@ -209,6 +210,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
   const currentUser = useCurrentUser();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
+  const { deleteChallenge: deleteOwnChallenge } = useDeleteUserChallenge();
 
   const handleMutationError = (error: { message: string }) => {
     showErrorNotification({ error: new Error(error.message) });
@@ -309,6 +311,33 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
   // Only User-source challenges carry user-authored text worth reporting
   const canReport = !!currentUser && challenge.source === ChallengeSource.User;
 
+  const isOwner =
+    !!currentUser &&
+    currentUser.id === challenge.createdById &&
+    challenge.source === ChallengeSource.User;
+  const canManageOwn = isOwner && !currentUser?.isModerator && isScheduled;
+
+  const handleOwnerDelete = () => {
+    openConfirmModal({
+      title: 'Delete challenge',
+      children:
+        'Delete this challenge? Your escrowed prize Buzz will be refunded. This cannot be undone.',
+      centered: true,
+      closeOnConfirm: false,
+      labels: { cancel: 'No, keep it', confirm: 'Delete challenge' },
+      confirmProps: { color: 'red' },
+      onConfirm: async () => {
+        try {
+          await deleteOwnChallenge(challenge.id);
+          closeAllModals();
+          await router.push('/challenges');
+        } catch {
+          // notification surfaced by the mutation
+        }
+      },
+    });
+  };
+
   return (
     <Gated
       contentNsfwLevel={challenge.allowedNsfwLevel}
@@ -334,7 +363,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                   <IconShare3 size={20} />
                 </ActionIcon>
               </ShareButton>
-              {(currentUser?.isModerator || canReport) && (
+              {(currentUser?.isModerator || canReport || canManageOwn) && (
                 <Menu position="bottom-end" withArrow>
                   <Menu.Target>
                     <ActionIcon variant="light" size="lg">
@@ -410,6 +439,25 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                           leftSection={<IconTrash size={14} />}
                           color="red"
                           onClick={handleDelete}
+                        >
+                          Delete
+                        </Menu.Item>
+                      </>
+                    )}
+                    {canManageOwn && (
+                      <>
+                        <Menu.Label>Actions</Menu.Label>
+                        <Menu.Item
+                          leftSection={<IconPencil size={14} stroke={1.5} />}
+                          component={Link}
+                          href={`/challenges/${challenge.id}/edit`}
+                        >
+                          Edit Challenge
+                        </Menu.Item>
+                        <Menu.Item
+                          leftSection={<IconTrash size={14} />}
+                          color="red"
+                          onClick={handleOwnerDelete}
                         >
                           Delete
                         </Menu.Item>
