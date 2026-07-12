@@ -3,6 +3,7 @@ import { Menu } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { IconEdit, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
+import { useRef } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ActionIconDotsVertical } from '~/components/Cards/components/ActionIconDotsVertical';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -18,6 +19,7 @@ export function ChallengeContextMenu({ challenge, buttonProps, ...menuProps }: P
   const currentUser = useCurrentUser();
   const router = useRouter();
   const { deleteChallenge, deleting } = useDeleteUserChallenge();
+  const deletingRef = useRef(false);
 
   const canManage =
     !!currentUser &&
@@ -60,6 +62,8 @@ export function ChallengeContextMenu({ challenge, buttonProps, ...menuProps }: P
               labels: { cancel: 'No, keep it', confirm: 'Delete challenge' },
               confirmProps: { color: 'red' },
               onConfirm: async () => {
+                if (deletingRef.current) return;
+                deletingRef.current = true;
                 try {
                   await deleteChallenge(challenge.id);
                   closeAllModals();
@@ -67,6 +71,8 @@ export function ChallengeContextMenu({ challenge, buttonProps, ...menuProps }: P
                   if (atDetails) await router.push('/challenges');
                 } catch {
                   // notification is surfaced by the mutation's onError
+                } finally {
+                  deletingRef.current = false;
                 }
               },
             });

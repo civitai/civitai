@@ -6,6 +6,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ChallengeSource } from '~/shared/utils/prisma/enums';
+import { getLoginLink } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
 
 export default function EditUserChallengePage() {
@@ -90,7 +91,7 @@ export const getServerSideProps = createServerSideProps({
     if (!session)
       return {
         redirect: {
-          destination: `/login?returnUrl=${encodeURIComponent(ctx.resolvedUrl)}`,
+          destination: getLoginLink({ returnUrl: ctx.resolvedUrl }),
           permanent: false,
         },
       };

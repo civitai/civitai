@@ -210,7 +210,8 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
   const currentUser = useCurrentUser();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
-  const { deleteChallenge: deleteOwnChallenge } = useDeleteUserChallenge();
+  const { deleteChallenge: deleteOwnChallenge, deleting: deletingOwn } = useDeleteUserChallenge();
+  const deletingOwnRef = useRef(false);
 
   const handleMutationError = (error: { message: string }) => {
     showErrorNotification({ error: new Error(error.message) });
@@ -327,12 +328,16 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
       labels: { cancel: 'No, keep it', confirm: 'Delete challenge' },
       confirmProps: { color: 'red' },
       onConfirm: async () => {
+        if (deletingOwnRef.current) return;
+        deletingOwnRef.current = true;
         try {
           await deleteOwnChallenge(challenge.id);
           closeAllModals();
           await router.push('/challenges');
         } catch {
           // notification surfaced by the mutation
+        } finally {
+          deletingOwnRef.current = false;
         }
       },
     });
@@ -457,10 +462,12 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                         <Menu.Item
                           leftSection={<IconTrash size={14} />}
                           color="red"
+                          disabled={deletingOwn}
                           onClick={handleOwnerDelete}
                         >
                           Delete
                         </Menu.Item>
+                        {canReport && <Menu.Divider />}
                       </>
                     )}
                     {canReport && (
