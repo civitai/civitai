@@ -272,6 +272,40 @@ export async function computeImageScores(
   return result;
 }
 
+export type ImageEngagementDelta = { imageId: number; dReactions: number; dComments: number };
+
+// Roll per-image engagement deltas up per owner. Images missing from
+// `ownerByImage` (deleted, or null userId) are dropped — their owner can't be
+// credited, which also keeps deleted-image engagement out of the delta window.
+export function rollupImageScoreDeltas(
+  deltas: ImageEngagementDelta[],
+  ownerByImage: Map<number, number>,
+  multipliers: { reactions: number; comments: number }
+): Map<number, number> {
+  const byUser = new Map<number, number>();
+  for (const { imageId, dReactions, dComments } of deltas) {
+    const userId = ownerByImage.get(imageId);
+    if (!userId) continue;
+    const delta =
+      Number(dReactions) * multipliers.reactions + Number(dComments) * multipliers.comments;
+    byUser.set(userId, (byUser.get(userId) ?? 0) + delta);
+  }
+  return byUser;
+}
+
+// New absolute images score = stored (or 0) + this run's delta. Keeps `images`
+// in the shared absolute-score persist path so `total` is recomputed there.
+export function foldImageDeltasOntoStored(
+  scoreDeltaByUser: Map<number, number>,
+  storedByUser: Map<number, number>
+): Map<number, number> {
+  const result = new Map<number, number>();
+  for (const [userId, delta] of scoreDeltaByUser) {
+    result.set(userId, (storedByUser.get(userId) ?? 0) + delta);
+  }
+  return result;
+}
+
 async function getUserScore(ctx: Context) {
   await getScores(ctx, 'users')`
     SELECT
