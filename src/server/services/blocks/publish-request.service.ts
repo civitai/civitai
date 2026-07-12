@@ -18,6 +18,10 @@ import {
 import { deriveOauthBitmaskFromBlockScopes } from '~/shared/constants/block-scope.constants';
 // Pure (no env/Prisma) — stamps the platform-owned iframe.src onto a manifest.
 import { stampCanonicalIframeSrc } from '~/server/services/blocks/manifest-normalize';
+// Type-only (erased at runtime) — the AppBlock projection the shared
+// AppBlock→AppListing mapper consumes (see the (3b) auto-create block in
+// approveRequest). The mapper VALUE itself is dynamically imported at use.
+import type { SourceAppBlock } from '~/server/services/blocks/app-listing-mapper';
 
 // dbRead/dbWrite/newUlid/bundle-s3 are dynamically imported inside the
 // functions that need them so the pure helpers (extract/diff) can be
@@ -2167,6 +2171,83 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       where: { id: existingAppBlock.appId },
       data: { grants: [], allowedScopes: derivedOauthCeiling },
     });
+  }
+
+  // (3b) App Store listing (W13) — auto-create the onsite `AppListing` for this
+  // app so an approved+deployed onsite app shows on the `/apps` store grid
+  // WITHOUT a manual `backfillAppListings` run. This closes the W13-LOCKED
+  // "1:1 slug=blockId auto-create-on-approve" decision that was never wired.
+  //
+  // TRANSACTION BOUNDARY: approveRequest is NOT a DB transaction — it interleaves
+  // durable DB writes with Forgejo/MinIO/Tekton I/O and is made correct by
+  // deterministic ids + P2002-fallback so a partial-failure re-approve converges
+  // (the OauthClient + AppBlock creates above use exactly this pattern). We slot
+  // the listing create into that same model: run it right after the AppBlock row
+  // exists, using the same client, WHILE THE PUBLISH_REQUEST IS STILL 'pending'
+  // (it is finalised 'approved' only in step 6, after the commit succeeds). So a
+  // failure in ANY later step (bundle fetch / commit / build) leaves the request
+  // pending → the mod re-approves → this block idempotently SKIPS the existing
+  // listing and the flow converges. The listing is never permanently orphaned.
+  //
+  // IDEMPOTENT on `appBlockId` (the 1:1 unique): first-version approve CREATES it;
+  // a subsequent-version approve finds it present and SKIPS — it must NEVER clobber
+  // curator edits (category/featured/featuredOrder) made after the first approve.
+  // A concurrent create (a racing approve or the backfill) is absorbed by the
+  // P2002 catch. We NEVER update an existing listing here.
+  //
+  // ONSITE ONLY: approveRequest only ever produces hosted (external_url IS NULL)
+  // AppBlocks, so `mapAppBlockToListing` yields kind='onsite'. The offsite
+  // external-submission flow (`offsite-listing.service`) owns its own listing
+  // writes — this path never touches it and never double-creates.
+  //
+  // We read the freshly-approved AppBlock's OWN columns from the PRIMARY
+  // (read-your-writes — it was just created/updated via dbWrite above) and map it
+  // through the SAME `mapAppBlockToListing` the backfill uses, over the exact same
+  // projection the backfill selects. That way the two paths cannot drift AND any
+  // mod curation already on the row (category/featured/featuredOrder) + the real
+  // OauthClient owner are mirrored faithfully — important for the transition case
+  // where an app approved BEFORE this feature (possibly already curated) has its
+  // first listing minted now on a subsequent-version approve.
+  const { mapAppBlockToListing } = await import('./app-listing-mapper');
+  try {
+    const existingListing = await dbRead.appListing.findUnique({
+      where: { appBlockId },
+      select: { id: true },
+    });
+    if (!existingListing) {
+      const ab = await dbWrite.appBlock.findUnique({
+        where: { id: appBlockId },
+        select: {
+          id: true,
+          blockId: true,
+          manifest: true,
+          contentRating: true,
+          category: true,
+          featured: true,
+          featuredOrder: true,
+          externalUrl: true,
+          app: { select: { userId: true } },
+        },
+      });
+      // A resolvable owner is required for the listing's userId FK. Every approved
+      // AppBlock has an OauthClient owner, so a miss here is anomalous — skip
+      // (don't throw into the already-side-effecting approve flow); the backfill
+      // remains the recovery path for such an anomaly.
+      if (ab && ab.app && typeof ab.app.userId === 'number') {
+        await dbWrite.appListing.create({
+          data: mapAppBlockToListing(ab as SourceAppBlock),
+          select: { id: true },
+        });
+      }
+    }
+  } catch (err) {
+    // P2002 = unique violation on appBlockId — a concurrent approve/backfill
+    // created the listing first. The invariant (one listing per app) still holds,
+    // so treat it as a no-op skip. Duck-type on the Prisma error `code` (matches
+    // this file's OauthClient/AppBlock P2002 handling). Any other error aborts the
+    // approve while the request is still pending → safe to re-approve.
+    const code = (err as { code?: unknown })?.code;
+    if (code !== 'P2002') throw err;
   }
 
   // (4) Obtain the bundle bytes. Two origins:
