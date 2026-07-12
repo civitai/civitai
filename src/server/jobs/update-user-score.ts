@@ -83,7 +83,9 @@ export const updateUserScore = createJob(
     await limitConcurrency(totalTasks, 5);
 
     // Advance only the categories that fetched cleanly, and only after their scores
-    // are persisted.
+    // are persisted. NB: a crash in this gap re-runs the window next time — a no-op
+    // for the five absolute categories, but a double-count for the incremental
+    // `images` category (see getImageScore). Accepted; force-backfill reconciles.
     for (const setLastUpdate of advanceCheckpoint) await setLastUpdate();
 
     // Re-throw so the run still surfaces as failed. Each category's original stack
@@ -158,8 +160,14 @@ async function getArticleScore(ctx: Context) {
 // last run onto their stored `images` score. Work scales with the images that
 // changed (~hundreds of thousands/day), NOT with each owner's full catalog (the
 // old full-recompute read tens of millions of `Image` rows nightly and timed the
-// job out). NOT idempotent — the images checkpoint must advance each run, and a
-// full recompute (`admin/temp/backfill-image-scores?force=true`) reconciles drift.
+// job out).
+//
+// NOT idempotent (unlike the five absolute-recompute categories, whose replay is
+// a no-op): a run writes `stored + delta` and only advances the images checkpoint
+// AFTER persistence, so a crash between the User write and the checkpoint upsert
+// re-applies the same delta window next run (double count). Accepted per the
+// incident decision — a full recompute (`admin/temp/backfill-image-scores?force=true`)
+// re-establishes the baseline.
 export async function getImageScore(ctx: Context) {
   // 1. Net engagement delta per image since the checkpoint. `metricValue` is
   // signed (un-likes / removed comments are negative), so this is the exact change
@@ -177,9 +185,13 @@ export async function getImageScore(ctx: Context) {
   `;
   if (!deltas.length) return;
 
-  // 2. Changed image -> owner (Postgres is authoritative; deleted images and null
-  // owners drop out here and are skipped by the rollup).
-  const ownerByImage = new Map<number, number>();
+  // 2. Map each changed image to its owner (Postgres authoritative; deleted images
+  // and null owners drop out) and roll deltas up per owner, ONE 10k-image batch at
+  // a time. A single owner map over every changed image could grow unbounded if the
+  // checkpoint ever froze for a wide window — the same V8 Map-cap failure class that
+  // first broke this job. Batching keeps each owner map small; only the per-owner
+  // accumulator (bounded by affected owners) survives across batches.
+  const scoreDeltaByUser = new Map<number, number>();
   for (const batch of chunk(deltas, 10000)) {
     const ids = batch.map((d) => d.imageId);
     const query = await ctx.pg.cancellableQuery<{ id: number; userId: number }>(
@@ -187,14 +199,19 @@ export async function getImageScore(ctx: Context) {
       [ids]
     );
     ctx.jobContext.on('cancel', query.cancel);
+    const ownerByImage = new Map<number, number>();
     for (const { id, userId } of await query.result()) ownerByImage.set(id, userId);
+    for (const [userId, delta] of rollupImageScoreDeltas(
+      batch,
+      ownerByImage,
+      ctx.scoreMultipliers.images
+    )) {
+      scoreDeltaByUser.set(userId, (scoreDeltaByUser.get(userId) ?? 0) + delta);
+    }
   }
-
-  // 3. Roll deltas up per owner.
-  const scoreDeltaByUser = rollupImageScoreDeltas(deltas, ownerByImage, ctx.scoreMultipliers.images);
   if (!scoreDeltaByUser.size) return;
 
-  // 4. Fold each delta onto the owner's stored images score -> new absolute value,
+  // 3. Fold each delta onto the owner's stored images score -> new absolute value,
   // handed to the shared persist path (which recomputes `total`).
   const userIds = [...scoreDeltaByUser.keys()];
   for (const ids of chunk(userIds, 5000)) {

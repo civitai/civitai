@@ -66,9 +66,12 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   console.time('BACKFILL_IMAGE_SCORES');
 
   // Checkpoint the incremental cron will resume from after a full sweep. Taken
-  // BEFORE the scan so no engagement between here and the checkpoint write is
-  // missed by the cron (a few duplicate events during the sweep are harmless vs.
-  // missing any).
+  // BEFORE the scan so the cron never MISSES engagement that lands mid-sweep. The
+  // incremental scorer isn't idempotent, so mid-sweep engagement is instead
+  // slightly OVER-counted (it's in both this sweep's absolute total and the cron's
+  // first delta window) for the sweep's duration — a deliberate tradeoff: an
+  // over-count is transient and self-corrects on the next force sweep, whereas a
+  // checkpoint taken AFTER the scan would permanently drop that window.
   const sweepStartedAt = new Date();
 
   // Phase 1 — scan v2 once in entityId ranges, accumulate reactions/comments per
