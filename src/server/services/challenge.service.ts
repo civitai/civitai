@@ -277,6 +277,7 @@ async function mapChallengeRowsToCards(items: ChallengeCardRow[]): Promise<Chall
       endsAt: item.endsAt,
       status: item.status,
       source: item.source,
+      createdById: item.createdById,
       prizePool: item.prizePool,
       nsfwLevel: item.nsfwLevel,
       allowedNsfwLevel: item.allowedNsfwLevel,
@@ -765,6 +766,7 @@ async function buildChallengeDetail(
     reviewCostType: challenge.reviewCostType,
     reviewCost: challenge.reviewCost,
     entryCount,
+    createdById,
     createdBy: {
       ...displayUser,
       profilePicture: displayProfilePics[displayUserId] ?? null,
@@ -2465,6 +2467,9 @@ export async function getActiveEvents(): Promise<ChallengeEventListItem[]> {
         endsAt: c.endsAt,
         status: c.status,
         source: c.source,
+        // createdById can be null (creator account deleted); fall back to the system user (-1),
+        // matching the displayUserId fallback above.
+        createdById: c.createdById ?? -1,
         nsfwLevel: c.nsfwLevel,
         allowedNsfwLevel: c.allowedNsfwLevel,
         prizePool: c.prizePool,
@@ -3030,6 +3035,7 @@ export async function getCompletedChallengesWithWinners(
       endsAt: item.endsAt,
       status: item.status,
       source: item.source,
+      createdById: item.createdById,
       prizePool: item.prizePool,
       nsfwLevel: item.nsfwLevel,
       allowedNsfwLevel: item.allowedNsfwLevel,

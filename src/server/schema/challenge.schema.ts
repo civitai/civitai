@@ -78,6 +78,8 @@ export type ChallengeListItem = {
   commentCount: number;
   modelVersionIds: number[];
   collectionId: number | null;
+  // Real creator id, distinct from createdBy.id which displays the judge when one is assigned.
+  createdById: number;
   createdBy: {
     id: number;
     username: string | null;
@@ -177,6 +179,8 @@ export type ChallengeDetail = {
   reviewCostType: ChallengeReviewCostType;
   reviewCost: number;
   entryCount: number;
+  // Real creator id, distinct from createdBy.id which displays the judge when one is assigned.
+  createdById: number;
   createdBy: {
     id: number;
     username: string | null;
