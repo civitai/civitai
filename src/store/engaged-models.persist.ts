@@ -38,17 +38,22 @@ import { useEngagedModelsStore } from '~/store/engaged-models.store';
  *   to a browsing session, so a 5-minute freshness bound eliminates the re-query
  *   for the common rapid-return pattern (reload, back/forward, open-in-new-tab)
  *   while capping the staleness window: after TTL an id is treated as unknown and
- *   re-queried, refreshing it. Optimistic writes in the ACTIVE tab still write
- *   through the store (and re-stamp the id fresh), so the acting tab is never
- *   stale. RESIDUAL RISK, explicit: a returning tab can briefly show stale
+ *   re-queried, refreshing it. Optimistic writes in the ACTIVE tab write through
+ *   the in-memory store and are dirty-guarded (a rehydrate never overwrites them),
+ *   so the acting tab is never stale. NOTE: a mutated id keeps its ORIGINAL
+ *   persisted TTL stamp (it is not re-stamped on write) — so it may be re-queried
+ *   slightly SOONER by other tabs, never served stale (the conservative direction).
+ *   RESIDUAL RISK, explicit: a returning tab can briefly show stale
  *   favorite/HIDDEN state for a model the user changed in ANOTHER tab/device —
  *   e.g. a model hidden elsewhere re-appearing — for at most TTL, until the id is
  *   re-queried. The TTL is deliberately short to bound that window.
  *
- * PER-USER ISOLATION — the blob carries its userId; a blob whose userId does not
- *   match the current user is IGNORED (and cleared), so user A's favorited/hidden
- *   state is never shown to user B on a shared browser. A user change resets the
- *   in-memory store before rehydrating the new user.
+ * PER-USER ISOLATION — there is ONE storage key for the whole origin; isolation is
+ *   enforced by an in-blob userId check, NOT by a per-user key. The blob carries its
+ *   userId; a blob whose userId does not match the current user is IGNORED (and
+ *   cleared), so user A's favorited/hidden state is never shown to user B on a
+ *   shared browser. 🔴 NEVER read/apply the blob without the userId gate. A user
+ *   change resets the in-memory store before rehydrating the new user.
  *
  * SSR / STORAGE-UNAVAILABLE SAFETY — every storage access is guarded by
  *   `typeof window` + try/catch. Rehydration runs only from a client effect
