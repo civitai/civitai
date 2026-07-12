@@ -9,6 +9,7 @@ import {
   IconSparkles,
 } from '@tabler/icons-react';
 import cardClasses from '~/components/Cards/Cards.module.css';
+import { ChallengeContextMenu } from '~/components/Challenge/ChallengeContextMenu';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -87,6 +88,7 @@ export const ChallengeCard = memo(function ChallengeCard({ data }: Props) {
     endsAt,
     status,
     source,
+    createdById,
     nsfwLevel,
     prizePool,
     entryCount,
@@ -144,6 +146,11 @@ export const ChallengeCard = memo(function ChallengeCard({ data }: Props) {
               </IconBadge>
             )}
           </div>
+          <ChallengeContextMenu
+            challenge={{ id, createdById, source, status }}
+            position="bottom-end"
+            withinPortal
+          />
         </div>
       }
       footerGradient
