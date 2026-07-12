@@ -3,6 +3,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { EngagedModelType } from '~/store/engaged-models.store';
 import { useEngagedModelsStore } from '~/store/engaged-models.store';
+import { initEngagedModelsPersistence } from '~/store/engaged-models.persist';
 import { trpcVanilla } from '~/utils/trpc';
 
 /**
@@ -164,6 +165,17 @@ export function useEngagedModelsMembership(modelIds: number[]): EngagedMembershi
   const validIds = modelIds.filter((id) => id > 0);
   const enabled = !!currentUser && validIds.length > 0;
   const key = validIds.join(',');
+
+  // Rehydrate the membership store from localStorage for the current user (and
+  // wire write-back) so a returning/reloading tab doesn't re-query ids it already
+  // knows-and-fresh. Client-only (effects don't run in SSR), keyed on the user id
+  // so a user change re-keys the persisted blob. Idempotent — the persistence
+  // module early-returns when the user is unchanged. No-op when storage is
+  // unavailable, leaving the store memory-only (today's behavior).
+  const currentUserId = currentUser?.id ?? null;
+  useEffect(() => {
+    initEngagedModelsPersistence(currentUserId);
+  }, [currentUserId]);
 
   useEffect(() => {
     if (!enabled) return;
