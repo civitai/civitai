@@ -107,6 +107,7 @@ import { ingestModelById, updateModelLastVersionAt } from './model.service';
 import { markFileReplaced, filesForModelVersionCache } from './model-file.service';
 import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
+import { deregisterFileLocations } from '~/utils/storage-resolver';
 import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
@@ -845,6 +846,10 @@ export const deleteVersionById = async ({
   }
 
   // Post-commit S3 cleanup — only after Postgres confirms the delete stuck.
+  // Keyed on ModelFile.url; this deletes the bytes for non-tiered / legacy
+  // files. For a TIERED file ModelFile.url is a known-stale pointer, so this
+  // path misses the real object — the deregister step below is what stops that
+  // leak. The two are complementary; keep both.
   if (modelFileUrls.length > 0) {
     try {
       await deleteModelFileObjects(modelFileUrls);
@@ -856,6 +861,25 @@ export const deleteVersionById = async ({
         error,
       });
     }
+  }
+
+  // Post-commit: deregister storage-resolver file_locations rows for this
+  // version. For a tiered file the real backend object is keyed by
+  // file_locations.path (not the stale ModelFile.url the S3 cleanup used), and
+  // the surviving row keeps that object whitelisted against the dereference-
+  // quarantine sweep. Removing the row turns the now catalog-gone object into a
+  // true storage orphan the existing sweep reclaims (reversibly) on its next
+  // cycle. deregisterFileLocations is best-effort and never throws, but wrap it
+  // anyway so a future change can't turn a registry blip into a failed delete.
+  try {
+    await deregisterFileLocations(id);
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'model-version-delete-deregister-file-locations',
+      message: `Failed to deregister file locations for model version ${id}`,
+      error,
+    });
   }
 
   return version;
