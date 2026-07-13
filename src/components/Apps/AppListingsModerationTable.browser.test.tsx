@@ -42,11 +42,17 @@ const ROWS = [
       submittedBy: { id: 1, username: 'dev', image: null },
     },
   }),
-  offsite({ id: 'apl_a', slug: 'alpha-live', name: 'Alpha', status: 'approved' }),
+  // Server (keyset) order is NOT alphabetical (Bravo precedes Alpha) so a client
+  // A→Z sort is observable as a flip.
   offsite({ id: 'apl_b', slug: 'bravo-live', name: 'Bravo', status: 'approved' }),
+  offsite({ id: 'apl_a', slug: 'alpha-live', name: 'Alpha', status: 'approved' }),
   offsite({ id: 'apl_o', slug: 'onsite-live', name: 'Onsite', kind: 'onsite', appBlockId: 'ab_1', status: 'approved' }),
   offsite({ id: 'apl_r', slug: 'gone-ext', name: 'Gone', status: 'removed' }),
 ];
+
+// Two-page dataset (paged mode) — page 1 carries a nextCursor, page 2 does not.
+const PAGE1 = [offsite({ id: 'apl_a', slug: 'alpha-live', name: 'Alpha', status: 'approved' })];
+const PAGE2 = [offsite({ id: 'apl_z', slug: 'zebra-live', name: 'Zebra', status: 'approved' })];
 
 const mocks = vi.hoisted(() => ({
   invalidate: vi.fn().mockResolvedValue(undefined),
@@ -54,6 +60,7 @@ const mocks = vi.hoisted(() => ({
   queryInput: vi.fn(),
   errorMode: false,
   queryError: false,
+  paged: false,
 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
@@ -93,12 +100,22 @@ vi.mock('~/utils/trpc', () => {
       useUtils: () => utils,
       appListings: {
         listAllListingsForModeration: {
-          useQuery: (input: unknown) => {
+          useQuery: (input: { cursor?: string }) => {
             mocks.queryInput(input);
+            if (mocks.queryError) {
+              return { data: undefined, isLoading: false, isFetching: false, error: new Error('nope') };
+            }
+            if (mocks.paged) {
+              const data = input?.cursor
+                ? { items: PAGE2, nextCursor: null }
+                : { items: PAGE1, nextCursor: 'cur-2' };
+              return { data, isLoading: false, isFetching: false, error: null };
+            }
             return {
-              data: mocks.queryError ? undefined : { items: ROWS, nextCursor: null },
+              data: { items: ROWS, nextCursor: null },
               isLoading: false,
-              error: mocks.queryError ? new Error('nope') : null,
+              isFetching: false,
+              error: null,
             };
           },
         },
@@ -138,6 +155,7 @@ beforeEach(() => {
   mocks.queryInput.mockClear();
   mocks.errorMode = false;
   mocks.queryError = false;
+  mocks.paged = false;
   showError.mockClear();
 });
 
@@ -169,21 +187,21 @@ describe('AppListingsModerationTable — sections + kind-aware visibility', () =
 });
 
 describe('AppListingsModerationTable — sort + server-side filter', () => {
-  test('the App column sorts (asc → desc reorders the Live rows)', async () => {
+  test('the App column client-sort reorders the loaded rows (server order → A→Z on click)', async () => {
     renderWithProviders(<AppListingsModerationTable />);
     await expect.element(page.getByTestId('apps-mod-listing-row-alpha-live')).toBeInTheDocument();
+    // Default = the server keyset order (Bravo precedes Alpha) — NOT a client A→Z.
     const before =
       page.getByTestId('apps-mod-listing-row-alpha-live').element()
         .compareDocumentPosition(page.getByTestId('apps-mod-listing-row-bravo-live').element());
-    // Default asc: Alpha precedes Bravo (FOLLOWING bit set on the "other" node).
-    expect(before & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(before & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy(); // bravo precedes alpha
 
     await page.getByRole('button', { name: 'Sort by App' }).first().click();
     const after =
       page.getByTestId('apps-mod-listing-row-alpha-live').element()
         .compareDocumentPosition(page.getByTestId('apps-mod-listing-row-bravo-live').element());
-    // Desc: Bravo now precedes Alpha.
-    expect(after & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    // A→Z: Alpha now precedes Bravo.
+    expect(after & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   test('typing in the filter forwards `search` to the server query', async () => {
@@ -230,13 +248,24 @@ describe('AppListingsModerationTable — inline actions fire the right mutation'
     });
   });
 
-  test('Purge is confirm-gated: disabled until a reason is entered, then fires', async () => {
+  test('Purge is typed-confirm gated: needs BOTH reason ≥3 AND the exact slug, then fires', async () => {
     renderWithProviders(<AppListingsModerationTable />);
     await page.getByTestId('apps-mod-purge-gone-ext').click();
-    // Destructive warning + a disabled confirm while the reason is empty.
+    // Destructive warning + a disabled confirm while nothing is entered.
     await expect.element(page.getByTestId('apps-mod-action-confirm')).toBeDisabled();
     expect(mocks.mutate).not.toHaveBeenCalled();
+
+    // Reason alone is NOT enough — the typed slug confirm is still required.
     await page.getByTestId('apps-mod-action-reason').fill('malware');
+    await expect.element(page.getByTestId('apps-mod-action-confirm')).toBeDisabled();
+
+    // A WRONG slug keeps it disabled.
+    await page.getByTestId('apps-mod-purge-confirm').fill('wrong-slug');
+    await expect.element(page.getByTestId('apps-mod-action-confirm')).toBeDisabled();
+    expect(mocks.mutate).not.toHaveBeenCalled();
+
+    // The exact slug (+ reason) enables it → fires with the right args.
+    await page.getByTestId('apps-mod-purge-confirm').fill('gone-ext');
     await expect.element(page.getByTestId('apps-mod-action-confirm')).toBeEnabled();
     await page.getByTestId('apps-mod-action-confirm').click();
     expect(mocks.mutate).toHaveBeenCalledWith('purge', { appListingId: 'apl_r', reason: 'malware' });
@@ -277,6 +306,48 @@ describe('AppListingsModerationTable — pending Review opens the review modal',
       'approve',
       expect.objectContaining({ publishRequestId: 'alpr_p' })
     );
+  });
+});
+
+describe('AppListingsModerationTable — pagination, status filter + honest truncation', () => {
+  test('Load more appends the next keyset page and hides once the cursor is exhausted', async () => {
+    mocks.paged = true;
+    renderWithProviders(<AppListingsModerationTable />);
+    // Page 1 only: alpha visible, zebra NOT yet, Load-more present.
+    await expect.element(page.getByTestId('apps-mod-listing-row-alpha-live')).toBeInTheDocument();
+    expect(page.getByTestId('apps-mod-listing-row-zebra-live').elements()).toHaveLength(0);
+    await expect.element(page.getByTestId('apps-mod-load-more')).toBeInTheDocument();
+
+    await page.getByTestId('apps-mod-load-more').click();
+    // Page 2 appended: BOTH rows now render, and Load-more is gone (nextCursor null).
+    await expect.element(page.getByTestId('apps-mod-listing-row-zebra-live')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-mod-listing-row-alpha-live')).toBeInTheDocument();
+    expect(page.getByTestId('apps-mod-load-more').elements()).toHaveLength(0);
+  });
+
+  test('the truncation indicator shows a "+more" count + Load-more only while a next page exists', async () => {
+    mocks.paged = true;
+    renderWithProviders(<AppListingsModerationTable />);
+    // Page 1 truncated → the count flags that more exist, and Load-more shows.
+    await expect
+      .element(page.getByTestId('apps-mod-listings-count'))
+      .toHaveTextContent('Showing 1+');
+    await expect.element(page.getByTestId('apps-mod-load-more')).toBeInTheDocument();
+  });
+
+  test('the count reads a plain total (no "+", no Load-more) when nothing is truncated', async () => {
+    renderWithProviders(<AppListingsModerationTable />);
+    const count = page.getByTestId('apps-mod-listings-count');
+    await expect.element(count).toHaveTextContent('Showing 5');
+    expect((count.element().textContent ?? '').includes('+')).toBe(false);
+    expect(page.getByTestId('apps-mod-load-more').elements()).toHaveLength(0);
+  });
+
+  test('selecting a status re-queries the server with that `status` arg', async () => {
+    renderWithProviders(<AppListingsModerationTable />);
+    await page.getByRole('radio', { name: 'Removed' }).click();
+    const lastInput = mocks.queryInput.mock.calls.at(-1)?.[0] as { status?: string };
+    expect(lastInput.status).toBe('removed');
   });
 });
 

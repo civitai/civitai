@@ -12,9 +12,10 @@ import {
   Table,
   Text,
   Textarea,
+  TextInput,
 } from '@mantine/core';
 import { IconAlertTriangle, IconBox, IconThumbUp } from '@tabler/icons-react';
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import {
   OffsiteReviewModal,
   type OffsitePendingRow,
@@ -75,6 +76,28 @@ const MOD_ACCESSORS: SubmissionAccessors<ModerationListingRow> = {
 
 type KindFilter = 'all' | 'onsite' | 'offsite';
 
+/** The server-side status filter (the primary "reach a specific bucket" affordance).
+ *  `'all'` = no filter; otherwise the raw `AppListing.status` ('Live' = approved). */
+type StatusFilter = 'all' | 'approved' | 'pending' | 'rejected' | 'removed' | 'draft';
+
+const STATUS_FILTER_OPTIONS: { label: string; value: StatusFilter }[] = [
+  { label: 'All', value: 'all' },
+  { label: 'Live', value: 'approved' },
+  { label: 'Pending', value: 'pending' },
+  { label: 'Rejected', value: 'rejected' },
+  { label: 'Removed', value: 'removed' },
+  { label: 'Draft', value: 'draft' },
+];
+
+/** Rows per keyset page (bounded by the schema at ≤50). */
+const PAGE_SIZE = 50;
+
+/** A non-mod-table sort column, used as the "no active sort" sentinel so the App
+ *  header renders neutral until a mod explicitly clicks it (the default order is the
+ *  server keyset — newest-first — NOT a client alphabetical re-sort of a truncated
+ *  window, which would misrepresent completeness). */
+const NEUTRAL_SORT: SortState = { column: 'reviewed', direction: 'asc' };
+
 /** Build the off-site review-modal row from a pending moderation listing row. */
 function toReviewRow(row: ModerationListingRow): OffsitePendingRow | null {
   const pending = row.pendingRequest;
@@ -101,32 +124,63 @@ export function AppListingsModerationTable() {
   const utils = trpc.useUtils();
   const [search, setSearch] = useState('');
   const [kind, setKind] = useState<KindFilter>('all');
-  const [sort, setSort] = useState<SortState>({ column: 'app', direction: 'asc' });
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  // `null` = the server keyset order (newest-first). A client sort is opt-in (a mod
+  // clicks the App header) and is labelled as covering only the LOADED rows.
+  const [sort, setSort] = useState<SortState | null>(null);
+  // Keyset pagination: `cursor` drives the query; `accumulated` holds the pages
+  // already loaded so "Load more" APPENDS rather than replaces.
+  const [cursor, setCursor] = useState<string | undefined>(undefined);
+  const [accumulated, setAccumulated] = useState<ModerationListingRow[]>([]);
   const [reviewRow, setReviewRow] = useState<OffsitePendingRow | null>(null);
   const [pendingAction, setPendingAction] = useState<{
     action: ListingModAction;
     row: ModerationListingRow;
   } | null>(null);
 
+  // A filter change = a NEW result set → reset pagination (don't append across it).
+  const trimmedSearch = search.trim();
+  const filterKey = `${statusFilter}|${kind}|${trimmedSearch}`;
+  useEffect(() => {
+    setAccumulated([]);
+    setCursor(undefined);
+  }, [filterKey]);
+
   const query = trpc.appListings.listAllListingsForModeration.useQuery(
     {
-      limit: 50,
-      search: search.trim() || undefined,
+      limit: PAGE_SIZE,
+      search: trimmedSearch || undefined,
       kind: kind === 'all' ? undefined : kind,
+      status: statusFilter === 'all' ? undefined : statusFilter,
+      cursor,
     },
     { enabled: !!features?.appBlocks, retry: false }
   );
 
-  const invalidate = () => utils.appListings.listAllListingsForModeration.invalidate();
+  // Reset to page 1 on a mutation (a listing's status/order may shift) + invalidate.
+  const invalidate = () => {
+    setAccumulated([]);
+    setCursor(undefined);
+    return utils.appListings.listAllListingsForModeration.invalidate();
+  };
 
-  const items = (query.data?.items ?? []) as ModerationListingRow[];
+  const page = (query.data?.items ?? []) as ModerationListingRow[];
+  const nextCursor = query.data?.nextCursor ?? null;
 
-  // Group (one group per listing — the mod view isn't version-collapsed), sort by
-  // the chosen column, then partition into the MOD status sections.
+  // Merge the current page into the accumulated set (dedupe by id — defensive).
+  const items = useMemo(() => {
+    if (!cursor) return page;
+    const seen = new Set(accumulated.map((r) => r.id));
+    return [...accumulated, ...page.filter((r) => !seen.has(r.id))];
+  }, [accumulated, page, cursor]);
+
+  // Group (one group per listing — the mod view isn't version-collapsed), apply the
+  // (opt-in) client sort, then partition into the MOD status sections. When `sort`
+  // is null the server keyset order (newest-first) is preserved.
   const buckets = useMemo(() => {
     const grouped = groupSubmissionsByApp(items, MOD_ACCESSORS.identity, MOD_ACCESSORS.submittedAt);
-    const sorted = sortGroups(grouped, sort, MOD_ACCESSORS);
-    return bucketGroupsByStatus(sorted, MOD_ACCESSORS.status, MOD_STATUS_BUCKETS);
+    const ordered = sort ? sortGroups(grouped, sort, MOD_ACCESSORS) : grouped;
+    return bucketGroupsByStatus(ordered, MOD_ACCESSORS.status, MOD_STATUS_BUCKETS);
   }, [items, sort]);
 
   const totalGroups = MOD_STATUS_SECTION_ORDER.reduce((n, b) => n + buckets[b].length, 0);
@@ -135,7 +189,12 @@ export function AppListingsModerationTable() {
   // (unobtrusive, mirrors the sibling mod queues).
   if (query.error) return null;
 
-  const onSort = (column: SortColumn) => setSort((s) => nextSortState(s, column));
+  const onSort = (column: SortColumn) =>
+    setSort((s) => nextSortState(s ?? { column: 'app', direction: 'desc' }, column));
+  const onLoadMore = () => {
+    setAccumulated(items);
+    if (nextCursor) setCursor(nextCursor);
+  };
 
   const openAction = (action: ListingModAction, row: ModerationListingRow) => {
     if (action === 'review') {
@@ -151,7 +210,7 @@ export function AppListingsModerationTable() {
       <Table verticalSpacing="md" horizontalSpacing="md">
         <Table.Thead>
           <Table.Tr>
-            <SortableTh label="App" column="app" sort={sort} onSort={onSort} />
+            <SortableTh label="App" column="app" sort={sort ?? NEUTRAL_SORT} onSort={onSort} />
             <Table.Th>Owner</Table.Th>
             <Table.Th>Category</Table.Th>
             <Table.Th>Reviews</Table.Th>
@@ -262,6 +321,12 @@ export function AppListingsModerationTable() {
     </Card>
   );
 
+  // Honest completeness signal: whenever a next page exists the loaded set is a
+  // TRUNCATED window (the newest `items.length`), so the view must never read as a
+  // complete list — surface the count + the Load-more affordance, and (when a client
+  // sort is active) note the sort covers only the loaded rows.
+  const truncated = nextCursor != null;
+
   return (
     <Stack gap="md" mt="lg">
       <Group justify="space-between" align="flex-end">
@@ -271,19 +336,29 @@ export function AppListingsModerationTable() {
           testId="apps-mod-listings-filter"
           placeholder="Filter by app name or slug…"
         />
-        <SegmentedControl
-          size="xs"
-          value={kind}
-          onChange={(v) => setKind(v as KindFilter)}
-          data={[
-            { label: 'All', value: 'all' },
-            { label: 'On-site', value: 'onsite' },
-            { label: 'External', value: 'offsite' },
-          ]}
-        />
+        <Group gap="sm">
+          <SegmentedControl
+            size="xs"
+            value={statusFilter}
+            onChange={(v) => setStatusFilter(v as StatusFilter)}
+            data={STATUS_FILTER_OPTIONS}
+            aria-label="Filter by status"
+          />
+          <SegmentedControl
+            size="xs"
+            value={kind}
+            onChange={(v) => setKind(v as KindFilter)}
+            data={[
+              { label: 'All', value: 'all' },
+              { label: 'On-site', value: 'onsite' },
+              { label: 'External', value: 'offsite' },
+            ]}
+            aria-label="Filter by kind"
+          />
+        </Group>
       </Group>
 
-      {query.isLoading ? (
+      {query.isLoading && items.length === 0 ? (
         <Text size="sm" c="dimmed">
           Loading…
         </Text>
@@ -294,12 +369,40 @@ export function AppListingsModerationTable() {
           </Text>
         </Card>
       ) : (
-        <StatusSections
-          buckets={buckets}
-          testIdPrefix="apps-mod-listings-section"
-          order={MOD_STATUS_SECTION_ORDER}
-          renderTable={renderTable}
-        />
+        <>
+          <Group gap={6}>
+            <Text size="xs" c="dimmed" data-testid="apps-mod-listings-count">
+              Showing {items.length}
+              {truncated ? '+ (more listings exist — Load more or narrow the filters)' : ''}.
+            </Text>
+            {truncated && sort && (
+              <Text size="xs" c="orange" data-testid="apps-mod-sort-partial-note">
+                Sort covers only the loaded rows — Load more or filter to include the rest.
+              </Text>
+            )}
+          </Group>
+
+          <StatusSections
+            buckets={buckets}
+            testIdPrefix="apps-mod-listings-section"
+            order={MOD_STATUS_SECTION_ORDER}
+            renderTable={renderTable}
+          />
+
+          {truncated && (
+            <Group justify="center">
+              <Button
+                variant="default"
+                onClick={onLoadMore}
+                loading={query.isFetching}
+                disabled={query.isFetching}
+                data-testid="apps-mod-load-more"
+              >
+                Load more
+              </Button>
+            </Group>
+          )}
+        </>
       )}
 
       <OffsiteReviewModal
@@ -333,12 +436,16 @@ function ListingModActionModal({
 }) {
   const [reason, setReason] = useState('');
   const [targetUserId, setTargetUserId] = useState<number | ''>('');
+  // Typed-confirmation for the irreversible Purge: the mod must type the listing
+  // slug (in ADDITION to the reason) before the destructive button enables.
+  const [confirmText, setConfirmText] = useState('');
 
   async function afterSuccess(message: string) {
     showSuccessNotification({ message });
     await onDone();
     setReason('');
     setTargetUserId('');
+    setConfirmText('');
     onClose();
   }
   function onError(title: string) {
@@ -381,8 +488,13 @@ function ListingModActionModal({
   const trimmed = reason.trim();
   const validTarget =
     typeof targetUserId === 'number' && Number.isInteger(targetUserId) && targetUserId > 0;
+  // Purge additionally requires the mod to type the exact listing slug (typed-confirm).
+  const confirmMatches = confirmText.trim() === row.slug;
   const canSubmit =
-    !busy && trimmed.length >= OFFSITE_MOD_REASON_MIN && (!isClaim || validTarget);
+    !busy &&
+    trimmed.length >= OFFSITE_MOD_REASON_MIN &&
+    (!isClaim || validTarget) &&
+    (!destructive || confirmMatches);
 
   function submit() {
     switch (action) {
@@ -403,6 +515,7 @@ function ListingModActionModal({
   function reset() {
     setReason('');
     setTargetUserId('');
+    setConfirmText('');
     onClose();
   }
 
@@ -422,12 +535,29 @@ function ListingModActionModal({
     >
       <Stack gap="md">
         {destructive && (
-          <Alert color="red" variant="light" icon={<IconAlertTriangle size={16} />}>
-            <Text size="sm">
-              Purge PERMANENTLY deletes this listing and its screenshots + reports. The audit event
-              (with the slug snapshot) is kept. This cannot be undone.
-            </Text>
-          </Alert>
+          <>
+            <Alert color="red" variant="light" icon={<IconAlertTriangle size={16} />}>
+              <Text size="sm">
+                Purge PERMANENTLY deletes this listing and its screenshots + reports. The audit
+                event (with the slug snapshot) is kept. This cannot be undone.
+              </Text>
+            </Alert>
+            <TextInput
+              label={
+                <Text size="sm">
+                  Type the slug <Code>{row.slug}</Code> to confirm
+                </Text>
+              }
+              placeholder={row.slug}
+              value={confirmText}
+              onChange={(e) => setConfirmText(e.currentTarget.value)}
+              disabled={busy}
+              error={
+                confirmText.length > 0 && !confirmMatches ? 'Does not match the slug' : undefined
+              }
+              data-testid="apps-mod-purge-confirm"
+            />
+          </>
         )}
         {isClaim && (
           <>
