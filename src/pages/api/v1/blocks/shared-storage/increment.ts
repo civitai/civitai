@@ -70,4 +70,11 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   }
 });
 
-export default withBlockScope(baseHandler, { requiredScope: 'apps:storage:shared:write' });
+// allowOpaqueOrigin: an UNVERIFIED block direct-fetches this from an opaque
+// origin (`Origin: null`), so it needs `ACAO: null` to clear the CORS preflight;
+// the Bearer block-JWT (no cookies) remains the sole authz gate — mirrors
+// images.ts; see WithBlockScopeOpts.allowOpaqueOrigin.
+export default withBlockScope(baseHandler, {
+  requiredScope: 'apps:storage:shared:write',
+  allowOpaqueOrigin: true,
+});
