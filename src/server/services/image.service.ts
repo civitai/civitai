@@ -189,6 +189,7 @@ import {
   nsfwBrowsingLevelsArray,
   nsfwBrowsingLevelsFlag,
   onlySelectableLevels,
+  sfwBrowsingLevelsArray,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
@@ -1455,7 +1456,7 @@ export const getAllImages = async (
     AND.push(Prisma.sql`(i."poi" != TRUE OR p."userId" = ${userId})`);
   }
   if (disableMinor) {
-    AND.push(Prisma.sql`(i."minor" != TRUE)`);
+    AND.push(Prisma.sql`(i."minor" != TRUE OR (i."nsfwLevel" & ${sfwBrowsingLevelsFlag}) != 0)`);
   }
   if (excludedTagIds?.length) {
     const notExcluded = Prisma.sql`NOT EXISTS (
@@ -3156,7 +3157,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     filters.push(`(NOT poi = true${ownCarveOut})`);
   }
   if (disableMinor) {
-    filters.push(`(NOT minor = true)`);
+    filters.push(`((NOT minor = true) OR nsfwLevel IN [${sfwBrowsingLevelsArray.join(', ')}])`);
   }
 
   if (isModerator) {
@@ -3803,7 +3804,10 @@ export async function getImagesFromBitdexPreFilter(
   if (disablePoi) {
     filters.push(_not(_eq('poi', _bool(true))));
   }
-  if (disableMinor) filters.push(_not(_eq('minor', _bool(true))));
+  if (disableMinor)
+    filters.push(
+      _or(_not(_eq('minor', _bool(true))), _in('nsfwLevel', sfwBrowsingLevelsArray.map(_int)))
+    );
 
   if (isModerator) {
     if (poiOnly) filters.push(_eq('poi', _bool(true)));
@@ -4022,7 +4026,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     filters.push(`(NOT poi = true)`);
   }
   if (disableMinor) {
-    filters.push(`(NOT minor = true)`);
+    filters.push(`((NOT minor = true) OR nsfwLevel IN [${sfwBrowsingLevelsArray.join(', ')}])`);
   }
 
   if (isModerator) {
@@ -5406,7 +5410,9 @@ export const getImagesForPosts = async ({
   }
 
   if (disableMinor) {
-    imageWhere.push(Prisma.sql`(i."minor" = false OR i."minor" IS NULL)`);
+    imageWhere.push(
+      Prisma.sql`(i."minor" = false OR i."minor" IS NULL OR (i."nsfwLevel" & ${sfwBrowsingLevelsFlag}) != 0)`
+    );
   }
 
   if (isModerator) {
