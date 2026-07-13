@@ -75,15 +75,29 @@ const SHARED_WRITE_SCOPE = 'apps:storage:shared:write';
 /**
  * The min-trust gate (design H3). Reuses EXISTING civitai trust signals hydrated
  * from `SessionUser` — no new trust score. FAIL-CLOSED: a vanished subject (null),
- * banned, muted, onboarding-incomplete, unverified email, or too-new account is
- * DENIED. `asserts` narrows `user` to non-null for the caller.
+ * banned, muted, onboarding-incomplete, unverified-AND-no-OAuth, or too-new account
+ * is DENIED. `asserts` narrows `user` to non-null for the caller.
+ *
+ * "Verified email" is satisfied by `emailVerified` OR a linked OAuth account
+ * (`hasLinkedOAuth`, a row in the `Account` table). Rationale: civitai's
+ * `emailVerified` is only ever set by the email-CHANGE flow — OAuth sign-in
+ * (GitHub/Google/Discord, ~69% of active users) never sets it, so the raw check
+ * locked out most legitimate users. A linked OAuth account is a provider-verified
+ * identity and a STRONGER anti-sybil signal than an unverified civitai email
+ * (minting N GitHub/Google accounts is harder than N unverified civitai accounts).
+ * A user with NEITHER a verified email NOR an OAuth link genuinely still needs to
+ * verify, so that case keeps the original deny.
  *
  * Signals (all AND-ed):
  *   sub!=anon (caller passes non-null) · !bannedAt · !muted ·
- *   onboarding-complete (Flags.hasFlag(onboarding, Buzz)) · emailVerified present ·
+ *   onboarding-complete (Flags.hasFlag(onboarding, Buzz)) ·
+ *   (emailVerified present OR hasLinkedOAuth) ·
  *   account age ≥ MIN_ACCOUNT_AGE_MS · [optional] paid tier.
  */
-export function assertSharedWriteTrust(user: SessionUser | null): asserts user is SessionUser {
+export function assertSharedWriteTrust(
+  user: SessionUser | null,
+  hasLinkedOAuth: boolean
+): asserts user is SessionUser {
   const deny = (message: string): never => {
     throw new TRPCError({ code: 'FORBIDDEN', message });
   };
@@ -93,7 +107,9 @@ export function assertSharedWriteTrust(user: SessionUser | null): asserts user i
   if (!Flags.hasFlag(user.onboarding ?? 0, OnboardingSteps.Buzz)) {
     return deny('Complete onboarding before contributing');
   }
-  if (!user.emailVerified) return deny('Verify your email before contributing');
+  if (!user.emailVerified && !hasLinkedOAuth) {
+    return deny('Verify your email before contributing');
+  }
   const createdAt = user.createdAt ? new Date(user.createdAt).getTime() : NaN;
   if (!Number.isFinite(createdAt) || Date.now() - createdAt < MIN_ACCOUNT_AGE_MS) {
     return deny('Your account is too new to contribute');
@@ -190,7 +206,16 @@ async function resolveSharedContext(blockToken: string, op: SharedOp): Promise<S
         message: 'shared storage writes require an authenticated viewer',
       });
     }
-    assertSharedWriteTrust(subjectUser);
+    // "Verified email" is satisfied by emailVerified OR a linked OAuth account.
+    // Only query when emailVerified is absent (the common OAuth case) — a
+    // verified-email user short-circuits with NO extra query per write op. The
+    // query keys on the SUBJECT `userId` (parsed from the verified block token),
+    // never client-forgeable input.
+    let hasLinkedOAuth = false;
+    if (subjectUser && !subjectUser.emailVerified) {
+      hasLinkedOAuth = (await dbRead.account.count({ where: { userId } })) > 0;
+    }
+    assertSharedWriteTrust(subjectUser, hasLinkedOAuth);
   }
 
   return {
