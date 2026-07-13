@@ -4,6 +4,10 @@
   border-radius: var(--mantine-radius-md);
   padding: var(--mantine-spacing-md);
   position: relative;
+  // Match the cosmetic cards' depth: exterior border + inset highlight + shadow.
+  border: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18),
+    inset 0 0 0 1px light-dark(rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.04));
 }
 
 .cardHeader {
@@ -24,30 +28,32 @@
   object-fit: cover;
 }
 
-.availability {
-  position: absolute;
-  // Top-right so it doesn't collide with the ImageGuard NSFW/blur toggle (top-left).
-  right: var(--mantine-spacing-md);
-  top: var(--mantine-spacing-md);
-  z-index: 2;
+// Two-section Early Access badge: green label + a darker inset time section,
+// split by a subtle divider — a real visual break instead of a "|".
+.eaBadge {
+  display: inline-flex;
+  align-items: stretch;
+  border-radius: var(--mantine-radius-sm);
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
+  color: var(--mantine-color-white);
+  background: var(--mantine-color-success-5);
 }
 
-.countdown {
-  position: absolute;
-  left: var(--mantine-spacing-md);
-  right: var(--mantine-spacing-md);
-  bottom: var(--mantine-spacing-md);
+.eaLabel {
   display: flex;
-  align-items: stretch;
-  text-align: center;
-  z-index: 2;
+  align-items: center;
+  padding: 5px 7px;
+}
 
-  :global(.mantine-Badge-label) {
-    display: block;
-    width: 100%;
-  }
-
-  :global(.mantine-Text-root) {
-    margin: 0 auto;
-  }
+.eaTime {
+  display: flex;
+  align-items: center;
+  padding: 5px 7px;
+  letter-spacing: 0.02em;
+  background: rgba(0, 0, 0, 0.28);
+  box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.18);
 }

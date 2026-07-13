@@ -136,6 +136,9 @@ export const updateCreatorShopItemSchema = z.object({
 export type GetCreatorShopInput = z.infer<typeof getCreatorShopSchema>;
 export const getCreatorShopSchema = z.object({
   userId: z.number(),
+  // Moderator-only: return site-wide sample data so an empty/unset shop still
+  // renders every populated section for design work. Honored only for mods.
+  preview: z.boolean().optional(),
 });
 
 export type GetEarlyAccessPricesInput = z.infer<typeof getEarlyAccessPricesSchema>;
