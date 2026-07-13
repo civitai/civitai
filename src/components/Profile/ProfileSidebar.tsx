@@ -21,6 +21,7 @@ import {
   IconRss,
   IconShare3,
   IconInfoCircle,
+  IconShoppingBag,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useMemo, useState } from 'react';
@@ -31,6 +32,8 @@ import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
+import { NextLink } from '~/components/NextLink/NextLink';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { UserContextMenu } from '~/components/Profile/UserContextMenu';
@@ -97,6 +100,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   const colorScheme = useComputedColorScheme('dark');
   const isMobile = useContainerSmallerThan('sm');
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const { data: user } = trpc.userProfile.get.useQuery({
     username,
   });
@@ -193,6 +197,23 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         <IconShare3 size={16} />
       </LegacyActionIcon>
     </ShareButton>
+  );
+
+  // Shown when the user has a live, public Creator Shop.
+  const shopBtn = features.creatorShop && user.creatorShopEnabled && (
+    <Button
+      component={NextLink}
+      href={`/user/${username}/shop`}
+      variant={isMobile ? 'filled' : 'light'}
+      color="yellow"
+      size={sizeOpts.button}
+      radius="xl"
+      leftSection={<IconShoppingBag size={16} />}
+      style={{ fontSize: 14, fontWeight: 590, lineHeight: 1.5 }}
+      fullWidth
+    >
+      Visit shop
+    </Button>
   );
 
   const mutedAlert = isCurrentUser && muted && (
@@ -328,6 +349,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
           </Group>
           <TipBuzzBtn />
           <ChatBtn />
+          {shopBtn}
         </>
       )}
 

@@ -746,6 +746,7 @@ export const reviewCreatorShopItem = async ({
     where: { id },
     select: {
       id: true,
+      cosmeticId: true,
       unitAmount: true,
       status: true,
       meta: true,
@@ -788,6 +789,20 @@ export const reviewCreatorShopItem = async ({
           },
           select: creatorShopItemSelect,
         });
+
+  // On approval, grant the creator their own cosmetic (idempotent).
+  if (action === 'approve' && item.cosmetic.createdById) {
+    await dbWrite.userCosmetic.createMany({
+      data: [
+        {
+          userId: item.cosmetic.createdById,
+          cosmeticId: item.cosmeticId,
+          claimKey: 'creator-shop',
+        },
+      ],
+      skipDuplicates: true,
+    });
+  }
 
   // Let the creator know the review outcome (best-effort).
   const creatorId = item.cosmetic.createdById;

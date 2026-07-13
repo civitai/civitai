@@ -8,7 +8,7 @@ import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enum
 
 // Business rules (shared by client + server).
 export const COSMETIC_PRICE_FLOOR = 500;
-export const CREATOR_SHOP_SUBMISSION_FEE = 1000;
+export const CREATOR_SHOP_SUBMISSION_FEE = 10000;
 export const CREATOR_SHOP_MAX_FEATURED = 6;
 // Creator keeps this share of each sale; platform keeps the remainder.
 export const CREATOR_SHOP_CREATOR_SHARE = 0.7;

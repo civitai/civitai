@@ -175,6 +175,7 @@ export const getUserCreator = async ({
         deletedAt: true,
         createdAt: true,
         publicSettings: true,
+        settings: true,
         excludeFromLeaderboards: true,
         links: {
           select: {
@@ -230,8 +231,12 @@ export const getUserCreator = async ({
     })
   );
 
+  // Expose only whether the shop is public — never leak the raw settings blob.
+  const { settings, ...rest } = user;
   return {
-    ...user,
+    ...rest,
+    creatorShopEnabled:
+      (settings as { creatorShop?: { enabled?: boolean } } | null)?.creatorShop?.enabled === true,
     _count: { models: modelCount },
   };
 };
@@ -774,11 +779,9 @@ export const getCreators = async <TSelect extends Prisma.UserSelect>({
     // there too so this endpoint never 500s from the caching machinery. (A genuine
     // dbRead.user.count DB error still propagates — the fallback re-runs and throws
     // again — which matches pre-cache behavior.)
-    const cachedCount = await fetchThroughCache(
-      cacheKey,
-      () => dbRead.user.count({ where }),
-      { ttl: CacheTTL.md }
-    ).catch((e) => {
+    const cachedCount = await fetchThroughCache(cacheKey, () => dbRead.user.count({ where }), {
+      ttl: CacheTTL.md,
+    }).catch((e) => {
       // Only the lock-retry-exhaustion throw falls back to the inline count. Any
       // OTHER throw from the cache helper (e.g. a future key-type/serialization
       // invariant) must surface, not be silently swallowed into a count.

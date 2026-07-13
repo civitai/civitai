@@ -523,6 +523,11 @@ export const purchaseCosmeticShopItem = async ({
     throw new Error('Cosmetic is not available');
   }
 
+  // Creators can't buy their own cosmetic — they're granted it on approval.
+  if (shopItem.cosmetic.createdById === userId) {
+    throw new Error('You already own this cosmetic');
+  }
+
   if (
     shopItem.availableQuantity !== null &&
     shopItem._count.purchases >= shopItem.availableQuantity
