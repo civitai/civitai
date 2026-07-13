@@ -5,7 +5,6 @@ import {
   Group,
   Text,
   Button,
-  ThemeIcon,
   ActionIcon,
   Modal,
   Divider,
@@ -160,54 +159,38 @@ function ChallengesPage() {
 
       <MasonryContainer>
         <Stack gap="md">
-          {/* Header */}
-          <Group justify="space-between" wrap="nowrap">
-            <Group gap="sm">
-              <ThemeIcon size="xl" radius="xl" color="yellow" variant="light">
-                <IconTrophy size={24} />
-              </ThemeIcon>
-              <div>
-                <Group gap={4}>
-                  <Title order={1}>Challenges</Title>
-                  <ActionIcon variant="subtle" color="gray" onClick={openInfo}>
-                    <IconInfoCircle size={20} />
-                  </ActionIcon>
-                </Group>
-                <Text c="dimmed" size="sm">
-                  Compete in AI art challenges and win prizes
-                </Text>
-              </div>
-            </Group>
-            {currentUser?.isModerator && (
-              <Button
-                component={Link}
-                href="/moderator/challenges"
-                leftSection={<IconSettings size={16} />}
-                variant="light"
-              >
-                Manage
-              </Button>
-            )}
-          </Group>
-
           {/* Featured Challenge Events */}
           <FeaturedChallengeEvents />
 
-          {/* Daily Challenges — active + upcoming System challenges, horizontal scroll. Previous
-              Winners lives here (not the page header) since it's tightly linked to daily challenges. */}
-          <Divider />
+          {/* Daily Challenges — active + upcoming System challenges, horizontal scroll. */}
           <Group justify="space-between" wrap="nowrap" gap="sm">
-            <Title order={3}>Daily Challenges</Title>
-            <Button
-              component={Link}
-              href="/challenges/winners"
-              leftSection={<IconTrophy size={16} />}
-              variant="light"
-              color="yellow"
-              className="shrink-0"
-            >
-              Previous Winners
-            </Button>
+            <Group gap={4} wrap="nowrap">
+              <Title order={3}>Daily Challenges</Title>
+              <ActionIcon variant="subtle" color="gray" onClick={openInfo}>
+                <IconInfoCircle size={20} />
+              </ActionIcon>
+            </Group>
+            <Group gap="sm" wrap="nowrap" className="shrink-0">
+              {currentUser?.isModerator && (
+                <Button
+                  component={Link}
+                  href="/moderator/challenges"
+                  leftSection={<IconSettings size={16} />}
+                  variant="light"
+                >
+                  Manage
+                </Button>
+              )}
+              <Button
+                component={Link}
+                href="/challenges/winners"
+                leftSection={<IconTrophy size={16} />}
+                variant="light"
+                color="yellow"
+              >
+                Previous Winners
+              </Button>
+            </Group>
           </Group>
           <DailyChallengesRow />
 

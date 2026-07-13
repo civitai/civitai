@@ -62,8 +62,11 @@ import {
   CHALLENGE_MAX_ENTRY_FEE,
   CHALLENGE_MAX_INITIAL_PRIZE,
   CHALLENGE_MIN_ENTRY_FEE,
+  CHALLENGE_MIN_START_LEAD_HOURS,
   DEFAULT_CATEGORY_ROWS,
   getEntryPoolContribution,
+  getMinUserChallengeStartsAt,
+  getUserChallengeVisibleAt,
 } from '~/shared/constants/challenge.constants';
 
 // Wrapped custom components for form integration
@@ -340,6 +343,16 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
         return;
       }
 
+      // Start must be >= 3h out. Mirrors the server: always on create, on edit only when the
+      // start date actually moved (so an unrelated edit near start time isn't blocked).
+      const startMoved = !challenge || startsAt.getTime() !== challenge.startsAt.getTime();
+      if (startMoved && startsAt < getMinUserChallengeStartsAt()) {
+        form.setError('startsAt', {
+          message: `Challenge must start at least ${CHALLENGE_MIN_START_LEAD_HOURS} hours from now.`,
+        });
+        return;
+      }
+
       // Validate distribution sums to 100 (mirrors the mod Dynamic-mode check below)
       const distTotal = (data.dist1 ?? 0) + (data.dist2 ?? 0) + (data.dist3 ?? 0);
       if (distTotal !== 100) {
@@ -503,6 +516,16 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
   // User-variant entry-fee pool preview
   const entryFeeWatch = form.watch('entryFee') ?? CHALLENGE_MIN_ENTRY_FEE;
   const perEntryToPool = getEntryPoolContribution(entryFeeWatch);
+
+  // User-variant feed-visibility preview (start - 7d). The watched value is display-shifted
+  // (toDisplayUTC), so convert back for the real future check and re-shift for the label.
+  const startsAtWatch = form.watch('startsAt');
+  const visibleAtPreview =
+    isUser && startsAtWatch ? getUserChallengeVisibleAt(fromDisplayUTC(startsAtWatch)) : null;
+  const visibleAtInFuture = !!visibleAtPreview && visibleAtPreview.getTime() > Date.now();
+  const visibleAtLabel = visibleAtPreview
+    ? dayjs(toDisplayUTC(visibleAtPreview)).format('MMM D, YYYY h:mm A')
+    : '';
 
   // Watch prize values for total calculation
   const [prize1, prize2, prize3] = form.watch(['prize1Buzz', 'prize2Buzz', 'prize3Buzz']);
@@ -668,9 +691,16 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
             </SimpleGrid>
 
             {isUser && (
-              <Text size="sm" c="dimmed">
-                A moderation scan runs before your challenge becomes visible.
-              </Text>
+              <Stack gap={4}>
+                <Text size="sm" c="dimmed">
+                  {visibleAtInFuture
+                    ? `Your challenge appears in the feed from ${visibleAtLabel} (UTC) — one week before it starts.`
+                    : 'Your challenge appears in the feed as soon as it passes review.'}
+                </Text>
+                <Text size="sm" c="dimmed">
+                  A moderation scan runs before your challenge becomes visible.
+                </Text>
+              </Stack>
             )}
           </Stack>
         </Paper>
@@ -712,9 +742,9 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                 </SimpleGrid>
                 <Divider label="Prize split (must total 100%)" />
                 <SimpleGrid cols={3}>
-                  <InputNumber name="dist1" label="1st Place %" min={0} max={100} withAsterisk disabled={isTerminal} />
-                  <InputNumber name="dist2" label="2nd Place %" min={0} max={100} withAsterisk disabled={isTerminal} />
-                  <InputNumber name="dist3" label="3rd Place %" min={0} max={100} withAsterisk disabled={isTerminal} />
+                  <InputNumber name="dist1" label="1st Place %" min={1} max={100} allowNegative={false} clampBehavior="blur" withAsterisk disabled={isTerminal} />
+                  <InputNumber name="dist2" label="2nd Place %" min={1} max={100} allowNegative={false} clampBehavior="blur" withAsterisk disabled={isTerminal} />
+                  <InputNumber name="dist3" label="3rd Place %" min={1} max={100} allowNegative={false} clampBehavior="blur" withAsterisk disabled={isTerminal} />
                 </SimpleGrid>
                 <Text size="sm" c={totalPct === 100 ? 'teal' : 'red'}>
                   {dist1 || 0} + {dist2 || 0} + {dist3 || 0} = {totalPct}%
@@ -824,22 +854,28 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   <InputNumber
                     name="dist1"
                     label="1st Place %"
-                    min={0}
+                    min={1}
                     max={100}
+                    allowNegative={false}
+                    clampBehavior="blur"
                     disabled={isActive || isTerminal}
                   />
                   <InputNumber
                     name="dist2"
                     label="2nd Place %"
-                    min={0}
+                    min={1}
                     max={100}
+                    allowNegative={false}
+                    clampBehavior="blur"
                     disabled={isActive || isTerminal}
                   />
                   <InputNumber
                     name="dist3"
                     label="3rd Place %"
-                    min={0}
+                    min={1}
                     max={100}
+                    allowNegative={false}
+                    clampBehavior="blur"
                     disabled={isActive || isTerminal}
                   />
                 </SimpleGrid>

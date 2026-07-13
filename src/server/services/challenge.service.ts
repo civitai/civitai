@@ -76,6 +76,8 @@ import {
 } from '~/server/games/daily-challenge/challenge-currency';
 import {
   getEntryPoolContribution,
+  getMinUserChallengeStartsAt,
+  getUserChallengeVisibleAt,
   USER_SELECTABLE_JUDGE_NAMES,
 } from '~/shared/constants/challenge.constants';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -1295,6 +1297,17 @@ export async function upsertUserChallenge({
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'End date must be after start date' });
   }
 
+  // Start must be at least CHALLENGE_MIN_START_LEAD_HOURS out — no "starts right now" challenges.
+  // On create this always applies; on edit it's only re-checked when the start date actually moves
+  // (guarded below, against the stored startsAt), so an unrelated edit near start time isn't blocked.
+  const minStartsAt = getMinUserChallengeStartsAt();
+  if (!id && rest.startsAt < minStartsAt) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'Challenge must start at least 3 hours from now.',
+    });
+  }
+
   // Judge must be an existing, active judge — users can only pick, not create or reprompt one.
   const judge = await dbRead.challengeJudge.findFirst({
     where: { id: judgeId, active: true, name: { in: [...USER_SELECTABLE_JUDGE_NAMES] } },
@@ -1378,6 +1391,7 @@ export async function upsertUserChallenge({
         basePrizePool: true,
         metadata: true,
         buzzType: true,
+        startsAt: true,
       },
     });
     if (!existing) throw throwNotFoundError('Challenge not found');
@@ -1411,6 +1425,13 @@ export async function upsertUserChallenge({
         message: 'Green challenges must be Safe-For-Work.',
       });
 
+    const startChanged = rest.startsAt.getTime() !== existing.startsAt.getTime();
+    if (startChanged && rest.startsAt < minStartsAt)
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'Challenge must start at least 3 hours from now.',
+      });
+
     const updated = await dbWrite.$transaction(async (tx) => {
       // Conditional on status IN THE WRITE: the Scheduled/entry-count checks above ran on the
       // read replica, so the hourly activation job (or a racing entry charge) could have flipped
@@ -1428,6 +1449,8 @@ export async function upsertUserChallenge({
           // Any content edit requires a fresh scan before the challenge is public again.
           ingestion: ChallengeIngestionStatus.Pending,
           scannedAt: null,
+          // Recompute the visibility window from the (possibly updated) start date.
+          visibleAt: getUserChallengeVisibleAt(rest.startsAt),
           ...(themeEls && {
             metadata: { ...parseChallengeMetadata(existing.metadata), themeElements: themeEls },
           }),
@@ -1498,8 +1521,8 @@ export async function upsertUserChallenge({
         buzzType,
         status: ChallengeStatus.Scheduled,
         ingestion: ChallengeIngestionStatus.Pending,
-        // Appears in the Upcoming feed once scanned (ingestion gate hides it until then).
-        visibleAt: new Date(),
+        // Visible from 1 week before start (and only once scanned — the ingestion gate is separate).
+        visibleAt: getUserChallengeVisibleAt(rest.startsAt),
         ...(themeEls && { metadata: { themeElements: themeEls } }),
       },
     });

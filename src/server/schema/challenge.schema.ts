@@ -53,7 +53,7 @@ export const prizeSchema = z.object({
 export type Prize = z.infer<typeof prizeSchema>;
 
 export const prizeDistributionSchema = z
-  .array(z.number().min(0).max(100))
+  .array(z.number().min(1).max(100))
   .length(3)
   .refine((arr) => arr.reduce((a, b) => a + b, 0) === 100, {
     message: 'Distribution must sum to 100%',

@@ -18,6 +18,23 @@ export const CHALLENGE_MAX_ENTRY_FEE = 100_000;
 /** Upper bound on the creator's optional initial prize (escrowed at creation). */
 export const CHALLENGE_MAX_INITIAL_PRIZE = 10_000_000;
 
+/** How far before startsAt a user challenge becomes eligible to appear in the feed. The feed also
+ * AND's the independent moderation-scan gate, so this only bounds how EARLY it can show. */
+export const CHALLENGE_USER_VISIBLE_LEAD_DAYS = 7;
+
+/** Minimum lead time between now and a user challenge's startsAt — blocks "starts right now". */
+export const CHALLENGE_MIN_START_LEAD_HOURS = 3;
+
+/** Feed-visibility timestamp for a user challenge: CHALLENGE_USER_VISIBLE_LEAD_DAYS before start. */
+export function getUserChallengeVisibleAt(startsAt: Date): Date {
+  return new Date(startsAt.getTime() - CHALLENGE_USER_VISIBLE_LEAD_DAYS * 24 * 60 * 60 * 1000);
+}
+
+/** Earliest allowed startsAt for a user challenge (now + CHALLENGE_MIN_START_LEAD_HOURS). */
+export function getMinUserChallengeStartsAt(from: Date = new Date()): Date {
+  return new Date(from.getTime() + CHALLENGE_MIN_START_LEAD_HOURS * 60 * 60 * 1000);
+}
+
 /** Max simultaneously Scheduled+Active user-created challenges, by membership tier.
  * (fib: free 1, bronze 2, silver 3, gold 5; founder treated as bronze.) */
 export const CHALLENGE_TIER_ACTIVE_LIMITS: Record<string, number> = {
