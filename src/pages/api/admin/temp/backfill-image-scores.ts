@@ -3,7 +3,7 @@ import { chunk } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { clickhouse } from '~/server/clickhouse/client';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { dataProcessor } from '~/server/db/db-helpers';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import { applyUserScoreUpdates, getScoreMultipliers } from '~/server/jobs/update-user-score';
@@ -32,6 +32,10 @@ import { booleanString } from '~/utils/zod-helpers';
  *   optional: &concurrency=3 &batchSize=1000000  (default already 1,000,000 = ~135 v2
  *   scans; a SMALLER window means MORE/slower scans, not fewer)
  *
+ * Full re-sweep (ignore prior stamps, recompute EVERY owner, and set the
+ * `update-user-score:images` cron checkpoint to hand off cleanly):
+ *   GET /api/admin/temp/backfill-image-scores?token=$WEBHOOK_TOKEN&dryRun=false&force=true
+ *
  * Idempotent + resumable: owners already stamped with `imageScoreRecomputedAt` are
  * always skipped, so a re-run only fills in the rest (never recomputes finished
  * users). Run the FULL range (default) — a partial start/end gives partial scores
@@ -49,6 +53,9 @@ const schema = z.object({
   end: z.coerce.number().min(0).optional(),
   // preview: scan + count owners, write nothing.
   dryRun: booleanString().default(true),
+  // full sweep: recompute + re-stamp EVERY owner, ignoring imageScoreRecomputedAt.
+  // Use to establish a fresh baseline / reconcile drift for the incremental cron.
+  force: booleanString().default(false),
 });
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
@@ -57,6 +64,15 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   const { images: imageMultipliers } = await getScoreMultipliers();
 
   console.time('BACKFILL_IMAGE_SCORES');
+
+  // Checkpoint the incremental cron will resume from after a full sweep. Taken
+  // BEFORE the scan so the cron never MISSES engagement that lands mid-sweep. The
+  // incremental scorer isn't idempotent, so mid-sweep engagement is instead
+  // slightly OVER-counted (it's in both this sweep's absolute total and the cron's
+  // first delta window) for the sweep's duration — a deliberate tradeoff: an
+  // over-count is transient and self-corrects on the next force sweep, whereas a
+  // checkpoint taken AFTER the scan would permanently drop that window.
+  const sweepStartedAt = new Date();
 
   // Phase 1 — scan v2 once in entityId ranges, accumulate reactions/comments per
   // owner in memory (the `+=` is synchronous, so concurrent windows are race-free).
@@ -110,23 +126,29 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
   if (params.dryRun) {
     console.timeEnd('BACKFILL_IMAGE_SCORES');
-    return res.status(200).json({ finished: true, dryRun: true, owners: owners.size, written: 0 });
+    return res
+      .status(200)
+      .json({ finished: true, dryRun: true, force: params.force, owners: owners.size, written: 0 });
   }
 
   // Phase 2 — write each owner's image score + recomputed total, stamp the marker.
   const stampedAt = new Date().toISOString();
   let written = 0;
   const writeTasks = chunk([...owners], 500).map((batch) => async () => {
-    // Always skip owners already backfilled — they're computed, and skipping makes
-    // a re-run resume (only fills in the rest) instead of redoing finished users.
-    const stamped = await pgDbRead
-      .cancellableQuery<{ id: number }>(
-        `SELECT id FROM "User" WHERE id = ANY($1::int[]) AND (meta->'scores'->>'imageScoreRecomputedAt') IS NOT NULL`,
-        [batch.map(([userId]) => userId)]
-      )
-      .then((q) => q.result());
-    const skip = new Set(stamped.map((s) => s.id));
-    const todo = batch.filter(([userId]) => !skip.has(userId));
+    // Default: skip owners already backfilled, so a re-run resumes (fills in the
+    // rest) instead of redoing finished users. force=true recomputes EVERYONE
+    // (fresh baseline / drift reconcile for the incremental cron).
+    let todo = batch;
+    if (!params.force) {
+      const stamped = await pgDbRead
+        .cancellableQuery<{ id: number }>(
+          `SELECT id FROM "User" WHERE id = ANY($1::int[]) AND (meta->'scores'->>'imageScoreRecomputedAt') IS NOT NULL`,
+          [batch.map(([userId]) => userId)]
+        )
+        .then((q) => q.result());
+      const skip = new Set(stamped.map((s) => s.id));
+      todo = batch.filter(([userId]) => !skip.has(userId));
+    }
     if (!todo.length) return;
 
     const records = todo.map(
@@ -151,6 +173,26 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   });
   await limitConcurrency(writeTasks, params.concurrency);
 
+  // Hand off to the incremental cron: only after a genuine FULL sweep (force, real
+  // writes, whole id range) is every stored score correct as of sweepStartedAt, so
+  // the cron can safely sum deltas from there. A partial or resume run must NOT
+  // advance the checkpoint (it would skip un-swept owners). Key mirrors the cron's
+  // `${jobKey}:${category}` (see getJobDate in server/jobs/job.ts).
+  const fullSweep = params.force && !params.dryRun && params.start === 0 && params.end === undefined;
+  if (fullSweep) {
+    await dbWrite.keyValue.upsert({
+      where: { key: 'update-user-score:images' },
+      create: { key: 'update-user-score:images', value: sweepStartedAt.getTime() },
+      update: { value: sweepStartedAt.getTime() },
+    });
+  }
+
   console.timeEnd('BACKFILL_IMAGE_SCORES');
-  res.status(200).json({ finished: true, owners: owners.size, written });
+  res.status(200).json({
+    finished: true,
+    force: params.force,
+    checkpointSet: fullSweep ? sweepStartedAt.toISOString() : null,
+    owners: owners.size,
+    written,
+  });
 });

@@ -139,6 +139,31 @@ const featureFlags = createFeatureFlags({
   // drop the threshold to 0. Supersedes the retired `imagesAsPostsPerPostCap` cap flag (which
   // truncated the gallery and was never ramped). (Mirrors the genTabDeferView precedent.)
   galleryLazyPostImages: { availability: [], fliptKey: 'gallery-lazy-post-images' },
+  // Serialize-perf: SLIM the per-model image count on `model.getAll` — the #1
+  // producer of oversized / event-loop-freezing tRPC responses (the
+  // `trpc-response-oversized` #3017 dataset; p90 > 1MB, ~20x the next path). When
+  // ON, the browse-feed response caps each model to `GET_ALL_IMAGES_PER_MODEL_SLIM`
+  // (6) images instead of `GET_ALL_IMAGES_PER_MODEL` (12) — a ~42% page-byte cut
+  // (the always-on per-image field trim in `model-getall-images` applies either
+  // way). The browse `ModelCard` renders only the cover, so nothing VISIBLE
+  // changes; the residual risk is browsing-level FEED-DROP: the shared image cache
+  // is ordered `postId,index` (browsing-agnostic), so a mixed-level model whose only
+  // browsing-safe image sits past index 6 could be dropped from an SFW-mode viewer's
+  // feed (`hidden.noImages`). The flag-ON path MITIGATES this by picking an
+  // nsfw-biased COVERAGE slice (`selectSlimGetAllModelImages`) instead of the naive
+  // first-6 — it keeps one image of every distinct `nsfwLevel` bit present, so any
+  // viewer with a visible image in the full set keeps one in the slice (image
+  // `nsfwLevel` is a single bit, ≤6 distinct, all fit in 6). Still `availability: []`
+  // = DARK by default and FAILS
+  // CLOSED (empty availability → static eval false when Flipt is absent/down), so
+  // the cap stays 12 (byte-identical COUNT to today) unless the Flipt
+  // `get-all-model-images-slim` threshold is ramped. Deploy dark, then ramp the
+  // threshold WHILE watching the feed-drop rate (Loki
+  // `event_name="feed_noimages_drop"`, `~/utils/faro/feedDrop`); instant rollback =
+  // set the threshold to 0. (Mirrors the galleryLazyPostImages / genTabDeferView
+  // dark-flag precedent.) No client bundle change is required (the feed already
+  // renders any-length image arrays), so this is a pure server behavior flag.
+  getAllModelImagesSlim: { availability: [], fliptKey: 'get-all-model-images-slim' },
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },

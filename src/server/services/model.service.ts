@@ -123,7 +123,10 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import type { RuleDefinition } from '~/server/utils/mod-rules';
-import { capGetAllModelImages } from '~/server/utils/model-getall-images';
+import {
+  buildGetAllModelImages,
+  GET_ALL_IMAGES_PER_MODEL,
+} from '~/server/utils/model-getall-images';
 import {
   DEFAULT_PAGE_SIZE,
   getCursorClauses,
@@ -1305,9 +1308,19 @@ export type GetModelsWithImagesAndModelVersions = AsyncReturnType<
 export const getModelsWithImagesAndModelVersions = async ({
   input,
   user,
+  // Per-model image cap for the RESPONSE (the shared image cache is untouched).
+  // The browse-feed controller selects the SLIM cap when the DARK
+  // `getAllModelImagesSlim` flag is on; other callers (home blocks, collections)
+  // default to `GET_ALL_IMAGES_PER_MODEL`.
+  imagesPerModel = GET_ALL_IMAGES_PER_MODEL,
+  // When true (flag-ON browse feed only) pick the nsfw-biased coverage slice instead
+  // of the naive first-`imagesPerModel`, so reducing the count adds ~zero feed drops.
+  biasImageSlice = false,
 }: {
   input: GetAllModelsOutput;
   user?: SessionUser;
+  imagesPerModel?: number;
+  biasImageSlice?: boolean;
 }) => {
   input.limit = input.limit ?? 100;
 
@@ -1410,13 +1423,14 @@ export const getModelsWithImagesAndModelVersions = async ({
           // images: model.nsfw
           //   ? versionImages.map((x) => ({ ...x, nsfwLevel: NsfwLevel.XXX }))
           //   : versionImages,
-          // Cap the images in the getAll (browse feed) response — the browse
-          // ModelCard only renders images[0], but the shared image cache returns
-          // up to 20, bloating the tRPC payload (serialized synchronously on the
-          // event loop). `capGetAllModelImages` returns a new array, so the shared
-          // `imagesForModelVersionsCache` entries (still used at full 20 by
-          // model-detail pages, auctions, etc.) are untouched.
-          images: capGetAllModelImages(filteredImages),
+          // Trim the images in the getAll (browse feed) response — the #1
+          // serialize-freeze source. `buildGetAllModelImages` caps the array to
+          // `imagesPerModel` (flag-selected) AND drops the per-image fields no
+          // consumer reads (always-on). It returns NEW arrays/objects, so the
+          // shared `imagesForModelVersionsCache` entries (still used at full 20
+          // with all fields by model-detail pages, auctions, etc.) are untouched.
+          // See `~/server/utils/model-getall-images`.
+          images: buildGetAllModelImages(filteredImages, imagesPerModel, biasImageSlice),
           canGenerate,
         };
       })

@@ -1,9 +1,13 @@
 import { TRPCError } from '@trpc/server';
+import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 
 import { dbRead, dbWrite } from '~/server/db/client';
 import { NsfwLevel } from '~/server/common/enums';
-import { nsfwLevelFromContentRating } from '~/shared/constants/browsingLevel.constants';
+import {
+  deriveContentRatingFromAssets,
+  nsfwLevelFromContentRating,
+} from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { newAppListingScreenshotId } from '~/server/utils/app-block-ids';
 import {
@@ -384,6 +388,57 @@ async function loadValidatedImage(
   return { pending: false, imageId: image.id };
 }
 
+/**
+ * After a MODERATOR directly mutates a LIVE approved listing's asset SET (the only
+ * path that bypasses the shadow-revision flow — see {@link assertOwnerAssetEditable}),
+ * re-derive `contentRating` from the current assets' max nsfwLevel and FLOOR the
+ * stored rating at the derived value (RAISE-ONLY — never auto-lower). Without this a
+ * mod adding a more-mature icon/cover/screenshot to a live listing leaves it
+ * UNDER-rated: the approve path re-derives, but a direct live-asset edit never runs
+ * approve. Raise-only so a mod's deliberate higher rating (or an asset REMOVAL) is
+ * never auto-lowered — mirrors `resolveApprovalContentRating`'s floor-at-derived.
+ *
+ * No-op for everyone else: owner edits on a live listing are blocked by the guard and
+ * go through a shadow revision (re-derived at approve); draft/pending/shadow listings
+ * are rated at approve. So it fires ONLY for `isModerator` on an `approved` non-shadow
+ * (`revisionOfId == null`) listing. Runs INSIDE the caller's `dbWrite.$transaction`
+ * (the `tx` param) so the derive+floor is ATOMIC with the asset write that triggered
+ * it — parity with approve's `resolveApprovalContentRating`. The guard short-circuits
+ * BEFORE any query, so a non-mod / draft / pending / shadow edit adds ZERO queries to
+ * the (trivial single-write) transaction. Reading the levels through `tx` keeps the
+ * derive row-consistent with the asset mutation just written in the same tx.
+ */
+async function reDeriveContentRatingForModLiveEdit(
+  tx: Prisma.TransactionClient,
+  listing: { id: string; status: string; revisionOfId: string | null; contentRating: string | null },
+  user: SessionUser
+): Promise<void> {
+  if (!user.isModerator) return;
+  if (listing.status !== 'approved' || listing.revisionOfId != null) return;
+
+  const current = await tx.appListing.findUnique({
+    where: { id: listing.id },
+    select: { iconId: true, coverId: true, contentRating: true },
+  });
+  if (!current) return;
+  const shots = await tx.appListingScreenshot.findMany({
+    where: { appListingId: listing.id, imageId: { not: null } },
+    select: { imageId: true },
+  });
+  const imageIds = [current.iconId, current.coverId, ...shots.map((s) => s.imageId)].filter(
+    (v): v is number => v != null
+  );
+  const images = imageIds.length
+    ? await tx.image.findMany({ where: { id: { in: imageIds } }, select: { nsfwLevel: true } })
+    : [];
+  const derived = deriveContentRatingFromAssets(images.map((i) => ({ nsfwLevel: i.nsfwLevel })));
+  // RAISE-ONLY floor: bump the stored rating up to `derived` only if derived's
+  // ceiling is strictly higher (never auto-lower). `nsfwLevelFromContentRating`
+  // maps null → the SFW floor, so a null stored rating is raised by any mature asset.
+  if (nsfwLevelFromContentRating(derived) <= nsfwLevelFromContentRating(current.contentRating)) return;
+  await tx.appListing.update({ where: { id: listing.id }, data: { contentRating: derived } });
+}
+
 // ---------------------------------------------------------------------------
 // Creator asset management (owner/mod-gated).
 // ---------------------------------------------------------------------------
@@ -412,9 +467,12 @@ export async function setListingIcon(
   assertOwnerAssetEditable(listing, user);
   const validated = await loadValidatedImage(args.imageId, 'icon', user);
   if (validated.pending) return { status: 'pending' };
-  await dbWrite.appListing.update({
-    where: { id: args.listingId },
-    data: { iconId: validated.imageId },
+  await dbWrite.$transaction(async (tx) => {
+    await tx.appListing.update({
+      where: { id: args.listingId },
+      data: { iconId: validated.imageId },
+    });
+    await reDeriveContentRatingForModLiveEdit(tx, listing, user);
   });
   return { status: 'attached', iconId: validated.imageId };
 }
@@ -427,9 +485,12 @@ export async function setListingCover(
   assertOwnerAssetEditable(listing, user);
   const validated = await loadValidatedImage(args.imageId, 'cover', user);
   if (validated.pending) return { status: 'pending' };
-  await dbWrite.appListing.update({
-    where: { id: args.listingId },
-    data: { coverId: validated.imageId },
+  await dbWrite.$transaction(async (tx) => {
+    await tx.appListing.update({
+      where: { id: args.listingId },
+      data: { coverId: validated.imageId },
+    });
+    await reDeriveContentRatingForModLiveEdit(tx, listing, user);
   });
   return { status: 'attached', coverId: validated.imageId };
 }
@@ -465,14 +526,17 @@ export async function addListingScreenshot(
   }
   const nextOrder = existing.length > 0 ? existing[0].order + 1 : 0;
   const id = newAppListingScreenshotId();
-  await dbWrite.appListingScreenshot.create({
-    data: {
-      id,
-      appListingId: args.listingId,
-      imageId,
-      order: nextOrder,
-      caption: args.caption ?? null,
-    },
+  await dbWrite.$transaction(async (tx) => {
+    await tx.appListingScreenshot.create({
+      data: {
+        id,
+        appListingId: args.listingId,
+        imageId,
+        order: nextOrder,
+        caption: args.caption ?? null,
+      },
+    });
+    await reDeriveContentRatingForModLiveEdit(tx, listing, user);
   });
   return { status: 'attached', id, order: nextOrder };
 }
@@ -561,6 +625,7 @@ export async function removeListingScreenshot(
   // review) — edits go through a shadow revision. Mods bypass (curation).
   assertOwnerAssetEditable(shot.appListing, user);
   await dbWrite.appListingScreenshot.delete({ where: { id: args.screenshotId } });
+  // (no re-derive: removal/reorder/caption can never RAISE the derived rating)
 
   // Re-pack: contiguous orders over the survivors (ordered by their old order).
   // Read the survivor set from dbWrite (primary): under replica lag the replica

@@ -28,8 +28,15 @@ import { Flags } from '~/shared/utils/flags';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
 import { ModelVersionFlag } from '~/shared/constants/model-version-flags.constants';
 
-const schema = z.object({
-  id: z.coerce.number(),
+export const schema = z.object({
+  // Bound to Postgres int4 (the `ModelVersion.id` column type, max 2147483647).
+  // Same overflow class as GET /api/v1/models/[id]: a bare `z.coerce.number()`
+  // accepts an out-of-range numeric string that then binds to the int4 `mv.id`
+  // in the raw query below and throws PG "value out of range for type integer"
+  // → raw 500. `.int().gt(0)` fails safeParse for out-of-range/non-positive ids
+  // → the existing 400 path fires. (The `if (!id)` guard below still covers a
+  // legitimately absent id.)
+  id: z.coerce.number().int().gt(0).lte(2147483647),
   epoch: z.number().optional(),
   // When supplied, the response describes that exact ModelFile (download url,
   // hashes, size, AIR with `+<fileId>`) rather than the version's primary file.
