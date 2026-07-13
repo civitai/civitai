@@ -66,6 +66,20 @@ export const DEV_TOKEN_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   'ai:write:budgeted',
   'apps:storage:read',
   'apps:storage:write',
+  // collections:* — INCLUDED in the dev allowlists (both this bearer path and the
+  // tunnel path below). Unlike apps:storage:shared:* (deliberately withheld pre-
+  // approval because a pre-approval app's storage NAMESPACE is synthetic and could
+  // collide across the approve boundary), the collections surface has NO per-app
+  // namespace: read operates on the dev's OWN collections + PUBLIC collections and
+  // is gated server-side by visibility/ownership + the maturity clamp; follow is
+  // self-bound to the dev's account. There is no cross-approve-boundary state to
+  // protect, so a developer iterating on a collections app in dev:live / dev-tunnel
+  // can safely exercise discover/read/follow. `social:tip:self` stays EXCLUDED
+  // (real money OUT — unchanged), so a collections app's TIP button is not
+  // exercisable via a dev token (matches the existing "no real money in dev"
+  // posture).
+  'collections:read:self',
+  'collections:write:self',
 ]);
 
 /**
@@ -83,6 +97,12 @@ export const TUNNEL_HOST_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<str
   'media:read:owned',
   'user:read:self',
   'ai:write:budgeted',
+  // collections:* — INCLUDED here too (see DEV_TOKEN_SCOPE_ALLOWLIST rationale):
+  // no per-app namespace, gated server-side by visibility/ownership/subject, so
+  // there is no pre-approval collision to protect against (contrast
+  // apps:storage:*, which this tunnel allowlist withholds until approval).
+  'collections:read:self',
+  'collections:write:self',
 ]);
 
 /**

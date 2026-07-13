@@ -233,6 +233,11 @@ export type GetAllCollectionsInfiniteSchema = z.infer<typeof getAllCollectionsIn
 export const getAllCollectionsInfiniteSchema = infiniteQuerySchema
   .extend({
     userId: z.number(),
+    // Optional case-insensitive name search (additive — omitted by every existing
+    // caller, so behaviour is byte-identical when absent). Threaded into
+    // getAllCollections' where clause. Added for the App Blocks collections
+    // discovery surface (search box).
+    query: z.string().trim().max(100),
     types: z.array(z.enum(CollectionType)),
     privacy: z.array(z.enum(CollectionReadConfiguration)),
     sort: z.enum(CollectionSort).default(constants.collectionFilterDefaults.sort),

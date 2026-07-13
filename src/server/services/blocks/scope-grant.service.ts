@@ -145,6 +145,20 @@ export async function recordScopeGrant(opts: {
  * is reserved for the money / AI scopes (`ai:write:budgeted`, `buzz:read:self`),
  * which the host requests lazily on the first buzz-spending action (Generate)
  * rather than on load.
+ *
+ * `collections:read:self` / `collections:write:self` are ALSO exempt — the gate
+ * is SERVER-SIDE per op, not a per-scope consent prompt: reads enforce collection
+ * VISIBILITY/OWNERSHIP (a private collection is 404 to a non-owner/contributor)
+ * and clamp items to the token's maturity ceiling; the follow write is SELF-BOUND
+ * to the token subject (the block follows on the caller's OWN behalf). A per-scope
+ * consent prompt would add nothing the visibility/ownership/subject checks don't
+ * already enforce. Exempting them is ALSO the #3090 fix: a page-app token that
+ * declared a consent-gated scope silently dropped it at mint (the user had no
+ * grant row) → every collections op 403'd; consent-exempt scopes flow through the
+ * mint's partitionByConsent unconditionally, so the minted PAGE token actually
+ * carries them end-to-end. (The follow write, being a bookmark on a viewer's own
+ * account, is a candidate for an EXPLICIT consent prompt pre-GA if the audience
+ * widens past the mod-only posture — NOT built here.)
  */
 const CONSENT_EXEMPT_SCOPES = new Set([
   'block:settings:read',
@@ -156,6 +170,11 @@ const CONSENT_EXEMPT_SCOPES = new Set([
   'apps:storage:shared:read',
   'apps:storage:shared:write',
   'models:read:self',
+  // Collections — server-side visibility/ownership (read) + self-bound subject
+  // (follow) are the gate; see the block collections endpoints. #3090: exempting
+  // them guarantees they reach `claims.scopes` in the minted page token.
+  'collections:read:self',
+  'collections:write:self',
 ]);
 
 export function partitionByConsent(

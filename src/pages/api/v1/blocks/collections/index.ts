@@ -1,0 +1,215 @@
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { withAxiom } from '@civitai/next-axiom';
+import * as z from 'zod';
+
+import {
+  parseSubjectUserId,
+  withBlockScope,
+  type BlockScopedNextApiRequest,
+} from '~/server/middleware/block-scope.middleware';
+import {
+  getAllCollections,
+  getCollectionItemCount,
+  getUserCollectionsWithPermissions,
+} from '~/server/services/collection.service';
+import {
+  collectionWithinCeiling,
+  getFollowedCollectionIds,
+  hydrateBlockSubject,
+  toMediaUrl,
+} from '~/server/services/blocks/block-collections.service';
+import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
+import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
+import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
+import { CollectionSort } from '~/server/common/enums';
+import { CollectionItemStatus, CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
+
+/**
+ * GET /api/v1/blocks/collections?mode=public|mine&query&sort&cursor&limit
+ *
+ * Block-token collection DISCOVERY for App Blocks. Scope `collections:read:self`.
+ *
+ *   - mode=public → public collections (name-searchable, sortable) via the
+ *     existing `getAllCollections` service (privacy pinned to Public).
+ *   - mode=mine   → the SUBJECT's OWN collections (public + private) via the
+ *     existing `getUserCollectionsWithPermissions` service, keyed on the verified
+ *     token subject (never a client-supplied userId).
+ *
+ * Maturity: collections whose own `nsfwLevel` exceeds the token's clamped ceiling
+ * (`claims.maxBrowsingLevel`, region-narrowed) are dropped — a SFW-domain block
+ * can't surface a mature collection in discovery. (Per-item maturity is enforced
+ * on the detail endpoint where the media is actually read.)
+ *
+ * Response: `{ items: [{ id, name, description, coverImageUrl, itemCount,
+ *   curator:{ userId, username }, isPublic, followed }], nextCursor }`.
+ */
+
+export const config = { api: { responseLimit: false } };
+
+const querySchema = z.object({
+  mode: z.enum(['public', 'mine']).default('public'),
+  query: z.string().trim().max(100).optional(),
+  sort: z.enum(CollectionSort).default(CollectionSort.Newest),
+  // Keyset cursor on the collection id (both modes order by id DESC).
+  cursor: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(24),
+});
+
+const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (req.method !== 'GET') {
+    res.status(405).json({ error: 'Method not allowed' });
+    return;
+  }
+
+  const claims = (req as BlockScopedNextApiRequest).blockClaims;
+  if (!claims) {
+    res.status(401).json({ error: 'Block token required' });
+    return;
+  }
+
+  let subjectUserId: number | null;
+  try {
+    subjectUserId = parseSubjectUserId(claims.sub);
+  } catch {
+    res.status(403).json({ error: 'Invalid subject claim' });
+    return;
+  }
+  if (subjectUserId == null) {
+    res.status(403).json({ error: 'Anonymous block tokens may not read collections' });
+    return;
+  }
+
+  const parsed = querySchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
+  const { mode, query, sort, cursor, limit } = parsed.data;
+
+  // Per-instance rate limit (shared blocks catalog limiter) — bounds a block
+  // hammering this private,no-store route onto the origin.
+  const rateLimit = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+  if (!rateLimit.allowed) {
+    res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
+    res.status(429).json({ error: 'Rate limit exceeded, please retry shortly.' });
+    return;
+  }
+
+  const regionRestricted = isRegionRestricted(getRegion(req));
+  const { browsingLevel } = resolveCatalogBrowsingLevel(claims, { regionRestricted });
+
+  const subjectUser = await hydrateBlockSubject(subjectUserId);
+  if (!subjectUser) {
+    res.status(404).json({ error: 'User not found' });
+    return;
+  }
+
+  try {
+    if (mode === 'public') {
+      // Fetch limit+1 to derive the next keyset cursor.
+      const rows = await getAllCollections({
+        input: {
+          limit: limit + 1,
+          cursor,
+          query,
+          sort,
+          privacy: [CollectionReadConfiguration.Public],
+        },
+        user: subjectUser,
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          read: true,
+          nsfwLevel: true,
+          userId: true,
+          user: { select: { id: true, username: true } },
+          image: { select: { url: true, type: true } },
+        },
+      });
+
+      // Maturity: drop collections above the clamped ceiling.
+      const visible = rows.filter((c) => collectionWithinCeiling(c.nsfwLevel ?? 0, browsingLevel));
+
+      let items = visible;
+      let nextCursor: number | undefined;
+      if (items.length > limit) {
+        items = items.slice(0, limit);
+        nextCursor = items[items.length - 1]?.id;
+      }
+
+      const ids = items.map((c) => c.id);
+      const [countRows, followed] = await Promise.all([
+        getCollectionItemCount({ collectionIds: ids, status: CollectionItemStatus.ACCEPTED }),
+        getFollowedCollectionIds(subjectUserId, ids),
+      ]);
+      const countMap = new Map(countRows.map((c) => [c.id, Number(c.count)]));
+
+      res.status(200).json({
+        items: items.map((c) => ({
+          id: c.id,
+          name: c.name,
+          description: c.description ?? null,
+          coverImageUrl: toMediaUrl(c.image),
+          itemCount: countMap.get(c.id) ?? 0,
+          curator: { userId: c.userId, username: c.user?.username ?? null },
+          isPublic: c.read === CollectionReadConfiguration.Public,
+          followed: followed.has(c.id),
+        })),
+        nextCursor,
+      });
+      return;
+    }
+
+    // mode === 'mine' — the subject's own collections (public + private). The
+    // service returns the FULL owned+contributed set (no DB pagination), so we
+    // apply the name filter + keyset (id DESC) slice in-memory. A user's own
+    // collection set is bounded, so this is safe.
+    const owned = await getUserCollectionsWithPermissions({
+      input: { userId: subjectUserId, contributingOnly: true },
+    });
+
+    const needle = query?.toLowerCase();
+    const filtered = owned
+      .filter((c) => (needle ? c.name.toLowerCase().includes(needle) : true))
+      .filter((c) => (cursor ? c.id < cursor : true))
+      .sort((a, b) => b.id - a.id);
+
+    let items = filtered;
+    let nextCursor: number | undefined;
+    if (items.length > limit) {
+      items = items.slice(0, limit);
+      nextCursor = items[items.length - 1]?.id;
+    }
+
+    const ids = items.map((c) => c.id);
+    const [countRows, followed] = await Promise.all([
+      getCollectionItemCount({ collectionIds: ids, status: CollectionItemStatus.ACCEPTED }),
+      getFollowedCollectionIds(subjectUserId, ids),
+    ]);
+    const countMap = new Map(countRows.map((c) => [c.id, Number(c.count)]));
+
+    res.status(200).json({
+      items: items.map((c) => ({
+        id: c.id,
+        name: c.name,
+        description: c.description ?? null,
+        coverImageUrl: toMediaUrl(c.image),
+        itemCount: countMap.get(c.id) ?? 0,
+        curator: { userId: c.userId, username: subjectUser.username ?? null },
+        isPublic: c.read === CollectionReadConfiguration.Public,
+        followed: followed.has(c.id),
+      })),
+      nextCursor,
+    });
+    return;
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to load collections' });
+    return;
+  }
+});
+
+// Scope-gated: collections:read:self (self-scope → non-anon subject enforced by
+// the middleware). Not the "any valid token" catalog mode — reads are subject-
+// bound (own private collections), so a declared+granted scope is the gate.
+export default withBlockScope(baseHandler, { requiredScope: 'collections:read:self' });
