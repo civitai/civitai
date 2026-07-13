@@ -380,17 +380,32 @@ export const appsSharedRouter = router({
           // table has no reader yet, so a moderation-blocked append would otherwise
           // be silent. Emit a structured, alertable event (METADATA ONLY — NEVER the
           // content text) so any auto-blocked write is observable before the
-          // mod-queue wiring lands. Widened from minor/POI only to ALSO fire on
-          // `audit` — that path catches the general abuse (harassment / spam that
-          // trips external moderation) now that non-mod app-dev-testers can post
-          // public content; without it that whole class was invisible. `link`/`size`
-          // stay unalerted (user error, not reportable abuse). Fire-and-forget
-          // (`.catch`) — an alert emit must NEVER block or fail the op.
-          if (e.category === 'minor' || e.category === 'poi' || e.category === 'audit') {
+          // mod-queue wiring lands. `link`/`size` stay unalerted (user error, not
+          // reportable abuse). Fire-and-forget (`.catch`) — an alert emit must NEVER
+          // block or fail the op.
+          //
+          // TWO DISTINCT signals (kept separate so the legal-urgency channel is not
+          // diluted): minor/POI are a HARD legal escalation (CSAM/minor) → the
+          // `…-legal-block` / `type:error` event; a general `audit` block (harassment
+          // / spam that trips external moderation) → the lower-urgency
+          // `…-content-block` / `type:warning` event. Same metadata-only shape.
+          if (e.category === 'minor' || e.category === 'poi') {
             logToAxiom(
               {
                 name: 'app-blocks-shared-storage-legal-block',
                 type: 'error',
+                category: e.category,
+                userId: uid,
+                slug,
+                appBlockId,
+              },
+              'block-audit'
+            ).catch(() => {});
+          } else if (e.category === 'audit') {
+            logToAxiom(
+              {
+                name: 'app-blocks-shared-storage-content-block',
+                type: 'warning',
                 category: e.category,
                 userId: uid,
                 slug,
@@ -744,6 +759,26 @@ async function insertSharedReport(
 }
 
 /**
+ * Neutralize Discord markdown in reporter-supplied free text before it is embedded
+ * in a mod-alerts message. A hostile reporter must NOT be able to plant a masked
+ * link `[label](https://phish.example)` (phishing) or other markdown/formatting in
+ * the mod channel. We strip the structural markdown characters — masked-link
+ * brackets/parens `[ ] ( )`, backticks, and emphasis/strike/spoiler/quote markers
+ * `* _ ~ | >` — then collapse whitespace. The caller ALSO wraps the result in an
+ * inline code span (belt-and-suspenders: no markdown, no URL auto-link, and no
+ * mention ping renders inside a code span). Returns a bounded, single-line string.
+ * NOTE: the Axiom copy of `reason` is deliberately left RAW — it is a structured
+ * log field, never rendered, so escaping there would only corrupt the record.
+ */
+export function sanitizeDiscordText(input: string): string {
+  return input
+    .replace(/[`[\]()*_~|>]/g, ' ') // drop markdown / masked-link structural chars
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 500);
+}
+
+/**
  * FIX 1 — fire-and-forget mod-Discord notify on a USER report of a shared row.
  * Mirrors the W1 publish-request `notifyModsOfNewRequest` pattern: posts to
  * `DISCORD_WEBHOOK_MOD_ALERTS` if it is set, otherwise a no-op. NEVER throws (a
@@ -775,7 +810,10 @@ async function notifyModsOfSharedReport(opts: {
             { name: 'App block', value: `\`${opts.appBlockId}\``, inline: true },
             { name: 'Reported by', value: `user #${opts.reporterUserId}`, inline: true },
             { name: 'Row key', value: `\`${opts.reportedKey}\`` },
-            { name: 'Reason', value: opts.reason.slice(0, 500) || 'user-report' },
+            // Reporter free text: markdown-neutralized + code-span-wrapped so a
+            // hostile reason can't plant a masked/phishing link in the mod channel
+            // (the other fields are already backtick-wrapped).
+            { name: 'Reason', value: `\`${sanitizeDiscordText(opts.reason) || 'user-report'}\`` },
           ],
           footer: { text: 'App Blocks shared storage' },
           timestamp: new Date().toISOString(),

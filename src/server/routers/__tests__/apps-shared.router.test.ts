@@ -85,7 +85,7 @@ vi.mock('~/server/logging/client', () => ({
 // import chain). In the test env DISCORD_WEBHOOK_MOD_ALERTS is unset, so the notify
 // short-circuits to a no-op before any fetch — exactly the fire-and-forget path.
 
-import { appsSharedRouter, appsModRouter } from '../apps-shared.router';
+import { appsSharedRouter, appsModRouter, sanitizeDiscordText } from '../apps-shared.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { OnboardingSteps } from '~/server/common/enums';
 
@@ -515,29 +515,39 @@ describe('FIX 1 abuse observability (alert emits)', () => {
       .map((c) => c[0]);
   }
 
-  it('an audit-category blocked append emits an alert (widened from minor/POI)', async () => {
+  it('an audit-category block emits the SEPARATE content-block warning (not legal-block)', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     mockAuditPromptServer.mockRejectedValueOnce(new Error('Your prompt was flagged'));
     await expect(
       caller().append({ blockToken: 't', value: { title: 'harassment text' } })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-    const emits = auditEmits('app-blocks-shared-storage-legal-block');
-    expect(emits).toHaveLength(1);
-    // slug is the SANITIZED schema slug (matches the existing legal-block emit).
-    expect(emits[0]).toMatchObject({ category: 'audit', userId: 42, slug: 'app_voting' });
+    // audit → the lower-urgency content-block/warning event …
+    const contentEmits = auditEmits('app-blocks-shared-storage-content-block');
+    expect(contentEmits).toHaveLength(1);
+    // slug is the SANITIZED schema slug (matches the legal-block emit shape).
+    expect(contentEmits[0]).toMatchObject({
+      type: 'warning',
+      category: 'audit',
+      userId: 42,
+      slug: 'app_voting',
+    });
     // metadata only — no content text leaked
-    expect(JSON.stringify(emits[0])).not.toContain('harassment');
+    expect(JSON.stringify(contentEmits[0])).not.toContain('harassment');
+    // … and it must NOT dilute the legal-urgency (CSAM/minor) channel.
+    expect(auditEmits('app-blocks-shared-storage-legal-block')).toHaveLength(0);
   });
 
-  it('minor content STILL emits the legal-block alert', async () => {
+  it('minor content STILL emits the legal-block error (NOT the content-block event)', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     await expect(
       caller().append({ blockToken: 't', value: { title: '13 year old girl' } })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     const emits = auditEmits('app-blocks-shared-storage-legal-block');
     expect(emits).toHaveLength(1);
-    expect(emits[0]).toMatchObject({ category: 'minor' });
+    expect(emits[0]).toMatchObject({ type: 'error', category: 'minor' });
     expect(JSON.stringify(emits[0])).not.toContain('13 year old');
+    // legal signal stays isolated from the general content-block channel.
+    expect(auditEmits('app-blocks-shared-storage-content-block')).toHaveLength(0);
   });
 
   it('a successful append emits NO block alert', async () => {
@@ -545,6 +555,7 @@ describe('FIX 1 abuse observability (alert emits)', () => {
     mockAppendDataPath();
     await caller().append({ blockToken: 't', value: { title: 'a fine idea' } });
     expect(auditEmits('app-blocks-shared-storage-legal-block')).toHaveLength(0);
+    expect(auditEmits('app-blocks-shared-storage-content-block')).toHaveLength(0);
   });
 
   it('a USER report emits a report alert with metadata only (NO content)', async () => {
@@ -598,6 +609,44 @@ describe('FIX 1 abuse observability (alert emits)', () => {
       caller().report({ blockToken: 't', key: 'ghost' })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(auditEmits('app-blocks-shared-storage-report')).toHaveLength(0);
+  });
+});
+
+// FIX 1 (Discord phishing vector): the reporter-supplied `reason` is embedded in
+// the mod-alerts Discord message. A hostile reporter must not be able to plant a
+// masked/phishing link or other markdown. `sanitizeDiscordText` neutralizes it and
+// the embed field wraps the result in an inline code span.
+describe('sanitizeDiscordText (mod-alert reason hardening)', () => {
+  it('neutralizes a masked link + backticks (no live markdown survives)', () => {
+    const hostile = 'click [here](https://phish.example) `rm -rf` **bold** ~~s~~ ||spoiler|| > q';
+    const out = sanitizeDiscordText(hostile);
+    // structural markdown / masked-link characters are gone
+    for (const ch of ['[', ']', '(', ')', '`', '*', '_', '~', '|', '>']) {
+      expect(out).not.toContain(ch);
+    }
+    expect(out).not.toMatch(/\]\(/); // the masked-link `](` sequence specifically
+    // the human-readable words survive as inert plain text
+    expect(out).toContain('here');
+    expect(out).toContain('https://phish.example');
+  });
+
+  it('the embed field value (code-span wrapped) contains no live masked link', () => {
+    // mirror the exact construction used in notifyModsOfSharedReport
+    const fieldValue = `\`${sanitizeDiscordText('[x](http://evil) `boom`') || 'user-report'}\``;
+    expect(fieldValue).not.toMatch(/\]\(/); // no masked link
+    // exactly two backticks (the wrapping span) — none survived from the input
+    expect((fieldValue.match(/`/g) ?? []).length).toBe(2);
+    expect(fieldValue.startsWith('`')).toBe(true);
+    expect(fieldValue.endsWith('`')).toBe(true);
+  });
+
+  it('an all-markdown reason collapses to empty → falls back to user-report', () => {
+    const fieldValue = `\`${sanitizeDiscordText('[]()``') || 'user-report'}\``;
+    expect(fieldValue).toBe('`user-report`');
+  });
+
+  it('caps the sanitized output at 500 chars', () => {
+    expect(sanitizeDiscordText('a'.repeat(1000)).length).toBe(500);
   });
 });
 
