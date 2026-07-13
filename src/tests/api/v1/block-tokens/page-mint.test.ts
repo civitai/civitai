@@ -717,4 +717,60 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
     expect(signArg.scopes).toEqual(['models:read:self']);
     expect(signArg.blockInstanceId).toBe('bki_x');
   });
+
+  // ── #3090 read-split PROOF: collections:read:private is CONSENT-GATED, while
+  // collections:read:self is CONSENT-EXEMPT. Driven through the REAL mint handler
+  // (partitionByConsent + getGrantedScopes over the mocked appUserScopeGrant) so
+  // the consent surfacing + carry is proven end-to-end — the exact thing #3090
+  // showed can silently fail. ────────────────────────────────────────────────
+  describe('collections read split — consent gating (#3090 proof)', () => {
+    const PAGE_COLLECTIONS_BLOCK = () =>
+      PAGE_BLOCK(
+        ['collections:read:self', 'collections:read:private'],
+        ['collections:read:self', 'collections:read:private'],
+        0 // both are SKIP_OAUTH_CHECK → allowedScopes irrelevant
+      );
+
+    it('NO grant: token OMITS read:private (exempt read:self still mints); needsConsent surfaces it', async () => {
+      // User has consented to NOTHING for this app.
+      mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+        grantedScopes: [],
+        revokedAt: null,
+      });
+      mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_COLLECTIONS_BLOCK());
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+      expect(res._status).toBe(200);
+      const signArg = mockTokenService.sign.mock.calls[0][0];
+      // read:self is CONSENT-EXEMPT → always carried.
+      expect(signArg.scopes).toContain('collections:read:self');
+      // read:private is CONSENT-GATED → WITHHELD without a grant (the #3090 point).
+      expect(signArg.scopes).not.toContain('collections:read:private');
+      // …and surfaced to the host as needing consent.
+      expect(res._body.needsConsent).toBe(true);
+      expect(res._body.missingScopes).toContain('collections:read:private');
+      expect(res._body.missingScopes).not.toContain('collections:read:self');
+    });
+
+    it('WITH grant: token CARRIES read:private; needsConsent is false', async () => {
+      mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+        grantedScopes: ['collections:read:private'],
+        revokedAt: null,
+      });
+      mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_COLLECTIONS_BLOCK());
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+      expect(res._status).toBe(200);
+      const signArg = mockTokenService.sign.mock.calls[0][0];
+      expect(signArg.scopes).toEqual(
+        expect.arrayContaining(['collections:read:self', 'collections:read:private'])
+      );
+      expect(res._body.needsConsent).toBe(false);
+      expect(res._body.missingScopes).toEqual([]);
+    });
+  });
 });

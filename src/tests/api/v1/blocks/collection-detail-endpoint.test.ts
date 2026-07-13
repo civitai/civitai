@@ -121,7 +121,8 @@ beforeEach(() => {
   mockRate.mockResolvedValue({ allowed: true });
   mockMaturity.mockReturnValue({ browsingLevel: 3, isSfwCeiling: true });
   mockHydrate.mockResolvedValue({ id: 42, username: 'mod', isModerator: false });
-  mockPerms.mockResolvedValue({ read: true });
+  // Default: a PUBLIC collection (readable, publicCollection=true).
+  mockPerms.mockResolvedValue({ read: true, publicCollection: true });
   mockFollowed.mockResolvedValue(new Set<number>([7]));
   mockGetById.mockResolvedValue({
     id: 7,
@@ -161,12 +162,35 @@ describe('GET /api/v1/blocks/collections/[id]', () => {
   });
 
   it('404 (not 403) for a private collection the subject cannot read — no existence oracle', async () => {
-    mockPerms.mockResolvedValueOnce({ read: false });
+    mockPerms.mockResolvedValueOnce({ read: false, publicCollection: false });
     const { req, res } = createMocks({ query: { id: '7' } });
     await handler(req as never, res as never);
     expect(res._status()).toBe(404);
     // getCollectionById is never reached (visibility gate fails first).
     expect(mockGetById).not.toHaveBeenCalled();
+  });
+
+  it('404 for an OWNED PRIVATE collection WITHOUT read:private — invisible-existence (no 403, no consent leak)', async () => {
+    // Subject owns it (read=true) but it is NOT public and the token lacks
+    // read:private → the SAME bare 404 a non-owner sees.
+    mockPerms.mockResolvedValueOnce({ read: true, publicCollection: false });
+    // Default claims carry only collections:read:self.
+    const { req, res } = createMocks({ query: { id: '7' } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(404);
+    expect(mockGetById).not.toHaveBeenCalled();
+  });
+
+  it('200 for an OWNED PRIVATE collection WITH read:private', async () => {
+    claimsBox.claims = fakeClaims({
+      scopes: ['collections:read:self', 'collections:read:private'],
+    });
+    mockPerms.mockResolvedValueOnce({ read: true, publicCollection: false });
+    mockItems.mockResolvedValueOnce({ items: [], nextCursor: undefined });
+    const { req, res } = createMocks({ query: { id: '7' } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(200);
+    expect(mockGetById).toHaveBeenCalled();
   });
 
   it('404 when the collection row is gone (getCollectionById throws)', async () => {

@@ -122,6 +122,18 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       return;
     }
 
+    // READ SPLIT (private consent gate): a PUBLIC/unlisted collection
+    // (`publicCollection`) is readable with collections:read:self. A NON-public
+    // (Private) collection is readable here ONLY because the subject is the
+    // owner/contributor — and that additionally requires the consent-gated
+    // `collections:read:private` scope. Without it, return the SAME invisible 404
+    // as a non-owner (no 403 oracle, and — critically — no "needs consent" leak to
+    // a non-owner, who can't distinguish this from a non-existent collection).
+    if (!permissions.publicCollection && !claims.scopes.includes('collections:read:private')) {
+      res.status(404).json({ error: 'Collection not found' });
+      return;
+    }
+
     // getCollectionById throws NotFound when the row is gone — map to the same 404.
     let collection;
     try {

@@ -35,6 +35,7 @@ import {
 describe('collections scopes — registry + #3090 plumbing', () => {
   const READ = 'collections:read:self';
   const WRITE = 'collections:write:self';
+  const PRIVATE = 'collections:read:private';
 
   it('are known, no-OAuth-bit (SKIP_OAUTH_CHECK) registry scopes', () => {
     expect(isKnownBlockScope(READ)).toBe(true);
@@ -51,13 +52,33 @@ describe('collections scopes — registry + #3090 plumbing', () => {
     expect(missing).toEqual([]);
   });
 
-  it('consentGatedScopes excludes the collections scopes (they are exempt)', () => {
-    // A consent-gated scope (buzz:read:self) is retained; the exempt collections
-    // scopes are dropped from the "requires a grant" set.
-    const gated = consentGatedScopes([READ, WRITE, 'buzz:read:self']);
+  it('consentGatedScopes excludes the exempt collections scopes but KEEPS read:private', () => {
+    // read:self + write:self are exempt (dropped); buzz:read:self + the
+    // consent-GATED read:private are retained in the "requires a grant" set.
+    const gated = consentGatedScopes([READ, WRITE, PRIVATE, 'buzz:read:self']);
     expect(gated).toContain('buzz:read:self');
+    expect(gated).toContain(PRIVATE);
     expect(gated).not.toContain(READ);
     expect(gated).not.toContain(WRITE);
+  });
+
+  it('read:private is a known SKIP_OAUTH_CHECK scope but is CONSENT-GATED (not exempt)', () => {
+    expect(isKnownBlockScope(PRIVATE)).toBe(true);
+    expect(BLOCK_SCOPE_TO_OAUTH_BIT[PRIVATE]).toBe(SKIP_OAUTH_CHECK);
+    // With NO grant, read:private is WITHHELD (unlike the exempt read:self/write:self).
+    const { signable, missing } = partitionByConsent([READ, PRIVATE], new Set<string>());
+    expect(signable).toContain(READ); // exempt → always signable
+    expect(signable).not.toContain(PRIVATE); // gated → withheld without a grant
+    expect(missing).toEqual([PRIVATE]);
+  });
+
+  it('read:private mints ONCE the user has granted it', () => {
+    const { signable, missing } = partitionByConsent(
+      [READ, PRIVATE],
+      new Set<string>([PRIVATE])
+    );
+    expect(signable).toEqual(expect.arrayContaining([READ, PRIVATE]));
+    expect(missing).toEqual([]);
   });
 
   it('are included in BOTH dev-mint allowlists (dev:live + dev-tunnel can exercise them)', () => {

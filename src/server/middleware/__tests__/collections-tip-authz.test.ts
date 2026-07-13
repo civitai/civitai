@@ -106,6 +106,7 @@ beforeEach(() => {
 
 const SCOPES = [
   'collections:read:self',
+  'collections:read:private',
   'collections:write:self',
   'social:tip:self',
   // buzz:read:self (balance readout) + apps:storage:shared:write (play-count

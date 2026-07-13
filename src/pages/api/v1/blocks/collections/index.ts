@@ -183,10 +183,15 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       return;
     }
 
-    // mode === 'mine' — the subject's own collections (public + private). The
-    // service returns the FULL owned+contributed set (no DB pagination), so we
-    // apply the name filter + keyset (id DESC) slice in-memory. A user's own
-    // collection set is bounded, so this is safe.
+    // mode === 'mine' — the subject's own collections. The service returns the
+    // FULL owned+contributed set (no DB pagination), so we apply the name filter +
+    // keyset (id DESC) slice in-memory. A user's own collection set is bounded.
+    //
+    // READ SPLIT: own PUBLIC collections are always returned (collections:read:self
+    // gated the endpoint). Own NON-PUBLIC collections (Private/Unlisted — anything
+    // not `Public`) are included ONLY when the token ALSO carries the consent-gated
+    // `collections:read:private` scope; otherwise they are omitted entirely.
+    const canReadPrivate = claims.scopes.includes('collections:read:private');
     const owned = await getUserCollectionsWithPermissions({
       input: { userId: subjectUserId, contributingOnly: true },
     });
@@ -194,6 +199,8 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     const needle = query?.toLowerCase();
     const filtered = owned
       .filter((c) => (needle ? c.name.toLowerCase().includes(needle) : true))
+      // Read split: hide non-public own collections unless read:private is granted.
+      .filter((c) => canReadPrivate || c.read === CollectionReadConfiguration.Public)
       .filter((c) => (cursor ? c.id < cursor : true))
       .sort((a, b) => b.id - a.id);
 

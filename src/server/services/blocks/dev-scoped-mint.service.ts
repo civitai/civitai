@@ -77,9 +77,13 @@ export const DEV_TOKEN_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   // can safely exercise discover/read/follow. `social:tip:self` stays EXCLUDED
   // (real money OUT — unchanged), so a collections app's TIP button is not
   // exercisable via a dev token (matches the existing "no real money in dev"
-  // posture).
+  // posture). `collections:read:private` (own private collections) is included:
+  // in prod it's consent-gated, but the dev-token path is self-bound to the dev's
+  // OWN account (no third-party data), so a dev iterating locally can read their
+  // own private collections without a consent round-trip.
   'collections:read:self',
   'collections:write:self',
+  'collections:read:private',
 ]);
 
 /**
@@ -103,6 +107,7 @@ export const TUNNEL_HOST_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<str
   // apps:storage:*, which this tunnel allowlist withholds until approval).
   'collections:read:self',
   'collections:write:self',
+  'collections:read:private',
 ]);
 
 /**

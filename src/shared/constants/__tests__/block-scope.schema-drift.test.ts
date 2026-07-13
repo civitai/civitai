@@ -34,9 +34,10 @@ describe('app-block v1 schema ⇄ BLOCK_SCOPE_TO_OAUTH_BIT drift guard', () => {
     expect(schemaEnum).toEqual(Object.keys(BLOCK_SCOPE_TO_OAUTH_BIT));
   });
 
-  it('includes the two new collections scopes', () => {
+  it('includes the three collections scopes (read:self, write:self, read:private)', () => {
     const schemaEnum = schema.properties?.scopes?.items?.enum as string[];
     expect(schemaEnum).toContain('collections:read:self');
     expect(schemaEnum).toContain('collections:write:self');
+    expect(schemaEnum).toContain('collections:read:private');
   });
 });

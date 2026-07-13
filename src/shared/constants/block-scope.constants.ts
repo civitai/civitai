@@ -95,6 +95,16 @@ export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> =
   // declarable manifest scopes (the manifest validator rejects unknown scopes).
   'collections:read:self': SKIP_OAUTH_CHECK,
   'collections:write:self': SKIP_OAUTH_CHECK,
+  // collections:read:private — the subject's OWN PRIVATE collections. Split out
+  // from collections:read:self (which covers own-PUBLIC + any PUBLIC collection)
+  // so that reading a user's PRIVATE collections requires an EXPLICIT per-user
+  // consent grant. Same no-OAuth-bit posture (SKIP_OAUTH_CHECK; server enforces
+  // ownership), and self-scope (non-anon subject) in the middleware. CRITICAL:
+  // this scope is CONSENT-GATED — it is deliberately NOT in CONSENT_EXEMPT_SCOPES,
+  // so it flows through partitionByConsent's gated set and the user must grant it
+  // via the host consent gate before a token carries it (contrast read:self,
+  // which is exempt and always mints). See scope-grant.service.ts.
+  'collections:read:private': SKIP_OAUTH_CHECK,
 } as const;
 
 export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;

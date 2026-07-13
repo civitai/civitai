@@ -81,7 +81,8 @@
           "apps:storage:shared:read",
           "apps:storage:shared:write",
           "collections:read:self",
-          "collections:write:self"
+          "collections:write:self",
+          "collections:read:private"
         ]
       }
     },

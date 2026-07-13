@@ -288,7 +288,11 @@ describe('GET /api/v1/blocks/collections', () => {
     expect(body.nextCursor).toBeUndefined();
   });
 
-  it('mode=mine: keyed on the token subject, in-memory name filter + id-DESC keyset', async () => {
+  it('mode=mine: keyed on the token subject, in-memory name filter + id-DESC keyset (with read:private)', async () => {
+    // The private cats are only visible because this token ALSO carries read:private.
+    claimsBox.claims = fakeClaims({
+      scopes: ['collections:read:self', 'collections:read:private'],
+    });
     mockUserCollections.mockResolvedValueOnce([
       { id: 20, name: 'My Cats', description: 'meow', read: 'Private', userId: 42, image: { url: 'c20', type: 'image' } },
       { id: 21, name: 'Dogs', description: null, read: 'Public', userId: 42, image: null },
@@ -305,6 +309,42 @@ describe('GET /api/v1/blocks/collections', () => {
     expect(mockUserCollections).toHaveBeenCalledWith(
       expect.objectContaining({ input: expect.objectContaining({ userId: 42 }) })
     );
+  });
+
+  it('mode=mine WITHOUT read:private: OMITS the subject\'s non-public collections', async () => {
+    // Default claims carry only collections:read:self → private/unlisted are hidden.
+    mockUserCollections.mockResolvedValueOnce([
+      { id: 20, name: 'Secret', description: null, read: 'Private', userId: 42, image: null },
+      { id: 21, name: 'Public Playlist', description: null, read: 'Public', userId: 42, image: null },
+      { id: 22, name: 'Unlisted', description: null, read: 'Unlisted', userId: 42, image: null },
+    ]);
+    mockItemCount.mockResolvedValueOnce([{ id: 21, count: 1 }]);
+    mockFollowed.mockResolvedValueOnce(new Set<number>());
+    const { req, res } = createMocks({ query: { mode: 'mine', limit: '24' } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(200);
+    const body = res._json() as any;
+    // Only the PUBLIC collection is returned; Private + Unlisted are omitted.
+    expect(body.items.map((i: any) => i.id)).toEqual([21]);
+  });
+
+  it('mode=mine WITH read:private: INCLUDES the subject\'s non-public collections', async () => {
+    claimsBox.claims = fakeClaims({
+      scopes: ['collections:read:self', 'collections:read:private'],
+    });
+    mockUserCollections.mockResolvedValueOnce([
+      { id: 20, name: 'Secret', description: null, read: 'Private', userId: 42, image: null },
+      { id: 21, name: 'Public Playlist', description: null, read: 'Public', userId: 42, image: null },
+      { id: 22, name: 'Unlisted', description: null, read: 'Unlisted', userId: 42, image: null },
+    ]);
+    mockItemCount.mockResolvedValueOnce([]);
+    mockFollowed.mockResolvedValueOnce(new Set<number>());
+    const { req, res } = createMocks({ query: { mode: 'mine', limit: '24' } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(200);
+    const body = res._json() as any;
+    // All three (id DESC) — the read:private scope unlocks the non-public ones.
+    expect(body.items.map((i: any) => i.id)).toEqual([22, 21, 20]);
   });
 
   it('404 when the token subject cannot be hydrated', async () => {
