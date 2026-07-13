@@ -106,10 +106,18 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 
   try {
     if (mode === 'public') {
-      // Fetch limit+1 to derive the next keyset cursor.
+      // Over-fetch so the maturity clamp can't under-fill the page and terminate
+      // pagination early (which would make later public collections unreachable).
+      // Walk the (createdAt DESC) rows collecting visible ones until the page is
+      // full, then continue the keyset from the FIRST fetched row we did NOT
+      // consume. getAllCollections' cursor is INCLUSIVE, so pointing next page's
+      // cursor at that first-unconsumed row resumes exactly there — no gap (the
+      // clamped-out rows before it were already walked past) and no duplicate (it
+      // was not shown on this page).
+      const OVERFETCH = limit * 4 + 1;
       const rows = await getAllCollections({
         input: {
-          limit: limit + 1,
+          limit: OVERFETCH,
           cursor,
           query,
           sort,
@@ -128,15 +136,29 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
         },
       });
 
-      // Maturity: drop collections above the clamped ceiling.
-      const visible = rows.filter((c) => collectionWithinCeiling(c.nsfwLevel ?? 0, browsingLevel));
-
-      let items = visible;
-      let nextCursor: number | undefined;
-      if (items.length > limit) {
-        items = items.slice(0, limit);
-        nextCursor = items[items.length - 1]?.id;
+      const items: typeof rows = [];
+      let firstUnconsumedId: number | undefined;
+      for (let i = 0; i < rows.length; i++) {
+        if (items.length >= limit) {
+          firstUnconsumedId = rows[i].id;
+          break;
+        }
+        if (collectionWithinCeiling(rows[i].nsfwLevel ?? 0, browsingLevel)) items.push(rows[i]);
       }
+
+      let nextCursor: number | undefined;
+      if (firstUnconsumedId !== undefined) {
+        // Page filled AND at least one fetched row remains → clean inclusive resume.
+        nextCursor = firstUnconsumedId;
+      } else if (rows.length === OVERFETCH) {
+        // Consumed the ENTIRE over-fetch without filling `limit` (a very heavy
+        // clamp) yet the source returned a full batch → more may remain. Resume
+        // from the last fetched row (inclusive → re-fetched next page; the client
+        // dedups by id). Rare (needs the clamp to drop most of 4×limit+1 rows).
+        nextCursor = rows[rows.length - 1]?.id;
+      }
+      // else: rows.length < OVERFETCH and the page wasn't over-consumed → the
+      // source is exhausted → no nextCursor.
 
       const ids = items.map((c) => c.id);
       const [countRows, followed] = await Promise.all([

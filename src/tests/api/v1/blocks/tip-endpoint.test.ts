@@ -61,17 +61,19 @@ vi.mock('~/server/middleware/block-scope.middleware', () => ({
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: any) => h }));
 
-const { mockTip, mockHydrate, mockRate, mockReserve, mockRefund } = vi.hoisted(() => ({
+const { mockTip, mockHydrate, mockRate, mockReserve, mockRefund, mockUserFind } = vi.hoisted(() => ({
   mockTip: vi.fn(),
   mockHydrate: vi.fn(),
   mockRate: vi.fn(),
   mockReserve: vi.fn(),
   mockRefund: vi.fn(),
+  mockUserFind: vi.fn(),
 }));
 
 vi.mock('~/server/controllers/buzz.controller', () => ({
   createBuzzTipTransactionHandler: mockTip,
 }));
+vi.mock('~/server/db/client', () => ({ dbRead: { user: { findUnique: mockUserFind } } }));
 // Tracker is instantiated for the fabricated ctx — a no-op class is enough.
 vi.mock('~/server/clickhouse/client', () => ({ Tracker: class {} }));
 vi.mock('~/server/services/blocks/block-collections.service', () => ({
@@ -114,6 +116,8 @@ beforeEach(() => {
   // Default: reservation well under the daily cap.
   mockReserve.mockResolvedValue({ total: 25, key: 'system:blocks:tip-cap:42:2026-07-13' });
   mockRefund.mockResolvedValue(undefined);
+  // Default: the recipient exists and is not deleted.
+  mockUserFind.mockResolvedValue({ id: 5, deletedAt: null });
 });
 
 describe('POST /api/v1/blocks/tip', () => {
@@ -196,6 +200,24 @@ describe('POST /api/v1/blocks/tip', () => {
     expect(mockTip).not.toHaveBeenCalled();
   });
 
+  it('400 when the recipient does not exist — no reservation, no tip', async () => {
+    mockUserFind.mockResolvedValueOnce(null);
+    const { req, res } = createMocks({ body: { toUserId: 999, amount: 10 } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(400);
+    expect((res._json() as any).error).toMatch(/Recipient not found/);
+    expect(mockReserve).not.toHaveBeenCalled();
+    expect(mockTip).not.toHaveBeenCalled();
+  });
+
+  it('400 when the recipient is soft-deleted', async () => {
+    mockUserFind.mockResolvedValueOnce({ id: 5, deletedAt: new Date() });
+    const { req, res } = createMocks({ body: { toUserId: 5, amount: 10 } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(400);
+    expect(mockTip).not.toHaveBeenCalled();
+  });
+
   it('429 when the per-instance tip rate limit trips', async () => {
     mockRate.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 30 });
     const { req, res } = createMocks({ body: { toUserId: 5, amount: 10 } });
@@ -247,9 +269,22 @@ describe('POST /api/v1/blocks/tip', () => {
     expect(res._status()).toBe(400);
     expect((res._json() as any).ok).toBe(false);
     expect((res._json() as any).error).toMatch(/funds/);
-    // A failed tip must REFUND the daily-cap reservation (a failed attempt can't
-    // burn the user's cap).
+    // A PRE-money failure (4xx) must REFUND the daily-cap reservation (a failed
+    // attempt can't burn the user's cap).
     expect(mockRefund).toHaveBeenCalledWith('system:blocks:tip-cap:42:2026-07-13', 999);
+  });
+
+  it('does NOT refund on a POST-money failure (5xx) — the reservation must stand (cap-bypass guard)', async () => {
+    // A 5xx from the tip handler may originate AFTER createBuzzTransactionMany moved
+    // Buzz (upsertBuzzTip / notification / metric). Refunding it would let the daily
+    // total under-count → drain past the ceiling. So a 5xx keeps the reservation.
+    mockTip.mockRejectedValueOnce(
+      new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'post-money boom' })
+    );
+    const { req, res } = createMocks({ body: { toUserId: 5, amount: 100 } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(500);
+    expect(mockRefund).not.toHaveBeenCalled();
   });
 
   it('maps an unexpected non-TRPC error → 500', async () => {

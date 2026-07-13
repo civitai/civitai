@@ -236,7 +236,7 @@ describe('GET /api/v1/blocks/collections', () => {
     );
   });
 
-  it('mode=public: derives nextCursor when more than `limit` rows return', async () => {
+  it('mode=public: nextCursor is the first UNCONSUMED row (clean inclusive resume, no dup)', async () => {
     mockGetAll.mockResolvedValueOnce([
       { id: 10, name: 'A', description: null, read: 'Public', nsfwLevel: 0, userId: 1, user: { id: 1, username: 'a' }, image: null },
       { id: 9, name: 'B', description: null, read: 'Public', nsfwLevel: 0, userId: 1, user: { id: 1, username: 'a' }, image: null },
@@ -245,7 +245,47 @@ describe('GET /api/v1/blocks/collections', () => {
     await handler(req as never, res as never);
     const body = res._json() as any;
     expect(body.items).toHaveLength(1);
-    expect(body.nextCursor).toBe(10);
+    expect(body.items[0].id).toBe(10);
+    // Page shows [10]; the next page resumes INCLUSIVELY at the first unconsumed
+    // row (9), never re-showing 10. Over-fetches (limit*4+1) in one query.
+    expect(body.nextCursor).toBe(9);
+    expect(mockGetAll).toHaveBeenCalledWith(
+      expect.objectContaining({ input: expect.objectContaining({ limit: 1 * 4 + 1 }) })
+    );
+  });
+
+  it('mode=public: a maturity-clamped page STILL FILLS to `limit` and advances the cursor (no early termination)', async () => {
+    // r9 (nsfw 8) is over the ceiling (3) → dropped by the clamp. The page must
+    // still fill 2 VISIBLE items and set nextCursor past the last consumed row, so
+    // later collections stay reachable (the pre-fix bug terminated pagination when
+    // the clamp under-filled the sliced page).
+    mockGetAll.mockResolvedValueOnce([
+      { id: 10, name: 'A', description: null, read: 'Public', nsfwLevel: 1, userId: 1, user: { id: 1, username: 'a' }, image: null },
+      { id: 9, name: 'Mature', description: null, read: 'Public', nsfwLevel: 8, userId: 1, user: { id: 1, username: 'a' }, image: null },
+      { id: 8, name: 'B', description: null, read: 'Public', nsfwLevel: 1, userId: 1, user: { id: 1, username: 'a' }, image: null },
+      { id: 7, name: 'C', description: null, read: 'Public', nsfwLevel: 1, userId: 1, user: { id: 1, username: 'a' }, image: null },
+      { id: 6, name: 'D', description: null, read: 'Public', nsfwLevel: 1, userId: 1, user: { id: 1, username: 'a' }, image: null },
+    ]);
+    const { req, res } = createMocks({ query: { mode: 'public', limit: '2' } });
+    await handler(req as never, res as never);
+    const body = res._json() as any;
+    // Page filled with the 2 visible collections (10, 8) — the mature 9 dropped.
+    expect(body.items.map((i: any) => i.id)).toEqual([10, 8]);
+    // Cursor advances to the first unconsumed row (7), NOT terminated early.
+    expect(body.nextCursor).toBe(7);
+  });
+
+  it('mode=public: exhausted source (fewer than the over-fetch) → no nextCursor', async () => {
+    mockGetAll.mockResolvedValueOnce([
+      { id: 10, name: 'A', description: null, read: 'Public', nsfwLevel: 1, userId: 1, user: { id: 1, username: 'a' }, image: null },
+      { id: 9, name: 'Mature', description: null, read: 'Public', nsfwLevel: 8, userId: 1, user: { id: 1, username: 'a' }, image: null },
+      { id: 8, name: 'B', description: null, read: 'Public', nsfwLevel: 1, userId: 1, user: { id: 1, username: 'a' }, image: null },
+    ]);
+    const { req, res } = createMocks({ query: { mode: 'public', limit: '2' } });
+    await handler(req as never, res as never);
+    const body = res._json() as any;
+    expect(body.items.map((i: any) => i.id)).toEqual([10, 8]);
+    expect(body.nextCursor).toBeUndefined();
   });
 
   it('mode=mine: keyed on the token subject, in-memory name filter + id-DESC keyset', async () => {

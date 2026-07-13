@@ -10,6 +10,7 @@ import {
   type BlockScopedNextApiRequest,
 } from '~/server/middleware/block-scope.middleware';
 import { createBuzzTipTransactionHandler } from '~/server/controllers/buzz.controller';
+import { dbRead } from '~/server/db/client';
 import { Tracker } from '~/server/clickhouse/client';
 import type { ProtectedContext } from '~/server/createContext';
 import { hydrateBlockSubject } from '~/server/services/blocks/block-collections.service';
@@ -100,6 +101,20 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     return;
   }
 
+  // RECIPIENT existence/tippable check — the shared handler only checks the target
+  // is not banned, NOT that it exists, so without this a page app could try to
+  // credit Buzz into a non-existent (or soft-deleted) account id. Reject a
+  // missing/deleted recipient with a clean 400 BEFORE any rate-limit or cap
+  // reservation is consumed. (Banned/blocked/24h checks remain the handler's.)
+  const recipient = await dbRead.user.findUnique({
+    where: { id: toUserId },
+    select: { id: true, deletedAt: true },
+  });
+  if (!recipient || recipient.deletedAt) {
+    res.status(400).json({ error: 'Recipient not found' });
+    return;
+  }
+
   // Per-instance rate limit (fail-CLOSED on redis error — money path).
   const rateLimit = await checkBlockTipRateLimit(claims.blockInstanceId);
   if (!rateLimit.allowed) {
@@ -172,14 +187,24 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     });
     return;
   } catch (error) {
-    // The tip did NOT move money — refund the daily-cap reservation so a failed
-    // attempt (insufficient funds, banned target, …) doesn't burn the user's cap.
-    await refundBlockTipSpend(capKey, amount);
-    // The handler wraps everything in a TRPCError (getTRPCErrorFromUnknown):
-    // insufficient funds / self-tip / banned target → BAD_REQUEST (400); etc.
     const trpcError = error as TRPCError;
     const statusCode =
       typeof trpcError?.code === 'string' ? getHTTPStatusCodeFromError(trpcError) : 500;
+
+    // REFUND ONLY ON A KNOWN-PRE-MONEY FAILURE. In createBuzzTipTransactionHandler
+    // the money moves at `createBuzzTransactionMany`; EVERY guard that runs before
+    // it (self-tip, banned/blocked target, 24h age, and the balance pre-check →
+    // insufficient funds) throws BAD_REQUEST — i.e. a 4xx GUARANTEES no Buzz left
+    // the sender, so the reservation must be refunded. A 5xx (or a non-TRPC throw)
+    // may originate AFTER the money moved (upsertBuzzTip / notification / metric),
+    // so we must NOT refund it — keeping the reservation only makes the daily cap
+    // STRICTER (the safe direction), never lets a real spend escape the ceiling.
+    // (Fixes the latent cap-bypass where a post-money throw refunded the cap and
+    // let the daily total under-count past the ceiling.)
+    if (statusCode >= 400 && statusCode < 500) {
+      await refundBlockTipSpend(capKey, amount);
+    }
+
     res
       .status(statusCode)
       .json({ ok: false, error: trpcError?.message ?? 'Failed to send tip' });
