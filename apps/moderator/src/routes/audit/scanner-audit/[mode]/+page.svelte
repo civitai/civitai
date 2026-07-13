@@ -54,14 +54,14 @@
 
   // Focused per-label review — in the spoke, same app.
   const labelHref = (label: string) =>
-    `/scanner-audit/${data.mode}/${encodeURIComponent(label)}`;
+    `/audit/scanner-audit/${data.mode}/${encodeURIComponent(label)}`;
 
   const exportHref = $derived(
     (() => {
       const p = new URLSearchParams({ view: data.view });
       if (data.label) p.set('label', data.label);
       if (data.version) p.set('version', data.version);
-      return `/scanner-audit/${data.mode}/export?${p}`;
+      return `/audit/scanner-audit/${data.mode}/export?${p}`;
     })()
   );
 
@@ -75,7 +75,7 @@
   </Button>
 </header>
 
-<Tabs value={data.mode} onValueChange={(v) => v && goto(`/scanner-audit/${v}`)} class="mb-4">
+<Tabs value={data.mode} onValueChange={(v) => v && goto(`/audit/scanner-audit/${v}`)} class="mb-4">
   <TabsList>
     {#each SCANNER_MODES as m (m.value)}
       <TabsTrigger value={m.value}>{m.label}</TabsTrigger>

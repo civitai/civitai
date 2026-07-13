@@ -18,7 +18,10 @@ const MIGRATED_ROUTES: Record<string, string> = {
   'article-rating-review': 'articles/ratings',
   'cosmetics/grant': 'cosmetics/grant',
   blocklists: 'blocklists',
-  'scanner-audit': 'scanner-audit',
+  // Audit tools now live under /audit in the spoke.
+  auditor: 'audit/prompt-tester',
+  'prompt-audit-test': 'audit/prohibited-prompts',
+  'scanner-audit': 'audit/scanner-audit',
   images: 'images',
   // Renamed image task pages — legacy top-level path → new nested spoke path.
   'image-tags': 'images/tags',

@@ -124,7 +124,7 @@
     }
   }
 
-  const tablePath = $derived(`/scanner-audit/${data.mode}`);
+  const tablePath = $derived(`/audit/scanner-audit/${data.mode}`);
   const scannerShort = $derived(data.scanner.replace('xguard_', '').replace('image_ingestion', 'image'));
   const policy = $derived(getScannerLabelPolicy(data.label));
 

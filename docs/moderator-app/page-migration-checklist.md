@@ -62,9 +62,14 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
   - Infra: **Postgres + Redis** (1-month TTL, fail-open reads, key `SYSTEM.BLOCKLIST:${type}`)
   - Notes: types = LinkDomain / MessagePattern / EmailDomain; case-insensitive; no cross-pod bust (TTL + lazy refresh)
 
-- [ ] **`/moderator/auditor`** — `src/pages/moderator/auditor.tsx` — flag: none
-  - Procedures: **none** — purely client-side (`useCheckProfanity` + `~/utils/metadata/audit`)
-  - Infra: none. Port the audit utilities client-side; no backend slice. Trivial / low-value but in active nav.
+- [x] **`/moderator/auditor`** — `src/pages/moderator/auditor.tsx` — flag: none — **Migrated.** The prompt tester
+  runs the audit **server-side** (a form `action` calling `@civitai/mod-utils/prompt-audit`
+  `getPromptHighlightSegments` — the word lists are server-only, so it can't be the legacy's client-only
+  page) and renders pass/flagged with full-category highlighting. Deferred (not in mod-utils): the
+  `cleanPrompt`/`getTagsFromPrompt` views and the profanity tester (`useCheckProfanity` stays in the main
+  app — still used by search/UI). Legacy page deleted; `/moderator/auditor` redirects (catchall) to
+  **`/audit/prompt-tester`** (label "Prompt Tester"), one of the three tools under the spoke's **Audit** nav
+  group (`/audit` → prohibited-prompts · prompt-tester · scanner-audit).
 
 - [x] **`/moderator/scanner-audit`** (index) — `src/pages/moderator/scanner-audit/index.tsx` — flag: none
   - Procedures: none — server redirect to `/moderator/scanner-audit/text`. Trivial. **Migrated.**
@@ -194,11 +199,7 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
   - Services: `generation/generation.service.ts` → `getGenerationResources`
   - Schemas: `generation.schema.ts` (`getGenerationResourcesSchema`)
   - Infra: **Postgres** (+ search index). `toggleUnavailableResource` lives in a child component — verify on migration.
-- [ ] **`/moderator/generation-config`** — `generation-config.tsx` — flag: none
-  - Procedures: `getEcosystemConfig`, `getGateRules` (queries); `setEcosystemConfig`, `setGateRules` (mutations)
-  - Services: `generation/generation.service.ts` (`getGenerationEcosystemConfig`, `setGenerationEcosystemConfig`, `getGateRules`, `setGateRules`)
-  - Schemas: `generation.schema.ts` (`generationEcosystemConfigSchema`), `shared/data-graph/generation/gates.ts` (`gateRuleSchema`)
-  - Infra: **Redis (sysRedis `SYSTEM.FEATURES`) + Flipt** (`GENERATION_TESTING`)
+- [ ] ~~**`/moderator/generation-config`**~~ — `generation-config.tsx` — **Excluded — stays in the main app** (decision 2026-07-10). Not migrating.
 - [ ] **`/moderator/generation-restrictions`** — `generation-restrictions.tsx` — flag: none (nav-gated on `csamReports`)
   - Procedures: `userRestriction.getAll` (query); `userRestriction.resolve`, `userRestriction.saveSuspiciousMatches` (mutations) — **logic inline in router**
   - Services: extract inline logic; `user.service.ts` (`updateUserById`), `orchestrator/promptAuditing.ts` (`resetProhibitedRequestCount`, `bustPromptAllowlistCache`), `notification.service.ts` (`createNotification`), `auth/session-invalidation.ts` (`refreshSession`)
@@ -214,11 +215,13 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
   - Services: `model-version.service.ts` (`getVersionById`); `training.controller.ts` (`getJobIdFromVersion`, `moderateTrainingData`); `orchestrator/workflows.ts` (`getWorkflow`)
   - Schemas: `base.schema.ts` (`getByIdSchema`)
   - Infra: **Postgres + Orchestrator (workflow `gateInstructions` mutation) + Axiom + S3** (training-data zip via `/api/download/training-data/{versionId}`)
-- [ ] **`/moderator/prompt-audit-test`** — `prompt-audit-test.tsx` — flag: none (nav-gated on `csamReports`)
-  - Procedures: `userRestriction.getTodaysAuditResults`, `userRestriction.getTodaysUserCounts` (queries); `userRestriction.saveSuspiciousMatches` (mutation) — **logic inline in router**
-  - Services: extract inline logic; `utils/metadata/audit.ts` (`debugAuditPrompt`)
-  - Schemas: `user-restriction.schema.ts` (`saveSuspiciousMatchSchema`)
-  - Infra: **ClickHouse (`prohibitedRequests`) + Redis (suspicious matches)**
+- [x] **`/moderator/prompt-audit-test`** — `prompt-audit-test.tsx` — **Migrated** to the spoke at
+  **`/audit/prohibited-prompts`** (under the Audit nav group), **without** the "flag as suspicious" feature.
+  The spoke reads ClickHouse directly (`prohibited-prompts.service.ts` → today's `prohibitedRequests` + per-user
+  counts) and highlights each prompt via `getPromptHighlightSegments` server-side. Legacy page deleted;
+  `/moderator/prompt-audit-test` redirects via the catchall. **Main-app cleanup:** removed the two orphaned
+  `userRestriction` procedures (`getTodaysAuditResults`, `getTodaysUserCounts`); **kept** `saveSuspiciousMatches`
+  (still used by generation-restrictions), `debugAudit`/`debugAuditPrompt`, and the ClickHouse client.
 - [ ] **`/moderator/testing/model3d-seed`** — `testing/model3d-seed.tsx` — flag: none
   - Procedures: **none** — direct HTTP POST to `/api/testing/model3d-seed`
   - Services: recreate the `/api/testing/model3d-seed` handler → `upsertModel3DFromWorkflow`

@@ -60,12 +60,24 @@ export const NAVIGATION: NavLink[] = [
     path: '/articles',
     role: 'moderator:staff',
     children: [
-      { path: '/articles', label: 'Review' },
-      { path: '/articles/ratings', label: 'Ratings' },
+      { path: '/articles/unpublished', label: 'Unpublished', countKey: 'articles' },
+      { path: '/articles/ratings', label: 'Rating Disputes', countKey: 'articleRatings' },
     ],
   },
   { path: '/cosmetics/grant', label: 'Grant Cosmetics', role: 'moderator:staff' },
-  { path: '/scanner-audit', label: 'Scanner Audit', role: 'moderator:staff' },
+  {
+    // Audit tools grouped under /audit: the prohibited-prompts monitor, the prompt tester, and scanner
+    // audit (which keeps its own [mode]/[label] subtree). `path: '/audit'` gates the subtree + gives the
+    // group its icon; the bare path redirects to the monitor (a group header is a toggle, not a link).
+    label: 'Audit',
+    path: '/audit',
+    role: 'moderator:staff',
+    children: [
+      { path: '/audit/prohibited-prompts', label: 'Prohibited Prompts' },
+      { path: '/audit/prompt-tester', label: 'Prompt Tester' },
+      { path: '/audit/scanner-audit', label: 'Scanner Audit' },
+    ],
+  },
   { path: '/blocklists', label: 'Blocklists', role: 'moderator:staff' },
   { path: '/users', label: 'Users', role: 'moderator:senior' },
   { path: '/admin', label: 'Permissions', role: 'moderator:admin' },
@@ -96,8 +108,16 @@ function pruneNav(links: NavLink[], rank: number, inherited = -1): NavLink[] {
   return out;
 }
 
+// Sidebar display order: Dashboard + Reports pinned at the top, then groups (items with children), then
+// the remaining childless items. Stable within each band, so NAVIGATION source order breaks ties. This
+// only reorders the rendered sidebar — gating (collectPathRanks) and roleHierarchy still read NAVIGATION
+// in source order.
+const NAV_PINNED_FRONT = new Set(['/', '/reports']);
+const navBand = (link: NavLink): number =>
+  link.path && NAV_PINNED_FRONT.has(link.path) ? 0 : link.children ? 1 : 2;
+
 export function navForUser(user: RoleUser): NavLink[] {
-  return pruneNav(NAVIGATION, userRank(user));
+  return pruneNav(NAVIGATION, userRank(user)).sort((a, b) => navBand(a) - navBand(b));
 }
 
 // Flat (path, requiredRank) for every INTERNAL path in the full tree — the gating source of truth.
