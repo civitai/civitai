@@ -850,11 +850,11 @@ describe('resetListingToPending', () => {
 // ---------------------------------------------------------------------------
 
 describe('unpublishOwnListing', () => {
-  function ownerPrimary(status: string, kind = 'offsite', userId = OWNER) {
-    return { userId, status, kind, slug: SLUG, name: 'Cool App' };
+  function ownerPrimary(status: string, kind = 'offsite', userId = OWNER, appBlockId: string | null = null) {
+    return { userId, status, kind, slug: SLUG, name: 'Cool App', appBlockId };
   }
 
-  it('OWNER hides their approved listing (approved → removed) + one owner-unpublish event, no notif/publish-request', async () => {
+  it('OWNER hides their approved OFF-SITE listing (approved → removed) + one owner-unpublish event, no notif/publish-request/block-flip', async () => {
     mockWrite.appListing.findUnique.mockResolvedValueOnce(ownerPrimary('approved'));
     const res = await unpublishOwnListing({
       input: { appListingId: APP_ID },
@@ -871,9 +871,32 @@ describe('unpublishOwnListing', () => {
       before: { status: 'approved' },
       after: { status: 'removed' },
     });
+    // OFF-SITE: no backing block to suspend.
+    expect(mockWrite.appBlock.updateMany).not.toHaveBeenCalled();
     // Pure visibility toggle — no re-review artifact, no owner self-notification.
     expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
     expect(mockNotify).not.toHaveBeenCalled();
+  });
+
+  it('🔴 ON-SITE full takedown: flips BOTH app_listings AND the backing app_blocks (approved → suspended) in ONE tx + owner-unpublish event', async () => {
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(ownerPrimary('approved', 'onsite', OWNER, BLOCK_ID));
+    const res = await unpublishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'removed' });
+    // The listing flip is kind-scoped to onsite.
+    expect(mockWrite.appListing.updateMany).toHaveBeenCalledWith({
+      where: { id: APP_ID, kind: 'onsite', status: 'approved' },
+      data: { status: 'removed' },
+    });
+    // The backing block is suspended (guarded to approved) so the runtime stops serving.
+    expect(mockWrite.appBlock.updateMany).toHaveBeenCalledWith({
+      where: { id: BLOCK_ID, status: 'approved' },
+      data: { status: 'suspended' },
+    });
+    expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data).toMatchObject({
+      action: 'owner-unpublish',
+      before: { status: 'approved' },
+      after: { status: 'removed' },
+    });
   });
 
   it('a NON-owner caller → NOT_OWNED (FORBIDDEN), no flip/event', async () => {
@@ -882,6 +905,7 @@ describe('unpublishOwnListing', () => {
       unpublishOwnListing({ input: { appListingId: APP_ID }, userId: 999 })
     ).rejects.toMatchObject({ name: 'OffsiteModerationError', code: 'NOT_OWNED' });
     expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+    expect(mockWrite.appBlock.updateMany).not.toHaveBeenCalled();
     expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
   });
 
@@ -893,8 +917,8 @@ describe('unpublishOwnListing', () => {
     expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
   });
 
-  it('an on-site owned listing → generic NOT_FOUND (offsite-only owner self-service)', async () => {
-    mockWrite.appListing.findUnique.mockResolvedValueOnce(ownerPrimary('approved', 'onsite'));
+  it('a missing listing → generic NOT_FOUND', async () => {
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(null);
     await expect(
       unpublishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
@@ -902,11 +926,11 @@ describe('unpublishOwnListing', () => {
 });
 
 describe('republishOwnListing (🔴 the last-event safety guard)', () => {
-  function ownerPrimary(status: string, kind = 'offsite', userId = OWNER) {
-    return { userId, status, kind, slug: SLUG, name: 'Cool App' };
+  function ownerPrimary(status: string, kind = 'offsite', userId = OWNER, appBlockId: string | null = null) {
+    return { userId, status, kind, slug: SLUG, name: 'Cool App', appBlockId };
   }
 
-  it('OWNER restores their OWN owner-unpublished listing (removed → approved) + owner-republish event', async () => {
+  it('OWNER restores their OWN owner-unpublished OFF-SITE listing (removed → approved) + owner-republish event, no block-flip', async () => {
     mockWrite.appListing.findUnique.mockResolvedValueOnce(ownerPrimary('removed'));
     // The most-recent event is the owner's own unpublish → restore allowed.
     mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce({ action: 'owner-unpublish' });
@@ -916,11 +940,41 @@ describe('republishOwnListing (🔴 the last-event safety guard)', () => {
       where: { id: APP_ID, kind: 'offsite', status: 'removed' },
       data: { status: 'approved' },
     });
+    expect(mockWrite.appBlock.updateMany).not.toHaveBeenCalled();
     expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data).toMatchObject({
       action: 'owner-republish',
       before: { status: 'removed' },
       after: { status: 'approved' },
     });
+  });
+
+  it('🔴 ON-SITE republish restores BOTH app_listings AND the backing app_blocks (suspended → approved) in ONE tx + owner-republish event', async () => {
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(ownerPrimary('removed', 'onsite', OWNER, BLOCK_ID));
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce({ action: 'owner-unpublish' });
+    const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'approved' });
+    expect(mockWrite.appListing.updateMany).toHaveBeenCalledWith({
+      where: { id: APP_ID, kind: 'onsite', status: 'removed' },
+      data: { status: 'approved' },
+    });
+    expect(mockWrite.appBlock.updateMany).toHaveBeenCalledWith({
+      where: { id: BLOCK_ID, status: 'suspended' },
+      data: { status: 'approved' },
+    });
+    expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data).toMatchObject({
+      action: 'owner-republish',
+    });
+  });
+
+  it('🔴 ON-SITE republish FORBIDDEN when the last event is a MOD delist — no listing flip AND no block flip', async () => {
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(ownerPrimary('removed', 'onsite', OWNER, BLOCK_ID));
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce({ action: 'delist' });
+    await expect(
+      republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+    expect(mockWrite.appBlock.updateMany).not.toHaveBeenCalled();
+    expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
   });
 
   it('🔴 FORBIDDEN when the last event is a MOD delist (takedown-for-cause) — no flip, no event', async () => {

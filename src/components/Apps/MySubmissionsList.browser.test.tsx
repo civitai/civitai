@@ -28,24 +28,68 @@ const mocks = vi.hoisted(() => ({
   // Spy on the analytics query so we can assert the input (e.g. the floored
   // `from`) every approved row passes — the per-row dedup key depends on it.
   analyticsUseQuery: vi.fn(),
+  // W13 P4 owner controls: record (name, vars) of the owner mutations + the
+  // invalidate, and drive the moderation-history query's items.
+  mutate: vi.fn(),
+  invalidate: vi.fn().mockResolvedValue(undefined),
+  historyItems: [] as Array<{
+    id: string;
+    action: string;
+    reason: string | null;
+    createdAt: Date;
+  }>,
 }));
 
-vi.mock('~/utils/trpc', () => ({
-  trpc: {
-    blocks: {
-      getMyAppAnalytics: {
-        useQuery: (...args: unknown[]) => {
-          mocks.analyticsUseQuery(...args);
-          return { data: mocks.analytics, isLoading: mocks.analyticsLoading };
+const showError = vi.fn();
+vi.mock('~/utils/notifications', () => ({
+  showSuccessNotification: vi.fn(),
+  showErrorNotification: (...a: unknown[]) => showError(...a),
+}));
+
+vi.mock('~/utils/trpc', () => {
+  // A mutation mock: records (name, vars), then drives onSuccess so the invalidate +
+  // notification paths run.
+  const mutation =
+    (name: string) =>
+    (opts?: { onSuccess?: () => void; onError?: (e: { message: string }) => void }) => ({
+      mutate: (vars: unknown) => {
+        mocks.mutate(name, vars);
+        void opts?.onSuccess?.();
+      },
+      isPending: false,
+    });
+  return {
+    trpc: {
+      useUtils: () => ({
+        blocks: { listMyPublishRequests: { invalidate: mocks.invalidate } },
+      }),
+      blocks: {
+        getMyAppAnalytics: {
+          useQuery: (...args: unknown[]) => {
+            mocks.analyticsUseQuery(...args);
+            return { data: mocks.analytics, isLoading: mocks.analyticsLoading };
+          },
+        },
+        // getMyApps is used only by the (mocked-away) panel; keep a stub so any
+        // accidental call is harmless.
+        getMyApps: { useQuery: () => ({ data: [], isLoading: false }) },
+        getMyAppRepo: { useQuery: () => ({ data: undefined, isLoading: false }) },
+      },
+      appListings: {
+        unpublishOwnListing: { useMutation: mutation('unpublish') },
+        republishOwnListing: { useMutation: mutation('republish') },
+        listMyListingModerationEvents: {
+          useQuery: () => ({
+            data: { items: mocks.historyItems, nextCursor: null },
+            isLoading: false,
+            error: null,
+          }),
         },
       },
-      // getMyApps is used only by the (mocked-away) panel; keep a stub so any
-      // accidental call is harmless.
-      getMyApps: { useQuery: () => ({ data: [], isLoading: false }) },
-      getMyAppRepo: { useQuery: () => ({ data: undefined, isLoading: false }) },
     },
-  },
-}));
+    setTrpcBatchingEnabled: vi.fn(),
+  };
+});
 
 // The real AppAnalyticsPanel pulls in chart.js; replace it with a marker that
 // records the scoped appBlockId it was opened with.
@@ -79,6 +123,13 @@ function makeSubmission(overrides: Partial<Submission>): Submission {
     manifestDiffSummary: { kind: 'update', added: [], removed: [], changed: [] },
     modelInstallCount: 3,
     userSubscriptionCount: 5,
+    // W13 P4 owner-control fields — default to a LIVE page app (backing listing
+    // approved, manifest declares a page). Owner-hidden / mod-removed / model-slot
+    // cases override `listingStatus` / `lastModerationAction` / `hasPage`.
+    appListingId: 'listing-1',
+    listingStatus: 'approved',
+    lastModerationAction: null,
+    hasPage: true,
     ...overrides,
   };
 }
@@ -88,6 +139,10 @@ beforeEach(() => {
   mocks.analyticsLoading = false;
   mocks.panelRenders.mockClear();
   mocks.analyticsUseQuery.mockClear();
+  mocks.mutate.mockClear();
+  mocks.invalidate.mockClear();
+  mocks.historyItems = [];
+  showError.mockClear();
 });
 
 describe('MySubmissionsList', () => {
@@ -629,5 +684,214 @@ describe('MySubmissionsList — UX pass 2: dates, author, first-version, live/Op
     // Approved + currently-published, but deploy failed → no Open live, no "live" badge.
     expect(page.getByRole('link', { name: /open live/i }).elements()).toHaveLength(0);
     expect(page.getByText('live', { exact: true }).elements()).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// W13 P4 — ON-SITE owner controls (unpublish / republish / mod-removed / history)
+// + the surfaced manage links + the Open-live run-page branching.
+// ---------------------------------------------------------------------------
+
+/** A LIVE on-site app (approved request + approved backing listing, page app). */
+const live = (over: Partial<Submission> = {}) =>
+  makeSubmission({
+    id: 'a',
+    slug: 'live-app',
+    appBlockId: 'block-a',
+    appListingId: 'l-a',
+    status: 'approved',
+    deployState: 'live',
+    listingStatus: 'approved',
+    lastModerationAction: null,
+    hasPage: true,
+    ...over,
+  });
+
+/** An owner-UNPUBLISHED app: the backing listing is removed, last event = owner-unpublish
+ *  (the publish request stays approved, so it still lives in the Live section). */
+const ownerHidden = () =>
+  makeSubmission({
+    id: 'h',
+    slug: 'hidden-app',
+    appBlockId: 'block-h',
+    appListingId: 'l-h',
+    status: 'approved',
+    deployState: 'live',
+    listingStatus: 'removed',
+    lastModerationAction: 'owner-unpublish',
+    hasPage: true,
+  });
+
+/** A MODERATOR-removed app: backing listing removed, last event = delist. */
+const modRemoved = () =>
+  makeSubmission({
+    id: 'm',
+    slug: 'gone-app',
+    appBlockId: 'block-m',
+    appListingId: 'l-m',
+    status: 'approved',
+    deployState: 'live',
+    listingStatus: 'removed',
+    lastModerationAction: 'delist',
+    hasPage: true,
+  });
+
+describe('MySubmissionsList — P4 onsite owner status badge', () => {
+  test('a LIVE app shows the "live" badge + Unpublish (no Republish / mod-removed)', async () => {
+    renderWithProviders(
+      <MySubmissionsList submissions={[live()]} onWithdraw={vi.fn()} withdrawing={false} />
+    );
+    await expect.element(page.getByText('live', { exact: true })).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-onsite-unpublish-live-app')).toBeInTheDocument();
+    expect(page.getByTestId('apps-onsite-republish-live-app').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-onsite-mod-removed-live-app').elements()).toHaveLength(0);
+  });
+
+  test('an OWNER-hidden app shows the "unpublished" badge + Republish (no Unpublish / Open-live)', async () => {
+    renderWithProviders(
+      <MySubmissionsList submissions={[ownerHidden()]} onWithdraw={vi.fn()} withdrawing={false} />
+    );
+    await expect.element(page.getByText('unpublished', { exact: true })).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-onsite-republish-hidden-app')).toBeInTheDocument();
+    expect(page.getByTestId('apps-onsite-unpublish-hidden-app').elements()).toHaveLength(0);
+    // Not serving → no Open-live affordance.
+    expect(page.getByTestId('apps-submissions-open-hidden-app').elements()).toHaveLength(0);
+  });
+
+  test('a MOD-removed app shows "removed by a moderator" + NO Republish button (the load-bearing guard)', async () => {
+    renderWithProviders(
+      <MySubmissionsList submissions={[modRemoved()]} onWithdraw={vi.fn()} withdrawing={false} />
+    );
+    // The overridden status badge.
+    await expect
+      .element(page.getByText('removed by a moderator', { exact: true }))
+      .toBeInTheDocument();
+    // The inline mod-removed marker.
+    await expect.element(page.getByTestId('apps-onsite-mod-removed-gone-app')).toBeInTheDocument();
+    // NEVER a republish/unpublish button on a mod takedown.
+    expect(page.getByTestId('apps-onsite-republish-gone-app').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-onsite-unpublish-gone-app').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-submissions-open-gone-app').elements()).toHaveLength(0);
+  });
+});
+
+describe('MySubmissionsList — P4 onsite unpublish / republish / history', () => {
+  test('Unpublish opens a confirm gate; confirming fires unpublishOwnListing with the listing id', async () => {
+    renderWithProviders(
+      <MySubmissionsList submissions={[live()]} onWithdraw={vi.fn()} withdrawing={false} />
+    );
+    // The row button opens the modal — it does NOT fire the mutation yet.
+    await page.getByTestId('apps-onsite-unpublish-live-app').click();
+    expect(mocks.mutate).not.toHaveBeenCalled();
+    // Confirming fires the mutation with the backing listing id (no reason).
+    await page.getByTestId('apps-onsite-unpublish-confirm').click();
+    expect(mocks.mutate).toHaveBeenCalledWith('unpublish', {
+      appListingId: 'l-a',
+      reason: undefined,
+    });
+    // On success it invalidates the my-submissions (publish-requests) query.
+    expect(mocks.invalidate).toHaveBeenCalled();
+  });
+
+  test('Republish fires republishOwnListing with the listing id', async () => {
+    renderWithProviders(
+      <MySubmissionsList submissions={[ownerHidden()]} onWithdraw={vi.fn()} withdrawing={false} />
+    );
+    await page.getByTestId('apps-onsite-republish-hidden-app').click();
+    expect(mocks.mutate).toHaveBeenCalledWith('republish', { appListingId: 'l-h' });
+    expect(mocks.invalidate).toHaveBeenCalled();
+  });
+
+  test('the History button opens the moderation timeline (actions + verbatim reasons)', async () => {
+    mocks.historyItems = [
+      {
+        id: 'e2',
+        action: 'delist',
+        reason: 'Reported for policy',
+        createdAt: new Date('2026-02-02T00:00:00Z'),
+      },
+      {
+        id: 'e1',
+        action: 'owner-unpublish',
+        reason: null,
+        createdAt: new Date('2026-02-01T00:00:00Z'),
+      },
+    ];
+    renderWithProviders(
+      <MySubmissionsList submissions={[modRemoved()]} onWithdraw={vi.fn()} withdrawing={false} />
+    );
+    await page.getByTestId('apps-onsite-history-gone-app').click();
+    await expect.element(page.getByText('Reported for policy')).toBeInTheDocument();
+    await expect.element(page.getByText('Delisted')).toBeInTheDocument();
+    await expect.element(page.getByText('Unpublished by you')).toBeInTheDocument();
+    expect(page.getByTestId('apps-onsite-history-entry').elements().length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('MySubmissionsList — P4 surfaced manage links', () => {
+  test('a live app links Edit → edit-manifest and Revenue → revenue for the app block', async () => {
+    renderWithProviders(
+      <MySubmissionsList submissions={[live()]} onWithdraw={vi.fn()} withdrawing={false} />
+    );
+    const edit = page.getByTestId('apps-onsite-edit-live-app');
+    await expect.element(edit).toBeInTheDocument();
+    expect(edit.element().getAttribute('href')).toBe('/apps/block-a/edit-manifest');
+    const revenue = page.getByTestId('apps-onsite-revenue-live-app');
+    await expect.element(revenue).toBeInTheDocument();
+    expect(revenue.element().getAttribute('href')).toBe('/apps/block-a/revenue');
+  });
+
+  test('a MOD-removed app keeps Revenue but drops Edit', async () => {
+    renderWithProviders(
+      <MySubmissionsList submissions={[modRemoved()]} onWithdraw={vi.fn()} withdrawing={false} />
+    );
+    await expect.element(page.getByTestId('apps-onsite-revenue-gone-app')).toBeInTheDocument();
+    expect(page.getByTestId('apps-onsite-edit-gone-app').elements()).toHaveLength(0);
+  });
+});
+
+describe('MySubmissionsList — P4 Open-live run-page branching (graceful, no dead link)', () => {
+  test('a page app the viewer CAN open → /apps/run/<slug> (internal)', async () => {
+    renderWithProviders(
+      <MySubmissionsList
+        submissions={[live({ hasPage: true })]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+        canOpenPage
+      />
+    );
+    const open = page.getByTestId('apps-submissions-open-live-app');
+    await expect.element(open).toBeInTheDocument();
+    expect(open.element().getAttribute('href')).toBe('/apps/run/live-app');
+  });
+
+  test('a page app the viewer CANNOT open (flag dark) → the standalone <slug>.civit.ai origin', async () => {
+    renderWithProviders(
+      <MySubmissionsList
+        submissions={[live({ hasPage: true })]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+        canOpenPage={false}
+      />
+    );
+    const open = page.getByTestId('apps-submissions-open-live-app');
+    await expect.element(open).toBeInTheDocument();
+    expect(open.element().getAttribute('href')).toBe('https://live-app.civit.ai/');
+  });
+
+  test('a model-slot app (no launch page) → informational "Runs on model pages", never a dead standalone link', async () => {
+    renderWithProviders(
+      <MySubmissionsList
+        submissions={[live({ hasPage: false })]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+        canOpenPage
+      />
+    );
+    const open = page.getByTestId('apps-submissions-open-live-app');
+    await expect.element(open).toBeInTheDocument();
+    // Not the standalone origin — it links to the block detail (install lives there).
+    expect(open.element().getAttribute('href')).not.toBe('https://live-app.civit.ai/');
+    await expect.element(page.getByText('Runs on model pages', { exact: false })).toBeInTheDocument();
   });
 });

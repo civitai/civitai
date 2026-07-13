@@ -1,19 +1,15 @@
 import {
-  Alert,
   Anchor,
   Badge,
   Button,
   Card,
   Code,
   Group,
-  Modal,
   Stack,
   Table,
   Text,
-  Textarea,
 } from '@mantine/core';
 import {
-  IconAlertTriangle,
   IconExternalLink,
   IconEye,
   IconEyeOff,
@@ -27,7 +23,6 @@ import {
   isWithdrawableOffsiteStatus,
   offsiteStatusChip,
 } from '~/components/Apps/offsiteSubmissionStatus';
-import { moderationActionChip } from '~/components/Apps/appListingModerationView';
 import {
   canOwnerRepublish,
   canOwnerUnpublish,
@@ -35,8 +30,11 @@ import {
   ownerStateChip,
   type OwnerListingState,
 } from '~/components/Apps/offsiteOwnerControls';
+import {
+  OwnerModerationHistoryModal,
+  OwnerUnpublishModal,
+} from '~/components/Apps/ownerListingModals';
 import { validateExternalUrl } from '~/server/schema/blocks/external-app.schema';
-import { OFFSITE_MOD_NOTE_MAX } from '~/server/schema/blocks/offsite-moderation.schema';
 import { ReviewerNotesButton } from '~/components/Apps/MySubmissionsList';
 import {
   bucketGroupsByStatus,
@@ -525,173 +523,14 @@ export function OffsiteSubmissionsList({
         target={unpublishTarget}
         onClose={() => setUnpublishTarget(null)}
         onDone={invalidateSubmissions}
+        testIdPrefix="apps-offsite"
+        variant="store"
       />
       <OwnerModerationHistoryModal
         target={historyTarget}
         onClose={() => setHistoryTarget(null)}
+        testIdPrefix="apps-offsite"
       />
     </Stack>
-  );
-}
-
-/**
- * Confirm-gated OWNER unpublish (approved → removed). Hides the live app from the
- * store immediately — no re-review needed, and the owner can republish it
- * themselves. `reason` is optional (the owner is acting on their own listing).
- */
-function OwnerUnpublishModal({
-  target,
-  onClose,
-  onDone,
-}: {
-  target: { id: string; slug: string } | null;
-  onClose: () => void;
-  onDone: () => Promise<void> | void;
-}) {
-  const [reason, setReason] = useState('');
-  const mutation = trpc.appListings.unpublishOwnListing.useMutation({
-    onSuccess: async () => {
-      showSuccessNotification({ message: 'App unpublished — it is now hidden from the store.' });
-      await onDone();
-      setReason('');
-      onClose();
-    },
-    onError: (e) => showErrorNotification({ title: 'Unpublish failed', error: new Error(e.message) }),
-  });
-
-  function close() {
-    if (mutation.isPending) return;
-    setReason('');
-    onClose();
-  }
-
-  if (!target) return null;
-  return (
-    <Modal
-      opened={!!target}
-      onClose={close}
-      title={
-        <Text fw={600}>
-          Unpublish <Code>{target.slug}</Code>
-        </Text>
-      }
-      centered
-    >
-      <Stack gap="md">
-        <Alert color="orange" variant="light" icon={<IconAlertTriangle size={16} />}>
-          <Text size="sm">
-            Unpublishing hides your live app from the store immediately. You can republish it
-            yourself at any time — no re-review needed.
-          </Text>
-        </Alert>
-        <Textarea
-          label="Reason (optional)"
-          autosize
-          minRows={2}
-          maxRows={6}
-          maxLength={OFFSITE_MOD_NOTE_MAX}
-          placeholder="Optional — a note for your own records / the listing history."
-          value={reason}
-          onChange={(e) => setReason(e.currentTarget.value)}
-          disabled={mutation.isPending}
-          data-testid="apps-offsite-unpublish-reason"
-        />
-        <Group justify="flex-end" gap="xs">
-          <Button variant="default" onClick={close} disabled={mutation.isPending}>
-            Cancel
-          </Button>
-          <Button
-            color="orange"
-            onClick={() =>
-              mutation.mutate({
-                appListingId: target.id,
-                reason: reason.trim() ? reason.trim() : undefined,
-              })
-            }
-            loading={mutation.isPending}
-            disabled={mutation.isPending}
-            data-testid="apps-offsite-unpublish-confirm"
-          >
-            Unpublish
-          </Button>
-        </Group>
-      </Stack>
-    </Modal>
-  );
-}
-
-/**
- * OWNER moderation-history modal — the "why was this hidden / un-approved" view.
- * Renders the listing's `AppListingModerationEvent` timeline (newest-first) via the
- * owner-scoped `listMyListingModerationEvents` proc: each entry's action + date +
- * (verbatim) reason. Owner-scoped server-side (own listing only).
- */
-function OwnerModerationHistoryModal({
-  target,
-  onClose,
-}: {
-  target: { id: string; slug: string } | null;
-  onClose: () => void;
-}) {
-  const query = trpc.appListings.listMyListingModerationEvents.useQuery(
-    { appListingId: target?.id ?? '', limit: 50 },
-    { enabled: !!target }
-  );
-  const items = (query.data?.items ?? []) as Array<{
-    id: string;
-    action: string;
-    reason: string | null;
-    createdAt: string | Date;
-  }>;
-
-  return (
-    <Modal
-      opened={!!target}
-      onClose={onClose}
-      title={
-        <Text fw={600}>
-          Moderation history{target ? <> — <Code>{target.slug}</Code></> : null}
-        </Text>
-      }
-      size="lg"
-      centered
-    >
-      {query.isLoading ? (
-        <Text size="sm" c="dimmed">
-          Loading…
-        </Text>
-      ) : query.error ? (
-        <Alert color="red" variant="light" icon={<IconAlertTriangle size={16} />}>
-          {query.error.message}
-        </Alert>
-      ) : items.length === 0 ? (
-        <Text size="sm" c="dimmed" data-testid="apps-offsite-history-empty">
-          No moderation history yet.
-        </Text>
-      ) : (
-        <Stack gap="sm" data-testid="apps-offsite-history-list">
-          {items.map((ev) => {
-            const chip = moderationActionChip(ev.action);
-            return (
-              <Card key={ev.id} withBorder p="sm" data-testid="apps-offsite-history-entry">
-                <Group justify="space-between" gap="xs" wrap="nowrap">
-                  <Badge color={chip.color} variant="light">
-                    {chip.label}
-                  </Badge>
-                  <Text size="xs" c="dimmed">
-                    {formatDate(ev.createdAt)}
-                  </Text>
-                </Group>
-                {ev.reason && (
-                  <Text size="sm" mt={6} style={{ whiteSpace: 'pre-wrap' }}>
-                    {ev.reason}
-                  </Text>
-                )}
-              </Card>
-            );
-          })}
-        </Stack>
-      )}
-    </Modal>
   );
 }
