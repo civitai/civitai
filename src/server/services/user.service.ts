@@ -595,13 +595,6 @@ export const updateUserById = async ({
   return user;
 };
 
-export const getUserEngagedModels = ({ id, type }: { id: number; type?: ModelEngagementType }) => {
-  return dbRead.modelEngagement.findMany({
-    where: { userId: id, type },
-    select: { modelId: true, type: true },
-  });
-};
-
 export type EngagedModelType = ModelEngagementType | 'Recommended';
 
 /**

@@ -372,10 +372,6 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
       applyNotifyToggled(model.id, !isNotificationOn);
       return { snapshot };
     },
-    async onSuccess() {
-      // Keep the legacy getEngagedModels cache in sync for still-on-old-endpoint feeds.
-      await queryUtils.user.getEngagedModels.invalidate();
-    },
     onError(error, _vars, context) {
       if (context?.snapshot) restoreMembership(model.id, context.snapshot);
       showErrorNotification({ title: 'Failed to update notification settings', error });
