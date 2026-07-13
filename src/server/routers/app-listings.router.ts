@@ -22,6 +22,7 @@ import {
 import {
   approveExternalRequestSchema,
   beginListingRevisionSchema,
+  getMyListingForEditSchema,
   listMySubmissionsSchema,
   listOffsiteRequestsSchema,
   persistListingAssetImageSchema,
@@ -29,6 +30,7 @@ import {
   submitExternalListingSchema,
   submitListingRevisionSchema,
   updateListingSchema,
+  updateRevisionDraftSchema,
   withdrawExternalRequestSchema,
 } from '~/server/schema/blocks/offsite-listing.schema';
 import {
@@ -41,10 +43,14 @@ import {
   dismissReportSchema,
   listListingReportsSchema,
   listModerationEventsSchema,
+  listMyListingModerationEventsSchema,
   purgeListingSchema,
   relistListingSchema,
   reportListingSchema,
+  republishOwnListingSchema,
+  resetListingToPendingSchema,
   resolveReportSchema,
+  unpublishOwnListingSchema,
 } from '~/server/schema/blocks/offsite-moderation.schema';
 import { rateLimit } from '~/server/middleware.trpc';
 import {
@@ -355,6 +361,60 @@ export const appListingsRouter = router({
     }),
 
   /**
+   * AUTHOR: owner-gated prefill read for the dual-mode edit wizard
+   * (`/apps/submit?edit=<listingId>`). Returns the listing's scalars + current
+   * assets (edge-resolved) + status + hasPendingRevision, resolving an approved
+   * parent's in-progress shadow so a resumed revision prefills its edited state.
+   * Owner-bound in the service (NOT_OWNED→FORBIDDEN, NOT_FOUND, rejected→
+   * MUST_RESUBMIT/BAD_REQUEST, removed→FORBIDDEN). Typed failures via `mapOffsiteError`.
+   */
+  getMyListingForEdit: appDeveloperProcedure
+    .input(getMyListingForEditSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { getMyListingForEdit } = await import(
+        '~/server/services/blocks/offsite-listing.service'
+      );
+      try {
+        return await getMyListingForEdit({ listingId: input.listingId, userId: ctx.user.id });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
+   * AUTHOR: write a scalar patch to an owned DRAFT shadow revision (the approved
+   * edit flow's "direct once shadow exists" scalar write, symmetric with the asset
+   * procs that already mutate an owned shadow). Owner-bound in the service; asserts
+   * the target is a draft shadow so it can never edit a live top-level listing.
+   * Typed failures map via `mapOffsiteError`.
+   */
+  updateRevisionDraft: appDeveloperProcedure
+    .use(
+      rateLimit({
+        limit: 30,
+        period: 3600,
+        errorMessage: 'Too many edits — slow down.',
+      })
+    )
+    .input(updateRevisionDraftSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { updateRevisionDraft } = await import(
+        '~/server/services/blocks/offsite-listing.service'
+      );
+      try {
+        return await updateRevisionDraft({
+          shadowId: input.shadowId,
+          patch: input.patch,
+          userId: ctx.user.id,
+        });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
    * AUTHOR: open (or re-open) a shadow-draft revision of an APPROVED listing so its
    * MATERIAL fields / assets can be edited while the current version stays live.
    * Idempotent (re-opening returns the existing shadow). Returns the shadow id;
@@ -549,6 +609,7 @@ export const appListingsRouter = router({
           publishRequestId: input.publishRequestId,
           reviewerUserId: ctx.user.id,
           approvalNotes: input.approvalNotes,
+          contentRating: input.contentRating,
         });
       } catch (err) {
         throw mapOffsiteError(err);
@@ -779,6 +840,116 @@ export const appListingsRouter = router({
         '~/server/services/blocks/offsite-moderation.service'
       );
       return listModerationEvents(input);
+    }),
+
+  // -------------------------------------------------------------------------
+  // W13 POST-APPROVAL LISTING MANAGEMENT (Phase 1) — DARK.
+  //
+  // `resetListingToPending` is a MOD action (`moderatorProcedure` + `isModerator`
+  // recheck, same posture as delist/relist/claim/purge). The three owner procs
+  // (`unpublishOwnListing` / `republishOwnListing` / `listMyListingModerationEvents`)
+  // are `appDeveloperProcedure` (mods + app-dev-testers) and are bound to the caller
+  // in the service (owner-only, else NOT_OWNED → FORBIDDEN). All typed failures map
+  // via `mapOffsiteError` (no infra leak). Offsite-only in the service.
+  // -------------------------------------------------------------------------
+
+  /**
+   * MOD reset an approved off-site listing back into the review queue (approved →
+   * pending) — mints a fresh pending publish request owned by the listing owner so a
+   * mod can re-approve/reject it through the existing flow, writes a `reset-to-pending`
+   * audit event, and notifies the owner. Typed failures map via `mapOffsiteError`
+   * (NOT_FOUND→NOT_FOUND, NOT_TRANSITIONABLE→BAD_REQUEST, infra→INTERNAL/no leak).
+   */
+  resetListingToPending: moderatorProcedure
+    .input(resetListingToPendingSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Resetting off-site listings is restricted to civitai team');
+      }
+      const { resetListingToPending } = await import(
+        '~/server/services/blocks/offsite-moderation.service'
+      );
+      try {
+        return await resetListingToPending({ input, reviewerUserId: ctx.user.id });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
+   * OWNER unpublish their OWN approved off-site listing (approved → removed) — a
+   * self-service visibility toggle (no re-review). Owner-bound in the service
+   * (NOT_OWNED→FORBIDDEN); NOT_TRANSITIONABLE when not approved. Typed failures map
+   * via `mapOffsiteError`.
+   */
+  unpublishOwnListing: appDeveloperProcedure
+    .use(
+      rateLimit({
+        limit: 30,
+        period: 3600,
+        errorMessage: 'Too many listing changes — slow down.',
+      })
+    )
+    .input(unpublishOwnListingSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { unpublishOwnListing } = await import(
+        '~/server/services/blocks/offsite-moderation.service'
+      );
+      try {
+        return await unpublishOwnListing({ input, userId: ctx.user.id });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
+   * OWNER republish their OWN owner-unpublished off-site listing (removed →
+   * approved). 🔴 Allowed ONLY when the listing's most-recent moderation event is an
+   * `owner-unpublish` — a listing a MODERATOR removed (delist/purge) is FORBIDDEN to
+   * self-restore (the load-bearing safety guard, in the service). Owner-bound. Typed
+   * failures map via `mapOffsiteError` (NOT_OWNED/FORBIDDEN→FORBIDDEN,
+   * NOT_TRANSITIONABLE→BAD_REQUEST).
+   */
+  republishOwnListing: appDeveloperProcedure
+    .use(
+      rateLimit({
+        limit: 30,
+        period: 3600,
+        errorMessage: 'Too many listing changes — slow down.',
+      })
+    )
+    .input(republishOwnListingSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { republishOwnListing } = await import(
+        '~/server/services/blocks/offsite-moderation.service'
+      );
+      try {
+        return await republishOwnListing({ input, userId: ctx.user.id });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
+   * OWNER per-listing moderation history for a listing the caller OWNS (the "why was
+   * this hidden / un-approved" view). Owner-bound in the service (NOT_FOUND on a
+   * missing listing, NOT_OWNED→FORBIDDEN otherwise); same PII-safe projection as the
+   * mod `listModerationEvents`.
+   */
+  listMyListingModerationEvents: appDeveloperProcedure
+    .input(listMyListingModerationEventsSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { listMyListingModerationEvents } = await import(
+        '~/server/services/blocks/offsite-moderation.service'
+      );
+      try {
+        return await listMyListingModerationEvents({ input, userId: ctx.user.id });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
     }),
 
   // -------------------------------------------------------------------------

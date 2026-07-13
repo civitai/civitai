@@ -7,12 +7,14 @@ import { styleTags, tagsNeedingReview, tagsToIgnore } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
 import {
   BlockedReason,
+  BlocklistType,
   ImageScanType,
   NotificationCategory,
   NsfwLevel,
   SearchIndexUpdateQueueAction,
   SignalMessages,
 } from '~/server/common/enums';
+import { stripBenignPhrases } from '~/server/services/blocklist.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getExplainSql } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
@@ -26,7 +28,7 @@ import {
   imageScanTypes,
 } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
-import { queueModel3DForThumbnailImage } from '~/server/services/nsfwLevels.service';
+import { updateModel3DNsfwLevelForThumbnailImage } from '~/server/services/nsfwLevels.service';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
 import { getTagRules } from '~/server/services/system-cache';
 import {
@@ -65,8 +67,6 @@ import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import type { NextApiRequest } from 'next';
 
 // const REQUIRED_SCANS = 2;
-
-const localTagCache: Record<string, { id: number; blocked?: true; ignored?: true }> = {};
 
 enum Status {
   Success = 0,
@@ -201,7 +201,8 @@ export default WebhookEndpoint(async (req, res) => {
     // Image was deleted between scan submit and callback — there's nothing to
     // update. ACK with 200 so the scanner drops the job instead of re-delivering
     // the result for a row that no longer exists.
-    if (e.message === 'Image not found') return res.status(200).json({ ok: true, skipped: 'deleted' });
+    if (e.message === 'Image not found')
+      return res.status(200).json({ ok: true, skipped: 'deleted' });
     return res.status(400).send({ error: e.message });
   }
 });
@@ -269,11 +270,7 @@ async function updateImage(
 
       // await dbWrite.$executeRaw`SELECT update_nsfw_level_new(${id}::int);`;
       if (image.postId) await updatePostNsfwLevel(image.postId);
-
-      // Re-enqueue the parent Model3D (if this image is a 3D thumbnail) so its
-      // nsfwLevel picks up the now-scanned thumbnail. The new scanner path does
-      // this too; the legacy path must mirror it or the model stays unrated.
-      await queueModel3DForThumbnailImage(id);
+      await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId: image.postId });
 
       await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
 
@@ -315,7 +312,7 @@ async function updateImage(
         // #endregion
       }
     } else if (data.ingestion === 'Blocked') {
-      await queueModel3DForThumbnailImage(id);
+      await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId: image.postId });
       await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Delete });
     }
 
@@ -547,6 +544,8 @@ async function getTagsFromIncomingTags({
   tags: BodyProps['tags'];
   source: BodyProps['source'];
 }) {
+  const localTagCache: Record<string, { id: number; blocked?: true; ignored?: true }> = {};
+
   if (!incomingTags) {
     await logToAxiom({
       type: 'image-scan-result',
@@ -914,8 +913,19 @@ async function processScanResult({
 
 type AuditImageScanResultsReturn = AsyncReturnType<typeof auditImageScanResults>;
 async function auditImageScanResults({ image }: { image: GetImageReturn }) {
-  const prompt = normalizeText(image.meta?.['prompt'] as string | undefined);
-  const negativePrompt = normalizeText(image.meta?.['negativePrompt'] as string | undefined);
+  // Moderator-managed benign phrases (proper nouns / technical terms that coincidentally
+  // contain a detection token) are blanked up front so every downstream check — minor,
+  // poi, blockedFor — sees the same cleaned text.
+  const [prompt, negativePrompt] = await Promise.all([
+    stripBenignPhrases(
+      normalizeText(image.meta?.['prompt'] as string | undefined),
+      BlocklistType.PromptBenignPhrase
+    ),
+    stripBenignPhrases(
+      normalizeText(image.meta?.['negativePrompt'] as string | undefined),
+      BlocklistType.NegativeBenignPhrase
+    ),
+  ]);
 
   const tagsFromTagsOnImageDetails = await dbWrite.$queryRaw<
     { id: number; name: string; nsfwLevel: number; confidence: number }[]

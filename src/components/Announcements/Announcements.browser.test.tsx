@@ -4,46 +4,44 @@ import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 
 /**
- * Announcements CLS reserve — component tests for the flag-gated space
- * reservation that stops the above-feed announcement banner from displacing the
- * tall masonry feed on load (the shift production RUM mis-attributes to
- * `MasonryContainer .queries`, the displaced victim).
+ * `Announcements` component contract for the combined feed-CLS fix: #3018's
+ * SSR-exact dismiss (carousel — or nothing — from server HTML, driven by the
+ * cookie via `useGetAnnouncements`) PLUS #3000's anti-collapse mechanism (a
+ * PERSISTENT `min-h` parent that stays mounted across the SSR→hydration handoff).
  *
- * Load-bearing behaviours:
- *   1. Flag OFF ⇒ current behaviour exactly (null when nothing to show; the
- *      carousel with no wrapper when there is — no reserved space, ever).
- *   2. Flag ON + a seeded `site` announcement + PRE-hydration (isClient=false) ⇒
- *      a PERSISTENT parent holding a responsive min-height (mobile 203 / desktop
- *      162), spacer inside.
- *   3. The SAME persistent parent (holding the min-height) is present once the
- *      carousel mounts — so the space is held continuously across the
- *      spacer→carousel swap (no collapse gap / double-shift while the dynamic
- *      chunk resolves).
- *   4. Flag ON + POST-hydration with everything dismissed ⇒ release the reserve
- *      (no permanent dead space for a dismisser).
- *   5. Reserve is scoped to `type === 'site'` — generator/training placements
- *      (above a form/wizard, not the feed) never reserve.
+ * The hydration/flag logic of `useGetAnnouncements` is unit-tested by the pure
+ * `announcements-exposure` + `announcements-dismissed-cookie` suites, so it is
+ * mocked here — these tests pin the COMPONENT's job: when does the persistent
+ * reserve wrapper appear, and does the min-height floor hold when the inner
+ * carousel is momentarily null.
  */
 
-// Per-test-controllable hook outputs (vi.mock is hoisted above imports).
+const RESERVE = '[data-testid="announcements-cls-reserve"]';
+const RESERVE_MIN_H = 'min-h-[203px]';
+
+// Per-test-controllable hook output (vi.mock is hoisted above imports).
+type HookShape = {
+  data: Array<{ id: number; dismissed: boolean }>;
+  seededCount: number;
+  serverExposedCount: number;
+  exposeSSR: boolean;
+  isClient: boolean;
+};
 const mocks = vi.hoisted(() => ({
-  feedReserveCls: false,
   hook: {
     data: [] as Array<{ id: number; dismissed: boolean }>,
     seededCount: 0,
+    serverExposedCount: 0,
+    exposeSSR: false,
     isClient: false,
-  },
-}));
-
-vi.mock('~/providers/FeatureFlagsProvider', () => ({
-  useFeatureFlags: () => ({ feedReserveCls: mocks.feedReserveCls }),
+  } as HookShape,
 }));
 
 vi.mock('~/components/Announcements/announcements.utils', () => ({
   useGetAnnouncements: () => mocks.hook,
 }));
 
-// Stub the dynamically-imported carousel so tests stay network/Embla-free.
+// Stub the (now statically-imported) carousel so tests stay network/Embla-free.
 vi.mock('~/components/Announcements/AnnouncementsCarousel', () => ({
   default: () => <div data-testid="carousel" />,
 }));
@@ -51,79 +49,140 @@ vi.mock('~/components/Announcements/AnnouncementsCarousel', () => ({
 // Imported AFTER the mocks are registered.
 import { Announcements } from '~/components/Announcements/Announcements';
 
-const RESERVE_CLASSES = ['min-h-[203px]', 'md:min-h-[162px]'];
-
 beforeEach(() => {
-  mocks.feedReserveCls = false;
-  mocks.hook = { data: [], seededCount: 0, isClient: false };
+  mocks.hook = {
+    data: [],
+    seededCount: 0,
+    serverExposedCount: 0,
+    exposeSSR: false,
+    isClient: false,
+  };
 });
 
-describe('Announcements CLS reserve', () => {
-  test('flag OFF, pre-hydration, seeded announcement → renders nothing (no reserve, no wrapper)', async () => {
-    mocks.feedReserveCls = false;
-    mocks.hook = { data: [], seededCount: 1, isClient: false };
+describe('Announcements — flag OFF / non-exposed (byte-identical to pre-fix)', () => {
+  test('flag OFF, no exposed data → renders nothing, NO reserve wrapper', async () => {
+    mocks.hook = {
+      data: [],
+      seededCount: 1,
+      serverExposedCount: 0,
+      exposeSSR: false,
+      isClient: false,
+    };
     renderWithProviders(<Announcements className="mb-3" />);
-    await expect
-      .poll(() => document.querySelector('[data-testid="announcements-cls-reserve"]'))
-      .toBe(null);
+    // Give any async mount a beat, then assert nothing rendered.
+    await expect.poll(() => document.querySelector(RESERVE)).toBe(null);
     expect(document.querySelector('[data-testid="carousel"]')).toBe(null);
   });
 
-  test('flag ON, pre-hydration, seeded site announcement → persistent parent holds responsive min-height (spacer inside)', async () => {
-    mocks.feedReserveCls = true;
-    mocks.hook = { data: [], seededCount: 1, isClient: false };
-    renderWithProviders(<Announcements className="mb-3" />);
-    const reserve = page.getByTestId('announcements-cls-reserve');
-    await expect.element(reserve).toBeInTheDocument();
-    const el = reserve.element() as HTMLElement;
-    // Reserves the LARGER (mobile) height, with a desktop override — never under-reserves.
-    for (const cls of RESERVE_CLASSES) expect(el.className).toContain(cls);
-    // Spacer state: hidden from a11y, no carousel inside yet, pass-through spacing preserved.
-    expect(el.getAttribute('aria-hidden')).toBe('true');
-    expect(el.querySelector('[data-testid="carousel"]')).toBe(null);
-    expect(el.className).toContain('mb-3');
-  });
-
-  test('flag ON, visible announcement → SAME persistent parent still holds min-height, now wrapping the carousel', async () => {
-    mocks.feedReserveCls = true;
-    mocks.hook = { data: [{ id: 1, dismissed: false }], seededCount: 1, isClient: true };
-    renderWithProviders(<Announcements className="mb-3" />);
-    const reserve = page.getByTestId('announcements-cls-reserve');
-    await expect.element(reserve).toBeInTheDocument();
-    const el = reserve.element() as HTMLElement;
-    // The min-height is held by the SAME parent across the swap → no collapse gap.
-    for (const cls of RESERVE_CLASSES) expect(el.className).toContain(cls);
-    // Carousel is now nested INSIDE the persistent parent, and content is not aria-hidden.
-    expect(el.querySelector('[data-testid="carousel"]')).not.toBe(null);
-    expect(el.getAttribute('aria-hidden')).toBe(null);
-  });
-
-  test('flag ON, post-hydration, all dismissed → releases reserve (no dead space)', async () => {
-    mocks.feedReserveCls = true;
-    mocks.hook = { data: [], seededCount: 1, isClient: true };
-    renderWithProviders(<Announcements className="mb-3" />);
-    await expect
-      .poll(() => document.querySelector('[data-testid="announcements-cls-reserve"]'))
-      .toBe(null);
-    expect(document.querySelector('[data-testid="carousel"]')).toBe(null);
-  });
-
-  test('flag ON but type !== "site" (generator) → no reserve (scoped to the feed placement)', async () => {
-    mocks.feedReserveCls = true;
-    mocks.hook = { data: [], seededCount: 1, isClient: false };
-    renderWithProviders(<Announcements type="generator" />);
-    await expect
-      .poll(() => document.querySelector('[data-testid="announcements-cls-reserve"]'))
-      .toBe(null);
-  });
-
-  test('flag OFF, visible announcement → carousel renders directly, WITHOUT the reserve wrapper (unchanged)', async () => {
-    mocks.feedReserveCls = false;
-    mocks.hook = { data: [{ id: 1, dismissed: false }], seededCount: 1, isClient: true };
+  test('flag OFF, a non-dismissed announcement (post-hydration) → carousel directly, NO reserve wrapper', async () => {
+    mocks.hook = {
+      data: [{ id: 1, dismissed: false }],
+      seededCount: 1,
+      serverExposedCount: 0,
+      exposeSSR: false,
+      isClient: true,
+    };
     renderWithProviders(<Announcements className="mb-3" />);
     const carousel = page.getByTestId('carousel');
     await expect.element(carousel).toBeInTheDocument();
-    // No persistent reserve parent in the flag-off path.
-    expect(document.querySelector('[data-testid="announcements-cls-reserve"]')).toBe(null);
+    expect(document.querySelector(RESERVE)).toBe(null);
+  });
+});
+
+describe('Announcements — flag ON, persistent CLS reserve', () => {
+  test('server saw a non-dismissed announcement → persistent min-height wrapper WITH the carousel inside', async () => {
+    // The flag-ON server/first-paint shape for a non-dismisser: exposed data even
+    // though isClient=false, serverExposedCount>0.
+    mocks.hook = {
+      data: [{ id: 1, dismissed: false }],
+      seededCount: 1,
+      serverExposedCount: 1,
+      exposeSSR: true,
+      isClient: false,
+    };
+    renderWithProviders(<Announcements className="mb-3" />);
+    const carousel = page.getByTestId('carousel');
+    await expect.element(carousel).toBeInTheDocument();
+    const wrapper = document.querySelector(RESERVE);
+    expect(wrapper).not.toBe(null);
+    // The min-height floor + the caller className both live on the persistent parent.
+    expect(wrapper?.className).toContain(RESERVE_MIN_H);
+    expect(wrapper?.className).toContain('md:min-h-[162px]');
+    expect(wrapper?.className).toContain('mb-3');
+    // The carousel is a child of the persistent wrapper (not a sibling).
+    expect(wrapper?.querySelector('[data-testid="carousel"]')).not.toBe(null);
+  });
+
+  test('post-hydration steady state (non-dismissed, isClient=true) → wrapper still present with the carousel', async () => {
+    // After hydration the gate follows LIVE state; with an active announcement the
+    // reserve stays put (no flicker).
+    mocks.hook = {
+      data: [{ id: 1, dismissed: false }],
+      seededCount: 1,
+      serverExposedCount: 1,
+      exposeSSR: true,
+      isClient: true,
+    };
+    renderWithProviders(<Announcements className="mb-3" />);
+    const carousel = page.getByTestId('carousel');
+    await expect.element(carousel).toBeInTheDocument();
+    const wrapper = document.querySelector(RESERVE);
+    expect(wrapper).not.toBe(null);
+    expect(wrapper?.className).toContain(RESERVE_MIN_H);
+    expect(wrapper?.querySelector('[data-testid="carousel"]')).not.toBe(null);
+  });
+
+  test('LIVE DISMISS of the last announcement (post-hydration, announcements now empty) → wrapper REMOVED, NO lingering dead space', async () => {
+    // The server exposed the carousel (serverExposedCount>0), but post-hydration
+    // (isClient=true) the user has dismissed the last announcement so the live
+    // `announcements` set is empty. The live-state gate must DROP the persistent
+    // min-height wrapper so the reserved space collapses immediately (rather than
+    // lingering until a reload) — a user-initiated collapse, excluded from CLS.
+    mocks.hook = {
+      data: [{ id: 1, dismissed: true }],
+      seededCount: 1,
+      serverExposedCount: 1,
+      exposeSSR: true,
+      isClient: true,
+    };
+    renderWithProviders(<Announcements className="mb-3" />);
+    await expect.poll(() => document.querySelector(RESERVE)).toBe(null);
+    // No wrapper AND no carousel → the space is fully released.
+    expect(document.querySelector('[data-testid="carousel"]')).toBe(null);
+  });
+
+  test('LIVE DISMISS of ONE of several (post-hydration, one still visible) → wrapper KEPT', async () => {
+    // Dismissing one announcement when others remain must NOT collapse the reserve
+    // (live length still > 0).
+    mocks.hook = {
+      data: [
+        { id: 1, dismissed: true },
+        { id: 2, dismissed: false },
+      ],
+      seededCount: 2,
+      serverExposedCount: 2,
+      exposeSSR: true,
+      isClient: true,
+    };
+    renderWithProviders(<Announcements className="mb-3" />);
+    const carousel = page.getByTestId('carousel');
+    await expect.element(carousel).toBeInTheDocument();
+    expect(document.querySelector(RESERVE)).not.toBe(null);
+  });
+
+  test('server saw the announcement as DISMISSED (serverExposedCount 0) → NO wrapper, NO dead space', async () => {
+    // A cookie-dismisser: the server-read cookie already filters the only active
+    // announcement, so serverExposedCount is 0 → the reserve must NOT render (no
+    // reserved dead space for people who dismissed).
+    mocks.hook = {
+      data: [{ id: 1, dismissed: true }],
+      seededCount: 1,
+      serverExposedCount: 0,
+      exposeSSR: true,
+      isClient: false,
+    };
+    renderWithProviders(<Announcements className="mb-3" />);
+    await expect.poll(() => document.querySelector(RESERVE)).toBe(null);
+    expect(document.querySelector('[data-testid="carousel"]')).toBe(null);
   });
 });

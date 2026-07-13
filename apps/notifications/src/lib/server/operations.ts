@@ -33,7 +33,7 @@ export async function createNotificationsBulk(rows: CreateNotificationRow[]): Pr
       .join(',');
     const updateResp = await write.cancellableQuery<{ key: string }>(`
       UPDATE "PendingNotification" pn
-      SET "users" = u.users::int[], "lastTriggered" = NOW()
+      SET "users" = ARRAY(SELECT DISTINCT unnest(pn."users" || u.users::int[])), "lastTriggered" = NOW()
       FROM (VALUES ${updateValues}) AS u(key, users)
       WHERE pn."key" = u.key
       RETURNING pn."key"
@@ -58,7 +58,7 @@ export async function createNotificationsBulk(rows: CreateNotificationRow[]): Pr
       const insertResp = await write.cancellableQuery(`
         INSERT INTO "PendingNotification" (key, type, category, users, details, "debounceSeconds")
         VALUES ${insertValues}
-        ON CONFLICT (key) DO UPDATE SET "users" = excluded."users", "lastTriggered" = NOW()
+        ON CONFLICT (key) DO UPDATE SET "users" = ARRAY(SELECT DISTINCT unnest("PendingNotification"."users" || excluded."users")), "lastTriggered" = NOW()
       `);
       await insertResp.result();
     }

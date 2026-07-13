@@ -17,6 +17,7 @@ import type {
   UpsertCosmeticShopItemInput,
   UpsertCosmeticShopSectionInput,
 } from '~/server/schema/cosmetic-shop.schema';
+import { computeCreatorShopSplit } from '~/server/schema/creator-shop.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
 import { imageSelect } from '~/server/selectors/image.selector';
@@ -36,6 +37,7 @@ import { withRetries } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import {
   CollectionType,
+  CosmeticShopItemStatus,
   CosmeticType,
   MediaType,
   MetricTimeframe,
@@ -476,6 +478,7 @@ export const getShopSectionsWithItems = async ({
 export const purchaseCosmeticShopItem = async ({
   userId,
   shopItemId,
+  viaShopUserId,
   buzzType = 'yellow',
 }: PurchaseCosmeticShopItemInput & {
   userId: number;
@@ -485,6 +488,7 @@ export const purchaseCosmeticShopItem = async ({
     where: { id: shopItemId },
     select: {
       id: true,
+      status: true,
       cosmeticId: true,
       availableQuantity: true,
       availableFrom: true,
@@ -492,9 +496,11 @@ export const purchaseCosmeticShopItem = async ({
       unitAmount: true,
       title: true,
       meta: true,
+      addedById: true,
       cosmetic: {
         select: {
           type: true,
+          createdById: true,
         },
       },
       _count: {
@@ -509,6 +515,12 @@ export const purchaseCosmeticShopItem = async ({
 
   if (!shopItem) {
     throw new Error('Cosmetic not found');
+  }
+
+  // Creator-submitted items share this table; only Published items are sellable.
+  // Guards against buying Draft/PendingReview/Rejected/Archived items by id.
+  if (shopItem.status !== CosmeticShopItemStatus.Published) {
+    throw new Error('Cosmetic is not available');
   }
 
   if (
@@ -618,29 +630,69 @@ export const purchaseCosmeticShopItem = async ({
       await withRetries(async () => {
         // We do this last mainly because we don't want to fail the purchase if this fails.
         // We can divide the funds later if needed.
-        const paidToUsers: number[] = meta?.paidToUserIds ?? [];
-        if (paidToUsers.length > 0) {
-          // distribute the buzz to these users:
-          const amountPerUser = Math.floor(shopItem.unitAmount / paidToUsers.length);
+        // Creator Shop items pay the cosmetic's creator (cosmetic.createdById)
+        // their 70% share directly. When another creator (the seller = addedById)
+        // lists a sellable-by-others cosmetic, that 70% pool is split by the
+        // cosmetic's sellerShare (% of price the seller keeps; creator gets the
+        // rest). Official items keep the legacy meta.paidToUserIds distribution.
+        const price = shopItem.unitAmount;
+        const creatorId = shopItem.cosmetic.createdById;
+        const { creatorPool, sellerAmount, creatorAmount } = computeCreatorShopSplit(
+          price,
+          meta?.sellerShare ?? 0
+        );
 
-          await Promise.all(
-            paidToUsers.map((paidToUserId) =>
-              // TODO.RedSplit: In the future, we might (?) want to use a different type of transaction here.
-              createBuzzTransaction({
-                fromAccountId: 0,
-                toAccountId: paidToUserId,
-                amount: amountPerUser,
-                type: TransactionType.Sell,
-                description: `A user has purchased your cosmetic - ${shopItem.title}`,
-                externalTransactionId: transactionId,
-                details: {
-                  purchasedBy: userId,
-                  originalAmount: shopItem.unitAmount,
-                },
-              })
-            )
-          );
+        // Cross-creator resale: when bought through another creator's shop
+        // (viaShopUserId) that actually resells this sellable item, split the 70%
+        // pool by the item's sellerShare. Verified server-side so credit can't be
+        // spoofed; otherwise the creator keeps the full 70%.
+        let resellerId: number | undefined;
+        if (viaShopUserId && creatorId && viaShopUserId !== creatorId && meta?.sellableByOthers) {
+          const viaUser = await dbRead.user.findUnique({
+            where: { id: viaShopUserId },
+            select: { settings: true },
+          });
+          const resoldIds =
+            (viaUser?.settings as { creatorShop?: { resoldItemIds?: number[] } } | null)
+              ?.creatorShop?.resoldItemIds ?? [];
+          if (resoldIds.includes(shopItem.id)) resellerId = viaShopUserId;
         }
+
+        let recipients: { userId: number; amount: number }[];
+        if (creatorId) {
+          if (resellerId) {
+            recipients = [
+              ...(creatorAmount > 0 ? [{ userId: creatorId, amount: creatorAmount }] : []),
+              ...(sellerAmount > 0 ? [{ userId: resellerId, amount: sellerAmount }] : []),
+            ];
+          } else {
+            recipients = [{ userId: creatorId, amount: creatorPool }];
+          }
+        } else {
+          recipients = (meta?.paidToUserIds ?? []).map((uid) => ({
+            userId: uid,
+            amount: Math.floor(price / (meta?.paidToUserIds?.length ?? 1)),
+          }));
+        }
+
+        await Promise.all(
+          recipients.map((r) =>
+            createBuzzTransaction({
+              fromAccountId: 0,
+              toAccountId: r.userId,
+              // Pay creators/resellers in the same Buzz color the buyer paid with.
+              toAccountType: buzzType,
+              amount: r.amount,
+              type: TransactionType.Sell,
+              description: `A user has purchased your cosmetic - ${shopItem.title}`,
+              // Unique per recipient when the pool is split, so the two payouts
+              // don't collide on the same external id.
+              externalTransactionId:
+                recipients.length > 1 ? `${transactionId}:${r.userId}` : transactionId,
+              details: { purchasedBy: userId, originalAmount: shopItem.unitAmount },
+            })
+          )
+        );
       }, 3);
     } catch (e) {
       // We will NOT stop the user interaction for this.

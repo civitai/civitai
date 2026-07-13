@@ -38,6 +38,19 @@
       "description": "Content rating of the app surface.",
       "enum": ["g", "pg", "pg13", "r", "x"]
     },
+    "category": {
+      "type": "string",
+      "description": "Optional marketplace category for the app's `/apps` store listing. When present it flows to the listing automatically on moderator-approve (only when a moderator has not already curated a category). Omit to let a moderator categorise the app. Must be one of the known marketplace categories — this enum is kept in lockstep with MARKETPLACE_CATEGORIES in src/server/services/blocks/marketplace-categories.constants.ts (a drift-guard test enforces equality).",
+      "enum": [
+        "generation",
+        "games",
+        "utility",
+        "discovery",
+        "moderation",
+        "analytics",
+        "other"
+      ]
+    },
     "renderMode": {
       "type": "string",
       "description": "How the block renders. Defaults to \"iframe\". \"inline\"/\"hybrid\" require a verified/internal trust tier (server-assigned), so authors should leave this as iframe.",
@@ -64,7 +77,9 @@
           "block:settings:write",
           "social:tip:self",
           "apps:storage:read",
-          "apps:storage:write"
+          "apps:storage:write",
+          "apps:storage:shared:read",
+          "apps:storage:shared:write"
         ]
       }
     },

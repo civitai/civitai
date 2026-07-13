@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { env } from '~/env/server';
 import { addCorsHeaders, TokenSecuredEndpoint } from '~/server/utils/endpoint-helpers';
+import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 
 const schema = z.object({
   url: z.string(),
@@ -28,6 +29,7 @@ export default TokenSecuredEndpoint(
           'Content-Type': 'application/x-www-form-urlencoded',
         },
         body: new URLSearchParams({ url }),
+        signal: fetchTimeoutSignal(60_000),
       });
 
       if (!response.ok) throw new Error('Network response was not ok');

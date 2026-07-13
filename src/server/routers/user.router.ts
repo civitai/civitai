@@ -16,7 +16,7 @@ import {
   getUserByIdHandler,
   getUserCosmeticsHandler,
   getUserCreatorHandler,
-  getUserEngagedModelsHandler,
+  getUserEngagedModelsByIdsHandler,
   getUserEngagedModelVersionsHandler,
   getUserFeatureFlagsHandler,
   getUserFollowingListHandler,
@@ -50,6 +50,7 @@ import {
   restoreAlertSchema,
   restoreUserSchema,
   getAllUsersInput,
+  getEngagedModelsByIdsSchema,
   getByUsernameSchema,
   getUserByUsernameSchema,
   getUserCosmeticsSchema,
@@ -141,9 +142,10 @@ export const userRouter = router({
   getSelfStatus: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .query(getSelfStatusHandler),
-  getEngagedModels: protectedProcedure
+  getEngagedModelsByIds: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
-    .query(getUserEngagedModelsHandler),
+    .input(getEngagedModelsByIdsSchema)
+    .query(getUserEngagedModelsByIdsHandler),
   getEngagedModelVersions: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .input(getByIdSchema)

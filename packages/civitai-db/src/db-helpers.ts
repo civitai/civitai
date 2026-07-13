@@ -1,6 +1,6 @@
 import { Prisma } from '@civitai/db-schema';
 import type { QueryResult, QueryResultRow } from 'pg';
-import { Pool, types } from 'pg';
+import { Client, Pool, types } from 'pg';
 import { performance } from 'node:perf_hooks';
 import client from 'prom-client';
 import { type DbLogFn } from './env';
@@ -216,10 +216,23 @@ export function createPool(options: CreatePoolOptions): AugmentedPool {
 
     const cancel = async () => {
       if (done) return;
-      const cancelConnection = await pool.connect();
-      await cancelConnection.query('SELECT pg_cancel_backend($1)', [pid]);
-      cancelConnection.release();
-      done = true;
+      // Fire the cancel over a one-shot Client OUTSIDE this pool. A saturated pool is exactly when
+      // cancellation is most urgent, and pool.connect() here would deadlock: every slot is held by a
+      // query awaiting cancellation, and the cancel itself would queue behind them forever.
+      // Don't touch `done` — the query's own .finally() owns that flag and the connection release, so a
+      // cancel that never connects can't leak the slot or double-release.
+      const cancelClient = new Client({
+        connectionString,
+        // Bound the connect: a best-effort cancel must never hang. The pool default of 0 (unlimited)
+        // would let an unreachable DB wedge this promise forever.
+        connectionTimeoutMillis: connectionTimeoutMillis || 5000,
+      });
+      try {
+        await cancelClient.connect();
+        await cancelClient.query('SELECT pg_cancel_backend($1)', [pid]);
+      } finally {
+        cancelClient.end().catch(() => null);
+      }
     };
     const result = async () => {
       const { rows } = await query;

@@ -3,6 +3,7 @@ import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-strategies';
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
+import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
 import { applyNsfwBaseline } from '~/server/jobs/apply-nsfw-baseline';
@@ -33,6 +34,7 @@ import { challengeCompletionJob } from '~/server/jobs/challenge-completion';
 import { dailyChallengeJobs } from '~/server/jobs/daily-challenge-processing';
 import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
 import { deliverAnnualSubscriptionBuzz } from '~/server/jobs/deliver-annual-sub-buzz';
+import { purgeReplacedFilesJob } from '~/server/jobs/purge-replaced-files';
 import {
   advanceReferralSubs,
   expireReferralTokens,
@@ -128,6 +130,7 @@ export const jobs: Job[] = [
   // refreshImageGenerationCoverage,
   cleanImageResources,
   deleteOldTrainingData,
+  purgeReplacedFilesJob,
   updateCollectionItemRandomId,
   refreshFeaturedCollectionsEligibility,
   ...metricJobs,
@@ -198,6 +201,7 @@ export const jobs: Job[] = [
   notifyStuckCryptoDepositsJob,
   processEnqueuedComicPanelsJob,
   auditRemixSourcesJob,
+  dedupeOfficialUploadsJob,
 ];
 
 const log = createLogger('jobs', 'green');

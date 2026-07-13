@@ -83,6 +83,7 @@ import {
 } from '~/server/services/user-preferences.service';
 import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { bustRatingTotalsCache } from '~/server/services/resourceReview.cache';
+import { getResourceReviewsByUserId } from '~/server/services/resourceReview.service';
 import {
   handleLogError,
   isPrismaUniqueViolation,
@@ -357,7 +358,7 @@ export const getUsers = async ({
       AND ${email ? Prisma.sql`u.email ILIKE ${email + '%'}` : Prisma.sql`TRUE`}
       AND ${
         excludedUserIds && excludedUserIds.length > 0
-          ? Prisma.sql`u.id NOT IN (${Prisma.join(excludedUserIds)})`
+          ? Prisma.sql`u.id != ALL(${excludedUserIds}::int[])`
           : Prisma.sql`TRUE`
       }
       AND u."deletedAt" IS NULL
@@ -594,11 +595,42 @@ export const updateUserById = async ({
   return user;
 };
 
-export const getUserEngagedModels = ({ id, type }: { id: number; type?: ModelEngagementType }) => {
-  return dbRead.modelEngagement.findMany({
-    where: { userId: id, type },
-    select: { modelId: true, type: true },
-  });
+export type EngagedModelType = ModelEngagementType | 'Recommended';
+
+/**
+ * Per-visible-set engagement membership: given a bounded set of `modelIds`, return which of
+ * them the user has engaged with, keyed by engagement type. The additive, index-bounded
+ * replacement for `getUserEngagedModels` (whose caller returns a user's ENTIRE engagement
+ * history — a whale's 3.75 MB / 482 ms synchronous serialize froze an api-primary pod).
+ *
+ * Every returned array is a subset of the input `modelIds` (the intersection of the user's
+ * engagements ∩ input), so the response is bounded by |modelIds| × (#types) — no cache needed.
+ * `Recommended` is derived from resource reviews, filtered to the same input set.
+ */
+export const getUserEngagedModelsByIds = async ({
+  id,
+  modelIds,
+}: {
+  id: number;
+  modelIds: number[];
+}) => {
+  const [engagements, recommendedReviews] = await Promise.all([
+    dbRead.modelEngagement.findMany({
+      where: { userId: id, modelId: { in: modelIds } },
+      select: { modelId: true, type: true },
+    }),
+    getResourceReviewsByUserId({ userId: id, recommended: true, modelIds }),
+  ]);
+
+  const engagedModels = engagements.reduce<Record<EngagedModelType, number[]>>((acc, model) => {
+    const { type, modelId } = model;
+    if (!acc[type]) acc[type] = [];
+    acc[type].push(modelId);
+    return acc;
+  }, {} as Record<EngagedModelType, number[]>);
+  engagedModels.Recommended = recommendedReviews.map((r) => r.modelId).filter(isDefined);
+
+  return engagedModels;
 };
 
 export async function getUserEngagedModelVersions({

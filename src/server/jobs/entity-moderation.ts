@@ -93,10 +93,12 @@ async function autoMuteIfScamAccount({
       return;
     }
 
-    const date = new Date();
+    // Gate the user via `muted` only. `mutedAt` is reserved for moderator
+    // confirmation (uphold) — setting it here would trip the confirm-mutes cron
+    // and cancel the membership before any moderator reviews the auto-mute.
     await updateUserById({
       id: userId,
-      data: { muted: true, mutedAt: date },
+      data: { muted: true },
       updateSource: 'entity-moderation:auto-mute-scam',
     });
     await invalidateSession(userId);

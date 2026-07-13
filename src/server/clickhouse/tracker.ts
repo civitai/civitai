@@ -179,8 +179,11 @@ export class Tracker {
   // Set from the tRPC context (createContext) when auth came from a Bearer token.
   // Merged only into content-creation events (post/images/comment/bounty/article) —
   // NOT the global actor — so it's only sent to tables that have the matching columns.
-  private provenance: { via: 'web' | 'api-key' | 'oauth'; viaClientId: string; viaApiKeyId: number } =
-    { via: 'web', viaClientId: '', viaApiKeyId: 0 };
+  private provenance: {
+    via: 'web' | 'api-key' | 'oauth';
+    viaClientId: string;
+    viaApiKeyId: number;
+  } = { via: 'web', viaClientId: '', viaApiKeyId: 0 };
 
   public setProvenance(args: {
     subject?: { type: 'apiKey'; id: number } | { type: 'oauth'; id: string };
@@ -309,7 +312,12 @@ export class Tracker {
         {
           type: 'error',
           name: 'Failed to track (5xx, exhausted)',
-          details: { table, status: res.status, attempts: attempt, response: errBody.slice(0, 500) },
+          details: {
+            table,
+            status: res.status,
+            attempts: attempt,
+            response: errBody.slice(0, 500),
+          },
           message: `Tracker returned ${res.status} after ${attempt} attempts`,
         },
         'clickhouse'
@@ -653,6 +661,8 @@ export class Tracker {
     negativePrompt: string;
     source?: ProhibitedSources;
     remixOfId?: number;
+    inputImages?: string[];
+    inputVideo?: string;
   }) {
     return this.track('prohibitedRequests', values);
   }

@@ -25,6 +25,7 @@ import type {
   VideoInterpolationStepTemplate,
 } from '@civitai/client';
 import { maxRandomSeed } from '~/server/common/constants';
+import { EXPERIMENTAL_MODE_SUPPORTED_MODELS } from '~/shared/constants/generation.constants';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import type { GenerationHandlerCtx } from '../orchestration-new.service';
 
@@ -56,6 +57,8 @@ import { createAceAudioInput } from './ace-audio.handler';
 
 // 3D model ecosystem handlers
 import { createPolyGenInput } from './polygen-graph.handler';
+import { createTripoInput } from './tripo-graph.handler';
+import { createHunyuan3dInput } from './hunyuan3d-graph.handler';
 
 // Video ecosystem handlers
 import { createWanSteps } from './wan.handler';
@@ -238,6 +241,8 @@ export { createAceAudioInput } from './ace-audio.handler';
 
 // 3D model ecosystems
 export { createPolyGenInput } from './polygen-graph.handler';
+export { createTripoInput } from './tripo-graph.handler';
+export { createHunyuan3dInput } from './hunyuan3d-graph.handler';
 
 // Video ecosystems
 export { createWanSteps } from './wan.handler';
@@ -286,13 +291,19 @@ export async function createEcosystemStepInput(
 
   const steps = await createEcosystemStep(normalizedData, handlerCtx);
 
-  // Enhanced compatibility mode: set engine to 'comfyui' for textToImage steps
+  // Enhanced compatibility mode: set engine to 'comfyui' for every textToImage step
+  // in EXPERIMENTAL_MODE_SUPPORTED_MODELS ecosystems.
   if (
-    steps[0]?.$type === 'textToImage' &&
     'enhancedCompatibility' in data &&
-    data.enhancedCompatibility
+    data.enhancedCompatibility &&
+    // Belt-and-suspenders check in case data.ecosystem leaks an unsupported ecosystem through a non-UI path
+    EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(data.ecosystem)
   ) {
-    (steps[0] as { input: Record<string, unknown> }).input.engine = 'comfyui';
+    for (const step of steps) {
+      if (step.$type === 'textToImage') {
+        (step as { input: Record<string, unknown> }).input.engine = 'comfyui';
+      }
+    }
   }
 
   return steps;
@@ -487,6 +498,12 @@ async function createEcosystemStep(
 
     case 'PolyGen':
       return createPolyGenInput(normalizedData, handlerCtx);
+
+    case 'Tripo':
+      return createTripoInput(normalizedData, handlerCtx);
+
+    case 'Hunyuan3D':
+      return createHunyuan3dInput(normalizedData, handlerCtx);
 
     default:
       throw new Error(`Unknown ecosystem: ${ecosystem}`);

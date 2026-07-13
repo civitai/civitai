@@ -4,12 +4,17 @@ import type { SessionUser } from '~/types/session';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
-import { MeiliCallTimeoutError, searchClient, withMeili } from '~/server/meilisearch/client';
+import {
+  isTransientMeiliError,
+  MeiliCallTimeoutError,
+  searchClient,
+  withMeili,
+} from '~/server/meilisearch/client';
 import type { GetAllModelsOutput } from '~/server/schema/model.schema';
 import { getDownloadFilename } from '~/server/services/file.service';
 import { getModelsWithVersions } from '~/server/services/model.service';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
-import { ModelFileVisibility, ModelModifier } from '~/shared/utils/prisma/enums';
+import { ModelFileVisibility, ModelModifier, ModelType } from '~/shared/utils/prisma/enums';
 import type { ModelHashType } from '~/shared/utils/prisma/enums';
 import { Flags } from '~/shared/utils/flags';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
@@ -77,6 +82,8 @@ export type RunModelSearchContext = {
   baseUrlOrigin: string;
 };
 
+const modelTypeValues = new Set<string>(Object.values(ModelType));
+
 export class ModelSearchMeiliTimeoutError extends Error {
   constructor() {
     super('Model search is temporarily overloaded — please retry.');
@@ -96,9 +103,19 @@ export async function resolveModelSearchIds(opts: {
   cursor?: GetAllModelsOutput['cursor'];
   limit: number;
   browsingLevel: number;
+  /**
+   * Type filter applied INSIDE the Meili query. Without it, a `query` +
+   * `types` request intersects the top-N relevance hits (of ANY type) with
+   * the type filter in the DB — for sparse types like Wildcards that's
+   * usually an empty page even when strong matches exist. Values are
+   * validated against ModelType here because the block endpoint's schema
+   * accepts arbitrary strings (also keeps them out of the filter expression).
+   */
+  types?: string[];
 }): Promise<{ searchIds: number[]; nextCursor?: string }> {
-  const { query, cursor, limit, browsingLevel } = opts;
+  const { query, cursor, limit, browsingLevel, types } = opts;
   const browsingLevelValues = Flags.instanceToArray(browsingLevel);
+  const typeValues = types?.filter((t) => modelTypeValues.has(t));
   const queryOffset = cursor && Number.isFinite(Number(cursor)) ? Math.max(0, Number(cursor)) : 0;
 
   let meiliResult: SearchResponse<{ id: number }> | undefined;
@@ -109,13 +126,31 @@ export async function resolveModelSearchIds(opts: {
           client.index(MODELS_SEARCH_INDEX).search<{ id: number }>(query, {
             offset: queryOffset || undefined,
             limit: limit ? limit + 1 : undefined,
-            filter: [`nsfwLevel IN [${browsingLevelValues.join(',')}]`],
+            filter: [
+              `nsfwLevel IN [${browsingLevelValues.join(',')}]`,
+              ...(typeValues?.length ? [`type IN [${typeValues.join(',')}]`] : []),
+            ],
             attributesToRetrieve: ['id'],
           })
         )
       : undefined;
   } catch (e) {
-    if (e instanceof MeiliCallTimeoutError) throw new ModelSearchMeiliTimeoutError();
+    // Widened from `instanceof MeiliCallTimeoutError` to also cover
+    // isTransientMeiliError: the timeout-wrapper only catches civitai's own
+    // MeiliCallTimeoutError, but a Meilisearch brownout ALSO throws the SDK's
+    // OWN transient error types (MeiliSearchCommunicationError statusCode
+    // 408/429/5xx, MeiliSearchApiError with a gateway 502/503/504, the wrapped
+    // SERVICE_UNAVAILABLE, MeiliSearchTimeOutError, network ECONNRESET, …).
+    // Those previously fell through `throw e` as raw Errors → the REST handler
+    // (whose resolveModelSearchIds try/catch sits BEFORE the outer try) left
+    // them UNHANDLED → a raw HTTP 500 (the top REST 500 source on the ?query=
+    // path; the same query retried immediately returns 200 — a transient
+    // backend flap). Converting them to ModelSearchMeiliTimeoutError here lets
+    // the caller map a transient upstream to a retryable 503 (no-store +
+    // Retry-After). A non-transient error (malformed filter / auth / real app
+    // bug) is NOT matched and still surfaces as its real status.
+    if (e instanceof MeiliCallTimeoutError || isTransientMeiliError(e))
+      throw new ModelSearchMeiliTimeoutError();
     throw e;
   }
 

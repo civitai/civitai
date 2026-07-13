@@ -80,6 +80,32 @@ describe('AppStorageProvisioner.provision', () => {
     expect(joined).toContain('CREATE TRIGGER kv_quota_trg');
   });
 
+  it('provisions the SHARED storage tables + trigger (shared_kv/votes/counters/reports)', async () => {
+    await AppStorageProvisioner.provision({
+      appBlockId: 'apb_test',
+      slug: 'generate_from_model',
+    });
+    const joined = capturedQueries.map((q) => q.sql).join('\n');
+    const S = '"app_generate_from_model"';
+    // shared_kv: server-key PK, author, generated size_bytes, hidden columns.
+    expect(joined).toContain(`CREATE TABLE IF NOT EXISTS ${S}.shared_kv`);
+    expect(joined).toContain('key text PRIMARY KEY');
+    expect(joined).toContain('author_user_id integer NOT NULL');
+    expect(joined).toContain('hidden_at timestamptz');
+    // votes: composite PK (one-vote-per-user) + FK cascade.
+    expect(joined).toContain(`CREATE TABLE IF NOT EXISTS ${S}.votes`);
+    expect(joined).toContain(`REFERENCES ${S}.shared_kv(key) ON DELETE CASCADE`);
+    expect(joined).toContain('PRIMARY KEY (key, user_id)');
+    // counters: CHECK(count>=0) blocks underflow (H1) + FK cascade.
+    expect(joined).toContain(`CREATE TABLE IF NOT EXISTS ${S}.counters`);
+    expect(joined).toContain('CHECK (count >= 0)');
+    // reports table (M4/M5).
+    expect(joined).toContain(`CREATE TABLE IF NOT EXISTS ${S}.shared_kv_reports`);
+    // shared_kv reuses the quota trigger fn → shared bytes/rows fold into the quota.
+    expect(joined).toContain('CREATE TRIGGER shared_kv_quota_trg');
+    expect(joined).toContain(`EXECUTE FUNCTION ${S}.kv_quota_trigger()`);
+  });
+
   it('seeds the quota row with the provided appBlockId via a parameterized insert', async () => {
     await AppStorageProvisioner.provision({
       appBlockId: 'apb_seed_value',

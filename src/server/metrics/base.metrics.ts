@@ -83,7 +83,10 @@ export function createMetricProcessor({
       if (!shouldUpdate || !metricUpdateAllowed) return;
 
       // Run update
-      const queue = await checkoutQueue('metric-update:' + name);
+      // NOTE: must match the casing used in queueUpdate (name.toLowerCase()) below —
+      // otherwise reader/writer keys diverge (e.g. 'metric-update:Post' vs
+      // 'metric-update:post') and every explicitly-queued update is silently dropped.
+      const queue = await checkoutQueue('metric-update:' + name.toLowerCase());
       ctx.queue = queue.content;
       ctx.lastUpdate = dayjs(lastUpdate).subtract(2, 'minute').toDate(); // Expand window to allow clickhouse tracker to catch up
       await update(ctx);

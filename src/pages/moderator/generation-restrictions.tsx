@@ -55,6 +55,9 @@ type RestrictionTrigger = {
   matchedWord?: string;
   matchedRegex?: string;
   imageId?: number | null;
+  remixOfId?: number | null;
+  inputImages?: string[];
+  inputVideo?: string;
   time?: string;
 };
 
@@ -220,6 +223,39 @@ function TriggerCard({ trigger, triggerKey }: { trigger: RestrictionTrigger; tri
                 highlight={trigger.matchedWord}
                 regexPattern={trigger.matchedRegex}
               />
+            </div>
+          )}
+          {(trigger.inputImages?.length || trigger.inputVideo || trigger.remixOfId) && (
+            <div className="mt-2">
+              <Text size="xs" fw={500} c="dimmed" mb={4}>
+                Input Media
+              </Text>
+              <div className="flex flex-wrap items-center gap-2">
+                {trigger.inputImages?.map((url, i) => (
+                  <a key={i} href={url} target="_blank" rel="noreferrer">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={url}
+                      alt="input"
+                      className="size-24 rounded border border-solid border-gray-3 object-cover dark:border-dark-4"
+                    />
+                  </a>
+                ))}
+                {trigger.inputVideo && (
+                  <a href={trigger.inputVideo} target="_blank" rel="noreferrer">
+                    <video
+                      src={trigger.inputVideo}
+                      className="size-24 rounded border border-solid border-gray-3 object-cover dark:border-dark-4"
+                      muted
+                    />
+                  </a>
+                )}
+                {trigger.remixOfId && (
+                  <Anchor href={`/images/${trigger.remixOfId}`} target="_blank" size="xs">
+                    Remixed image #{trigger.remixOfId}
+                  </Anchor>
+                )}
+              </div>
             </div>
           )}
         </div>

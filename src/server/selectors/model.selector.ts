@@ -140,7 +140,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       },
       files: {
         select: modelFileSelect,
-        where: { dataPurged: false },
+        where: { dataPurged: false, replacedAt: null },
       },
       generationCoverage: { select: { covered: true } },
       recommendedResources: {

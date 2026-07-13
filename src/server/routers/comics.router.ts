@@ -10,6 +10,7 @@ import {
   isFlagProtected,
 } from '~/server/trpc';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -3492,7 +3493,7 @@ export const comicsRouter = router({
             }
 
             try {
-              const resp = await fetch(candidateImg.url);
+              const resp = await fetch(candidateImg.url, { signal: fetchTimeoutSignal(120_000) });
               if (!resp.ok) {
                 blurredPreviews.push(null);
                 continue;
@@ -3645,7 +3646,7 @@ export const comicsRouter = router({
           // Single-image path (or multi-image with only 1 result)
           let s3ImageKey: string;
           try {
-            const imageResponse = await fetch(imageUrl);
+            const imageResponse = await fetch(imageUrl, { signal: fetchTimeoutSignal(120_000) });
             if (!imageResponse.ok) throw new Error(`Failed to download: ${imageResponse.status}`);
             const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
 
@@ -3902,7 +3903,7 @@ export const comicsRouter = router({
 
         let s3Key: string;
         try {
-          const resp = await fetch(clean.url);
+          const resp = await fetch(clean.url, { signal: fetchTimeoutSignal(120_000) });
           if (!resp.ok) throw new Error(`Failed to download: ${resp.status}`);
           const buf = Buffer.from(await resp.arrayBuffer());
           s3Key = randomUUID();
@@ -4017,7 +4018,7 @@ export const comicsRouter = router({
         }
 
         try {
-          const resp = await fetch(out.url);
+          const resp = await fetch(out.url, { signal: fetchTimeoutSignal(120_000) });
           if (!resp.ok) {
             newCandidates.push({
               requiresUnlock: true,

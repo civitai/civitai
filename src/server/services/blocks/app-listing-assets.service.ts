@@ -1,11 +1,12 @@
 import { TRPCError } from '@trpc/server';
+import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 
 import { dbRead, dbWrite } from '~/server/db/client';
 import { NsfwLevel } from '~/server/common/enums';
 import {
-  getHighestBrowsingLevelBit,
-  orchestratorNsfwLevelMap,
+  deriveContentRatingFromAssets,
+  nsfwLevelFromContentRating,
 } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { newAppListingScreenshotId } from '~/server/utils/app-block-ids';
@@ -233,18 +234,41 @@ type OwnedListing = {
   userId: number;
   iconId: number | null;
   coverId: number | null;
+  status: string;
+  revisionOfId: string | null;
 };
 
 /**
- * Map an `AppListing.contentRating` (`g|pg|pg13|r|x` — nullable) to the MAXIMUM
- * `NsfwLevel` bit its published assets may carry. Reuses the canonical
- * `orchestratorNsfwLevelMap` (which lacks the SFW `g` rating → PG). A
- * null/unknown rating FAILS CLOSED to PG (SFW) — never widen on ambiguity.
+ * 🔴 Owner asset-edit guard (defense-in-depth). An APPROVED, non-shadow (live,
+ * `revisionOfId == null`) listing must NOT have its assets mutated directly by its
+ * owner — those edits go through a SHADOW revision (mod re-review), so a direct
+ * add/remove/replace on the live row can never silently change the served listing.
+ * Draft / pending / shadow (`revisionOfId != null`) listings are freely editable.
+ *
+ * Moderators BYPASS (they may curate a live listing). The mod placeholder backfill
+ * writes assets via `dbWrite` DIRECTLY, NOT through these owner procs, so it is
+ * unaffected by this guard.
  */
-export function nsfwLevelFromContentRating(rating: string | null | undefined): NsfwLevel {
-  if (!rating || rating === 'g') return NsfwLevel.PG;
-  return orchestratorNsfwLevelMap[rating] ?? NsfwLevel.PG;
+function assertOwnerAssetEditable(
+  listing: { status: string; revisionOfId: string | null },
+  user: SessionUser
+): void {
+  if (user.isModerator) return;
+  if (listing.status === 'approved' && listing.revisionOfId == null) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'This listing is live; edit its assets through a revision instead of directly.',
+    });
+  }
 }
+
+/**
+ * Re-export the canonical `AppListing.contentRating` → max-`NsfwLevel` ceiling map
+ * (its home is `browsingLevel.constants`, shared with the client-side review-modal
+ * derive so the forward + inverse can never diverge). The backfill below uses it to
+ * clamp creator-derived screenshots.
+ */
+export { nsfwLevelFromContentRating };
 
 /**
  * Load a listing and assert the caller owns it (or is a moderator). Throws
@@ -263,6 +287,8 @@ async function loadOwnedListing(listingId: string, user: SessionUser): Promise<O
       userId: true,
       iconId: true,
       coverId: true,
+      status: true,
+      revisionOfId: true,
     },
   });
   if (!listing) throw new TRPCError({ code: 'NOT_FOUND', message: 'Listing not found' });
@@ -273,15 +299,39 @@ async function loadOwnedListing(listingId: string, user: SessionUser): Promise<O
 }
 
 /**
- * Load an Image, assert the caller owns it (or is a mod), and validate it for
- * the given asset kind. Returns the imageId once validated.
+ * The result of {@link loadValidatedImage}: a discriminated union so a still-
+ * SCANNING image is a NON-ERROR outcome the caller reports (client polls on it),
+ * NOT a thrown 4xx. TERMINAL problems still THROW (see below).
+ *
+ *   - `{ pending: true }`  — the Image exists, is owned + format-valid, but its
+ *     scan has not reached `Scanned` yet. NOT an error; NO db write; the caller
+ *     returns `{ status: 'pending' }` and the client re-polls.
+ *   - `{ pending: false, imageId }` — `Scanned` and attachable.
+ */
+type LoadValidatedImageResult = { pending: true } | { pending: false; imageId: number };
+
+/**
+ * Load an Image, assert the caller owns it (or is a mod), and validate it for the
+ * given asset kind. Returns a discriminated {@link LoadValidatedImageResult}:
+ * `{ pending: true }` while the scan is in-flight (a normal expected wait — no
+ * throw), `{ pending: false, imageId }` once `Scanned`.
+ *
+ * TERMINAL failures still THROW (real errors the client surfaces + stops polling
+ * on): missing → NOT_FOUND; not owned → FORBIDDEN; bad format → BAD_REQUEST;
+ * `ImageIngestionStatus.NotFound` (scanner couldn't fetch the bytes) → BAD_REQUEST;
+ * `Blocked` (prohibited content) → BAD_REQUEST.
+ *
+ * Content RATING is deliberately NOT gated here (W13): the scanner's per-image
+ * level is imprecise, every off-site listing is mod-reviewed before it is visible,
+ * and the rating is derived from + confirmed against the assets at approve. The
+ * `Blocked` reject is KEPT — it is a hard integrity reject (prohibited content),
+ * not a rating mismatch.
  */
 async function loadValidatedImage(
   imageId: number,
   kind: ListingAssetKind,
-  user: SessionUser,
-  contentRating: string | null
-): Promise<number> {
+  user: SessionUser
+): Promise<LoadValidatedImageResult> {
   const image = await dbRead.image.findUnique({
     where: { id: imageId },
     select: {
@@ -313,59 +363,147 @@ async function loadValidatedImage(
   );
   if (!result.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: result.reason });
 
-  // Content-status gate: a listing asset is publicly rendered (P2), so the Image
-  // must be scan-complete AND within the listing's maturity ceiling. This mirrors
-  // the site-wide "don't publish un-scanned / over-rated media" invariant.
+  // Content-status gate. A TERMINAL ingestion failure (NotFound = the scanner
+  // couldn't fetch the bytes; Blocked = prohibited content) still THROWS
+  // BAD_REQUEST — the client shows the message + stops polling. A non-terminal
+  // scanning state (Pending / Error-retry / PendingManualAssignment) is NOT an
+  // error: return `{ pending: true }` so the caller reports it as a poll-able 200.
+  if (image.ingestion === ImageIngestionStatus.NotFound) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: "that image couldn't be imported — upload it manually instead",
+    });
+  }
+  if (image.ingestion === ImageIngestionStatus.Blocked) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'that image was rejected during scanning — choose a different image',
+    });
+  }
   if (image.ingestion !== ImageIngestionStatus.Scanned) {
-    throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message: 'image is not approved for publishing (scan is not complete)',
-    });
+    // Still scanning — a NON-error pending result (supersedes the old CONFLICT
+    // throw; #3016's pending-CONFLICT is replaced by this poll-able result).
+    return { pending: true };
   }
-  // Fail closed: a null contentRating clamps to SFW (PG). NsfwLevel bits are
-  // severity-ordered (PG=1 < PG13=2 < R=4 < X=8 < XXX=16 < Blocked=32), so a
-  // numeric compare of the image's highest bit vs the ceiling is exact.
-  const maxLevel = nsfwLevelFromContentRating(contentRating);
-  const imageLevel = getHighestBrowsingLevelBit(image.nsfwLevel ?? 0);
-  if (imageLevel > maxLevel) {
-    throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message: "image exceeds the listing's content rating",
-    });
-  }
-  return image.id;
+  return { pending: false, imageId: image.id };
+}
+
+/**
+ * After a MODERATOR directly mutates a LIVE approved listing's asset SET (the only
+ * path that bypasses the shadow-revision flow — see {@link assertOwnerAssetEditable}),
+ * re-derive `contentRating` from the current assets' max nsfwLevel and FLOOR the
+ * stored rating at the derived value (RAISE-ONLY — never auto-lower). Without this a
+ * mod adding a more-mature icon/cover/screenshot to a live listing leaves it
+ * UNDER-rated: the approve path re-derives, but a direct live-asset edit never runs
+ * approve. Raise-only so a mod's deliberate higher rating (or an asset REMOVAL) is
+ * never auto-lowered — mirrors `resolveApprovalContentRating`'s floor-at-derived.
+ *
+ * No-op for everyone else: owner edits on a live listing are blocked by the guard and
+ * go through a shadow revision (re-derived at approve); draft/pending/shadow listings
+ * are rated at approve. So it fires ONLY for `isModerator` on an `approved` non-shadow
+ * (`revisionOfId == null`) listing. Runs INSIDE the caller's `dbWrite.$transaction`
+ * (the `tx` param) so the derive+floor is ATOMIC with the asset write that triggered
+ * it — parity with approve's `resolveApprovalContentRating`. The guard short-circuits
+ * BEFORE any query, so a non-mod / draft / pending / shadow edit adds ZERO queries to
+ * the (trivial single-write) transaction. Reading the levels through `tx` keeps the
+ * derive row-consistent with the asset mutation just written in the same tx.
+ */
+async function reDeriveContentRatingForModLiveEdit(
+  tx: Prisma.TransactionClient,
+  listing: { id: string; status: string; revisionOfId: string | null; contentRating: string | null },
+  user: SessionUser
+): Promise<void> {
+  if (!user.isModerator) return;
+  if (listing.status !== 'approved' || listing.revisionOfId != null) return;
+
+  const current = await tx.appListing.findUnique({
+    where: { id: listing.id },
+    select: { iconId: true, coverId: true, contentRating: true },
+  });
+  if (!current) return;
+  const shots = await tx.appListingScreenshot.findMany({
+    where: { appListingId: listing.id, imageId: { not: null } },
+    select: { imageId: true },
+  });
+  const imageIds = [current.iconId, current.coverId, ...shots.map((s) => s.imageId)].filter(
+    (v): v is number => v != null
+  );
+  const images = imageIds.length
+    ? await tx.image.findMany({ where: { id: { in: imageIds } }, select: { nsfwLevel: true } })
+    : [];
+  const derived = deriveContentRatingFromAssets(images.map((i) => ({ nsfwLevel: i.nsfwLevel })));
+  // RAISE-ONLY floor: bump the stored rating up to `derived` only if derived's
+  // ceiling is strictly higher (never auto-lower). `nsfwLevelFromContentRating`
+  // maps null → the SFW floor, so a null stored rating is raised by any mature asset.
+  if (nsfwLevelFromContentRating(derived) <= nsfwLevelFromContentRating(current.contentRating)) return;
+  await tx.appListing.update({ where: { id: listing.id }, data: { contentRating: derived } });
 }
 
 // ---------------------------------------------------------------------------
 // Creator asset management (owner/mod-gated).
 // ---------------------------------------------------------------------------
 
+/**
+ * The attach procs resolve with a discriminated `status` result instead of
+ * throwing for a still-scanning image: `{ status: 'pending' }` (200, NO db write —
+ * the client re-polls) while the Image's scan is in-flight, `{ status: 'attached',
+ * … }` once it lands and the attach is written. A TERMINAL problem (not-found /
+ * not-owned / bad-format / NotFound / Blocked) still THROWS from
+ * {@link loadValidatedImage}.
+ */
+export type SetListingIconResult = { status: 'pending' } | { status: 'attached'; iconId: number };
+export type SetListingCoverResult =
+  | { status: 'pending' }
+  | { status: 'attached'; coverId: number };
+export type AddListingScreenshotResult =
+  | { status: 'pending' }
+  | { status: 'attached'; id: string; order: number };
+
 export async function setListingIcon(
   args: { listingId: string; imageId: number },
   user: SessionUser
-): Promise<{ iconId: number }> {
+): Promise<SetListingIconResult> {
   const listing = await loadOwnedListing(args.listingId, user);
-  const iconId = await loadValidatedImage(args.imageId, 'icon', user, listing.contentRating);
-  await dbWrite.appListing.update({ where: { id: args.listingId }, data: { iconId } });
-  return { iconId };
+  assertOwnerAssetEditable(listing, user);
+  const validated = await loadValidatedImage(args.imageId, 'icon', user);
+  if (validated.pending) return { status: 'pending' };
+  await dbWrite.$transaction(async (tx) => {
+    await tx.appListing.update({
+      where: { id: args.listingId },
+      data: { iconId: validated.imageId },
+    });
+    await reDeriveContentRatingForModLiveEdit(tx, listing, user);
+  });
+  return { status: 'attached', iconId: validated.imageId };
 }
 
 export async function setListingCover(
   args: { listingId: string; imageId: number },
   user: SessionUser
-): Promise<{ coverId: number }> {
+): Promise<SetListingCoverResult> {
   const listing = await loadOwnedListing(args.listingId, user);
-  const coverId = await loadValidatedImage(args.imageId, 'cover', user, listing.contentRating);
-  await dbWrite.appListing.update({ where: { id: args.listingId }, data: { coverId } });
-  return { coverId };
+  assertOwnerAssetEditable(listing, user);
+  const validated = await loadValidatedImage(args.imageId, 'cover', user);
+  if (validated.pending) return { status: 'pending' };
+  await dbWrite.$transaction(async (tx) => {
+    await tx.appListing.update({
+      where: { id: args.listingId },
+      data: { coverId: validated.imageId },
+    });
+    await reDeriveContentRatingForModLiveEdit(tx, listing, user);
+  });
+  return { status: 'attached', coverId: validated.imageId };
 }
 
 export async function addListingScreenshot(
   args: { listingId: string; imageId: number; caption?: string | null },
   user: SessionUser
-): Promise<{ id: string; order: number }> {
+): Promise<AddListingScreenshotResult> {
   const listing = await loadOwnedListing(args.listingId, user);
-  const imageId = await loadValidatedImage(args.imageId, 'screenshot', user, listing.contentRating);
+  assertOwnerAssetEditable(listing, user);
+  const validated = await loadValidatedImage(args.imageId, 'screenshot', user);
+  if (validated.pending) return { status: 'pending' };
+  const imageId = validated.imageId;
 
   // COUNT cap — reject the (N+1)th (mirrors E5 MAX_SCREENSHOTS "reject, not truncate").
   // Read the count + max order from dbWrite (primary), NOT the replica: under
@@ -388,16 +526,19 @@ export async function addListingScreenshot(
   }
   const nextOrder = existing.length > 0 ? existing[0].order + 1 : 0;
   const id = newAppListingScreenshotId();
-  await dbWrite.appListingScreenshot.create({
-    data: {
-      id,
-      appListingId: args.listingId,
-      imageId,
-      order: nextOrder,
-      caption: args.caption ?? null,
-    },
+  await dbWrite.$transaction(async (tx) => {
+    await tx.appListingScreenshot.create({
+      data: {
+        id,
+        appListingId: args.listingId,
+        imageId,
+        order: nextOrder,
+        caption: args.caption ?? null,
+      },
+    });
+    await reDeriveContentRatingForModLiveEdit(tx, listing, user);
   });
-  return { id, order: nextOrder };
+  return { status: 'attached', id, order: nextOrder };
 }
 
 /**
@@ -409,7 +550,7 @@ export async function reorderListingScreenshots(
   args: { listingId: string; orderedIds: string[] },
   user: SessionUser
 ): Promise<{ reordered: number }> {
-  await loadOwnedListing(args.listingId, user);
+  assertOwnerAssetEditable(await loadOwnedListing(args.listingId, user), user);
   // Read the current set from dbWrite (primary): under replica lag the reorder
   // could target a just-deleted id (P2025 → 500 after the delete committed) or
   // miss a just-added row.
@@ -443,12 +584,16 @@ export async function updateListingScreenshotCaption(
 ): Promise<{ id: string }> {
   const shot = await dbRead.appListingScreenshot.findUnique({
     where: { id: args.screenshotId },
-    select: { id: true, appListing: { select: { userId: true } } },
+    select: {
+      id: true,
+      appListing: { select: { userId: true, status: true, revisionOfId: true } },
+    },
   });
   if (!shot) throw new TRPCError({ code: 'NOT_FOUND', message: 'Screenshot not found' });
   if (shot.appListing.userId !== user.id && !user.isModerator) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not own this listing' });
   }
+  assertOwnerAssetEditable(shot.appListing, user);
   await dbWrite.appListingScreenshot.update({
     where: { id: args.screenshotId },
     data: { caption: args.caption ?? null },
@@ -466,13 +611,21 @@ export async function removeListingScreenshot(
 ): Promise<{ removed: string }> {
   const shot = await dbRead.appListingScreenshot.findUnique({
     where: { id: args.screenshotId },
-    select: { id: true, appListingId: true, appListing: { select: { userId: true } } },
+    select: {
+      id: true,
+      appListingId: true,
+      appListing: { select: { userId: true, status: true, revisionOfId: true } },
+    },
   });
   if (!shot) throw new TRPCError({ code: 'NOT_FOUND', message: 'Screenshot not found' });
   if (shot.appListing.userId !== user.id && !user.isModerator) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not own this listing' });
   }
+  // 🔴 Never delete a screenshot from a LIVE approved listing directly (bypasses
+  // review) — edits go through a shadow revision. Mods bypass (curation).
+  assertOwnerAssetEditable(shot.appListing, user);
   await dbWrite.appListingScreenshot.delete({ where: { id: args.screenshotId } });
+  // (no re-derive: removal/reorder/caption can never RAISE the derived rating)
 
   // Re-pack: contiguous orders over the survivors (ordered by their old order).
   // Read the survivor set from dbWrite (primary): under replica lag the replica
@@ -497,11 +650,26 @@ export type ListingAssetsView = {
   listingId: string;
   iconId: number | null;
   coverId: number | null;
-  screenshots: { id: string; imageId: number | null; order: number; caption: string | null }[];
+  /** Detected `nsfwLevel` of the icon/cover Image (null if unset/absent). */
+  iconNsfwLevel: number | null;
+  coverNsfwLevel: number | null;
+  screenshots: {
+    id: string;
+    imageId: number | null;
+    order: number;
+    caption: string | null;
+    /** Detected `nsfwLevel` of the backing Image (null if the Image was deleted). */
+    nsfwLevel: number | null;
+  }[];
   completeness: ListingAssetsCompleteResult;
 };
 
-/** Owner/mod read of a listing's current assets for the creator dashboard. */
+/**
+ * Owner/mod read of a listing's current assets for the creator dashboard + the mod
+ * review modal. Includes each asset's detected `nsfwLevel` (owner/mod-gated, so it
+ * is not a public exposure) so the review modal can derive the content rating from
+ * the assets' max level.
+ */
 export async function getListingAssets(
   args: { listingId: string },
   user: SessionUser
@@ -512,11 +680,32 @@ export async function getListingAssets(
     select: { id: true, imageId: true, order: true, caption: true },
     orderBy: { order: 'asc' },
   });
+
+  // Resolve the detected nsfwLevel of every backing Image in ONE query.
+  const imageIds = [
+    listing.iconId,
+    listing.coverId,
+    ...screenshots.map((s) => s.imageId),
+  ].filter((v): v is number => v != null);
+  const images = imageIds.length
+    ? await dbRead.image.findMany({
+        where: { id: { in: imageIds } },
+        select: { id: true, nsfwLevel: true },
+      })
+    : [];
+  const levelById = new Map<number, number | null>(
+    images.map((i) => [i.id, i.nsfwLevel ?? null])
+  );
+  const levelOf = (id: number | null): number | null =>
+    id == null ? null : levelById.get(id) ?? null;
+
   return {
     listingId: listing.id,
     iconId: listing.iconId,
     coverId: listing.coverId,
-    screenshots,
+    iconNsfwLevel: levelOf(listing.iconId),
+    coverNsfwLevel: levelOf(listing.coverId),
+    screenshots: screenshots.map((s) => ({ ...s, nsfwLevel: levelOf(s.imageId) })),
     completeness: checkListingAssetsComplete({
       iconId: listing.iconId,
       coverId: listing.coverId,

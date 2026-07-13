@@ -30,6 +30,11 @@ export interface BlockedPromptEntry {
   matchedRegex?: string;
   imageId: number | null;
   remixOfId: number | null;
+  // Base/source media attached to the blocked job, surfaced in the moderator
+  // restriction-review UI so a deepfake against a real photo can be told apart
+  // from a transform of AI content.
+  inputImages?: string[];
+  inputVideo?: string;
   time: string;
 }
 
@@ -64,9 +69,11 @@ async function seedBlockedPromptsFromClickHouse(userId: number): Promise<void> {
     negativePrompt: string;
     source: string;
     remixOfId: number | null;
+    inputImages: string[];
+    inputVideo: string | null;
     time: string;
   }>`
-    SELECT prompt, negativePrompt, source, remixOfId, time
+    SELECT prompt, negativePrompt, source, remixOfId, inputImages, inputVideo, time
     FROM prohibitedRequests
     WHERE time > subtractDays(now(), ${BLOCKED_PROMPTS_WINDOW_DAYS}) AND userId = ${userId}
     ORDER BY time ASC
@@ -87,6 +94,8 @@ async function seedBlockedPromptsFromClickHouse(userId: number): Promise<void> {
         matchedRegex: undefined,
         imageId: null,
         remixOfId: row.remixOfId ?? null,
+        inputImages: row.inputImages?.length ? row.inputImages : undefined,
+        inputVideo: row.inputVideo || undefined,
         time: row.time,
       };
       await sysRedis.rPush(key, JSON.stringify(entry));
@@ -228,6 +237,8 @@ export interface AuditPromptOptions {
   track?: any; // Tracker
   imageId?: number; // Source image ID when triggered during a remix
   remixOfId?: number; // The original image being remixed
+  inputImages?: string[]; // Base/source image URLs attached to the job
+  inputVideo?: string; // Source video URL (vid2vid)
 }
 
 /**
@@ -242,8 +253,18 @@ export interface AuditPromptOptions {
  * - Tracks blocked attempts and escalates warnings based on user's violation count
  */
 export async function auditPromptServer(options: AuditPromptOptions): Promise<void> {
-  const { prompt, negativePrompt, userId, isGreen, isModerator, track, imageId, remixOfId } =
-    options;
+  const {
+    prompt,
+    negativePrompt,
+    userId,
+    isGreen,
+    isModerator,
+    track,
+    imageId,
+    remixOfId,
+    inputImages,
+    inputVideo,
+  } = options;
 
   // Skip auditing if prompt is empty (will be caught by validation elsewhere)
   if (!prompt || !prompt.trim()) {
@@ -321,6 +342,8 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
         matchedWord: error.triggers[0]?.matchedWord,
         imageId: imageId ?? null,
         remixOfId: remixOfId ?? null,
+        inputImages,
+        inputVideo,
         time: new Date().toISOString(),
       };
 
@@ -337,6 +360,8 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
         source,
         count,
         remixOfId,
+        inputImages,
+        inputVideo,
       });
 
       // civitai.com/civitai.red - standard escalating warnings
@@ -370,8 +395,21 @@ async function reportProhibitedRequest(options: {
   source: string;
   count: number;
   remixOfId?: number;
+  inputImages?: string[];
+  inputVideo?: string;
 }) {
-  const { prompt, negativePrompt, userId, isModerator, track, source, count, remixOfId } = options;
+  const {
+    prompt,
+    negativePrompt,
+    userId,
+    isModerator,
+    track,
+    source,
+    count,
+    remixOfId,
+    inputImages,
+    inputVideo,
+  } = options;
 
   // Track the prohibited request in ClickHouse (audit log only)
   if (track) {
@@ -381,6 +419,8 @@ async function reportProhibitedRequest(options: {
         negativePrompt: negativePrompt ?? '{error capturing negativePrompt}',
         source,
         remixOfId,
+        inputImages,
+        inputVideo,
       });
     } catch {
       // Continue with muting even if tracking fails

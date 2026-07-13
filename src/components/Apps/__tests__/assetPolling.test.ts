@@ -15,23 +15,45 @@ import {
  */
 
 describe('classifyAttachResult', () => {
-  it('null message (resolved) → attached (terminal)', () => {
-    expect(classifyAttachResult(null)).toEqual({ kind: 'attached' });
+  it('a resolved { status: "attached" } → attached (terminal)', () => {
+    expect(classifyAttachResult({ result: { status: 'attached' } })).toEqual({ kind: 'attached' });
   });
 
-  it('"scan is not complete" → scanning (retriable)', () => {
-    expect(classifyAttachResult('Image scan is not complete yet')).toEqual({ kind: 'scanning' });
+  it('a resolved { status: "pending" } → scanning (retriable — keep polling)', () => {
+    expect(classifyAttachResult({ result: { status: 'pending' } })).toEqual({ kind: 'scanning' });
   });
 
-  it('matches the scan message case-insensitively', () => {
-    expect(classifyAttachResult('SCAN IS NOT COMPLETE').kind).toBe('scanning');
-  });
-
-  it('any other message → error (terminal) carrying the reason', () => {
-    expect(classifyAttachResult('Image was blocked (NSFW)')).toEqual({
+  it('a THROWN error → error (terminal) carrying the human message', () => {
+    expect(
+      classifyAttachResult({
+        error: { message: "that image couldn't be imported — upload it manually instead" },
+      })
+    ).toEqual({
       kind: 'error',
-      message: 'Image was blocked (NSFW)',
+      message: "that image couldn't be imported — upload it manually instead",
     });
+  });
+
+  it('a THROWN "blocked" error → error (terminal)', () => {
+    expect(
+      classifyAttachResult({
+        error: { message: 'that image was rejected during scanning — choose a different image' },
+      }).kind
+    ).toBe('error');
+  });
+
+  // REGRESSION GUARD: pending is a resolved SUCCESS RESULT (its own `status`), NOT
+  // an error the poller keys off a tRPC code. So the decision is purely structural
+  // over `status` — prose never drives it, and there is no CONFLICT code anymore.
+  // A pending result whose (irrelevant) surrounding message would sound terminal
+  // still classifies as scanning; a thrown error that sounds retriable is still
+  // terminal.
+  it('classification is driven by the resolved status / throw, never by prose', () => {
+    expect(classifyAttachResult({ result: { status: 'pending' } }).kind).toBe('scanning');
+    // A thrown message that HAPPENS to sound like "scanning" is still terminal.
+    expect(
+      classifyAttachResult({ error: { message: 'scan is not complete (but this threw)' } }).kind
+    ).toBe('error');
   });
 });
 

@@ -110,7 +110,11 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { getPrimaryFile, selectLiveLinkedComponents } from '~/server/utils/model-helpers';
+import {
+  GET_ALL_IMAGES_PER_MODEL,
+  GET_ALL_IMAGES_PER_MODEL_SLIM,
+} from '~/server/utils/model-getall-images';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
 import {
@@ -331,6 +335,7 @@ export const getModelHandler = async ({
 
       return {
         ...version,
+        licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
         metrics: undefined,
         rank: {
           generationCountAllTime: versionMetrics?.generationCount ?? 0,
@@ -364,28 +369,31 @@ export const getModelHandler = async ({
             return { ...match, ...removeNulls(item.settings as RecommendedSettingsSchema) };
           })
           .filter(isDefined),
-        linkedComponents: version.recommendedResources
-          .filter((r) => isLinkedComponent(r.settings))
-          .map((r) => {
-            const s = r.settings as LinkedComponentSettings;
-            const fileData = linkedFileDataMap.get(s.fileId);
-            return {
-              recommendedResourceId: r.id,
-              componentType: s.componentType as ModelFileComponentType,
-              modelId: s.modelId,
-              modelName: s.modelName,
-              versionId: r.resource?.id ?? 0,
-              versionName: s.versionName,
-              fileId: s.fileId,
-              fileName: fileData?.name ?? s.fileName,
-              sizeKB: fileData?.sizeKB,
-              fileType: fileData?.type,
-              fileMetadata: fileData?.metadata as
-                | { format?: string | null; size?: string | null; fp?: string | null }
-                | undefined,
-              isRequired: s.isRequired,
-            };
-          }),
+        linkedComponents: selectLiveLinkedComponents(
+          version.recommendedResources
+            .filter((r) => isLinkedComponent(r.settings))
+            .map((r) => {
+              const s = r.settings as LinkedComponentSettings;
+              const fileData = linkedFileDataMap.get(s.fileId);
+              return {
+                recommendedResourceId: r.id,
+                componentType: s.componentType as ModelFileComponentType,
+                modelId: s.modelId,
+                modelName: s.modelName,
+                versionId: r.resource?.id ?? 0,
+                versionName: s.versionName,
+                fileId: s.fileId,
+                fileName: fileData?.name ?? s.fileName,
+                sizeKB: fileData?.sizeKB,
+                fileType: fileData?.type,
+                fileMetadata: fileData?.metadata as
+                  | { format?: string | null; size?: string | null; fp?: string | null }
+                  | undefined,
+                isRequired: s.isRequired,
+              };
+            }),
+          new Set(linkedFileDataMap.keys())
+        ),
       };
     });
 
@@ -438,11 +446,21 @@ export const getModelsInfiniteHandler = async ({
     let loopCount = 0;
     let isPrivate = false;
     let nextCursor: string | bigint | undefined;
+    // Serialize-freeze lever: the browse feed is the #1 producer of oversized tRPC
+    // responses. When the DARK `getAllModelImagesSlim` flag is on, cap each model's
+    // images to the SLIM count AND pick the nsfw-biased coverage slice (drives the
+    // browsing-level feed-drop regression of the smaller cap to ~0); OFF ⇒ today's
+    // `GET_ALL_IMAGES_PER_MODEL`, naive first-N. The always-on per-image field trim
+    // applies either way (see model-getall-images).
+    const slim = ctx.features.getAllModelImagesSlim;
+    const imagesPerModel = slim ? GET_ALL_IMAGES_PER_MODEL_SLIM : GET_ALL_IMAGES_PER_MODEL;
     const results: Awaited<ReturnType<typeof getModelsWithImagesAndModelVersions>>['items'] = [];
     while (results.length < (input.limit ?? 100) && loopCount < 3) {
       const result = await getModelsWithImagesAndModelVersions({
         input,
         user: ctx.user,
+        imagesPerModel,
+        biasImageSlice: slim,
       });
       if (result.isPrivate) isPrivate = true;
       results.push(...result.items);

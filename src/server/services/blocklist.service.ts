@@ -7,7 +7,8 @@ import type {
   RemoveBlocklistItemSchema,
   UpsertBlocklistSchema,
 } from '~/server/schema/blocklist.schema';
-import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { createLruCache } from '~/server/utils/lru-cache';
 
 export type BlocklistDTO = {
   id?: number;
@@ -98,12 +99,59 @@ export async function throwOnBlockedLinkDomain(value: string) {
   const blockedFor: string[] = [];
   if (matches) {
     for (const match of matches) {
-      const url = new URL(match);
+      let url: URL;
+      try {
+        url = new URL(match);
+      } catch {
+        // A regex-matched substring that `new URL()` can't parse isn't a URL we
+        // can attribute to a host, so it can't be a blocked-domain hit. Skip it
+        // (rather than block) — and, critically, never let a raw TypeError escape
+        // as a 500 on user input. This IS reachable: e.g. `http://1.1.1.256/x`
+        // matches the link regex but `new URL()` rejects the invalid IPv4 octet.
+        continue;
+      }
       if (blockedDomains.some((x) => x === url.host)) blockedFor.push(match);
     }
   }
 
-  if (blockedFor.length) throw new Error(`invalid urls: ${blockedFor.join(', ')}`);
+  // User-input validation rejection → BAD_REQUEST (400), not a plain Error (which
+  // the tRPC layer would wrap as INTERNAL_SERVER_ERROR / 500).
+  if (blockedFor.length) throwBadRequestError(`invalid urls: ${blockedFor.join(', ')}`);
+}
+// #endregion
+
+// #region [benign phrases]
+const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// Compile a moderator-managed phrase list into a single whole-word, case-insensitive
+// matcher. Whitespace in a phrase is loosened to `[^a-zA-Z0-9]+` (the same inter-word
+// separator audit.ts uses) so "teen titans" also matches "teen  titans" / "teen-titans"
+// / "teen.titans". Zero-width alnum boundaries (again matching audit.ts) instead of `\b`
+// so a phrase whose edge is punctuation still anchors. Returns null for an empty list so
+// callers can skip the replace.
+export function buildBenignPhraseRegex(phrases: string[]): RegExp | null {
+  const cleaned = phrases.map((p) => p.trim()).filter((p) => p.length > 0);
+  if (!cleaned.length) return null;
+  const alternation = cleaned.map((p) => escapeRegex(p).replace(/\s+/g, '[^a-zA-Z0-9]+')).join('|');
+  return new RegExp(`(?<![a-zA-Z0-9])(?:${alternation})(?![a-zA-Z0-9])`, 'gi');
+}
+
+// In-process TTL cache over the Redis-backed blocklist: the scan path strips benign
+// phrases on every image, so a short-lived local copy avoids a Redis round-trip per
+// scan. TTL (not cross-pod invalidation) is the freshness bound — a moderator edit
+// takes effect within `ttl` on every pod, which is fine for this non-urgent list.
+const benignPhraseRegexCache = createLruCache<BlocklistType, { pattern: RegExp | null }>({
+  name: 'benign-phrase-regex',
+  ttl: CacheTTL.xs * 1000,
+  keyFn: (type) => type,
+  fetchFn: async (type) => ({ pattern: buildBenignPhraseRegex(await getBlocklistData(type)) }),
+});
+
+export async function stripBenignPhrases(text: string | undefined, type: BlocklistType) {
+  if (!text) return text;
+  const { pattern } = await benignPhraseRegexCache.fetch(type);
+  if (!pattern) return text;
+  return text.replace(pattern, ' ');
 }
 // #endregion
 

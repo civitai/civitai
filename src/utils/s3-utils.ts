@@ -13,11 +13,14 @@ import {
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { randomUUID } from 'crypto';
 import { dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
 
 import { logToAxiom } from '~/server/logging/client';
 import { instrumentB2Client, recordB2PresignIssued } from '~/server/prom/b2-put.metrics';
+import { registerMediaLocation } from '~/server/services/storage-resolver';
+import { isUpstreamNetworkError } from '~/server/utils/errorHandling';
 
 const missingEnvs = (): string[] => {
   const keys = [];
@@ -103,6 +106,46 @@ export async function getImageUploadBackend(): Promise<{
     bucket: env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads',
     backend: 'backblaze',
   };
+}
+
+/**
+ * Server-side: upload ALREADY-FETCHED image bytes into the SAME store the
+ * browser-direct client upload path uses (the B2 image bucket resolved by
+ * `getImageUploadBackend`, registered in storage-resolver) and return the UUID
+ * key to store as `Image.url`.
+ *
+ * This is the server analogue of `/api/v1/image-upload` + the client's presigned
+ * PUT (`useCFImageUpload`): the bytes land where the edge URL (`getEdgeUrl` →
+ * `NEXT_PUBLIC_IMAGE_LOCATION`) and the image SCANNER actually read from, so a
+ * subsequent `createImage({ url: key })` reaches `Scanned`.
+ *
+ * 🔴 DO NOT reach for Cloudflare Images (`uploadBufferToCF`) to make a SCANNABLE
+ * image. CF Images is a DIFFERENT store the edge URL + scanner never resolve — a
+ * CF Images id used as `Image.url` yields an edge URL that 404s at scan time, so
+ * the row goes terminally `ImageIngestionStatus.NotFound`. (That bug shipped in
+ * the App Blocks OG-image auto-pull path.)
+ */
+export async function uploadImageBufferToStore(
+  data: Uint8Array | Buffer,
+  opts?: { contentType?: string }
+): Promise<{ key: string; backend: ImageUploadBackend }> {
+  const { s3, bucket, backend } = await getImageUploadBackend();
+  const key = randomUUID();
+  const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data);
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      Body: bytes,
+      ...(opts?.contentType ? { ContentType: opts.contentType } : {}),
+    })
+  );
+  // Mirror the upload endpoint: register the uuid→backend mapping so the
+  // storage-resolver / edge (and thus the scanner) can locate the object. Awaited
+  // (unlike the endpoint's fire-and-forget) to close the register-vs-scan race —
+  // `registerMediaLocation` swallows its own errors, so this can't throw.
+  await registerMediaLocation(key, backend, bytes.byteLength);
+  return { key, backend };
 }
 
 export function getS3Client() {
@@ -211,12 +254,23 @@ function isAllowedModelFileBucket(bucket: string | undefined): bucket is string 
  * Reads from `dbWrite` (primary) — these helpers run after the destructive DB
  * op has committed, and we need post-commit consistency rather than a stale
  * replica view (which would over-skip and create orphans).
+ *
+ * `excludeId` lets a caller that KEEPS its own row (e.g. `purge-replaced-files`,
+ * which only sets `dataPurged: true` rather than deleting the row) exclude that
+ * row from the refcount check — otherwise the row always matches its own url
+ * and the guard self-vetoes the delete forever.
+ *
+ * Exported for direct test coverage of the refcount guard (see
+ * `src/utils/__tests__/s3-utils.refcount.test.ts`).
  */
-async function urlsSafeToDelete(urls: string[]): Promise<{ safe: string[]; skipped: number }> {
+export async function urlsSafeToDelete(
+  urls: string[],
+  excludeId?: number
+): Promise<{ safe: string[]; skipped: number }> {
   const candidates = urls.filter((u): u is string => typeof u === 'string' && u.length > 0);
   if (candidates.length === 0) return { safe: [], skipped: 0 };
   const referenced = await dbWrite.modelFile.findMany({
-    where: { url: { in: candidates } },
+    where: { url: { in: candidates }, ...(excludeId != null ? { id: { not: excludeId } } : {}) },
     select: { url: true, id: true },
   });
   if (referenced.length === 0) return { safe: candidates, skipped: 0 };
@@ -246,14 +300,17 @@ async function urlsSafeToDelete(urls: string[]): Promise<{ safe: string[]; skipp
  * Gated by MODEL_FILE_BUCKET_ALLOWLIST to prevent a user-supplied url from
  * pointing the delete at an arbitrary bucket (defense in depth — schema
  * validation is z.url() only).
+ *
+ * `excludeId` is for callers that keep their own row (e.g. `purge-replaced-files`)
+ * — see `urlsSafeToDelete`.
  */
-export async function deleteModelFileObject(url: string) {
+export async function deleteModelFileObject(url: string, excludeId?: number) {
   if (!url) return;
   // Refcount check: skip if any live ModelFile row still references this URL.
   // Closes the user-supplied-url hijack: an attacker plants a row with
   // url=victim's url, then deletes their own row. Without this check, the
   // S3 cleanup would delete the victim's bytes.
-  const { safe } = await urlsSafeToDelete([url]);
+  const { safe } = await urlsSafeToDelete([url], excludeId);
   if (safe.length === 0) return;
   const b2 = parseB2Url(url);
   if (b2) {
@@ -490,6 +547,61 @@ export async function abortMultipartUpload(
       UploadId: uploadId,
     })
   );
+}
+
+/**
+ * Classification of an S3/AWS-SDK error thrown while finalizing (complete) or
+ * aborting a multipart upload, so the `/api/upload/{complete,abort}` handlers can
+ * map it to the RIGHT HTTP status instead of a blind raw 500.
+ *
+ *  - `not-found`  — the multipart upload no longer exists: it was ALREADY completed
+ *    or aborted (a client double-submit / retry-after-success). The AWS-SDK v3
+ *    surfaces this as `NoSuchUpload` (HTTP 404). This is a client/STATE fault, not a
+ *    server fault: "The specified upload does not exist. The upload ID may be
+ *    invalid, or the upload may have been aborted or completed." Retrying it is
+ *    futile — the caller should STOP. (This was ~27 raw-500s/12h on dp-prod, the
+ *    same `key`+`uploadId` repeating across pods as the client kept retrying.)
+ *  - `transient` — a retry-able storage-backend blip: an S3/B2 HTTP 5xx, a throttle
+ *    / timing signal (`SlowDown` / `RequestTimeout` / `RequestTimeTooSkewed` /
+ *    `ServiceUnavailable` / `InternalError`), or a status-less network failure
+ *    (`ECONNRESET` / `ETIMEDOUT` / …). Mirror #2972/#3049 → 503 + Retry-After.
+ *  - `other`     — anything unrecognized, INCLUDING a genuine server-side bug. Left
+ *    to surface as a hard 500 so a real failed upload fails LOUD (never masked as a
+ *    silent 409/503).
+ *
+ * AWS-SDK v3 errors carry `error.name` (e.g. `'NoSuchUpload'`, `'SlowDown'`) and
+ * `error.$metadata.httpStatusCode`; a pre-response network failure has neither, so
+ * it is matched by {@link isUpstreamNetworkError}.
+ */
+export type S3MultipartErrorClass = 'not-found' | 'transient' | 'other';
+
+const S3_TRANSIENT_ERROR_NAMES: ReadonlySet<string> = new Set([
+  'SlowDown',
+  'RequestTimeout',
+  'RequestTimeTooSkewed',
+  'ServiceUnavailable',
+  'InternalError',
+]);
+
+export function classifyS3MultipartError(error: unknown): S3MultipartErrorClass {
+  const err = error as
+    | { name?: unknown; $metadata?: { httpStatusCode?: unknown } | null }
+    | null
+    | undefined;
+  const name = typeof err?.name === 'string' ? err.name : undefined;
+  const httpStatusCode =
+    typeof err?.$metadata?.httpStatusCode === 'number' ? err.$metadata.httpStatusCode : undefined;
+
+  // Terminal state fault: the upload is already finalized/aborted → stop retrying.
+  if (name === 'NoSuchUpload' || httpStatusCode === 404) return 'not-found';
+
+  // Retry-able storage-backend failure.
+  if (typeof httpStatusCode === 'number' && httpStatusCode >= 500) return 'transient';
+  if (name && S3_TRANSIENT_ERROR_NAMES.has(name)) return 'transient';
+  if (isUpstreamNetworkError(error)) return 'transient';
+
+  // Unrecognized — keep surfacing as a hard 500 (do NOT mask a real server fault).
+  return 'other';
 }
 
 type GetObjectOptions = {

@@ -61,6 +61,10 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
       updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
     },
+    // Backing-Image levels for the approve-time content-rating derive.
+    image: {
+      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+    },
   });
   const mockRead = makeClient();
   const mockWrite = makeClient() as ReturnType<typeof makeClient> & {
@@ -108,6 +112,7 @@ function resetAll() {
       .mockImplementation(async (a: { data: unknown }) => a.data);
     client.appListingPublishRequest.updateMany.mockReset().mockResolvedValue({ count: 1 });
     client.appListingPublishRequest.findMany.mockReset().mockResolvedValue([]);
+    client.image.findMany.mockReset().mockResolvedValue([]);
   }
   mockWrite.$transaction
     .mockReset()
@@ -601,6 +606,10 @@ describe('approveExternalRequest (revision apply)', () => {
       })
     );
     mockWrite.appListingScreenshot.count.mockResolvedValue(2);
+    // Backing-Image levels for the approve-time content-rating derive: an R asset →
+    // the revision path stamps the DERIVED rating ('r'), not the shadow's declared value.
+    mockWrite.appListingScreenshot.findMany.mockResolvedValue([{ imageId: 10 }]);
+    mockWrite.image.findMany.mockResolvedValue([{ nsfwLevel: 4 }]);
   }
 
   it('copies shadow scalars onto the PARENT (id/slug preserved), deletes the shadow, approves + re-points the request', async () => {
@@ -637,7 +646,9 @@ describe('approveExternalRequest (revision apply)', () => {
       tagline: 'edited tagline',
       description: 'edited desc',
       category: 'games',
-      contentRating: 'pg',
+      // DERIVED from the shadow's assets (max R) rather than copied from the shadow's
+      // declared 'pg' — the never-under-rate safety applies on the revision path too.
+      contentRating: 'r',
       externalUrl: 'https://cool.example.com/edited',
       connectClientId: null,
       iconId: 5,

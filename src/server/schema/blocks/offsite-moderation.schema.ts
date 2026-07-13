@@ -73,13 +73,17 @@ export type ListListingReportsInput = z.infer<typeof listListingReportsSchema>;
 
 /**
  * Moderation-event action taxonomy — MUST equal the `app_listing_mod_events_action_check`
- * CHECK set (migration `20260706120100_w13_p3b_app_listing_moderation_events`). A
- * drift here would let a proc write an `action` the DB rejects (23514). The
- * action-agreement unit test pins this tuple against the migration's IN-list.
+ * CHECK set. The base six were shipped in migration
+ * `20260706120100_w13_p3b_app_listing_moderation_events`; the last three
+ * (`reset-to-pending`/`owner-unpublish`/`owner-republish`) are added by the W13
+ * post-approval-mgmt widen `20260713120000_w13_post_approval_mod_actions` (a strict
+ * superset — additive DROP+ADD CHECK). A drift here would let a proc write an
+ * `action` the DB rejects (23514). The action-agreement unit test pins this tuple
+ * against the LATEST action-CHECK migration's IN-list.
  *
- * NOTE the hyphen form (`report-resolve`/`report-dismiss`) — it matches the
- * shipped migration CHECK verbatim. `claim` is reserved for PR4 (not written by
- * any PR3 proc), but stays in the tuple because the DB CHECK already allows it.
+ * NOTE the hyphen form (`report-resolve`/`report-dismiss`/`reset-to-pending`/
+ * `owner-unpublish`/`owner-republish`) — it matches the shipped/widened migration
+ * CHECK verbatim.
  */
 export const APP_LISTING_MODERATION_ACTIONS = [
   'delist',
@@ -88,6 +92,10 @@ export const APP_LISTING_MODERATION_ACTIONS = [
   'purge',
   'report-resolve',
   'report-dismiss',
+  // W13 post-approval management (Phase 1):
+  'reset-to-pending',
+  'owner-unpublish',
+  'owner-republish',
 ] as const;
 export type AppListingModerationAction = (typeof APP_LISTING_MODERATION_ACTIONS)[number];
 
@@ -179,3 +187,66 @@ export const listModerationEventsSchema = z.object({
   limit: z.number().int().min(1).max(50).optional(),
 });
 export type ListModerationEventsInput = z.infer<typeof listModerationEventsSchema>;
+
+// ---------------------------------------------------------------------------
+// W13 post-approval listing management (Phase 1) — reset-to-pending (mod),
+// owner unpublish/republish, and the owner-scoped moderation-history read.
+// ---------------------------------------------------------------------------
+
+/**
+ * MOD reset an APPROVED off-site listing back into the review queue
+ * (approved → pending). `reason` is REQUIRED (audit — same bounds as delist/relist)
+ * because a reset un-publishes a live listing and re-opens a review. The service
+ * re-enters the listing into the queue by minting a fresh `pending`
+ * `AppListingPublishRequest` (owned by the listing owner) so a mod can then
+ * approve/reject it through the existing flow. The reviewer is bound to
+ * `ctx.user.id` — never client-supplied.
+ */
+export const resetListingToPendingSchema = z.object({
+  appListingId: z.string().min(1).max(64),
+  reason: modReason,
+});
+export type ResetListingToPendingInput = z.infer<typeof resetListingToPendingSchema>;
+
+/**
+ * OWNER unpublish their OWN approved off-site listing (approved → removed). A pure
+ * self-service visibility toggle — NO re-review, NO content-rating re-derive, NO
+ * publish request. `reason` is OPTIONAL (the owner is acting on their own listing).
+ * The owner is bound to `ctx.user.id` in the service (a caller can only unpublish a
+ * listing they own — FORBIDDEN otherwise).
+ */
+export const unpublishOwnListingSchema = z.object({
+  appListingId: z.string().min(1).max(64),
+  reason: modNote,
+});
+export type UnpublishOwnListingInput = z.infer<typeof unpublishOwnListingSchema>;
+
+/**
+ * OWNER republish their OWN owner-unpublished off-site listing (removed → approved).
+ * 🔴 SAFETY GUARD (enforced in the service): republish is allowed ONLY when the
+ * most-recent `AppListingModerationEvent` for the listing is an `owner-unpublish` —
+ * i.e. the removal was owner-initiated. If the last event is a moderator
+ * `delist`/`purge` (a takedown-for-cause), republish is FORBIDDEN (an owner may not
+ * restore a listing a moderator removed). Pure visibility toggle — no re-derive, no
+ * publish request. `reason` is OPTIONAL. Owner-bound to `ctx.user.id`.
+ */
+export const republishOwnListingSchema = z.object({
+  appListingId: z.string().min(1).max(64),
+  reason: modNote,
+});
+export type RepublishOwnListingInput = z.infer<typeof republishOwnListingSchema>;
+
+/**
+ * OWNER per-listing moderation-history read (keyset, newest-first) — the owner's
+ * "why was this hidden / un-approved" view. Mirrors `listModerationEventsSchema` but
+ * the service asserts the caller OWNS the listing (FORBIDDEN otherwise); a mod uses
+ * `listModerationEventsSchema` / `listModerationEvents` instead.
+ */
+export const listMyListingModerationEventsSchema = z.object({
+  appListingId: z.string().min(1).max(64),
+  cursor: z.string().min(1).max(64).optional(),
+  limit: z.number().int().min(1).max(50).optional(),
+});
+export type ListMyListingModerationEventsInput = z.infer<
+  typeof listMyListingModerationEventsSchema
+>;

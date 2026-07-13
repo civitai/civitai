@@ -42,3 +42,51 @@
 .control {
   border: none !important;
 }
+
+/* Mirrors the main content-nav's Shop tab highlight (HomeContentToggle.module.css). */
+.tabHighlight {
+  padding: 4px 12px;
+  border-radius: var(--mantine-radius-xl);
+  background-color: light-dark(
+    alpha(var(--mantine-color-yellow-3), 0.3),
+    alpha(var(--mantine-color-yellow-3), 0.1)
+  );
+  background-image: linear-gradient(
+    90deg,
+    alpha(var(--mantine-color-yellow-4), 0),
+    alpha(var(--mantine-color-yellow-4), 0.1),
+    alpha(var(--mantine-color-yellow-4), 0)
+  );
+  background-size: 50px;
+  background-position: -300% 50%;
+  background-repeat: no-repeat;
+  color: light-dark(var(--mantine-color-yellow-8), var(--mantine-color-yellow-3));
+  /* `button-highlight` is a global keyframes (src/styles/globals.css); it stays
+     global because no local @keyframes of that name exists in this module. */
+  animation: button-highlight 5s linear infinite;
+  will-change: background-position;
+
+  /* The label carries `text-black dark:text-white`, and the icon inherits the
+     control's color — force both to the yellow accent. */
+  :global(.text-black) {
+    color: light-dark(var(--mantine-color-yellow-8), var(--mantine-color-yellow-3)) !important;
+  }
+
+  svg {
+    color: light-dark(var(--mantine-color-yellow-8), var(--mantine-color-yellow-3)) !important;
+    /* The profile nav passes an explicit `color` to the icon, which tabler
+       renders as a `stroke="#fff"` attribute — override the stroke too. */
+    stroke: light-dark(var(--mantine-color-yellow-8), var(--mantine-color-yellow-3)) !important;
+  }
+
+  /* Collapse the 30px icon box to an inline glyph so the pill matches the main
+     nav's compact size + tight icon-to-label spacing. */
+  :global(.mantine-ThemeIcon-root) {
+    width: auto !important;
+    height: auto !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    background: transparent !important;
+  }
+}

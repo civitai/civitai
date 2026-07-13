@@ -113,6 +113,9 @@ import { TrackView } from '~/components/TrackView/TrackView';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { ToggleVaultButton } from '~/components/Vault/ToggleVaultButton';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
+import { applyNotifyToggled } from '~/store/engaged-models.optimistic';
+import { restoreMembership, snapshotMembership } from '~/store/engaged-models.store';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
@@ -146,6 +149,15 @@ import { formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, getModelUrl, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './ModelVersionDetails.module.scss';
+
+// Hoisted constant inline-style objects — these previously allocated a fresh
+// object on every render inside the Details/file rows (feeding SSR GC). Same
+// values, referenced by identity.
+const styleDottedUnderline: React.CSSProperties = { textDecorationStyle: 'dotted' };
+const styleNowrap: React.CSSProperties = { whiteSpace: 'nowrap' };
+const styleFlexShrink0: React.CSSProperties = { flexShrink: 0 };
+const styleOpacity06: React.CSSProperties = { opacity: 0.6 };
+const styleIconOpacity: React.CSSProperties = { opacity: 0.5 };
 
 export function ModelVersionDetails(props: Props) {
   return <ModelVersionDetailsContent {...props} />;
@@ -344,24 +356,27 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   });
 
   // Notification toggle state
-  const {
-    data: { Notify: watchedModels = [], Mute: mutedModels = [] } = { Notify: [], Mute: [] },
-  } = trpc.user.getEngagedModels.useQuery(undefined, { enabled: !!user });
+  // PR2: per-visible-set membership for this single model (Notify/Mute).
+  const { isEngaged: isModelEngaged, isKnown: isNotifyKnown } = useEngagedModelMembership(model.id);
   const { data: followingUsers = [] } = trpc.user.getFollowingUsers.useQuery(undefined, {
     enabled: !!user,
     staleTime: 60 * 1000, // 1 minute - avoid refetching on every model view
   });
+  const isNotificationOn =
+    (followingUsers.includes(model.user.id) || isModelEngaged('Notify')) &&
+    !isModelEngaged('Mute');
   const toggleNotifyModelMutation = trpc.user.toggleNotifyModel.useMutation({
-    async onSuccess() {
-      await queryUtils.user.getEngagedModels.invalidate();
+    onMutate() {
+      // Optimistic store update + snapshot for rollback.
+      const snapshot = snapshotMembership(model.id);
+      applyNotifyToggled(model.id, !isNotificationOn);
+      return { snapshot };
     },
-    onError(error) {
+    onError(error, _vars, context) {
+      if (context?.snapshot) restoreMembership(model.id, context.snapshot);
       showErrorNotification({ title: 'Failed to update notification settings', error });
     },
   });
-  const isNotificationOn =
-    (followingUsers.includes(model.user.id) || watchedModels.includes(model.id)) &&
-    !mutedModels.includes(model.id);
 
   const handlePublishClick = async (publishDate?: Date) => {
     try {
@@ -759,13 +774,28 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         <LoginRedirect reason="notify-model">
                           <Button
                             color={isNotificationOn ? 'green' : 'gray'}
-                            onClick={() =>
+                            onClick={() => {
+                              // F1: block the toggle until Notify/Mute membership is
+                              // known — a cold store reads not-engaged and would fire
+                              // the OPPOSITE of the user's intent.
+                              if (!isNotifyKnown) return;
+                              // Carry an EXPLICIT direction (setTo) — never a blind
+                              // server toggle. on→OFF (set Mute, overrides a
+                              // follow-based auto-watch); off→ON (set Notify). With
+                              // setTo the server sets the row to exactly this state, so
+                              // a click acting on a fabricated/errored "off" for a
+                              // genuinely-ON model can no longer silently DELETE the
+                              // Notify — it's an idempotent subscribe, and the
+                              // optimistic write matches the guaranteed server outcome.
                               toggleNotifyModelMutation.mutate({
                                 modelId: model.id,
-                                type: isNotificationOn ? ModelEngagementType.Mute : undefined,
-                              })
-                            }
-                            loading={toggleNotifyModelMutation.isPending}
+                                type: isNotificationOn
+                                  ? ModelEngagementType.Mute
+                                  : ModelEngagementType.Notify,
+                                setTo: true,
+                              });
+                            }}
+                            loading={toggleNotifyModelMutation.isPending || !isNotifyKnown}
                             fullWidth
                             style={{ paddingLeft: 0, paddingRight: 0 }}
                             aria-label={
@@ -1115,14 +1145,9 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         const config = componentTypeConfig[lc.componentType];
                         const Icon = config?.icon ?? IconPuzzle;
                         return (
-                          <Box
+                          <div
                             key={`lc-${lc.recommendedResourceId ?? lc.fileId}`}
-                            p="sm"
-                            style={{
-                              borderBottom: `1px solid ${
-                                colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2]
-                              }`,
-                            }}
+                            className={classes.fileRow}
                           >
                             <Group justify="space-between" wrap="nowrap">
                               <Group gap="sm" wrap="nowrap">
@@ -1145,7 +1170,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                                       size="sm"
                                       fw={500}
                                       td="underline"
-                                      style={{ textDecorationStyle: 'dotted' }}
+                                      style={styleDottedUnderline}
                                     >
                                       {lc.modelName}
                                     </Text>
@@ -1158,9 +1183,9 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                                   </Text>
                                 </Box>
                               </Group>
-                              <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
+                              <Group gap="xs" wrap="nowrap" style={styleFlexShrink0}>
                                 {lc.sizeKB ? (
-                                  <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
+                                  <Text size="xs" c="dimmed" style={styleNowrap}>
                                     {formatKBytes(lc.sizeKB)}
                                   </Text>
                                 ) : null}
@@ -1205,7 +1230,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                                 </Tooltip>
                               </Group>
                             </Group>
-                          </Box>
+                          </div>
                         );
                       })}
                       {/* Regular optional files */}
@@ -1221,15 +1246,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         });
 
                         return (
-                          <Box
-                            key={file.id}
-                            p="sm"
-                            style={{
-                              borderBottom: `1px solid ${
-                                colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2]
-                              }`,
-                            }}
-                          >
+                          <div key={file.id} className={classes.fileRow}>
                             <Group justify="space-between" wrap="nowrap">
                               <Group gap="sm" wrap="nowrap">
                                 <ThemeIcon
@@ -1237,7 +1254,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                                   radius="md"
                                   color="gray"
                                   variant="light"
-                                  style={{ opacity: 0.6 }}
+                                  style={styleOpacity06}
                                 >
                                   <FileIcon size={20} />
                                 </ThemeIcon>
@@ -1275,7 +1292,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                                 </ActionIcon>
                               </Tooltip>
                             </Group>
-                          </Box>
+                          </div>
                         );
                       })}
                     </Stack>
@@ -1316,26 +1333,10 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                 </Group>
               </Accordion.Control>
               <Accordion.Panel p={0}>
-                <Stack
-                  gap={0}
-                  style={{
-                    backgroundColor: colorScheme === 'dark' ? '#1f2023' : theme.colors.gray[0],
-                  }}
-                >
+                <Stack gap={0} className={classes.detailsPanel}>
                   {/* Type */}
-                  <Group
-                    justify="space-between"
-                    px="md"
-                    py={10}
-                    style={{
-                      borderBottom: `1px solid ${
-                        colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-                      }`,
-                    }}
-                  >
-                    <Text size="sm" c="dimmed">
-                      Type
-                    </Text>
+                  <div className={classes.detailRow}>
+                    <span className={classes.detailLabel}>Type</span>
                     <Group gap={6}>
                       <Badge size="sm" radius="xl" variant="filled" color="gray">
                         {getDisplayName(model.type)} {model.checkpointType}
@@ -1348,25 +1349,14 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         <HowToUseModel type={model.type} />
                       )}
                     </Group>
-                  </Group>
+                  </div>
                   {/* Stats */}
-                  <Group
-                    justify="space-between"
-                    px="md"
-                    py={10}
-                    style={{
-                      borderBottom: `1px solid ${
-                        colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-                      }`,
-                    }}
-                  >
-                    <Text size="sm" c="dimmed">
-                      Stats
-                    </Text>
+                  <div className={classes.detailRow}>
+                    <span className={classes.detailLabel}>Stats</span>
                     <Group gap={12}>
                       {!downloadsDisabled && (
                         <Group gap={4}>
-                          <IconDownload size={16} style={{ opacity: 0.5 }} />
+                          <IconDownload size={16} style={styleIconOpacity} />
                           <Text size="sm">
                             <AnimatedCount value={liveMetrics.downloadCount} abbreviate={false} />
                           </Text>
@@ -1374,7 +1364,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       )}
                       {canGenerate && (
                         <Group gap={4}>
-                          <IconBrush size={16} style={{ opacity: 0.5 }} />
+                          <IconBrush size={16} style={styleIconOpacity} />
                           <Text size="sm">
                             <AnimatedCount value={liveMetrics.generationCount} />
                           </Text>
@@ -1382,56 +1372,34 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       )}
                       {!!liveMetrics.earnedAmount && (
                         <Group gap={4}>
-                          <IconBolt size={16} style={{ opacity: 0.5 }} />
+                          <IconBolt size={16} style={styleIconOpacity} />
                           <Text size="sm">
                             <AnimatedCount value={liveMetrics.earnedAmount} />
                           </Text>
                         </Group>
                       )}
                     </Group>
-                  </Group>
+                  </div>
                   {/* Generation Popularity */}
                   {canGenerate &&
                     features.modelVersionPopularity &&
                     model.type === ModelType.Checkpoint && (
-                      <Group
-                        justify="space-between"
-                        px="md"
-                        py={10}
-                        style={{
-                          borderBottom: `1px solid ${
-                            colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-                          }`,
-                        }}
-                      >
-                        <Text size="sm" c="dimmed">
-                          Generation
-                        </Text>
+                      <div className={classes.detailRow}>
+                        <span className={classes.detailLabel}>Generation</span>
                         <ModelVersionPopularity
                           versionId={version.id}
                           isCheckpoint={model.type === ModelType.Checkpoint}
                           listenForUpdates
                         />
-                      </Group>
+                      </div>
                     )}
                   {/* Generation License Fee */}
-                  {!!version.licensingFee && version.licensingFee > 0 && (
-                    <Group
-                      justify="space-between"
-                      px="md"
-                      py={10}
-                      style={{
-                        borderBottom: `1px solid ${
-                          colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-                        }`,
-                      }}
-                    >
-                      <Text size="sm" c="dimmed">
-                        Generation License Fee
-                      </Text>
+                  {Number(version.licensingFee ?? 0) > 0 && (
+                    <div className={classes.detailRow}>
+                      <span className={classes.detailLabel}>Generation License Fee</span>
                       <Group gap={4} wrap="nowrap">
                         <CurrencyIcon currency="BUZZ" size={16} />
-                        <Text size="sm">{numberWithCommas(version.licensingFee)} / image</Text>
+                        <Text size="sm">{numberWithCommas(Number(version.licensingFee))} / image</Text>
                         <Popover
                           width={260}
                           shadow="md"
@@ -1460,45 +1428,25 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                           </Popover.Dropdown>
                         </Popover>
                       </Group>
-                    </Group>
+                    </div>
                   )}
                   {/* Reviews */}
-                  <Group
-                    justify="space-between"
-                    px="md"
-                    py={10}
-                    style={{
-                      borderBottom: `1px solid ${
-                        colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-                      }`,
-                    }}
-                  >
-                    <Text size="sm" c="dimmed">
-                      Reviews
-                    </Text>
+                  <div className={classes.detailRow}>
+                    <span className={classes.detailLabel}>Reviews</span>
                     <ModelVersionReview
                       modelId={model.id}
                       versionId={version.id}
                       thumbsUpCount={liveMetrics.thumbsUpCount}
                       thumbsDownCount={liveMetrics.thumbsDownCount}
                     />
-                  </Group>
+                  </div>
                   {/* Published */}
-                  <Group
-                    justify="space-between"
-                    px="md"
-                    py={10}
-                    style={{
-                      borderBottom: `1px solid ${
-                        colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-                      }`,
-                    }}
-                  >
-                    <Text size="sm" c="dimmed">
+                  <div className={classes.detailRow}>
+                    <span className={classes.detailLabel}>
                       {version.status === 'Published' && version.publishedAt
                         ? 'Published'
                         : 'Uploaded'}
-                    </Text>
+                    </span>
                     <Text size="sm">
                       {formatDate(
                         version.status === 'Published' && version.publishedAt
@@ -1506,75 +1454,40 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                           : version.createdAt
                       )}
                     </Text>
-                  </Group>
+                  </div>
                   {/* Base Model */}
-                  <Group
-                    justify="space-between"
-                    px="md"
-                    py={10}
-                    style={{
-                      borderBottom: `1px solid ${
-                        colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-                      }`,
-                    }}
-                  >
-                    <Text size="sm" c="dimmed">
-                      Base Model
-                    </Text>
+                  <div className={classes.detailRow}>
+                    <span className={classes.detailLabel}>Base Model</span>
                     <Text size="sm">
                       {version.baseModel}{' '}
                       {version.baseModelType && version.baseModelType !== 'Standard'
                         ? version.baseModelType
                         : ''}
                     </Text>
-                  </Group>
+                  </div>
                   {/* Hash */}
                   {!!hashes.length && (
-                    <Group justify="space-between" px="md" py={10}>
-                      <Text size="sm" c="dimmed">
-                        Hash
-                      </Text>
+                    <div className={classes.detailRowPlain}>
+                      <span className={classes.detailLabel}>Hash</span>
                       <ModelHash hashes={hashes} />
-                    </Group>
+                    </div>
                   )}
                   {/* Trigger Words */}
                   {!!version.trainedWords?.length && (
-                    <Group
-                      justify="space-between"
-                      px="md"
-                      py={10}
-                      style={{
-                        borderTop: `1px solid ${
-                          colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-                        }`,
-                      }}
-                    >
-                      <Text size="sm" c="dimmed">
-                        Trigger Words
-                      </Text>
+                    <div className={classes.detailRowTop}>
+                      <span className={classes.detailLabel}>Trigger Words</span>
                       <TrainedWords
                         trainedWords={version.trainedWords}
                         files={version.files}
                         type={model.type}
                       />
-                    </Group>
+                    </div>
                   )}
                   {/* AIR */}
                   {features.air && (
-                    <Group
-                      justify="space-between"
-                      px="md"
-                      py={10}
-                      style={{
-                        borderTop: `1px solid ${
-                          colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-                        }`,
-                      }}
-                    >
+                    <div className={classes.detailRowTop}>
                       <Group gap="xs">
-                        <Text size="sm" c="dimmed">
-                          AIR
-                        </Text>
+                        <span className={classes.detailLabel}>AIR</span>
                         <URNExplanation size={16} />
                       </Group>
                       <ModelURN
@@ -1584,7 +1497,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         modelVersionId={version.id}
                         fileType={primaryFile?.type}
                       />
-                    </Group>
+                    </div>
                   )}
                 </Stack>
               </Accordion.Panel>

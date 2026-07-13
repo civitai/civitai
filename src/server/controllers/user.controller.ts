@@ -24,6 +24,7 @@ import type { PaymentMethodDeleteInput } from '~/server/schema/stripe.schema';
 import type {
   DeleteUserInput,
   GetAllUsersInput,
+  GetEngagedModelsByIdsInput,
   GetByUsernameSchema,
   GetUserByUsernameSchema,
   GetUserCosmeticsSchema,
@@ -55,7 +56,6 @@ import type {
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getUserNotificationCount } from '~/server/services/notification.service';
 import {
-  getResourceReviewsByUserId,
   getUserResourceReview,
 } from '~/server/services/resourceReview.service';
 import {
@@ -81,7 +81,7 @@ import {
   getUserCosmetics,
   getUserCreator,
   getUserDownloadedModelVersions,
-  getUserEngagedModels,
+  getUserEngagedModelsByIds,
   getUserEngagedModelVersions,
   getUserList,
   getUserPurchasedRewards,
@@ -628,38 +628,20 @@ export const restoreUserHandler = async ({
   }
 };
 
-type EngagedModelType = ModelEngagementType | 'Recommended';
-
-export const getUserEngagedModelsHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
+// Per-visible-set membership handler. Replaced the removed unbounded
+// `getUserEngagedModelsHandler`, whose whole-history response was a serialize-freeze
+// source. Bounded input → bounded response, so there is no cache: the tiny,
+// index-scannable payload isn't worth the combinatorial keyspace + bust-site sprawl.
+export const getUserEngagedModelsByIdsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetEngagedModelsByIdsInput;
+  ctx: ProtectedContext;
+}) => {
   const { id } = ctx.user;
-
   try {
-    const engagementsCache = await redis.get(
-      `${REDIS_KEYS.USER.BASE}:${id}:${REDIS_SUB_KEYS.USER.MODEL_ENGAGEMENTS}`
-    );
-    if (engagementsCache) return JSON.parse(engagementsCache) as Record<EngagedModelType, number[]>;
-
-    const engagements = await getUserEngagedModels({ id });
-    const recommendedReviews = await getResourceReviewsByUserId({ userId: id, recommended: true });
-
-    // turn array of user.engagedModels into object with `type` as key and array of modelId as value
-    const engagedModels = engagements.reduce<Record<EngagedModelType, number[]>>((acc, model) => {
-      const { type, modelId } = model;
-      if (!acc[type]) acc[type] = [];
-      acc[type].push(modelId);
-      return acc;
-    }, {} as Record<EngagedModelType, number[]>);
-    engagedModels.Recommended = recommendedReviews.map((r) => r.modelId).filter(isDefined);
-
-    await redis.set(
-      `${REDIS_KEYS.USER.BASE}:${id}:${REDIS_SUB_KEYS.USER.MODEL_ENGAGEMENTS}`,
-      JSON.stringify(engagedModels),
-      {
-        EX: 60 * 60 * 24,
-      }
-    );
-
-    return engagedModels;
+    return await getUserEngagedModelsByIds({ id, modelIds: input.modelIds });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -969,7 +951,12 @@ export const toggleNotifyModelHandler = async ({
   try {
     const { id: userId } = ctx.user;
     const result = input.type
-      ? await toggleModelEngagement({ modelId: input.modelId, type: input.type, userId })
+      ? await toggleModelEngagement({
+          modelId: input.modelId,
+          type: input.type,
+          setTo: input.setTo,
+          userId,
+        })
       : await toggleModelNotify({ ...input, userId });
 
     if (result) {

@@ -30,7 +30,7 @@ export function HomeStyleSegmentedControl({
     label: (
       <Link legacyBehavior href={value.url} passHref>
         <Anchor td="none" variant="text">
-          <Group align="center" gap={8} wrap="nowrap">
+          <Group align="center" gap={8} wrap="nowrap" className={value.className}>
             <ThemeIcon
               size={30}
               color={activePath === key ? theme.colors.dark[7] : 'transparent'}
@@ -77,6 +77,7 @@ export type DataItem = {
   disabled?: boolean;
   count?: number;
   label?: string;
+  className?: string;
 };
 type Props = {
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';

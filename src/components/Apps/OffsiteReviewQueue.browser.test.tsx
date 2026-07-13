@@ -29,6 +29,7 @@ const OFFSITE_ROW = {
 
 const mocks = vi.hoisted(() => ({
   invalidate: vi.fn().mockResolvedValue(undefined),
+  approveMutate: vi.fn(),
 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
@@ -61,12 +62,27 @@ vi.mock('~/utils/trpc', () => {
         },
         getAssets: {
           useQuery: () => ({
-            data: { listingId: 'listing-1', iconId: 10, coverId: 11, screenshots: [{ imageId: 12 }] },
+            // Icon/cover PG (1); a screenshot at R (4) → derived rating 'r', which is
+            // HIGHER than the declared 'g' (mismatch case).
+            data: {
+              listingId: 'listing-1',
+              iconId: 10,
+              coverId: 11,
+              iconNsfwLevel: 1,
+              coverNsfwLevel: 1,
+              screenshots: [{ imageId: 12, nsfwLevel: 4 }],
+            },
             isLoading: false,
             error: null,
           }),
         },
-        approveExternalRequest: { useMutation: mutation },
+        approveExternalRequest: {
+          useMutation: () => ({
+            mutate: mocks.approveMutate,
+            mutateAsync: vi.fn(),
+            isPending: false,
+          }),
+        },
         rejectExternalRequest: { useMutation: mutation },
       },
     },
@@ -77,6 +93,7 @@ const { OffsiteReviewQueue } = await import('./OffsiteReviewQueue');
 
 beforeEach(() => {
   mocks.invalidate.mockClear();
+  mocks.approveMutate.mockClear();
 });
 
 describe('OffsiteReviewQueue — kind-aware review row', () => {
@@ -149,5 +166,33 @@ describe('OffsiteReviewModal — approve-notes gating, friendly date, field labe
     // The badge values they label are still rendered.
     await expect.element(page.getByText('utility', { exact: true })).toBeInTheDocument();
     await expect.element(page.getByText('g', { exact: true })).toBeInTheDocument();
+  });
+});
+
+describe('OffsiteReviewModal — content-rating derive + mod override', () => {
+  test('surfaces the DERIVED rating and FLAGS it as higher than the declared rating', async () => {
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    // Derived from the assets (max R) → 'r', shown alongside the declared 'g'.
+    await expect
+      .element(page.getByTestId('apps-offsite-derived-rating'))
+      .toHaveTextContent('r');
+    // Assets more mature than declared → the mismatch warning renders.
+    await expect
+      .element(page.getByTestId('apps-offsite-rating-mismatch'))
+      .toBeInTheDocument();
+  });
+
+  test('the approve rating Select defaults to the derived value and approve passes it', async () => {
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await page.getByTestId('apps-offsite-approve-open').click();
+    // The Select is present (defaulting to the derived rating), and confirming approve
+    // forwards the chosen rating to the mutation.
+    await expect.element(page.getByTestId('apps-offsite-approve-rating')).toBeInTheDocument();
+    await page.getByTestId('apps-offsite-approve-confirm').click();
+    expect(mocks.approveMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ publishRequestId: 'req-1', contentRating: 'r' })
+    );
   });
 });

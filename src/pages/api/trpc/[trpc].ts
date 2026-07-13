@@ -8,6 +8,7 @@ import { logToAxiom, safeError } from '~/server/logging/client';
 import { recordTrpcError } from '~/server/prom/http-errors';
 import { isClientAbortError } from '~/server/utils/errorHandling';
 import { appRouter } from '~/server/routers';
+import { runWithSerializeCtx, serializeCtxFromRequest } from '~/server/logging/trpc-serialize-log';
 
 export const config = {
   api: {
@@ -139,5 +140,8 @@ const trpcHandler = createNextApiHandler({
 // handled natively by `allowMethodOverride: true` above (main), so no manual
 // restore step is needed here.
 export default withAxiom(async (req: NextApiRequest, res: NextApiResponse) => {
-  await trpcHandler(req, res);
+  // Seed the request-scoped procedure-path context so the transformer's serialize
+  // step (an awaited descendant of trpcHandler) can name the offending procedure
+  // on an oversized/slow serialize. No-op wrapper when the instrument is disabled.
+  await runWithSerializeCtx(serializeCtxFromRequest(req), () => trpcHandler(req, res));
 }) as NextApiHandler;

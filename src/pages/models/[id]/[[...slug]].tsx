@@ -106,6 +106,7 @@ import { TrackView } from '~/components/TrackView/TrackView';
 import { env } from '~/env/client';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
 import useIsClient from '~/hooks/useIsClient';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -388,13 +389,11 @@ export default function ModelDetailsV2({
     (Array.isArray(rawVersionId) ? rawVersionId[0] : rawVersionId) ?? model?.modelVersions[0]?.id
   );
 
-  const { data: { Recommended: reviewedModels = [] } = { Recommended: [] } } =
-    trpc.user.getEngagedModels.useQuery(undefined, {
-      enabled: !!currentUser,
-      gcTime: Infinity,
-      staleTime: Infinity,
-    });
-  const isFavorite = model && reviewedModels.includes(model.id);
+  // PR2: per-visible-set membership for just this model (was the unbounded getEngagedModels).
+  const { isEngaged: isModelEngaged, isKnown: isFavoriteKnown } = useEngagedModelMembership(
+    model?.id ?? 0
+  );
+  const isFavorite = !!model && isModelEngaged('Recommended');
 
   const isModerator = currentUser?.isModerator ?? false;
   const isCreator = model?.user.id === currentUser?.id;
@@ -824,8 +823,13 @@ export default function ModelDetailsV2({
                               filled={isFavorite}
                             />
                           }
-                          className="cursor-pointer"
-                          onClick={() => handleToggleFavorite({ setTo: !isFavorite })}
+                          className={isFavoriteKnown ? 'cursor-pointer' : 'cursor-progress'}
+                          onClick={() => {
+                            // F1: don't toggle until Recommended membership is known —
+                            // a cold store reads not-favorited and would flip intent.
+                            if (!isFavoriteKnown) return;
+                            handleToggleFavorite({ setTo: !isFavorite });
+                          }}
                         >
                           <Text className={classes.modelBadgeText}>
                             {abbreviateNumber(model.rank?.thumbsUpCountAllTime ?? 0)}
