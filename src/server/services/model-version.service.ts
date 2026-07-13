@@ -274,38 +274,68 @@ export const getUserEarlyAccessModelVersions = async ({ userId }: { userId: numb
 // Licensing lineage roots selectable for a given base model — the versions
 // flagged LicensingRoot that define a fee others can inherit (e.g. an
 // ecosystem's Base / Turbo checkpoints). Feeds the version-form picker.
-export const getLicensingRoots = async ({ baseModel }: { baseModel: string }) => {
-  return dbRead.$queryRaw<
-    Array<{
-      id: number;
-      modelId: number;
-      modelName: string;
-      versionName: string;
-      licensingFee: number | null;
-      licensingFeeType: LicensingFeeType | null;
-      licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
-    }>
-  >`
-    SELECT
-      mv.id,
-      mv."modelId",
-      m.name AS "modelName",
-      mv.name AS "versionName",
-      mv."licensingFee"::float8 AS "licensingFee",
-      mv."licensingFeeType",
-      mv."licensingFeeSettlementCurrency"
-    FROM "ModelVersion" mv
-    JOIN "Model" m ON m.id = mv."modelId"
-    WHERE mv."baseModel" = ${baseModel}
-      AND (mv.flags & ${ModelVersionFlag.LicensingRoot}) = ${ModelVersionFlag.LicensingRoot}
-      AND mv.status = ${ModelStatus.Published}::"ModelStatus"
-      AND mv."licensingFee" IS NOT NULL
-      AND mv."licensingFee" > 0
-      AND m.status = ${ModelStatus.Published}::"ModelStatus"
-      AND m.availability = ${Availability.Public}::"Availability"
-      AND m."deletedAt" IS NULL
-    ORDER BY m.name, mv.index
-  `;
+// `standard*` describes the (baseModel, modelType) BaseModelLicensingFee rule's
+// root version — the "Default" option's live fee/name. The id lets the client
+// drop that version from `roots` so it can't appear as both Default and a pick.
+type StandardRule = { versionId: number; licensingFee: number | null; versionName: string | null };
+export const getLicensingRoots = async ({
+  baseModel,
+  modelType,
+}: {
+  baseModel: string;
+  modelType?: ModelType;
+}) => {
+  const [roots, standardRows] = await Promise.all([
+    dbRead.$queryRaw<
+      Array<{
+        id: number;
+        modelId: number;
+        versionName: string;
+        licensingFee: number | null;
+        licensingFeeType: LicensingFeeType | null;
+        licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
+      }>
+    >`
+      SELECT
+        mv.id,
+        mv."modelId",
+        mv.name AS "versionName",
+        mv."licensingFee"::float8 AS "licensingFee",
+        mv."licensingFeeType",
+        mv."licensingFeeSettlementCurrency"
+      FROM "ModelVersion" mv
+      JOIN "Model" m ON m.id = mv."modelId"
+      WHERE mv."baseModel" = ${baseModel}
+        AND (mv.flags & ${ModelVersionFlag.LicensingRoot}) = ${ModelVersionFlag.LicensingRoot}
+        AND mv.status = ${ModelStatus.Published}::"ModelStatus"
+        AND mv."licensingFee" IS NOT NULL
+        AND mv."licensingFee" > 0
+        AND m.status = ${ModelStatus.Published}::"ModelStatus"
+        AND m.availability = ${Availability.Public}::"Availability"
+        AND m."deletedAt" IS NULL
+      ORDER BY m.name, mv.index
+    `,
+    modelType
+      ? dbRead.$queryRaw<StandardRule[]>`
+          SELECT
+            rmv.id AS "versionId",
+            rmv."licensingFee"::float8 AS "licensingFee",
+            rmv.name AS "versionName"
+          FROM "BaseModelLicensingFee" bmlf
+          JOIN "ModelVersion" rmv ON rmv.id = bmlf."modelVersionId"
+          WHERE bmlf."baseModel" = ${baseModel}
+            AND bmlf."modelType" = ${modelType}::"ModelType"
+        `
+      : Promise.resolve([] as StandardRule[]),
+  ]);
+
+  const rule = standardRows[0];
+  return {
+    roots,
+    standardVersionId: rule?.versionId ?? null,
+    standardFee: rule?.licensingFee ?? null,
+    standardVersionName: rule?.versionName ?? null,
+  };
 };
 
 // Field-level early-access requirements (status-independent): a timeframe needs
