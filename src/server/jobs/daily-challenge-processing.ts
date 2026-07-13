@@ -72,7 +72,11 @@ import {
 import { upsertComment } from '~/server/services/commentsv2.service';
 import { createNotification } from '~/server/services/notification.service';
 import { toggleReaction } from '~/server/services/reaction.service';
-import { refundUserChallengeFunds } from '~/server/games/daily-challenge/challenge-funding';
+import {
+  refundUserChallengeFunds,
+  buildWinnerPayoutTransactions,
+  getChallengeBuzzType,
+} from '~/server/games/daily-challenge/challenge-funding';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { getRandom, shuffle } from '~/utils/array-helpers';
 import { withRetries } from '~/utils/errorHandling';
@@ -1157,6 +1161,8 @@ export async function pickWinnersForChallenge(
   log('Challenge claimed for completion');
 
   try {
+    const winnerBuzzType = await getChallengeBuzzType(currentChallenge.challengeId);
+
     // Check if winners already exist from a previous (failed) run.
     // If so, skip LLM generation entirely to avoid non-deterministic re-picks.
     const existingWinners = await getExistingWinnersForRetry(currentChallenge.challengeId);
@@ -1329,15 +1335,12 @@ export async function pickWinnersForChallenge(
     // would get place-1 buzz), and on the retry path the array order isn't tied to place at all.
     await withRetries(() =>
       createBuzzTransactionMany(
-        winningEntries.map((entry) => ({
-          type: TransactionType.Reward,
-          toAccountId: entry.userId,
-          fromAccountId: 0, // central bank
-          amount: entry.prize,
-          description: `Challenge Winner Prize #${entry.position}: ${currentChallenge.title}`,
-          externalTransactionId: `challenge-winner-prize-${currentChallenge.challengeId}-${entry.userId}-place-${entry.position}`,
-          toAccountType: 'yellow',
-        }))
+        buildWinnerPayoutTransactions({
+          challengeId: currentChallenge.challengeId,
+          title: currentChallenge.title,
+          buzzType: winnerBuzzType,
+          winners: winningEntries,
+        })
       )
     );
     log('Prizes sent');
