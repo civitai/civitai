@@ -354,7 +354,9 @@ export const appsSharedRouter = router({
         });
       }
 
-      // BLOCKING content safety → HTML-escaped, store-ready text.
+      // BLOCKING content safety → RAW, store-ready text (Fix 2: escape-at-rest
+      // removed; XSS is contained at the text-render + opaque-origin-sandbox layers,
+      // never at rest — see shared-content-safety.ts C2 note).
       let safe: { title: string; body?: string };
       try {
         safe = await assertSharedTextSafe({
@@ -374,15 +376,36 @@ export const appsSharedRouter = router({
               reason: `auto:${e.category}`,
             }).catch(() => {});
           }
-          // H-1 (audit): the `shared_kv_reports` table has no reader yet, so the
-          // LEGAL-escalation signal (minor/POI) would otherwise be silent. Emit a
-          // structured, alertable event (NEVER the content) so a CSAM/minor attempt
-          // is observable even before the mod-queue wiring lands (a pre-GA gate).
+          // FIX 1 (pre-GA gate 1 — make abuse OBSERVABLE): the `shared_kv_reports`
+          // table has no reader yet, so a moderation-blocked append would otherwise
+          // be silent. Emit a structured, alertable event (METADATA ONLY — NEVER the
+          // content text) so any auto-blocked write is observable before the
+          // mod-queue wiring lands. `link`/`size` stay unalerted (user error, not
+          // reportable abuse). Fire-and-forget (`.catch`) — an alert emit must NEVER
+          // block or fail the op.
+          //
+          // TWO DISTINCT signals (kept separate so the legal-urgency channel is not
+          // diluted): minor/POI are a HARD legal escalation (CSAM/minor) → the
+          // `…-legal-block` / `type:error` event; a general `audit` block (harassment
+          // / spam that trips external moderation) → the lower-urgency
+          // `…-content-block` / `type:warning` event. Same metadata-only shape.
           if (e.category === 'minor' || e.category === 'poi') {
             logToAxiom(
               {
                 name: 'app-blocks-shared-storage-legal-block',
                 type: 'error',
+                category: e.category,
+                userId: uid,
+                slug,
+                appBlockId,
+              },
+              'block-audit'
+            ).catch(() => {});
+          } else if (e.category === 'audit') {
+            logToAxiom(
+              {
+                name: 'app-blocks-shared-storage-content-block',
+                type: 'warning',
                 category: e.category,
                 userId: uid,
                 slug,
@@ -600,18 +623,53 @@ export const appsSharedRouter = router({
       blockTokenInput.extend({ key: sharedKeyInput, reason: z.string().max(500).optional() })
     )
     .mutation(async ({ input }) => {
-      const { userId, schema } = await resolveSharedContext(input.blockToken, 'report');
+      const { userId, slug, schema, appBlockId } = await resolveSharedContext(
+        input.blockToken,
+        'report'
+      );
       const uid = userId as number;
       const pool = requireAppsDb();
       const exists = (
         await pool.query(`SELECT 1 FROM ${schema}.shared_kv WHERE key = $1`, [input.key])
       ).rowCount;
       if (!exists) throw new TRPCError({ code: 'NOT_FOUND', message: 'request not found' });
+      const reason = input.reason ?? 'user-report';
       await insertSharedReport(schema, {
         key: input.key,
         reporterUserId: uid,
-        reason: input.reason ?? 'user-report',
+        reason,
       });
+
+      // FIX 1 (pre-GA gate 1 — make abuse OBSERVABLE): a user report previously
+      // filed a `shared_kv_reports` row that NOTHING reads, so ordinary abuse
+      // (harassment / brigading / spam that dodged the auto-audit) was invisible.
+      // Emit a structured, alertable event mirroring the auto-block emit above —
+      // METADATA ONLY (userId / slug / appBlockId / reason / reported key), NEVER the
+      // reported content itself. Fire-and-forget (`.catch`) so a logging outage can
+      // never fail a legitimate report.
+      logToAxiom(
+        {
+          name: 'app-blocks-shared-storage-report',
+          type: 'warning',
+          userId: uid,
+          slug,
+          appBlockId,
+          reason,
+          key: input.key,
+        },
+        'block-audit'
+      ).catch(() => {});
+      // Also fire the mod-Discord notify if the webhook is wired (same pattern as
+      // the W1 publish-request flow). Self-contained + fire-and-forget: never awaited
+      // in a way that can block/fail the report, and swallows its own errors.
+      void notifyModsOfSharedReport({
+        slug,
+        appBlockId,
+        reportedKey: input.key,
+        reporterUserId: uid,
+        reason,
+      });
+
       return { ok: true as const };
     }),
 });
@@ -698,6 +756,81 @@ async function insertSharedReport(
      VALUES ($1, $2, $3, $4)`,
     [`skr_${newUlid()}`, args.key, args.reporterUserId, args.reason]
   );
+}
+
+/**
+ * Neutralize Discord markdown in reporter-supplied free text before it is embedded
+ * in a mod-alerts message. A hostile reporter must NOT be able to plant a masked
+ * link `[label](https://phish.example)` (phishing) or other markdown/formatting in
+ * the mod channel. We strip the structural markdown characters — masked-link
+ * brackets/parens `[ ] ( )`, backticks, and emphasis/strike/spoiler/quote markers
+ * `* _ ~ | >` — then collapse whitespace. The caller ALSO wraps the result in an
+ * inline code span (belt-and-suspenders: no markdown, no URL auto-link, and no
+ * mention ping renders inside a code span). Returns a bounded, single-line string.
+ * NOTE: the Axiom copy of `reason` is deliberately left RAW — it is a structured
+ * log field, never rendered, so escaping there would only corrupt the record.
+ */
+export function sanitizeDiscordText(input: string): string {
+  return input
+    .replace(/[`[\]()*_~|>]/g, ' ') // drop markdown / masked-link structural chars
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 500);
+}
+
+/**
+ * FIX 1 — fire-and-forget mod-Discord notify on a USER report of a shared row.
+ * Mirrors the W1 publish-request `notifyModsOfNewRequest` pattern: posts to
+ * `DISCORD_WEBHOOK_MOD_ALERTS` if it is set, otherwise a no-op. NEVER throws (a
+ * Discord outage must not affect the report), and the caller does not await it —
+ * so the report op returns immediately. Carries METADATA ONLY: slug / app-block /
+ * reported key / reporter id + the reporter's stated reason (bounded to 500 chars
+ * by the input schema). It does NOT — and cannot — include the reported content
+ * (the op only holds the row key).
+ */
+async function notifyModsOfSharedReport(opts: {
+  slug: string;
+  appBlockId: string;
+  reportedKey: string;
+  reporterUserId: number;
+  reason: string;
+}): Promise<void> {
+  try {
+    const { env } = await import('~/env/server');
+    if (!env.DISCORD_WEBHOOK_MOD_ALERTS) return;
+    const baseUrl = (process.env.NEXTAUTH_URL ?? '').replace(/\/$/, '');
+    const appUrl = baseUrl ? `${baseUrl}/${opts.slug}` : opts.slug;
+    const payload = {
+      embeds: [
+        {
+          title: `Shared-storage report: ${opts.slug}`,
+          url: appUrl,
+          color: 0xe03131,
+          fields: [
+            { name: 'App block', value: `\`${opts.appBlockId}\``, inline: true },
+            { name: 'Reported by', value: `user #${opts.reporterUserId}`, inline: true },
+            { name: 'Row key', value: `\`${opts.reportedKey}\`` },
+            // Reporter free text: markdown-neutralized + code-span-wrapped so a
+            // hostile reason can't plant a masked/phishing link in the mod channel
+            // (the other fields are already backtick-wrapped).
+            { name: 'Reason', value: `\`${sanitizeDiscordText(opts.reason) || 'user-report'}\`` },
+          ],
+          footer: { text: 'App Blocks shared storage' },
+          timestamp: new Date().toISOString(),
+        },
+      ],
+    };
+    await fetch(env.DISCORD_WEBHOOK_MOD_ALERTS, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(5_000),
+    }).catch(() => {
+      /* fire and forget */
+    });
+  } catch {
+    /* never let Discord break a report */
+  }
 }
 
 function isForeignKeyViolation(err: unknown): boolean {
