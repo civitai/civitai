@@ -36,9 +36,18 @@ if (cap('git status --porcelain')) {
   process.exit(1);
 }
 const branch = cap('git rev-parse --abbrev-ref HEAD');
-if (branch !== 'main') {
-  console.error(`releases must be cut from 'main' (you are on '${branch}'). Checkout main first.`);
+// Default: releases are cut from 'main'. Set RELEASE_ALLOW_BRANCH=1 to cut from
+// the current branch instead (e.g. an app still living on a feature branch that
+// hasn't merged to main yet).
+if (branch !== 'main' && process.env.RELEASE_ALLOW_BRANCH !== '1') {
+  console.error(
+    `releases must be cut from 'main' (you are on '${branch}'). ` +
+      `Checkout main first, or set RELEASE_ALLOW_BRANCH=1 to release from this branch.`
+  );
   process.exit(1);
+}
+if (branch !== 'main') {
+  console.warn(`⚠  releasing from '${branch}' (RELEASE_ALLOW_BRANCH=1), not 'main'.`);
 }
 
 sh('git pull --rebase');
