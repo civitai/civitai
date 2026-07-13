@@ -37,7 +37,12 @@ import { useRouter } from 'next/router';
 import type { MouseEvent } from 'react';
 import { useMemo, useRef, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { OffsiteReportsQueue, OffsiteReviewQueue } from '~/components/Apps/OffsiteReviewQueue';
+import { AppListingsModerationTable } from '~/components/Apps/AppListingsModerationTable';
+// `OffsiteReviewQueue` (the flat pending-only off-site list) is SUPERSEDED by the
+// unified `AppListingsModerationTable` below (which covers pending too, via the
+// per-row Review action). It stays exported for a one-line rollback: swap the
+// `<AppListingsModerationTable />` in the Pending panel back to `<OffsiteReviewQueue />`.
+import { OffsiteReportsQueue } from '~/components/Apps/OffsiteReviewQueue';
 import { pickReviewIframeSrc } from '~/components/Apps/reviewIframeSrc';
 import { Meta } from '~/components/Meta/Meta';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
@@ -241,13 +246,18 @@ export default function ReviewQueuePage() {
           </Tabs.List>
 
           <Tabs.Panel value="pending" pt="md">
-            {/* On-site (App Block) queue — deep code review (byte-unchanged). */}
+            {/* On-site (App Block) queue — deep code review (byte-unchanged). The
+                onsite iframe/preview review lives here and is KEPT as-is. */}
             <PendingTab
               onSelect={(r) => setSelected({ request: r, mode: 'pending' })}
             />
-            {/* Off-site (external-link) queue — lighter content-only review (W13
-                P3a). Kind-aware: its own table + modal + approve/reject procs. */}
-            <OffsiteReviewQueue />
+            {/* Unified moderator LISTINGS MANAGEMENT table (W13 post-approval mgmt,
+                P2) — all statuses across both kinds, with per-row lifecycle actions.
+                REPLACES the flat off-site pending list (`OffsiteReviewQueue`): a
+                pending off-site row's Review action opens that same review modal, so
+                the table now covers pending too while adding post-approval
+                management (reset/hide/relist/claim/purge) that had no home. */}
+            <AppListingsModerationTable />
           </Tabs.Panel>
 
           <Tabs.Panel value="approved" pt="md">

@@ -12,6 +12,7 @@ import {
 } from '~/server/schema/blocks/app-listing.schema';
 import {
   getAppListingDetailSchema,
+  listAllListingsForModerationSchema,
   listAppListingsSchema,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import {
@@ -950,6 +951,25 @@ export const appListingsRouter = router({
       } catch (err) {
         throw mapOffsiteError(err);
       }
+    }),
+
+  /**
+   * MOD: the ALL-STATUS listings management table (W13 post-approval mgmt, P2) —
+   * every lifecycle status (draft|pending|approved|rejected|removed), keyset-
+   * paginated, optional status/kind/search filters. Read-only `moderatorProcedure`
+   * (mirrors the sibling mod-read queues `listPendingRequests`/`listListingReports`
+   * — mod-only server-side; the client gates rendering on the app-blocks flag +
+   * treats a query error as "render nothing"). The per-row lifecycle ACTIONS reuse
+   * the merged Phase 1 procs (resetListingToPending / delist / relist / claim /
+   * purge) + the off-site approve/reject review flow.
+   */
+  listAllListingsForModeration: moderatorProcedure
+    .input(listAllListingsForModerationSchema)
+    .query(async ({ input }) => {
+      const { listAllListingsForModeration } = await import(
+        '~/server/services/blocks/app-listing.service'
+      );
+      return listAllListingsForModeration(input);
     }),
 
   // -------------------------------------------------------------------------

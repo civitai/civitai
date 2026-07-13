@@ -68,7 +68,7 @@ import { trpc } from '~/utils/trpc';
 
 type OffsiteUser = { id: number; username: string | null; image: string | null };
 
-type OffsitePendingRow = {
+export type OffsitePendingRow = {
   id: string;
   appListingId: string | null;
   slug: string;
@@ -212,12 +212,16 @@ export function OffsiteReviewQueue() {
   );
 }
 
-function OffsiteReviewModal({
+export function OffsiteReviewModal({
   request,
   onClose,
+  onActioned,
 }: {
   request: OffsitePendingRow | null;
   onClose: () => void;
+  /** Fired after a successful approve/reject — lets a host (e.g. the mod
+   *  management table) invalidate its own query in addition to the review queues. */
+  onActioned?: () => void | Promise<void>;
 }) {
   const utils = trpc.useUtils();
   const features = useFeatureFlags();
@@ -244,6 +248,7 @@ function OffsiteReviewModal({
       showSuccessNotification({ message: `Approved ${request?.slug}.` });
       await utils.appListings.listPendingRequests.invalidate();
       await utils.appListings.listApprovedRequests.invalidate();
+      await onActioned?.();
       close();
     },
     onError: (e: { message: string }) => {
@@ -255,6 +260,7 @@ function OffsiteReviewModal({
       showSuccessNotification({ message: `Rejected ${request?.slug}.` });
       await utils.appListings.listPendingRequests.invalidate();
       await utils.appListings.listRejectedRequests.invalidate();
+      await onActioned?.();
       close();
     },
     onError: (e: { message: string }) => {
