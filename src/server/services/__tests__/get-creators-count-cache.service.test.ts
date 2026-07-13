@@ -1,23 +1,30 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Tests for the getCreators count cache (perf fix for the slow /api/v1/creators).
+// Tests for the getCreators count path (perf fixes for the slow /api/v1/creators).
 //
-// EXPLAIN ANALYZE proved the `dbRead.user.count({ where })` in the `count:true`
-// branch dominates the endpoint (~1174ms — it scans the whole ~892k-row Model
-// table). The total-creators count is a slowly-moving aggregate, so the count is
-// wrapped in `fetchThroughCache` (fail-open) keyed only by the parts of `where`
-// that vary: `query` (username contains) and `excludeIds`.
+// Two perf fixes coexist here, split by whether `query` (username search) is set:
 //
-// The count is cached ONLY for the hot default listing (no `query`). `query` is
-// user-controlled (public endpoint, no schema max) and interpolated raw into the
-// cache key, so caching per-query would mint unbounded distinct Redis keys — a
-// keyspace-growth vector. So a username-search (`query` truthy) runs the count
-// inline and never touches the cache. The no-query key is `excludeIds`-only.
+//  1. NO-QUERY BROWSE path — cached exact count. EXPLAIN ANALYZE proved the
+//     `dbRead.user.count({ where })` in the `count:true` branch dominates the
+//     endpoint (~1174ms — it scans the whole ~900k-row Model table). The
+//     total-creators count is a slowly-moving aggregate, so it's wrapped in
+//     `fetchThroughCache` (fail-open) keyed only by `excludeIds` (the only
+//     varying part of `where` on the browse path).
+//
+//  2. QUERY (username-search) path — the exact COUNT is DROPPED entirely. The
+//     search count is pathological (`username LIKE '%q%'` ∩ `models: { some }` →
+//     full Model-table scan → ~90k nested-loop probes into User, ~800ms–1.4s on
+//     EVERY keystroke request) and uncacheable (user-controlled `query`, no
+//     schema max → unbounded keyspace). Instead we over-fetch `take + 1` rows and
+//     return a `hasMore` boolean; the controller maps that to lower-bound
+//     pagination metadata. NO `dbRead.user.count` runs on the query path.
 //
 // These tests exercise:
 //   - no-query MISS  → runs dbRead.user.count once and returns the value
 //   - no-query HIT   → same excludeIds does NOT call dbRead.user.count again
-//   - WITH query     → count is NOT cached; dbRead.user.count runs every call
+//   - WITH query     → count is NEVER run; take+1 hasMore probe drives pagination
+//   - take+1 boundary → exactly `take` rows ⇒ hasMore=false; `take+1` ⇒
+//     hasMore=true, items trimmed back to `take`
 //   - key VARIES by excludeIds (different inputs → separate counts)
 //   - count:false/unset → never touches the count cache
 //   - cache-throws fallback → a fetchThroughCache throw still returns a correct
@@ -123,21 +130,53 @@ describe('getCreators — count cache', () => {
     expect(mockDb.user.count).toHaveBeenCalledTimes(1);
   });
 
-  it('WITH query: count is NOT cached — dbRead.user.count runs on every call', async () => {
-    // `query` is user-controlled with no schema max → caching per-query would mint
-    // unbounded keys. So the username-search count runs inline and never consults
-    // the cache: two calls with the SAME query both invoke dbRead.user.count, and
-    // nothing is written to the cache store.
-    mockDb.user.count.mockResolvedValueOnce(10).mockResolvedValueOnce(11);
+  it('WITH query: the exact COUNT is dropped — dbRead.user.count is NEVER called', async () => {
+    // The username-search count is pathological + uncacheable, so the query path
+    // drops it entirely and derives pagination from a take+1 over-fetch. No count
+    // runs, and the cache machinery is never consulted.
+    mockDb.user.findMany.mockResolvedValueOnce([{ username: 'a' }, { username: 'b' }]);
 
-    const a = await getCreators({ select, count: true, excludeIds: [-1], query: 'foo' });
-    const b = await getCreators({ select, count: true, excludeIds: [-1], query: 'foo' });
+    const result = await getCreators({ select, count: true, excludeIds: [-1], query: 'foo', take: 20 });
 
-    expect(a.count).toBe(10);
-    expect(b.count).toBe(11);
-    expect(mockDb.user.count).toHaveBeenCalledTimes(2);
-    // The cache machinery was never consulted for a query'd request.
+    expect(mockDb.user.count).not.toHaveBeenCalled();
     expect(cacheStore.size).toBe(0);
+    // Returns a hasMore boolean instead of a count.
+    expect(result).not.toHaveProperty('count');
+    expect(result).toHaveProperty('hasMore');
+  });
+
+  it('WITH query, take+1 boundary: fewer than take+1 rows ⇒ hasMore=false, items untrimmed', async () => {
+    // take=3 and exactly 3 rows returned (no +1 sentinel) → this is the last page.
+    mockDb.user.findMany.mockResolvedValueOnce([
+      { username: 'a' },
+      { username: 'b' },
+      { username: 'c' },
+    ]);
+
+    const result = await getCreators({ select, count: true, excludeIds: [-1], query: 'foo', take: 3 });
+
+    // over-fetched take+1 = 4 rows
+    expect(mockDb.user.findMany).toHaveBeenCalledWith(expect.objectContaining({ take: 4 }));
+    expect((result as { hasMore: boolean }).hasMore).toBe(false);
+    expect(result.items).toHaveLength(3);
+  });
+
+  it('WITH query, take+1 boundary: take+1 rows ⇒ hasMore=true, items trimmed back to take', async () => {
+    // take=3 and 4 rows returned (the +1 sentinel) → there IS another page; the
+    // sentinel row is trimmed off the returned items.
+    mockDb.user.findMany.mockResolvedValueOnce([
+      { username: 'a' },
+      { username: 'b' },
+      { username: 'c' },
+      { username: 'd' },
+    ]);
+
+    const result = await getCreators({ select, count: true, excludeIds: [-1], query: 'foo', take: 3 });
+
+    expect(mockDb.user.findMany).toHaveBeenCalledWith(expect.objectContaining({ take: 4 }));
+    expect((result as { hasMore: boolean }).hasMore).toBe(true);
+    expect(result.items).toHaveLength(3);
+    expect(result.items).toEqual([{ username: 'a' }, { username: 'b' }, { username: 'c' }]);
   });
 
   it('cache key VARIES by excludeIds → separate counts', async () => {

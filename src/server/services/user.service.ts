@@ -720,8 +720,12 @@ export const getCreators = async <TSelect extends Prisma.UserSelect>({
     id: excludeIds.length ? { notIn: excludeIds } : undefined,
     deletedAt: null,
   };
+  // On the username-search (query) path we replace the exact COUNT with a take+1
+  // "hasMore" probe (see the comment in the `count` block below): over-fetch one
+  // row so we can tell whether another page exists without running an aggregate.
+  const useHasMore = count && !!query && take != null;
   const items = await dbRead.user.findMany({
-    take,
+    take: useHasMore ? (take as number) + 1 : take,
     skip,
     select,
     where,
@@ -729,25 +733,37 @@ export const getCreators = async <TSelect extends Prisma.UserSelect>({
   });
 
   if (count) {
-    // The count scans the whole ~892k-row Model table (index-only scan on
-    // Model_userId → HashAggregate distinct userIds → nested-loop to User,
-    // ~1174ms in EXPLAIN ANALYZE) on EVERY request and dominates this endpoint's
-    // latency. It's a slowly-moving aggregate, so cache it: a few-minutes-stale
-    // totalItems/totalPages is harmless. Cache unconditionally (no IS_DATAPACKET
-    // gate) — the 892k-row scan is expensive on every cluster. TTL = 10min
-    // (CacheTTL.md): cheap-to-refresh, bounds staleness to a sub-page drift on an
-    // ~86.5k-creator total.
+    // ── Username-search path (query present): DROP the exact COUNT ────────────
+    // The search count is pathological. `where.username = { contains: query }`
+    // compiles to `username LIKE '%query%'` (a leading wildcard no btree can
+    // serve) intersected with `models: { some: {} }`. Both sides are
+    // non-selective (~90k model-owners, tens-of-thousands of `%q%` matches) with
+    // a tiny intersection, so the planner scans the whole ~900k-row Model table →
+    // HashAggregate to ~90k distinct owners → nested-loop into User applying the
+    // LIKE as a filter: ~800ms–1.4s on EVERY keystroke-driven request, dominating
+    // this endpoint's DB latency (~53,000s of replica CPU / 37d in prod). It is
+    // also uncacheable: `query` is user-controlled on a public endpoint with no
+    // `.max()` in its zod schema, so per-query cache keys are an unbounded
+    // keyspace-growth vector.
     //
-    // Cache ONLY the hot default-listing count (no `query`). `query` is
-    // user-controlled on a public endpoint with no `.max()` in its zod schema and
-    // is interpolated raw into the cache key, so caching per-query would let
-    // arbitrary `?query=<random>` values mint UNBOUNDED distinct keys (each held
-    // EX=2×600s) on the shared cache cluster — a keyspace-growth vector. Per-query
-    // counts are also low-hit-rate. So run the username-search count inline.
+    // So on the query path we return a `hasMore` boolean derived from the take+1
+    // over-fetch instead of a count. The controller maps this to pagination
+    // metadata (totalItems/totalPages become monotonic lower-bounds that are
+    // exact on the final page; `hasMore` is the authoritative next-page signal
+    // and the REST nextPage/prevPage links keep working). The no-query BROWSE
+    // path below keeps its cached exact count unchanged.
     if (query) {
-      const queryCount = await dbRead.user.count({ where });
-      return { items, count: queryCount };
+      const hasMore = take != null && items.length > (take as number);
+      return { items: hasMore ? items.slice(0, take as number) : items, hasMore };
     }
+    // ── No-query browse path (unchanged): cached exact count ──────────────────
+    // The browse count scans the whole ~900k-row Model table (index-only scan on
+    // Model_userId → HashAggregate distinct userIds → nested-loop to User,
+    // ~1174ms in EXPLAIN ANALYZE). It's a slowly-moving aggregate, so cache it: a
+    // few-minutes-stale totalItems/totalPages is harmless. Cache unconditionally
+    // (no IS_DATAPACKET gate) — the scan is expensive on every cluster. TTL =
+    // 10min (CacheTTL.md): cheap-to-refresh, bounds staleness to a sub-page drift
+    // on an ~86.5k-creator total.
     // No-query path: key by `excludeIds` only (the only remaining varying part of
     // `where`; models:{some:{}} and deletedAt:null are constant).
     const sortedExcludeIds = [...excludeIds].sort((a, b) => a - b).join(',');
