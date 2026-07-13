@@ -13,7 +13,7 @@ Legend: `[x]` done · `[ ]` not started · **🚧** blocked on a dependency · *
 - [x] Monetization module — `setLicensingFee` / `bulkSetLicensingFee` / apply-default-by-type (kysely); early-access write client (calls the main-app REST endpoint, forwards session cookie)
 - [x] Axiom logging (`handleError` hook)
 - [ ] Analytics reads module (ClickHouse) — **🚧 A1** owner-keyed rollup
-- [ ] Charting library decision (**C1**) — needed for analytics / earnings / dashboard trends
+- [x] Charting primitive (**C1**) — **Chart.js** in-house `Chart` wrapper in `@civitai/ui` (SSR-safe; `chartColor()` bridges the theme palette). Chose it over LayerChart (that ships un-preprocessed TS → build fails; Chart.js also matches the main app). Placeholder chart live on `/earnings/analytics`.
 
 ---
 

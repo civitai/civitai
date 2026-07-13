@@ -51,7 +51,7 @@ Legend: ✅ decided · 🔧 needs a build/schema change · 🟢 eng/design call 
 
 | # | Item | Recommendation | State |
 |---|---|---|---|
-| C1 | Svelte charting library | Lean **LayerChart** (LayerCake-based, shadcn-svelte's charting companion), added **into `@civitai/ui`** as a shared `chart` primitive. Now higher-stakes given B4's expanded analytics. **Decide before `/analytics`.** | 🟢 |
+| C1 | Svelte charting library | **Chart.js** (decided 2026-07-13) — an in-house `Chart` wrapper in `@civitai/ui` (`components/ui/chart`), SSR-safe, with `chartColor()`/`chartColors()` bridging the theme's `--chart-*` palette to the canvas. **Chose Chart.js over LayerChart** because LayerChart 2.0.1 ships un-preprocessed TS in its `node_modules` `.svelte` files and `vite-plugin-svelte` doesn't preprocess deps → the production build fails; Chart.js is also the lib the **main app already standardizes on** (consistency) and builds cleanly. Trade-off: canvas (not SVG/CSS-var-native) — colours are bridged in JS. | ✅🔧 |
 | C2 | `/licensing`: page vs mode of `/models` | **`?mode=bulk` on `/models`** — same rows/field/write, one shared row component. B7 makes bulk **v1**, so this surface ships in v1 either way. | 🟢 |
 | C3 | Date-range control | Ship **presets (7/30/90d)**; `@civitai/ui` has `calendar`/`date-picker`/`range-calendar` if we want custom ranges. B4 adds a **weekly-granularity** toggle. | 🟢 |
 | C4 | Pagination — offset vs cursor | **Offset** for v1 (URL-addressable via the `pagination` primitive); revisit if version counts make it slow. | 🟢 |
