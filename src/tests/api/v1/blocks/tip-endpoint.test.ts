@@ -61,10 +61,12 @@ vi.mock('~/server/middleware/block-scope.middleware', () => ({
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: any) => h }));
 
-const { mockTip, mockHydrate, mockRate } = vi.hoisted(() => ({
+const { mockTip, mockHydrate, mockRate, mockReserve, mockRefund } = vi.hoisted(() => ({
   mockTip: vi.fn(),
   mockHydrate: vi.fn(),
   mockRate: vi.fn(),
+  mockReserve: vi.fn(),
+  mockRefund: vi.fn(),
 }));
 
 vi.mock('~/server/controllers/buzz.controller', () => ({
@@ -75,7 +77,13 @@ vi.mock('~/server/clickhouse/client', () => ({ Tracker: class {} }));
 vi.mock('~/server/services/blocks/block-collections.service', () => ({
   hydrateBlockSubject: mockHydrate,
 }));
-vi.mock('~/server/utils/block-tip-rate-limit', () => ({ checkBlockTipRateLimit: mockRate }));
+vi.mock('~/server/utils/block-tip-rate-limit', () => ({
+  checkBlockTipRateLimit: mockRate,
+  reserveBlockTipSpend: mockReserve,
+  refundBlockTipSpend: mockRefund,
+  BLOCK_TIP_MAX_PER_TIP: 5_000,
+  BLOCK_TIP_CAP_PER_DAY: 25_000,
+}));
 
 import handler from '~/pages/api/v1/blocks/tip';
 
@@ -103,6 +111,9 @@ beforeEach(() => {
   mockRate.mockResolvedValue({ allowed: true });
   mockHydrate.mockResolvedValue({ id: 42, username: 'mod', bannedAt: null, muted: false });
   mockTip.mockResolvedValue([{ transactionId: 't1' }]);
+  // Default: reservation well under the daily cap.
+  mockReserve.mockResolvedValue({ total: 25, key: 'system:blocks:tip-cap:42:2026-07-13' });
+  mockRefund.mockResolvedValue(undefined);
 });
 
 describe('POST /api/v1/blocks/tip', () => {
@@ -132,13 +143,43 @@ describe('POST /api/v1/blocks/tip', () => {
     expect(res._status()).toBe(400);
   });
 
-  it('400 for a non-positive / over-max amount', async () => {
+  it('400 for a non-positive amount', async () => {
     const { req, res } = createMocks({ body: { toUserId: 5, amount: 0 } });
     await handler(req as never, res as never);
     expect(res._status()).toBe(400);
-    const over = createMocks({ body: { toUserId: 5, amount: 1_000_000 } });
-    await handler(over.req as never, over.res as never);
-    expect(over.res._status()).toBe(400);
+  });
+
+  it('400 for an amount over the per-tip cap (BLOCK_TIP_MAX_PER_TIP=5000) — no reservation, no tip', async () => {
+    const { req, res } = createMocks({ body: { toUserId: 5, amount: 5_001 } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(400);
+    // Rejected by the schema bound before any reserve / money move.
+    expect(mockReserve).not.toHaveBeenCalled();
+    expect(mockTip).not.toHaveBeenCalled();
+  });
+
+  it('accepts an amount exactly at the per-tip cap (5000)', async () => {
+    const { req, res } = createMocks({ body: { toUserId: 5, amount: 5_000 } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(200);
+  });
+
+  it('400 when the per-user DAILY tip cap is exceeded — reservation refunded, tip NOT sent', async () => {
+    mockReserve.mockResolvedValueOnce({ total: 25_001, key: 'k' }); // just over BLOCK_TIP_CAP_PER_DAY
+    const { req, res } = createMocks({ body: { toUserId: 5, amount: 100 } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(400);
+    expect((res._json() as any).error).toMatch(/[Dd]aily tip limit/);
+    expect(mockRefund).toHaveBeenCalledWith('k', 100); // over-cap reservation refunded
+    expect(mockTip).not.toHaveBeenCalled();
+  });
+
+  it('503 (fail-closed) when the daily-cap reservation redis call throws', async () => {
+    mockReserve.mockRejectedValueOnce(new Error('redis down'));
+    const { req, res } = createMocks({ body: { toUserId: 5, amount: 100 } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(503);
+    expect(mockTip).not.toHaveBeenCalled();
   });
 
   it('400 when entityType is supplied without entityId', async () => {
@@ -206,6 +247,9 @@ describe('POST /api/v1/blocks/tip', () => {
     expect(res._status()).toBe(400);
     expect((res._json() as any).ok).toBe(false);
     expect((res._json() as any).error).toMatch(/funds/);
+    // A failed tip must REFUND the daily-cap reservation (a failed attempt can't
+    // burn the user's cap).
+    expect(mockRefund).toHaveBeenCalledWith('system:blocks:tip-cap:42:2026-07-13', 999);
   });
 
   it('maps an unexpected non-TRPC error → 500', async () => {

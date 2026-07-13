@@ -66,8 +66,20 @@ const MIN_ACCOUNT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 // materializes. `free`/absent tier fails when on.
 const REQUIRE_PAID_TIER = false;
 
-type SharedOp = 'list' | 'getCount' | 'append' | 'vote' | 'unvote' | 'withdraw' | 'report';
-const READ_OPS: ReadonlySet<SharedOp> = new Set<SharedOp>(['list', 'getCount']);
+type SharedOp =
+  | 'list'
+  | 'getCount'
+  | 'append'
+  | 'vote'
+  | 'unvote'
+  | 'withdraw'
+  | 'report'
+  // App Blocks play-counts (block REST endpoints /api/v1/blocks/shared-storage/*):
+  //   - 'increment' is a WRITE (min-trust gated like append/vote — anti-inflation)
+  //   - 'getTop' is a READ (anon-allowed like list/getCount)
+  | 'increment'
+  | 'getTop';
+const READ_OPS: ReadonlySet<SharedOp> = new Set<SharedOp>(['list', 'getCount', 'getTop']);
 
 const SHARED_READ_SCOPE = 'apps:storage:shared:read';
 const SHARED_WRITE_SCOPE = 'apps:storage:shared:write';
@@ -138,7 +150,7 @@ interface SharedContext {
  *   4. for WRITE ops: authenticated subject + the min-trust gate
  * Anon may READ list/counts; anon NEVER writes/votes.
  */
-async function resolveSharedContext(blockToken: string, op: SharedOp): Promise<SharedContext> {
+export async function resolveSharedContext(blockToken: string, op: SharedOp): Promise<SharedContext> {
   const claims = await verifyBlockToken(blockToken);
   if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
 
@@ -698,6 +710,120 @@ export const appsSharedRouter = router({
       return { ok: true as const };
     }),
 });
+
+// ── App Blocks play-counts (block REST endpoints) ─────────────────────────────
+// A monotonic per-key counter surface over the SAME `counters` table the
+// vote-tally uses, for app-defined counters (e.g. `playcount:<collectionId>`).
+// Reuses resolveSharedContext so ALL the shared-storage security holds verbatim:
+// per-app schema isolation (sanitizeAppSlug), approved-block + revocation checks,
+// the per-op scope assertion, the fail-closed Flipt kill-switch, and — for the
+// WRITE (increment) — the min-trust gate + write-scope. This is the anti-inflation
+// posture the coordinator required: a sub-trust caller is DENIED (the app treats
+// increment as best-effort/fire-and-forget), so a fresh/sybil account can't pump
+// a count.
+
+// Per-app counter keys are bounded to the shared key shape (≤64 chars) — same
+// bound as the vote `key` input.
+const COUNTER_KEY_MAX = 64;
+
+/**
+ * Increment (by 1) the counter for `key` in THIS app's shared schema. The
+ * `counters.key` column FK-references `shared_kv.key`, so we first upsert a tiny
+ * ANCHOR `shared_kv` row for the key (value `{}`) inside the same txn (under the
+ * quota GUC), then upsert the counter. Rate-limited on the SAME per-(user, app)
+ * vote bucket as the shared vote path. Returns the new count.
+ *
+ * NOTE (best-effort/anti-abuse): the per-user shared_kv row cap that `append`
+ * enforces is intentionally NOT applied here — counter keys are app-global
+ * (one anchor row per key across ALL users), created at most once per key. The
+ * write-scope + min-trust gate + rate limit + the app byte/row quota trigger are
+ * the bounds. Counter anchor rows carry a distinct app-chosen key prefix (e.g.
+ * `playcount:`), so an app that also runs a request feed keeps them separable.
+ */
+export async function incrementSharedCounter(
+  blockToken: string,
+  key: string
+): Promise<{ key: string; count: number }> {
+  const { userId, schema, appBlockId } = await resolveSharedContext(blockToken, 'increment');
+  const uid = userId as number; // non-null (write path ran the trust gate)
+
+  const rl = await checkSharedVoteRateLimit(uid, appBlockId);
+  if (!rl.allowed) {
+    throw new TRPCError({
+      code: 'TOO_MANY_REQUESTS',
+      message: `Too many increments — retry in ${rl.retryAfterSeconds}s`,
+    });
+  }
+
+  const pool = requireAppsDb();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // GUC drives the shared_kv quota trigger (byte/row accounting on the anchor).
+    await client.query(`SET LOCAL app.current_app_block_id = ${pgQuoteLiteral(appBlockId)}`);
+    // Anchor row so the counters FK holds. INSERT-or-ignore: created once per key.
+    await client.query(
+      `INSERT INTO ${schema}.shared_kv (key, author_user_id, value)
+       VALUES ($1, $2, '{}'::jsonb)
+       ON CONFLICT (key) DO NOTHING`,
+      [key, uid]
+    );
+    const rows = (
+      await client.query<{ count: string }>(
+        `INSERT INTO ${schema}.counters AS c (key, count)
+         VALUES ($1, 1)
+         ON CONFLICT (key) DO UPDATE SET count = c.count + 1
+         RETURNING c.count::text AS count`,
+        [key]
+      )
+    ).rows;
+    await client.query('COMMIT');
+    return { key, count: Number(rows[0]?.count ?? '0') };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Top-N counters (by count DESC) whose key matches `prefix` in THIS app's shared
+ * schema. READ op (anon-allowed by the resolver; the block REST endpoint gates on
+ * the shared:read scope). Hidden anchor rows are excluded. `limit` is bounded by
+ * the caller. Returns `[{ key, count }]`.
+ */
+export async function getTopSharedCounters(
+  blockToken: string,
+  prefix: string,
+  limit: number
+): Promise<Array<{ key: string; count: number }>> {
+  const { schema } = await resolveSharedContext(blockToken, 'getTop');
+  const pool = requireAppsDb();
+  // Escape LIKE metacharacters in the app-supplied prefix (same escape as list).
+  const escapedPrefix = (prefix ?? '').replace(/([\\%_])/g, '\\$1');
+  const rows = (
+    await pool.query<{ key: string; count: string }>(
+      `SELECT c.key, c.count::text AS count
+         FROM ${schema}.counters c
+         JOIN ${schema}.shared_kv s ON s.key = c.key
+        WHERE s.hidden_at IS NULL
+          AND c.key LIKE $1 ESCAPE '\\'
+        ORDER BY c.count DESC, c.key ASC
+        LIMIT $2`,
+      [`${escapedPrefix}%`, limit]
+    )
+  ).rows;
+  return rows.map((r) => ({ key: r.key, count: Number(r.count) }));
+}
+
+/** Shared key-shape validator for the block counter endpoints (≤64 chars). */
+export function assertValidCounterKey(key: unknown): string {
+  if (typeof key !== 'string' || key.length < 1 || key.length > COUNTER_KEY_MAX) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'invalid counter key' });
+  }
+  return key;
+}
 
 /**
  * Cross-app moderator surface (design M4). SESSION-authed (moderatorProcedure) —

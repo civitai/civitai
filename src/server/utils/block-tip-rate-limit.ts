@@ -1,4 +1,4 @@
-import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 
 /**
  * Per-instance fixed-window rate limit for the App Blocks TIP endpoint
@@ -71,4 +71,77 @@ export async function checkBlockTipRateLimit(
     // limiter's redis is unreachable. Surface a retryable back-off.
     return { allowed: false, retryAfterSeconds: BLOCK_TIP_RATE_LIMIT_WINDOW_SECONDS };
   }
+}
+
+// ── Tip amount caps (what makes block tipping PAGE-SAFE) ──────────────────────
+// Tipping is money OUT to third parties and is NOT gated by the per-gen
+// `buzzBudget` cost-preflight, so a page tip needs its OWN explicit bounds — the
+// analogue of the gen-spend `buzzBudget` + `BLOCK_BUZZ_CAP_PER_DAY` pair. These
+// two caps are the load-bearing safety that let `social:tip:self` come off
+// PAGE_FORBIDDEN_SCOPES: a compromised/buggy block can neither drain an account
+// in one call (per-tip cap) nor bleed it over a day (per-user daily cap).
+
+// Per-single-tip ceiling. Bounds one call; a block can't move a large sum in one
+// shot. Conservative vs. the gen per-call budget cap (1000) — a tip is a direct
+// transfer to another user, but a legitimate creator tip can reasonably exceed
+// 1000, so this is set higher while still hard-bounding a single request.
+export const BLOCK_TIP_MAX_PER_TIP = 5_000;
+// Per-USER daily aggregate across ALL of a user's installed blocks (the key omits
+// appBlockId, mirroring BLOCK_BUZZ_CAP_PER_DAY, so a publisher can't multiply the
+// ceiling by spinning up N blocks). Set BELOW the gen daily cap (50_000) because
+// tips are irreversible transfers to third parties.
+export const BLOCK_TIP_CAP_PER_DAY = 25_000;
+// 25h TTL: covers a UTC-day window plus skew; the key is re-derived per day so a
+// stale counter never bleeds into the next window.
+const BLOCK_TIP_CAP_TTL_SECONDS = 25 * 60 * 60;
+
+function tipCapWindowKey(): string {
+  return new Date().toISOString().slice(0, 10); // UTC calendar day
+}
+
+function tipCapRedisKey(userId: number): `${typeof REDIS_SYS_KEYS.BLOCKS.TIP_CAP}:${string}` {
+  // PER-USER aggregate: appBlockId is intentionally NOT part of the key.
+  return `${REDIS_SYS_KEYS.BLOCKS.TIP_CAP}:${userId}:${tipCapWindowKey()}`;
+}
+
+/**
+ * Atomically reserves `amount` against this user's cumulative UTC-day tip counter
+ * and returns the new running total + the exact key reserved. INCRBY is atomic so
+ * concurrent tips accumulate correctly with no read→check→record TOCTOU. Sets the
+ * TTL on the (effectively) first write. No try/catch: a Redis error throws and
+ * fails the tip CLOSED (mirrors reserveBlockBuzzSpend). Caller compares `total`
+ * against BLOCK_TIP_CAP_PER_DAY and refunds via the returned key on over-cap /
+ * on any downstream failure.
+ */
+export async function reserveBlockTipSpend(
+  userId: number,
+  amount: number
+): Promise<{ total: number; key: ReturnType<typeof tipCapRedisKey> }> {
+  const key = tipCapRedisKey(userId);
+  const total = await sysRedis.incrBy(key, Math.ceil(amount));
+  if (total <= Math.ceil(amount)) {
+    await sysRedis.expire(key, BLOCK_TIP_CAP_TTL_SECONDS);
+  } else {
+    const ttl = await sysRedis.ttl(key);
+    if (ttl < 0) await sysRedis.expire(key, BLOCK_TIP_CAP_TTL_SECONDS);
+  }
+  return { total, key };
+}
+
+/**
+ * Refunds a previously-reserved tip `amount` (best-effort DECRBY) against the
+ * EXACT key returned by reserveBlockTipSpend. Used when the reservation pushed the
+ * total over the daily cap, or when the tip transaction throws (insufficient
+ * funds, etc.). Best-effort: a failed refund leaves the reservation in place →
+ * OVER-counts → the cap is only made STRICTER (the safe direction). Never throws.
+ * Takes the reserved key (not re-derived) so a request straddling midnight UTC
+ * refunds the day it reserved, not the next day's key.
+ */
+export async function refundBlockTipSpend(
+  key: ReturnType<typeof tipCapRedisKey>,
+  amount: number
+): Promise<void> {
+  await sysRedis.decrBy(key, Math.ceil(amount)).catch(() => {
+    /* best-effort — a lost refund over-counts (stricter cap) */
+  });
 }

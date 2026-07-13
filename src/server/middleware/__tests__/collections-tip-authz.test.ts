@@ -108,6 +108,10 @@ const SCOPES = [
   'collections:read:self',
   'collections:write:self',
   'social:tip:self',
+  // buzz:read:self (balance readout) + apps:storage:shared:write (play-count
+  // increment) are ALSO self/non-anon scopes — same authz contract.
+  'buzz:read:self',
+  'apps:storage:shared:write',
 ] as const;
 
 describe.each(SCOPES)('withBlockScope authz — %s', (scope) => {
@@ -175,6 +179,56 @@ describe.each(SCOPES)('withBlockScope authz — %s', (scope) => {
     await route(makeReq(`Bearer ${bogus}`) as never, res as never);
 
     expect(res.statusCode).toBe(401);
+    expect(wrapped).not.toHaveBeenCalled();
+  });
+});
+
+// apps:storage:shared:read (play-count "top" read) is anon-ALLOWED by design (a
+// public within-app read), so it has a different anon contract than the self
+// scopes above: an anon token carrying it RUNS the handler.
+describe('withBlockScope authz — apps:storage:shared:read (anon-allowed read)', () => {
+  const scope = 'apps:storage:shared:read';
+
+  it('accepts a valid token carrying the scope → handler runs', async () => {
+    const token = await mintToken({ userId: 42, scopes: [scope] });
+    const wrapped = vi.fn(async (_req: NextApiRequest, res: NextApiResponse) => {
+      res.status(200).json({ ok: true });
+    });
+    const route = withBlockScope(wrapped as never, { requiredScope: scope });
+    const res = makeRes();
+    await route(makeReq(`Bearer ${token}`, 'GET') as never, res as never);
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('ACCEPTS an ANON token carrying the scope → handler runs (public within-app read)', async () => {
+    const token = await mintToken({ userId: null, scopes: [scope] });
+    const wrapped = vi.fn(async (_req: NextApiRequest, res: NextApiResponse) => {
+      res.status(200).json({ ok: true });
+    });
+    const route = withBlockScope(wrapped as never, { requiredScope: scope });
+    const res = makeRes();
+    await route(makeReq(`Bearer ${token}`, 'GET') as never, res as never);
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('rejects a token MISSING the scope → 403', async () => {
+    const token = await mintToken({ userId: 42, scopes: [] });
+    const wrapped = vi.fn();
+    const route = withBlockScope(wrapped as never, { requiredScope: scope });
+    const res = makeRes();
+    await route(makeReq(`Bearer ${token}`, 'GET') as never, res as never);
+    expect(res.statusCode).toBe(403);
+    expect(wrapped).not.toHaveBeenCalled();
+  });
+
+  it('rejects a REVOKED instance → 403', async () => {
+    isRevokedMock.mockResolvedValue(true);
+    const token = await mintToken({ userId: 42, scopes: [scope] });
+    const wrapped = vi.fn();
+    const route = withBlockScope(wrapped as never, { requiredScope: scope });
+    const res = makeRes();
+    await route(makeReq(`Bearer ${token}`, 'GET') as never, res as never);
+    expect(res.statusCode).toBe(403);
     expect(wrapped).not.toHaveBeenCalled();
   });
 });

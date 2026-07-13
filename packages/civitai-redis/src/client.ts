@@ -1616,6 +1616,13 @@ export const REDIS_SYS_KEYS = {
     EMERGENCY_KILL_LIST: 'system:blocks:emergency-kill-list',
     // Cumulative Buzz-spend cap counter, keyed `system:blocks:buzz-cap:${userId}:${appBlockId}:${day}`.
     BUZZ_CAP: 'system:blocks:buzz-cap',
+    // Cumulative TIP-spend cap counter for the block tip endpoint, keyed
+    // `system:blocks:tip-cap:${userId}:${UTC-day}`. DISTINCT from BUZZ_CAP: that
+    // bounds a user's daily generation SPEND; this bounds a user's daily Buzz
+    // TIPPED-OUT through blocks (money to third parties). Per-USER aggregate (no
+    // appBlockId) so N installed blocks share ONE daily tip ceiling. INCRBY'd by
+    // each tip amount pre-transaction (reserve-and-refund), TTL set on first write.
+    TIP_CAP: 'system:blocks:tip-cap',
     /**
      * Per-APP cumulative spend-BOUNTY accrual cap counter (audit 🟡-2 / the
      * App-Blocks Sybil-economics review). DISTINCT from BUZZ_CAP: that one

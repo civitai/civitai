@@ -13,7 +13,13 @@ import { createBuzzTipTransactionHandler } from '~/server/controllers/buzz.contr
 import { Tracker } from '~/server/clickhouse/client';
 import type { ProtectedContext } from '~/server/createContext';
 import { hydrateBlockSubject } from '~/server/services/blocks/block-collections.service';
-import { checkBlockTipRateLimit } from '~/server/utils/block-tip-rate-limit';
+import {
+  BLOCK_TIP_CAP_PER_DAY,
+  BLOCK_TIP_MAX_PER_TIP,
+  checkBlockTipRateLimit,
+  refundBlockTipSpend,
+  reserveBlockTipSpend,
+} from '~/server/utils/block-tip-rate-limit';
 
 /**
  * POST /api/v1/blocks/tip
@@ -31,22 +37,20 @@ import { checkBlockTipRateLimit } from '~/server/utils/block-tip-rate-limit';
  *
  * Response: `{ ok: true, tip: { toUserId, amount, entityType?, entityId? } }`.
  *
- * 🔴 NOTE (wire-up gate for the page app): `social:tip:self` is in
- * PAGE_FORBIDDEN_SCOPES, so the production page-token mint refuses to issue it to
- * a full-page (entity=none) app. This endpoint is correct + fully guarded, but a
- * page app cannot currently obtain a token carrying `social:tip:self` — see the
- * PR description. Reconciling that page-mint rule is a separate decision.
+ * PAGE-SAFE via BOUNDED tipping: this endpoint enforces a per-tip cap
+ * (BLOCK_TIP_MAX_PER_TIP) AND a per-user daily cap (BLOCK_TIP_CAP_PER_DAY,
+ * reserve-and-refund) BEFORE any money moves — the analogue of the gen-spend
+ * `buzzBudget` + `BLOCK_BUZZ_CAP_PER_DAY` pair. Those caps are what let
+ * `social:tip:self` come off PAGE_FORBIDDEN_SCOPES (a page tip is now bounded, no
+ * longer effectively-unbounded spend). Over either cap → clean 4xx (never a 500).
  */
 
 export const config = { api: { bodyParser: { sizeLimit: '4kb' } } };
 
-// Sane upper bound on a single tip call. The AUTHORITATIVE control is the
-// balance check inside the handler; this only bounds a single request's amount.
-const MAX_TIP_AMOUNT = 100_000;
-
 const bodySchema = z.object({
   toUserId: z.number().int().positive(),
-  amount: z.number().int().positive().max(MAX_TIP_AMOUNT),
+  // Per-tip cap is the schema's hard upper bound — over-per-tip → clean 400.
+  amount: z.number().int().positive().max(BLOCK_TIP_MAX_PER_TIP),
   entityType: z.enum(['Image', 'Collection', 'User']).optional(),
   entityId: z.number().int().positive().optional(),
 });
@@ -118,6 +122,26 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     return;
   }
 
+  // PER-USER DAILY CAP — atomically RESERVE this tip against the user's UTC-day
+  // aggregate BEFORE the money moves. Fail-CLOSED on a redis error (503). Over the
+  // daily cap → refund the reservation + clean 400. The reservation stands only if
+  // the tip transaction below resolves; any throw refunds it.
+  let capKey: Awaited<ReturnType<typeof reserveBlockTipSpend>>['key'];
+  try {
+    const reserved = await reserveBlockTipSpend(subjectUserId, amount);
+    capKey = reserved.key;
+    if (reserved.total > BLOCK_TIP_CAP_PER_DAY) {
+      await refundBlockTipSpend(capKey, amount);
+      res.status(400).json({
+        error: `Daily tip limit reached (${BLOCK_TIP_CAP_PER_DAY} Buzz). Try again tomorrow.`,
+      });
+      return;
+    }
+  } catch {
+    res.status(503).json({ error: 'Tip limiter unavailable; please retry' });
+    return;
+  }
+
   // Build a minimal ProtectedContext for the controller (it reads ctx.user +
   // ctx.track). The sender is ALWAYS the verified subject — never body input.
   const ctx = {
@@ -148,6 +172,9 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     });
     return;
   } catch (error) {
+    // The tip did NOT move money — refund the daily-cap reservation so a failed
+    // attempt (insufficient funds, banned target, …) doesn't burn the user's cap.
+    await refundBlockTipSpend(capKey, amount);
     // The handler wraps everything in a TRPCError (getTRPCErrorFromUnknown):
     // insufficient funds / self-tip / banned target → BAD_REQUEST (400); etc.
     const trpcError = error as TRPCError;

@@ -302,43 +302,52 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
     expect(mockTokenService.sign).toHaveBeenCalledTimes(1);
   });
 
-  it('rejects a page manifest that declares a still-forbidden money scope (page hard rule)', async () => {
-    // The OAuth client ALLOWS the money scope + it's in the approved set — so
-    // the earlier OAuth/approved gates pass and the PAGE HARD RULE is what
-    // rejects (proves the page-specific gate, not the generic allowlist).
-    // social:tip:self is NOT un-forbidden by W10 (only ai:write:budgeted is).
-    mockBlockRegistry.resolvePageBlock.mockResolvedValue(
-      PAGE_BLOCK(
-        ['apps:storage:read', 'social:tip:self'],
-        ['apps:storage:read', 'social:tip:self'],
-        MONEY_BITS
-      )
-    );
-    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
-    const res = makeRes();
-    await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
-
-    expect(res._status).toBe(403);
-    expect(res._body.error).toMatch(/money\/spend scopes/);
-    expect(mockTokenService.sign).not.toHaveBeenCalled();
-  });
-
-  // W10: ai:write:budgeted is INTENTIONALLY absent here — it is now allowed for
-  // pages (covered by the budget tests below). Only tipping + balance-read stay
-  // page-forbidden.
+  // BOUNDED-TIPPING: social:tip:self + buzz:read:self are NO LONGER page-forbidden
+  // (PAGE_FORBIDDEN_SCOPES is now empty). Tipping is bounded by per-tip +
+  // per-user-daily caps in /api/v1/blocks/tip, which made it page-safe. A page
+  // manifest declaring these scopes now MINTS end-to-end (given the user's
+  // consent grant — they're consent-gated, not exempt) rather than 403'ing.
   it.each([['buzz:read:self'], ['social:tip:self']])(
-    'rejects forbidden page scope %s',
+    'now MINTS a page token carrying the (bounded) scope %s (no longer page-forbidden)',
     async (scope) => {
+      mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+        grantedScopes: [scope],
+        revokedAt: null,
+      });
       mockBlockRegistry.resolvePageBlock.mockResolvedValue(
         PAGE_BLOCK([scope], [scope], MONEY_BITS)
       );
       const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
       const res = makeRes();
       await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
-      expect(res._status).toBe(403);
-      expect(mockTokenService.sign).not.toHaveBeenCalled();
+      // No page-hard-rule 403 — the token is signed and carries the scope.
+      expect(res._status).toBe(200);
+      expect(mockTokenService.sign).toHaveBeenCalledTimes(1);
+      expect(mockTokenService.sign.mock.calls[0][0].scopes).toContain(scope);
     }
   );
+
+  it('MINTS a page token declaring BOTH social:tip:self + buzz:read:self (end-to-end)', async () => {
+    mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: ['social:tip:self', 'buzz:read:self'],
+      revokedAt: null,
+    });
+    mockBlockRegistry.resolvePageBlock.mockResolvedValue(
+      PAGE_BLOCK(
+        ['social:tip:self', 'buzz:read:self'],
+        ['social:tip:self', 'buzz:read:self'],
+        MONEY_BITS
+      )
+    );
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+    expect(res._status).toBe(200);
+    const signArg = mockTokenService.sign.mock.calls[0][0];
+    expect(signArg.scopes).toEqual(
+      expect.arrayContaining(['social:tip:self', 'buzz:read:self'])
+    );
+  });
 
   it('is flag-gated on appBlocksPages (appBlocks alone is not enough → 403, no token)', async () => {
     (mockFlags.getFeatureFlags as any).mockImplementation(() => ({
@@ -564,10 +573,11 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
     });
   });
 
-  // ── Audit: a MIXED manifest with one still-forbidden money scope is a HARD
-  // reject of the WHOLE request — the allowed ai:write:budgeted does not
-  // "rescue" the request when social:tip:self rides alongside it. ───────────
-  it('MIXED manifest [ai:write:budgeted, social:tip:self] → 403, whole request rejected', async () => {
+  // BOUNDED-TIPPING: a MIXED manifest [ai:write:budgeted, social:tip:self] now
+  // MINTS both scopes — both are bounded spend (gen by buzzBudget + daily cap,
+  // tip by per-tip + daily cap), so neither is page-forbidden. (Previously this
+  // was a hard 403 because tipping was categorically forbidden for pages.)
+  it('MIXED manifest [ai:write:budgeted, social:tip:self] now MINTS both (both bounded)', async () => {
     mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
       grantedScopes: ['ai:write:budgeted', 'social:tip:self'],
       revokedAt: null,
@@ -583,8 +593,6 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
           page: { path: '/', title: 'Hello' },
         },
         approvedScopes: ['ai:write:budgeted', 'social:tip:self'],
-        // Allow both bits so the OAuth/approved gates pass and the PAGE HARD
-        // RULE is what rejects (social:tip:self stays page-forbidden).
         app: { allowedScopes: MONEY_BITS },
       },
     });
@@ -592,9 +600,14 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
 
-    expect(res._status).toBe(403);
-    // No partial mint — the whole request is rejected, no token signed.
-    expect(mockTokenService.sign).not.toHaveBeenCalled();
+    expect(res._status).toBe(200);
+    const signArg = mockTokenService.sign.mock.calls[0][0];
+    expect(signArg.scopes).toEqual(
+      expect.arrayContaining(['ai:write:budgeted', 'social:tip:self'])
+    );
+    // Generation budget still resolves (default 10) since the page manifest
+    // omits page.buzzBudgetPerGen.
+    expect(signArg.buzzBudget).toBe(10);
   });
 
   // ── MODEL_INSTALL positive regression: the path the integer-enforcement fix
