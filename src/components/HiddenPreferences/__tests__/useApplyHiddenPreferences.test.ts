@@ -233,13 +233,14 @@ type RunImagesOpts = {
   poiDisabled?: boolean;
   minorDisabled?: boolean;
   currentUser?: unknown;
+  browsingLevel?: number;
 };
 const runImages = (data: ReturnType<typeof makeImage>[], opts: RunImagesOpts = {}) =>
   filterPreferences({
     type: 'images',
     data,
     hiddenPreferences: opts.hiddenPreferences ?? emptyPrefs(),
-    browsingLevel: BROWSING_LEVEL,
+    browsingLevel: opts.browsingLevel ?? BROWSING_LEVEL,
     currentUser: (opts.currentUser ?? null) as never,
     canViewNsfw: true,
     poiDisabled: opts.poiDisabled ?? false,
@@ -254,14 +255,40 @@ describe("filterPreferences — 'images' branch drops every hidden dimension (la
 
   // [label, the-image-that-must-drop, filter opts]. Each pairs the dirty image with
   // a clean sibling (id 1) and asserts the clean one survives while the dirty drops.
-  const cases: Array<[string, ReturnType<typeof makeImage>, RunImagesOpts, keyof ReturnType<typeof runImages>['hidden']]> = [
+  const cases: Array<
+    [
+      string,
+      ReturnType<typeof makeImage>,
+      RunImagesOpts,
+      keyof ReturnType<typeof runImages>['hidden']
+    ]
+  > = [
     ['browsing-level mismatch', makeImage({ id: 2, nsfwLevel: 2 }), {}, 'browsingLevel'],
-    ['hidden image id', makeImage({ id: 3 }), { hiddenPreferences: prefsWith({ images: [3] }) }, 'images'],
-    ['hidden user', makeImage({ id: 4, userId: 555 }), { hiddenPreferences: prefsWith({ users: [555] }) }, 'users'],
-    ['hidden tag', makeImage({ id: 5, tagIds: [88] }), { hiddenPreferences: prefsWith({ tags: [88] }) }, 'tags'],
-    ['system hidden tag', makeImage({ id: 6, tagIds: [77] }), { hiddenPreferences: prefsWith({ systemTags: [77] }) }, 'tags'],
+    [
+      'hidden image id',
+      makeImage({ id: 3 }),
+      { hiddenPreferences: prefsWith({ images: [3] }) },
+      'images',
+    ],
+    [
+      'hidden user',
+      makeImage({ id: 4, userId: 555 }),
+      { hiddenPreferences: prefsWith({ users: [555] }) },
+      'users',
+    ],
+    [
+      'hidden tag',
+      makeImage({ id: 5, tagIds: [88] }),
+      { hiddenPreferences: prefsWith({ tags: [88] }) },
+      'tags',
+    ],
+    [
+      'system hidden tag',
+      makeImage({ id: 6, tagIds: [77] }),
+      { hiddenPreferences: prefsWith({ systemTags: [77] }) },
+      'tags',
+    ],
     ['poi (disablePoi)', makeImage({ id: 7, poi: true }), { poiDisabled: true }, 'poi'],
-    ['minor (disableMinor)', makeImage({ id: 8, minor: true }), { minorDisabled: true }, 'minor'],
   ];
 
   it.each(cases)('drops a %s image and keeps the clean sibling', (_label, dirty, opts, counter) => {
@@ -278,6 +305,29 @@ describe("filterPreferences — 'images' branch drops every hidden dimension (la
       minorDisabled: false,
     });
     expect(items.map((i) => i.id)).toEqual([9]);
+  });
+
+  // disableMinor drops a minor image ONLY when it is also mature (nsfwLevel outside
+  // {PG, PG-13}); SFW-minor stays visible. MATURE_LEVEL = PG|R so both a PG (SFW) and an
+  // R (mature) minor image clear the browsing-level gate and reach the minor check.
+  const MATURE_LEVEL = 1 | 4;
+
+  it('drops a MATURE minor image when disableMinor is on', () => {
+    const { items, hidden } = runImages(
+      [makeImage({ id: 1, nsfwLevel: 4 }), makeImage({ id: 10, nsfwLevel: 4, minor: true })],
+      { minorDisabled: true, browsingLevel: MATURE_LEVEL }
+    );
+    expect(items.map((i) => i.id)).toEqual([1]);
+    expect(hidden.minor).toBe(1);
+  });
+
+  it('KEEPS an SFW minor image even when disableMinor is on', () => {
+    const { items, hidden } = runImages([makeImage({ id: 11, nsfwLevel: 1, minor: true })], {
+      minorDisabled: true,
+      browsingLevel: MATURE_LEVEL,
+    });
+    expect(items.map((i) => i.id)).toEqual([11]);
+    expect(hidden.minor).toBe(0);
   });
 });
 

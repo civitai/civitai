@@ -94,6 +94,36 @@ describe('/api/v1/creators error-body JSON.parse guard', () => {
     expect(body.metadata.currentPage).toBe(1);
   });
 
+  it('search path (?query=): hasMore metadata still emits a nextPage link + valid totals', async () => {
+    // The username-search path drops the exact COUNT and returns hasMore-based
+    // lower-bound pagination (totalPages = currentPage+1 while more remain). The
+    // public response shape must stay intact: items mapped, metadata.totalItems /
+    // totalPages present + numeric, and nextPage generated so REST pagination
+    // keeps working.
+    mockGetCreators.mockResolvedValue({
+      items: [{ username: 'bob', _count: { models: 1 } }],
+      totalItems: 21, // lower bound (skipped 20 + 1 item + 1 more)
+      currentPage: 1,
+      pageSize: 20,
+      totalPages: 2, // currentPage + 1
+      hasMore: true,
+    });
+    const { req, res } = createMocks({ query: { query: 'bo' } });
+
+    await handler(req, res);
+
+    expect(res._getStatusCode()).toBe(200);
+    const body = res._getJSONData();
+    expect(body.items[0].username).toBe('bob');
+    // contract fields present + numeric
+    expect(typeof body.metadata.totalItems).toBe('number');
+    expect(typeof body.metadata.totalPages).toBe('number');
+    expect(body.metadata.currentPage).toBe(1);
+    expect(body.metadata.hasMore).toBe(true);
+    // nextPage link is emitted (currentPage < totalPages) so callers can page on.
+    expect(body.metadata.nextPage).toContain('page=2');
+  });
+
   it('a TRPCError with a JSON-stringified message is parsed and returned as before (no regression)', async () => {
     // Some errors legitimately carry a JSON-stringified body (zod/validation).
     // The pre-existing success path must keep parsing them.

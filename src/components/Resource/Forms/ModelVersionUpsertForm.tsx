@@ -142,6 +142,12 @@ const schema = modelVersionUpsertSchema2
 type Schema = z.infer<typeof schema>;
 
 const baseModelTypeOptions = constants.baseModelTypes.map((x) => ({ label: x, value: x }));
+// Sentinel for the Licensing Base picker's default option; maps to a null
+// licensingSourceVersionId (inherit the base model's standard-fee root).
+const LICENSING_DEFAULT = 'default';
+const capitalizeFirst = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+const licensingOptionLabel = (versionName: string, fee: number | null) =>
+  `${capitalizeFirst(versionName)}${fee != null ? ` (${fee} Buzz)` : ''}`;
 const querySchema = z.object({
   templateId: z.coerce.number().optional(),
   bountyId: z.coerce.number().optional(),
@@ -253,15 +259,20 @@ export function ModelVersionUpsertForm({
     !!currentUser?.isModerator;
 
   const licensingSourceVersionId = form.watch('licensingSourceVersionId') ?? null;
-  const { data: licensingRootsData = [] } = trpc.modelVersion.getLicensingRoots.useQuery(
-    { baseModel },
+  const { data: licensingRootsData } = trpc.modelVersion.getLicensingRoots.useQuery(
+    { baseModel, modelType: model?.type },
     { enabled: !!baseModel }
   );
-  // Exclude the version being edited — a root defines its own fee and must not
-  // point at itself. The picker always carries an implicit "Default (base model
-  // standard fee)" option, so a single remaining root is still a real choice
-  // (default vs that lineage); we only hide it when there are no roots at all.
-  const licensingRoots = licensingRootsData.filter((r) => r.id !== version?.id);
+  // Exclude the version being edited (a root can't point at itself) and the
+  // standard-fee root (it's already the explicit default option, so listing it
+  // again would be a duplicate with different persisted semantics). We only hide
+  // the whole picker when no other roots remain.
+  const standardLicensingId = licensingRootsData?.standardVersionId ?? null;
+  const standardLicensingFee = licensingRootsData?.standardFee ?? null;
+  const standardLicensingName = licensingRootsData?.standardVersionName ?? null;
+  const licensingRoots = (licensingRootsData?.roots ?? []).filter(
+    (r) => r.id !== version?.id && r.id !== standardLicensingId
+  );
 
   // A licensing lineage root is scoped to a base model, so a base-model change
   // invalidates any selected source. Skip the initial value (edit pre-fill).
@@ -825,30 +836,6 @@ export function ModelVersionUpsertForm({
               <Divider my="md" />
             </Stack>
           )}
-          {(showLicensingFeeBlock || !!currentUser?.isModerator) && licensingRoots.length > 0 && (
-            <Stack gap="xs">
-              <Select
-                label="Licensing base"
-                description="If this model is built on a specific base, pick it so generations inherit that base's licensing fee. Leave as default to use the base model's standard fee."
-                placeholder="Default (base model standard fee)"
-                clearable
-                value={licensingSourceVersionId ? String(licensingSourceVersionId) : null}
-                onChange={(val) =>
-                  form.setValue('licensingSourceVersionId', val ? Number(val) : null, {
-                    shouldDirty: true,
-                  })
-                }
-                data={licensingRoots.map((r) => ({
-                  value: String(r.id),
-                  label: `${r.modelName} — ${r.versionName} (${Number(r.licensingFee)} Buzz${
-                    r.licensingFeeSettlementCurrency === LicensingFeeSettlementCurrency.Cash
-                      ? ', cash'
-                      : ''
-                  })`,
-                }))}
-              />
-            </Stack>
-          )}
           {showLicensingFeeBlock && (
             <Stack gap="xs">
               <InputNumber
@@ -913,6 +900,36 @@ export function ModelVersionUpsertForm({
               />
             )}
           </Group>
+          {licensingRoots.length > 0 && (
+            <Stack gap="xs">
+              <Select
+                label="Licensing Base"
+                description="If this model is built on a specific base, pick it so generations inherit that base's licensing fee."
+                allowDeselect={false}
+                comboboxProps={{ withinPortal: true }}
+                value={licensingSourceVersionId ? String(licensingSourceVersionId) : LICENSING_DEFAULT}
+                onChange={(val) =>
+                  form.setValue(
+                    'licensingSourceVersionId',
+                    val && val !== LICENSING_DEFAULT ? Number(val) : null,
+                    { shouldDirty: true }
+                  )
+                }
+                data={[
+                  {
+                    value: LICENSING_DEFAULT,
+                    label: standardLicensingName
+                      ? licensingOptionLabel(standardLicensingName, standardLicensingFee)
+                      : 'Default',
+                  },
+                  ...licensingRoots.map((r) => ({
+                    value: String(r.id),
+                    label: licensingOptionLabel(r.versionName, r.licensingFee),
+                  })),
+                ]}
+              />
+            </Stack>
+          )}
           {hasNsfwBaseModelViolation && (
             <Alert color="red" title="License Restriction Violation">
               <Text size="sm">
@@ -951,7 +968,6 @@ export function ModelVersionUpsertForm({
             key="description"
             name="description"
             label="Version changes or notes"
-            description="Tell us about this version"
             includeControls={['formatting', 'list', 'link']}
             editorSize="xl"
           />

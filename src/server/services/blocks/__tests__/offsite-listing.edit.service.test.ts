@@ -65,6 +65,10 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
     image: {
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
     },
+    // W13 owner controls: the batched last-moderation-event lookup (removed listings).
+    appListingModerationEvent: {
+      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+    },
   });
   const mockRead = makeClient();
   const mockWrite = makeClient() as ReturnType<typeof makeClient> & {
@@ -113,6 +117,7 @@ function resetAll() {
     client.appListingPublishRequest.updateMany.mockReset().mockResolvedValue({ count: 1 });
     client.appListingPublishRequest.findMany.mockReset().mockResolvedValue([]);
     client.image.findMany.mockReset().mockResolvedValue([]);
+    client.appListingModerationEvent.findMany.mockReset().mockResolvedValue([]);
   }
   mockWrite.$transaction
     .mockReset()
@@ -734,6 +739,17 @@ describe('reject/withdraw a pending REVISION', () => {
       kind: 'offsite',
       appListingId: 'apl_shadow', // the shadow, a draft
     });
+    // Pre-tx notification snapshot: the shadow reads as a REVISION (revisionOfId set)
+    // → the "not approved" owner notice is skipped (parent stays live).
+    mockRead.appListing.findUnique.mockResolvedValue({
+      userId: OWNER,
+      name: 'Cool App',
+      slug: 'cool-app',
+      revisionOfId: 'apl_parent',
+    });
+    // In-tx `closeTerminalListing` reads the listing on the WRITE client (the tx) to
+    // pick the delete-vs-flip branch — a draft shadow → the status-guarded delete.
+    mockWrite.appListing.findUnique.mockResolvedValue({ status: 'draft', slug: 'apl_shadow' });
     await rejectExternalRequest({
       publishRequestId: 'alpr_rev',
       reviewerUserId: MOD,
@@ -756,6 +772,9 @@ describe('reject/withdraw a pending REVISION', () => {
       submittedByUserId: OWNER,
       appListingId: 'apl_shadow',
     });
+    // In-tx `closeTerminalListing` reads the listing on the WRITE client (the tx) to
+    // pick the delete-vs-flip branch — a draft shadow → the status-guarded delete.
+    mockWrite.appListing.findUnique.mockResolvedValue({ status: 'draft', slug: 'apl_shadow' });
     await withdrawExternalRequest({ publishRequestId: 'alpr_rev', userId: OWNER });
     expect(mockWrite.appListing.deleteMany).toHaveBeenCalledWith({
       where: { id: 'apl_shadow', status: 'draft' },
@@ -828,5 +847,69 @@ describe('listMySubmissions (shadow handling)', () => {
       .mockResolvedValueOnce([]); // shadow exists in the DB, but no PENDING request targets it
     const res = await listMySubmissions({ userId: OWNER });
     expect(res.items[0]).toMatchObject({ hasPendingRevision: false });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listMySubmissions — lastModerationAction projection (W13 owner controls)
+// ---------------------------------------------------------------------------
+
+describe('listMySubmissions (lastModerationAction for removed listings)', () => {
+  /** A REMOVED listing's request row (the request stays `approved` after a takedown). */
+  const removedRequestRow = {
+    id: 'alpr_removed',
+    appListingId: 'apl_removed',
+    slug: 'gone-app',
+    status: 'approved',
+    appListing: { name: 'Gone App', revisionOfId: null, status: 'removed' },
+  };
+  const liveRequestRow = {
+    id: 'alpr_live',
+    appListingId: 'apl_live',
+    slug: 'live-app',
+    status: 'approved',
+    appListing: { name: 'Live App', revisionOfId: null, status: 'approved' },
+  };
+
+  it('attaches the latest moderation-event action for a REMOVED listing (owner-unpublish → eligible)', async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([removedRequestRow])
+      .mockResolvedValueOnce([]); // no pending revision
+    mockRead.appListingModerationEvent.findMany.mockResolvedValueOnce([
+      { appListingId: 'apl_removed', action: 'owner-unpublish' },
+    ]);
+
+    const res = await listMySubmissions({ userId: OWNER });
+
+    // The last-event query is scoped to the removed listing id, newest-first, distinct.
+    const eventArgs = mockRead.appListingModerationEvent.findMany.mock.calls[0][0] as Record<
+      string,
+      unknown
+    >;
+    expect(eventArgs).toMatchObject({
+      where: { appListingId: { in: ['apl_removed'] } },
+      distinct: ['appListingId'],
+    });
+    expect(res.items[0]).toMatchObject({ lastModerationAction: 'owner-unpublish' });
+  });
+
+  it('surfaces a moderator takedown (delist) as the lastModerationAction (republish forbidden client-side)', async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([removedRequestRow])
+      .mockResolvedValueOnce([]);
+    mockRead.appListingModerationEvent.findMany.mockResolvedValueOnce([
+      { appListingId: 'apl_removed', action: 'delist' },
+    ]);
+    const res = await listMySubmissions({ userId: OWNER });
+    expect(res.items[0]).toMatchObject({ lastModerationAction: 'delist' });
+  });
+
+  it('does NOT query moderation events for a LIVE listing (no removed rows) → null action', async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([liveRequestRow])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+    expect(mockRead.appListingModerationEvent.findMany).not.toHaveBeenCalled();
+    expect(res.items[0]).toMatchObject({ lastModerationAction: null });
   });
 });

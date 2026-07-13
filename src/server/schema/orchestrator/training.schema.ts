@@ -173,6 +173,10 @@ const whatIfKohyaParams = z.object({
   maxTrainEpochs: z.number(),
   numRepeats: z.number(),
   trainBatchSize: z.number(),
+  // Sample prompts drive the sample-generation jobs that per-resource license
+  // fees attach to; without them the whatif estimate omits the fee that the
+  // real submission incurs. Optional so pre-update clients still validate.
+  samplePrompts: z.array(z.string()).optional(),
 });
 
 const whatIfAiToolkitParams = z.object({
@@ -215,6 +219,10 @@ const whatIfAiToolkitParams = z.object({
   keepTokens: z.number(),
   numRepeats: z.number().optional(),
   maxTrainEpochs: z.number().nullable().optional(),
+  // Sample prompts drive the sample-generation jobs that per-resource license
+  // fees attach to; without them the whatif estimate omits the fee that the
+  // real submission incurs. Optional so pre-update clients still validate.
+  samplePrompts: z.array(z.string()).optional(),
 });
 
 export const imageTrainingRouterWhatIfSchema = z

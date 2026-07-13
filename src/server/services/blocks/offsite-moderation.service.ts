@@ -827,7 +827,8 @@ export async function dismissReport(opts: {
 
 /**
  * PII-safe moderation-event projection: the audit fields + the acting mod's public
- * chip ({id,username,image}) + the denormalized slug. No raw actorUserId FK.
+ * chip ({id,username,image}) + the denormalized slug. No raw actorUserId FK. Used by
+ * the MOD-facing `listModerationEvents` only.
  */
 const moderationEventSelect = {
   id: true,
@@ -844,14 +845,34 @@ const moderationEventSelect = {
 } as const;
 
 /**
- * MOD per-listing moderation history, NEWEST-first, keyset-paginated. The cursor is
- * the event id (`alme_<ULID>`, time-sortable so it tracks the `createdAt desc`
- * order); the `id` tie-break makes same-millisecond ordering deterministic.
+ * OWNER-scoped projection for a listing OWNER reading their OWN moderation history
+ * ("why was this hidden / un-approved"). 🔴 Privacy: deliberately DROPS the acting
+ * moderator's chip (`actor`), the linked `reportId`, the `detail` blob, and the
+ * `before`/`after` snapshots — so a taken-down app's owner never learns WHICH mod
+ * delisted/purged it (a harassment vector) nor sees internal report/detail fields.
+ * Returns only what the owner history modal renders: the action, when, and the
+ * verbatim reason (+ `id` for the React key / keyset cursor). The mod-facing
+ * `moderationEventSelect` above is UNCHANGED (mods still see the actor).
+ */
+const ownerModerationEventSelect = {
+  id: true,
+  action: true,
+  reason: true,
+  createdAt: true,
+} as const;
+
+/**
+ * Per-listing moderation history, NEWEST-first, keyset-paginated. The cursor is the
+ * event id (`alme_<ULID>`, time-sortable so it tracks the `createdAt desc` order);
+ * the `id` tie-break makes same-millisecond ordering deterministic. `ownerScoped`
+ * selects the privacy-minimal `ownerModerationEventSelect` (no mod identity / report/
+ * detail) for the owner read; the mod read keeps the full `moderationEventSelect`.
  */
 async function queryModerationEvents(opts: {
   appListingId: string;
   cursor?: string;
   limit?: number;
+  ownerScoped?: boolean;
 }) {
   const limit = Math.min(opts.limit ?? 25, 50);
   const rows = await dbRead.appListingModerationEvent.findMany({
@@ -859,7 +880,7 @@ async function queryModerationEvents(opts: {
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
-    select: moderationEventSelect,
+    select: opts.ownerScoped ? ownerModerationEventSelect : moderationEventSelect,
   });
   const hasNext = rows.length > limit;
   const items = hasNext ? rows.slice(0, limit) : rows;
@@ -1134,9 +1155,12 @@ export async function republishOwnListing(opts: {
  * OWNER per-listing moderation history (audit trail) for a listing the CALLER OWNS
  * — the owner's "why was this hidden / un-approved" view. Asserts ownership
  * (NOT_FOUND on a missing listing, NOT_OWNED → FORBIDDEN otherwise) then returns the
- * SAME newest-first, keyset-paginated, PII-safe projection as the mod
- * `listModerationEvents`. Offsite-only is NOT enforced here (an owner can only pass
- * their own listing id regardless of kind; the projection is already PII-safe).
+ * newest-first, keyset-paginated history through the OWNER-scoped
+ * `ownerModerationEventSelect` — 🔴 which DROPS the acting-mod chip (`actor`),
+ * `reportId`, `detail`, and `before`/`after` so a taken-down app's owner can't learn
+ * which moderator acted (harassment vector) nor read internal report/detail fields.
+ * The mod-facing `listModerationEvents` keeps the full projection. Offsite-only is
+ * NOT enforced here (an owner can only pass their own listing id regardless of kind).
  */
 export async function listMyListingModerationEvents(opts: {
   input: ListMyListingModerationEventsInput;
@@ -1153,5 +1177,7 @@ export async function listMyListingModerationEvents(opts: {
   if (listing.userId !== userId) {
     throw new OffsiteModerationError('NOT_OWNED', 'You can only view your own listings.');
   }
-  return queryModerationEvents(input);
+  // 🔴 Owner read → the privacy-minimal projection (no acting-mod identity / reportId /
+  // detail / before-after). The mod read (`listModerationEvents`) keeps the full one.
+  return queryModerationEvents({ ...input, ownerScoped: true });
 }

@@ -230,7 +230,21 @@ export function ariaSortFor(
  */
 export type StatusBucket = 'live' | 'pending' | 'rejected' | 'withdrawn';
 
-/** The section render order (Live → Pending → Rejected → Withdrawn). */
+/**
+ * The MOD-view status buckets (Live / Pending / Rejected / **Removed** / Draft).
+ * The owner (submitter) view uses {@link StatusBucket} — a listing an author can
+ * `withdraw`; the moderator view manages the durable `AppListing` lifecycle
+ * (`draft|pending|approved|rejected|removed`), where the terminal takedown state
+ * is `removed` (not `withdrawn`) and an un-submitted `draft` still exists. Kept a
+ * DISTINCT union (rather than widening `StatusBucket`) so the owner lists' bucket
+ * SET stays exactly its four sections — see {@link StatusBucketConfig}.
+ */
+export type ModStatusBucket = 'live' | 'pending' | 'rejected' | 'removed' | 'draft';
+
+/** Every bucket ANY consumer can render (owner ∪ mod) — the section-META key set. */
+export type AnyStatusBucket = StatusBucket | ModStatusBucket;
+
+/** The OWNER section render order (Live → Pending → Rejected → Withdrawn). */
 export const STATUS_SECTION_ORDER: readonly StatusBucket[] = [
   'live',
   'pending',
@@ -238,7 +252,21 @@ export const STATUS_SECTION_ORDER: readonly StatusBucket[] = [
   'withdrawn',
 ];
 
-/** Map a raw submission status → its display section. Unknown → `withdrawn`. */
+/**
+ * The MOD section render order (Live → Pending → Rejected → Removed → Draft). A
+ * `draft` listing (author hasn't submitted, or an abandoned draft) is surfaced in
+ * a de-emphasised trailing section rather than DROPPED, so an all-status mod read
+ * never silently hides a row.
+ */
+export const MOD_STATUS_SECTION_ORDER: readonly ModStatusBucket[] = [
+  'live',
+  'pending',
+  'rejected',
+  'removed',
+  'draft',
+];
+
+/** Map a raw submission status → its OWNER display section. Unknown → `withdrawn`. */
 export function statusBucket(status: string): StatusBucket {
   switch (status) {
     case 'approved':
@@ -254,11 +282,64 @@ export function statusBucket(status: string): StatusBucket {
   }
 }
 
-/** Groups partitioned into the four status sections (by each group's `latest`). */
-export type BucketedGroups<T> = Record<StatusBucket, SubmissionGroup<T>[]>;
+/**
+ * Map a raw `AppListing.status` → its MOD display section. `approved` → **live**,
+ * `removed` → **removed** (the mod takedown state), `draft` → **draft**. Unknown →
+ * `draft` (a safe closed default that keeps a future status visible-but-quiet
+ * rather than vanishing).
+ */
+export function modStatusBucket(status: string): ModStatusBucket {
+  switch (status) {
+    case 'approved':
+      return 'live';
+    case 'pending':
+      return 'pending';
+    case 'rejected':
+      return 'rejected';
+    case 'removed':
+      return 'removed';
+    case 'draft':
+      return 'draft';
+    default:
+      return 'draft';
+  }
+}
 
 /**
- * Partition already-grouped submissions into the four status sections. Preserves
+ * A per-consumer bucketing config: which buckets exist (the render/init key set)
+ * and how a raw status maps into one. Lets the owner lists keep their exact four
+ * sections while the mod table uses its five — see {@link bucketGroupsByStatus}.
+ */
+export type StatusBucketConfig<B extends string> = {
+  buckets: readonly B[];
+  bucketOf: (status: string) => B;
+};
+
+/** The OWNER (submitter) bucketing config — the default for {@link bucketGroupsByStatus}. */
+export const OWNER_STATUS_BUCKETS: StatusBucketConfig<StatusBucket> = {
+  buckets: STATUS_SECTION_ORDER,
+  bucketOf: statusBucket,
+};
+
+/** The MOD (moderator listings table) bucketing config. */
+export const MOD_STATUS_BUCKETS: StatusBucketConfig<ModStatusBucket> = {
+  buckets: MOD_STATUS_SECTION_ORDER,
+  bucketOf: modStatusBucket,
+};
+
+/**
+ * Groups partitioned into a consumer's status sections. Generic over the bucket
+ * key `B` so the owner view yields exactly `{live,pending,rejected,withdrawn}` and
+ * the mod view yields its own set.
+ */
+export type BucketedGroups<T, B extends string = StatusBucket> = Record<
+  B,
+  SubmissionGroup<T>[]
+>;
+
+/**
+ * Partition already-grouped submissions into a consumer's status sections
+ * (default: the OWNER config → the original four buckets, unchanged). Preserves
  * the incoming group order within each bucket (so a pre-applied sort is retained).
  * PURE — never mutates the input.
  *
@@ -268,18 +349,22 @@ export type BucketedGroups<T> = Record<StatusBucket, SubmissionGroup<T>[]>;
  * on the published version within the group) instead of burying it in the
  * default-collapsed Rejected/Withdrawn section — reachable normally when a live app
  * gets an update that's then rejected or withdrawn. Only groups that have NEVER been
- * approved bucket by their `latest` submission's status (see {@link statusBucket}).
+ * approved bucket by their `latest` submission's status (see the config's `bucketOf`).
+ * (For the mod table each row is a single listing — one "version" — so the
+ * any-approved→live rule reduces to "an `approved` listing is Live".)
  */
-export function bucketGroupsByStatus<T>(
+export function bucketGroupsByStatus<T, B extends string = StatusBucket>(
   groups: readonly SubmissionGroup<T>[],
-  statusOf: (row: T) => string
-): BucketedGroups<T> {
-  const result: BucketedGroups<T> = { live: [], pending: [], rejected: [], withdrawn: [] };
+  statusOf: (row: T) => string,
+  config: StatusBucketConfig<B> = OWNER_STATUS_BUCKETS as unknown as StatusBucketConfig<B>
+): BucketedGroups<T, B> {
+  const result = {} as BucketedGroups<T, B>;
+  for (const b of config.buckets) result[b] = [];
   for (const group of groups) {
     const hasPublishedVersion = [group.latest, ...group.older].some(
       (v) => statusOf(v) === 'approved'
     );
-    const bucket = hasPublishedVersion ? 'live' : statusBucket(statusOf(group.latest));
+    const bucket = hasPublishedVersion ? ('live' as B) : config.bucketOf(statusOf(group.latest));
     result[bucket].push(group);
   }
   return result;

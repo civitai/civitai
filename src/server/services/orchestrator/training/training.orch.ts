@@ -455,12 +455,21 @@ export const createTrainingWhatIfWorkflow = async ({
   currencies,
   ...input
 }: ImageTraininWhatIfWorkflowSchema) => {
-  const { model, priority, engine, trainingDataImagesCount, ...trainingParams } = input;
+  const { model, priority, engine, trainingDataImagesCount, samplePrompts, ...trainingParams } =
+    input;
 
   const params = {
     ...trainingParams,
     engine,
   } as any; // Type assertion needed because whatIf schema is a union
+
+  // Per-resource license fees are only priced when the workflow generates
+  // samples, so the whatif must always carry non-empty prompts or the estimate
+  // silently drops the fee. Keep any real prompts the client sent and backfill
+  // empties with a placeholder so the fee is always reflected.
+  const whatIfSamplePrompts = (samplePrompts?.length ? samplePrompts : ['', '', '']).map((p) =>
+    p && p.trim().length > 0 ? p : 'sample prompt'
+  );
 
   const runArgs: ImageTrainingStepSchema = {
     model,
@@ -471,7 +480,7 @@ export const createTrainingWhatIfWorkflow = async ({
     trainingData: 'https://fake',
     loraName: '',
     triggerWord: '',
-    samplePrompts: ['', '', ''],
+    samplePrompts: whatIfSamplePrompts,
     modelFileId: -1,
     negativePrompt: '',
   };
@@ -489,11 +498,14 @@ export const createTrainingWhatIfWorkflow = async ({
   });
 
   const cost = workflow.cost?.total;
+  // Per-resource licensing fees (keyed by resource AIR) are already included in
+  // `cost.total`; surface their sum so the UI can break out the license fee.
+  const licenseFee = Object.values(workflow.cost?.fees ?? {}).reduce((sum, fee) => sum + fee, 0);
 
   const _step = workflow.steps?.[0] as ImageResourceTrainingStep | undefined;
   // console.dir(_step);
   const precedingJobs = _step?.jobs?.[0]?.queuePosition?.precedingJobs;
   const eta = _step?.output?.eta;
 
-  return { cost, precedingJobs, eta };
+  return { cost, licenseFee, precedingJobs, eta };
 };
