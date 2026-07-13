@@ -37,13 +37,18 @@
     DEFAULT_GENERATION_TRIAL_LIMIT,
     MAX_GENERATION_TRIAL_LIMIT,
   } from '$lib/monetization/early-access';
+  import {
+    feeToRatio,
+    formatFeeRatio,
+    FEE_IMAGE_OPTIONS,
+    DEFAULT_FEE_IMAGES,
+  } from '$lib/monetization/fee';
   import JoinUpsell from '$lib/components/JoinUpsell.svelte';
+  import { IconSearch, IconFilter, IconArrowsSort } from '@tabler/icons-svelte';
   import type { PageData } from './$types';
   import type { CreatorModel, CreatorModelVersion } from '$lib/server/models';
 
   let { data }: { data: PageData } = $props();
-
-  const feeLabel = (fee: number | null) => (fee == null ? 'Off' : `${fee} ⚡ / image`);
 
   // Off / Active / Paused — a fee is "paused" (kept but not charged) when the owner isn't currently a CP member.
   function feeStatus(fee: number | null): { label: string; cls: string } {
@@ -63,10 +68,26 @@
     goto(url, { keepFocus: true, noScroll: true });
   }
 
+  // Search fires on Enter, on blur, and via the button — all no-op if the term is unchanged.
+  function runSearch(raw: FormDataEntryValue | string | null) {
+    const q = String(raw ?? '').trim();
+    if (q === (data.query.q ?? '')) return;
+    navigate({ q: q || null, page: null });
+  }
+
+  // Fee buzz/images fields accept whole positive integers only — reject any typed or pasted non-digit
+  // (decimal point, sign, exponent, letters) before it lands in the value.
+  function integerOnly(e: InputEvent) {
+    const text = e.data ?? e.dataTransfer?.getData('text') ?? '';
+    if (text && /\D/.test(text)) e.preventDefault();
+  }
+
   // --- Bulk mode ---
   const bulkMode = $derived(data.canSetFee && page.url.searchParams.get('mode') === 'bulk');
   let selected = $state<Set<number>>(new Set());
-  let bulkFee = $state('');
+  // Bulk editor defaults to 1 ⚡ per DEFAULT_FEE_IMAGES (10) images.
+  let bulkBuzz = $state('1');
+  let bulkImages = $state(String(DEFAULT_FEE_IMAGES));
   let showBulkConfirm = $state(false);
   let bulkForm = $state<HTMLFormElement>();
 
@@ -171,36 +192,53 @@
 <!-- Search / filter / sort -->
 <div class="mb-4 flex flex-wrap items-center gap-2">
   <form
+    class="flex items-center gap-1"
     onsubmit={(e) => {
       e.preventDefault();
-      const q = String(new FormData(e.currentTarget).get('q') ?? '').trim();
-      navigate({ q: q || null, page: null });
+      runSearch(new FormData(e.currentTarget).get('q'));
     }}
   >
     <input
       name="q"
       value={data.query.q}
       placeholder="Search models…"
+      onblur={(e) => runSearch(e.currentTarget.value)}
       class="w-56 rounded border border-dark-4 bg-dark-7 px-2 py-1.5 text-sm text-white"
     />
+    <button
+      type="submit"
+      aria-label="Search"
+      title="Search"
+      class="rounded border border-dark-4 bg-dark-6 p-1.5 text-white hover:border-dark-3"
+    >
+      <IconSearch size={16} />
+    </button>
   </form>
-  <select
-    value={data.query.fee}
-    onchange={(e) => navigate({ fee: e.currentTarget.value || null, page: null })}
-    class="rounded border border-dark-4 bg-dark-7 px-2 py-1.5 text-sm text-white"
-  >
-    <option value="">All fees</option>
-    <option value="set">Has a fee</option>
-    <option value="off">No fee</option>
-  </select>
-  <select
-    value={data.query.sort}
-    onchange={(e) => navigate({ sort: e.currentTarget.value, page: null })}
-    class="rounded border border-dark-4 bg-dark-7 px-2 py-1.5 text-sm text-white"
-  >
-    <option value="recent">Recently updated</option>
-    <option value="name">Name</option>
-  </select>
+  <div class="flex items-center gap-1 rounded border border-dark-4 bg-dark-7 pl-2" title="Filter">
+    <IconFilter size={16} class="text-dark-3" />
+    <select
+      aria-label="Filter by fee"
+      value={data.query.fee}
+      onchange={(e) => navigate({ fee: e.currentTarget.value || null, page: null })}
+      class="bg-transparent py-1.5 pr-2 text-sm text-white outline-none"
+    >
+      <option value="">All fees</option>
+      <option value="set">Has a fee</option>
+      <option value="off">No fee</option>
+    </select>
+  </div>
+  <div class="flex items-center gap-1 rounded border border-dark-4 bg-dark-7 pl-2" title="Sort">
+    <IconArrowsSort size={16} class="text-dark-3" />
+    <select
+      aria-label="Sort"
+      value={data.query.sort}
+      onchange={(e) => navigate({ sort: e.currentTarget.value, page: null })}
+      class="bg-transparent py-1.5 pr-2 text-sm text-white outline-none"
+    >
+      <option value="recent">Recently updated</option>
+      <option value="name">Name</option>
+    </select>
+  </div>
   <span class="ml-auto text-xs text-dark-3">{data.total} model{data.total === 1 ? '' : 's'}</span>
 </div>
 
@@ -213,14 +251,29 @@
       <input type="hidden" name="versionIds" value={[...selected].join(',')} />
       <input
         type="number"
-        name="fee"
-        step="0.01"
+        name="buzz"
         min="0"
-        max="100"
-        bind:value={bulkFee}
-        placeholder="⚡ / image (empty = clear)"
-        class="w-52 rounded border border-dark-4 bg-dark-7 px-2 py-1 text-sm text-white"
+        step="1"
+        inputmode="numeric"
+        onbeforeinput={integerOnly}
+        bind:value={bulkBuzz}
+        placeholder="Buzz"
+        aria-label="Buzz (leave empty to clear the fee)"
+        title="Leave empty to clear the fee"
+        class="w-20 rounded border border-dark-4 bg-dark-7 px-2 py-1 text-sm text-white"
       />
+      <span class="text-sm text-dark-3">⚡ per</span>
+      <select
+        name="images"
+        bind:value={bulkImages}
+        aria-label="Images"
+        class="rounded border border-dark-4 bg-dark-7 px-1.5 py-1 text-sm text-white"
+      >
+        {#each FEE_IMAGE_OPTIONS as opt (opt)}
+          <option value={String(opt)}>{opt}</option>
+        {/each}
+      </select>
+      <span class="text-sm text-dark-3">images</span>
       <button
         type="button"
         onclick={() => (showBulkConfirm = true)}
@@ -232,10 +285,11 @@
         type="submit"
         formaction="?/bulkApplyDefault"
         class="rounded border border-dark-4 px-3 py-1 text-sm text-white hover:border-dark-3"
-        title="Set each selected version to its model-type default (LoRA 0.1, Checkpoint 1)"
+        title="Set each selected version to its model-type default (LoRA 1 ⚡ per 10 images, Checkpoint 1 ⚡ per image)"
       >
         Apply default by type
       </button>
+      <span class="text-xs text-dark-3">Empty buzz clears the fee.</span>
     </form>
   </div>
 {/if}
@@ -252,19 +306,23 @@
   <div class="flex flex-col gap-5">
     {#each data.models as model (model.id)}
       <Card>
-        <CardHeader class="flex-row items-center gap-3">
-          {#if bulkMode && model.versions.length > 0}
-            <input
-              type="checkbox"
-              checked={allSelected(model)}
-              onchange={() => toggleModel(model)}
-              aria-label="Select all versions of {model.name}"
-              class="size-4"
-            />
-          {/if}
-          <CardTitle class="text-base text-white">{model.name}</CardTitle>
-          <Badge variant="secondary">{model.type}</Badge>
-          <Badge variant="outline" class="ml-auto">{model.status}</Badge>
+        <CardHeader>
+          <div class="flex items-center gap-3">
+            {#if bulkMode && model.versions.length > 0}
+              <input
+                type="checkbox"
+                checked={allSelected(model)}
+                onchange={() => toggleModel(model)}
+                aria-label="Select all versions of {model.name}"
+                class="size-4"
+              />
+            {/if}
+            <CardTitle class="text-base text-white">{model.name}</CardTitle>
+            <Badge variant="secondary">{model.type}</Badge>
+            <Badge variant={model.status === 'Published' ? 'default' : 'outline'} class="ml-auto">
+              {model.status}
+            </Badge>
+          </div>
         </CardHeader>
         <CardContent>
           {#if model.versions.length === 0}
@@ -277,13 +335,14 @@
                   <TableHead>Version</TableHead>
                   <TableHead>Base model</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Licensing fee (⚡ / image)</TableHead>
+                  <TableHead>Licensing fee</TableHead>
                   <TableHead>Access</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {#each model.versions as version (version.id)}
                   {@const st = feeStatus(version.licensingFee)}
+                  {@const ratio = feeToRatio(version.licensingFee)}
                   <TableRow>
                     {#if bulkMode}
                       <TableCell>
@@ -306,18 +365,32 @@
                     <TableCell>
                       <div class="flex items-center gap-2">
                         {#if data.canSetFee && !bulkMode}
-                          <form method="POST" action="?/setFee" use:enhance={setFeeEnhance} class="flex items-center gap-2">
+                          <form method="POST" action="?/setFee" use:enhance={setFeeEnhance} class="flex items-center gap-1.5">
                             <input type="hidden" name="versionId" value={version.id} />
                             <input
                               type="number"
-                              name="fee"
-                              step="0.01"
+                              name="buzz"
                               min="0"
-                              max="100"
-                              value={version.licensingFee ?? ''}
+                              step="1"
+                              inputmode="numeric"
+                              onbeforeinput={integerOnly}
+                              value={ratio.buzz || ''}
                               placeholder="Off"
-                              class="w-24 rounded border border-dark-4 bg-dark-7 px-2 py-1 text-sm text-white"
+                              aria-label="Buzz for {version.name}"
+                              class="w-14 rounded border border-dark-4 bg-dark-7 px-2 py-1 text-sm text-white"
                             />
+                            <span class="text-xs text-dark-3">⚡ per</span>
+                            <select
+                              name="images"
+                              value={String(ratio.images)}
+                              aria-label="Images for {version.name}"
+                              class="rounded border border-dark-4 bg-dark-7 px-1.5 py-1 text-sm text-white"
+                            >
+                              {#each FEE_IMAGE_OPTIONS as opt (opt)}
+                                <option value={String(opt)}>{opt}</option>
+                              {/each}
+                            </select>
+                            <span class="text-xs text-dark-3">images</span>
                             <button
                               type="submit"
                               class="rounded bg-blue-8 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-7"
@@ -326,7 +399,7 @@
                             </button>
                           </form>
                         {:else}
-                          <span class="text-dark-1">{feeLabel(version.licensingFee)}</span>
+                          <span class="text-dark-1">{formatFeeRatio(version.licensingFee)}</span>
                         {/if}
                         <span class="text-xs {st.cls}">{st.label}</span>
                       </div>
@@ -386,7 +459,12 @@
     </AlertDialogHeader>
     <AlertDialogFooter>
       <AlertDialogCancel>Cancel</AlertDialogCancel>
-      <AlertDialogAction onclick={() => (bulkForm?.requestSubmit())}>Apply</AlertDialogAction>
+      <AlertDialogAction
+        onclick={() => {
+          showBulkConfirm = false;
+          bulkForm?.requestSubmit();
+        }}>Apply</AlertDialogAction
+      >
     </AlertDialogFooter>
   </AlertDialogContent>
 </AlertDialog>

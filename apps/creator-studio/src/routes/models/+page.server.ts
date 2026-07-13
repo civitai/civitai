@@ -1,6 +1,7 @@
+import { z } from 'zod';
 import { fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
-import { getCreatorModels, type FeeFilter, type ModelsSort } from '$lib/server/models';
+import { getCreatorModels } from '$lib/server/models';
 import {
   resolveMembership,
   canSetLicensingFee,
@@ -10,23 +11,41 @@ import {
   setLicensingFee,
   bulkSetLicensingFee,
   bulkApplyDefaultFees,
+  licensingFeeRatioSchema,
 } from '$lib/server/monetization/licensing-fee';
-import {
-  setEarlyAccessConfig,
-  DEFAULT_GENERATION_TRIAL_LIMIT,
-  type EarlyAccessConfig,
-} from '$lib/server/monetization/early-access';
+import { setEarlyAccessConfig, earlyAccessFormSchema } from '$lib/server/monetization/early-access';
 
-const sortOf = (v: string | null): ModelsSort => (v === 'name' ? 'name' : 'recent');
-const feeFilterOf = (v: string | null): FeeFilter | undefined =>
-  v === 'set' || v === 'off' ? v : undefined;
+// --- input schemas: every load/action input is zod-validated ---
+const versionIdSchema = z.coerce.number().int().positive();
+// Hidden field is a comma-joined id list ("1,2,3"). Keep valid positive ints; require at least one.
+const versionIdsSchema = z
+  .string()
+  .transform((s) =>
+    s
+      .split(',')
+      .map((x) => Number(x.trim()))
+      .filter((n) => Number.isInteger(n) && n > 0)
+  )
+  .refine((ids) => ids.length > 0, 'Select at least one version.');
+const clearFlagSchema = z.preprocess((v) => v === 'on' || v === 'true', z.boolean());
+const modelsQuerySchema = z.object({
+  q: z.string().optional(),
+  fee: z.enum(['set', 'off']).optional().catch(undefined),
+  sort: z.enum(['recent', 'name']).catch('recent'),
+  page: z.coerce.number().int().min(1).catch(1),
+});
+
+const firstError = (e: z.ZodError) => e.issues[0]?.message ?? 'Invalid input.';
 
 export const load: PageServerLoad = async ({ locals, parent, url }) => {
   const { membership } = await parent();
-  const q = url.searchParams.get('q')?.trim() || undefined;
-  const fee = feeFilterOf(url.searchParams.get('fee'));
-  const sort = sortOf(url.searchParams.get('sort'));
-  const page = Number(url.searchParams.get('page')) || 1;
+  const {
+    q: rawQ,
+    fee,
+    sort,
+    page,
+  } = modelsQuerySchema.parse(Object.fromEntries(url.searchParams));
+  const q = rawQ?.trim() || undefined;
 
   const result = await getCreatorModels({ userId: locals.user.id, q, fee, sort, page });
   return {
@@ -36,75 +55,38 @@ export const load: PageServerLoad = async ({ locals, parent, url }) => {
   };
 };
 
-function parseFee(raw: FormDataEntryValue | null): number | null | 'invalid' {
-  if (raw == null || raw === '') return null;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : 'invalid';
-}
-function parseIds(raw: FormDataEntryValue | null): number[] {
-  return String(raw ?? '')
-    .split(',')
-    .map(Number)
-    .filter((n) => Number.isInteger(n));
-}
-
-const boolOf = (form: FormData, key: string) => form.get(key) === 'on' || form.get(key) === 'true';
-const numOf = (form: FormData, key: string): number | undefined => {
-  const v = form.get(key);
-  if (v == null || v === '') return undefined;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : undefined;
-};
-
-// Build the early-access config from the editor form. Light shape validation only —
-// the main-app endpoint is the source of truth for prices, per-user limits, etc.
-function parseEarlyAccessForm(form: FormData): EarlyAccessConfig | { error: string } {
-  const timeframe = numOf(form, 'timeframe');
-  if (!timeframe || timeframe <= 0) return { error: 'Enter an early access duration (in days).' };
-
-  const chargeForDownload = boolOf(form, 'chargeForDownload');
-  const chargeForGeneration = boolOf(form, 'chargeForGeneration');
-  if (!chargeForDownload && !chargeForGeneration)
-    return { error: 'Charge for downloads and/or generations to enable early access.' };
-
-  return {
-    timeframe,
-    chargeForDownload,
-    downloadPrice: numOf(form, 'downloadPrice'),
-    chargeForGeneration,
-    generationPrice: numOf(form, 'generationPrice'),
-    generationTrialLimit: numOf(form, 'generationTrialLimit') ?? DEFAULT_GENERATION_TRIAL_LIMIT,
-    donationGoalEnabled: boolOf(form, 'donationGoalEnabled'),
-    donationGoal: numOf(form, 'donationGoal'),
-    freeGeneration: boolOf(form, 'freeGeneration'),
-  };
-}
-
 export const actions: Actions = {
   setFee: async ({ request, locals, cookies }) => {
     const form = await request.formData();
-    const versionId = Number(form.get('versionId'));
-    if (!Number.isInteger(versionId))
-      return fail(400, { versionId: null, error: 'Invalid version.' });
+    const versionId = versionIdSchema.safeParse(form.get('versionId'));
+    if (!versionId.success) return fail(400, { versionId: null, error: 'Invalid version.' });
 
-    const fee = parseFee(form.get('fee'));
-    if (fee === 'invalid') return fail(400, { versionId, error: 'Enter a number.' });
+    const fee = licensingFeeRatioSchema.safeParse({
+      buzz: form.get('buzz'),
+      images: form.get('images'),
+    });
+    if (!fee.success) return fail(400, { versionId: versionId.data, error: firstError(fee.error) });
 
     const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
-    const result = await setLicensingFee(locals.user.id, membership, versionId, fee);
-    if (!result.ok) return fail(result.status, { versionId, error: result.error });
+    const result = await setLicensingFee(locals.user.id, membership, versionId.data, fee.data);
+    if (!result.ok) return fail(result.status, { versionId: versionId.data, error: result.error });
 
-    return { versionId };
+    return { versionId: versionId.data };
   },
 
   bulkSetFee: async ({ request, locals, cookies }) => {
     const form = await request.formData();
-    const fee = parseFee(form.get('fee'));
-    if (fee === 'invalid') return fail(400, { bulk: true, error: 'Enter a number.' });
+    const versionIds = versionIdsSchema.safeParse(String(form.get('versionIds') ?? ''));
+    if (!versionIds.success) return fail(400, { bulk: true, error: firstError(versionIds.error) });
 
-    const versionIds = parseIds(form.get('versionIds'));
+    const fee = licensingFeeRatioSchema.safeParse({
+      buzz: form.get('buzz'),
+      images: form.get('images'),
+    });
+    if (!fee.success) return fail(400, { bulk: true, error: firstError(fee.error) });
+
     const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
-    const result = await bulkSetLicensingFee(locals.user.id, membership, versionIds, fee);
+    const result = await bulkSetLicensingFee(locals.user.id, membership, versionIds.data, fee.data);
     if (!result.ok) return fail(result.status, { bulk: true, error: result.error });
 
     return { bulk: true, updated: result.updated };
@@ -112,9 +94,11 @@ export const actions: Actions = {
 
   bulkApplyDefault: async ({ request, locals, cookies }) => {
     const form = await request.formData();
-    const versionIds = parseIds(form.get('versionIds'));
+    const versionIds = versionIdsSchema.safeParse(String(form.get('versionIds') ?? ''));
+    if (!versionIds.success) return fail(400, { bulk: true, error: firstError(versionIds.error) });
+
     const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
-    const result = await bulkApplyDefaultFees(locals.user.id, membership, versionIds);
+    const result = await bulkApplyDefaultFees(locals.user.id, membership, versionIds.data);
     if (!result.ok) return fail(result.status, { bulk: true, error: result.error });
 
     return { bulk: true, updated: result.updated };
@@ -124,25 +108,26 @@ export const actions: Actions = {
   // ownership + all validation are enforced by the endpoint. We forward the shared session cookie.
   setEarlyAccess: async ({ request }) => {
     const form = await request.formData();
-    const versionId = Number(form.get('versionId'));
-    if (!Number.isInteger(versionId))
-      return fail(400, { versionId: null, error: 'Invalid version.' });
+    const versionId = versionIdSchema.safeParse(form.get('versionId'));
+    if (!versionId.success) return fail(400, { versionId: null, error: 'Invalid version.' });
 
     // Auth is enforced by the hook; the endpoint re-checks ownership. We forward the session cookie.
     const cookie = request.headers.get('cookie') ?? '';
 
-    if (boolOf(form, 'clear')) {
-      const result = await setEarlyAccessConfig(cookie, versionId, null);
-      if (!result.ok) return fail(result.status, { versionId, error: result.error });
-      return { versionId, earlyAccessCleared: true };
+    if (clearFlagSchema.parse(form.get('clear'))) {
+      const result = await setEarlyAccessConfig(cookie, versionId.data, null);
+      if (!result.ok)
+        return fail(result.status, { versionId: versionId.data, error: result.error });
+      return { versionId: versionId.data, earlyAccessCleared: true };
     }
 
-    const config = parseEarlyAccessForm(form);
-    if ('error' in config) return fail(400, { versionId, error: config.error });
+    const config = earlyAccessFormSchema.safeParse(Object.fromEntries(form));
+    if (!config.success)
+      return fail(400, { versionId: versionId.data, error: firstError(config.error) });
 
-    const result = await setEarlyAccessConfig(cookie, versionId, config);
-    if (!result.ok) return fail(result.status, { versionId, error: result.error });
+    const result = await setEarlyAccessConfig(cookie, versionId.data, config.data);
+    if (!result.ok) return fail(result.status, { versionId: versionId.data, error: result.error });
 
-    return { versionId, earlyAccessSaved: true };
+    return { versionId: versionId.data, earlyAccessSaved: true };
   },
 };

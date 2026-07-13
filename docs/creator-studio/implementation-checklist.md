@@ -68,10 +68,10 @@ Legend: `[x]` done · `[ ]` not started · **🚧** blocked on a dependency · *
 ---
 
 ## `/settings` — Payout & settings
-- [ ] Payout (Tipalti) status card
-- [ ] Membership / tier status card
-- [ ] Default fee-suggestion preference
-- *(route stub only)*
+- [x] Membership / tier status card — reads session (`tier` + CP membership); links to `/pricing` + `/creator-program`
+- [x] Payout (Tipalti) status card — reads `UserPaymentConfiguration` (active / pending / not set up); links out to the Buzz dashboard
+- [x] Fee defaults — **read-only info** (B9 made a per-account pref moot: fixed seed values — Checkpoint 1, LoRA 0.1)
+- [ ] CP cash panel + Withdraw — deferred to `/earnings` (C6: one cash home)
 
 ---
 
