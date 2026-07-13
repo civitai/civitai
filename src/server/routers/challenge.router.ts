@@ -67,6 +67,7 @@ import {
 } from '~/server/services/challenge.service';
 import { getJudgingCategoryOptions } from '~/server/services/challenge-category.service';
 import { getJudgeCommentForImage } from '~/server/services/commentsv2.service';
+import { deriveDomainCurrency } from '~/server/games/daily-challenge/challenge-currency';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // Router definition
@@ -180,7 +181,13 @@ export const challengeRouter = router({
     .input(userChallengeUpsertSchema)
     .use(isFlagProtected('challengePlatform'))
     .use(isFlagProtected('userChallenges'))
-    .mutation(({ input, ctx }) => upsertUserChallenge({ ...input, userId: ctx.user.id })),
+    .mutation(({ input, ctx }) =>
+      upsertUserChallenge({
+        ...input,
+        userId: ctx.user.id,
+        buzzType: deriveDomainCurrency(ctx.features.isGreen),
+      })
+    ),
 
   // User: delete own Scheduled, entry-free challenge (refunds escrowed prize). Owner/status guards
   // enforced in the service.

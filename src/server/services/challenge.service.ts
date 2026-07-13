@@ -69,6 +69,10 @@ import {
   refundUserChallengeFunds,
 } from '~/server/games/daily-challenge/challenge-funding';
 import {
+  isNonSfwForGreen,
+  type ChallengeBuzzType,
+} from '~/server/games/daily-challenge/challenge-currency';
+import {
   getEntryPoolContribution,
   USER_SELECTABLE_JUDGE_NAMES,
 } from '~/shared/constants/challenge.constants';
@@ -1244,8 +1248,9 @@ export async function upsertChallenge({
 // via challenge-funding.ts.
 export async function upsertUserChallenge({
   userId,
+  buzzType,
   ...input
-}: UserChallengeUpsertInput & { userId: number }) {
+}: UserChallengeUpsertInput & { userId: number; buzzType: ChallengeBuzzType }) {
   const {
     id,
     coverImage,
@@ -1271,6 +1276,11 @@ export async function upsertUserChallenge({
   if (!judge) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Selected judge is not available.' });
 
   const allowedNsfwLevel = rest.allowedNsfwLevel ?? sfwBrowsingLevelsFlag;
+  if (isNonSfwForGreen(buzzType, allowedNsfwLevel))
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'Green challenges must be Safe-For-Work.',
+    });
   const themeEls = themeElements?.length ? themeElements : undefined;
 
   // Derive label + criteria from the ChallengeCategory library (throws on unknown keys) so only
@@ -1445,6 +1455,7 @@ export async function upsertUserChallenge({
         collectionId: collection.id,
         createdById: userId,
         source: ChallengeSource.User,
+        buzzType,
         status: ChallengeStatus.Scheduled,
         ingestion: ChallengeIngestionStatus.Pending,
         // Appears in the Upcoming feed once scanned (ingestion gate hides it until then).
@@ -1458,7 +1469,12 @@ export async function upsertUserChallenge({
   // challenge + its auto-created collection so we never leave a partially funded challenge.
   if (initialPrizeBuzz > 0) {
     try {
-      await chargeInitialPrize({ challengeId: created.id, userId, amount: initialPrizeBuzz });
+      await chargeInitialPrize({
+        challengeId: created.id,
+        userId,
+        amount: initialPrizeBuzz,
+        fromAccountType: buzzType,
+      });
     } catch (e) {
       // Prize charge failed — remove the unfunded challenge + its auto-created collection. If the
       // cleanup itself fails we'd strand an unfunded challenge, so log loudly instead of swallowing.
