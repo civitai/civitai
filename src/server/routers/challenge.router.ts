@@ -67,6 +67,7 @@ import {
 } from '~/server/services/challenge.service';
 import { getJudgingCategoryOptions } from '~/server/services/challenge-category.service';
 import { getJudgeCommentForImage } from '~/server/services/commentsv2.service';
+import { deriveDomainCurrency } from '~/server/games/daily-challenge/challenge-currency';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // Router definition
@@ -76,7 +77,9 @@ export const challengeRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getInfiniteChallengesSchema)
     .use(isFlagProtected('challengePlatform'))
-    .query(({ input, ctx }) => getInfiniteChallenges({ ...input, currentUserId: ctx.user?.id })),
+    .query(({ input, ctx }) =>
+      getInfiniteChallenges({ ...input, currentUserId: ctx.user?.id, isGreen: ctx.features.isGreen })
+    ),
 
   // Active + next few upcoming daily (System) challenges for the horizontal daily row
   getDaily: publicProcedure
@@ -89,7 +92,7 @@ export const challengeRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
     .use(isFlagProtected('challengePlatform'))
-    .query(({ input, ctx }) => getChallengeDetail(input.id, ctx.user?.id)),
+    .query(({ input, ctx }) => getChallengeDetail(input.id, ctx.user?.id, ctx.features.isGreen)),
 
   // Get upcoming challenge themes for preview widget
   getUpcomingThemes: publicProcedure
@@ -180,7 +183,13 @@ export const challengeRouter = router({
     .input(userChallengeUpsertSchema)
     .use(isFlagProtected('challengePlatform'))
     .use(isFlagProtected('userChallenges'))
-    .mutation(({ input, ctx }) => upsertUserChallenge({ ...input, userId: ctx.user.id })),
+    .mutation(({ input, ctx }) =>
+      upsertUserChallenge({
+        ...input,
+        userId: ctx.user.id,
+        buzzType: deriveDomainCurrency(ctx.features.isGreen),
+      })
+    ),
 
   // User: delete own Scheduled, entry-free challenge (refunds escrowed prize). Owner/status guards
   // enforced in the service.

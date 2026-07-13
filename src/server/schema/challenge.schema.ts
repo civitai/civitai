@@ -144,6 +144,7 @@ export type ChallengeDetail = {
   visibleAt: Date;
   status: ChallengeStatus;
   source: ChallengeSource;
+  buzzType: 'green' | 'yellow';
   eventId: number | null;
   nsfwLevel: number;
   allowedNsfwLevel: number;

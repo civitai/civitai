@@ -5257,6 +5257,7 @@ model Challenge {
   reviewCostType  ChallengeReviewCostType @default(None) // Type of paid review pricing
   reviewCost      Int  @default(0) // Buzz cost (per entry or flat, depending on reviewCostType)
   entryFee        Int  @default(0) // Buzz charged per entry to participate (0 = free). Net to pool = entryFee - platform cut
+  buzzType        String @default("yellow")
 
   // Ownership & Source
   createdById Int?

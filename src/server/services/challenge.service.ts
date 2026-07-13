@@ -69,6 +69,12 @@ import {
   refundUserChallengeFunds,
 } from '~/server/games/daily-challenge/challenge-funding';
 import {
+  deriveDomainCurrency,
+  isChallengeHiddenByDomainCurrency,
+  isNonSfwForGreen,
+  type ChallengeBuzzType,
+} from '~/server/games/daily-challenge/challenge-currency';
+import {
   getEntryPoolContribution,
   USER_SELECTABLE_JUDGE_NAMES,
 } from '~/shared/constants/challenge.constants';
@@ -328,7 +334,7 @@ export async function getDailyChallenges(limit = 4): Promise<ChallengeListItem[]
 }
 
 export async function getInfiniteChallenges(
-  input: GetInfiniteChallengesInput & { currentUserId?: number }
+  input: GetInfiniteChallengesInput & { currentUserId?: number; isGreen?: boolean }
 ) {
   const {
     query,
@@ -344,6 +350,7 @@ export async function getInfiniteChallenges(
     limit,
     cursor,
     currentUserId,
+    isGreen,
   } = input;
 
   // Build WHERE conditions using parameterized queries (SQL injection safe)
@@ -370,6 +377,14 @@ export async function getInfiniteChallenges(
     currentUserId
       ? Prisma.sql`(NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."poi" = true) OR c."createdById" = ${currentUserId})`
       : Prisma.sql`NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."poi" = true)`
+  );
+
+  // Domain-currency gate: green user challenges surface only on the green site, yellow only
+  // off-green. Scoped to user challenges — System/mod/event (prize-only, no entry fee) are
+  // universal and show on both domains, mirroring the scan/POI gates.
+  const domainCurrency = deriveDomainCurrency(isGreen ?? false);
+  conditions.push(
+    Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency})`
   );
 
   // Status filter (parameterized)
@@ -759,6 +774,7 @@ async function buildChallengeDetail(
     visibleAt: challenge.visibleAt,
     status: challenge.status,
     source: challenge.source,
+    buzzType: challenge.buzzType,
     eventId: challenge.eventId,
     nsfwLevel: challenge.nsfwLevel,
     allowedNsfwLevel: challenge.allowedNsfwLevel,
@@ -809,7 +825,8 @@ async function buildChallengeDetail(
  */
 export async function getChallengeDetail(
   id: number,
-  viewerId?: number
+  viewerId?: number,
+  isGreen?: boolean
 ): Promise<ChallengeDetail | null> {
   const challenge = await getChallengeById(id);
   if (!challenge) return null;
@@ -849,6 +866,20 @@ export async function getChallengeDetail(
     )
       return null;
   }
+
+  // Domain-currency gate — direct-URL parity with the feed filter; user-scoped, creator exempt.
+  if (
+    isChallengeHiddenByDomainCurrency(
+      {
+        source: challenge.source,
+        buzzType: challenge.buzzType,
+        createdById: challenge.createdById,
+      },
+      isGreen ?? false,
+      viewerId
+    )
+  )
+    return null;
 
   const { _internal, ...detail } = await buildChallengeDetail(challenge);
   return detail;
@@ -1244,8 +1275,9 @@ export async function upsertChallenge({
 // via challenge-funding.ts.
 export async function upsertUserChallenge({
   userId,
+  buzzType,
   ...input
-}: UserChallengeUpsertInput & { userId: number }) {
+}: UserChallengeUpsertInput & { userId: number; buzzType: ChallengeBuzzType }) {
   const {
     id,
     coverImage,
@@ -1271,6 +1303,14 @@ export async function upsertUserChallenge({
   if (!judge) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Selected judge is not available.' });
 
   const allowedNsfwLevel = rest.allowedNsfwLevel ?? sfwBrowsingLevelsFlag;
+  // buzzType is derived from the caller's current domain, but it's immutable once stored — on
+  // create it's what will be stored, so gate here; on edit the STORED buzzType is what matters
+  // (gated below, against `existing.buzzType`, after it's loaded).
+  if (!id && isNonSfwForGreen(buzzType, allowedNsfwLevel))
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'Green challenges must be Safe-For-Work.',
+    });
   const themeEls = themeElements?.length ? themeElements : undefined;
 
   // Derive label + criteria from the ChallengeCategory library (throws on unknown keys) so only
@@ -1337,6 +1377,7 @@ export async function upsertUserChallenge({
         collectionId: true,
         basePrizePool: true,
         metadata: true,
+        buzzType: true,
       },
     });
     if (!existing) throw throwNotFoundError('Challenge not found');
@@ -1360,6 +1401,15 @@ export async function upsertUserChallenge({
           message: 'This challenge already has entries and can no longer be edited.',
         });
     }
+    // buzzType is immutable (set at creation, derived from the domain the creator was on).
+    // The passed `buzzType` above reflects the EDITOR's current domain, which may differ — the
+    // guard here must use the STORED value, since that's what stays authoritative after this edit.
+    const existingBuzzType: ChallengeBuzzType = existing.buzzType === 'green' ? 'green' : 'yellow';
+    if (isNonSfwForGreen(existingBuzzType, allowedNsfwLevel))
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'Green challenges must be Safe-For-Work.',
+      });
 
     const updated = await dbWrite.$transaction(async (tx) => {
       // Conditional on status IN THE WRITE: the Scheduled/entry-count checks above ran on the
@@ -1445,6 +1495,7 @@ export async function upsertUserChallenge({
         collectionId: collection.id,
         createdById: userId,
         source: ChallengeSource.User,
+        buzzType,
         status: ChallengeStatus.Scheduled,
         ingestion: ChallengeIngestionStatus.Pending,
         // Appears in the Upcoming feed once scanned (ingestion gate hides it until then).
@@ -1458,7 +1509,12 @@ export async function upsertUserChallenge({
   // challenge + its auto-created collection so we never leave a partially funded challenge.
   if (initialPrizeBuzz > 0) {
     try {
-      await chargeInitialPrize({ challengeId: created.id, userId, amount: initialPrizeBuzz });
+      await chargeInitialPrize({
+        challengeId: created.id,
+        userId,
+        amount: initialPrizeBuzz,
+        fromAccountType: buzzType,
+      });
     } catch (e) {
       // Prize charge failed — remove the unfunded challenge + its auto-created collection. If the
       // cleanup itself fails we'd strand an unfunded challenge, so log loudly instead of swallowing.
