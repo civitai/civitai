@@ -106,21 +106,27 @@ export interface WithBlockScopeOpts {
    * `src/components/AppBlocks/sandbox.ts` — only internal/verified tiers get
    * it), so the iframe runs at an OPAQUE origin and every `fetch` it makes
    * sends `Origin: null`. `null` can never be in the OauthClient.allowedOrigins
-   * allowlist, so a direct (non-bridge) catalog fetch's CORS preflight falls
-   * through to the handler and 405s — the in-block resource browser then can't
-   * load. (Generation/money go through the postMessage host bridge, which is
-   * CORS-free; the catalog selector is the one path that direct-fetches.)
+   * allowlist, so a direct (non-bridge) fetch's CORS preflight falls through to
+   * the handler and 405s — the in-block resource browser (or collections / tip /
+   * buzz / shared-storage rail) then can't load. (First hit by the catalog
+   * selector; the collections, tip, buzz, and shared-storage REST endpoints a
+   * block direct-fetches hit the SAME wall.)
    *
-   * SAFE ONLY for the block CATALOG endpoints (/api/v1/blocks/{models,images}),
-   * which is why this is an explicit per-endpoint opt-in and NOT a blanket
-   * middleware behavior: they return PUBLIC, maturity-clamped data (strictly ⊆
-   * the public, already-`ACAO:*` /api/v1/models), carry NO credentials
-   * (Allow-Credentials is omitted and block iframes have no civitai cookie), and
-   * the real request still requires a valid short-lived block JWT in
-   * `Authorization` (an attacker's own null-origin sandboxed page can't mint
-   * one). The preflight is CORS POLICY only; the token remains the gate. NEVER
-   * set this on a scoped/credentialed endpoint (me.ts, settings, …) — `ACAO:
-   * null` there would let ANY sandboxed page read a per-user response.
+   * SAFE wherever authorization rests SOLELY on the Bearer block-JWT with NO
+   * ambient/cookie credential — which is every block REST endpoint, so this is
+   * set on both the PUBLIC catalog endpoints (/api/v1/blocks/{models,images})
+   * and the per-user scoped ones (collections/tip/buzz/shared-storage). Block
+   * iframes carry no civitai cookie and `Access-Control-Allow-Credentials` is
+   * omitted, so `ACAO: null` grants NO tokenless access: the real request still
+   * requires a valid short-lived block JWT in `Authorization` (an attacker's own
+   * null-origin sandboxed page can't mint one), and per-user responses are bound
+   * to the token's SUBJECT — the preflight is CORS POLICY only; the token is the
+   * gate, not CORS. That is why it stays an explicit per-endpoint opt-in and not
+   * blanket middleware behavior. Do NOT set it on any endpoint that would
+   * authorize via an AMBIENT credential (a civitai session cookie) — there
+   * `ACAO: null` could let a sandboxed page read a per-user response WITHOUT
+   * presenting a token. (No block endpoint reads cookies today; the catalog
+   * endpoints additionally return only PUBLIC maturity-clamped data.)
    */
   allowOpaqueOrigin?: boolean;
 }
@@ -296,7 +302,7 @@ async function setBlockCors(
     return 'fallthrough';
   }
 
-  // Opaque-origin (`Origin: null`) opt-in — CATALOG endpoints only (see
+  // Opaque-origin (`Origin: null`) opt-in — opted-in block endpoints only (see
   // WithBlockScopeOpts.allowOpaqueOrigin). Unverified blocks run sandboxed
   // without `allow-same-origin` → opaque origin → `Origin: null`, which can
   // never be in the allowlist above. We echo `ACAO: null` ONLY when the

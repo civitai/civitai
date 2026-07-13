@@ -241,4 +241,11 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 // Scope-gated: collections:read:self (self-scope → non-anon subject enforced by
 // the middleware). Not the "any valid token" catalog mode — reads are subject-
 // bound (own private collections), so a declared+granted scope is the gate.
-export default withBlockScope(baseHandler, { requiredScope: 'collections:read:self' });
+// allowOpaqueOrigin: an UNVERIFIED block direct-fetches this from an opaque
+// origin (`Origin: null`), so it needs `ACAO: null` to clear the CORS preflight;
+// the Bearer block-JWT (no cookies) remains the sole authz gate — mirrors
+// images.ts; see WithBlockScopeOpts.allowOpaqueOrigin.
+export default withBlockScope(baseHandler, {
+  requiredScope: 'collections:read:self',
+  allowOpaqueOrigin: true,
+});
