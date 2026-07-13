@@ -10,10 +10,23 @@ import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing
  * browsers + host-side surfaces (mod queue, activity feed, notifications). This is
  * the entire new abuse surface, so every `append` runs this SYNCHRONOUSLY before a
  * row can land:
- *   - C2 (stored XSS): shared text is PLAIN TEXT. We HTML-escape on write (store
- *     escaped) so a stored `<script>` can never execute even if a
- *     featured/verified app is later granted `allow-same-origin`. The block still
- *     treats it as untrusted on read; escape-at-rest is the belt.
+ *   - C2 (stored XSS): shared text is PLAIN TEXT and is STORED RAW. Escape-at-rest
+ *     was REMOVED (2026-07 security review): it was the WRONG layer. Apps render the
+ *     value as React TEXT (children) and the host forwards `value` as DATA over
+ *     postMessage — there is NO HTML render path (no `dangerouslySetInnerHTML` /
+ *     `innerHTML` / `.html()` sink consumes it), so escaping only made stored
+ *     entities display LITERALLY (a title `Tom & Jerry <3` rendered as
+ *     `Tom &amp; Jerry &lt;3`). XSS containment now rests on (b) text-render and
+ *     (c) the opaque-origin sandbox — all approved apps are `unverified` → no
+ *     `allow-same-origin`, so even an injected `<script>` runs in an origin that
+ *     can't touch civitai. The raw text is STILL run through the full block below
+ *     (minor/POI/link/audit/size) — only the entity-escape of the stored form is
+ *     gone.
+ *     🔴 GATE-2 (pre-GA): a STRUCTURAL opaque-origin pin MUST be enforced before any
+ *     `verified`/`internal`-tier app is ever granted `apps:storage:shared:*` — a
+ *     verified app receives `allow-same-origin`, and escape-at-rest was the only
+ *     belt for that case. Do not grant a shared scope to a non-`unverified` tier
+ *     until that pin exists.
  *   - C3 (illegal content): `includesMinor` / `includesPoi` are a HARD legal fail
  *     (minor/POI/CSAM signals) — reject + the caller files a Report. Then
  *     `auditPromptServer` runs the full platform audit (regex + external
@@ -51,20 +64,6 @@ export class SharedContentBlockedError extends Error {
   }
 }
 
-/**
- * HTML-escape a plain-text field for storage-at-rest (C2). We STORE the escaped
- * form so the value is inert on every render path. `&` first so we don't
- * double-escape the entities we introduce.
- */
-export function escapeSharedText(input: string): string {
-  return input
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#x27;');
-}
-
 export interface SharedTextSafetyInput {
   title: string;
   body?: string;
@@ -76,8 +75,9 @@ export interface SharedTextSafetyInput {
 
 /**
  * Runs the full BLOCKING safety belt on shared write text. Throws
- * `SharedContentBlockedError` on any block. Returns the HTML-escaped, store-ready
- * `{ title, body }` on success.
+ * `SharedContentBlockedError` on any block. Returns the RAW, store-ready
+ * `{ title, body }` on success (see the C2 note above — the value is stored
+ * un-escaped and XSS is contained at the render + sandbox layers, NOT at rest).
  */
 export async function assertSharedTextSafe(
   input: SharedTextSafetyInput
@@ -129,5 +129,8 @@ export async function assertSharedTextSafe(
     throw new SharedContentBlockedError('audit', message);
   }
 
-  return { title: escapeSharedText(title), body: body != null ? escapeSharedText(body) : undefined };
+  // Store RAW (Fix 2 / 2026-07 security review): escape-at-rest was removed — see
+  // the C2 note. Every safety control above ran on the raw text; the returned value
+  // is the un-escaped, store-ready form.
+  return { title, body: body != null ? body : undefined };
 }
