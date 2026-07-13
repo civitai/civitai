@@ -236,8 +236,14 @@ function OffsiteRow({
   const canUnpublish = showOwner && canOwnerUnpublish(ownerState);
   const canRepublish = showOwner && canOwnerRepublish(ownerState);
   const isModRemoved = showOwner && ownerState === 'mod-removed';
-  // History is offered whenever there's a live/removed listing that can carry events.
-  const canViewHistory = showOwner && (ownerState !== 'inactive');
+  // History only when there IS history — a removed/hidden listing, or any recorded
+  // moderation event. A pristine, never-moderated live listing shows no History button
+  // (it would just open to "No moderation history yet.").
+  const canViewHistory =
+    showOwner &&
+    (ownerState === 'owner-hidden' ||
+      ownerState === 'mod-removed' ||
+      !!s.lastModerationAction);
 
   const renderActions = () => {
     const hasAny =

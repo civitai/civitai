@@ -718,7 +718,14 @@ function SubmissionActions({
     const canUnpublish = showOwner && canOwnerUnpublish(ownerState);
     const canRepublish = showOwner && canOwnerRepublish(ownerState);
     const isModRemoved = showOwner && ownerState === 'mod-removed';
-    const canViewHistory = showOwner && ownerState !== 'inactive';
+    // History only when there IS history — a removed/hidden listing, or any recorded
+    // moderation event. A pristine, never-moderated live app shows no History button
+    // (it would just open to "No moderation history yet.").
+    const canViewHistory =
+      showOwner &&
+      (ownerState === 'owner-hidden' ||
+        ownerState === 'mod-removed' ||
+        !!s.lastModerationAction);
     // Surface the manage entry points on any live / owner-hidden app (an app the owner
     // still controls); a mod takedown hides Edit (mirrors the off-site list), Revenue
     // stays (earnings are historical + viewable regardless of visibility).

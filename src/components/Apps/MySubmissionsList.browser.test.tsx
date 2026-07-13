@@ -826,6 +826,22 @@ describe('MySubmissionsList — P4 onsite unpublish / republish / history', () =
     await expect.element(page.getByText('Unpublished by you')).toBeInTheDocument();
     expect(page.getByTestId('apps-onsite-history-entry').elements().length).toBeGreaterThanOrEqual(2);
   });
+
+  test('a pristine, never-moderated LIVE app shows NO History button', async () => {
+    renderWithProviders(
+      <MySubmissionsList submissions={[live()]} onWithdraw={vi.fn()} withdrawing={false} />
+    );
+    // The row rendered (Unpublish is present) — but there's no History affordance.
+    await expect.element(page.getByTestId('apps-onsite-unpublish-live-app')).toBeInTheDocument();
+    expect(page.getByTestId('apps-onsite-history-live-app').elements()).toHaveLength(0);
+  });
+
+  test('a removed/hidden app DOES show a History button', async () => {
+    renderWithProviders(
+      <MySubmissionsList submissions={[ownerHidden()]} onWithdraw={vi.fn()} withdrawing={false} />
+    );
+    await expect.element(page.getByTestId('apps-onsite-history-hidden-app')).toBeInTheDocument();
+  });
 });
 
 describe('MySubmissionsList — P4 surfaced manage links', () => {

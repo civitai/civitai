@@ -348,11 +348,14 @@ describe('OffsiteSubmissionsList — moderation history modal', () => {
   });
 
   test('an empty history shows the empty-state copy', async () => {
+    // History only renders on a removed/hidden listing now (a pristine live app shows
+    // no History button), so exercise the empty-state on an owner-hidden listing whose
+    // history query returns [].
     mocks.historyItems = [];
     renderWithProviders(
-      <OffsiteSubmissionsList submissions={[live()]} onWithdraw={vi.fn()} withdrawing={false} />
+      <OffsiteSubmissionsList submissions={[ownerHidden()]} onWithdraw={vi.fn()} withdrawing={false} />
     );
-    await page.getByTestId('apps-offsite-history-live-off').click();
+    await page.getByTestId('apps-offsite-history-hidden-off').click();
     await expect.element(page.getByTestId('apps-offsite-history-empty')).toBeInTheDocument();
   });
 });

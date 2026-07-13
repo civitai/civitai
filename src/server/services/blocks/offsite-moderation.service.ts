@@ -1166,6 +1166,9 @@ export async function republishOwnListing(opts: {
 }): Promise<RepublishOwnListingResult> {
   const { input, userId } = opts;
   const reason = input.reason?.trim() ? input.reason.trim() : null;
+  // Set when the on-site block-restore flip matched 0 rows (drift — mirrors relist).
+  let onsiteBlockRestoreDrift = false;
+  let onsiteBlockId: string | null = null;
 
   await dbWrite.$transaction(async (tx) => {
     const listing = await loadOwnedListingInTx(tx, input.appListingId, userId);
@@ -1201,13 +1204,22 @@ export async function republishOwnListing(opts: {
         'This listing can no longer be republished.'
       );
     }
-    // ON-SITE: restore the backing block so the runtime serves again.
-    await flipBackingBlockStatus(tx, {
-      isOnsite,
-      appBlockId: listing.appBlockId,
-      from: 'suspended',
-      to: 'approved',
-    });
+    // ON-SITE: restore the backing block so the runtime serves again. Guarded to
+    // `suspended` + non-fatal on a 0-count; a 0-count means the block wasn't suspended
+    // (drift) → the listing shows approved but the block may not serve (store card →
+    // a blank/broken block; Open 404s). Non-fatal (store visibility IS restored), but
+    // flagged for a post-commit warn so the divergence is observable on the OWNER path
+    // too (mirrors the mod `relistListing` drift warn).
+    if (isOnsite && listing.appBlockId) {
+      onsiteBlockId = listing.appBlockId;
+      const flippedBlock = await flipBackingBlockStatus(tx, {
+        isOnsite,
+        appBlockId: listing.appBlockId,
+        from: 'suspended',
+        to: 'approved',
+      });
+      if (!flippedBlock) onsiteBlockRestoreDrift = true;
+    }
     await tx.appListingModerationEvent.create({
       data: {
         id: newAppListingModerationEventId(),
@@ -1221,6 +1233,27 @@ export async function republishOwnListing(opts: {
       },
     });
   });
+
+  // Post-commit, best-effort: warn when an on-site owner-republish restored the LISTING
+  // but the backing block wasn't `suspended` (so it may not serve) — the same drift
+  // observability the mod `relistListing` emits. Dynamic import keeps the logging graph
+  // out of the tx path.
+  if (onsiteBlockRestoreDrift) {
+    void import('~/server/logging/client')
+      .then(({ logToAxiom }) =>
+        logToAxiom(
+          {
+            type: 'warning',
+            name: 'app-listing-relist-block-drift',
+            message:
+              'onsite owner-republish: backing app_block was not suspended; the block may not serve',
+            details: { appListingId: input.appListingId, appBlockId: onsiteBlockId },
+          },
+          'app-blocks'
+        )
+      )
+      .catch(() => undefined);
+  }
 
   return { appListingId: input.appListingId, status: 'approved' };
 }

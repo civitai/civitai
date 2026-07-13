@@ -3,6 +3,7 @@ import { IconAlertTriangle } from '@tabler/icons-react';
 import { useState } from 'react';
 import { moderationActionChip } from '~/components/Apps/appListingModerationView';
 import { OFFSITE_MOD_NOTE_MAX } from '~/server/schema/blocks/offsite-moderation.schema';
+import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -23,12 +24,6 @@ import { trpc } from '~/utils/trpc';
  *     `offline` (on-site: a FULL takedown — the app goes OFFLINE at `<slug>.civit.ai`
  *     / the run page, not just delisted from the store).
  */
-
-function formatDate(d: string | Date | null | undefined): string {
-  if (!d) return '—';
-  const date = typeof d === 'string' ? new Date(d) : d;
-  return date.toLocaleString();
-}
 
 export type OwnerModalTarget = { id: string; slug: string } | null;
 
