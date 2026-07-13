@@ -69,6 +69,7 @@ describe('chargeEntryFees — happy paths', () => {
       userId: USER_ID,
       imageIds: [1, 2],
       entryFee: 0,
+      fromAccountType: 'yellow',
     });
     expect(result).toEqual({ paidImageIds: [1, 2], unpaidImageIds: [] });
     expect(mockCreateBuzzTransactionMany).not.toHaveBeenCalled();
@@ -84,6 +85,7 @@ describe('chargeEntryFees — happy paths', () => {
       userId: USER_ID,
       imageIds: [10, 11],
       entryFee: ENTRY_FEE,
+      fromAccountType: 'yellow',
     });
 
     expect(result).toEqual({ paidImageIds: [10, 11], unpaidImageIds: [] });
@@ -120,6 +122,7 @@ describe('chargeEntryFees — happy paths', () => {
       userId: USER_ID,
       imageIds: [10],
       entryFee: ENTRY_FEE,
+      fromAccountType: 'yellow',
     });
 
     expect(result).toEqual({ paidImageIds: [10], unpaidImageIds: [] });
@@ -134,6 +137,7 @@ describe('chargeEntryFees — happy paths', () => {
       userId: USER_ID,
       imageIds: [10],
       entryFee: CHALLENGE_ENTRY_HOUSE_CUT,
+      fromAccountType: 'yellow',
     });
 
     expect(result).toEqual({ paidImageIds: [10], unpaidImageIds: [] });
@@ -157,6 +161,7 @@ describe('chargeEntryFees — partial failure (the no-refund contract)', () => {
       userId: USER_ID,
       imageIds: [10, 11, 12],
       entryFee: ENTRY_FEE,
+      fromAccountType: 'yellow',
     });
 
     expect(result.paidImageIds).toEqual([10]);
@@ -195,6 +200,7 @@ describe('chargeEntryFees — partial failure (the no-refund contract)', () => {
       userId: USER_ID,
       imageIds: [10, 11, 12],
       entryFee: ENTRY_FEE,
+      fromAccountType: 'yellow',
     });
 
     expect(result.paidImageIds).toEqual([10]);
@@ -217,6 +223,7 @@ describe('chargeEntryFees — partial failure (the no-refund contract)', () => {
       userId: USER_ID,
       imageIds: [10],
       entryFee: ENTRY_FEE,
+      fromAccountType: 'yellow',
     });
 
     expect(result).toEqual({ paidImageIds: [10], unpaidImageIds: [] });
