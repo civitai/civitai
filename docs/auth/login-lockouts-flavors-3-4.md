@@ -25,12 +25,20 @@ Login is no longer NextAuth in the main app. It's a **SvelteKit hub at `apps/aut
 
   **Fix:** flip the bridge cookie from `SameSite=Lax` to **`SameSite=None; Secure`** (falls back to `Lax` on dev/http where `None` without `Secure` is browser-rejected). Safe — it's the ONLY cross-site cookie in the flow, and it's HttpOnly, `Path`-scoped, 10-min, carrying just the PKCE verifier + state guarded by the state check (not a session), so `None` doesn't weaken it (the `state` check is the real CSRF gate). The session/device cookies stay `Lax` (they're same-site on `.red`).
 
-  **Shipped alongside a residual diagnostic** (`callback.ts` logs `userAgent` + `cookieCount` on `exchange-error`) because for a *top-level* nav both `Lax` and `None` deliver — so if `no_cookie` persists after this, the data says why: `cookieCount>0` (other `.red` cookies survived) would have meant bridge-specific → `None` fixes it; `cookieCount==0` + Safari ⇒ ITP full-block (needs the cookie-independent redesign: carry `{v,s,r}` in an encrypted `state` param); `cookieCount==0` + Chrome ⇒ host-canonicalization bug. **Next:** post-deploy, confirm `no_cookie` on `.red` drops; if not, read `by cookieCount, userAgent`.
+  **`SameSite=None` DID NOT fix it** (deployed 2026-07-09 ~18:00). `.red` `no_cookie` stayed flat across the deploy boundary. The residual diagnostic (`userAgent` + `cookieCount`) explained why: the population is **(a) bots** — the top UA is a 2014 `Safari/8.0` scraper hitting `/callback` with `cookieCount==0` (inflated the earlier "1.4%") and **(b) real modern users** (Chrome/Edge/Android, `cookieCount≥3`) whose bridge cookie is dropped **while their other (Domain-scoped) cookies survive**, *even under `None`*. For a top-level nav `None` delivers, so this rules `SameSite` out — it's an attribute unique to the bridge cookie: it's the only **host-only** cookie (the survivors are `Domain`-scoped) and the only **10-min** one.
+
+  **Round 2 (this change): `Domain=<registrable>` + a probe.** Scope the bridge cookie to the registrable domain (`civitai.red`) — mirroring the session cookies, which don't have this problem — so it survives a host variation (www↔apex) between `/authorize` and `/callback`. Shipped with a **`Domain`-scoped, 1-hour probe cookie** (`oauth_bridge_probe`, carries only `{authHost, ts}`, no secret) so if `no_cookie` STILL persists, the callback classifies the residual: `probeAuthHost ≠ host` → host variation; `probeAgeMs > 10min` → the login outran the bridge TTL (expiry); probe absent → full block / bot. **Next:** post-deploy, confirm `.red` `no_cookie` drops; if not, read the probe fields.
 
   ```kusto
   ['civitai-prod'] | where name == 'auth-flow' and detail == 'no_cookie'
-  | summarize count() by tostring(host), cookieCount, tostring(userAgent)
+  | summarize count() by tostring(host), cookieCount, probePresent, tostring(probeAuthHost), bin(probeAgeMs, 60000)
   ```
+
+  > **⚠️ TEMPORARY — revert once the `.red no_cookie` cause is confirmed.** The `Domain=` scoping stays; the
+  > *probe* does not. Remove when done: `buildBridgeProbeCookie` / `readBridgeProbe` / `BRIDGE_PROBE_COOKIE` in
+  > `src/server/auth/oauth-bridge.ts`; the probe set in `authorize.ts`; and the `probePresent` / `probeAuthHost`
+  > / `probeAgeMs` (and, if fully cleaning up, `userAgent`) fields in `callback.ts`. The general `auth-flow` /
+  > `captcha-reject` telemetry and the `oauth_state`→`detail` split are PERMANENT (cheap standing observability).
 
 ---
 

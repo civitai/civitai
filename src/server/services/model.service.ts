@@ -31,7 +31,12 @@ import {
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
-import { MeiliCallTimeoutError, searchClient, withMeili } from '~/server/meilisearch/client';
+import {
+  isTransientMeiliError,
+  MeiliCallTimeoutError,
+  searchClient,
+  withMeili,
+} from '~/server/meilisearch/client';
 import { modelMetrics } from '~/server/metrics';
 import { withSpan } from '~/server/utils/otel-helpers';
 import {
@@ -118,7 +123,10 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import type { RuleDefinition } from '~/server/utils/mod-rules';
-import { capGetAllModelImages } from '~/server/utils/model-getall-images';
+import {
+  buildGetAllModelImages,
+  GET_ALL_IMAGES_PER_MODEL,
+} from '~/server/utils/model-getall-images';
 import {
   DEFAULT_PAGE_SIZE,
   getCursorClauses,
@@ -329,7 +337,21 @@ export const getModelsRaw = async ({
         client.index(MODELS_SEARCH_INDEX).search(query, request)
       );
     } catch (err) {
-      if (err instanceof MeiliCallTimeoutError) {
+      // Widened from `instanceof MeiliCallTimeoutError` to isTransientMeiliError
+      // (same fix as /api/v1/models' resolveModelSearchIds + #2972's user
+      // search). getModelsRaw is the search path behind model.getAll (the tRPC
+      // getModelsInfiniteHandler); its timeout-wrapper only caught civitai's own
+      // MeiliCallTimeoutError. A Meilisearch brownout ALSO throws the SDK's own
+      // transient types (MeiliSearchCommunicationError 408/429/5xx,
+      // MeiliSearchApiError gateway 502/503/504, network ECONNRESET, …), which
+      // fell through `throw err` → getModelsInfiniteHandler's throwDbError
+      // wrapped them as TRPCError INTERNAL_SERVER_ERROR → a 500 (invisible in
+      // Axiom). Converting them to SERVICE_UNAVAILABLE here surfaces a transient
+      // brownout as a retryable 503 through getModelsInfiniteHandler's
+      // `if (error instanceof TRPCError) throw error` (which re-throws it
+      // unchanged). Non-transient errors (malformed filter / auth / real app
+      // bug) are NOT matched and still surface as their real status.
+      if (isTransientMeiliError(err)) {
         throw new TRPCError({
           code: 'SERVICE_UNAVAILABLE',
           message: 'Model search is temporarily overloaded — please retry.',
@@ -1286,9 +1308,19 @@ export type GetModelsWithImagesAndModelVersions = AsyncReturnType<
 export const getModelsWithImagesAndModelVersions = async ({
   input,
   user,
+  // Per-model image cap for the RESPONSE (the shared image cache is untouched).
+  // The browse-feed controller selects the SLIM cap when the DARK
+  // `getAllModelImagesSlim` flag is on; other callers (home blocks, collections)
+  // default to `GET_ALL_IMAGES_PER_MODEL`.
+  imagesPerModel = GET_ALL_IMAGES_PER_MODEL,
+  // When true (flag-ON browse feed only) pick the nsfw-biased coverage slice instead
+  // of the naive first-`imagesPerModel`, so reducing the count adds ~zero feed drops.
+  biasImageSlice = false,
 }: {
   input: GetAllModelsOutput;
   user?: SessionUser;
+  imagesPerModel?: number;
+  biasImageSlice?: boolean;
 }) => {
   input.limit = input.limit ?? 100;
 
@@ -1391,13 +1423,14 @@ export const getModelsWithImagesAndModelVersions = async ({
           // images: model.nsfw
           //   ? versionImages.map((x) => ({ ...x, nsfwLevel: NsfwLevel.XXX }))
           //   : versionImages,
-          // Cap the images in the getAll (browse feed) response — the browse
-          // ModelCard only renders images[0], but the shared image cache returns
-          // up to 20, bloating the tRPC payload (serialized synchronously on the
-          // event loop). `capGetAllModelImages` returns a new array, so the shared
-          // `imagesForModelVersionsCache` entries (still used at full 20 by
-          // model-detail pages, auctions, etc.) are untouched.
-          images: capGetAllModelImages(filteredImages),
+          // Trim the images in the getAll (browse feed) response — the #1
+          // serialize-freeze source. `buildGetAllModelImages` caps the array to
+          // `imagesPerModel` (flag-selected) AND drops the per-image fields no
+          // consumer reads (always-on). It returns NEW arrays/objects, so the
+          // shared `imagesForModelVersionsCache` entries (still used at full 20
+          // with all fields by model-detail pages, auctions, etc.) are untouched.
+          // See `~/server/utils/model-getall-images`.
+          images: buildGetAllModelImages(filteredImages, imagesPerModel, biasImageSlice),
           canGenerate,
         };
       })

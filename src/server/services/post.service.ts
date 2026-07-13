@@ -62,6 +62,7 @@ import type {
 } from '~/server/services/user.service';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 import { getPeriods } from '~/server/utils/enum-helpers';
+import { capPostGetInfiniteImages } from '~/server/utils/post-getinfinite-images';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -527,7 +528,11 @@ export const getPostsInfinite = async ({
 
           return true;
         })
-        .map(({ userId: creatorId, ...post }) => {
+        // Strip `cursorId` from each item: it's the raw sort-key value selected
+        // for keyset pagination (surfaced via the page-level `nextCursor`), NOT
+        // a per-item field — no consumer reads `item.cursorId`. Dropping it
+        // removes one field (a superjson-typed Date/number node) PER POST.
+        .map(({ userId: creatorId, cursorId: _cursorId, ...post }) => {
           const _images = images.filter((x) => x.postId === post.id);
           const { username, image, deletedAt } = userData[creatorId] || {};
 
@@ -545,7 +550,16 @@ export const getPostsInfinite = async ({
                 | null,
             },
             stats: postStats[post.id] ?? null,
-            images: _images,
+            // Cap the images embedded per post in the browse feed. The post cards
+            // render only `images[0]` (cover) + the `imageCount` field above
+            // (computed from the FULL list, so the count is unaffected), but
+            // `getImagesForPosts` returns the post's ENTIRE image list — a gallery
+            // post can carry dozens/hundreds of rows, the dominant contributor to
+            // this endpoint's ~1.6 MB payloads serialized synchronously on the
+            // event loop. The cap keeps headroom for the client hidden-preferences
+            // fall-through (see `post-getinfinite-images.ts`); `.slice` returns a
+            // new array so nothing upstream is mutated.
+            images: capPostGetInfiniteImages(_images),
             cosmetic: cosmetics[post.id] ?? null,
           };
         })

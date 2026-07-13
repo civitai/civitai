@@ -8,14 +8,17 @@ import {
   IconLayoutList,
   IconPencilMinus,
   IconPhoto,
+  IconShoppingBag,
   IconVideo,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { trpc } from '~/utils/trpc';
 import type { DataItem } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
 import { HomeStyleSegmentedControl } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
+import homeStyleClasses from '~/components/HomeContentToggle/HomeStyleSegmentedControl.module.css';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { getDisplayName } from '~/utils/string-helpers';
+import { getDisplayName, postgresSlugify } from '~/utils/string-helpers';
 
 type ProfileNavigationProps = {
   username: string;
@@ -26,6 +29,10 @@ const overviewPath = '[username]';
 export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
   const router = useRouter();
   const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
+  const isShopOwner =
+    !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
+  const isModerator = currentUser?.isModerator ?? false;
 
   const {
     data: userOverview,
@@ -91,6 +98,18 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       icon: (props) => <IconBookmark {...props} />,
       count: userOverview?.collectionCount ?? 0,
       disabled: !!user?.bannedAt,
+    },
+    shop: {
+      url: `${baseUrl}/shop`,
+      icon: (props) => <IconShoppingBag {...props} />,
+      label: 'Shop',
+      className: homeStyleClasses.tabHighlight,
+      // A disabled shop is hidden from everyone but its owner (and moderators,
+      // who need to review/fix shops regardless of publish state).
+      disabled:
+        !features.creatorShop ||
+        !!user?.bannedAt ||
+        (!isShopOwner && !isModerator && !user?.creatorShopEnabled),
     },
   };
 

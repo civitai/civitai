@@ -34,7 +34,7 @@ import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useReviewedModelIds } from '~/hooks/useReviewedModelIds';
+import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
 import { constants } from '~/server/common/constants';
 import { Availability, ModelModifier } from '~/shared/utils/prisma/enums';
 import { aDayAgo } from '~/utils/date-helpers';
@@ -218,8 +218,8 @@ function ModelCardContent({ data }: Props) {
 function ModelCardStats({ data }: { data: Props['data'] }) {
   const inView = useElementInView();
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: data.id });
-  const reviewedModelIds = useReviewedModelIds();
-  const hasReview = reviewedModelIds.has(data.id);
+  const { isEngaged } = useEngagedModelMembership(data.id);
+  const hasReview = isEngaged('Recommended');
   const isPOI = data.poi;
 
   const baseMetrics = useMemo(

@@ -7,6 +7,8 @@ import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { getDisplayName } from '~/utils/string-helpers';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
+import { OnboardingSteps } from '~/server/common/enums';
+import { Flags } from '~/shared/utils/flags';
 
 export type ServerAvailability = ColorDomain;
 
@@ -83,6 +85,30 @@ const featureFlags = createFeatureFlags({
   // cosmetic space reservation (worst case = a little dead space, never a
   // functional break), so flipping the flag off is an instant, safe rollback.
   feedReserveCls: { availability: ['mod'], fliptKey: 'feed-reserve-cls' },
+  // Perf: emit the COMPACT wire shape for `hiddenPreferences.getHidden` (id-only
+  // arrays for the model / model3d / explicit-image sets instead of
+  // `{ id, hidden: true }` objects). `getHidden` returns a user's ENTIRE hidden
+  // set; for a whale it superjson-serializes ~12.4MB / ~1.15s SYNCHRONOUSLY on
+  // every response (incl. cache hits) — the single worst event-loop freeze in
+  // the `trpc-response-oversized` dataset (twin of `user.getEngagedModels`). The
+  // client re-expands to the legacy shape so downstream data is identical —
+  // BUT ONLY a client bundle that ships with this PR (which contains
+  // `expandHiddenPreferences`). A PRE-PR bundle reads the compact `number[]` as
+  // `{ id }[]`, gets `x.id === undefined`, and UN-HIDES the user's entire hidden
+  // set (incl. NSFW/moderated) until a hard reload.
+  //
+  // 🔴 RAMP DISCIPLINE: `availability: []` = DARK by default and FAILS CLOSED
+  // (empty availability → static eval false when Flipt is absent/down), so the
+  // Flipt `hidden-prefs-compact` threshold is the ONLY on-switch. NOT `['mod']`:
+  // that would turn compact ON for every mod the instant the server deploys,
+  // while their tabs may still run the OLD bundle → guaranteed un-hide exposure
+  // window on every deploy. Deploy dark, CONFIRM the new bundle is serving
+  // everywhere (hours — see the SPA-cache rollout pattern), THEN ramp the Flipt
+  // threshold; never ramp during/immediately-after a deploy. Instant rollback =
+  // set the threshold to 0. Verify via
+  // `trpc-response-oversized {path="hiddenPreferences.getHidden"}` serializeMs tail.
+  // (Mirrors the `genTabDeferView` / `coinbasePayments` `availability: []` precedent.)
+  hiddenPrefsCompact: { availability: [], fliptKey: 'hidden-prefs-compact' },
   // Perf experiment: defer the generation-tab-switch remount (useDeferredValue) to fix
   // mobile INP (p75 ~304ms, dominant phase = processing_duration; the gen-tab switch is
   // the single hottest interaction). `availability: []` = DARK by default and fails CLOSED when
@@ -93,6 +119,51 @@ const featureFlags = createFeatureFlags({
   // the A/B (no flag-off cohort) and shipping the deferral fleet-wide unmeasured. OFF =
   // byte-identical to today. Measured via RUM `exp_gen_tab_defer_view`. Instant safe rollback.
   genTabDeferView: { availability: [], fliptKey: 'gen-tab-defer-view' },
+  // Serialize-perf: LAZY per-post image load on `image.getImagesAsPostsInfinite` (the #2
+  // producer of oversized/event-loop-freezing tRPC responses). Model galleries carry
+  // multi-image showcase posts (17% have >12 images; p90/p99 ≈ 20). When ON the server
+  // returns only the first `GALLERY_POST_IMAGE_SLICE` (6) images per post PLUS the true
+  // `imageCount`; the card carousel lazy-loads the remainder on approach via
+  // `trpc.image.getInfinite({ postId })`. So the gallery is NOT truncated — only the initial
+  // payload shrinks (a large cut on the heavy tail). OFF = byte-identical to today (all
+  // images inline, no `imageCount`).
+  //
+  // 🔴 SERVER-SIDE flag → STALE-CLIENT RAMP DISCIPLINE (same class as the shape-swap flags):
+  // a PRE-this-PR bundle (no lazy-load code) would render only the 6-image slice with
+  // `total = slice.length` → "6 of 6" instead of "1 of 20" until the user reloads. That's a
+  // UX-truncation regression (NOT content-unsafe; browsing-level filtering is unchanged),
+  // self-healing on reload. Hence `availability: []` = DARK by default, fails CLOSED (no
+  // slice) when Flipt is absent/down; the Flipt `gallery-lazy-post-images` THRESHOLD is the
+  // ONLY on-switch. Ramp ONLY after the new bundle is serving everywhere (confirm via RUM
+  // app_version — hours, per the SPA-cache rollout pattern); threshold-only; instant rollback =
+  // drop the threshold to 0. Supersedes the retired `imagesAsPostsPerPostCap` cap flag (which
+  // truncated the gallery and was never ramped). (Mirrors the genTabDeferView precedent.)
+  galleryLazyPostImages: { availability: [], fliptKey: 'gallery-lazy-post-images' },
+  // Serialize-perf: SLIM the per-model image count on `model.getAll` — the #1
+  // producer of oversized / event-loop-freezing tRPC responses (the
+  // `trpc-response-oversized` #3017 dataset; p90 > 1MB, ~20x the next path). When
+  // ON, the browse-feed response caps each model to `GET_ALL_IMAGES_PER_MODEL_SLIM`
+  // (6) images instead of `GET_ALL_IMAGES_PER_MODEL` (12) — a ~42% page-byte cut
+  // (the always-on per-image field trim in `model-getall-images` applies either
+  // way). The browse `ModelCard` renders only the cover, so nothing VISIBLE
+  // changes; the residual risk is browsing-level FEED-DROP: the shared image cache
+  // is ordered `postId,index` (browsing-agnostic), so a mixed-level model whose only
+  // browsing-safe image sits past index 6 could be dropped from an SFW-mode viewer's
+  // feed (`hidden.noImages`). The flag-ON path MITIGATES this by picking an
+  // nsfw-biased COVERAGE slice (`selectSlimGetAllModelImages`) instead of the naive
+  // first-6 — it keeps one image of every distinct `nsfwLevel` bit present, so any
+  // viewer with a visible image in the full set keeps one in the slice (image
+  // `nsfwLevel` is a single bit, ≤6 distinct, all fit in 6). Still `availability: []`
+  // = DARK by default and FAILS
+  // CLOSED (empty availability → static eval false when Flipt is absent/down), so
+  // the cap stays 12 (byte-identical COUNT to today) unless the Flipt
+  // `get-all-model-images-slim` threshold is ramped. Deploy dark, then ramp the
+  // threshold WHILE watching the feed-drop rate (Loki
+  // `event_name="feed_noimages_drop"`, `~/utils/faro/feedDrop`); instant rollback =
+  // set the threshold to 0. (Mirrors the galleryLazyPostImages / genTabDeferView
+  // dark-flag precedent.) No client bundle change is required (the feed already
+  // renders any-length image arrays), so this is a pure server behavior flag.
+  getAllModelImagesSlim: { availability: [], fliptKey: 'get-all-model-images-slim' },
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },
@@ -214,6 +285,8 @@ const featureFlags = createFeatureFlags({
   draftMode: ['public'],
   membershipsV2: ['public'],
   cosmeticShop: ['public'],
+  // Mods get it by default; unlock testers via the `creator-shop` Flipt flag.
+  creatorShop: { availability: ['mod'], fliptKey: 'creator-shop' },
   impersonation: isDev ? ['mod'] : ['granted'],
   donationGoals: ['public'],
   creatorComp: ['public'],
@@ -271,6 +344,12 @@ const featureFlags = createFeatureFlags({
   // Both mod-only at launch; Flipt key allows broadening without a code change.
   model3dFeed: { availability: ['mod'], fliptKey: 'model3d-feed' },
   model3dGenerator: { availability: ['mod'], fliptKey: 'model3d-generator' },
+  // Per-model 3D generator gates, layered UNDER `model3dGenerator` (which gates
+  // the whole 3D surface). Let Tripo & Hunyuan3D ship dark and roll out
+  // independently of Meshy (PolyGen) via Flipt. Off ⇒ the ecosystem is hidden
+  // from the img2model3d picker and rejected on submit (see ecosystem-graph.ts).
+  tripoGenerator: { availability: ['mod'], fliptKey: 'tripo-generator' },
+  hunyuan3dGenerator: { availability: ['mod'], fliptKey: 'hunyuan3d-generator' },
   // Retool privileged endpoints — `granted` means the moderator must carry the
   // matching permission key in user.permissions. Endpoints lookup the key
   // directly from `RetoolAction.privileged`, so the permission name MUST stay
@@ -446,6 +525,9 @@ export function buildFliptContext(user?: SessionUser): Record<string, string> {
     ctx.tier = user.tier ?? 'free';
     ctx.isLoggedIn = 'true';
     ctx.isMember = String(!!user.tier && user.tier !== 'free');
+    // Creator Program membership is recorded as an onboarding-step bit
+    // (set on join in creator-program.service, cleared on leave).
+    ctx.isInCreatorProgram = String(Flags.hasFlag(user.onboarding, OnboardingSteps.CreatorProgram));
   } else {
     ctx.isLoggedIn = 'false';
   }

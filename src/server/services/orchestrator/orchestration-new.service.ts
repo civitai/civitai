@@ -89,6 +89,7 @@ import { parsePromptSnippetReferences } from '~/utils/prompt-helpers';
 // Ecosystem handlers - unified router
 import { createEcosystemStepInput } from './ecosystems';
 import { createComfyInput, resourcesToImageMetadataResources } from './ecosystems/comfy-input';
+import { extractStepErrors, sanitizeProviderError } from './provider-errors';
 import { removeEmpty } from '~/utils/object-helpers';
 
 // =============================================================================
@@ -1356,6 +1357,26 @@ function buildVariantStepMetadata(
 // =============================================================================
 
 /**
+ * Collect base/source image URLs from validated graph input — used to capture
+ * what a (blocked) prompt was operating on for the moderator restriction-review
+ * UI. Covers the standard `images` array plus, defensively, a legacy singular
+ * `sourceImage`.
+ */
+function extractInputImageUrls(data: Record<string, unknown>): string[] | undefined {
+  const urls: string[] = [];
+  const images = data.images;
+  if (Array.isArray(images)) {
+    for (const img of images) {
+      const url = (img as { url?: string } | null | undefined)?.url;
+      if (typeof url === 'string') urls.push(url);
+    }
+  }
+  const sourceImageUrl = (data.sourceImage as { url?: string } | null | undefined)?.url;
+  if (typeof sourceImageUrl === 'string') urls.push(sourceImageUrl);
+  return urls.length ? urls : undefined;
+}
+
+/**
  * Submits a generation workflow using generation-graph input.
  *
  * Validates:
@@ -1389,6 +1410,10 @@ export async function generateFromGraph({
   // Audit prompt before generation
   if ('prompt' in data && typeof data.prompt === 'string' && data.prompt.trim()) {
     const negativePrompt = 'negativePrompt' in data ? (data.negativePrompt as string) : undefined;
+    const inputImages = extractInputImageUrls(data as unknown as Record<string, unknown>);
+    const inputVideo = (
+      'video' in data ? (data.video as { url?: string } | null | undefined) : undefined
+    )?.url;
     try {
       await auditPromptServer({
         prompt: data.prompt,
@@ -1398,6 +1423,8 @@ export async function generateFromGraph({
         isModerator,
         track,
         remixOfId,
+        inputImages,
+        inputVideo,
       });
     } catch (err) {
       // Legacy regex/external audit blocked the prompt. Fire-and-forget an
@@ -2252,19 +2279,11 @@ export function formatStepOutputs(
     } satisfies NormalizedImageOutput;
   });
 
-  // Collect errors
-  const errors: string[] = [];
-  const stepOutput = step.output;
-  if (stepOutput) {
-    if ('errors' in stepOutput && stepOutput.errors) errors.push(...stepOutput.errors);
-    if (
-      'externalTOSViolation' in stepOutput &&
-      'message' in stepOutput &&
-      typeof stepOutput.message === 'string'
-    ) {
-      errors.push(stepOutput.message);
-    }
-  }
+  // Collect step errors (including external-provider job.reason failures) and
+  // sanitize each before surfacing to the client.
+  const engine =
+    (params.engine as string | undefined) ?? ((step as { input?: { engine?: string } }).input?.engine);
+  const errors = extractStepErrors(step).map((msg) => sanitizeProviderError(msg, engine));
 
   return { output, errors };
 }

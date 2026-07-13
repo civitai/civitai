@@ -302,6 +302,26 @@ export const userSettingsSchema = z.object({
   tosGreenAcceptedHash: z.string().optional(),
   tosRedAcceptedHash: z.string().optional(),
   preferredFiatCurrency: z.string().optional(),
+  // Creator Shop storefront settings (see docs/features/creator-shop.md).
+  creatorShop: z
+    .object({
+      enabled: z.boolean().optional(),
+      showModels: z.boolean().optional(),
+      featuredItemIds: z.array(z.number()).optional(),
+      resoldItemIds: z.array(z.number()).optional(),
+      description: z.string().nullish(),
+      coverImageId: z.number().nullish(),
+      // Ordered storefront sections with per-section visibility.
+      sections: z
+        .array(
+          z.object({
+            key: z.enum(['featured', 'cosmetics', 'resold', 'merch', 'models']),
+            visible: z.boolean(),
+          })
+        )
+        .optional(),
+    })
+    .optional(),
 });
 
 const [featureKey, ...otherKeys] = featureFlagKeys;

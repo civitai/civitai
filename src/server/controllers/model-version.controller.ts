@@ -517,9 +517,15 @@ export const upsertModelVersionHandler = async ({
   }
 };
 
-export const deleteModelVersionHandler = async ({ input }: { input: GetByIdInput }) => {
+export const deleteModelVersionHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: ProtectedContext;
+}) => {
   try {
-    const version = await deleteVersionById(input);
+    const version = await deleteVersionById({ ...input, isModerator: ctx.user.isModerator });
     if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
 
     await updateModelEarlyAccessDeadline({ id: version.modelId }).catch((e) => {

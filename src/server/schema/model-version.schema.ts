@@ -380,6 +380,15 @@ export const earlyAccessConfigInput = modelVersionEarlyAccessConfigSchema;
 //   buzzTransactionId: true,
 // });
 
+// Narrow input for editing only a version's early-access config (e.g. from the
+// creator studio) without round-tripping the whole version. `id` is named for
+// the `isOwnerOrModerator` middleware; a null config clears early access.
+export type UpdateEarlyAccessConfigInput = z.infer<typeof updateEarlyAccessConfigSchema>;
+export const updateEarlyAccessConfigSchema = z.object({
+  id: z.number(),
+  earlyAccessConfig: earlyAccessConfigInput.nullish(),
+});
+
 export const modelVersionUpsertSchema2 = z.object({
   modelId: z.number(),
   id: z.number().optional(),

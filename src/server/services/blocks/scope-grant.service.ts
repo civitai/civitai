@@ -114,13 +114,29 @@ export async function recordScopeGrant(opts: {
  * granted scopes, returning the granted subset to sign + the withheld scopes
  * the host must re-consent for.
  *
- * `block:settings:*` and `apps:storage:*` are intentionally NOT consent-gated
- * here — they are publisher-only / ambient-but-otherwise-gated scopes that have
- * their own issuance-time checks (caller-is-installer, resolveStorageContext).
- * Subjecting them to per-user consent would make the publisher re-consent to
- * their own block's settings on every version bump for no security gain. The
- * remaining user-resource scopes (media/user/ai/buzz/social, models:write)
- * flow through the consent gate.
+ * `block:settings:*` and `apps:storage:*` (per-user KV) are intentionally NOT
+ * consent-gated here — they are publisher-only / ambient-but-otherwise-gated
+ * scopes that have their own issuance-time checks (caller-is-installer,
+ * resolveStorageContext). Subjecting them to per-user consent would make the
+ * publisher re-consent to their own block's settings on every version bump for
+ * no security gain. The remaining user-resource scopes (media/user/ai/buzz/
+ * social, models:write) flow through the consent gate.
+ *
+ * `apps:storage:shared:read` / `apps:storage:shared:write` (the SHARED, app-
+ * global / cross-user datastore) are ALSO exempt — and, unlike the per-user
+ * scopes, they are NOT publisher-only. Their governance is NOT a per-scope
+ * consent prompt but the SERVER-SIDE controls in `resolveSharedContext`
+ * (apps-shared.router.ts): a fail-closed min-trust gate (not-anon, not-banned,
+ * not-muted, onboarding-complete, email-verified, account age ≥ 7d) plus
+ * content moderation and one-vote / per-user-row / rate limits, all enforced at
+ * every read/write REGARDLESS of the token scope. `shared:read` is reading
+ * PUBLIC community data (anon-safe — the router allows anon reads by design);
+ * `shared:write` is trust-gated PUBLIC posting/voting (the resolver rejects anon
+ * and any ineligible caller before touching data, whether or not the scope is
+ * present). A per-scope consent prompt would add nothing that the trust gate +
+ * moderation don't already enforce — so, mirroring the per-user storage scopes,
+ * these sign without a grant. (Pre-GA consideration, NOT built here: an EXPLICIT
+ * shared-WRITE consent prompt if widening the audience beyond the trust gate.)
  *
  * `models:read:self` is ALSO exempt (allow-by-default): a low-sensitivity read
  * of the viewer's OWN models, and a no-op for an anon viewer (no user → nothing
@@ -135,6 +151,10 @@ const CONSENT_EXEMPT_SCOPES = new Set([
   'block:settings:write',
   'apps:storage:read',
   'apps:storage:write',
+  // SHARED (cross-user) storage — governed by resolveSharedContext's server-side
+  // min-trust gate + content moderation + rate limits, not per-scope consent.
+  'apps:storage:shared:read',
+  'apps:storage:shared:write',
   'models:read:self',
 ]);
 

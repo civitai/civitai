@@ -2,11 +2,12 @@
  * Boogu Family Graph
  *
  * Controls for the Boogu ecosystem (Boogu-Image-0.1, comfy engine).
- * One ecosystem, three checkpoints selected per workflow and discriminated on
- * model.id into base / turbo / edit modes:
- *  - Base  (txt2img):      full steps/cfg
- *  - Turbo (txt2img):      distilled — few steps, low cfg
- *  - Edit  (img2img:edit): takes source image(s)
+ * One ecosystem, checkpoints selected per workflow and discriminated on
+ * model.id into base / turbo / edit / editTurbo modes:
+ *  - Base      (txt2img):      full steps/cfg
+ *  - Turbo     (txt2img):      distilled — few steps, low cfg
+ *  - Edit      (img2img:edit): takes source image(s)
+ *  - EditTurbo (img2img:edit): distilled edit — few steps, low cfg
  *
  * Built on Qwen3-VL-8B + FLUX.1-dev. Supports community LoRAs.
  */
@@ -33,13 +34,14 @@ import { sdxlAspectRatioBuckets } from '~/shared/constants/generation.constants'
 // =============================================================================
 
 /** Boogu mode type */
-export type BooguMode = 'base' | 'turbo' | 'edit';
+export type BooguMode = 'base' | 'turbo' | 'edit' | 'editTurbo';
 
 /** Boogu model version IDs (CivitaiOfficial Boogu-Image-0.1 checkpoints) */
 const booguVersionIds = {
   base: 3049541,
   turbo: 3050010,
   edit: 3049824,
+  editTurbo: 3113427,
 } as const;
 
 /** Map from version ID to mode name */
@@ -53,8 +55,11 @@ const booguTxt2ImgVersionOptions = [
   { label: 'Turbo', value: booguVersionIds.turbo },
 ];
 
-/** Version options for img2img:edit workflow (Edit only) */
-const booguEditVersionOptions = [{ label: 'Edit', value: booguVersionIds.edit }];
+/** Version options for img2img:edit workflow (Edit + Edit Turbo) */
+const booguEditVersionOptions = [
+  { label: 'Edit', value: booguVersionIds.edit },
+  { label: 'Edit Turbo', value: booguVersionIds.editTurbo },
+];
 
 /** Workflow-specific version configuration */
 const booguWorkflowVersions = {
@@ -108,6 +113,13 @@ const editModeGraph = new DataGraph<BooguModeCtx, GenerationCtx>()
   .node('cfgScale', sliderNode({ min: 1, max: 8, step: 0.5, defaultValue: 5 }))
   .node('steps', sliderNode({ min: 1, max: 50, defaultValue: 35 }));
 
+/** Edit Turbo mode subgraph: distilled edit — few steps, low cfg; source image via root images node. */
+const editTurboModeGraph = new DataGraph<BooguModeCtx, GenerationCtx>()
+  .merge(createResourcesGraph())
+  .node('aspectRatio', aspectRatioNode({ options: sdxlAspectRatioBuckets, defaultValue: '1:1' }))
+  .node('cfgScale', sliderNode({ min: 1, max: 2, step: 0.1, defaultValue: 1 }))
+  .node('steps', sliderNode({ min: 1, max: 12, defaultValue: 4 }));
+
 // =============================================================================
 // Boogu Family Graph
 // =============================================================================
@@ -116,8 +128,8 @@ const editModeGraph = new DataGraph<BooguModeCtx, GenerationCtx>()
  * Boogu family controls.
  *
  * Checkpoint selector swaps version options per workflow (Base/Turbo on
- * txt2img, Edit on img2img:edit). `booguMode` is computed from the selected
- * model.id, then discriminated into the base/turbo/edit subgraphs.
+ * txt2img, Edit/Edit Turbo on img2img:edit). `booguMode` is computed from the
+ * selected model.id, then discriminated into the base/turbo/edit/editTurbo subgraphs.
  */
 export const booguGraph = new DataGraph<
   { ecosystem: string; workflow: string; model: ResourceData },
@@ -160,6 +172,7 @@ export const booguGraph = new DataGraph<
     base: baseModeGraph,
     turbo: turboModeGraph,
     edit: editModeGraph,
+    editTurbo: editTurboModeGraph,
   })
   // Prompt + triggerWords are common to all modes. negativePrompt is only in
   // base/edit branches; its registration effect self-adds to the snippets

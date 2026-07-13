@@ -14,11 +14,13 @@ import {
 } from '~/shared/utils/prisma/enums';
 import {
   BlockedReason,
+  BlocklistType,
   NotificationCategory,
   NsfwLevel,
   SearchIndexUpdateQueueAction,
   SignalMessages,
 } from '~/server/common/enums';
+import { stripBenignPhrases } from '~/server/services/blocklist.service';
 import {
   auditMetaData,
   getTagsFromPrompt,
@@ -766,8 +768,14 @@ async function auditScanResults(args: {
   prompt?: string;
   negativePrompt?: string;
 }) {
-  const prompt = normalizeText(args.prompt);
-  const negativePrompt = normalizeText(args.negativePrompt);
+  // Moderator-managed benign phrases (proper nouns / technical terms that coincidentally
+  // contain a detection token) are blanked up front so every downstream check — minor,
+  // poi, blockedFor — sees the same cleaned text. A benign phrase is innocent content, so
+  // it shouldn't feed any detector.
+  const [prompt, negativePrompt] = await Promise.all([
+    stripBenignPhrases(normalizeText(args.prompt), BlocklistType.PromptBenignPhrase),
+    stripBenignPhrases(normalizeText(args.negativePrompt), BlocklistType.NegativeBenignPhrase),
+  ]);
   const tags = await dbWrite.$queryRaw<
     { id: number; name: string; type: TagType; nsfwLevel: number; confidence: number }[]
   >`

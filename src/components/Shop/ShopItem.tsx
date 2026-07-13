@@ -1,4 +1,5 @@
 import {
+  Anchor,
   Badge,
   Button,
   Divider,
@@ -10,9 +11,10 @@ import {
   Title,
   UnstyledButton,
 } from '@mantine/core';
+import { NextLink } from '~/components/NextLink/NextLink';
+import type { MouseEvent } from 'react';
 import { CosmeticType, Currency } from '~/shared/utils/prisma/enums';
 import dayjs from '~/shared/utils/dayjs';
-import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { useShopLastViewed } from '~/components/CosmeticShop/cosmetic-shop.util';
 import { CosmeticShopItemPreviewModal } from '~/components/CosmeticShop/CosmeticShopItemPreviewModal';
 import { Countdown } from '~/components/Countdown/Countdown';
@@ -29,15 +31,22 @@ import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import classes from './ShopItem.module.scss';
 import { IconCheck } from '@tabler/icons-react';
+import clsx from 'clsx';
 
 export const ShopItem = ({
   item,
   sectionItemCreatedAt,
   alreadyOwned = false,
+  viaShopUserId,
+  creator,
 }: {
   item: CosmeticShopItemGetById;
   sectionItemCreatedAt?: Date;
   alreadyOwned?: boolean;
+  // Attributes the purchase to this shop owner (Creator Shop cross-creator resale).
+  viaShopUserId?: number;
+  // The cosmetic's original creator, shown as attribution (Creator Shop only).
+  creator?: { id: number; username: string | null; image: string | null } | null;
 }) => {
   const cosmetic = item.cosmetic;
   const isAvailable =
@@ -122,13 +131,15 @@ export const ShopItem = ({
 
               dialogStore.trigger({
                 component: CosmeticShopItemPreviewModal,
-                props: { shopItem: item },
+                props: { shopItem: item, viaShopUserId },
               });
             }}
             disabled={!isAvailable || outOfStock}
           >
             <div className={classes.cardHeader}>
-              <CosmeticSample cosmetic={cosmetic} size="lg" />
+              <div className={clsx(classes.sampleWrapper, outOfStock && classes.dim)}>
+                <CosmeticSample cosmetic={cosmetic} size="lg" />
+              </div>
               <Text size="xs" c="dimmed" px={6} component="div" className={classes.type}>
                 {getDisplayName(item.cosmetic.type)}
               </Text>
@@ -142,31 +153,51 @@ export const ShopItem = ({
               )}
             </div>
           </UnstyledButton>
-          <Stack gap={4} align="flex-start">
-            <CurrencyBadge
-              currency={Currency.BUZZ}
-              type={domain === 'green' ? 'green' : 'yellow'}
-              unitAmount={item.unitAmount}
-              variant="transparent"
-              className="!px-0"
-            />
-            <Title order={3}>{item.title}</Title>
+          <Stack gap={2}>
+            <div className={classes.titleRow}>
+              <Title order={3} className={classes.title}>
+                {item.title}
+              </Title>
+              <CurrencyBadge
+                currency={Currency.BUZZ}
+                type={domain === 'green' ? 'green' : 'yellow'}
+                unitAmount={item.unitAmount}
+                variant="transparent"
+                className={clsx('!px-0', classes.price)}
+              />
+            </div>
+            {creator?.username && (
+              <Text size="xs" c="dimmed">
+                by{' '}
+                <Anchor
+                  component={NextLink}
+                  href={`/user/${creator.username}`}
+                  c="blue.4"
+                  fw={500}
+                  underline="always"
+                  // Don't trigger the card's purchase modal.
+                  onClick={(e: MouseEvent) => e.stopPropagation()}
+                >
+                  @{creator.username}
+                </Anchor>
+              </Text>
+            )}
           </Stack>
           {!!item.description && (
-            <ContentClamp maxHeight={200}>
+            <div className={classes.description}>
               <RenderHtml html={item.description} />
-            </ContentClamp>
+            </div>
           )}
         </Stack>
         <Stack mt="auto" gap={4}>
           <LoginRedirect reason="shop">
             <Button
-              color="gray"
               radius="xl"
+              className={clsx(classes.buyButton, domain === 'green' && classes.buyButtonGreen)}
               onClick={() => {
                 dialogStore.trigger({
                   component: CosmeticShopItemPreviewModal,
-                  props: { shopItem: item },
+                  props: { shopItem: item, viaShopUserId },
                 });
               }}
               disabled={!isAvailable || outOfStock}

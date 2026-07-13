@@ -3,6 +3,10 @@ import {
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
 import { isKnownSlotId, isPageSlot } from '~/shared/constants/slot-registry';
+import {
+  MARKETPLACE_CATEGORIES,
+  isMarketplaceCategory,
+} from '~/server/services/blocks/marketplace-categories.constants';
 // The lexical SSRF hostname guards were EXTRACTED to a shared, dependency-free
 // module (no `node:dns`, so this validator stays client-bundle-safe — it is
 // imported by `ManifestEditForm.tsx`). `safe-fetch.ts` imports the same helpers,
@@ -19,6 +23,14 @@ interface RawManifest {
   renderMode?: unknown;
   trustTier?: unknown;
   scopes?: unknown;
+  /**
+   * OPTIONAL marketplace category. When present it MUST be a member of
+   * `MARKETPLACE_CATEGORIES` (single-sourced with the const + the published
+   * schema's `category` enum). It flows to the app's `/apps` store listing on
+   * moderator-approve (populated onto `AppBlock.category` only when a moderator
+   * hasn't already curated one — see `approveRequest`). Absent is fine.
+   */
+  category?: unknown;
   iframe?: {
     src?: unknown;
     minHeight?: unknown;
@@ -287,6 +299,18 @@ export class BlockManifestValidator {
 
     if ((renderMode === 'inline' || renderMode === 'hybrid') && trustTier === 'unverified') {
       errors.push('INLINE_REQUIRES_VERIFIED_TIER');
+    }
+
+    // Optional marketplace `category`. When present it must be one of the known
+    // MARKETPLACE_CATEGORIES (referenced directly — never a second hardcoded
+    // copy, so the validator, the const, and the published schema's `category`
+    // enum can't drift). Absent is fine (a moderator can categorise later). On
+    // approve, a present+valid category is copied onto AppBlock.category only
+    // when a moderator hasn't already curated one (see approveRequest), so it
+    // flows to the auto-created store listing. Mirrors how the offsite
+    // submission path validates its taxonomy category.
+    if (m.category !== undefined && !isMarketplaceCategory(m.category)) {
+      errors.push(`category must be one of ${MARKETPLACE_CATEGORIES.join(', ')}`);
     }
 
     if (!Array.isArray(m.scopes)) {

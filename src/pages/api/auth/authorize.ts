@@ -4,11 +4,13 @@ import {
   buildAuthorizeRedirect,
   safePath,
   clearBridgeCookie,
+  buildBridgeProbeCookie,
   HUB_BASE_URL,
 } from '~/server/auth/oauth-bridge';
 import { sessionCookieName } from '@civitai/auth';
 import {
   clearAllSessionCookies,
+  cookieDomainForHost,
   POST_LOGIN_MARKER,
   LOGIN_RETRY_COOKIE,
   loginRetryCookie,
@@ -46,6 +48,16 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     return;
   }
 
+  // Scope the bridge cookie to the REGISTRABLE domain (civitai.red) so it survives a host variation (www↔apex)
+  // between this /authorize (where it's set) and /callback (where it's read) — host-only was being dropped there
+  // while the Domain-scoped session cookies survived. Derive it from `req.headers.host` — the SAME source the
+  // session cookies and the /callback clear use — so set and clear always agree. Undefined on localhost/IP →
+  // host-only (dev). `secure` follows the request protocol (x-forwarded-proto, via selfOrigin); this matches the
+  // package's env-derived isSecureCookie() in every real env (prod all-https / dev all-http).
+  const authHost = req.headers.host ?? '';
+  const secure = selfOrigin.startsWith('https://');
+  const cookieDomain = cookieDomainForHost(req.headers.host);
+
   // Loop recovery (retry-tolerant). /api/auth/callback sets a one-shot marker right after minting a session. If
   // the marker is present but the session COOKIE is ABSENT here, the civ-token the callback set didn't arrive —
   // EITHER an intermittent cookie-landing miss (the edge dropped a Set-Cookie) OR a real Domain/Secure misconfig
@@ -61,7 +73,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
       logAuth(req, 'loop-terminal', { retries });
       res.setHeader('Set-Cookie', [
         ...clearAllSessionCookies(req.headers.host),
-        clearBridgeCookie(),
+        clearBridgeCookie(undefined, cookieDomain), // match the Domain the bridge cookie was set with
       ]);
       res.status(400).setHeader('Content-Type', 'text/html; charset=utf-8');
       res.send(renderSignInProblemHtml());
@@ -78,8 +90,12 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
   const { location, setCookie } = buildAuthorizeRedirect({
     selfOrigin,
     returnUrl: safePath(req.query.returnUrl),
+    cookieDomain,
   });
   const bridge = Array.isArray(setCookie) ? setCookie : [setCookie];
-  res.setHeader('Set-Cookie', [...bridge, ...cookieOps]);
+  // Diagnostic probe alongside the bridge cookie (Domain-scoped, 1h) so /callback can classify a missing bridge
+  // cookie (host variation vs expiry vs full block). Remove once the .red no_cookie cause is settled.
+  const probe = buildBridgeProbeCookie({ host: authHost, domain: cookieDomain, secure });
+  res.setHeader('Set-Cookie', [...bridge, probe, ...cookieOps]);
   res.redirect(302, location);
 }

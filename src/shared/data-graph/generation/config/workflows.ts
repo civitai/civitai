@@ -380,9 +380,12 @@ export const workflowConfigs: WorkflowConfigs = {
     // Image segment, where txt2img/img2img both title as "Create Image").
     label: 'Create 3D Model',
     modeLabel: 'Image to 3D',
-    description: 'Generate a 3D model from a source image (PolyGen via Meshy)',
+    description: 'Generate a 3D model from a source image (Meshy, Tripo, or Hunyuan3D)',
     category: 'model3d',
-    ecosystemIds: [ECO.PolyGen],
+    // Image-to-3D is supported by all three 3D ecosystems; the user picks one
+    // via the `BaseModelInput` "Eco" picker. Text-to-3D (txt2model3d) stays
+    // PolyGen-only — Tripo/Hunyuan3D have no text-to-3D operation.
+    ecosystemIds: [ECO.PolyGen, ECO.Tripo, ECO.Hunyuan3D],
     featureFlag: 'model3dGenerator',
     isNew: true,
   },

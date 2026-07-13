@@ -18,6 +18,13 @@ import {
 import { deriveOauthBitmaskFromBlockScopes } from '~/shared/constants/block-scope.constants';
 // Pure (no env/Prisma) — stamps the platform-owned iframe.src onto a manifest.
 import { stampCanonicalIframeSrc } from '~/server/services/blocks/manifest-normalize';
+// Pure const (no env/Prisma) — the marketplace category taxonomy + type guard.
+// approveRequest copies a validated manifest `category` onto AppBlock.category.
+import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
+// Type-only (erased at runtime) — the AppBlock projection the shared
+// AppBlock→AppListing mapper consumes (see the (3b) auto-create block in
+// approveRequest). The mapper VALUE itself is dynamically imported at use.
+import type { SourceAppBlock } from '~/server/services/blocks/app-listing-mapper';
 
 // dbRead/dbWrite/newUlid/bundle-s3 are dynamically imported inside the
 // functions that need them so the pure helpers (extract/diff) can be
@@ -1902,6 +1909,13 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     typeof manifest.contentRating === 'string' ? manifest.contentRating : 'g';
   const manifestRenderMode =
     typeof manifest.renderMode === 'string' ? manifest.renderMode : 'iframe';
+  // W13 category-on-approve: the OPTIONAL marketplace `category` the manifest
+  // declares (already shape-validated below by BlockManifestValidator — if
+  // present it is guaranteed a MARKETPLACE_CATEGORIES member; the guard here
+  // narrows the type + is defense-in-depth). `null` when the manifest omits it.
+  // Copied onto AppBlock.category ONLY when the row has no curated category yet
+  // (no-clobber — see the updateMany just before the (3b) listing-create block).
+  const manifestCategory = isMarketplaceCategory(manifest.category) ? manifest.category : null;
 
   // Determine first-vs-subsequent via the existing app_blocks row.
   // We don't rely on request.appBlockId being null because two requests
@@ -2167,6 +2181,140 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       where: { id: existingAppBlock.appId },
       data: { grants: [], allowedScopes: derivedOauthCeiling },
     });
+  }
+
+  // (3a) Category-on-approve (W13 follow-up to (3b)) — populate AppBlock.category
+  // from the validated manifest `category` so it flows to the auto-created store
+  // listing below WITHOUT any change to (3b)/`mapAppBlockToListing` (they already
+  // read AppBlock.category). NO-CLOBBER + read-your-writes, done as ONE atomic
+  // write across every path (first-version create, P2002-retry, subsequent
+  // version): a targeted `updateMany` gated on `category: null` sets it ONLY when
+  // no category is present yet. This is immune to replica lag (the gate is
+  // evaluated at the PRIMARY, unlike the `dbRead` row read above) and guarantees
+  // a moderator's curated category (set via `setMarketplaceMeta`) is never
+  // overridden by a re-approve. Skipped entirely when the manifest declares no
+  // category (the row keeps whatever it had — null for a fresh app). Runs BEFORE
+  // the (3b) block's `dbWrite.appBlock.findUnique` re-read (same PRIMARY), so the
+  // listing-create reads the just-written category (read-your-writes). A first-
+  // version approve whose manifest declares a category therefore mints a listing
+  // already categorised; a manifest with no category leaves it null (mod-curated
+  // later). The "category added in a LATER version" case (listing already exists,
+  // so (3b) skips it) is an accepted non-goal — recoverable via mod curation.
+  if (manifestCategory !== null) {
+    try {
+      await dbWrite.appBlock.updateMany({
+        where: { id: appBlockId, category: null },
+        data: { category: manifestCategory },
+      });
+    } catch (err) {
+      // Same posture as the (3b) listing-create below (and #3085): the category
+      // FEEDS the convenience store listing, so it must NEVER gate the
+      // approve/deploy. On ANY error (transient DB blip, etc.) log-and-CONTINUE
+      // — the app still deploys, the category is simply absent this pass and is
+      // recoverable on a re-approve (the null-gate re-applies idempotently) or
+      // via mod curation. If we rethrew, a deterministically-failing write here
+      // could wedge the app's deploy forever over a mere categorisation miss.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[approveRequest] category-from-manifest set failed (slug=${request.slug}, appBlockId=${appBlockId}); ` +
+          `approve/deploy CONTINUES — AppBlock.category is unset this pass, recoverable on re-approve or via mod curation: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+      );
+    }
+  }
+
+  // (3b) App Store listing (W13) — auto-create the onsite `AppListing` for this
+  // app so an approved+deployed onsite app shows on the `/apps` store grid
+  // WITHOUT a manual `backfillAppListings` run. This closes the W13-LOCKED
+  // "1:1 slug=blockId auto-create-on-approve" decision that was never wired.
+  //
+  // TRANSACTION BOUNDARY: approveRequest is NOT a DB transaction — it interleaves
+  // durable DB writes with Forgejo/MinIO/Tekton I/O and is made correct by
+  // deterministic ids + P2002-fallback so a partial-failure re-approve converges
+  // (the OauthClient + AppBlock creates above use exactly this pattern). We slot
+  // the listing create into that same model: run it right after the AppBlock row
+  // exists, using the same client, WHILE THE PUBLISH_REQUEST IS STILL 'pending'
+  // (it is finalised 'approved' only in step 6, after the commit succeeds). So a
+  // failure in ANY later step (bundle fetch / commit / build) leaves the request
+  // pending → the mod re-approves → this block idempotently SKIPS the existing
+  // listing and the flow converges. The listing is never permanently orphaned.
+  //
+  // IDEMPOTENT on `appBlockId` (the 1:1 unique): first-version approve CREATES it;
+  // a subsequent-version approve finds it present and SKIPS — it must NEVER clobber
+  // curator edits (category/featured/featuredOrder) made after the first approve.
+  // A concurrent create (a racing approve or the backfill) is absorbed by the
+  // P2002 catch. We NEVER update an existing listing here.
+  //
+  // ONSITE ONLY: approveRequest only ever produces hosted (external_url IS NULL)
+  // AppBlocks, so `mapAppBlockToListing` yields kind='onsite'. The offsite
+  // external-submission flow (`offsite-listing.service`) owns its own listing
+  // writes — this path never touches it and never double-creates.
+  //
+  // We read the freshly-approved AppBlock's OWN columns from the PRIMARY
+  // (read-your-writes — it was just created/updated via dbWrite above) and map it
+  // through the SAME `mapAppBlockToListing` the backfill uses, over the exact same
+  // projection the backfill selects. That way the two paths cannot drift AND any
+  // mod curation already on the row (category/featured/featuredOrder) + the real
+  // OauthClient owner are mirrored faithfully — important for the transition case
+  // where an app approved BEFORE this feature (possibly already curated) has its
+  // first listing minted now on a subsequent-version approve.
+  const { mapAppBlockToListing } = await import('./app-listing-mapper');
+  try {
+    const existingListing = await dbRead.appListing.findUnique({
+      where: { appBlockId },
+      select: { id: true },
+    });
+    if (!existingListing) {
+      const ab = await dbWrite.appBlock.findUnique({
+        where: { id: appBlockId },
+        select: {
+          id: true,
+          blockId: true,
+          manifest: true,
+          contentRating: true,
+          category: true,
+          featured: true,
+          featuredOrder: true,
+          externalUrl: true,
+          app: { select: { userId: true } },
+        },
+      });
+      // A resolvable owner is required for the listing's userId FK. Every approved
+      // AppBlock has an OauthClient owner, so a miss here is anomalous — skip
+      // (don't throw into the already-side-effecting approve flow); the backfill
+      // remains the recovery path for such an anomaly.
+      if (ab && ab.app && typeof ab.app.userId === 'number') {
+        await dbWrite.appListing.create({
+          data: mapAppBlockToListing(ab as SourceAppBlock),
+          select: { id: true },
+        });
+      }
+    }
+  } catch (err) {
+    // The store listing is a CONVENIENCE — it must NEVER gate the approve/deploy.
+    //   - P2002 = unique violation on appBlockId: a concurrent approve/backfill
+    //     created the listing first. The invariant (one listing per app) still
+    //     holds → silent no-op skip.
+    //   - ANY OTHER error (e.g. the app owner deleted their account → user_id FK
+    //     violation, an out-of-domain contentRating hitting the CHECK, a transient
+    //     DB error): log-and-CONTINUE. If we rethrew, that failure would abort the
+    //     whole approve BEFORE the commit/build — and because it re-fails
+    //     deterministically, the app could NEVER be re-approved/deployed over a
+    //     mere shelf-listing miss. Instead the approve proceeds, the app deploys,
+    //     and the listing is simply absent until a `blocks.backfillAppListings`
+    //     run mints it. Duck-type on the Prisma error `code` (matches this file's
+    //     OauthClient/AppBlock P2002 handling).
+    const code = (err as { code?: unknown })?.code;
+    if (code !== 'P2002') {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[approveRequest] onsite AppListing auto-create failed (slug=${request.slug}, appBlockId=${appBlockId}); ` +
+          `approve/deploy CONTINUES — the app will not appear on /apps until a blocks.backfillAppListings run: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+      );
+    }
   }
 
   // (4) Obtain the bundle bytes. Two origins:
