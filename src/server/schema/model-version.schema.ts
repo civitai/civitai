@@ -440,6 +440,7 @@ export const getModelVersionSchema = z.object({
 export type GetLicensingRootsSchema = z.infer<typeof getLicensingRootsSchema>;
 export const getLicensingRootsSchema = z.object({
   baseModel: z.string(),
+  modelType: z.enum(ModelType).optional(),
 });
 
 export type UpsertExplorationPromptInput = z.infer<typeof upsertExplorationPromptSchema>;

@@ -271,8 +271,16 @@ export const getUserEarlyAccessModelVersions = async ({ userId }: { userId: numb
 // Licensing lineage roots selectable for a given base model — the versions
 // flagged LicensingRoot that define a fee others can inherit (e.g. an
 // ecosystem's Base / Turbo checkpoints). Feeds the version-form picker.
-export const getLicensingRoots = async ({ baseModel }: { baseModel: string }) => {
-  return dbRead.$queryRaw<
+// `standardFee` is the fee the "Default" option inherits: the (baseModel,
+// modelType) BaseModelLicensingFee rule's root version fee, live from the DB.
+export const getLicensingRoots = async ({
+  baseModel,
+  modelType,
+}: {
+  baseModel: string;
+  modelType?: ModelType;
+}) => {
+  const roots = await dbRead.$queryRaw<
     Array<{
       id: number;
       modelId: number;
@@ -303,6 +311,26 @@ export const getLicensingRoots = async ({ baseModel }: { baseModel: string }) =>
       AND m."deletedAt" IS NULL
     ORDER BY m.name, mv.index
   `;
+
+  let standardFee: number | null = null;
+  let standardVersionName: string | null = null;
+  if (modelType) {
+    const [rule] = await dbRead.$queryRaw<
+      Array<{ licensingFee: number | null; versionName: string | null }>
+    >`
+      SELECT
+        rmv."licensingFee"::float8 AS "licensingFee",
+        rmv.name AS "versionName"
+      FROM "BaseModelLicensingFee" bmlf
+      JOIN "ModelVersion" rmv ON rmv.id = bmlf."modelVersionId"
+      WHERE bmlf."baseModel" = ${baseModel}
+        AND bmlf."modelType" = ${modelType}::"ModelType"
+    `;
+    standardFee = rule?.licensingFee ?? null;
+    standardVersionName = rule?.versionName ?? null;
+  }
+
+  return { roots, standardFee, standardVersionName };
 };
 
 export const upsertModelVersion = async ({
