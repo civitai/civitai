@@ -24,16 +24,19 @@ import {
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
 // Storefront items carry the cosmetic's creator so cards can attribute the owner
-// (esp. resold items from other creators). Only used by the creator storefront.
+// (esp. resold items from other creators). The full avatar selector (profile
+// picture + equipped cosmetics) lets the card render the creator's real avatar
+// and badge. Only used by the creator storefront.
 const creatorStorefrontItemSelect = Prisma.validator<Prisma.CosmeticShopItemSelect>()({
   ...cosmeticShopItemSelect,
   cosmetic: {
     select: {
       ...simpleCosmeticSelect,
       videoUrl: true,
-      creator: { select: { id: true, username: true, image: true } },
+      creator: { select: userWithCosmeticsSelect },
     },
   },
 });
@@ -474,14 +477,19 @@ export const getCreatorShop = async ({
   userId,
   viewerId,
   isModerator,
+  preview,
 }: {
   userId: number;
   viewerId?: number;
   isModerator?: boolean;
+  // Moderator-only design aid: ignore this creator's own inventory/config and
+  // fill every section with real site-wide sample data (see the router — only
+  // honored for mods).
+  preview?: boolean;
 }) => {
   const settings = await getCreatorShopSettings({ userId });
   // A disabled shop is invisible to everyone but its owner and moderators.
-  if (settings.enabled !== true && viewerId !== userId && !isModerator)
+  if (!preview && settings.enabled !== true && viewerId !== userId && !isModerator)
     throw throwNotFoundError('Shop not found');
 
   const now = new Date();
@@ -490,7 +498,9 @@ export const getCreatorShop = async ({
     dbRead.cosmeticShopItem.findMany({
       where: {
         status: CosmeticShopItemStatus.Published,
-        addedById: userId,
+        // Preview draws cosmetics from every creator so the section is populated
+        // regardless of whose (possibly empty) shop is being viewed.
+        ...(preview ? {} : { addedById: userId }),
         AND: [
           { OR: [{ availableFrom: null }, { availableFrom: { lte: now } }] },
           { OR: [{ availableTo: null }, { availableTo: { gte: now } }] },
@@ -500,24 +510,28 @@ export const getCreatorShop = async ({
       // exact same <ShopItem> component + purchase modal as /shop.
       select: creatorStorefrontItemSelect,
       orderBy: { createdAt: 'desc' },
+      ...(preview ? { take: 12 } : {}),
     }),
     // Resold items reference other creators' still-sellable published items —
-    // one inventory, owned by the original creator (no copy).
+    // one inventory, owned by the original creator (no copy). Preview shows a
+    // sample of any sellable items instead of this creator's chosen list.
     dbRead.cosmeticShopItem.findMany({
       where: {
-        id: { in: resoldIds },
+        ...(preview ? {} : { id: { in: resoldIds } }),
         status: CosmeticShopItemStatus.Published,
         meta: { path: ['sellableByOthers'], equals: true },
         // Hide resold items whose owner has since made their shop private.
         addedBy: { settings: { path: ['creatorShop', 'enabled'], equals: true } },
       },
       select: creatorStorefrontItemSelect,
+      ...(preview ? { take: 6, orderBy: { id: 'desc' } } : {}),
     }),
     // Drives the Models section visibility — the storefront only lists the
-    // creator's currently-Early-Access models (paid tiers come later).
+    // creator's currently-Early-Access models (paid tiers come later). Preview
+    // counts site-wide so the Models section always renders.
     dbRead.model.count({
       where: {
-        userId,
+        ...(preview ? {} : { userId }),
         status: ModelStatus.Published,
         deletedAt: null,
         earlyAccessDeadline: { gte: now },
@@ -540,17 +554,27 @@ export const getCreatorShop = async ({
       sellerShare: (item.meta as CosmeticShopItemMeta)?.sellerShare ?? 0,
     },
   });
-  // Preserve the creator's chosen resold order.
-  const resoldById = new Map(resoldItems.map((i) => [i.id, sanitizeResold(i)]));
-  const resold = resoldIds
-    .map((id) => resoldById.get(id))
-    .filter((x): x is ReturnType<typeof sanitizeResold> => !!x);
-  const featuredIds = settings.featuredItemIds ?? [];
-  const featured = featuredIds
-    .map((fid) => cosmetics.find((c) => c.id === fid))
-    .filter((x): x is (typeof cosmetics)[number] => !!x);
+  const resold = preview
+    ? resoldItems.map(sanitizeResold)
+    : // Preserve the creator's chosen resold order.
+      (() => {
+        const resoldById = new Map(resoldItems.map((i) => [i.id, sanitizeResold(i)]));
+        return resoldIds
+          .map((id) => resoldById.get(id))
+          .filter((x): x is ReturnType<typeof sanitizeResold> => !!x);
+      })();
+  const featured = preview
+    ? cosmetics.slice(0, 3)
+    : (settings.featuredItemIds ?? [])
+        .map((fid) => cosmetics.find((c) => c.id === fid))
+        .filter((x): x is (typeof cosmetics)[number] => !!x);
 
-  return { cosmetics, featured, resold, settings, earlyAccessModelCount };
+  // In preview, force every section on so the layout is fully exercised.
+  const effectiveSettings = preview
+    ? { ...settings, enabled: true, showModels: true, sections: undefined }
+    : settings;
+
+  return { cosmetics, featured, resold, settings: effectiveSettings, earlyAccessModelCount };
 };
 
 // Early Access download prices for the shop's Models section, keyed by model

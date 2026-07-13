@@ -90,3 +90,63 @@
     }
   }
 }
+
+// Sticky side rail (skyscraper ads) beside the xl content column.
+$rail-activate: 1440px; // Sass var: @media can't read CSS custom properties
+
+.mainRegion {
+  position: relative;
+
+  --rail-width: 300px;
+  --rail-content-max: 1320px; // Mantine Container size="xl"
+  --rail-pad: var(--mantine-spacing-md);
+  // keep <= the rail's natural top offset, else it shoves down at rest
+  --rail-top: var(--mantine-spacing-md);
+  --rail-region-gap: var(--mantine-spacing-xl);
+
+  padding-inline: var(--rail-pad);
+  padding-block: var(--mantine-spacing-md);
+}
+
+.contentCol {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rail-region-gap);
+  min-width: 0;
+}
+
+.rail {
+  display: none;
+}
+
+@media (min-width: $rail-activate) {
+  // .withRail is only set when the rail is actually mounted, so absent-rail cases
+  // (POI models, below the breakpoint) keep the content centered at xl.
+  .withRail {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--rail-pad);
+    max-width: calc(var(--rail-content-max) + var(--rail-width) + var(--rail-pad) * 3);
+    margin-inline: auto;
+  }
+
+  .withRail .contentCol {
+    flex: 1 1 auto;
+    margin-inline: 0; // beat Container's auto margins so flex-grow fills the width
+  }
+
+  .rail {
+    display: block;
+    flex: 0 0 var(--rail-width);
+    width: 300px;
+    align-self: flex-start;
+    position: sticky;
+    top: var(--rail-top);
+    width: var(--rail-width);
+    min-height: 600px;
+    border-radius: var(--mantine-radius-md);
+    background: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-6));
+    border: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+    overflow: hidden;
+  }
+}

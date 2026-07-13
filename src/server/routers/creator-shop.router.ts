@@ -99,6 +99,7 @@ export const creatorShopRouter = router({
         ...input,
         viewerId: ctx.user?.id,
         isModerator: ctx.user?.isModerator,
+        preview: input.preview && !!ctx.user?.isModerator,
       })
     ),
   getEarlyAccessPrices: publicProcedure

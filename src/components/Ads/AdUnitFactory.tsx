@@ -1,8 +1,7 @@
-import { supportUsImageSizes } from '~/components/Ads/ads.utils';
+import { SupportUs } from '~/components/Ads/SupportUs';
 import { Text } from '@mantine/core';
 import React, { forwardRef, useCallback, useEffect, useRef, useState } from 'react';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
-import Image from 'next/image';
 import clsx from 'clsx';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
@@ -78,26 +77,6 @@ function AdUnitContent({
   return id ? <div className="flex items-center justify-center" id={id}></div> : null;
 }
 
-function SupportUsImage({ sizes }: { sizes?: AdSize[] }) {
-  const maxHeight = sizes ? getMaxHeight(sizes) : 0;
-  const filtered = supportUsImageSizes
-    .filter(([, height]) => height <= maxHeight)
-    .sort(([, a], [, b]) => b - a);
-  const match = filtered[0];
-  if (!match) return null;
-  const [width, height] = match;
-  return (
-    <NextLink href="/pricing" className="flex">
-      <Image
-        src={`/images/support-us/${width}x${height}.jpg`}
-        alt="Please support civitai and creators by disabling adblock"
-        width={width}
-        height={height}
-      />
-    </NextLink>
-  );
-}
-
 function AdWrapper({
   adUnit,
   sizes,
@@ -130,11 +109,21 @@ function AdWrapper({
 
   if (adSizes && !adSizes.length) return null;
 
+  // Blocked / no consent: render the neutral support-us element on its own — not
+  // inside the ad container — so cosmetic filters that strip ad slots miss it.
+  if (adsBlocked || !consent) {
+    if (!adSizes?.length) return null;
+    return (
+      <SupportUs
+        maxWidth={Math.max(...adSizes.map(([w]) => w))}
+        maxHeight={Math.max(...adSizes.map(([, h]) => h))}
+      />
+    );
+  }
+
   const content = (
     <>
-      {adsBlocked || !consent ? (
-        <SupportUsImage sizes={adSizes ?? undefined} />
-      ) : useDirectAds ? (
+      {useDirectAds ? (
         <CivitaiAdUnit adUnit={adUnit} id={id} />
       ) : inView && ready && adSizes !== undefined ? (
         <AdUnitContent
@@ -194,48 +183,6 @@ function AdWrapper({
       </AdunitSizesStyles>
     );
   } else return null;
-
-  // return (
-  //   <div
-  //     ref={ref}
-  //     style={preserveLayout !== false ? adWrapperStyles : undefined}
-  //     className={clsx({
-  //       [styles.adWrapper]: preserveLayout !== false,
-  //       ['relative box-content flex flex-col items-center justify-center gap-2']: true,
-  //       className,
-  //     })}
-  //   >
-  //     {inView && (
-  //       <>
-  //         {adsBlocked ? (
-  //           <SupportUsImage sizes={adSizes ?? undefined} />
-  //         ) : ready && adSizes !== undefined ? (
-  //           <AdUnitContent
-  //             // key={key}
-  //             adUnit={adUnit}
-  //             sizes={adSizes ?? undefined}
-  //             id={id}
-  //             onDismount={onDismount}
-  //           />
-  //         ) : null}
-  //         {withFeedback && !isMember && (
-  //           <div className="flex w-full justify-end">
-  //             <Text
-  //               component={NextLink}
-  //               td="underline"
-  //               href="/pricing"
-  //               c="dimmed"
-  //               size="xs"
-  //               align="center"
-  //             >
-  //               Remove ads
-  //             </Text>
-  //           </div>
-  //         )}
-  //       </>
-  //     )}
-  //   </div>
-  // );
 }
 
 export function adUnitFactory(factoryArgs: {

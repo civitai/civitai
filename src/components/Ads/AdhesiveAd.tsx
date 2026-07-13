@@ -3,7 +3,6 @@ import { useState } from 'react';
 import { IconX } from '@tabler/icons-react';
 import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
-import { NextLink } from '~/components/NextLink/NextLink';
 import { isMobileDevice } from '~/hooks/useIsMobile';
 // import { useContainerLargerThan } from '~/components/ContainerProvider/useContainerLargerThan';
 
@@ -22,22 +21,14 @@ function AdhesiveAdContent({
   const canClose = adsBlocked || (tracked && !isMobile);
 
   return (
-    // No hideOnBlocked: when ads are blocked we render a CSS/text placeholder
-    // instead (an <img> placeholder gets eaten by blockers too), sized to match
-    // the ad so the footer neither goes blank nor shifts.
+    // The adhesive unit renders the support-us image itself when blocked; we just
+    // reserve the bar height so the footer neither goes blank nor shifts.
     <AdUnitRenderable>
-      <div className="relative flex justify-center border-t border-gray-3 bg-gray-2 dark:border-dark-4 dark:bg-dark-9">
-        {adsBlocked ? (
-          <NextLink
-            href="/pricing"
-            className="flex w-full items-center justify-center px-12 text-center text-xs leading-tight text-gray-7 dark:text-dark-1 sm:text-sm"
-            style={{ height: isMobile ? 50 : 90 }}
-          >
-            Civitai memberships — more features, fewer limits.
-          </NextLink>
-        ) : (
-          <AdUnitAdhesive maxHeight={90} preserveLayout={preserveLayout} />
-        )}
+      <div
+        className="relative flex justify-center border-t border-gray-3 bg-gray-2 dark:border-dark-4 dark:bg-dark-9"
+        style={{ minHeight: isMobile ? 50 : 90 }}
+      >
+        <AdUnitAdhesive maxHeight={90} preserveLayout={preserveLayout} />
         {canClose && onClose && (
           <button
             className="absolute inset-y-0 right-0 flex w-9 items-center justify-center bg-gray-0/50 dark:bg-dark-6/50"
