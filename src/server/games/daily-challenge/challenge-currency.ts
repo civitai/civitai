@@ -1,5 +1,6 @@
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
+import { ChallengeSource } from '~/shared/utils/prisma/enums';
 
 export type ChallengeBuzzType = 'green' | 'yellow';
 
@@ -20,13 +21,17 @@ export function isNonSfwForGreen(
   return buzzType === 'green' && Flags.intersects(allowedNsfwLevel, nsfwBrowsingLevelsFlag);
 }
 
-// A challenge shows only on the domain matching its currency (green on green, yellow off-green).
-// The creator is exempt so they can always reach their own, mirroring the scan/POI gates.
+// A user challenge shows only on the domain matching its currency (green on green, yellow
+// off-green). Only user-created challenges are domain-scoped: System/mod/event challenges are
+// prize-only (no entry fee) and universal — a green user can win their yellow Buzz and spend it on
+// the mature site — so they show on both domains, like the scan/POI gates. The creator is exempt
+// so they can always reach their own.
 export function isChallengeHiddenByDomainCurrency(
-  challenge: { buzzType: ChallengeBuzzType; createdById: number | null },
+  challenge: { source: ChallengeSource; buzzType: ChallengeBuzzType; createdById: number | null },
   isGreen: boolean,
   viewerId?: number
 ): boolean {
+  if (challenge.source !== ChallengeSource.User) return false;
   if (challenge.createdById != null && challenge.createdById === viewerId) return false;
   return challenge.buzzType !== deriveDomainCurrency(isGreen);
 }

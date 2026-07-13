@@ -297,7 +297,11 @@ export function buildWinnerPayoutTransactions({
   }));
 }
 
-/** The stored pool currency for a challenge; falls back to yellow for legacy/missing rows. */
+/**
+ * The stored pool currency for a challenge; falls back to yellow when the row is missing or holds
+ * an unexpected value. NOTE: this is not a substitute for the migration — before the `buzzType`
+ * column exists, the select itself throws. Apply the ALTER before deploying (see the migration).
+ */
 export async function getChallengeBuzzType(challengeId: number): Promise<ChallengeBuzzType> {
   const challenge = await dbRead.challenge.findUnique({
     where: { id: challengeId },

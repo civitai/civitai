@@ -58,6 +58,7 @@ export default function EditUserChallengePage() {
     visibleAt: new Date(challenge.visibleAt),
     status: challenge.status,
     source: challenge.source,
+    buzzType: challenge.buzzType,
     prizes: challenge.prizes,
     entryPrize: challenge.entryPrize,
     prizeMode: challenge.prizeMode,

@@ -137,6 +137,7 @@ type ChallengeForEdit = {
   visibleAt: Date;
   status: ChallengeStatus;
   source: ChallengeSource;
+  buzzType: 'green' | 'yellow';
   prizes: Prize[];
   entryPrize: Prize | null;
   prizeMode: PrizeMode;
@@ -199,7 +200,10 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
     challenge?.status === ChallengeStatus.Cancelled;
 
   const [domainBuzzType] = useAvailableBuzz();
-  const buzzLabel = domainBuzzType === 'green' ? 'Green' : 'Yellow';
+  // buzzType is immutable, and a creator can edit cross-domain, so the current domain wouldn't
+  // reflect the challenge's real currency — prefer the stored value when editing.
+  const effectiveBuzzType = isEditing ? challenge?.buzzType : domainBuzzType;
+  const buzzLabel = effectiveBuzzType === 'green' ? 'Green' : 'Yellow';
 
   // Mod-only "Customize judging categories" toggle. Presentation/submission-only state — it isn't
   // part of the submitted schema, so it lives outside RHF rather than as a form field.

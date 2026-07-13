@@ -379,9 +379,13 @@ export async function getInfiniteChallenges(
       : Prisma.sql`NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."poi" = true)`
   );
 
-  // Domain-currency gate: green challenges only surface on the green site, yellow only off-green.
+  // Domain-currency gate: green user challenges surface only on the green site, yellow only
+  // off-green. Scoped to user challenges — System/mod/event (prize-only, no entry fee) are
+  // universal and show on both domains, mirroring the scan/POI gates.
   const domainCurrency = deriveDomainCurrency(isGreen ?? false);
-  conditions.push(Prisma.sql`c."buzzType" = ${domainCurrency}`);
+  conditions.push(
+    Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency})`
+  );
 
   // Status filter (parameterized)
   if (status && status.length > 0) {
@@ -770,6 +774,7 @@ async function buildChallengeDetail(
     visibleAt: challenge.visibleAt,
     status: challenge.status,
     source: challenge.source,
+    buzzType: challenge.buzzType,
     eventId: challenge.eventId,
     nsfwLevel: challenge.nsfwLevel,
     allowedNsfwLevel: challenge.allowedNsfwLevel,
@@ -862,10 +867,14 @@ export async function getChallengeDetail(
       return null;
   }
 
-  // Domain-currency gate — direct-URL parity with the feed filter; creator exempt.
+  // Domain-currency gate — direct-URL parity with the feed filter; user-scoped, creator exempt.
   if (
     isChallengeHiddenByDomainCurrency(
-      { buzzType: challenge.buzzType, createdById: challenge.createdById },
+      {
+        source: challenge.source,
+        buzzType: challenge.buzzType,
+        createdById: challenge.createdById,
+      },
       isGreen ?? false,
       viewerId
     )

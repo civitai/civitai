@@ -186,6 +186,9 @@ export async function getChallengeById(challengeId: number): Promise<ChallengeDe
 
   return {
     ...result,
+    // $queryRaw returns the TEXT column as an arbitrary string; narrow to the union (app only ever
+    // writes 'green'/'yellow', default 'yellow') so the typed contract holds downstream.
+    buzzType: result.buzzType === 'green' ? 'green' : 'yellow',
     modelVersionIds: result.modelVersionIds ?? [],
     prizes: typeof result.prizes === 'string' ? JSON.parse(result.prizes) : result.prizes,
     entryPrize:
