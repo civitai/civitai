@@ -29,6 +29,7 @@
  * non-numeric token so one challenge's refund can't collide with another's (5 vs 50, 51, ...).
  */
 import { dbRead, dbWrite } from '~/server/db/client';
+import type { ChallengeBuzzType } from '~/server/games/daily-challenge/challenge-currency';
 import { logToAxiom } from '~/server/logging/client';
 import {
   createBuzzTransaction,
@@ -56,15 +57,18 @@ export async function chargeInitialPrize({
   challengeId,
   userId,
   amount,
+  fromAccountType,
 }: {
   challengeId: number;
   userId: number;
   amount: number;
+  fromAccountType: ChallengeBuzzType;
 }) {
   if (amount <= 0) return;
   await createBuzzTransaction({
     fromAccountId: userId,
     toAccountId: 0,
+    fromAccountType,
     type: TransactionType.Purchase,
     amount,
     description: 'Challenge initial prize pool',
@@ -101,11 +105,13 @@ export async function chargeEntryFees({
   userId,
   imageIds,
   entryFee,
+  fromAccountType,
 }: {
   challengeId: number;
   userId: number;
   imageIds: number[];
   entryFee: number;
+  fromAccountType: ChallengeBuzzType;
 }): Promise<ChargeEntryFeesResult> {
   if (entryFee <= 0 || imageIds.length === 0)
     return { paidImageIds: imageIds, unpaidImageIds: [] };
@@ -119,6 +125,7 @@ export async function chargeEntryFees({
     imageIds.map((imageId) => ({
       fromAccountId: userId,
       toAccountId: 0,
+      fromAccountType,
       type: TransactionType.Purchase,
       amount: houseAmount,
       description: 'Challenge entry fee (house)',
@@ -147,6 +154,7 @@ export async function chargeEntryFees({
       housePaidIds.map((imageId) => ({
         fromAccountId: userId,
         toAccountId: 0,
+        fromAccountType,
         type: TransactionType.Purchase,
         amount: poolAmount,
         description: 'Challenge entry fee (prize pool)',
@@ -264,4 +272,36 @@ export async function refundUserChallengeFunds(challengeId: number) {
     `Refunded ${refundedEntries} entry-fee pool contributions + initial prize for cancelled challenge ${challengeId}`
   );
   return { refundedEntries };
+}
+
+/** Build the winner-prize transactions for a challenge, paid in its stored currency. Pure. */
+export function buildWinnerPayoutTransactions({
+  challengeId,
+  title,
+  buzzType,
+  winners,
+}: {
+  challengeId: number;
+  title: string;
+  buzzType: ChallengeBuzzType;
+  winners: Array<{ userId: number; position: number; prize: number }>;
+}) {
+  return winners.map((entry) => ({
+    type: TransactionType.Reward,
+    toAccountId: entry.userId,
+    fromAccountId: 0,
+    amount: entry.prize,
+    description: `Challenge Winner Prize #${entry.position}: ${title}`,
+    externalTransactionId: `challenge-winner-prize-${challengeId}-${entry.userId}-place-${entry.position}`,
+    toAccountType: buzzType,
+  }));
+}
+
+/** The stored pool currency for a challenge; falls back to yellow for legacy/missing rows. */
+export async function getChallengeBuzzType(challengeId: number): Promise<ChallengeBuzzType> {
+  const challenge = await dbRead.challenge.findUnique({
+    where: { id: challengeId },
+    select: { buzzType: true },
+  });
+  return challenge?.buzzType === 'green' ? 'green' : 'yellow';
 }

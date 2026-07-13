@@ -39,7 +39,8 @@ vi.mock('~/server/services/buzz.service', () => ({
   refundTransaction: mockRefundTransaction,
 }));
 
-const { chargeEntryFees, refundUserChallengeFunds } = await import('./challenge-funding');
+const { chargeEntryFees, chargeInitialPrize, refundUserChallengeFunds, buildWinnerPayoutTransactions } =
+  await import('./challenge-funding');
 const { CHALLENGE_ENTRY_HOUSE_CUT, getEntryPoolContribution } = await import(
   '~/shared/constants/challenge.constants'
 );
@@ -223,6 +224,73 @@ describe('chargeEntryFees — partial failure (the no-refund contract)', () => {
       where: { id: CHALLENGE_ID },
       data: { prizePool: { increment: getEntryPoolContribution(ENTRY_FEE) * 1 } },
     });
+  });
+});
+
+describe('chargeInitialPrize fromAccountType', () => {
+  it('forwards fromAccountType to createBuzzTransaction', async () => {
+    mockCreateBuzzTransaction.mockResolvedValueOnce({});
+
+    await chargeInitialPrize({
+      challengeId: 3,
+      userId: 1,
+      amount: 1000,
+      fromAccountType: 'green',
+    });
+
+    expect(mockCreateBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ fromAccountType: 'green', amount: 1000 })
+    );
+  });
+});
+
+describe('chargeEntryFees fromAccountType', () => {
+  it('forwards fromAccountType to both house and pool legs', async () => {
+    mockCreateBuzzTransactionMany
+      .mockResolvedValueOnce(batchResult(1)) // house batch
+      .mockResolvedValueOnce(batchResult(1)); // pool batch
+
+    await chargeEntryFees({
+      challengeId: 3,
+      userId: 1,
+      imageIds: [10],
+      entryFee: 100,
+      fromAccountType: 'green',
+    });
+
+    for (const call of mockCreateBuzzTransactionMany.mock.calls) {
+      expect(call[0][0]).toEqual(expect.objectContaining({ fromAccountType: 'green' }));
+    }
+  });
+});
+
+describe('buildWinnerPayoutTransactions', () => {
+  it('pays winners in the challenge buzzType (green)', () => {
+    const txs = buildWinnerPayoutTransactions({
+      challengeId: 7,
+      title: 'Neon Cats',
+      buzzType: 'green',
+      winners: [{ userId: 11, position: 1, prize: 5000 }],
+    });
+    expect(txs).toEqual([
+      expect.objectContaining({
+        toAccountId: 11,
+        fromAccountId: 0,
+        amount: 5000,
+        toAccountType: 'green',
+        externalTransactionId: 'challenge-winner-prize-7-11-place-1',
+      }),
+    ]);
+  });
+
+  it('pays winners in yellow when the challenge is yellow', () => {
+    const [tx] = buildWinnerPayoutTransactions({
+      challengeId: 7,
+      title: 'Neon Cats',
+      buzzType: 'yellow',
+      winners: [{ userId: 11, position: 1, prize: 5000 }],
+    });
+    expect(tx.toAccountType).toBe('yellow');
   });
 });
 
