@@ -20,7 +20,7 @@ export const load: LayoutServerLoad = ({ locals, url, cookies }) => {
     isModerator: user.isModerator === true,
     testMembership,
     membership,
-    nav: navForMember(membership.isMember),
+    nav: navForMember(membership.isCreatorProgramMember),
     logoutUrl: env.AUTH_JWT_ISSUER ? hubLogoutUrl(env.AUTH_JWT_ISSUER, url.origin) : null,
   };
 };

@@ -37,6 +37,7 @@
     DEFAULT_GENERATION_TRIAL_LIMIT,
     MAX_GENERATION_TRIAL_LIMIT,
   } from '$lib/monetization/early-access';
+  import JoinUpsell from '$lib/components/JoinUpsell.svelte';
   import type { PageData } from './$types';
   import type { CreatorModel, CreatorModelVersion } from '$lib/server/models';
 
@@ -161,10 +162,10 @@
 </header>
 
 {#if !data.canSetFee}
-  <div class="mb-6 rounded-lg border border-dark-4 bg-dark-6 p-4 text-sm text-dark-1">
-    Setting licensing fees requires <a href="/join">Creator Program membership</a>. You can still review your
-    models below.
-  </div>
+  <JoinUpsell
+    class="mb-6"
+    body="Setting licensing fees requires Creator Program membership. You can still review your models below."
+  />
 {/if}
 
 <!-- Search / filter / sort -->

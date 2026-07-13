@@ -76,6 +76,7 @@ Legend: `[x]` done · `[ ]` not started · **🚧** blocked on a dependency · *
 ---
 
 ## `/join` — Membership upsell
-- [x] Upsell page (value-prop cards) + already-member redirect to `/`
-- [ ] Final tier-comparison + CTA copy in the **Creator Program** framing (B1)
-- [ ] Reusable inline upsell (card/tooltip on gated controls)
+- [x] Upsell page (value-prop cards) + CP-member redirect to `/` (B1 gate, not subscription tier)
+- [x] Final capability-comparison + CTA copy in the **Creator Program** framing (B1) — perks, member-vs-everyone table, requirement note (active membership + creator score ≥ 40k), CTA → `civitai.com/creator-program`; tailored for paying-but-not-CP vs non-member
+- [x] Reusable inline upsell (`JoinUpsell` component) — used on `/models`; links to `/join`
+- [x] Nav aligned to CP membership (B1) — `/join` item + member badges now key on `isCreatorProgramMember`, not subscription tier

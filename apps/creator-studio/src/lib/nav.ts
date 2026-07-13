@@ -17,7 +17,7 @@ export const NAV: NavItem[] = [
   { href: '/earnings/analytics', label: 'Analytics', icon: 'chart' },
   { href: '/licensing', label: 'Licensing', icon: 'license', memberOnly: true },
   { href: '/settings', label: 'Settings', icon: 'settings' },
-  { href: '/join', label: 'Become a member', icon: 'sparkles', nonMemberOnly: true },
+  { href: '/join', label: 'Join Creator Program', icon: 'sparkles', nonMemberOnly: true },
 ];
 
 export function isNavActive(href: string, pathname: string): boolean {
@@ -32,6 +32,8 @@ export function activeNavHref(pathname: string): string | undefined {
     .sort((a, b) => b.length - a.length)[0];
 }
 
+// `isMember` here is the Creator Program gate (B1) — the single bar the Studio's member-only surfaces key on,
+// not subscription tier. Callers pass `membership.isCreatorProgramMember`.
 export function navForMember(isMember: boolean): NavItem[] {
   return NAV.filter((item) => (item.nonMemberOnly ? !isMember : true));
 }

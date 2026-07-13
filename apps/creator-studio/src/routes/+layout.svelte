@@ -105,7 +105,7 @@
                     >
                       <Icon size={18} stroke={1.5} />
                       <span>{item.label}</span>
-                      {#if item.memberOnly && !data.membership.isMember}
+                      {#if item.memberOnly && !data.membership.isCreatorProgramMember}
                         <span
                           class="ml-auto rounded bg-dark-6 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-dark-2"
                           title="Requires a membership"
