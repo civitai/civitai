@@ -25,6 +25,7 @@ import {
   setAppReviewExcludedSchema,
   setMarketplaceMetaSchema,
   subscriptionScopeSchema,
+  toPublicBlockManifest,
   upsertAppBlockReviewSchema,
 } from '~/server/schema/blocks/subscription.schema';
 import {
@@ -1547,6 +1548,9 @@ export const blocksRouter = router({
           appBlock: {
             select: {
               id: true,
+              // W13 P4: `hasPage` for the Open-live run-page link (does the manifest
+              // declare a launchable page). PUBLIC subset only — never the raw manifest.
+              manifest: true,
               _count: { select: { userSubscriptions: true } },
             },
           },
@@ -1580,10 +1584,51 @@ export const blocksRouter = router({
             return acc;
           }, {})
         : {};
+
+      // W13 P4 (owner controls): resolve the backing on-site `AppListing` (1:1 with
+      // the AppBlock — `AppListing.appBlockId`) for each row so the UI reads the TRUE
+      // live/removed listing state. A publish request stays `approved` after an owner
+      // unpublish, so the request status alone can't tell live from owner-hidden. One
+      // batched findMany (NOT per-row) keyed by appBlockId.
+      const listingByBlockId = new Map<string, { id: string; status: string }>();
+      if (appBlockIds.length) {
+        const listings = await dbRead.appListing.findMany({
+          where: { appBlockId: { in: appBlockIds }, kind: 'onsite' },
+          select: { id: true, appBlockId: true, status: true },
+        });
+        for (const l of listings) {
+          if (l.appBlockId) listingByBlockId.set(l.appBlockId, { id: l.id, status: l.status });
+        }
+      }
+
+      // For every REMOVED backing listing, its MOST-RECENT moderation-event action —
+      // so the UI distinguishes an owner-hidden listing (last event `owner-unpublish`
+      // → Republish-eligible) from a moderator takedown (last event `delist`/`purge` →
+      // Republish FORBIDDEN, shown as "removed by a moderator"). Batched `distinct` +
+      // `orderBy desc` (ONE query, latest per listing), only over removed listings —
+      // mirrors the off-site `listMySubmissions` approach.
+      const removedListingIds = [...listingByBlockId.values()]
+        .filter((l) => l.status === 'removed')
+        .map((l) => l.id);
+      const lastEvents = removedListingIds.length
+        ? await dbRead.appListingModerationEvent.findMany({
+            where: { appListingId: { in: removedListingIds } },
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            distinct: ['appListingId'],
+            select: { appListingId: true, action: true },
+          })
+        : [];
+      const lastActionByListingId = new Map(
+        lastEvents
+          .filter((e): e is { appListingId: string; action: string } => e.appListingId != null)
+          .map((e) => [e.appListingId, e.action])
+      );
+
       type RowWithCount = (typeof rows)[number];
       return rows.map((r: RowWithCount) => {
         const counts = r.appBlock?._count;
         const appBlockId = r.appBlock?.id;
+        const manifest = r.appBlock?.manifest;
         const { appBlock: _drop, ...rest } = r;
         // userSubscriptionCount keeps the historical meaning ("blanket +
         // pinned subscriptions for this app"); modelInstallCount is the
@@ -1591,10 +1636,22 @@ export const blocksRouter = router({
         // model_block_installs row count meant.
         const totalSubs = counts?.userSubscriptions ?? null;
         const pinnedCount = appBlockId ? pinnedCounts[appBlockId] ?? 0 : null;
+        const listing = appBlockId ? listingByBlockId.get(appBlockId) : undefined;
         return {
           ...rest,
           modelInstallCount: pinnedCount,
           userSubscriptionCount: totalSubs,
+          // The backing on-site listing id (owner unpublish/republish/history target)
+          // + its TRUE lifecycle status, and — for a removed listing — the last mod
+          // action (owner-hidden vs mod-removed). Null when no backing listing exists
+          // (e.g. a pending first-version request, or a pre-W13 backfill gap).
+          appListingId: listing?.id ?? null,
+          listingStatus: listing?.status ?? null,
+          lastModerationAction: listing ? lastActionByListingId.get(listing.id) ?? null : null,
+          // Whether the manifest declares a launchable page (drives the Open-live →
+          // /apps/run/<slug> vs standalone-origin vs model-slot branching). PUBLIC
+          // subset only.
+          hasPage: !!toPublicBlockManifest(manifest).hasPage,
         };
       });
     }),
