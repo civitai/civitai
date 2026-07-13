@@ -274,6 +274,8 @@ describe('trust gate is independent of the (now-exempt) shared:write scope', () 
   });
 
   const ineligible: Array<[string, Record<string, unknown>]> = [
+    ['banned', { bannedAt: new Date() }],
+    ['muted', { muted: true }],
     ['too-new account', { createdAt: new Date() }],
     ['unverified email', { emailVerified: undefined }],
     ['onboarding incomplete', { onboarding: 0 }],
