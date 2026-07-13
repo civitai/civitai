@@ -68,7 +68,12 @@ function resetDb() {
   mockDb.appListingScreenshot.createMany.mockReset().mockResolvedValue({ count: 0 });
   mockDb.appListingScreenshot.update.mockReset().mockImplementation(async (a: { data: unknown }) => a.data);
   mockDb.appListingScreenshot.delete.mockReset().mockResolvedValue({});
-  mockDb.$transaction.mockReset().mockImplementation(async (ops: unknown[]) => Promise.all(ops as Promise<unknown>[]));
+  mockDb.$transaction.mockReset().mockImplementation(async (arg: unknown) => {
+    // Interactive (callback) form: run it with mockDb as the tx client (dbRead ===
+    // dbWrite === mockDb here). Array form: resolve the batched ops.
+    if (typeof arg === 'function') return (arg as (tx: typeof mockDb) => unknown)(mockDb);
+    return Promise.all(arg as Promise<unknown>[]);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -775,21 +780,43 @@ describe('mod live-asset edit re-derives contentRating (raise-only)', () => {
     });
   });
 
-  it('non-mod owner edit does NOT trigger a re-derive (helper early-returns)', async () => {
-    // A DRAFT listing the owner may edit directly (guard allows draft); the helper
-    // early-returns for a non-mod, so contentRating is never re-derived here.
-    mockDb.appListing.findUnique.mockResolvedValue({
-      ...approvedListing, id: 'apl_draft', userId: 42, status: 'draft', contentRating: null,
-    });
-    mockDb.image.findUnique.mockResolvedValue({
-      ...validScreenshotImage, userId: 42, nsfwLevel: NsfwLevel.R,
-    });
-    mockDb.appListingScreenshot.findMany.mockResolvedValue([]);
-    mockDb.appListingScreenshot.count.mockResolvedValue(0);
+  it('mod adds a PG13 asset to a pg-rated live listing → floors up to pg13 (intra-ladder raise)', async () => {
+    // Exercises the raise PAST the shared g/pg SFW ceiling (both map to PG): pg → pg13
+    // is a real bump the null→r and x→no-lower cases don't cover.
+    mockDb.appListing.findUnique.mockResolvedValue({ ...approvedListing, contentRating: 'pg' });
+    mockDb.image.findUnique.mockResolvedValue({ ...validScreenshotImage, nsfwLevel: NsfwLevel.PG13 });
+    mockDb.appListingScreenshot.findMany.mockResolvedValue([{ order: 0, imageId: 500 }]);
+    mockDb.appListingScreenshot.count.mockResolvedValue(1);
+    mockDb.image.findMany.mockResolvedValue([{ nsfwLevel: NsfwLevel.PG13 }]);
     const { addListingScreenshot } = await import('../app-listing-assets.service');
-    const res = await addListingScreenshot({ listingId: 'apl_draft', imageId: 500 }, owner);
+    const res = await addListingScreenshot({ listingId: 'apl_live', imageId: 500 }, mod);
     expect(res).toMatchObject({ status: 'attached' });
-    // No re-derive: reDeriveContentRatingForModLiveEdit early-returns for a non-mod.
+    expect(mockDb.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_live' },
+      data: { contentRating: 'pg13' },
+    });
+  });
+
+  it('mod editing a DRAFT listing does NOT re-derive (STATUS gate isolated)', async () => {
+    // Isolates the status gate: the mod gate PASSES (a mod IS editing) but
+    // status !== 'approved' → the helper early-returns. The asset is R, so WITHOUT
+    // the status guard this would raise to 'r' — proving the status check (not the
+    // mod check) is what suppresses the re-derive here. The non-mod branch of the
+    // guard is unreachable via this mutator anyway (assertOwnerAssetEditable throws
+    // for a non-mod on an approved non-shadow listing), so the `isModerator` guard
+    // inside the helper is defense-in-depth only.
+    mockDb.appListing.findUnique.mockResolvedValue({
+      ...approvedListing, id: 'apl_draft', status: 'draft', contentRating: null,
+    });
+    mockDb.image.findUnique.mockResolvedValue({ ...validScreenshotImage, nsfwLevel: NsfwLevel.R });
+    mockDb.appListingScreenshot.findMany.mockResolvedValue([{ order: 0, imageId: 500 }]);
+    mockDb.appListingScreenshot.count.mockResolvedValue(1);
+    mockDb.image.findMany.mockResolvedValue([{ nsfwLevel: NsfwLevel.R }]);
+    const { addListingScreenshot } = await import('../app-listing-assets.service');
+    const res = await addListingScreenshot({ listingId: 'apl_draft', imageId: 500 }, mod);
+    expect(res).toMatchObject({ status: 'attached' });
+    // The screenshot row is created, but the status gate suppresses the re-derive.
+    expect(mockDb.appListingScreenshot.create).toHaveBeenCalledTimes(1);
     expect(mockDb.appListing.update).not.toHaveBeenCalled();
   });
 });
