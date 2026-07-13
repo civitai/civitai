@@ -256,6 +256,53 @@ describe('H3 min-trust gate (write + vote)', () => {
   });
 });
 
+// Defense-in-depth for the CONSENT_EXEMPT change (shared scopes now sign into
+// tokens without a per-user consent grant, so an anon/low-trust token can now
+// legitimately CARRY apps:storage:shared:write). These pin that the trust gate
+// is enforced INDEPENDENTLY of the scope: even with the write scope present on
+// the claims, an anon / too-new / unverified subject is rejected BEFORE any data
+// access. `validClaims()` already carries [READ, WRITE], so every claim here has
+// the write scope present.
+describe('trust gate is independent of the (now-exempt) shared:write scope', () => {
+  it('anon subject with the write scope present → UNAUTHORIZED, no DB access', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'anon' })); // scopes include WRITE
+    await expect(
+      caller().append({ blockToken: 't', value: { title: 'x' } })
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(mockPool.connect).not.toHaveBeenCalled();
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
+  const ineligible: Array<[string, Record<string, unknown>]> = [
+    ['banned', { bannedAt: new Date() }],
+    ['muted', { muted: true }],
+    ['too-new account', { createdAt: new Date() }],
+    ['unverified email', { emailVerified: undefined }],
+    ['onboarding incomplete', { onboarding: 0 }],
+  ];
+  for (const [name, over] of ineligible) {
+    it(`authenticated but ineligible (${name}) with the write scope present → FORBIDDEN, no DB access`, async () => {
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims()); // sub: user:42, scopes include WRITE
+      mockGetSessionUser.mockResolvedValueOnce(trustedUser(over));
+      await expect(caller().vote({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+      });
+      expect(mockPool.query).not.toHaveBeenCalled();
+    });
+  }
+
+  it('a trusted subject with the scope present is allowed (reaches the vote CTE)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (sql.trim().startsWith('SELECT 1')) return { rows: [{ x: 1 }], rowCount: 1 };
+      if (sql.includes('WITH ins AS')) return { rows: [{ count: '1' }], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    });
+    const out = await caller().vote({ blockToken: 't', key: 'req1' });
+    expect(out.count).toBe(1);
+  });
+});
+
 describe('C1 cross-user overwrite', () => {
   it('append SERVER-generates the key (client key never used)', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
