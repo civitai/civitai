@@ -103,13 +103,21 @@ const GOOD_REASON = 'impersonates a real vendor';
 const OWNER = 500;
 const BLOCK_ID = 'blk_backing';
 
-/** Replica classify shape — now carries userId + appBlockId (dual-action classify). */
+/** Replica classify shape — carries userId + name + appBlockId (dual-action classify). */
 function offsiteListing(status: string, kind = 'offsite') {
-  return { id: APP_ID, kind, status, slug: SLUG, userId: OWNER, appBlockId: null };
+  return { id: APP_ID, kind, status, slug: SLUG, name: 'Cool App', userId: OWNER, appBlockId: null };
 }
 /** An on-site listing carries a backing AppBlock id (dual-table flip target). */
 function onsiteListing(status: string) {
-  return { id: APP_ID, kind: 'onsite', status, slug: SLUG, userId: OWNER, appBlockId: BLOCK_ID };
+  return {
+    id: APP_ID,
+    kind: 'onsite',
+    status,
+    slug: SLUG,
+    name: 'Cool App',
+    userId: OWNER,
+    appBlockId: BLOCK_ID,
+  };
 }
 
 beforeEach(() => {
@@ -150,9 +158,9 @@ describe('delistListing', () => {
     });
     expect(res).toEqual({ appListingId: APP_ID, status: 'removed' });
 
-    // The mutate is status+kind-guarded (approved-only, offsite-only).
+    // The mutate is status+kind-guarded (approved OR removed → removed, offsite-only).
     expect(mockWrite.appListing.updateMany).toHaveBeenCalledWith({
-      where: { id: APP_ID, kind: 'offsite', status: 'approved' },
+      where: { id: APP_ID, kind: 'offsite', status: { in: ['approved', 'removed'] } },
       data: { status: 'removed' },
     });
     // Exactly ONE audit event, with the correct action/actor/reason/slug/before/after.
@@ -190,9 +198,9 @@ describe('delistListing', () => {
       reviewerUserId: REVIEWER,
     });
     expect(res).toEqual({ appListingId: APP_ID, status: 'removed' });
-    // The listing flip is kind-scoped to onsite.
+    // The listing flip is kind-scoped to onsite (approved OR removed → removed).
     expect(mockWrite.appListing.updateMany).toHaveBeenCalledWith({
-      where: { id: APP_ID, kind: 'onsite', status: 'approved' },
+      where: { id: APP_ID, kind: 'onsite', status: { in: ['approved', 'removed'] } },
       data: { status: 'removed' },
     });
     // The backing AppBlock is ALSO suspended (guarded approved→suspended) in the tx.
@@ -207,8 +215,8 @@ describe('delistListing', () => {
     expect(mockNotify).not.toHaveBeenCalled();
   });
 
-  it('a status-guarded 0-count (already removed/draft) → NOT_TRANSITIONABLE and ZERO events', async () => {
-    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
+  it('a status-guarded 0-count (concurrently moved out of {approved,removed}, e.g. to draft/pending) → NOT_TRANSITIONABLE, ZERO events', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('approved'));
     mockWrite.appListing.updateMany.mockResolvedValueOnce({ count: 0 });
     await expect(
       delistListing({ input: { appListingId: APP_ID, reason: GOOD_REASON }, reviewerUserId: REVIEWER })
@@ -217,6 +225,29 @@ describe('delistListing', () => {
     expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
     // Rolled back → no owner notification.
     expect(mockNotify).not.toHaveBeenCalled();
+  });
+
+  it('🔴 ENFORCED-TAKEDOWN LOCK: delist on an already-REMOVED (owner-unpublished) listing succeeds + writes a delist event (before status removed)', async () => {
+    // The owner previously self-unpublished (status removed). A mod delist is idempotent
+    // (stays removed) but ALWAYS writes a `delist` event → the LAST event is now a mod
+    // takedown, so republishOwnListing's guard forbids the owner re-exposing it.
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
+    const res = await delistListing({
+      input: { appListingId: APP_ID, reason: 'confirmed impersonation' },
+      reviewerUserId: REVIEWER,
+    });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'removed' });
+    expect(mockWrite.appListing.updateMany).toHaveBeenCalledWith({
+      where: { id: APP_ID, kind: 'offsite', status: { in: ['approved', 'removed'] } },
+      data: { status: 'removed' },
+    });
+    expect(mockWrite.appListingModerationEvent.create).toHaveBeenCalledTimes(1);
+    expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data).toMatchObject({
+      action: 'delist',
+      // The pre-state is reflected accurately (removed, not a hardcoded approved).
+      before: { status: 'removed' },
+      after: { status: 'removed' },
+    });
   });
 
   it('a missing listing → generic NOT_FOUND (indistinguishable from on-site)', async () => {

@@ -307,12 +307,21 @@ async function classifyListingForAction(appListingId: string): Promise<{
   kind: string;
   status: string;
   slug: string;
+  name: string | null;
   appBlockId: string | null;
   userId: number;
 }> {
   const listing = await dbRead.appListing.findUnique({
     where: { id: appListingId },
-    select: { id: true, kind: true, status: true, slug: true, appBlockId: true, userId: true },
+    select: {
+      id: true,
+      kind: true,
+      status: true,
+      slug: true,
+      name: true,
+      appBlockId: true,
+      userId: true,
+    },
   });
   if (!listing) {
     throw new OffsiteModerationError('NOT_FOUND', 'Listing not found.');
@@ -322,6 +331,7 @@ async function classifyListingForAction(appListingId: string): Promise<{
     kind: listing.kind,
     status: listing.status,
     slug: listing.slug,
+    name: listing.name,
     appBlockId: listing.appBlockId,
     userId: listing.userId,
   };
@@ -345,10 +355,16 @@ export type DelistListingResult = { appListingId: string; status: 'removed' };
  *     clobbering a drifted state but is non-fatal on a 0-count (the store status is
  *     the source of truth for visibility).
  *
- * Status-guarded: the listing mutate is `updateMany({ id, kind, status:'approved' })`;
- * a 0-count means a concurrent action already moved the row → NOT_TRANSITIONABLE and
- * the tx rolls back BEFORE the audit event is written (ZERO events on a guarded
- * failure). Optionally resolves the triggering `reportId` in the same tx.
+ * STATUS: a delist is allowed on an `approved` OR an already-`removed` listing. The
+ * `removed → removed` case is the 🔴 "convert an owner-hide into an ENFORCED takedown"
+ * path: an owner who self-unpublished (last event = `owner-unpublish`) could otherwise
+ * freely `republishOwnListing` — a mod delist on the removed listing is idempotent
+ * (stays `removed`) but ALWAYS writes a `delist` event, making the LAST event a mod
+ * takedown so the republish guard then FORBIDS the owner from re-exposing it (a
+ * reversible lock-down without a hard `purge`). Status-guarded to `{approved,removed}`;
+ * a 0-count means a concurrent action moved the row out of that set → NOT_TRANSITIONABLE
+ * and the tx rolls back BEFORE the event is written (ZERO events on a guarded failure).
+ * Optionally resolves the triggering `reportId` in the same tx.
  */
 export async function delistListing(opts: {
   input: DelistListingInput;
@@ -361,8 +377,11 @@ export async function delistListing(opts: {
   const eventId = newAppListingModerationEventId();
 
   await dbWrite.$transaction(async (tx) => {
+    // Allow approved → removed AND removed → removed (the enforced-takedown lock). The
+    // idempotent removed→removed write keeps status `removed` but still counts (1 row),
+    // so the event below is ALWAYS written on a matched row.
     const flipped = await tx.appListing.updateMany({
-      where: { id: input.appListingId, kind: listing.kind, status: 'approved' },
+      where: { id: input.appListingId, kind: listing.kind, status: { in: ['approved', 'removed'] } },
       data: { status: 'removed' },
     });
     if (flipped.count === 0) {
@@ -372,7 +391,8 @@ export async function delistListing(opts: {
       );
     }
     // ON-SITE: also suspend the backing AppBlock so the block runtime stops serving.
-    // Guarded to `approved` (don't clobber a drifted state); non-fatal on 0-count.
+    // Guarded to `approved` (don't clobber a drifted/already-suspended state); non-fatal
+    // on 0-count (also covers the removed→removed lock, where the block is already suspended).
     if (isOnsite && listing.appBlockId) {
       await tx.appBlock.updateMany({
         where: { id: listing.appBlockId, status: 'approved' },
@@ -388,7 +408,8 @@ export async function delistListing(opts: {
         actorUserId: reviewerUserId,
         reason,
         reportId: input.reportId ?? null,
-        before: { status: 'approved' },
+        // Reflect the actual pre-state (approved for a hide, removed for the lock-down).
+        before: { status: listing.status },
         after: { status: 'removed' },
       },
     });
@@ -417,7 +438,7 @@ export async function delistListing(opts: {
       // Keyed by the audit event id so each distinct hide (delist→relist→delist)
       // notifies once, without a fresh nonce.
       key: `app-listing-hidden:${eventId}`,
-      details: { slug: listing.slug, listingId: input.appListingId, reason },
+      details: { slug: listing.slug, name: listing.name, listingId: input.appListingId, reason },
     });
   }
 
@@ -446,6 +467,8 @@ export async function relistListing(opts: {
   const reason = requireModReason(input.reason);
   const listing = await classifyListingForAction(input.appListingId);
   const isOnsite = listing.kind === 'onsite';
+  // Set when the on-site block-restore flip matched 0 rows (drift — see below).
+  let onsiteBlockRestoreDrift = false;
 
   await dbWrite.$transaction(async (tx) => {
     const flipped = await tx.appListing.updateMany({
@@ -460,11 +483,19 @@ export async function relistListing(opts: {
     }
     // ON-SITE: restore the backing AppBlock so the block runtime serves again.
     // Guarded to `suspended` (don't clobber a drifted state); non-fatal on 0-count.
+    //
+    // DRIFT CAVEAT: if the block was NOT `suspended` (e.g. `deprecated`, or already
+    // `approved`) the guard matches 0 rows and the block is left as-is. The listing
+    // then shows `approved` while the block may not serve — a BLANK/BROKEN block
+    // surface, NOT an exposure (the store card links to a block that renders nothing).
+    // Non-fatal (store visibility IS restored); flagged for a post-commit warn so the
+    // divergence is observable rather than silent.
     if (isOnsite && listing.appBlockId) {
-      await tx.appBlock.updateMany({
+      const blockFlip = await tx.appBlock.updateMany({
         where: { id: listing.appBlockId, status: 'suspended' },
         data: { status: 'approved' },
       });
+      if (blockFlip.count === 0) onsiteBlockRestoreDrift = true;
     }
     await tx.appListingModerationEvent.create({
       data: {
@@ -479,6 +510,26 @@ export async function relistListing(opts: {
       },
     });
   });
+
+  // Post-commit, best-effort: warn when an on-site relist restored the LISTING but the
+  // backing block wasn't `suspended` (so it may not serve) — observability for the
+  // drift caveat above. Dynamic import keeps the logging graph out of the tx path.
+  if (onsiteBlockRestoreDrift) {
+    void import('~/server/logging/client')
+      .then(({ logToAxiom }) =>
+        logToAxiom(
+          {
+            type: 'warning',
+            name: 'app-listing-relist-block-drift',
+            message:
+              'onsite relist: backing app_block was not suspended; the block may not serve',
+            details: { appListingId: input.appListingId, appBlockId: listing.appBlockId },
+          },
+          'app-blocks'
+        )
+      )
+      .catch(() => undefined);
+  }
 
   return { appListingId: input.appListingId, status: 'approved' };
 }

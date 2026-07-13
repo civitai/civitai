@@ -22,25 +22,32 @@ import { APP_LISTING_MODERATION_ACTIONS } from '~/server/schema/blocks/offsite-m
 const REPO_ROOT = path.resolve(__dirname, '../../../../..');
 const MIGRATIONS_DIR = path.join(REPO_ROOT, 'prisma/migrations');
 
+/** The named CHECK constraint whose IN-list is the action taxonomy under test. */
+const ACTION_CHECK_CONSTRAINT = 'app_listing_mod_events_action_check';
+
 /**
- * Resolve the LATEST migration `.sql` that DEFINES the action CHECK — the base
- * table create (`..._app_listing_moderation_events`) OR a later DROP+ADD widen
- * (e.g. `..._w13_post_approval_mod_actions`). Scan by CONTENT (any migration whose
- * `.sql` carries an `"action" ... IN (...)` CHECK), sorted by the timestamp-prefixed
- * dir name, so a FUTURE widen in a differently-named dir is automatically the one
- * checked (mirrors the status-CHECK test's "latest widen wins", but content-based so
- * the widen dir need not share a naming token with the create).
+ * Resolve the LATEST migration `.sql` that DEFINES the `app_listing_mod_events_action_check`
+ * CHECK — the base table create (`..._app_listing_moderation_events`) OR a later DROP+ADD
+ * widen (e.g. `..._w13_post_approval_mod_actions`). Scan by CONTENT but keyed to THIS
+ * SPECIFIC named constraint (not any `"action"` CHECK), so an unrelated future migration
+ * that happens to CHECK a different `"action"` column can't mis-target this test. Sorted
+ * by the timestamp-prefixed dir name → the latest widen wins (mirrors the status-CHECK
+ * test's intent, content-based so the widen dir need not share a naming token).
  */
 function modEventsMigration(): string {
   const matches = readdirSync(MIGRATIONS_DIR)
     .filter((d) => {
       const file = path.join(MIGRATIONS_DIR, d, 'migration.sql');
       if (!existsSync(file)) return false;
-      return /CHECK\s*\(\s*"action"\s+IN\s*\(/i.test(readFileSync(file, 'utf8'));
+      const sql = readFileSync(file, 'utf8');
+      // Must define OUR named constraint AND carry an `"action" IN (...)` list.
+      return sql.includes(ACTION_CHECK_CONSTRAINT) && /CHECK\s*\(\s*"action"\s+IN\s*\(/i.test(sql);
     })
     .sort();
   if (matches.length === 0)
-    throw new Error('no migration defining the "action" CHECK found under prisma/migrations');
+    throw new Error(
+      `no migration defining the "${ACTION_CHECK_CONSTRAINT}" CHECK found under prisma/migrations`
+    );
   return path.join(MIGRATIONS_DIR, matches[matches.length - 1], 'migration.sql');
 }
 
