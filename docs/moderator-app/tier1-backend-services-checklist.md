@@ -225,7 +225,8 @@ Establish the service-porting rhythm on the cheapest pages (Postgres, plus alrea
 - [ ] `getManagableTags` — **raw SQL, currently in `tag.controller.ts`** — extract into a service
 
 ### Comics review queue  ·  used by: comics-review  ·  **NEW service (extract)**
-- [ ] `getComicModReviewQueue` — **inline in `comics.router.ts` today** — extract into a service fn (JOIN `ComicPanel` → `Image` with `needsReview`/`tosViolation`/`ingestion` filters)
+- [x] `getComicModReviewQueue` — ported to the spoke as `comic-review.service.ts` `getComicReviewQueue`
+  (Kysely; ComicPanel⋈Image⋈Project⋈Chapter⋈User). Orphaned main-app inline procedure removed.
 - [ ] (moderation reuses `image.service.moderateImages`)
 
 ---

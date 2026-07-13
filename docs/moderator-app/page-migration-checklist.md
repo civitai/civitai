@@ -133,11 +133,15 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
   - Schemas: `image.schema.ts` (`ingestionErrorReviewInput`, `resolveIngestionErrorInput`)
   - Infra: **Postgres only**
 
-- [ ] **`/moderator/comics-review`** — `src/pages/moderator/comics-review.tsx` — flag: none (nav-gated on `comicCreator`)
-  - Procedures: `comics.getModReviewQueue` (**inline query in router**, schema inline); `image.moderate` (mutation, reused)
-  - Services: extract inline comics query into a service fn; `moderateImages` (reused from images.tsx)
-  - Infra: **Postgres + Meilisearch + Redis + S3 + Cloudflare + email** (via `image.moderate`)
-  - Notes: approving via `image.moderate` lifts comic visibility automatically
+- [x] **`/moderator/comics-review`** — `src/pages/moderator/comics-review.tsx` — flag: none — **Migrated.**
+  Queue ported to Kysely (`comic-review.service.ts` → `getComicReviewQueue`: ComicPanel ⋈ Image ⋈
+  ComicProject ⋈ ComicChapter-on-`(projectId, chapterPosition)` ⋈ User, OR-filtered on
+  needsReview/ingestion/tosViolation, keyset on `p.id`). Approve/Block reuse the ported
+  `acceptImage`/`blockImage`; each also enqueues the parent comic (`syncSearchIndex` `entityType: 'comic'`
+  = project id) so the listing refreshes — the one sanctioned main-app call, replacing the legacy
+  moderateImages re-queue. Per-card optimistic actions + reason/limit filters + cursor paging. **Main-app
+  cleanup:** removed the orphaned inline `comics.getModReviewQueue` procedure (only this page used it);
+  `image.moderate`/`moderateImages` kept (shared).
 
 - [ ] **`/moderator/tags`** — `src/pages/moderator/tags.tsx` — flag: `moderateTags`
   - Procedures: `tag.getManagableTags` (query, **raw SQL in controller**); `tag.addTags`, `tag.disableTags`, `tag.deleteTags` (mutations)

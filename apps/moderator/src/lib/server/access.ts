@@ -78,6 +78,7 @@ export const NAVIGATION: NavLink[] = [
       { path: '/audit/scanner-audit', label: 'Scanner Audit' },
     ],
   },
+  { path: '/comics-review', label: 'Comics Review', role: 'moderator:staff' },
   { path: '/blocklists', label: 'Blocklists', role: 'moderator:staff' },
   { path: '/users', label: 'Users', role: 'moderator:senior' },
   { path: '/admin', label: 'Permissions', role: 'moderator:admin' },

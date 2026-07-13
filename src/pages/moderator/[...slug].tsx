@@ -17,6 +17,7 @@ const MIGRATED_ROUTES: Record<string, string> = {
   articles: 'articles',
   'article-rating-review': 'articles/ratings',
   'cosmetics/grant': 'cosmetics/grant',
+  'comics-review': 'comics-review',
   blocklists: 'blocklists',
   // Audit tools now live under /audit in the spoke.
   auditor: 'audit/prompt-tester',
