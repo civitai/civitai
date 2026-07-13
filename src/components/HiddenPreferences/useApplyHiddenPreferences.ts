@@ -7,7 +7,7 @@ import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsPro
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NsfwLevel } from '~/server/common/enums';
 import {
-  hasSafeBrowsingLevel,
+  getIsSafeBrowsingLevel,
   parseBitwiseBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
@@ -245,7 +245,7 @@ export function filterPreferences<
             }
           }
 
-          if (model.minor && minorDisabled && !hasSafeBrowsingLevel(model.nsfwLevel)) {
+          if (model.minor && minorDisabled && !getIsSafeBrowsingLevel(model.nsfwLevel)) {
             hidden.minor++;
             return false;
           }
@@ -274,7 +274,7 @@ export function filterPreferences<
                 return false;
               }
 
-              if (i.minor && minorDisabled && !hasSafeBrowsingLevel(i.nsfwLevel)) {
+              if (i.minor && minorDisabled && !getIsSafeBrowsingLevel(i.nsfwLevel)) {
                 hidden.minor++;
                 return false;
               }
@@ -337,7 +337,7 @@ export function filterPreferences<
           return false;
         }
 
-        if (image.minor && minorDisabled && !hasSafeBrowsingLevel(image.nsfwLevel)) {
+        if (image.minor && minorDisabled && !getIsSafeBrowsingLevel(image.nsfwLevel)) {
           hidden.minor++;
           return false;
         }
@@ -428,7 +428,7 @@ export function filterPreferences<
           if (
             article.coverImage.minor &&
             minorDisabled &&
-            !hasSafeBrowsingLevel(article.coverImage.nsfwLevel)
+            !getIsSafeBrowsingLevel(article.coverImage.nsfwLevel)
           ) {
             hidden.minor++;
             return false;
@@ -501,7 +501,7 @@ export function filterPreferences<
             if (
               collection.image.minor &&
               minorDisabled &&
-              !hasSafeBrowsingLevel(collection.image.nsfwLevel)
+              !getIsSafeBrowsingLevel(collection.image.nsfwLevel)
             ) {
               hidden.minor++;
               return false;
@@ -528,7 +528,7 @@ export function filterPreferences<
                 hidden.poi++;
                 return false;
               }
-              if (i.minor && minorDisabled && !hasSafeBrowsingLevel(i.nsfwLevel)) {
+              if (i.minor && minorDisabled && !getIsSafeBrowsingLevel(i.nsfwLevel)) {
                 hidden.minor++;
                 return false;
               }
@@ -599,7 +599,7 @@ export function filterPreferences<
               hidden.poi++;
               return false;
             }
-            if (i.minor && minorDisabled && !hasSafeBrowsingLevel(i.nsfwLevel)) {
+            if (i.minor && minorDisabled && !getIsSafeBrowsingLevel(i.nsfwLevel)) {
               hidden.minor++;
               return false;
             }
@@ -656,7 +656,7 @@ export function filterPreferences<
               hidden.poi++;
               return false;
             }
-            if (image.minor && minorDisabled && !hasSafeBrowsingLevel(image.nsfwLevel)) {
+            if (image.minor && minorDisabled && !getIsSafeBrowsingLevel(image.nsfwLevel)) {
               hidden.minor++;
               return false;
             }
@@ -775,7 +775,7 @@ export function filterPreferences<
             return false;
           }
         }
-        if (m.minor && minorDisabled && !hasSafeBrowsingLevel(m.nsfwLevel)) {
+        if (m.minor && minorDisabled && !getIsSafeBrowsingLevel(m.nsfwLevel)) {
           hidden.minor++;
           return false;
         }
