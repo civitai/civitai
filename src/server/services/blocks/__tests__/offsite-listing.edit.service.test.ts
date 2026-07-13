@@ -739,6 +739,17 @@ describe('reject/withdraw a pending REVISION', () => {
       kind: 'offsite',
       appListingId: 'apl_shadow', // the shadow, a draft
     });
+    // Pre-tx notification snapshot: the shadow reads as a REVISION (revisionOfId set)
+    // → the "not approved" owner notice is skipped (parent stays live).
+    mockRead.appListing.findUnique.mockResolvedValue({
+      userId: OWNER,
+      name: 'Cool App',
+      slug: 'cool-app',
+      revisionOfId: 'apl_parent',
+    });
+    // In-tx `closeTerminalListing` reads the listing on the WRITE client (the tx) to
+    // pick the delete-vs-flip branch — a draft shadow → the status-guarded delete.
+    mockWrite.appListing.findUnique.mockResolvedValue({ status: 'draft', slug: 'apl_shadow' });
     await rejectExternalRequest({
       publishRequestId: 'alpr_rev',
       reviewerUserId: MOD,
@@ -761,6 +772,9 @@ describe('reject/withdraw a pending REVISION', () => {
       submittedByUserId: OWNER,
       appListingId: 'apl_shadow',
     });
+    // In-tx `closeTerminalListing` reads the listing on the WRITE client (the tx) to
+    // pick the delete-vs-flip branch — a draft shadow → the status-guarded delete.
+    mockWrite.appListing.findUnique.mockResolvedValue({ status: 'draft', slug: 'apl_shadow' });
     await withdrawExternalRequest({ publishRequestId: 'alpr_rev', userId: OWNER });
     expect(mockWrite.appListing.deleteMany).toHaveBeenCalledWith({
       where: { id: 'apl_shadow', status: 'draft' },

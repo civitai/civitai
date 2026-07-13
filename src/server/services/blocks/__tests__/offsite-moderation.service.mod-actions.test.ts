@@ -1004,6 +1004,25 @@ describe('listMyListingModerationEvents', () => {
     expect(args.orderBy).toEqual([{ createdAt: 'desc' }, { id: 'desc' }]);
   });
 
+  it('🔴 uses the OWNER-scoped projection — NO acting-mod identity / reportId / detail / snapshots', async () => {
+    // Privacy guard: a taken-down app's owner must not learn WHICH moderator acted
+    // (harassment vector) nor read internal report/detail fields. The owner read must
+    // request ONLY {id, action, reason, createdAt} — dropping actor/reportId/detail/
+    // before/after (which the MOD-facing read keeps). Asserted on the `select` the proc
+    // passes to Prisma (the source of truth for what leaves the DB).
+    mockRead.appListing.findUnique.mockResolvedValueOnce({ userId: OWNER });
+    mockRead.appListingModerationEvent.findMany.mockResolvedValueOnce([evt('alme_1')]);
+    await listMyListingModerationEvents({ input: { appListingId: APP_ID }, userId: OWNER });
+    const select = mockRead.appListingModerationEvent.findMany.mock.calls[0][0].select as Record<
+      string,
+      unknown
+    >;
+    expect(select).toEqual({ id: true, action: true, reason: true, createdAt: true });
+    for (const dropped of ['actor', 'reportId', 'detail', 'before', 'after', 'appListingId', 'slug']) {
+      expect(select).not.toHaveProperty(dropped);
+    }
+  });
+
   it('FORBIDDEN (NOT_OWNED) on a listing the caller does NOT own — no events read', async () => {
     mockRead.appListing.findUnique.mockResolvedValueOnce({ userId: 12345 });
     await expect(
