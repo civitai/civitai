@@ -15,6 +15,7 @@ import {
   type SubmitExternalListingInput,
 } from '~/server/schema/blocks/offsite-listing.schema';
 import { assertListingAssetsComplete } from '~/server/services/blocks/app-listing-assets.service';
+import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
 import {
   deriveContentRatingFromAssets,
   nsfwLevelFromContentRating,
@@ -1199,6 +1200,10 @@ export async function approveExternalRequest(opts: {
       iconId: true,
       coverId: true,
       revisionOfId: true,
+      // Owner (for the post-commit "approved" owner notification) + name (message).
+      userId: true,
+      name: true,
+      slug: true,
     },
   });
   if (!listing) {
@@ -1303,16 +1308,23 @@ export async function approveExternalRequest(opts: {
       coverId: primaryListing.coverId,
       override: opts.contentRating,
     });
+    // Guard flips a `draft` OR a `pending` listing → approved. `pending` is the W13
+    // post-approval-mgmt REOPEN path: `resetListingToPending` bounces an approved
+    // listing back to `pending` + mints a fresh pending request pointing at it (a
+    // non-shadow request), so re-approving that request must accept a `pending`
+    // listing — not only a first-time `draft`. Additive: a first-time draft still
+    // flips exactly as before. Status-guarded so a concurrently deleted/moved row
+    // rolls the request flip back rather than approving a listing that is gone.
     const flipped = await tx.appListing.updateMany({
-      where: { id: appListingId, status: 'draft' },
+      where: { id: appListingId, status: { in: ['draft', 'pending'] } },
       data: { status: 'approved', contentRating: finalRating },
     });
     if (flipped.count === 0) {
-      // The draft was concurrently deleted / already flipped — abort (rolls back
-      // the request flip) rather than approve a request whose listing is gone.
+      // The draft/pending listing was concurrently deleted / already flipped — abort
+      // (rolls back the request flip) rather than approve a request whose listing is gone.
       throw new OffsiteRequestError(
         'NOT_PENDING',
-        `cannot approve — the draft listing is no longer available`
+        `cannot approve — the draft/pending listing is no longer available`
       );
     }
     // Supersede any OTHER pending off-site request for this slug (parity with the
@@ -1328,6 +1340,19 @@ export async function approveExternalRequest(opts: {
       },
       data: { status: 'withdrawn' },
     });
+  });
+
+  // Post-commit, best-effort: notify the listing OWNER their app went live. Emitted
+  // AFTER the tx so a notification failure can't roll back the approval, and only on
+  // a committed approve. Keyed by the publish request so a ret/replay dedups. Covers
+  // BOTH a first-time approve and a reset-to-pending re-approve (both land here — the
+  // revision-apply path returns earlier). (The listing owner may differ from the
+  // submitter after a mod claim, so target `AppListing.userId`, not submittedBy.)
+  await notifyAppListingOwner({
+    type: 'app-listing-approved',
+    userId: listing.userId,
+    key: `app-listing-approved:${publishRequestId}`,
+    details: { slug: listing.slug, name: listing.name, listingId: appListingId, reason: null },
   });
 
   return { publishRequestId, listingId: appListingId, slug: request.slug };
@@ -1551,6 +1576,20 @@ export async function rejectExternalRequest(opts: {
     );
   }
 
+  // Snapshot the owner + display fields for the post-commit "not approved" owner
+  // notification BEFORE the tx deletes the draft (the row is gone afterwards). A
+  // REVISION reject (the request points at a shadow — `revisionOfId != null`) is
+  // NOT a first-time rejection: the parent listing stays LIVE, so a "your app was
+  // not approved" notice would be misleading — skip it (revision-edit rejection
+  // notices are out of Phase-1 scope). A request whose listing was already gone
+  // (`appListingId` null) → nothing to notify.
+  const rejectedListing = request.appListingId
+    ? await dbRead.appListing.findUnique({
+        where: { id: request.appListingId },
+        select: { userId: true, name: true, slug: true, revisionOfId: true },
+      })
+    : null;
+
   // ONE transaction: status-guarded flip + draft delete, so a crash between them
   // can't orphan a hidden `draft` listing that keeps squatting the slug. The flip
   // is TOCTOU-guarded (`status:'pending'`): a concurrent approve/withdraw that
@@ -1575,6 +1614,23 @@ export async function rejectExternalRequest(opts: {
     }
     await deleteDraftListing(request.appListingId, tx);
   });
+
+  // Post-commit, best-effort: notify the owner their first-time submission was not
+  // approved, carrying the mod reason. Skipped for a revision reject (parent still
+  // live) and when there was no listing. Keyed by the request → dedups a replay.
+  if (rejectedListing && rejectedListing.revisionOfId == null) {
+    await notifyAppListingOwner({
+      type: 'app-listing-rejected',
+      userId: rejectedListing.userId,
+      key: `app-listing-rejected:${publishRequestId}`,
+      details: {
+        slug: rejectedListing.slug,
+        name: rejectedListing.name,
+        listingId: request.appListingId,
+        reason,
+      },
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------

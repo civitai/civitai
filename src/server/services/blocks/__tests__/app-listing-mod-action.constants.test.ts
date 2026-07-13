@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'fs';
+import { existsSync, readdirSync, readFileSync } from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 
@@ -22,13 +22,26 @@ import { APP_LISTING_MODERATION_ACTIONS } from '~/server/schema/blocks/offsite-m
 const REPO_ROOT = path.resolve(__dirname, '../../../../..');
 const MIGRATIONS_DIR = path.join(REPO_ROOT, 'prisma/migrations');
 
+/**
+ * Resolve the LATEST migration `.sql` that DEFINES the action CHECK — the base
+ * table create (`..._app_listing_moderation_events`) OR a later DROP+ADD widen
+ * (e.g. `..._w13_post_approval_mod_actions`). Scan by CONTENT (any migration whose
+ * `.sql` carries an `"action" ... IN (...)` CHECK), sorted by the timestamp-prefixed
+ * dir name, so a FUTURE widen in a differently-named dir is automatically the one
+ * checked (mirrors the status-CHECK test's "latest widen wins", but content-based so
+ * the widen dir need not share a naming token with the create).
+ */
 function modEventsMigration(): string {
-  const dirs = readdirSync(MIGRATIONS_DIR)
-    .filter((d) => /_app_listing_moderation_events$/.test(d))
+  const matches = readdirSync(MIGRATIONS_DIR)
+    .filter((d) => {
+      const file = path.join(MIGRATIONS_DIR, d, 'migration.sql');
+      if (!existsSync(file)) return false;
+      return /CHECK\s*\(\s*"action"\s+IN\s*\(/i.test(readFileSync(file, 'utf8'));
+    })
     .sort();
-  if (dirs.length === 0)
-    throw new Error('no *_app_listing_moderation_events migration dir found under prisma/migrations');
-  return path.join(MIGRATIONS_DIR, dirs[dirs.length - 1], 'migration.sql');
+  if (matches.length === 0)
+    throw new Error('no migration defining the "action" CHECK found under prisma/migrations');
+  return path.join(MIGRATIONS_DIR, matches[matches.length - 1], 'migration.sql');
 }
 
 /** Extract the quoted tokens from the `... "action" IN ('a', 'b', ...)` list. */
@@ -49,8 +62,14 @@ describe('AppListingModerationEvent action: code tuple ⟺ DB CHECK agreement', 
   it('uses the HYPHEN form report-resolve / report-dismiss (matches the shipped CHECK)', () => {
     expect(APP_LISTING_MODERATION_ACTIONS).toContain('report-resolve');
     expect(APP_LISTING_MODERATION_ACTIONS).toContain('report-dismiss');
-    // The PR3 procs write these five; claim is reserved for PR4 but allowed by the CHECK.
-    for (const a of ['delist', 'relist', 'purge', 'report-resolve', 'report-dismiss']) {
+    // The base P3b procs write these; claim + purge are also allowed by the CHECK.
+    for (const a of ['delist', 'relist', 'claim', 'purge', 'report-resolve', 'report-dismiss']) {
+      expect(APP_LISTING_MODERATION_ACTIONS).toContain(a);
+    }
+  });
+
+  it('includes the W13 post-approval-mgmt actions (reset-to-pending / owner-unpublish / owner-republish)', () => {
+    for (const a of ['reset-to-pending', 'owner-unpublish', 'owner-republish']) {
       expect(APP_LISTING_MODERATION_ACTIONS).toContain(a);
     }
   });

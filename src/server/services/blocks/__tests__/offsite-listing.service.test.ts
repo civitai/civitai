@@ -96,12 +96,17 @@ const { mockRead, mockWrite, ids } = vi.hoisted(() => {
   return { mockRead, mockWrite, ids: { n: 0 } };
 });
 
+const { mockNotify } = vi.hoisted(() => ({ mockNotify: vi.fn(async () => undefined) }));
+
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
 vi.mock('~/server/services/image.service', () => ({ createImage: mockCreateImage }));
 vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingId: () => `apl_test_${++ids.n}`,
   newAppListingPublishRequestId: () => `alpr_test_${++ids.n}`,
 }));
+// approve/reject emit an owner notification post-commit; assert it without pulling
+// the notifications client graph.
+vi.mock('~/server/services/blocks/app-listing-notify', () => ({ notifyAppListingOwner: mockNotify }));
 
 const CALLER = 42;
 const OTHER = 99;
@@ -138,6 +143,7 @@ beforeEach(() => {
     .mockReset()
     .mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(mockWrite));
   mockCreateImage.mockReset().mockResolvedValue({ id: 12345 });
+  mockNotify.mockReset().mockResolvedValue(undefined);
 });
 
 // ---------------------------------------------------------------------------
@@ -454,6 +460,11 @@ function stageApproveScenario(listing: {
     externalUrl: listing.externalUrl ?? 'https://cool.example.com/app',
     iconId: listing.iconId === undefined ? 1 : listing.iconId,
     coverId: listing.coverId === undefined ? 2 : listing.coverId,
+    // Owner fields the approve path reads for the post-commit owner notification.
+    userId: listing.submittedByUserId ?? CALLER,
+    name: 'Cool App',
+    slug: 'cool-app',
+    revisionOfId: null,
   };
   const count = listing.screenshotCount === undefined ? 1 : listing.screenshotCount;
   mockRead.appListing.findUnique.mockResolvedValue(listingRow);
@@ -486,13 +497,40 @@ describe('approveExternalRequest', () => {
     expect(reqCall.data.reviewedAt).toBeInstanceOf(Date);
 
     // Listing flip (status-guarded so an approved listing is never re-flipped). The
+    // guard now accepts draft OR pending (the W13 reset-to-pending reopen path). The
     // derived content rating is stamped alongside the status; with no asset levels
     // staged the derive fails safe to 'g'.
     expect(mockWrite.appListing.updateMany).toHaveBeenCalledWith({
-      where: { id: 'apl_1', status: 'draft' },
+      where: { id: 'apl_1', status: { in: ['draft', 'pending'] } },
       data: { status: 'approved', contentRating: 'g' },
     });
     expect(mockWrite.$transaction).toHaveBeenCalledTimes(1);
+
+    // Post-commit: the OWNER is notified their app went live.
+    expect(mockNotify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'app-listing-approved',
+        userId: CALLER,
+        details: expect.objectContaining({ slug: 'cool-app', listingId: 'apl_1' }),
+      })
+    );
+  });
+
+  it('W13 REOPEN round-trip: a reset-to-pending listing (status pending) re-approves via the widened {draft,pending} guard', async () => {
+    // After resetListingToPending the listing is `pending` with a fresh pending
+    // request. Re-approving must succeed — proving the widened guard accepts pending.
+    stageApproveScenario({ iconId: 1, coverId: 2, screenshotCount: 1, status: 'pending' });
+    const res = await approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD });
+    expect(res).toEqual({ publishRequestId: 'alpr_1', listingId: 'apl_1', slug: 'cool-app' });
+    // The listing flip fired with the widened guard (pending row matched → approved).
+    expect(mockWrite.appListing.updateMany).toHaveBeenCalledWith({
+      where: { id: 'apl_1', status: { in: ['draft', 'pending'] } },
+      data: { status: 'approved', contentRating: 'g' },
+    });
+    // Owner re-notified their app is live again.
+    expect(mockNotify).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'app-listing-approved', userId: CALLER })
+    );
   });
 
   it('the AUTHORITATIVE asset gate reads the PRIMARY (tx), not the replica', async () => {
@@ -677,8 +715,11 @@ describe('approveExternalRequest', () => {
   }
 
   function ratingStampedOnFlip(): unknown {
+    // The status flip is the updateMany that stamps `contentRating` (the widened
+    // reopen guard is `where.status = { in: ['draft','pending'] }`, no longer a
+    // plain 'draft' string — match on the data shape instead).
     const flip = mockWrite.appListing.updateMany.mock.calls.find(
-      (c) => (c[0] as { where: { status?: string } }).where.status === 'draft'
+      (c) => (c[0] as { data?: { contentRating?: unknown } }).data?.contentRating !== undefined
     );
     return (flip?.[0] as { data: { contentRating?: unknown } }).data.contentRating;
   }
@@ -778,6 +819,48 @@ describe('rejectExternalRequest', () => {
     expect(mockWrite.appListing.deleteMany).toHaveBeenCalledWith({
       where: { id: 'apl_1', status: 'draft' },
     });
+  });
+
+  it('notifies the OWNER their first-time submission was NOT approved (carrying the reason)', async () => {
+    mockRead.appListingPublishRequest.findUnique.mockResolvedValue({
+      id: 'alpr_1',
+      status: 'pending',
+      kind: 'offsite',
+      appListingId: 'apl_1',
+    });
+    // The pre-tx listing read (for the notification target) returns a first-time draft.
+    mockRead.appListing.findUnique.mockResolvedValue({
+      userId: CALLER,
+      name: 'Cool App',
+      slug: 'cool-app',
+      revisionOfId: null,
+    });
+    await rejectExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD, rejectionReason: REASON });
+    expect(mockNotify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'app-listing-rejected',
+        userId: CALLER,
+        details: expect.objectContaining({ slug: 'cool-app', reason: REASON }),
+      })
+    );
+  });
+
+  it('does NOT notify on a REVISION reject (parent stays live)', async () => {
+    mockRead.appListingPublishRequest.findUnique.mockResolvedValue({
+      id: 'alpr_1',
+      status: 'pending',
+      kind: 'offsite',
+      appListingId: 'apl_shadow',
+    });
+    // The rejected listing is a shadow revision (revisionOfId set) → no owner notice.
+    mockRead.appListing.findUnique.mockResolvedValue({
+      userId: CALLER,
+      name: 'Cool App',
+      slug: 'cool-app',
+      revisionOfId: 'apl_parent',
+    });
+    await rejectExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD, rejectionReason: REASON });
+    expect(mockNotify).not.toHaveBeenCalled();
   });
 
   it('a NON-PENDING request → NOT_PENDING, no write', async () => {
