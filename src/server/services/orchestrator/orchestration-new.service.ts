@@ -1625,6 +1625,7 @@ import type * as z from 'zod';
 import type { workflowQuerySchema } from '~/server/schema/orchestrator/workflows.schema';
 import { queryWorkflows } from './workflows';
 import { parseAIR } from '~/shared/utils/air';
+import { maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
 
 // =============================================================================
 // Types
@@ -2062,11 +2063,29 @@ function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] {
 }
 
 /**
+ * Max rating across a workflow's `model3DPreview` render images. The
+ * orchestrator never rates the mesh blob itself (`nsfwLevel: null`) — the
+ * chained 2D preview render carries the result's effective rating, so it must
+ * be propagated onto the `model3d` output for the client's NSFW gates
+ * (yellow-Buzz unlock, enableNsfw, siteRestricted) to apply.
+ */
+export function getModel3DPreviewNsfwLevel(
+  steps: WorkflowStep[] | null | undefined
+): NsfwLevel | undefined {
+  const previews = (steps ?? []).filter((s) => s.$type === 'model3DPreview') as Array<{
+    output?: { images?: ImageBlob[] };
+  }>;
+  if (!previews.length) return undefined;
+  return maxNsfwLevel(previews.flatMap((s) => (s.output?.images ?? []).map((i) => i?.nsfwLevel)));
+}
+
+/**
  * Formats step outputs into normalized images array
  */
 export function formatStepOutputs(
   step: StepWithOutput,
-  resolvedParams?: Record<string, unknown>
+  resolvedParams?: Record<string, unknown>,
+  previewNsfwLevel?: NsfwLevel
 ): { output: NormalizedWorkflowStepOutput[]; errors: string[] } {
   const items = normalizeStepOutput(step);
   const metadata = (step.metadata as Record<string, unknown>) ?? {};
@@ -2134,6 +2153,10 @@ export function formatStepOutputs(
       return {
         ...base,
         type: 'model3d' as const,
+        // Inherit the most severe rating from the polyGen auto-thumbnail and
+        // the chained model3DPreview render — the mesh blob itself is never
+        // rated, and without this a mature result bypasses the NSFW gates.
+        nsfwLevel: maxNsfwLevel([base.nsfwLevel, thumb?.nsfwLevel, previewNsfwLevel]),
         url: item.url as string,
         format: item.format,
         // Kept for back-compat: the base FBX still surfaces in `variants[]`
@@ -2282,7 +2305,8 @@ export function formatStepOutputs(
   // Collect step errors (including external-provider job.reason failures) and
   // sanitize each before surfacing to the client.
   const engine =
-    (params.engine as string | undefined) ?? ((step as { input?: { engine?: string } }).input?.engine);
+    (params.engine as string | undefined) ??
+    (step as { input?: { engine?: string } }).input?.engine;
   const errors = extractStepErrors(step).map((msg) => sanitizeProviderError(msg, engine));
 
   return { output, errors };
@@ -2309,7 +2333,8 @@ function formatStep(
   workflowId: string,
   step: WorkflowStep,
   allResources: GenerationResource[],
-  workflowMetadata?: Record<string, unknown>
+  workflowMetadata?: Record<string, unknown>,
+  previewNsfwLevel?: NsfwLevel
 ): NormalizedStep {
   const metadata = (step.metadata ?? {}) as Record<string, unknown>;
   const rawParams = (metadata.params ?? {}) as Record<string, unknown>;
@@ -2393,7 +2418,11 @@ function formatStep(
   const paramsForDimensions = { ...wfParams, ...(finalParams ?? {}) };
 
   // Format outputs
-  const { output, errors } = formatStepOutputs(step as StepWithOutput, paramsForDimensions);
+  const { output, errors } = formatStepOutputs(
+    step as StepWithOutput,
+    paramsForDimensions,
+    previewNsfwLevel
+  );
 
   return {
     $type: step.$type,
@@ -2481,8 +2510,15 @@ export async function formatGenerationResponse2(
     const hasWfMeta = rawWfMeta && 'params' in rawWfMeta;
 
     // Format steps first — needed for historic metadata fallback
+    const previewNsfwLevel = getModel3DPreviewNsfwLevel(workflow.steps);
     const steps = (workflow.steps ?? []).map((step) =>
-      formatStep(workflow.id as string, step, enrichedResources, hasWfMeta ? rawWfMeta : undefined)
+      formatStep(
+        workflow.id as string,
+        step,
+        enrichedResources,
+        hasWfMeta ? rawWfMeta : undefined,
+        previewNsfwLevel
+      )
     );
 
     // Build workflow-level metadata
@@ -2784,6 +2820,7 @@ export async function getWorkflowStatusUpdate({
   if (result) {
     const wfMeta = (result.metadata ?? {}) as Record<string, unknown>;
     const wfParams = (wfMeta.params ?? {}) as Record<string, unknown>;
+    const previewNsfwLevel = getModel3DPreviewNsfwLevel(result.steps);
 
     return {
       id: workflowId,
@@ -2800,7 +2837,11 @@ export async function getWorkflowStatusUpdate({
         const paramsForDimensions = { ...wfParams, ...stepParams };
 
         // Format step outputs using the shared utility
-        const { output, errors } = formatStepOutputs(step as StepWithOutput, paramsForDimensions);
+        const { output, errors } = formatStepOutputs(
+          step as StepWithOutput,
+          paramsForDimensions,
+          previewNsfwLevel
+        );
 
         return {
           name: step.name,
