@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
 import { useRouter } from 'next/router';
-import { renderWithProviders } from '../../../test/component-setup';
+import { renderWithProviders } from '../../../../test/component-setup';
 
 // The current user is the only input that gates the redirect. A `vi.hoisted`
 // holder lets the (hoisted) `vi.mock` factory read a value the tests mutate.
@@ -21,7 +21,7 @@ vi.mock('~/components/NextLink/NextLink', () => ({
   NextLink: ({ children }: { children?: React.ReactNode }) => <a>{children}</a>,
 }));
 
-import PaymentSuccess from './success';
+import PaymentSuccess from '~/pages/payment/success';
 
 // The scaffold mocks `next/router` with a shared router object (spy `replace`,
 // mutable `query`). Grab it so we can seed `cid` and assert on `replace`.
