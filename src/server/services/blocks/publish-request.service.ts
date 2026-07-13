@@ -2201,10 +2201,27 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // later). The "category added in a LATER version" case (listing already exists,
   // so (3b) skips it) is an accepted non-goal — recoverable via mod curation.
   if (manifestCategory !== null) {
-    await dbWrite.appBlock.updateMany({
-      where: { id: appBlockId, category: null },
-      data: { category: manifestCategory },
-    });
+    try {
+      await dbWrite.appBlock.updateMany({
+        where: { id: appBlockId, category: null },
+        data: { category: manifestCategory },
+      });
+    } catch (err) {
+      // Same posture as the (3b) listing-create below (and #3085): the category
+      // FEEDS the convenience store listing, so it must NEVER gate the
+      // approve/deploy. On ANY error (transient DB blip, etc.) log-and-CONTINUE
+      // — the app still deploys, the category is simply absent this pass and is
+      // recoverable on a re-approve (the null-gate re-applies idempotently) or
+      // via mod curation. If we rethrew, a deterministically-failing write here
+      // could wedge the app's deploy forever over a mere categorisation miss.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[approveRequest] category-from-manifest set failed (slug=${request.slug}, appBlockId=${appBlockId}); ` +
+          `approve/deploy CONTINUES — AppBlock.category is unset this pass, recoverable on re-approve or via mod curation: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+      );
+    }
   }
 
   // (3b) App Store listing (W13) — auto-create the onsite `AppListing` for this

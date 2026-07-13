@@ -2238,6 +2238,48 @@ describe('approveRequest', () => {
       expect(data.category).toBeNull();
     });
 
+    it('tx-boundary: a transient category updateMany error does NOT abort the approve — commit/finalise/build still run, category simply unset (mirrors #3085 listing posture)', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({ manifest: manifest({ category: 'generation' }) })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle({ category: 'generation' });
+      // The (3a) category-set hits a transient DB error. It FEEDS the convenience
+      // listing, so — like the (3b) listing-create — it must log-and-continue,
+      // never gate the approve/deploy.
+      mockDbWrite.appBlock.updateMany.mockRejectedValueOnce(
+        new Error('deadlock detected on app_blocks update')
+      );
+      // The (3b) re-read still returns a null category (the set never landed).
+      mockDbWrite.appBlock.findUnique.mockImplementation(
+        async (args: { where: { id: string } }) => ({
+          id: args.where.id,
+          blockId: 'hello',
+          manifest: manifest(),
+          contentRating: 'g',
+          category: null,
+          featured: false,
+          featuredOrder: null,
+          externalUrl: null,
+          app: { userId: 42 },
+        })
+      );
+
+      const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      // The category write was attempted and failed…
+      expect(mockDbWrite.appBlock.updateMany).toHaveBeenCalledTimes(1);
+      // …but the approve still COMPLETED end-to-end: commit + build + finalise.
+      expect(result.forgejoCommitSha).toBe('commit_sha_abc');
+      expect(mockForgejo.commitFiles).toHaveBeenCalledOnce();
+      expect(mockTriggerBuild).toHaveBeenCalledOnce();
+      // The listing is still minted (its own create didn't fail), just uncategorised.
+      expect(mockDbWrite.appListing.create).toHaveBeenCalledTimes(1);
+      const data = mockDbWrite.appListing.create.mock.calls[0][0].data;
+      expect(data.category).toBeNull();
+    });
+
     it('rejects an approve whose manifest declares an unknown category (validator gate)', async () => {
       const { approveRequest } = await import('../publish-request.service');
       mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
