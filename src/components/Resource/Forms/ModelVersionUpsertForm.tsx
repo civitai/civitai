@@ -263,13 +263,16 @@ export function ModelVersionUpsertForm({
     { baseModel, modelType: model?.type },
     { enabled: !!baseModel }
   );
-  // Exclude the version being edited — a root defines its own fee and must not
-  // point at itself. The picker always carries an explicit default option (the
-  // base model's standard-fee root), so a single remaining root is still a real
-  // choice; we only hide the whole picker when there are no roots at all.
-  const licensingRoots = (licensingRootsData?.roots ?? []).filter((r) => r.id !== version?.id);
+  // Exclude the version being edited (a root can't point at itself) and the
+  // standard-fee root (it's already the explicit default option, so listing it
+  // again would be a duplicate with different persisted semantics). We only hide
+  // the whole picker when no other roots remain.
+  const standardLicensingId = licensingRootsData?.standardVersionId ?? null;
   const standardLicensingFee = licensingRootsData?.standardFee ?? null;
   const standardLicensingName = licensingRootsData?.standardVersionName ?? null;
+  const licensingRoots = (licensingRootsData?.roots ?? []).filter(
+    (r) => r.id !== version?.id && r.id !== standardLicensingId
+  );
 
   // A licensing lineage root is scoped to a base model, so a base-model change
   // invalidates any selected source. Skip the initial value (edit pre-fill).
@@ -921,7 +924,7 @@ export function ModelVersionUpsertForm({
                   },
                   ...licensingRoots.map((r) => ({
                     value: String(r.id),
-                    label: licensingOptionLabel(r.versionName, Number(r.licensingFee)),
+                    label: licensingOptionLabel(r.versionName, r.licensingFee),
                   })),
                 ]}
               />
