@@ -63,6 +63,10 @@ import { truncate } from 'lodash-es';
 import { usePathname } from 'next/navigation';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { useCheckProfanity } from '~/hooks/useCheckProfanity';
+import {
+  nsfwBrowsingLevelsArray,
+  sfwBrowsingLevelsArray,
+} from '~/shared/constants/browsingLevel.constants';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -158,7 +162,11 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
     isImages && supportsPoi && browsingSettingsAddons.settings.disablePoi
       ? `poi != true${currentUser?.username ? ` OR user.username = ${currentUser?.username}` : ''}`
       : null,
-    supportsMinor && browsingSettingsAddons.settings.disableMinor ? 'minor != true' : null,
+    supportsMinor && browsingSettingsAddons.settings.disableMinor
+      ? `(minor != true OR (nsfwLevel IN [${sfwBrowsingLevelsArray.join(
+          ', '
+        )}] AND NOT nsfwLevel IN [${nsfwBrowsingLevelsArray.join(', ')}]))`
+      : null,
     isModels && !currentUser?.isModerator
       ? `availability != ${Availability.Private}${
           currentUser?.id ? ` OR user.id = ${currentUser?.id}` : ''
@@ -604,8 +612,8 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
               return (
                 <Stack gap="xs" align="center">
                   <Text size="sm" align="center">
-                    Your search includes terms tied to real people. Content depicting real people
-                    is filtered from search results.
+                    Your search includes terms tied to real people. Content depicting real people is
+                    filtered from search results.
                   </Text>
                 </Stack>
               );
