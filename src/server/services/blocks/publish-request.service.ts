@@ -25,6 +25,11 @@ import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-cate
 // AppBlock→AppListing mapper consumes (see the (3b) auto-create block in
 // approveRequest). The mapper VALUE itself is dynamically imported at use.
 import type { SourceAppBlock } from '~/server/services/blocks/app-listing-mapper';
+// Pure util (no env/Prisma) — folds a blockId to the appsDb schema slug. Used by
+// the (3c) storage-provision-on-approve block; matches the admin backfill's
+// derivation exactly. The provisioner VALUE is dynamically imported at use so
+// appsDb/pg stay out of this module's static graph (mirrors the (3b) mapper).
+import { sanitizeAppSlug } from '~/server/utils/apps-slug';
 
 // dbRead/dbWrite/newUlid/bundle-s3 are dynamically imported inside the
 // functions that need them so the pure helpers (extract/diff) can be
@@ -2314,6 +2319,70 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
             err instanceof Error ? err.message : String(err)
           }`
       );
+    }
+  }
+
+  // (3c) Per-app storage provisioning (W4) — create the app's appsDb schema +
+  // tables (kv / quota / shared_kv / votes / counters / shared_kv_reports + the
+  // quota triggers + per-app role) at approve, so a storage-declaring app has its
+  // datastore the moment it deploys — WITHOUT a manual
+  // `/api/admin/apps-storage-backfill` run. Closes the same "approve silently
+  // didn't do X" gap as (3a)/(3b): before this, an approved+deployed app that
+  // declared `apps:storage:*` had NO schema until someone hand-ran the backfill,
+  // so its FIRST storage call 500'd with `relation "app_<slug>.shared_kv" does not
+  // exist` (this bit the live `app-requests` app).
+  //
+  // GATED ON STORAGE SCOPE (design decision): we provision ONLY when the approved
+  // manifest declares any `apps:storage:*` scope (per-user read/write OR shared
+  // read/write). A gen-only app (e.g. one declaring just `ai:write:budgeted`)
+  // never touches the datastore, so minting an empty 6-table schema + role for it
+  // is pure litter. An app that ADDS storage in a LATER version is provisioned on
+  // THAT version's approve — a scope change requires a new approved version, and
+  // the DDL is idempotent, so there is no "added storage but never provisioned"
+  // hole. (The admin backfill still provisions ALL approved apps unconditionally;
+  // this go-forward path is deliberately narrower.) The scope snapshot used here
+  // is the SAME `manifestScopes` written to `AppBlock.approvedScopes` above, so
+  // the provision decision matches what the token-mint path will actually grant.
+  //
+  // IDEMPOTENT: `AppStorageProvisioner.provision` is `CREATE ... IF NOT EXISTS` /
+  // DO-block / ON CONFLICT throughout, so first-version and every subsequent-
+  // version approve (a re-approve just re-runs the DDL) are equally safe.
+  //
+  // LOG-AND-CONTINUE (same posture as (3a)/(3b) + #3085/#3089/#3090): storage
+  // provisioning must NEVER block an app's approve/deploy. On ANY error we emit a
+  // structured warning and CONTINUE — the app still deploys and the schema is
+  // recoverable via `/api/admin/apps-storage-backfill`. If we rethrew, a
+  // deterministically-failing appsDb (e.g. cnpg-cluster-apps briefly down) would
+  // wedge the app's deploy forever over a datastore miss.
+  const declaresStorageScope = manifestScopes.some((s) => s.startsWith('apps:storage:'));
+  if (declaresStorageScope) {
+    // Same slug derivation the backfill uses: sanitizeAppSlug(blockId). request.slug
+    // is the manifest blockId (== AppBlock.blockId), already SLUG_REGEX-validated at
+    // submit; sanitizeAppSlug folds it to the appsDb schema slug (hyphens → `_`).
+    const storageSlug = sanitizeAppSlug(request.slug);
+    if (!storageSlug) {
+      // Anomalous — a submit-validated blockId should always normalize. Skip +
+      // warn rather than throw into the already-side-effecting approve flow.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[approveRequest] storage provisioning skipped (slug=${request.slug}, appBlockId=${appBlockId}); ` +
+          `blockId does not normalize to a valid appsDb slug — recoverable via /api/admin/apps-storage-backfill`
+      );
+    } else {
+      try {
+        const { AppStorageProvisioner } = await import(
+          '~/server/services/apps/storage-provision.service'
+        );
+        await AppStorageProvisioner.provision({ appBlockId, slug: storageSlug });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[approveRequest] storage provisioning failed (slug=${request.slug}, appBlockId=${appBlockId}, storageSlug=${storageSlug}); ` +
+            `approve/deploy CONTINUES — the app's datastore schema is absent this pass, recoverable via /api/admin/apps-storage-backfill: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+        );
+      }
     }
   }
 
