@@ -16,6 +16,7 @@ import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import * as z from 'zod';
 import { BackButton } from '~/components/BackButton/BackButton';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { ModelVersionMultiSelect } from '~/components/Challenge/ModelVersionMultiSelect';
@@ -196,6 +197,9 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
     challenge?.status === ChallengeStatus.Completing ||
     challenge?.status === ChallengeStatus.Completed ||
     challenge?.status === ChallengeStatus.Cancelled;
+
+  const [domainBuzzType] = useAvailableBuzz();
+  const buzzLabel = domainBuzzType === 'green' ? 'Green' : 'Yellow';
 
   // Mod-only "Customize judging categories" toggle. Presentation/submission-only state — it isn't
   // part of the submitted schema, so it lives outside RHF rather than as a form field.
@@ -674,9 +678,9 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
               <>
                 <Title order={4}>Entry Fee &amp; Prizes</Title>
                 <Alert icon={<IconInfoCircle size={16} />} color="blue">
-                  Your challenge is funded by entry fees. Each entry pays the entry fee;{' '}
-                  {CHALLENGE_ENTRY_HOUSE_CUT} Buzz per entry covers AI judging and the rest grows the
-                  prize pool.
+                  Entry fees &amp; prizes use <b>{buzzLabel} Buzz</b>. Your challenge is funded by
+                  entry fees — each entry pays the entry fee; {CHALLENGE_ENTRY_HOUSE_CUT} Buzz per
+                  entry covers AI judging and the rest grows the prize pool.
                 </Alert>
                 <SimpleGrid cols={{ base: 1, sm: 2 }}>
                   <InputNumber
