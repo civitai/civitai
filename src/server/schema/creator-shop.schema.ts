@@ -49,7 +49,7 @@ export const cosmeticImageRequirements = (type: CosmeticType): CosmeticImageRequ
     case CosmeticType.ProfileDecoration:
       return { width: 120, height: 120, exact: true, requireTransparency: true };
     case CosmeticType.ProfileBackground:
-      return { width: 450, height: 155, exact: true, requireTransparency: false };
+      return { width: 450, height: 144, exact: true, requireTransparency: false };
     case CosmeticType.ContentDecoration:
       return { width: 256, height: 256, exact: false, requireTransparency: true };
     case CosmeticType.Badge:
@@ -60,7 +60,7 @@ export const cosmeticImageRequirements = (type: CosmeticType): CosmeticImageRequ
 
 const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
 
-// Human-readable aspect ratio, e.g. 144×144 -> "1:1", 450×155 -> "90:31".
+// Human-readable aspect ratio, e.g. 144×144 -> "1:1", 450×144 -> "25:9".
 export const aspectRatioLabel = (width: number, height: number): string => {
   const g = gcd(width, height) || 1;
   return `${width / g}:${height / g}`;

@@ -74,13 +74,19 @@ export const CosmeticPreview = ({
       }
 
       return (
-        <Stack gap="xl">
+        <Stack gap="xl" align="center">
           {!hideHeader && (
             <Text fw="bold" align="center">
               Preview
             </Text>
           )}
-          <CreatorCardV2 user={userWithEquippedCosmetics} cosmeticOverwrites={[cosmetic]} />
+          {/* Cap the card at the profile width (450px) so profile backgrounds
+              fill it, matching how the card renders on profiles. */}
+          <CreatorCardV2
+            user={userWithEquippedCosmetics}
+            cosmeticOverwrites={[cosmetic]}
+            style={{ width: '100%', maxWidth: 450 }}
+          />
         </Stack>
       );
     case CosmeticType.ContentDecoration:

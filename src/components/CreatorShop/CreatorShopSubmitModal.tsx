@@ -280,6 +280,7 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
             <BuzzTransactionButton
               buzzAmount={CREATOR_SHOP_SUBMISSION_FEE}
               accountTypes={[buzzType]}
+              colorType={buzzType}
               label="Submit for review"
               loading={pending}
               disabled={!canSubmit}
