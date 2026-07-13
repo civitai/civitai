@@ -159,24 +159,25 @@ export function isKnownSlotId(id: string): id is SlotId {
  * if an app's approved manifest declared one of these, a `kind==='page'` mint
  * rejects it.
  *
- * W10 generation spend: `ai:write:budgeted` is NO LONGER forbidden for pages.
- * A page is stateless (no install settings row), so its per-generation budget
- * comes from the approved manifest's `page.buzzBudgetPerGen` field — server-read,
- * clamped to BUZZ_BUDGET_CAP, defaulted to BUZZ_BUDGET_DEFAULT when the manifest
- * omits it (see resolveBuzzBudget in the mint handler). Page generation spend is
- * therefore bounded by exactly the same two limits a model slot is: the per-gen
- * `buzzBudget` claim AND the per-user daily cap (BLOCK_BUZZ_CAP_PER_DAY in
- * blocks.router.ts) — neither is bypassed for pages.
+ * NOW EMPTY — every money/spend scope a page can request is BOUNDED, so none is
+ * categorically forbidden:
+ *   - `ai:write:budgeted` (generation): bounded by the per-gen `buzzBudget` claim
+ *     (from the approved manifest's `page.buzzBudgetPerGen`, server-read + clamped
+ *     to BUZZ_BUDGET_CAP) AND the per-user daily cap (BLOCK_BUZZ_CAP_PER_DAY).
+ *   - `social:tip:self` (tipping): bounded by a per-tip cap (BLOCK_TIP_MAX_PER_TIP)
+ *     AND a per-user daily cap (BLOCK_TIP_CAP_PER_DAY, reserve-and-refund) enforced
+ *     in `/api/v1/blocks/tip` BEFORE any money moves — the exact analogue of the
+ *     gen-spend pair. Tipping was previously forbidden ONLY because it lacked such
+ *     bounds; now that it has them, a page tip is bounded spend, not unbounded, so
+ *     it is page-safe. (Tipping is also self-bound to the token subject and
+ *     rate-limited per instance.)
+ *   - `buzz:read:self` (balance read): a low-sensitivity read of the viewer's OWN
+ *     balance, needed for a page app's Buzz-balance readout; no spend authority.
  *
- * The two scopes below STAY forbidden for pages:
- *   - `social:tip:self` — tipping is NOT gated by the buzzBudget cost-preflight,
- *     so the manifest budget cap does not bound it. On a stateless page (no
- *     per-content owner to attribute against, no per-gen cost ceiling) a tip
- *     scope would be effectively unbounded spend, so it remains rejected.
- *   - `buzz:read:self` — balance read isn't needed to spend a bounded budget,
- *     and a page (entity=none) has no reason to read the viewer's balance.
+ * Keep this list as the deterministic mint-time belt: to re-forbid a scope for
+ * pages, add it back here (the mint filters requested page scopes against it).
  */
-export const PAGE_FORBIDDEN_SCOPES = ['buzz:read:self', 'social:tip:self'] as const;
+export const PAGE_FORBIDDEN_SCOPES = [] as const;
 
 /** Does the slot render a full standalone page (W10)? */
 export function isPageSlot(id: string): boolean {

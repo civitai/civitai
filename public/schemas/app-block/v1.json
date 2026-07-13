@@ -79,7 +79,10 @@
           "apps:storage:read",
           "apps:storage:write",
           "apps:storage:shared:read",
-          "apps:storage:shared:write"
+          "apps:storage:shared:write",
+          "collections:read:self",
+          "collections:write:self",
+          "collections:read:private"
         ]
       }
     },

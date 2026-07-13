@@ -632,6 +632,23 @@ export function enforceContextBinding(
         }
         break;
       }
+      case 'collections:read:self':
+      case 'collections:read:private':
+      case 'collections:write:self': {
+        // All three collections scopes are :self — there is no anonymous "self"
+        // whose own/private collections to read or whose account to
+        // follow-on-behalf-of. Require an authenticated subject here (mirrors the
+        // social:tip:self / apps:storage:* :self cases). The per-op authority lives
+        // in the block collections endpoints: reads enforce collection
+        // visibility/ownership (a private collection is 404 without ownership AND
+        // the read:private scope) + the maturity clamp; the follow write is
+        // self-bound to this subject. No request-shape binding is added here —
+        // presence of the scope + a non-anon subject is the middleware check.
+        if (claims.sub === 'anon') {
+          throw forbidden(`${scope} requires authenticated subject`);
+        }
+        break;
+      }
       default:
         // Fail closed (L-M6). Reaching here means a scope passed the
         // `isKnownBlockScope` gate above (it's in BLOCK_SCOPE_TO_OAUTH_BIT)

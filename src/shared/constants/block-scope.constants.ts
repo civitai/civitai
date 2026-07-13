@@ -77,6 +77,34 @@ export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> =
   // apps that declare it, never to a pre-approval dev-tunnel/dev-token session.
   'apps:storage:shared:read': SKIP_OAUTH_CHECK,
   'apps:storage:shared:write': SKIP_OAUTH_CHECK,
+  // collections:read:self / collections:write:self — the App Blocks Collections
+  // surface (discover + read public collections and the viewer's OWN collections;
+  // follow/bookmark a collection on the viewer's behalf). Same no-OAuth-bit
+  // posture as apps:storage:* — these never touch the user's civitai resources
+  // through the OAuth surface, so there is no bitmask bit; SKIP_OAUTH_CHECK makes
+  // that explicit. The REAL gate is SERVER-SIDE and per-op:
+  //   - read: collection VISIBILITY/OWNERSHIP — a private collection is 404 to a
+  //     non-owner/contributor (existence-leak-safe), and item reads are clamped to
+  //     the token's `maxBrowsingLevel` maturity ceiling;
+  //   - write (follow): the token SUBJECT is the actor (self-bound), the block
+  //     endpoint follows/unfollows on the caller's own behalf.
+  // Both are additionally bound to a NON-ANON subject in the block-scope
+  // middleware (self-scopes), and both are consent-exempt (server
+  // visibility/ownership is the gate, not a per-scope consent prompt) — see
+  // scope-grant.service.ts CONSENT_EXEMPT_SCOPES. Adding them here also makes them
+  // declarable manifest scopes (the manifest validator rejects unknown scopes).
+  'collections:read:self': SKIP_OAUTH_CHECK,
+  'collections:write:self': SKIP_OAUTH_CHECK,
+  // collections:read:private — the subject's OWN PRIVATE collections. Split out
+  // from collections:read:self (which covers own-PUBLIC + any PUBLIC collection)
+  // so that reading a user's PRIVATE collections requires an EXPLICIT per-user
+  // consent grant. Same no-OAuth-bit posture (SKIP_OAUTH_CHECK; server enforces
+  // ownership), and self-scope (non-anon subject) in the middleware. CRITICAL:
+  // this scope is CONSENT-GATED — it is deliberately NOT in CONSENT_EXEMPT_SCOPES,
+  // so it flows through partitionByConsent's gated set and the user must grant it
+  // via the host consent gate before a token carries it (contrast read:self,
+  // which is exempt and always mints). See scope-grant.service.ts.
+  'collections:read:private': SKIP_OAUTH_CHECK,
 } as const;
 
 export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
