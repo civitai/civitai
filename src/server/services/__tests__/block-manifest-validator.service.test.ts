@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BlockManifestValidator } from '../block-manifest-validator.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
 
 const VALID_MANIFEST = {
   blockId: 'test-block',
@@ -612,6 +613,39 @@ describe('BlockManifestValidator', () => {
       expect(result.valid).toBe(false);
       if (!result.valid) {
         expect(result.errors.some((e) => e.includes('iframe.src'))).toBe(true);
+      }
+    });
+  });
+
+  // W13 category-on-approve — the OPTIONAL marketplace `category`. Absent is
+  // fine; present must be a MARKETPLACE_CATEGORIES member (single-sourced with
+  // the const + the published schema's `category` enum).
+  describe('category (optional marketplace taxonomy)', () => {
+    it('accepts a manifest with NO category (optional)', () => {
+      // VALID_MANIFEST declares no category.
+      expect(BlockManifestValidator.validate(VALID_MANIFEST, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it.each(MARKETPLACE_CATEGORIES.map((c) => [c] as const))(
+      'accepts the valid category %j',
+      (category) => {
+        const manifest = { ...VALID_MANIFEST, category };
+        expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+      }
+    );
+
+    it.each([
+      ['productivity', 'not in the taxonomy'],
+      ['Generation', 'wrong case'],
+      ['', 'empty string'],
+      [42, 'non-string'],
+      [null, 'null'],
+    ])('rejects category %j (%s) with a clear error', (category) => {
+      const manifest = { ...VALID_MANIFEST, category };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => e.startsWith('category must be one of'))).toBe(true);
       }
     });
   });
