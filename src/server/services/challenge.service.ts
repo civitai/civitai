@@ -69,6 +69,7 @@ import {
   refundUserChallengeFunds,
 } from '~/server/games/daily-challenge/challenge-funding';
 import {
+  deriveDomainCurrency,
   isChallengeHiddenByDomainCurrency,
   isNonSfwForGreen,
   type ChallengeBuzzType,
@@ -379,7 +380,7 @@ export async function getInfiniteChallenges(
   );
 
   // Domain-currency gate: green challenges only surface on the green site, yellow only off-green.
-  const domainCurrency = isGreen ? 'green' : 'yellow';
+  const domainCurrency = deriveDomainCurrency(isGreen ?? false);
   conditions.push(Prisma.sql`c."buzzType" = ${domainCurrency}`);
 
   // Status filter (parameterized)
@@ -1293,7 +1294,10 @@ export async function upsertUserChallenge({
   if (!judge) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Selected judge is not available.' });
 
   const allowedNsfwLevel = rest.allowedNsfwLevel ?? sfwBrowsingLevelsFlag;
-  if (isNonSfwForGreen(buzzType, allowedNsfwLevel))
+  // buzzType is derived from the caller's current domain, but it's immutable once stored — on
+  // create it's what will be stored, so gate here; on edit the STORED buzzType is what matters
+  // (gated below, against `existing.buzzType`, after it's loaded).
+  if (!id && isNonSfwForGreen(buzzType, allowedNsfwLevel))
     throw new TRPCError({
       code: 'BAD_REQUEST',
       message: 'Green challenges must be Safe-For-Work.',
@@ -1364,6 +1368,7 @@ export async function upsertUserChallenge({
         collectionId: true,
         basePrizePool: true,
         metadata: true,
+        buzzType: true,
       },
     });
     if (!existing) throw throwNotFoundError('Challenge not found');
@@ -1387,6 +1392,15 @@ export async function upsertUserChallenge({
           message: 'This challenge already has entries and can no longer be edited.',
         });
     }
+    // buzzType is immutable (set at creation, derived from the domain the creator was on).
+    // The passed `buzzType` above reflects the EDITOR's current domain, which may differ — the
+    // guard here must use the STORED value, since that's what stays authoritative after this edit.
+    const existingBuzzType: ChallengeBuzzType = existing.buzzType === 'green' ? 'green' : 'yellow';
+    if (isNonSfwForGreen(existingBuzzType, allowedNsfwLevel))
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'Green challenges must be Safe-For-Work.',
+      });
 
     const updated = await dbWrite.$transaction(async (tx) => {
       // Conditional on status IN THE WRITE: the Scheduled/entry-count checks above ran on the
