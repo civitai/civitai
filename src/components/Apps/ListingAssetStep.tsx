@@ -247,6 +247,12 @@ export function ListingAssetStep({
     apply: (s: AssetState) => void
   ) {
     const outcome = await attachOnce(key, kind, imageId);
+    // 🔴 Sub-ms race: `attachOnce` has ALREADY committed the server row (e.g.
+    // `addListingScreenshot`) by the time we reach here. If a cancel/replace bumped
+    // the epoch during the await, we drop the outcome CLIENT-side (below) but the
+    // server row persists — a benign orphan that simply RE-APPEARS on reload
+    // (`getListingAssets` reads it) and is healed by mod curation / re-review. The
+    // common case — cancel BEFORE attach commits — leaves only an unattached Image.
     if (!isCurrentEpoch(key, epoch)) return;
     if (outcome.kind === 'attached') {
       clearTimer(key);
@@ -398,9 +404,12 @@ export function ListingAssetStep({
    * Cancel a screenshot that never attached (working/scanning/error/timeout — no
    * server row). Invalidate any in-flight poll (clearTimer + bumpEpoch so the
    * isCurrentEpoch guard drops a resolving drive), drop the slot, and revoke its
-   * blob. NO server call: nothing was attached; a persisted-but-unattached Image
-   * row is a harmless orphan. Always allowed — cancelling your own in-flight upload
-   * is never gated by allowRemove.
+   * blob. NO server call in the common case: nothing was attached; a persisted-but-
+   * unattached Image row is a harmless orphan. EXCEPTION — in the sub-ms window where
+   * an attach committed the server SCREENSHOT row just before this epoch bump, that
+   * row persists and re-appears on reload (still benign — see the race note in
+   * `drive`). Always allowed — cancelling your own in-flight upload is never gated by
+   * allowRemove.
    */
   function cancelScreenshot(id: string) {
     clearTimer(id);
