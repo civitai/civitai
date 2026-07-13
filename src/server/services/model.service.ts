@@ -1313,10 +1313,14 @@ export const getModelsWithImagesAndModelVersions = async ({
   // `getAllModelImagesSlim` flag is on; other callers (home blocks, collections)
   // default to `GET_ALL_IMAGES_PER_MODEL`.
   imagesPerModel = GET_ALL_IMAGES_PER_MODEL,
+  // When true (flag-ON browse feed only) pick the nsfw-biased coverage slice instead
+  // of the naive first-`imagesPerModel`, so reducing the count adds ~zero feed drops.
+  biasImageSlice = false,
 }: {
   input: GetAllModelsOutput;
   user?: SessionUser;
   imagesPerModel?: number;
+  biasImageSlice?: boolean;
 }) => {
   input.limit = input.limit ?? 100;
 
@@ -1426,7 +1430,7 @@ export const getModelsWithImagesAndModelVersions = async ({
           // shared `imagesForModelVersionsCache` entries (still used at full 20
           // with all fields by model-detail pages, auctions, etc.) are untouched.
           // See `~/server/utils/model-getall-images`.
-          images: buildGetAllModelImages(filteredImages, imagesPerModel),
+          images: buildGetAllModelImages(filteredImages, imagesPerModel, biasImageSlice),
           canGenerate,
         };
       })

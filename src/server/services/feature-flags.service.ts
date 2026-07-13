@@ -146,10 +146,15 @@ const featureFlags = createFeatureFlags({
   // (6) images instead of `GET_ALL_IMAGES_PER_MODEL` (12) — a ~42% page-byte cut
   // (the always-on per-image field trim in `model-getall-images` applies either
   // way). The browse `ModelCard` renders only the cover, so nothing VISIBLE
-  // changes; the risk is browsing-level FEED-DROP: the shared image cache is
-  // ordered `postId,index` (browsing-agnostic), so a mixed-level model whose only
-  // browsing-safe image sits past index 6 is dropped from an SFW-mode viewer's
-  // feed (`hidden.noImages`). Hence `availability: []` = DARK by default and FAILS
+  // changes; the residual risk is browsing-level FEED-DROP: the shared image cache
+  // is ordered `postId,index` (browsing-agnostic), so a mixed-level model whose only
+  // browsing-safe image sits past index 6 could be dropped from an SFW-mode viewer's
+  // feed (`hidden.noImages`). The flag-ON path MITIGATES this by picking an
+  // nsfw-biased COVERAGE slice (`selectSlimGetAllModelImages`) instead of the naive
+  // first-6 — it keeps one image of every distinct `nsfwLevel` bit present, so any
+  // viewer with a visible image in the full set keeps one in the slice (image
+  // `nsfwLevel` is a single bit, ≤6 distinct, all fit in 6). Still `availability: []`
+  // = DARK by default and FAILS
   // CLOSED (empty availability → static eval false when Flipt is absent/down), so
   // the cap stays 12 (byte-identical COUNT to today) unless the Flipt
   // `get-all-model-images-slim` threshold is ramped. Deploy dark, then ramp the

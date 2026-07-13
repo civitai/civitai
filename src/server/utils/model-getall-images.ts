@@ -108,6 +108,90 @@ export function capGetAllModelImages<T>(images: T[], limit = GET_ALL_IMAGES_PER_
 }
 
 /**
+ * NSFW-biased slim slice — the SELECTION used on the flag-ON (`getAllModelImagesSlim`)
+ * path INSTEAD of the naive first-`limit`. Same byte win as `capGetAllModelImages`
+ * (returns exactly `limit` images), but chosen to drive the browsing-level feed-drop
+ * regression to ~0 rather than the naive first-6's measured ~2.7%.
+ *
+ * WHY it's coverage-complete. The shared cache is ordered `postId,index` (creator's
+ * curated order, browsing-AGNOSTIC), so the naive first-6 can leave a mixed-level
+ * model's only browsing-safe image past index 6 → the client hidden-prefs filter
+ * (`useApplyHiddenPreferences`, `case 'models'`) finds no survivor → `hidden.noImages`
+ * drops the model from that viewer's feed. An image `nsfwLevel` is ALWAYS a SINGLE bit
+ * (1/2/4/8/16/32 — there are ≤6 distinct levels), and the per-image filter has exactly
+ * two nsfw branches:
+ *   - `model.nsfw`  → keep if `image.nsfwLevel <= maxSelectedLevel`
+ *   - otherwise     → keep if `(image.nsfwLevel & browsingLevel) != 0`
+ * So if we include ONE representative image of every distinct bit present in the full
+ * set, then for ANY viewer who had ≥1 visible image in the full ≤20 set we still have a
+ * survivor in the slice:
+ *   - `(nsfwLevel & browsingLevel)!=0` viewer: their satisfying bit L is present → its
+ *     representative (also bit L) intersects `browsingLevel` → survives.
+ *   - `nsfwLevel <= maxSelectedLevel` viewer: the LOWEST bit present `Lmin` is ≤ any
+ *     level they could see, and we always include a rep of every bit incl. `Lmin` →
+ *     `Lmin <= maxSelectedLevel` → survives. (Covering every bit also covers the
+ *     HIGHEST bit, so a high-only viewer keeps a cover too.)
+ * Since there are ≤6 bits and the slim cap is 6, all distinct bits always fit. The
+ * guarantee is scoped to the nsfwLevel dimension (~0 NEW browsing-level drops): any
+ * per-image poi/minor/hidden-tag drops are viewer/image-specific and orthogonal — they
+ * can drop a coverage representative just as they'd drop the naive first-6 image, and
+ * they affect all cap policies alike.
+ *
+ * PRECONDITION: designed for the `model.getAll` image cache, where every `nsfwLevel` is
+ * a TRUTHY single bit (the shared-cache SQL filters `nsfwLevel != 0`/NULL). Falsy
+ * (0/null/undefined) levels are visible to no viewer and NEVER consume a bit-slot, so
+ * they can't crowd out a real bit even if a future caller passes such a set.
+ *
+ * Algorithm (coverage-first):
+ *   1. Coverage: add the EARLIEST-cache-order image of each distinct TRUTHY `nsfwLevel`
+ *      bit. Index 0 — the creator's curated lead — is the earliest rep of its own bit,
+ *      so it is covered on the real-data path (every level a truthy single bit).
+ *   2. Fill any remaining slots with the earliest not-yet-selected images (this reaches
+ *      index 0 first, so the curated lead is kept whenever a slot is free; a falsy /
+ *      invisible lead is omitted only when the real bits already fill the budget).
+ *   3. Return the selected set in ORIGINAL cache order, capped to `limit` — so a
+ *      permissive viewer's cover stays `images[0]`, not the safest image (order does
+ *      not affect the survives/drop test, only display).
+ *
+ * Never mutates the input and returns a fresh array (shared-cache safety); ≤ `limit`
+ * pass-through returns the input unchanged (the caller field-trim then clones it).
+ */
+export function selectSlimGetAllModelImages<T extends { nsfwLevel?: number | null }>(
+  images: T[],
+  limit = GET_ALL_IMAGES_PER_MODEL_SLIM
+): T[] {
+  if (images.length <= limit) return images;
+
+  const selected = new Set<number>();
+  const seenLevels = new Set<number>();
+
+  // 1. Coverage: one EARLIEST-cache-order representative per distinct nsfwLevel bit.
+  //    A FALSY level (0 / null / undefined — not a browseable bit, so visible to NO
+  //    viewer) never claims a coverage slot, so it can never crowd out a real bit.
+  //    Because index 0 is the earliest image, a real-bit lead is its bit's earliest
+  //    representative here — so the creator's curated lead is always covered on the
+  //    real-data path (where every level is a truthy single bit).
+  for (let i = 0; i < images.length && selected.size < limit; i++) {
+    const level = images[i]?.nsfwLevel;
+    if (!level || seenLevels.has(level)) continue;
+    seenLevels.add(level);
+    selected.add(i);
+  }
+
+  // 2. Fill remaining slots by cache order. This visits index 0 first, so the curated
+  //    lead is included whenever a slot is free (including a falsy/invisible lead) — it
+  //    is omitted ONLY when the distinct real bits already fill the budget, which loses
+  //    no viewer a cover (a falsy-level lead is visible to nobody).
+  for (let i = 0; i < images.length && selected.size < limit; i++) selected.add(i);
+
+  // 3. Emit in original cache order, capped.
+  return [...selected]
+    .sort((a, b) => a - b)
+    .slice(0, limit)
+    .map((i) => images[i]);
+}
+
+/**
  * Return a shallow copy of `image` without the wire-dropped fields. Generic so it
  * is type-safe over the cache result type (a key absent on the input is a no-op),
  * and the narrowed `Omit<...>` return type makes tsc flag any future consumer that
@@ -120,12 +204,24 @@ export function stripGetAllModelImage<T extends Record<string, unknown>>(image: 
 
 /**
  * The exact per-model image wire transform the `model.getAll` response mapping
- * applies: cap to `limit` (flag-selected), then field-trim every surviving image.
- * Both steps return fresh arrays/objects — the shared image cache is never touched.
+ * applies: reduce to `limit` images, then field-trim every surviving image. Both
+ * steps return fresh arrays/objects — the shared image cache is never touched.
+ *
+ * Selection depends on `biased`:
+ *   - `biased: false` (default, flag-OFF path + non-feed callers like home blocks /
+ *     collections): naive first-`limit` cache order — BYTE-IDENTICAL to today.
+ *   - `biased: true` (flag-ON `getAllModelImagesSlim` path only): the nsfw-biased
+ *     coverage slice (`selectSlimGetAllModelImages`) — same count/byte win, but
+ *     guarantees any viewer with a visible image in the full set keeps one in the
+ *     slice, driving the feed-drop regression to ~0. See that fn's docs.
  */
 export function buildGetAllModelImages<T extends Record<string, unknown>>(
   images: T[],
-  limit = GET_ALL_IMAGES_PER_MODEL
+  limit = GET_ALL_IMAGES_PER_MODEL,
+  biased = false
 ) {
-  return capGetAllModelImages(images, limit).map(stripGetAllModelImage);
+  const reduced = biased
+    ? selectSlimGetAllModelImages(images as (T & { nsfwLevel?: number | null })[], limit)
+    : capGetAllModelImages(images, limit);
+  return reduced.map(stripGetAllModelImage);
 }
