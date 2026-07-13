@@ -1308,6 +1308,7 @@ export type Challenge = {
   reviewCostType: Generated<ChallengeReviewCostType>;
   reviewCost: Generated<number>;
   entryFee: Generated<number>;
+  buzzType: Generated<string>;
   createdById: number | null;
   source: Generated<ChallengeSource>;
   judgeId: number | null;

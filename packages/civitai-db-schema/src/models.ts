@@ -3620,6 +3620,7 @@ export interface Challenge {
   reviewCostType: ChallengeReviewCostType;
   reviewCost: number;
   entryFee: number;
+  buzzType: string;
   createdById: number | null;
   createdBy?: User | null;
   source: ChallengeSource;
