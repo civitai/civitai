@@ -48,14 +48,6 @@ export const licensingFeeRatioSchema = z
 // truth). Keep in sync when a non-commercial base model is added there.
 const NON_COMMERCIAL_BASE_MODELS = new Set(['Ideogram 4.0']);
 
-// Default fee suggestions by model type (B10). Types not listed get no default and are skipped.
-const DEFAULT_FEE_BY_TYPE: Record<string, number> = {
-  Checkpoint: 1,
-  LORA: 0.1,
-  LoCon: 0.1,
-  DoRA: 0.1,
-};
-
 export type SetFeeResult = { ok: true } | { ok: false; status: 400 | 403; error: string };
 export type BulkFeeResult =
   | { ok: true; updated: number }
@@ -189,34 +181,3 @@ export async function bulkSetLicensingFee(
   return { ok: true, updated };
 }
 
-// Apply each selected version's model-type default fee (B10), grouped into one write per fee value. Skips
-// versions whose type has no default or whose base model is non-commercial.
-export async function bulkApplyDefaultFees(
-  userId: number,
-  membership: Membership,
-  versionIds: number[]
-): Promise<BulkFeeResult> {
-  if (!canSetLicensingFee(membership))
-    return {
-      ok: false,
-      status: 403,
-      error: 'Creator Program membership is required to set a licensing fee.',
-    };
-  if (versionIds.length === 0)
-    return { ok: false, status: 400, error: 'Select at least one version.' };
-
-  const owned = await ownedVersions(userId, versionIds);
-  const byFee = new Map<number, number[]>();
-  for (const v of owned) {
-    if (NON_COMMERCIAL_BASE_MODELS.has(v.baseModel)) continue;
-    const fee = DEFAULT_FEE_BY_TYPE[v.modelType];
-    if (fee == null) continue;
-    const list = byFee.get(fee) ?? [];
-    list.push(v.id);
-    byFee.set(fee, list);
-  }
-
-  let updated = 0;
-  for (const [fee, ids] of byFee) updated += await writeFee(userId, ids, fee);
-  return { ok: true, updated };
-}

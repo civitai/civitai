@@ -10,10 +10,11 @@ import {
 import {
   setLicensingFee,
   bulkSetLicensingFee,
-  bulkApplyDefaultFees,
   licensingFeeRatioSchema,
 } from '$lib/server/monetization/licensing-fee';
 import { setEarlyAccessConfig, earlyAccessFormSchema } from '$lib/server/monetization/early-access';
+import { getModelsScore } from '$lib/server/creator-score';
+import { earlyAccessDaysForScore } from '$lib/monetization/early-access';
 
 // --- input schemas: every load/action input is zod-validated ---
 const versionIdSchema = z.coerce.number().int().positive();
@@ -47,10 +48,14 @@ export const load: PageServerLoad = async ({ locals, parent, url }) => {
   } = modelsQuerySchema.parse(Object.fromEntries(url.searchParams));
   const q = rawQ?.trim() || undefined;
 
-  const result = await getCreatorModels({ userId: locals.user.id, q, fee, sort, page });
+  const [result, modelsScore] = await Promise.all([
+    getCreatorModels({ userId: locals.user.id, q, fee, sort, page }),
+    getModelsScore(locals.user.id),
+  ]);
   return {
     ...result,
     canSetFee: canSetLicensingFee(membership),
+    maxEarlyAccessDays: earlyAccessDaysForScore(modelsScore),
     query: { q: q ?? '', fee: fee ?? '', sort },
   };
 };
@@ -87,18 +92,6 @@ export const actions: Actions = {
 
     const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
     const result = await bulkSetLicensingFee(locals.user.id, membership, versionIds.data, fee.data);
-    if (!result.ok) return fail(result.status, { bulk: true, error: result.error });
-
-    return { bulk: true, updated: result.updated };
-  },
-
-  bulkApplyDefault: async ({ request, locals, cookies }) => {
-    const form = await request.formData();
-    const versionIds = versionIdsSchema.safeParse(String(form.get('versionIds') ?? ''));
-    if (!versionIds.success) return fail(400, { bulk: true, error: firstError(versionIds.error) });
-
-    const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
-    const result = await bulkApplyDefaultFees(locals.user.id, membership, versionIds.data);
     if (!result.ok) return fail(result.status, { bulk: true, error: result.error });
 
     return { bulk: true, updated: result.updated };

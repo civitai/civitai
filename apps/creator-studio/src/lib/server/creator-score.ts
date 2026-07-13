@@ -19,14 +19,24 @@ const num = (v: unknown): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
-export async function getCreatorScore(userId: number): Promise<number> {
+async function readScores(userId: number): Promise<Scores> {
   const row = await dbRead
     .selectFrom('User')
     .select('meta')
     .where('id', '=', userId)
     .executeTakeFirst();
 
-  const scores = (row?.meta as { scores?: Scores } | null)?.scores ?? {};
+  return (row?.meta as { scores?: Scores } | null)?.scores ?? {};
+}
+
+export async function getCreatorScore(userId: number): Promise<number> {
+  const scores = await readScores(userId);
   const sum = SCORE_KEYS.reduce((acc, k) => acc + num(scores[k]), 0);
   return Math.max(sum, num(scores.total));
+}
+
+// The per-type *models* score — what the early-access day ladder keys off (distinct from the
+// aggregate creator score above).
+export async function getModelsScore(userId: number): Promise<number> {
+  return num((await readScores(userId)).models);
 }

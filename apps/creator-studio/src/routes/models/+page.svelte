@@ -6,14 +6,6 @@
   import { Card, CardHeader, CardTitle, CardContent } from '@civitai/ui/components/ui/card/index.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
-  } from '@civitai/ui/components/ui/table/index.js';
-  import {
     AlertDialog,
     AlertDialogContent,
     AlertDialogHeader,
@@ -44,7 +36,13 @@
     DEFAULT_FEE_IMAGES,
   } from '$lib/monetization/fee';
   import JoinUpsell from '$lib/components/JoinUpsell.svelte';
-  import { IconSearch, IconFilter, IconArrowsSort } from '@tabler/icons-svelte';
+  import {
+    IconSearch,
+    IconFilter,
+    IconArrowsSort,
+    IconChevronRight,
+    IconExternalLink,
+  } from '@tabler/icons-svelte';
   import type { PageData } from './$types';
   import type { CreatorModel, CreatorModelVersion } from '$lib/server/models';
 
@@ -56,6 +54,30 @@
     return data.canSetFee
       ? { label: 'Active', cls: 'text-green-5' }
       : { label: 'Paused', cls: 'text-yellow-5' };
+  }
+
+  // Compact fee chip for a scan row: colour mirrors feeStatus (green Active / yellow Paused / dim Off).
+  function feeChip(fee: number | null): { label: string; cls: string } {
+    if (fee == null) return { label: 'Fee off', cls: 'border-dark-4 text-dark-3' };
+    const { buzz, images } = feeToRatio(fee);
+    const label = images === 1 ? `${buzz} ⚡ / img` : `${buzz} ⚡ / ${images}`;
+    return data.canSetFee
+      ? { label, cls: 'border-green-5/30 bg-green-5/10 text-green-5' }
+      : { label, cls: 'border-yellow-5/30 bg-yellow-5/10 text-yellow-5' };
+  }
+
+  // Early-access chip: green while a window is active, dim grey when configured but not currently
+  // active, and hidden when nothing is set up. `hasEarlyAccess` = active window; `earlyAccessConfig`
+  // = a saved config (may outlive the window).
+  function earlyAccessChip(v: CreatorModelVersion): { cls: string; title: string } | null {
+    if (v.hasEarlyAccess)
+      return { cls: 'border-green-5/30 bg-green-5/10 text-green-5', title: 'Early access active' };
+    if (v.earlyAccessConfig)
+      return {
+        cls: 'border-dark-4 text-dark-3',
+        title: 'Early access configured (not currently active)',
+      };
+    return null;
   }
 
   // --- URL-driven table state (search / fee filter / sort / pagination) ---
@@ -91,6 +113,11 @@
   let showBulkConfirm = $state(false);
   let bulkForm = $state<HTMLFormElement>();
 
+  // Leaving bulk mode (Done, browser back, or any URL change) discards a pending selection.
+  $effect(() => {
+    if (!bulkMode && selected.size > 0) selected = new Set();
+  });
+
   function toggleVersion(id: number) {
     const next = new Set(selected);
     next.has(id) ? next.delete(id) : next.add(id);
@@ -108,8 +135,17 @@
 
   const setFeeEnhance = () => async (event: { result: any; update: (o?: { reset?: boolean }) => Promise<void> }) => {
     await event.update({ reset: false });
-    if (event.result.type === 'success') toast.success('Licensing fee saved');
-    else if (event.result.type === 'failure') toast.error(String(event.result.data?.error ?? 'Failed to save'));
+    if (event.result.type === 'success') {
+      toast.success('Licensing fee saved');
+      // Refresh so the row chip reflects the new fee; keep the sheet open on the (now fresh) version.
+      await invalidateAll();
+      if (editing) {
+        const id = editing.id;
+        editing = data.models.flatMap((m) => m.versions).find((v) => v.id === id) ?? editing;
+      }
+    } else if (event.result.type === 'failure') {
+      toast.error(String(event.result.data?.error ?? 'Failed to save'));
+    }
   };
 
   const bulkEnhance = () => async (event: { result: any; update: (o?: { reset?: boolean }) => Promise<void> }) => {
@@ -141,8 +177,10 @@
 
   function openEditor(version: CreatorModelVersion) {
     const c = version.earlyAccessConfig;
+    // Clamp the seeded duration to the creator's score-based max so the field starts in-range.
+    const maxDays = data.maxEarlyAccessDays;
     ea = {
-      timeframe: c?.timeframe ?? 7,
+      timeframe: Math.min(c?.timeframe ?? 7, maxDays || Infinity),
       chargeForDownload: c?.chargeForDownload ?? false,
       downloadPrice: c?.downloadPrice ?? MIN_DOWNLOAD_PRICE,
       chargeForGeneration: c?.chargeForGeneration ?? true,
@@ -153,6 +191,12 @@
       freeGeneration: c?.freeGeneration ?? false,
     };
     editing = version;
+  }
+
+  // Snap the duration down to the creator's max as soon as it's exceeded (the `max` attr only warns).
+  function clampTimeframe() {
+    const max = data.maxEarlyAccessDays;
+    if (typeof ea.timeframe === 'number' && ea.timeframe > max) ea.timeframe = max;
   }
 
   const eaEnhance = () => async (event: { result: any; update: (o?: { reset?: boolean }) => Promise<void> }) => {
@@ -167,19 +211,9 @@
   };
 </script>
 
-<header class="page-header flex items-start gap-3">
-  <div>
-    <h1>Models</h1>
-    <p>Set licensing fees, manage early/paid access, and sell access indefinitely — per version.</p>
-  </div>
-  {#if data.canSetFee && (data.total > 0 || bulkMode)}
-    <a
-      href={bulkMode ? '/models' : '/models?mode=bulk'}
-      class="ml-auto rounded-md border border-dark-4 bg-dark-6 px-3 py-1.5 text-sm text-white hover:border-dark-3"
-    >
-      {bulkMode ? 'Done' : 'Bulk edit fees'}
-    </a>
-  {/if}
+<header class="page-header">
+  <h1>Models</h1>
+  <p>Set licensing fees, manage early/paid access, and sell access indefinitely — per version.</p>
 </header>
 
 {#if !data.canSetFee}
@@ -242,11 +276,25 @@
   <span class="ml-auto text-xs text-dark-3">{data.total} model{data.total === 1 ? '' : 's'}</span>
 </div>
 
-{#if bulkMode && selected.size > 0}
+<!-- Bulk actions toolbar — entry points for bulk operations (room for more actions here later). -->
+{#if data.canSetFee && data.total > 0 && !bulkMode}
+  <div class="mb-4 flex flex-wrap items-center gap-2">
+    <a
+      href="/models?mode=bulk"
+      class="rounded-md border border-dark-4 bg-dark-6 px-3 py-1.5 text-sm text-white hover:border-dark-3"
+    >
+      Bulk edit fees
+    </a>
+  </div>
+{/if}
+
+{#if bulkMode}
   <div
     class="sticky top-2 z-10 mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-blue-8/40 bg-dark-6 p-3 shadow-lg"
   >
-    <span class="text-sm font-medium text-white">{selected.size} selected</span>
+    <span class="text-sm font-medium text-white">
+      {selected.size > 0 ? `${selected.size} selected` : 'Select versions to edit'}
+    </span>
     <form bind:this={bulkForm} method="POST" action="?/bulkSetFee" use:enhance={bulkEnhance} class="contents">
       <input type="hidden" name="versionIds" value={[...selected].join(',')} />
       <input
@@ -276,19 +324,18 @@
       <span class="text-sm text-dark-3">images</span>
       <button
         type="button"
+        disabled={selected.size === 0}
         onclick={() => (showBulkConfirm = true)}
-        class="rounded bg-blue-8 px-3 py-1 text-sm font-medium text-white hover:bg-blue-7"
+        class="rounded bg-blue-8 px-3 py-1 text-sm font-medium text-white hover:bg-blue-7 disabled:cursor-not-allowed disabled:opacity-40"
       >
-        Apply to {selected.size}
+        Apply{selected.size > 0 ? ` to ${selected.size}` : ''}
       </button>
-      <button
-        type="submit"
-        formaction="?/bulkApplyDefault"
-        class="rounded border border-dark-4 px-3 py-1 text-sm text-white hover:border-dark-3"
-        title="Set each selected version to its model-type default (LoRA 1 ⚡ per 10 images, Checkpoint 1 ⚡ per image)"
+      <a
+        href="/models"
+        class="inline-flex items-center rounded border border-dark-4 px-3 py-1 text-sm text-white hover:border-dark-3"
       >
-        Apply default by type
-      </button>
+        Cancel
+      </a>
       <span class="text-xs text-dark-3">Empty buzz clears the fee.</span>
     </form>
   </div>
@@ -309,119 +356,108 @@
         <CardHeader>
           <div class="flex items-center gap-3">
             {#if bulkMode && model.versions.length > 0}
-              <input
-                type="checkbox"
-                checked={allSelected(model)}
-                onchange={() => toggleModel(model)}
-                aria-label="Select all versions of {model.name}"
-                class="size-4"
-              />
+              <label class="flex cursor-pointer items-center gap-3">
+                <input
+                  type="checkbox"
+                  checked={allSelected(model)}
+                  onchange={() => toggleModel(model)}
+                  aria-label="Select all versions of {model.name}"
+                  class="size-4"
+                />
+                <CardTitle class="text-base text-white">{model.name}</CardTitle>
+              </label>
+            {:else}
+              <CardTitle class="text-base text-white">{model.name}</CardTitle>
             {/if}
-            <CardTitle class="text-base text-white">{model.name}</CardTitle>
             <Badge variant="secondary">{model.type}</Badge>
             <Badge variant={model.status === 'Published' ? 'default' : 'outline'} class="ml-auto">
               {model.status}
             </Badge>
+            {#if !bulkMode}
+              <a
+                href="https://civitai.com/models/{model.id}"
+                target="_blank"
+                rel="noopener noreferrer"
+                title="View on Civitai"
+                aria-label="View {model.name} on Civitai"
+                class="shrink-0 rounded-md p-1 text-dark-3 hover:bg-dark-6 hover:text-white"
+              >
+                <IconExternalLink size={16} />
+              </a>
+            {/if}
           </div>
         </CardHeader>
         <CardContent>
           {#if model.versions.length === 0}
             <p class="text-sm text-dark-3">No versions.</p>
           {:else}
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  {#if bulkMode}<TableHead class="w-8"></TableHead>{/if}
-                  <TableHead>Version</TableHead>
-                  <TableHead>Base model</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Licensing fee</TableHead>
-                  <TableHead>Access</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {#each model.versions as version (version.id)}
-                  {@const st = feeStatus(version.licensingFee)}
-                  {@const ratio = feeToRatio(version.licensingFee)}
-                  <TableRow>
-                    {#if bulkMode}
-                      <TableCell>
-                        <input
-                          type="checkbox"
-                          checked={selected.has(version.id)}
-                          onchange={() => toggleVersion(version.id)}
-                          aria-label="Select {version.name}"
-                          class="size-4"
-                        />
-                      </TableCell>
-                    {/if}
-                    <TableCell class="font-medium text-white">{version.name}</TableCell>
-                    <TableCell class="text-dark-2">{version.baseModel}</TableCell>
-                    <TableCell>
-                      <Badge variant={version.status === 'Published' ? 'default' : 'outline'}>
-                        {version.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div class="flex items-center gap-2">
-                        {#if data.canSetFee && !bulkMode}
-                          <form method="POST" action="?/setFee" use:enhance={setFeeEnhance} class="flex items-center gap-1.5">
-                            <input type="hidden" name="versionId" value={version.id} />
-                            <input
-                              type="number"
-                              name="buzz"
-                              min="0"
-                              step="1"
-                              inputmode="numeric"
-                              onbeforeinput={integerOnly}
-                              value={ratio.buzz || ''}
-                              placeholder="Off"
-                              aria-label="Buzz for {version.name}"
-                              class="w-14 rounded border border-dark-4 bg-dark-7 px-2 py-1 text-sm text-white"
-                            />
-                            <span class="text-xs text-dark-3">⚡ per</span>
-                            <select
-                              name="images"
-                              value={String(ratio.images)}
-                              aria-label="Images for {version.name}"
-                              class="rounded border border-dark-4 bg-dark-7 px-1.5 py-1 text-sm text-white"
+            <ul class="divide-y divide-dark-4 border-t border-dark-4">
+              {#each model.versions as version (version.id)}
+                {@const chip = feeChip(version.licensingFee)}
+                {@const ea = earlyAccessChip(version)}
+                <li>
+                  {#if bulkMode}
+                    <label class="flex w-full cursor-pointer items-center gap-3 py-3">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(version.id)}
+                        onchange={() => toggleVersion(version.id)}
+                        aria-label="Select {version.name}"
+                        class="size-4 shrink-0"
+                      />
+                      <span class="flex min-w-0 flex-1 flex-col">
+                        <span class="truncate text-sm font-medium text-white">{version.name}</span>
+                        <span class="truncate text-xs text-dark-2">{version.baseModel} · {version.status}</span>
+                      </span>
+                      <span
+                        class="shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium {chip.cls}"
+                      >
+                        {chip.label}
+                      </span>
+                    </label>
+                  {:else}
+                    <div class="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onclick={() => openEditor(version)}
+                        class="flex min-w-0 flex-1 items-center gap-3 rounded-md py-3 text-left hover:bg-dark-6/40"
+                      >
+                        <span class="flex min-w-0 flex-1 flex-col">
+                          <span class="truncate text-sm font-medium text-white">{version.name}</span>
+                          <span class="truncate text-xs text-dark-2">{version.baseModel} · {version.status}</span>
+                        </span>
+                        <span class="flex shrink-0 items-center gap-2">
+                          {#if ea}
+                            <span
+                              title={ea.title}
+                              class="rounded-full border px-2 py-0.5 text-xs font-medium {ea.cls}"
                             >
-                              {#each FEE_IMAGE_OPTIONS as opt (opt)}
-                                <option value={String(opt)}>{opt}</option>
-                              {/each}
-                            </select>
-                            <span class="text-xs text-dark-3">images</span>
-                            <button
-                              type="submit"
-                              class="rounded bg-blue-8 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-7"
-                            >
-                              Save
-                            </button>
-                          </form>
-                        {:else}
-                          <span class="text-dark-1">{formatFeeRatio(version.licensingFee)}</span>
-                        {/if}
-                        <span class="text-xs {st.cls}">{st.label}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell class="text-dark-2">
-                      <div class="flex items-center gap-2">
-                        <span>{version.hasEarlyAccess ? 'Early access' : '—'}</span>
-                        {#if !bulkMode}
-                          <button
-                            type="button"
-                            onclick={() => openEditor(version)}
-                            class="rounded border border-dark-4 px-2 py-0.5 text-xs text-white hover:border-dark-3"
+                              Early access
+                            </span>
+                          {/if}
+                          <span
+                            class="rounded-full border px-2 py-0.5 text-xs font-medium {chip.cls}"
                           >
-                            {version.earlyAccessConfig ? 'Edit' : 'Set up'}
-                          </button>
-                        {/if}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                {/each}
-              </TableBody>
-            </Table>
+                            {chip.label}
+                          </span>
+                          <IconChevronRight size={16} class="text-dark-3" />
+                        </span>
+                      </button>
+                      <a
+                        href="https://civitai.com/models/{model.id}?modelVersionId={version.id}"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="View on Civitai"
+                        aria-label="View {version.name} on Civitai"
+                        class="shrink-0 rounded-md p-1.5 text-dark-3 hover:bg-dark-6 hover:text-white"
+                      >
+                        <IconExternalLink size={16} />
+                      </a>
+                    </div>
+                  {/if}
+                </li>
+              {/each}
+            </ul>
           {/if}
         </CardContent>
       </Card>
@@ -472,123 +508,194 @@
 <Sheet open={editing != null} onOpenChange={(o) => { if (!o) editing = null; }}>
   <SheetContent side="right" class="w-full gap-0 overflow-y-auto p-0 sm:max-w-md">
     {#if editing}
+      {@const ratio = feeToRatio(editing.licensingFee)}
+      {@const st = feeStatus(editing.licensingFee)}
       <SheetHeader class="border-b border-dark-4 p-5">
-        <SheetTitle class="text-white">Early &amp; paid access</SheetTitle>
-        <SheetDescription>
-          {editing.name} — gate this version behind payment for a limited time. When the window ends it becomes
-          free and public.
-        </SheetDescription>
+        <SheetTitle class="text-white">{editing.name}</SheetTitle>
+        <SheetDescription>{editing.baseModel} · {editing.status}</SheetDescription>
       </SheetHeader>
 
-      <form method="POST" action="?/setEarlyAccess" use:enhance={eaEnhance} class="flex flex-col gap-5 p-5">
-        <input type="hidden" name="versionId" value={editing.id} />
-
-        <label class="flex flex-col gap-1 text-sm">
-          <span class="text-dark-1">Early access duration (days)</span>
-          <input
-            type="number"
-            name="timeframe"
-            min="1"
-            bind:value={ea.timeframe}
-            class="w-32 rounded border border-dark-4 bg-dark-7 px-2 py-1.5 text-white"
-          />
-        </label>
-
-        <div class="flex flex-col gap-2 rounded-lg border border-dark-4 p-3">
-          <label class="flex items-center gap-2 text-sm text-white">
-            <input type="checkbox" name="chargeForDownload" bind:checked={ea.chargeForDownload} class="size-4" />
-            Charge to download
-          </label>
-          {#if ea.chargeForDownload}
-            <label class="flex flex-col gap-1 text-sm">
-              <span class="text-dark-2">Download price (⚡, min {MIN_DOWNLOAD_PRICE})</span>
+      <div class="flex flex-col gap-6 p-5">
+        <!-- Licensing fee -->
+        <section class="flex flex-col gap-3">
+          <div class="flex items-center justify-between">
+            <span class="text-sm font-medium text-white">Licensing fee</span>
+            <span class="text-xs {st.cls}">{st.label}</span>
+          </div>
+          {#if data.canSetFee}
+            <form method="POST" action="?/setFee" use:enhance={setFeeEnhance} class="flex flex-wrap items-center gap-1.5">
+              <input type="hidden" name="versionId" value={editing.id} />
               <input
                 type="number"
-                name="downloadPrice"
-                min={MIN_DOWNLOAD_PRICE}
-                bind:value={ea.downloadPrice}
-                class="w-40 rounded border border-dark-4 bg-dark-7 px-2 py-1.5 text-white"
-              />
-            </label>
-          {/if}
-        </div>
-
-        <div class="flex flex-col gap-2 rounded-lg border border-dark-4 p-3">
-          <label class="flex items-center gap-2 text-sm text-white">
-            <input type="checkbox" name="chargeForGeneration" bind:checked={ea.chargeForGeneration} class="size-4" />
-            Charge to generate
-          </label>
-          {#if ea.chargeForGeneration}
-            <label class="flex flex-col gap-1 text-sm">
-              <span class="text-dark-2">Generation price (⚡, min {MIN_GENERATION_PRICE})</span>
-              <input
-                type="number"
-                name="generationPrice"
-                min={MIN_GENERATION_PRICE}
-                bind:value={ea.generationPrice}
-                class="w-40 rounded border border-dark-4 bg-dark-7 px-2 py-1.5 text-white"
-              />
-            </label>
-            <label class="flex flex-col gap-1 text-sm">
-              <span class="text-dark-2">Free trial generations (0–{MAX_GENERATION_TRIAL_LIMIT})</span>
-              <input
-                type="number"
-                name="generationTrialLimit"
+                name="buzz"
                 min="0"
-                max={MAX_GENERATION_TRIAL_LIMIT}
-                bind:value={ea.generationTrialLimit}
-                class="w-32 rounded border border-dark-4 bg-dark-7 px-2 py-1.5 text-white"
+                step="1"
+                inputmode="numeric"
+                onbeforeinput={integerOnly}
+                value={ratio.buzz || ''}
+                placeholder="Off"
+                aria-label="Buzz for {editing.name}"
+                class="w-16 rounded border border-dark-4 bg-dark-7 px-2 py-1 text-sm text-white"
               />
-            </label>
-            <label class="flex items-center gap-2 text-sm text-white">
-              <input type="checkbox" name="freeGeneration" bind:checked={ea.freeGeneration} class="size-4" />
-              Allow free generation
-            </label>
+              <span class="text-xs text-dark-3">⚡ per</span>
+              <select
+                name="images"
+                value={String(ratio.images)}
+                aria-label="Images for {editing.name}"
+                class="rounded border border-dark-4 bg-dark-7 px-1.5 py-1 text-sm text-white"
+              >
+                {#each FEE_IMAGE_OPTIONS as opt (opt)}
+                  <option value={String(opt)}>{opt}</option>
+                {/each}
+              </select>
+              <span class="text-xs text-dark-3">images</span>
+              <button
+                type="submit"
+                class="ml-auto rounded bg-blue-8 px-3 py-1 text-sm font-medium text-white hover:bg-blue-7"
+              >
+                Save fee
+              </button>
+              <span class="w-full text-xs text-dark-3">Leave empty to clear the fee.</span>
+            </form>
+          {:else}
+            <span class="text-sm text-dark-1">{formatFeeRatio(editing.licensingFee)}</span>
           {/if}
-        </div>
+        </section>
 
-        <div class="flex flex-col gap-2 rounded-lg border border-dark-4 p-3">
-          <label class="flex items-center gap-2 text-sm text-white">
-            <input type="checkbox" name="donationGoalEnabled" bind:checked={ea.donationGoalEnabled} class="size-4" />
-            Enable a donation goal
-          </label>
-          {#if ea.donationGoalEnabled}
-            <label class="flex flex-col gap-1 text-sm">
-              <span class="text-dark-2">Goal amount (⚡)</span>
-              <input
-                type="number"
-                name="donationGoal"
-                min="0"
-                bind:value={ea.donationGoal}
-                class="w-40 rounded border border-dark-4 bg-dark-7 px-2 py-1.5 text-white"
-              />
-            </label>
+        <!-- Early & paid access -->
+        <section class="flex flex-col gap-4 border-t border-dark-4 pt-6">
+          <div class="flex flex-col gap-1">
+            <span class="text-sm font-medium text-white">Early &amp; paid access</span>
+            <span class="text-xs text-dark-2">
+              Gate this version behind payment for a limited time. When the window ends it becomes free and public.
+            </span>
+          </div>
+
+          {#if data.maxEarlyAccessDays === 0}
+            <p class="rounded-lg border border-dark-4 p-3 text-xs text-dark-2">
+              Early access isn't available for your account yet — it unlocks as your creator score grows.
+            </p>
+          {:else}
+            <form method="POST" action="?/setEarlyAccess" use:enhance={eaEnhance} class="flex flex-col gap-4">
+              <input type="hidden" name="versionId" value={editing.id} />
+
+              <label class="flex flex-col gap-1 text-sm">
+                <span class="text-dark-1">Early access duration (days)</span>
+                <input
+                  type="number"
+                  name="timeframe"
+                  min="1"
+                  max={data.maxEarlyAccessDays}
+                  step="1"
+                  inputmode="numeric"
+                  onbeforeinput={integerOnly}
+                  oninput={clampTimeframe}
+                  bind:value={ea.timeframe}
+                  class="w-32 rounded border border-dark-4 bg-dark-7 px-2 py-1.5 text-white"
+                />
+                <span class="text-xs text-dark-3">
+                  Up to {data.maxEarlyAccessDays} day{data.maxEarlyAccessDays === 1 ? '' : 's'} at your creator level.
+                </span>
+              </label>
+
+              <div class="flex flex-col gap-2 rounded-lg border border-dark-4 p-3">
+                <label class="flex items-center gap-2 text-sm text-white">
+                  <input type="checkbox" name="chargeForDownload" bind:checked={ea.chargeForDownload} class="size-4" />
+                  Charge to download
+                </label>
+                {#if ea.chargeForDownload}
+                  <label class="flex flex-col gap-1 text-sm">
+                    <span class="text-dark-2">Download price (⚡, min {MIN_DOWNLOAD_PRICE})</span>
+                    <input
+                      type="number"
+                      name="downloadPrice"
+                      min={MIN_DOWNLOAD_PRICE}
+                      bind:value={ea.downloadPrice}
+                      class="w-40 rounded border border-dark-4 bg-dark-7 px-2 py-1.5 text-white"
+                    />
+                  </label>
+                {/if}
+              </div>
+
+              <div class="flex flex-col gap-2 rounded-lg border border-dark-4 p-3">
+                <label class="flex items-center gap-2 text-sm text-white">
+                  <input type="checkbox" name="chargeForGeneration" bind:checked={ea.chargeForGeneration} class="size-4" />
+                  Charge to generate
+                </label>
+                {#if ea.chargeForGeneration}
+                  <label class="flex flex-col gap-1 text-sm">
+                    <span class="text-dark-2">Generation price (⚡, min {MIN_GENERATION_PRICE})</span>
+                    <input
+                      type="number"
+                      name="generationPrice"
+                      min={MIN_GENERATION_PRICE}
+                      bind:value={ea.generationPrice}
+                      class="w-40 rounded border border-dark-4 bg-dark-7 px-2 py-1.5 text-white"
+                    />
+                  </label>
+                  <label class="flex flex-col gap-1 text-sm">
+                    <span class="text-dark-2">Free trial generations (0–{MAX_GENERATION_TRIAL_LIMIT})</span>
+                    <input
+                      type="number"
+                      name="generationTrialLimit"
+                      min="0"
+                      max={MAX_GENERATION_TRIAL_LIMIT}
+                      bind:value={ea.generationTrialLimit}
+                      class="w-32 rounded border border-dark-4 bg-dark-7 px-2 py-1.5 text-white"
+                    />
+                  </label>
+                  <label class="flex items-center gap-2 text-sm text-white">
+                    <input type="checkbox" name="freeGeneration" bind:checked={ea.freeGeneration} class="size-4" />
+                    Allow free generation
+                  </label>
+                {/if}
+              </div>
+
+              <div class="flex flex-col gap-2 rounded-lg border border-dark-4 p-3">
+                <label class="flex items-center gap-2 text-sm text-white">
+                  <input type="checkbox" name="donationGoalEnabled" bind:checked={ea.donationGoalEnabled} class="size-4" />
+                  Enable a donation goal
+                </label>
+                {#if ea.donationGoalEnabled}
+                  <label class="flex flex-col gap-1 text-sm">
+                    <span class="text-dark-2">Goal amount (⚡)</span>
+                    <input
+                      type="number"
+                      name="donationGoal"
+                      min="0"
+                      bind:value={ea.donationGoal}
+                      class="w-40 rounded border border-dark-4 bg-dark-7 px-2 py-1.5 text-white"
+                    />
+                  </label>
+                {/if}
+              </div>
+
+              {#if !ea.chargeForDownload && !ea.chargeForGeneration}
+                <p class="text-xs text-yellow-5">Enable a download or generation charge to turn on early access.</p>
+              {/if}
+
+              <SheetFooter class="flex-col gap-2 p-0">
+                <button
+                  type="submit"
+                  class="rounded bg-blue-8 px-3 py-2 text-sm font-medium text-white hover:bg-blue-7"
+                >
+                  Save early access
+                </button>
+                {#if editing.earlyAccessConfig}
+                  <button
+                    type="submit"
+                    name="clear"
+                    value="true"
+                    class="rounded border border-dark-4 px-3 py-2 text-sm text-white hover:border-dark-3"
+                  >
+                    Turn off early access
+                  </button>
+                {/if}
+              </SheetFooter>
+            </form>
           {/if}
-        </div>
-
-        {#if !ea.chargeForDownload && !ea.chargeForGeneration}
-          <p class="text-xs text-yellow-5">Enable a download or generation charge to turn on early access.</p>
-        {/if}
-
-        <SheetFooter class="flex-col gap-2 p-0">
-          <button
-            type="submit"
-            class="rounded bg-blue-8 px-3 py-2 text-sm font-medium text-white hover:bg-blue-7"
-          >
-            Save early access
-          </button>
-          {#if editing.earlyAccessConfig}
-            <button
-              type="submit"
-              name="clear"
-              value="true"
-              class="rounded border border-dark-4 px-3 py-2 text-sm text-white hover:border-dark-3"
-            >
-              Turn off early access
-            </button>
-          {/if}
-        </SheetFooter>
-      </form>
+        </section>
+      </div>
     {/if}
   </SheetContent>
 </Sheet>

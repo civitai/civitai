@@ -9,6 +9,27 @@ export const MIN_GENERATION_PRICE = 50;
 export const DEFAULT_GENERATION_TRIAL_LIMIT = 10;
 export const MAX_GENERATION_TRIAL_LIMIT = 1000;
 
+// Max early-access days unlock by the creator's *models* score — mirrors the main app's
+// EARLY_ACCESS_CONFIG.scoreTimeFrameUnlock (enforced by /api/v1/model-versions/early-access).
+// The 30-day feature-flag tier is intentionally omitted here.
+export const EARLY_ACCESS_SCORE_UNLOCK: ReadonlyArray<readonly [number, number]> = [
+  [40000, 3],
+  [65000, 5],
+  [90000, 7],
+  [125000, 9],
+  [200000, 12],
+  [250000, 15],
+];
+
+// Highest early-access duration (days) the given models score unlocks. 0 = early access unavailable.
+export function earlyAccessDaysForScore(modelsScore: number): number {
+  let days = 0;
+  for (const [score, unlocked] of EARLY_ACCESS_SCORE_UNLOCK) {
+    if (modelsScore >= score) days = unlocked;
+  }
+  return days;
+}
+
 export type EarlyAccessConfig = {
   timeframe: number;
   chargeForDownload: boolean;
