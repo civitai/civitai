@@ -37,7 +37,7 @@ const {
   return {
     mockVerifyBlockToken: vi.fn(),
     mockParseSubjectUserId: vi.fn(),
-    mockDbRead: { appBlock: { findUnique: vi.fn() } },
+    mockDbRead: { appBlock: { findUnique: vi.fn() }, account: { count: vi.fn() } },
     mockIsSharedEnabled: vi.fn(async () => true),
     mockPool,
     mockClient,
@@ -147,6 +147,10 @@ beforeEach(() => {
   );
   mockGetSessionUser.mockResolvedValue(trustedUser());
   mockDbRead.appBlock.findUnique.mockResolvedValue({ id: 'apb_test', status: 'approved' });
+  // Default: no linked OAuth account (so an unverified-email subject is still denied
+  // unless a test opts into a linked account). Only consulted when emailVerified is
+  // absent — the verified-email tests never hit this.
+  mockDbRead.account.count.mockResolvedValue(0);
   mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 });
   mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
   mockCheckAppendRl.mockResolvedValue({ allowed: true });
@@ -274,6 +278,93 @@ describe('H3 min-trust gate (write + vote)', () => {
     await expect(caller().vote({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
     });
+  });
+});
+
+// "Verified email" is satisfied by emailVerified OR a linked OAuth account. civitai
+// only sets emailVerified via the email-CHANGE flow — OAuth sign-in never does — so
+// ~69% of active (OAuth-heavy) users had emailVerified=NULL and were wrongly locked
+// out. A linked OAuth account is a provider-verified identity (a STRONGER anti-sybil
+// signal than an unverified civitai email), so it now satisfies the gate. The other
+// trust conditions (banned/muted/onboarding/age/tier) are UNCHANGED and still take
+// precedence in the SAME order.
+describe('OAuth-linked account satisfies the verified-email trust condition', () => {
+  it('(case 2 — THE FIX) emailVerified NULL + hasLinkedOAuth=true → PASSES', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockGetSessionUser.mockResolvedValueOnce(trustedUser({ emailVerified: undefined }));
+    mockDbRead.account.count.mockResolvedValueOnce(1); // one linked OAuth account
+    mockAppendDataPath();
+    const out = await caller().append({ blockToken: 't', value: { title: 'idea' } });
+    expect(out.key).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+    expect(mockPool.connect).toHaveBeenCalled();
+    // the account query keyed on the SUBJECT userId (from the verified token), not input
+    expect(mockDbRead.account.count).toHaveBeenCalledWith({ where: { userId: 42 } });
+  });
+
+  it('(case 3) emailVerified NULL + hasLinkedOAuth=false → DENIED (Verify your email…)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockGetSessionUser.mockResolvedValueOnce(trustedUser({ emailVerified: undefined }));
+    mockDbRead.account.count.mockResolvedValueOnce(0); // no linked OAuth account
+    await expect(
+      caller().append({ blockToken: 't', value: { title: 'idea' } })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'Verify your email before contributing' });
+    expect(mockPool.connect).not.toHaveBeenCalled();
+  });
+
+  it('(case 1 — unchanged) emailVerified set → PASSES WITHOUT querying account.count', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    // trustedUser() default has emailVerified set
+    mockAppendDataPath();
+    const out = await caller().append({ blockToken: 't', value: { title: 'idea' } });
+    expect(out.key).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+    // query-only-when-needed: a verified-email subject incurs NO account query
+    expect(mockDbRead.account.count).not.toHaveBeenCalled();
+  });
+
+  it('(query-only-when-needed) unverified subject DOES query account.count', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockGetSessionUser.mockResolvedValueOnce(trustedUser({ emailVerified: undefined }));
+    mockDbRead.account.count.mockResolvedValueOnce(1);
+    mockAppendDataPath();
+    await caller().append({ blockToken: 't', value: { title: 'idea' } });
+    expect(mockDbRead.account.count).toHaveBeenCalledTimes(1);
+    expect(mockDbRead.account.count).toHaveBeenCalledWith({ where: { userId: 42 } });
+  });
+
+  // (case 4) the OTHER trust conditions still DENY with their specific messages and
+  // take PRECEDENCE — even when hasLinkedOAuth would be true, the earlier check wins.
+  // These fire BEFORE the email/OAuth check, so account.count is never consulted.
+  const precedence: Array<[string, Record<string, unknown>, string]> = [
+    ['banned', { bannedAt: new Date() }, 'Your account is not eligible for this action'],
+    ['muted', { muted: true }, 'Your account has been restricted'],
+    ['onboarding incomplete', { onboarding: 0 }, 'Complete onboarding before contributing'],
+    ['too-new account', { createdAt: new Date() }, 'Your account is too new to contribute'],
+  ];
+  for (const [name, over, message] of precedence) {
+    it(`(case 4) ${name} still DENIES (precedence preserved) even with a linked OAuth account`, async () => {
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      // emailVerified absent AND a linked OAuth account present — proves the earlier
+      // condition, not the email/OAuth check, is what denies.
+      mockGetSessionUser.mockResolvedValueOnce(trustedUser({ ...over, emailVerified: undefined }));
+      mockDbRead.account.count.mockResolvedValue(1);
+      await expect(
+        caller().append({ blockToken: 't', value: { title: 'idea' } })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN', message });
+      expect(mockPool.connect).not.toHaveBeenCalled();
+    });
+  }
+
+  // Precedence proof for a subject whose email IS verified: banned still denies and
+  // — because emailVerified is present — the account.count query is skipped entirely
+  // (banned wins before the email/OAuth branch is ever relevant).
+  it('(case 4) a verified-email banned subject denies WITHOUT an account query', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockGetSessionUser.mockResolvedValueOnce(trustedUser({ bannedAt: new Date() }));
+    await expect(
+      caller().append({ blockToken: 't', value: { title: 'idea' } })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'Your account is not eligible for this action' });
+    expect(mockDbRead.account.count).not.toHaveBeenCalled();
+    expect(mockPool.connect).not.toHaveBeenCalled();
   });
 });
 
