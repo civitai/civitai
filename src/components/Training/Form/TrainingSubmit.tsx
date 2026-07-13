@@ -315,6 +315,9 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       priority: getTrainingFields.getPriority(selectedRun.highPriority),
       engine: getTrainingFields.getEngine(selectedRun.params.engine),
       trainingDataImagesCount: thisNumImages ?? 1,
+      // Include the run's sample prompts so the estimate reflects the per-resource
+      // license fee, which the orchestrator only prices when samples are generated.
+      samplePrompts: selectedRun.samplePrompts,
     };
 
     // Transform parameters for AI Toolkit
@@ -385,6 +388,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       priority: baseData.priority,
       engine: baseData.engine as any, // Type assertion for discriminated union
       trainingDataImagesCount: baseData.trainingDataImagesCount,
+      samplePrompts: baseData.samplePrompts,
       resolution: selectedRun.params.resolution,
       trainBatchSize: selectedRun.params.trainBatchSize,
       maxTrainEpochs: selectedRun.params.maxTrainEpochs,
@@ -395,6 +399,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     formBaseModel,
     selectedRun.highPriority,
     selectedRun.params.engine,
+    selectedRun.samplePrompts,
     thisNumImages,
     selectedRun.params.resolution,
     selectedRun.params.trainBatchSize,

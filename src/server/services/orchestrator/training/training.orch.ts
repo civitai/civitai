@@ -455,12 +455,21 @@ export const createTrainingWhatIfWorkflow = async ({
   currencies,
   ...input
 }: ImageTraininWhatIfWorkflowSchema) => {
-  const { model, priority, engine, trainingDataImagesCount, ...trainingParams } = input;
+  const { model, priority, engine, trainingDataImagesCount, samplePrompts, ...trainingParams } =
+    input;
 
   const params = {
     ...trainingParams,
     engine,
   } as any; // Type assertion needed because whatIf schema is a union
+
+  // Per-resource license fees are only priced when the workflow generates
+  // samples, so the whatif must always carry non-empty prompts or the estimate
+  // silently drops the fee. Keep any real prompts the client sent and backfill
+  // empties with a placeholder so the fee is always reflected.
+  const whatIfSamplePrompts = (samplePrompts?.length ? samplePrompts : ['', '', '']).map((p) =>
+    p && p.trim().length > 0 ? p : 'sample prompt'
+  );
 
   const runArgs: ImageTrainingStepSchema = {
     model,
@@ -471,7 +480,7 @@ export const createTrainingWhatIfWorkflow = async ({
     trainingData: 'https://fake',
     loraName: '',
     triggerWord: '',
-    samplePrompts: ['', '', ''],
+    samplePrompts: whatIfSamplePrompts,
     modelFileId: -1,
     negativePrompt: '',
   };
