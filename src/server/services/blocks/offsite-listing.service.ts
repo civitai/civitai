@@ -1771,6 +1771,13 @@ const submissionSelect = {
       category: true,
       contentRating: true,
       revisionOfId: true,
+      // The listing's TRUE lifecycle status (`draft|pending|approved|rejected|
+      // removed`) — DISTINCT from the publish-REQUEST `status`. An owner unpublish
+      // / mod delist flips `AppListing.status` approved → removed WITHOUT touching
+      // the (still-`approved`) request, so my-submissions can only distinguish a
+      // live listing from a hidden one by reading THIS field. Additive/PII-safe;
+      // the mod queues that spread `submissionSelect` gain it harmlessly.
+      status: true,
     },
   },
 } as const;
@@ -1836,9 +1843,40 @@ export async function listMySubmissions(
       .map((r) => r.appListing?.revisionOfId)
       .filter((id): id is string => id != null)
   );
+
+  // W13 post-approval mgmt (owner controls): for every REMOVED listing on the page,
+  // fetch its MOST-RECENT moderation-event action so the my-submissions UI can tell
+  // an owner-hidden listing (last event `owner-unpublish` → republish-eligible) from
+  // a moderator takedown (last event `delist` → republish FORBIDDEN, shown as
+  // "removed by a moderator") WITHOUT a per-row history fetch. This mirrors the
+  // `hasPendingRevision` batched second query above. `distinct` + `orderBy desc`
+  // returns exactly the latest event per listing in ONE query. Only removed listings
+  // are queried (a live listing needs no last-action), bounding the cost.
+  const removedParentIds = page
+    .filter((r) => r.appListingId != null && r.appListing?.status === 'removed')
+    .map((r) => r.appListingId as string);
+  const lastEvents =
+    removedParentIds.length > 0
+      ? await dbRead.appListingModerationEvent.findMany({
+          where: { appListingId: { in: removedParentIds } },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          distinct: ['appListingId'],
+          select: { appListingId: true, action: true },
+        })
+      : [];
+  const lastActionByListing = new Map(
+    lastEvents
+      .filter((e): e is { appListingId: string; action: string } => e.appListingId != null)
+      .map((e) => [e.appListingId, e.action])
+  );
+
   const items = page.map((r) => ({
     ...r,
     hasPendingRevision: r.appListingId != null && parentsWithRevision.has(r.appListingId),
+    // Null for a non-removed listing (or one with no events) — the UI only reads it
+    // when `appListing.status === 'removed'` to gate the Republish affordance.
+    lastModerationAction:
+      r.appListingId != null ? lastActionByListing.get(r.appListingId) ?? null : null,
   }));
 
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };

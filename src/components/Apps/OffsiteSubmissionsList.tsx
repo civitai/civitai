@@ -1,5 +1,25 @@
-import { Anchor, Badge, Button, Card, Code, Group, Stack, Table, Text } from '@mantine/core';
-import { IconExternalLink, IconPencil } from '@tabler/icons-react';
+import {
+  Alert,
+  Anchor,
+  Badge,
+  Button,
+  Card,
+  Code,
+  Group,
+  Modal,
+  Stack,
+  Table,
+  Text,
+  Textarea,
+} from '@mantine/core';
+import {
+  IconAlertTriangle,
+  IconExternalLink,
+  IconEye,
+  IconEyeOff,
+  IconHistory,
+  IconPencil,
+} from '@tabler/icons-react';
 import Link from 'next/link';
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import {
@@ -7,7 +27,16 @@ import {
   isWithdrawableOffsiteStatus,
   offsiteStatusChip,
 } from '~/components/Apps/offsiteSubmissionStatus';
+import { moderationActionChip } from '~/components/Apps/appListingModerationView';
+import {
+  canOwnerRepublish,
+  canOwnerUnpublish,
+  ownerListingState,
+  ownerStateChip,
+  type OwnerListingState,
+} from '~/components/Apps/offsiteOwnerControls';
 import { validateExternalUrl } from '~/server/schema/blocks/external-app.schema';
+import { OFFSITE_MOD_NOTE_MAX } from '~/server/schema/blocks/offsite-moderation.schema';
 import { ReviewerNotesButton } from '~/components/Apps/MySubmissionsList';
 import {
   bucketGroupsByStatus,
@@ -19,6 +48,8 @@ import {
   type SubmissionGroup,
 } from '~/components/Apps/submissionsTable';
 import { StatusSections, SubmissionSearch, VersionToggle } from '~/components/Apps/submissionsTableUi';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 
 /**
  * /apps/my-submissions — the author's OFF-SITE (external-link) submissions, shown
@@ -31,6 +62,20 @@ import { StatusSections, SubmissionSearch, VersionToggle } from '~/components/Ap
  * (App/Status/Submitted/Reviewed), and per-app version-collapse (grouped by
  * `slug`, newest shown, older versions expandable). The filter/sort/group logic is
  * the shared pure `submissionsTable.ts` (identical to the onsite list).
+ *
+ * W13 post-approval management (Phase 3) — OWNER controls on the author's own
+ * off-site listings (offsite-only; the procs are offsite-scoped):
+ *   - a LIVE (approved) listing → **Unpublish** (confirm-gated; hides it from the
+ *     store, no re-review) + the existing shadow-revision **Edit** entry point.
+ *   - an owner-unpublished listing → **Republish** (removed → approved).
+ *   - a moderator-removed listing → a "removed by a moderator" state (NO republish —
+ *     the server FORBIDS self-restore of a takedown) linking to its history.
+ *   - a **View history** modal on any live/removed listing showing its
+ *     `AppListingModerationEvent` timeline (the owner's "why was this hidden /
+ *     un-approved" view).
+ * The owner-hidden-vs-mod-removed distinction — which gates Republish — is read from
+ * the row's `lastModerationAction` (the list query's projection), NOT a per-row fetch;
+ * the server guard remains authoritative (a race surfaces as a mutation error).
  */
 
 export type OffsiteSubmission = {
@@ -50,9 +95,18 @@ export type OffsiteSubmission = {
     contentRating: string | null;
     /** Non-null only for a shadow revision draft (never surfaced here — inferred). */
     revisionOfId?: string | null;
+    /** The listing's TRUE lifecycle status (`draft|pending|approved|rejected|removed`)
+     *  — DISTINCT from `status` (the publish-REQUEST status). Drives the owner
+     *  unpublish/republish affordances: an owner-hide/mod-delist flips this to
+     *  `removed` while the request stays `approved`. */
+    status?: string | null;
   } | null;
   /** True when this parent listing has an in-flight shadow revision under review. */
   hasPendingRevision?: boolean;
+  /** The listing's most-recent moderation-event action (populated for a `removed`
+   *  listing) — `owner-unpublish` ⇒ owner-hidden (republish-eligible), anything else
+   *  (a moderator `delist`) ⇒ mod-removed (republish forbidden). */
+  lastModerationAction?: string | null;
 };
 
 /** Field adapters for the shared filter/sort/group helpers. Collapse identity =
@@ -73,8 +127,26 @@ function formatDate(d: string | Date | null | undefined): string {
   return date.toLocaleString();
 }
 
-function StatusCell({ submission }: { submission: OffsiteSubmission }) {
-  const chip = offsiteStatusChip(submission.status);
+/** Derive the owner-control state for a row's listing (live / owner-hidden /
+ *  mod-removed / inactive) from its true listing status + last mod-event action. */
+function rowOwnerState(s: OffsiteSubmission): OwnerListingState {
+  return ownerListingState({
+    listingStatus: s.appListing?.status,
+    lastModerationAction: s.lastModerationAction,
+  });
+}
+
+function StatusCell({
+  submission,
+  ownerState,
+}: {
+  submission: OffsiteSubmission;
+  ownerState: OwnerListingState;
+}) {
+  // For a removed listing the request status still reads `approved`, so override the
+  // chip with the owner-facing state (unpublished / removed-by-a-moderator).
+  const stateChip = ownerStateChip(ownerState);
+  const chip = stateChip ?? offsiteStatusChip(submission.status);
   const notes =
     submission.status === 'rejected'
       ? submission.rejectionReason
@@ -123,11 +195,20 @@ function LinkCell({ submission }: { submission: OffsiteSubmission }) {
   );
 }
 
+/** Owner-control handlers threaded from the list down to each latest row. */
+type OwnerControls = {
+  onUnpublish: (listingId: string, slug: string) => void;
+  onRepublish: (listingId: string) => void;
+  republishing: boolean;
+  onViewHistory: (listingId: string, slug: string) => void;
+};
+
 function OffsiteRow({
   submission,
   nested,
   onWithdraw,
   withdrawing,
+  owner,
   toggle,
 }: {
   submission: OffsiteSubmission;
@@ -135,16 +216,41 @@ function OffsiteRow({
   nested: boolean;
   onWithdraw: (publishRequestId: string) => void;
   withdrawing: boolean;
+  /** Owner-control handlers (only wired on the latest, non-nested row). */
+  owner: OwnerControls;
   /** The "N versions" expand/collapse control (only on a collapsible latest row). */
   toggle?: ReactNode;
 }) {
   const s = submission;
-  // Edit only on the latest (non-nested) row of an editable request; older
-  // versions are historical. Withdraw stays available per-row where applicable.
-  const canEdit = !nested && isEditableOffsiteStatus(s.status) && !!s.appListingId;
+  const listingStatus = s.appListing?.status ?? null;
+  const ownerState = rowOwnerState(s);
+  // Edit only on the latest (non-nested) row of an editable request; older versions
+  // are historical, and a REMOVED listing is not editable (the service FORBIDs it),
+  // so exclude it here even though its request status is still `approved`.
+  const canEdit =
+    !nested &&
+    isEditableOffsiteStatus(s.status) &&
+    !!s.appListingId &&
+    listingStatus !== 'removed';
   const canWithdraw = isWithdrawableOffsiteStatus(s.status);
+  // Owner takedown affordances live ONLY on the latest row with a real listing id.
+  const showOwner = !nested && !!s.appListingId;
+  const canUnpublish = showOwner && canOwnerUnpublish(ownerState);
+  const canRepublish = showOwner && canOwnerRepublish(ownerState);
+  const isModRemoved = showOwner && ownerState === 'mod-removed';
+  // History is offered whenever there's a live/removed listing that can carry events.
+  const canViewHistory = showOwner && (ownerState !== 'inactive');
+
   const renderActions = () => {
-    if (!canEdit && !canWithdraw && !s.hasPendingRevision) {
+    const hasAny =
+      canEdit ||
+      canWithdraw ||
+      s.hasPendingRevision ||
+      canUnpublish ||
+      canRepublish ||
+      isModRemoved ||
+      canViewHistory;
+    if (!hasAny) {
       return (
         <Text size="xs" c="dimmed">
           —
@@ -165,6 +271,37 @@ function OffsiteRow({
             Edit
           </Button>
         )}
+        {canUnpublish && s.appListingId && (
+          <Button
+            size="xs"
+            variant="default"
+            color="orange"
+            onClick={() => owner.onUnpublish(s.appListingId as string, s.slug)}
+            leftSection={<IconEyeOff size={12} />}
+            data-testid={`apps-offsite-unpublish-${s.slug}`}
+          >
+            Unpublish
+          </Button>
+        )}
+        {canRepublish && s.appListingId && (
+          <Button
+            size="xs"
+            variant="default"
+            color="green"
+            onClick={() => owner.onRepublish(s.appListingId as string)}
+            disabled={owner.republishing}
+            loading={owner.republishing}
+            leftSection={<IconEye size={12} />}
+            data-testid={`apps-offsite-republish-${s.slug}`}
+          >
+            Republish
+          </Button>
+        )}
+        {isModRemoved && (
+          <Text size="xs" c="red" data-testid={`apps-offsite-mod-removed-${s.slug}`}>
+            Removed by a moderator
+          </Text>
+        )}
         {canWithdraw && (
           <Button
             size="xs"
@@ -176,6 +313,18 @@ function OffsiteRow({
             data-testid={`apps-offsite-withdraw-${s.slug}`}
           >
             Withdraw
+          </Button>
+        )}
+        {canViewHistory && s.appListingId && (
+          <Button
+            size="xs"
+            variant="subtle"
+            color="gray"
+            onClick={() => owner.onViewHistory(s.appListingId as string, s.slug)}
+            leftSection={<IconHistory size={12} />}
+            data-testid={`apps-offsite-history-${s.slug}`}
+          >
+            History
           </Button>
         )}
         {s.hasPendingRevision && (
@@ -218,7 +367,7 @@ function OffsiteRow({
         <LinkCell submission={s} />
       </Table.Td>
       <Table.Td>
-        <StatusCell submission={s} />
+        <StatusCell submission={s} ownerState={nested ? 'inactive' : ownerState} />
       </Table.Td>
       <Table.Td>
         <Text size="xs">{formatDate(s.submittedAt)}</Text>
@@ -244,6 +393,26 @@ export function OffsiteSubmissionsList({
 }) {
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [unpublishTarget, setUnpublishTarget] = useState<{ id: string; slug: string } | null>(null);
+  const [historyTarget, setHistoryTarget] = useState<{ id: string; slug: string } | null>(null);
+
+  const utils = trpc.useUtils();
+  const invalidateSubmissions = () => utils.appListings.listMySubmissions.invalidate();
+
+  const republishMutation = trpc.appListings.republishOwnListing.useMutation({
+    onSuccess: async () => {
+      showSuccessNotification({ message: 'App republished — it is live in the store again.' });
+      await invalidateSubmissions();
+    },
+    onError: (e) => showErrorNotification({ title: 'Republish failed', error: new Error(e.message) }),
+  });
+
+  const owner: OwnerControls = {
+    onUnpublish: (id, slug) => setUnpublishTarget({ id, slug }),
+    onRepublish: (id) => republishMutation.mutate({ appListingId: id }),
+    republishing: republishMutation.isPending,
+    onViewHistory: (id, slug) => setHistoryTarget({ id, slug }),
+  };
 
   // Group → filter → sort newest-first → partition into status SECTIONS. Status is
   // now the section (Live / Pending / Rejected / Withdrawn), so the header column is
@@ -300,6 +469,7 @@ export function OffsiteSubmissionsList({
                   nested={false}
                   onWithdraw={onWithdraw}
                   withdrawing={withdrawing}
+                  owner={owner}
                   toggle={
                     g.older.length > 0 ? (
                       <VersionToggle
@@ -319,6 +489,7 @@ export function OffsiteSubmissionsList({
                       nested
                       onWithdraw={onWithdraw}
                       withdrawing={withdrawing}
+                      owner={owner}
                     />
                   ))}
               </Fragment>
@@ -349,6 +520,178 @@ export function OffsiteSubmissionsList({
           renderTable={renderTable}
         />
       )}
+
+      <OwnerUnpublishModal
+        target={unpublishTarget}
+        onClose={() => setUnpublishTarget(null)}
+        onDone={invalidateSubmissions}
+      />
+      <OwnerModerationHistoryModal
+        target={historyTarget}
+        onClose={() => setHistoryTarget(null)}
+      />
     </Stack>
+  );
+}
+
+/**
+ * Confirm-gated OWNER unpublish (approved → removed). Hides the live app from the
+ * store immediately — no re-review needed, and the owner can republish it
+ * themselves. `reason` is optional (the owner is acting on their own listing).
+ */
+function OwnerUnpublishModal({
+  target,
+  onClose,
+  onDone,
+}: {
+  target: { id: string; slug: string } | null;
+  onClose: () => void;
+  onDone: () => Promise<void> | void;
+}) {
+  const [reason, setReason] = useState('');
+  const mutation = trpc.appListings.unpublishOwnListing.useMutation({
+    onSuccess: async () => {
+      showSuccessNotification({ message: 'App unpublished — it is now hidden from the store.' });
+      await onDone();
+      setReason('');
+      onClose();
+    },
+    onError: (e) => showErrorNotification({ title: 'Unpublish failed', error: new Error(e.message) }),
+  });
+
+  function close() {
+    if (mutation.isPending) return;
+    setReason('');
+    onClose();
+  }
+
+  if (!target) return null;
+  return (
+    <Modal
+      opened={!!target}
+      onClose={close}
+      title={
+        <Text fw={600}>
+          Unpublish <Code>{target.slug}</Code>
+        </Text>
+      }
+      centered
+    >
+      <Stack gap="md">
+        <Alert color="orange" variant="light" icon={<IconAlertTriangle size={16} />}>
+          <Text size="sm">
+            Unpublishing hides your live app from the store immediately. You can republish it
+            yourself at any time — no re-review needed.
+          </Text>
+        </Alert>
+        <Textarea
+          label="Reason (optional)"
+          autosize
+          minRows={2}
+          maxRows={6}
+          maxLength={OFFSITE_MOD_NOTE_MAX}
+          placeholder="Optional — a note for your own records / the listing history."
+          value={reason}
+          onChange={(e) => setReason(e.currentTarget.value)}
+          disabled={mutation.isPending}
+          data-testid="apps-offsite-unpublish-reason"
+        />
+        <Group justify="flex-end" gap="xs">
+          <Button variant="default" onClick={close} disabled={mutation.isPending}>
+            Cancel
+          </Button>
+          <Button
+            color="orange"
+            onClick={() =>
+              mutation.mutate({
+                appListingId: target.id,
+                reason: reason.trim() ? reason.trim() : undefined,
+              })
+            }
+            loading={mutation.isPending}
+            disabled={mutation.isPending}
+            data-testid="apps-offsite-unpublish-confirm"
+          >
+            Unpublish
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
+  );
+}
+
+/**
+ * OWNER moderation-history modal — the "why was this hidden / un-approved" view.
+ * Renders the listing's `AppListingModerationEvent` timeline (newest-first) via the
+ * owner-scoped `listMyListingModerationEvents` proc: each entry's action + date +
+ * (verbatim) reason. Owner-scoped server-side (own listing only).
+ */
+function OwnerModerationHistoryModal({
+  target,
+  onClose,
+}: {
+  target: { id: string; slug: string } | null;
+  onClose: () => void;
+}) {
+  const query = trpc.appListings.listMyListingModerationEvents.useQuery(
+    { appListingId: target?.id ?? '', limit: 50 },
+    { enabled: !!target }
+  );
+  const items = (query.data?.items ?? []) as Array<{
+    id: string;
+    action: string;
+    reason: string | null;
+    createdAt: string | Date;
+  }>;
+
+  return (
+    <Modal
+      opened={!!target}
+      onClose={onClose}
+      title={
+        <Text fw={600}>
+          Moderation history{target ? <> — <Code>{target.slug}</Code></> : null}
+        </Text>
+      }
+      size="lg"
+      centered
+    >
+      {query.isLoading ? (
+        <Text size="sm" c="dimmed">
+          Loading…
+        </Text>
+      ) : query.error ? (
+        <Alert color="red" variant="light" icon={<IconAlertTriangle size={16} />}>
+          {query.error.message}
+        </Alert>
+      ) : items.length === 0 ? (
+        <Text size="sm" c="dimmed" data-testid="apps-offsite-history-empty">
+          No moderation history yet.
+        </Text>
+      ) : (
+        <Stack gap="sm" data-testid="apps-offsite-history-list">
+          {items.map((ev) => {
+            const chip = moderationActionChip(ev.action);
+            return (
+              <Card key={ev.id} withBorder p="sm" data-testid="apps-offsite-history-entry">
+                <Group justify="space-between" gap="xs" wrap="nowrap">
+                  <Badge color={chip.color} variant="light">
+                    {chip.label}
+                  </Badge>
+                  <Text size="xs" c="dimmed">
+                    {formatDate(ev.createdAt)}
+                  </Text>
+                </Group>
+                {ev.reason && (
+                  <Text size="sm" mt={6} style={{ whiteSpace: 'pre-wrap' }}>
+                    {ev.reason}
+                  </Text>
+                )}
+              </Card>
+            );
+          })}
+        </Stack>
+      )}
+    </Modal>
   );
 }

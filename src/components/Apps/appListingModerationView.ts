@@ -99,6 +99,11 @@ const MOD_ACTION_CHIPS: Record<string, Chip> = {
   claim: { label: 'Ownership claimed', color: 'blue' },
   'report-resolve': { label: 'Report resolved', color: 'green' },
   'report-dismiss': { label: 'Report dismissed', color: 'gray' },
+  // W13 post-approval management (Phase 1) — surfaced in the OWNER moderation-history
+  // view (and the mod one). `owner-*` are the author's own visibility toggles.
+  'reset-to-pending': { label: 'Reset to pending', color: 'yellow' },
+  'owner-unpublish': { label: 'Unpublished by you', color: 'gray' },
+  'owner-republish': { label: 'Republished by you', color: 'green' },
 };
 
 /** Chip for a moderation-event action, for the per-listing history view. */
