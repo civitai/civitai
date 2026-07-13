@@ -45,9 +45,10 @@ import {
   PoolTrigger,
 } from '~/shared/utils/prisma/enums';
 import {
-  challengeJudgingCategorySchema,
-  challengeJudgingCategoriesSchema,
+  challengeJudgingCategoryInputSchema,
+  challengeJudgingCategoriesInputSchema,
   upsertChallengeBaseSchema,
+  type ChallengeJudgingCategoryInput,
   type Prize,
 } from '~/server/schema/challenge.schema';
 import { computeDynamicPool } from '~/server/games/daily-challenge/challenge-pool';
@@ -98,11 +99,16 @@ const schema = upsertChallengeBaseSchema
     dist1: z.number().min(0).max(100).default(50),
     dist2: z.number().min(0).max(100).default(30),
     dist3: z.number().min(0).max(100).default(20),
+    // Optional here: the user variant hides this input (server forces visibleAt on scan-pass) and
+    // `shouldUnregister` drops the unmounted field — a required z.date() would fail user submits.
+    visibleAt: z.date().optional(),
     // User-variant-only fields (unused by the moderator submit path)
     entryFee: z.number().int().min(CHALLENGE_MIN_ENTRY_FEE).max(CHALLENGE_MAX_ENTRY_FEE).default(CHALLENGE_MIN_ENTRY_FEE),
     initialPrizeBuzz: z.number().int().min(0).max(CHALLENGE_MAX_INITIAL_PRIZE).default(0),
     maxParticipants: z.number().int().min(1).max(100_000).optional(),
-    judgingCategories: z.array(challengeJudgingCategorySchema).default([]),
+    // Only key + weight are form state (CategoryWeights derives label/criteria for display; the
+    // server re-derives them). `shouldUnregister` strips the rest, so validate the input shape.
+    judgingCategories: z.array(challengeJudgingCategoryInputSchema).default([]),
   });
 
 type ChallengeForEdit = {
@@ -163,17 +169,17 @@ export function resolveInitialCustomizeCategories(params: {
 }
 
 export type ModJudgingCategoriesResult =
-  | { success: true; data: CategoryWeightRow[] | null }
+  | { success: true; data: ChallengeJudgingCategoryInput[] | null }
   | { success: false; message: string };
 
 // Off -> explicit null (Task 5 persists Prisma.JsonNull) and the sum-100 validation is skipped
 // entirely, so toggling off (or leaving off) never blocks submit on stale/empty category rows.
 export function resolveModJudgingCategoriesSubmission(
   customizeCategories: boolean,
-  categories: CategoryWeightRow[]
+  categories: ChallengeJudgingCategoryInput[]
 ): ModJudgingCategoriesResult {
   if (!customizeCategories) return { success: true, data: null };
-  const result = challengeJudgingCategoriesSchema.safeParse(categories);
+  const result = challengeJudgingCategoriesInputSchema.safeParse(categories);
   if (!result.success) {
     return { success: false, message: result.error.issues[0]?.message ?? 'Invalid judging categories' };
   }
@@ -311,7 +317,6 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
     // Convert display dates back to real UTC and snap to exact hours
     const startsAt = dayjs.utc(fromDisplayUTC(data.startsAt)).startOf('hour').toDate();
     const endsAt = dayjs.utc(fromDisplayUTC(data.endsAt)).startOf('hour').toDate();
-    const visibleAt = dayjs.utc(fromDisplayUTC(data.visibleAt)).startOf('hour').toDate();
 
     // Cross-field date validation (can't use .refine() because useForm accesses .shape)
     if (endsAt <= startsAt) {
@@ -320,6 +325,13 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
     }
 
     if (isUser) {
+      // Description is required for user challenges (mod keeps it optional), so it's enforced here
+      // rather than in the shared form schema.
+      if (!data.description) {
+        form.setError('description', { message: 'Description is required' });
+        return;
+      }
+
       // Validate distribution sums to 100 (mirrors the mod Dynamic-mode check below)
       const distTotal = (data.dist1 ?? 0) + (data.dist2 ?? 0) + (data.dist3 ?? 0);
       if (distTotal !== 100) {
@@ -332,7 +344,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
         return;
       }
 
-      const categoriesResult = challengeJudgingCategoriesSchema.safeParse(data.judgingCategories);
+      const categoriesResult = challengeJudgingCategoriesInputSchema.safeParse(data.judgingCategories);
       if (!categoriesResult.success) {
         showErrorNotification({
           title: 'Invalid judging categories',
@@ -344,7 +356,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
       upsertUserMutation.mutate({
         id: challenge?.id,
         title: data.title,
-        description: data.description || undefined,
+        description: data.description,
         theme: data.theme,
         coverImage: data.coverImage,
         allowedNsfwLevel: data.allowedNsfwLevel,
@@ -373,6 +385,14 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
       });
       return;
     }
+
+    // visibleAt is mod-only (the user variant hides it — server forces it). The picker is always
+    // rendered + defaulted here, so this guard is a type-narrowing safety net, not a real path.
+    if (!data.visibleAt) {
+      form.setError('visibleAt', { message: 'Visible date is required' });
+      return;
+    }
+    const visibleAt = dayjs.utc(fromDisplayUTC(data.visibleAt)).startOf('hour').toDate();
 
     // Parse comma-separated theme elements into array
     const parsedThemeElements = data.themeElements
@@ -502,14 +522,6 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
           </Title>
         </Group>
 
-        {isUser && (
-          <Alert icon={<IconInfoCircle size={16} />} color="blue">
-            Your challenge is funded by entry fees. Each entry pays the entry fee;{' '}
-            {CHALLENGE_ENTRY_HOUSE_CUT} Buzz per entry covers AI judging and the rest grows the prize
-            pool. A moderation scan runs before your challenge becomes visible.
-          </Alert>
-        )}
-
         {isTerminal && (
           <Alert color="red" title="Challenge is read-only">
             This challenge is {challenge?.status?.toLowerCase()} and cannot be edited.
@@ -557,12 +569,14 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   disabled={isTerminal}
                 />
 
-                <InputText
-                  name="invitation"
-                  label="Invitation"
-                  placeholder="Short tagline to invite participants"
-                  disabled={isTerminal}
-                />
+                {!isUser && (
+                  <InputText
+                    name="invitation"
+                    label="Invitation"
+                    placeholder="Short tagline to invite participants"
+                    disabled={isTerminal}
+                  />
+                )}
               </Stack>
 
               <div className="w-full sm:w-80 sm:shrink-0">
@@ -585,6 +599,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
               placeholder="What is the challenge about? Provide details, rules, and any other information participants should know."
               includeControls={['heading', 'formatting', 'list', 'link', 'colors']}
               editorSize="lg"
+              withAsterisk={isUser}
               stickyToolbar
               disabled={isTerminal}
             />
@@ -617,6 +632,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   label="Visible From (UTC)"
                   placeholder="When challenge appears in feed"
                   valueFormat="lll"
+                  withAsterisk
                   disabled={isTerminal}
                   timeInputProps={{ step: 3600 }}
                 />
@@ -627,6 +643,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                 label="Starts At (UTC)"
                 placeholder="When submissions open"
                 valueFormat="lll"
+                withAsterisk
                 disabled={isActive || isTerminal}
                 timeInputProps={{ step: 3600 }}
               />
@@ -636,10 +653,17 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                 label="Ends At (UTC)"
                 placeholder="When submissions close"
                 valueFormat="lll"
+                withAsterisk
                 disabled={isTerminal}
                 timeInputProps={{ step: 3600 }}
               />
             </SimpleGrid>
+
+            {isUser && (
+              <Text size="sm" c="dimmed">
+                A moderation scan runs before your challenge becomes visible.
+              </Text>
+            )}
           </Stack>
         </Paper>
 
@@ -649,6 +673,11 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
             {isUser && (
               <>
                 <Title order={4}>Entry Fee &amp; Prizes</Title>
+                <Alert icon={<IconInfoCircle size={16} />} color="blue">
+                  Your challenge is funded by entry fees. Each entry pays the entry fee;{' '}
+                  {CHALLENGE_ENTRY_HOUSE_CUT} Buzz per entry covers AI judging and the rest grows the
+                  prize pool.
+                </Alert>
                 <SimpleGrid cols={{ base: 1, sm: 2 }}>
                   <InputNumber
                     name="entryFee"
@@ -659,6 +688,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                     max={CHALLENGE_MAX_ENTRY_FEE}
                     step={10}
                     description={`Min ${CHALLENGE_MIN_ENTRY_FEE}. ${perEntryToPool} Buzz of each entry goes to the prize pool. Entry fees are non-refundable once paid.`}
+                    withAsterisk
                     disabled={isTerminal}
                   />
                   <InputNumber
@@ -674,9 +704,9 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                 </SimpleGrid>
                 <Divider label="Prize split (must total 100%)" />
                 <SimpleGrid cols={3}>
-                  <InputNumber name="dist1" label="1st Place %" min={0} max={100} disabled={isTerminal} />
-                  <InputNumber name="dist2" label="2nd Place %" min={0} max={100} disabled={isTerminal} />
-                  <InputNumber name="dist3" label="3rd Place %" min={0} max={100} disabled={isTerminal} />
+                  <InputNumber name="dist1" label="1st Place %" min={0} max={100} withAsterisk disabled={isTerminal} />
+                  <InputNumber name="dist2" label="2nd Place %" min={0} max={100} withAsterisk disabled={isTerminal} />
+                  <InputNumber name="dist3" label="3rd Place %" min={0} max={100} withAsterisk disabled={isTerminal} />
                 </SimpleGrid>
                 <Text size="sm" c={totalPct === 100 ? 'teal' : 'red'}>
                   {dist1 || 0} + {dist2 || 0} + {dist3 || 0} = {totalPct}%

@@ -23,6 +23,7 @@ describe('prizeSchema floors', () => {
 describe('userChallengeUpsertSchema money/quantity floors', () => {
   const valid = {
     title: 'A valid challenge title',
+    description: 'A valid challenge description.',
     theme: 'Neon',
     coverImage: { url: '123e4567-e89b-12d3-a456-426614174000' },
     judgeId: 1,

@@ -69,11 +69,12 @@ describe('resolveModJudgingCategoriesSubmission', () => {
     expect(resolveModJudgingCategoriesSubmission(false, [])).toEqual({ success: true, data: null });
   });
 
-  it('submits the validated array when the toggle is on and categories are valid', () => {
+  it('submits the validated array (stripped to the {key,weight} input shape) when the toggle is on and categories are valid', () => {
     const result = resolveModJudgingCategoriesSubmission(true, DEFAULT_CATEGORY_ROWS);
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data).toEqual(DEFAULT_CATEGORY_ROWS);
+      // Only key + weight are the submitted contract; label/criteria are server-derived.
+      expect(result.data).toEqual(DEFAULT_CATEGORY_ROWS.map(({ key, weight }) => ({ key, weight })));
     }
   });
 

@@ -5,6 +5,7 @@ import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
   claimChallengeForCompletion,
+  buildChallengeModerationText,
   closeChallengeCollection,
   createChallengeWinner,
   distributePrizes,
@@ -61,7 +62,8 @@ import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/servi
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { resolveJudgingCategories } from '~/server/services/challenge-category.service';
 import { assertCanCreateUserChallenge } from '~/server/services/challenge-eligibility.service';
-import { extModeration } from '~/server/integrations/moderation';
+import { submitTextModeration } from '~/server/services/text-moderation.service';
+import { isChallengeHiddenByPoiCover } from '~/server/games/daily-challenge/challenge-visibility';
 import {
   chargeInitialPrize,
   refundUserChallengeFunds,
@@ -357,6 +359,17 @@ export async function getInfiniteChallenges(
     currentUserId
       ? Prisma.sql`(c."ingestion" = 'Scanned'::"ChallengeIngestionStatus" OR c."createdById" = ${currentUserId})`
       : Prisma.sql`c."ingestion" = 'Scanned'::"ChallengeIngestionStatus"`
+  );
+
+  // A challenge with no cover image is incomplete — never surface it in the feed.
+  conditions.push(Prisma.sql`c."coverImageId" IS NOT NULL`);
+
+  // POI gate: keep challenges whose cover depicts a real person out of public feeds (the image
+  // scanner sets Image.poi). Creator can still see their own, mirroring the scan gate above.
+  conditions.push(
+    currentUserId
+      ? Prisma.sql`(NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."poi" = true) OR c."createdById" = ${currentUserId})`
+      : Prisma.sql`NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."poi" = true)`
   );
 
   // Status filter (parameterized)
@@ -814,6 +827,27 @@ export async function getChallengeDetail(
     challenge.createdById !== viewerId
   ) {
     return null;
+  }
+
+  // POI gate: a cover depicting a real person (Image.poi, set by the image scanner) keeps the
+  // challenge out of public view — direct-URL parity with the feed filter. Creator exempt; skip
+  // the lookup entirely for trusted System challenges.
+  if (challenge.source === ChallengeSource.User && challenge.coverImageId) {
+    const cover = await dbRead.image.findUnique({
+      where: { id: challenge.coverImageId },
+      select: { poi: true },
+    });
+    if (
+      isChallengeHiddenByPoiCover(
+        {
+          source: challenge.source,
+          createdById: challenge.createdById,
+          coverPoi: cover?.poi ?? false,
+        },
+        viewerId
+      )
+    )
+      return null;
   }
 
   const { _internal, ...detail } = await buildChallengeDetail(challenge);
@@ -1462,33 +1496,29 @@ export async function upsertUserChallenge({
   return created;
 }
 
-// Moderation scan for a user challenge's author-supplied text (title/theme/invitation/
-// description). Flips ingestion Pending → Scanned, or → Blocked when the external
-// moderator flags hate/CSAM/etc. Fail-soft: on error we mark Error (retryable) rather than
-// auto-approving — the scan gate keeps the challenge hidden until it reaches Scanned.
+// Submits a user challenge's author-supplied text (title/theme/description; invitation is not
+// surfaced) to the async text-moderation pipeline (`EntityModeration` + XGuard). The result
+// callback resolves ingestion via `challengeModerationAdapter`: `blocked` → Blocked (hidden),
+// `nsfw` → Scanned with nsfwLevel floored to R, clean → Scanned. Idempotent — unchanged content
+// dedups on contentHash. The scan gate keeps the challenge hidden until it reaches Scanned.
 export async function scanUserChallenge(challengeId: number): Promise<void> {
   const challenge = await dbRead.challenge.findUnique({
     where: { id: challengeId },
-    select: { title: true, description: true, theme: true, invitation: true },
+    select: { title: true, description: true, theme: true },
   });
   if (!challenge) return;
 
-  const text = [challenge.title, challenge.theme, challenge.invitation, challenge.description]
-    .filter(Boolean)
-    .join('\n');
-
   try {
-    const { flagged } = await extModeration.moderatePrompt(text);
-    await dbWrite.challenge.update({
-      where: { id: challengeId },
-      data: {
-        ingestion: flagged ? ChallengeIngestionStatus.Blocked : ChallengeIngestionStatus.Scanned,
-        scannedAt: new Date(),
-      },
+    await submitTextModeration({
+      entityType: 'Challenge',
+      entityId: challengeId,
+      content: buildChallengeModerationText(challenge),
+      labels: ['nsfw'],
+      priority: 'low',
     });
   } catch (e) {
-    // Fail-soft: mark Error (retryable; the scan gate keeps it hidden) but log so scan failures
-    // aren't invisible in prod.
+    // Submit failure already persists a Failed EntityModeration row (the retry cron re-submits);
+    // log but don't rethrow so create/edit isn't blocked on a moderation-gateway hiccup.
     logToAxiom({
       type: 'error',
       name: 'user-challenge-scan-failed',
@@ -1496,9 +1526,6 @@ export async function scanUserChallenge(challengeId: number): Promise<void> {
       stack: e instanceof Error ? e.stack : undefined,
       challengeId,
     });
-    await dbWrite.challenge
-      .update({ where: { id: challengeId }, data: { ingestion: ChallengeIngestionStatus.Error } })
-      .catch(() => undefined);
   }
 }
 

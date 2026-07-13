@@ -23,9 +23,9 @@ export const challengeActivationJob = createJob('challenge-activation', '0 * * *
   if (!(await isFlipt(FLIPT_FEATURE_FLAGS.CHALLENGE_PLATFORM_ENABLED))) return;
 
   // User challenges past start that never passed scan can't activate (getChallengesReadyToStart
-  // requires Scanned). Blocked → void now (refunds fees + prize). Pending/Error → retry the scan
-  // (a success lets the normal activation below pick it up this same run); still unscanned after
-  // the grace window → void so the escrow isn't stranded forever.
+  // requires Scanned). Blocked → void now (refunds fees + prize). Pending/Error → re-submit the
+  // scan; it resolves asynchronously via the moderation webhook, so a later run activates it once
+  // it reaches Scanned. Still unscanned after the grace window → void so the escrow isn't stranded.
   const unscanned = await getUnscannedUserChallengesPastStart();
   for (const { id: challengeId, ingestion, startsAt } of unscanned) {
     try {

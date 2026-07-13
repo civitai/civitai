@@ -3,6 +3,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { removeTags } from '~/utils/string-helpers';
 import {
   challengeJudgingCategoriesSchema,
   type ChallengeJudgingCategory,
@@ -30,6 +31,18 @@ import {
 // Re-export pure pool computation (lives in separate file to avoid pulling
 // DB/Redis into client bundles)
 export { computeDynamicPool, distributePrizes } from './challenge-pool';
+
+// Author-supplied text sent to the text-moderation scan. `invitation` is intentionally excluded —
+// it isn't surfaced on user-created challenges. Description is RTE HTML, so tags are stripped.
+export function buildChallengeModerationText(challenge: {
+  title: string | null;
+  theme: string | null;
+  description: string | null;
+}) {
+  return [challenge.title, challenge.theme, challenge.description ? removeTags(challenge.description) : null]
+    .filter(Boolean)
+    .join('\n');
+}
 
 // =============================================================================
 // Challenge Table Helpers (New System)

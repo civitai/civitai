@@ -410,7 +410,7 @@ export type UpsertChallengeInput = z.infer<typeof upsertChallengeSchema>;
 export const userChallengeUpsertBaseSchema = z.object({
   id: z.number().optional(),
   title: z.string().trim().min(3).max(200),
-  description: z.string().max(5000).optional(),
+  description: z.string().min(1).max(5000),
   theme: z.string().trim().min(1).max(100),
   themeElements: z.array(z.string().max(100)).max(20).optional(),
   invitation: z.string().max(300).optional(),
