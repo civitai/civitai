@@ -1,6 +1,7 @@
 import * as z from 'zod';
 
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
+import { APP_LISTING_STATUSES } from '~/server/services/blocks/app-listing-status.constants';
 
 /**
  * App Store Listings (W13) — P2a UNIFIED STORE READ PATH schemas + public DTOs.
@@ -56,6 +57,31 @@ export const listAppListingsSchema = z.object({
   limit: z.number().int().min(1).max(50).default(20),
 });
 export type ListAppListingsInput = z.infer<typeof listAppListingsSchema>;
+
+/**
+ * W13 POST-APPROVAL MOD MANAGEMENT — the moderator all-status listings read.
+ *
+ * Backs `appListings.listAllListingsForModeration` (moderatorProcedure): unlike
+ * the public `listAvailable` (approved-only, public allowlist), this returns
+ * listings across EVERY lifecycle status for the mod management table. All filters
+ * are optional (omitted = the whole store); `search` matches name OR slug
+ * server-side (case-insensitive). Keyset-paginated by the ULID `id` (a stable
+ * total order), bounded `limit` ≤ 50 (mirrors `listListingReportsSchema`).
+ */
+export const listAllListingsForModerationSchema = z.object({
+  // Full AppListing lifecycle set (draft|pending|approved|rejected|removed).
+  status: z.enum(APP_LISTING_STATUSES).optional(),
+  kind: z.enum(['onsite', 'offsite']).optional(),
+  // Server-side name/slug substring filter (bounded; trimmed in the service).
+  search: z.string().max(200).optional(),
+  // Opaque keyset cursor = the last row's `id` (bounded, same as the sibling
+  // mod-read queues). A tampered value just yields a different/empty page.
+  cursor: z.string().min(1).max(64).optional(),
+  limit: z.number().int().min(1).max(50).default(25),
+});
+export type ListAllListingsForModerationInput = z.infer<
+  typeof listAllListingsForModerationSchema
+>;
 
 /** Detail lookup by EXACTLY ONE of slug or id (approved listings only). */
 export const getAppListingDetailSchema = z

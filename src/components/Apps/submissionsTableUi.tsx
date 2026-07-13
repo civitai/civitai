@@ -11,10 +11,10 @@ import { useState, type ReactNode } from 'react';
 import {
   ariaSortFor,
   STATUS_SECTION_ORDER,
+  type AnyStatusBucket,
   type BucketedGroups,
   type SortColumn,
   type SortState,
-  type StatusBucket,
   type SubmissionGroup,
 } from '~/components/Apps/submissionsTable';
 
@@ -139,13 +139,19 @@ export function VersionCountBadge({ count }: { count: number }) {
  * focused on what still needs attention.
  */
 export const STATUS_SECTION_META: Record<
-  StatusBucket,
+  AnyStatusBucket,
   { label: string; color: string; collapsible: boolean }
 > = {
   live: { label: 'Live', color: 'green', collapsible: false },
   pending: { label: 'Pending', color: 'blue', collapsible: false },
   rejected: { label: 'Rejected', color: 'red', collapsible: true },
   withdrawn: { label: 'Withdrawn', color: 'gray', collapsible: true },
+  // Mod-view sections (Live/Pending/Rejected reuse the entries above). `removed`
+  // (the mod takedown state) stays ALWAYS-EXPANDED — a removed listing still has
+  // relist/purge/claim actions a mod needs in view; `draft` is a quiet, terminal
+  // default-collapsed trailing section.
+  removed: { label: 'Removed', color: 'red', collapsible: false },
+  draft: { label: 'Draft', color: 'gray', collapsible: true },
 };
 
 /**
@@ -217,22 +223,26 @@ function StatusSection({
  * both the onsite (`MySubmissionsList`) and offsite (`OffsiteSubmissionsList`)
  * lists so the section layout + collapse behavior are identical.
  */
-export function StatusSections<T>({
+export function StatusSections<T, B extends string = AnyStatusBucket>({
   buckets,
   testIdPrefix,
   renderTable,
+  order = STATUS_SECTION_ORDER as unknown as readonly B[],
 }: {
-  buckets: BucketedGroups<T>;
+  buckets: BucketedGroups<T, B>;
   /** e.g. `apps-submissions-section` → section testids `${prefix}-live` etc. */
   testIdPrefix: string;
   renderTable: (groups: SubmissionGroup<T>[]) => ReactNode;
+  /** Which buckets to render, in order. Defaults to the OWNER four sections; the
+   *  mod table passes `MOD_STATUS_SECTION_ORDER`. */
+  order?: readonly B[];
 }) {
   return (
     <Stack gap="lg">
-      {STATUS_SECTION_ORDER.map((bucket) => {
+      {order.map((bucket) => {
         const groups = buckets[bucket];
         if (groups.length === 0) return null;
-        const meta = STATUS_SECTION_META[bucket];
+        const meta = STATUS_SECTION_META[bucket as AnyStatusBucket];
         return (
           <StatusSection
             key={bucket}
