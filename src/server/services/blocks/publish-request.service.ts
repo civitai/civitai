@@ -18,6 +18,9 @@ import {
 import { deriveOauthBitmaskFromBlockScopes } from '~/shared/constants/block-scope.constants';
 // Pure (no env/Prisma) — stamps the platform-owned iframe.src onto a manifest.
 import { stampCanonicalIframeSrc } from '~/server/services/blocks/manifest-normalize';
+// Pure const (no env/Prisma) — the marketplace category taxonomy + type guard.
+// approveRequest copies a validated manifest `category` onto AppBlock.category.
+import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 // Type-only (erased at runtime) — the AppBlock projection the shared
 // AppBlock→AppListing mapper consumes (see the (3b) auto-create block in
 // approveRequest). The mapper VALUE itself is dynamically imported at use.
@@ -1906,6 +1909,13 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     typeof manifest.contentRating === 'string' ? manifest.contentRating : 'g';
   const manifestRenderMode =
     typeof manifest.renderMode === 'string' ? manifest.renderMode : 'iframe';
+  // W13 category-on-approve: the OPTIONAL marketplace `category` the manifest
+  // declares (already shape-validated below by BlockManifestValidator — if
+  // present it is guaranteed a MARKETPLACE_CATEGORIES member; the guard here
+  // narrows the type + is defense-in-depth). `null` when the manifest omits it.
+  // Copied onto AppBlock.category ONLY when the row has no curated category yet
+  // (no-clobber — see the updateMany just before the (3b) listing-create block).
+  const manifestCategory = isMarketplaceCategory(manifest.category) ? manifest.category : null;
 
   // Determine first-vs-subsequent via the existing app_blocks row.
   // We don't rely on request.appBlockId being null because two requests
@@ -2170,6 +2180,30 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     await dbWrite.oauthClient.update({
       where: { id: existingAppBlock.appId },
       data: { grants: [], allowedScopes: derivedOauthCeiling },
+    });
+  }
+
+  // (3a) Category-on-approve (W13 follow-up to (3b)) — populate AppBlock.category
+  // from the validated manifest `category` so it flows to the auto-created store
+  // listing below WITHOUT any change to (3b)/`mapAppBlockToListing` (they already
+  // read AppBlock.category). NO-CLOBBER + read-your-writes, done as ONE atomic
+  // write across every path (first-version create, P2002-retry, subsequent
+  // version): a targeted `updateMany` gated on `category: null` sets it ONLY when
+  // no category is present yet. This is immune to replica lag (the gate is
+  // evaluated at the PRIMARY, unlike the `dbRead` row read above) and guarantees
+  // a moderator's curated category (set via `setMarketplaceMeta`) is never
+  // overridden by a re-approve. Skipped entirely when the manifest declares no
+  // category (the row keeps whatever it had — null for a fresh app). Runs BEFORE
+  // the (3b) block's `dbWrite.appBlock.findUnique` re-read (same PRIMARY), so the
+  // listing-create reads the just-written category (read-your-writes). A first-
+  // version approve whose manifest declares a category therefore mints a listing
+  // already categorised; a manifest with no category leaves it null (mod-curated
+  // later). The "category added in a LATER version" case (listing already exists,
+  // so (3b) skips it) is an accepted non-goal — recoverable via mod curation.
+  if (manifestCategory !== null) {
+    await dbWrite.appBlock.updateMany({
+      where: { id: appBlockId, category: null },
+      data: { category: manifestCategory },
     });
   }
 

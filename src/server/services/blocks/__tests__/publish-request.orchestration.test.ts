@@ -82,7 +82,16 @@ const {
       // `findUnique` added (W13 auto-create-on-approve): approveRequest re-reads
       // the freshly-approved AppBlock's own columns off the PRIMARY to map it into
       // the onsite AppListing (same projection the backfill selects).
-      appBlock: { create: vi.fn(), update: vi.fn(), findUnique: vi.fn() },
+      // `updateMany` added (W13 category-on-approve): approveRequest copies a
+      // validated manifest `category` onto AppBlock.category via a targeted,
+      // no-clobber `updateMany` (gated on category=null) right before the (3b)
+      // listing-create re-read.
+      appBlock: {
+        create: vi.fn(),
+        update: vi.fn(),
+        updateMany: vi.fn(),
+        findUnique: vi.fn(),
+      },
       // `update` added 2026-06-02 (audit A1 fix): approveRequest now re-caps
       // the app-block OauthClient's allowedScopes to the manifest-derived
       // ceiling + forces grants:[] on the subsequent-version + P2002-retry
@@ -267,6 +276,9 @@ beforeEach(() => {
   mockTriggerBuild.mockResolvedValue({ name: 'pipelinerun-mock' });
   mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 0 });
   mockDbWrite.appBlock.update.mockResolvedValue(undefined);
+  // W13 category-on-approve default: the no-clobber category `updateMany` is a
+  // no-op unless a test opts in (the default manifest declares no category).
+  mockDbWrite.appBlock.updateMany.mockResolvedValue({ count: 0 });
 
   // Default: no pending conflict, no existing app block, user lookup OK.
   mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
@@ -2110,6 +2122,136 @@ describe('approveRequest', () => {
       expect(result.forgejoCommitSha).toBe('commit_sha_abc');
       // Still exactly ONE listing create across BOTH approves — no duplicate.
       expect(mockDbWrite.appListing.create).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ---- W13: category-on-approve ------------------------------------------
+  //
+  // approveRequest now copies a VALIDATED manifest `category` onto
+  // AppBlock.category so it flows to the auto-created (3b) store listing —
+  // WITHOUT touching (3b) or the mapper (they already read AppBlock.category).
+  // It's a targeted, NO-CLOBBER `updateMany` gated on `category: null`, run at
+  // the PRIMARY right before the (3b) re-read (read-your-writes), so a mod's
+  // curated category is never overridden and a manifest with no category leaves
+  // the column null.
+  describe('W13: category-on-approve (manifest category → AppBlock.category → listing)', () => {
+    // Simulate the DB row's category column with no-clobber `updateMany`
+    // (category set ONLY when currently null) feeding the (3b) findUnique
+    // re-read — so the listing-create assertion is genuinely end-to-end, not a
+    // tautology. `initial` is whatever category the row already carries.
+    function simulateCategoryPersistence(initial: string | null) {
+      const state: { category: string | null } = { category: initial };
+      mockDbWrite.appBlock.updateMany.mockImplementation(
+        async (args: { where: { category: unknown }; data: { category?: string } }) => {
+          // Mirror the SQL `WHERE category IS NULL` gate: only set when null.
+          if (state.category === null && typeof args.data.category === 'string') {
+            state.category = args.data.category;
+            return { count: 1 };
+          }
+          return { count: 0 };
+        }
+      );
+      mockDbWrite.appBlock.findUnique.mockImplementation(
+        async (args: { where: { id: string } }) => ({
+          id: args.where.id,
+          blockId: 'hello',
+          manifest: manifest(),
+          contentRating: 'g',
+          category: state.category,
+          featured: false,
+          featuredOrder: null,
+          externalUrl: null,
+          app: { userId: 42 },
+        })
+      );
+      return state;
+    }
+
+    it('first-version approve with a manifest category sets AppBlock.category (no-clobber gate) and the listing mirrors it', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({ manifest: manifest({ category: 'generation' }) })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle({ category: 'generation' });
+      const state = simulateCategoryPersistence(null);
+
+      const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      // The category-set is a targeted, no-clobber updateMany gated on category=null.
+      expect(mockDbWrite.appBlock.updateMany).toHaveBeenCalledWith({
+        where: { id: result.appBlockId, category: null },
+        data: { category: 'generation' },
+      });
+      expect(state.category).toBe('generation');
+      // End-to-end: the auto-created onsite listing is categorised from the manifest.
+      expect(mockDbWrite.appListing.create).toHaveBeenCalledTimes(1);
+      const data = mockDbWrite.appListing.create.mock.calls[0][0].data;
+      expect(data.category).toBe('generation');
+    });
+
+    it('no-clobber: a moderator-curated category is NOT overridden by a re-approve whose manifest declares a different one', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      // Subsequent-version approve; the manifest declares 'games'…
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({ manifest: manifest({ version: '0.2.0', category: 'games' }) })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue({
+        id: 'apb_existing',
+        appId: 'oc_existing',
+        repoUrl: 'https://forgejo.example/civitai-apps/hello',
+        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+      });
+      // …but the row already carries the moderator's curated 'utility'. Use the
+      // transition case (no prior listing) so a listing IS minted and we can
+      // assert its category faithfully mirrors the curated value, not 'games'.
+      mockDbRead.appListing.findUnique.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0', category: 'games' });
+      const state = simulateCategoryPersistence('utility');
+
+      await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      // The updateMany still runs (manifest has a category) but its null-gate
+      // matches 0 rows, so the curated value survives.
+      expect(mockDbWrite.appBlock.updateMany).toHaveBeenCalledWith({
+        where: { id: 'apb_existing', category: null },
+        data: { category: 'games' },
+      });
+      expect(state.category).toBe('utility');
+      const data = mockDbWrite.appListing.create.mock.calls[0][0].data;
+      expect(data.category).toBe('utility');
+    });
+
+    it('manifest with NO category leaves AppBlock.category null (no updateMany, listing uncategorised)', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle();
+      const state = simulateCategoryPersistence(null);
+
+      await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      // No manifest category ⇒ the category-set is skipped entirely.
+      expect(mockDbWrite.appBlock.updateMany).not.toHaveBeenCalled();
+      expect(state.category).toBeNull();
+      const data = mockDbWrite.appListing.create.mock.calls[0][0].data;
+      expect(data.category).toBeNull();
+    });
+
+    it('rejects an approve whose manifest declares an unknown category (validator gate)', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({ manifest: manifest({ category: 'not-a-category' }) })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle({ category: 'not-a-category' });
+
+      await expect(
+        approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+      ).rejects.toThrow(/Invalid manifest — cannot approve/);
+      // Pre-validation fails before any category write or listing-create.
+      expect(mockDbWrite.appBlock.updateMany).not.toHaveBeenCalled();
+      expect(mockDbWrite.appListing.create).not.toHaveBeenCalled();
     });
   });
 });
