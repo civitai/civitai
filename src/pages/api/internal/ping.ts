@@ -50,8 +50,11 @@ export default PublicEndpoint(
       country,
       ads: ads ?? false,
       duration: Math.floor(duration),
-      windowWidth,
-      windowHeight,
+      // pageView requires number; a malformed body (the case we now tolerate) may
+      // omit these — 0 is a safe fallback (the client always sends them, so the
+      // legit path is unchanged).
+      windowWidth: windowWidth ?? 0,
+      windowHeight: windowHeight ?? 0,
     });
 
     return res.status(200).end();
