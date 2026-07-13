@@ -1920,7 +1920,7 @@ const chargeContestEntryFeesForCollection = async ({
   if (isModerator || imageIds.length === 0) return undefined;
   const feeChallenge = await dbRead.challenge.findFirst({
     where: { collectionId, source: 'User', entryFee: { gt: 0 }, status: 'Active' },
-    select: { id: true, entryFee: true },
+    select: { id: true, entryFee: true, buzzType: true },
   });
   if (!feeChallenge) return undefined;
   const { chargeEntryFees } = await import('~/server/games/daily-challenge/challenge-funding');
@@ -1929,6 +1929,7 @@ const chargeContestEntryFeesForCollection = async ({
     userId,
     imageIds,
     entryFee: feeChallenge.entryFee,
+    fromAccountType: feeChallenge.buzzType === 'green' ? 'green' : 'yellow',
   });
 };
 
