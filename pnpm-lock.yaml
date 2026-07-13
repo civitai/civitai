@@ -939,6 +939,9 @@ importers:
       '@civitai/brand':
         specifier: workspace:*
         version: link:../../packages/civitai-brand
+      '@civitai/clickhouse':
+        specifier: workspace:*
+        version: link:../../packages/civitai-clickhouse
       '@civitai/db':
         specifier: workspace:*
         version: link:../../packages/civitai-db
