@@ -69,6 +69,7 @@ import {
   refundUserChallengeFunds,
 } from '~/server/games/daily-challenge/challenge-funding';
 import {
+  isChallengeHiddenByDomainCurrency,
   isNonSfwForGreen,
   type ChallengeBuzzType,
 } from '~/server/games/daily-challenge/challenge-currency';
@@ -332,7 +333,7 @@ export async function getDailyChallenges(limit = 4): Promise<ChallengeListItem[]
 }
 
 export async function getInfiniteChallenges(
-  input: GetInfiniteChallengesInput & { currentUserId?: number }
+  input: GetInfiniteChallengesInput & { currentUserId?: number; isGreen?: boolean }
 ) {
   const {
     query,
@@ -348,6 +349,7 @@ export async function getInfiniteChallenges(
     limit,
     cursor,
     currentUserId,
+    isGreen,
   } = input;
 
   // Build WHERE conditions using parameterized queries (SQL injection safe)
@@ -375,6 +377,10 @@ export async function getInfiniteChallenges(
       ? Prisma.sql`(NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."poi" = true) OR c."createdById" = ${currentUserId})`
       : Prisma.sql`NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."poi" = true)`
   );
+
+  // Domain-currency gate: green challenges only surface on the green site, yellow only off-green.
+  const domainCurrency = isGreen ? 'green' : 'yellow';
+  conditions.push(Prisma.sql`c."buzzType" = ${domainCurrency}`);
 
   // Status filter (parameterized)
   if (status && status.length > 0) {
@@ -813,7 +819,8 @@ async function buildChallengeDetail(
  */
 export async function getChallengeDetail(
   id: number,
-  viewerId?: number
+  viewerId?: number,
+  isGreen?: boolean
 ): Promise<ChallengeDetail | null> {
   const challenge = await getChallengeById(id);
   if (!challenge) return null;
@@ -853,6 +860,16 @@ export async function getChallengeDetail(
     )
       return null;
   }
+
+  // Domain-currency gate — direct-URL parity with the feed filter; creator exempt.
+  if (
+    isChallengeHiddenByDomainCurrency(
+      { buzzType: challenge.buzzType, createdById: challenge.createdById },
+      isGreen ?? false,
+      viewerId
+    )
+  )
+    return null;
 
   const { _internal, ...detail } = await buildChallengeDetail(challenge);
   return detail;

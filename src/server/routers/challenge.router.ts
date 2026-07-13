@@ -77,7 +77,9 @@ export const challengeRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getInfiniteChallengesSchema)
     .use(isFlagProtected('challengePlatform'))
-    .query(({ input, ctx }) => getInfiniteChallenges({ ...input, currentUserId: ctx.user?.id })),
+    .query(({ input, ctx }) =>
+      getInfiniteChallenges({ ...input, currentUserId: ctx.user?.id, isGreen: ctx.features.isGreen })
+    ),
 
   // Active + next few upcoming daily (System) challenges for the horizontal daily row
   getDaily: publicProcedure
@@ -90,7 +92,7 @@ export const challengeRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
     .use(isFlagProtected('challengePlatform'))
-    .query(({ input, ctx }) => getChallengeDetail(input.id, ctx.user?.id)),
+    .query(({ input, ctx }) => getChallengeDetail(input.id, ctx.user?.id, ctx.features.isGreen)),
 
   // Get upcoming challenge themes for preview widget
   getUpcomingThemes: publicProcedure

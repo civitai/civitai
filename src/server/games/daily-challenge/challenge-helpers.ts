@@ -4,6 +4,7 @@ import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { removeTags } from '~/utils/string-helpers';
+import type { ChallengeBuzzType } from '~/server/games/daily-challenge/challenge-currency';
 import {
   challengeJudgingCategoriesSchema,
   type ChallengeJudgingCategory,
@@ -89,6 +90,7 @@ export type ChallengeDetails = {
   reviewCost: number;
   createdById: number | null; // nullable: creator account deletion sets this NULL (FK ON DELETE SET NULL)
   source: ChallengeSource;
+  buzzType: ChallengeBuzzType;
   status: ChallengeStatus;
   ingestion: ChallengeIngestionStatus;
   scannedAt: Date | null;
@@ -166,6 +168,7 @@ export async function getChallengeById(challengeId: number): Promise<ChallengeDe
       c."reviewCost",
       c."createdById",
       c.source,
+      c."buzzType",
       c.status,
       c."ingestion",
       c."scannedAt",
