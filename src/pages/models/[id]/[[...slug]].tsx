@@ -120,7 +120,11 @@ import { getDefaultModelVersion } from '~/server/services/model-version.service'
 import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import {
+  getIsSafeBrowsingLevel,
+  publicBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { ModelModifier } from '~/shared/utils/prisma/enums';
 import { Availability, CollectionType, ModelStatus, ModelType } from '~/shared/utils/prisma/enums';
 import type { ModelById } from '~/types/router';
@@ -311,22 +315,30 @@ export const getServerSideProps = createServerSideProps({
                 })
                 .catch(() => null)
             : null,
-          // Carousel CLS fix: SSR-prefetch the images query the ModelCarousel
-          // (and the page's own useQueryImages) run client-side, so it hydrates
-          // with isLoading already false — the carousel reserves the right height
-          // from real image dimensions instead of a fixed 600px placeholder that
-          // rarely matches (layout shift). The input MUST match useQueryImages
-          // exactly: the addon-derived excludedTagIds/disablePoi/disableMinor are
-          // resolved from the LIVE addon list at the request's browsing level (not
-          // the DEFAULT constant), or the React Query key won't line up and the
-          // client refetches. Fail-soft on any miss.
+          // Carousel CLS fix: SSR-prefetch the images query the ModelCarousel runs
+          // client-side, so it hydrates with isLoading already false — the carousel
+          // reserves the right height from real image dimensions instead of a fixed
+          // 600px placeholder that rarely matches (layout shift). The input MUST
+          // match useQueryImages exactly — browsingLevel and the addon-derived
+          // excludedTagIds/disablePoi/disableMinor all key the query — or the React
+          // Query key won't line up and the client refetches. Fail-soft on any miss.
           model && modelVersionIdParsed
             ? (async () => {
                 const { getBrowsingSettingAddons } = await import('~/server/services/system-cache');
-                const browsingLevel = getServerBrowsingLevel({
-                  canViewNsfw: features?.canViewNsfw ?? false,
-                  user: session?.user,
-                });
+                // Mirror ModelCarousel: a minor model forces its carousel to SFW for
+                // non-moderators, so SSR must resolve at that same forced level. Using
+                // the viewer's own level here would key on a different disableMinor
+                // (and browsingLevel) than the client, orphaning the prefetch on
+                // exactly the models this matters for.
+                const forceMinorLevel = !!model.minor && !session?.user?.isModerator;
+                const browsingLevel = forceMinorLevel
+                  ? session?.user
+                    ? sfwBrowsingLevelsFlag
+                    : publicBrowsingLevelsFlag
+                  : getServerBrowsingLevel({
+                      canViewNsfw: features?.canViewNsfw ?? false,
+                      user: session?.user,
+                    });
                 const addons = await getBrowsingSettingAddons().catch(() => null);
                 if (!addons) return null;
                 const addonSettings = resolveBrowsingSettingsAddons(addons, browsingLevel, {
@@ -342,6 +354,7 @@ export const getServerSideProps = createServerSideProps({
                     pending: true,
                     include: [],
                     withMeta: false,
+                    browsingLevel,
                     excludedTagIds: addonSettings.excludedTagIds,
                     disablePoi: addonSettings.disablePoi,
                     disableMinor: addonSettings.disableMinor,
