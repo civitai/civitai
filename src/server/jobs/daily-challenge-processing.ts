@@ -1345,57 +1345,97 @@ export async function pickWinnersForChallenge(
         return;
       }
 
-      log('Sending entries for final judgment');
-      const generated = await generateWinners({
-        theme: currentChallenge.theme,
-        entries: judgedEntries.map((entry) => ({
-          creator: entry.username,
-          creatorId: entry.userId,
-          summary: entry.summary,
-          score: entry.score,
-        })),
-        config: judgingConfig,
-      });
-      process = generated.process;
-      outcome = generated.outcome;
+      // Degenerate participation: asking an LLM to pick "exactly 3" winners among fewer than 2
+      // distinct entrants is semantically broken (and a wasted judging call) — skip
+      // generateWinners and award place 1 deterministically instead. judgedEntries.length is
+      // already guaranteed >= 1 here (see the empty-entries return above), so "< 2 distinct"
+      // can only mean exactly one distinct entrant.
+      const distinctEntrantIds = new Set(judgedEntries.map((entry) => entry.userId));
 
-      const winnersBuzzCost = Math.ceil(estimateBuzzCost(generated.model, generated.usage));
-      if (winnersBuzzCost > 0) {
-        await incrementOperationSpent(currentChallenge.challengeId, winnersBuzzCost);
-      }
+      if (distinctEntrantIds.size < 2) {
+        const [soleEntry] = judgedEntries;
+        log('Fewer than 2 distinct entrants — awarding place 1 deterministically (no LLM):', {
+          challengeId: currentChallenge.challengeId,
+          userId: soleEntry.userId,
+        });
 
-      // Map winners to entries
-      winningEntries = generated.winners
-        .map((winner, i) => {
-          const entry = judgedEntries.find(
-            (e) =>
-              e.username.toLowerCase() === winner.creator.toLowerCase() ||
-              e.userId === winner.creatorId
-          );
-          if (!entry) return null;
-          return {
-            userId: entry.userId,
-            imageId: entry.imageId,
-            position: i + 1,
-            prize: currentChallenge.prizes[i]?.buzz ?? 0,
-            reason: winner.reason,
-          };
-        })
-        .filter(isDefined);
+        const prize = currentChallenge.prizes[0]?.buzz ?? 0;
+        const soleWinnerReason = 'Sole eligible entrant';
+        winningEntries = [
+          {
+            userId: soleEntry.userId,
+            imageId: soleEntry.imageId,
+            position: 1,
+            prize,
+            reason: soleWinnerReason,
+          },
+        ];
+        process = 'Deterministic award: fewer than 2 distinct entrants';
+        outcome = 'Sole entrant awarded place 1 without LLM judging';
 
-      // 4. Create ChallengeWinner records (idempotent via P2002 handling)
-      for (const entry of winningEntries) {
         await createChallengeWinner({
           challengeId: currentChallenge.challengeId,
-          userId: entry.userId,
-          imageId: entry.imageId!, // always non-null on fresh winner path
-          place: entry.position,
-          buzzAwarded: entry.prize,
-          pointsAwarded: currentChallenge.prizes[entry.position - 1]?.points ?? 0,
-          reason: entry.reason ?? undefined,
+          userId: soleEntry.userId,
+          imageId: soleEntry.imageId,
+          place: 1,
+          buzzAwarded: prize,
+          pointsAwarded: currentChallenge.prizes[0]?.points ?? 0,
+          reason: soleWinnerReason,
         });
+        log('ChallengeWinner record created (deterministic sole-entrant award)');
+      } else {
+        log('Sending entries for final judgment');
+        const generated = await generateWinners({
+          theme: currentChallenge.theme,
+          entries: judgedEntries.map((entry) => ({
+            creator: entry.username,
+            creatorId: entry.userId,
+            summary: entry.summary,
+            score: entry.score,
+          })),
+          config: judgingConfig,
+        });
+        process = generated.process;
+        outcome = generated.outcome;
+
+        const winnersBuzzCost = Math.ceil(estimateBuzzCost(generated.model, generated.usage));
+        if (winnersBuzzCost > 0) {
+          await incrementOperationSpent(currentChallenge.challengeId, winnersBuzzCost);
+        }
+
+        // Map winners to entries
+        winningEntries = generated.winners
+          .map((winner, i) => {
+            const entry = judgedEntries.find(
+              (e) =>
+                e.username.toLowerCase() === winner.creator.toLowerCase() ||
+                e.userId === winner.creatorId
+            );
+            if (!entry) return null;
+            return {
+              userId: entry.userId,
+              imageId: entry.imageId,
+              position: i + 1,
+              prize: currentChallenge.prizes[i]?.buzz ?? 0,
+              reason: winner.reason,
+            };
+          })
+          .filter(isDefined);
+
+        // 4. Create ChallengeWinner records (idempotent via P2002 handling)
+        for (const entry of winningEntries) {
+          await createChallengeWinner({
+            challengeId: currentChallenge.challengeId,
+            userId: entry.userId,
+            imageId: entry.imageId!, // always non-null on fresh winner path
+            place: entry.position,
+            buzzAwarded: entry.prize,
+            pointsAwarded: currentChallenge.prizes[entry.position - 1]?.points ?? 0,
+            reason: entry.reason ?? undefined,
+          });
+        }
+        log('ChallengeWinner records created');
       }
-      log('ChallengeWinner records created');
     }
 
     // 5. Distribute winner buzz prizes. Pay `entry.prize` (keyed to the entry's PLACE and equal
