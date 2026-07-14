@@ -121,7 +121,7 @@ describe.each(SCOPES)('withBlockScope authz — %s', (scope) => {
     const wrapped = vi.fn(async (_req: NextApiRequest, res: NextApiResponse) => {
       res.status(200).json({ ok: true });
     });
-    const route = withBlockScope(wrapped as never, { requiredScope: scope });
+    const route = withBlockScope(wrapped as never, { endpoint: 'collections', requiredScope: scope });
 
     const res = makeRes();
     await route(makeReq(`Bearer ${token}`) as never, res as never);
@@ -133,7 +133,7 @@ describe.each(SCOPES)('withBlockScope authz — %s', (scope) => {
   it('rejects a valid token MISSING the scope → 403', async () => {
     const token = await mintToken({ userId: 42, scopes: [] });
     const wrapped = vi.fn();
-    const route = withBlockScope(wrapped as never, { requiredScope: scope });
+    const route = withBlockScope(wrapped as never, { endpoint: 'collections', requiredScope: scope });
 
     const res = makeRes();
     await route(makeReq(`Bearer ${token}`) as never, res as never);
@@ -145,7 +145,7 @@ describe.each(SCOPES)('withBlockScope authz — %s', (scope) => {
   it('rejects an ANON token carrying the scope → 403 (self-scope requires a real subject)', async () => {
     const token = await mintToken({ userId: null, scopes: [scope] });
     const wrapped = vi.fn();
-    const route = withBlockScope(wrapped as never, { requiredScope: scope });
+    const route = withBlockScope(wrapped as never, { endpoint: 'collections', requiredScope: scope });
 
     const res = makeRes();
     await route(makeReq(`Bearer ${token}`) as never, res as never);
@@ -158,7 +158,7 @@ describe.each(SCOPES)('withBlockScope authz — %s', (scope) => {
     isRevokedMock.mockResolvedValue(true);
     const token = await mintToken({ userId: 42, scopes: [scope] });
     const wrapped = vi.fn();
-    const route = withBlockScope(wrapped as never, { requiredScope: scope });
+    const route = withBlockScope(wrapped as never, { endpoint: 'collections', requiredScope: scope });
 
     const res = makeRes();
     await route(makeReq(`Bearer ${token}`) as never, res as never);
@@ -174,7 +174,7 @@ describe.each(SCOPES)('withBlockScope authz — %s', (scope) => {
     const payload = Buffer.from(JSON.stringify({ sub: 'user:1' })).toString('base64url');
     const bogus = `${header}.${payload}.bad`;
     const wrapped = vi.fn();
-    const route = withBlockScope(wrapped as never, { requiredScope: scope });
+    const route = withBlockScope(wrapped as never, { endpoint: 'collections', requiredScope: scope });
 
     const res = makeRes();
     await route(makeReq(`Bearer ${bogus}`) as never, res as never);
@@ -195,7 +195,7 @@ describe('withBlockScope authz — apps:storage:shared:read (anon-allowed read)'
     const wrapped = vi.fn(async (_req: NextApiRequest, res: NextApiResponse) => {
       res.status(200).json({ ok: true });
     });
-    const route = withBlockScope(wrapped as never, { requiredScope: scope });
+    const route = withBlockScope(wrapped as never, { endpoint: 'collections', requiredScope: scope });
     const res = makeRes();
     await route(makeReq(`Bearer ${token}`, 'GET') as never, res as never);
     expect(res.statusCode).toBe(200);
@@ -206,7 +206,7 @@ describe('withBlockScope authz — apps:storage:shared:read (anon-allowed read)'
     const wrapped = vi.fn(async (_req: NextApiRequest, res: NextApiResponse) => {
       res.status(200).json({ ok: true });
     });
-    const route = withBlockScope(wrapped as never, { requiredScope: scope });
+    const route = withBlockScope(wrapped as never, { endpoint: 'collections', requiredScope: scope });
     const res = makeRes();
     await route(makeReq(`Bearer ${token}`, 'GET') as never, res as never);
     expect(res.statusCode).toBe(200);
@@ -215,7 +215,7 @@ describe('withBlockScope authz — apps:storage:shared:read (anon-allowed read)'
   it('rejects a token MISSING the scope → 403', async () => {
     const token = await mintToken({ userId: 42, scopes: [] });
     const wrapped = vi.fn();
-    const route = withBlockScope(wrapped as never, { requiredScope: scope });
+    const route = withBlockScope(wrapped as never, { endpoint: 'collections', requiredScope: scope });
     const res = makeRes();
     await route(makeReq(`Bearer ${token}`, 'GET') as never, res as never);
     expect(res.statusCode).toBe(403);
@@ -226,7 +226,7 @@ describe('withBlockScope authz — apps:storage:shared:read (anon-allowed read)'
     isRevokedMock.mockResolvedValue(true);
     const token = await mintToken({ userId: 42, scopes: [scope] });
     const wrapped = vi.fn();
-    const route = withBlockScope(wrapped as never, { requiredScope: scope });
+    const route = withBlockScope(wrapped as never, { endpoint: 'collections', requiredScope: scope });
     const res = makeRes();
     await route(makeReq(`Bearer ${token}`, 'GET') as never, res as never);
     expect(res.statusCode).toBe(403);

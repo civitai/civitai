@@ -1,6 +1,10 @@
 import { isDev } from '~/env/other';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { Tracker } from '~/server/clickhouse/client';
+import {
+  ensureRegisterAppBlockRuntimeMetrics,
+  normalizeSlotId,
+} from '~/server/metrics/app-block-runtime.metrics';
 import { blockRenderSchema } from '~/server/schema/track.schema';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 
@@ -61,6 +65,29 @@ export default PublicEndpoint(
     const result = blockRenderSchema.safeParse(parsed);
     if (!result.success) return res.status(400).send('invalid input');
 
+    // `status`/`errorClass` drive the prom render counter ONLY — they are NOT
+    // forwarded to the ClickHouse insert (the `blockRenders` table is provisioned
+    // out-of-repo by the tracker service; adding columns is out of scope here).
+    // Strip them so the CH payload stays byte-identical to the pre-change insert.
+    const { status, errorClass: _errorClass, ...renderData } = result.data;
+
+    // Per-app render/impression outcome (additive + dark). `result` ∈ ok|error.
+    // `slot_id` is clamped to the enumerated slot set (unknown → 'other');
+    // `app_block_id` is client-supplied here (same trust level as the CH insert)
+    // — see the cardinality-budget note in app-block-runtime.metrics. Emitted
+    // AFTER the same-origin + schema gates so only well-formed beacons count.
+    // Fire-and-forget: never let a metrics failure break the beacon.
+    try {
+      const { rendersTotal } = ensureRegisterAppBlockRuntimeMetrics();
+      rendersTotal.inc({
+        app_block_id: renderData.appBlockId,
+        slot_id: normalizeSlotId(renderData.slotId),
+        result: status,
+      });
+    } catch {
+      // swallow — observability must not affect the response
+    }
+
     // Resolve the session ONCE here so we can derive isAnon, then hand it to the
     // Tracker (3rd ctor arg) so it isn't re-resolved. `isAnon` is SERVER-derived
     // (`!session?.user`) — never from the client body.
@@ -68,7 +95,7 @@ export default PublicEndpoint(
     const tracker = new Tracker(req, res, session);
     // Fire-and-forget: blockRender() dispatches the ClickHouse insert without
     // awaiting the network round-trip (same as the tRPC resolver did).
-    void tracker.blockRender({ ...result.data, isAnon: !session?.user });
+    void tracker.blockRender({ ...renderData, isAnon: !session?.user });
 
     return res.status(200).end();
   },

@@ -148,7 +148,7 @@ describe('withBlockScope — "any valid block token" mode (no requiredScope)', (
     const wrapped = vi.fn(async (_req: NextApiRequest, res: NextApiResponse) => {
       res.status(200).json({ via: 'block' });
     });
-    const route = withBlockScope(wrapped as never, {}); // NO requiredScope
+    const route = withBlockScope(wrapped as never, { endpoint: 'models' }); // NO requiredScope
 
     const res = makeRes();
     await route(makeReq(`Bearer ${token}`) as never, res as never);
@@ -163,7 +163,7 @@ describe('withBlockScope — "any valid block token" mode (no requiredScope)', (
 
   it('still rejects an INVALID token → 401 (full validation preserved)', async () => {
     const wrapped = vi.fn();
-    const route = withBlockScope(wrapped as never, {});
+    const route = withBlockScope(wrapped as never, { endpoint: 'models' });
 
     // 3-segment JWS with a RS256/typ:JWT/kid header (passes isBlockJwt shape)
     // but a bogus signature → verifyBlockToken returns null → 401.
@@ -184,7 +184,7 @@ describe('withBlockScope — "any valid block token" mode (no requiredScope)', (
     isRevokedMock.mockResolvedValue(true);
     const token = await mintToken([]);
     const wrapped = vi.fn();
-    const route = withBlockScope(wrapped as never, {});
+    const route = withBlockScope(wrapped as never, { endpoint: 'models' });
 
     const res = makeRes();
     await route(makeReq(`Bearer ${token}`) as never, res as never);
@@ -199,7 +199,7 @@ describe('withBlockScope — "any valid block token" mode (no requiredScope)', (
     const wrapped = vi.fn(async (_req: NextApiRequest, res: NextApiResponse) => {
       res.status(401).json({ error: 'Block token required' });
     });
-    const route = withBlockScope(wrapped as never, {});
+    const route = withBlockScope(wrapped as never, { endpoint: 'models' });
 
     const res = makeRes();
     await route(makeReq() as never, res as never);
@@ -216,7 +216,7 @@ describe('withBlockScope — opaque-origin CORS (allowOpaqueOrigin, catalog endp
     // in, so the preflight is fully handled here (the wrapped handler — which
     // would 405 a non-GET — is never reached).
     const wrapped = vi.fn();
-    const route = withBlockScope(wrapped as never, { allowOpaqueOrigin: true });
+    const route = withBlockScope(wrapped as never, { endpoint: 'models', allowOpaqueOrigin: true });
 
     const res = makeRes();
     await route(
@@ -235,7 +235,7 @@ describe('withBlockScope — opaque-origin CORS (allowOpaqueOrigin, catalog endp
     const wrapped = vi.fn(async (_req: NextApiRequest, res: NextApiResponse) => {
       res.status(200).json({ via: 'block' });
     });
-    const route = withBlockScope(wrapped as never, { allowOpaqueOrigin: true });
+    const route = withBlockScope(wrapped as never, { endpoint: 'models', allowOpaqueOrigin: true });
 
     const res = makeRes();
     await route(
@@ -253,7 +253,7 @@ describe('withBlockScope — opaque-origin CORS (allowOpaqueOrigin, catalog endp
     const wrapped = vi.fn(async (_req: NextApiRequest, res: NextApiResponse) => {
       res.status(401).json({ error: 'Block token required' });
     });
-    const route = withBlockScope(wrapped as never, { allowOpaqueOrigin: true });
+    const route = withBlockScope(wrapped as never, { endpoint: 'models', allowOpaqueOrigin: true });
 
     const res = makeRes();
     // No Authorization header → falls through to the wrapped handler's 401 guard.
@@ -268,7 +268,7 @@ describe('withBlockScope — opaque-origin CORS (allowOpaqueOrigin, catalog endp
     // A scoped route (or any route without allowOpaqueOrigin) must NEVER echo
     // ACAO:null — that would let any sandboxed page read a per-user response.
     const wrapped = vi.fn();
-    const route = withBlockScope(wrapped as never, { requiredScope: 'models:read:self' });
+    const route = withBlockScope(wrapped as never, { endpoint: 'models', requiredScope: 'models:read:self' });
 
     const res = makeRes();
     await route(
@@ -283,7 +283,7 @@ describe('withBlockScope — opaque-origin CORS (allowOpaqueOrigin, catalog endp
 
   it('the opt-in does NOT widen to arbitrary real origins — only the literal `null` is special-cased', async () => {
     const wrapped = vi.fn();
-    const route = withBlockScope(wrapped as never, { allowOpaqueOrigin: true });
+    const route = withBlockScope(wrapped as never, { endpoint: 'models', allowOpaqueOrigin: true });
 
     const res = makeRes();
     await route(

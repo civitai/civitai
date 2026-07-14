@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import client from 'prom-client';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 /**
@@ -240,5 +241,76 @@ describe('POST /api/track/block-render', () => {
     expect(mockBlockRender).not.toHaveBeenCalled();
     expect(mockGetSession).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(200);
+  });
+});
+
+// --- App Blocks runtime observability: the render-outcome prom counter --------
+async function renderCounterValue(
+  appBlockId: string,
+  slotId: string,
+  result: string
+): Promise<number> {
+  const metric = client.register.getSingleMetric('civitai_app_block_renders_total');
+  if (!metric) return 0;
+  const data = await (
+    metric as { get(): Promise<{ values: Array<{ labels: Record<string, string>; value: number }> }> }
+  ).get();
+  const match = data.values.find(
+    (v) => v.labels.app_block_id === appBlockId && v.labels.slot_id === slotId && v.labels.result === result
+  );
+  return match?.value ?? 0;
+}
+
+describe('POST /api/track/block-render — civitai_app_block_renders_total counter', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    devStore.isDev = false;
+    sessionStore.session = null;
+  });
+
+  it('increments result=ok (schema default) on a status-less beacon AND keeps status/errorClass out of the CH insert', async () => {
+    const before = await renderCounterValue('apb_test', 'app.page', 'ok');
+    const handler = (await import('~/pages/api/track/block-render')).default;
+    const req = makeReq({ origin: 'https://civitai.com', body: validInput });
+    const res = makeRes();
+
+    await handler(req as any, res);
+
+    expect(await renderCounterValue('apb_test', 'app.page', 'ok')).toBe(before + 1);
+    // status/errorClass never reach the ClickHouse insert (prom-only).
+    const arg = mockBlockRender.mock.calls[0][0];
+    expect(arg).not.toHaveProperty('status');
+    expect(arg).not.toHaveProperty('errorClass');
+    expect(arg).toEqual({ ...validInput, isAnon: true });
+  });
+
+  it('increments result=error when the beacon carries status:"error"', async () => {
+    const before = await renderCounterValue('apb_test', 'app.page', 'error');
+    const handler = (await import('~/pages/api/track/block-render')).default;
+    const req = makeReq({
+      origin: 'https://civitai.com',
+      body: { ...validInput, status: 'error', errorClass: 'timeout' },
+    });
+    const res = makeRes();
+
+    await handler(req as any, res);
+
+    expect(await renderCounterValue('apb_test', 'app.page', 'error')).toBe(before + 1);
+    // The error still writes the (identifier-only) CH row — status/errorClass stripped.
+    expect(mockBlockRender).toHaveBeenCalledWith({ ...validInput, isAnon: true });
+  });
+
+  it('clamps an unknown slot_id to "other" to bound label cardinality', async () => {
+    const before = await renderCounterValue('apb_test', 'other', 'ok');
+    const handler = (await import('~/pages/api/track/block-render')).default;
+    const req = makeReq({
+      origin: 'https://civitai.com',
+      body: { ...validInput, slotId: 'totally.unknown.slot' },
+    });
+    const res = makeRes();
+
+    await handler(req as any, res);
+
+    expect(await renderCounterValue('apb_test', 'other', 'ok')).toBe(before + 1);
   });
 });

@@ -1,6 +1,11 @@
 import { decodeProtectedHeader, jwtVerify } from 'jose';
 import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
+import {
+  ensureRegisterAppBlockRuntimeMetrics,
+  statusToRequestResult,
+  type AppBlockEndpoint,
+} from '~/server/metrics/app-block-runtime.metrics';
 import { isAppBlocksRuntimeEnabled } from '~/server/services/app-blocks-flag';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import {
@@ -73,6 +78,16 @@ export type BlockScopedNextApiRequest = NextApiRequest & {
 };
 
 export interface WithBlockScopeOpts {
+  /**
+   * Low-cardinality LOGICAL name for this endpoint (e.g. 'tip', 'buzz',
+   * 'collections', 'shared_storage_top'). Used as the `endpoint` label on the
+   * per-app REST-RED metrics (`civitai_app_block_requests_total` /
+   * `civitai_app_block_request_duration_seconds`). Derived from the HANDLER, so
+   * ids in the path can never leak into the label. Strictly enumerated — see
+   * AppBlockEndpoint in ~/server/metrics/app-block-runtime.metrics.
+   */
+  endpoint: AppBlockEndpoint;
+
   /**
    * The block scope this endpoint requires. When PRESENT, the middleware
    * enforces `claims.scopes.includes(requiredScope)` (403 on miss) AND runs
@@ -719,6 +734,34 @@ export function withBlockScope(
       res.status(401).json({ error: 'invalid block token' });
       return;
     }
+
+    // Runtime observability (additive + dark — no behavior change): per-app REST
+    // RED. Recorded on response finish so it captures the wrapped handler's real
+    // status + latency AND the middleware's OWN 403 rejections below (revocation
+    // / missing-scope / context-binding). The invalid-token 401 above is
+    // intentionally NOT attributed — there are no claims, so no `app_block_id` to
+    // key on. `app_block_id` comes from the VERIFIED JWT (bounded to approved
+    // apps); `endpoint`/`result` are strictly enumerated. Fire-and-forget: a
+    // metrics failure must never poison the user-facing response.
+    const metricStart = process.hrtime.bigint();
+    let metricRecorded = false;
+    const recordBlockMetric = () => {
+      if (metricRecorded) return;
+      metricRecorded = true;
+      try {
+        const { requestsTotal, requestDurationSeconds } = ensureRegisterAppBlockRuntimeMetrics();
+        const labels = { app_block_id: claims.appBlockId, endpoint: opts.endpoint };
+        const elapsedSeconds = Number(process.hrtime.bigint() - metricStart) / 1e9;
+        requestDurationSeconds.observe(labels, elapsedSeconds);
+        requestsTotal.inc({ ...labels, result: statusToRequestResult(res.statusCode) });
+      } catch {
+        // never let observability break the request
+      }
+    };
+    // 'close' covers a client-aborted connection that never emits 'finish'; the
+    // recorded-once guard makes the pair idempotent.
+    res.on('finish', recordBlockMetric);
+    res.on('close', recordBlockMetric);
 
     // H-2: per-instance revocation check. Uninstall, toggleEnabled(false),
     // and (Phase 2) publisher-ban all write a marker that lives for one
