@@ -33,7 +33,6 @@
     { href: '/models', title: 'Models', body: 'Set licensing fees, manage access, sell indefinitely.' },
     { href: '/earnings', title: 'Earnings', body: 'Your earnings broken down by source.' },
     { href: '/earnings/analytics', title: 'Analytics', body: 'Usage that drives your fees.' },
-    { href: '/licensing', title: 'Licensing', body: 'Bulk-edit fees across your versions.' },
     { href: '/settings', title: 'Settings', body: 'Payout status, membership, defaults.' },
   ];
 </script>

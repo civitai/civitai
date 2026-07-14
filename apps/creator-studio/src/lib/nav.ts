@@ -1,23 +1,33 @@
-// Single source for both the desktop sidebar and mobile header (plan §3). memberOnly is a display hint only;
-// enforcement is per-action in $lib/server/membership.ts.
+import {
+  IconLayoutDashboard,
+  IconBox,
+  IconCoin,
+  IconChartBar,
+  IconSettings,
+  IconSparkles,
+} from '@tabler/icons-svelte';
+
+// Single source for both the desktop sidebar and mobile header (plan §3), icon component included so there's no
+// name→component lookup to keep in sync. memberOnly is a display hint only; enforcement is per-action in
+// $lib/server/membership.ts. Because items carry a component, nav is built client-side (see +layout.svelte) —
+// not returned from a server load, which can't serialize a component.
+type NavIcon = typeof IconLayoutDashboard;
 
 export type NavItem = {
   href: string;
   label: string;
-  /** Tabler icon name, resolved to a component in +layout.svelte. */
-  icon: string;
+  icon: NavIcon;
   memberOnly?: boolean;
   nonMemberOnly?: boolean;
 };
 
 export const NAV: NavItem[] = [
-  { href: '/', label: 'Dashboard', icon: 'dashboard' },
-  { href: '/models', label: 'Models', icon: 'box', memberOnly: true },
-  { href: '/earnings', label: 'Earnings', icon: 'coin' },
-  { href: '/earnings/analytics', label: 'Analytics', icon: 'chart' },
-  { href: '/licensing', label: 'Licensing', icon: 'license', memberOnly: true },
-  { href: '/settings', label: 'Settings', icon: 'settings' },
-  { href: '/join', label: 'Join Creator Program', icon: 'sparkles', nonMemberOnly: true },
+  { href: '/', label: 'Dashboard', icon: IconLayoutDashboard },
+  { href: '/models', label: 'Models', icon: IconBox, memberOnly: true },
+  { href: '/earnings', label: 'Earnings', icon: IconCoin },
+  { href: '/earnings/analytics', label: 'Analytics', icon: IconChartBar },
+  { href: '/settings', label: 'Settings', icon: IconSettings },
+  { href: '/join', label: 'Join Creator Program', icon: IconSparkles, nonMemberOnly: true },
 ];
 
 export function isNavActive(href: string, pathname: string): boolean {

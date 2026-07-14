@@ -3,17 +3,7 @@
   import { page } from '$app/state';
   import { invalidateAll } from '$app/navigation';
   import { buildWordmarkSvg } from '@civitai/brand';
-  import {
-    IconLayoutDashboard,
-    IconBox,
-    IconCoin,
-    IconChartBar,
-    IconLicense,
-    IconSettings,
-    IconSparkles,
-    IconCircle,
-    IconLogout,
-  } from '@tabler/icons-svelte';
+  import { IconLogout } from '@tabler/icons-svelte';
   import {
     Sidebar,
     SidebarProvider,
@@ -30,24 +20,14 @@
   } from '@civitai/ui/components/ui/sidebar/index.js';
   import { Avatar, AvatarImage, AvatarFallback } from '@civitai/ui/components/ui/avatar/index.js';
   import { Toaster } from '@civitai/ui/components/ui/sonner/index.js';
-  import { activeNavHref } from '$lib/nav';
+  import { activeNavHref, navForMember } from '$lib/nav';
   import type { LayoutData } from './$types';
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
   const wordmark = buildWordmarkSvg({ base: '#e8eaed' });
 
-  const icons: Record<string, typeof IconLayoutDashboard> = {
-    dashboard: IconLayoutDashboard,
-    box: IconBox,
-    coin: IconCoin,
-    chart: IconChartBar,
-    license: IconLicense,
-    settings: IconSettings,
-    sparkles: IconSparkles,
-  };
-  const iconFor = (name: string) => icons[name] ?? IconCircle;
-
+  const nav = $derived(navForMember(data.membership.isCreatorProgramMember));
   const who = $derived(data.user.username ?? `user #${data.user.id}`);
   // Exactly one active item — longest matching href wins so a parent (/earnings) doesn't also light up on a
   // child route (/earnings/analytics).
@@ -88,8 +68,8 @@
       <SidebarGroup>
         <SidebarGroupContent>
           <SidebarMenu>
-            {#each data.nav as item (item.href)}
-              {@const Icon = iconFor(item.icon)}
+            {#each nav as item (item.href)}
+              {@const Icon = item.icon}
               <SidebarMenuItem>
                 <SidebarMenuButton isActive={item.href === activeHref}>
                   {#snippet child({ props })}

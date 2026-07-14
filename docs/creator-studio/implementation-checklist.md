@@ -12,7 +12,8 @@ Legend: `[x]` done · `[ ]` not started · **🚧** blocked on a dependency · *
 - [x] Membership resolver (Creator Program gate) + moderator test simulator (`cs-test-membership` cookie)
 - [x] Monetization module — `setLicensingFee` / `bulkSetLicensingFee` / apply-default-by-type (kysely); early-access write client (calls the main-app REST endpoint, forwards session cookie)
 - [x] Axiom logging (`handleError` hook)
-- [ ] Analytics reads module (ClickHouse) — **🚧 A1** owner-keyed rollup
+- [~] Analytics reads module (ClickHouse) — content/creator metrics **done** (userId-keyed, no A1 needed; `src/lib/server/analytics.ts`); model-usage/earnings metrics still **🚧 A1** owner-keyed rollup
+- [x] Redis read-through cache (`@civitai/redis` `createRedisCacheBuilder` / `createSysRedisCacheBuilder` → spoke `cache.ts`); analytics reads cached with range-scaled TTL (7d ~5m / 30d ~15m / 90d ~1h)
 - [x] Charting primitive (**C1**) — **Chart.js** in-house `Chart` wrapper in `@civitai/ui` (SSR-safe; `chartColor()` bridges the theme palette). Chose it over LayerChart (that ships un-preprocessed TS → build fails; Chart.js also matches the main app). Placeholder chart live on `/earnings/analytics`.
 
 ---
@@ -37,12 +38,13 @@ Legend: `[x]` done · `[ ]` not started · **🚧** blocked on a dependency · *
 
 ## Licensing — bulk fees
 - [x] **Implemented as `/models?mode=bulk`** (C2 decision — not a separate page). Bulk set/clear + apply-default covered above.
-- [ ] Retire / redirect the standalone `/licensing` route stub to `/models?mode=bulk`
+- [x] Dropped the standalone `/licensing` route stub (+ its nav item, dashboard card, and orphaned `license` icon) — bulk lives under Models
 
 ---
 
 ## `/` — Dashboard
 - [x] Shell: headline stat cards (placeholders) + section link cards + member badge
+- [x] Content-activity row — real 30-day reactions / followers / images / posts / profile views (`getContentTotals`, userId-keyed, Redis-cached)
 - [ ] Earnings summary by source — **🚧 A1** owner-keyed rollup
 - [ ] CP cash pending / settled (`getCash` / `getBanked`)
 - [ ] Top-earning models widget — **🚧 A1**
@@ -61,9 +63,8 @@ Legend: `[x]` done · `[ ]` not started · **🚧** blocked on a dependency · *
 
 ## `/earnings/analytics` — Basic analytics
 - [ ] Model section: generations / downloads over time, top-models — **🚧 A1 + C1**
-- [ ] Content/creator section: reactions, followers, posts, profile views (B4) — **🚧** owner-keyed MVs + C1
-- [ ] Date-range control (presets)
-- *(route stub only)*
+- [x] Content/creator section (B4): reactions, followers, images, posts, profile views over time + top-images table (userId-keyed, no A1 needed); Chart.js line charts; Redis-cached
+- [x] Date-range control — 7/30/90-day presets + day/week granularity toggle (URL-driven)
 
 ---
 
