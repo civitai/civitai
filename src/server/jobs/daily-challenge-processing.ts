@@ -11,10 +11,13 @@ import {
   createChallengeRecord,
   createChallengeWinner,
   getChallengeById,
+  getChallengeEntryCount,
   getExistingWinnersForRetry,
+  incrementOperationSpent,
   resolveEventContext,
   setChallengeActive,
   updateChallengeStatus,
+  type ChallengeDetails,
   type EventContext,
   type RecentEntry,
   type SelectedResource,
@@ -53,6 +56,7 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import {
+  estimateBuzzCost,
   generateArticle,
   generateCollectionDetails,
   generateReview,
@@ -78,6 +82,11 @@ import {
   getChallengeBuzzType,
 } from '~/server/games/daily-challenge/challenge-funding';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import {
+  CHALLENGE_ENTRY_HOUSE_CUT,
+  CHALLENGE_JOB_BATCH_SIZE,
+  CHALLENGE_JOB_CONCURRENCY,
+} from '~/shared/constants/challenge.constants';
 import { getRandom, shuffle } from '~/utils/array-helpers';
 import { withRetries } from '~/utils/errorHandling';
 import { createLogger } from '~/utils/logging';
@@ -537,6 +546,14 @@ export async function createUpcomingChallenge(targetDate?: Date) {
   return challengeToLegacyFormat(challenge);
 }
 
+// Indirection seam: reviewEntries() calls reviewEntriesForChallenge() through this object
+// (rather than the bare function reference) so tests can substitute per-challenge processing
+// via `vi.spyOn(challengeReviewInternals, 'reviewEntriesForChallenge')` without needing to mock
+// every DB/LLM call the real implementation makes.
+export const challengeReviewInternals = {
+  reviewEntriesForChallenge,
+};
+
 export async function reviewEntries() {
   // Check if challenge platform is enabled
   if (!(await isFlipt(FLIPT_FEATURE_FLAGS.CHALLENGE_PLATFORM_ENABLED))) {
@@ -554,23 +571,36 @@ export async function reviewEntries() {
 
     log(`Processing entries for ${activeChallenges.length} active challenge(s)`);
 
-    // Process each challenge with error isolation
-    for (const challenge of activeChallenges) {
-      try {
-        await reviewEntriesForChallenge(challenge);
-      } catch (error) {
-        // Log error but continue with other challenges
-        const err = error as Error;
-        logToAxiom({
-          type: 'error',
-          name: 'daily-challenge-process-entries',
-          message: err.message,
-          challengeId: challenge.challengeId,
-          collectionId: challenge.collectionId,
-        });
-        log(`Failed to process challenge ${challenge.challengeId}:`, error);
-      }
+    if (activeChallenges.length >= CHALLENGE_JOB_BATCH_SIZE) {
+      logToAxiom({
+        type: 'warning',
+        name: 'daily-challenge-process-entries',
+        message: 'Active challenge count hit the batch ceiling; excess challenges roll to the next tick',
+        count: activeChallenges.length,
+      });
     }
+
+    // Process challenges with bounded concurrency. Each task isolates its own error so one
+    // failing challenge can't abort or block the rest of the batch.
+    await limitConcurrency(
+      activeChallenges.map((challenge) => async () => {
+        try {
+          await challengeReviewInternals.reviewEntriesForChallenge(challenge);
+        } catch (error) {
+          // Log error but continue with other challenges
+          const err = error as Error;
+          logToAxiom({
+            type: 'error',
+            name: 'daily-challenge-process-entries',
+            message: err.message,
+            challengeId: challenge.challengeId,
+            collectionId: challenge.collectionId,
+          });
+          log(`Failed to process challenge ${challenge.challengeId}:`, error);
+        }
+      }),
+      CHALLENGE_JOB_CONCURRENCY
+    );
   } catch (e) {
     const error = e as Error;
     logToAxiom({
@@ -946,6 +976,11 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       });
       log('Review prepared', entry.imageId, review);
 
+      const reviewBuzzCost = Math.ceil(estimateBuzzCost(review.model, review.usage));
+      if (reviewBuzzCost > 0) {
+        await incrementOperationSpent(currentChallenge.challengeId, reviewBuzzCost);
+      }
+
       // Add tag and score note to collection item (include judgeId for tracking)
       const note = JSON.stringify({
         score: review.score,
@@ -1134,6 +1169,33 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
 }
 
 /**
+ * Emit the `challenge-llm-spend` cost-observability metric when a challenge reaches a terminal
+ * (Completed) state. `houseCutCollected` approximates the house cut collected from paid entries
+ * as `entryCount * CHALLENGE_ENTRY_HOUSE_CUT` — 0 for challenges that don't charge an entry fee.
+ * Best-effort: this runs after the challenge's terminal state is already committed, so a failure
+ * here is logged rather than thrown.
+ */
+async function logChallengeSpendMetric(challenge: ChallengeDetails) {
+  try {
+    const entryCount = await getChallengeEntryCount(challenge.collectionId);
+    const houseCutCollected =
+      challenge.source === ChallengeSource.User && challenge.entryFee > 0
+        ? entryCount * CHALLENGE_ENTRY_HOUSE_CUT
+        : 0;
+    logToAxiom({
+      name: 'challenge-llm-spend',
+      challengeId: challenge.id,
+      source: challenge.source,
+      operationSpent: challenge.operationSpent,
+      houseCutCollected,
+    });
+  } catch (error) {
+    const err = error as Error;
+    log('Failed to log challenge-llm-spend metric', challenge.id, err.message);
+  }
+}
+
+/**
  * Pick winners for a single challenge.
  *
  * Operation order (race-condition safe):
@@ -1278,55 +1340,102 @@ export async function pickWinnersForChallenge(
         }
         await updateChallengeStatus(currentChallenge.challengeId, ChallengeStatus.Completed);
         log('Challenge marked as completed (no entries)');
+        const freshChallenge = await getChallengeById(currentChallenge.challengeId);
+        if (freshChallenge) await logChallengeSpendMetric(freshChallenge);
         return;
       }
 
-      log('Sending entries for final judgment');
-      const generated = await generateWinners({
-        theme: currentChallenge.theme,
-        entries: judgedEntries.map((entry) => ({
-          creator: entry.username,
-          creatorId: entry.userId,
-          summary: entry.summary,
-          score: entry.score,
-        })),
-        config: judgingConfig,
-      });
-      process = generated.process;
-      outcome = generated.outcome;
+      // Degenerate participation: asking an LLM to pick "exactly 3" winners among fewer than 2
+      // distinct entrants is semantically broken (and a wasted judging call) — skip
+      // generateWinners and award place 1 deterministically instead. judgedEntries.length is
+      // already guaranteed >= 1 here (see the empty-entries return above), so "< 2 distinct"
+      // can only mean exactly one distinct entrant.
+      const distinctEntrantIds = new Set(judgedEntries.map((entry) => entry.userId));
 
-      // Map winners to entries
-      winningEntries = generated.winners
-        .map((winner, i) => {
-          const entry = judgedEntries.find(
-            (e) =>
-              e.username.toLowerCase() === winner.creator.toLowerCase() ||
-              e.userId === winner.creatorId
-          );
-          if (!entry) return null;
-          return {
-            userId: entry.userId,
-            imageId: entry.imageId,
-            position: i + 1,
-            prize: currentChallenge.prizes[i]?.buzz ?? 0,
-            reason: winner.reason,
-          };
-        })
-        .filter(isDefined);
+      if (distinctEntrantIds.size < 2) {
+        const [soleEntry] = judgedEntries;
+        log('Fewer than 2 distinct entrants — awarding place 1 deterministically (no LLM):', {
+          challengeId: currentChallenge.challengeId,
+          userId: soleEntry.userId,
+        });
 
-      // 4. Create ChallengeWinner records (idempotent via P2002 handling)
-      for (const entry of winningEntries) {
+        const prize = currentChallenge.prizes[0]?.buzz ?? 0;
+        const soleWinnerReason = 'Sole eligible entrant';
+        winningEntries = [
+          {
+            userId: soleEntry.userId,
+            imageId: soleEntry.imageId,
+            position: 1,
+            prize,
+            reason: soleWinnerReason,
+          },
+        ];
+        process = 'Deterministic award: fewer than 2 distinct entrants';
+        outcome = 'Sole entrant awarded place 1 without LLM judging';
+
         await createChallengeWinner({
           challengeId: currentChallenge.challengeId,
-          userId: entry.userId,
-          imageId: entry.imageId!, // always non-null on fresh winner path
-          place: entry.position,
-          buzzAwarded: entry.prize,
-          pointsAwarded: currentChallenge.prizes[entry.position - 1]?.points ?? 0,
-          reason: entry.reason ?? undefined,
+          userId: soleEntry.userId,
+          imageId: soleEntry.imageId,
+          place: 1,
+          buzzAwarded: prize,
+          pointsAwarded: currentChallenge.prizes[0]?.points ?? 0,
+          reason: soleWinnerReason,
         });
+        log('ChallengeWinner record created (deterministic sole-entrant award)');
+      } else {
+        log('Sending entries for final judgment');
+        const generated = await generateWinners({
+          theme: currentChallenge.theme,
+          entries: judgedEntries.map((entry) => ({
+            creator: entry.username,
+            creatorId: entry.userId,
+            summary: entry.summary,
+            score: entry.score,
+          })),
+          config: judgingConfig,
+        });
+        process = generated.process;
+        outcome = generated.outcome;
+
+        const winnersBuzzCost = Math.ceil(estimateBuzzCost(generated.model, generated.usage));
+        if (winnersBuzzCost > 0) {
+          await incrementOperationSpent(currentChallenge.challengeId, winnersBuzzCost);
+        }
+
+        // Map winners to entries by numeric creatorId only. `winner.creator` is the LLM's echo of
+        // the (user-controlled, spoofable) display name — matching on it let a second entrant who
+        // set their name equal to another entrant's name hijack `find`'s first-match semantics and
+        // steal that entrant's payout. judgedEntries is already deduped to one entry per userId
+        // (see getJudgedEntries), so creatorId alone fully disambiguates.
+        winningEntries = generated.winners
+          .map((winner, i) => {
+            const entry = judgedEntries.find((e) => e.userId === winner.creatorId);
+            if (!entry) return null;
+            return {
+              userId: entry.userId,
+              imageId: entry.imageId,
+              position: i + 1,
+              prize: currentChallenge.prizes[i]?.buzz ?? 0,
+              reason: winner.reason,
+            };
+          })
+          .filter(isDefined);
+
+        // 4. Create ChallengeWinner records (idempotent via P2002 handling)
+        for (const entry of winningEntries) {
+          await createChallengeWinner({
+            challengeId: currentChallenge.challengeId,
+            userId: entry.userId,
+            imageId: entry.imageId!, // always non-null on fresh winner path
+            place: entry.position,
+            buzzAwarded: entry.prize,
+            pointsAwarded: currentChallenge.prizes[entry.position - 1]?.points ?? 0,
+            reason: entry.reason ?? undefined,
+          });
+        }
+        log('ChallengeWinner records created');
       }
-      log('ChallengeWinner records created');
     }
 
     // 5. Distribute winner buzz prizes. Pay `entry.prize` (keyed to the entry's PLACE and equal
@@ -1361,16 +1470,14 @@ export async function pickWinnersForChallenge(
     // 7. Set Completed status + store summary (AFTER all prizes distributed)
     const challengeRecord = await getChallengeById(currentChallenge.challengeId);
 
-    // Partial-winner residual: fewer winners than distribution places leaves the unfilled places'
-    // buzz sitting in account 0 for a paid user challenge. No pro-rata redistribution yet — just
-    // surface the stranded amount for a manual follow-up.
+    // Partial-winner residual: unfilled prize buzz stays in account 0 by design (spec decision).
     if (challengeRecord?.source === ChallengeSource.User) {
       const totalPrizeBuzz = challengeRecord.prizes.reduce((sum, p) => sum + (p.buzz ?? 0), 0);
       const distributedPrizeBuzz = winningEntries.reduce((sum, e) => sum + e.prize, 0);
       const residualBuzz = totalPrizeBuzz - distributedPrizeBuzz;
       if (residualBuzz > 0) {
         await logToAxiom({
-          type: 'warning',
+          type: 'info',
           name: 'challenge-partial-winner-residual',
           message: 'User challenge completed with fewer winners than prize places; buzz not paid out',
           challengeId: currentChallenge.challengeId,
@@ -1406,6 +1513,7 @@ export async function pickWinnersForChallenge(
       },
     });
     log('Challenge status updated to Completed');
+    if (challengeRecord) await logChallengeSpendMetric(challengeRecord);
 
     // 8. Send notifications to winners (non-critical, last)
     const notificationKey = currentChallenge.challengeId ?? currentChallenge.collectionId;

@@ -2,7 +2,6 @@ import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { removeTags } from '~/utils/string-helpers';
 import type { ChallengeBuzzType } from '~/server/games/daily-challenge/challenge-currency';
 import {
@@ -13,6 +12,7 @@ import {
   getIsSafeBrowsingLevel,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import { CHALLENGE_JOB_BATCH_SIZE } from '~/shared/constants/challenge.constants';
 import type { PoolTrigger } from '~/shared/utils/prisma/enums';
 import {
   ChallengeReviewCostType,
@@ -33,14 +33,20 @@ import {
 // DB/Redis into client bundles)
 export { computeDynamicPool, distributePrizes } from './challenge-pool';
 
-// Author-supplied text sent to the text-moderation scan. `invitation` is intentionally excluded —
-// it isn't surfaced on user-created challenges. Description is RTE HTML, so tags are stripped.
+// Author-supplied text sent to the text-moderation scan. Description is RTE HTML, so tags are
+// stripped.
 export function buildChallengeModerationText(challenge: {
   title: string | null;
   theme: string | null;
   description: string | null;
+  invitation: string | null;
 }) {
-  return [challenge.title, challenge.theme, challenge.description ? removeTags(challenge.description) : null]
+  return [
+    challenge.title,
+    challenge.theme,
+    challenge.description ? removeTags(challenge.description) : null,
+    challenge.invitation,
+  ]
     .filter(Boolean)
     .join('\n');
 }
@@ -126,64 +132,59 @@ type ChallengeDbRow = Omit<
   judgeId: number | null;
 };
 
-export async function getChallengeById(challengeId: number): Promise<ChallengeDetails | null> {
-  // Note: Using dbRead directly since 'challenge' isn't in LaggingType yet
-  const rows = await dbRead.$queryRaw<ChallengeDbRow[]>`
-    SELECT
-      c.id,
-      c."startsAt",
-      c."endsAt",
-      c."visibleAt",
-      c.title,
-      c.description,
-      c.theme,
-      c.invitation,
-      c."coverImageId",
-      (SELECT url FROM "Image" WHERE id = c."coverImageId") as "coverUrl",
-      (SELECT hash FROM "Image" WHERE id = c."coverImageId") as "coverImageHash",
-      (SELECT width FROM "Image" WHERE id = c."coverImageId") as "coverImageWidth",
-      (SELECT height FROM "Image" WHERE id = c."coverImageId") as "coverImageHeight",
-      c."nsfwLevel",
-      c."allowedNsfwLevel",
-      c."modelVersionIds",
-      c."collectionId",
-      c."judgeId",
-      c."judgingPrompt",
-      c."reviewPercentage",
-      c."maxReviews",
-      c."maxEntriesPerUser",
-      c.prizes,
-      c."entryPrize",
-      c."entryPrizeRequirement",
-      c."prizePool",
-      c."prizeMode",
-      c."basePrizePool",
-      c."buzzPerAction",
-      c."poolTrigger",
-      c."maxPrizePool",
-      c."prizeDistribution",
-      c."operationBudget",
-      c."operationSpent",
-      c."reviewCostType",
-      c."reviewCost",
-      c."createdById",
-      c.source,
-      c."buzzType",
-      c.status,
-      c."ingestion",
-      c."scannedAt",
-      c."entryFee",
-      c."maxParticipants",
-      c."judgingCategories",
-      c."eventId",
-      c.metadata
-    FROM "Challenge" c
-    WHERE c.id = ${challengeId}
-  `;
+// Shared column list for both the single-row and batched challenge lookups — keeps the two
+// queries (and their cover-image subquery hydration) from drifting apart.
+const challengeSelectFragment = Prisma.sql`
+  c.id,
+  c."startsAt",
+  c."endsAt",
+  c."visibleAt",
+  c.title,
+  c.description,
+  c.theme,
+  c.invitation,
+  c."coverImageId",
+  (SELECT url FROM "Image" WHERE id = c."coverImageId") as "coverUrl",
+  (SELECT hash FROM "Image" WHERE id = c."coverImageId") as "coverImageHash",
+  (SELECT width FROM "Image" WHERE id = c."coverImageId") as "coverImageWidth",
+  (SELECT height FROM "Image" WHERE id = c."coverImageId") as "coverImageHeight",
+  c."nsfwLevel",
+  c."allowedNsfwLevel",
+  c."modelVersionIds",
+  c."collectionId",
+  c."judgeId",
+  c."judgingPrompt",
+  c."reviewPercentage",
+  c."maxReviews",
+  c."maxEntriesPerUser",
+  c.prizes,
+  c."entryPrize",
+  c."entryPrizeRequirement",
+  c."prizePool",
+  c."prizeMode",
+  c."basePrizePool",
+  c."buzzPerAction",
+  c."poolTrigger",
+  c."maxPrizePool",
+  c."prizeDistribution",
+  c."operationBudget",
+  c."operationSpent",
+  c."reviewCostType",
+  c."reviewCost",
+  c."createdById",
+  c.source,
+  c."buzzType",
+  c.status,
+  c."ingestion",
+  c."scannedAt",
+  c."entryFee",
+  c."maxParticipants",
+  c."judgingCategories",
+  c."eventId",
+  c.metadata
+`;
 
-  const result = rows[0];
-  if (!result) return null;
-
+function hydrateChallengeRow(result: ChallengeDbRow): ChallengeDetails {
   return {
     ...result,
     // $queryRaw returns the TEXT column as an arbitrary string; narrow to the union (app only ever
@@ -202,6 +203,29 @@ export async function getChallengeById(challengeId: number): Promise<ChallengeDe
   };
 }
 
+/**
+ * Batched version of `getChallengeById` — fetches N challenges (incl. cover-image hydration)
+ * in a single set-based query instead of N correlated round-trips. Order is not guaranteed;
+ * callers should map results by id. Returns `[]` immediately (no query) for an empty input.
+ */
+export async function getChallengesByIds(challengeIds: number[]): Promise<ChallengeDetails[]> {
+  if (challengeIds.length === 0) return [];
+
+  // Note: Using dbRead directly since 'challenge' isn't in LaggingType yet
+  const rows = await dbRead.$queryRaw<ChallengeDbRow[]>`
+    SELECT ${challengeSelectFragment}
+    FROM "Challenge" c
+    WHERE c.id = ANY(${challengeIds}::int[])
+  `;
+
+  return rows.map(hydrateChallengeRow);
+}
+
+export async function getChallengeById(challengeId: number): Promise<ChallengeDetails | null> {
+  const [result] = await getChallengesByIds([challengeId]);
+  return result ?? null;
+}
+
 export async function getActiveChallengeFromDb(): Promise<ChallengeDetails | null> {
   const [row] = await dbRead.$queryRaw<{ id: number }[]>`
     SELECT id
@@ -216,24 +240,28 @@ export async function getActiveChallengeFromDb(): Promise<ChallengeDetails | nul
 
 /**
  * Gets ALL active challenges (supports multiple concurrent challenges).
- * Returns challenges ordered by startsAt DESC.
+ * Ordered by least-recently-reviewed first (never-reviewed challenges first via NULLS FIRST,
+ * then oldest reviewedAt) so a batch of >CHALLENGE_JOB_BATCH_SIZE actives rotates through the
+ * full set across consecutive runs instead of starving later-started challenges (spec C1).
  */
-export async function getActiveChallengesFromDb(limit = 50): Promise<ChallengeDetails[]> {
+export async function getActiveChallengesFromDb(
+  limit = CHALLENGE_JOB_BATCH_SIZE
+): Promise<ChallengeDetails[]> {
   const rows = await dbRead.$queryRaw<{ id: number }[]>`
     SELECT id
     FROM "Challenge"
     WHERE status = ${ChallengeStatus.Active}::"ChallengeStatus"
-    ORDER BY "startsAt" DESC
+    ORDER BY cast(metadata->>'reviewedAt' as bigint) ASC NULLS FIRST, "startsAt" ASC, id ASC
     LIMIT ${limit}
   `;
-  const challenges = await Promise.all(rows.map((row) => getChallengeById(row.id)));
-  return challenges.filter((c): c is ChallengeDetails => c !== null);
+  return getChallengesByIds(rows.map((row) => row.id));
 }
 
 /**
  * Gets active challenges that have ENDED (endsAt <= now).
  * These challenges need winner picking and status transition.
- * Returns challenges ordered by endsAt ASC (oldest first).
+ * Returns challenges ordered by endsAt ASC (oldest first, id tiebreak), bounded to
+ * CHALLENGE_JOB_BATCH_SIZE per run.
  */
 export async function getEndedActiveChallengesFromDb(): Promise<ChallengeDetails[]> {
   const rows = await dbRead.$queryRaw<{ id: number }[]>`
@@ -241,16 +269,17 @@ export async function getEndedActiveChallengesFromDb(): Promise<ChallengeDetails
     FROM "Challenge"
     WHERE status = ${ChallengeStatus.Active}::"ChallengeStatus"
     AND "endsAt" <= now()
-    ORDER BY "endsAt" ASC
+    ORDER BY "endsAt" ASC, id ASC
+    LIMIT ${CHALLENGE_JOB_BATCH_SIZE}
   `;
-  const challenges = await Promise.all(rows.map((row) => getChallengeById(row.id)));
-  return challenges.filter((c): c is ChallengeDetails => c !== null);
+  return getChallengesByIds(rows.map((row) => row.id));
 }
 
 /**
  * Gets recently-completed challenges that still have stuck REVIEW CollectionItems.
  * Used by the reconciliation pass to re-process challenges that weren't fully settled.
- * Returns challenges whose endsAt is within the last windowHours hours.
+ * Returns challenges whose endsAt is within the last windowHours hours, ordered by endsAt ASC
+ * (id tiebreak), bounded to CHALLENGE_JOB_BATCH_SIZE per run.
  */
 export async function getChallengesToReconcileFromDb(windowHours = 48): Promise<ChallengeDetails[]> {
   const rows = await dbRead.$queryRaw<{ id: number }[]>`
@@ -262,16 +291,17 @@ export async function getChallengesToReconcileFromDb(windowHours = 48): Promise<
       SELECT 1 FROM "CollectionItem" ci
       WHERE ci."collectionId" = c."collectionId" AND ci.status = 'REVIEW'
     )
-    ORDER BY c."endsAt" ASC
+    ORDER BY c."endsAt" ASC, c.id ASC
+    LIMIT ${CHALLENGE_JOB_BATCH_SIZE}
   `;
-  const challenges = await Promise.all(rows.map((row) => getChallengeById(row.id)));
-  return challenges.filter((c): c is ChallengeDetails => c !== null);
+  return getChallengesByIds(rows.map((row) => row.id));
 }
 
 /**
  * Gets scheduled challenges that are ready to START (startsAt <= now).
  * These challenges should be activated.
- * Returns challenges ordered by startsAt ASC (oldest first).
+ * Returns challenges ordered by startsAt ASC (oldest first, id tiebreak), bounded to
+ * CHALLENGE_JOB_BATCH_SIZE per run.
  */
 export async function getScheduledChallengesReadyToStart(): Promise<ChallengeDetails[]> {
   const rows = await dbRead.$queryRaw<{ id: number }[]>`
@@ -280,10 +310,10 @@ export async function getScheduledChallengesReadyToStart(): Promise<ChallengeDet
     WHERE status = ${ChallengeStatus.Scheduled}::"ChallengeStatus"
     AND "startsAt" <= now()
     AND ("source" != 'User' OR "ingestion" = 'Scanned')
-    ORDER BY "startsAt" ASC
+    ORDER BY "startsAt" ASC, id ASC
+    LIMIT ${CHALLENGE_JOB_BATCH_SIZE}
   `;
-  const challenges = await Promise.all(rows.map((row) => getChallengeById(row.id)));
-  return challenges.filter((c): c is ChallengeDetails => c !== null);
+  return getChallengesByIds(rows.map((row) => row.id));
 }
 
 /**
@@ -291,7 +321,8 @@ export async function getScheduledChallengesReadyToStart(): Promise<ChallengeDet
  * (Blocked, or stuck Pending/Error). None of these can activate (getScheduledChallengesReadyToStart
  * requires Scanned), so without intervention they sit Scheduled+hidden forever with the creator's
  * initial prize escrowed. Blocked ones are voided; Pending/Error ones get a re-scan attempt and
- * are voided once well past start. Returns id + ingestion ordered by startsAt ASC.
+ * are voided once well past start. Returns id + ingestion ordered by startsAt ASC (id tiebreak),
+ * bounded to CHALLENGE_JOB_BATCH_SIZE per run.
  */
 export async function getUnscannedUserChallengesPastStart(): Promise<
   { id: number; ingestion: ChallengeIngestionStatus; startsAt: Date }[]
@@ -305,7 +336,8 @@ export async function getUnscannedUserChallengesPastStart(): Promise<
     AND source = ${ChallengeSource.User}::"ChallengeSource"
     AND "ingestion" != ${ChallengeIngestionStatus.Scanned}::"ChallengeIngestionStatus"
     AND "startsAt" <= now()
-    ORDER BY "startsAt" ASC
+    ORDER BY "startsAt" ASC, id ASC
+    LIMIT ${CHALLENGE_JOB_BATCH_SIZE}
   `;
   return rows;
 }
@@ -476,11 +508,18 @@ export async function updateChallengeStatus(
   });
 }
 
-export async function setChallengeActive(challengeId: number): Promise<void> {
-  await updateChallengeStatus(challengeId, ChallengeStatus.Active);
-  // Cache the active challenge in Redis for quick access
-  const challenge = await getChallengeById(challengeId);
-  await redis.packed.set(REDIS_KEYS.DAILY_CHALLENGE.DETAILS, challenge);
+/**
+ * Conditionally activate a Scheduled challenge. Uses UPDATE ... WHERE status='Scheduled' so
+ * overlapping activation ticks can't both flip status — whichever tick's write actually
+ * matches the row wins; the rest see `activated: false` and should skip their own activation
+ * side effects.
+ */
+export async function setChallengeActive(challengeId: number): Promise<{ activated: boolean }> {
+  const { count } = await dbWrite.challenge.updateMany({
+    where: { id: challengeId, status: ChallengeStatus.Scheduled },
+    data: { status: ChallengeStatus.Active },
+  });
+  return { activated: count === 1 };
 }
 
 // =============================================================================

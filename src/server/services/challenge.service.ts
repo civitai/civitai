@@ -61,9 +61,15 @@ import { createImage, imagesForModelVersionsCache } from '~/server/services/imag
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { resolveJudgingCategories } from '~/server/services/challenge-category.service';
-import { assertCanCreateUserChallenge } from '~/server/services/challenge-eligibility.service';
+import {
+  assertCanCreateUserChallenge,
+  assertUserAccountInGoodStanding,
+} from '~/server/services/challenge-eligibility.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
-import { isChallengeHiddenByPoiCover } from '~/server/games/daily-challenge/challenge-visibility';
+import {
+  isChallengeHiddenByCoverScan,
+  isChallengeHiddenByPoiCover,
+} from '~/server/games/daily-challenge/challenge-visibility';
 import {
   chargeInitialPrize,
   refundUserChallengeFunds,
@@ -393,6 +399,16 @@ export async function getInfiniteChallenges(
     currentUserId
       ? Prisma.sql`(NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."poi" = true) OR c."createdById" = ${currentUserId})`
       : Prisma.sql`NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."poi" = true)`
+  );
+
+  // Cover-scan gate: the cover image itself must have finished moderation scanning before the
+  // challenge is publicly visible — separate from the challenge text-scan gate above. Scoped to
+  // user challenges only, mirroring the detail path (getChallengeDetail): System/mod covers are
+  // trusted and default to Scanned, so they're exempt. Creator exempt, mirroring the POI gate.
+  conditions.push(
+    currentUserId
+      ? Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."ingestion" = 'Scanned'::"ImageIngestionStatus") OR c."createdById" = ${currentUserId})`
+      : Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."ingestion" = 'Scanned'::"ImageIngestionStatus"))`
   );
 
   // Domain-currency gate: green user challenges surface only on the green site, yellow only
@@ -864,13 +880,14 @@ export async function getChallengeDetail(
     return null;
   }
 
-  // POI gate: a cover depicting a real person (Image.poi, set by the image scanner) keeps the
-  // challenge out of public view — direct-URL parity with the feed filter. Creator exempt; skip
-  // the lookup entirely for trusted System challenges.
+  // POI + cover-scan gate: a cover depicting a real person (Image.poi, set by the image scanner),
+  // or one that hasn't finished moderation scanning yet, keeps the challenge out of public view —
+  // direct-URL parity with the feed filter. Creator exempt; skip the lookup entirely for trusted
+  // System challenges.
   if (challenge.source === ChallengeSource.User && challenge.coverImageId) {
     const cover = await dbRead.image.findUnique({
       where: { id: challenge.coverImageId },
-      select: { poi: true },
+      select: { poi: true, ingestion: true },
     });
     if (
       isChallengeHiddenByPoiCover(
@@ -879,6 +896,14 @@ export async function getChallengeDetail(
           createdById: challenge.createdById,
           coverPoi: cover?.poi ?? false,
         },
+        viewerId
+      )
+    )
+      return null;
+
+    if (
+      isChallengeHiddenByCoverScan(
+        { source: challenge.source, createdById: challenge.createdById, coverImage: cover },
         viewerId
       )
     )
@@ -1347,8 +1372,13 @@ export async function upsertUserChallenge({
   const resolvedJudgingCategories = await resolveJudgingCategories(judgingCategories);
 
   // Create — gate on eligibility (score + standing + tier concurrent cap) before creating any
-  // resources, so an ineligible caller can't leave an orphan cover Image behind.
+  // resources, so an ineligible caller can't leave an orphan cover Image behind. Edit — only
+  // re-check account standing (banned/deleted/muted/active-strike), NOT the score/cap/daily-limit
+  // create gates, so a since-muted/struck/banned creator can't keep editing a Scheduled challenge
+  // while a transient dip in the (known-flaky) creator score doesn't lock out an otherwise-good
+  // creator from editing their own challenge.
   if (!id) await assertCanCreateUserChallenge(userId);
+  else await assertUserAccountInGoodStanding(userId);
 
   // Cover image: reuse an existing Image or create one from the upload (like the mod path).
   // A reused id must belong to the caller — otherwise anyone could surface another user's
@@ -1591,15 +1621,15 @@ export async function upsertUserChallenge({
   return created;
 }
 
-// Submits a user challenge's author-supplied text (title/theme/description; invitation is not
-// surfaced) to the async text-moderation pipeline (`EntityModeration` + XGuard). The result
-// callback resolves ingestion via `challengeModerationAdapter`: `blocked` → Blocked (hidden),
-// `nsfw` → Scanned with nsfwLevel floored to R, clean → Scanned. Idempotent — unchanged content
-// dedups on contentHash. The scan gate keeps the challenge hidden until it reaches Scanned.
+// Submits a user challenge's author-supplied text (title/theme/description/invitation) to the
+// async text-moderation pipeline (`EntityModeration` + XGuard). The result callback resolves
+// ingestion via `challengeModerationAdapter`: `blocked` → Blocked (hidden), `nsfw` → Scanned with
+// nsfwLevel floored to R, clean → Scanned. Idempotent — unchanged content dedups on contentHash.
+// The scan gate keeps the challenge hidden until it reaches Scanned.
 export async function scanUserChallenge(challengeId: number): Promise<void> {
   const challenge = await dbRead.challenge.findUnique({
     where: { id: challengeId },
-    select: { title: true, description: true, theme: true },
+    select: { title: true, description: true, theme: true, invitation: true },
   });
   if (!challenge) return;
 
@@ -2057,6 +2087,9 @@ export async function endChallengeAndPickWinners(challengeId: number) {
         if (challenge.source === ChallengeSource.User) {
           const { refundedEntries } = await refundUserChallengeFunds(challengeId);
           log(`Refunded ${refundedEntries} entry fees (no winners)`);
+          if (refundedEntries > 0) {
+            await notifyEntrantsOfCancellation(challenge);
+          }
         }
         await dbWrite.challenge.update({
           where: { id: challengeId },
@@ -2185,16 +2218,14 @@ export async function endChallengeAndPickWinners(challengeId: number) {
       }
     }
 
-    // Partial-winner residual: fewer winners than distribution places leaves the unfilled places'
-    // buzz sitting in account 0 for a paid user challenge. No pro-rata redistribution yet — just
-    // surface the stranded amount for a manual follow-up.
+    // Partial-winner residual: unfilled prize buzz stays in account 0 by design (spec decision).
     if (challenge.source === ChallengeSource.User) {
       const totalPrizeBuzz = challenge.prizes.reduce((sum, p) => sum + (p.buzz ?? 0), 0);
       const distributedPrizeBuzz = winningEntries.reduce((sum, e) => sum + e.prize, 0);
       const residualBuzz = totalPrizeBuzz - distributedPrizeBuzz;
       if (residualBuzz > 0) {
         await logToAxiom({
-          type: 'warning',
+          type: 'info',
           name: 'challenge-partial-winner-residual',
           message:
             'User challenge completed with fewer winners than prize places; buzz not paid out',
@@ -2250,6 +2281,69 @@ export async function endChallengeAndPickWinners(challengeId: number) {
 }
 
 /**
+ * Distinct paying entrants for a challenge — owners of images *currently* entered into its
+ * collection, excluding the creator. This is an approximation of "who actually got refunded",
+ * not an exact match, and the divergence is accepted rather than re-architected to query the
+ * buzz ledger: a moderator-added entry has a CollectionItem row despite its fee charge being
+ * bypassed, so that user may be notified without having paid; and a paid entry removed from the
+ * collection before the void still has its pool fee reversed by `refundUserChallengeFunds`
+ * (matched by transaction-id prefix, independent of this query) but won't appear here, so that
+ * payer won't be notified. The refund itself is unaffected either way — only this courtesy
+ * notification is approximate.
+ */
+async function getPayingEntrantUserIds(collectionId: number, createdById: number | null) {
+  const rows = await dbRead.$queryRaw<{ userId: number }[]>`
+    SELECT DISTINCT i."userId"
+    FROM "CollectionItem" ci
+    JOIN "Image" i ON i.id = ci."imageId"
+    WHERE ci."collectionId" = ${collectionId}
+  `;
+  return rows.map((r) => r.userId).filter((userId) => userId !== createdById);
+}
+
+/** Notify every distinct paying entrant that their challenge was cancelled/refunded. Call only
+ * after a refund has actually happened (`refundedEntries > 0`) so no-fee/no-entrant/System
+ * challenges never fire this. Best-effort: the refund has already succeeded by the time this
+ * runs, so a failure here is logged and swallowed rather than propagating and blocking the
+ * status flip to Cancelled/Completed. */
+async function notifyEntrantsOfCancellation(challenge: {
+  id: number;
+  title: string;
+  collectionId: number | null;
+  createdById: number | null;
+  entryFee: number;
+}) {
+  if (!challenge.collectionId) return;
+  try {
+    const entrantUserIds = await getPayingEntrantUserIds(
+      challenge.collectionId,
+      challenge.createdById
+    );
+    if (entrantUserIds.length === 0) return;
+
+    await createNotification({
+      type: 'challenge-cancelled',
+      category: NotificationCategory.System,
+      key: `challenge-cancelled:${challenge.id}`,
+      userIds: entrantUserIds,
+      details: {
+        challengeId: challenge.id,
+        challengeTitle: challenge.title,
+        refundedBuzz: getEntryPoolContribution(challenge.entryFee),
+      },
+    });
+    log(`Notified ${entrantUserIds.length} entrants of challenge cancellation`);
+  } catch (err) {
+    await logToAxiom({
+      type: 'error',
+      name: 'challenge-cancelled-notification',
+      challengeId: challenge.id,
+      message: (err as Error).message,
+    });
+  }
+}
+
+/**
  * Void/cancel a challenge without picking winners.
  * Closes the collection and marks the challenge as Cancelled.
  */
@@ -2284,6 +2378,9 @@ export async function voidChallenge(challengeId: number) {
   // failed. The refund is idempotent, so a crash between refund and update safely re-runs.
   const { refundedEntries } = await refundUserChallengeFunds(challengeId);
   log(`Refunded ${refundedEntries} entry fees`);
+  if (refundedEntries > 0) {
+    await notifyEntrantsOfCancellation(challenge);
+  }
 
   await dbWrite.challenge.update({
     where: { id: challengeId },

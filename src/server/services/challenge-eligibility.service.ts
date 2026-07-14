@@ -1,7 +1,11 @@
 import { TRPCError } from '@trpc/server';
 import { dbRead } from '~/server/db/client';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
-import { getChallengeActiveLimit, CHALLENGE_MIN_CREATOR_SCORE } from '~/shared/constants/challenge.constants';
+import {
+  getChallengeActiveLimit,
+  CHALLENGE_MIN_CREATOR_SCORE,
+  CHALLENGE_CREATE_DAILY_LIMIT,
+} from '~/shared/constants/challenge.constants';
 import { ChallengeSource, ChallengeStatus, StrikeStatus } from '~/shared/utils/prisma/enums';
 
 function forbidden(message: string) {
@@ -37,19 +41,52 @@ export async function getUserChallengeStanding(userId: number): Promise<UserChal
   };
 }
 
-/** Throws unless the user is in good standing AND meets the creator-score threshold. */
-export async function assertUserInGoodStanding(userId: number): Promise<UserChallengeStanding> {
+/** Throws unless the user's account standing is clean (not banned/deleted/muted, no active
+ * strikes). Does NOT check the creator-score threshold — that's a create-only gate (see
+ * `assertUserInGoodStanding`). Used to re-check an existing creator on edit, where the
+ * known-flaky user-score pipeline shouldn't be able to lock someone out of editing their own
+ * Scheduled challenge. */
+export async function assertUserAccountInGoodStanding(
+  userId: number
+): Promise<UserChallengeStanding> {
   const standing = await getUserChallengeStanding(userId);
   if (standing.bannedAt || standing.deletedAt)
     throw forbidden('Your account is not eligible to create challenges.');
   if (standing.muted) throw forbidden('Muted accounts cannot create challenges.');
   if (standing.activeStrikes > 0)
     throw forbidden('Resolve your active strikes before creating a challenge.');
+  return standing;
+}
+
+/** Throws unless the user is in good standing AND meets the creator-score threshold. */
+export async function assertUserInGoodStanding(userId: number): Promise<UserChallengeStanding> {
+  const standing = await assertUserAccountInGoodStanding(userId);
   if (standing.scoreTotal < CHALLENGE_MIN_CREATOR_SCORE)
     throw forbidden(
       `You need a creator score of at least ${CHALLENGE_MIN_CREATOR_SCORE.toLocaleString()} to create challenges.`
     );
   return standing;
+}
+
+/** Throws if the user has created CHALLENGE_CREATE_DAILY_LIMIT or more User-source challenges in
+ * the last 24h. Anti-spam/abuse guard against rapid create->delete churn (deleted rows drop out of
+ * this count, so a determined churner can still evade it — see constant's doc comment). */
+export async function assertUnderDailyCreateLimit(
+  userId: number
+): Promise<{ limit: number; recentCount: number }> {
+  const recentCount = await dbRead.challenge.count({
+    where: {
+      createdById: userId,
+      source: ChallengeSource.User,
+      createdAt: { gt: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+    },
+  });
+
+  if (recentCount >= CHALLENGE_CREATE_DAILY_LIMIT)
+    throw forbidden(
+      `You can create at most ${CHALLENGE_CREATE_DAILY_LIMIT} challenges per day. Please try again later.`
+    );
+  return { limit: CHALLENGE_CREATE_DAILY_LIMIT, recentCount };
 }
 
 /** Throws if the user already has as many Scheduled/Active challenges as their tier allows. */
@@ -78,5 +115,6 @@ export async function assertUnderActiveChallengeLimit(
 /** Full gate for creating a new user challenge. */
 export async function assertCanCreateUserChallenge(userId: number): Promise<void> {
   await assertUserInGoodStanding(userId);
+  await assertUnderDailyCreateLimit(userId);
   await assertUnderActiveChallengeLimit(userId);
 }

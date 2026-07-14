@@ -52,6 +52,11 @@ export function getChallengeActiveLimit(tier?: string | null): number {
   return CHALLENGE_TIER_ACTIVE_LIMITS[tier] ?? CHALLENGE_DEFAULT_ACTIVE_LIMIT;
 }
 
+/** Max User-source challenges a single user may create in a rolling 24h window. Counts current
+ * rows only — deleting a challenge and recreating one still frees up a slot (see
+ * assertUnderDailyCreateLimit); this bounds average creation rate, not deletion churn. */
+export const CHALLENGE_CREATE_DAILY_LIMIT = 5;
+
 /** Net buzz a single paid entry contributes to the prize pool (never negative). */
 export function getEntryPoolContribution(entryFee: number): number {
   return Math.max(0, entryFee - CHALLENGE_ENTRY_HOUSE_CUT);
@@ -150,3 +155,8 @@ export const DEFAULT_CATEGORY_ROWS: CategoryWeightRow[] = [
 // excluded even though user challenges can allow NSFW levels — it shares CivChan's userId, and
 // NSFW entries are judged with the standard rubrics for now (product call pending).
 export const USER_SELECTABLE_JUDGE_NAMES = ['CivBot', 'CivChan'] as const;
+
+/** Max challenges processed concurrently inside a single job run. Bounded by DB load + OpenRouter rate limits. */
+export const CHALLENGE_JOB_CONCURRENCY = 5;
+/** Max challenges a single job run pulls from a selector. Remaining work rolls to the next tick. */
+export const CHALLENGE_JOB_BATCH_SIZE = 200;

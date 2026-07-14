@@ -21,7 +21,7 @@ export const challengeModerationAdapter: ModerationAdapter = {
   resolveContent: async (ids) => {
     const rows = await dbRead.challenge.findMany({
       where: { id: { in: ids } },
-      select: { id: true, title: true, theme: true, description: true },
+      select: { id: true, title: true, theme: true, description: true, invitation: true },
     });
     return new Map(rows.map((r) => [r.id, buildChallengeModerationText(r)]));
   },
