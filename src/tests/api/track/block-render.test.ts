@@ -57,6 +57,13 @@ vi.mock('~/server/clickhouse/client', () => ({
   },
 }));
 
+// Known-app clamp: control which appBlockIds count as "approved" so the render
+// counter's `app_block_id` label bound is deterministic (real approved lookup is
+// a TTL-cached DB query — mocked here). 'apb_test' is known; everything else → 'other'.
+vi.mock('~/server/services/blocks/known-app-blocks.service', () => ({
+  boundAppBlockIdLabel: vi.fn(async (id: string) => (id === 'apb_test' ? id : 'other')),
+}));
+
 function makeRes() {
   const res = {} as NextApiResponse & { _status?: number; _body?: unknown };
   res.status = vi.fn((code: number) => {
@@ -298,6 +305,27 @@ describe('POST /api/track/block-render — civitai_app_block_renders_total count
     expect(await renderCounterValue('apb_test', 'app.page', 'error')).toBe(before + 1);
     // The error still writes the (identifier-only) CH row — status/errorClass stripped.
     expect(mockBlockRender).toHaveBeenCalledWith({ ...validInput, isAnon: true });
+  });
+
+  it('clamps an UNKNOWN app_block_id to "other" (bounds the label) and preserves a known one', async () => {
+    const beforeOther = await renderCounterValue('other', 'app.page', 'ok');
+    const beforeKnown = await renderCounterValue('apb_test', 'app.page', 'ok');
+    const handler = (await import('~/pages/api/track/block-render')).default;
+
+    // Unknown/unapproved app id from a scripted client → bucketed to 'other'.
+    const unknownReq = makeReq({
+      origin: 'https://civitai.com',
+      body: { ...validInput, appBlockId: 'apb_attacker_garbage_9f3' },
+    });
+    await handler(unknownReq as any, makeRes());
+    expect(await renderCounterValue('other', 'app.page', 'ok')).toBe(beforeOther + 1);
+
+    // A known/approved app id is preserved (per-app attribution intact). The CH
+    // insert still records the RAW client id — only the prom LABEL is clamped.
+    const knownReq = makeReq({ origin: 'https://civitai.com', body: validInput });
+    await handler(knownReq as any, makeRes());
+    expect(await renderCounterValue('apb_test', 'app.page', 'ok')).toBe(beforeKnown + 1);
+    expect(mockBlockRender).toHaveBeenLastCalledWith({ ...validInput, isAnon: true });
   });
 
   it('clamps an unknown slot_id to "other" to bound label cardinality', async () => {

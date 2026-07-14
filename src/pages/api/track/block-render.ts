@@ -5,6 +5,7 @@ import {
   ensureRegisterAppBlockRuntimeMetrics,
   normalizeSlotId,
 } from '~/server/metrics/app-block-runtime.metrics';
+import { boundAppBlockIdLabel } from '~/server/services/blocks/known-app-blocks.service';
 import { blockRenderSchema } from '~/server/schema/track.schema';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 
@@ -72,15 +73,19 @@ export default PublicEndpoint(
     const { status, errorClass: _errorClass, ...renderData } = result.data;
 
     // Per-app render/impression outcome (additive + dark). `result` ∈ ok|error.
-    // `slot_id` is clamped to the enumerated slot set (unknown → 'other');
-    // `app_block_id` is client-supplied here (same trust level as the CH insert)
-    // — see the cardinality-budget note in app-block-runtime.metrics. Emitted
-    // AFTER the same-origin + schema gates so only well-formed beacons count.
-    // Fire-and-forget: never let a metrics failure break the beacon.
+    // All three labels are BOUNDED even though the beacon body is client-supplied
+    // and this route is public/ungated: `slot_id` clamps to the enumerated slot
+    // set, `result` is enumerated, and `app_block_id` is clamped to the
+    // approved-app set (unknown → 'other') via a TTL-cached in-memory lookup — no
+    // per-request DB hit — so a scripted client can't blow up prom-client's heap
+    // with unbounded distinct labels. Emitted AFTER the same-origin + schema
+    // gates so only well-formed beacons count. Fire-and-forget: never let a
+    // metrics failure break the beacon.
     try {
+      const appBlockIdLabel = await boundAppBlockIdLabel(renderData.appBlockId);
       const { rendersTotal } = ensureRegisterAppBlockRuntimeMetrics();
       rendersTotal.inc({
-        app_block_id: renderData.appBlockId,
+        app_block_id: appBlockIdLabel,
         slot_id: normalizeSlotId(renderData.slotId),
         result: status,
       });
