@@ -13,6 +13,7 @@ import {
   getIsSafeBrowsingLevel,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import { CHALLENGE_JOB_BATCH_SIZE } from '~/shared/constants/challenge.constants';
 import type { PoolTrigger } from '~/shared/utils/prisma/enums';
 import {
   ChallengeReviewCostType,
@@ -234,24 +235,27 @@ export async function getActiveChallengeFromDb(): Promise<ChallengeDetails | nul
 
 /**
  * Gets ALL active challenges (supports multiple concurrent challenges).
- * Returns challenges ordered by startsAt DESC.
+ * Returns challenges ordered by startsAt ASC (id tiebreak), bounded to
+ * CHALLENGE_JOB_BATCH_SIZE per run so the same challenges aren't perpetually starved.
  */
-export async function getActiveChallengesFromDb(limit = 50): Promise<ChallengeDetails[]> {
+export async function getActiveChallengesFromDb(
+  limit = CHALLENGE_JOB_BATCH_SIZE
+): Promise<ChallengeDetails[]> {
   const rows = await dbRead.$queryRaw<{ id: number }[]>`
     SELECT id
     FROM "Challenge"
     WHERE status = ${ChallengeStatus.Active}::"ChallengeStatus"
-    ORDER BY "startsAt" DESC
+    ORDER BY "startsAt" ASC, id ASC
     LIMIT ${limit}
   `;
-  const challenges = await Promise.all(rows.map((row) => getChallengeById(row.id)));
-  return challenges.filter((c): c is ChallengeDetails => c !== null);
+  return getChallengesByIds(rows.map((row) => row.id));
 }
 
 /**
  * Gets active challenges that have ENDED (endsAt <= now).
  * These challenges need winner picking and status transition.
- * Returns challenges ordered by endsAt ASC (oldest first).
+ * Returns challenges ordered by endsAt ASC (oldest first, id tiebreak), bounded to
+ * CHALLENGE_JOB_BATCH_SIZE per run.
  */
 export async function getEndedActiveChallengesFromDb(): Promise<ChallengeDetails[]> {
   const rows = await dbRead.$queryRaw<{ id: number }[]>`
@@ -259,16 +263,17 @@ export async function getEndedActiveChallengesFromDb(): Promise<ChallengeDetails
     FROM "Challenge"
     WHERE status = ${ChallengeStatus.Active}::"ChallengeStatus"
     AND "endsAt" <= now()
-    ORDER BY "endsAt" ASC
+    ORDER BY "endsAt" ASC, id ASC
+    LIMIT ${CHALLENGE_JOB_BATCH_SIZE}
   `;
-  const challenges = await Promise.all(rows.map((row) => getChallengeById(row.id)));
-  return challenges.filter((c): c is ChallengeDetails => c !== null);
+  return getChallengesByIds(rows.map((row) => row.id));
 }
 
 /**
  * Gets recently-completed challenges that still have stuck REVIEW CollectionItems.
  * Used by the reconciliation pass to re-process challenges that weren't fully settled.
- * Returns challenges whose endsAt is within the last windowHours hours.
+ * Returns challenges whose endsAt is within the last windowHours hours, ordered by endsAt ASC
+ * (id tiebreak), bounded to CHALLENGE_JOB_BATCH_SIZE per run.
  */
 export async function getChallengesToReconcileFromDb(windowHours = 48): Promise<ChallengeDetails[]> {
   const rows = await dbRead.$queryRaw<{ id: number }[]>`
@@ -280,16 +285,17 @@ export async function getChallengesToReconcileFromDb(windowHours = 48): Promise<
       SELECT 1 FROM "CollectionItem" ci
       WHERE ci."collectionId" = c."collectionId" AND ci.status = 'REVIEW'
     )
-    ORDER BY c."endsAt" ASC
+    ORDER BY c."endsAt" ASC, c.id ASC
+    LIMIT ${CHALLENGE_JOB_BATCH_SIZE}
   `;
-  const challenges = await Promise.all(rows.map((row) => getChallengeById(row.id)));
-  return challenges.filter((c): c is ChallengeDetails => c !== null);
+  return getChallengesByIds(rows.map((row) => row.id));
 }
 
 /**
  * Gets scheduled challenges that are ready to START (startsAt <= now).
  * These challenges should be activated.
- * Returns challenges ordered by startsAt ASC (oldest first).
+ * Returns challenges ordered by startsAt ASC (oldest first, id tiebreak), bounded to
+ * CHALLENGE_JOB_BATCH_SIZE per run.
  */
 export async function getScheduledChallengesReadyToStart(): Promise<ChallengeDetails[]> {
   const rows = await dbRead.$queryRaw<{ id: number }[]>`
@@ -298,10 +304,10 @@ export async function getScheduledChallengesReadyToStart(): Promise<ChallengeDet
     WHERE status = ${ChallengeStatus.Scheduled}::"ChallengeStatus"
     AND "startsAt" <= now()
     AND ("source" != 'User' OR "ingestion" = 'Scanned')
-    ORDER BY "startsAt" ASC
+    ORDER BY "startsAt" ASC, id ASC
+    LIMIT ${CHALLENGE_JOB_BATCH_SIZE}
   `;
-  const challenges = await Promise.all(rows.map((row) => getChallengeById(row.id)));
-  return challenges.filter((c): c is ChallengeDetails => c !== null);
+  return getChallengesByIds(rows.map((row) => row.id));
 }
 
 /**
@@ -309,7 +315,8 @@ export async function getScheduledChallengesReadyToStart(): Promise<ChallengeDet
  * (Blocked, or stuck Pending/Error). None of these can activate (getScheduledChallengesReadyToStart
  * requires Scanned), so without intervention they sit Scheduled+hidden forever with the creator's
  * initial prize escrowed. Blocked ones are voided; Pending/Error ones get a re-scan attempt and
- * are voided once well past start. Returns id + ingestion ordered by startsAt ASC.
+ * are voided once well past start. Returns id + ingestion ordered by startsAt ASC (id tiebreak),
+ * bounded to CHALLENGE_JOB_BATCH_SIZE per run.
  */
 export async function getUnscannedUserChallengesPastStart(): Promise<
   { id: number; ingestion: ChallengeIngestionStatus; startsAt: Date }[]
@@ -323,7 +330,8 @@ export async function getUnscannedUserChallengesPastStart(): Promise<
     AND source = ${ChallengeSource.User}::"ChallengeSource"
     AND "ingestion" != ${ChallengeIngestionStatus.Scanned}::"ChallengeIngestionStatus"
     AND "startsAt" <= now()
-    ORDER BY "startsAt" ASC
+    ORDER BY "startsAt" ASC, id ASC
+    LIMIT ${CHALLENGE_JOB_BATCH_SIZE}
   `;
   return rows;
 }

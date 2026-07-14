@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { computeDynamicPool } from '../challenge-pool';
+import { CHALLENGE_JOB_BATCH_SIZE } from '~/shared/constants/challenge.constants';
 
 // challenge-helpers.ts (transitively, via daily-challenge.utils.ts) eagerly constructs real
 // db/redis clients at import time. Mock them so the module graph loads without a live DB/Redis.
@@ -212,5 +213,91 @@ describe('getChallengesByIds', () => {
     const { getChallengesByIds } = await import('../challenge-helpers');
     await getChallengesByIds([1, 2, 3]);
     expect(mockDbRead.$queryRaw).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('bounded job selectors', () => {
+  // Selectors that hydrate ids via getChallengesByIds — each issues an id-listing query
+  // (call 1) then, if any ids came back, a single batched hydrate query (call 2). The old
+  // Promise.all(rows.map(getChallengeById)) pattern would have issued 1 + N queries instead.
+  const hydratingSelectors: Array<[string, () => Promise<unknown>]> = [
+    [
+      'getActiveChallengesFromDb',
+      async () => (await import('../challenge-helpers')).getActiveChallengesFromDb(),
+    ],
+    [
+      'getEndedActiveChallengesFromDb',
+      async () => (await import('../challenge-helpers')).getEndedActiveChallengesFromDb(),
+    ],
+    [
+      'getChallengesToReconcileFromDb',
+      async () => (await import('../challenge-helpers')).getChallengesToReconcileFromDb(),
+    ],
+    [
+      'getScheduledChallengesReadyToStart',
+      async () => (await import('../challenge-helpers')).getScheduledChallengesReadyToStart(),
+    ],
+  ];
+
+  beforeEach(() => {
+    mockDbRead.$queryRaw.mockReset();
+  });
+
+  it('CHALLENGE_JOB_BATCH_SIZE exceeds the old hardcoded 50-row cap (regression guard)', () => {
+    // getActiveChallengesFromDb used to hardcode LIMIT 50, silently dropping the 51st+ active
+    // challenge. If this constant ever regresses back to <=50 that bug returns.
+    expect(CHALLENGE_JOB_BATCH_SIZE).toBeGreaterThan(50);
+  });
+
+  it.each(hydratingSelectors)(
+    '%s: hydrates 60 ids via ONE batched query, not N+1',
+    async (_name, run) => {
+      const idRows = Array.from({ length: 60 }, (_, i) => ({ id: i + 1 }));
+      mockDbRead.$queryRaw
+        .mockResolvedValueOnce(idRows) // id-listing query
+        .mockResolvedValueOnce([]); // getChallengesByIds batched hydrate query
+
+      await run();
+
+      expect(mockDbRead.$queryRaw).toHaveBeenCalledTimes(2);
+    }
+  );
+
+  it.each(hydratingSelectors)(
+    '%s: bounds the id-listing query at CHALLENGE_JOB_BATCH_SIZE with a stable ORDER BY',
+    async (_name, run) => {
+      mockDbRead.$queryRaw.mockResolvedValue([]); // empty id list short-circuits getChallengesByIds
+
+      await run();
+
+      expect(mockDbRead.$queryRaw).toHaveBeenCalledTimes(1);
+      const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[0] as [
+        TemplateStringsArray,
+        ...unknown[]
+      ];
+      const sql = strings.join('?');
+      expect(sql).toMatch(/ORDER BY .*ASC.*,\s*(?:c\.)?id ASC/);
+      expect(sql).toMatch(/LIMIT \?/);
+      expect(values).toContain(CHALLENGE_JOB_BATCH_SIZE);
+      expect(values).not.toContain(50);
+    }
+  );
+
+  it('getUnscannedUserChallengesPastStart: bounds at CHALLENGE_JOB_BATCH_SIZE with a stable ORDER BY (no hydrate query)', async () => {
+    mockDbRead.$queryRaw.mockResolvedValueOnce([]);
+    const { getUnscannedUserChallengesPastStart } = await import('../challenge-helpers');
+
+    await getUnscannedUserChallengesPastStart();
+
+    expect(mockDbRead.$queryRaw).toHaveBeenCalledTimes(1);
+    const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[0] as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    const sql = strings.join('?');
+    expect(sql).toMatch(/ORDER BY "startsAt" ASC, id ASC/);
+    expect(sql).toMatch(/LIMIT \?/);
+    expect(values).toContain(CHALLENGE_JOB_BATCH_SIZE);
+    expect(values).not.toContain(50);
   });
 });
