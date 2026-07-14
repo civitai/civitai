@@ -220,6 +220,15 @@ export const creatorCompAmountPaidCounter = registerCounterWithLabels({
   labelNames: ['account_type'] as const,
 });
 
+// Cosmetic shop payouts that failed after the buyer was charged and are still owed to a creator.
+// `pending` rows are awaiting a retry; `exhausted` rows have burned their retries and need a human.
+// Set by the retry job, not collect() — the value comes from a DB count and every pod would run it.
+export const cosmeticPayoutDeadLetterGauge = registerGaugeWithLabels({
+  name: 'cosmetic_payout_dead_letter_rows',
+  help: 'Unresolved cosmetic shop creator payouts (buzz owed), by retry state',
+  labelNames: ['state'] as const,
+});
+
 // License fee payout metrics
 export const licenseFeeCreatorsPaidCounter = registerCounterWithLabels({
   name: 'license_fee_creators_paid_total',

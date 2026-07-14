@@ -2599,6 +2599,25 @@ export interface UserCosmeticShopPurchases {
   refunded: boolean;
 }
 
+export interface CosmeticShopPayoutDeadLetter {
+  id: number;
+  externalTransactionId: string;
+  purchaseTransactionId: string;
+  recipientUserId: number;
+  buyerId: number;
+  shopItemId: number;
+  cosmeticId: number;
+  amount: number;
+  originalAmount: number;
+  buzzType: string;
+  description: string;
+  attempts: number;
+  lastError: string | null;
+  resolvedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface BuzzClaim {
   key: string;
   title: string;

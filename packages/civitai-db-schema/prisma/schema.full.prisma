@@ -3762,6 +3762,31 @@ model UserCosmeticShopPurchases {
   refunded          Boolean
 }
 
+// Cosmetic shop creator payouts that failed after the buyer was charged. Deliberately has no
+// foreign keys: a row is buzz still owed, so it must outlive deletion of the item/cosmetic/purchase.
+model CosmeticShopPayoutDeadLetter {
+  id                    Int       @id @default(autoincrement())
+  // Replayed verbatim rather than recomputed — it is the buzz service's idempotency key, so
+  // preserving the original value is what makes a retry unable to double-pay.
+  externalTransactionId String    @unique
+  purchaseTransactionId String
+  recipientUserId       Int
+  buyerId               Int
+  shopItemId            Int
+  cosmeticId            Int
+  amount                Int
+  originalAmount        Int
+  buzzType              String
+  description           String
+  attempts              Int       @default(0)
+  lastError             String?
+  resolvedAt            DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([resolvedAt])
+}
+
 enum BuzzAccountType {
   user
   generation

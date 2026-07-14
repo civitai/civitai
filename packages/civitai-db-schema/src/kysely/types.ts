@@ -1829,6 +1829,24 @@ export type CosmeticShopItem = {
   reviewedAt: Timestamp | null;
   rejectionReason: string | null;
 };
+export type CosmeticShopPayoutDeadLetter = {
+  id: Generated<number>;
+  externalTransactionId: string;
+  purchaseTransactionId: string;
+  recipientUserId: number;
+  buyerId: number;
+  shopItemId: number;
+  cosmeticId: number;
+  amount: number;
+  originalAmount: number;
+  buzzType: string;
+  description: string;
+  attempts: Generated<number>;
+  lastError: string | null;
+  resolvedAt: Timestamp | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
 export type CosmeticShopSection = {
   id: Generated<number>;
   addedById: number | null;
@@ -3863,6 +3881,7 @@ export type DB = {
   CommentV2Report: CommentV2Report;
   Cosmetic: Cosmetic;
   CosmeticShopItem: CosmeticShopItem;
+  CosmeticShopPayoutDeadLetter: CosmeticShopPayoutDeadLetter;
   CosmeticShopSection: CosmeticShopSection;
   CosmeticShopSectionItem: CosmeticShopSectionItem;
   CoveredCheckpoint: CoveredCheckpoint;

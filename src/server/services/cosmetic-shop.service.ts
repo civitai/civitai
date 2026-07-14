@@ -475,6 +475,76 @@ export const getShopSectionsWithItems = async ({
   );
 };
 
+// Suffixed only when the pool is split, so the two payouts don't collide on the same external id.
+// The buzz service keys idempotency on this value, so the dead-letter row and the original attempt
+// MUST derive it identically — a retry under a different id would double-pay.
+const cosmeticPayoutExternalId = (transactionId: string, recipientCount: number, userId: number) =>
+  recipientCount > 1 ? `${transactionId}:${userId}` : transactionId;
+
+// Records buzz owed to creators after the buyer was already charged, for `retry-cosmetic-shop-payouts`
+// to settle. Never throws: the purchase must not fail because we couldn't write the debt down.
+async function recordCosmeticPayoutFailure({
+  recipients,
+  transactionId,
+  buyerId,
+  shopItemId,
+  cosmeticId,
+  originalAmount,
+  buzzType,
+  description,
+  error,
+}: {
+  recipients: { userId: number; amount: number }[];
+  transactionId: string;
+  buyerId: number;
+  shopItemId: number;
+  cosmeticId: number;
+  originalAmount: number;
+  buzzType: BuzzSpendType;
+  description: string;
+  error: unknown;
+}) {
+  const lastError = error instanceof Error ? error.message : String(error);
+
+  try {
+    await Promise.all(
+      recipients
+        .filter((r) => r.amount > 0)
+        .map((r) => {
+          const externalTransactionId = cosmeticPayoutExternalId(
+            transactionId,
+            recipients.length,
+            r.userId
+          );
+
+          return dbWrite.cosmeticShopPayoutDeadLetter.upsert({
+            where: { externalTransactionId },
+            create: {
+              externalTransactionId,
+              purchaseTransactionId: transactionId,
+              recipientUserId: r.userId,
+              buyerId,
+              shopItemId,
+              cosmeticId,
+              amount: r.amount,
+              originalAmount,
+              buzzType,
+              description,
+              lastError,
+            },
+            update: { lastError },
+          });
+        })
+    );
+  } catch (e) {
+    logToAxiom({
+      level: 'error',
+      message: 'Failed to record cosmetic payout dead letter',
+      data: { shopItemId, buyerId, transactionId, recipients, error: e },
+    });
+  }
+}
+
 export const purchaseCosmeticShopItem = async ({
   userId,
   shopItemId,
@@ -631,74 +701,78 @@ export const purchaseCosmeticShopItem = async ({
       return userCosmetic;
     });
 
+    const description = `A user has purchased your cosmetic - ${shopItem.title}`;
+    // Resolved outside the retry so the catch below still knows who was owed what and can
+    // dead-letter the debt. The buyer has already paid at this point.
+    let recipients: { userId: number; amount: number }[] = [];
     try {
-      await withRetries(async () => {
-        // We do this last mainly because we don't want to fail the purchase if this fails.
-        // We can divide the funds later if needed.
-        // Creator Shop items pay the cosmetic's creator (cosmetic.createdById)
-        // their 70% share directly. When another creator (the seller = addedById)
-        // lists a sellable-by-others cosmetic, that 70% pool is split by the
-        // cosmetic's sellerShare (% of price the seller keeps; creator gets the
-        // rest). Official items keep the legacy meta.paidToUserIds distribution.
-        const price = shopItem.unitAmount;
-        const creatorId = shopItem.cosmetic.createdById;
-        const { creatorPool, sellerAmount, creatorAmount } = computeCreatorShopSplit(
-          price,
-          meta?.sellerShare ?? 0
-        );
+      // Creator Shop items pay the cosmetic's creator (cosmetic.createdById)
+      // their 70% share directly. When another creator (the seller = addedById)
+      // lists a sellable-by-others cosmetic, that 70% pool is split by the
+      // cosmetic's sellerShare (% of price the seller keeps; creator gets the
+      // rest). Official items keep the legacy meta.paidToUserIds distribution.
+      const price = shopItem.unitAmount;
+      const creatorId = shopItem.cosmetic.createdById;
+      const { creatorPool, sellerAmount, creatorAmount } = computeCreatorShopSplit(
+        price,
+        meta?.sellerShare ?? 0
+      );
 
-        // Cross-creator resale: when bought through another creator's shop
-        // (viaShopUserId) that actually resells this sellable item, split the 70%
-        // pool by the item's sellerShare. Verified server-side so credit can't be
-        // spoofed; otherwise the creator keeps the full 70%.
-        let resellerId: number | undefined;
-        if (viaShopUserId && creatorId && viaShopUserId !== creatorId && meta?.sellableByOthers) {
-          const viaUser = await dbRead.user.findUnique({
-            where: { id: viaShopUserId },
-            select: { settings: true },
-          });
-          const resoldIds =
-            (viaUser?.settings as { creatorShop?: { resoldItemIds?: number[] } } | null)
-              ?.creatorShop?.resoldItemIds ?? [];
-          if (resoldIds.includes(shopItem.id)) resellerId = viaShopUserId;
-        }
+      // Cross-creator resale: when bought through another creator's shop
+      // (viaShopUserId) that actually resells this sellable item, split the 70%
+      // pool by the item's sellerShare. Verified server-side so credit can't be
+      // spoofed; otherwise the creator keeps the full 70%.
+      let resellerId: number | undefined;
+      if (viaShopUserId && creatorId && viaShopUserId !== creatorId && meta?.sellableByOthers) {
+        const viaUser = await dbRead.user.findUnique({
+          where: { id: viaShopUserId },
+          select: { settings: true },
+        });
+        const resoldIds =
+          (viaUser?.settings as { creatorShop?: { resoldItemIds?: number[] } } | null)?.creatorShop
+            ?.resoldItemIds ?? [];
+        if (resoldIds.includes(shopItem.id)) resellerId = viaShopUserId;
+      }
 
-        let recipients: { userId: number; amount: number }[];
-        if (creatorId) {
-          if (resellerId) {
-            recipients = [
-              ...(creatorAmount > 0 ? [{ userId: creatorId, amount: creatorAmount }] : []),
-              ...(sellerAmount > 0 ? [{ userId: resellerId, amount: sellerAmount }] : []),
-            ];
-          } else {
-            recipients = [{ userId: creatorId, amount: creatorPool }];
-          }
+      if (creatorId) {
+        if (resellerId) {
+          recipients = [
+            ...(creatorAmount > 0 ? [{ userId: creatorId, amount: creatorAmount }] : []),
+            ...(sellerAmount > 0 ? [{ userId: resellerId, amount: sellerAmount }] : []),
+          ];
         } else {
-          recipients = (meta?.paidToUserIds ?? []).map((uid) => ({
-            userId: uid,
-            amount: Math.floor(price / (meta?.paidToUserIds?.length ?? 1)),
-          }));
+          recipients = [{ userId: creatorId, amount: creatorPool }];
         }
+      } else {
+        recipients = (meta?.paidToUserIds ?? []).map((uid) => ({
+          userId: uid,
+          amount: Math.floor(price / (meta?.paidToUserIds?.length ?? 1)),
+        }));
+      }
 
-        await Promise.all(
-          recipients.map((r) =>
-            createBuzzTransaction({
-              fromAccountId: 0,
-              toAccountId: r.userId,
-              // Pay creators/resellers in the same Buzz color the buyer paid with.
-              toAccountType: buzzType,
-              amount: r.amount,
-              type: TransactionType.Sell,
-              description: `A user has purchased your cosmetic - ${shopItem.title}`,
-              // Unique per recipient when the pool is split, so the two payouts
-              // don't collide on the same external id.
-              externalTransactionId:
-                recipients.length > 1 ? `${transactionId}:${r.userId}` : transactionId,
-              details: { purchasedBy: userId, originalAmount: shopItem.unitAmount },
-            })
-          )
-        );
-      }, 3);
+      await withRetries(
+        () =>
+          Promise.all(
+            recipients.map((r) =>
+              createBuzzTransaction({
+                fromAccountId: 0,
+                toAccountId: r.userId,
+                // Pay creators/resellers in the same Buzz color the buyer paid with.
+                toAccountType: buzzType,
+                amount: r.amount,
+                type: TransactionType.Sell,
+                description,
+                externalTransactionId: cosmeticPayoutExternalId(
+                  transactionId,
+                  recipients.length,
+                  r.userId
+                ),
+                details: { purchasedBy: userId, originalAmount: shopItem.unitAmount },
+              })
+            )
+          ),
+        3
+      );
     } catch (e) {
       // We will NOT stop the user interaction for this.
       logToAxiom({
@@ -710,6 +784,18 @@ export const purchaseCosmeticShopItem = async ({
           transactionId,
           error: e,
         },
+      });
+
+      await recordCosmeticPayoutFailure({
+        recipients,
+        transactionId,
+        buyerId: userId,
+        shopItemId,
+        cosmeticId: shopItem.cosmeticId,
+        originalAmount: shopItem.unitAmount,
+        buzzType,
+        description,
+        error: e,
       });
     }
 

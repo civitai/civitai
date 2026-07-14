@@ -42,6 +42,7 @@ import {
 } from '~/server/jobs/referral-program-jobs';
 import { prepaidMembershipJobs } from '~/server/jobs/prepaid-membership-jobs';
 import { updateCreatorResourceCompensation } from '~/server/jobs/deliver-creator-compensation';
+import { retryCosmeticShopPayouts } from '~/server/jobs/retry-cosmetic-shop-payouts';
 import { deliverLeaderboardCosmetics } from '~/server/jobs/deliver-leaderboard-cosmetics';
 import { deliverPurchasedCosmetics } from '~/server/jobs/deliver-purchased-cosmetics';
 import { dummyJob } from '~/server/jobs/dummy-job';
@@ -162,6 +163,7 @@ export const jobs: Job[] = [
   tempSetMissingNsfwLevel,
   imagesCreatedEvents,
   updateCreatorResourceCompensation,
+  retryCosmeticShopPayouts,
   confirmMutes,
   confirmPendingBlockAttributions,
   bulkPayoutBlockAttributions,
@@ -224,8 +226,7 @@ export default WebhookEndpoint(async (req, res) => {
   const { name, run, options } = job;
 
   const lock = await acquireLock(name, options.lockExpiration, noCheck);
-  if (!lock)
-    return res.status(200).json({ ok: true, error: 'Job already running' });
+  if (!lock) return res.status(200).json({ ok: true, error: 'Job already running' });
 
   const jobStart = Date.now();
   const axiom = req.log.with({ scope: 'job', name, pod });
