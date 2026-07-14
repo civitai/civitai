@@ -270,6 +270,13 @@ describe('bounded job selectors', () => {
     ],
   ];
 
+  // Selectors ordered by a plain startsAt/id ASC cursor. getActiveChallengesFromDb is excluded —
+  // it rotates by reviewedAt instead (see the dedicated test below) so later-started actives
+  // aren't starved when there are more than CHALLENGE_JOB_BATCH_SIZE concurrent actives (spec C1).
+  const startsAtOrderedSelectors = hydratingSelectors.filter(
+    ([name]) => name !== 'getActiveChallengesFromDb'
+  );
+
   beforeEach(() => {
     mockDbRead.$queryRaw.mockReset();
   });
@@ -294,7 +301,7 @@ describe('bounded job selectors', () => {
     }
   );
 
-  it.each(hydratingSelectors)(
+  it.each(startsAtOrderedSelectors)(
     '%s: bounds the id-listing query at CHALLENGE_JOB_BATCH_SIZE with a stable ORDER BY',
     async (_name, run) => {
       mockDbRead.$queryRaw.mockResolvedValue([]); // empty id list short-circuits getChallengesByIds
@@ -313,6 +320,26 @@ describe('bounded job selectors', () => {
       expect(values).not.toContain(50);
     }
   );
+
+  it('getActiveChallengesFromDb: rotates least-recently-reviewed first (reviewedAt ASC NULLS FIRST) so >batch-size actives drain across runs', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([]); // empty id list short-circuits getChallengesByIds
+    const { getActiveChallengesFromDb } = await import('../challenge-helpers');
+
+    await getActiveChallengesFromDb();
+
+    expect(mockDbRead.$queryRaw).toHaveBeenCalledTimes(1);
+    const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[0] as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    const sql = strings.join('?');
+    expect(sql).toMatch(
+      /ORDER BY cast\(metadata->>'reviewedAt' as bigint\) ASC NULLS FIRST, "startsAt" ASC, id ASC/
+    );
+    expect(sql).toMatch(/LIMIT \?/);
+    expect(values).toContain(CHALLENGE_JOB_BATCH_SIZE);
+    expect(values).not.toContain(50);
+  });
 
   it('getUnscannedUserChallengesPastStart: bounds at CHALLENGE_JOB_BATCH_SIZE with a stable ORDER BY (no hydrate query)', async () => {
     mockDbRead.$queryRaw.mockResolvedValueOnce([]);

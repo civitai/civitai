@@ -240,8 +240,9 @@ export async function getActiveChallengeFromDb(): Promise<ChallengeDetails | nul
 
 /**
  * Gets ALL active challenges (supports multiple concurrent challenges).
- * Returns challenges ordered by startsAt ASC (id tiebreak), bounded to
- * CHALLENGE_JOB_BATCH_SIZE per run so the same challenges aren't perpetually starved.
+ * Ordered by least-recently-reviewed first (never-reviewed challenges first via NULLS FIRST,
+ * then oldest reviewedAt) so a batch of >CHALLENGE_JOB_BATCH_SIZE actives rotates through the
+ * full set across consecutive runs instead of starving later-started challenges (spec C1).
  */
 export async function getActiveChallengesFromDb(
   limit = CHALLENGE_JOB_BATCH_SIZE
@@ -250,7 +251,7 @@ export async function getActiveChallengesFromDb(
     SELECT id
     FROM "Challenge"
     WHERE status = ${ChallengeStatus.Active}::"ChallengeStatus"
-    ORDER BY "startsAt" ASC, id ASC
+    ORDER BY cast(metadata->>'reviewedAt' as bigint) ASC NULLS FIRST, "startsAt" ASC, id ASC
     LIMIT ${limit}
   `;
   return getChallengesByIds(rows.map((row) => row.id));
