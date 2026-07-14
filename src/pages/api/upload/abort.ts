@@ -56,6 +56,15 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
       res.status(204).end();
       return;
     }
+    if (errorClass === 'invalid-parts') {
+      // A parts-manifest fault (400-class) surfaced on the abort path — terminal, the
+      // client must stop retrying and re-upload. 422 Unprocessable Entity mirrors the
+      // complete handler. no-store so nothing caches the failure. (The sole caller
+      // fire-and-forgets abort and ignores the body, so the status alone is safe.)
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(422).json({ error: 'Upload parts invalid or incomplete — please re-upload' });
+      return;
+    }
     if (errorClass === 'transient') {
       // Retry-able storage-backend blip (S3/B2 5xx, throttle/timing, or network).
       res.setHeader('Retry-After', '2');

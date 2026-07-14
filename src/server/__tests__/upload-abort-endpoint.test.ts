@@ -133,6 +133,31 @@ describe('/api/upload/abort — error classification', () => {
     expect(res.ended).toBe(true);
   });
 
+  it('InvalidPart (name + $metadata 400) → 422 + no-store, not 500', async () => {
+    mockAbortMultipartUpload.mockRejectedValue(
+      s3Error({
+        name: 'InvalidPart',
+        message:
+          'One or more of the specified parts could not be found. The part may not have been uploaded, or the specified entity tag may not match the part\'s entity tag.',
+        $metadata: { httpStatusCode: 400 },
+      })
+    );
+    const res = makeRes();
+    await handler(makeReq(), res);
+    expect(res.statusCode).toBe(422);
+    expect(res.body).toEqual({ error: 'Upload parts invalid or incomplete — please re-upload' });
+    expect(res.headers['Cache-Control']).toBe('no-store');
+  });
+
+  it('an unknown 400 (not a parts fault) STILL surfaces as 500, not 422', async () => {
+    mockAbortMultipartUpload.mockRejectedValue(
+      s3Error({ name: 'SomeUnknownClientError', $metadata: { httpStatusCode: 400 } })
+    );
+    const res = makeRes();
+    await handler(makeReq(), res);
+    expect(res.statusCode).toBe(500);
+  });
+
   it('transient S3 500 → 503 + Retry-After header, not 500', async () => {
     mockAbortMultipartUpload.mockRejectedValue(
       s3Error({ name: 'InternalError', $metadata: { httpStatusCode: 500 } })
