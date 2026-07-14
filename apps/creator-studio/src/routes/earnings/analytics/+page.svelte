@@ -7,12 +7,14 @@
 
   const RANGES = [7, 30, 90] as const;
   const num = (n: number) => n.toLocaleString();
+  // Build a URL that preserves both controls.
+  const link = (days: number, g: 'day' | 'week') => `?days=${days}&g=${g}`;
 
   const commonOptions = {
     responsive: true,
     maintainAspectRatio: false,
     plugins: { legend: { display: false } },
-    scales: { x: { ticks: { maxTicksLimit: 7 } } },
+    scales: { x: { ticks: { maxTicksLimit: 8, autoSkip: true } } },
   };
 
   function lineData(series: TimePoint[], label: string, colorIndex: number) {
@@ -26,7 +28,7 @@
           backgroundColor: chartColor(colorIndex),
           tension: 0.3,
           fill: false,
-          pointRadius: 2,
+          pointRadius: series.length > 45 ? 0 : 2,
         },
       ],
     };
@@ -56,22 +58,36 @@
   );
 </script>
 
-<header class="page-header flex items-start gap-3">
+<header class="page-header flex flex-wrap items-start gap-3">
   <div>
     <h1>Analytics</h1>
     <p>Your content performance — reactions, followers, and posts over time.</p>
   </div>
-  <div class="ml-auto flex items-center gap-1 rounded-lg border border-dark-4 bg-dark-6 p-0.5">
-    {#each RANGES as r (r)}
-      <a
-        href="?days={r}"
-        class="rounded px-2.5 py-1 text-sm {data.days === r
-          ? 'bg-blue-8 text-white'
-          : 'text-dark-2 hover:text-white'}"
-      >
-        {r}d
-      </a>
-    {/each}
+  <div class="ml-auto flex items-center gap-2">
+    <div class="flex items-center gap-1 rounded-lg border border-dark-4 bg-dark-6 p-0.5">
+      {#each RANGES as r (r)}
+        <a
+          href={link(r, data.granularity)}
+          class="rounded px-2.5 py-1 text-sm {data.days === r
+            ? 'bg-blue-8 text-white'
+            : 'text-dark-2 hover:text-white'}"
+        >
+          {r}d
+        </a>
+      {/each}
+    </div>
+    <div class="flex items-center gap-1 rounded-lg border border-dark-4 bg-dark-6 p-0.5">
+      {#each ['day', 'week'] as const as g (g)}
+        <a
+          href={link(data.days, g)}
+          class="rounded px-2.5 py-1 text-sm capitalize {data.granularity === g
+            ? 'bg-blue-8 text-white'
+            : 'text-dark-2 hover:text-white'}"
+        >
+          {g}
+        </a>
+      {/each}
+    </div>
   </div>
 </header>
 
@@ -104,6 +120,39 @@
       </div>
     {/each}
   </div>
+
+  {#if data.analytics.topImages.length > 0}
+    <div class="mt-4 rounded-lg border border-dark-4 bg-dark-6 p-4">
+      <p class="mb-3 text-sm text-dark-2">Top images by reactions</p>
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="border-b border-dark-4 text-left text-xs uppercase tracking-wide text-dark-3">
+            <th class="w-10 py-2 font-medium">#</th>
+            <th class="py-2 font-medium">Image</th>
+            <th class="w-28 py-2 text-right font-medium">Reactions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each data.analytics.topImages as img, i (img.imageId)}
+            <tr class="border-b border-dark-6">
+              <td class="py-2 text-dark-3">{i + 1}</td>
+              <td class="py-2">
+                <a
+                  href="https://civitai.com/images/{img.imageId}"
+                  target="_blank"
+                  rel="noreferrer"
+                  class="text-white underline decoration-dark-4 hover:decoration-white"
+                >
+                  Image #{img.imageId}
+                </a>
+              </td>
+              <td class="py-2 text-right font-medium text-white">{num(img.reactions)}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  {/if}
 {/if}
 
 <div class="mt-8 rounded-lg border border-dashed border-dark-4 p-4 text-sm text-dark-3">

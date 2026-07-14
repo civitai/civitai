@@ -1,10 +1,11 @@
 import { getClickhouse } from '$lib/server/clickhouse';
 
 // Content/Creator analytics (B4 section b). Every metric is keyed **directly to the creator's userId** in
-// ClickHouse — no owner-keyed rollup (A1) needed. Daily counts over a rolling window. Model-usage/earnings
-// metrics (keyed by modelVersionId) are the ones that wait on A1 and are not here.
+// ClickHouse — no owner-keyed rollup (A1) needed. Daily/weekly counts over a rolling window, gap-filled so the
+// charts are continuous. Model-usage/earnings metrics (keyed by modelVersionId) wait on A1 and are not here.
 
 export type TimePoint = { date: string; value: number };
+export type TopImage = { imageId: number; reactions: number };
 export type ContentTotals = {
   reactions: number;
   followers: number;
@@ -19,16 +20,38 @@ export type ContentAnalytics = {
   posts: TimePoint[];
   profileViews: TimePoint[];
   totals: ContentTotals;
+  topImages: TopImage[];
 };
 
 export const ANALYTICS_RANGES = [7, 30, 90] as const;
 export type AnalyticsRange = (typeof ANALYTICS_RANGES)[number];
+export type Granularity = 'day' | 'week';
 
-// userId + days are trusted integers (session id + a validated preset), so they're coerced and interpolated
-// directly rather than going through the tagged-template formatter.
-export async function getContentAnalytics(userId: number, days: number): Promise<ContentAnalytics> {
+// Gap-filled daily/weekly count query for `table`, keyed to the creator via `filter`. WITH FILL synthesizes the
+// missing buckets (value 0) so a series never has holes; `TO … + step` makes the range inclusive of today/this
+// week. userId + days are trusted integers (session id + validated preset), so they're interpolated directly.
+function seriesSql(
+  table: string,
+  timeCol: string,
+  filter: string,
+  d: number,
+  gran: Granularity
+): string {
+  const bucket = gran === 'week' ? `toStartOfWeek(${timeCol}, 1)` : `toDate(${timeCol})`;
+  const from = gran === 'week' ? `toStartOfWeek(today() - ${d}, 1)` : `today() - ${d}`;
+  const to = gran === 'week' ? `toStartOfWeek(today(), 1) + 7` : `today() + 1`;
+  const step = gran === 'week' ? 7 : 1;
+  return `SELECT ${bucket} AS date, count() AS value FROM ${table} WHERE ${filter} AND toDate(${timeCol}) >= today() - ${d} GROUP BY date ORDER BY date WITH FILL FROM ${from} TO ${to} STEP ${step}`;
+}
+
+export async function getContentAnalytics(
+  userId: number,
+  days: number,
+  granularity: Granularity
+): Promise<ContentAnalytics> {
   const uid = Number(userId);
   const d = Number(days);
+  const g = granularity;
   const ch = getClickhouse();
 
   const series = async (sql: string): Promise<TimePoint[]> => {
@@ -36,21 +59,22 @@ export async function getContentAnalytics(userId: number, days: number): Promise
     return rows.map((r) => ({ date: String(r.date), value: Number(r.value) }));
   };
 
-  const [reactions, followers, images, posts, profileViews] = await Promise.all([
+  const [reactions, followers, images, posts, profileViews, topImagesRaw] = await Promise.all([
     series(
-      `SELECT toDate(time) AS date, count() AS value FROM reactions WHERE ownerId = ${uid} AND endsWith(toString(type), '_Create') AND toDate(time) >= today() - ${d} GROUP BY date ORDER BY date`
+      seriesSql(
+        'reactions',
+        'time',
+        `ownerId = ${uid} AND endsWith(toString(type), '_Create')`,
+        d,
+        g
+      )
     ),
-    series(
-      `SELECT toDate(time) AS date, count() AS value FROM userEngagements WHERE targetUserId = ${uid} AND type = 'Follow' AND toDate(time) >= today() - ${d} GROUP BY date ORDER BY date`
-    ),
-    series(
-      `SELECT toDate(createdAt) AS date, count() AS value FROM images_created WHERE userId = ${uid} AND toDate(createdAt) >= today() - ${d} GROUP BY date ORDER BY date`
-    ),
-    series(
-      `SELECT toDate(time) AS date, count() AS value FROM posts WHERE userId = ${uid} AND type = 'Publish' AND toDate(time) >= today() - ${d} GROUP BY date ORDER BY date`
-    ),
-    series(
-      `SELECT toDate(time) AS date, count() AS value FROM views WHERE entityType = 'User' AND entityId = ${uid} AND toDate(time) >= today() - ${d} GROUP BY date ORDER BY date`
+    series(seriesSql('userEngagements', 'time', `targetUserId = ${uid} AND type = 'Follow'`, d, g)),
+    series(seriesSql('images_created', 'createdAt', `userId = ${uid}`, d, g)),
+    series(seriesSql('posts', 'time', `userId = ${uid} AND type = 'Publish'`, d, g)),
+    series(seriesSql('views', 'time', `entityType = 'User' AND entityId = ${uid}`, d, g)),
+    ch.$query<{ imageId: number | string; reactions: number | string }>(
+      `SELECT entityId AS imageId, count() AS reactions FROM reactions WHERE ownerId = ${uid} AND type = 'Image_Create' AND toDate(time) >= today() - ${d} GROUP BY imageId ORDER BY reactions DESC LIMIT 10`
     ),
   ]);
 
@@ -68,5 +92,9 @@ export async function getContentAnalytics(userId: number, days: number): Promise
       posts: sum(posts),
       profileViews: sum(profileViews),
     },
+    topImages: topImagesRaw.map((r) => ({
+      imageId: Number(r.imageId),
+      reactions: Number(r.reactions),
+    })),
   };
 }
