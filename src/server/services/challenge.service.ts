@@ -3096,9 +3096,9 @@ export async function playgroundPickWinners(input: PlaygroundPickWinnersInput) {
 // ─── Previous Winners Page ───────────────────────────────────────────────────
 
 export async function getCompletedChallengesWithWinners(
-  input: GetCompletedChallengesWithWinnersInput
+  input: GetCompletedChallengesWithWinnersInput & { isGreen?: boolean; currentUserId?: number }
 ) {
-  const { cursor, limit, eventId, browsingLevel, query } = input;
+  const { cursor, limit, eventId, browsingLevel, query, isGreen, currentUserId } = input;
 
   // Phase 1: Query completed challenges with cursor pagination
   const conditions: Prisma.Sql[] = [
@@ -3111,8 +3111,29 @@ export async function getCompletedChallengesWithWinners(
     conditions.push(Prisma.sql`c."eventId" = ${eventId}`);
   }
 
-  if (browsingLevel) {
-    conditions.push(Prisma.sql`(c."allowedNsfwLevel" & ${browsingLevel}) > 0`);
+  // Domain-currency gate — parity with the feed: a user challenge only appears on its own domain
+  // (green on green, yellow off-green). System/mod/event challenges are universal. Creator exempt.
+  const domainCurrency = deriveDomainCurrency(isGreen ?? false);
+  conditions.push(
+    currentUserId
+      ? Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency} OR c."createdById" = ${currentUserId})`
+      : Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency})`
+  );
+
+  // Content level filter — parity with the feed: exclude a challenge whose REAL cover image level
+  // doesn't intersect the viewer's effective (green-capped) browsing level, rather than trusting
+  // the declared allowedNsfwLevel. Creator sees their own.
+  const effectiveBrowsingLevel = getEffectiveBrowsingLevel({
+    isGreen: isGreen ?? false,
+    isLoggedIn: currentUserId != null,
+    requested: browsingLevel,
+  });
+  if (effectiveBrowsingLevel > 0) {
+    conditions.push(
+      currentUserId
+        ? Prisma.sql`(c."createdById" = ${currentUserId} OR EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0))`
+        : Prisma.sql`EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0)`
+    );
   }
 
   if (query) {
@@ -3263,16 +3284,20 @@ export async function getCompletedChallengesWithWinners(
     getCosmeticsForUsers(allUserIds),
   ]);
 
-  // Group winners by challengeId
+  // Group winners by challengeId. Defense-in-depth: on green, null out any winner thumbnail whose
+  // real image level isn't SFW (a green challenge's entries are already SFW by the entry gate, so
+  // this only bites on mislabeled data). The frontend WinnerPodiumCard also keys ImageGuard2 on
+  // imageNsfwLevel.
   const winnersByChallengeId = new Map<number, ChallengeWinnerSummary[]>();
   for (const w of winnerRows) {
     const list = winnersByChallengeId.get(w.challengeId) ?? [];
+    const hideThumb = (isGreen ?? false) && isImageHiddenFromGreenViewer(w.imageNsfwLevel, currentUserId);
     list.push({
       place: w.place,
       userId: w.userId,
       username: w.username,
       imageId: w.imageId,
-      imageUrl: w.imageUrl,
+      imageUrl: hideThumb ? null : w.imageUrl,
       imageNsfwLevel: w.imageNsfwLevel,
       imageHash: w.imageHash,
       buzzAwarded: w.buzzAwarded,

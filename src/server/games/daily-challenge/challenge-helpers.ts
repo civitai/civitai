@@ -4,6 +4,7 @@ import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { removeTags } from '~/utils/string-helpers';
 import type { ChallengeBuzzType } from '~/server/games/daily-challenge/challenge-currency';
+import { isImageHiddenFromGreenViewer } from '~/server/games/daily-challenge/challenge-visibility';
 import {
   challengeJudgingCategoriesSchema,
   type ChallengeJudgingCategory,
@@ -566,7 +567,12 @@ export async function createChallengeWinner(input: CreateWinnerInput): Promise<n
   }
 }
 
-export async function getChallengeWinners(challengeId: number): Promise<
+export async function getChallengeWinners(
+  challengeId: number,
+  // On the green (SFW) site, null out any winner thumbnail whose real image level isn't SFW.
+  // Optional so internal callers (e.g. buildChallengeDetail, already domain/cover-gated) can skip it.
+  green?: { isGreen?: boolean; viewerId?: number }
+): Promise<
   Array<{
     id: number;
     userId: number;
@@ -621,8 +627,13 @@ export async function getChallengeWinners(challengeId: number): Promise<
     ORDER BY cw.place ASC
   `;
 
+  const hideThumbs = green?.isGreen ?? false;
   return rows.map(({ collectionItemNote, ...row }) => ({
     ...row,
+    imageUrl:
+      hideThumbs && isImageHiddenFromGreenViewer(row.imageNsfwLevel, green?.viewerId)
+        ? null
+        : row.imageUrl,
     judgeScore: parseJudgeScore(collectionItemNote),
   }));
 }
