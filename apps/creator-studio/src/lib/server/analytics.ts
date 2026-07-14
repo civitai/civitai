@@ -98,3 +98,27 @@ export async function getContentAnalytics(
     })),
   };
 }
+
+// Just the period totals (no series / top-images) — cheap enough for the dashboard's activity row.
+export async function getContentTotals(userId: number, days: number): Promise<ContentTotals> {
+  const uid = Number(userId);
+  const d = Number(days);
+  const ch = getClickhouse();
+
+  const count = async (table: string, timeCol: string, filter: string): Promise<number> => {
+    const rows = await ch.$query<{ value: number | string }>(
+      `SELECT count() AS value FROM ${table} WHERE ${filter} AND toDate(${timeCol}) >= today() - ${d}`
+    );
+    return Number(rows[0]?.value ?? 0);
+  };
+
+  const [reactions, followers, images, posts, profileViews] = await Promise.all([
+    count('reactions', 'time', `ownerId = ${uid} AND endsWith(toString(type), '_Create')`),
+    count('userEngagements', 'time', `targetUserId = ${uid} AND type = 'Follow'`),
+    count('images_created', 'createdAt', `userId = ${uid}`),
+    count('posts', 'time', `userId = ${uid} AND type = 'Publish'`),
+    count('views', 'time', `entityType = 'User' AND entityId = ${uid}`),
+  ]);
+
+  return { reactions, followers, images, posts, profileViews };
+}

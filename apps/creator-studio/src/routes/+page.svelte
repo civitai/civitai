@@ -2,12 +2,26 @@
   import { Card, CardHeader, CardTitle, CardContent } from '@civitai/ui/components/ui/card/index.js';
   import { Skeleton } from '@civitai/ui/components/ui/skeleton/index.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
-  import type { LayoutData } from './$types';
+  import type { PageData } from './$types';
 
-  let { data }: { data: LayoutData } = $props();
+  let { data }: { data: PageData } = $props();
   const name = $derived(data.user.username ?? 'creator');
+  const num = (n: number) => n.toLocaleString();
 
-  // Headline stats are placeholders until the ClickHouse owner-keyed rollup lands (decision A1).
+  // Real content activity (userId-keyed ClickHouse; no A1 needed).
+  const activity = $derived(
+    data.content
+      ? [
+          { label: 'Reactions', value: data.content.reactions },
+          { label: 'New followers', value: data.content.followers },
+          { label: 'Images posted', value: data.content.images },
+          { label: 'Posts published', value: data.content.posts },
+          { label: 'Profile views', value: data.content.profileViews },
+        ]
+      : []
+  );
+
+  // Earnings headline stats stay placeholders until the ClickHouse owner-keyed rollup lands (decision A1).
   const stats = [
     { label: 'Earned this period', hint: 'Awaiting analytics wiring' },
     { label: 'CP cash pending', hint: 'Awaiting analytics wiring' },
@@ -35,6 +49,25 @@
     <a href="/join" class="ml-auto"><Badge variant="outline">Become a member</Badge></a>
   {/if}
 </header>
+
+{#if data.content}
+  <section class="mb-8">
+    <div class="mb-2 flex items-center justify-between">
+      <p class="text-xs uppercase tracking-wide text-dark-3">Your activity — last 30 days</p>
+      <a href="/earnings/analytics" class="text-xs text-dark-2 hover:text-white">View analytics →</a>
+    </div>
+    <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+      {#each activity as a (a.label)}
+        <Card>
+          <CardContent>
+            <p class="text-xs uppercase tracking-wide text-dark-3">{a.label}</p>
+            <p class="mt-1 text-xl font-semibold text-white">{num(a.value)}</p>
+          </CardContent>
+        </Card>
+      {/each}
+    </div>
+  </section>
+{/if}
 
 <section class="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
   {#each stats as stat (stat.label)}
