@@ -241,8 +241,11 @@ path:**
 - [ ] **CDC/ClickPipe path** — clone the Buzz-DB ClickPipe for prod `Model` + `ModelVersion` (Bastion/networking
       OK? CDC enabled?). Mirror **full tables, or just** `ModelVersion.id/modelId` + `Model.id/userId`?
 - [ ] **Dictionary refresh + staleness** — CDC-mirror `ReplacingMergeTree` backing (**not** direct Postgres, see
-      warning above). On ownership transfer / version delete, we attribute *historical* earnings to the
-      **current** owner and drop rows whose `modelVersionId` isn't in the dict — OK?
+      warning above). Staleness tolerance for the owner lookup (ownership rarely changes)?
+      **Attribution is settled (Justin, 2026-07-14): historical earnings follow the new owner** if a version is
+      transferred. That is what a point-in-time `dictGet` does naturally, so no extra work — but it means a
+      creator's past earnings totals *change* when a model moves. Rows whose `modelVersionId` is absent from the
+      dictionary are dropped.
 - [ ] **Layout** — `ownerUserId` UInt32, `source` LowCardinality, ordering key, `PARTITION BY toYYYYMM(date)`,
       TTL (likely none — financial history).
 - [ ] **Corrupt-row filter** must be in any MV sourced from `resourceCompensations` (see warning above).
