@@ -13,6 +13,7 @@ type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: number;
   onChange?: (value: number) => void;
   disabled?: boolean;
+  sfwOnly?: boolean;
 };
 
 // Levels that can be selected (excluding Blocked)
@@ -55,16 +56,19 @@ export function ContentRatingSelect({
   value = 1,
   onChange,
   disabled,
+  sfwOnly,
   ...inputWrapperProps
 }: Props) {
   const { isGreen } = useFeatureFlags();
   const selectedLevels = parseBitwiseBrowsingLevel(value);
 
-  // On the SFW (green) domain, only PG/PG-13 are offered — the server rejects anything higher.
-  const availableLevels: readonly (typeof selectableLevels)[number][] = isGreen
+  // SFW-only when the caller forces it (green Buzz selected) or on the SFW (green) domain — the
+  // server rejects anything higher in both cases.
+  const restrictToSfw = sfwOnly ?? isGreen;
+  const availableLevels: readonly (typeof selectableLevels)[number][] = restrictToSfw
     ? sfwOnlyLevels
     : selectableLevels;
-  const availablePresets = isGreen ? presets.slice(0, 1) : presets;
+  const availablePresets = restrictToSfw ? presets.slice(0, 1) : presets;
 
   const handleLevelToggle = (level: (typeof selectableLevels)[number], checked: boolean) => {
     let newLevels = [...selectedLevels];

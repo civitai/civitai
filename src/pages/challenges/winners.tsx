@@ -31,9 +31,9 @@ function PreviousWinnersPage() {
               <IconTrophy size={24} />
             </ThemeIcon>
             <div>
-              <Title order={1}>Previous Winners</Title>
+              <Title order={1}>Daily Challenge Winners</Title>
               <Text c="dimmed" size="sm">
-                Browse completed challenges and their winners
+                Browse completed daily challenges and their winners
               </Text>
             </div>
           </Group>

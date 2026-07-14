@@ -167,6 +167,7 @@ export type ChallengeDetail = {
   }>;
   collectionId: number | null;
   maxEntriesPerUser: number;
+  entryFee: number;
   prizes: Prize[];
   entryPrize: Prize | null;
   entryPrizeRequirement: number;
@@ -427,6 +428,7 @@ export const userChallengeUpsertBaseSchema = z.object({
   prizeDistribution: prizeDistributionSchema,
   maxParticipants: z.number().int().min(1).max(100_000).optional(),
   maxEntriesPerUser: z.number().int().min(1).max(100).default(5),
+  buzzType: z.enum(['green', 'yellow']).optional(),
   startsAt: z.date(),
   endsAt: z.date(),
 });

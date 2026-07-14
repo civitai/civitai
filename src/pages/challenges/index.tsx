@@ -31,7 +31,9 @@ import { ChallengeSort } from '~/server/schema/challenge.schema';
 import type { GetInfiniteChallengesInput } from '~/server/schema/challenge.schema';
 import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import styles from './index.module.css';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async ({ features }) => {
@@ -49,6 +51,23 @@ const statusMap: Record<string, ChallengeStatus> = {
 function ChallengesPage() {
   const router = useRouter();
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
+  const canCreateChallenge =
+    !currentUser?.muted &&
+    features.canWrite &&
+    features.challengePlatform &&
+    features.userChallenges;
+  const createChallengeButton = canCreateChallenge ? (
+    <Button
+      component={Link}
+      href="/challenges/create"
+      leftSection={<IconTrophy size={16} />}
+      variant="light"
+      rel="nofollow"
+    >
+      Create Challenge
+    </Button>
+  ) : null;
   const [infoOpened, { open: openInfo, close: closeInfo }] = useDisclosure(false);
 
   // Parse query params
@@ -73,14 +92,19 @@ function ChallengesPage() {
     if (!currentUser) return <NotFound />;
     return (
       <MasonryContainer>
-        <Stack gap="xl" align="flex-start">
-          <Title>My Challenges</Title>
-          <SegmentedControl
-            radius="xl"
-            data={['Scheduled', 'Active', 'Completed']}
-            value={myStatus}
-            onChange={(v) => setMyStatus(v as 'Scheduled' | 'Active' | 'Completed')}
-          />
+        <Stack gap="xs">
+          <Stack gap="xl" align="flex-start">
+            <Title>My Challenges</Title>
+            <SegmentedControl
+              classNames={styles}
+              transitionDuration={0}
+              radius="xl"
+              data={['Scheduled', 'Active', 'Completed']}
+              value={myStatus}
+              onChange={(v) => setMyStatus(v as 'Scheduled' | 'Active' | 'Completed')}
+              withItemsBorders={false}
+            />
+          </Stack>
           <ChallengesInfinite
             filters={{
               userId: currentUser.id,
@@ -188,7 +212,7 @@ function ChallengesPage() {
                 variant="light"
                 color="yellow"
               >
-                Previous Winners
+                Daily Challenge Winners
               </Button>
             </Group>
           </Group>
@@ -199,7 +223,10 @@ function ChallengesPage() {
           <Divider />
           <Group wrap="wrap" gap="sm">
             <Title order={3}>Community Challenges</Title>
-            <ChallengeFeedFilters ml="auto" />
+            <Group gap="sm" wrap="wrap" ml="auto">
+              {createChallengeButton}
+              <ChallengeFeedFilters />
+            </Group>
           </Group>
           <ChallengesInfinite
             filters={{
@@ -210,6 +237,7 @@ function ChallengesPage() {
               excludeEventChallenges: true,
               participation,
             }}
+            emptyAction={createChallengeButton}
           />
         </Stack>
       </MasonryContainer>

@@ -78,7 +78,10 @@ import { useRouter } from 'next/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { useDeleteUserChallenge, useQueryChallenge } from '~/components/Challenge/challenge.utils';
 import { WinnerPodiumCard } from '~/components/Challenge/WinnerPodiumCard';
-import type { Props as DescriptionTableProps } from '~/components/DescriptionTable/DescriptionTable';
+import {
+  DescriptionTable,
+  type Props as DescriptionTableProps,
+} from '~/components/DescriptionTable/DescriptionTable';
 import { buildPassthroughQuery } from '~/utils/query-string-helpers';
 import { getModelUrl, slugit } from '~/utils/string-helpers';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -687,31 +690,6 @@ function SpotlightCard({
   );
 }
 
-/** Flat label/value rows matching the model details sidebar style. */
-function DetailRows({ items }: { items: DescriptionTableProps['items'] }) {
-  return (
-    <div className="flex flex-col bg-gray-0 dark:bg-[#1f2023]">
-      {items
-        .filter((item) => item.visible !== false)
-        .map((item, index) => (
-          <div
-            key={index}
-            className="flex items-center justify-between gap-3 border-b border-gray-3 px-4 py-2.5 last:border-b-0 dark:border-dark-4"
-          >
-            {typeof item.label === 'string' ? (
-              <Text size="sm" c="dimmed">
-                {item.label}
-              </Text>
-            ) : (
-              item.label
-            )}
-            <div className="text-right">{item.value}</div>
-          </div>
-        ))}
-    </div>
-  );
-}
-
 function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
   useInjectKeyframes();
   const colorScheme = useComputedColorScheme('dark');
@@ -775,13 +753,13 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
     {
       label: 'Starts',
       value: (
-        <Text size="sm">{formatDate(challenge.startsAt, 'MMM DD, YYYY hh:mm A [UTC]', true)}</Text>
+        <Text size="sm">{formatDate(challenge.startsAt, 'MMM DD, YYYY hh:mm A', false)}</Text>
       ),
     },
     {
       label: 'Ends',
       value: (
-        <Text size="sm">{formatDate(challenge.endsAt, 'MMM DD, YYYY hh:mm A [UTC]', true)}</Text>
+        <Text size="sm">{formatDate(challenge.endsAt, 'MMM DD, YYYY hh:mm A', false)}</Text>
       ),
     },
     {
@@ -790,7 +768,13 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
     },
     {
       label: 'AI Reviews',
-      value: <Text size="sm">Only 6–12 entries selected at random every 10 min</Text>,
+      value: (
+        <Text size="sm">
+          {challenge.entryFee > 0
+            ? 'Every entry is judged'
+            : 'Only 6–12 entries selected at random every 10 min'}
+        </Text>
+      ),
     },
     ...(challenge.entryPrize && challenge.entryPrizeRequirement > 0
       ? [
@@ -869,6 +853,15 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
     });
   }
 
+  // Shared props for DescriptionTable inside accordion panels (no outer borders)
+  const accordionTableProps = {
+    withBorder: true,
+    paperProps: {
+      style: { borderLeft: 0, borderRight: 0, borderBottom: 0 },
+      radius: 0,
+    },
+  } as const;
+
   return (
     <Stack gap="md">
       {/* Combined Dynamic Prize Pool + Entries Card */}
@@ -926,6 +919,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
               borderLeft: getBorder(cs, 'teal'),
               borderRight: getBorder(cs, 'teal'),
               background: getBackground(cs, 'teal'),
+              borderRadius: 'var(--mantine-radius-md) var(--mantine-radius-md) 0 0',
             }}
           >
             <Stack gap="sm" align="center" p="md">
@@ -1262,7 +1256,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
             <Group justify="space-between">Overview</Group>
           </Accordion.Control>
           <Accordion.Panel>
-            <DetailRows items={challengeDetails} />
+            <DescriptionTable items={challengeDetails} labelWidth="40%" {...accordionTableProps} />
           </Accordion.Panel>
         </Accordion.Item>
 
@@ -1277,7 +1271,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
                   Projected from the current pool — grows as entries are submitted.
                 </Text>
               )}
-              <DetailRows items={prizeItems} />
+              <DescriptionTable items={prizeItems} labelWidth="50%" {...accordionTableProps} />
             </ScrollArea.Autosize>
           </Accordion.Panel>
         </Accordion.Item>
