@@ -1,14 +1,17 @@
 import type { PageServerLoad } from './$types';
 import { getContentTotals } from '$lib/server/analytics';
 import { getEarningsSummary } from '$lib/server/earnings';
+import { getCreatorCash } from '$lib/server/cash';
 
-// Headline content activity (userId-keyed) + earnings summary (A1 Part 1, buzzTransactions — already owner-keyed).
-// Each degrades independently so one slow/failed ClickHouse read doesn't blank the other. Layout resolved user +
-// membership. Per-model "top-earning model" still waits on A1 Part 2.
+// Headline content activity (userId-keyed ClickHouse) + buzz earnings (A1 Part 1, buzzTransactions) + cash
+// balances (buzz service — authoritative, matches the Buzz dashboard). Each degrades independently so one slow or
+// failed source doesn't blank the others. Layout resolved user + membership. "Top-earning model" waits on A1 Part 2.
 export const load: PageServerLoad = async ({ locals }) => {
-  const [content, earnings] = await Promise.all([
-    getContentTotals({ userId: locals.user.id, days: 30 }).catch(() => null),
-    getEarningsSummary({ userId: locals.user.id, days: 30 }).catch(() => null),
+  const userId = locals.user.id;
+  const [content, earnings, cash] = await Promise.all([
+    getContentTotals({ userId, days: 30 }).catch(() => null),
+    getEarningsSummary({ userId, days: 30 }).catch(() => null),
+    getCreatorCash({ userId }).catch(() => null),
   ]);
-  return { content, earnings };
+  return { content, earnings, cash };
 };

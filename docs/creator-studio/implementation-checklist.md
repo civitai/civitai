@@ -43,21 +43,21 @@ Legend: `[x]` done · `[ ]` not started · **🚧** blocked on a dependency · *
 ---
 
 ## `/` — Dashboard
-- [x] Shell: headline stat cards (placeholders) + section link cards + member badge
+- [x] Shell: headline stat cards + section link cards + member badge
 - [x] Content-activity row — real 30-day reactions / followers / images / posts / profile views (`getContentTotals`, userId-keyed, Redis-cached)
-- [ ] Earnings summary by source — **🚧 A1** owner-keyed rollup
-- [ ] CP cash pending / settled (`getCash` / `getBanked`)
-- [ ] Top-earning models widget — **🚧 A1**
-- [ ] Replace placeholder skeletons with real numbers
+- [x] Buzz earned (30d, `buzzTransactions`) + CP cash cards (ready / pending / withdrawn, authoritative via `@civitai/buzz`)
+- [ ] Top-earning models widget — **🚧 A1 Part 2** (owner-keyed dictionary, Koen/CDC)
 
 ---
 
 ## `/earnings` — Earnings by source
-- [ ] By-source breakdown (comp / license / tip) — **🚧 A1**
-- [ ] Access-sale + cosmetic-sale sources — **🚧 A5**
-- [ ] Time-series chart — **🚧 C1**
-- [ ] CP cash panel + Withdraw link-out
-- *(route stub only)*
+- [x] By-source breakdown (comp / license / tip / access / cosmetic) — **A1 Part 1**: reads `buzzTransactions` directly (already owner-keyed, no rollup); `licenseFee`+`'27'` filter, early-access prefix
+- [x] Access-sale + cosmetic-sale sources — folded into the same read (A5 needs no new MV; cosmetic = `sell`, access = `purchase`+`early-access-`)
+- [x] Time-series chart — buzz-only per-currency trend (Chart.js), real buzz colors; Redis-cached
+- [x] Per-currency faithful display (B8/D1: no conversion/merge) — currency cards + source×currency table
+- [x] CP cash panel — **authoritative** ready / pending / withdrawn (buzz service via `@civitai/buzz` + `CashWithdrawal` query), USD (cents÷100), matches the Buzz dashboard to the cent; Buzz Dashboard link-out
+- [x] `@civitai/buzz` wired into the spoke (shim + `BUZZ_ENDPOINT`); cash read is NOT from ClickHouse (mirror/flow) — see the owner-rollup-handoff discussion
+- [ ] Per-model earnings breakdown — **🚧 A1 Part 2** (owner-keyed dictionary, Koen/CDC)
 
 ---
 

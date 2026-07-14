@@ -34,14 +34,19 @@
       hint: 'Yellow, blue & green — last 30 days',
     },
     {
-      label: 'Cash pending',
-      value: data.earnings ? formatAmount(sumWhere((c) => c === 'cashPending'), 'cashPending') : null,
-      hint: 'Last 30 days',
+      label: 'Cash ready',
+      value: data.cash ? formatAmount(data.cash.settled, 'cashSettled') : null,
+      hint: 'Available to withdraw',
     },
     {
-      label: 'Cash settled',
-      value: data.earnings ? formatAmount(sumWhere((c) => c === 'cashSettled'), 'cashSettled') : null,
-      hint: 'Last 30 days',
+      label: 'Cash pending',
+      value: data.cash ? formatAmount(data.cash.pending, 'cashPending') : null,
+      hint: 'Accruing to cash',
+    },
+    {
+      label: 'Withdrawn',
+      value: data.cash ? formatAmount(data.cash.withdrawn, 'cashSettled') : null,
+      hint: 'Paid out to date',
     },
     { label: 'Top-earning model', value: null, pending: true, hint: 'Needs owner-keyed rollup (A1 Part 2)' },
   ]);
@@ -85,7 +90,7 @@
   </section>
 {/if}
 
-<section class="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+<section class="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
   {#each stats as stat (stat.label)}
     <Card>
       <CardHeader>

@@ -48,13 +48,15 @@ export function currencySort(a: string, b: string): number {
 const nf = new Intl.NumberFormat('en-US');
 const usd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
 
-// Cash accounts are denominated in buzz on the wire; USD = buzz / buzzDollarRatio (main app `buzzToUsdc`).
-export const BUZZ_DOLLAR_RATIO = 1000;
-export const buzzToUsd = (buzz: number) => buzz / BUZZ_DOLLAR_RATIO;
+// Cash accounts (cashSettled/cashPending) hold their balance in USD **cents**, not buzz — so USD = cents / 100,
+// matching the main app's `formatCurrencyForDisplay` (value / 100). (Do NOT use buzzDollarRatio here; that's for
+// converting spendable buzz, a different thing.)
+export const CASH_CENTS_PER_USD = 100;
+export const centsToUsd = (cents: number) => cents / CASH_CENTS_PER_USD;
 
-// Buzz + banked balances show a ⚡; cash (settled/pending) is converted to USD and shown as $. Never mix the two
-// in one total — callers only ever format a single-currency amount.
+// Buzz + banked balances show a ⚡ with the raw buzz count; cash (settled/pending) is USD-cents → shown as $.
+// Never mix families in one total — callers only ever format a single-currency amount.
 export function formatAmount(amount: number, currency: string): string {
   const { family } = currencyMeta(currency);
-  return family === 'cash' ? usd.format(buzzToUsd(amount)) : `⚡ ${nf.format(amount)}`;
+  return family === 'cash' ? usd.format(centsToUsd(amount)) : `⚡ ${nf.format(amount)}`;
 }

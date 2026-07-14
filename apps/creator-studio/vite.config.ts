@@ -19,6 +19,7 @@ export default defineConfig(({ mode }) => {
         '@civitai/auth',
         '@civitai/axiom',
         '@civitai/brand',
+        '@civitai/buzz',
         '@civitai/clickhouse',
         '@civitai/db',
         '@civitai/db-schema',

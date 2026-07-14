@@ -15,6 +15,7 @@
     "@civitai/auth": "workspace:*",
     "@civitai/axiom": "workspace:*",
     "@civitai/brand": "workspace:*",
+    "@civitai/buzz": "workspace:*",
     "@civitai/clickhouse": "workspace:*",
     "@civitai/db": "workspace:*",
     "@civitai/db-schema": "workspace:*",
