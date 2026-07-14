@@ -67,6 +67,7 @@ import { CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
 import { isDefined } from '~/utils/type-guards';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { HighlightedBadgesInput } from '~/components/Profile/HighlightedBadgesInput';
 import { InputProfileSectionsSettingsInput } from '~/components/Profile/ProfileSectionsSettingsInput';
 import { InputShowcaseItemsInput } from '~/components/Profile/ShowcaseItemsInput';
 
@@ -520,6 +521,20 @@ export default function UserProfileEditModal() {
                 data={badges}
                 onShopClick={handleClose}
               />
+              <Input.Wrapper
+                label="Highlighted badges"
+                description="Pin badges to the top of your profile's badge list."
+              >
+                <Box mt={4}>
+                  <HighlightedBadgesInput
+                    badges={badges}
+                    value={privacySettings?.highlightedBadgeIds ?? []}
+                    onChange={(highlightedBadgeIds) =>
+                      form.setValue('privacySettings', { ...privacySettings, highlightedBadgeIds })
+                    }
+                  />
+                </Box>
+              </Input.Wrapper>
             </Stack>
             <Stack>
               <InputSelect
