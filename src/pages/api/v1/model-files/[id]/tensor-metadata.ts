@@ -6,13 +6,16 @@ import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { getFileForModelVersion } from '~/server/services/file.service';
+import { persistModelWeightPrecision } from '~/server/services/tensor-metadata-persistence.service';
 import { getFullTensorAnalysisCached } from '~/server/services/tensor-metadata.service';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import {
+  getDominantWeightPrecision,
   inferTensorMetadataFormat,
   parseModelTensorMetadata,
   supportsTensorVramEstimate,
+  type ModelTensorAnalysis,
 } from '~/utils/model-tensor-metadata';
 
 const schema = z.object({
@@ -39,6 +42,7 @@ export default MixedAuthEndpoint(async function handler(
       id: true,
       modelVersionId: true,
       name: true,
+      url: true,
       type: true,
       sizeKB: true,
       metadata: true,
@@ -70,6 +74,23 @@ export default MixedAuthEndpoint(async function handler(
       modelType: file.modelVersion.model.type,
       fileType: file.type,
     });
+    const currentWeightPrecision = (file.metadata as BasicFileMetadata | null)?.weightPrecision;
+    const addWeightPrecision = async <
+      T extends Pick<ModelTensorAnalysis, 'dtypeCounts'> &
+        Partial<Pick<ModelTensorAnalysis, 'weightPrecision'>>
+    >(
+      data: T
+    ) => {
+      const weightPrecision = data.weightPrecision ?? getDominantWeightPrecision(data.dtypeCounts);
+      await persistModelWeightPrecision({
+        fileId: file.id,
+        fileUrl: file.url,
+        modelVersionId: file.modelVersionId,
+        currentWeightPrecision,
+        weightPrecision,
+      });
+      return { ...data, weightPrecision };
+    };
 
     // Tensor metadata is derived purely from immutable file content, so cache the parsed
     // analysis by file id. Auth is still re-checked per request above via getFileForModelVersion.
@@ -105,8 +126,6 @@ export default MixedAuthEndpoint(async function handler(
         )
       );
 
-    res.setHeader('Cache-Control', TENSOR_METADATA_CACHE_CONTROL);
-
     if (summaryOnly) {
       const summary = await fetchThroughCache(
         `${REDIS_KEYS.CACHES.TENSOR_METADATA_SUMMARY}:${id}`,
@@ -117,12 +136,17 @@ export default MixedAuthEndpoint(async function handler(
         },
         { ttl: CacheTTL.month }
       );
-      return res.status(200).json(summary);
+      const response = await addWeightPrecision(summary);
+      res.setHeader('Cache-Control', TENSOR_METADATA_CACHE_CONTROL);
+      return res.status(200).json(response);
     }
 
     const analysis = await fetchFull();
-    res.status(200).json(analysis);
+    const response = await addWeightPrecision(analysis);
+    res.setHeader('Cache-Control', TENSOR_METADATA_CACHE_CONTROL);
+    res.status(200).json(response);
   } catch (error) {
+    res.setHeader('Cache-Control', 'private, no-store');
     const err = error instanceof Error ? error : new Error(String(error));
     logToAxiom({
       name: 'model-file-tensor-metadata',

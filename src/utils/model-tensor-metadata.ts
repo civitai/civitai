@@ -57,6 +57,7 @@ export type ModelTensorAnalysis = {
   tensorCount: number;
   totalTensorBytes: number;
   dtypeCounts: ModelTensorDtypeSummary[];
+  weightPrecision: string | null;
   largestTensor: ModelTensorInfo | null;
   vramEstimate: ModelVramEstimate | null;
   tensors: ModelTensorInfo[];
@@ -110,15 +111,54 @@ export function analyzeModelTensors(
     dtypeCounts.set(tensor.dtype, summary);
   }
 
+  const dtypeSummary = [...dtypeCounts.values()].sort((a, b) => b.bytes - a.bytes);
+
   return {
     format,
     tensorCount: tensors.length,
     totalTensorBytes,
-    dtypeCounts: [...dtypeCounts.values()].sort((a, b) => b.bytes - a.bytes),
+    dtypeCounts: dtypeSummary,
+    weightPrecision: getDominantWeightPrecision(dtypeSummary),
     largestTensor,
     vramEstimate: estimateVram ? estimateComfyDynamicOffloadVram(tensors) : null,
     tensors,
   };
+}
+
+export function getDominantWeightPrecision(dtypeCounts: ModelTensorDtypeSummary[]) {
+  const bytesByPrecision = new Map<string, number>();
+
+  for (const { dtype, bytes } of dtypeCounts) {
+    if (!Number.isFinite(bytes) || bytes <= 0) continue;
+    const precision = toWeightPrecision(dtype);
+    bytesByPrecision.set(precision, (bytesByPrecision.get(precision) ?? 0) + bytes);
+  }
+
+  let dominant: { precision: string; bytes: number } | null = null;
+  for (const [precision, bytes] of bytesByPrecision) {
+    if (!dominant || bytes > dominant.bytes) dominant = { precision, bytes };
+  }
+
+  return dominant?.precision ?? null;
+}
+
+function toWeightPrecision(dtype: string) {
+  const normalized = normalizePrecision(dtype);
+  if (normalized.startsWith('F8')) return 'FP8';
+
+  const floatMatch = /^F(\d+)$/.exec(normalized);
+  if (floatMatch) return `FP${floatMatch[1]}`;
+
+  const quantizedMatch = /^(I?Q)(\d+)/.exec(normalized);
+  if (quantizedMatch) return `${quantizedMatch[1]}${quantizedMatch[2]}`;
+
+  const integerMatch = /^I(\d+)$/.exec(normalized);
+  if (integerMatch) return `INT${integerMatch[1]}`;
+
+  const unsignedIntegerMatch = /^U(\d+)$/.exec(normalized);
+  if (unsignedIntegerMatch) return `UINT${unsignedIntegerMatch[1]}`;
+
+  return normalized;
 }
 
 export function supportsTensorVramEstimate({ modelType, fileType }: ModelTensorVramSupport) {

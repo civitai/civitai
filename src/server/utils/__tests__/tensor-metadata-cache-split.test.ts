@@ -74,6 +74,7 @@ const makeAnalysis = () => ({
   tensorCount: 2,
   totalTensorBytes: 100,
   dtypeCounts: [{ dtype: 'F16', count: 2, bytes: 100 }],
+  weightPrecision: 'FP16',
   largestTensor: { name: 'a.weight', shape: [10, 10], dtype: 'F16', sizeBytes: 50 },
   vramEstimate: null,
   tensors: [
