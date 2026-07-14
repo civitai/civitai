@@ -73,6 +73,7 @@ import {
   isImageHiddenFromGreenViewer,
 } from '~/server/games/daily-challenge/challenge-visibility';
 import {
+  buildWinnerPayoutTransactions,
   chargeInitialPrize,
   refundUserChallengeFunds,
 } from '~/server/games/daily-challenge/challenge-funding';
@@ -2160,14 +2161,13 @@ export async function endChallengeAndPickWinners(challengeId: number) {
       process = generated.process;
       outcome = generated.outcome;
 
-      // Map winners to entries
+      // Map winners to entries by numeric creatorId only. `winner.creator` is the LLM's echo of the
+      // (user-controlled, spoofable) display name — matching on it let a second entrant who set their
+      // name equal to another's hijack `find`'s first-match and steal the payout. judgedEntries is
+      // deduped to one entry per userId, so creatorId alone disambiguates. (Parity with the cron path.)
       winningEntries = generated.winners
         .map((winner, i) => {
-          const entry = judgedEntries.find(
-            (e) =>
-              e.username.toLowerCase() === winner.creator.toLowerCase() ||
-              e.userId === winner.creatorId
-          );
+          const entry = judgedEntries.find((e) => e.userId === winner.creatorId);
           if (!entry) return null;
           return {
             userId: entry.userId,
@@ -2194,20 +2194,18 @@ export async function endChallengeAndPickWinners(challengeId: number) {
       log('ChallengeWinner records created');
     }
 
-    // Send prizes to winners
-    // Note: externalTransactionId uses challengeId-userId-place pattern for idempotency
-    // This ensures retries don't create duplicate payments
+    // Send prizes to winners in the challenge's stored currency (green vs yellow). Routed through
+    // the same builder as the cron completion path — hardcoding 'yellow' here minted yellow and
+    // stranded the collected green pool for green challenges. Deterministic externalTransactionId
+    // (challenge-winner-prize-{cid}-{uid}-place-{n}) keeps retries idempotent.
     await withRetries(() =>
       createBuzzTransactionMany(
-        winningEntries.map((entry) => ({
-          type: TransactionType.Reward,
-          toAccountId: entry.userId,
-          fromAccountId: 0, // central bank
-          amount: entry.prize,
-          description: `Challenge Winner Prize #${entry.position}: ${challenge.title}`,
-          externalTransactionId: `challenge-winner-prize-${challengeId}-${entry.userId}-place-${entry.position}`,
-          toAccountType: 'yellow',
-        }))
+        buildWinnerPayoutTransactions({
+          challengeId,
+          title: challenge.title,
+          buzzType: challenge.buzzType,
+          winners: winningEntries,
+        })
       )
     );
     log('Prizes sent');
