@@ -68,3 +68,37 @@ export function buildServerFaultErrorLog(e: unknown): MixedObject {
   // Non-TRPCError: log the full error directly (already the real failure).
   return safeError(e) ?? { message: String(e) };
 }
+
+/**
+ * Build the structured log payload for an error caught at a CENTRAL 500-emitting
+ * chokepoint (the tRPC `onError` handler, the REST `handleEndpointError`). This is
+ * the generalization of the per-router pattern in `orchestrator.router.ts` so that
+ * EVERY unexpected 500 becomes self-describing and queryable the normal way
+ * (`{namespace="civitai-dp-prod"} | detected_level="error"`), instead of needing a
+ * raw `|= "TRPCError"` stdout grep + a Tempo dig to root-cause it.
+ *
+ *  - SERVER fault (INTERNAL_SERVER_ERROR / TIMEOUT / any non-TRPCError) → carries
+ *    the UN-MASKED `.cause` chain (real message + stack + Prisma code) and an
+ *    explicit `level: 'error'`. `level` is the canonical field Loki's log-level
+ *    detection reads first, so these lines land as `detected_level="error"`.
+ *  - CLIENT fault (BAD_REQUEST / NOT_FOUND / CONFLICT / PRECONDITION_FAILED that
+ *    still reach the chokepoint) → the light `safeError` shape + `level: 'info'`,
+ *    so normal user-feedback rejections never flood the error stream.
+ *
+ * PII/secrets: the payload only ever contains the primitive error fields that
+ * `safeError` extracts (name/message/stack/code + the walked cause) — no request
+ * body or tokens are added here. Callers append their own request context.
+ */
+export function buildCentralErrorLog(e: unknown): MixedObject & { level: 'error' | 'info' } {
+  const fault = classifyErrorFault(e);
+  const base =
+    fault === 'server' ? buildServerFaultErrorLog(e) : safeError(e) ?? { message: String(e) };
+  return {
+    ...base,
+    level: fault === 'server' ? 'error' : 'info',
+    // Surface the tRPC code for client-fault entries too (safeError omits it for a
+    // TRPCError whose own `.code` field is not the JS `Error.code`); harmless
+    // duplicate of the server-fault branch, which already carries it.
+    ...(e instanceof TRPCError ? { code: e.code } : null),
+  };
+}

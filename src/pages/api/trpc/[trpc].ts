@@ -4,7 +4,7 @@ import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { withAxiom } from '@civitai/next-axiom';
 import { isProd } from '~/env/other';
 import { createContext } from '~/server/createContext';
-import { logToAxiom, safeError } from '~/server/logging/client';
+import { logToAxiom, buildCentralErrorLog } from '~/server/logging/client';
 import { recordTrpcError } from '~/server/prom/http-errors';
 import { isClientAbortError } from '~/server/utils/errorHandling';
 import { appRouter } from '~/server/routers';
@@ -106,10 +106,18 @@ const trpcHandler = createNextApiHandler({
         axInput = undefined;
       }
 
+      // Everything reaching here is either a genuine server fault
+      // (INTERNAL_SERVER_ERROR / TIMEOUT — the invisible raw-500 class) or a
+      // remaining client-fault 4xx (BAD_REQUEST / NOT_FOUND / CONFLICT /
+      // PRECONDITION_FAILED); FORBIDDEN/UNAUTHORIZED/TOO_MANY_REQUESTS/
+      // SERVICE_UNAVAILABLE already returned above. buildCentralErrorLog un-masks
+      // the `.cause` chain for server faults and tags `level:'error'` (so 500s are
+      // queryable as detected_level="error"), while tagging the client-fault 4xx
+      // `level:'info'` so they stay out of the error stream. Behavior is unchanged:
+      // this only shapes the log line — the client still gets its original response.
       await logToAxiom(
         {
-          ...safeError(error),
-          code: error.code,
+          ...buildCentralErrorLog(error),
           path,
           type,
           user: ctx?.user?.id,
