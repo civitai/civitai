@@ -2269,10 +2269,15 @@ export async function endChallengeAndPickWinners(challengeId: number) {
 }
 
 /**
- * Distinct paying entrants for a challenge — owners of images entered into its collection,
- * excluding the creator. `chargeContestEntryFeesForCollection` only commits a CollectionItem
- * after its entry fee is charged, so this is the same population whose pool contribution
- * `refundUserChallengeFunds` reverses.
+ * Distinct paying entrants for a challenge — owners of images *currently* entered into its
+ * collection, excluding the creator. This is an approximation of "who actually got refunded",
+ * not an exact match, and the divergence is accepted rather than re-architected to query the
+ * buzz ledger: a moderator-added entry has a CollectionItem row despite its fee charge being
+ * bypassed, so that user may be notified without having paid; and a paid entry removed from the
+ * collection before the void still has its pool fee reversed by `refundUserChallengeFunds`
+ * (matched by transaction-id prefix, independent of this query) but won't appear here, so that
+ * payer won't be notified. The refund itself is unaffected either way — only this courtesy
+ * notification is approximate.
  */
 async function getPayingEntrantUserIds(collectionId: number, createdById: number | null) {
   const rows = await dbRead.$queryRaw<{ userId: number }[]>`
@@ -2286,7 +2291,9 @@ async function getPayingEntrantUserIds(collectionId: number, createdById: number
 
 /** Notify every distinct paying entrant that their challenge was cancelled/refunded. Call only
  * after a refund has actually happened (`refundedEntries > 0`) so no-fee/no-entrant/System
- * challenges never fire this. */
+ * challenges never fire this. Best-effort: the refund has already succeeded by the time this
+ * runs, so a failure here is logged and swallowed rather than propagating and blocking the
+ * status flip to Cancelled/Completed. */
 async function notifyEntrantsOfCancellation(challenge: {
   id: number;
   title: string;
@@ -2295,21 +2302,33 @@ async function notifyEntrantsOfCancellation(challenge: {
   entryFee: number;
 }) {
   if (!challenge.collectionId) return;
-  const entrantUserIds = await getPayingEntrantUserIds(challenge.collectionId, challenge.createdById);
-  if (entrantUserIds.length === 0) return;
+  try {
+    const entrantUserIds = await getPayingEntrantUserIds(
+      challenge.collectionId,
+      challenge.createdById
+    );
+    if (entrantUserIds.length === 0) return;
 
-  await createNotification({
-    type: 'challenge-cancelled',
-    category: NotificationCategory.System,
-    key: `challenge-cancelled:${challenge.id}`,
-    userIds: entrantUserIds,
-    details: {
+    await createNotification({
+      type: 'challenge-cancelled',
+      category: NotificationCategory.System,
+      key: `challenge-cancelled:${challenge.id}`,
+      userIds: entrantUserIds,
+      details: {
+        challengeId: challenge.id,
+        challengeTitle: challenge.title,
+        refundedBuzz: getEntryPoolContribution(challenge.entryFee),
+      },
+    });
+    log(`Notified ${entrantUserIds.length} entrants of challenge cancellation`);
+  } catch (err) {
+    await logToAxiom({
+      type: 'error',
+      name: 'challenge-cancelled-notification',
       challengeId: challenge.id,
-      challengeTitle: challenge.title,
-      refundedBuzz: getEntryPoolContribution(challenge.entryFee),
-    },
-  });
-  log(`Notified ${entrantUserIds.length} entrants of challenge cancellation`);
+      message: (err as Error).message,
+    });
+  }
 }
 
 /**
