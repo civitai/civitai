@@ -2430,30 +2430,36 @@ export async function voidChallenge(challengeId: number) {
 
   log('Voiding challenge:', challengeId);
 
-  // Close the collection if exists
-  await closeChallengeCollection(challenge);
-  log('Collection closed');
-
-  // Refund BEFORE flipping to Cancelled: the status guard above makes a Cancelled challenge
-  // un-re-voidable, so refund-after-flip would strand the funds permanently if the buzz call
-  // failed. The refund is idempotent (deterministic externalTransactionId prefixes; the buzz
-  // service dedups), so a crash between refund and update — or two concurrent voids — safely
-  // resolve to a single net refund.
-  const { refundedEntries } = await refundUserChallengeFunds(challengeId);
-  log(`Refunded ${refundedEntries} entry fees`);
-  if (refundedEntries > 0) {
-    await notifyEntrantsOfCancellation(challenge);
-  }
-
-  // Conditional flip so a concurrent activation isn't clobbered back to Cancelled.
-  await dbWrite.challenge.updateMany({
+  // Atomically claim the row (Active/Scheduled -> Cancelled) BEFORE refunding. Only the caller whose
+  // conditional update affects one row proceeds. This stops (a) two concurrent voids from both
+  // refunding, and (b) — critically — a void from refunding a pool the completion cron is
+  // simultaneously claiming to pay out to winners, which would mint (the cron's own Active->Completing
+  // claim can no longer win once we've flipped to Cancelled). If the claim is lost, the challenge
+  // already moved on; there is nothing to refund. Refunds are idempotent via deterministic
+  // externalTransactionId prefixes (the buzz service dedups), so a rare crash after a won claim is
+  // safe to re-run manually.
+  const claimed = await dbWrite.challenge.updateMany({
     where: {
       id: challengeId,
       status: { in: [ChallengeStatus.Active, ChallengeStatus.Scheduled] },
     },
     data: { status: ChallengeStatus.Cancelled },
   });
+  if (claimed.count !== 1) {
+    log('Void claim lost (already cancelled or claimed for completion); skipping refund');
+    return { success: true };
+  }
   log('Challenge status updated to Cancelled');
+
+  // Close the collection if exists
+  await closeChallengeCollection(challenge);
+  log('Collection closed');
+
+  const { refundedEntries } = await refundUserChallengeFunds(challengeId);
+  log(`Refunded ${refundedEntries} entry fees`);
+  if (refundedEntries > 0) {
+    await notifyEntrantsOfCancellation(challenge);
+  }
 
   return { success: true };
 }

@@ -38,7 +38,12 @@ export function getEffectiveBrowsingLevel({
 }): number {
   if (!isGreen) return requested && requested > 0 ? requested : 0;
   const greenCap = isLoggedIn ? sfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
-  return requested && requested > 0 ? requested & greenCap : greenCap;
+  if (!requested || requested <= 0) return greenCap;
+  // Mask the request to the SFW cap. A request for ONLY NSFW bits (e.g. R|X|XXX) masks to 0 — fall
+  // back to the cap rather than returning 0, which callers treat as "no filter" and would leak
+  // everything on green. On green the result is therefore always > 0 (a non-empty SFW set).
+  const clamped = requested & greenCap;
+  return clamped > 0 ? clamped : greenCap;
 }
 
 // True when an image at `nsfwLevel` must be withheld from a viewer on the green (SFW) site —

@@ -16,14 +16,28 @@ import {
 } from './challenge-visibility';
 
 describe('getEffectiveBrowsingLevel', () => {
-  it('clamps a crafted NSFW request to SFW on green (logged-in)', () => {
+  it('clamps a crafted NSFW-only request to the SFW cap on green — never 0 (no "no filter" bypass)', () => {
     const lvl = getEffectiveBrowsingLevel({
       isGreen: true,
       isLoggedIn: true,
       requested: nsfwBrowsingLevelsFlag,
     });
     expect(Flags.intersects(lvl, nsfwBrowsingLevelsFlag)).toBe(false);
-    expect(lvl).toBe(nsfwBrowsingLevelsFlag & sfwBrowsingLevelsFlag); // === 0, no allowed bits
+    // A request for only NSFW bits masks to 0 against the cap; must fall back to the cap, NOT 0 —
+    // callers gate the filter on `> 0`, so returning 0 here would skip NSFW filtering entirely.
+    expect(lvl).toBe(sfwBrowsingLevelsFlag);
+    expect(lvl).toBeGreaterThan(0);
+  });
+
+  it('on green the effective level is ALWAYS > 0 for any requested value (filter never skipped)', () => {
+    for (const requested of [undefined, 0, -5, 1, nsfwBrowsingLevelsFlag, 60, 0xffff]) {
+      expect(
+        getEffectiveBrowsingLevel({ isGreen: true, isLoggedIn: true, requested })
+      ).toBeGreaterThan(0);
+      expect(
+        getEffectiveBrowsingLevel({ isGreen: true, isLoggedIn: false, requested })
+      ).toBeGreaterThan(0);
+    }
   });
 
   it('falls back to the SFW cap on green when no level is requested (no bypass by omission)', () => {
