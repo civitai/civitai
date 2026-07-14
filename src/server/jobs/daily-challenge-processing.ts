@@ -1403,14 +1403,14 @@ export async function pickWinnersForChallenge(
           await incrementOperationSpent(currentChallenge.challengeId, winnersBuzzCost);
         }
 
-        // Map winners to entries
+        // Map winners to entries by numeric creatorId only. `winner.creator` is the LLM's echo of
+        // the (user-controlled, spoofable) display name — matching on it let a second entrant who
+        // set their name equal to another entrant's name hijack `find`'s first-match semantics and
+        // steal that entrant's payout. judgedEntries is already deduped to one entry per userId
+        // (see getJudgedEntries), so creatorId alone fully disambiguates.
         winningEntries = generated.winners
           .map((winner, i) => {
-            const entry = judgedEntries.find(
-              (e) =>
-                e.username.toLowerCase() === winner.creator.toLowerCase() ||
-                e.userId === winner.creatorId
-            );
+            const entry = judgedEntries.find((e) => e.userId === winner.creatorId);
             if (!entry) return null;
             return {
               userId: entry.userId,
