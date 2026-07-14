@@ -252,4 +252,7 @@ async function fetchModelResponseCached(
 // App Blocks: allow this route to be called with an RS256 block JWT carrying
 // the `models:read:self` scope. When no block JWT is present the call falls
 // through to the existing PublicEndpoint path, so legacy callers are unaffected.
-export default withBlockScope(baseHandler, { requiredScope: 'models:read:self' });
+export default withBlockScope(baseHandler, {
+  endpoint: 'model_detail',
+  requiredScope: 'models:read:self',
+});

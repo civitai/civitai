@@ -188,6 +188,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 // the Bearer block-JWT (no cookies) remains the sole authz gate — mirrors
 // images.ts; see WithBlockScopeOpts.allowOpaqueOrigin.
 export default withBlockScope(baseHandler, {
+  endpoint: 'collection',
   requiredScope: 'collections:read:self',
   allowOpaqueOrigin: true,
 });
