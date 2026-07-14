@@ -9,6 +9,7 @@
   const num = (n: number) => n.toLocaleString();
   // Build a URL that preserves both controls.
   const link = (days: number, g: 'day' | 'week') => `?days=${days}&g=${g}`;
+  const periodLabel = $derived(`over the last ${data.days} days`);
 
   const commonOptions = {
     responsive: true,
@@ -94,6 +95,7 @@
 {#if !data.analytics}
   <div class="placeholder">Analytics are temporarily unavailable — please try again shortly.</div>
 {:else}
+  <p class="mb-2 text-xs text-dark-3">Totals {periodLabel}</p>
   <section class="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
     {#each tiles as tile (tile.label)}
       <div class="rounded-lg border border-dark-4 bg-dark-6 p-3">
@@ -123,7 +125,9 @@
 
   {#if data.analytics.topImages.length > 0}
     <div class="mt-4 rounded-lg border border-dark-4 bg-dark-6 p-4">
-      <p class="mb-3 text-sm text-dark-2">Top images by reactions</p>
+      <p class="mb-3 text-sm text-dark-2">
+        Top images by reactions <span class="text-xs text-dark-3">{periodLabel}</span>
+      </p>
       <table class="w-full text-sm">
         <thead>
           <tr class="border-b border-dark-4 text-left text-xs uppercase tracking-wide text-dark-3">
