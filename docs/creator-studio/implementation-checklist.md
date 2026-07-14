@@ -71,8 +71,9 @@ Legend: `[x]` done · `[ ]` not started · **🚧** blocked on a dependency · *
 ## `/settings` — Payout & settings
 - [x] Membership / tier status card — reads session (`tier` + CP membership); links to `/pricing` + `/creator-program`
 - [x] Payout (Tipalti) status card — reads `UserPaymentConfiguration` (active / pending / not set up); links out to the Buzz dashboard
+- [x] Payout unlock (**#16**) — when not-set-up, the "Set up payouts" prompt unlocks once settled cash ≥ $50 (`getCreatorCash`), so we don't push creators into Tipalti signup (billed per account) before they can withdraw
 - [x] Fee defaults — **read-only info** (B9 made a per-account pref moot: fixed seed values — Checkpoint 1, LoRA 0.1)
-- [ ] CP cash panel + Withdraw — deferred to `/earnings` (C6: one cash home)
+- [x] CP cash panel + Withdraw — landed on `/earnings` (C6: one cash home)
 
 ---
 

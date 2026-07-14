@@ -7,15 +7,17 @@
     CIVITAI_MEMBERSHIP_URL,
     CIVITAI_MANAGE_MEMBERSHIP_URL,
   } from '$lib/creator-program';
+  import { formatAmount } from '$lib/earnings';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
 
   const BUZZ_DASHBOARD_URL = 'https://civitai.com/user/buzz-dashboard';
-  // Payout onboarding is gated on settled cash so we don't push creators into a Tipalti signup (which bills
-  // us per account) before they can actually withdraw. TODO: unlock the button once the settled-cash read is
-  // wired — until then "not set up" always shows the locked message.
+  // Payout onboarding is gated on settled cash so we don't push creators into a Tipalti signup (which bills us
+  // per account) before they can actually withdraw ($50 min withdrawal). Once they clear that, prompt setup.
   const PAYOUT_UNLOCK_USD = 50;
+  // cash balances are USD cents; settled is the withdrawable balance.
+  const canSetUpPayout = $derived(!!data.cash && data.cash.settled >= PAYOUT_UNLOCK_USD * 100);
 
   const tier = $derived(data.membership.tier);
   const isMember = $derived(data.membership.isMember);
@@ -79,6 +81,8 @@
         <Badge variant="default" class="ml-auto">Active</Badge>
       {:else if data.payout === 'pending'}
         <Badge variant="secondary" class="ml-auto">Pending setup</Badge>
+      {:else if canSetUpPayout}
+        <Badge variant="secondary" class="ml-auto">Ready to set up</Badge>
       {:else}
         <Badge variant="outline" class="ml-auto">Locked</Badge>
       {/if}
@@ -89,12 +93,15 @@
           Your Tipalti payout account is active. Manage it and withdraw earnings on the Buzz dashboard.
         {:else if data.payout === 'pending'}
           Your payout onboarding is started but not finished — complete it to withdraw earnings as cash.
+        {:else if canSetUpPayout}
+          You have <strong class="text-green-5">{formatAmount(data.cash?.settled ?? 0, 'cashSettled')}</strong> in
+          settled cash ready to withdraw. Set up payouts to cash out.
         {:else}
           Payout setup unlocks once you have <strong class="text-white">${PAYOUT_UNLOCK_USD} in settled cash</strong>
           ready to withdraw — so there's nothing to set up yet.
         {/if}
       </p>
-      {#if data.payout !== 'not_set_up'}
+      {#if data.payout !== 'not_set_up' || canSetUpPayout}
         <div>
           <Button
             href={BUZZ_DASHBOARD_URL}
@@ -103,7 +110,11 @@
             variant="secondary"
             size="sm"
           >
-            {data.payout === 'active' ? 'Manage payouts' : 'Continue payout setup'}
+            {data.payout === 'active'
+              ? 'Manage payouts'
+              : data.payout === 'pending'
+                ? 'Continue payout setup'
+                : 'Set up payouts'}
           </Button>
         </div>
       {/if}
