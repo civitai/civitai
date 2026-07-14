@@ -14,12 +14,12 @@ import {
   acceptImage,
   blockImage,
   resolveImageAppeal,
+  getPendingImageAppealAppellants,
+  sendBulkAppealEmails,
 } from '$lib/server/image-moderation.service';
 import { setReportStatus } from '$lib/server/reports.service';
-import {
-  getModel3DsByThumbnailImageIds,
-  unpublishModel3d,
-} from '$lib/server/model3d.service';
+import { getActorMeta } from '$lib/server/request-meta';
+import { getModel3DsByThumbnailImageIds, unpublishModel3d } from '$lib/server/model3d.service';
 import { ReportStatus } from '$lib/reports';
 import { IMAGE_VIEW_SLUGS, type ImageViewSlug } from '$lib/image-review';
 import { allBrowsingLevelsFlag } from '@civitai/shared';
@@ -71,12 +71,26 @@ export const load: PageServerLoad = async ({ params, url }) => {
   };
 
   if (view === 'reported') {
-    const { items, nextCursor } = await getReportedImageQueue({ browsingLevel: level, cursor, limit });
-    return { ...base, view, kind: 'reported' as const, items: await withModel3d(items), nextCursor };
+    const { items, nextCursor } = await getReportedImageQueue({
+      browsingLevel: level,
+      cursor,
+      limit,
+    });
+    return {
+      ...base,
+      view,
+      kind: 'reported' as const,
+      items: await withModel3d(items),
+      nextCursor,
+    };
   }
 
   if (view === 'appeals') {
-    const { items, nextCursor } = await getAppealImageQueue({ browsingLevel: level, cursor, limit });
+    const { items, nextCursor } = await getAppealImageQueue({
+      browsingLevel: level,
+      cursor,
+      limit,
+    });
     return { ...base, view, kind: 'appeal' as const, items: await withModel3d(items), nextCursor };
   }
 
@@ -135,7 +149,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
     items: await withModel3d(
       stripped.map((item) => ({
         ...item,
-        ruleDefinition: item.ruleId != null ? (rules[item.ruleId] ?? null) : null,
+        ruleDefinition: item.ruleId != null ? rules[item.ruleId] ?? null : null,
       }))
     ),
     nextCursor,
@@ -155,19 +169,28 @@ export const actions: Actions = {
 
     await acceptImage({ imageId, removeMinorFlag, userId: locals.user.id });
     if (reportId)
-      await setReportStatus({ id: reportId, status: ReportStatus.Unactioned, userId: locals.user.id });
+      await setReportStatus({
+        id: reportId,
+        status: ReportStatus.Unactioned,
+        userId: locals.user.id,
+      });
     return { success: true, imageId };
   },
 
-  block: async ({ request, locals }) => {
+  block: async (event) => {
+    const { request, locals } = event;
     const form = await request.formData();
     const imageId = Number(form.get('imageId'));
     if (!imageId) return fail(400, { error: 'Missing image id.' });
     const reportId = form.get('reportId') ? Number(form.get('reportId')) : undefined;
 
-    await blockImage({ imageId, userId: locals.user.id });
+    await blockImage({ imageId, userId: locals.user.id, ...getActorMeta(event) });
     if (reportId)
-      await setReportStatus({ id: reportId, status: ReportStatus.Actioned, userId: locals.user.id });
+      await setReportStatus({
+        id: reportId,
+        status: ReportStatus.Actioned,
+        userId: locals.user.id,
+      });
     return { success: true, imageId };
   },
 
@@ -201,9 +224,14 @@ export const actions: Actions = {
     const imageIds = parseIds(form.get('imageIds'));
     const reportIds = parseIds(form.get('reportIds'));
     const removeMinorFlag = form.get('removeMinorFlag') === 'true';
+    // Snapshot any appeal appellants before resolving, then email each once (deduped) instead of per-image.
+    const appellants = await getPendingImageAppealAppellants(imageIds);
     await Promise.all(
-      imageIds.map((imageId) => acceptImage({ imageId, removeMinorFlag, userId: locals.user.id }))
+      imageIds.map((imageId) =>
+        acceptImage({ imageId, removeMinorFlag, userId: locals.user.id, deferAppealEmail: true })
+      )
     );
+    await sendBulkAppealEmails(appellants, true);
     await Promise.all(
       reportIds.map((id) =>
         setReportStatus({ id, status: ReportStatus.Unactioned, userId: locals.user.id })
@@ -212,11 +240,15 @@ export const actions: Actions = {
     return { success: true };
   },
 
-  bulkBlock: async ({ request, locals }) => {
+  bulkBlock: async (event) => {
+    const { request, locals } = event;
     const form = await request.formData();
     const imageIds = parseIds(form.get('imageIds'));
     const reportIds = parseIds(form.get('reportIds'));
-    await Promise.all(imageIds.map((imageId) => blockImage({ imageId, userId: locals.user.id })));
+    const actor = getActorMeta(event);
+    await Promise.all(
+      imageIds.map((imageId) => blockImage({ imageId, userId: locals.user.id, ...actor }))
+    );
     await Promise.all(
       reportIds.map((id) =>
         setReportStatus({ id, status: ReportStatus.Actioned, userId: locals.user.id })
@@ -229,9 +261,13 @@ export const actions: Actions = {
     const form = await request.formData();
     const imageIds = parseIds(form.get('imageIds'));
     const status = form.get('status') === 'Approved' ? 'Approved' : 'Rejected';
+    const appellants = await getPendingImageAppealAppellants(imageIds);
     await Promise.all(
-      imageIds.map((imageId) => resolveImageAppeal({ imageId, status, userId: locals.user.id }))
+      imageIds.map((imageId) =>
+        resolveImageAppeal({ imageId, status, userId: locals.user.id, deferAppealEmail: true })
+      )
     );
+    await sendBulkAppealEmails(appellants, status === 'Approved');
     return { success: true };
   },
 };

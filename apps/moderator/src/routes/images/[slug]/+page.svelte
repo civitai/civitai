@@ -199,7 +199,8 @@
 {/snippet}
 
 <!-- Accept / Delete for the review + reported queues. A `reportId` couples the report status
-     (accept → Unactioned, block → Actioned). `minor` adds the "clear minor flag" accept. -->
+     (accept → Unactioned, block → Actioned). `minor` adds the "Accept + clear minor" button; plain
+     Accept keeps the flag for SFW and auto-clears it for R+ (handled server-side). -->
 {#snippet reviewActions(item: { id: number }, opts: { reportId?: number; minor?: boolean })}
   {@const verdict = acted.get(item.id)}
   {#if verdict}

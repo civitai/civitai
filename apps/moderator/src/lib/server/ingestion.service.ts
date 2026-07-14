@@ -1,5 +1,7 @@
 import { sql } from '@civitai/db/kysely';
+import { REDIS_KEYS } from '@civitai/redis';
 import { dbRead, dbWrite } from './db';
+import { bustCachedObject } from './cache';
 import { syncSearchIndex } from './search-index';
 import { recordModActivity } from './mod-activity';
 import type { MediaType } from '$lib/media/edge-url';
@@ -94,8 +96,8 @@ export async function getIngestionErrorImages({
 }
 
 // Moderator resolves an ingestion error by pinning the image's nsfwLevel and marking it Scanned. Runs
-// INTERNALLY via Kysely (nsfwLevel setter). The one main-app hit is the Meilisearch enqueue. Redis
-// cache refreshes are deferred to Wave 3.
+// INTERNALLY via Kysely (nsfwLevel setter) + Redis cache busts; the one main-app hit is the Meilisearch
+// enqueue. Faithful to the legacy resolveIngestionError.
 export async function resolveIngestionError({
   id,
   nsfwLevel,
@@ -140,6 +142,10 @@ export async function resolveIngestionError({
 
   await recordModActivity({ userId, entityType: 'image', entityId: id, activity: 'setNsfwLevel' });
 
-  // TODO(moderator-migration): the main app also refreshes imageMetadataCache + tagIdsForImagesCache
-  // (Redis) here; deferred until Redis is wired in the spoke (Wave 3).
+  // Bust the post-scan caches the main app refreshes here (imageMetadataCache + tagIdsForImagesCache) so a
+  // reader re-fetches the pinned nsfwLevel/tags instead of serving the pre-resolve state until TTL.
+  await Promise.all([
+    bustCachedObject(REDIS_KEYS.CACHES.IMAGE_METADATA, id),
+    bustCachedObject(REDIS_KEYS.CACHES.TAG_IDS_FOR_IMAGES, id),
+  ]);
 }

@@ -19,3 +19,18 @@ export async function bustImageTagCaches(ids: number | number[]): Promise<void> 
     bustCachedObject(REDIS_KEYS.CACHES.THUMBNAILS, ids),
   ]);
 }
+
+// Port of the main app's bustCacheTag. getAllImages caches under tags (`images-modelVersion:X`, …); each
+// tag is a Redis SET at `${TAG}:${tag}` holding the cache keys tagged with it. Delete every member key,
+// then the set. Use plain `sMembers`/`del` (NOT packed) — tagCacheKey writes raw strings via sAdd, so a
+// packed read would msgpack-decode and throw.
+export async function bustCacheTag(tag: string | string[]): Promise<void> {
+  const tags = Array.isArray(tag) ? tag : [tag];
+  const redis = getRedis();
+  for (const t of tags) {
+    const setKey = `${REDIS_KEYS.TAG}:${t}` as RedisKeyTemplateCache;
+    const keys = await redis.sMembers<RedisKeyTemplateCache>(setKey);
+    for (const key of keys) await redis.del(key);
+    await redis.del(setKey);
+  }
+}

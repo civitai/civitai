@@ -5,8 +5,9 @@ import type { Actions, PageServerLoad } from './$types';
 import { parseQuery } from '$lib/server/query';
 import { getComicReviewQueue } from '$lib/server/comic-review.service';
 import { acceptImage, blockImage } from '$lib/server/image-moderation.service';
-import { syncSearchIndex } from '$lib/server/search-index';
+import { getActorMeta } from '$lib/server/request-meta';
 import { getPromptHighlightSegments } from '@civitai/mod-utils/prompt-audit';
+import type { RequestEvent } from './$types';
 
 const REVIEW_REASONS = [
   { value: 'all', label: 'Any reason' },
@@ -48,25 +49,27 @@ export const load: PageServerLoad = async ({ url }) => {
 };
 
 // Reuse the ported image moderation. Approving (acceptImage) clears the image's needsReview/ingestion so
-// the comic flips back to visible; blocking (blockImage) soft-hides it. Either way, enqueue the parent
-// comic project for a Meilisearch refresh (the one sanctioned main-app call) so the listing updates —
-// mirrors the main app's re-queue on moderateImages.
+// the comic flips back to visible; blocking (blockImage) soft-hides it. Both already re-queue every parent
+// comic for the Meilisearch refresh (queueComicsForImages), so nothing comic-specific is needed here.
 async function moderatePanel(
-  run: (args: { imageId: number; userId: number }) => Promise<void>,
-  request: Request,
-  userId: number
+  run: (args: {
+    imageId: number;
+    userId: number;
+    ip?: string;
+    userAgent?: string;
+  }) => Promise<void>,
+  event: RequestEvent
 ) {
-  const form = await request.formData();
+  const form = await event.request.formData();
   const imageId = Number(form.get('imageId'));
-  const projectId = Number(form.get('projectId'));
   if (!imageId) return fail(400, { error: 'Missing image id.' });
 
-  await run({ imageId, userId });
-  if (projectId) syncSearchIndex({ entityType: 'comic', entityId: projectId });
+  // acceptImage ignores ip/userAgent; blockImage uses them for the DeleteTOS analytics row.
+  await run({ imageId, userId: event.locals.user.id, ...getActorMeta(event) });
   return { success: true, imageId };
 }
 
 export const actions: Actions = {
-  approve: ({ request, locals }) => moderatePanel(acceptImage, request, locals.user.id),
-  block: ({ request, locals }) => moderatePanel(blockImage, request, locals.user.id),
+  approve: (event) => moderatePanel(acceptImage, event),
+  block: (event) => moderatePanel(blockImage, event),
 };
