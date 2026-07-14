@@ -47,15 +47,19 @@ const MODEL_ID = 12345;
 const APP_BLOCK_ID = 'apb_metrics_test';
 const REQUIRED_SCOPE = 'models:read:self';
 
-async function mintToken(scopes: string[] = [REQUIRED_SCOPE]): Promise<string> {
+async function mintToken(
+  scopes: string[] = [REQUIRED_SCOPE],
+  opts: { dev?: boolean; appBlockId?: string } = {}
+): Promise<string> {
   const r = await BlockTokenService.sign({
     userId: 42,
     blockId: 'blk_test',
     appId: 'app_test',
-    appBlockId: APP_BLOCK_ID,
+    appBlockId: opts.appBlockId ?? APP_BLOCK_ID,
     blockInstanceId: 'bki_test',
     scopes,
     ctx: { modelId: MODEL_ID },
+    ...(opts.dev ? { dev: true } : {}),
   });
   return r.token;
 }
@@ -113,12 +117,16 @@ function makeReq(token: string): NextApiRequest {
   } as unknown as NextApiRequest;
 }
 
-async function counterValue(endpoint: AppBlockEndpoint, result: string): Promise<number> {
+async function counterValue(
+  endpoint: AppBlockEndpoint,
+  result: string,
+  appBlockId: string = APP_BLOCK_ID
+): Promise<number> {
   const metric = client.register.getSingleMetric('civitai_app_block_requests_total');
   if (!metric) return 0;
   const data = await (metric as { get(): Promise<{ values: Array<{ labels: Record<string, string>; value: number }> }> }).get();
   const match = data.values.find(
-    (v) => v.labels.app_block_id === APP_BLOCK_ID && v.labels.endpoint === endpoint && v.labels.result === result
+    (v) => v.labels.app_block_id === appBlockId && v.labels.endpoint === endpoint && v.labels.result === result
   );
   return match?.value ?? 0;
 }
@@ -204,5 +212,38 @@ describe('withBlockScope — per-app REST RED metric', () => {
     expect(res.statusCode).toBe(403);
     expect(wrapped).not.toHaveBeenCalled();
     expect(await counterValue('model_detail', 'forbidden')).toBe(before + 1);
+  });
+
+  it('buckets a DEV token (synthetic appBlockId) to app_block_id="dev"', async () => {
+    const before = await counterValue('model_detail', 'success', 'dev');
+    // Dev tokens carry a caller-constructed synthetic appBlockId — an unbounded
+    // label vector. It must collapse to the single 'dev' bucket, NOT pass raw.
+    const route = withBlockScope(statusHandler(200) as never, {
+      endpoint: 'model_detail',
+      requiredScope: REQUIRED_SCOPE,
+    });
+    const res = makeRes();
+    await route(
+      makeReq(await mintToken([REQUIRED_SCOPE], { dev: true, appBlockId: 'apb_synthetic_dev_xyz' })) as never,
+      res as never
+    );
+    res._finish();
+
+    expect(await counterValue('model_detail', 'success', 'dev')).toBe(before + 1);
+    // The synthetic id NEVER became a label.
+    expect(await counterValue('model_detail', 'success', 'apb_synthetic_dev_xyz')).toBe(0);
+  });
+
+  it('keeps a normal (non-dev) token on its real appBlockId', async () => {
+    const before = await counterValue('model_detail', 'success', APP_BLOCK_ID);
+    const route = withBlockScope(statusHandler(200) as never, {
+      endpoint: 'model_detail',
+      requiredScope: REQUIRED_SCOPE,
+    });
+    const res = makeRes();
+    await route(makeReq(await mintToken()) as never, res as never);
+    res._finish();
+
+    expect(await counterValue('model_detail', 'success', APP_BLOCK_ID)).toBe(before + 1);
   });
 });

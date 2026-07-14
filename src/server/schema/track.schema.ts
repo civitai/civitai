@@ -68,10 +68,11 @@ export const blockRenderSchema = z.object({
   // timeout). Drives the `civitai_app_block_renders_total{result}` prom counter.
   status: z.enum(['ok', 'error']).default('ok'),
   // Optional low-cardinality failure discriminator (e.g. 'timeout', 'fatal',
-  // 'no_token', 'error_boundary'). Bounded but NOT put on a prom label (kept for
-  // a future ClickHouse column). Reserved: the beacon route validates it but
-  // does NOT forward it to the ClickHouse insert today (prom-only), so it never
-  // reaches the tracker payload.
+  // 'no_token', 'error', 'error_boundary'). Drives the bounded `error_class`
+  // label on `civitai_app_block_renders_total` (via `normalizeErrorClass`, which
+  // clamps any value outside the known set to 'other'). It is STILL stripped from
+  // the ClickHouse insert — it never reaches the tracker payload, only the prom
+  // label.
   errorClass: z.string().trim().min(1).max(64).optional(),
 });
 

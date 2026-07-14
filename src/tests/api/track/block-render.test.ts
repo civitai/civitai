@@ -255,7 +255,8 @@ describe('POST /api/track/block-render', () => {
 async function renderCounterValue(
   appBlockId: string,
   slotId: string,
-  result: string
+  result: string,
+  errorClass?: string
 ): Promise<number> {
   const metric = client.register.getSingleMetric('civitai_app_block_renders_total');
   if (!metric) return 0;
@@ -263,7 +264,11 @@ async function renderCounterValue(
     metric as { get(): Promise<{ values: Array<{ labels: Record<string, string>; value: number }> }> }
   ).get();
   const match = data.values.find(
-    (v) => v.labels.app_block_id === appBlockId && v.labels.slot_id === slotId && v.labels.result === result
+    (v) =>
+      v.labels.app_block_id === appBlockId &&
+      v.labels.slot_id === slotId &&
+      v.labels.result === result &&
+      (errorClass === undefined || v.labels.error_class === errorClass)
   );
   return match?.value ?? 0;
 }
@@ -275,15 +280,15 @@ describe('POST /api/track/block-render — civitai_app_block_renders_total count
     sessionStore.session = null;
   });
 
-  it('increments result=ok (schema default) on a status-less beacon AND keeps status/errorClass out of the CH insert', async () => {
-    const before = await renderCounterValue('apb_test', 'app.page', 'ok');
+  it('increments result=ok with error_class=none on a status-less beacon AND keeps status/errorClass out of the CH insert', async () => {
+    const before = await renderCounterValue('apb_test', 'app.page', 'ok', 'none');
     const handler = (await import('~/pages/api/track/block-render')).default;
     const req = makeReq({ origin: 'https://civitai.com', body: validInput });
     const res = makeRes();
 
     await handler(req as any, res);
 
-    expect(await renderCounterValue('apb_test', 'app.page', 'ok')).toBe(before + 1);
+    expect(await renderCounterValue('apb_test', 'app.page', 'ok', 'none')).toBe(before + 1);
     // status/errorClass never reach the ClickHouse insert (prom-only).
     const arg = mockBlockRender.mock.calls[0][0];
     expect(arg).not.toHaveProperty('status');
@@ -291,8 +296,8 @@ describe('POST /api/track/block-render — civitai_app_block_renders_total count
     expect(arg).toEqual({ ...validInput, isAnon: true });
   });
 
-  it('increments result=error when the beacon carries status:"error"', async () => {
-    const before = await renderCounterValue('apb_test', 'app.page', 'error');
+  it('increments result=error with the sent error_class label when the beacon carries status:"error"', async () => {
+    const before = await renderCounterValue('apb_test', 'app.page', 'error', 'timeout');
     const handler = (await import('~/pages/api/track/block-render')).default;
     const req = makeReq({
       origin: 'https://civitai.com',
@@ -302,9 +307,43 @@ describe('POST /api/track/block-render — civitai_app_block_renders_total count
 
     await handler(req as any, res);
 
-    expect(await renderCounterValue('apb_test', 'app.page', 'error')).toBe(before + 1);
+    expect(await renderCounterValue('apb_test', 'app.page', 'error', 'timeout')).toBe(before + 1);
     // The error still writes the (identifier-only) CH row — status/errorClass stripped.
     expect(mockBlockRender).toHaveBeenCalledWith({ ...validInput, isAnon: true });
+  });
+
+  it('preserves each KNOWN error_class on the label', async () => {
+    const handler = (await import('~/pages/api/track/block-render')).default;
+    for (const ec of ['fatal', 'no_token', 'error', 'error_boundary'] as const) {
+      const before = await renderCounterValue('apb_test', 'app.page', 'error', ec);
+      await handler(
+        makeReq({
+          origin: 'https://civitai.com',
+          body: { ...validInput, status: 'error', errorClass: ec },
+        }) as any,
+        makeRes()
+      );
+      expect(await renderCounterValue('apb_test', 'app.page', 'error', ec)).toBe(before + 1);
+    }
+  });
+
+  it('clamps an UNKNOWN error_class to "other" (bounds the label) and still strips it from the CH insert', async () => {
+    const before = await renderCounterValue('apb_test', 'app.page', 'error', 'other');
+    const handler = (await import('~/pages/api/track/block-render')).default;
+    const req = makeReq({
+      origin: 'https://civitai.com',
+      body: { ...validInput, status: 'error', errorClass: 'attacker_garbage_zzz' },
+    });
+    const res = makeRes();
+
+    await handler(req as any, res);
+
+    expect(await renderCounterValue('apb_test', 'app.page', 'error', 'other')).toBe(before + 1);
+    // CH insert stays byte-identical: neither status nor errorClass is forwarded.
+    const arg = mockBlockRender.mock.calls[0][0];
+    expect(arg).not.toHaveProperty('status');
+    expect(arg).not.toHaveProperty('errorClass');
+    expect(arg).toEqual({ ...validInput, isAnon: true });
   });
 
   it('clamps an UNKNOWN app_block_id to "other" (bounds the label) and preserves a known one', async () => {
