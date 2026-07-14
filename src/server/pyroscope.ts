@@ -77,6 +77,15 @@ export async function registerPyroscope(): Promise<void> {
     const basicAuthUser = process.env.PYROSCOPE_BASIC_AUTH_USER;
     const basicAuthPassword = process.env.PYROSCOPE_BASIC_AUTH_PASSWORD;
 
+    // Profile flush interval (default 60000ms). The flush runs a
+    // serialize→protobuf-encode→push on the MAIN thread, so on a CPU-ceiling-
+    // capped pool it's a periodic on-loop blip. Env-tunable (no code change) so a
+    // Stage-2 canary can lengthen it if event-loop-lag p99 shows the flush stall
+    // is material at peak. Ignored unless a finite number.
+    const flushRaw = process.env.PYROSCOPE_FLUSH_INTERVAL_MS;
+    const flushIntervalMs =
+      flushRaw && Number.isFinite(Number(flushRaw)) ? Number(flushRaw) : undefined;
+
     Pyroscope.init({
       serverAddress,
       appName: process.env.PYROSCOPE_APP_NAME ?? 'civitai-dp-prod',
@@ -98,6 +107,7 @@ export async function registerPyroscope(): Promise<void> {
         // this is low-overhead; validate empirically in the Stage-2 canary.
         samplingIntervalMicros: 10_000,
       },
+      ...(flushIntervalMs ? { flushIntervalMs } : {}),
       ...(basicAuthUser && basicAuthPassword ? { basicAuthUser, basicAuthPassword } : {}),
     });
 
