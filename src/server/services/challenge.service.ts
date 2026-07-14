@@ -378,8 +378,13 @@ export async function getInfiniteChallenges(
   // Build WHERE conditions using parameterized queries (SQL injection safe)
   const conditions: Prisma.Sql[] = [];
 
-  // Only show visible challenges
-  conditions.push(Prisma.sql`c."visibleAt" <= now()`);
+  // Only show challenges past their visibility window — except to their own creator, so a creator
+  // can see (and manage) a not-yet-visible challenge they made. Mirrors the scan/POI gates below.
+  conditions.push(
+    currentUserId
+      ? Prisma.sql`(c."visibleAt" <= now() OR c."createdById" = ${currentUserId})`
+      : Prisma.sql`c."visibleAt" <= now()`
+  );
 
   // Scan gate: hide challenges that haven't passed the moderation scan, except from their
   // own creator (so a creator can preview their pending challenge). System/mod challenges
@@ -416,7 +421,9 @@ export async function getInfiniteChallenges(
   // universal and show on both domains, mirroring the scan/POI gates.
   const domainCurrency = deriveDomainCurrency(isGreen ?? false);
   conditions.push(
-    Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency})`
+    currentUserId
+      ? Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency} OR c."createdById" = ${currentUserId})`
+      : Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency})`
   );
 
   // Status filter (parameterized)

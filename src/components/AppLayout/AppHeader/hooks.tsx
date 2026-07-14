@@ -128,7 +128,6 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
         },
         {
           href: '/challenges?engagement=created',
-          as: '/challenges',
           visible: features.challengePlatform && features.userChallenges,
           icon: IconTrophy,
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],

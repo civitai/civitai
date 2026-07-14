@@ -33,6 +33,7 @@ import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import styles from './index.module.css';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async ({ features }) => {
@@ -91,14 +92,19 @@ function ChallengesPage() {
     if (!currentUser) return <NotFound />;
     return (
       <MasonryContainer>
-        <Stack gap="xl" align="flex-start">
-          <Title>My Challenges</Title>
-          <SegmentedControl
-            radius="xl"
-            data={['Scheduled', 'Active', 'Completed']}
-            value={myStatus}
-            onChange={(v) => setMyStatus(v as 'Scheduled' | 'Active' | 'Completed')}
-          />
+        <Stack gap="xs">
+          <Stack gap="xl" align="flex-start">
+            <Title>My Challenges</Title>
+            <SegmentedControl
+              classNames={styles}
+              transitionDuration={0}
+              radius="xl"
+              data={['Scheduled', 'Active', 'Completed']}
+              value={myStatus}
+              onChange={(v) => setMyStatus(v as 'Scheduled' | 'Active' | 'Completed')}
+              withItemsBorders={false}
+            />
+          </Stack>
           <ChallengesInfinite
             filters={{
               userId: currentUser.id,
