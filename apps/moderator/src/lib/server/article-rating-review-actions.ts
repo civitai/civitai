@@ -1,4 +1,7 @@
+import { NotificationCategory } from '@civitai/notifications';
+import { getBrowsingLevelLabel } from '@civitai/shared';
 import { getClickhouse } from './clickhouse';
+import { getNotifications } from './notifications';
 import { syncSearchIndex } from './search-index';
 import { resolveArticleRatingReview } from './article-rating-reviews.service';
 import { ReportStatus } from '$lib/article-rating-review';
@@ -37,10 +40,64 @@ export async function resolveRatingReview(input: {
     moderatorId: input.userId,
   });
 
-  // TODO(moderator-migration): notify the owner (article-rating-review-approved/rejected). Notifications
-  // write to a separate notifications DB (notifDbWrite) not wired into the spoke — deferred to Wave 2.
+  void notifyRatingReviewResolved({
+    ownerUserId: result.ownerUserId,
+    reviewId: input.reviewId,
+    articleId: result.articleId,
+    articleTitle: result.articleTitle,
+    status: result.status,
+    previousLevel: result.previousLevel,
+    appliedLevel: input.appliedLevel,
+    modComment: input.modComment,
+  });
 
   return { ok: true, status: result.status };
+}
+
+// Owner notification, ported from the legacy resolveArticleRatingReview. Actioned = the mod granted the
+// owner's suggested level (approved); Unactioned = the mod applied a different level (rejected). Sent via
+// @civitai/notifications (best-effort — a delivery failure never fails the resolution).
+async function notifyRatingReviewResolved(v: {
+  ownerUserId: number;
+  reviewId: number;
+  articleId: number;
+  articleTitle: string;
+  status: ReportStatus;
+  previousLevel: number;
+  appliedLevel: number;
+  modComment?: string;
+}): Promise<void> {
+  try {
+    if (v.status === ReportStatus.Actioned)
+      await getNotifications().createNotification({
+        userId: v.ownerUserId,
+        type: 'article-rating-review-approved',
+        category: NotificationCategory.System,
+        key: `article-rating-review-approved:${v.reviewId}`,
+        details: {
+          articleId: v.articleId,
+          articleTitle: v.articleTitle,
+          previousLevel: getBrowsingLevelLabel(v.previousLevel),
+          newLevel: getBrowsingLevelLabel(v.appliedLevel),
+          modComment: v.modComment ?? null,
+        },
+      });
+    else
+      await getNotifications().createNotification({
+        userId: v.ownerUserId,
+        type: 'article-rating-review-rejected',
+        category: NotificationCategory.System,
+        key: `article-rating-review-rejected:${v.reviewId}`,
+        details: {
+          articleId: v.articleId,
+          articleTitle: v.articleTitle,
+          appliedLevel: getBrowsingLevelLabel(v.appliedLevel),
+          modComment: v.modComment ?? null,
+        },
+      });
+  } catch {
+    // onFailure already logged by the client; best-effort.
+  }
 }
 
 // ClickHouse analytics parity with the legacy tRPC path's `ctx.track.articleRatingReviewResolved`. The

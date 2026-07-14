@@ -1,5 +1,7 @@
 import { sql } from '@civitai/db/kysely';
+import { REDIS_KEYS } from '@civitai/redis';
 import { dbWrite } from './db';
+import { bustCachedObject } from './cache';
 import { syncSearchIndex } from './search-index';
 import { ArticleStatus, type ArticleMetadata } from '$lib/articles';
 
@@ -10,10 +12,10 @@ const UNPUBLISHED: ArticleStatus[] = [
   ArticleStatus.UnpublishedViolation,
 ];
 
-// Restore or delete an article. The DB mutation runs INTERNALLY via Kysely; the only main-app hit is the
-// approved Meilisearch enqueue. Infra-bound side effects the main app also performs (image/S3 cleanup on
-// delete, Redis cache refresh + full ingestion recompute on restore, owner notifications) are deferred to
-// the waves that wire that infra — see the TODO markers below.
+// Restore or delete an article. The DB mutations run INTERNALLY via Kysely; the only main-app hit is the
+// Meilisearch enqueue. Restore is faithful (status + nsfwLevel re-derive + ingestion recompute +
+// userArticleCountCache bust). Delete's cover/orphaned-content image cleanup (DB + S3 + CDN) is still
+// deferred — it needs the @civitai/storage client that isn't wired yet (see the TODO in deleteArticle).
 export async function moderateArticle(input: {
   action: 'restore' | 'delete';
   articleId: number;
@@ -37,10 +39,19 @@ export async function moderateArticle(input: {
 }
 
 async function restoreArticle(id: number): Promise<void> {
-  await dbWrite.transaction().execute(async (trx) => {
+  const userId = await dbWrite.transaction().execute(async (trx): Promise<number> => {
     const article = await trx
       .selectFrom('Article')
-      .select(['status', 'publishedAt', 'metadata'])
+      .select([
+        'status',
+        'publishedAt',
+        'metadata',
+        'userId',
+        'coverId',
+        'title',
+        'content',
+        'ingestion',
+      ])
       .where('id', '=', id)
       .executeTakeFirst();
     if (!article) throw new Error(`No article with id ${id}`);
@@ -111,10 +122,75 @@ async function restoreArticle(id: number): Promise<void> {
           GREATEST(a."userNsfwLevel", level."nsfwLevel", mf."floor")
         ) != a."nsfwLevel"
     `.execute(trx);
+
+    // Re-derive Article.ingestion from ground truth (content/cover image scan states + text moderation),
+    // ported from recomputeArticleIngestionInTx. The legacy also flips status + notifies the owner, but
+    // both are gated on status='Processing'; restore already set status='Published' above, so here this
+    // only fixes `ingestion` — a restored article whose cover/content image is Blocked (or still unscanned)
+    // stays Blocked/Pending (hidden) instead of silently going live.
+    const conn = await trx
+      .selectFrom('ImageConnection as ic')
+      .innerJoin('Image as i', 'i.id', 'ic.imageId')
+      .select('i.ingestion')
+      .where('ic.entityId', '=', id)
+      .where('ic.entityType', '=', 'Article')
+      .execute();
+    const cover = article.coverId
+      ? await trx
+          .selectFrom('Image')
+          .select('ingestion')
+          .where('id', '=', article.coverId)
+          .executeTakeFirst()
+      : null;
+    const states = [...conn.map((c) => c.ingestion), ...(cover ? [cover.ingestion] : [])];
+    const total = states.length;
+    const terminal = states.filter(
+      (s) => s === 'Scanned' || s === 'Blocked' || s === 'Error' || s === 'NotFound'
+    ).length;
+    const imageBlocked = states.some((s) => s === 'Blocked');
+    const imageError = states.some((s) => s === 'Error' || s === 'NotFound');
+    const imageDone = total === 0 || terminal === total;
+
+    const textMod = await trx
+      .selectFrom('EntityModeration')
+      .select(['status', 'blocked'])
+      .where('entityType', '=', 'Article')
+      .where('entityId', '=', id)
+      .executeTakeFirst();
+    const hasText =
+      (article.title?.trim() ?? '').length > 0 ||
+      (article.content ?? '').replace(/<[^>]*>/g, '').trim().length > 0;
+    const textBlocked = hasText && textMod?.status === 'Succeeded' && textMod.blocked === true;
+    const textError =
+      hasText && !!textMod && ['Failed', 'Expired', 'Canceled'].includes(textMod.status);
+    const textDone = !hasText || textMod?.status === 'Succeeded';
+
+    const next =
+      imageBlocked || textBlocked
+        ? 'Blocked'
+        : imageError || textError
+        ? 'Error'
+        : imageDone && textDone
+        ? 'Scanned'
+        : 'Pending';
+
+    await trx
+      .updateTable('Article')
+      .set({
+        ingestion: sql`${next}::"ArticleIngestionStatus"`,
+        ...(next === 'Scanned' && article.ingestion !== 'Scanned'
+          ? { contentScannedAt: new Date() }
+          : {}),
+      })
+      .where('id', '=', id)
+      .execute();
+
+    return article.userId;
   });
 
-  // TODO(moderator-migration): the main app also refreshes userArticleCountCache (Redis, Wave 3) and runs
-  // the full ingestion-status recompute; deferred until Redis is wired in the spoke.
+  // The owner gained a published article — refresh their cached article count (createCachedObject: one key
+  // per user at `${OVERVIEW_USERS}:articleCount:${userId}`).
+  await bustCachedObject(`${REDIS_KEYS.CACHES.OVERVIEW_USERS}:articleCount`, userId);
 }
 
 async function deleteArticle(id: number): Promise<void> {

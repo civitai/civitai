@@ -66,16 +66,16 @@ faithful choice (no callback, no query/packed-write duplication).
 ### Reports set-status — `setReportStatus`  ·  (reports)
 - [ ] Reward reporter(s) on Actioned (`reportAcceptedReward`, incl. `alsoReportedBy`, with `ip`) — **buzz + ClickHouse**
 
-### Article restore — `restoreArticle`  ·  (articles)
-- [ ] Recompute ingestion state (`recomputeArticleIngestionInTx`) — **DB**
-- [ ] Owner ingestion notifications — **notifications**
-- [ ] Refresh `userArticleCountCache` + replication-lag guards — **Redis / infra**
+### Article restore — `restoreArticle`  ·  (articles) — ✅ complete
+- [x] Recompute ingestion state (`recomputeArticleIngestionInTx` — image/text scan-state → Blocked/Error/Scanned/Pending) — **DB**
+- [x] Refresh `userArticleCountCache` (`bustCachedObject`) — **Redis**
+- [n/a] Owner ingestion notifications — the legacy's `article-published`/`article-images-blocked` are gated on `status='Processing'`; restore sets `status='Published'` first, so they don't fire on the restore path (they belong to the scan pipeline). Replication-lag guards omitted (lag routing off by default).
 
-### Article delete — `deleteArticle`  ·  (articles)
-- [ ] Delete cover image + orphaned content images (`deleteImageById`) — **DB + S3 + CDN**
+### Article delete — `deleteArticle`  ·  (articles) — ⛔ blocked on `@civitai/storage`
+- [ ] Delete cover image + orphaned content images (`deleteImageById`) — **DB + S3 + CDN** — needs the S3/storage client
 
-### Article rating resolve — `resolveArticleRatingReview`  ·  (article-rating-review)
-- [ ] Notify owner (`article-rating-review-approved`/`-rejected`, with level labels + modComment) — **notifications**
+### Article rating resolve — `resolveArticleRatingReview`  ·  (article-rating-review) — ✅ complete
+- [x] Notify owner (`article-rating-review-approved` when the mod grants the suggested level / `-rejected` when a different level is applied; level labels + modComment) — **notifications** (`@civitai/notifications`)
 
 ---
 
