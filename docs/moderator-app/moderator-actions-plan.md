@@ -24,27 +24,34 @@ spoke omits; infra tag = what must be wired. (Audited spoke-vs-legacy across eve
 **Verified already complete — nothing to do:** image-tag moderation, blocklists, cosmetics grant, scanner
 verdicts.)
 
-### Image accept — `acceptImage`  ·  (images minor/poi/…, comics-review approve)
-- [ ] Remove pHash from blocklist (`bulkRemoveBlockedImages`) — **ClickHouse `blocked_images`** — else re-uploads keep auto-blocking
-- [ ] Bust post/gallery caches (`bustCachesForPosts`) — **Redis**
-- [ ] Refresh thumbnail cache (in the recompute) — **Redis**
-- [ ] Re-queue parent comic(s) (`queueComicsForPanelImages`, all comics containing the image) — **comic search-index**
-- [ ] Auto-resolve appeal when `needsReview==='appeal'` (`resolveEntityAppeal(Approved)`) — **appeal cascade**
+### Image accept — `acceptImage`  ·  (images minor/poi/…, comics-review approve) — ✅ complete
+- [x] Remove pHash from blocklist (`bulkRemoveBlockedImages`) — **ClickHouse `blocked_images`** — else re-uploads keep auto-blocking
+- [x] Bust post/gallery caches (`bustCachesForPosts` tag-bust) — **Redis**
+- [x] Refresh thumbnail cache (in `recompute`, mirroring `updateNsfwLevel`) — **Redis**
+- [x] Re-queue parent comic(s) (`queueComicsForPanelImages`, all comics containing the image) — **comic search-index**
+- [x] Auto-resolve appeal when `needsReview==='appeal'` (`resolveEntityAppeal(Approved)`) — **appeal cascade**
 
-### Image block — `blockImage`  ·  (images, comics-review block)
-- [ ] Add pHash to blocklist (`bulkAddBlockedImages`) — **ClickHouse `blocked_images`** — else identical re-uploads aren't auto-blocked
-- [ ] Notify uploader (`createNotification` `tos-violation`) — **notifications**
-- [ ] `DeleteTOS` analytics (`ctx.track.images`, + collect `violationType`/`violationDetails`) — **ClickHouse** — feeds appeal `tosReason` + strike analytics
-- [ ] Invalidate image-exists cache (`invalidateManyImageExistence`) — **Redis (sysRedis)**
-- [ ] Bust post/gallery caches (`bustCachesForPosts`) — **Redis**
-- [ ] Re-queue parent comic(s) — **comic search-index**
+### Image block — `blockImage`  ·  (images, comics-review block) — ✅ complete
+- [x] Add pHash to blocklist (`bulkAddBlockedImages`) — **ClickHouse `blocked_images`** — the handler hardcodes `include: ['phash-block']`, so always on
+- [x] Invalidate image-exists cache (`invalidateManyImageExistence`) — **Redis (sysRedis)**
+- [x] Bust post/gallery caches (`bustCachesForPosts` tag-bust) — **Redis**
+- [x] Re-queue parent comic(s) — **comic search-index**
+- [x] `DeleteTOS` analytics (`ctx.track.images` in `moderateImageHandler`, block only) — **ClickHouse** — ported the 5 lookups + tos/nsfw mappings; inserts into the CH `images` table with actor ip/userAgent threaded from the form action
+- [x] Notify uploader (`createNotification` `tos-violation`; handler hardcodes `include: ['user-notification']`) — **notifications** — wired via `@civitai/notifications` (the existing HTTP client to `apps/notifications`; needs `NOTIFICATIONS_ENDPOINT`/`_TOKEN` in the deployed spoke env, best-effort so a missing endpoint no-ops)
 
-### Image appeal resolve — `resolveImageAppeal`  ·  (images appeals)
-- [ ] Refund appeal fee on approve — **buzz**
-- [ ] Notify appellant (`entity-appeal-resolved`) — **notifications**
-- [ ] Appeal-resolution email — **email**
-- [ ] Re-queue parent comic + bust post caches + refresh thumbnail cache — **comic index / Redis**
-- [ ] Persist `internalNotes` — **DB** (minor)
+**Showcase gallery (`imagesForModelVersionsCache`):** the spoke **busts** the per-version packed key
+(`bustCachedObject(IMAGES_FOR_MODEL_VERSION, versionIds)`), same as it busts every other cache. The main
+app *refreshes* (re-populates from primary) only to dodge a replication-lag re-cache window, but lag
+routing is off by default and it busts every other gallery cache anyway — so a bust is the consistent,
+faithful choice (no callback, no query/packed-write duplication).
+
+### Image appeal resolve — `resolveImageAppeal`  ·  (images appeals) — ✅ complete
+- [x] Re-queue parent comic + bust post caches (both directions) + thumbnail bust (approve, via `recompute`) — **comic index / Redis**
+- [x] Refund appeal fee on approve (`refundAppealFee`, `appeal-` prefix → multi-txn) — **buzz** (`@civitai/buzz` client wired)
+- [x] Notify appellant (`entity-appeal-resolved`) — **notifications** (`@civitai/notifications`)
+- [x] Appeal-resolution email (`appealResolutionEmail`, spoke template) — **email** (`@civitai/email` client wired)
+- [x] Shared `runAppealCascade` also runs from `acceptImage`'s appeal-queue auto-approve (legacy `handleUnblockImages` did too)
+- [ ] Persist `internalNotes` — **DB** (minor; spoke `resolveImageAppeal` takes no `internalNotes` yet)
 
 ### Image nsfwLevel set — `updateImageNsfwLevel`  ·  (image-rating-review, downleveled-review)
 - [ ] Stamp `metadata.nsfwLevelReason` — **DB**
@@ -53,8 +60,8 @@ verdicts.)
 - [ ] Finalize Knights-of-New-Order votes (`updatePendingImageRatings`) — **ClickHouse + KoNO**
 - [ ] Remove image from new-order pools (`pool.reset`) — **Redis (new-order)**
 
-### Ingestion error resolve — `resolveIngestionError`  ·  (ingestion-error-review)
-- [ ] Refresh `imageMetadataCache` + `tagIdsForImagesCache` — **Redis** (already `TODO`-marked)
+### Ingestion error resolve — `resolveIngestionError`  ·  (ingestion-error-review) — ✅ complete
+- [x] Bust `imageMetadataCache` + `tagIdsForImagesCache` — **Redis** (`bustCachedObject`). Main-app procedure/service already removed (only a `NOTE(moderator-migration)` marker remains) — no cutover needed.
 
 ### Reports set-status — `setReportStatus`  ·  (reports)
 - [ ] Reward reporter(s) on Actioned (`reportAcceptedReward`, incl. `alsoReportedBy`, with `ip`) — **buzz + ClickHouse**
@@ -78,18 +85,26 @@ Only the migrated-page mutations that are **moderator-only AND still called by a
 get lifted into a spoke endpoint (the single implementation), and the main-app callers are repointed + the
 main-app procedure deleted. Everything else stays spoke-owned (no endpoint).
 
-### ✅ Endpoint: `image-moderate`  *(the one that matters)*
-- Backs: the spoke's `acceptImage`/`blockImage`/`resolveImageAppeal` **and** the main app's `image.moderate`
-  (callers `NeedsReviewBadge`, `UnblockImage`) + `image.setTosViolation`.
-- Plan: complete it to full fidelity (Deliverable 1's Image sections), expose at `/api/mod/image-moderate`,
-  repoint the three main-app callers, delete main-app `moderateImages`/`handleBlock`/`handleUnblock` +
-  `image.moderate` procedure. This is both the biggest fidelity gap and the biggest "lighter main app" win.
+### ✅ DONE — Endpoint: `image-moderate`
+- Spoke: `mod-actions/registry.ts` (`image-moderate` → loops `blockImage`/`acceptImage`) + `routes/api/mod/[action]/+server.ts`
+  (shared-`WEBHOOK_TOKEN` auth; `/api/mod/*` bypasses the session guard in `hooks.server.ts`).
+- Main app: `moderateImageHandler` now delegates via `moderatorApp.imageModerate(…)` (the `@civitai/moderation`
+  client singleton in `services/moderator-app.service.ts`), threading the moderator `userId`/`ip`/`userAgent`.
+  The thin `image.moderate` procedure stays (client callers
+  `NeedsReviewBadge`/`UnblockImage` can't hold the token); `moderateImages` + the handler's DeleteTOS block are **deleted**.
+- **Not fully deleted:** `handleBlockImages`/`handleUnblockImages` remain — the KoNO game (`new-order.service.ts`) and the
+  external `api/mod/{remove,restore}-images` endpoints still call them directly (separate slices). Their `include`-branches are now dead.
+- **Out of this slice:** `image.setTosViolation` (the inline "Report TOS Violation" context-menu action, `useReportTosViolation`)
+  is a distinct workflow with its own handler + no spoke equivalent — a separate future slice, left in the main app.
 
-### ✅ Endpoint: `report-set-status`
-- Backs: the spoke's `setReportStatus` **and** the main app's `bulkSetReportStatus` (callers
-  `pages/api/mod/action-report.ts`, `csam.controller.ts`).
-- Plan: complete it (Deliverable 1 reporter-reward), expose at `/api/mod/report-set-status`, repoint the two
-  main-app callers, delete main-app `bulkSetReportStatus`.
+### ⬜ NOT STARTED — Endpoint: `report-set-status`
+- Nothing implemented yet: `@civitai/moderation` `MOD_ACTION` only defines `imageModerate`; the registry has no
+  `report-set-status` entry; the spoke's `setReportStatus` still carries the reporter-reward `TODO`; and the
+  main-app `bulkSetReportStatus` is not repointed/deleted.
+- Backs (when built): the spoke's `setReportStatus` **and** the main app's `bulkSetReportStatus` (callers
+  `pages/api/mod/action-report.ts`, `csam.controller.ts`, `image.service.ts`).
+- Plan: complete the reporter-reward (Deliverable 1), add the action to `@civitai/moderation` + the registry,
+  expose at `/api/mod/report-set-status`, repoint the main-app callers, delete `bulkSetReportStatus`.
 
 ### ⚠️ Not clean endpoints — decide explicitly
 - **`updateImageNsfwLevel`** — still used by `SetBrowsingLevelModal`, which is **owner-or-mod** (dual-gated).
@@ -108,24 +123,31 @@ are now orphaned and remove them** (no live callers found) — a cleanup, not an
 
 ---
 
-## Architecture — the `/api/mod` surface (for the 2 endpoints above)
+## Architecture — the `/api/mod` surface  _(image-moderate shipped; report-set-status follows the same shape)_
 
 ```
+packages/civitai-moderation/                 # SHARED contract + client (dep of both apps)
+  src/schema.ts        # action input zod schemas + MOD_ACTION names (the wire contract)
+  src/client.ts        # createModeratorClient({endpoint, token}) → typed methods (imageModerate, …); no retry
 apps/moderator/src/lib/server/mod-actions/
-  registry.ts            # action -> { schema (zod), handler, requiredRole }
-  image-moderate.ts      # full-fidelity handler (all side effects)
-  report-set-status.ts
-apps/moderator/src/routes/api/mod/[action]/+server.ts   # cross-site entry (main app -> spoke)
+  registry.ts          # action -> { schema (from @civitai/moderation), handler }
+apps/moderator/src/routes/api/mod/[action]/+server.ts   # cross-app entry (main app -> spoke)
+src/server/services/moderator-app.service.ts # main app's configured `moderatorApp` client singleton
 ```
 
-- **Handlers** own the complete operation against the spoke's wired infra: `(input, actor) => Result`.
-- **Registry** is the single catalog; both entry points dispatch through it.
-- **`/api/mod/[action]`** — POST, internal-token auth (mirror of the `syncSearchIndex` token the spoke already
-  uses toward the main app), look up `action`, validate body against its `schema`, run `handler(input, actor)`,
-  return JSON. `actor.userId` is asserted by the trusted caller (the main app already checked the session).
-  Exempt `/api/mod/*` from the nav role-gate in `hooks.server.ts` (it self-authorizes).
-- **Spoke form actions** call `dispatch(action, input, { userId: locals.user.id })` — same registry path — so
-  the migrated pages and the main-app callers run identical code. `+page.server.ts` actions stay thin.
+- **`@civitai/moderation`** is the single source of truth for the cross-app contract: the spoke registry
+  validates against its schemas and the main-app client is typed against them, so producer and consumer
+  can't drift (same pattern as `@civitai/notifications`). Add an action = schema + `MOD_ACTION` name +
+  client method here, then a handler in the spoke registry.
+- **Handlers** own the complete operation against the spoke's wired infra (call the same services the
+  moderator pages use). **Registry** is the spoke-side catalog.
+- **`/api/mod/[action]`** — POST, shared-`WEBHOOK_TOKEN` auth (mirror of `syncSearchIndex`, reverse
+  direction), `Object.hasOwn` action lookup, validate body against its `schema`, run the handler, return
+  JSON. `userId` is asserted by the trusted caller. `/api/mod/*` bypasses the session guard in
+  `hooks.server.ts` (self-authenticates via token).
+- **Main app** calls via the `moderatorApp` client singleton (`moderatorApp.imageModerate(…)`); the thin
+  `image.moderate` tRPC procedure stays as the proxy for client components that can't hold the token.
+- **Spoke form actions** keep calling the services directly (no self-HTTP) — same code the registry runs.
 
 Only actions in Deliverable 2 go through the registry/endpoint. Page-only mutations stay as direct spoke
 service calls.
