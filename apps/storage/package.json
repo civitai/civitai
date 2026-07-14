@@ -9,7 +9,8 @@
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "smoke": "tsx scripts/smoke.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.490.0",
