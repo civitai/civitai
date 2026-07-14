@@ -131,6 +131,22 @@ const enforceAppListingsReadFlag = middleware(async ({ ctx, next }) => {
 });
 
 /**
+ * Store WRITE gate — mirrors `enforceAppBlocksFlag`'s HARD-THROW shape (a write
+ * with the store dark must REJECT, not soft-fail like the read gate) but keyed on
+ * the DEDICATED store-visibility flag `isAppListingsEnabled` (which OR-falls-back
+ * to `isAppBlocksEnabled`). This keeps the review WRITEs (`upsertReview`/
+ * `getMyReview`) on the SAME flag as the store visibility + reviews read path
+ * (`enforceAppListingsReadFlag`), so once `app-listings` widens independently of
+ * the held block-runtime gate, a viewer who can SEE the review affordance can
+ * also submit — instead of seeing the button and 403-ing on write. Zero change
+ * today: the OR-fallback preserves the existing mods + app-dev-testers cohort.
+ */
+const enforceAppListingsWriteFlag = middleware(async ({ ctx, next }) => {
+  if (await isAppListingsEnabled({ user: ctx.user })) return next();
+  throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
+});
+
+/**
  * Red-capable host check — maturity is a HOST property (independent of moderator
  * status), so even a mod on civitai.com does not see mature (r/x) listings in
  * these viewer-facing reads. Fail-closed: a missing host → false (SFW only).
@@ -1038,12 +1054,18 @@ export const appListingsRouter = router({
   // user EXCEPT the listing owner, for BOTH kinds, NO install/usage gate.
   //
   // FLAG GATING: the WRITEs (`upsertReview`/`getMyReview`) are `protectedProcedure`
-  // (auth REQUIRED) + `enforceAppBlocksFlag` — the "store enabled for this viewer"
-  // gate that THROWS UNAUTHORIZED when off (a real anon/non-mod caller can't write
-  // until the segment widens at GA). `listReviews` is `publicProcedure` +
+  // (auth REQUIRED) + `enforceAppListingsWriteFlag` — the "store enabled for this
+  // viewer" gate keyed on the SAME dedicated `app-listings` flag as the store
+  // visibility + `listReviews` read path, THROWING UNAUTHORIZED when off (a real
+  // anon/non-store caller can't write). Keeping the writes on `app-listings`
+  // (not the held block-runtime `app-blocks-enabled`) means the review submit
+  // widens WITH the store, so a viewer who SEES the affordance can also submit
+  // instead of 403-ing. `listReviews` is `publicProcedure` +
   // `enforceAppListingsReadFlag` (empty page when off, same posture as
-  // listAvailable). The review affordance renders only on the mod-only
-  // store-preview surface today (the public `/apps/[slug]` cutover is P2d).
+  // listAvailable). Zero change today: `isAppListingsEnabled` OR-falls-back to
+  // `isAppBlocksEnabled`, so the current mods + app-dev-testers cohort is
+  // unchanged. The review affordance renders only on the mod-only store-preview
+  // surface today (the public `/apps/[slug]` cutover is P2d).
   //
   // FOLLOW-UP (deferred): a MOD exclude/report path for individual reviews.
   // `listReviews` ALREADY filters `exclude`/`tosViolation`, so a future mod action
@@ -1056,7 +1078,7 @@ export const appListingsRouter = router({
    * non-approved-listing gates are enforced in the service (FORBIDDEN / BAD_REQUEST).
    */
   upsertReview: protectedProcedure
-    .use(enforceAppBlocksFlag)
+    .use(enforceAppListingsWriteFlag)
     .use(
       rateLimit({
         limit: 30,
@@ -1075,7 +1097,7 @@ export const appListingsRouter = router({
 
   /** USER: the caller's OWN review for a listing (form prefill), or null. */
   getMyReview: protectedProcedure
-    .use(enforceAppBlocksFlag)
+    .use(enforceAppListingsWriteFlag)
     .input(getMyAppListingReviewSchema)
     .query(async ({ ctx, input }) => {
       if (!ctx.user) return null;
