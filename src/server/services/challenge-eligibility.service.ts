@@ -41,14 +41,26 @@ export async function getUserChallengeStanding(userId: number): Promise<UserChal
   };
 }
 
-/** Throws unless the user is in good standing AND meets the creator-score threshold. */
-export async function assertUserInGoodStanding(userId: number): Promise<UserChallengeStanding> {
+/** Throws unless the user's account standing is clean (not banned/deleted/muted, no active
+ * strikes). Does NOT check the creator-score threshold — that's a create-only gate (see
+ * `assertUserInGoodStanding`). Used to re-check an existing creator on edit, where the
+ * known-flaky user-score pipeline shouldn't be able to lock someone out of editing their own
+ * Scheduled challenge. */
+export async function assertUserAccountInGoodStanding(
+  userId: number
+): Promise<UserChallengeStanding> {
   const standing = await getUserChallengeStanding(userId);
   if (standing.bannedAt || standing.deletedAt)
     throw forbidden('Your account is not eligible to create challenges.');
   if (standing.muted) throw forbidden('Muted accounts cannot create challenges.');
   if (standing.activeStrikes > 0)
     throw forbidden('Resolve your active strikes before creating a challenge.');
+  return standing;
+}
+
+/** Throws unless the user is in good standing AND meets the creator-score threshold. */
+export async function assertUserInGoodStanding(userId: number): Promise<UserChallengeStanding> {
+  const standing = await assertUserAccountInGoodStanding(userId);
   if (standing.scoreTotal < CHALLENGE_MIN_CREATOR_SCORE)
     throw forbidden(
       `You need a creator score of at least ${CHALLENGE_MIN_CREATOR_SCORE.toLocaleString()} to create challenges.`

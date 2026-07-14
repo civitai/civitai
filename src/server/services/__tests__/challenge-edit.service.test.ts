@@ -6,6 +6,7 @@ const {
   mockDbRead,
   mockGetChallengeConfig,
   mockGetChallengeById,
+  mockAssertUserAccountInGoodStanding,
   mockAssertUserInGoodStanding,
   mockAssertCanCreateUserChallenge,
   mockResolveJudgingCategories,
@@ -20,6 +21,7 @@ const {
     },
     mockGetChallengeConfig: vi.fn(),
     mockGetChallengeById: vi.fn(),
+    mockAssertUserAccountInGoodStanding: vi.fn(),
     mockAssertUserInGoodStanding: vi.fn(),
     mockAssertCanCreateUserChallenge: vi.fn(),
     mockResolveJudgingCategories: vi.fn(),
@@ -79,6 +81,7 @@ vi.mock('~/server/services/notification.service', () => ({
 vi.mock('~/server/services/challenge-eligibility.service', () => ({
   assertCanCreateUserChallenge: mockAssertCanCreateUserChallenge,
   assertUserInGoodStanding: mockAssertUserInGoodStanding,
+  assertUserAccountInGoodStanding: mockAssertUserAccountInGoodStanding,
 }));
 
 vi.mock('~/server/services/challenge-category.service', () => ({
@@ -232,7 +235,7 @@ describe('upsertUserChallenge (edit branch) — creator standing re-check', () =
   });
 
   it('throws when the creator has fallen out of good standing (muted/struck/banned)', async () => {
-    mockAssertUserInGoodStanding.mockRejectedValueOnce(
+    mockAssertUserAccountInGoodStanding.mockRejectedValueOnce(
       new TRPCError({ code: 'FORBIDDEN', message: 'Muted accounts cannot create challenges.' })
     );
 
@@ -240,9 +243,10 @@ describe('upsertUserChallenge (edit branch) — creator standing re-check', () =
       'Muted accounts cannot create challenges.'
     );
 
-    expect(mockAssertUserInGoodStanding).toHaveBeenCalledWith(111);
+    expect(mockAssertUserAccountInGoodStanding).toHaveBeenCalledWith(111);
     // Score/cap/daily-limit gates are create-only concerns — must not run on edit.
     expect(mockAssertCanCreateUserChallenge).not.toHaveBeenCalled();
+    expect(mockAssertUserInGoodStanding).not.toHaveBeenCalled();
     // Standing gate sits before the existing-challenge/cover-image lookups, so a since-muted
     // creator can't trigger those side effects.
     expect(mockDbRead.challenge.findUnique).not.toHaveBeenCalled();
@@ -250,7 +254,7 @@ describe('upsertUserChallenge (edit branch) — creator standing re-check', () =
   });
 
   it('does not throw on the standing check when the creator is in good standing', async () => {
-    mockAssertUserInGoodStanding.mockResolvedValueOnce({
+    mockAssertUserAccountInGoodStanding.mockResolvedValueOnce({
       scoreTotal: 0,
       bannedAt: null,
       muted: false,
@@ -263,7 +267,9 @@ describe('upsertUserChallenge (edit branch) — creator standing re-check', () =
 
     await expect(upsertUserChallenge(editInput as never)).rejects.toThrow('Challenge not found');
 
-    expect(mockAssertUserInGoodStanding).toHaveBeenCalledWith(111);
+    expect(mockAssertUserAccountInGoodStanding).toHaveBeenCalledWith(111);
     expect(mockAssertCanCreateUserChallenge).not.toHaveBeenCalled();
+    // The edit branch must never reach for the score-bundled check.
+    expect(mockAssertUserInGoodStanding).not.toHaveBeenCalled();
   });
 });
