@@ -1470,16 +1470,14 @@ export async function pickWinnersForChallenge(
     // 7. Set Completed status + store summary (AFTER all prizes distributed)
     const challengeRecord = await getChallengeById(currentChallenge.challengeId);
 
-    // Partial-winner residual: fewer winners than distribution places leaves the unfilled places'
-    // buzz sitting in account 0 for a paid user challenge. No pro-rata redistribution yet — just
-    // surface the stranded amount for a manual follow-up.
+    // Partial-winner residual: unfilled prize buzz stays in account 0 by design (spec decision).
     if (challengeRecord?.source === ChallengeSource.User) {
       const totalPrizeBuzz = challengeRecord.prizes.reduce((sum, p) => sum + (p.buzz ?? 0), 0);
       const distributedPrizeBuzz = winningEntries.reduce((sum, e) => sum + e.prize, 0);
       const residualBuzz = totalPrizeBuzz - distributedPrizeBuzz;
       if (residualBuzz > 0) {
         await logToAxiom({
-          type: 'warning',
+          type: 'info',
           name: 'challenge-partial-winner-residual',
           message: 'User challenge completed with fewer winners than prize places; buzz not paid out',
           challengeId: currentChallenge.challengeId,
