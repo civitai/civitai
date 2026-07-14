@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import requestIp from 'request-ip';
+import { sessionCookieName } from '@civitai/auth';
 import {
   setSessionCookie,
   postLoginMarkerCookie,
@@ -87,6 +88,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       probePresent: !!probe,
       probeAuthHost: probe?.authHost,
       probeAgeMs: probe?.ageMs,
+      // Already-authenticated on a `no_cookie` callback ⇒ a prior callback in this flow already succeeded and
+      // cleared the (single-use) bridge cookie, so THIS is a duplicate/retried hit, not a real lockout.
+      hasSession: !!req.cookies[sessionCookieName()],
     });
     res.redirect(302, `/login?error=${encodeURIComponent(result.error)}`);
     return;
