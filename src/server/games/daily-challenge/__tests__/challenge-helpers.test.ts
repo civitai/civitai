@@ -4,8 +4,11 @@ import { CHALLENGE_JOB_BATCH_SIZE } from '~/shared/constants/challenge.constants
 
 // challenge-helpers.ts (transitively, via daily-challenge.utils.ts) eagerly constructs real
 // db/redis clients at import time. Mock them so the module graph loads without a live DB/Redis.
-const { mockDbRead, mockRedis } = vi.hoisted(() => {
+const { mockDbRead, mockDbWrite, mockRedis } = vi.hoisted(() => {
   const dbRead = { $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []) };
+  const dbWrite = {
+    challenge: { updateMany: vi.fn(async () => ({ count: 1 })) },
+  };
   const redis = {
     packed: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
     get: vi.fn(async () => null),
@@ -13,10 +16,10 @@ const { mockDbRead, mockRedis } = vi.hoisted(() => {
     del: vi.fn(async () => 0),
     scanIterator: async function* () {},
   };
-  return { mockDbRead: dbRead, mockRedis: redis };
+  return { mockDbRead: dbRead, mockDbWrite: dbWrite, mockRedis: redis };
 });
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: {} }));
+vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/redis/client', () => ({
   redis: mockRedis,
   sysRedis: { sMembers: vi.fn(async () => []) },
@@ -299,5 +302,39 @@ describe('bounded job selectors', () => {
     expect(sql).toMatch(/LIMIT \?/);
     expect(values).toContain(CHALLENGE_JOB_BATCH_SIZE);
     expect(values).not.toContain(50);
+  });
+});
+
+describe('setChallengeActive idempotency', () => {
+  beforeEach(() => {
+    mockDbWrite.challenge.updateMany.mockReset();
+    mockDbRead.$queryRaw.mockReset();
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+    mockRedis.packed.set.mockClear();
+  });
+
+  it('activates only from Scheduled and is a no-op on second call', async () => {
+    // First tick wins the conditional write; a concurrent/second tick finds status is no
+    // longer 'Scheduled' and updateMany matches zero rows.
+    mockDbWrite.challenge.updateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
+
+    const { setChallengeActive } = await import('../challenge-helpers');
+
+    const first = await setChallengeActive(1);
+    expect(first).toEqual({ activated: true });
+    expect(mockDbWrite.challenge.updateMany).toHaveBeenNthCalledWith(1, {
+      where: { id: 1, status: 'Scheduled' },
+      data: { status: 'Active' },
+    });
+    // Side effect (Redis cache write) only runs when this call actually activated it.
+    expect(mockRedis.packed.set).toHaveBeenCalledTimes(1);
+
+    const second = await setChallengeActive(1);
+    expect(second).toEqual({ activated: false });
+    expect(mockDbWrite.challenge.updateMany).toHaveBeenCalledTimes(2);
+    // No duplicate side effect on the no-op second call.
+    expect(mockRedis.packed.set).toHaveBeenCalledTimes(1);
   });
 });

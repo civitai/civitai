@@ -502,11 +502,24 @@ export async function updateChallengeStatus(
   });
 }
 
-export async function setChallengeActive(challengeId: number): Promise<void> {
-  await updateChallengeStatus(challengeId, ChallengeStatus.Active);
-  // Cache the active challenge in Redis for quick access
-  const challenge = await getChallengeById(challengeId);
-  await redis.packed.set(REDIS_KEYS.DAILY_CHALLENGE.DETAILS, challenge);
+/**
+ * Conditionally activate a Scheduled challenge. Uses UPDATE ... WHERE status='Scheduled' so
+ * overlapping activation ticks can't both flip status + duplicate the Redis cache write —
+ * whichever tick's write actually matches the row wins; the rest see `activated: false` and
+ * should skip their own activation side effects.
+ */
+export async function setChallengeActive(challengeId: number): Promise<{ activated: boolean }> {
+  const { count } = await dbWrite.challenge.updateMany({
+    where: { id: challengeId, status: ChallengeStatus.Scheduled },
+    data: { status: ChallengeStatus.Active },
+  });
+  const activated = count === 1;
+  if (activated) {
+    // Cache the active challenge in Redis for quick access
+    const challenge = await getChallengeById(challengeId);
+    await redis.packed.set(REDIS_KEYS.DAILY_CHALLENGE.DETAILS, challenge);
+  }
+  return { activated };
 }
 
 // =============================================================================
