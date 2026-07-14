@@ -32,8 +32,7 @@
   // Any load in flight — a real page nav or an in-place query change (e.g. the analytics range/granularity
   // controls, which re-run the server load without leaving the route). Drives the top progress bar.
   const isNavigating = $derived(!!navigating.to);
-  // Exactly one active item — longest matching href wins so a parent (/earnings) doesn't also light up on a
-  // child route (/earnings/analytics).
+  // Exactly one active item — longest matching href wins so a parent doesn't also light up on a child route.
   const activeHref = $derived(activeNavHref(page.url.pathname));
 
   // Moderator-only membership simulator. The `cs-test-membership` cookie is read (mod-gated) by the server

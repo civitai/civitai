@@ -67,19 +67,9 @@
       : { label, cls: 'border-yellow-5/30 bg-yellow-5/10 text-yellow-5' };
   }
 
-  // Early-access chip: green while a window is active, dim grey when configured but not currently
-  // active, and hidden when nothing is set up. `hasEarlyAccess` = active window; `earlyAccessConfig`
-  // = a saved config (may outlive the window).
-  function earlyAccessChip(v: CreatorModelVersion): { cls: string; title: string } | null {
-    if (v.hasEarlyAccess)
-      return { cls: 'border-green-5/30 bg-green-5/10 text-green-5', title: 'Early access active' };
-    if (v.earlyAccessConfig)
-      return {
-        cls: 'border-dark-4 text-dark-3',
-        title: 'Early access configured (not currently active)',
-      };
-    return null;
-  }
+  // Early-access chip: shown (green) only while a window is actually active, so it clearly means
+  // "early access is on" and nothing else.
+  const eaChipCls = 'border-green-5/30 bg-green-5/10 text-green-5';
 
   // --- URL-driven table state (search / fee filter / sort / pagination) ---
   function navigate(params: Record<string, string | null>) {
@@ -177,7 +167,7 @@
       timeframe: Math.min(c?.timeframe ?? 7, maxDays || Infinity),
       chargeForDownload: c?.chargeForDownload ?? false,
       downloadPrice: c?.downloadPrice ?? MIN_DOWNLOAD_PRICE,
-      chargeForGeneration: c?.chargeForGeneration ?? true,
+      chargeForGeneration: c?.chargeForGeneration ?? false,
       generationPrice: c?.generationPrice ?? MIN_GENERATION_PRICE,
       generationTrialLimit: c?.generationTrialLimit ?? DEFAULT_GENERATION_TRIAL_LIMIT,
       donationGoalEnabled: c?.donationGoalEnabled ?? false,
@@ -231,7 +221,7 @@
       type="submit"
       aria-label="Search"
       title="Search"
-      class="rounded border border-dark-4 bg-dark-6 p-1.5 text-white hover:border-dark-3"
+      class="flex items-center justify-center rounded border border-dark-4 bg-dark-6 px-2.5 py-2 text-white hover:border-dark-3"
     >
       <IconSearch size={16} />
     </button>
@@ -242,7 +232,7 @@
       aria-label="Filter by fee"
       value={data.query.fee}
       onchange={(e) => navigate({ fee: e.currentTarget.value || null, page: null })}
-      class="bg-transparent py-1.5 pr-2 text-sm text-white outline-none"
+      class="bg-transparent py-1.5 pr-2 text-sm text-white outline-none [&>option]:bg-dark-7 [&>option]:text-white"
     >
       <option value="">All fees</option>
       <option value="set">Has a fee</option>
@@ -255,7 +245,7 @@
       aria-label="Sort"
       value={data.query.sort}
       onchange={(e) => navigate({ sort: e.currentTarget.value, page: null })}
-      class="bg-transparent py-1.5 pr-2 text-sm text-white outline-none"
+      class="bg-transparent py-1.5 pr-2 text-sm text-white outline-none [&>option]:bg-dark-7 [&>option]:text-white"
     >
       <option value="recent">Recently updated</option>
       <option value="name">Name</option>
@@ -294,18 +284,18 @@
         title="Leave empty to clear the fee"
         class="w-20 py-1"
       />
-      <span class="text-sm text-dark-3">⚡ per</span>
+      <span class="text-sm text-dark-1">⚡ per</span>
       <select
         name="images"
         bind:value={bulkImages}
         aria-label="Images"
-        class="rounded border border-dark-4 bg-dark-7 px-1.5 py-1 text-sm text-white"
+        class="rounded border border-dark-4 bg-dark-7 px-1.5 py-1 text-sm text-white [&>option]:bg-dark-7 [&>option]:text-white"
       >
         {#each FEE_IMAGE_OPTIONS as opt (opt)}
           <option value={String(opt)}>{opt}</option>
         {/each}
       </select>
-      <span class="text-sm text-dark-3">images</span>
+      <span class="text-sm text-dark-1">images</span>
       <button
         type="button"
         disabled={selected.size === 0}
@@ -320,7 +310,7 @@
       >
         Cancel
       </a>
-      <span class="text-xs text-dark-3">Empty buzz clears the fee.</span>
+      <span class="text-xs text-dark-1">Empty buzz clears the fee.</span>
     </form>
   </div>
 {/if}
@@ -371,17 +361,16 @@
             {/if}
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent class="p-0">
           {#if model.versions.length === 0}
-            <p class="text-sm text-dark-3">No versions.</p>
+            <p class="px-5 py-4 text-sm text-dark-3">No versions.</p>
           {:else}
             <ul class="divide-y divide-dark-4 border-t border-dark-4">
               {#each model.versions as version (version.id)}
                 {@const chip = feeChip(version.licensingFee)}
-                {@const ea = earlyAccessChip(version)}
                 <li>
                   {#if bulkMode}
-                    <label class="flex w-full cursor-pointer items-center gap-3 py-3">
+                    <label class="flex w-full cursor-pointer items-center gap-3 px-5 py-3">
                       <input
                         type="checkbox"
                         checked={selected.has(version.id)}
@@ -400,44 +389,30 @@
                       </span>
                     </label>
                   {:else}
-                    <div class="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onclick={() => openEditor(version)}
-                        class="flex min-w-0 flex-1 items-center gap-3 rounded-md py-3 text-left hover:bg-dark-6/40"
-                      >
-                        <span class="flex min-w-0 flex-1 flex-col">
-                          <span class="truncate text-sm font-medium text-white">{version.name}</span>
-                          <span class="truncate text-xs text-dark-2">{version.baseModel} · {version.status}</span>
-                        </span>
-                        <span class="flex shrink-0 items-center gap-2">
-                          {#if ea}
-                            <span
-                              title={ea.title}
-                              class="rounded-full border px-2 py-0.5 text-xs font-medium {ea.cls}"
-                            >
-                              Early access
-                            </span>
-                          {/if}
+                    <button
+                      type="button"
+                      onclick={() => openEditor(version)}
+                      class="flex w-full cursor-pointer items-center gap-3 px-5 py-3 text-left hover:bg-dark-6/40"
+                    >
+                      <span class="flex min-w-0 flex-1 flex-col">
+                        <span class="truncate text-sm font-medium text-white">{version.name}</span>
+                        <span class="truncate text-xs text-dark-2">{version.baseModel} · {version.status}</span>
+                      </span>
+                      <span class="flex shrink-0 items-center gap-2">
+                        {#if version.hasEarlyAccess}
                           <span
-                            class="rounded-full border px-2 py-0.5 text-xs font-medium {chip.cls}"
+                            title="Early access is on"
+                            class="rounded-full border px-2 py-0.5 text-xs font-medium {eaChipCls}"
                           >
-                            {chip.label}
+                            Early access
                           </span>
-                          <IconChevronRight size={16} class="text-dark-3" />
+                        {/if}
+                        <span class="rounded-full border px-2 py-0.5 text-xs font-medium {chip.cls}">
+                          {chip.label}
                         </span>
-                      </button>
-                      <a
-                        href="https://civitai.com/models/{model.id}?modelVersionId={version.id}"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        title="View on Civitai"
-                        aria-label="View {version.name} on Civitai"
-                        class="shrink-0 rounded-md p-1.5 text-dark-3 hover:bg-dark-6 hover:text-white"
-                      >
-                        <IconExternalLink size={16} />
-                      </a>
-                    </div>
+                        <IconChevronRight size={16} class="text-dark-3" />
+                      </span>
+                    </button>
                   {/if}
                 </li>
               {/each}

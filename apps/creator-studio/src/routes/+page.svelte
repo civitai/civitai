@@ -2,6 +2,7 @@
   import { Card, CardHeader, CardTitle, CardContent } from '@civitai/ui/components/ui/card/index.js';
   import { Skeleton } from '@civitai/ui/components/ui/skeleton/index.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
+  import { IconArrowRight } from '@tabler/icons-svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -24,15 +25,15 @@
   // Earnings headline stats stay placeholders until the ClickHouse owner-keyed rollup lands (decision A1).
   const stats = [
     { label: 'Earned this period', hint: 'Awaiting analytics wiring' },
-    { label: 'CP cash pending', hint: 'Awaiting analytics wiring' },
-    { label: 'CP cash settled', hint: 'Awaiting analytics wiring' },
+    { label: 'Cash pending', hint: 'Awaiting analytics wiring' },
+    { label: 'Cash settled', hint: 'Awaiting analytics wiring' },
     { label: 'Top-earning model', hint: 'Needs owner-keyed rollup' },
   ];
 
   const sections = [
     { href: '/models', title: 'Models', body: 'Set licensing fees, manage access, sell indefinitely.' },
     { href: '/earnings', title: 'Earnings', body: 'Your earnings broken down by source.' },
-    { href: '/earnings/analytics', title: 'Analytics', body: 'Usage that drives your fees.' },
+    { href: '/analytics', title: 'Analytics', body: 'Usage that drives your fees.' },
     { href: '/settings', title: 'Settings', body: 'Payout status, membership, defaults.' },
   ];
 </script>
@@ -53,7 +54,7 @@
   <section class="mb-8">
     <div class="mb-2 flex items-center justify-between">
       <p class="text-xs uppercase tracking-wide text-dark-3">Your activity — last 30 days</p>
-      <a href="/earnings/analytics" class="text-xs text-dark-2 hover:text-white">View analytics →</a>
+      <a href="/analytics" class="text-xs text-dark-2 hover:text-white">View analytics →</a>
     </div>
     <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
       {#each activity as a (a.label)}
@@ -84,10 +85,14 @@
 
 <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
   {#each sections as section (section.href)}
-    <a href={section.href} class="block">
-      <Card class="h-full transition-colors hover:border-dark-3">
-        <CardHeader>
+    <a href={section.href} class="group block">
+      <Card class="h-full cursor-pointer transition-colors hover:border-blue-8/60 hover:bg-dark-6">
+        <CardHeader class="flex flex-row items-center gap-2">
           <CardTitle class="text-base text-white">{section.title}</CardTitle>
+          <IconArrowRight
+            size={16}
+            class="ml-auto text-dark-3 transition-transform group-hover:translate-x-0.5 group-hover:text-white"
+          />
         </CardHeader>
         <CardContent>
           <p class="text-sm text-dark-2">{section.body}</p>

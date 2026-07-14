@@ -10,17 +10,24 @@
   // Build a URL that preserves both controls.
   const link = (days: number, g: 'day' | 'week') => `?days=${days}&g=${g}`;
   const periodLabel = $derived(`over the last ${data.days} days`);
+  // "YYYY-MM-DD" → "MM-DD" for the x-axis (shorter labels; less edge overhang than the full date).
+  const mmdd = (d: string) => (d.length >= 10 ? d.slice(5, 10) : d);
 
   const commonOptions = {
     responsive: true,
     maintainAspectRatio: false,
     plugins: { legend: { display: false } },
-    scales: { x: { ticks: { maxTicksLimit: 8, autoSkip: true } } },
+    // Trigger the tooltip anywhere along a date column, not only when the cursor sits exactly on a point.
+    interaction: { mode: 'index' as const, intersect: false },
+    elements: { point: { hoverRadius: 5, hitRadius: 16 } },
+    scales: {
+      x: { ticks: { maxTicksLimit: 8, autoSkip: true, maxRotation: 0, align: 'inner' as const } },
+    },
   };
 
   function lineData(series: TimePoint[], label: string, colorIndex: number) {
     return {
-      labels: series.map((p) => p.date),
+      labels: series.map((p) => mmdd(p.date)),
       datasets: [
         {
           label,

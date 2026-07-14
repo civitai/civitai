@@ -1,6 +1,12 @@
 import { dbRead } from '$lib/server/db';
 import type { EarlyAccessConfig } from '$lib/monetization/early-access';
 
+// The `earlyAccessConfig` column is `{}` (or JSON null) for versions that never configured early access.
+// Only treat it as a real config when it actually carries the timeframe an EA setup always writes.
+function isRealEarlyAccessConfig(value: unknown): value is EarlyAccessConfig {
+  return !!value && typeof value === 'object' && 'timeframe' in value;
+}
+
 export type CreatorModelVersion = {
   id: number;
   name: string;
@@ -122,7 +128,11 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
       // kysely types the DECIMAL column as string (prisma-kysely maps Decimal→string); the app carries a number.
       licensingFee: v.licensingFee == null ? null : Number(v.licensingFee),
       hasEarlyAccess: v.earlyAccessEndsAt !== null,
-      earlyAccessConfig: (v.earlyAccessConfig as EarlyAccessConfig | null) ?? null,
+      // The column defaults to an empty object `{}` (or JSON null) for versions that never set up early
+      // access — treat those as "no config" so the UI doesn't show every version as configured.
+      earlyAccessConfig: isRealEarlyAccessConfig(v.earlyAccessConfig)
+        ? (v.earlyAccessConfig as EarlyAccessConfig)
+        : null,
     });
     byModel.set(v.modelId, list);
   }

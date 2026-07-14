@@ -25,7 +25,7 @@ export const NAV: NavItem[] = [
   { href: '/', label: 'Dashboard', icon: IconLayoutDashboard },
   { href: '/models', label: 'Models', icon: IconBox, memberOnly: true },
   { href: '/earnings', label: 'Earnings', icon: IconCoin },
-  { href: '/earnings/analytics', label: 'Analytics', icon: IconChartBar },
+  { href: '/analytics', label: 'Analytics', icon: IconChartBar },
   { href: '/settings', label: 'Settings', icon: IconSettings },
   { href: '/join', label: 'Join Creator Program', icon: IconSparkles, nonMemberOnly: true },
 ];
@@ -35,7 +35,7 @@ export function isNavActive(href: string, pathname: string): boolean {
   return pathname === href || pathname.startsWith(href + '/');
 }
 
-// Longest matching href wins, so `/earnings/analytics` highlights over `/earnings`.
+// Longest matching href wins (e.g. a future `/settings/x` highlights `/settings`, not `/`).
 export function activeNavHref(pathname: string): string | undefined {
   return NAV.map((n) => n.href)
     .filter((href) => isNavActive(href, pathname))
