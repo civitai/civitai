@@ -325,8 +325,9 @@ export const getTags = async ({
 };
 
 // #region [tag voting]
-// `unlisted` isn't on the tag composites — read the small cache rather than widen
-// imageTagsCache. Mods keep unlisted tags so they can see what content is flagged as.
+// The ImageTag view already drops unlisted tags (`AND NOT t_1.unlisted` in its Tag
+// lateral); ModelTag does not, so only the model path needs this. Mods keep them so
+// they can see what content is flagged as.
 async function stripUnlistedTags<T extends { id: number }>(
   tags: T[],
   isModerator: boolean
@@ -374,6 +375,7 @@ export const getVotableTags = async ({
         if (userVote) tag.vote = userVote.vote;
       }
     }
+    results = await stripUnlistedTags(results, isModerator);
   } else if (type === 'image') {
     const voteCutoff = new Date(Date.now() + constants.tagVoting.voteDuration);
 
@@ -423,7 +425,7 @@ export const getVotableTags = async ({
     );
   }
 
-  return stripUnlistedTags(results, isModerator);
+  return results;
 };
 
 export async function getVotableImageTags({
@@ -482,7 +484,7 @@ export async function getVotableImageTags({
     if (userVote) tag.vote = userVote.vote > 0 ? 1 : -1;
   }
 
-  return stripUnlistedTags(allImageTags, !!user.isModerator);
+  return allImageTags;
 }
 
 // TODO - create function for getting model tag votes and then finish abstracting this fuction - replaces `getVotableTags`
