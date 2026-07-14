@@ -9,7 +9,9 @@ Ordered by dependency + risk: verify first (may change scope), then cheap copy/s
 Implemented on `feat/public-challenges-feedback` (plan: `docs/superpowers/plans/2026-07-14-challenge-feedback.md`). Commits `b54648abe5` (form + detail card) and `31d9631828` (feed). Per-file editor diagnostics clean; branch has **pre-existing** `buzzType` typecheck errors (challenge.service.ts / challenge-funding.ts / collection.service.ts + a browser-test mock) that are NOT from this work — `buzzType` is referenced in app types but missing from `schema.full.prisma` (needs `db:generate` or the column added, owned by the base branch).
 
 **Shipped:**
-- Entry-fee copy (drop "Min 50"), max-participants copy trim, "AI Reviews → Every entry is judged".
+- Entry-fee copy (drop "Min 50"), max-participants copy trim.
+- "AI Reviews" scoped: user challenges = "Every entry is judged"; daily/system keep the 6–12-random copy.
+- Overview + Prizes accordions restored to the bordered `DescriptionTable` style (matches prod); dropped the custom `DetailRows`.
 - Prize-pool card top corners rounded.
 - Local-time schedule for everyone + mod-only Local/UTC toggle; detail-page dates render in viewer zone.
 - Domain-locked Yellow/Green currency control + site-follows-currency hint.
@@ -17,7 +19,7 @@ Implemented on `feat/public-challenges-feedback` (plan: `docs/superpowers/plans/
 - "Previous Winners → Daily Challenge Winners" (feed + winners page).
 - Anti-cheat INTEGRITY line added to the 3 static judge prompts in the gitignored migration (Task 1) — **still needs manual DB apply**.
 
-**Deferred (not this branch):** overview divider-style revert (subjective — leave to Manuel); bounties "created by me" parity; Phase 7 theme auto-generate; My-Challenges recently-participated section + feed reorder; playground judge/category mgmt; applying the judge-prompt migration to preview/prod; confirm tier numbers with Justin.
+**Deferred (not this branch):** bounties "created by me" parity; Phase 7 theme auto-generate; My-Challenges recently-participated section + feed reorder; playground judge/category mgmt; applying the judge-prompt migration to preview/prod; confirm tier numbers with Justin.
 
 ---
 
