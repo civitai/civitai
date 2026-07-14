@@ -2073,6 +2073,9 @@ export async function endChallengeAndPickWinners(challengeId: number) {
         if (challenge.source === ChallengeSource.User) {
           const { refundedEntries } = await refundUserChallengeFunds(challengeId);
           log(`Refunded ${refundedEntries} entry fees (no winners)`);
+          if (refundedEntries > 0) {
+            await notifyEntrantsOfCancellation(challenge);
+          }
         }
         await dbWrite.challenge.update({
           where: { id: challengeId },
@@ -2266,6 +2269,50 @@ export async function endChallengeAndPickWinners(challengeId: number) {
 }
 
 /**
+ * Distinct paying entrants for a challenge — owners of images entered into its collection,
+ * excluding the creator. `chargeContestEntryFeesForCollection` only commits a CollectionItem
+ * after its entry fee is charged, so this is the same population whose pool contribution
+ * `refundUserChallengeFunds` reverses.
+ */
+async function getPayingEntrantUserIds(collectionId: number, createdById: number | null) {
+  const rows = await dbRead.$queryRaw<{ userId: number }[]>`
+    SELECT DISTINCT i."userId"
+    FROM "CollectionItem" ci
+    JOIN "Image" i ON i.id = ci."imageId"
+    WHERE ci."collectionId" = ${collectionId}
+  `;
+  return rows.map((r) => r.userId).filter((userId) => userId !== createdById);
+}
+
+/** Notify every distinct paying entrant that their challenge was cancelled/refunded. Call only
+ * after a refund has actually happened (`refundedEntries > 0`) so no-fee/no-entrant/System
+ * challenges never fire this. */
+async function notifyEntrantsOfCancellation(challenge: {
+  id: number;
+  title: string;
+  collectionId: number | null;
+  createdById: number | null;
+  entryFee: number;
+}) {
+  if (!challenge.collectionId) return;
+  const entrantUserIds = await getPayingEntrantUserIds(challenge.collectionId, challenge.createdById);
+  if (entrantUserIds.length === 0) return;
+
+  await createNotification({
+    type: 'challenge-cancelled',
+    category: NotificationCategory.System,
+    key: `challenge-cancelled:${challenge.id}`,
+    userIds: entrantUserIds,
+    details: {
+      challengeId: challenge.id,
+      challengeTitle: challenge.title,
+      refundedBuzz: getEntryPoolContribution(challenge.entryFee),
+    },
+  });
+  log(`Notified ${entrantUserIds.length} entrants of challenge cancellation`);
+}
+
+/**
  * Void/cancel a challenge without picking winners.
  * Closes the collection and marks the challenge as Cancelled.
  */
@@ -2300,6 +2347,9 @@ export async function voidChallenge(challengeId: number) {
   // failed. The refund is idempotent, so a crash between refund and update safely re-runs.
   const { refundedEntries } = await refundUserChallengeFunds(challengeId);
   log(`Refunded ${refundedEntries} entry fees`);
+  if (refundedEntries > 0) {
+    await notifyEntrantsOfCancellation(challenge);
+  }
 
   await dbWrite.challenge.update({
     where: { id: challengeId },
