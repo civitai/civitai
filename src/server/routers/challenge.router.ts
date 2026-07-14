@@ -92,7 +92,9 @@ export const challengeRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
     .use(isFlagProtected('challengePlatform'))
-    .query(({ input, ctx }) => getChallengeDetail(input.id, ctx.user?.id, ctx.features.isGreen)),
+    .query(({ input, ctx }) =>
+      getChallengeDetail(input.id, ctx.user?.id, ctx.features.isGreen, ctx.user?.isModerator)
+    ),
 
   // Get upcoming challenge themes for preview widget
   getUpcomingThemes: publicProcedure

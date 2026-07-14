@@ -860,14 +860,19 @@ async function buildChallengeDetail(
 export async function getChallengeDetail(
   id: number,
   viewerId?: number,
-  isGreen?: boolean
+  isGreen?: boolean,
+  isModerator?: boolean
 ): Promise<ChallengeDetail | null> {
   const challenge = await getChallengeById(id);
   if (!challenge) return null;
 
-  // Visibility check: only show challenges that are visible to the public
+  // Visibility check: only show challenges that are visible to the public. The creator and
+  // moderators may preview a not-yet-visible challenge — this bypasses the schedule gate only;
+  // the scan/POI/cover gates below still apply.
   const now = new Date();
-  if (challenge.visibleAt > now) return null;
+  const canPreviewUnpublished =
+    isModerator === true || (viewerId != null && challenge.createdById === viewerId);
+  if (challenge.visibleAt > now && !canPreviewUnpublished) return null;
   if (challenge.status === ChallengeStatus.Cancelled) return null;
 
   // Scan gate: user-created challenges stay hidden until moderation scan passes. The creator can
