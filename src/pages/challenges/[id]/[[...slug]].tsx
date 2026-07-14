@@ -770,7 +770,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
       label: 'AI Reviews',
       value: (
         <Text size="sm">
-          {challenge.source === ChallengeSource.User
+          {challenge.entryFee > 0
             ? 'Every entry is judged'
             : 'Only 6–12 entries selected at random every 10 min'}
         </Text>
