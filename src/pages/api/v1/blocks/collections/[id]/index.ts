@@ -87,7 +87,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 
   const parsed = querySchema.safeParse(req.query);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error });
+    res.status(400).json({ error: 'Invalid query parameters', details: parsed.error.flatten() });
     return;
   }
   const { cursor, limit } = parsed.data;

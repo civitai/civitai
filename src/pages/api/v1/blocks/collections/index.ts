@@ -14,15 +14,20 @@ import {
 } from '~/server/services/collection.service';
 import {
   collectionWithinCeiling,
+  getFallbackCoverImages,
   getFollowedCollectionIds,
   hydrateBlockSubject,
-  toMediaUrl,
+  toCoverImageUrl,
 } from '~/server/services/blocks/block-collections.service';
 import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { CollectionSort } from '~/server/common/enums';
-import { CollectionItemStatus, CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
+import {
+  CollectionItemStatus,
+  CollectionReadConfiguration,
+  CollectionType,
+} from '~/shared/utils/prisma/enums';
 
 /**
  * GET /api/v1/blocks/collections?mode=public|mine&query&sort&cursor&limit
@@ -46,10 +51,25 @@ import { CollectionItemStatus, CollectionReadConfiguration } from '~/shared/util
 
 export const config = { api: { responseLimit: false } };
 
+// Block-friendly `sort` aliases → the internal CollectionSort enum. Accepted IN
+// ADDITION to the raw enum values (backward-compat), so a block may send the
+// simple `newest`/`popular` OR the underlying `Newest`/`Most Followers`. There is
+// no media-count popularity sort on the service — `popular` maps to the closest
+// available ranking, MostContributors ('Most Followers').
+const SORT_ALIAS: Record<string, CollectionSort> = {
+  newest: CollectionSort.Newest,
+  popular: CollectionSort.MostContributors,
+};
+
 const querySchema = z.object({
   mode: z.enum(['public', 'mine']).default('public'),
   query: z.string().trim().max(100).optional(),
-  sort: z.enum(CollectionSort).default(CollectionSort.Newest),
+  // Preprocess maps a friendly alias (case-insensitive) to the enum value; a raw
+  // enum value passes through unchanged; undefined falls to the enum default.
+  sort: z.preprocess(
+    (v) => (typeof v === 'string' ? SORT_ALIAS[v.toLowerCase()] ?? v : v),
+    z.enum(CollectionSort).default(CollectionSort.Newest)
+  ),
   // Keyset cursor on the collection id (both modes order by id DESC).
   cursor: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(24),
@@ -81,7 +101,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 
   const parsed = querySchema.safeParse(req.query);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error });
+    res.status(400).json({ error: 'Invalid query parameters', details: parsed.error.flatten() });
     return;
   }
   const { mode, query, sort, cursor, limit } = parsed.data;
@@ -122,6 +142,10 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
           query,
           sort,
           privacy: [CollectionReadConfiguration.Public],
+          // MEDIA collections only — a Model/Article/Post collection renders an
+          // empty player (the detail endpoint drops non-image items), so restrict
+          // discovery to Image collections (which hold images + videos).
+          types: [CollectionType.Image],
         },
         user: subjectUser,
         select: {
@@ -161,9 +185,13 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       // source is exhausted → no nextCursor.
 
       const ids = items.map((c) => c.id);
-      const [countRows, followed] = await Promise.all([
+      // Cover fallback: for collections whose own cover `image` is null, derive a
+      // cover from the collection's first accepted media item (batched).
+      const missingCoverIds = items.filter((c) => !c.image?.url).map((c) => c.id);
+      const [countRows, followed, fallbackCovers] = await Promise.all([
         getCollectionItemCount({ collectionIds: ids, status: CollectionItemStatus.ACCEPTED }),
         getFollowedCollectionIds(subjectUserId, ids),
+        getFallbackCoverImages(missingCoverIds),
       ]);
       const countMap = new Map(countRows.map((c) => [c.id, Number(c.count)]));
 
@@ -172,7 +200,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
           id: c.id,
           name: c.name,
           description: c.description ?? null,
-          coverImageUrl: toMediaUrl(c.image),
+          coverImageUrl: toCoverImageUrl(c.image ?? fallbackCovers.get(c.id)),
           itemCount: countMap.get(c.id) ?? 0,
           curator: { userId: c.userId, username: c.user?.username ?? null },
           isPublic: c.read === CollectionReadConfiguration.Public,
@@ -212,9 +240,11 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     }
 
     const ids = items.map((c) => c.id);
-    const [countRows, followed] = await Promise.all([
+    const missingCoverIds = items.filter((c) => !c.image?.url).map((c) => c.id);
+    const [countRows, followed, fallbackCovers] = await Promise.all([
       getCollectionItemCount({ collectionIds: ids, status: CollectionItemStatus.ACCEPTED }),
       getFollowedCollectionIds(subjectUserId, ids),
+      getFallbackCoverImages(missingCoverIds),
     ]);
     const countMap = new Map(countRows.map((c) => [c.id, Number(c.count)]));
 
@@ -223,7 +253,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
         id: c.id,
         name: c.name,
         description: c.description ?? null,
-        coverImageUrl: toMediaUrl(c.image),
+        coverImageUrl: toCoverImageUrl(c.image ?? fallbackCovers.get(c.id)),
         itemCount: countMap.get(c.id) ?? 0,
         curator: { userId: c.userId, username: subjectUser.username ?? null },
         isPublic: c.read === CollectionReadConfiguration.Public,

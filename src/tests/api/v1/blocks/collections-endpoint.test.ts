@@ -69,6 +69,7 @@ const {
   mockFollowed,
   mockRate,
   mockMaturity,
+  mockFallbackCovers,
 } = vi.hoisted(() => ({
   mockGetAll: vi.fn(),
   mockItemCount: vi.fn(),
@@ -77,6 +78,7 @@ const {
   mockFollowed: vi.fn(),
   mockRate: vi.fn(),
   mockMaturity: vi.fn(),
+  mockFallbackCovers: vi.fn(),
 }));
 
 vi.mock('~/server/services/collection.service', () => ({
@@ -87,7 +89,11 @@ vi.mock('~/server/services/collection.service', () => ({
 vi.mock('~/server/services/blocks/block-collections.service', () => ({
   hydrateBlockSubject: mockHydrate,
   getFollowedCollectionIds: mockFollowed,
-  toMediaUrl: (img: any) => (img?.url ? `edge:${img.url}` : null),
+  getFallbackCoverImages: mockFallbackCovers,
+  // Cover url helper: a video cover yields a poster (`poster:` prefix), a still
+  // image yields `edge:`; null when there is no url — mirrors toCoverImageUrl.
+  toCoverImageUrl: (img: any) =>
+    img?.url ? `${img.type === 'video' ? 'poster' : 'edge'}:${img.url}` : null,
   // Drop a collection whose nsfwLevel exceeds the (test) ceiling of 3.
   collectionWithinCeiling: (nsfwLevel: number, level: number) => nsfwLevel <= level,
 }));
@@ -128,6 +134,7 @@ beforeEach(() => {
   mockMaturity.mockReturnValue({ browsingLevel: 3, isSfwCeiling: true });
   mockHydrate.mockResolvedValue({ id: 42, username: 'mod', isModerator: true });
   mockFollowed.mockResolvedValue(new Set<number>([10]));
+  mockFallbackCovers.mockResolvedValue(new Map());
   mockItemCount.mockResolvedValue([
     { id: 10, count: 5 },
     { id: 11, count: 2 },
@@ -352,5 +359,96 @@ describe('GET /api/v1/blocks/collections', () => {
     const { req, res } = createMocks();
     await handler(req as never, res as never);
     expect(res._status()).toBe(404);
+  });
+
+  // ---- feedback fixes ----
+
+  it('mode=public: restricts discovery to Image (media) collections (type filter)', async () => {
+    mockGetAll.mockResolvedValueOnce([]);
+    const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(200);
+    // The block list surfaces media collections only — a Model/Article/Post
+    // collection would render an empty player, so getAllCollections is passed the
+    // Image type filter.
+    expect(mockGetAll).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({ types: ['Image'] }),
+      })
+    );
+  });
+
+  it('sort=popular alias maps to CollectionSort.MostContributors on the wire', async () => {
+    mockGetAll.mockResolvedValueOnce([]);
+    const { req, res } = createMocks({ query: { mode: 'public', sort: 'popular' } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(200);
+    expect(mockGetAll).toHaveBeenCalledWith(
+      expect.objectContaining({ input: expect.objectContaining({ sort: 'Most Followers' }) })
+    );
+  });
+
+  it('sort=newest alias maps to CollectionSort.Newest', async () => {
+    mockGetAll.mockResolvedValueOnce([]);
+    const { req, res } = createMocks({ query: { mode: 'public', sort: 'newest' } });
+    await handler(req as never, res as never);
+    expect(mockGetAll).toHaveBeenCalledWith(
+      expect.objectContaining({ input: expect.objectContaining({ sort: 'Newest' }) })
+    );
+  });
+
+  it('sort: the raw CollectionSort enum value is still accepted (backward-compat)', async () => {
+    mockGetAll.mockResolvedValueOnce([]);
+    const { req, res } = createMocks({ query: { mode: 'public', sort: 'Most Followers' } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(200);
+    expect(mockGetAll).toHaveBeenCalledWith(
+      expect.objectContaining({ input: expect.objectContaining({ sort: 'Most Followers' }) })
+    );
+  });
+
+  it('mode=public: derives a cover from the first item when the collection cover is null', async () => {
+    mockGetAll.mockResolvedValueOnce([
+      { id: 10, name: 'A', description: null, read: 'Public', nsfwLevel: 0, userId: 1, user: { id: 1, username: 'a' }, image: null },
+    ]);
+    // The fallback query returns a still-image cover for collection 10.
+    mockFallbackCovers.mockResolvedValueOnce(
+      new Map([[10, { url: 'first-item-10', type: 'image' }]])
+    );
+    mockItemCount.mockResolvedValueOnce([{ id: 10, count: 4 }]);
+    const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
+    await handler(req as never, res as never);
+    const body = res._json() as any;
+    expect(body.items[0].coverImageUrl).toBe('edge:first-item-10');
+    // Only the cover-less collection id is passed to the fallback lookup.
+    expect(mockFallbackCovers).toHaveBeenCalledWith([10]);
+  });
+
+  it('mode=public: a VIDEO first-item cover yields a poster url (not a raw video)', async () => {
+    mockGetAll.mockResolvedValueOnce([
+      { id: 10, name: 'A', description: null, read: 'Public', nsfwLevel: 0, userId: 1, user: { id: 1, username: 'a' }, image: null },
+    ]);
+    mockFallbackCovers.mockResolvedValueOnce(
+      new Map([[10, { url: 'clip-10', type: 'video' }]])
+    );
+    mockItemCount.mockResolvedValueOnce([{ id: 10, count: 4 }]);
+    const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
+    await handler(req as never, res as never);
+    const body = res._json() as any;
+    // toCoverImageUrl renders a video cover as a poster (image), never the .mp4.
+    expect(body.items[0].coverImageUrl).toBe('poster:clip-10');
+  });
+
+  it('400 returns a STRING error message + flattened details (not a raw ZodError)', async () => {
+    // limit 0 fails the .min(1) gate deterministically.
+    const { req, res } = createMocks({ query: { mode: 'public', limit: '0' } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(400);
+    const body = res._json() as any;
+    expect(typeof body.error).toBe('string');
+    expect(body.error).toBe('Invalid query parameters');
+    // flatten() shape: { formErrors, fieldErrors }.
+    expect(body.details).toBeTruthy();
+    expect(body.details).toHaveProperty('fieldErrors');
   });
 });
