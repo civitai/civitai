@@ -1,6 +1,6 @@
 ##### DEPENDENCIES
 
-FROM node:20-alpine3.20 AS deps
+FROM node:22-alpine3.22 AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
@@ -110,7 +110,7 @@ COPY --from=builder /app/server-maps/ /server-maps/
 
 ##### RUNNER
 
-FROM node:20-alpine3.20 AS runner
+FROM node:22-alpine3.22 AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
