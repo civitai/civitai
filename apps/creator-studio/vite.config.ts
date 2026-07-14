@@ -22,6 +22,7 @@ export default defineConfig(({ mode }) => {
         '@civitai/clickhouse',
         '@civitai/db',
         '@civitai/db-schema',
+        '@civitai/redis',
         '@civitai/ui',
       ],
     },

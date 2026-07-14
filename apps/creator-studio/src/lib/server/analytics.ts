@@ -1,4 +1,5 @@
 import { getClickhouse } from '$lib/server/clickhouse';
+import { createCache } from '$lib/server/cache';
 
 // Content/Creator analytics (B4 section b). Every metric is keyed **directly to the creator's userId** in
 // ClickHouse — no owner-keyed rollup (A1) needed. Daily/weekly counts over a rolling window, gap-filled so the
@@ -27,6 +28,25 @@ export const ANALYTICS_RANGES = [7, 30, 90] as const;
 export type AnalyticsRange = (typeof ANALYTICS_RANGES)[number];
 export type Granularity = 'day' | 'week';
 
+// Analytics reads are cached in Redis so page reloads hit the cache, not ClickHouse (fail-open). Wider windows
+// are both more expensive to compute (the 90-day query is slow) and less volatile (an extra hour barely moves a
+// 90-day total), so they cache longer; the cheap, freshness-sensitive 7-day window caches briefly.
+const rangeTtlSeconds = (days: number) => (days >= 90 ? 3600 : days >= 30 ? 900 : 300);
+
+// Cached read-through wrappers. The named args double as the cache key; the TTL reads `days` off the same args.
+export const getContentAnalytics = createCache({
+  name: 'analytics:content',
+  fetch: ({ userId, days, granularity }: { userId: number; days: number; granularity: Granularity }) =>
+    fetchContentAnalytics(userId, days, granularity),
+  ttlSeconds: ({ days }) => rangeTtlSeconds(days),
+}).get;
+
+export const getContentTotals = createCache({
+  name: 'analytics:totals',
+  fetch: ({ userId, days }: { userId: number; days: number }) => fetchContentTotals(userId, days),
+  ttlSeconds: ({ days }) => rangeTtlSeconds(days),
+}).get;
+
 // Gap-filled daily/weekly count query for `table`, keyed to the creator via `filter`. WITH FILL synthesizes the
 // missing buckets (value 0) so a series never has holes; `TO … + step` makes the range inclusive of today/this
 // week. userId + days are trusted integers (session id + validated preset), so they're interpolated directly.
@@ -44,7 +64,7 @@ function seriesSql(
   return `SELECT ${bucket} AS date, count() AS value FROM ${table} WHERE ${filter} AND toDate(${timeCol}) >= today() - ${d} GROUP BY date ORDER BY date WITH FILL FROM ${from} TO ${to} STEP ${step}`;
 }
 
-export async function getContentAnalytics(
+async function fetchContentAnalytics(
   userId: number,
   days: number,
   granularity: Granularity
@@ -100,7 +120,7 @@ export async function getContentAnalytics(
 }
 
 // Just the period totals (no series / top-images) — cheap enough for the dashboard's activity row.
-export async function getContentTotals(userId: number, days: number): Promise<ContentTotals> {
+async function fetchContentTotals(userId: number, days: number): Promise<ContentTotals> {
   const uid = Number(userId);
   const d = Number(days);
   const ch = getClickhouse();

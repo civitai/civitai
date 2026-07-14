@@ -948,6 +948,9 @@ importers:
       '@civitai/db-schema':
         specifier: workspace:*
         version: link:../../packages/civitai-db-schema
+      '@civitai/redis':
+        specifier: workspace:*
+        version: link:../../packages/civitai-redis
       '@civitai/ui':
         specifier: workspace:*
         version: link:../../packages/civitai-ui
