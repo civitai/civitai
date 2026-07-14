@@ -83,7 +83,9 @@ export async function buildServer(): Promise<FastifyInstance> {
     };
   }
 
-  // Count a presigned-upload issuance for the B2 backends (reproduces the monolith's b2_presign_issued).
+  // Count ONE presigned-upload issuance per upload for the B2 backends (reproduces the monolith's
+  // b2_presign_issued: one per single PUT, one per multipart upload — sized at /presign/multipart,
+  // streaming at /multipart/create — never per part). Always labeled with the RESOLVED bucket.
   function countPresign(backend: StorageBackend, bucket: string) {
     if (backend === 'b2' || backend === 'b2Image') b2PresignIssued.inc({ backend, bucket });
   }
@@ -163,24 +165,22 @@ export async function buildServer(): Promise<FastifyInstance> {
   app.post(
     '/multipart/create',
     route(createMultipartInput, async (body) => {
-      return getBackendClient(body.backend).createMultipartUpload(body.key, {
+      const result = await getBackendClient(body.backend).createMultipartUpload(body.key, {
         bucket: body.bucket,
         mimeType: body.mimeType,
       });
+      countPresign(body.backend, result.bucket); // one count per streaming upload, resolved bucket
+      return result;
     })
   );
 
   app.post(
     '/multipart/presign-part',
     route(presignPartInput, async (body) => {
-      const result = await getBackendClient(body.backend).presignUploadPart(
-        body.key,
-        body.uploadId,
-        body.partNumber,
-        { bucket: body.bucket, expiresIn: body.expiresIn }
-      );
-      countPresign(body.backend, body.bucket ?? '');
-      return result;
+      return getBackendClient(body.backend).presignUploadPart(body.key, body.uploadId, body.partNumber, {
+        bucket: body.bucket,
+        expiresIn: body.expiresIn,
+      });
     })
   );
 

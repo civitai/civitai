@@ -94,6 +94,35 @@ describe('client.uploadStream', () => {
     expect(rec.aborted).toBe(true);
     expect(rec.complete).toBeUndefined();
   });
+
+  it('throws and aborts on an empty (zero-byte) source', async () => {
+    const rec = newRecorder();
+    const client = createStorageClient({ endpoint: 'http://storage.test', fetch: routingFetch(rec) });
+    await expect(client.uploadStream({ key: 'k' }, source([]))).rejects.toThrow(/no bytes/);
+    expect(rec.presigns).toEqual([]);
+    expect(rec.aborted).toBe(true);
+    expect(rec.complete).toBeUndefined();
+  });
+
+  it('aborts when the signal is already aborted', async () => {
+    const rec = newRecorder();
+    const client = createStorageClient({ endpoint: 'http://storage.test', fetch: routingFetch(rec) });
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      client.uploadStream({ key: 'k', chunkSize: 100 }, source([40, 40, 40]), { signal: controller.signal })
+    ).rejects.toThrow(/aborted/i);
+    expect(rec.aborted).toBe(true);
+  });
+
+  it('re-chunks a single large piece without a quadratic blow-up (correct slicing)', async () => {
+    const rec = newRecorder();
+    const client = createStorageClient({ endpoint: 'http://storage.test', fetch: routingFetch(rec) });
+    // One 250-byte piece, 100-byte chunks → 3 parts: [100, 100, 50].
+    const result = await client.uploadStream({ key: 'k', chunkSize: 100 }, source([250]));
+    expect(rec.puts.map((p) => p.size)).toEqual([100, 100, 50]);
+    expect(result.parts.map((p) => p.PartNumber)).toEqual([1, 2, 3]);
+  });
 });
 
 describe('client.getObjectBuffer', () => {

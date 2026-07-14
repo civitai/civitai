@@ -105,9 +105,11 @@ async function main() {
     assert(mHead.exists && mHead.size === TOTAL, `multipart head size ${mHead.size} !== ${TOTAL}`);
     const mGet = await client.getGetUrl({ backend, key: multiKey });
     const mBytes = Buffer.from(await (await fetch(mGet.url)).arrayBuffer());
-    assert(mBytes.byteLength === TOTAL, `multipart read-back size ${mBytes.byteLength} !== ${TOTAL}`);
-    assert(mBytes[0] === 0 && mBytes[TOTAL - 1] === (TOTAL - 1) % 251, 'multipart boundary bytes wrong');
-    log('streaming multipart read-back verified');
+    // Full-content compare (not just size + endpoints): a swapped/shifted interior part is caught too.
+    const expected = Buffer.alloc(TOTAL);
+    for (let i = 0; i < TOTAL; i++) expected[i] = i % 251;
+    assert(mBytes.equals(expected), 'streaming multipart read-back content differs from source');
+    log('streaming multipart read-back verified (full content)');
 
     // --- delete + confirm gone ---
     if (!keep) {

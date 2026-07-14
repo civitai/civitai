@@ -172,4 +172,13 @@ describe('B2 presign metric', () => {
     expect(res.body).toContain('storage_b2_presign_issued_total');
     expect(res.body).toMatch(/storage_b2_presign_issued_total\{backend="b2",bucket="civitai-modelfiles"\}\s+[1-9]/);
   });
+
+  it('counts once on streaming create, labeled with the RESOLVED bucket (not empty)', async () => {
+    await app.inject({ method: 'POST', url: '/multipart/create', payload: { backend: 'b2', key: 'y' } });
+    // presign-part must NOT emit a count (would be a bucket="" series split from the real one — C1).
+    await app.inject({ method: 'POST', url: '/multipart/presign-part', payload: { backend: 'b2', key: 'y', uploadId: 'u', partNumber: 1 } });
+    const res = await app.inject({ method: 'GET', url: '/metrics' });
+    expect(res.body).toMatch(/storage_b2_presign_issued_total\{backend="b2",bucket="default-bucket"\}\s+[1-9]/);
+    expect(res.body).not.toMatch(/storage_b2_presign_issued_total\{backend="b2",bucket=""\}/);
+  });
 });

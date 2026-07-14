@@ -31,45 +31,61 @@ import {
 
 const DEFAULT_STREAM_CHUNK_SIZE = 100 * 1024 * 1024; // 100MB — matches the monolith's moveAssetFromBlob
 
-// Merge buffered pieces into one contiguous Uint8Array of `totalBytes`.
-function concatChunks(chunks: Uint8Array[], totalBytes: number): Uint8Array {
-  const out = new Uint8Array(totalBytes);
-  let offset = 0;
-  for (const c of chunks) {
-    out.set(c, offset);
-    offset += c.byteLength;
-  }
-  return out;
-}
-
-// Re-chunk an arbitrary byte stream into `chunkSize` pieces (the last may be smaller). Bounded memory:
-// only up to ~chunkSize is buffered at a time, regardless of the source's total size.
+// Re-chunk an arbitrary byte stream into exactly-`chunkSize` pieces (the final piece may be smaller).
+// Each byte is copied at most once (into the emitted chunk) — no quadratic re-concat even if a single
+// source piece dwarfs `chunkSize`. Extra memory beyond the source's own in-flight pieces is bounded to
+// ~chunkSize, and every yielded chunk is a fresh, offset-0 Uint8Array.
+//
+// CONTRACT: the source must not mutate a Uint8Array after yielding it — a sub-chunk-size piece is held
+// by reference until a full chunk assembles. Node streams and web ReadableStreams yield distinct
+// buffers, so this holds for the documented uses.
 async function* chunkStream(
   source: AsyncIterable<Uint8Array>,
   chunkSize: number
 ): AsyncGenerator<Uint8Array> {
-  let buffer: Uint8Array[] = [];
-  let buffered = 0;
+  const queue: Uint8Array[] = [];
+  let queued = 0;
   for await (const piece of source) {
     if (piece.byteLength === 0) continue;
-    buffer.push(piece);
-    buffered += piece.byteLength;
-    while (buffered >= chunkSize) {
-      const merged = concatChunks(buffer, buffered);
-      yield merged.subarray(0, chunkSize);
-      const rest = merged.subarray(chunkSize);
-      buffer = rest.byteLength ? [rest] : [];
-      buffered = rest.byteLength;
+    queue.push(piece);
+    queued += piece.byteLength;
+    while (queued >= chunkSize) {
+      const chunk = new Uint8Array(chunkSize);
+      let filled = 0;
+      while (filled < chunkSize) {
+        const head = queue[0];
+        const need = chunkSize - filled;
+        if (head.byteLength <= need) {
+          chunk.set(head, filled);
+          filled += head.byteLength;
+          queue.shift();
+        } else {
+          chunk.set(head.subarray(0, need), filled);
+          queue[0] = head.subarray(need); // view of the remaining tail; no copy
+          filled += need;
+        }
+      }
+      queued -= chunkSize;
+      yield chunk;
     }
   }
-  if (buffered > 0) yield concatChunks(buffer, buffered);
+  if (queued > 0) {
+    const tail = new Uint8Array(queued);
+    let filled = 0;
+    for (const p of queue) {
+      tail.set(p, filled);
+      filled += p.byteLength;
+    }
+    yield tail;
+  }
 }
 
 // PUT one part's bytes to a presigned URL and return its ETag. Server-side (no XHR/progress).
 async function putBytesTo(
   fetchImpl: typeof fetch,
   url: string,
-  body: Uint8Array
+  body: Uint8Array,
+  signal?: AbortSignal
 ): Promise<string | null> {
   const res = await fetchImpl(url, {
     method: 'PUT',
@@ -78,6 +94,7 @@ async function putBytesTo(
     // lib typings (and `BodyInit` isn't a name under Node-only libs). Cast to ArrayBuffer — a BodyInit
     // member in both — so this compiles wherever the (server-only) client is consumed.
     body: body as unknown as ArrayBuffer,
+    signal,
   });
   if (!res.ok) {
     throw new StorageClientError(`part upload failed (${res.status})`, res.status, res.status >= 500);
@@ -286,7 +303,7 @@ export function createStorageClient(config: StorageClientConfig = {}) {
         partExpiresIn?: number;
       },
       source: AsyncIterable<Uint8Array>,
-      options: { onProgress?: (loadedBytes: number) => void } = {}
+      options: { onProgress?: (loadedBytes: number) => void; signal?: AbortSignal } = {}
     ): Promise<{ bucket: string; key: string; parts: MultipartPart[] }> => {
       const backend = params.backend ?? 'default';
       const chunkSize = params.chunkSize ?? DEFAULT_STREAM_CHUNK_SIZE;
@@ -306,6 +323,7 @@ export function createStorageClient(config: StorageClientConfig = {}) {
       try {
         let partNumber = 1;
         for await (const chunk of chunkStream(source, chunkSize)) {
+          if (options.signal?.aborted) throw new StorageClientError('uploadStream aborted');
           const { url } = presignPartResult.parse(
             await post(
               '/multipart/presign-part',
@@ -313,16 +331,17 @@ export function createStorageClient(config: StorageClientConfig = {}) {
               config
             )
           );
-          const etag = await putBytesTo(fetchImpl, url, chunk);
-          if (!etag) {
-            throw new StorageClientError(
-              `missing ETag for part ${partNumber} — the bucket CORS must expose the ETag response header`
-            );
-          }
+          const etag = await putBytesTo(fetchImpl, url, chunk, options.signal);
+          if (!etag) throw new StorageClientError(`part ${partNumber} upload returned no ETag`);
           parts.push({ ETag: etag, PartNumber: partNumber });
           loaded += chunk.byteLength;
           options.onProgress?.(loaded);
           partNumber++;
+        }
+        // A zero-byte source yields no parts; completing a multipart with an empty parts list is an S3
+        // error. Fail clearly (the caller should use a single PUT for empty/known-small objects).
+        if (parts.length === 0) {
+          throw new StorageClientError('uploadStream: source produced no bytes');
         }
         await post('/multipart/complete', { backend, bucket, key, uploadId, parts }, config);
         return { bucket, key, parts };
@@ -335,11 +354,14 @@ export function createStorageClient(config: StorageClientConfig = {}) {
 
     // Read an object's bytes server-side: presign a GET, then fetch it (bytes never flow through the
     // storage service). For server consumers that need the content itself (e.g. dataset reads).
-    getObjectBuffer: async (input: PresignGetInput): Promise<ArrayBuffer> => {
+    getObjectBuffer: async (
+      input: PresignGetInput,
+      options: { signal?: AbortSignal } = {}
+    ): Promise<ArrayBuffer> => {
       const { url } = presignResult.parse(await post('/presign/get', input, config));
       const fetchImpl = config.fetch ?? globalThis.fetch;
       if (!fetchImpl) throw new StorageClientError('No fetch implementation available (pass `fetch`).');
-      const res = await fetchImpl(url);
+      const res = await fetchImpl(url, { signal: options.signal });
       if (!res.ok) {
         throw new StorageClientError(`object read failed (${res.status})`, res.status, res.status >= 500);
       }
