@@ -2,7 +2,11 @@
   import { Card, CardHeader, CardTitle, CardContent } from '@civitai/ui/components/ui/card/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
-  import { CREATOR_PROGRAM_URL, CIVITAI_MEMBERSHIP_URL } from '$lib/creator-program';
+  import {
+    CREATOR_PROGRAM_URL,
+    CIVITAI_MEMBERSHIP_URL,
+    CIVITAI_MANAGE_MEMBERSHIP_URL,
+  } from '$lib/creator-program';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -42,7 +46,13 @@
         {/if}
       </p>
       <div class="flex flex-wrap gap-2">
-        <Button href={CIVITAI_MEMBERSHIP_URL} variant="secondary" size="sm">Manage membership</Button>
+        {#if isMember || isCP}
+          <Button href={CIVITAI_MANAGE_MEMBERSHIP_URL} variant="secondary" size="sm">
+            Manage membership
+          </Button>
+        {:else}
+          <Button href={CIVITAI_MEMBERSHIP_URL} variant="secondary" size="sm">Get a membership</Button>
+        {/if}
         {#if !isCP}
           <Button href={CREATOR_PROGRAM_URL} variant="secondary" size="sm">Creator Program</Button>
         {/if}

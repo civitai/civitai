@@ -4,8 +4,12 @@
 // rebuild enrollment here).
 export const CREATOR_PROGRAM_URL = 'https://civitai.com/creator-program';
 
-// Where a user buys/manages a Civitai membership (the subscription that, with the score bar, unlocks CP).
+// Where a user buys a Civitai membership (the subscription that, with the score bar, unlocks CP).
 export const CIVITAI_MEMBERSHIP_URL = 'https://civitai.com/pricing';
+
+// The main-app membership-management page (view plan, upgrade, cancel, update payment, benefits).
+// Its server guard redirects non-members to /pricing, so only link members here.
+export const CIVITAI_MANAGE_MEMBERSHIP_URL = 'https://civitai.com/user/membership';
 
 // Mirrors the main app's MIN_CREATOR_SCORE (src/shared/constants/creator-program.constants.ts). Keep in sync.
 export const MIN_CREATOR_SCORE = 40000;
