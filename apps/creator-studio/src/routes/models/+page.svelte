@@ -36,6 +36,7 @@
     DEFAULT_FEE_IMAGES,
   } from '$lib/monetization/fee';
   import JoinUpsell from '$lib/components/JoinUpsell.svelte';
+  import NumberInput from '$lib/components/NumberInput.svelte';
   import {
     IconSearch,
     IconFilter,
@@ -97,18 +98,11 @@
     navigate({ q: q || null, page: null });
   }
 
-  // Fee buzz/images fields accept whole positive integers only — reject any typed or pasted non-digit
-  // (decimal point, sign, exponent, letters) before it lands in the value.
-  function integerOnly(e: InputEvent) {
-    const text = e.data ?? e.dataTransfer?.getData('text') ?? '';
-    if (text && /\D/.test(text)) e.preventDefault();
-  }
-
   // --- Bulk mode ---
   const bulkMode = $derived(data.canSetFee && page.url.searchParams.get('mode') === 'bulk');
   let selected = $state<Set<number>>(new Set());
   // Bulk editor defaults to 1 ⚡ per DEFAULT_FEE_IMAGES (10) images.
-  let bulkBuzz = $state('1');
+  let bulkBuzz = $state<number | undefined>(1);
   let bulkImages = $state(String(DEFAULT_FEE_IMAGES));
   let showBulkConfirm = $state(false);
   let bulkForm = $state<HTMLFormElement>();
@@ -191,12 +185,6 @@
       freeGeneration: c?.freeGeneration ?? false,
     };
     editing = version;
-  }
-
-  // Snap the duration down to the creator's max as soon as it's exceeded (the `max` attr only warns).
-  function clampTimeframe() {
-    const max = data.maxEarlyAccessDays;
-    if (typeof ea.timeframe === 'number' && ea.timeframe > max) ea.timeframe = max;
   }
 
   const eaEnhance = () => async (event: { result: any; update: (o?: { reset?: boolean }) => Promise<void> }) => {
@@ -297,18 +285,14 @@
     </span>
     <form bind:this={bulkForm} method="POST" action="?/bulkSetFee" use:enhance={bulkEnhance} class="contents">
       <input type="hidden" name="versionIds" value={[...selected].join(',')} />
-      <input
-        type="number"
+      <NumberInput
         name="buzz"
-        min="0"
-        step="1"
-        inputmode="numeric"
-        onbeforeinput={integerOnly}
+        min={0}
         bind:value={bulkBuzz}
         placeholder="Buzz"
         aria-label="Buzz (leave empty to clear the fee)"
         title="Leave empty to clear the fee"
-        class="w-20 rounded border border-dark-4 bg-dark-7 px-2 py-1 text-sm text-white"
+        class="w-20 py-1"
       />
       <span class="text-sm text-dark-3">⚡ per</span>
       <select
@@ -525,17 +509,13 @@
           {#if data.canSetFee}
             <form method="POST" action="?/setFee" use:enhance={setFeeEnhance} class="flex flex-wrap items-center gap-1.5">
               <input type="hidden" name="versionId" value={editing.id} />
-              <input
-                type="number"
+              <NumberInput
                 name="buzz"
-                min="0"
-                step="1"
-                inputmode="numeric"
-                onbeforeinput={integerOnly}
-                value={ratio.buzz || ''}
+                min={0}
+                value={ratio.buzz || undefined}
                 placeholder="Off"
                 aria-label="Buzz for {editing.name}"
-                class="w-16 rounded border border-dark-4 bg-dark-7 px-2 py-1 text-sm text-white"
+                class="w-16 py-1"
               />
               <span class="text-xs text-dark-3">⚡ per</span>
               <select
@@ -581,20 +561,15 @@
 
               <label class="flex flex-col gap-1 text-sm">
                 <span class="text-dark-1">Early access duration (days)</span>
-                <input
-                  type="number"
+                <NumberInput
                   name="timeframe"
-                  min="1"
+                  min={0}
                   max={data.maxEarlyAccessDays}
-                  step="1"
-                  inputmode="numeric"
-                  onbeforeinput={integerOnly}
-                  oninput={clampTimeframe}
                   bind:value={ea.timeframe}
-                  class="w-32 rounded border border-dark-4 bg-dark-7 px-2 py-1.5 text-white"
+                  class="w-32"
                 />
                 <span class="text-xs text-dark-3">
-                  Up to {data.maxEarlyAccessDays} day{data.maxEarlyAccessDays === 1 ? '' : 's'} at your creator level.
+                  Up to {data.maxEarlyAccessDays} day{data.maxEarlyAccessDays === 1 ? '' : 's'} at your creator level — set 0 to turn early access off.
                 </span>
               </label>
 
@@ -606,12 +581,11 @@
                 {#if ea.chargeForDownload}
                   <label class="flex flex-col gap-1 text-sm">
                     <span class="text-dark-2">Download price (⚡, min {MIN_DOWNLOAD_PRICE})</span>
-                    <input
-                      type="number"
+                    <NumberInput
                       name="downloadPrice"
                       min={MIN_DOWNLOAD_PRICE}
                       bind:value={ea.downloadPrice}
-                      class="w-40 rounded border border-dark-4 bg-dark-7 px-2 py-1.5 text-white"
+                      class="w-40"
                     />
                   </label>
                 {/if}
@@ -625,23 +599,21 @@
                 {#if ea.chargeForGeneration}
                   <label class="flex flex-col gap-1 text-sm">
                     <span class="text-dark-2">Generation price (⚡, min {MIN_GENERATION_PRICE})</span>
-                    <input
-                      type="number"
+                    <NumberInput
                       name="generationPrice"
                       min={MIN_GENERATION_PRICE}
                       bind:value={ea.generationPrice}
-                      class="w-40 rounded border border-dark-4 bg-dark-7 px-2 py-1.5 text-white"
+                      class="w-40"
                     />
                   </label>
                   <label class="flex flex-col gap-1 text-sm">
                     <span class="text-dark-2">Free trial generations (0–{MAX_GENERATION_TRIAL_LIMIT})</span>
-                    <input
-                      type="number"
+                    <NumberInput
                       name="generationTrialLimit"
-                      min="0"
+                      min={0}
                       max={MAX_GENERATION_TRIAL_LIMIT}
                       bind:value={ea.generationTrialLimit}
-                      class="w-32 rounded border border-dark-4 bg-dark-7 px-2 py-1.5 text-white"
+                      class="w-32"
                     />
                   </label>
                   <label class="flex items-center gap-2 text-sm text-white">
@@ -659,18 +631,14 @@
                 {#if ea.donationGoalEnabled}
                   <label class="flex flex-col gap-1 text-sm">
                     <span class="text-dark-2">Goal amount (⚡)</span>
-                    <input
-                      type="number"
-                      name="donationGoal"
-                      min="0"
-                      bind:value={ea.donationGoal}
-                      class="w-40 rounded border border-dark-4 bg-dark-7 px-2 py-1.5 text-white"
-                    />
+                    <NumberInput name="donationGoal" min={0} bind:value={ea.donationGoal} class="w-40" />
                   </label>
                 {/if}
               </div>
 
-              {#if !ea.chargeForDownload && !ea.chargeForGeneration}
+              {#if !ea.timeframe}
+                <p class="text-xs text-dark-3">A duration of 0 turns early access off when you save.</p>
+              {:else if !ea.chargeForDownload && !ea.chargeForGeneration}
                 <p class="text-xs text-yellow-5">Enable a download or generation charge to turn on early access.</p>
               {/if}
 

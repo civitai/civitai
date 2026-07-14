@@ -107,7 +107,12 @@ export const actions: Actions = {
     // Auth is enforced by the hook; the endpoint re-checks ownership. We forward the session cookie.
     const cookie = request.headers.get('cookie') ?? '';
 
-    if (clearFlagSchema.parse(form.get('clear'))) {
+    // Explicit clear (Turn-off button) OR a 0 / empty duration both mean "turn early access off" —
+    // clearing the config, and skipping the "needs a charge" validation the config path enforces.
+    const rawTimeframe = Number(form.get('timeframe'));
+    const turnOff =
+      clearFlagSchema.parse(form.get('clear')) || !Number.isFinite(rawTimeframe) || rawTimeframe <= 0;
+    if (turnOff) {
       const result = await setEarlyAccessConfig(cookie, versionId.data, null);
       if (!result.ok)
         return fail(result.status, { versionId: versionId.data, error: result.error });
