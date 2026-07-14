@@ -325,18 +325,8 @@ export const getTags = async ({
 };
 
 // #region [tag voting]
-/**
- * Drop unlisted tags before they reach the client. They're already hidden from
- * tag lists, search and tag pages, so surfacing them on votable chips would
- * advertise the exact tags we delisted — and invite votes on them. Moderators
- * keep them; they need to see what a piece of content is flagged as.
- *
- * `unlisted` isn't on the ImageTag/ModelTag composites, so it's resolved from
- * the basic tag cache rather than widened into those payloads — imageTagsCache
- * is the largest consumer of next-redis-cluster (see the 2026-06-09 audit note
- * on its definition) and shouldn't grow. Reading it here also means a tag being
- * unlisted takes effect without purging the composite caches.
- */
+// `unlisted` isn't on the tag composites — read the small cache rather than widen
+// imageTagsCache. Mods keep unlisted tags so they can see what content is flagged as.
 async function stripUnlistedTags<T extends { id: number }>(
   tags: T[],
   isModerator: boolean

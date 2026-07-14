@@ -1,9 +1,5 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 
-// Unlisted tags are hidden from tag lists, search and tag pages. They must not
-// reach the client on votable chips either — that would advertise the exact tags
-// we delisted and invite votes on them.
-
 const { imageTagsFetch, tagCacheFetch, imageVotes, modelTagFindMany, modelVotes } = vi.hoisted(
   () => ({
     imageTagsFetch: vi.fn(),
