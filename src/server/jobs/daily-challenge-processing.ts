@@ -78,6 +78,10 @@ import {
   getChallengeBuzzType,
 } from '~/server/games/daily-challenge/challenge-funding';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import {
+  CHALLENGE_JOB_BATCH_SIZE,
+  CHALLENGE_JOB_CONCURRENCY,
+} from '~/shared/constants/challenge.constants';
 import { getRandom, shuffle } from '~/utils/array-helpers';
 import { withRetries } from '~/utils/errorHandling';
 import { createLogger } from '~/utils/logging';
@@ -537,6 +541,14 @@ export async function createUpcomingChallenge(targetDate?: Date) {
   return challengeToLegacyFormat(challenge);
 }
 
+// Indirection seam: reviewEntries() calls reviewEntriesForChallenge() through this object
+// (rather than the bare function reference) so tests can substitute per-challenge processing
+// via `vi.spyOn(challengeReviewInternals, 'reviewEntriesForChallenge')` without needing to mock
+// every DB/LLM call the real implementation makes.
+export const challengeReviewInternals = {
+  reviewEntriesForChallenge,
+};
+
 export async function reviewEntries() {
   // Check if challenge platform is enabled
   if (!(await isFlipt(FLIPT_FEATURE_FLAGS.CHALLENGE_PLATFORM_ENABLED))) {
@@ -554,23 +566,36 @@ export async function reviewEntries() {
 
     log(`Processing entries for ${activeChallenges.length} active challenge(s)`);
 
-    // Process each challenge with error isolation
-    for (const challenge of activeChallenges) {
-      try {
-        await reviewEntriesForChallenge(challenge);
-      } catch (error) {
-        // Log error but continue with other challenges
-        const err = error as Error;
-        logToAxiom({
-          type: 'error',
-          name: 'daily-challenge-process-entries',
-          message: err.message,
-          challengeId: challenge.challengeId,
-          collectionId: challenge.collectionId,
-        });
-        log(`Failed to process challenge ${challenge.challengeId}:`, error);
-      }
+    if (activeChallenges.length >= CHALLENGE_JOB_BATCH_SIZE) {
+      logToAxiom({
+        type: 'warning',
+        name: 'daily-challenge-process-entries',
+        message: 'Active challenge count hit the batch ceiling; excess challenges roll to the next tick',
+        count: activeChallenges.length,
+      });
     }
+
+    // Process challenges with bounded concurrency. Each task isolates its own error so one
+    // failing challenge can't abort or block the rest of the batch.
+    await limitConcurrency(
+      activeChallenges.map((challenge) => async () => {
+        try {
+          await challengeReviewInternals.reviewEntriesForChallenge(challenge);
+        } catch (error) {
+          // Log error but continue with other challenges
+          const err = error as Error;
+          logToAxiom({
+            type: 'error',
+            name: 'daily-challenge-process-entries',
+            message: err.message,
+            challengeId: challenge.challengeId,
+            collectionId: challenge.collectionId,
+          });
+          log(`Failed to process challenge ${challenge.challengeId}:`, error);
+        }
+      }),
+      CHALLENGE_JOB_CONCURRENCY
+    );
   } catch (e) {
     const error = e as Error;
     logToAxiom({
