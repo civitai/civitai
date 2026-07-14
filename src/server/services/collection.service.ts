@@ -2194,6 +2194,33 @@ export const validateContestCollectionEntry = async ({
     }
   }
 
+  // Required resource: for challenges with configured modelVersionIds, every submitted image
+  // must use at least one of them (OR logic — mirrors the promotion-time check in
+  // challenge-rewards.ts:promoteChallengeEntries). Checked before the entry-fee charge below so
+  // an off-resource image is never charged: previously this rule was enforced only at
+  // promotion, after the fee already ran, and entry fees are never refunded (see
+  // challenge-funding.ts) — so an off-resource submission was charged then silently rejected.
+  if (imageIds.length > 0 && !isModerator) {
+    const resourceChallenge = await dbRead.challenge.findFirst({
+      where: { collectionId, status: 'Active', modelVersionIds: { isEmpty: false } },
+      select: { modelVersionIds: true },
+    });
+    if (resourceChallenge) {
+      const withRequiredResource = await dbRead.imageResourceNew.findMany({
+        where: {
+          imageId: { in: imageIds },
+          modelVersionId: { in: resourceChallenge.modelVersionIds },
+        },
+        select: { imageId: true },
+        distinct: ['imageId'],
+      });
+      const validImageIds = new Set(withRequiredResource.map((r) => r.imageId));
+      if (imageIds.some((id) => !validImageIds.has(id))) {
+        throw throwBadRequestError('This image does not use a required model for this challenge.');
+      }
+    }
+  }
+
   // Entry fee: for user-created challenges, charge the participant once per submitted image
   // (idempotent per challenge+image). Runs only after all other validation has passed. Callers
   // that defer (bulkSaveItems) charge after their write instead, to avoid a paid-but-missing entry.
