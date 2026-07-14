@@ -11,7 +11,7 @@ import {
   SegmentedControl,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { IconInfoCircle, IconSettings, IconTrophy } from '@tabler/icons-react';
+import { IconInfoCircle, IconPlus, IconSettings, IconTrophy } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
@@ -31,6 +31,7 @@ import { ChallengeSort } from '~/server/schema/challenge.schema';
 import type { GetInfiniteChallengesInput } from '~/server/schema/challenge.schema';
 import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({
@@ -49,6 +50,23 @@ const statusMap: Record<string, ChallengeStatus> = {
 function ChallengesPage() {
   const router = useRouter();
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
+  const canCreateChallenge =
+    !currentUser?.muted &&
+    features.canWrite &&
+    features.challengePlatform &&
+    features.userChallenges;
+  const createChallengeButton = canCreateChallenge ? (
+    <Button
+      component={Link}
+      href="/challenges/create"
+      leftSection={<IconPlus size={16} />}
+      variant="light"
+      rel="nofollow"
+    >
+      Create Challenge
+    </Button>
+  ) : null;
   const [infoOpened, { open: openInfo, close: closeInfo }] = useDisclosure(false);
 
   // Parse query params
@@ -188,7 +206,7 @@ function ChallengesPage() {
                 variant="light"
                 color="yellow"
               >
-                Previous Winners
+                Daily Challenge Winners
               </Button>
             </Group>
           </Group>
@@ -199,7 +217,20 @@ function ChallengesPage() {
           <Divider />
           <Group wrap="wrap" gap="sm">
             <Title order={3}>Community Challenges</Title>
-            <ChallengeFeedFilters ml="auto" />
+            <Group gap="sm" wrap="wrap" ml="auto">
+              {currentUser && (
+                <Button
+                  component={Link}
+                  href="/challenges?engagement=created"
+                  variant="subtle"
+                  rel="nofollow"
+                >
+                  My Challenges
+                </Button>
+              )}
+              {createChallengeButton}
+              <ChallengeFeedFilters />
+            </Group>
           </Group>
           <ChallengesInfinite
             filters={{
@@ -210,6 +241,7 @@ function ChallengesPage() {
               excludeEventChallenges: true,
               participation,
             }}
+            emptyAction={createChallengeButton}
           />
         </Stack>
       </MasonryContainer>
