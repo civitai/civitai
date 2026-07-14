@@ -189,7 +189,7 @@ export const challengeRouter = router({
       upsertUserChallenge({
         ...input,
         userId: ctx.user.id,
-        buzzType: deriveDomainCurrency(ctx.features.isGreen),
+        buzzType: input.buzzType ?? deriveDomainCurrency(ctx.features.isGreen),
       })
     ),
 

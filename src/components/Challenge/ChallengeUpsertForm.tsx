@@ -123,6 +123,7 @@ const schema = upsertChallengeBaseSchema
     entryFee: z.number().int().min(CHALLENGE_MIN_ENTRY_FEE).max(CHALLENGE_MAX_ENTRY_FEE).default(CHALLENGE_MIN_ENTRY_FEE),
     initialPrizeBuzz: z.number().int().min(0).max(CHALLENGE_MAX_INITIAL_PRIZE).default(0),
     maxParticipants: z.number().int().min(1).max(100_000).optional(),
+    buzzType: z.enum(['green', 'yellow']).default('yellow'),
     // Only key + weight are form state (CategoryWeights derives label/criteria for display; the
     // server re-derives them). `shouldUnregister` strips the rest, so validate the input shape.
     judgingCategories: z.array(challengeJudgingCategoryInputSchema).default([]),
@@ -219,7 +220,6 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
   // buzzType is immutable, and a creator can edit cross-domain, so the current domain wouldn't
   // reflect the challenge's real currency — prefer the stored value when editing.
   const effectiveBuzzType = isEditing ? challenge?.buzzType : domainBuzzType;
-  const buzzLabel = effectiveBuzzType === 'green' ? 'Green' : 'Yellow';
 
   // Mod-only "Customize judging categories" toggle. Presentation/submission-only state — it isn't
   // part of the submitted schema, so it lives outside RHF rather than as a form field.
@@ -287,6 +287,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
       modelVersionIds: challenge?.modelVersionIds ?? [],
       nsfwLevel: challenge?.nsfwLevel ?? 1,
       allowedNsfwLevel: challenge?.allowedNsfwLevel ?? sfwBrowsingLevelsFlag,
+      buzzType: challenge?.buzzType ?? (domainBuzzType === 'green' ? 'green' : 'yellow'),
       judgeId: challenge?.judgeId ? String(challenge.judgeId) : isUser ? '' : '1',
       eventId: challenge?.eventId ? String(challenge.eventId) : null,
       judgingPrompt: challenge?.judgingPrompt ?? '',
@@ -427,6 +428,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
         judgingCategories: data.judgingCategories,
         entryFee: data.entryFee,
         initialPrizeBuzz: data.initialPrizeBuzz,
+        buzzType: data.buzzType,
         prizeDistribution: [data.dist1, data.dist2, data.dist3],
         maxParticipants: data.maxParticipants,
         maxEntriesPerUser: data.maxEntriesPerUser,
@@ -557,6 +559,10 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
   // User-variant entry-fee pool preview
   const entryFeeWatch = form.watch('entryFee') ?? CHALLENGE_MIN_ENTRY_FEE;
   const perEntryToPool = getEntryPoolContribution(entryFeeWatch);
+  const selectedBuzzType: 'green' | 'yellow' =
+    (form.watch('buzzType') as 'green' | 'yellow' | undefined) ??
+    (effectiveBuzzType === 'green' ? 'green' : 'yellow');
+  const buzzLabel = selectedBuzzType === 'green' ? 'Green' : 'Yellow';
 
   // User-variant feed-visibility preview (start - 7d). The watched value is in the active schedule
   // tz, so resolve to the real instant for the future check and re-apply the tz for the label.
@@ -777,18 +783,37 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
               <>
                 <Title order={4}>Entry Fee &amp; Prizes</Title>
                 <Stack gap={4}>
-                  <SegmentedControl
-                    value={effectiveBuzzType === 'green' ? 'green' : 'yellow'}
-                    disabled
+                  <InputSegmentedControl
+                    name="buzzType"
+                    disabled={isActive || isTerminal}
+                    onChange={(value) => {
+                      if (value === 'green')
+                        form.setValue('allowedNsfwLevel', sfwBrowsingLevelsFlag);
+                    }}
                     data={[
-                      { label: 'Yellow Buzz', value: 'yellow' },
-                      { label: 'Green Buzz', value: 'green' },
+                      {
+                        value: 'yellow',
+                        label: (
+                          <Group gap={6} justify="center" wrap="nowrap">
+                            <CurrencyIcon currency="BUZZ" type="yellow" size={16} />
+                            <span>Yellow Buzz</span>
+                          </Group>
+                        ),
+                      },
+                      {
+                        value: 'green',
+                        label: (
+                          <Group gap={6} justify="center" wrap="nowrap">
+                            <CurrencyIcon currency="BUZZ" type="green" size={16} />
+                            <span>Green Buzz</span>
+                          </Group>
+                        ),
+                      },
                     ]}
                   />
                   <Text size="xs" c="dimmed">
-                    Currency is set by the site you create on. To run a{' '}
-                    {effectiveBuzzType === 'green' ? 'Yellow' : 'Green'} Buzz challenge, create it on{' '}
-                    {effectiveBuzzType === 'green' ? 'civitai.com' : 'civitai.red'}.
+                    Green Buzz challenges are Safe-For-Work (PG / PG-13) and run on civitai.com;
+                    Yellow Buzz challenges run on civitai.red. Editable while scheduled.
                   </Text>
                 </Stack>
                 <Alert icon={<IconInfoCircle size={16} />} color="blue">
@@ -800,7 +825,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   <InputNumber
                     name="entryFee"
                     label="Entry Fee"
-                    leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                    leftSection={<CurrencyIcon currency="BUZZ" type={selectedBuzzType} size={16} />}
                     currency={Currency.BUZZ}
                     min={CHALLENGE_MIN_ENTRY_FEE}
                     max={CHALLENGE_MAX_ENTRY_FEE}
@@ -812,7 +837,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   <InputNumber
                     name="initialPrizeBuzz"
                     label="Initial Prize (optional)"
-                    leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                    leftSection={<CurrencyIcon currency="BUZZ" type={selectedBuzzType} size={16} />}
                     currency={Currency.BUZZ}
                     min={0}
                     step={100}
@@ -1002,7 +1027,11 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
             <Title order={4}>Entry Requirements</Title>
 
             {/* Content Rating Selection — creator picks the browsing level; defaults to SFW */}
-            <InputContentRatingSelect name="allowedNsfwLevel" disabled={isActive || isTerminal} />
+            <InputContentRatingSelect
+              name="allowedNsfwLevel"
+              disabled={isActive || isTerminal}
+              sfwOnly={selectedBuzzType === 'green'}
+            />
             <Divider />
 
             {/* Entry Limits */}

@@ -1466,11 +1466,15 @@ export async function upsertUserChallenge({
           message: 'This challenge already has entries and can no longer be edited.',
         });
     }
-    // buzzType is immutable (set at creation, derived from the domain the creator was on).
-    // The passed `buzzType` above reflects the EDITOR's current domain, which may differ — the
-    // guard here must use the STORED value, since that's what stays authoritative after this edit.
+    // buzzType is editable while Scheduled, but not once an initial prize is escrowed — it was
+    // charged in the old currency, so switching would strand those funds. Reject that case.
     const existingBuzzType: ChallengeBuzzType = existing.buzzType === 'green' ? 'green' : 'yellow';
-    if (isNonSfwForGreen(existingBuzzType, allowedNsfwLevel))
+    if (buzzType !== existingBuzzType && existing.basePrizePool > 0)
+      throw new TRPCError({
+        code: 'PRECONDITION_FAILED',
+        message: 'Remove the initial prize before changing the challenge currency.',
+      });
+    if (isNonSfwForGreen(buzzType, allowedNsfwLevel))
       throw new TRPCError({
         code: 'BAD_REQUEST',
         message: 'Green challenges must be Safe-For-Work.',
@@ -1492,6 +1496,7 @@ export async function upsertUserChallenge({
         where: { id, status: ChallengeStatus.Scheduled },
         data: {
           ...commonData,
+          buzzType,
           // The initial prize is escrowed once at creation; never let an edit rewrite the
           // (already-charged) pool from client input — that would pay out unfunded Buzz.
           // Edits are limited to Scheduled + no entries, so the pool equals the base here.
