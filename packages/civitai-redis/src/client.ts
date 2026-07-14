@@ -2035,9 +2035,6 @@ export const REDIS_KEYS = {
     BUG_REPORTS: 'counters:bug-reports',
   },
   LIVE_NOW: 'live-now',
-  DAILY_CHALLENGE: {
-    DETAILS: 'daily-challenge:details',
-  },
   TAG: 'tag',
   EVENT: {
     BASE: 'event', // special case

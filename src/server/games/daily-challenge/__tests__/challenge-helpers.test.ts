@@ -23,7 +23,7 @@ vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite 
 vi.mock('~/server/redis/client', () => ({
   redis: mockRedis,
   sysRedis: { sMembers: vi.fn(async () => []) },
-  REDIS_KEYS: { DAILY_CHALLENGE: { DETAILS: 'daily-challenge:details' } },
+  REDIS_KEYS: {},
   REDIS_SYS_KEYS: {},
   withSysReadDeadline: vi.fn(async (fn: () => unknown) => fn()),
 }));
@@ -310,7 +310,6 @@ describe('setChallengeActive idempotency', () => {
     mockDbWrite.challenge.updateMany.mockReset();
     mockDbRead.$queryRaw.mockReset();
     mockDbRead.$queryRaw.mockResolvedValue([]);
-    mockRedis.packed.set.mockClear();
   });
 
   it('activates only from Scheduled and is a no-op on second call', async () => {
@@ -328,13 +327,9 @@ describe('setChallengeActive idempotency', () => {
       where: { id: 1, status: 'Scheduled' },
       data: { status: 'Active' },
     });
-    // Side effect (Redis cache write) only runs when this call actually activated it.
-    expect(mockRedis.packed.set).toHaveBeenCalledTimes(1);
 
     const second = await setChallengeActive(1);
     expect(second).toEqual({ activated: false });
     expect(mockDbWrite.challenge.updateMany).toHaveBeenCalledTimes(2);
-    // No duplicate side effect on the no-op second call.
-    expect(mockRedis.packed.set).toHaveBeenCalledTimes(1);
   });
 });

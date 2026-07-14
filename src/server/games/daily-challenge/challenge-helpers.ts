@@ -2,7 +2,6 @@ import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { removeTags } from '~/utils/string-helpers';
 import type { ChallengeBuzzType } from '~/server/games/daily-challenge/challenge-currency';
 import {
@@ -504,22 +503,16 @@ export async function updateChallengeStatus(
 
 /**
  * Conditionally activate a Scheduled challenge. Uses UPDATE ... WHERE status='Scheduled' so
- * overlapping activation ticks can't both flip status + duplicate the Redis cache write —
- * whichever tick's write actually matches the row wins; the rest see `activated: false` and
- * should skip their own activation side effects.
+ * overlapping activation ticks can't both flip status — whichever tick's write actually
+ * matches the row wins; the rest see `activated: false` and should skip their own activation
+ * side effects.
  */
 export async function setChallengeActive(challengeId: number): Promise<{ activated: boolean }> {
   const { count } = await dbWrite.challenge.updateMany({
     where: { id: challengeId, status: ChallengeStatus.Scheduled },
     data: { status: ChallengeStatus.Active },
   });
-  const activated = count === 1;
-  if (activated) {
-    // Cache the active challenge in Redis for quick access
-    const challenge = await getChallengeById(challengeId);
-    await redis.packed.set(REDIS_KEYS.DAILY_CHALLENGE.DETAILS, challenge);
-  }
-  return { activated };
+  return { activated: count === 1 };
 }
 
 // =============================================================================
