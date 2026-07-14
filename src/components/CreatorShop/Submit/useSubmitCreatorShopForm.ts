@@ -55,7 +55,10 @@ export function useSubmitCreatorShopForm({
   // Buyers already own the art once an item is published or sold — lock it.
   const artLocked =
     isEdit && (item?.status === CosmeticShopItemStatus.Published || (item?.purchases ?? 0) > 0);
-  const supportsAnimated = type === CosmeticType.Badge || type === CosmeticType.ProfileDecoration;
+  const supportsAnimated =
+    type === CosmeticType.Badge ||
+    type === CosmeticType.ProfileDecoration ||
+    type === CosmeticType.ProfileBackground;
 
   const { data: buzz } = useQueryBuzz(['yellow', 'green']);
   const yellowBalance = buzz.accounts.find((a) => a.type === 'yellow')?.balance ?? 0;

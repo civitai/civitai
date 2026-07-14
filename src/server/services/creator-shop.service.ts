@@ -103,7 +103,8 @@ const withRemaining = (item: CreatorShopItemRow) => {
 
 // The cosmetic `data` blob is built server-side (never trust client-shaped data).
 const buildCosmeticData = (type: CosmeticType, imageUrl: string, animated?: boolean) => {
-  if (type === CosmeticType.ProfileBackground) return { url: imageUrl, type: MediaType.image };
+  if (type === CosmeticType.ProfileBackground)
+    return { url: imageUrl, type: MediaType.image, animated: !!animated };
   if (type === CosmeticType.Badge || type === CosmeticType.ProfileDecoration)
     return { url: imageUrl, animated: !!animated };
   return { url: imageUrl };
