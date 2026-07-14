@@ -36,12 +36,17 @@ export function useAdsContext() {
 
 const useAdProviderStore = create<{
   ready: boolean;
-  adsBlocked: boolean;
+  adsBlocked?: boolean;
   consent: boolean;
   browserBlocked: boolean;
 }>(() => ({
   ready: false,
-  adsBlocked: true,
+  // Tri-state: undefined = detection pending, false = confirmed serving (loader onLoad / direct-ad
+  // probe success), true = confirmed blocked (onError / probe failure). We can't know ads are
+  // blocked without attempting to load them, so while pending we render the empty reserved ad slot
+  // and hold the SupportUs fallback until a block is actually confirmed. Defaulting to true showed
+  // the fallback during the pending window — a flash for the ~95% of users who aren't blocked.
+  adsBlocked: undefined,
   consent: true,
   browserBlocked: false,
 }));

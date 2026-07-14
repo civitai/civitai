@@ -97,12 +97,13 @@ function AdWrapper({
   preserveLayout?: boolean;
   onDismount?: OnDismount;
 }) {
-  // const router = useRouter();
-  // const key = router.asPath.split('?')[0];
   const { adsBlocked, ready, isMember, consent, useDirectAds } = useAdsContext();
 
   const adSizes = useAdSizes({ sizes, lutSizes, maxHeight, maxWidth });
-  const [ref, inView] = useInView();
+  // The blocked/no-consent branch below early-returns <SupportUs/> without the observed wrapper,
+  // so when either flag flips the wrapper re-mounts under a fresh ref. Re-key on them so useInView
+  // re-observes the new wrapper instead of staying bound to the stale (unobserved) ref.
+  const [ref, inView] = useInView({ key: `${adsBlocked}:${consent}` });
 
   if (adSizes && !adSizes.length) return null;
 
