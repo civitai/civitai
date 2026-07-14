@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { computeDynamicPool } from '../challenge-pool';
+import { buildChallengeModerationText } from '../challenge-helpers';
 import { CHALLENGE_JOB_BATCH_SIZE } from '~/shared/constants/challenge.constants';
 
 // challenge-helpers.ts (transitively, via daily-challenge.utils.ts) eagerly constructs real
@@ -27,6 +28,33 @@ vi.mock('~/server/redis/client', () => ({
   REDIS_SYS_KEYS: {},
   withSysReadDeadline: vi.fn(async (fn: () => unknown) => fn()),
 }));
+
+describe('buildChallengeModerationText', () => {
+  it('includes title, theme, description, and invitation', () => {
+    const result = buildChallengeModerationText({
+      title: 'Title',
+      theme: 'Theme',
+      description: '<p>Description</p>',
+      invitation: 'Invitation text',
+    });
+
+    expect(result).toContain('Title');
+    expect(result).toContain('Theme');
+    expect(result).toContain('Description');
+    expect(result).toContain('Invitation text');
+  });
+
+  it('omits invitation when absent without adding a stray separator', () => {
+    const result = buildChallengeModerationText({
+      title: 'Title',
+      theme: null,
+      description: null,
+      invitation: null,
+    });
+
+    expect(result).toBe('Title');
+  });
+});
 
 describe('computeDynamicPool', () => {
   const defaultDistribution = [50, 30, 20];

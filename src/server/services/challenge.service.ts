@@ -1607,15 +1607,15 @@ export async function upsertUserChallenge({
   return created;
 }
 
-// Submits a user challenge's author-supplied text (title/theme/description; invitation is not
-// surfaced) to the async text-moderation pipeline (`EntityModeration` + XGuard). The result
-// callback resolves ingestion via `challengeModerationAdapter`: `blocked` → Blocked (hidden),
-// `nsfw` → Scanned with nsfwLevel floored to R, clean → Scanned. Idempotent — unchanged content
-// dedups on contentHash. The scan gate keeps the challenge hidden until it reaches Scanned.
+// Submits a user challenge's author-supplied text (title/theme/description/invitation) to the
+// async text-moderation pipeline (`EntityModeration` + XGuard). The result callback resolves
+// ingestion via `challengeModerationAdapter`: `blocked` → Blocked (hidden), `nsfw` → Scanned with
+// nsfwLevel floored to R, clean → Scanned. Idempotent — unchanged content dedups on contentHash.
+// The scan gate keeps the challenge hidden until it reaches Scanned.
 export async function scanUserChallenge(challengeId: number): Promise<void> {
   const challenge = await dbRead.challenge.findUnique({
     where: { id: challengeId },
-    select: { title: true, description: true, theme: true },
+    select: { title: true, description: true, theme: true, invitation: true },
   });
   if (!challenge) return;
 

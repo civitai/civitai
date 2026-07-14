@@ -33,14 +33,20 @@ import {
 // DB/Redis into client bundles)
 export { computeDynamicPool, distributePrizes } from './challenge-pool';
 
-// Author-supplied text sent to the text-moderation scan. `invitation` is intentionally excluded —
-// it isn't surfaced on user-created challenges. Description is RTE HTML, so tags are stripped.
+// Author-supplied text sent to the text-moderation scan. Description is RTE HTML, so tags are
+// stripped.
 export function buildChallengeModerationText(challenge: {
   title: string | null;
   theme: string | null;
   description: string | null;
+  invitation: string | null;
 }) {
-  return [challenge.title, challenge.theme, challenge.description ? removeTags(challenge.description) : null]
+  return [
+    challenge.title,
+    challenge.theme,
+    challenge.description ? removeTags(challenge.description) : null,
+    challenge.invitation,
+  ]
     .filter(Boolean)
     .join('\n');
 }
