@@ -164,10 +164,13 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     // default buckets are fine for this REST surface
   );
 
-  // Cardinality: renders_total ≈ (approvedApps+1 for 'dev'/'other') × 5 slot_id
-  // (4 known + 'other') × 6 error_class ('none' + 5 known + 'other', but 'none'
-  // only pairs with result=ok and the 5+other only with result=error) × 2 result
-  // — every factor strictly bounded, so the series count stays small.
+  // Cardinality: renders_total ≈ (A+1) × 5 slot_id × 7 error_class ≈ 1785 at
+  // A=50, where A = approved apps (+1 for the 'other' bucket), slot_id = 4 known
+  // + 'other', and error_class = 'none' + 5 known + 'other' (7). `result` is NOT
+  // an independent multiplier — it's coupled to error_class ('none' pairs only
+  // with result=ok; the 5-known+'other' pair only with result=error), so the 7
+  // error_class values already encode the result split. Every factor is strictly
+  // bounded, so the series count stays small.
   const rendersTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_renders_total',
