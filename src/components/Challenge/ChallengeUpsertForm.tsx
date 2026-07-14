@@ -5,6 +5,7 @@ import {
   Divider,
   Group,
   Paper,
+  SegmentedControl,
   SimpleGrid,
   Stack,
   Switch,
@@ -238,10 +239,18 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
     { enabled: !isUser }
   );
 
-  // Default dates (in UTC, shifted for display)
-  const defaultStartsAt = toDisplayUTC(dayjs.utc().add(1, 'day').startOf('day').toDate());
-  const defaultEndsAt = toDisplayUTC(dayjs.utc().add(2, 'day').startOf('day').toDate());
-  const defaultVisibleAt = toDisplayUTC(dayjs.utc().startOf('day').toDate());
+  // Schedule timezone display mode. Default local for everyone; mods can toggle to UTC.
+  const [scheduleTz, setScheduleTz] = useState<'local' | 'utc'>('local');
+  const isUtcSchedule = scheduleTz === 'utc';
+  const toScheduleDisplay = (d: Date) => (isUtcSchedule ? toDisplayUTC(d) : d);
+  const fromScheduleDisplay = (d: Date) => (isUtcSchedule ? fromDisplayUTC(d) : d);
+  const snapScheduleHour = (d: Date) =>
+    (isUtcSchedule ? dayjs.utc(fromDisplayUTC(d)) : dayjs(d)).startOf('hour').toDate();
+
+  // Default dates as local start-of-day instants (rendered in the active schedule tz).
+  const defaultStartsAt = dayjs().add(1, 'day').startOf('day').toDate();
+  const defaultEndsAt = dayjs().add(2, 'day').startOf('day').toDate();
+  const defaultVisibleAt = dayjs().startOf('day').toDate();
 
   // Parse existing prizes
   const existingPrizes = challenge?.prizes ?? [];
@@ -288,9 +297,9 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
       operationBudget: challenge?.operationBudget ?? 0,
       reviewCostType: challenge?.reviewCostType ?? ChallengeReviewCostType.None,
       reviewCost: challenge?.reviewCost ?? 0,
-      startsAt: challenge?.startsAt ? toDisplayUTC(challenge.startsAt) : defaultStartsAt,
-      endsAt: challenge?.endsAt ? toDisplayUTC(challenge.endsAt) : defaultEndsAt,
-      visibleAt: challenge?.visibleAt ? toDisplayUTC(challenge.visibleAt) : defaultVisibleAt,
+      startsAt: challenge?.startsAt ? toScheduleDisplay(challenge.startsAt) : defaultStartsAt,
+      endsAt: challenge?.endsAt ? toScheduleDisplay(challenge.endsAt) : defaultEndsAt,
+      visibleAt: challenge?.visibleAt ? toScheduleDisplay(challenge.visibleAt) : defaultVisibleAt,
       source: challenge?.source ?? ChallengeSource.Mod,
       prize1Buzz: existingPrizes[0]?.buzz ?? 5000,
       prize2Buzz: existingPrizes[1]?.buzz ?? 2500,
@@ -356,9 +365,9 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
   };
 
   const handleSubmit = (data: z.infer<typeof schema>) => {
-    // Convert display dates back to real UTC and snap to exact hours
-    const startsAt = dayjs.utc(fromDisplayUTC(data.startsAt)).startOf('hour').toDate();
-    const endsAt = dayjs.utc(fromDisplayUTC(data.endsAt)).startOf('hour').toDate();
+    // Snap to exact hours and resolve to the true UTC instant (honoring the schedule tz mode)
+    const startsAt = snapScheduleHour(data.startsAt);
+    const endsAt = snapScheduleHour(data.endsAt);
 
     // Cross-field date validation (can't use .refine() because useForm accesses .shape)
     if (endsAt <= startsAt) {
@@ -445,7 +454,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
       form.setError('visibleAt', { message: 'Visible date is required' });
       return;
     }
-    const visibleAt = dayjs.utc(fromDisplayUTC(data.visibleAt)).startOf('hour').toDate();
+    const visibleAt = snapScheduleHour(data.visibleAt);
 
     // Parse comma-separated theme elements into array
     const parsedThemeElements = data.themeElements
@@ -549,14 +558,14 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
   const entryFeeWatch = form.watch('entryFee') ?? CHALLENGE_MIN_ENTRY_FEE;
   const perEntryToPool = getEntryPoolContribution(entryFeeWatch);
 
-  // User-variant feed-visibility preview (start - 7d). The watched value is display-shifted
-  // (toDisplayUTC), so convert back for the real future check and re-shift for the label.
+  // User-variant feed-visibility preview (start - 7d). The watched value is in the active schedule
+  // tz, so resolve to the real instant for the future check and re-apply the tz for the label.
   const startsAtWatch = form.watch('startsAt');
   const visibleAtPreview =
-    isUser && startsAtWatch ? getUserChallengeVisibleAt(fromDisplayUTC(startsAtWatch)) : null;
+    isUser && startsAtWatch ? getUserChallengeVisibleAt(fromScheduleDisplay(startsAtWatch)) : null;
   const visibleAtInFuture = !!visibleAtPreview && visibleAtPreview.getTime() > Date.now();
   const visibleAtLabel = visibleAtPreview
-    ? dayjs(toDisplayUTC(visibleAtPreview)).format('MMM D, YYYY h:mm A')
+    ? dayjs(toScheduleDisplay(visibleAtPreview)).format('MMM D, YYYY h:mm A')
     : '';
 
   // Watch prize values for total calculation
@@ -682,9 +691,31 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
         {/* Timing */}
         <Paper withBorder p={{ base: 'sm', sm: 'md' }}>
           <Stack gap="md">
-            <Title order={4}>Schedule</Title>
+            <Group justify="space-between" align="center">
+              <Title order={4}>Schedule</Title>
+              {!isUser && (
+                <SegmentedControl
+                  size="xs"
+                  value={scheduleTz}
+                  onChange={(next) => {
+                    const val = next as 'local' | 'utc';
+                    (['visibleAt', 'startsAt', 'endsAt'] as const).forEach((field) => {
+                      const cur = form.getValues(field) as Date | null | undefined;
+                      if (!cur) return;
+                      const instant = scheduleTz === 'utc' ? fromDisplayUTC(cur) : cur;
+                      form.setValue(field, val === 'utc' ? toDisplayUTC(instant) : instant);
+                    });
+                    setScheduleTz(val);
+                  }}
+                  data={[
+                    { label: 'Local', value: 'local' },
+                    { label: 'UTC', value: 'utc' },
+                  ]}
+                />
+              )}
+            </Group>
             <Text size="sm" c="dimmed">
-              Times are snapped to the nearest hour (UTC).
+              Times are snapped to the nearest hour ({isUtcSchedule ? 'UTC' : 'your local time'}).
             </Text>
 
             <SimpleGrid cols={{ base: 1, sm: isUser ? 2 : 3 }}>
@@ -692,7 +723,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
               {!isUser && (
                 <InputDateTimePicker
                   name="visibleAt"
-                  label="Visible From (UTC)"
+                  label={`Visible From (${isUtcSchedule ? 'UTC' : 'local'})`}
                   placeholder="When challenge appears in feed"
                   valueFormat="lll"
                   withAsterisk
@@ -703,7 +734,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
 
               <InputDateTimePicker
                 name="startsAt"
-                label="Starts At (UTC)"
+                label={`Starts At (${isUtcSchedule ? 'UTC' : 'local'})`}
                 placeholder="When submissions open"
                 valueFormat="lll"
                 withAsterisk
@@ -713,7 +744,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
 
               <InputDateTimePicker
                 name="endsAt"
-                label="Ends At (UTC)"
+                label={`Ends At (${isUtcSchedule ? 'UTC' : 'local'})`}
                 placeholder="When submissions close"
                 valueFormat="lll"
                 withAsterisk
@@ -726,7 +757,9 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
               <Stack gap={4}>
                 <Text size="sm" c="dimmed">
                   {visibleAtInFuture
-                    ? `Your challenge appears in the feed from ${visibleAtLabel} (UTC) — one week before it starts.`
+                    ? `Your challenge appears in the feed from ${visibleAtLabel} (${
+                        isUtcSchedule ? 'UTC' : 'local time'
+                      }) — one week before it starts.`
                     : 'Your challenge appears in the feed as soon as it passes review.'}
                 </Text>
                 <Text size="sm" c="dimmed">
@@ -743,6 +776,21 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
             {isUser && (
               <>
                 <Title order={4}>Entry Fee &amp; Prizes</Title>
+                <Stack gap={4}>
+                  <SegmentedControl
+                    value={effectiveBuzzType === 'green' ? 'green' : 'yellow'}
+                    disabled
+                    data={[
+                      { label: 'Yellow Buzz', value: 'yellow' },
+                      { label: 'Green Buzz', value: 'green' },
+                    ]}
+                  />
+                  <Text size="xs" c="dimmed">
+                    Currency is set by the site you create on. To run a{' '}
+                    {effectiveBuzzType === 'green' ? 'Yellow' : 'Green'} Buzz challenge, create it on{' '}
+                    {effectiveBuzzType === 'green' ? 'civitai.com' : 'civitai.red'}.
+                  </Text>
+                </Stack>
                 <Alert icon={<IconInfoCircle size={16} />} color="blue">
                   Entry fees &amp; prizes use <b>{buzzLabel} Buzz</b>. Your challenge is funded by
                   entry fees — each entry pays the entry fee; {CHALLENGE_ENTRY_HOUSE_CUT} Buzz per
@@ -757,7 +805,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                     min={CHALLENGE_MIN_ENTRY_FEE}
                     max={CHALLENGE_MAX_ENTRY_FEE}
                     step={10}
-                    description={`Min ${CHALLENGE_MIN_ENTRY_FEE}. ${perEntryToPool} Buzz of each entry goes to the prize pool. Entry fees are non-refundable once paid.`}
+                    description={`${perEntryToPool} Buzz of each entry goes to the prize pool. Entry fees are non-refundable once paid.`}
                     withAsterisk
                     disabled={isTerminal}
                   />
@@ -983,7 +1031,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                 <InputNumber
                   name="maxParticipants"
                   label="Max Participants (optional)"
-                  description="Caps distinct participants. Once reached, no new participants can join; existing participants can still add entries up to the per-user limit."
+                  description="Once reached, no new participants can join."
                   min={1}
                   max={100_000}
                   disabled={isActive || isTerminal}

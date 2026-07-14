@@ -775,13 +775,13 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
     {
       label: 'Starts',
       value: (
-        <Text size="sm">{formatDate(challenge.startsAt, 'MMM DD, YYYY hh:mm A [UTC]', true)}</Text>
+        <Text size="sm">{formatDate(challenge.startsAt, 'MMM DD, YYYY hh:mm A', false)}</Text>
       ),
     },
     {
       label: 'Ends',
       value: (
-        <Text size="sm">{formatDate(challenge.endsAt, 'MMM DD, YYYY hh:mm A [UTC]', true)}</Text>
+        <Text size="sm">{formatDate(challenge.endsAt, 'MMM DD, YYYY hh:mm A', false)}</Text>
       ),
     },
     {
@@ -790,7 +790,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
     },
     {
       label: 'AI Reviews',
-      value: <Text size="sm">Only 6–12 entries selected at random every 10 min</Text>,
+      value: <Text size="sm">Every entry is judged</Text>,
     },
     ...(challenge.entryPrize && challenge.entryPrizeRequirement > 0
       ? [
@@ -926,6 +926,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
               borderLeft: getBorder(cs, 'teal'),
               borderRight: getBorder(cs, 'teal'),
               background: getBackground(cs, 'teal'),
+              borderRadius: 'var(--mantine-radius-md) var(--mantine-radius-md) 0 0',
             }}
           >
             <Stack gap="sm" align="center" p="md">
