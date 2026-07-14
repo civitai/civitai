@@ -831,6 +831,15 @@ export const getModelsWithVersionsHandler = async ({
           }
           return {
             ...modelVersion,
+            // `getModelVersionDetailsSelect` carries a raw Prisma `Decimal`
+            // `licensingFee`; convert it to a number so the `...modelVersion`
+            // spread never puts a Decimal on a tRPC response. superjson tolerates
+            // a raw Decimal (silent string-coerce), but the phased devalue
+            // migration would throw on it — this keeps the (currently unwired)
+            // handler safe if it's ever re-attached to a router. Mirrors the
+            // conversion in getModelHandler (model.controller.ts).
+            licensingFee:
+              modelVersion.licensingFee != null ? Number(modelVersion.licensingFee) : null,
             files,
             stats: {
               downloadCount: metrics[0]?.downloadCount ?? 0,

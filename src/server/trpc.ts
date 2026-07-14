@@ -13,6 +13,7 @@ import { trpcProcedureDuration } from '~/server/prom/client';
 import { maybeLogTrpcSlow } from '~/server/logging/trpc-slow-log';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
 import { instrumentSerialize } from '~/server/logging/trpc-serialize-log';
+import { unionDeserialize } from '~/shared/utils/trpc-union-transformer';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
@@ -44,16 +45,30 @@ const t = initTRPC
   .context<Context>()
   .meta<TRPCMeta>()
   .create({
+    // Phase 1 of the superjson → devalue transformer migration (additive, wire
+    // unchanged). Split into a CombinedDataTransformer so READ and WRITE flip
+    // independently in later phases. WRITE (serialize) stays 100% superjson;
+    // READ (deserialize) becomes the format-sniffing UNION so the server can
+    // decode either format before any writer ever emits devalue. `input` is the
+    // request-read path (the only one exercised server-side); `output` is filled
+    // for a complete transformer.
     transformer: {
-      // instrumentSerialize times the serialize (the exact frame that pegs the
-      // loop on an oversized response — see trpc-serialize-log.ts) and, only above
-      // a cheap duration floor, logs the offending procedure + byte size. Disarmed
-      // by default: a single boolean branch, then the original withSpan+superjson.
-      serialize: (data: any) =>
-        instrumentSerialize(() =>
-          withSpan('trpc:serialize:superjson', () => superjson.serialize(data))
-        ),
-      deserialize: superjson.deserialize.bind(superjson),
+      input: {
+        serialize: (data: any) => superjson.serialize(data),
+        deserialize: unionDeserialize,
+      },
+      output: {
+        // instrumentSerialize times the serialize (the exact frame that pegs the
+        // loop on an oversized response — see trpc-serialize-log.ts) and, only
+        // above a cheap duration floor, logs the offending procedure + byte size.
+        // Disarmed by default: a single boolean branch, then the original
+        // withSpan+superjson. Kept EXACTLY as before — the write stays superjson.
+        serialize: (data: any) =>
+          instrumentSerialize(() =>
+            withSpan('trpc:serialize:superjson', () => superjson.serialize(data))
+          ),
+        deserialize: unionDeserialize,
+      },
     },
     errorFormatter({ shape }) {
       return shape;

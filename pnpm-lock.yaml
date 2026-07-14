@@ -340,6 +340,9 @@ importers:
       decimal.js:
         specifier: ^10.5.0
         version: 10.6.0
+      devalue:
+        specifier: 5.8.1
+        version: 5.8.1
       diff:
         specifier: 4.0.2
         version: 4.0.2
