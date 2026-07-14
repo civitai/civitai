@@ -39,15 +39,12 @@ function AdUnitContent({
   id?: string;
   onDismount?: OnDismount;
 }) {
-  // const loadedRef = useRef(false);
-  const [id, setId] = useState<string | null>(initialId ?? null);
+  // Generate the id at first render (not in an effect) so the placement div is in
+  // the DOM before the auction is queued — otherwise a late-mounting slot can push
+  // startAuction before its <div id> exists and the slot never fills.
+  const [id] = useState(() => initialId ?? uuidv4());
 
   useEffect(() => {
-    // if (loadedRef.current) return;
-    // loadedRef.current = true;
-    const id = initialId ?? uuidv4();
-    setId(id);
-
     if (!adUnitDictionary[adUnit]) adUnitDictionary[adUnit] = id;
 
     if (window.adngin && window.adngin.adnginLoaderReady) {
@@ -74,7 +71,7 @@ function AdUnitContent({
     };
   }, []);
 
-  return id ? <div className="flex items-center justify-center" id={id}></div> : null;
+  return <div className="flex items-center justify-center" id={id}></div>;
 }
 
 function AdWrapper({
