@@ -11,7 +11,11 @@ const {
     collectionItem: { count: vi.fn().mockResolvedValue(0) },
   },
   mockDbWrite: {
-    challenge: { delete: vi.fn().mockResolvedValue(undefined) },
+    challenge: {
+      findUnique: vi.fn(),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      delete: vi.fn().mockResolvedValue(undefined),
+    },
     collection: { delete: vi.fn().mockResolvedValue(undefined) },
   },
   mockRefundUserChallengeFunds: vi.fn().mockResolvedValue({ refundedEntries: 0 }),
@@ -45,15 +49,34 @@ describe('deleteUserChallenge', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockDbRead.collectionItem.count.mockResolvedValue(0);
+    mockDbWrite.challenge.updateMany.mockResolvedValue({ count: 1 });
   });
 
-  it('owner + Scheduled + 0 entries: refunds and deletes', async () => {
+  it('owner + Scheduled + 0 entries: claims, refunds and deletes', async () => {
     mockDbRead.challenge.findUnique.mockResolvedValue(makeChallenge());
+    mockDbWrite.challenge.findUnique.mockResolvedValue(makeChallenge());
     const res = await deleteUserChallenge({ id: 1, userId: OWNER });
     expect(res).toEqual({ success: true });
+    // Atomic claim (Scheduled -> Cancelled) gates the refund.
+    expect(mockDbWrite.challenge.updateMany).toHaveBeenCalledWith({
+      where: { id: 1, status: ChallengeStatus.Scheduled },
+      data: { status: ChallengeStatus.Cancelled },
+    });
     expect(mockRefundUserChallengeFunds).toHaveBeenCalledWith(1);
     expect(mockDbWrite.challenge.delete).toHaveBeenCalledWith({ where: { id: 1 } });
     expect(mockDbWrite.collection.delete).toHaveBeenCalledWith({ where: { id: 100 } });
+  });
+
+  it('lost claim (concurrent delete / activation race): does NOT refund or delete', async () => {
+    mockDbRead.challenge.findUnique.mockResolvedValue(makeChallenge());
+    mockDbWrite.challenge.findUnique.mockResolvedValue(makeChallenge());
+    // Another caller (or the activation job) already flipped the row out of Scheduled.
+    mockDbWrite.challenge.updateMany.mockResolvedValue({ count: 0 });
+    await expect(deleteUserChallenge({ id: 1, userId: OWNER })).rejects.toThrow(
+      /no longer in a deletable state/i
+    );
+    expect(mockRefundUserChallengeFunds).not.toHaveBeenCalled();
+    expect(mockDbWrite.challenge.delete).not.toHaveBeenCalled();
   });
 
   it('rejects non-owner', async () => {

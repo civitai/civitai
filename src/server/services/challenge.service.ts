@@ -1711,7 +1711,10 @@ export async function updateChallengeStatus(id: number, status: ChallengeStatus)
 }
 
 export async function deleteChallenge(id: number) {
-  const challenge = await dbRead.challenge.findUnique({
+  // Read on the primary, not the read replica: replica lag let a delete see a stale `Scheduled`
+  // status for a challenge the activation job had just flipped to `Active`, then refund + delete a
+  // now-live challenge out from under its entrants.
+  const challenge = await dbWrite.challenge.findUnique({
     where: { id },
     select: { id: true, status: true, collectionId: true, source: true },
   });
@@ -1731,13 +1734,27 @@ export async function deleteChallenge(id: number) {
     });
   }
 
-  // Refund BEFORE deleting: refundUserChallengeFunds reads the Challenge row, so once the row
-  // is gone there is no code path left that can ever return the creator's escrowed prize or
-  // any collected entry fees. Scheduled only — a Cancelled challenge was already refunded by
-  // voidChallenge, and a Completing/Completed challenge's pool was (or is being) paid out to
-  // winners, so refunding it would double-spend from account 0 (minted Buzz). A failure here
-  // aborts the delete so it can be retried.
+  // Refund BEFORE deleting: refundUserChallengeFunds reads the Challenge row, so once the row is
+  // gone nothing can return the creator's escrowed prize or collected entry fees. Scheduled only —
+  // a Cancelled challenge was already refunded by voidChallenge, and a Completing/Completed pool
+  // was (or is being) paid out to winners, so refunding it would double-spend from account 0.
   if (challenge.source === ChallengeSource.User && challenge.status === ChallengeStatus.Scheduled) {
+    // Atomically claim the row (Scheduled -> Cancelled) before refunding. This does double duty:
+    // (a) two concurrent deletes / a delete racing the activation job can't both refund — only the
+    // caller whose conditional update affects 1 row proceeds; (b) if activation won the race the
+    // status is no longer Scheduled, count is 0, and we abort rather than refunding a live/other
+    // challenge. Refunds are also idempotent via deterministic externalTransactionId prefixes, so a
+    // rare crash after the claim is safe to re-run manually.
+    const claimed = await dbWrite.challenge.updateMany({
+      where: { id, status: ChallengeStatus.Scheduled },
+      data: { status: ChallengeStatus.Cancelled },
+    });
+    if (claimed.count !== 1) {
+      throw new TRPCError({
+        code: 'PRECONDITION_FAILED',
+        message: 'This challenge is no longer in a deletable state.',
+      });
+    }
     await refundUserChallengeFunds(id);
   }
 
@@ -2419,15 +2436,21 @@ export async function voidChallenge(challengeId: number) {
 
   // Refund BEFORE flipping to Cancelled: the status guard above makes a Cancelled challenge
   // un-re-voidable, so refund-after-flip would strand the funds permanently if the buzz call
-  // failed. The refund is idempotent, so a crash between refund and update safely re-runs.
+  // failed. The refund is idempotent (deterministic externalTransactionId prefixes; the buzz
+  // service dedups), so a crash between refund and update — or two concurrent voids — safely
+  // resolve to a single net refund.
   const { refundedEntries } = await refundUserChallengeFunds(challengeId);
   log(`Refunded ${refundedEntries} entry fees`);
   if (refundedEntries > 0) {
     await notifyEntrantsOfCancellation(challenge);
   }
 
-  await dbWrite.challenge.update({
-    where: { id: challengeId },
+  // Conditional flip so a concurrent activation isn't clobbered back to Cancelled.
+  await dbWrite.challenge.updateMany({
+    where: {
+      id: challengeId,
+      status: { in: [ChallengeStatus.Active, ChallengeStatus.Scheduled] },
+    },
     data: { status: ChallengeStatus.Cancelled },
   });
   log('Challenge status updated to Cancelled');
