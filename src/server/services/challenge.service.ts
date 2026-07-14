@@ -61,7 +61,10 @@ import { createImage, imagesForModelVersionsCache } from '~/server/services/imag
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { resolveJudgingCategories } from '~/server/services/challenge-category.service';
-import { assertCanCreateUserChallenge } from '~/server/services/challenge-eligibility.service';
+import {
+  assertCanCreateUserChallenge,
+  assertUserInGoodStanding,
+} from '~/server/services/challenge-eligibility.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
 import {
   isChallengeCoverScanned,
@@ -1363,8 +1366,11 @@ export async function upsertUserChallenge({
   const resolvedJudgingCategories = await resolveJudgingCategories(judgingCategories);
 
   // Create — gate on eligibility (score + standing + tier concurrent cap) before creating any
-  // resources, so an ineligible caller can't leave an orphan cover Image behind.
+  // resources, so an ineligible caller can't leave an orphan cover Image behind. Edit — only
+  // re-check standing (not score/cap/daily-limit, which are create-only concerns) so a
+  // since-muted/struck/banned creator can't keep editing a Scheduled challenge.
   if (!id) await assertCanCreateUserChallenge(userId);
+  else await assertUserInGoodStanding(userId);
 
   // Cover image: reuse an existing Image or create one from the upload (like the mod path).
   // A reused id must belong to the caller — otherwise anyone could surface another user's

@@ -1,15 +1,28 @@
+import { TRPCError } from '@trpc/server';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Use vi.hoisted to define mocks available in vi.mock factories
-const { mockDbRead, mockGetChallengeConfig, mockGetChallengeById } = vi.hoisted(() => {
+const {
+  mockDbRead,
+  mockGetChallengeConfig,
+  mockGetChallengeById,
+  mockAssertUserInGoodStanding,
+  mockAssertCanCreateUserChallenge,
+  mockResolveJudgingCategories,
+} = vi.hoisted(() => {
   return {
     mockDbRead: {
       $queryRaw: vi.fn(),
       modelVersion: { findMany: vi.fn() },
-      image: { findUnique: vi.fn() },
+      image: { findUnique: vi.fn(), findFirst: vi.fn() },
+      challenge: { findUnique: vi.fn() },
+      challengeJudge: { findFirst: vi.fn() },
     },
     mockGetChallengeConfig: vi.fn(),
     mockGetChallengeById: vi.fn(),
+    mockAssertUserInGoodStanding: vi.fn(),
+    mockAssertCanCreateUserChallenge: vi.fn(),
+    mockResolveJudgingCategories: vi.fn(),
   };
 });
 
@@ -63,6 +76,15 @@ vi.mock('~/server/services/notification.service', () => ({
   createNotification: vi.fn(),
 }));
 
+vi.mock('~/server/services/challenge-eligibility.service', () => ({
+  assertCanCreateUserChallenge: mockAssertCanCreateUserChallenge,
+  assertUserInGoodStanding: mockAssertUserInGoodStanding,
+}));
+
+vi.mock('~/server/services/challenge-category.service', () => ({
+  resolveJudgingCategories: mockResolveJudgingCategories,
+}));
+
 vi.mock('~/utils/errorHandling', () => ({
   withRetries: vi.fn((fn: () => unknown) => fn()),
 }));
@@ -78,7 +100,9 @@ vi.mock('~/server/utils/errorHandling', () => ({
 }));
 
 // Import after mocks are set up (top-level, not in beforeEach)
-const { getChallengeForEdit } = await import('~/server/services/challenge.service');
+const { getChallengeForEdit, upsertUserChallenge } = await import(
+  '~/server/services/challenge.service'
+);
 
 const mockConfig = {
   reviewMeTagId: 301770,
@@ -174,5 +198,72 @@ describe('getChallengeForEdit', () => {
     const result = await getChallengeForEdit(1);
 
     expect(result?.judgingCategories).toBeNull();
+  });
+});
+
+describe('upsertUserChallenge (edit branch) — creator standing re-check', () => {
+  // Enough to clear the pre-standing-check steps (judge lookup, category resolution) and reach
+  // the cover-image/existing-challenge lookups. userId must match assertions below.
+  const editInput = {
+    id: 42,
+    userId: 111,
+    buzzType: 'yellow' as const,
+    title: 'Edited title',
+    description: 'desc',
+    theme: 'Neon',
+    coverImage: { id: 555, url: 'unused' },
+    allowedNsfwLevel: 1,
+    modelVersionIds: [],
+    judgeId: 1,
+    judgingCategories: [],
+    entryFee: 50,
+    initialPrizeBuzz: 0,
+    prizeDistribution: [],
+    maxEntriesPerUser: 5,
+    startsAt: new Date(Date.now() + 86400000),
+    endsAt: new Date(Date.now() + 2 * 86400000),
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDbRead.challengeJudge.findFirst.mockResolvedValue({ id: 1 });
+    mockDbRead.image.findFirst.mockResolvedValue({ id: 555 });
+    mockResolveJudgingCategories.mockResolvedValue([]);
+  });
+
+  it('throws when the creator has fallen out of good standing (muted/struck/banned)', async () => {
+    mockAssertUserInGoodStanding.mockRejectedValueOnce(
+      new TRPCError({ code: 'FORBIDDEN', message: 'Muted accounts cannot create challenges.' })
+    );
+
+    await expect(upsertUserChallenge(editInput as never)).rejects.toThrow(
+      'Muted accounts cannot create challenges.'
+    );
+
+    expect(mockAssertUserInGoodStanding).toHaveBeenCalledWith(111);
+    // Score/cap/daily-limit gates are create-only concerns — must not run on edit.
+    expect(mockAssertCanCreateUserChallenge).not.toHaveBeenCalled();
+    // Standing gate sits before the existing-challenge/cover-image lookups, so a since-muted
+    // creator can't trigger those side effects.
+    expect(mockDbRead.challenge.findUnique).not.toHaveBeenCalled();
+    expect(mockDbRead.image.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('does not throw on the standing check when the creator is in good standing', async () => {
+    mockAssertUserInGoodStanding.mockResolvedValueOnce({
+      scoreTotal: 0,
+      bannedAt: null,
+      muted: false,
+      deletedAt: null,
+      activeStrikes: 0,
+    });
+    // Downstream (unrelated to standing): simulate the challenge no longer existing, so a
+    // rejection here can only come from the next real gate, not the standing check.
+    mockDbRead.challenge.findUnique.mockResolvedValueOnce(null);
+
+    await expect(upsertUserChallenge(editInput as never)).rejects.toThrow('Challenge not found');
+
+    expect(mockAssertUserInGoodStanding).toHaveBeenCalledWith(111);
+    expect(mockAssertCanCreateUserChallenge).not.toHaveBeenCalled();
   });
 });
