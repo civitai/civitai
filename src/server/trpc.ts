@@ -246,7 +246,6 @@ function runRecordProcedureDuration<T>(
   userId: number | undefined,
   next: () => Promise<T>
 ): Promise<T> {
-  const metricsEnd = TRPC_PROCEDURE_METRICS ? trpcProcedureDuration.startTimer({ path }) : undefined;
   const startedAt = performance.now();
   return next().then(
     (result) => {
@@ -255,16 +254,21 @@ function runRecordProcedureDuration<T>(
       const r = result as unknown as { ok?: boolean; error?: { code?: string } };
       const ok = r?.ok !== false;
       const errorCode = r?.ok === false ? r.error?.code : undefined;
-      metricsEnd?.();
-      maybeLogTrpcSlow({ path, type, durationMs: performance.now() - startedAt, ok, errorCode, userId });
+      const durationMs = performance.now() - startedAt;
+      // Reuse the single performance.now() delta for BOTH the opt-in histogram and
+      // the always-on slow-log — avoids startTimer's separate hrtime capture +
+      // Object.assign per procedure. Same histogram semantics (wall-clock seconds).
+      if (TRPC_PROCEDURE_METRICS) trpcProcedureDuration.observe({ path }, durationMs / 1000);
+      maybeLogTrpcSlow({ path, type, durationMs, ok, errorCode, userId });
       return result;
     },
     (err) => {
-      metricsEnd?.();
+      const durationMs = performance.now() - startedAt;
+      if (TRPC_PROCEDURE_METRICS) trpcProcedureDuration.observe({ path }, durationMs / 1000);
       maybeLogTrpcSlow({
         path,
         type,
-        durationMs: performance.now() - startedAt,
+        durationMs,
         ok: false,
         errorCode: err instanceof TRPCError ? err.code : undefined,
         userId,
