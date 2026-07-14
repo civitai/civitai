@@ -104,6 +104,7 @@
     "@civitai/buzz": "workspace:*",
     "@civitai/client": "0.2.0-beta.80",
     "@civitai/cybertipline-tools": "^0.1.0",
+    "@civitai/moderation": "workspace:*",
     "@civitai/next-axiom": "^0.17.0",
     "@clavata/sdk": "^0.2.3",
     "@clickhouse/client": "^0.2.2",

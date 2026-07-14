@@ -18,6 +18,8 @@ export default defineConfig(({ mode }) => {
       noExternal: [
         '@civitai/auth',
         '@civitai/brand',
+        '@civitai/buzz',
+        '@civitai/email',
         // @civitai/client ships ESM with extensionless directory imports (dist/generated) that Node's
         // ESM loader rejects when externalized — bundle it so Vite resolves them.
         '@civitai/client',
@@ -25,6 +27,8 @@ export default defineConfig(({ mode }) => {
         '@civitai/db',
         '@civitai/db-schema',
         '@civitai/mod-utils',
+        '@civitai/moderation',
+        '@civitai/notifications',
         '@civitai/redis',
         '@civitai/shared',
         '@civitai/ui',
