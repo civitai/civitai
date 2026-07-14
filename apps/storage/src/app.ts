@@ -70,7 +70,10 @@ export async function buildServer(): Promise<FastifyInstance> {
   }
 
   // Wrap an authed handler: parse+auth, run, and map a backend/config error to 500 with a logged reason.
-  function route<T>(schema: ZodType<T>, handler: (body: T, reply: FastifyReply) => Promise<unknown>) {
+  function route<T>(
+    schema: ZodType<T>,
+    handler: (body: T, reply: FastifyReply) => Promise<unknown>
+  ) {
     return async (req: FastifyRequest, reply: FastifyReply) => {
       const body = authedBody(schema, req, reply);
       if (body === null) return reply;
@@ -177,10 +180,15 @@ export async function buildServer(): Promise<FastifyInstance> {
   app.post(
     '/multipart/presign-part',
     route(presignPartInput, async (body) => {
-      return getBackendClient(body.backend).presignUploadPart(body.key, body.uploadId, body.partNumber, {
-        bucket: body.bucket,
-        expiresIn: body.expiresIn,
-      });
+      return getBackendClient(body.backend).presignUploadPart(
+        body.key,
+        body.uploadId,
+        body.partNumber,
+        {
+          bucket: body.bucket,
+          expiresIn: body.expiresIn,
+        }
+      );
     })
   );
 
@@ -200,7 +208,9 @@ export async function buildServer(): Promise<FastifyInstance> {
     } catch (err) {
       const cls = classifyS3MultipartError(err);
       req.log.error({ err, class: cls }, 'multipart complete failed');
-      return reply.code(MULTIPART_ERROR_STATUS[cls]).send({ error: 'multipart complete failed', class: cls });
+      return reply
+        .code(MULTIPART_ERROR_STATUS[cls])
+        .send({ error: 'multipart complete failed', class: cls });
     }
   });
 
@@ -208,12 +218,18 @@ export async function buildServer(): Promise<FastifyInstance> {
     const body = authedBody(abortMultipartInput, req, reply);
     if (body === null) return reply;
     try {
-      await getBackendClient(body.backend).abortMultipartUpload(body.key, body.uploadId, body.bucket);
+      await getBackendClient(body.backend).abortMultipartUpload(
+        body.key,
+        body.uploadId,
+        body.bucket
+      );
       return reply.send({ ok: true });
     } catch (err) {
       const cls = classifyS3MultipartError(err);
       req.log.error({ err, class: cls }, 'multipart abort failed');
-      return reply.code(MULTIPART_ERROR_STATUS[cls]).send({ error: 'multipart abort failed', class: cls });
+      return reply
+        .code(MULTIPART_ERROR_STATUS[cls])
+        .send({ error: 'multipart abort failed', class: cls });
     }
   });
 

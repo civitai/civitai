@@ -97,7 +97,11 @@ async function putBytesTo(
     signal,
   });
   if (!res.ok) {
-    throw new StorageClientError(`part upload failed (${res.status})`, res.status, res.status >= 500);
+    throw new StorageClientError(
+      `part upload failed (${res.status})`,
+      res.status,
+      res.status >= 500
+    );
   }
   return res.headers.get('etag');
 }
@@ -212,10 +216,24 @@ async function post(path: string, body: unknown, config: StorageClientConfig): P
     resolved = resolveConfig(config);
   } catch (err) {
     const e = err as StorageClientError;
-    safeReport(config.onFailure, { path, status: e.status, retryable: false, attempts: 0, message: e.message });
+    safeReport(config.onFailure, {
+      path,
+      status: e.status,
+      retryable: false,
+      attempts: 0,
+      message: e.message,
+    });
     throw e;
   }
-  const { endpoint, token, fetch: fetchImpl, timeoutMs, retries, retryBaseMs, onFailure } = resolved;
+  const {
+    endpoint,
+    token,
+    fetch: fetchImpl,
+    timeoutMs,
+    retries,
+    retryBaseMs,
+    onFailure,
+  } = resolved;
   const url = `${endpoint}${path}`;
   for (let attempt = 0; ; attempt++) {
     try {
@@ -308,7 +326,8 @@ export function createStorageClient(config: StorageClientConfig = {}) {
       const backend = params.backend ?? 'default';
       const chunkSize = params.chunkSize ?? DEFAULT_STREAM_CHUNK_SIZE;
       const fetchImpl = config.fetch ?? globalThis.fetch;
-      if (!fetchImpl) throw new StorageClientError('No fetch implementation available (pass `fetch`).');
+      if (!fetchImpl)
+        throw new StorageClientError('No fetch implementation available (pass `fetch`).');
 
       const { uploadId, bucket, key } = createMultipartResult.parse(
         await post(
@@ -360,10 +379,15 @@ export function createStorageClient(config: StorageClientConfig = {}) {
     ): Promise<ArrayBuffer> => {
       const { url } = presignResult.parse(await post('/presign/get', input, config));
       const fetchImpl = config.fetch ?? globalThis.fetch;
-      if (!fetchImpl) throw new StorageClientError('No fetch implementation available (pass `fetch`).');
+      if (!fetchImpl)
+        throw new StorageClientError('No fetch implementation available (pass `fetch`).');
       const res = await fetchImpl(url, { signal: options.signal });
       if (!res.ok) {
-        throw new StorageClientError(`object read failed (${res.status})`, res.status, res.status >= 500);
+        throw new StorageClientError(
+          `object read failed (${res.status})`,
+          res.status,
+          res.status >= 500
+        );
       }
       return res.arrayBuffer();
     },

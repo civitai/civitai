@@ -10,15 +10,17 @@ describe('parseKey', () => {
   });
 
   it('parses path-style when the host matches s3Host (bucket in path)', () => {
-    expect(
-      parseKey(`https://${S3_HOST}/my-bucket/path/to/file.png`, { s3Host: S3_HOST })
-    ).toEqual({ bucket: 'my-bucket', key: 'path/to/file.png' });
+    expect(parseKey(`https://${S3_HOST}/my-bucket/path/to/file.png`, { s3Host: S3_HOST })).toEqual({
+      bucket: 'my-bucket',
+      key: 'path/to/file.png',
+    });
   });
 
   it('parses virtual-host style by stripping .s3Host from the hostname', () => {
-    expect(
-      parseKey(`https://my-bucket.${S3_HOST}/path/to/file.png`, { s3Host: S3_HOST })
-    ).toEqual({ bucket: 'my-bucket', key: 'path/to/file.png' });
+    expect(parseKey(`https://my-bucket.${S3_HOST}/path/to/file.png`, { s3Host: S3_HOST })).toEqual({
+      bucket: 'my-bucket',
+      key: 'path/to/file.png',
+    });
   });
 
   it('parses path-style when the host matches b2Host', () => {

@@ -12,7 +12,9 @@ function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(ab, bb);
 }
 
-function presentedToken(headers: Record<string, string | string[] | undefined>): string | undefined {
+function presentedToken(
+  headers: Record<string, string | string[] | undefined>
+): string | undefined {
   const auth = headers['authorization'];
   const authStr = Array.isArray(auth) ? auth[0] : auth;
   if (authStr) {

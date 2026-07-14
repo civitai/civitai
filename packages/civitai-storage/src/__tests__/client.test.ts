@@ -2,7 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { createStorageClient } from '../client';
 
 const json = (obj: unknown) =>
-  new Response(JSON.stringify(obj), { status: 200, headers: { 'content-type': 'application/json' } });
+  new Response(JSON.stringify(obj), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
 
 type Recorder = {
   presigns: number[];
@@ -39,7 +42,8 @@ function routingFetch(rec: Recorder, opts: { failPart?: number } = {}): typeof f
       return json({ ok: true });
     }
     if (url.endsWith('/presign/get')) return json({ url: 'https://s3/obj', bucket: 'b', key: 'k' });
-    if (url === 'https://s3/obj') return new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 });
+    if (url === 'https://s3/obj')
+      return new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 });
     throw new Error(`unexpected fetch ${method} ${url}`);
   }) as typeof fetch;
 }
@@ -53,7 +57,10 @@ const newRecorder = (): Recorder => ({ presigns: [], puts: [], aborted: false })
 describe('client.uploadStream', () => {
   it('creates, presigns+PUTs each chunk, and completes with assembled parts', async () => {
     const rec = newRecorder();
-    const client = createStorageClient({ endpoint: 'http://storage.test', fetch: routingFetch(rec) });
+    const client = createStorageClient({
+      endpoint: 'http://storage.test',
+      fetch: routingFetch(rec),
+    });
 
     // 120 bytes in, 100-byte chunks → 2 parts: [100, 20].
     const result = await client.uploadStream({ key: 'k', chunkSize: 100 }, source([40, 40, 40]));
@@ -74,7 +81,10 @@ describe('client.uploadStream', () => {
 
   it('reports cumulative progress ending at the total', async () => {
     const rec = newRecorder();
-    const client = createStorageClient({ endpoint: 'http://storage.test', fetch: routingFetch(rec) });
+    const client = createStorageClient({
+      endpoint: 'http://storage.test',
+      fetch: routingFetch(rec),
+    });
     const seen: number[] = [];
     await client.uploadStream({ key: 'k', chunkSize: 100 }, source([40, 40, 40]), {
       onProgress: (loaded) => seen.push(loaded),
@@ -97,7 +107,10 @@ describe('client.uploadStream', () => {
 
   it('throws and aborts on an empty (zero-byte) source', async () => {
     const rec = newRecorder();
-    const client = createStorageClient({ endpoint: 'http://storage.test', fetch: routingFetch(rec) });
+    const client = createStorageClient({
+      endpoint: 'http://storage.test',
+      fetch: routingFetch(rec),
+    });
     await expect(client.uploadStream({ key: 'k' }, source([]))).rejects.toThrow(/no bytes/);
     expect(rec.presigns).toEqual([]);
     expect(rec.aborted).toBe(true);
@@ -106,18 +119,26 @@ describe('client.uploadStream', () => {
 
   it('aborts when the signal is already aborted', async () => {
     const rec = newRecorder();
-    const client = createStorageClient({ endpoint: 'http://storage.test', fetch: routingFetch(rec) });
+    const client = createStorageClient({
+      endpoint: 'http://storage.test',
+      fetch: routingFetch(rec),
+    });
     const controller = new AbortController();
     controller.abort();
     await expect(
-      client.uploadStream({ key: 'k', chunkSize: 100 }, source([40, 40, 40]), { signal: controller.signal })
+      client.uploadStream({ key: 'k', chunkSize: 100 }, source([40, 40, 40]), {
+        signal: controller.signal,
+      })
     ).rejects.toThrow(/aborted/i);
     expect(rec.aborted).toBe(true);
   });
 
   it('re-chunks a single large piece without a quadratic blow-up (correct slicing)', async () => {
     const rec = newRecorder();
-    const client = createStorageClient({ endpoint: 'http://storage.test', fetch: routingFetch(rec) });
+    const client = createStorageClient({
+      endpoint: 'http://storage.test',
+      fetch: routingFetch(rec),
+    });
     // One 250-byte piece, 100-byte chunks → 3 parts: [100, 100, 50].
     const result = await client.uploadStream({ key: 'k', chunkSize: 100 }, source([250]));
     expect(rec.puts.map((p) => p.size)).toEqual([100, 100, 50]);
@@ -128,7 +149,10 @@ describe('client.uploadStream', () => {
 describe('client.getObjectBuffer', () => {
   it('presigns a GET then fetches the bytes', async () => {
     const rec = newRecorder();
-    const client = createStorageClient({ endpoint: 'http://storage.test', fetch: routingFetch(rec) });
+    const client = createStorageClient({
+      endpoint: 'http://storage.test',
+      fetch: routingFetch(rec),
+    });
     const buf = await client.getObjectBuffer({ backend: 'default', key: 'k' });
     expect(new Uint8Array(buf)).toEqual(new Uint8Array([1, 2, 3, 4]));
   });

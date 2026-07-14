@@ -30,7 +30,9 @@ const REQUIRED: Record<Backend, string[]> = {
 
 const missing = REQUIRED[backend].filter((k) => !process.env[k]);
 if (missing.length) {
-  console.log(`SKIP: storage smoke — backend "${backend}" not configured (missing ${missing.join(', ')}).`);
+  console.log(
+    `SKIP: storage smoke — backend "${backend}" not configured (missing ${missing.join(', ')}).`
+  );
   process.exit(0);
 }
 

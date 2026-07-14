@@ -60,7 +60,9 @@ export function getBackendClient(backend: StorageBackend): S3Backend {
   if (!config.accessKey) missing.push('accessKey');
   if (!config.secretKey) missing.push('secretKey');
   if (missing.length) {
-    throw new Error(`[storage] backend "${backend}" is not configured: missing ${missing.join(', ')}`);
+    throw new Error(
+      `[storage] backend "${backend}" is not configured: missing ${missing.join(', ')}`
+    );
   }
   const built = createS3Client(config);
   cache.set(backend, built);

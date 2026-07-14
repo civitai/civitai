@@ -80,7 +80,10 @@ export function createS3Client(config: S3BackendConfig, options: S3ClientOptions
     return Promise.all(
       chunks.map((chunk) =>
         client.send(
-          new DeleteObjectsCommand({ Bucket: b, Delete: { Objects: chunk.map((Key) => ({ Key })) } })
+          new DeleteObjectsCommand({
+            Bucket: b,
+            Delete: { Objects: chunk.map((Key) => ({ Key })) },
+          })
         )
       )
     );
@@ -134,7 +137,12 @@ export function createS3Client(config: S3BackendConfig, options: S3ClientOptions
     const bucket = requireBucket(opts?.bucket);
     const url = await getSignedUrl(
       client,
-      new UploadPartCommand({ Bucket: bucket, Key: key, UploadId: uploadId, PartNumber: partNumber }),
+      new UploadPartCommand({
+        Bucket: bucket,
+        Key: key,
+        UploadId: uploadId,
+        PartNumber: partNumber,
+      }),
       { expiresIn: opts?.expiresIn ?? uploadExpiration }
     );
     return { url, partNumber };
@@ -170,7 +178,8 @@ export function createS3Client(config: S3BackendConfig, options: S3ClientOptions
     const { key, bucket: parsedBucket } = parseKey(fileUrl, { s3Host: endpointHost });
     const bucket = opts.bucket ?? parsedBucket ?? requireBucket();
     const command: GetObjectCommandInput = { Bucket: bucket, Key: key };
-    if (opts.fileName) command.ResponseContentDisposition = `attachment; filename="${opts.fileName}"`;
+    if (opts.fileName)
+      command.ResponseContentDisposition = `attachment; filename="${opts.fileName}"`;
     const url = await getSignedUrl(client, new GetObjectCommand(command), {
       expiresIn: opts.expiresIn ?? downloadExpiration,
     });
@@ -180,7 +189,8 @@ export function createS3Client(config: S3BackendConfig, options: S3ClientOptions
   async function getGetUrlByKey(key: string, opts: GetUrlOptions = {}) {
     const bucket = requireBucket(opts.bucket);
     const command: GetObjectCommandInput = { Bucket: bucket, Key: key };
-    if (opts.fileName) command.ResponseContentDisposition = `attachment; filename="${opts.fileName}"`;
+    if (opts.fileName)
+      command.ResponseContentDisposition = `attachment; filename="${opts.fileName}"`;
     const url = await getSignedUrl(client, new GetObjectCommand(command), {
       expiresIn: opts.expiresIn ?? downloadExpiration,
     });
@@ -204,7 +214,11 @@ export function createS3Client(config: S3BackendConfig, options: S3ClientOptions
       };
     } catch (error) {
       const err = error as { name?: string; $metadata?: { httpStatusCode?: number } };
-      if (err?.name === 'NotFound' || err?.name === 'NoSuchKey' || err?.$metadata?.httpStatusCode === 404) {
+      if (
+        err?.name === 'NotFound' ||
+        err?.name === 'NoSuchKey' ||
+        err?.$metadata?.httpStatusCode === 404
+      ) {
         return { exists: false };
       }
       throw error;

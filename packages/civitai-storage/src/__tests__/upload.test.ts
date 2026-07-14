@@ -36,16 +36,19 @@ describe('uploadToPresignedUrl', () => {
   });
 
   it('throws on a non-2xx response', async () => {
-    mockFetch(() => ({ ok: false, status: 403, headers: new Headers() }) as Response);
-    await expect(uploadToPresignedUrl('https://s3/put', new Blob([new Uint8Array(1)]))).rejects.toThrow(
-      /upload failed \(403\)/
-    );
+    mockFetch(() => ({ ok: false, status: 403, headers: new Headers() } as Response));
+    await expect(
+      uploadToPresignedUrl('https://s3/put', new Blob([new Uint8Array(1)]))
+    ).rejects.toThrow(/upload failed \(403\)/);
   });
 });
 
 describe('uploadMultipart', () => {
   const presign = (chunkSize: number, parts: number): PresignMultipartResult => ({
-    urls: Array.from({ length: parts }, (_, i) => ({ url: `https://s3/part/${i + 1}`, partNumber: i + 1 })),
+    urls: Array.from({ length: parts }, (_, i) => ({
+      url: `https://s3/part/${i + 1}`,
+      partNumber: i + 1,
+    })),
     bucket: 'b',
     key: 'k',
     uploadId: 'u1',
@@ -90,7 +93,7 @@ describe('uploadMultipart', () => {
   });
 
   it('throws when a part is missing its ETag (CORS not exposing it)', async () => {
-    mockFetch(() => ({ ok: true, status: 200, headers: new Headers() }) as Response);
+    mockFetch(() => ({ ok: true, status: 200, headers: new Headers() } as Response));
     await expect(uploadMultipart(presign(10, 1), new Blob([new Uint8Array(5)]))).rejects.toThrow(
       /must expose the ETag/
     );

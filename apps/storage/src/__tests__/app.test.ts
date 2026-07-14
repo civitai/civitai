@@ -14,8 +14,16 @@ vi.mock('../lib/server/backends', () => ({
       bucket: opts?.bucket ?? 'default-bucket',
       key,
     }),
-    getGetUrl: async () => ({ url: 'https://signed.example/get', bucket: 'default-bucket', key: 'k' }),
-    getGetUrlByKey: async (key: string) => ({ url: 'https://signed.example/get', bucket: 'default-bucket', key }),
+    getGetUrl: async () => ({
+      url: 'https://signed.example/get',
+      bucket: 'default-bucket',
+      key: 'k',
+    }),
+    getGetUrlByKey: async (key: string) => ({
+      url: 'https://signed.example/get',
+      bucket: 'default-bucket',
+      key,
+    }),
     getMultipartPutUrl: async (key: string) => ({
       urls: [{ url: 'https://signed.example/part1', partNumber: 1 }],
       bucket: 'default-bucket',
@@ -23,7 +31,11 @@ vi.mock('../lib/server/backends', () => ({
       uploadId: 'upload-1',
       chunkSize: 25 * 1024 * 1024,
     }),
-    createMultipartUpload: async (key: string) => ({ uploadId: 'upload-1', bucket: 'default-bucket', key }),
+    createMultipartUpload: async (key: string) => ({
+      uploadId: 'upload-1',
+      bucket: 'default-bucket',
+      key,
+    }),
     presignUploadPart: async (_key: string, _uploadId: string, partNumber: number) => ({
       url: `https://signed.example/part/${partNumber}`,
       partNumber,
@@ -71,7 +83,11 @@ describe('ops routes', () => {
   });
 
   it('GET /metrics 404s a public-ingress request (XFF present)', async () => {
-    const res = await app.inject({ method: 'GET', url: '/metrics', headers: { 'x-forwarded-for': '1.2.3.4' } });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/metrics',
+      headers: { 'x-forwarded-for': '1.2.3.4' },
+    });
     expect(res.statusCode).toBe(404);
   });
 });
@@ -83,7 +99,11 @@ describe('validation', () => {
   });
 
   it('rejects presign/get with neither key nor url', async () => {
-    const res = await app.inject({ method: 'POST', url: '/presign/get', payload: { backend: 'default' } });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/presign/get',
+      payload: { backend: 'default' },
+    });
     expect(res.statusCode).toBe(400);
   });
 });
@@ -92,11 +112,19 @@ describe('happy paths (mocked backend)', () => {
   it('presigns a PUT and defaults the backend', async () => {
     const res = await app.inject({ method: 'POST', url: '/presign/put', payload: { key: 'abc' } });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ url: 'https://signed.example/put', bucket: 'default-bucket', key: 'abc' });
+    expect(res.json()).toEqual({
+      url: 'https://signed.example/put',
+      bucket: 'default-bucket',
+      key: 'abc',
+    });
   });
 
   it('deletes an object', async () => {
-    const res = await app.inject({ method: 'POST', url: '/objects/delete', payload: { key: 'abc' } });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/objects/delete',
+      payload: { key: 'abc' },
+    });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ ok: true });
   });
@@ -108,7 +136,11 @@ describe('happy paths (mocked backend)', () => {
   });
 
   it('creates a streaming multipart upload', async () => {
-    const res = await app.inject({ method: 'POST', url: '/multipart/create', payload: { key: 'abc' } });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/multipart/create',
+      payload: { key: 'abc' },
+    });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ uploadId: 'upload-1', bucket: 'default-bucket', key: 'abc' });
   });
@@ -167,18 +199,34 @@ describe('multipart complete/abort error classification', () => {
 
 describe('B2 presign metric', () => {
   it('increments storage_b2_presign_issued_total for a b2 backend', async () => {
-    await app.inject({ method: 'POST', url: '/presign/put', payload: { backend: 'b2', key: 'x', bucket: 'civitai-modelfiles' } });
+    await app.inject({
+      method: 'POST',
+      url: '/presign/put',
+      payload: { backend: 'b2', key: 'x', bucket: 'civitai-modelfiles' },
+    });
     const res = await app.inject({ method: 'GET', url: '/metrics' });
     expect(res.body).toContain('storage_b2_presign_issued_total');
-    expect(res.body).toMatch(/storage_b2_presign_issued_total\{backend="b2",bucket="civitai-modelfiles"\}\s+[1-9]/);
+    expect(res.body).toMatch(
+      /storage_b2_presign_issued_total\{backend="b2",bucket="civitai-modelfiles"\}\s+[1-9]/
+    );
   });
 
   it('counts once on streaming create, labeled with the RESOLVED bucket (not empty)', async () => {
-    await app.inject({ method: 'POST', url: '/multipart/create', payload: { backend: 'b2', key: 'y' } });
+    await app.inject({
+      method: 'POST',
+      url: '/multipart/create',
+      payload: { backend: 'b2', key: 'y' },
+    });
     // presign-part must NOT emit a count (would be a bucket="" series split from the real one — C1).
-    await app.inject({ method: 'POST', url: '/multipart/presign-part', payload: { backend: 'b2', key: 'y', uploadId: 'u', partNumber: 1 } });
+    await app.inject({
+      method: 'POST',
+      url: '/multipart/presign-part',
+      payload: { backend: 'b2', key: 'y', uploadId: 'u', partNumber: 1 },
+    });
     const res = await app.inject({ method: 'GET', url: '/metrics' });
-    expect(res.body).toMatch(/storage_b2_presign_issued_total\{backend="b2",bucket="default-bucket"\}\s+[1-9]/);
+    expect(res.body).toMatch(
+      /storage_b2_presign_issued_total\{backend="b2",bucket="default-bucket"\}\s+[1-9]/
+    );
     expect(res.body).not.toMatch(/storage_b2_presign_issued_total\{backend="b2",bucket=""\}/);
   });
 });
