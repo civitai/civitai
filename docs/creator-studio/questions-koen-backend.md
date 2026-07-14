@@ -136,6 +136,24 @@ buzz-earnings-by-type MV should work straight off the buzz transactions — no o
 sales specifically** for the rollup. Koen: is the per-`toAccountId` MV feasible, and what's the effort? Pair with
 Briant on the type/flag.
 
+> **@ai: CORRECTION (CH audit 2026-07-14) — no type/flag is needed, and this question is now mostly moot.**
+>
+> The "generic purchase type" concern is **half wrong**. On the *buyer's* leg both are `purchase`, but on the
+> **creator's receiving leg** — the only side earnings cares about — they are already distinct:
+> **cosmetic sale = `type='sell'`** (cosmetics are two-legged: buyer→bank `purchase`, then a separate `sell`
+> forwards ~70% to `cosmetic.createdById`), and **access sale = `type='purchase'` + `externalTransactionId LIKE
+> 'early-access-%'`** (single-legged, straight to `model.userId`). **No schema change, no new flag, no app work.**
+>
+> **The real trap is the opposite one:** `type='purchase'` is dominated by users topping up their **own** buzz —
+> 90d: `np-deposit-` = 39,402 rows / 686M buzz vs `early-access-` = 29,993 rows / 54.8M. Those top-ups have
+> `toAccountId` = the buyer, so a naive `toAccountId = X AND type='purchase'` counts a creator's own buzz
+> purchases as earnings. Filter on the `externalTransactionId` prefix (or `details.earlyAccessPurchase`).
+>
+> **And no separate MV is needed either.** `default.buzzTransactions` already ships a
+> `PROJECTION byToAccount (SELECT * ORDER BY toAccountId, date, …)`, so owner-keyed reads are already cheap —
+> all five earnings sources are one query against one table. See
+> [owner-rollup-handoff.md](owner-rollup-handoff.md) for the canonical filter table. **A5 collapses into A1.**
+
 ---
 
 ### Anything I'm missing?
