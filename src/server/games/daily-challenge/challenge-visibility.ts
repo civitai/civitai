@@ -1,4 +1,6 @@
 import {
+  hasPublicBrowsingLevel,
+  hasSafeBrowsingLevel,
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -37,6 +39,18 @@ export function getEffectiveBrowsingLevel({
   if (!isGreen) return requested && requested > 0 ? requested : 0;
   const greenCap = isLoggedIn ? sfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
   return requested && requested > 0 ? requested & greenCap : greenCap;
+}
+
+// True when an image at `nsfwLevel` must be withheld from a viewer on the green (SFW) site —
+// unknown/unrated (null/0) counts as unsafe. Logged-in green viewers may see PG + PG-13, anonymous
+// PG only. The CALLER decides green-ness (`isGreen`) and any creator exemption; this is the pure
+// per-image predicate reused by the detail cover gate and the winners-thumbnail strip.
+export function isImageHiddenFromGreenViewer(
+  nsfwLevel: number | null | undefined,
+  viewerId?: number
+): boolean {
+  const passes = viewerId != null ? hasSafeBrowsingLevel : hasPublicBrowsingLevel;
+  return nsfwLevel == null || nsfwLevel === 0 || !passes(nsfwLevel);
 }
 
 // A challenge's cover image must finish moderation scanning before the challenge is publicly

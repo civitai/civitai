@@ -6,11 +6,13 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import { ChallengeSource } from '~/shared/utils/prisma/enums';
+import { NsfwLevel } from '~/server/common/enums';
 import {
   getEffectiveBrowsingLevel,
   isChallengeCoverScanned,
   isChallengeHiddenByCoverScan,
   isChallengeHiddenByPoiCover,
+  isImageHiddenFromGreenViewer,
 } from './challenge-visibility';
 
 describe('getEffectiveBrowsingLevel', () => {
@@ -42,6 +44,29 @@ describe('getEffectiveBrowsingLevel', () => {
 
   it('returns 0 (no filter) off green when nothing is requested', () => {
     expect(getEffectiveBrowsingLevel({ isGreen: false, isLoggedIn: false })).toBe(0);
+  });
+});
+
+describe('isImageHiddenFromGreenViewer', () => {
+  it('shows a PG image to a logged-in viewer', () => {
+    expect(isImageHiddenFromGreenViewer(NsfwLevel.PG, 5)).toBe(false);
+  });
+
+  it('shows PG-13 to a logged-in viewer but hides it from anonymous', () => {
+    expect(isImageHiddenFromGreenViewer(NsfwLevel.PG13, 5)).toBe(false);
+    expect(isImageHiddenFromGreenViewer(NsfwLevel.PG13, undefined)).toBe(true);
+  });
+
+  it('hides mature images from any green viewer', () => {
+    expect(isImageHiddenFromGreenViewer(NsfwLevel.R, 5)).toBe(true);
+    expect(isImageHiddenFromGreenViewer(NsfwLevel.X, 5)).toBe(true);
+    expect(isImageHiddenFromGreenViewer(NsfwLevel.XXX, undefined)).toBe(true);
+  });
+
+  it('treats unknown/unrated (null or 0) as unsafe', () => {
+    expect(isImageHiddenFromGreenViewer(null, 5)).toBe(true);
+    expect(isImageHiddenFromGreenViewer(0, 5)).toBe(true);
+    expect(isImageHiddenFromGreenViewer(undefined, undefined)).toBe(true);
   });
 });
 
