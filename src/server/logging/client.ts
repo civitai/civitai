@@ -78,27 +78,55 @@ export function buildServerFaultErrorLog(e: unknown): MixedObject {
  * raw `|= "TRPCError"` stdout grep + a Tempo dig to root-cause it.
  *
  *  - SERVER fault (INTERNAL_SERVER_ERROR / TIMEOUT / any non-TRPCError) → carries
- *    the UN-MASKED `.cause` chain (real message + stack + Prisma code) and an
- *    explicit `level: 'error'`. `level` is the canonical field Loki's log-level
- *    detection reads first, so these lines land as `detected_level="error"`.
+ *    the UN-MASKED `.cause` chain (real message + stack + Prisma code) and
+ *    severity `type: 'error'`.
  *  - CLIENT fault (BAD_REQUEST / NOT_FOUND / CONFLICT / PRECONDITION_FAILED that
- *    still reach the chokepoint) → the light `safeError` shape + `level: 'info'`,
+ *    still reach the chokepoint) → the light `safeError` shape + `type: 'info'`,
  *    so normal user-feedback rejections never flood the error stream.
+ *
+ * SEVERITY FIELD: the Alloy→Loki pipeline (`prometheus-stack/alloy.yaml`,
+ * `civitai_logs`) extracts **`type`** as the log level — `level` is NOT read (it
+ * doesn't exist in the payload). So `type` is the load-bearing field that makes a
+ * line land as `detected_level="error"`; this matches the codebase convention
+ * (`orchestrator.router.ts` what-if logs `type:'error'`/`type:'info'`). `level` is
+ * emitted too as a harmless belt-and-suspenders duplicate.
  *
  * PII/secrets: the payload only ever contains the primitive error fields that
  * `safeError` extracts (name/message/stack/code + the walked cause) — no request
  * body or tokens are added here. Callers append their own request context.
  */
-export function buildCentralErrorLog(e: unknown): MixedObject & { level: 'error' | 'info' } {
+export function buildCentralErrorLog(
+  e: unknown
+): MixedObject & { type: 'error' | 'info'; level: 'error' | 'info' } {
   const fault = classifyErrorFault(e);
+  const severity = fault === 'server' ? 'error' : 'info';
   const base =
     fault === 'server' ? buildServerFaultErrorLog(e) : safeError(e) ?? { message: String(e) };
   return {
     ...base,
-    level: fault === 'server' ? 'error' : 'info',
+    type: severity, // load-bearing: Alloy extracts `type` → Loki detected_level
+    level: severity, // belt-and-suspenders; not read by the pipeline
     // Surface the tRPC code for client-fault entries too (safeError omits it for a
     // TRPCError whose own `.code` field is not the JS `Error.code`); harmless
     // duplicate of the server-fault branch, which already carries it.
     ...(e instanceof TRPCError ? { code: e.code } : null),
   };
+}
+
+/**
+ * Best-effort dedup for errors that a router/service ALREADY logged as a server
+ * fault (via `buildServerFaultErrorLog`) before re-throwing — e.g.
+ * `orchestrator.router.ts` what-if. Without this the central chokepoints would log
+ * the same fault a SECOND time. Keyed on the thrown object identity (a WeakSet, so
+ * GC reclaims entries — no leak). Only reliable when the SAME error reference
+ * bubbles to the chokepoint (the common case: a pre-existing TRPCError passes
+ * through tRPC unchanged); a raw non-TRPCError that tRPC re-wraps is not matched,
+ * which is acceptable (rare + still correctly attributed).
+ */
+const alreadyLoggedServerFaults = new WeakSet<object>();
+export function markServerFaultLogged(e: unknown): void {
+  if (e !== null && typeof e === 'object') alreadyLoggedServerFaults.add(e as object);
+}
+export function wasServerFaultLogged(e: unknown): boolean {
+  return e !== null && typeof e === 'object' && alreadyLoggedServerFaults.has(e as object);
 }

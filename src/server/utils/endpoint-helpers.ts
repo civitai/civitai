@@ -17,15 +17,18 @@ import type { Partner } from '~/shared/utils/prisma/models';
 import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { isClientAbortError } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
-import { logToAxiom, buildCentralErrorLog } from '~/server/logging/client';
+import { logToAxiom, buildCentralErrorLog, wasServerFaultLogged } from '~/server/logging/client';
 
 // Fire-and-forget structured, cause-walked error log for a REST 500 produced by
 // `handleEndpointError`. logToAxiom's stderr write is synchronous (→ Alloy → Loki),
 // so the queryable `_axiom` line lands even though we don't await; the `.catch`
 // guarantees telemetry can never break the error response. Server faults carry the
-// un-masked `.cause` chain + `level:'error'` (queryable as detected_level="error");
-// client-fault 4xx are NOT routed here, so they never hit the error stream.
+// un-masked `.cause` chain + severity `type:'error'` (queryable as
+// detected_level="error"); client-fault 4xx and SERVICE_UNAVAILABLE 503s are gated
+// out at the call site so they never hit the error stream.
 function logRestServerFault(e: unknown) {
+  // Skip if a router/service already logged this exact fault before re-throwing.
+  if (wasServerFaultLogged(e)) return;
   logToAxiom({ ...buildCentralErrorLog(e), source: 'handleEndpointError' }, 'civitai-prod').catch(
     () => undefined
   );
@@ -238,9 +241,12 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
     // A TRPCError that maps to a 5xx (INTERNAL_SERVER_ERROR / TIMEOUT) is a genuine
     // server fault that previously reached the client as a 500 with NOTHING logged
     // structurally — invisible in `_axiom`. Emit the un-masked cause-walked error
-    // log so it's queryable. Sub-500 (4xx) TRPCErrors are normal client feedback —
-    // skip, so they don't flood the error stream.
-    if (status >= 500) logRestServerFault(apiError);
+    // log so it's queryable. Sub-500 (4xx) TRPCErrors are normal client feedback,
+    // and SERVICE_UNAVAILABLE (503) is the retryable transient-upstream mapping
+    // (transient CH/Meili/orchestrator) that fires in high-volume waves — both are
+    // excluded so they don't flood the error stream (mirrors the tRPC onError
+    // early-return for 503).
+    if (status >= 500 && status !== 503) logRestServerFault(apiError);
     // Older Zod-validation TRPCErrors stuff a JSON-encoded issue array into
     // `message`; many newer call sites (incl. `withMeili`'s
     // MeiliCallTimeoutError → TRPCError mapping) pass a plain string. Falling
