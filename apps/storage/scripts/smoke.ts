@@ -125,6 +125,14 @@ async function main() {
 
     console.log('\n✅ storage smoke PASSED');
   } finally {
+    // Safety net: best-effort remove everything we created, even if an assertion above threw mid-run —
+    // so a run against a real bucket can never orphan test objects. S3 delete is idempotent, so
+    // re-deleting the happy-path objects is harmless. (STORAGE_SMOKE_KEEP=1 opts out.)
+    if (!keep) {
+      for (const key of created) {
+        await client.deleteObject({ backend, key }).catch(() => {});
+      }
+    }
     await app.close();
   }
 }
