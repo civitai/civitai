@@ -67,7 +67,7 @@ import {
 } from '~/server/services/challenge-eligibility.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
 import {
-  isChallengeCoverScanned,
+  isChallengeHiddenByCoverScan,
   isChallengeHiddenByPoiCover,
 } from '~/server/games/daily-challenge/challenge-visibility';
 import {
@@ -402,12 +402,13 @@ export async function getInfiniteChallenges(
   );
 
   // Cover-scan gate: the cover image itself must have finished moderation scanning before the
-  // challenge is publicly visible — separate from the challenge text-scan gate above. Creator
-  // exempt, mirroring the POI and text-scan gates.
+  // challenge is publicly visible — separate from the challenge text-scan gate above. Scoped to
+  // user challenges only, mirroring the detail path (getChallengeDetail): System/mod covers are
+  // trusted and default to Scanned, so they're exempt. Creator exempt, mirroring the POI gate.
   conditions.push(
     currentUserId
-      ? Prisma.sql`(EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."ingestion" = 'Scanned'::"ImageIngestionStatus") OR c."createdById" = ${currentUserId})`
-      : Prisma.sql`EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."ingestion" = 'Scanned'::"ImageIngestionStatus")`
+      ? Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."ingestion" = 'Scanned'::"ImageIngestionStatus") OR c."createdById" = ${currentUserId})`
+      : Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."ingestion" = 'Scanned'::"ImageIngestionStatus"))`
   );
 
   // Domain-currency gate: green user challenges surface only on the green site, yellow only
@@ -900,7 +901,12 @@ export async function getChallengeDetail(
     )
       return null;
 
-    if (challenge.createdById !== viewerId && !isChallengeCoverScanned({ coverImage: cover }))
+    if (
+      isChallengeHiddenByCoverScan(
+        { source: challenge.source, createdById: challenge.createdById, coverImage: cover },
+        viewerId
+      )
+    )
       return null;
   }
 
