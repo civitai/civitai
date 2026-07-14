@@ -1,9 +1,10 @@
-import { Alert, Center, Loader, Stack } from '@mantine/core';
-import { IconEye } from '@tabler/icons-react';
+import { Alert, Anchor, Center, Loader, Stack } from '@mantine/core';
+import { IconAlertTriangle, IconEye } from '@tabler/icons-react';
 import { useState } from 'react';
 import { useRouter } from 'next/router';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
+import { NextLink } from '~/components/NextLink/NextLink';
 import {
   useMutateCreatorShop,
   useQueryCreatorShop,
@@ -102,6 +103,17 @@ function UserShopPage() {
                 Preview mode — sections are filled with site-wide sample cosmetics and models for
                 design work. This is not {displayName}&apos;s real shop; don&apos;t purchase from
                 preview, as buys would resolve against these sample items.
+              </Alert>
+            )}
+
+            {isOwner && shop?.membershipLapsed && (
+              <Alert color="red" variant="light" icon={<IconAlertTriangle size={16} />}>
+                Your shop is hidden from visitors because your Creator Program membership has
+                lapsed.{' '}
+                <Anchor component={NextLink} href="/creator-program" fw={600}>
+                  Renew your membership
+                </Anchor>{' '}
+                to make it public again.
               </Alert>
             )}
 
