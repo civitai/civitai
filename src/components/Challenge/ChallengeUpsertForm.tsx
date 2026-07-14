@@ -721,7 +721,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
               )}
             </Group>
             <Text size="sm" c="dimmed">
-              Times are snapped to the nearest hour ({isUtcSchedule ? 'UTC' : 'your local time'}).
+              Times are rounded down to the hour ({isUtcSchedule ? 'UTC' : 'your local time'}).
             </Text>
 
             <SimpleGrid cols={{ base: 1, sm: isUser ? 2 : 3 }}>

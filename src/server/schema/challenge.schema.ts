@@ -167,6 +167,7 @@ export type ChallengeDetail = {
   }>;
   collectionId: number | null;
   maxEntriesPerUser: number;
+  entryFee: number;
   prizes: Prize[];
   entryPrize: Prize | null;
   entryPrizeRequirement: number;

@@ -823,6 +823,7 @@ async function buildChallengeDetail(
     models,
     collectionId: challenge.collectionId,
     maxEntriesPerUser: challenge.maxEntriesPerUser,
+    entryFee: challenge.entryFee,
     prizes: challenge.prizes,
     entryPrize: challenge.entryPrize,
     entryPrizeRequirement: challenge.entryPrizeRequirement,
