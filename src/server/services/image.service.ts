@@ -724,16 +724,12 @@ export async function handleBlockImages({
   return images;
 }
 
-export const moderateImages = async (
-  args: ImageModerationSchema & (ImageModerationUnblockSchema | ImageModerationBlockSchema)
-) => {
-  switch (args.reviewAction) {
-    case 'unblock':
-      return handleUnblockImages(args);
-    case 'block':
-      return handleBlockImages(args);
-  }
-};
+// NOTE: the moderator `image.moderate` verdict (block/unblock from the review queue + inline badges) now
+// lives in the moderator spoke app (apps/moderator); the main app delegates via callModAction. The
+// handleBlockImages/handleUnblockImages primitives below remain only for the not-yet-migrated consumers
+// that call them directly (the Knights-of-New-Order game, the /api/mod/{remove,restore}-images automation
+// endpoints). Their `include: ['phash-block' | 'user-notification']` branches are dead until those callers
+// migrate — do not add new callers.
 
 export async function updateNsfwLevel(ids: number | number[]) {
   if (!Array.isArray(ids)) ids = [ids];
@@ -6359,7 +6355,6 @@ export async function updateImageNsfwLevel({
 // backs user rating votes + the mod APIs (set-image-nsfw-level, retool) + new-order.
 // NOTE(moderator-migration): getIngestionErrorImages + resolveIngestionError (the ingestion-error-review
 // queue + its nsfwLevel setter) now live in the spoke app (apps/moderator, Kysely).
-
 
 // #region [image tools]
 async function authorizeImagesAction({

@@ -76,12 +76,13 @@ import {
   getReportViolationDetailsForImages,
   getResourceIdsForImages,
   getTagNamesForImages,
-  moderateImages,
 } from './../services/image.service';
-import { Limiter } from '~/server/utils/concurrency-helpers';
 import { imagesFeedWithoutIndexCounter } from '~/server/prom/client';
 import { constants, POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
+import { moderatorApp } from '~/server/services/moderator-app.service';
+import { ModeratorClientError } from '@civitai/moderation';
+import requestIp from 'request-ip';
 
 export const moderateImageHandler = async ({
   input,
@@ -91,40 +92,28 @@ export const moderateImageHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const images = await moderateImages({
-      ...input,
-      include: ['user-notification', 'phash-block'],
-      moderatorId: ctx.user.id,
+    // Delegated to the moderator spoke, which owns image moderation now: block/unblock + every side effect
+    // (pHash blocklist, DeleteTOS analytics, tos-violation notification, feed-existence/gallery/comic
+    // invalidation). We stay the thin authed proxy because the client callers (NeedsReviewBadge,
+    // UnblockImage) can't hold the internal token. `violationType`/`violationDetails` aren't forwarded — no
+    // live caller sets them, and the spoke derives the same values via mapToViolationType + report details.
+    await moderatorApp.imageModerate({
+      ids: input.ids,
+      reviewAction: input.reviewAction,
+      userId: ctx.user.id,
+      ip: requestIp.getClientIp(ctx.req) ?? undefined,
+      userAgent: ctx.req.headers['user-agent'],
     });
-    if (input.reviewAction === 'block') {
-      const imageIds = images.map((img) => img.id);
-      const [imageTags, imageResources, reportDetails] = await Promise.all([
-        getTagNamesForImages(imageIds),
-        getResourceIdsForImages(imageIds),
-        getReportViolationDetailsForImages(imageIds),
-      ]);
-
-      await Limiter().process(images, (images) =>
-        ctx.track.images(
-          images.map(({ id, userId, nsfwLevel, needsReview }) => ({
-            type: 'DeleteTOS',
-            imageId: id,
-            nsfw: getNsfwLevelDeprecatedReverseMapping(nsfwLevel),
-            tags: imageTags[id] ?? [],
-            resources: imageResources[id] ?? [],
-            tosReason: needsReview ?? 'other',
-            violationType:
-              input.violationType ?? mapToViolationType(needsReview, reportDetails[id]),
-            violationDetails: input.violationDetails ?? reportDetails[id]?.comment ?? '',
-            ownerId: userId,
-            userId: ctx.user.id,
-          }))
-        )
-      );
-    }
   } catch (error) {
     if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
+    // If the spoke rejects the action with a 4xx (a bad/conflicting request rather than a server fault),
+    // surface it as the matching tRPC code with the spoke's clean message, not a generic 500.
+    if (error instanceof ModeratorClientError && error.status && error.status < 500)
+      throw new TRPCError({
+        code: error.status === 409 ? 'CONFLICT' : 'BAD_REQUEST',
+        message: error.message,
+      });
+    throw throwDbError(error);
   }
 };
 

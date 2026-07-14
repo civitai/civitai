@@ -250,7 +250,6 @@ export const imageModerationSchema = z.object({
   reviewAction: z.enum(['unblock', 'block']),
   violationType: z.enum(ViolationType).optional(),
   violationDetails: z.string().optional(),
-  removeMinorFlag: z.boolean().optional(),
 });
 export type ImageModerationSchema = z.infer<typeof imageModerationSchema>;
 export type ImageModerationUnblockSchema = {

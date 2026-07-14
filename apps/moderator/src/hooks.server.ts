@@ -18,8 +18,14 @@ const NON_MODERATOR_REDIRECT = env.CIVITAI_APP_URL || 'https://civitai.com';
 // where there is no cookie). Everything else is gated.
 const PUBLIC_PATHS = new Set(['/favicon.svg']);
 
+// Internal service-to-service ingress: the main app POSTs here to delegate moderator mutations the spoke
+// owns. These carry the shared WEBHOOK_TOKEN, not a moderator session cookie, so they bypass the session
+// guard entirely — each `/api/mod/*` endpoint self-authenticates via the token.
+const INTERNAL_API_PREFIX = '/api/mod/';
+
 export const handle: Handle = async ({ event, resolve }) => {
   if (PUBLIC_PATHS.has(event.url.pathname)) return resolve(event);
+  if (event.url.pathname.startsWith(INTERNAL_API_PREFIX)) return resolve(event);
 
   const result = await guard.check(event.request.headers.get('cookie') ?? '', event.url.href);
 
@@ -39,7 +45,11 @@ export const handle: Handle = async ({ event, resolve }) => {
   // A matched route above the user's tier bounces to the dashboard; unmatched routes fall through to 404.
   // `/api/*` endpoints are exempt: they aren't NAVIGATION paths (canAccess would deny them), they're
   // already moderator-authenticated by the guard above, and any that need a finer tier self-check.
-  if (event.route.id && !event.url.pathname.startsWith('/api/') && !canAccess(result.user, event.url.pathname)) {
+  if (
+    event.route.id &&
+    !event.url.pathname.startsWith('/api/') &&
+    !canAccess(result.user, event.url.pathname)
+  ) {
     return new Response(null, { status: 303, headers: { location: '/' } });
   }
 
