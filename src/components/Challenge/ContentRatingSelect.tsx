@@ -1,6 +1,7 @@
 import type { InputWrapperProps } from '@mantine/core';
 import { Badge, Card, Checkbox, Group, Input, Stack, Text, Tooltip } from '@mantine/core';
 import { NsfwLevel } from '~/server/common/enums';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   browsingLevelLabels,
   browsingLevelDescriptions,
@@ -22,6 +23,9 @@ const selectableLevels = [
   NsfwLevel.X,
   NsfwLevel.XXX,
 ] as const;
+
+// The SFW domain rejects any non-SFW challenge server-side, so only these are offered there.
+const sfwOnlyLevels = [NsfwLevel.PG, NsfwLevel.PG13] as const;
 
 // Color mapping for each level
 const levelColors: Record<number, string> = {
@@ -53,7 +57,14 @@ export function ContentRatingSelect({
   disabled,
   ...inputWrapperProps
 }: Props) {
+  const { isGreen } = useFeatureFlags();
   const selectedLevels = parseBitwiseBrowsingLevel(value);
+
+  // On the SFW (green) domain, only PG/PG-13 are offered — the server rejects anything higher.
+  const availableLevels: readonly (typeof selectableLevels)[number][] = isGreen
+    ? sfwOnlyLevels
+    : selectableLevels;
+  const availablePresets = isGreen ? presets.slice(0, 1) : presets;
 
   const handleLevelToggle = (level: (typeof selectableLevels)[number], checked: boolean) => {
     let newLevels = [...selectedLevels];
@@ -85,7 +96,7 @@ export function ContentRatingSelect({
       <Stack gap="xs" mt={5}>
         {/* Quick presets */}
         <Group gap="xs">
-          {presets.map((preset) => (
+          {availablePresets.map((preset) => (
             <Badge
               key={preset.label}
               variant={value === preset.value ? 'filled' : 'light'}
@@ -101,7 +112,7 @@ export function ContentRatingSelect({
         {/* Individual level selection */}
         <Card withBorder p="sm">
           <Stack gap="xs">
-            {selectableLevels.map((level) => {
+            {availableLevels.map((level) => {
               const isChecked = selectedLevels.includes(level);
               const label = browsingLevelLabels[level];
               const description = browsingLevelDescriptions[level];
@@ -135,7 +146,7 @@ export function ContentRatingSelect({
           <Text size="xs" c="dimmed">
             Allowed:
           </Text>
-          {selectableLevels
+          {availableLevels
             .filter((level) => selectedLevels.includes(level))
             .map((level) => (
               <Badge key={level} size="xs" color={levelColors[level]} variant="filled">

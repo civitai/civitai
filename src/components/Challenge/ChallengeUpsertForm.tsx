@@ -13,7 +13,7 @@ import {
 } from '@mantine/core';
 import dayjs from '~/shared/utils/dayjs';
 import { useRouter } from 'next/router';
-import React, { useState } from 'react';
+import { useMemo, useState } from 'react';
 import * as z from 'zod';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
@@ -79,17 +79,29 @@ const InputContentRatingSelect = withController(ContentRatingSelect);
 const schema = upsertChallengeBaseSchema
   .omit({ prizes: true, entryPrize: true, judgeId: true, eventId: true, themeElements: true })
   .extend({
+    // Override with explicit messages — the default zod copy ("Invalid input") doesn't tell the
+    // creator what's actually wrong.
+    title: z
+      .string()
+      .min(3, 'Title must be at least 3 characters')
+      .max(200, 'Title must be under 200 characters'),
+    theme: z.string().min(1, 'Theme is required'),
     themeElements: z.string().optional(),
     judgeId: z.string().nullish().default('1'),
     eventId: z.string().nullish().default(null),
+    // The `{ error }` on the object (not just the refine) is what surfaces the message when the
+    // field is `undefined` — an undefined object fails the object check before `.refine()` runs.
     coverImage: z
-      .object({
-        id: z.number().optional(),
-        url: z.string(),
-        hash: z.string().nullish(),
-        width: z.number().nullish(),
-        height: z.number().nullish(),
-      })
+      .object(
+        {
+          id: z.number().optional(),
+          url: z.string(),
+          hash: z.string().nullish(),
+          width: z.number().nullish(),
+          height: z.number().nullish(),
+        },
+        { error: 'Cover image is required' }
+      )
       .refine((val) => !!val.url, { error: 'Cover image is required' }),
     prize1Buzz: z.number().min(0).default(5000),
     prize2Buzz: z.number().min(0).default(2500),
@@ -235,8 +247,27 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
   const existingPrizes = challenge?.prizes ?? [];
   const existingEntryPrize = challenge?.entryPrize;
 
+  // Description + judge are required for the user variant only. Enforcing them in the schema (not
+  // just in handleSubmit) makes their errors surface inline on the first submit, alongside
+  // title/theme/cover — otherwise the manual checks never run because zod short-circuits.
+  const formSchema = useMemo(
+    () =>
+      isUser
+        ? // cast: extend only tightens description/judgeId (both read via `.shape` by useForm), so
+          // the base type keeps defaultValues/handleSubmit typing identical across variants.
+          (schema.extend({
+            description: z
+              .string()
+              .min(1, 'Description is required')
+              .max(5000, 'Description must be under 5000 characters'),
+            judgeId: z.string().min(1, 'Select a judge for your challenge'),
+          }) as unknown as typeof schema)
+        : schema,
+    [isUser]
+  );
+
   const form = useForm({
-    schema,
+    schema: formSchema,
     defaultValues: {
       title: challenge?.title ?? '',
       description: challenge?.description ?? '',
@@ -336,8 +367,8 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
     }
 
     if (isUser) {
-      // Description is required for user challenges (mod keeps it optional), so it's enforced here
-      // rather than in the shared form schema.
+      // The user schema requires description (see formSchema) — this narrows the type for the
+      // mutation and is a safety net; the inline error comes from the schema on the first submit.
       if (!data.description) {
         form.setError('description', { message: 'Description is required' });
         return;
@@ -360,6 +391,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
         return;
       }
 
+      // Backstop: formSchema already requires judgeId for the user variant (inline error on submit).
       if (!data.judgeId) {
         form.setError('judgeId', { message: 'Select a judge for your challenge' });
         return;

@@ -258,10 +258,21 @@ const challengeCardQuery = Prisma.sql`
     LEFT JOIN "ChallengeJudge" cj ON cj.id = c."judgeId"
     LEFT JOIN "User" ju ON ju.id = cj."userId"`;
 
-// Hydrate card rows with display user (judge if present, else creator) profile pictures/cosmetics and
-// cover images, then shape into ChallengeListItem.
+// User challenges show the real creator; system/mod challenges keep the judge (e.g. CivBot persona)
+// as the shown author.
+const displayUidFor = (item: {
+  source: ChallengeSource;
+  judgeUserId: number | null;
+  createdById: number;
+}) =>
+  item.source !== ChallengeSource.User && item.judgeUserId != null
+    ? item.judgeUserId
+    : item.createdById;
+
+// Hydrate card rows with display user profile pictures/cosmetics and cover images, then shape into
+// ChallengeListItem.
 async function mapChallengeRowsToCards(items: ChallengeCardRow[]): Promise<ChallengeListItem[]> {
-  const displayUserIds = [...new Set(items.map((item) => item.judgeUserId ?? item.createdById))];
+  const displayUserIds = [...new Set(items.map(displayUidFor))];
   const [profilePictures, cosmetics] = await Promise.all([
     getProfilePicturesForUsers(displayUserIds),
     getCosmeticsForUsers(displayUserIds),
@@ -277,6 +288,9 @@ async function mapChallengeRowsToCards(items: ChallengeCardRow[]): Promise<Chall
     const coverImage = item.coverImageId
       ? coverImages.find((img) => img.id === item.coverImageId)
       : null;
+
+    const displayUid = displayUidFor(item);
+    const showJudge = displayUid !== item.createdById;
 
     return {
       id: item.id,
@@ -307,12 +321,12 @@ async function mapChallengeRowsToCards(items: ChallengeCardRow[]): Promise<Chall
         : null,
       modelVersionIds: item.modelVersionIds ?? [],
       createdBy: {
-        id: item.judgeUserId ?? item.createdById,
-        username: item.judgeUsername ?? item.creatorUsername,
-        image: item.judgeImage ?? item.creatorImage,
-        profilePicture: profilePictures[item.judgeUserId ?? item.createdById] ?? null,
-        cosmetics: cosmetics[item.judgeUserId ?? item.createdById] ?? null,
-        deletedAt: item.judgeDeletedAt ?? item.creatorDeletedAt,
+        id: displayUid,
+        username: showJudge ? item.judgeUsername : item.creatorUsername,
+        image: showJudge ? item.judgeImage : item.creatorImage,
+        profilePicture: profilePictures[displayUid] ?? null,
+        cosmetics: cosmetics[displayUid] ?? null,
+        deletedAt: showJudge ? item.judgeDeletedAt : item.creatorDeletedAt,
       },
     };
   });
@@ -716,8 +730,10 @@ async function buildChallengeDetail(
     }
   }
 
-  // Resolve display user: prefer judge's user over creator
-  const displayUserId = judge?.userId ?? createdById;
+  // Display user: user challenges show the real creator; system/mod challenges keep the judge
+  // (e.g. CivBot persona) as the shown author.
+  const displayUserId =
+    challenge.source === ChallengeSource.User ? createdById : judge?.userId ?? createdById;
   let displayUser: {
     id: number;
     username: string | null;
@@ -2497,11 +2513,17 @@ export async function getActiveEvents(): Promise<ChallengeEventListItem[]> {
     for (const j of judges) judgeUserMap.set(j.id, j.userId);
   }
 
-  // Collect all display user IDs (judge user or creator)
+  // Collect all display user IDs (creator for user challenges, else judge user)
   const displayUserIds = [
     ...new Set(
       allChallenges
-        .map((c) => (c.judgeId ? judgeUserMap.get(c.judgeId) : null) ?? c.createdById)
+        .map((c) =>
+          displayUidFor({
+            source: c.source,
+            judgeUserId: c.judgeId ? judgeUserMap.get(c.judgeId) ?? null : null,
+            createdById: c.createdById ?? -1,
+          })
+        )
         .filter(isDefined)
     ),
   ];
@@ -2559,8 +2581,11 @@ export async function getActiveEvents(): Promise<ChallengeEventListItem[]> {
     endDate: event.endDate,
     challenges: event.challenges.map((c) => {
       // createdById can be null (creator account deleted); fall back to the system user (-1).
-      const displayUserId =
-        (c.judgeId ? judgeUserMap.get(c.judgeId) : null) ?? c.createdById ?? -1;
+      const displayUserId = displayUidFor({
+        source: c.source,
+        judgeUserId: c.judgeId ? judgeUserMap.get(c.judgeId) ?? null : null,
+        createdById: c.createdById ?? -1,
+      });
       const user = users.get(displayUserId);
       const coverImage = c.coverImageId ? coverImages.get(c.coverImageId) : null;
 
@@ -3088,7 +3113,7 @@ export async function getCompletedChallengesWithWinners(
 
   // Batch enrich: profile pictures + cosmetics for both display users (creators/judges) and winners
   const winnerUserIds = [...new Set(winnerRows.map((w) => w.userId))];
-  const displayUserIds = [...new Set(items.map((item) => item.judgeUserId ?? item.createdById))];
+  const displayUserIds = [...new Set(items.map(displayUidFor))];
   const allUserIds = [...new Set([...displayUserIds, ...winnerUserIds])];
   const [profilePictures, cosmetics] = await Promise.all([
     getProfilePicturesForUsers(allUserIds),
@@ -3132,6 +3157,9 @@ export async function getCompletedChallengesWithWinners(
     const coverImage = item.coverImageId ? coverImageMap.get(item.coverImageId) ?? null : null;
     const metadata = parseChallengeMetadata(item.metadata);
 
+    const displayUid = displayUidFor(item);
+    const showJudge = displayUid !== item.createdById;
+
     return {
       id: item.id,
       title: item.title,
@@ -3161,12 +3189,12 @@ export async function getCompletedChallengesWithWinners(
         : null,
       modelVersionIds: item.modelVersionIds ?? [],
       createdBy: {
-        id: item.judgeUserId ?? item.createdById,
-        username: item.judgeUsername ?? item.creatorUsername,
-        image: item.judgeImage ?? item.creatorImage,
-        profilePicture: profilePictures[item.judgeUserId ?? item.createdById] ?? null,
-        cosmetics: cosmetics[item.judgeUserId ?? item.createdById] ?? null,
-        deletedAt: item.judgeDeletedAt ?? item.creatorDeletedAt,
+        id: displayUid,
+        username: showJudge ? item.judgeUsername : item.creatorUsername,
+        image: showJudge ? item.judgeImage : item.creatorImage,
+        profilePicture: profilePictures[displayUid] ?? null,
+        cosmetics: cosmetics[displayUid] ?? null,
+        deletedAt: showJudge ? item.judgeDeletedAt : item.creatorDeletedAt,
       },
       winners: winnersByChallengeId.get(item.id) ?? [],
       completionSummary: metadata.completionSummary ?? null,

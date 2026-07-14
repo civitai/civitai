@@ -69,6 +69,13 @@ vi.mock('~/utils/notifications', () => ({
   showErrorNotification: vi.fn(),
 }));
 
+// The form reads useFeatureFlags() (via useAvailableBuzz and ContentRatingSelect); that hook throws
+// outside FeatureFlagsCtx, so the component renders nothing without this. Yellow domain = full
+// content-rating options, matching what the mod-variant tests below expect.
+vi.mock('~/providers/FeatureFlagsProvider', () => ({
+  useFeatureFlags: () => ({ isGreen: false }),
+}));
+
 const { ChallengeUpsertForm } = await import('../ChallengeUpsertForm');
 
 // A mod editing an EXISTING challenge with no categories yet (`judgingCategories` is `undefined` —
