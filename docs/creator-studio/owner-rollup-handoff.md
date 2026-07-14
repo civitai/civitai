@@ -1,10 +1,11 @@
 # Creator Studio — owner-keyed earnings rollup (build handoff)
 
 > **Status:** **substantially revised 2026-07-14** after a second live ClickHouse audit + Justin's answers to
-> D1/D2. The earnings half of this design is **simpler than originally specced**: `/earnings` reads
-> `default.buzzTransactions`, which is **already owner-keyed**, so it needs **no dictionary and no CDC**. The
-> `modelVersionId → ownerUserId` dictionary survives **only** for the per-model `/analytics` table. Answers
-> backend question **A1** in [questions-koen-backend.md](questions-koen-backend.md).
+> D1/D2. The **by-source earnings totals** are simpler than originally specced: `/earnings` reads
+> `default.buzzTransactions`, which is **already owner-keyed**, so those need **no dictionary and no CDC**.
+> **The dictionary is still required** for anything *per-model* (top-earning models, the `/analytics` table) —
+> Justin confirmed those ship, so **Part 2 below stays on the critical path**. Answers backend question **A1**
+> in [questions-koen-backend.md](questions-koen-backend.md).
 
 ## The problem (unchanged, but narrower than we thought)
 
@@ -46,9 +47,10 @@ Why this works:
 - **`toAccountType` carries the currency** as `LowCardinality(String)`, lowercase: `yellow`, `blue`, `green`,
   `creatorProgramBank`, `cashSettled`, `cashPending`, `club`, `creatorProgramBankGreen`.
 
-**This deletes a large amount of previously-planned work:** no `Model`/`ModelVersion` CDC mirror, no dictionary,
-no `AggregatingMergeTree`, no backfill, and **no A1 dependency blocking `/earnings` or the dashboard**. The
-launch fallback below is moot for those pages.
+**This deletes a large amount of previously-planned work — for the by-source totals only:** no
+`AggregatingMergeTree`, no backfill, and no A1 dependency blocking the `/earnings` **source cards + time-series**
+or the dashboard's headline totals. **It does not delete the dictionary** — see Part 2; anything broken out
+*per model* still needs it, and Justin confirmed those tiles ship.
 
 #### Gotchas that will bite whoever writes these queries
 
@@ -76,11 +78,20 @@ Until fixed, filter `type IN ('licenseFee','27')`, or the license-fee card reads
 (he built the MV chain); the root cause, the verified swap procedure, and the backfill live in his private plan
 doc. Do not attempt the MV surgery from this workstream — it has a data-loss failure mode.
 
-### Part 2 — per-model `/analytics`: the dictionary still applies
+### Part 2 — per-model earnings: the dictionary is **required**, not optional
 
-The dictionary is **still needed** for the per-model usage/earnings table on `/analytics`, which is genuinely
-`modelVersionId`-keyed and cannot be answered from `buzzTransactions` (a comp/licenseFee transaction is a daily
-per-creator *aggregate*; it does not carry `modelVersionId`).
+**Justin (2026-07-14), on top-earning models:** *"That's going to have to be driven by the resource compensation
+table… So we are going to need the dictionary for that one to map to the user so we can get all of the model
+versions that are associated with them."*
+
+So this half of the original design stands, and **Koen's CDC work stays on the critical path**. It covers the
+per-model usage/earnings table on `/analytics` **and** the dashboard's "top-earning models" tile — both are
+genuinely `modelVersionId`-keyed and **cannot** be answered from `buzzTransactions`, because a
+compensation/licenseFee transaction is a daily per-creator *aggregate* that does not carry `modelVersionId`.
+
+The two halves coexist: **by-source totals** read `buzzTransactions` (free, today); **per-model breakdowns** read
+`resourceCompensations` through the dictionary (needs the CDC build). They will not tie out to the buzz exactly —
+one is accrual, the other settlement (see Precision) — so do not present them as the same number.
 
 - **Key:** `modelVersionId` (UInt/Int). **Attribute:** `ownerUserId` (`Model.userId` of the version's parent).
 - **Source:** production Postgres (`ModelVersion` joined to `Model`), reached via **CDC / ClickPipe** — CH cannot
@@ -109,16 +120,23 @@ composite `(toAccountId, toAccountType)` is the real owner key — one user hold
 
 **Two wrinkles worth knowing:**
 
-- **Access sales always credit yellow**, regardless of what the buyer spent. `earlyAccessPurchase`
-  (`src/server/services/model-version.service.ts:1777`) omits `toAccountType`, so `buzz.service.ts:652` defaults
-  it to `'yellow'`. Buyers may spend green or yellow (blue is rejected). So the currency dimension is constant
-  for that source by construction. If that is not intended, it is a bug in the payment path, not in reporting.
+- 🔴 **Access sales always credit yellow, and that is a confirmed bug** (Justin, 2026-07-14: *"That's wrong. It
+  should pay whatever the person paid in… If a buyer spends green, the creator should get green."*).
+  `earlyAccessPurchase` (`src/server/services/model-version.service.ts:1777`) omits `toAccountType`, so
+  `buzz.service.ts:652` defaults it to `'yellow'`. Buyers may spend green or yellow (blue is rejected).
+  **Fix = pass the buyer's `buzzType` through as `toAccountType`.** Note it is **forward-only**: every access sale
+  to date credited yellow, so historical rows cannot be re-colored and the currency dimension is uniformly yellow
+  for that source before the fix lands. Reporting must not be built to assume otherwise.
 - **Comp, license fee, and cosmetic sales all preserve the original color**, so the dimension is meaningful there.
 
-### Currency splits are only trustworthy after 2025-07-15
+### Label history — a non-issue at v1, but do not extend the window without reading this
 
-If any chart splits **historical** earnings by currency, note that `orchestration.resourceCompensations.accountType`
-has a label history (this affects `/analytics`, not the `buzzTransactions` read path):
+**Justin (2026-07-14):** *"I think we already capped the history… the furthest we go back with the analytics is
+90 days, so it should be okay."* Correct — a 90-day window starts well after the last label change (2025-08-26),
+so **none of the below affects v1**. It only bites if someone later widens the window or builds an all-time view.
+
+`orchestration.resourceCompensations.accountType` has a label history (this affects `/analytics`, not the
+`buzzTransactions` read path):
 
 | Era | Labels | Meaning |
 |---|---|---|
@@ -129,9 +147,9 @@ has a label history (this affects `/analytics`, not the `buzzTransactions` read 
 So `User`/`Yellow` and `Generation`/`Blue` are the **same currencies renamed**, not double-labelling — verified by
 a clean one-day cutover on 2025-08-26 (`User` 25,203→0, `Yellow` 16,308→23,908) with no sustained overlap, and no
 creator was double-paid (the per-`accountType` payout suffix postdates the rename by seven weeks; `-User` and
-`-Generation` suffixes have zero rows, ever). **But pre-2025-07-15 `User` is not yellow** — it is yellow+blue.
-Any all-time by-currency chart overstates yellow and understates blue for that era. Recommend an explicit start
-date on currency-split views, or normalize the eras.
+`-Generation` suffixes have zero rows, ever). **But pre-2025-07-15 `User` is not yellow** — it is yellow+blue, so
+an all-time by-currency chart would overstate yellow and understate blue for that era. The 90-day cap already
+prevents this; keep the cap, or normalize the eras before lifting it.
 
 ## D2 — the `source` filter spans more than this MV → **ANSWERED: use buzz transactions for all of it**
 
@@ -179,6 +197,22 @@ this in-code as needing finance review). Only a *forecasting* view would want ra
 `/analytics` table still does: until the dictionary lands, the app-side `WHERE modelVersionId IN (…)` query is an
 acceptable stopgap for **small creators**, with a version-count cap and top-earners hidden.
 
+## Two payment-path bugs that shape what `/earnings` can honestly claim
+
+Neither is a Creator Studio bug, but both change what the numbers mean. Do not design around them silently.
+
+1. **Access sales always credit yellow** (see D1 above). Confirmed a bug, fix is forward-only, historical rows
+   stay yellow.
+2. **Cosmetic creator payouts are best-effort — a sale can succeed while the creator is never credited.**
+   `cosmetic-shop.service.ts:702-709` wraps the bank→creator `sell` leg in `withRetries(..., 3)` and a catch that
+   only logs to Axiom; the in-code comment says *"we don't want to fail the purchase if this fails. We can divide
+   the funds later if needed."* So the platform keeps the buyer's buzz and the creator silently gets nothing.
+   **`/earnings` will under-report cosmetic revenue with no signal**, because a failed payout leaves **no row** —
+   the only trace is an Axiom log line with nothing durable tying it to a creator or amount. Justin's call
+   (2026-07-14) is that failing the purchase would be worse, which is right — but until there is a durable
+   failure record (a dead-letter row, or a zero-amount `sell` carrying the reason in `details`), nothing can
+   report on or settle these. Flagged, not scheduled.
+
 ## ⚠️ Do not `SELECT sum(amount)` over all of `resourceCompensations`
 
 11 rows all-time carry **binary-garbage** `accountType` values, absurd dates (1970-02-05, 2083-11-04) and amounts
@@ -197,11 +231,12 @@ in this repo inserts into it).
       `toAccountId = X AND date BETWEEN …` read. If yes, **no MV is needed at all** for v1.
 - [ ] Filter `type IN ('licenseFee','27')` until Justin's ingest fix + backfill lands, then drop the `'27'`.
 - [ ] Exclude `accountId = 0`; isolate access sales by `externalTransactionId LIKE 'early-access-%'`.
-- [ ] Decide whether the dashboard's "top-earning models" is answerable at all from `buzzTransactions` — it is
-      **not** (comp/licenseFee rows are per-creator daily aggregates with no `modelVersionId`). That tile depends
-      on Part 2, or on `resourceCompensations` + the `IN (…)` fallback.
+- [x] ~~Decide whether "top-earning models" is answerable from `buzzTransactions`~~ — **it is not, and Justin
+      confirmed the tile ships**, so it is driven by `resourceCompensations` + the Part 2 dictionary (with the
+      `IN (…)` fallback until that lands).
 
-**For Part 2 (`/analytics` per-model table) — still needs Koen:**
+**For Part 2 (per-model earnings: `/analytics` table + top-earning models) — still needs Koen, on the critical
+path:**
 
 - [ ] **CDC/ClickPipe path** — clone the Buzz-DB ClickPipe for prod `Model` + `ModelVersion` (Bastion/networking
       OK? CDC enabled?). Mirror **full tables, or just** `ModelVersion.id/modelId` + `Model.id/userId`?

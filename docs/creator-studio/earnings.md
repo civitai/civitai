@@ -105,10 +105,11 @@ see their own earnings normally.
 - ~~**Owner-keyed rollup (gap #1) is a hard dependency**~~ **ANSWERED: not for this page.** `buzzTransactions` is
   already owner-keyed (`toAccountId`) with a `byToAccount` projection. The dictionary is still scheduled, but only
   [analytics.md](analytics.md)'s per-model table needs it.
-- 🔴 **Open — "top-earning models" is not answerable from `buzzTransactions`.** comp/licenseFee rows are
-  *per-creator daily aggregates* with no `modelVersionId`, so any per-model earnings breakdown still needs the
-  gap #1 dictionary or the `IN (…)` fallback. If the dashboard/`/earnings` shows that tile, it keeps the A1
-  dependency — confirm whether it ships v1.
+- ~~**"top-earning models"**~~ **ANSWERED (2026-07-14): it ships, so it keeps the A1 dependency.** It is not
+  answerable from `buzzTransactions` (comp/licenseFee rows are per-creator daily aggregates with no
+  `modelVersionId`), so it reads `resourceCompensations` via the gap #1 dictionary — `IN (…)` fallback until that
+  lands. **Do not present per-model earnings and by-source totals as the same number**: the former is fractional
+  *accrual*, the latter integer *settlement*.
 - **`/earnings` vs `/earnings/analytics` vs dashboard boundary** — what is *unique* to `/earnings` (by-source totals +
   cash) so it doesn't duplicate the other two?
 - **CP cash + withdrawal — inline or link-out?** Surface pending/settled + Withdraw here, or send fully to the existing
