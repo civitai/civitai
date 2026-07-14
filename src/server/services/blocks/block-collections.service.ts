@@ -20,11 +20,13 @@
  * additionally drops collections whose own `nsfwLevel` exceeds the ceiling.
  */
 
+import { Prisma } from '@prisma/client';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { dbRead } from '~/server/db/client';
 import { sessionClient } from '~/server/auth/session-client';
 import type { SessionUser } from '~/types/session';
 import { Flags } from '~/shared/utils/flags';
+import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
 
 /**
  * Resolve the FULL server-side SessionUser for a verified block-token subject
@@ -68,6 +70,71 @@ export function toMediaUrl(
     original: true,
     type: (image.type as 'image' | 'video' | undefined) ?? 'image',
   });
+}
+
+/**
+ * Compose a directly-`<img>`-renderable COVER url for a collection cover Image.
+ * Identical to `toMediaUrl` for a still image, but for a VIDEO cover it requests
+ * a transcoded still frame (`type: 'image'` + `transcode` + `anim: false`) so the
+ * returned url is a poster/first-frame JPEG — NOT the raw `.mp4` an `<img>` tag
+ * can't display (the cause of the "missing thumbnail" cards). Returns null when
+ * there is no image key so the block renders its placeholder tile.
+ *
+ * Distinct from `toMediaUrl` (used for the player's media items, where a video
+ * item must keep its playable `.mp4` url).
+ */
+export function toCoverImageUrl(
+  image: { url?: string | null; type?: string | null } | null | undefined
+): string | null {
+  if (!image?.url) return null;
+  const isVideo = image.type === 'video';
+  return isVideo
+    ? getEdgeUrl(image.url, { original: true, type: 'image', transcode: true, anim: false })
+    : getEdgeUrl(image.url, { original: true, type: 'image' });
+}
+
+/**
+ * Fallback cover source for collections whose own cover is null OR is itself over
+ * the ceiling: the media (url,type) of each collection's most-recent ACCEPTED
+ * item WHOSE OWN `Image.nsfwLevel` is PERMITTED by the token's clamped
+ * `browsingLevel`. This is the maturity clamp the discovery cover MUST apply — a
+ * MIXED-bucket collection (nsfwLevel 29) intersects a SFW ceiling and passes the
+ * collection-level discovery gate, but its newest item can be R/X; surfacing that
+ * thumbnail on a SFW-domain / region-restricted token would leak mature media.
+ *
+ * The nsfw test is BITWISE (`nsfwLevel & browsingLevel != 0`, plus unrated 0 —
+ * the identical authority the detail path + images service use), applied IN the
+ * WHERE so `DISTINCT ON (collectionId)` picks the newest *permitted* item per
+ * collection (filtering after `distinct` would drop the cover entirely). Returns
+ * a Map keyed by collectionId; a collection with no permitted item is absent
+ * (→ placeholder tile).
+ */
+export async function getFallbackCoverImages(
+  collectionIds: number[],
+  browsingLevel: number
+): Promise<Map<number, { url: string | null; type: string | null }>> {
+  if (collectionIds.length === 0) return new Map();
+  const rows = await dbRead.$queryRaw<
+    { collectionId: number; url: string | null; type: string | null }[]
+  >`
+    SELECT DISTINCT ON (ci."collectionId")
+      ci."collectionId" as "collectionId",
+      i."url" as "url",
+      i."type"::text as "type"
+    FROM "CollectionItem" ci
+    JOIN "Image" i ON i."id" = ci."imageId"
+    WHERE ci."collectionId" IN (${Prisma.join(collectionIds)})
+      AND ci."status" = ${CollectionItemStatus.ACCEPTED}::"CollectionItemStatus"
+      AND ((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)
+    ORDER BY ci."collectionId", ci."createdAt" DESC
+  `;
+  const map = new Map<number, { url: string | null; type: string | null }>();
+  for (const r of rows) {
+    if (r.collectionId != null && r.url) {
+      map.set(r.collectionId, { url: r.url, type: r.type ?? null });
+    }
+  }
+  return map;
 }
 
 /** True iff the collection's own nsfwLevel is permitted by the clamped ceiling. */
