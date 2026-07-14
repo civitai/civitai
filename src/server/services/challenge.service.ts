@@ -63,7 +63,10 @@ import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { resolveJudgingCategories } from '~/server/services/challenge-category.service';
 import { assertCanCreateUserChallenge } from '~/server/services/challenge-eligibility.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
-import { isChallengeHiddenByPoiCover } from '~/server/games/daily-challenge/challenge-visibility';
+import {
+  isChallengeCoverScanned,
+  isChallengeHiddenByPoiCover,
+} from '~/server/games/daily-challenge/challenge-visibility';
 import {
   chargeInitialPrize,
   refundUserChallengeFunds,
@@ -393,6 +396,15 @@ export async function getInfiniteChallenges(
     currentUserId
       ? Prisma.sql`(NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."poi" = true) OR c."createdById" = ${currentUserId})`
       : Prisma.sql`NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."poi" = true)`
+  );
+
+  // Cover-scan gate: the cover image itself must have finished moderation scanning before the
+  // challenge is publicly visible — separate from the challenge text-scan gate above. Creator
+  // exempt, mirroring the POI and text-scan gates.
+  conditions.push(
+    currentUserId
+      ? Prisma.sql`(EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."ingestion" = 'Scanned'::"ImageIngestionStatus") OR c."createdById" = ${currentUserId})`
+      : Prisma.sql`EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."ingestion" = 'Scanned'::"ImageIngestionStatus")`
   );
 
   // Domain-currency gate: green user challenges surface only on the green site, yellow only
@@ -864,13 +876,14 @@ export async function getChallengeDetail(
     return null;
   }
 
-  // POI gate: a cover depicting a real person (Image.poi, set by the image scanner) keeps the
-  // challenge out of public view — direct-URL parity with the feed filter. Creator exempt; skip
-  // the lookup entirely for trusted System challenges.
+  // POI + cover-scan gate: a cover depicting a real person (Image.poi, set by the image scanner),
+  // or one that hasn't finished moderation scanning yet, keeps the challenge out of public view —
+  // direct-URL parity with the feed filter. Creator exempt; skip the lookup entirely for trusted
+  // System challenges.
   if (challenge.source === ChallengeSource.User && challenge.coverImageId) {
     const cover = await dbRead.image.findUnique({
       where: { id: challenge.coverImageId },
-      select: { poi: true },
+      select: { poi: true, ingestion: true },
     });
     if (
       isChallengeHiddenByPoiCover(
@@ -882,6 +895,9 @@ export async function getChallengeDetail(
         viewerId
       )
     )
+      return null;
+
+    if (challenge.createdById !== viewerId && !isChallengeCoverScanned({ coverImage: cover }))
       return null;
   }
 
