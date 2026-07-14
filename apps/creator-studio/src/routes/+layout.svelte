@@ -1,6 +1,6 @@
 <script lang="ts">
   import '../global.css';
-  import { page } from '$app/state';
+  import { page, navigating } from '$app/state';
   import { invalidateAll } from '$app/navigation';
   import { buildWordmarkSvg } from '@civitai/brand';
   import { IconLogout } from '@tabler/icons-svelte';
@@ -29,6 +29,9 @@
 
   const nav = $derived(navForMember(data.membership.isCreatorProgramMember));
   const who = $derived(data.user.username ?? `user #${data.user.id}`);
+  // Any load in flight — a real page nav or an in-place query change (e.g. the analytics range/granularity
+  // controls, which re-run the server load without leaving the route). Drives the top progress bar.
+  const isNavigating = $derived(!!navigating.to);
   // Exactly one active item — longest matching href wins so a parent (/earnings) doesn't also light up on a
   // child route (/earnings/analytics).
   const activeHref = $derived(activeNavHref(page.url.pathname));
@@ -46,6 +49,12 @@
     invalidateAll();
   }
 </script>
+
+{#if isNavigating}
+  <div class="nav-progress" role="status" aria-label="Loading">
+    <div class="nav-progress-bar bg-blue-8"></div>
+  </div>
+{/if}
 
 <SidebarProvider>
   <Sidebar>
@@ -157,3 +166,28 @@
 </SidebarProvider>
 
 <Toaster richColors position="bottom-right" />
+
+<style>
+  .nav-progress {
+    position: fixed;
+    inset: 0 0 auto 0;
+    height: 2px;
+    z-index: 100;
+    overflow: hidden;
+  }
+  .nav-progress-bar {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    width: 40%;
+    animation: nav-progress-slide 1.1s ease-in-out infinite;
+  }
+  @keyframes nav-progress-slide {
+    0% {
+      left: -40%;
+    }
+    100% {
+      left: 100%;
+    }
+  }
+</style>
