@@ -123,6 +123,7 @@ import {
 } from '~/components/Challenge/DynamicPrizeCard/constants';
 import { ProgressLegendDot } from '~/components/Challenge/DynamicPrizeCard/ProgressLegendDot';
 import { GlowDivider } from '~/components/Challenge/DynamicPrizeCard/GlowDivider';
+import { distributePrizes } from '~/server/games/daily-challenge/challenge-pool';
 
 function useInjectKeyframes() {
   useEffect(() => {
@@ -817,8 +818,15 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
       : []),
   ];
 
-  // Prize breakdown
-  const prizeItems: DescriptionTableProps['items'] = challenge.prizes.map((prize, index) => ({
+  // Prize breakdown. Dynamic-pool (user) challenges don't materialize `prizes` until they end
+  // (distributePrizes runs at winner-pick), so before then show the projected split derived from
+  // the current pool + distribution. Completed challenges render their real `prizes`.
+  const isProjectedPrizes =
+    isDynamicPool && !challenge.prizes.length && !!challenge.prizeDistribution?.length;
+  const prizeBreakdown = isProjectedPrizes
+    ? distributePrizes(challenge.prizePool, challenge.prizeDistribution ?? [])
+    : challenge.prizes;
+  const prizeItems: DescriptionTableProps['items'] = prizeBreakdown.map((prize, index) => ({
     label: (
       <Group gap={4}>
         <ThemeIcon
@@ -1264,6 +1272,11 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
           </Accordion.Control>
           <Accordion.Panel>
             <ScrollArea.Autosize mah={300}>
+              {isProjectedPrizes && (
+                <Text size="xs" c="dimmed" px="xs" pb={4}>
+                  Projected from the current pool — grows as entries are submitted.
+                </Text>
+              )}
               <DetailRows items={prizeItems} />
             </ScrollArea.Autosize>
           </Accordion.Panel>
