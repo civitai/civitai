@@ -17,6 +17,22 @@ import type { Partner } from '~/shared/utils/prisma/models';
 import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { isClientAbortError } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
+import { logToAxiom, buildCentralErrorLog, wasServerFaultLogged } from '~/server/logging/client';
+
+// Fire-and-forget structured, cause-walked error log for a REST 500 produced by
+// `handleEndpointError`. logToAxiom's stderr write is synchronous (→ Alloy → Loki),
+// so the queryable `_axiom` line lands even though we don't await; the `.catch`
+// guarantees telemetry can never break the error response. Server faults carry the
+// un-masked `.cause` chain + severity `type:'error'` (queryable as
+// detected_level="error"); client-fault 4xx and SERVICE_UNAVAILABLE 503s are gated
+// out at the call site so they never hit the error stream.
+function logRestServerFault(e: unknown) {
+  // Skip if a router/service already logged this exact fault before re-throwing.
+  if (wasServerFaultLogged(e)) return;
+  logToAxiom({ ...buildCentralErrorLog(e), source: 'handleEndpointError' }, 'civitai-prod').catch(
+    () => undefined
+  );
+}
 
 type AxiomAPIRequest = NextApiRequest & { log: Logger };
 
@@ -222,6 +238,15 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
   if (e instanceof TRPCError) {
     const apiError = e as TRPCError;
     const status = getHTTPStatusCodeFromError(apiError);
+    // A TRPCError that maps to a 5xx (INTERNAL_SERVER_ERROR / TIMEOUT) is a genuine
+    // server fault that previously reached the client as a 500 with NOTHING logged
+    // structurally — invisible in `_axiom`. Emit the un-masked cause-walked error
+    // log so it's queryable. Sub-500 (4xx) TRPCErrors are normal client feedback,
+    // and SERVICE_UNAVAILABLE (503) is the retryable transient-upstream mapping
+    // (transient CH/Meili/orchestrator) that fires in high-volume waves — both are
+    // excluded so they don't flood the error stream (mirrors the tRPC onError
+    // early-return for 503).
+    if (status >= 500 && status !== 503) logRestServerFault(apiError);
     // Older Zod-validation TRPCErrors stuff a JSON-encoded issue array into
     // `message`; many newer call sites (incl. `withMeili`'s
     // MeiliCallTimeoutError → TRPCError mapping) pass a plain string. Falling
@@ -239,20 +264,13 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
   } else {
     const error = e as Error;
     // This branch increments the http-errors counter (via the wrapper's
-    // instrumentApiResponse) but historically logged nothing, so any
-    // non-TRPCError throw inside a wrapped handler — e.g. an unguarded
-    // TypeError — was counted yet completely un-attributable in logs (it took
-    // a live repro to find one such silent 500). Emit class + truncated message
-    // so the next one is attributable from Loki. Class + message only (no
-    // stack, query, or body) to stay PII-light + low-cardinality, and wrapped
-    // so telemetry can never break the error response.
-    try {
-      console.error(
-        `[handleEndpointError] unhandled ${error?.name ?? 'Error'}: ${String(
-          error?.message ?? ''
-        ).slice(0, 300)}`
-      );
-    } catch {}
+    // instrumentApiResponse) but historically logged nothing structural, so any
+    // non-TRPCError throw inside a wrapped handler — e.g. an unguarded TypeError —
+    // was counted yet completely un-attributable in logs (it took a live repro to
+    // find one such silent 500). Emit the structured, cause-walked `_axiom` error
+    // log (name + message + stack, un-masked cause) so the next one is attributable
+    // from Loki the normal way. safeError keeps it PII-light (primitive fields only).
+    logRestServerFault(error);
     return res.status(500).json({ message: 'An unexpected error occurred', error: error.message });
   }
 }
