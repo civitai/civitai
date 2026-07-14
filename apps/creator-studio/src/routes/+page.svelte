@@ -3,6 +3,7 @@
   import { Skeleton } from '@civitai/ui/components/ui/skeleton/index.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { IconArrowRight } from '@tabler/icons-svelte';
+  import { currencyMeta, formatAmount } from '$lib/earnings';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -22,13 +23,28 @@
       : []
   );
 
-  // Earnings headline stats stay placeholders until the ClickHouse owner-keyed rollup lands (decision A1).
-  const stats = [
-    { label: 'Earned this period', hint: 'Awaiting analytics wiring' },
-    { label: 'Cash pending', hint: 'Awaiting analytics wiring' },
-    { label: 'Cash settled', hint: 'Awaiting analytics wiring' },
-    { label: 'Top-earning model', hint: 'Needs owner-keyed rollup' },
-  ];
+  // Earnings headline (A1 Part 1 — buzzTransactions, already owner-keyed). Buzz colors are summed for this glance
+  // number (all buzz, same unit); cash is separate. The /earnings page keeps every currency distinct.
+  const sumWhere = (pred: (currency: string) => boolean) =>
+    (data.earnings ?? []).filter((b) => pred(b.currency)).reduce((s, b) => s + b.total, 0);
+  const stats = $derived([
+    {
+      label: 'Buzz earned',
+      value: data.earnings ? `⚡ ${num(sumWhere((c) => currencyMeta(c).family === 'buzz'))}` : null,
+      hint: 'Yellow, blue & green — last 30 days',
+    },
+    {
+      label: 'Cash pending',
+      value: data.earnings ? formatAmount(sumWhere((c) => c === 'cashPending'), 'cashPending') : null,
+      hint: 'Last 30 days',
+    },
+    {
+      label: 'Cash settled',
+      value: data.earnings ? formatAmount(sumWhere((c) => c === 'cashSettled'), 'cashSettled') : null,
+      hint: 'Last 30 days',
+    },
+    { label: 'Top-earning model', value: null, pending: true, hint: 'Needs owner-keyed rollup (A1 Part 2)' },
+  ]);
 
   const sections = [
     { href: '/models', title: 'Models', body: 'Set licensing fees, manage access, sell indefinitely.' },
@@ -76,7 +92,13 @@
         <CardTitle class="text-sm font-medium text-dark-2">{stat.label}</CardTitle>
       </CardHeader>
       <CardContent>
-        <Skeleton class="h-7 w-24" />
+        {#if stat.value != null}
+          <p class="text-xl font-semibold text-white">{stat.value}</p>
+        {:else if stat.pending}
+          <p class="text-xl font-semibold text-dark-4">—</p>
+        {:else}
+          <Skeleton class="h-7 w-24" />
+        {/if}
         <p class="mt-2 text-xs text-dark-3">{stat.hint}</p>
       </CardContent>
     </Card>
