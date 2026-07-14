@@ -26,24 +26,9 @@
 
 ---
 
-## Task 1: Fetch the cover image's real `nsfwLevel` (data foundation)
+## Task 1: ~~Fetch the cover image's real `nsfwLevel`~~ — SKIPPED (verified unnecessary)
 
-Every NSFW gate below needs the cover image's real level, which is currently never selected.
-
-**Files:**
-- Modify: `src/server/games/daily-challenge/challenge-helpers.ts` — the challenge SELECT (~`:146-151`), the row type (~`:69-74`), and the `ChallengeListItem`/`ChallengeDetail` mapped types (~`:113-128`).
-
-**Interfaces:**
-- Produces: challenge row + `ChallengeListItem` + `ChallengeDetail` gain `coverImageNsfwLevel: number | null` (real scanner level of the cover `Image`, `null` when `coverImageId` is null).
-
-- [ ] **Step 1 — Add the column to the raw SELECT.** In the `getChallengesByIds`/detail SELECT block, after the existing cover subselects (`:150`), add:
-  ```sql
-  (SELECT "nsfwLevel" FROM "Image" WHERE id = c."coverImageId") as "coverImageNsfwLevel",
-  ```
-  Keep `c."nsfwLevel"` (declared-derived) — it still drives display badges; do not remove it.
-- [ ] **Step 2 — Thread the field through the row type and the two public mapped types** (`coverImageNsfwLevel: number | null`). Populate it in whatever maps rows → `ChallengeListItem`/`ChallengeDetail` (mirror how `coverUrl` is carried).
-- [ ] **Step 3 — Typecheck** (editor diagnostics; do not run `pnpm typecheck` unprompted per project rule). Expected: no new errors.
-- [ ] **Step 4 — Commit:** `fix(challenges): select real cover image nsfwLevel for content gating`
+**Finding during execution:** the real cover-image `nsfwLevel` is ALREADY fetched on every surface that renders a cover, via a post-query `dbRead.image.findMany`/`findUnique` (feed `challenge.service.ts:288`→`coverImage.nsfwLevel:321`; detail `buildChallengeDetail:708`→`:806`; events `:2705`; winner rows carry `imageNsfwLevel` directly). The server-side exclusion (Tasks 2/4) queries `Image` via an `EXISTS` subquery (no selected column needed), and the frontend (Task 5) only needs to *use* the already-present `coverImage.nsfwLevel`. **No SQL column, no type plumbing.** Nothing to do here.
 
 ---
 
@@ -187,20 +172,19 @@ Fixes the client-side mirror: `ChallengeCard.tsx:108` and the detail cover feed 
 
 **Files:**
 - Modify: `src/components/Cards/ChallengeCard.tsx` (~`:101-109`).
-- Modify: `src/pages/challenges/[id]/[[...slug]].tsx` — the `coverImage` object handed to `ImageGuard2` (~`:555-574`).
+- Verify (no change expected): detail `[[...slug]].tsx:557` wraps `ImageGuard2 image={challenge.coverImage}`, and `challenge.coverImage.nsfwLevel` is already the **real** image level (server `buildChallengeDetail:806`). Winner thumbnails (`WinnerPodiumCard.tsx:146`) already key on real `imageNsfwLevel`. So **only `ChallengeCard` is wrong** — it uses the top-level declared `nsfwLevel` while the real `coverImage.nsfwLevel` is already on the item.
 - Verify: `src/components/Challenge/challenge.utils.ts:25,74` already sends `browsingLevel` to the query (keep).
 
 **Interfaces:**
-- Consumes: `coverImageNsfwLevel` from `ChallengeListItem`/`ChallengeDetail` (Task 1).
+- Consumes: `coverImage.nsfwLevel` (real level) — already present on `ChallengeListItem` (feed mapping `challenge.service.ts:321`).
 
-- [ ] **Step 1 — ChallengeCard:** set the guard image's `nsfwLevel` to the **cover image's real level**, falling back to the declared level only when the real level is missing:
+- [ ] **Step 1 — ChallengeCard:** the card builds a guard image object (`:101-109`) using the top-level `nsfwLevel` (challenge-declared). Change it to the cover image's real level, which is already destructured available as `coverImage.nsfwLevel`:
   ```ts
-  nsfwLevel: coverImageNsfwLevel ?? nsfwLevel, // real scanner level drives the blur, not the declared ceiling
+  nsfwLevel: coverImage.nsfwLevel ?? nsfwLevel, // real scanner level drives the blur, not the declared ceiling
   ```
-  Remove the stale `// Use challenge content level instead of image's own level` comment.
-- [ ] **Step 2 — Detail:** ensure `challenge.coverImage.nsfwLevel` passed to `ImageGuard2` is `coverImageNsfwLevel` (real), not the declared level. Adjust the object construction where `coverImage` is assembled.
-- [ ] **Step 3 — Component smoke check** via the `component-preview` skill (dark + light): SFW cover renders; an NSFW-level cover shows the `ImageGuard2` blur/toggle. (Server exclusion means green users won't receive NSFW cards, but the guard must still be correct for `.red` and borderline levels.)
-- [ ] **Step 4 — Commit:** `fix(challenges): blur challenge cover on real image nsfwLevel, not declared level`
+  Remove the stale `// Use challenge content level instead of image's own level` comment. (Confirm `coverImage` is in scope in the object builder; the card already reads `coverImage` at `:86`.)
+- [ ] **Step 2 — Component smoke check** via the `component-preview` skill (dark + light): SFW cover renders; an NSFW-level cover shows the `ImageGuard2` blur/toggle. (Server exclusion means green users won't receive NSFW cards, but the guard must still be correct for `.red` and borderline levels.)
+- [ ] **Step 3 — Commit:** `fix(challenges): blur challenge card cover on real image nsfwLevel, not declared level`
 
 ---
 
@@ -275,6 +259,6 @@ Fixes blocker #4 (double-refund → minted Buzz) and the delete-vs-activation re
 ## Self-Review
 
 - **Spec coverage:** #1 winners leak → Task 4; #2 detail Mod/System → Task 3; #3 feed bypass/declared-level → Task 2; #4 green NSFW cover → Tasks 2+3+5; buzz double-refund → Task 7; mod payout currency+spoof → Task 6; frontend filtering (user's ask) → Task 5; delete-vs-activation race → Task 7 Step 2. Ops (flags/migrations/sentinel) → pre-deploy checklist. ✅
-- **Data dependency:** Tasks 2/3/4/5 all consume `coverImageNsfwLevel` from Task 1 — Task 1 must land first.
+- **Data dependency:** none — Task 1 was verified unnecessary (real cover `nsfwLevel` already fetched everywhere). Tasks 2–7 are independent; execute in order for clean commits. Tasks 2/3/4 all edit `challenge.service.ts` — do them sequentially to avoid conflicts.
 - **Type consistency:** `getEffectiveBrowsingLevel` signature identical in Tasks 2/3/4. `buildWinnerPayoutTransactions({ challengeId, title, buzzType, winners })` matches the cron call in Task 6.
 - **Open item for the user:** Task 7 Step 0 (buzz-service idempotency) may promote a `refundedAt` migration; Task 2 Step 6 may add a null-cover branch. Both flagged inline.

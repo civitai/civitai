@@ -67,6 +67,7 @@ import {
 } from '~/server/services/challenge-eligibility.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
 import {
+  getEffectiveBrowsingLevel,
   isChallengeHiddenByCoverScan,
   isChallengeHiddenByPoiCover,
 } from '~/server/games/daily-challenge/challenge-visibility';
@@ -463,9 +464,23 @@ export async function getInfiniteChallenges(
     conditions.push(Prisma.sql`c."eventId" IS NULL`);
   }
 
-  // Content level filter - only show challenges whose allowedNsfwLevel intersects the browsing level
-  if (browsingLevel) {
-    conditions.push(Prisma.sql`(c."allowedNsfwLevel" & ${browsingLevel}) > 0`);
+  // Content level filter — models-style: exclude a challenge outright when its REAL cover image
+  // level doesn't intersect the viewer's effective browsing level, rather than trusting the
+  // challenge's declared `allowedNsfwLevel`. On green the level is capped server-side (see
+  // getEffectiveBrowsingLevel) so a client can't bypass it by omitting `browsingLevel`. Creator
+  // always sees their own. A challenge with no cover is already excluded by the IS NOT NULL gate
+  // above.
+  const effectiveBrowsingLevel = getEffectiveBrowsingLevel({
+    isGreen: isGreen ?? false,
+    isLoggedIn: currentUserId != null,
+    requested: browsingLevel,
+  });
+  if (effectiveBrowsingLevel > 0) {
+    conditions.push(
+      currentUserId
+        ? Prisma.sql`(c."createdById" = ${currentUserId} OR EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0))`
+        : Prisma.sql`EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0)`
+    );
   }
 
   // User participation filter (requires logged-in user)

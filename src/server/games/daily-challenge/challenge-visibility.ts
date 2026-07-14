@@ -1,3 +1,7 @@
+import {
+  publicBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { ChallengeSource, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
 // A user challenge whose cover image depicts a real person (`Image.poi`, set by the image scanner)
@@ -13,6 +17,26 @@ export function isChallengeHiddenByPoiCover(
     challenge.createdById !== viewerId &&
     challenge.coverPoi
   );
+}
+
+// The browsing level the server will actually filter on. On the green (SFW) site the requested
+// level is bitwise-AND'd against a hard cap so a hand-crafted request can't raise the ceiling, and
+// an absent level falls back to the cap (instead of "no filter") — otherwise a client that simply
+// omits `browsingLevel` would bypass NSFW filtering on green entirely. Logged-in green viewers get
+// PG + PG-13; anonymous get PG only. Off green the request passes through unchanged (0 = no filter).
+// Mirrors the pattern in comics.router.ts. Pure + dependency-free for unit testing.
+export function getEffectiveBrowsingLevel({
+  isGreen,
+  isLoggedIn,
+  requested,
+}: {
+  isGreen: boolean;
+  isLoggedIn: boolean;
+  requested?: number | null;
+}): number {
+  if (!isGreen) return requested && requested > 0 ? requested : 0;
+  const greenCap = isLoggedIn ? sfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
+  return requested && requested > 0 ? requested & greenCap : greenCap;
 }
 
 // A challenge's cover image must finish moderation scanning before the challenge is publicly
