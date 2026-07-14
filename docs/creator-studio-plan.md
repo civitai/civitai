@@ -285,8 +285,8 @@ their fee — reconcile with the backend stacking Justin refers to.)*
 
 The design has cross-team dependencies — surface these early (likely with **Koen / backend**):
 
-- **ClickHouse / data** — the earnings **`source`** split (compensation / licenseFee / tip) already exists in
-  `orchestration.resourceCompensations`; the real add is the **owner-keyed earnings rollup**
+- **ClickHouse / data** — the earnings **`source`** split (compensation / licenseFee) already exists in
+  `orchestration.resourceCompensations` (tips + access/cosmetic sit in *other* tables — see §7.6 / A5); the real add is the **owner-keyed earnings rollup**
   ([§7.6](#76-clickhouse-analytics--materialized-views)). *(The earlier concern about tagging the buzz-service report
   endpoints is moot — analytics read from ClickHouse, not the buzz service.)*
 - **Main-app owner** — sign-off on the [§7.2](#72-new-package--creator-studio-modules) **consolidation** refactor:
@@ -296,8 +296,9 @@ The design has cross-team dependencies — surface these early (likely with **Ko
 
 ### 7.5 Engineering to-dos (not Justin — eng verification)
 
-- Earnings **by source** is already available: `orchestration.resourceCompensations.source` = comp / licenseFee / tip
-  (confirmed by the live audit). The remaining gap is the **owner-keyed rollup** ([§7.6](#76-clickhouse-analytics--materialized-views)).
+- Earnings **by source** is partly available: `orchestration.resourceCompensations.source` = comp / licenseFee
+  **only** (CH audit 2026-07-14 — no `tip` there; tips live in `default.buzz_resource_compensation`, access/cosmetic
+  are buzz txns → A5). The remaining gaps are the **owner-keyed rollup** and unioning A1+A5 sources ([§7.6](#76-clickhouse-analytics--materialized-views)).
 - The `earlyAccessPurchase()` **dependency-map** is now **optional** — with Q1 minimal and the extraction deferred to
   the post-v1 consolidation, it's off any critical path. Do it when scoping the consolidation.
 
@@ -310,7 +311,7 @@ aggregates**, never individual rows (the buzz service is too slow). Inventory fr
 
 | Need | Table |
 |---|---|
-| Earnings by resource + **source** (comp / licenseFee / tip) | `orchestration.resourceCompensations` (SummingMergeTree; +`accountType`, `source`) |
+| Earnings by resource + **source** (comp / licenseFee — no tip here) | `orchestration.resourceCompensations` (SummingMergeTree; +`accountType`, `source`) |
 | Earnings mirror (comp/tip split) | `default.buzz_resource_compensation` |
 | Generations per resource | `default.daily_resource_generation_counts` |
 | Downloads | `default.daily_downloads`, `daily_downloads_unique`, `modelVersionUniqueDownloads` |
@@ -322,7 +323,12 @@ never the owner's `userId` (the `userId` columns that exist — `daily_user_reso
 
 1. **Owner-keyed earnings rollup** — an MV aggregating `(ownerUserId, date, source) → sum(amount)` off
    `resourceCompensations` (+ a `modelVersion → ownerUserId` dictionary in CH). Scales better than app-side
-   `WHERE modelVersionId IN (…)`, which balloons for prolific creators.
+   `WHERE modelVersionId IN (…)`, which balloons for prolific creators. Full spec + open decisions:
+   [owner-rollup-handoff.md](creator-studio/owner-rollup-handoff.md). **Two design decisions flagged there
+   (CH audit 2026-07-14):** (D1) the key likely needs **`accountType`/currency** so buzz-color vs cash stay
+   separable (B8); (D2) `resourceCompensations` holds **comp + license only** — tips + access/cosmetic come from
+   *other* MVs (A5), so the `/earnings` source filter must union A1+A5 on a shared source vocabulary. Also: `amount`
+   is fractional — the MV must not `FLOOR` it.
 2. **Per-creator access/cosmetic-sale earnings** (only if v1 needs them) — those are buzz *transactions*, not in
    `resourceCompensations`; `buzz.transactions_daily_stats` is platform-wide (no account dimension). Would need a
    per-`toAccountId` daily buzz-earnings-by-type MV.

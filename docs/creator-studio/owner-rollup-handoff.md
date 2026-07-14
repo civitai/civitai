@@ -33,16 +33,19 @@ ClickHouse is poor at large joins but excellent at **dictionaries** (in-memory h
 ### 2. Owner-keyed earnings MV
 
 - **Engine:** `AggregatingMergeTree`.
-- **Key:** `(ownerUserId, date, source)`.
-- **Value:** `sum(amount)` (via `sumState` / `sumMerge`).
-- **Source rows:** `orchestration.resourceCompensations` (comp + license fee), resolving `ownerUserId` via
-  `dictGet` on the row's `modelVersionId` at insert time.
+- **Key:** `(ownerUserId, date, source)` — **open (D1 below): almost certainly needs `accountType`/currency too.**
+- **Value:** `sumState(amount)` / `sumMerge` — **must NOT `FLOOR`.** Verified (CH audit 2026-07-14): `amount` is
+  fractional (sub-buzz, e.g. `0.0234`); the current comp query `FLOOR`s it, which would drop 0.01-fee precision.
+- **Source rows:** `orchestration.resourceCompensations`, filtered to `source IN ('compensation','licenseFee')
+  AND amount > 0` (those are the only real `source` values; the table also holds a few corrupt rows), resolving
+  `ownerUserId` via `dictGet` on the row's `modelVersionId` at insert time.
 - **Result:** owner review becomes a point lookup on `(ownerUserId, …)` instead of an `IN (…)` over every version
   the creator owns. Kills the slow-for-big-catalogs problem.
 
-> **Scope note.** This MV covers `resourceCompensations`-sourced earnings (comp, license fee). **Access-sale +
-> cosmetic-sale** earnings are buzz *transactions* paid directly to the creator's `toAccountId` and are handled
-> by a **separate** per-`toAccountId` MV — see backend question **A5**, not this doc.
+> **Scope note.** This MV covers `resourceCompensations`-sourced earnings — **comp + license fee only** (verified:
+> those are the only real `source` values). **Tips, access-sale, and cosmetic-sale** are NOT here: tips appear in
+> `default.buzz_resource_compensation`, and access/cosmetic are buzz *transactions* paid directly to the creator's
+> `toAccountId` (backend question **A5**). See D2 below — the `/earnings` source filter spans this MV *plus* those.
 
 ## Launch fallback (Option B)
 
@@ -50,18 +53,39 @@ Until the dictionary + MV land, the app-side `WHERE modelVersionId IN (…)` que
 **small creators**. For launch we'd ship with top-earners hidden and a version-count cap on the per-model table,
 then remove the cap once this rollup is live. Prefer landing the rollup before v1 if the schedule allows.
 
-## Confirm-before-building checklist
+## Questions for Koen (build agenda)
 
-- [ ] Confirm the CDC/ClickPipe path to prod Postgres for `Model` + `ModelVersion` (reuse the Buzz ClickPipe
-      setup; verify Bastion/networking).
-- [ ] Confirm dictionary source + refresh model (CDC-mirror `ReplacingMergeTree` vs. direct Postgres
-      `LIFETIME(300)`).
-- [ ] Confirm the exact `source` enum values on the owner-keyed MV (comp / license / tip …) and that they match
-      the dashboard/`/earnings` filters.
-- [ ] Confirm `amount` units/precision line up with the A2 fractional-fee migration (`licensingFee` → numeric at
-      0.01) so sub-buzz amounts aggregate correctly.
-- [ ] Backfill plan for existing `resourceCompensations` history into the owner-keyed MV.
-- [ ] Pair with Koen on final column types + partitioning/TTL.
+> Grounded in a live ClickHouse audit (2026-07-14): `orchestration.resourceCompensations.source` has only
+> **`compensation`** and **`licenseFee`** (plus a few corrupt rows to filter out); `amount` is **fractional**
+> (sub-buzz, e.g. `0.0234`), and the current comp query `FLOOR`s it.
+
+**Two of these are design decisions, not just confirmations — settle them first:**
+
+- **D1 — the MV key must carry currency.** Rows have an `accountType` (buzz color: Yellow/User, Blue, Green) and
+  license fees can settle to **cash**. B8 says show earnings in the currency received with **no conversion** — so
+  the proposed key `(ownerUserId, date, source)` can't separate green vs yellow vs cash.
+  **Decide:** key on `(ownerUserId, date, source, accountType)` (or a normalized `currency` dimension)?
+- **D2 — the `source` filter spans more than this MV.** This MV yields **comp + license only**. The `/earnings`
+  source filter also wants **tip, access-sale, cosmetic-sale** — none of which are in `resourceCompensations`
+  (tips look to live in `default.buzz_resource_compensation`; access/cosmetic are direct buzz txns → **A5**).
+  **Decide:** the single canonical `source` label set, and how reads **union** A1 (comp/license) with the tip +
+  A5 sources so the filter is one consistent list. (A1 and A5 must share a source vocabulary.)
+
+**Build-confirm checklist:**
+
+- [ ] **CDC/ClickPipe path** — can we clone the Buzz-DB ClickPipe for prod `Model` + `ModelVersion` (Bastion /
+      networking OK? CDC enabled on those tables)? Mirror **full tables, or just** `ModelVersion.id/modelId` +
+      `Model.id/userId`?
+- [ ] **Dictionary source/refresh** — CDC-mirror `ReplacingMergeTree` vs. direct-Postgres `LIFETIME(300)` (is a
+      direct CH→prod-Postgres connection even possible through the Bastion?). Staleness tolerance for the owner
+      lookup (ownership rarely changes)? On ownership transfer / version delete, we attribute *historical*
+      earnings to the **current** owner and drop rows whose `modelVersionId` isn't in the dict — OK?
+- [ ] **Amount precision** — MV aggregates **raw fractional** `amount` (no `FLOOR`); confirm the CH state type
+      (`sumState` of Float64 vs Decimal) and display rounding line up with the `Decimal(10,2)` fee (A2).
+- [ ] **Backfill** — `INSERT … SELECT … dictGet(...)` over history: all-time or from a cutoff? Handle versions
+      missing from the dictionary.
+- [ ] **Layout** — column types (`ownerUserId` UInt32, `source` LowCardinality, `accountType` if added), ordering
+      key, `PARTITION BY toYYYYMM(date)`, TTL (likely none — financial history).
 
 ## References
 

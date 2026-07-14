@@ -33,10 +33,13 @@ it"* view (generations, downloads, per-model funnels) lives on [analytics.md](an
 service is too slow) ([plan §5.1](../creator-studio-plan.md#51-the-core-architectural-decision--where-does-business-logic-run),
 [§7.6](../creator-studio-plan.md#76-clickhouse-analytics--materialized-views)). Scoped to `locals.user.id`:
 
-- **Earnings by source** — `orchestration.resourceCompensations` already carries `source` covering **compensation /
-  licenseFee / tip** (available now). **Access-sale + cosmetic-sale** earnings are buzz *transactions*, **not** in
+- **Earnings by source** — `orchestration.resourceCompensations` carries `source` covering **compensation /
+  licenseFee only** (CH audit 2026-07-14 — no `tip` there; tips live in `default.buzz_resource_compensation`).
+  **Tips, access-sale, and cosmetic-sale** are buzz *transactions* paid to the creator's `toAccountId`, **not** in
   `resourceCompensations` → they need a separate per-`toAccountId` daily buzz-earnings rollup
-  ([§7.6](../creator-studio-plan.md#76-clickhouse-analytics--materialized-views) **gap #2**) — see Open questions.
+  ([§7.6](../creator-studio-plan.md#76-clickhouse-analytics--materialized-views) **gap #2** / A5) — see Open questions.
+  So the by-source filter must **union** the owner-keyed comp/license MV with the tip + A5 sources on one shared
+  source vocabulary.
 - **Owner-keyed rollup dependency** — every earnings table is keyed by `modelVersionId`, **not** the creator's
   `userId`; "creator X's earnings" needs the `(ownerUserId, date, source)` MV + `modelVersion → ownerUserId` dictionary
   ([§7.6](../creator-studio-plan.md#76-clickhouse-analytics--materialized-views) **gap #1**). Blocks this page.
