@@ -150,3 +150,10 @@ export const DEFAULT_CATEGORY_ROWS: CategoryWeightRow[] = [
 // excluded even though user challenges can allow NSFW levels — it shares CivChan's userId, and
 // NSFW entries are judged with the standard rubrics for now (product call pending).
 export const USER_SELECTABLE_JUDGE_NAMES = ['CivBot', 'CivChan'] as const;
+
+/** Max challenges processed concurrently inside a single job run. Bounded by DB load + OpenRouter rate limits. */
+export const CHALLENGE_JOB_CONCURRENCY = 5;
+/** Max challenges a single job run pulls from a selector. Remaining work rolls to the next tick. */
+export const CHALLENGE_JOB_BATCH_SIZE = 200;
+/** Rough per-entry review cost in Buzz (gpt-5-nano, ~0.5 Buzz) used only for the spend-vs-housecut metric. */
+export const CHALLENGE_REVIEW_BUZZ_ESTIMATE = 1;
