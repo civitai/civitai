@@ -11,8 +11,8 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 // by the Meilisearch indexer (`articleSelect` spreads `...articleDetailSelect`
 // into the index document), so anything exposed here leaks to external
 // consumers. `moderatorNsfwLevel` is an internal moderation signal; callers
-// that render the mod edit UI (`getArticleById`, `getModeratorArticles`)
-// extend this select explicitly with the override field instead.
+// that render the mod edit UI (`getArticleById`) extend this select explicitly
+// with the override field instead.
 export const articleDetailSelect = Prisma.validator<Prisma.ArticleSelect>()({
   id: true,
   createdAt: true,
@@ -28,7 +28,7 @@ export const articleDetailSelect = Prisma.validator<Prisma.ArticleSelect>()({
   // exist in prod (tagId pointing at a hard-deleted Tag). Selecting the
   // required relation on such a row makes Prisma throw "Inconsistent query
   // result: Field tag is required ... got null" → HTTP 500 for every consumer
-  // of this select (getArticleById, getModeratorArticles, the search indexer,
+  // of this select (getArticleById, the search indexer,
   // the outbound webhook). Filtering on tag existence drops the orphan join
   // rows so these queries degrade gracefully instead of erroring.
   tags: { select: { tag: { select: simpleTagSelect } }, where: { tag: { is: {} } } },

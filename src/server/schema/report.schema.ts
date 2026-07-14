@@ -1,7 +1,6 @@
 import * as z from 'zod';
 import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
 import { ExternalModerationType } from '~/server/common/enums';
-import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { AppealStatus, EntityType, ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 
@@ -110,25 +109,6 @@ export const createReportInputSchema = z.discriminatedUnion('reason', [
   reportAutomatedSchema,
   reportSpamSchema,
 ]);
-
-export type GetReportsInput = z.infer<typeof getReportsSchema>;
-export const getReportsSchema = getAllQuerySchema.extend({
-  type: z.enum(ReportEntity),
-  filters: z
-    .object({
-      id: z.string(),
-      value: z.unknown(),
-    })
-    .array()
-    .optional(),
-  sort: z
-    .object({
-      id: z.string(),
-      desc: z.boolean(),
-    })
-    .array()
-    .optional(),
-});
 
 export type GetReportCountInput = z.infer<typeof getReportCount>;
 export const getReportCount = z.object({

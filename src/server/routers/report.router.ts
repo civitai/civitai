@@ -2,17 +2,15 @@ import {
   createEntityAppealHandler,
   createReportHandler,
   getRecentAppealsHandler,
-  getReportsHandler,
 } from '~/server/controllers/report.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   createEntityAppealSchema,
   createReportInputSchema,
   getRecentAppealsSchema,
-  getReportsSchema,
 } from '~/server/schema/report.schema';
 import { getAppealDetails } from '~/server/services/report.service';
-import { guardedProcedure, moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
+import { guardedProcedure, protectedProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export const reportRouter = router({
@@ -20,8 +18,6 @@ export const reportRouter = router({
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(createReportInputSchema)
     .mutation(createReportHandler),
-  getAll: moderatorProcedure.input(getReportsSchema).query(getReportsHandler),
-
   // #region [appeal]
   getRecentAppeals: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })

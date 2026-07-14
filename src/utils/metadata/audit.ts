@@ -872,37 +872,6 @@ function includesInappropriateEnriched(
 // #endregion [inappropriate]
 
 // #region [highlight]
-const highlighters = {
-  positive: [
-    {
-      color: '#7950F2',
-      fn: highlightMinor,
-    },
-    {
-      color: '#339AF0',
-      fn: words.young.nouns.highlight,
-    },
-    {
-      color: '#38d9a9',
-      fn: words.poi.highlight,
-    },
-    {
-      color: '#F03E3E',
-      fn: highlightBlocked,
-    },
-    {
-      color: '#FD7E14',
-      fn: words.nsfw.highlight,
-    },
-  ],
-  negative: [
-    {
-      color: '#339AF0',
-      fn: words.young.negativeNouns.highlight,
-    },
-  ],
-};
-
 function highlightReplacement(
   prompt: string,
   match: RegExpMatchArray | null,
@@ -913,18 +882,6 @@ function highlightReplacement(
   return (
     prompt.substring(0, match.index) + prompt.substring(match.index).replace(word, replaceFn(word))
   );
-}
-
-function highlightBlocked(prompt: string, replaceFn: (word: string) => string) {
-  for (const { regex } of blockedNSFWRegexLazy()) {
-    if (regex.test(prompt)) {
-      const match = regex.exec(prompt);
-      const word = trimNonAlphanumeric(match?.[0]);
-      if (!word) continue;
-      prompt = prompt.replace(word, replaceFn(word));
-    }
-  }
-  return prompt;
 }
 
 function highlightMinor(prompt: string, replaceFn: (word: string) => string) {
@@ -951,27 +908,6 @@ function highlightMinor(prompt: string, replaceFn: (word: string) => string) {
 // production code.
 export function __getAgeRegexesForTest() {
   return ageRegexes;
-}
-
-export function highlightInappropriate({
-  prompt,
-  negativePrompt,
-}: {
-  prompt?: string;
-  negativePrompt?: string;
-}) {
-  if (!prompt) return prompt;
-  for (const { fn, color } of highlighters.positive) {
-    prompt = fn(prompt, (word) => `<span style="color: ${color}">${word}</span>`);
-  }
-  if (negativePrompt) {
-    for (const { fn, color } of highlighters.negative) {
-      negativePrompt = fn(negativePrompt, (word) => `<span style="color: ${color}">${word}</span>`);
-    }
-    prompt += `<br><br><span style="color: #777">Negative Prompt:</span><br>${negativePrompt}`;
-  }
-
-  return prompt;
 }
 
 export function cleanPrompt({

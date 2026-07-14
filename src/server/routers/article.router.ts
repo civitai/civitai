@@ -3,7 +3,6 @@ import {
   publicProcedure,
   guardedProcedure,
   protectedProcedure,
-  moderatorProcedure,
   isFlagProtected,
   middleware,
 } from '~/server/trpc';
