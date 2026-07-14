@@ -26,10 +26,7 @@ import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsPro
 import { isDefined } from '~/utils/type-guards';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { nsfwRestrictedBaseModels } from '~/server/common/constants';
-import {
-  nsfwBrowsingLevelsArray,
-  sfwBrowsingLevelsArray,
-} from '~/shared/constants/browsingLevel.constants';
+import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
 
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
 export default function ImageSearch() {
@@ -65,9 +62,7 @@ function RenderFilters() {
     browsingSettingsAddons.settings.disablePoi
       ? `poi != true${currentUser?.username ? ` OR user.username = ${currentUser.username}` : ''}`
       : null,
-    browsingSettingsAddons.settings.disableMinor
-      ? `(minor != true OR nsfwLevel IN [${sfwBrowsingLevelsArray.join(', ')}])`
-      : null,
+    browsingSettingsAddons.settings.disableMinor ? 'minor != true' : null,
     // Filter out images from NSFW models with restricted base models
     `NOT (nsfwLevel IN [${nsfwBrowsingLevelsArray.join(
       ', '

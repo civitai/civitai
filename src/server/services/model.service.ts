@@ -441,9 +441,7 @@ export const getModelsRaw = async ({
     AND.push(Prisma.sql`(${pSql}."poi" = false OR mm."userId" = ${userId})`);
   }
   if (disableMinor) {
-    AND.push(
-      Prisma.sql`(${pSql}."minor" = false OR ((${pSql}."nsfwLevel" & ${sfwBrowsingLevelsFlag}) != 0 AND (${pSql}."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0))`
-    );
+    AND.push(Prisma.sql`${pSql}."minor" = false`);
   }
   if (input.excludedTagIds?.length) {
     const notExcluded = Prisma.sql`NOT EXISTS (

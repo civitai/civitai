@@ -29,10 +29,7 @@ import { Availability } from '~/shared/utils/prisma/enums';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { isDefined } from '~/utils/type-guards';
 import { nsfwRestrictedBaseModels } from '~/server/common/constants';
-import {
-  nsfwBrowsingLevelsArray,
-  sfwBrowsingLevelsArray,
-} from '~/shared/constants/browsingLevel.constants';
+import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
 
 export default function ModelsSearch() {
   return (
@@ -54,11 +51,7 @@ const RenderFilters = () => {
       ? `poi != true${currentUser?.id ? ` OR user.id = ${currentUser.id}` : ''}`
       : null,
     browsingSettingsAddons.settings.disableMinor
-      ? `(minor != true OR (nsfwLevel IN [${sfwBrowsingLevelsArray.join(
-          ', '
-        )}] AND NOT nsfwLevel IN [${nsfwBrowsingLevelsArray.join(', ')}]))${
-          currentUser?.id ? ` OR user.id = ${currentUser.id}` : ''
-        }`
+      ? `minor != true${currentUser?.id ? ` OR user.id = ${currentUser.id}` : ''}`
       : null,
     `availability != ${Availability.Private}${
       currentUser?.id ? ` OR user.id = ${currentUser.id}` : ''
