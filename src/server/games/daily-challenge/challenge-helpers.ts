@@ -126,64 +126,59 @@ type ChallengeDbRow = Omit<
   judgeId: number | null;
 };
 
-export async function getChallengeById(challengeId: number): Promise<ChallengeDetails | null> {
-  // Note: Using dbRead directly since 'challenge' isn't in LaggingType yet
-  const rows = await dbRead.$queryRaw<ChallengeDbRow[]>`
-    SELECT
-      c.id,
-      c."startsAt",
-      c."endsAt",
-      c."visibleAt",
-      c.title,
-      c.description,
-      c.theme,
-      c.invitation,
-      c."coverImageId",
-      (SELECT url FROM "Image" WHERE id = c."coverImageId") as "coverUrl",
-      (SELECT hash FROM "Image" WHERE id = c."coverImageId") as "coverImageHash",
-      (SELECT width FROM "Image" WHERE id = c."coverImageId") as "coverImageWidth",
-      (SELECT height FROM "Image" WHERE id = c."coverImageId") as "coverImageHeight",
-      c."nsfwLevel",
-      c."allowedNsfwLevel",
-      c."modelVersionIds",
-      c."collectionId",
-      c."judgeId",
-      c."judgingPrompt",
-      c."reviewPercentage",
-      c."maxReviews",
-      c."maxEntriesPerUser",
-      c.prizes,
-      c."entryPrize",
-      c."entryPrizeRequirement",
-      c."prizePool",
-      c."prizeMode",
-      c."basePrizePool",
-      c."buzzPerAction",
-      c."poolTrigger",
-      c."maxPrizePool",
-      c."prizeDistribution",
-      c."operationBudget",
-      c."operationSpent",
-      c."reviewCostType",
-      c."reviewCost",
-      c."createdById",
-      c.source,
-      c."buzzType",
-      c.status,
-      c."ingestion",
-      c."scannedAt",
-      c."entryFee",
-      c."maxParticipants",
-      c."judgingCategories",
-      c."eventId",
-      c.metadata
-    FROM "Challenge" c
-    WHERE c.id = ${challengeId}
-  `;
+// Shared column list for both the single-row and batched challenge lookups — keeps the two
+// queries (and their cover-image subquery hydration) from drifting apart.
+const challengeSelectFragment = Prisma.sql`
+  c.id,
+  c."startsAt",
+  c."endsAt",
+  c."visibleAt",
+  c.title,
+  c.description,
+  c.theme,
+  c.invitation,
+  c."coverImageId",
+  (SELECT url FROM "Image" WHERE id = c."coverImageId") as "coverUrl",
+  (SELECT hash FROM "Image" WHERE id = c."coverImageId") as "coverImageHash",
+  (SELECT width FROM "Image" WHERE id = c."coverImageId") as "coverImageWidth",
+  (SELECT height FROM "Image" WHERE id = c."coverImageId") as "coverImageHeight",
+  c."nsfwLevel",
+  c."allowedNsfwLevel",
+  c."modelVersionIds",
+  c."collectionId",
+  c."judgeId",
+  c."judgingPrompt",
+  c."reviewPercentage",
+  c."maxReviews",
+  c."maxEntriesPerUser",
+  c.prizes,
+  c."entryPrize",
+  c."entryPrizeRequirement",
+  c."prizePool",
+  c."prizeMode",
+  c."basePrizePool",
+  c."buzzPerAction",
+  c."poolTrigger",
+  c."maxPrizePool",
+  c."prizeDistribution",
+  c."operationBudget",
+  c."operationSpent",
+  c."reviewCostType",
+  c."reviewCost",
+  c."createdById",
+  c.source,
+  c."buzzType",
+  c.status,
+  c."ingestion",
+  c."scannedAt",
+  c."entryFee",
+  c."maxParticipants",
+  c."judgingCategories",
+  c."eventId",
+  c.metadata
+`;
 
-  const result = rows[0];
-  if (!result) return null;
-
+function hydrateChallengeRow(result: ChallengeDbRow): ChallengeDetails {
   return {
     ...result,
     // $queryRaw returns the TEXT column as an arbitrary string; narrow to the union (app only ever
@@ -200,6 +195,29 @@ export async function getChallengeById(challengeId: number): Promise<ChallengeDe
         ? JSON.parse(result.prizeDistribution)
         : result.prizeDistribution,
   };
+}
+
+/**
+ * Batched version of `getChallengeById` — fetches N challenges (incl. cover-image hydration)
+ * in a single set-based query instead of N correlated round-trips. Order is not guaranteed;
+ * callers should map results by id. Returns `[]` immediately (no query) for an empty input.
+ */
+export async function getChallengesByIds(challengeIds: number[]): Promise<ChallengeDetails[]> {
+  if (challengeIds.length === 0) return [];
+
+  // Note: Using dbRead directly since 'challenge' isn't in LaggingType yet
+  const rows = await dbRead.$queryRaw<ChallengeDbRow[]>`
+    SELECT ${challengeSelectFragment}
+    FROM "Challenge" c
+    WHERE c.id = ANY(${challengeIds}::int[])
+  `;
+
+  return rows.map(hydrateChallengeRow);
+}
+
+export async function getChallengeById(challengeId: number): Promise<ChallengeDetails | null> {
+  const [result] = await getChallengesByIds([challengeId]);
+  return result ?? null;
 }
 
 export async function getActiveChallengeFromDb(): Promise<ChallengeDetails | null> {

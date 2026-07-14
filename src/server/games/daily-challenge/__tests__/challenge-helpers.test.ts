@@ -1,5 +1,28 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { computeDynamicPool } from '../challenge-pool';
+
+// challenge-helpers.ts (transitively, via daily-challenge.utils.ts) eagerly constructs real
+// db/redis clients at import time. Mock them so the module graph loads without a live DB/Redis.
+const { mockDbRead, mockRedis } = vi.hoisted(() => {
+  const dbRead = { $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []) };
+  const redis = {
+    packed: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
+    get: vi.fn(async () => null),
+    set: vi.fn(async () => undefined),
+    del: vi.fn(async () => 0),
+    scanIterator: async function* () {},
+  };
+  return { mockDbRead: dbRead, mockRedis: redis };
+});
+
+vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: {} }));
+vi.mock('~/server/redis/client', () => ({
+  redis: mockRedis,
+  sysRedis: { sMembers: vi.fn(async () => []) },
+  REDIS_KEYS: { DAILY_CHALLENGE: { DETAILS: 'daily-challenge:details' } },
+  REDIS_SYS_KEYS: {},
+  withSysReadDeadline: vi.fn(async (fn: () => unknown) => fn()),
+}));
 
 describe('computeDynamicPool', () => {
   const defaultDistribution = [50, 30, 20];
@@ -165,5 +188,29 @@ describe('computeDynamicPool', () => {
       const totalAllocated = result.prizes.reduce((sum, p) => sum + p.buzz, 0);
       expect(totalAllocated).toBe(result.totalPool);
     }
+  });
+});
+
+describe('getChallengesByIds', () => {
+  beforeEach(() => {
+    mockDbRead.$queryRaw.mockClear();
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+  });
+
+  it('is exported and returns an array', async () => {
+    const { getChallengesByIds } = await import('../challenge-helpers');
+    expect(typeof getChallengesByIds).toBe('function');
+  });
+
+  it('returns empty array for empty input without hitting the db', async () => {
+    const { getChallengesByIds } = await import('../challenge-helpers');
+    await expect(getChallengesByIds([])).resolves.toEqual([]);
+    expect(mockDbRead.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('issues exactly one query for multiple ids (kills the N+1)', async () => {
+    const { getChallengesByIds } = await import('../challenge-helpers');
+    await getChallengesByIds([1, 2, 3]);
+    expect(mockDbRead.$queryRaw).toHaveBeenCalledTimes(1);
   });
 });
