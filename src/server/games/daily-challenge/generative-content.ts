@@ -7,7 +7,7 @@ import type {
 import { logToAxiom } from '~/server/logging/client';
 import { civitaiLLM } from '~/server/services/ai/civitai-llm';
 import { openrouter, AI_MODELS, type AIModel } from '~/server/services/ai/openrouter';
-import type { SimpleMessage } from '~/server/services/ai/openrouter';
+import type { SimpleMessage, TokenUsage } from '~/server/services/ai/openrouter';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import {
   DEFAULT_CATEGORY_ROWS,
@@ -46,6 +46,44 @@ function pickClient(model: string) {
   }
   if (!openrouter) throw new Error('OpenRouter not connected');
   return openrouter;
+}
+
+// $/M-token rates for models used in the daily-challenge pipeline (verified 2026-07-13).
+// estimateBuzzCost returns 0 for any model absent here — notably the Civitai-hosted urn:air:*
+// models, which don't report token usage through the orchestrator's completion endpoint yet.
+export const MODEL_BUZZ_RATES: Record<string, { input: number; output: number }> = {
+  [AI_MODELS.GPT_5_NANO]: { input: 0.05, output: 0.4 },
+  [AI_MODELS.GPT_4O_MINI]: { input: 0.15, output: 0.6 },
+};
+
+/** Pure: token usage -> Buzz (1 Buzz = $0.001), priced via MODEL_BUZZ_RATES. 0 for unrated models. */
+export function estimateBuzzCost(model: string, usage: TokenUsage): number {
+  const rates = MODEL_BUZZ_RATES[model];
+  if (!rates) return 0;
+  const usd =
+    (usage.promptTokens / 1_000_000) * rates.input +
+    (usage.completionTokens / 1_000_000) * rates.output;
+  return usd * 1000;
+}
+
+/**
+ * Route a JSON completion to the model's client and normalize the usage shape. Civitai-hosted
+ * models (urn:air:*) go through the orchestrator client, which doesn't report token usage —
+ * estimateBuzzCost returns 0 for those regardless (no MODEL_BUZZ_RATES entry), so the zeroed
+ * usage never under/over-counts tracked spend.
+ */
+async function getCompletionWithUsage<T>(
+  model: AIModel,
+  messages: SimpleMessage[],
+  retries: number
+): Promise<{ content: T; usage: TokenUsage }> {
+  if (model.startsWith('urn:air:')) {
+    if (!civitaiLLM) throw new Error('Civitai LLM not connected');
+    const content = await civitaiLLM.getJsonCompletion<T>({ retries, model, messages });
+    return { content, usage: { promptTokens: 0, completionTokens: 0 } };
+  }
+  if (!openrouter) throw new Error('OpenRouter not connected');
+  return openrouter.getJsonCompletionWithUsage<T>({ retries, model, messages });
 }
 
 type GenerateCollectionDetailsInput = {
@@ -274,7 +312,9 @@ ${scoreLines}
 }`;
 }
 
-export async function generateReview(input: GenerateReviewInput): Promise<GeneratedReview> {
+export async function generateReview(
+  input: GenerateReviewInput
+): Promise<GeneratedReview & { usage: TokenUsage; model: AIModel }> {
   // Resolve the rubric block up front (it needs the DB-backed category library): the REAL
   // categories when present, else the canonical defaults so a migrated prompt with no categories
   // still gets the default blocks instead of a literal {{SCORING_RUBRICS}}. injectRubrics is a
@@ -297,11 +337,11 @@ export async function generateReview(input: GenerateReviewInput): Promise<Genera
   }
 
   const model = input.model ?? DEFAULT_REVIEW_MODEL;
-  const result = await pickClient(model).getJsonCompletion<GeneratedReview>({
-    retries: 3,
+  const { content: result, usage } = await getCompletionWithUsage<GeneratedReview>(
     model,
     messages,
-  });
+    3
+  );
 
   return {
     score: result.score,
@@ -309,6 +349,8 @@ export async function generateReview(input: GenerateReviewInput): Promise<Genera
     comment: result.comment,
     summary: result.summary,
     aestheticFlaws: result.aestheticFlaws,
+    usage,
+    model,
   };
 }
 
@@ -431,7 +473,9 @@ type GeneratedWinners = {
   process: string;
   outcome: string;
 };
-export async function generateWinners(input: GenerateWinnersInput) {
+export async function generateWinners(
+  input: GenerateWinnersInput
+): Promise<GeneratedWinners & { usage: TokenUsage; model: AIModel }> {
   const userText = `${UNTRUSTED_FIELDS_PREAMBLE}\n\nTheme: ${input.theme}\nEntries:\n\`\`\`json \n${JSON.stringify(
     input.entries,
     null,
@@ -439,10 +483,9 @@ export async function generateWinners(input: GenerateWinnersInput) {
   )}\n\`\`\``;
 
   const model = input.model ?? DEFAULT_CONTENT_MODEL;
-  const result = await pickClient(model).getJsonCompletion<GeneratedWinners>({
-    retries: 3,
+  const { content: result, usage } = await getCompletionWithUsage<GeneratedWinners>(
     model,
-    messages: [
+    [
       prepareSystemMessage(
         input.config,
         'winner',
@@ -467,9 +510,10 @@ export async function generateWinners(input: GenerateWinnersInput) {
         ],
       },
     ],
-  });
+    3
+  );
 
-  return result;
+  return { ...result, usage, model };
 }
 
 // Helpers

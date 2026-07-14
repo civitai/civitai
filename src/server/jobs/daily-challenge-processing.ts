@@ -11,10 +11,13 @@ import {
   createChallengeRecord,
   createChallengeWinner,
   getChallengeById,
+  getChallengeEntryCount,
   getExistingWinnersForRetry,
+  incrementOperationSpent,
   resolveEventContext,
   setChallengeActive,
   updateChallengeStatus,
+  type ChallengeDetails,
   type EventContext,
   type RecentEntry,
   type SelectedResource,
@@ -53,6 +56,7 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import {
+  estimateBuzzCost,
   generateArticle,
   generateCollectionDetails,
   generateReview,
@@ -79,6 +83,7 @@ import {
 } from '~/server/games/daily-challenge/challenge-funding';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
+  CHALLENGE_ENTRY_HOUSE_CUT,
   CHALLENGE_JOB_BATCH_SIZE,
   CHALLENGE_JOB_CONCURRENCY,
 } from '~/shared/constants/challenge.constants';
@@ -971,6 +976,11 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       });
       log('Review prepared', entry.imageId, review);
 
+      const reviewBuzzCost = Math.ceil(estimateBuzzCost(review.model, review.usage));
+      if (reviewBuzzCost > 0) {
+        await incrementOperationSpent(currentChallenge.challengeId, reviewBuzzCost);
+      }
+
       // Add tag and score note to collection item (include judgeId for tracking)
       const note = JSON.stringify({
         score: review.score,
@@ -1159,6 +1169,33 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
 }
 
 /**
+ * Emit the `challenge-llm-spend` cost-observability metric when a challenge reaches a terminal
+ * (Completed) state. `houseCutCollected` approximates the house cut collected from paid entries
+ * as `entryCount * CHALLENGE_ENTRY_HOUSE_CUT` — 0 for challenges that don't charge an entry fee.
+ * Best-effort: this runs after the challenge's terminal state is already committed, so a failure
+ * here is logged rather than thrown.
+ */
+async function logChallengeSpendMetric(challenge: ChallengeDetails) {
+  try {
+    const entryCount = await getChallengeEntryCount(challenge.collectionId);
+    const houseCutCollected =
+      challenge.source === ChallengeSource.User && challenge.entryFee > 0
+        ? entryCount * CHALLENGE_ENTRY_HOUSE_CUT
+        : 0;
+    logToAxiom({
+      name: 'challenge-llm-spend',
+      challengeId: challenge.id,
+      source: challenge.source,
+      operationSpent: challenge.operationSpent,
+      houseCutCollected,
+    });
+  } catch (error) {
+    const err = error as Error;
+    log('Failed to log challenge-llm-spend metric', challenge.id, err.message);
+  }
+}
+
+/**
  * Pick winners for a single challenge.
  *
  * Operation order (race-condition safe):
@@ -1303,6 +1340,8 @@ export async function pickWinnersForChallenge(
         }
         await updateChallengeStatus(currentChallenge.challengeId, ChallengeStatus.Completed);
         log('Challenge marked as completed (no entries)');
+        const freshChallenge = await getChallengeById(currentChallenge.challengeId);
+        if (freshChallenge) await logChallengeSpendMetric(freshChallenge);
         return;
       }
 
@@ -1319,6 +1358,11 @@ export async function pickWinnersForChallenge(
       });
       process = generated.process;
       outcome = generated.outcome;
+
+      const winnersBuzzCost = Math.ceil(estimateBuzzCost(generated.model, generated.usage));
+      if (winnersBuzzCost > 0) {
+        await incrementOperationSpent(currentChallenge.challengeId, winnersBuzzCost);
+      }
 
       // Map winners to entries
       winningEntries = generated.winners
@@ -1431,6 +1475,7 @@ export async function pickWinnersForChallenge(
       },
     });
     log('Challenge status updated to Completed');
+    if (challengeRecord) await logChallengeSpendMetric(challengeRecord);
 
     // 8. Send notifications to winners (non-critical, last)
     const notificationKey = currentChallenge.challengeId ?? currentChallenge.collectionId;

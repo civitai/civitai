@@ -108,7 +108,9 @@ vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
   createChallengeRecord: vi.fn(),
   createChallengeWinner: vi.fn().mockResolvedValue(undefined),
   getChallengeById: vi.fn(),
+  getChallengeEntryCount: vi.fn().mockResolvedValue(0),
   getExistingWinnersForRetry: mockGetExistingWinnersForRetry,
+  incrementOperationSpent: vi.fn().mockResolvedValue(undefined),
   resolveEventContext: mockResolveEventContext,
   setChallengeActive: vi.fn(),
   updateChallengeStatus: mockUpdateChallengeStatus,
@@ -120,6 +122,7 @@ vi.mock('~/server/games/daily-challenge/challenge-rewards', () => ({
 }));
 
 vi.mock('~/server/games/daily-challenge/generative-content', () => ({
+  estimateBuzzCost: vi.fn().mockReturnValue(0),
   generateArticle: vi.fn(),
   generateCollectionDetails: vi.fn(),
   generateReview: mockGenerateReview,
