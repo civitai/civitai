@@ -156,7 +156,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
           nsfwLevel: true,
           userId: true,
           user: { select: { id: true, username: true } },
-          image: { select: { url: true, type: true } },
+          image: { select: { url: true, type: true, nsfwLevel: true } },
         },
       });
 
@@ -185,13 +185,20 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       // source is exhausted → no nextCursor.
 
       const ids = items.map((c) => c.id);
-      // Cover fallback: for collections whose own cover `image` is null, derive a
-      // cover from the collection's first accepted media item (batched).
-      const missingCoverIds = items.filter((c) => !c.image?.url).map((c) => c.id);
+      // Cover fallback + MATURITY CLAMP: a cover is usable only when it exists AND
+      // its own nsfwLevel is within the token's clamped ceiling. A MIXED-bucket
+      // collection can pass the collection-level discovery gate (bitwise) yet have
+      // a mature cover / first item, so an unclamped cover would leak mature media
+      // on a SFW-domain / region-restricted token. When the primary cover is null
+      // OR over the ceiling, fall back to the newest CLAMPED item (same authority
+      // the detail path uses).
+      const primaryCoverUsable = (c: (typeof items)[number]) =>
+        !!c.image?.url && collectionWithinCeiling(c.image.nsfwLevel ?? 0, browsingLevel);
+      const missingCoverIds = items.filter((c) => !primaryCoverUsable(c)).map((c) => c.id);
       const [countRows, followed, fallbackCovers] = await Promise.all([
         getCollectionItemCount({ collectionIds: ids, status: CollectionItemStatus.ACCEPTED }),
         getFollowedCollectionIds(subjectUserId, ids),
-        getFallbackCoverImages(missingCoverIds),
+        getFallbackCoverImages(missingCoverIds, browsingLevel),
       ]);
       const countMap = new Map(countRows.map((c) => [c.id, Number(c.count)]));
 
@@ -200,7 +207,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
           id: c.id,
           name: c.name,
           description: c.description ?? null,
-          coverImageUrl: toCoverImageUrl(c.image ?? fallbackCovers.get(c.id)),
+          coverImageUrl: toCoverImageUrl(primaryCoverUsable(c) ? c.image : fallbackCovers.get(c.id)),
           itemCount: countMap.get(c.id) ?? 0,
           curator: { userId: c.userId, username: c.user?.username ?? null },
           isPublic: c.read === CollectionReadConfiguration.Public,
@@ -240,11 +247,16 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     }
 
     const ids = items.map((c) => c.id);
-    const missingCoverIds = items.filter((c) => !c.image?.url).map((c) => c.id);
+    // Same maturity clamp as public discovery: a primary cover over the ceiling
+    // (or null) falls back to the newest CLAMPED item so a SFW-domain / region-
+    // restricted token never gets a mature thumbnail — even for own collections.
+    const primaryCoverUsable = (c: (typeof items)[number]) =>
+      !!c.image?.url && collectionWithinCeiling(c.image.nsfwLevel ?? 0, browsingLevel);
+    const missingCoverIds = items.filter((c) => !primaryCoverUsable(c)).map((c) => c.id);
     const [countRows, followed, fallbackCovers] = await Promise.all([
       getCollectionItemCount({ collectionIds: ids, status: CollectionItemStatus.ACCEPTED }),
       getFollowedCollectionIds(subjectUserId, ids),
-      getFallbackCoverImages(missingCoverIds),
+      getFallbackCoverImages(missingCoverIds, browsingLevel),
     ]);
     const countMap = new Map(countRows.map((c) => [c.id, Number(c.count)]));
 
@@ -253,7 +265,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
         id: c.id,
         name: c.name,
         description: c.description ?? null,
-        coverImageUrl: toCoverImageUrl(c.image ?? fallbackCovers.get(c.id)),
+        coverImageUrl: toCoverImageUrl(primaryCoverUsable(c) ? c.image : fallbackCovers.get(c.id)),
         itemCount: countMap.get(c.id) ?? 0,
         curator: { userId: c.userId, username: subjectUser.username ?? null },
         isPublic: c.read === CollectionReadConfiguration.Public,

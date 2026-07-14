@@ -94,8 +94,11 @@ vi.mock('~/server/services/blocks/block-collections.service', () => ({
   // image yields `edge:`; null when there is no url — mirrors toCoverImageUrl.
   toCoverImageUrl: (img: any) =>
     img?.url ? `${img.type === 'video' ? 'poster' : 'edge'}:${img.url}` : null,
-  // Drop a collection whose nsfwLevel exceeds the (test) ceiling of 3.
-  collectionWithinCeiling: (nsfwLevel: number, level: number) => nsfwLevel <= level,
+  // REAL bitwise semantics (Flags.intersects OR unrated 0) — NOT a `<=` — so the
+  // maturity clamp on covers is exercised faithfully: a MIXED bucket (29) still
+  // intersects a SFW ceiling (3), and a mature bucket (28) does NOT (28 & 3 = 0).
+  collectionWithinCeiling: (nsfwLevel: number, level: number) =>
+    !nsfwLevel || (nsfwLevel & level) !== 0,
 }));
 vi.mock('~/server/utils/block-catalog-rate-limit', () => ({ checkBlockCatalogRateLimit: mockRate }));
 vi.mock('~/server/utils/block-catalog-maturity', () => ({
@@ -420,8 +423,9 @@ describe('GET /api/v1/blocks/collections', () => {
     await handler(req as never, res as never);
     const body = res._json() as any;
     expect(body.items[0].coverImageUrl).toBe('edge:first-item-10');
-    // Only the cover-less collection id is passed to the fallback lookup.
-    expect(mockFallbackCovers).toHaveBeenCalledWith([10]);
+    // Only the cover-less collection id is passed to the fallback lookup, WITH the
+    // token's clamped browsingLevel (3) so the fallback query filters by maturity.
+    expect(mockFallbackCovers).toHaveBeenCalledWith([10], 3);
   });
 
   it('mode=public: a VIDEO first-item cover yields a poster url (not a raw video)', async () => {
@@ -437,6 +441,84 @@ describe('GET /api/v1/blocks/collections', () => {
     const body = res._json() as any;
     // toCoverImageUrl renders a video cover as a poster (image), never the .mp4.
     expect(body.items[0].coverImageUrl).toBe('poster:clip-10');
+  });
+
+  it('mode=public: a MATURE primary cover is clamped out → uses the clamped fallback (no mature-thumbnail leak)', async () => {
+    // Collection nsfwLevel 1 passes the discovery gate, but its OWN cover image is
+    // mature (bucket 28). On a SFW ceiling (3): 28 & 3 === 0 → the primary cover
+    // must be rejected and replaced by the maturity-clamped fallback item.
+    mockGetAll.mockResolvedValueOnce([
+      {
+        id: 10,
+        name: 'A',
+        description: null,
+        read: 'Public',
+        nsfwLevel: 1,
+        userId: 1,
+        user: { id: 1, username: 'a' },
+        image: { url: 'mature-cover', type: 'image', nsfwLevel: 28 },
+      },
+    ]);
+    mockFallbackCovers.mockResolvedValueOnce(new Map([[10, { url: 'sfw-item', type: 'image' }]]));
+    mockItemCount.mockResolvedValueOnce([{ id: 10, count: 3 }]);
+    const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
+    await handler(req as never, res as never);
+    const body = res._json() as any;
+    // NEVER the mature primary cover.
+    expect(body.items[0].coverImageUrl).toBe('edge:sfw-item');
+    expect(body.items[0].coverImageUrl).not.toBe('edge:mature-cover');
+    // The cover-less-after-clamp id is sent to the fallback WITH browsingLevel 3.
+    expect(mockFallbackCovers).toHaveBeenCalledWith([10], 3);
+  });
+
+  it('mode=public: a MIXED-bucket (29) collection passes the gate but its cover is CLAMPED via the fallback', async () => {
+    // 29 & 3 === 1 → the mixed collection passes discovery. Cover is null, so it
+    // takes the fallback — which is threaded browsingLevel so the query returns the
+    // newest PERMITTED (SFW) item, never the mature newest one.
+    mockGetAll.mockResolvedValueOnce([
+      {
+        id: 10,
+        name: 'Mixed',
+        description: null,
+        read: 'Public',
+        nsfwLevel: 29,
+        userId: 1,
+        user: { id: 1, username: 'a' },
+        image: null,
+      },
+    ]);
+    mockFallbackCovers.mockResolvedValueOnce(new Map([[10, { url: 'sfw-item', type: 'image' }]]));
+    mockItemCount.mockResolvedValueOnce([{ id: 10, count: 5 }]);
+    const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
+    await handler(req as never, res as never);
+    const body = res._json() as any;
+    // The mixed collection IS surfaced (passes the bitwise gate)…
+    expect(body.items.map((i: any) => i.id)).toEqual([10]);
+    // …but its cover comes from the maturity-clamped fallback.
+    expect(body.items[0].coverImageUrl).toBe('edge:sfw-item');
+    expect(mockFallbackCovers).toHaveBeenCalledWith([10], 3);
+  });
+
+  it('mode=public: a SFW primary cover within the ceiling is used directly (no fallback)', async () => {
+    mockGetAll.mockResolvedValueOnce([
+      {
+        id: 10,
+        name: 'A',
+        description: null,
+        read: 'Public',
+        nsfwLevel: 1,
+        userId: 1,
+        user: { id: 1, username: 'a' },
+        image: { url: 'sfw-cover', type: 'image', nsfwLevel: 1 },
+      },
+    ]);
+    mockItemCount.mockResolvedValueOnce([{ id: 10, count: 1 }]);
+    const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
+    await handler(req as never, res as never);
+    const body = res._json() as any;
+    expect(body.items[0].coverImageUrl).toBe('edge:sfw-cover');
+    // Nothing needed the fallback (primary within ceiling).
+    expect(mockFallbackCovers).toHaveBeenCalledWith([], 3);
   });
 
   it('400 returns a STRING error message + flattened details (not a raw ZodError)', async () => {

@@ -20,6 +20,7 @@
  * additionally drops collections whose own `nsfwLevel` exceeds the ceiling.
  */
 
+import { Prisma } from '@prisma/client';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { dbRead } from '~/server/db/client';
 import { sessionClient } from '~/server/auth/session-client';
@@ -93,33 +94,44 @@ export function toCoverImageUrl(
 }
 
 /**
- * Fallback cover source for collections whose own `image` (cover) is null: the
- * media (url,type) of each collection's most-recent ACCEPTED image/video item.
- * Batched (one query for all ids) with `distinct` on collectionId so we take a
- * single representative item per collection. Returns a Map keyed by collectionId;
- * collections with no accepted media item are simply absent (→ placeholder tile).
+ * Fallback cover source for collections whose own cover is null OR is itself over
+ * the ceiling: the media (url,type) of each collection's most-recent ACCEPTED
+ * item WHOSE OWN `Image.nsfwLevel` is PERMITTED by the token's clamped
+ * `browsingLevel`. This is the maturity clamp the discovery cover MUST apply — a
+ * MIXED-bucket collection (nsfwLevel 29) intersects a SFW ceiling and passes the
+ * collection-level discovery gate, but its newest item can be R/X; surfacing that
+ * thumbnail on a SFW-domain / region-restricted token would leak mature media.
+ *
+ * The nsfw test is BITWISE (`nsfwLevel & browsingLevel != 0`, plus unrated 0 —
+ * the identical authority the detail path + images service use), applied IN the
+ * WHERE so `DISTINCT ON (collectionId)` picks the newest *permitted* item per
+ * collection (filtering after `distinct` would drop the cover entirely). Returns
+ * a Map keyed by collectionId; a collection with no permitted item is absent
+ * (→ placeholder tile).
  */
 export async function getFallbackCoverImages(
-  collectionIds: number[]
+  collectionIds: number[],
+  browsingLevel: number
 ): Promise<Map<number, { url: string | null; type: string | null }>> {
   if (collectionIds.length === 0) return new Map();
-  const rows = await dbRead.collectionItem.findMany({
-    where: {
-      collectionId: { in: collectionIds },
-      imageId: { not: null },
-      status: CollectionItemStatus.ACCEPTED,
-    },
-    select: {
-      collectionId: true,
-      image: { select: { url: true, type: true } },
-    },
-    orderBy: [{ collectionId: 'asc' }, { createdAt: 'desc' }],
-    distinct: ['collectionId'],
-  });
+  const rows = await dbRead.$queryRaw<
+    { collectionId: number; url: string | null; type: string | null }[]
+  >`
+    SELECT DISTINCT ON (ci."collectionId")
+      ci."collectionId" as "collectionId",
+      i."url" as "url",
+      i."type"::text as "type"
+    FROM "CollectionItem" ci
+    JOIN "Image" i ON i."id" = ci."imageId"
+    WHERE ci."collectionId" IN (${Prisma.join(collectionIds)})
+      AND ci."status" = ${CollectionItemStatus.ACCEPTED}::"CollectionItemStatus"
+      AND ((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)
+    ORDER BY ci."collectionId", ci."createdAt" DESC
+  `;
   const map = new Map<number, { url: string | null; type: string | null }>();
   for (const r of rows) {
-    if (r.collectionId != null && r.image?.url) {
-      map.set(r.collectionId, { url: r.image.url, type: r.image.type ?? null });
+    if (r.collectionId != null && r.url) {
+      map.set(r.collectionId, { url: r.url, type: r.type ?? null });
     }
   }
   return map;
