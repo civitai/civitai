@@ -115,7 +115,7 @@ const reports = [
     reason: ReportReason.Ownership,
     label: 'This uses my art',
     Element: OwnershipForm,
-    availableFor: [ReportEntity.Model, ReportEntity.BountyEntry],
+    availableFor: [ReportEntity.Model, ReportEntity.BountyEntry, ReportEntity.Challenge],
   },
   {
     reason: ReportReason.Spam,
