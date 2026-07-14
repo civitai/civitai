@@ -11,7 +11,7 @@ import {
   SegmentedControl,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { IconInfoCircle, IconPlus, IconSettings, IconTrophy } from '@tabler/icons-react';
+import { IconInfoCircle, IconSettings, IconTrophy } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
@@ -60,7 +60,7 @@ function ChallengesPage() {
     <Button
       component={Link}
       href="/challenges/create"
-      leftSection={<IconPlus size={16} />}
+      leftSection={<IconTrophy size={16} />}
       variant="light"
       rel="nofollow"
     >
@@ -218,16 +218,6 @@ function ChallengesPage() {
           <Group wrap="wrap" gap="sm">
             <Title order={3}>Community Challenges</Title>
             <Group gap="sm" wrap="wrap" ml="auto">
-              {currentUser && (
-                <Button
-                  component={Link}
-                  href="/challenges?engagement=created"
-                  variant="subtle"
-                  rel="nofollow"
-                >
-                  My Challenges
-                </Button>
-              )}
               {createChallengeButton}
               <ChallengeFeedFilters />
             </Group>
