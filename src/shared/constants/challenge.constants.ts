@@ -52,6 +52,11 @@ export function getChallengeActiveLimit(tier?: string | null): number {
   return CHALLENGE_TIER_ACTIVE_LIMITS[tier] ?? CHALLENGE_DEFAULT_ACTIVE_LIMIT;
 }
 
+/** Max User-source challenges a single user may create in a rolling 24h window. Counts current
+ * rows only — deleting a challenge and recreating one still frees up a slot (see
+ * assertUnderDailyCreateLimit); this bounds average creation rate, not deletion churn. */
+export const CHALLENGE_CREATE_DAILY_LIMIT = 5;
+
 /** Net buzz a single paid entry contributes to the prize pool (never negative). */
 export function getEntryPoolContribution(entryFee: number): number {
   return Math.max(0, entryFee - CHALLENGE_ENTRY_HOUSE_CUT);

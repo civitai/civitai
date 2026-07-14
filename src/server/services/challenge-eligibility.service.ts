@@ -1,7 +1,11 @@
 import { TRPCError } from '@trpc/server';
 import { dbRead } from '~/server/db/client';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
-import { getChallengeActiveLimit, CHALLENGE_MIN_CREATOR_SCORE } from '~/shared/constants/challenge.constants';
+import {
+  getChallengeActiveLimit,
+  CHALLENGE_MIN_CREATOR_SCORE,
+  CHALLENGE_CREATE_DAILY_LIMIT,
+} from '~/shared/constants/challenge.constants';
 import { ChallengeSource, ChallengeStatus, StrikeStatus } from '~/shared/utils/prisma/enums';
 
 function forbidden(message: string) {
@@ -52,6 +56,27 @@ export async function assertUserInGoodStanding(userId: number): Promise<UserChal
   return standing;
 }
 
+/** Throws if the user has created CHALLENGE_CREATE_DAILY_LIMIT or more User-source challenges in
+ * the last 24h. Anti-spam/abuse guard against rapid create->delete churn (deleted rows drop out of
+ * this count, so a determined churner can still evade it — see constant's doc comment). */
+export async function assertUnderDailyCreateLimit(
+  userId: number
+): Promise<{ limit: number; recentCount: number }> {
+  const recentCount = await dbRead.challenge.count({
+    where: {
+      createdById: userId,
+      source: ChallengeSource.User,
+      createdAt: { gt: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+    },
+  });
+
+  if (recentCount >= CHALLENGE_CREATE_DAILY_LIMIT)
+    throw forbidden(
+      `You can create at most ${CHALLENGE_CREATE_DAILY_LIMIT} challenges per day. Please try again later.`
+    );
+  return { limit: CHALLENGE_CREATE_DAILY_LIMIT, recentCount };
+}
+
 /** Throws if the user already has as many Scheduled/Active challenges as their tier allows. */
 export async function assertUnderActiveChallengeLimit(
   userId: number
@@ -78,5 +103,6 @@ export async function assertUnderActiveChallengeLimit(
 /** Full gate for creating a new user challenge. */
 export async function assertCanCreateUserChallenge(userId: number): Promise<void> {
   await assertUserInGoodStanding(userId);
+  await assertUnderDailyCreateLimit(userId);
   await assertUnderActiveChallengeLimit(userId);
 }
