@@ -10,7 +10,7 @@ vi.mock('~/server/db/client', () => ({
 }));
 vi.mock('~/server/services/model-file.service', () => ({ deleteFilesForModelVersionCache }));
 
-import { persistModelWeightPrecision } from '~/server/services/tensor-metadata-persistence.service';
+import { persistModelTensorHeaderMetadata } from '~/server/services/tensor-metadata-persistence.service';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -18,15 +18,16 @@ beforeEach(() => {
   deleteFilesForModelVersionCache.mockResolvedValue(undefined);
 });
 
-describe('persistModelWeightPrecision', () => {
-  it('skips empty or already-current precision values', async () => {
+describe('persistModelTensorHeaderMetadata', () => {
+  it('skips already-current derived values', async () => {
     await expect(
-      persistModelWeightPrecision({
+      persistModelTensorHeaderMetadata({
         fileId: 42,
         fileUrl: 'https://example.com/model.gguf',
         modelVersionId: 7,
         currentWeightPrecision: 'Q4',
         weightPrecision: 'Q4',
+        currentFileType: 'Model',
       })
     ).resolves.toBe(false);
 
@@ -36,21 +37,47 @@ describe('persistModelWeightPrecision', () => {
 
   it('atomically merges precision for the current file content and busts the file cache', async () => {
     await expect(
-      persistModelWeightPrecision({
+      persistModelTensorHeaderMetadata({
         fileId: 42,
         fileUrl: 'https://example.com/model.gguf',
         modelVersionId: 7,
         currentWeightPrecision: null,
         weightPrecision: 'Q4',
+        currentFileType: 'Model',
       })
     ).resolves.toBe(true);
 
     const query = executeRaw.mock.calls[0][0];
-    expect(query.sql).toContain('jsonb_build_object');
+    expect(query.sql).toContain('::jsonb');
     expect(query.sql).toContain('"url" =');
     expect(query.values).toEqual(
-      expect.arrayContaining(['Q4', 42, 'https://example.com/model.gguf'])
+      expect.arrayContaining([
+        JSON.stringify({ weightPrecision: 'Q4' }),
+        42,
+        'https://example.com/model.gguf',
+      ])
     );
+    expect(deleteFilesForModelVersionCache).toHaveBeenCalledWith(7);
+  });
+
+  it('corrects fp and an unambiguous file type in the same guarded update', async () => {
+    await expect(
+      persistModelTensorHeaderMetadata({
+        fileId: 42,
+        fileUrl: 'https://example.com/model.safetensors',
+        modelVersionId: 7,
+        currentWeightPrecision: 'BF16',
+        weightPrecision: 'BF16',
+        currentFp: 'fp16',
+        fp: 'bf16',
+        currentFileType: 'Other',
+        correctedFileType: 'VAE',
+      })
+    ).resolves.toBe(true);
+
+    const query = executeRaw.mock.calls[0][0];
+    expect(query.sql).toContain('"type" =');
+    expect(query.values).toEqual(expect.arrayContaining([JSON.stringify({ fp: 'bf16' }), 'VAE']));
     expect(deleteFilesForModelVersionCache).toHaveBeenCalledWith(7);
   });
 
@@ -58,11 +85,12 @@ describe('persistModelWeightPrecision', () => {
     executeRaw.mockResolvedValue(0);
 
     await expect(
-      persistModelWeightPrecision({
+      persistModelTensorHeaderMetadata({
         fileId: 42,
         fileUrl: 'https://example.com/model.safetensors',
         modelVersionId: 7,
         weightPrecision: 'BF16',
+        currentFileType: 'Model',
       })
     ).resolves.toBe(false);
 

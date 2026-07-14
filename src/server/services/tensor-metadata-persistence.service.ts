@@ -2,28 +2,47 @@ import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { deleteFilesForModelVersionCache } from '~/server/services/model-file.service';
 
-type PersistModelWeightPrecisionOptions = {
+type PersistModelTensorHeaderMetadataOptions = {
   fileId: number;
   fileUrl: string;
   modelVersionId: number;
   currentWeightPrecision?: string | null;
   weightPrecision: string | null;
+  currentFp?: ModelFileFp | null;
+  fp?: ModelFileFp | null;
+  currentFileType: string;
+  correctedFileType?: string | null;
 };
 
-export async function persistModelWeightPrecision({
+export async function persistModelTensorHeaderMetadata({
   fileId,
   fileUrl,
   modelVersionId,
   currentWeightPrecision,
   weightPrecision,
-}: PersistModelWeightPrecisionOptions) {
-  if (!weightPrecision || currentWeightPrecision === weightPrecision) return false;
+  currentFp,
+  fp,
+  currentFileType,
+  correctedFileType,
+}: PersistModelTensorHeaderMetadataOptions) {
+  const metadataPatch: Record<string, string> = {};
+  if (weightPrecision && currentWeightPrecision !== weightPrecision)
+    metadataPatch.weightPrecision = weightPrecision;
+  if (fp && currentFp !== fp) metadataPatch.fp = fp;
+
+  const shouldCorrectFileType = !!correctedFileType && correctedFileType !== currentFileType;
+  if (!Object.keys(metadataPatch).length && !shouldCorrectFileType) return false;
+
+  const typeUpdate = shouldCorrectFileType
+    ? Prisma.sql`, "type" = ${correctedFileType}`
+    : Prisma.empty;
 
   const updated = await dbWrite.$executeRaw(
     Prisma.sql`
       UPDATE "ModelFile"
       SET "metadata" = COALESCE(NULLIF("metadata", 'null'::jsonb), '{}'::jsonb) ||
-        jsonb_build_object('weightPrecision', ${weightPrecision})
+        ${JSON.stringify(metadataPatch)}::jsonb
+        ${typeUpdate}
       WHERE "id" = ${fileId}
         AND "url" = ${fileUrl}
         AND (
@@ -31,12 +50,11 @@ export async function persistModelWeightPrecision({
           "metadata" = 'null'::jsonb OR
           jsonb_typeof("metadata") = 'object'
         )
-        AND ("metadata"->>'weightPrecision') IS DISTINCT FROM ${weightPrecision}
     `
   );
 
-  // The caller read metadata without this value, so clear the model-file cache even
-  // when the write was a no-op because another request persisted it first.
+  // The caller read stale derived fields, so clear the model-file cache even when
+  // another request won the guarded write first.
   await deleteFilesForModelVersionCache(modelVersionId);
   return updated > 0;
 }

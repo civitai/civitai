@@ -26,6 +26,7 @@ function makeAnalysis(tensorCount: number, marker: string): ModelTensorAnalysis 
     totalTensorBytes: tensorCount * 1000,
     dtypeCounts: [],
     weightPrecision: null,
+    detectedModelType: null,
     largestTensor: null,
     vramEstimate: null,
     tensors: Array.from({ length: tensorCount }, (_, i) => ({

@@ -42,7 +42,7 @@ const MIN_VRAM_INFO =
   'Rough lower bound to run this model, estimated from its tensor sizes and precision plus typical runtime overhead. At this level weights are streamed onto the GPU as needed, so it runs but more slowly. Actual usage varies by the tool and settings you use.';
 const RECOMMENDED_VRAM_INFO =
   'Rough target for smooth performance, estimated from its tensor sizes and precision plus typical runtime overhead. At this level the full set of weights can stay resident on the GPU at once. Actual usage varies by the tool and settings you use.';
-const TENSOR_METADATA_RESPONSE_VERSION = 2;
+const TENSOR_METADATA_RESPONSE_VERSION = 3;
 
 export function ModelTensorMetadata({ files, userPreferences, enabled, selectedFileId }: Props) {
   const theme = useMantineTheme();
