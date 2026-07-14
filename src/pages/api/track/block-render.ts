@@ -3,6 +3,7 @@ import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { Tracker } from '~/server/clickhouse/client';
 import {
   ensureRegisterAppBlockRuntimeMetrics,
+  normalizeErrorClass,
   normalizeSlotId,
 } from '~/server/metrics/app-block-runtime.metrics';
 import { boundAppBlockIdLabel } from '~/server/services/blocks/known-app-blocks.service';
@@ -70,12 +71,14 @@ export default PublicEndpoint(
     // forwarded to the ClickHouse insert (the `blockRenders` table is provisioned
     // out-of-repo by the tracker service; adding columns is out of scope here).
     // Strip them so the CH payload stays byte-identical to the pre-change insert.
-    const { status, errorClass: _errorClass, ...renderData } = result.data;
+    // `errorClass` still drives the prom label below (normalized), never the CH insert.
+    const { status, errorClass, ...renderData } = result.data;
 
     // Per-app render/impression outcome (additive + dark). `result` ∈ ok|error.
-    // All three labels are BOUNDED even though the beacon body is client-supplied
-    // and this route is public/ungated: `slot_id` clamps to the enumerated slot
-    // set, `result` is enumerated, and `app_block_id` is clamped to the
+    // ALL labels are BOUNDED even though the beacon body is client-supplied and
+    // this route is public/ungated: `slot_id` clamps to the enumerated slot set,
+    // `result` is enumerated, `error_class` clamps to the known failure set
+    // ('none' on ok, else known-or-'other'), and `app_block_id` is clamped to the
     // approved-app set (unknown → 'other') via a TTL-cached in-memory lookup — no
     // per-request DB hit — so a scripted client can't blow up prom-client's heap
     // with unbounded distinct labels. Emitted AFTER the same-origin + schema
@@ -88,6 +91,7 @@ export default PublicEndpoint(
         app_block_id: appBlockIdLabel,
         slot_id: normalizeSlotId(renderData.slotId),
         result: status,
+        error_class: normalizeErrorClass(status, errorClass),
       });
     } catch {
       // swallow — observability must not affect the response

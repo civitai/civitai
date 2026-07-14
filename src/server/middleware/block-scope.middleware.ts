@@ -740,9 +740,17 @@ export function withBlockScope(
     // status + latency AND the middleware's OWN 403 rejections below (revocation
     // / missing-scope / context-binding). The invalid-token 401 above is
     // intentionally NOT attributed — there are no claims, so no `app_block_id` to
-    // key on. `app_block_id` comes from the VERIFIED JWT (bounded to approved
-    // apps); `endpoint`/`result` are strictly enumerated. Fire-and-forget: a
+    // key on. `endpoint`/`result` are strictly enumerated. Fire-and-forget: a
     // metrics failure must never poison the user-facing response.
+    //
+    // `app_block_id` cardinality: a normal (approved/pre-approval) token carries
+    // a real FK appBlockId bounded to the approved-app set. A DEV token
+    // (`claims.dev === true`, the same discriminator the max-age cap + audit path
+    // use) carries a CALLER-CONSTRUCTED, synthetic, non-resolving appBlockId (see
+    // dev-scoped-mint.service) — an unbounded label vector even though minting is
+    // mod/dev-cohort gated. Bucket ALL dev tokens to the single stable label
+    // 'dev' so that vector is closed while real per-app attribution is preserved.
+    const appBlockIdLabel = claims.dev === true ? 'dev' : claims.appBlockId;
     const metricStart = process.hrtime.bigint();
     let metricRecorded = false;
     const recordBlockMetric = () => {
@@ -750,7 +758,7 @@ export function withBlockScope(
       metricRecorded = true;
       try {
         const { requestsTotal, requestDurationSeconds } = ensureRegisterAppBlockRuntimeMetrics();
-        const labels = { app_block_id: claims.appBlockId, endpoint: opts.endpoint };
+        const labels = { app_block_id: appBlockIdLabel, endpoint: opts.endpoint };
         const elapsedSeconds = Number(process.hrtime.bigint() - metricStart) / 1e9;
         requestDurationSeconds.observe(labels, elapsedSeconds);
         requestsTotal.inc({ ...labels, result: statusToRequestResult(res.statusCode) });
