@@ -195,4 +195,4 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 // (`Origin: null`) so its direct catalog fetch needs `ACAO: null` to clear the
 // CORS preflight; safe here (public maturity-clamped data, no credentials,
 // still token-gated) — see WithBlockScopeOpts.allowOpaqueOrigin.
-export default withBlockScope(baseHandler, { allowOpaqueOrigin: true });
+export default withBlockScope(baseHandler, { endpoint: 'models', allowOpaqueOrigin: true });

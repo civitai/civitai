@@ -97,7 +97,12 @@ export function BlockSlotClient({ slotId, context }: BlockSlotClientProps) {
         data-block-count={1}
         data-active-block-id={install.blockInstanceId}
       >
-        <BlockErrorBoundary blockName={install.manifest.name}>
+        <BlockErrorBoundary
+          blockName={install.manifest.name}
+          appBlockId={install.appBlockId}
+          blockInstanceId={install.blockInstanceId}
+          slotId={slotId}
+        >
           <BlockHost blockInstall={install} slotContext={context} />
         </BlockErrorBoundary>
       </div>
@@ -139,6 +144,9 @@ export function BlockSlotClient({ slotId, context }: BlockSlotClientProps) {
           <BlockErrorBoundary
             key={activeInstall.blockInstanceId}
             blockName={activeInstall.manifest.name}
+            appBlockId={activeInstall.appBlockId}
+            blockInstanceId={activeInstall.blockInstanceId}
+            slotId={slotId}
           >
             <BlockHost blockInstall={activeInstall} slotContext={context} />
           </BlockErrorBoundary>

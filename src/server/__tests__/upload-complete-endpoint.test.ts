@@ -145,6 +145,44 @@ describe('/api/upload/complete — error classification', () => {
     expect(res.body).toEqual({ error: 'Upload already finalized or aborted' });
   });
 
+  it('InvalidPart (name + $metadata 400) → 422 + no-store, not 500', async () => {
+    mockCompleteMultipartUpload.mockRejectedValue(
+      s3Error({
+        name: 'InvalidPart',
+        message:
+          'One or more of the specified parts could not be found. The part may not have been uploaded, or the specified entity tag may not match the part\'s entity tag.',
+        $metadata: { httpStatusCode: 400 },
+      })
+    );
+    const res = makeRes();
+    await handler(makeReq(), res);
+    expect(res.statusCode).toBe(422);
+    expect(res.body).toEqual({ error: 'Upload parts invalid or incomplete — please re-upload' });
+    expect(res.headers['Cache-Control']).toBe('no-store');
+  });
+
+  it('InvalidRequest ("must specify at least one part") + 400 → 422', async () => {
+    mockCompleteMultipartUpload.mockRejectedValue(
+      s3Error({
+        name: 'InvalidRequest',
+        message: 'You must specify at least one part',
+        $metadata: { httpStatusCode: 400 },
+      })
+    );
+    const res = makeRes();
+    await handler(makeReq(), res);
+    expect(res.statusCode).toBe(422);
+  });
+
+  it('an unknown 400 (not a parts fault) STILL surfaces as 500, not 422', async () => {
+    mockCompleteMultipartUpload.mockRejectedValue(
+      s3Error({ name: 'SomeUnknownClientError', $metadata: { httpStatusCode: 400 } })
+    );
+    const res = makeRes();
+    await handler(makeReq(), res);
+    expect(res.statusCode).toBe(500);
+  });
+
   it('transient S3 503 → 503 + Retry-After header, not 500', async () => {
     mockCompleteMultipartUpload.mockRejectedValue(
       s3Error({ name: 'ServiceUnavailable', $metadata: { httpStatusCode: 503 } })

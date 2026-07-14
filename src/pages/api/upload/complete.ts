@@ -55,6 +55,16 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
       res.status(409).json({ error: 'Upload already finalized or aborted' });
       return;
     }
+    if (errorClass === 'invalid-parts') {
+      // The parts manifest the client sent doesn't match what the backend stored
+      // (a part upload failed/expired, a stale ETag, or an empty/mis-ordered list) —
+      // a B2/S3 400-class fault. 422 Unprocessable Entity = the request was well
+      // formed but the upload STATE isn't; terminal → the client must stop retrying
+      // this manifest and re-upload. no-store so nothing caches the failure.
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(422).json({ error: 'Upload parts invalid or incomplete — please re-upload' });
+      return;
+    }
     if (errorClass === 'transient') {
       // Retry-able storage-backend blip (S3/B2 5xx, throttle/timing, or network).
       res.setHeader('Retry-After', '2');

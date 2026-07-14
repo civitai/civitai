@@ -681,6 +681,26 @@ export function IframeHost({
     return off;
   }, [onMessage, applyHeight, install.appBlockId, install.blockInstanceId, slotId]);
 
+  // App Blocks runtime observability — render-FAILURE beacon. The success
+  // beacon fires at BLOCK_READY above (guarded by `blockRenderEmittedRef`). Here
+  // we fire the mutually-exclusive `error` beacon when the host lands on a
+  // terminal-failure state — the iframe never reached BLOCK_READY in time
+  // ('timeout'), the block reported a fatal error ('fatal'), or its token never
+  // resolved ('no_token'). Sharing the SAME emit-once ref makes ok/error
+  // mutually exclusive per mount. Fire-and-forget (beacon swallows failures).
+  useEffect(() => {
+    if (status !== 'timeout' && status !== 'fatal' && status !== 'no_token') return;
+    if (blockRenderEmittedRef.current) return;
+    blockRenderEmittedRef.current = true;
+    sendBlockRender({
+      appBlockId: install.appBlockId,
+      blockInstanceId: install.blockInstanceId,
+      slotId,
+      status: 'error',
+      errorClass: status,
+    });
+  }, [status, install.appBlockId, install.blockInstanceId, slotId]);
+
   useEffect(() => {
     const off = onMessage<unknown>('RESIZE_IFRAME', (raw) => {
       if (!raw || typeof raw !== 'object' || !('height' in raw)) return;

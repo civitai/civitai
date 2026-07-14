@@ -87,7 +87,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 
   const parsed = querySchema.safeParse(req.query);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error });
+    res.status(400).json({ error: 'Invalid query parameters', details: parsed.error.flatten() });
     return;
   }
   const { cursor, limit } = parsed.data;
@@ -183,4 +183,12 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   }
 });
 
-export default withBlockScope(baseHandler, { requiredScope: 'collections:read:self' });
+// allowOpaqueOrigin: an UNVERIFIED block direct-fetches this from an opaque
+// origin (`Origin: null`), so it needs `ACAO: null` to clear the CORS preflight;
+// the Bearer block-JWT (no cookies) remains the sole authz gate — mirrors
+// images.ts; see WithBlockScopeOpts.allowOpaqueOrigin.
+export default withBlockScope(baseHandler, {
+  endpoint: 'collection',
+  requiredScope: 'collections:read:self',
+  allowOpaqueOrigin: true,
+});

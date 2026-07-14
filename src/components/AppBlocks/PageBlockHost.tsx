@@ -408,6 +408,27 @@ export function PageBlockHost({
     return off;
   }, [onMessage]);
 
+  // App Blocks runtime observability — render-FAILURE beacon. The success beacon
+  // fires at BLOCK_READY above (guarded by `blockRenderEmittedRef`). Here we fire
+  // the mutually-exclusive `error` beacon when the page host lands on a terminal-
+  // failure state: the iframe never reached BLOCK_READY ('timeout'), the block
+  // reported a fatal error ('fatal'), its token never resolved ('no_token'), or
+  // the mint hard-failed ('error'). Sharing the SAME emit-once ref makes ok/error
+  // mutually exclusive per mount. Fire-and-forget (beacon swallows failures).
+  useEffect(() => {
+    if (status !== 'timeout' && status !== 'fatal' && status !== 'no_token' && status !== 'error')
+      return;
+    if (blockRenderEmittedRef.current) return;
+    blockRenderEmittedRef.current = true;
+    sendBlockRender({
+      appBlockId,
+      blockInstanceId,
+      slotId: 'app.page',
+      status: 'error',
+      errorClass: status,
+    });
+  }, [status, appBlockId, blockInstanceId]);
+
   // Lazy consent (A6): the block (rendered in full for a logged-in viewer whose
   // page token is missing a consent-gated scope, e.g. `ai:write:budgeted` once
   // the page money scope is enabled) asks the host to open the consent UI when

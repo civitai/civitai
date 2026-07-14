@@ -337,6 +337,34 @@ async function classifyListingForAction(appListingId: string): Promise<{
   };
 }
 
+/**
+ * Shared ON-SITE dual-table status flip. An on-site `AppListing` is 1:1 with a
+ * backing `AppBlock`, and the block RUNTIME serving gate (`<slug>.civit.ai` / the
+ * in-host page) reads `app_blocks.status` — NOT the listing status. So any action
+ * that hides/restores an on-site listing must flip the backing block IN THE SAME TX
+ * or store-visibility and runtime-serving drift apart (hidden in the store but still
+ * serving, or restored in the store but a suspended/blank block).
+ *
+ * Factored out of the mod `delistListing`/`relistListing` (approved↔suspended) so the
+ * OWNER `unpublishOwnListing`/`republishOwnListing` reuse the EXACT same flip. The
+ * write is status-guarded to the expected `from` (don't clobber a drifted/already-set
+ * state) and NON-FATAL on a 0-count (the LISTING flip is the authoritative visibility
+ * gate; a drifted block is a benign blank/broken surface, not an exposure). No-op for
+ * an off-site listing (no backing block). Returns true when a block row was flipped,
+ * false on a 0-count (drift) or an off-site listing — the caller may log the drift.
+ */
+async function flipBackingBlockStatus(
+  tx: Prisma.TransactionClient,
+  opts: { isOnsite: boolean; appBlockId: string | null; from: string; to: string }
+): Promise<boolean> {
+  if (!opts.isOnsite || !opts.appBlockId) return false;
+  const flip = await tx.appBlock.updateMany({
+    where: { id: opts.appBlockId, status: opts.from },
+    data: { status: opts.to },
+  });
+  return flip.count > 0;
+}
+
 export type DelistListingResult = { appListingId: string; status: 'removed' };
 
 /**
@@ -392,13 +420,14 @@ export async function delistListing(opts: {
     }
     // ON-SITE: also suspend the backing AppBlock so the block runtime stops serving.
     // Guarded to `approved` (don't clobber a drifted/already-suspended state); non-fatal
-    // on 0-count (also covers the removed→removed lock, where the block is already suspended).
-    if (isOnsite && listing.appBlockId) {
-      await tx.appBlock.updateMany({
-        where: { id: listing.appBlockId, status: 'approved' },
-        data: { status: 'suspended' },
-      });
-    }
+    // on 0-count (also covers the removed→removed lock, where the block is already
+    // suspended). Shared with relist + the owner unpublish/republish procs.
+    await flipBackingBlockStatus(tx, {
+      isOnsite,
+      appBlockId: listing.appBlockId,
+      from: 'approved',
+      to: 'suspended',
+    });
     await tx.appListingModerationEvent.create({
       data: {
         id: eventId,
@@ -491,11 +520,13 @@ export async function relistListing(opts: {
     // Non-fatal (store visibility IS restored); flagged for a post-commit warn so the
     // divergence is observable rather than silent.
     if (isOnsite && listing.appBlockId) {
-      const blockFlip = await tx.appBlock.updateMany({
-        where: { id: listing.appBlockId, status: 'suspended' },
-        data: { status: 'approved' },
+      const flipped = await flipBackingBlockStatus(tx, {
+        isOnsite,
+        appBlockId: listing.appBlockId,
+        from: 'suspended',
+        to: 'approved',
       });
-      if (blockFlip.count === 0) onsiteBlockRestoreDrift = true;
+      if (!flipped) onsiteBlockRestoreDrift = true;
     }
     await tx.appListingModerationEvent.create({
       data: {
@@ -1006,37 +1037,59 @@ export async function resetListingToPending(opts: {
 }
 
 /**
- * Load an OFF-SITE listing the caller OWNS for an owner action, on the PRIMARY
- * inside a tx. A missing OR on-site listing → generic NOT_FOUND (offsite-only owner
- * self-service, parity with claim/purge); a listing owned by someone else →
- * NOT_OWNED (router → FORBIDDEN).
+ * Load a listing the caller OWNS for an owner action, on the PRIMARY inside a tx.
+ * DUAL-KIND (W13 P4): both on-site AND off-site listings are valid owner self-service
+ * targets — the on-site path additionally flips the backing block (see
+ * {@link flipBackingBlockStatus}), so `kind` + `appBlockId` are returned to branch it.
+ * A missing listing → generic NOT_FOUND; a listing owned by someone else → NOT_OWNED
+ * (router → FORBIDDEN). (Widened from the P3 offsite-only `loadOwnedOffsiteInTx`.)
  */
-async function loadOwnedOffsiteInTx(
+async function loadOwnedListingInTx(
   tx: Prisma.TransactionClient,
   appListingId: string,
   callerUserId: number
-): Promise<{ userId: number; status: string; slug: string; name: string | null }> {
+): Promise<{
+  userId: number;
+  status: string;
+  kind: string;
+  slug: string;
+  name: string | null;
+  appBlockId: string | null;
+}> {
   const listing = await tx.appListing.findUnique({
     where: { id: appListingId },
-    select: { userId: true, status: true, kind: true, slug: true, name: true },
+    select: { userId: true, status: true, kind: true, slug: true, name: true, appBlockId: true },
   });
-  if (!listing || listing.kind !== 'offsite') {
-    throw new OffsiteModerationError('NOT_FOUND', 'Off-site listing not found.');
+  if (!listing) {
+    throw new OffsiteModerationError('NOT_FOUND', 'Listing not found.');
   }
   if (listing.userId !== callerUserId) {
     throw new OffsiteModerationError('NOT_OWNED', 'You can only manage your own listings.');
   }
-  return { userId: listing.userId, status: listing.status, slug: listing.slug, name: listing.name };
+  return {
+    userId: listing.userId,
+    status: listing.status,
+    kind: listing.kind,
+    slug: listing.slug,
+    name: listing.name,
+    appBlockId: listing.appBlockId,
+  };
 }
 
 export type UnpublishOwnListingResult = { appListingId: string; status: 'removed' };
 
 /**
- * OWNER self-hide their OWN approved off-site listing (approved → removed). A pure
- * visibility toggle — NO content-rating re-derive, NO asset change, NO publish
- * request. In ONE tx (primary): owner-load + guard offsite/owner/status, guard-flip
- * approved → removed (0-count → NOT_TRANSITIONABLE), write an `owner-unpublish`
- * event. No notification (the owner performed the action). `reason` optional.
+ * OWNER self-hide their OWN approved listing (approved → removed) — DUAL-KIND
+ * (W13 P4). A pure visibility toggle: NO content-rating re-derive, NO asset change,
+ * NO publish request. In ONE tx (primary): owner-load + guard owner/status, guard-flip
+ * the listing approved → removed (0-count → NOT_TRANSITIONABLE), write an
+ * `owner-unpublish` event.
+ *
+ * ON-SITE: it's a FULL TAKEDOWN — the backing `AppBlock` is also flipped approved →
+ * suspended in the SAME tx (via {@link flipBackingBlockStatus}), so the app leaves the
+ * store AND stops serving at `<slug>.civit.ai` / the run page (the block runtime gate
+ * reads `app_blocks.status`). OFF-SITE: only the listing flips (no backing block). No
+ * notification (the owner performed the action). `reason` optional.
  */
 export async function unpublishOwnListing(opts: {
   input: UnpublishOwnListingInput;
@@ -1046,15 +1099,16 @@ export async function unpublishOwnListing(opts: {
   const reason = input.reason?.trim() ? input.reason.trim() : null;
 
   await dbWrite.$transaction(async (tx) => {
-    const listing = await loadOwnedOffsiteInTx(tx, input.appListingId, userId);
+    const listing = await loadOwnedListingInTx(tx, input.appListingId, userId);
     if (listing.status !== 'approved') {
       throw new OffsiteModerationError(
         'NOT_TRANSITIONABLE',
         'Only an approved listing can be unpublished.'
       );
     }
+    const isOnsite = listing.kind === 'onsite';
     const flipped = await tx.appListing.updateMany({
-      where: { id: input.appListingId, kind: 'offsite', status: 'approved' },
+      where: { id: input.appListingId, kind: listing.kind, status: 'approved' },
       data: { status: 'removed' },
     });
     if (flipped.count === 0) {
@@ -1063,6 +1117,13 @@ export async function unpublishOwnListing(opts: {
         'This listing can no longer be unpublished.'
       );
     }
+    // ON-SITE full takedown: suspend the backing block so the runtime stops serving.
+    await flipBackingBlockStatus(tx, {
+      isOnsite,
+      appBlockId: listing.appBlockId,
+      from: 'approved',
+      to: 'suspended',
+    });
     await tx.appListingModerationEvent.create({
       data: {
         id: newAppListingModerationEventId(),
@@ -1083,7 +1144,8 @@ export async function unpublishOwnListing(opts: {
 export type RepublishOwnListingResult = { appListingId: string; status: 'approved' };
 
 /**
- * OWNER restore their OWN owner-unpublished off-site listing (removed → approved).
+ * OWNER restore their OWN owner-unpublished listing (removed → approved) — DUAL-KIND
+ * (W13 P4).
  *
  * 🔴 SAFETY GUARD (load-bearing): republish is allowed ONLY when the MOST-RECENT
  * `AppListingModerationEvent` for the listing is an `owner-unpublish`. If the last
@@ -1091,8 +1153,12 @@ export type RepublishOwnListingResult = { appListingId: string; status: 'approve
  * FORBIDDEN — an owner must NOT be able to self-restore a listing a moderator
  * removed. No events at all → also FORBIDDEN (can't prove owner-initiated removal).
  * The latest-event read + the flip are in ONE tx on the PRIMARY so a concurrent mod
- * takedown can't slip between the check and the restore. Pure visibility toggle — no
- * re-derive, no publish request. `reason` optional.
+ * takedown can't slip between the check and the restore.
+ *
+ * ON-SITE: the backing `AppBlock` is also restored suspended → approved in the SAME
+ * tx (via {@link flipBackingBlockStatus}), so the app serves again. OFF-SITE: only the
+ * listing flips. Pure visibility toggle — no re-derive, no publish request. `reason`
+ * optional.
  */
 export async function republishOwnListing(opts: {
   input: RepublishOwnListingInput;
@@ -1100,9 +1166,12 @@ export async function republishOwnListing(opts: {
 }): Promise<RepublishOwnListingResult> {
   const { input, userId } = opts;
   const reason = input.reason?.trim() ? input.reason.trim() : null;
+  // Set when the on-site block-restore flip matched 0 rows (drift — mirrors relist).
+  let onsiteBlockRestoreDrift = false;
+  let onsiteBlockId: string | null = null;
 
   await dbWrite.$transaction(async (tx) => {
-    const listing = await loadOwnedOffsiteInTx(tx, input.appListingId, userId);
+    const listing = await loadOwnedListingInTx(tx, input.appListingId, userId);
     if (listing.status !== 'removed') {
       throw new OffsiteModerationError(
         'NOT_TRANSITIONABLE',
@@ -1124,8 +1193,9 @@ export async function republishOwnListing(opts: {
         'This listing was removed by a moderator and cannot be restored by its owner.'
       );
     }
+    const isOnsite = listing.kind === 'onsite';
     const flipped = await tx.appListing.updateMany({
-      where: { id: input.appListingId, kind: 'offsite', status: 'removed' },
+      where: { id: input.appListingId, kind: listing.kind, status: 'removed' },
       data: { status: 'approved' },
     });
     if (flipped.count === 0) {
@@ -1133,6 +1203,22 @@ export async function republishOwnListing(opts: {
         'NOT_TRANSITIONABLE',
         'This listing can no longer be republished.'
       );
+    }
+    // ON-SITE: restore the backing block so the runtime serves again. Guarded to
+    // `suspended` + non-fatal on a 0-count; a 0-count means the block wasn't suspended
+    // (drift) → the listing shows approved but the block may not serve (store card →
+    // a blank/broken block; Open 404s). Non-fatal (store visibility IS restored), but
+    // flagged for a post-commit warn so the divergence is observable on the OWNER path
+    // too (mirrors the mod `relistListing` drift warn).
+    if (isOnsite && listing.appBlockId) {
+      onsiteBlockId = listing.appBlockId;
+      const flippedBlock = await flipBackingBlockStatus(tx, {
+        isOnsite,
+        appBlockId: listing.appBlockId,
+        from: 'suspended',
+        to: 'approved',
+      });
+      if (!flippedBlock) onsiteBlockRestoreDrift = true;
     }
     await tx.appListingModerationEvent.create({
       data: {
@@ -1147,6 +1233,27 @@ export async function republishOwnListing(opts: {
       },
     });
   });
+
+  // Post-commit, best-effort: warn when an on-site owner-republish restored the LISTING
+  // but the backing block wasn't `suspended` (so it may not serve) — the same drift
+  // observability the mod `relistListing` emits. Dynamic import keeps the logging graph
+  // out of the tx path.
+  if (onsiteBlockRestoreDrift) {
+    void import('~/server/logging/client')
+      .then(({ logToAxiom }) =>
+        logToAxiom(
+          {
+            type: 'warning',
+            name: 'app-listing-relist-block-drift',
+            message:
+              'onsite owner-republish: backing app_block was not suspended; the block may not serve',
+            details: { appListingId: input.appListingId, appBlockId: onsiteBlockId },
+          },
+          'app-blocks'
+        )
+      )
+      .catch(() => undefined);
+  }
 
   return { appListingId: input.appListingId, status: 'approved' };
 }

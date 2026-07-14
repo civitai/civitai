@@ -104,4 +104,4 @@ const baseHandler = withAxiom(async function handler(
   });
 });
 
-export default withBlockScope(baseHandler, { requiredScope: 'user:read:self' });
+export default withBlockScope(baseHandler, { endpoint: 'me', requiredScope: 'user:read:self' });

@@ -37,8 +37,11 @@ Login is no longer NextAuth in the main app. It's a **SvelteKit hub at `apps/aut
   > **⚠️ TEMPORARY — revert once the `.red no_cookie` cause is confirmed.** The `Domain=` scoping stays; the
   > *probe* does not. Remove when done: `buildBridgeProbeCookie` / `readBridgeProbe` / `BRIDGE_PROBE_COOKIE` in
   > `src/server/auth/oauth-bridge.ts`; the probe set in `authorize.ts`; and the `probePresent` / `probeAuthHost`
-  > / `probeAgeMs` (and, if fully cleaning up, `userAgent`) fields in `callback.ts`. The general `auth-flow` /
-  > `captcha-reject` telemetry and the `oauth_state`→`detail` split are PERMANENT (cheap standing observability).
+  > / `probeAgeMs` / `hasSession` (and, if fully cleaning up, `userAgent`) fields in `callback.ts`. The general
+  > `auth-flow` / `captcha-reject` telemetry and the `oauth_state`→`detail` split are PERMANENT (cheap standing
+  > observability).
+
+  **Round-2 result (24h post-deploy 2026-07-13):** `Domain=` did NOT drop `.red no_cookie` — because host-variation was never the cause (`probeAuthHost == host` for 100% of probe-present events). The probe re-diagnosed the residual: **~55% probe-absent = bot/full-block** (the Safari-8 scraper + genuine ITP), **~38% probe-present/same-host/fresh = duplicate callbacks** (bridge cookie cleared by a prior successful callback — `hasSession` field added to confirm), **~7% = genuine expiry** (`probeAgeMs > 10min`). So the raw metric was ~93% bots + benign duplicates; the real first-attempt lockout is a small slice. `Domain=` is harmless (mirrors session cookies) → kept, not reverted. Bot mitigation deemed not worth a WAF rule (the hits short-circuit before the hub / before siteverify — no real harm, just log noise); de-noise at query time instead.
 
 ---
 
