@@ -5,16 +5,52 @@
  * `@civitai/storage` client + browser uploader — so it exercises the whole stack end-to-end against a
  * REAL bucket: client -> service -> s3.ts (presign/head/delete/multipart) -> S3.
  *
- * Run against staging/real creds (never mocks):
- *   S3_UPLOAD_ENDPOINT=... S3_UPLOAD_KEY=... S3_UPLOAD_SECRET=... S3_UPLOAD_BUCKET=... \
+ * Auto-loads apps/storage/.env (fill-gaps: a real shell var still wins), so with the app's .env
+ * populated you can just run:
  *   pnpm --filter @civitai/storage-app smoke
+ * Override per run in the shell, e.g. STORAGE_SMOKE_BACKEND=b2.
  *
- * Optional: STORAGE_TOKEN (exercises the auth gate), STORAGE_SMOKE_BACKEND (default|b2|b2Image|csam,
- * default `default`), STORAGE_SMOKE_KEEP=1 (skip cleanup). Exits 0 on success, 1 on any failure, and 0
+ * Env: S3_UPLOAD_* (default) / S3_UPLOAD_B2_* (b2) / S3_IMAGE_B2_* (b2Image) / CSAM_UPLOAD_* (csam);
+ * STORAGE_TOKEN (exercises the auth gate); STORAGE_SMOKE_BACKEND (default|b2|b2Image|csam, default
+ * `default`); STORAGE_SMOKE_KEEP=1 (skip cleanup). A NON-LOCAL endpoint requires STORAGE_SMOKE_CONFIRM=1
+ * (guard against an accidental run on a real bucket). Exits 0 on success, 1 on failure/refusal, and 0
  * with a SKIP message when the chosen backend's creds are absent (so CI can call it unconditionally).
  */
-import { buildServer } from '../src/app';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { createStorageClient } from '@civitai/storage';
+
+// Load apps/storage/.env into process.env (fill gaps only — a real shell var still wins), so the smoke
+// runs from the app's .env without exporting anything (tsx doesn't auto-load .env). Runs BEFORE the
+// (dynamic) import of ../src/app so env.ts's module-level reads (STORAGE_TOKEN, …) see the values.
+// No-op if the file is absent (CI / fresh checkout).
+function loadDotEnv() {
+  let text: string;
+  try {
+    text = readFileSync(fileURLToPath(new URL('../.env', import.meta.url)), 'utf8');
+  } catch {
+    return;
+  }
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) continue;
+    const key = trimmed
+      .slice(0, eq)
+      .replace(/^export\s+/, '')
+      .trim();
+    let value = trimmed.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (key && process.env[key] === undefined) process.env[key] = value;
+  }
+}
+loadDotEnv();
 
 type Backend = 'default' | 'b2' | 'b2Image' | 'csam';
 const backend = (process.env.STORAGE_SMOKE_BACKEND ?? 'default') as Backend;
@@ -28,12 +64,49 @@ const REQUIRED: Record<Backend, string[]> = {
   csam: ['CSAM_UPLOAD_ENDPOINT', 'CSAM_UPLOAD_KEY', 'CSAM_UPLOAD_SECRET'],
 };
 
+const ENDPOINT_VAR: Record<Backend, string> = {
+  default: 'S3_UPLOAD_ENDPOINT',
+  b2: 'S3_UPLOAD_B2_ENDPOINT',
+  b2Image: 'S3_IMAGE_B2_ENDPOINT',
+  csam: 'CSAM_UPLOAD_ENDPOINT',
+};
+const BUCKET_VAR: Record<Backend, string> = {
+  default: 'S3_UPLOAD_BUCKET',
+  b2: 'S3_UPLOAD_B2_BUCKET',
+  b2Image: 'S3_IMAGE_B2_BUCKET',
+  csam: 'CSAM_BUCKET_NAME',
+};
+
 const missing = REQUIRED[backend].filter((k) => !process.env[k]);
 if (missing.length) {
   console.log(
     `SKIP: storage smoke — backend "${backend}" not configured (missing ${missing.join(', ')}).`
   );
   process.exit(0);
+}
+
+const endpoint = process.env[ENDPOINT_VAR[backend]] ?? '';
+const bucket = process.env[BUCKET_VAR[backend]] ?? '(backend default)';
+let endpointHost = '';
+try {
+  endpointHost = new URL(endpoint).hostname;
+} catch {
+  // leave empty → treated as non-local (must confirm)
+}
+const isLocal = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(endpointHost);
+
+// Guard against an accidental run on a real bucket: this smoke WRITES + DELETES objects (under a
+// smoke/<...>/ prefix). A non-local endpoint requires an explicit STORAGE_SMOKE_CONFIRM=1.
+if (!isLocal && process.env.STORAGE_SMOKE_CONFIRM !== '1') {
+  console.error(`REFUSED: storage smoke targets a NON-LOCAL endpoint.`);
+  console.error(`  backend:  ${backend}`);
+  console.error(`  endpoint: ${endpoint || '(unset)'}`);
+  console.error(`  bucket:   ${bucket}`);
+  console.error(`This run would write + delete test objects (smoke/<...>/) on that bucket.`);
+  console.error(
+    `Re-run with STORAGE_SMOKE_CONFIRM=1 to proceed, or point it at a local S3 (MinIO).`
+  );
+  process.exit(1);
 }
 
 const log = (msg: string) => console.log(`  • ${msg}`);
@@ -54,7 +127,10 @@ async function* generate(totalBytes: number, pieceSize: number): AsyncGenerator<
 }
 
 async function main() {
-  console.log(`storage smoke — backend "${backend}"`);
+  console.log(`storage smoke — backend "${backend}" | endpoint ${endpoint} | bucket ${bucket}`);
+  // Dynamic import: ../src/app -> env.ts reads STORAGE_TOKEN etc. at module load, so it must evaluate
+  // AFTER loadDotEnv() (top-level static imports run before top-level code).
+  const { buildServer } = await import('../src/app');
   const app = await buildServer();
   const address = await app.listen({ port: 0, host: '127.0.0.1' }); // e.g. http://127.0.0.1:53187
   const client = createStorageClient({ endpoint: address, token: process.env.STORAGE_TOKEN });
