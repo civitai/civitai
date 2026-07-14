@@ -11,7 +11,7 @@ import {
 import { CacheTTL, constants } from '~/server/common/constants';
 import { NsfwLevel, TagSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { imageTagsCache } from '~/server/redis/caches';
+import { imageTagsCache, tagCache as basicTagCache } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type {
   AdjustTagsSchema,
@@ -325,6 +325,27 @@ export const getTags = async ({
 };
 
 // #region [tag voting]
+/**
+ * Drop unlisted tags before they reach the client. They're already hidden from
+ * tag lists, search and tag pages, so surfacing them on votable chips would
+ * advertise the exact tags we delisted — and invite votes on them. Moderators
+ * keep them; they need to see what a piece of content is flagged as.
+ *
+ * `unlisted` isn't on the ImageTag/ModelTag composites, so it's resolved from
+ * the basic tag cache rather than widened into those payloads — imageTagsCache
+ * is the largest consumer of next-redis-cluster (see the 2026-06-09 audit note
+ * on its definition) and shouldn't grow. Reading it here also means a tag being
+ * unlisted takes effect without purging the composite caches.
+ */
+async function stripUnlistedTags<T extends { id: number }>(
+  tags: T[],
+  isModerator: boolean
+): Promise<T[]> {
+  if (isModerator || !tags.length) return tags;
+  const cached = await basicTagCache.fetch(tags.map((tag) => tag.id));
+  return tags.filter((tag) => !cached[tag.id]?.unlisted);
+}
+
 export const getVotableTags = async ({
   userId,
   type,
@@ -412,7 +433,7 @@ export const getVotableTags = async ({
     );
   }
 
-  return results;
+  return stripUnlistedTags(results, isModerator);
 };
 
 export async function getVotableImageTags({
@@ -471,7 +492,7 @@ export async function getVotableImageTags({
     if (userVote) tag.vote = userVote.vote > 0 ? 1 : -1;
   }
 
-  return allImageTags;
+  return stripUnlistedTags(allImageTags, !!user.isModerator);
 }
 
 // TODO - create function for getting model tag votes and then finish abstracting this fuction - replaces `getVotableTags`
@@ -717,9 +738,9 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
   const tagIdMatch = (col: string) =>
     isTagIds
       ? Prisma.sql`${Prisma.raw(`"${col}"`)} = ANY(${castedTags as number[]}::int[])`
-      : Prisma.sql`${Prisma.raw(
-          `"${col}"`
-        )} IN (SELECT id FROM "Tag" WHERE "name" = ANY(${castedTags as string[]}::text[]))`;
+      : Prisma.sql`${Prisma.raw(`"${col}"`)} IN (SELECT id FROM "Tag" WHERE "name" = ANY(${
+          castedTags as string[]
+        }::text[]))`;
 
   // TODO.fix "disabled" doesnt exist for TagsOnModels, is this being used?
   if (entityType === 'model') {
