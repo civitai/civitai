@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Group, Text, useComputedColorScheme } from '@mantine/core';
-import { IconCrown, IconPhotoOff, IconSparkles, IconTrophy } from '@tabler/icons-react';
+import { IconCrown, IconEyeOff, IconPhotoOff, IconSparkles, IconTrophy } from '@tabler/icons-react';
 import Link from 'next/link';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -91,6 +91,19 @@ export function WinnerPodiumCard({
     ? 'w-80'
     : 'w-64';
 
+  const mediaAspectClass = compact
+    ? isFirst
+      ? 'aspect-[5/6]'
+      : 'aspect-square'
+    : isFirst
+    ? 'aspect-square'
+    : 'aspect-[4/3]';
+
+  // The server withholds a mature winner image's URL on the green (SFW) site but keeps its
+  // blurhash, so `imageId + imageHash + no imageUrl` means "gated for this domain", distinct from a
+  // genuinely removed image (no hash).
+  const isGatedThumb = !!winner.imageId && !winner.imageUrl && !!winner.imageHash;
+
   return (
     <div
       className={`flex min-w-0 flex-col overflow-hidden rounded-xl border-2 ${config.border} ${
@@ -129,17 +142,7 @@ export function WinnerPodiumCard({
 
       {/* Winner Image */}
       {winner.imageId && winner.imageUrl ? (
-        <div
-          className={`relative w-full overflow-hidden ${
-            compact
-              ? isFirst
-                ? 'aspect-[5/6]'
-                : 'aspect-square'
-              : isFirst
-              ? 'aspect-square'
-              : 'aspect-[4/3]'
-          }`}
-        >
+        <div className={`relative w-full overflow-hidden ${mediaAspectClass}`}>
           <ImageGuard2
             image={{
               id: winner.imageId,
@@ -177,17 +180,22 @@ export function WinnerPodiumCard({
             )}
           </ImageGuard2>
         </div>
+      ) : isGatedThumb ? (
+        <div className={`relative w-full overflow-hidden ${mediaAspectClass}`}>
+          <MediaHash hash={winner.imageHash ?? null} width={450} height={450} />
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/40 p-2 text-center text-white">
+            <IconEyeOff size={compact ? 20 : 28} stroke={1.5} />
+            <Text size={compact ? 'xs' : 'sm'} fw={600}>
+              Mature content
+            </Text>
+            <Text size="xs" className="opacity-80">
+              View on civitai.red
+            </Text>
+          </div>
+        </div>
       ) : (
         <div
-          className={`relative flex w-full items-center justify-center overflow-hidden bg-gray-100 dark:bg-dark-5 ${
-            compact
-              ? isFirst
-                ? 'aspect-[5/6]'
-                : 'aspect-square'
-              : isFirst
-              ? 'aspect-square'
-              : 'aspect-[4/3]'
-          }`}
+          className={`relative flex w-full items-center justify-center overflow-hidden bg-gray-100 dark:bg-dark-5 ${mediaAspectClass}`}
         >
           <div className="flex flex-col items-center gap-1 text-gray-400 dark:text-dark-3">
             <IconPhotoOff size={compact ? 24 : 36} stroke={1.5} />

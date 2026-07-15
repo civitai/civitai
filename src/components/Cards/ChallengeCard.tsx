@@ -105,7 +105,7 @@ export const ChallengeCard = memo(function ChallengeCard({ data }: Props) {
         type: coverImage.type,
         width: coverImage.width ?? 512,
         height: coverImage.height ?? 512,
-        nsfwLevel: coverImage.nsfwLevel ?? nsfwLevel,
+        nsfwLevel,
         hash: coverImage.hash,
         metadata: null,
       }

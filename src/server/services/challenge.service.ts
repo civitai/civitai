@@ -910,44 +910,33 @@ export async function getChallengeDetail(
     return null;
   }
 
-  // Cover-image gates. POI + cover-scan are user-challenge-only (System/mod covers are trusted and
-  // default to Scanned). The green NSFW hard-block applies to ALL sources — direct-URL parity with
-  // the feed filter — so a mod/system challenge with an NSFW cover can't be reached on .com.
-  if (challenge.coverImageId) {
+  // POI + cover-scan gate: a cover depicting a real person (Image.poi, set by the image scanner),
+  // or one that hasn't finished moderation scanning yet, keeps the challenge out of public view —
+  // direct-URL parity with the feed filter. Creator exempt; skip the lookup entirely for trusted
+  // System challenges. NSFW-on-green gating is handled client-side by <Gated> (MatureContentRedirect)
+  // on the detail page, matching how model/image detail pages gate mature content on the safe site.
+  if (challenge.source === ChallengeSource.User && challenge.coverImageId) {
     const cover = await dbRead.image.findUnique({
       where: { id: challenge.coverImageId },
-      select: { poi: true, ingestion: true, nsfwLevel: true },
+      select: { poi: true, ingestion: true },
     });
-
-    if (challenge.source === ChallengeSource.User) {
-      if (
-        isChallengeHiddenByPoiCover(
-          {
-            source: challenge.source,
-            createdById: challenge.createdById,
-            coverPoi: cover?.poi ?? false,
-          },
-          viewerId
-        )
-      )
-        return null;
-
-      if (
-        isChallengeHiddenByCoverScan(
-          { source: challenge.source, createdById: challenge.createdById, coverImage: cover },
-          viewerId
-        )
-      )
-        return null;
-    }
-
-    // Green (.com) hard-block: never serve a challenge whose REAL cover image level isn't SFW,
-    // regardless of source. Treat unknown/unrated (null/0) as unsafe. Creator viewing their own is
-    // exempt (they can already preview their pending/blocked challenge above).
     if (
-      isGreen &&
-      challenge.createdById !== viewerId &&
-      isImageHiddenFromGreenViewer(cover?.nsfwLevel, viewerId)
+      isChallengeHiddenByPoiCover(
+        {
+          source: challenge.source,
+          createdById: challenge.createdById,
+          coverPoi: cover?.poi ?? false,
+        },
+        viewerId
+      )
+    )
+      return null;
+
+    if (
+      isChallengeHiddenByCoverScan(
+        { source: challenge.source, createdById: challenge.createdById, coverImage: cover },
+        viewerId
+      )
     )
       return null;
   }
