@@ -68,6 +68,16 @@ export function clearChallengeCategoryCache() {
   cache = null;
 }
 
+// Every challenge's judgingCategories requires exactly one `theme` (judgingCategoryRefinements),
+// so the theme category must never be soft-hidden or removed — it would break create for all users.
+export function assertCategoryActiveAllowed(key: string, active: boolean) {
+  if (key === 'theme' && !active)
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'The theme category cannot be deactivated.',
+    });
+}
+
 /** Category list for the picker — key/label/group/criteria only (prompt content stays server-side). */
 export async function getJudgingCategoryOptions(): Promise<ChallengeCategoryOption[]> {
   const rows = await getChallengeCategoryRows();

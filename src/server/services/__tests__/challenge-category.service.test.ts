@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 // tests pin down. (In prod the same path covers an env whose ChallengeCategory table hasn't
 // been created/seeded yet — migrations are applied manually.)
 import {
+  assertCategoryActiveAllowed,
   getJudgingCategoryOptions,
   pickCategoryRubric,
   resolveJudgingCategories,
@@ -104,5 +105,17 @@ describe('preset fallback (no DB available)', () => {
     const derive = (k: 'theme' | 'aesthetic') =>
       `${CHALLENGE_PRESET_CATEGORIES[k].label.toUpperCase()} SCORING (0-10):\n${CHALLENGE_PRESET_CATEGORIES[k].criteria}`.trim();
     expect(block).toBe([derive('theme'), derive('aesthetic')].join('\n\n'));
+  });
+});
+
+describe('assertCategoryActiveAllowed', () => {
+  it('rejects deactivating the theme category', () => {
+    expect(() => assertCategoryActiveAllowed('theme', false)).toThrow(/theme category cannot/i);
+  });
+  it('allows deactivating a non-theme category', () => {
+    expect(() => assertCategoryActiveAllowed('humor', false)).not.toThrow();
+  });
+  it('allows keeping theme active', () => {
+    expect(() => assertCategoryActiveAllowed('theme', true)).not.toThrow();
   });
 });
