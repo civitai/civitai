@@ -355,6 +355,20 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // Author-scoped in-place edit of an OWN shared_kv row (the sibling of
+  // SHARED_APPEND's INSERT-only write; fixes "editing creates a new one"). Same
+  // REQUEST-style hang class + same host placement as SHARED_APPEND — the shared
+  // datastore is a per-APP surface a model-slot block can also edit, so BOTH real
+  // hosts wire it. Reply is the SHARED_WITHDRAW-style `{ ok, error? }` (NOT
+  // SHARED_APPEND's `{ key }`): the SDK's isValidSharedUpdateResult REQUIRES a
+  // boolean `ok`, so the error reply MUST carry `ok: false` or it's dropped.
+  SHARED_UPDATE: {
+    request: true,
+    reply: 'SHARED_UPDATE_RESULT',
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   SHARED_VOTE: {
     request: true,
     reply: 'SHARED_VOTE_RESULT',

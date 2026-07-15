@@ -61,6 +61,7 @@ vi.mock('~/utils/trpc', () => ({
     apps: {
       shared: {
         append: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        update: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         vote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         unvote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         withdraw: { useMutation: () => ({ mutateAsync: vi.fn() }) },
