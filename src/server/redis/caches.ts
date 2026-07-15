@@ -778,6 +778,31 @@ export const userImageVideoCountPublicCache = createUserContentCountCache<UserIm
   `
 );
 
+const userImageVideoCountVariants = [
+  userImageVideoCountCache,
+  userImageVideoCountSfwCache,
+  userImageVideoCountPublicCache,
+];
+
+/**
+ * The image/video count is cached once per browsing-level variant, and all three
+ * move together whenever a user's countable images change.
+ *
+ * `refresh` re-queries eagerly, so it is only safe once the image already
+ * satisfies the count predicate (Scanned, on a post that is published and not
+ * future-dated). Calling it mid-transition caches the pre-transition count for
+ * the full TTL — prefer `bust` on any path that can fire before the image
+ * qualifies.
+ */
+export const userImageVideoCountCaches = {
+  refresh: async (userIds: number | number[]) => {
+    await Promise.all(userImageVideoCountVariants.map((cache) => cache.refresh(userIds)));
+  },
+  bust: async (userIds: number | number[]) => {
+    await Promise.all(userImageVideoCountVariants.map((cache) => cache.bust(userIds)));
+  },
+};
+
 type UserArticleCount = { id: number; articleCount: number };
 export const userArticleCountCache = createUserContentCountCache<UserArticleCount>(
   'articleCount',
