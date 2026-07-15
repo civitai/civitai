@@ -305,17 +305,23 @@ export default MixedAuthEndpoint(async function handler(
     Flags.hasFlag(modelVersion.versionFlags, ModelVersionFlag.LicensingRoot) &&
     modelVersion.licensingFee != null &&
     modelVersion.licensingFee > 0;
+  // The recipient's owner is part of each guard: `ModelVersion.modelId` has orphan
+  // rows in prod despite a validated FK, and a fee we cannot attribute to a user is
+  // worse than no fee — the orchestrator would stamp a null owner onto
+  // ResourceCompensation. Dropping the component degrades safely instead.
   const hasSourceRule =
     !isLicensingRoot &&
     modelVersion.licensingSourceVersionId != null &&
     modelVersion.sourceLicensingFee != null &&
-    modelVersion.sourceLicensingFee > 0;
+    modelVersion.sourceLicensingFee > 0 &&
+    modelVersion.sourceLicensingFeeRecipientUserId != null;
   const hasBaseRule =
     !isLicensingRoot &&
     !hasSourceRule &&
     modelVersion.baseLicensingFeeRecipientId != null &&
     modelVersion.baseLicensingFee != null &&
-    modelVersion.baseLicensingFee > 0;
+    modelVersion.baseLicensingFee > 0 &&
+    modelVersion.baseLicensingFeeRecipientUserId != null;
 
   // When the base/lineage component already settles to this version itself (it's
   // the root), its own fee IS that component — don't double-count it as a surcharge.
