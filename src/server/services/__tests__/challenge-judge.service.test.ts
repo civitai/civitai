@@ -29,4 +29,16 @@ describe('getUserSelectableJudges', () => {
       expect.arrayContaining(['CivBot', 'CivChan'])
     );
   });
+
+  it('falls back to the name whitelist when the userSelectable column does not exist yet', async () => {
+    findMany
+      .mockRejectedValueOnce(Object.assign(new Error('column does not exist'), { code: 'P2022' }))
+      .mockResolvedValueOnce([{ id: 3, name: 'CivBot', bio: null }]);
+    const res = await getUserSelectableJudges();
+    expect(res).toEqual([{ id: 3, name: 'CivBot', bio: null }]);
+    expect(findMany).toHaveBeenCalledTimes(2);
+    expect(findMany.mock.calls[1][0].where.name.in).toEqual(
+      expect.arrayContaining(['CivBot', 'CivChan'])
+    );
+  });
 });

@@ -1383,9 +1383,11 @@ export async function upsertUserChallenge({
   // Judge must be an existing, active judge — users can only pick, not create or reprompt one.
   // Read/write parity: validate against exactly the set the user picker offered (getActiveJudges),
   // including the whitelist fallback — never a separate query that could drift from the form.
-  const selectableJudges = await getUserSelectableJudges();
-  if (judgeId != null && !selectableJudges.some((j) => j.id === judgeId))
-    throw new TRPCError({ code: 'BAD_REQUEST', message: 'Selected judge is not available.' });
+  if (judgeId != null) {
+    const selectableJudges = await getUserSelectableJudges();
+    if (!selectableJudges.some((j) => j.id === judgeId))
+      throw new TRPCError({ code: 'BAD_REQUEST', message: 'Selected judge is not available.' });
+  }
 
   const allowedNsfwLevel = rest.allowedNsfwLevel ?? sfwBrowsingLevelsFlag;
   // buzzType is derived from the caller's current domain, but it's immutable once stored — on

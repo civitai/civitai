@@ -1,4 +1,5 @@
 import { Card, Center, Flex, Tabs, Text } from '@mantine/core';
+import { useRouter } from 'next/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -10,6 +11,16 @@ import { CategoriesPanel } from './CategoriesPanel';
 export function PlaygroundPage() {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
+  const router = useRouter();
+
+  const activeTab = router.query.tab === 'categories' ? 'categories' : 'judges';
+  const setTab = (value: string | null) => {
+    router.replace(
+      { pathname: router.pathname, query: { ...router.query, tab: value ?? 'judges' } },
+      undefined,
+      { shallow: true }
+    );
+  };
 
   if (!features.challengePlatform) {
     return <NotFound />;
@@ -24,7 +35,7 @@ export function PlaygroundPage() {
   }
 
   return (
-    <Tabs defaultValue="judges" keepMounted={false}>
+    <Tabs value={activeTab} onChange={setTab} keepMounted={false}>
       <Tabs.List>
         <Tabs.Tab value="judges">Judges</Tabs.Tab>
         <Tabs.Tab value="categories">Categories</Tabs.Tab>
