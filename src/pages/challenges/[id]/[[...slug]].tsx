@@ -23,6 +23,7 @@ import {
   useMantineTheme,
   useComputedColorScheme,
 } from '@mantine/core';
+import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import type { InferGetServerSidePropsType } from 'next';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as z from 'zod';
@@ -37,6 +38,7 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { CreatorCardSimple } from '~/components/CreatorCard/CreatorCardSimple';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -45,10 +47,13 @@ import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import {
   ChallengeReviewCostType,
   Currency,
+  ChallengeSource,
   ChallengeStatus,
   PrizeMode,
   PoolTrigger,
 } from '~/shared/utils/prisma/enums';
+import { openReportModal } from '~/components/Dialog/triggers/report';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import {
   IconBrush,
@@ -58,6 +63,7 @@ import {
   IconCube,
   IconDotsVertical,
   IconFilter,
+  IconFlag,
   IconGift,
   IconPencil,
   IconPhoto,
@@ -71,10 +77,12 @@ import {
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { useQueryChallenge } from '~/components/Challenge/challenge.utils';
+import { useDeleteUserChallenge, useQueryChallenge } from '~/components/Challenge/challenge.utils';
 import { WinnerPodiumCard } from '~/components/Challenge/WinnerPodiumCard';
-import type { Props as DescriptionTableProps } from '~/components/DescriptionTable/DescriptionTable';
-import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
+import {
+  DescriptionTable,
+  type Props as DescriptionTableProps,
+} from '~/components/DescriptionTable/DescriptionTable';
 import { buildPassthroughQuery } from '~/utils/query-string-helpers';
 import { getModelUrl, slugit } from '~/utils/string-helpers';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -119,6 +127,7 @@ import {
 } from '~/components/Challenge/DynamicPrizeCard/constants';
 import { ProgressLegendDot } from '~/components/Challenge/DynamicPrizeCard/ProgressLegendDot';
 import { GlowDivider } from '~/components/Challenge/DynamicPrizeCard/GlowDivider';
+import { distributePrizes } from '~/server/games/daily-challenge/challenge-pool';
 
 function useInjectKeyframes() {
   useEffect(() => {
@@ -204,8 +213,11 @@ export const getServerSideProps = createServerSideProps({
 function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { data: challenge, isLoading } = useQueryChallenge(id);
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
+  const { deleteChallenge: deleteOwnChallenge, deleting: deletingOwn } = useDeleteUserChallenge();
+  const deletingOwnRef = useRef(false);
 
   const handleMutationError = (error: { message: string }) => {
     showErrorNotification({ error: new Error(error.message) });
@@ -303,11 +315,48 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
   const isActive = challenge.status === ChallengeStatus.Active;
   const isCompleted = challenge.status === ChallengeStatus.Completed;
   const isScheduled = challenge.status === ChallengeStatus.Scheduled;
+  // Only User-source challenges carry user-authored text worth reporting
+  const canReport = !!currentUser && challenge.source === ChallengeSource.User;
+
+  const isOwner =
+    !!currentUser &&
+    currentUser.id === challenge.createdById &&
+    challenge.source === ChallengeSource.User;
+  const canManageOwn =
+    features.userChallenges && isOwner && !currentUser?.isModerator && isScheduled;
+
+  const handleOwnerDelete = () => {
+    openConfirmModal({
+      title: 'Delete challenge',
+      children:
+        'Delete this challenge? Your escrowed prize Buzz will be refunded. This cannot be undone.',
+      centered: true,
+      closeOnConfirm: false,
+      labels: { cancel: 'No, keep it', confirm: 'Delete challenge' },
+      confirmProps: { color: 'red' },
+      onConfirm: async () => {
+        if (deletingOwnRef.current) return;
+        deletingOwnRef.current = true;
+        try {
+          await deleteOwnChallenge(challenge.id);
+          closeAllModals();
+          await router.push('/challenges');
+        } catch {
+          // notification surfaced by the mutation
+        } finally {
+          deletingOwnRef.current = false;
+        }
+      },
+    });
+  };
 
   return (
     <Gated
-      contentNsfwLevel={challenge.allowedNsfwLevel}
-      bypassRating={currentUser?.isModerator ?? false}
+      // Gate on the challenge's allowed rating combined with the cover image's REAL level, so a
+      // challenge whose declared rating is SFW but whose cover scanned NSFW still shows the
+      // MatureContentRedirect on the green (SFW) site instead of leaking the cover.
+      contentNsfwLevel={challenge.allowedNsfwLevel | (challenge.coverImage?.nsfwLevel ?? 0)}
+      bypassRating={isOwner || (currentUser?.isModerator ?? false)}
       meta={{
         title: `${challenge.title} | Civitai Challenges`,
         description:
@@ -329,7 +378,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                   <IconShare3 size={20} />
                 </ActionIcon>
               </ShareButton>
-              {currentUser?.isModerator && (
+              {(currentUser?.isModerator || canReport || canManageOwn) && (
                 <Menu position="bottom-end" withArrow>
                   <Menu.Target>
                     <ActionIcon variant="light" size="lg">
@@ -337,71 +386,116 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                     </ActionIcon>
                   </Menu.Target>
                   <Menu.Dropdown>
-                    <Menu.Label>Actions</Menu.Label>
-                    <Menu.Item
-                      leftSection={<IconPencil size={14} stroke={1.5} />}
-                      component={Link}
-                      href={`/moderator/challenges/${challenge.id}/edit`}
-                    >
-                      Edit Challenge
-                    </Menu.Item>
-                    <ToggleLockComments entityId={challenge.id} entityType="challenge">
-                      {({ toggle, locked, isLoading }) => (
+                    {currentUser?.isModerator && (
+                      <>
+                        <Menu.Label>Actions</Menu.Label>
                         <Menu.Item
-                          leftSection={
-                            isLoading ? <Loader size={14} /> : <IconLock size={14} stroke={1.5} />
+                          leftSection={<IconPencil size={14} stroke={1.5} />}
+                          component={Link}
+                          href={`/moderator/challenges/${challenge.id}/edit`}
+                        >
+                          Edit Challenge
+                        </Menu.Item>
+                        <ToggleLockComments entityId={challenge.id} entityType="challenge">
+                          {({ toggle, locked, isLoading }) => (
+                            <Menu.Item
+                              leftSection={
+                                isLoading ? (
+                                  <Loader size={14} />
+                                ) : (
+                                  <IconLock size={14} stroke={1.5} />
+                                )
+                              }
+                              onClick={toggle}
+                              disabled={isLoading}
+                              closeMenuOnClick={false}
+                            >
+                              {locked ? 'Unlock' : 'Lock'} Comments
+                            </Menu.Item>
+                          )}
+                        </ToggleLockComments>
+
+                        {isActive && (
+                          <>
+                            <Menu.Divider />
+                            <Menu.Label>Quick Actions</Menu.Label>
+                            <Menu.Item
+                              leftSection={<IconTrophy size={14} />}
+                              onClick={handleEndAndPickWinners}
+                            >
+                              End & Pick Winners
+                            </Menu.Item>
+                            <Menu.Item
+                              leftSection={<IconX size={14} />}
+                              color="red"
+                              onClick={handleVoidChallenge}
+                            >
+                              Void Challenge
+                            </Menu.Item>
+                          </>
+                        )}
+
+                        {isScheduled && (
+                          <>
+                            <Menu.Divider />
+                            <Menu.Label>Quick Actions</Menu.Label>
+                            <Menu.Item
+                              leftSection={<IconX size={14} />}
+                              color="red"
+                              onClick={handleVoidChallenge}
+                            >
+                              Cancel Challenge
+                            </Menu.Item>
+                          </>
+                        )}
+
+                        <Menu.Divider />
+                        <Menu.Item
+                          leftSection={<IconTrash size={14} />}
+                          color="red"
+                          onClick={handleDelete}
+                        >
+                          Delete
+                        </Menu.Item>
+                      </>
+                    )}
+                    {canManageOwn && (
+                      <>
+                        <Menu.Label>Actions</Menu.Label>
+                        <Menu.Item
+                          leftSection={<IconPencil size={14} stroke={1.5} />}
+                          component={Link}
+                          href={`/challenges/${challenge.id}/edit`}
+                        >
+                          Edit Challenge
+                        </Menu.Item>
+                        <Menu.Item
+                          leftSection={<IconTrash size={14} />}
+                          color="red"
+                          disabled={deletingOwn}
+                          onClick={handleOwnerDelete}
+                        >
+                          Delete
+                        </Menu.Item>
+                        {canReport && <Menu.Divider />}
+                      </>
+                    )}
+                    {canReport && (
+                      <>
+                        {currentUser?.isModerator && <Menu.Divider />}
+                        <Menu.Item
+                          leftSection={<IconFlag size={14} stroke={1.5} />}
+                          onClick={() =>
+                            openReportModal({
+                              entityType: ReportEntity.Challenge,
+                              entityId: challenge.id,
+                            })
                           }
-                          onClick={toggle}
-                          disabled={isLoading}
-                          closeMenuOnClick={false}
                         >
-                          {locked ? 'Unlock' : 'Lock'} Comments
-                        </Menu.Item>
-                      )}
-                    </ToggleLockComments>
-
-                    {isActive && (
-                      <>
-                        <Menu.Divider />
-                        <Menu.Label>Quick Actions</Menu.Label>
-                        <Menu.Item
-                          leftSection={<IconTrophy size={14} />}
-                          onClick={handleEndAndPickWinners}
-                        >
-                          End & Pick Winners
-                        </Menu.Item>
-                        <Menu.Item
-                          leftSection={<IconX size={14} />}
-                          color="red"
-                          onClick={handleVoidChallenge}
-                        >
-                          Void Challenge
+                          Report
                         </Menu.Item>
                       </>
                     )}
-
-                    {isScheduled && (
-                      <>
-                        <Menu.Divider />
-                        <Menu.Label>Quick Actions</Menu.Label>
-                        <Menu.Item
-                          leftSection={<IconX size={14} />}
-                          color="red"
-                          onClick={handleVoidChallenge}
-                        >
-                          Cancel Challenge
-                        </Menu.Item>
-                      </>
-                    )}
-
-                    <Menu.Divider />
-                    <Menu.Item
-                      leftSection={<IconTrash size={14} />}
-                      color="red"
-                      onClick={handleDelete}
-                    >
-                      Delete
-                    </Menu.Item>
                   </Menu.Dropdown>
                 </Menu>
               )}
@@ -665,13 +759,13 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
     {
       label: 'Starts',
       value: (
-        <Text size="sm">{formatDate(challenge.startsAt, 'MMM DD, YYYY hh:mm A [UTC]', true)}</Text>
+        <Text size="sm">{formatDate(challenge.startsAt, 'MMM DD, YYYY hh:mm A', false)}</Text>
       ),
     },
     {
       label: 'Ends',
       value: (
-        <Text size="sm">{formatDate(challenge.endsAt, 'MMM DD, YYYY hh:mm A [UTC]', true)}</Text>
+        <Text size="sm">{formatDate(challenge.endsAt, 'MMM DD, YYYY hh:mm A', false)}</Text>
       ),
     },
     {
@@ -680,7 +774,13 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
     },
     {
       label: 'AI Reviews',
-      value: <Text size="sm">Only 6–12 entries selected at random every 10 min</Text>,
+      value: (
+        <Text size="sm">
+          {challenge.entryFee > 0
+            ? 'Every entry is judged'
+            : 'Only 6–12 entries selected at random every 10 min'}
+        </Text>
+      ),
     },
     ...(challenge.entryPrize && challenge.entryPrizeRequirement > 0
       ? [
@@ -708,8 +808,15 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
       : []),
   ];
 
-  // Prize breakdown
-  const prizeItems: DescriptionTableProps['items'] = challenge.prizes.map((prize, index) => ({
+  // Prize breakdown. Dynamic-pool (user) challenges don't materialize `prizes` until they end
+  // (distributePrizes runs at winner-pick), so before then show the projected split derived from
+  // the current pool + distribution. Completed challenges render their real `prizes`.
+  const isProjectedPrizes =
+    isDynamicPool && !challenge.prizes.length && !!challenge.prizeDistribution?.length;
+  const prizeBreakdown = isProjectedPrizes
+    ? distributePrizes(challenge.prizePool, challenge.prizeDistribution ?? [])
+    : challenge.prizes;
+  const prizeItems: DescriptionTableProps['items'] = prizeBreakdown.map((prize, index) => ({
     label: (
       <Group gap={4}>
         <ThemeIcon
@@ -719,18 +826,38 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
         >
           <IconTrophy size={14} />
         </ThemeIcon>
-        <Text size="sm">{getPlaceLabel(index + 1)}</Text>
+        <Text size="sm" c="dimmed">
+          {getPlaceLabel(index + 1)}
+        </Text>
       </Group>
     ),
     value: (
-      <CurrencyBadge
-        size="sm"
-        currency={Currency.BUZZ}
-        unitAmount={prize.buzz}
-        variant="transparent"
-      />
+      <CurrencyBadge size="sm" currency={Currency.BUZZ} unitAmount={prize.buzz} />
     ),
   }));
+
+  if (challenge.entryPrize) {
+    prizeItems.push({
+      label: (
+        <Group gap={4}>
+          <ThemeIcon size="sm" color="blue" variant="light">
+            <IconGift size={14} />
+          </ThemeIcon>
+          <Text size="sm" c="dimmed">
+            Participation
+          </Text>
+        </Group>
+      ),
+      value: (
+        <CurrencyBadge
+          size="sm"
+          currency={Currency.BUZZ}
+          type="blue"
+          unitAmount={challenge.entryPrize.buzz}
+        />
+      ),
+    });
+  }
 
   // Shared props for DescriptionTable inside accordion panels (no outer borders)
   const accordionTableProps = {
@@ -740,28 +867,6 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
       radius: 0,
     },
   } as const;
-
-  if (challenge.entryPrize) {
-    prizeItems.push({
-      label: (
-        <Group gap={4}>
-          <ThemeIcon size="sm" color="blue" variant="light">
-            <IconGift size={14} />
-          </ThemeIcon>
-          <Text size="sm">Participation</Text>
-        </Group>
-      ),
-      value: (
-        <CurrencyBadge
-          size="sm"
-          currency={Currency.BUZZ}
-          type="blue"
-          unitAmount={challenge.entryPrize.buzz}
-          variant="transparent"
-        />
-      ),
-    });
-  }
 
   return (
     <Stack gap="md">
@@ -820,6 +925,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
               borderLeft: getBorder(cs, 'teal'),
               borderRight: getBorder(cs, 'teal'),
               background: getBackground(cs, 'teal'),
+              borderRadius: 'var(--mantine-radius-md) var(--mantine-radius-md) 0 0',
             }}
           >
             <Stack gap="sm" align="center" p="md">
@@ -1138,7 +1244,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
       <Accordion
         variant="separated"
         multiple
-        defaultValue={['details', 'models', 'prizes']}
+        defaultValue={['details', 'models', 'prizes', 'judging']}
         styles={(theme) => ({
           content: { padding: 0 },
           item: {
@@ -1166,10 +1272,43 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
           </Accordion.Control>
           <Accordion.Panel>
             <ScrollArea.Autosize mah={300}>
+              {isProjectedPrizes && (
+                <Text size="xs" c="dimmed" px="xs" pb={4}>
+                  Projected from the current pool — grows as entries are submitted.
+                </Text>
+              )}
               <DescriptionTable items={prizeItems} labelWidth="50%" {...accordionTableProps} />
             </ScrollArea.Autosize>
           </Accordion.Panel>
         </Accordion.Item>
+
+        {!!challenge.judgingCategories?.length && (
+          <Accordion.Item value="judging">
+            <Accordion.Control>
+              <Group justify="space-between">Judging</Group>
+            </Accordion.Control>
+            <Accordion.Panel>
+              <div className="flex flex-col bg-gray-0 dark:bg-[#1f2023]">
+                {challenge.judgingCategories.map((category) => (
+                  <div
+                    key={category.key}
+                    className="flex flex-col gap-1 border-b border-gray-3 px-4 py-2.5 last:border-b-0 dark:border-dark-4"
+                  >
+                    <Group justify="space-between" gap="xs" wrap="nowrap">
+                      <Text size="sm">{category.label}</Text>
+                      <Text size="sm" fw={500}>
+                        {category.weight}%
+                      </Text>
+                    </Group>
+                    <Text size="xs" c="dimmed">
+                      {category.criteria}
+                    </Text>
+                  </div>
+                ))}
+              </div>
+            </Accordion.Panel>
+          </Accordion.Item>
+        )}
 
         {challenge.models.length > 0 && (
           <Accordion.Item value="models">

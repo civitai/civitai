@@ -23,6 +23,8 @@ import {
   getCoverOfModel,
   getJudgedEntries,
 } from '~/server/jobs/daily-challenge-processing';
+import { challengeJudgingCategoriesSchema } from '~/server/schema/challenge.schema';
+import { ChallengeSource } from '~/shared/utils/prisma/enums';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z
@@ -145,7 +147,29 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     const challengeRecord = await getChallengeById(challengeId!);
     if (!challengeRecord) return res.status(404).json({ error: 'Challenge not found' });
     const challengeDetails = challengeToLegacyFormat(challengeRecord);
-    const judgedEntries = await getJudgedEntries(challengeDetails.collectionId, config);
+
+    // User-source challenges rank by creator-defined weighted categories (see getJudgedEntries);
+    // judgingCategories isn't in the slim ChallengeDetails type, so fetch it separately.
+    const [judgingCategoriesRow] = await dbRead.$queryRaw<
+      [{ judgingCategories: unknown } | undefined]
+    >`
+      SELECT "judgingCategories" FROM "Challenge"
+      WHERE id = ${challengeId}
+      LIMIT 1
+    `;
+    const userJudgingCategories =
+      challengeRecord.source === ChallengeSource.User
+        ? challengeJudgingCategoriesSchema.safeParse(judgingCategoriesRow?.judgingCategories)
+        : undefined;
+    const userCategories = userJudgingCategories?.success ? userJudgingCategories.data : undefined;
+
+    const judgedEntries = await getJudgedEntries(
+      challengeDetails.collectionId,
+      config,
+      undefined,
+      challengeRecord.source,
+      userCategories
+    );
 
     const result = await generateWinners({
       theme: challengeRecord.theme ?? '',

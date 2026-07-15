@@ -1,3 +1,5 @@
+import { sanitizeCategoryLabel } from '~/shared/constants/challenge.constants';
+
 /**
  * Pure scoring utilities for daily challenges.
  * This module has NO server dependencies (no Redis, Prisma, etc.)
@@ -48,5 +50,48 @@ export function calculateWeightedScore(score: Score): number | null {
     return Math.min(weighted, THEME_GATE_MAX_SCORE);
   }
 
+  return weighted;
+}
+
+/**
+ * Ranking score for user-created challenges, which use arbitrary creator-defined judging
+ * categories instead of the fixed theme/aesthetic/humor/wittiness set. Every category is
+ * weighted equally: the final score is the mean of the category scores (0-10). Categories
+ * are clamped to 0-10 defensively (the LLM output is not trusted). Returns null if there are
+ * no category scores to average.
+ */
+export function calculateCategoryScore(scores: Record<string, number>): number | null {
+  const values = Object.values(scores).filter((v) => typeof v === 'number' && !Number.isNaN(v));
+  if (values.length === 0) return null;
+  const clamped = values.map((v) => Math.min(10, Math.max(0, v)));
+  return clamped.reduce((a, b) => a + b, 0) / clamped.length;
+}
+
+/**
+ * Ranking score for user-created challenges with weighted, creator-defined categories.
+ * Scores are keyed by category LABEL (the key the AI review schema emits). Theme is mandatory,
+ * so its gate rules always apply: theme <= disqualify → null; theme < gate → cap.
+ */
+export function calculateWeightedCategoryScore(
+  scores: Record<string, number>,
+  categories: { key: string; label: string; weight: number }[]
+): number | null {
+  const clamp = (v: number) => Math.min(10, Math.max(0, Number(v) || 0));
+  // The AI review echoes category labels back as JSON keys; normalize both sides so minor
+  // case/whitespace drift from the LLM doesn't silently read back as a 0 (which would
+  // disqualify every entry via the theme gate below).
+  const normalizedScores: Record<string, number> = {};
+  for (const [key, value] of Object.entries(scores)) {
+    normalizedScores[sanitizeCategoryLabel(key).toLowerCase()] = value;
+  }
+  const scoreFor = (label: string) =>
+    clamp(normalizedScores[sanitizeCategoryLabel(label).toLowerCase()]);
+
+  const theme = categories.find((c) => c.key === 'theme');
+  const themeScore = theme ? scoreFor(theme.label) : undefined;
+  if (themeScore !== undefined && themeScore < THEME_DISQUALIFY_THRESHOLD) return null;
+  const weighted = categories.reduce((sum, c) => sum + scoreFor(c.label) * (c.weight / 100), 0);
+  if (themeScore !== undefined && themeScore < THEME_GATE_THRESHOLD)
+    return Math.min(weighted, THEME_GATE_MAX_SCORE);
   return weighted;
 }

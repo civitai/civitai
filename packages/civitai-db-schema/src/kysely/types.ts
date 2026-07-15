@@ -102,6 +102,7 @@ import type {
   PrizeMode,
   PoolTrigger,
   ChallengeReviewCostType,
+  ChallengeIngestionStatus,
   EntityMetric_EntityType_Type,
   EntityMetric_MetricType_Type,
   ComicProjectStatus,
@@ -1302,10 +1303,12 @@ export type Challenge = {
   modelVersionIds: Generated<number[]>;
   allowedNsfwLevel: Generated<number>;
   judgingPrompt: string | null;
+  judgingCategories: unknown | null;
   reviewPercentage: Generated<number>;
   maxReviews: number | null;
   collectionId: number | null;
   maxEntriesPerUser: Generated<number>;
+  maxParticipants: number | null;
   prizes: Generated<unknown>;
   entryPrize: unknown | null;
   entryPrizeRequirement: Generated<number>;
@@ -1320,14 +1323,30 @@ export type Challenge = {
   operationSpent: Generated<number>;
   reviewCostType: Generated<ChallengeReviewCostType>;
   reviewCost: Generated<number>;
-  createdById: number;
+  entryFee: Generated<number>;
+  buzzType: Generated<string>;
+  createdById: number | null;
   source: Generated<ChallengeSource>;
   judgeId: number | null;
   status: Generated<ChallengeStatus>;
+  ingestion: Generated<ChallengeIngestionStatus>;
+  scannedAt: Timestamp | null;
   metadata: unknown | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
   eventId: number | null;
+};
+export type ChallengeCategory = {
+  key: string;
+  label: string;
+  group: string;
+  criteria: string;
+  rubric: string | null;
+  rubricNsfw: string | null;
+  sortOrder: Generated<number>;
+  active: Generated<boolean>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
 };
 export type ChallengeEvent = {
   id: Generated<number>;
@@ -1357,6 +1376,10 @@ export type ChallengeJudge = {
   active: Generated<boolean>;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
+};
+export type ChallengeReport = {
+  challengeId: number;
+  reportId: number;
 };
 export type ChallengeWinner = {
   id: Generated<number>;
@@ -3832,8 +3855,10 @@ export type DB = {
   BuzzWithdrawalRequestHistory: BuzzWithdrawalRequestHistory;
   CashWithdrawal: CashWithdrawal;
   Challenge: Challenge;
+  ChallengeCategory: ChallengeCategory;
   ChallengeEvent: ChallengeEvent;
   ChallengeJudge: ChallengeJudge;
+  ChallengeReport: ChallengeReport;
   ChallengeWinner: ChallengeWinner;
   Changelog: Changelog;
   Chat: Chat;

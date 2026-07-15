@@ -1,5 +1,60 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { computeDynamicPool } from '../challenge-pool';
+import { buildChallengeModerationText } from '../challenge-helpers';
+import { CHALLENGE_JOB_BATCH_SIZE } from '~/shared/constants/challenge.constants';
+
+// challenge-helpers.ts (transitively, via daily-challenge.utils.ts) eagerly constructs real
+// db/redis clients at import time. Mock them so the module graph loads without a live DB/Redis.
+const { mockDbRead, mockDbWrite, mockRedis } = vi.hoisted(() => {
+  const dbRead = { $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []) };
+  const dbWrite = {
+    challenge: { updateMany: vi.fn(async () => ({ count: 1 })) },
+  };
+  const redis = {
+    packed: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
+    get: vi.fn(async () => null),
+    set: vi.fn(async () => undefined),
+    del: vi.fn(async () => 0),
+    scanIterator: async function* () {},
+  };
+  return { mockDbRead: dbRead, mockDbWrite: dbWrite, mockRedis: redis };
+});
+
+vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
+vi.mock('~/server/redis/client', () => ({
+  redis: mockRedis,
+  sysRedis: { sMembers: vi.fn(async () => []) },
+  REDIS_KEYS: {},
+  REDIS_SYS_KEYS: {},
+  withSysReadDeadline: vi.fn(async (fn: () => unknown) => fn()),
+}));
+
+describe('buildChallengeModerationText', () => {
+  it('includes title, theme, description, and invitation', () => {
+    const result = buildChallengeModerationText({
+      title: 'Title',
+      theme: 'Theme',
+      description: '<p>Description</p>',
+      invitation: 'Invitation text',
+    });
+
+    expect(result).toContain('Title');
+    expect(result).toContain('Theme');
+    expect(result).toContain('Description');
+    expect(result).toContain('Invitation text');
+  });
+
+  it('omits invitation when absent without adding a stray separator', () => {
+    const result = buildChallengeModerationText({
+      title: 'Title',
+      theme: null,
+      description: null,
+      invitation: null,
+    });
+
+    expect(result).toBe('Title');
+  });
+});
 
 describe('computeDynamicPool', () => {
   const defaultDistribution = [50, 30, 20];
@@ -165,5 +220,171 @@ describe('computeDynamicPool', () => {
       const totalAllocated = result.prizes.reduce((sum, p) => sum + p.buzz, 0);
       expect(totalAllocated).toBe(result.totalPool);
     }
+  });
+});
+
+describe('getChallengesByIds', () => {
+  beforeEach(() => {
+    mockDbRead.$queryRaw.mockClear();
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+  });
+
+  it('is exported and returns an array', async () => {
+    const { getChallengesByIds } = await import('../challenge-helpers');
+    expect(typeof getChallengesByIds).toBe('function');
+  });
+
+  it('returns empty array for empty input without hitting the db', async () => {
+    const { getChallengesByIds } = await import('../challenge-helpers');
+    await expect(getChallengesByIds([])).resolves.toEqual([]);
+    expect(mockDbRead.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('issues exactly one query for multiple ids (kills the N+1)', async () => {
+    const { getChallengesByIds } = await import('../challenge-helpers');
+    await getChallengesByIds([1, 2, 3]);
+    expect(mockDbRead.$queryRaw).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('bounded job selectors', () => {
+  // Selectors that hydrate ids via getChallengesByIds — each issues an id-listing query
+  // (call 1) then, if any ids came back, a single batched hydrate query (call 2). The old
+  // Promise.all(rows.map(getChallengeById)) pattern would have issued 1 + N queries instead.
+  const hydratingSelectors: Array<[string, () => Promise<unknown>]> = [
+    [
+      'getActiveChallengesFromDb',
+      async () => (await import('../challenge-helpers')).getActiveChallengesFromDb(),
+    ],
+    [
+      'getEndedActiveChallengesFromDb',
+      async () => (await import('../challenge-helpers')).getEndedActiveChallengesFromDb(),
+    ],
+    [
+      'getChallengesToReconcileFromDb',
+      async () => (await import('../challenge-helpers')).getChallengesToReconcileFromDb(),
+    ],
+    [
+      'getScheduledChallengesReadyToStart',
+      async () => (await import('../challenge-helpers')).getScheduledChallengesReadyToStart(),
+    ],
+  ];
+
+  // Selectors ordered by a plain startsAt/id ASC cursor. getActiveChallengesFromDb is excluded —
+  // it rotates by reviewedAt instead (see the dedicated test below) so later-started actives
+  // aren't starved when there are more than CHALLENGE_JOB_BATCH_SIZE concurrent actives (spec C1).
+  const startsAtOrderedSelectors = hydratingSelectors.filter(
+    ([name]) => name !== 'getActiveChallengesFromDb'
+  );
+
+  beforeEach(() => {
+    mockDbRead.$queryRaw.mockReset();
+  });
+
+  it('CHALLENGE_JOB_BATCH_SIZE exceeds the old hardcoded 50-row cap (regression guard)', () => {
+    // getActiveChallengesFromDb used to hardcode LIMIT 50, silently dropping the 51st+ active
+    // challenge. If this constant ever regresses back to <=50 that bug returns.
+    expect(CHALLENGE_JOB_BATCH_SIZE).toBeGreaterThan(50);
+  });
+
+  it.each(hydratingSelectors)(
+    '%s: hydrates 60 ids via ONE batched query, not N+1',
+    async (_name, run) => {
+      const idRows = Array.from({ length: 60 }, (_, i) => ({ id: i + 1 }));
+      mockDbRead.$queryRaw
+        .mockResolvedValueOnce(idRows) // id-listing query
+        .mockResolvedValueOnce([]); // getChallengesByIds batched hydrate query
+
+      await run();
+
+      expect(mockDbRead.$queryRaw).toHaveBeenCalledTimes(2);
+    }
+  );
+
+  it.each(startsAtOrderedSelectors)(
+    '%s: bounds the id-listing query at CHALLENGE_JOB_BATCH_SIZE with a stable ORDER BY',
+    async (_name, run) => {
+      mockDbRead.$queryRaw.mockResolvedValue([]); // empty id list short-circuits getChallengesByIds
+
+      await run();
+
+      expect(mockDbRead.$queryRaw).toHaveBeenCalledTimes(1);
+      const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[0] as [
+        TemplateStringsArray,
+        ...unknown[]
+      ];
+      const sql = strings.join('?');
+      expect(sql).toMatch(/ORDER BY .*ASC.*,\s*(?:c\.)?id ASC/);
+      expect(sql).toMatch(/LIMIT \?/);
+      expect(values).toContain(CHALLENGE_JOB_BATCH_SIZE);
+      expect(values).not.toContain(50);
+    }
+  );
+
+  it('getActiveChallengesFromDb: rotates least-recently-reviewed first (reviewedAt ASC NULLS FIRST) so >batch-size actives drain across runs', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([]); // empty id list short-circuits getChallengesByIds
+    const { getActiveChallengesFromDb } = await import('../challenge-helpers');
+
+    await getActiveChallengesFromDb();
+
+    expect(mockDbRead.$queryRaw).toHaveBeenCalledTimes(1);
+    const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[0] as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    const sql = strings.join('?');
+    expect(sql).toMatch(
+      /ORDER BY cast\(metadata->>'reviewedAt' as bigint\) ASC NULLS FIRST, "startsAt" ASC, id ASC/
+    );
+    expect(sql).toMatch(/LIMIT \?/);
+    expect(values).toContain(CHALLENGE_JOB_BATCH_SIZE);
+    expect(values).not.toContain(50);
+  });
+
+  it('getUnscannedUserChallengesPastStart: bounds at CHALLENGE_JOB_BATCH_SIZE with a stable ORDER BY (no hydrate query)', async () => {
+    mockDbRead.$queryRaw.mockResolvedValueOnce([]);
+    const { getUnscannedUserChallengesPastStart } = await import('../challenge-helpers');
+
+    await getUnscannedUserChallengesPastStart();
+
+    expect(mockDbRead.$queryRaw).toHaveBeenCalledTimes(1);
+    const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[0] as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    const sql = strings.join('?');
+    expect(sql).toMatch(/ORDER BY "startsAt" ASC, id ASC/);
+    expect(sql).toMatch(/LIMIT \?/);
+    expect(values).toContain(CHALLENGE_JOB_BATCH_SIZE);
+    expect(values).not.toContain(50);
+  });
+});
+
+describe('setChallengeActive idempotency', () => {
+  beforeEach(() => {
+    mockDbWrite.challenge.updateMany.mockReset();
+    mockDbRead.$queryRaw.mockReset();
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+  });
+
+  it('activates only from Scheduled and is a no-op on second call', async () => {
+    // First tick wins the conditional write; a concurrent/second tick finds status is no
+    // longer 'Scheduled' and updateMany matches zero rows.
+    mockDbWrite.challenge.updateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
+
+    const { setChallengeActive } = await import('../challenge-helpers');
+
+    const first = await setChallengeActive(1);
+    expect(first).toEqual({ activated: true });
+    expect(mockDbWrite.challenge.updateMany).toHaveBeenNthCalledWith(1, {
+      where: { id: 1, status: 'Scheduled' },
+      data: { status: 'Active' },
+    });
+
+    const second = await setChallengeActive(1);
+    expect(second).toEqual({ activated: false });
+    expect(mockDbWrite.challenge.updateMany).toHaveBeenCalledTimes(2);
   });
 });

@@ -327,7 +327,13 @@ const featureFlags = createFeatureFlags({
   serviceStatus: ['granted'],
   cashManagement: { availability: ['granted'], fliptKey: 'feature-cash-management' },
   auctionsMod: ['granted'],
-  challengePlatform: ['public'],
+  // Platform-wide challenge kill-switch. Flipt is authoritative; availability ['public'] is the
+  // Flipt-DOWN / flag-absent fallback (so an outage leaves the platform ON, matching prior behavior).
+  challengePlatform: { availability: ['public'], fliptKey: 'challenge-platform-enabled' },
+  // Public user-created challenges. Flipt is the on/off kill-switch; availability ['public'] is the
+  // Flipt-DOWN / flag-absent fallback (so a Flipt outage — or deploying before the flag exists —
+  // leaves it PUBLIC). Create the `user-challenges` Flipt flag DISABLED before this deploys.
+  userChallenges: { availability: ['mod'], fliptKey: 'user-challenges' },
   comicCreator: { availability: ['mod'], fliptKey: 'comic-creator' },
   licensingFee: { availability: ['user'], fliptKey: 'licensing-fee' },
   liveMetrics: { availability: ['mod'], fliptKey: 'live-metrics' },
