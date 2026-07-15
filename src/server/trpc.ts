@@ -9,7 +9,8 @@ import {
   BulkheadFullError,
   HEAVY_REQUEST_CONCURRENCY,
 } from '~/server/utils/request-bulkhead';
-import { trpcProcedureDuration } from '~/server/prom/client';
+import { trpcProcedureDuration, trpcClientReadCapabilityRequests } from '~/server/prom/client';
+import { phase1CapableLabel } from '~/server/utils/client-version-saturation';
 import { maybeLogTrpcSlow } from '~/server/logging/trpc-slow-log';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
 import { instrumentSerialize } from '~/server/logging/trpc-serialize-log';
@@ -141,6 +142,17 @@ async function needsUpdate(req?: NextApiRequest) {
 }
 
 const enforceClientVersion = t.middleware(async ({ next, ctx }) => {
+  // Serializer-migration saturation instrument: for WEB clients only, bucket this
+  // procedure by whether the reported bundle can decode the union serializer
+  // (Phase-1-capable). Bounded label (true/false), memoized semver compare — a
+  // Map lookup on the hot path after warmup. Non-web (API-key / server-to-server)
+  // requests have no browser bundle and are excluded so the ratio stays purely
+  // about the SPA population the Phase-2 write-flip gate cares about. Counted
+  // before next() so it reflects attempts even if the resolver throws.
+  if ((ctx.req?.headers['x-client'] as string) === 'web') {
+    const phase1Capable = phase1CapableLabel(ctx.req?.headers['x-client-version'] as string);
+    trpcClientReadCapabilityRequests.inc({ phase1_capable: phase1Capable });
+  }
   // if (await needsUpdate(ctx.req)) {
   //   throw new TRPCError({
   //     code: 'PRECONDITION_FAILED',
