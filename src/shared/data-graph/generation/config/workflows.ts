@@ -65,6 +65,7 @@ const EDIT_IMG_IDS = [
   ECO.HiDreamO1,
   ECO.MAI,
   ECO.Boogu,
+  ECO.Reve,
 ];
 
 /** Image ecosystems that support image:create */
@@ -105,6 +106,7 @@ const TXT2IMG_IDS = [
   ECO.Krea2,
   ECO.MAI,
   ECO.Boogu,
+  ECO.Reve,
 ];
 
 /** Video ecosystems that support video:create */
