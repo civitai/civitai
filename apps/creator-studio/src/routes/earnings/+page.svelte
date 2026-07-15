@@ -135,7 +135,15 @@
 {#if !data.summary}
   <div class="placeholder">Earnings are temporarily unavailable — please try again shortly.</div>
 {:else if !hasBuzzEarnings}
-  <div class="placeholder">No buzz earnings {periodLabel}. Set licensing fees or access prices to start earning.</div>
+  <div class="placeholder">
+    {#if data.membership.isCreatorProgramMember}
+      No buzz earnings {periodLabel}. Set licensing fees or access prices on
+      <a href="/models" class="underline">your models</a> to start earning.
+    {:else}
+      You're not in the Creator Program yet, so there's nothing to show here.
+      <a href="/join" class="underline">Join to start earning</a> from your models.
+    {/if}
+  </div>
 {:else}
   <p class="mb-2 text-xs text-dark-3">Buzz earned {periodLabel}</p>
   <section class="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">

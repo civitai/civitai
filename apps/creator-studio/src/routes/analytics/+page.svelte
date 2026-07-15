@@ -64,6 +64,12 @@
         ]
       : []
   );
+
+  // Distinguish "loaded but nothing happened this period" from "failed to load" so a new creator doesn't just
+  // see flat-zero charts with no explanation.
+  const hasActivity = $derived(
+    !!data.analytics && Object.values(data.analytics.totals).some((v) => v > 0)
+  );
 </script>
 
 <header class="page-header flex flex-wrap items-start gap-3">
@@ -101,6 +107,10 @@
 
 {#if !data.analytics}
   <div class="placeholder">Analytics are temporarily unavailable — please try again shortly.</div>
+{:else if !hasActivity}
+  <div class="placeholder">
+    No activity {periodLabel}. Once your images get reactions, followers, or views, they'll show up here.
+  </div>
 {:else}
   <p class="mb-2 text-xs text-dark-3">Totals {periodLabel}</p>
   <section class="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-5">

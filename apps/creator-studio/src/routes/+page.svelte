@@ -27,27 +27,40 @@
   // number (all buzz, same unit); cash is separate. The /earnings page keeps every currency distinct.
   const sumWhere = (pred: (currency: string) => boolean) =>
     (data.earnings ?? []).filter((b) => pred(b.currency)).reduce((s, b) => s + b.total, 0);
+  // Cash is Creator-Program-only; hide those cards for non-members (they'd be a meaningless $0 — or a stuck
+  // skeleton if the buzz service has no cash account for them).
+  const cashStats = $derived(
+    data.membership.isCreatorProgramMember
+      ? [
+          {
+            label: 'Cash ready',
+            value: data.cash ? formatAmount(data.cash.settled, 'cashSettled') : null,
+            pending: false,
+            hint: 'Available to withdraw',
+          },
+          {
+            label: 'Cash pending',
+            value: data.cash ? formatAmount(data.cash.pending, 'cashPending') : null,
+            pending: false,
+            hint: 'Accruing to cash',
+          },
+          {
+            label: 'Withdrawn',
+            value: data.cash ? formatAmount(data.cash.withdrawn, 'cashSettled') : null,
+            pending: false,
+            hint: 'Paid out to date',
+          },
+        ]
+      : []
+  );
   const stats = $derived([
     {
       label: 'Buzz earned',
       value: data.earnings ? `⚡ ${num(sumWhere((c) => currencyMeta(c).family === 'buzz'))}` : null,
+      pending: false,
       hint: 'Yellow, blue & green — last 30 days',
     },
-    {
-      label: 'Cash ready',
-      value: data.cash ? formatAmount(data.cash.settled, 'cashSettled') : null,
-      hint: 'Available to withdraw',
-    },
-    {
-      label: 'Cash pending',
-      value: data.cash ? formatAmount(data.cash.pending, 'cashPending') : null,
-      hint: 'Accruing to cash',
-    },
-    {
-      label: 'Withdrawn',
-      value: data.cash ? formatAmount(data.cash.withdrawn, 'cashSettled') : null,
-      hint: 'Paid out to date',
-    },
+    ...cashStats,
     { label: 'Top-earning model', value: null, pending: true, hint: 'Needs owner-keyed rollup (A1 Part 2)' },
   ]);
 
@@ -71,12 +84,12 @@
   {/if}
 </header>
 
-{#if data.content}
-  <section class="mb-8">
-    <div class="mb-2 flex items-center justify-between">
-      <p class="text-xs uppercase tracking-wide text-dark-3">Your activity — last 30 days</p>
-      <a href="/analytics" class="text-xs text-dark-2 hover:text-white">View analytics →</a>
-    </div>
+<section class="mb-8">
+  <div class="mb-2 flex items-center justify-between">
+    <p class="text-xs uppercase tracking-wide text-dark-3">Your activity — last 30 days</p>
+    <a href="/analytics" class="text-xs text-dark-2 hover:text-white">View analytics →</a>
+  </div>
+  {#if data.content}
     <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
       {#each activity as a (a.label)}
         <Card>
@@ -87,8 +100,10 @@
         </Card>
       {/each}
     </div>
-  </section>
-{/if}
+  {:else}
+    <p class="text-sm text-dark-3">Activity is temporarily unavailable — please try again shortly.</p>
+  {/if}
+</section>
 
 <section class="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
   {#each stats as stat (stat.label)}
