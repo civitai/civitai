@@ -17,6 +17,7 @@ function createMocks({ method = 'GET' }: { method?: string } = {}) {
   } as unknown as Record<string, unknown>;
   let statusCode = 200;
   let payload: unknown;
+  const headers: Record<string, string> = {};
   const res = {
     status(c: number) {
       statusCode = c;
@@ -26,12 +27,15 @@ function createMocks({ method = 'GET' }: { method?: string } = {}) {
       payload = b;
       return res;
     },
-    setHeader() {},
+    setHeader(k: string, v: string) {
+      headers[k] = v;
+    },
     end() {
       return res;
     },
     _status: () => statusCode,
     _json: () => payload,
+    _headers: () => headers,
   };
   return { req, res };
 }
@@ -54,8 +58,11 @@ vi.mock('~/server/middleware/block-scope.middleware', () => ({
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: any) => h }));
 
-const { mockAccount } = vi.hoisted(() => ({ mockAccount: vi.fn() }));
+const { mockAccount, mockRate } = vi.hoisted(() => ({ mockAccount: vi.fn(), mockRate: vi.fn() }));
 vi.mock('~/server/services/buzz.service', () => ({ getUserBuzzAccount: mockAccount }));
+vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
+  checkBlockCatalogRateLimit: mockRate,
+}));
 
 import handler from '~/pages/api/v1/blocks/buzz/accounts';
 import { blockBuzzAccountTypes } from '~/server/schema/buzz.schema';
@@ -81,6 +88,7 @@ function fakeClaims(over: Partial<BlockTokenClaims> = {}): BlockTokenClaims {
 beforeEach(() => {
   vi.clearAllMocks();
   claimsBox.claims = fakeClaims();
+  mockRate.mockResolvedValue({ allowed: true });
   mockAccount.mockResolvedValue(
     blockBuzzAccountTypes.map((accountType, i) => ({
       id: 42,
@@ -111,6 +119,32 @@ describe('GET /api/v1/blocks/buzz/accounts', () => {
     await handler(req as never, res as never);
     expect(res._status()).toBe(403);
     expect(mockAccount).not.toHaveBeenCalled();
+  });
+
+  it('429 when the per-instance rate limit trips, before the balance service is called', async () => {
+    mockRate.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 7 });
+    const { req, res } = createMocks();
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(429);
+    expect(res._headers()['Retry-After']).toBe('7');
+    expect(mockAccount).not.toHaveBeenCalled();
+  });
+
+  it('checks the rate limit (keyed on blockInstanceId) before the service call', async () => {
+    const order: string[] = [];
+    mockRate.mockImplementationOnce(async () => {
+      order.push('rate');
+      return { allowed: true };
+    });
+    mockAccount.mockImplementationOnce(async () => {
+      order.push('service');
+      return [];
+    });
+    const { req, res } = createMocks();
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(200);
+    expect(mockRate).toHaveBeenCalledWith('bki');
+    expect(order).toEqual(['rate', 'service']);
   });
 
   it('200: reads every exposed pool for the verified subject, projecting {accountType, balance}', async () => {

@@ -8,6 +8,7 @@ import {
 } from '~/server/middleware/block-scope.middleware';
 import { getBlockBuzzTransactionsQuery } from '~/server/schema/buzz.schema';
 import { getUserBuzzTransactions } from '~/server/services/buzz.service';
+import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 
@@ -60,6 +61,16 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   }
   const { accountType, type, cursor, start, end, limit } = parsed.data;
 
+  // Per-instance rate limit (shared blocks catalog limiter) — bounds a block
+  // hammering this private,no-store ledger route onto the origin. Runs BEFORE
+  // the buzz-service call. Mirrors blocks/collections + blocks/models.
+  const rateLimit = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+  if (!rateLimit.allowed) {
+    res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
+    res.status(429).json({ error: 'Rate limit exceeded, please retry shortly.' });
+    return;
+  }
+
   try {
     const { cursor: nextCursor, transactions } = await getUserBuzzTransactions({
       accountId: subjectUserId,
@@ -73,9 +84,27 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 
     res.status(200).json({
       cursor: nextCursor,
-      transactions: transactions.map(({ toUser, fromUser, ...t }) => ({
+      transactions: transactions.map(({ toUser, fromUser, details, ...t }) => ({
         ...t,
         type: TransactionType[t.type],
+        // Allowlist the `details` projection to the entity-attribution fields
+        // the dashboard renders (tips/rewards/challenges). `buzzTransactionDetails`
+        // is a `.passthrough()` object, and Purchase rows store
+        // `details.stripePaymentIntentId` (see buzz.service completeStripeBuzzPurchase),
+        // so an unfiltered spread would ship the user's Stripe payment-intent
+        // reference to the block iframe. Deny-by-default, mirroring the
+        // `{ id, username }` counterparty projection beside it: pick only the
+        // known attribution fields, drop stripePaymentIntentId + any other
+        // passthrough key.
+        details: details
+          ? {
+              user: details.user,
+              entityId: details.entityId,
+              entityType: details.entityType,
+              url: details.url,
+              toAccountType: details.toAccountType,
+            }
+          : details,
         toUser: toUser ? { id: toUser.id, username: toUser.username } : undefined,
         fromUser: fromUser ? { id: fromUser.id, username: fromUser.username } : undefined,
       })),

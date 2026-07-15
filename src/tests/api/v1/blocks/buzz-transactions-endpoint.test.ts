@@ -21,6 +21,7 @@ function createMocks({
   } as unknown as Record<string, unknown>;
   let statusCode = 200;
   let payload: unknown;
+  const headers: Record<string, string> = {};
   const res = {
     status(c: number) {
       statusCode = c;
@@ -30,12 +31,15 @@ function createMocks({
       payload = b;
       return res;
     },
-    setHeader() {},
+    setHeader(k: string, v: string) {
+      headers[k] = v;
+    },
     end() {
       return res;
     },
     _status: () => statusCode,
     _json: () => payload,
+    _headers: () => headers,
   };
   return { req, res };
 }
@@ -58,15 +62,19 @@ vi.mock('~/server/middleware/block-scope.middleware', () => ({
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: any) => h }));
 
-const { mockGetTransactions, mockHandleEndpointError } = vi.hoisted(() => ({
+const { mockGetTransactions, mockHandleEndpointError, mockRate } = vi.hoisted(() => ({
   mockGetTransactions: vi.fn(),
   mockHandleEndpointError: vi.fn(),
+  mockRate: vi.fn(),
 }));
 vi.mock('~/server/services/buzz.service', () => ({
   getUserBuzzTransactions: mockGetTransactions,
 }));
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   handleEndpointError: mockHandleEndpointError,
+}));
+vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
+  checkBlockCatalogRateLimit: mockRate,
 }));
 
 import handler from '~/pages/api/v1/blocks/buzz/transactions';
@@ -108,6 +116,7 @@ const sampleRow = {
 beforeEach(() => {
   vi.clearAllMocks();
   claimsBox.claims = fakeClaims();
+  mockRate.mockResolvedValue({ allowed: true });
   mockGetTransactions.mockResolvedValue({
     cursor: new Date('2026-06-30T00:00:00Z'),
     transactions: [sampleRow],
@@ -180,6 +189,69 @@ describe('GET /api/v1/blocks/buzz/transactions', () => {
       start: new Date('2026-05-01T00:00:00Z'),
       end: new Date('2026-07-01T00:00:00Z'),
       limit: 200,
+    });
+  });
+
+  it('429 when the per-instance rate limit trips, before the service is called', async () => {
+    mockRate.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 7 });
+    const { req, res } = createMocks();
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(429);
+    expect(res._headers()['Retry-After']).toBe('7');
+    expect(mockGetTransactions).not.toHaveBeenCalled();
+  });
+
+  it('checks the rate limit (keyed on blockInstanceId) before the service call', async () => {
+    const order: string[] = [];
+    mockRate.mockImplementationOnce(async () => {
+      order.push('rate');
+      return { allowed: true };
+    });
+    mockGetTransactions.mockImplementationOnce(async () => {
+      order.push('service');
+      return { cursor: null, transactions: [] };
+    });
+    const { req, res } = createMocks();
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(200);
+    expect(mockRate).toHaveBeenCalledWith('bki');
+    expect(order).toEqual(['rate', 'service']);
+  });
+
+  it('F1: allowlists details — DROPS stripePaymentIntentId, keeps attribution fields', async () => {
+    // A Purchase row: buzz.service stores the Stripe payment-intent ref inside
+    // details.passthrough(). It must never reach the block iframe.
+    mockGetTransactions.mockResolvedValueOnce({
+      cursor: null,
+      transactions: [
+        {
+          ...sampleRow,
+          details: {
+            user: 'buyer',
+            entityId: 5,
+            entityType: 'Model',
+            url: '/models/5',
+            toAccountType: 'yellow',
+            stripePaymentIntentId: 'pi_secret_123',
+            someOtherPassthrough: 'leak',
+          },
+          externalTransactionId: 'pi_secret_123',
+        },
+      ],
+    });
+    const { req, res } = createMocks();
+    await handler(req as never, res as never);
+    const body = res._json() as { transactions: Record<string, unknown>[] };
+    const details = body.transactions[0].details as Record<string, unknown>;
+    expect(details).not.toHaveProperty('stripePaymentIntentId');
+    expect(details).not.toHaveProperty('someOtherPassthrough');
+    // Attribution fields the dashboard renders are preserved.
+    expect(details).toMatchObject({
+      user: 'buyer',
+      entityId: 5,
+      entityType: 'Model',
+      url: '/models/5',
+      toAccountType: 'yellow',
     });
   });
 

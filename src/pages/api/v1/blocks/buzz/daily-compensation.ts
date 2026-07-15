@@ -8,6 +8,7 @@ import {
 } from '~/server/middleware/block-scope.middleware';
 import { getBlockBuzzDailyCompensationQuery } from '~/server/schema/buzz.schema';
 import { getDailyCompensationRewardByUser } from '~/server/services/buzz.service';
+import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 
 /**
@@ -56,6 +57,18 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     return;
   }
   const { date, source, accountType } = parsed.data;
+
+  // Per-instance rate limit (shared blocks catalog limiter) — bounds a block
+  // hammering this private,no-store route onto the origin. Runs BEFORE the
+  // service call, which fans out to a Postgres modelVersion.findMany + a
+  // ClickHouse scan per call — the most expensive of the three. Mirrors
+  // blocks/collections + blocks/models.
+  const rateLimit = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+  if (!rateLimit.allowed) {
+    res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
+    res.status(429).json({ error: 'Rate limit exceeded, please retry shortly.' });
+    return;
+  }
 
   try {
     const result = await getDailyCompensationRewardByUser({

@@ -8,6 +8,7 @@ import {
 } from '~/server/middleware/block-scope.middleware';
 import { blockBuzzAccountTypes } from '~/server/schema/buzz.schema';
 import { getUserBuzzAccount } from '~/server/services/buzz.service';
+import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 
 /**
  * GET /api/v1/blocks/buzz/accounts
@@ -43,6 +44,16 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   }
   if (subjectUserId == null) {
     res.status(403).json({ error: 'Anonymous block tokens may not read balances' });
+    return;
+  }
+
+  // Per-instance rate limit (shared blocks catalog limiter) — bounds a block
+  // hammering this private,no-store balance route onto the origin. Runs BEFORE
+  // the service call. Mirrors blocks/collections + blocks/models.
+  const rateLimit = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+  if (!rateLimit.allowed) {
+    res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
+    res.status(429).json({ error: 'Rate limit exceeded, please retry shortly.' });
     return;
   }
 
