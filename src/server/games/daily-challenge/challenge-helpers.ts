@@ -1,6 +1,5 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { removeTags } from '~/utils/string-helpers';
 import type { ChallengeBuzzType } from '~/server/games/daily-challenge/challenge-currency';
@@ -834,10 +833,10 @@ export async function resolveEventContext(eventId: number | null): Promise<Event
 
 /**
  * Resolve the `categories` + `nsfw` inputs generateReview() needs for judging a challenge entry.
- * User-source challenges always carry creator-defined judging categories (JSONB); other sources
- * leave this null unless DYNAMIC_JUDGING_CATEGORIES is enabled. Parse defensively — a
- * malformed/corrupt value falls back to the fixed theme/wittiness/humor/aesthetic scoring
- * schema instead of failing the review. Mirrors the gate in reviewEntriesForChallenge
+ * Any challenge that stores judgingCategories is judged by them; those without fall back to the
+ * default rubric (generateReview resolves DEFAULT_CATEGORY_ROWS from the DB). Parse defensively —
+ * a malformed/corrupt value falls back to the fixed theme/wittiness/humor/aesthetic scoring schema
+ * instead of failing the review. Mirrors reviewEntriesForChallenge
  * (~/server/jobs/daily-challenge-processing.ts).
  */
 export async function resolveChallengeReviewInputs(challenge: {
@@ -848,13 +847,10 @@ export async function resolveChallengeReviewInputs(challenge: {
   categories: { key: string; name: string; criteria: string }[] | undefined;
   nsfw: boolean;
 }> {
-  const useCategories =
-    challenge.source === ChallengeSource.User ||
-    (await isFlipt(FLIPT_FEATURE_FLAGS.DYNAMIC_JUDGING_CATEGORIES));
-  const userJudgingCategories = useCategories
-    ? challengeJudgingCategoriesSchema.safeParse(challenge.judgingCategories)
-    : undefined;
-  const userCategories: ChallengeJudgingCategory[] | undefined = userJudgingCategories?.success
+  const userJudgingCategories = challengeJudgingCategoriesSchema.safeParse(
+    challenge.judgingCategories
+  );
+  const userCategories: ChallengeJudgingCategory[] | undefined = userJudgingCategories.success
     ? userJudgingCategories.data
     : undefined;
 

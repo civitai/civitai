@@ -1,27 +1,16 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 // Verifies `resolveChallengeReviewInputs` — the category+nsfw resolution extracted out of
 // reviewEntriesForChallenge (~/server/jobs/daily-challenge-processing.ts) so the mod re-review
-// endpoint (~/pages/api/mod/daily-challenge/re-review.ts) can mirror it exactly instead of
-// re-reviewing non-user challenges with the fixed rubric regardless of their configured
-// judgingCategories. Gate: `source === ChallengeSource.User || isFlipt(DYNAMIC_JUDGING_CATEGORIES)`.
-// A malformed/null judgingCategories value always falls back to `categories: undefined` (fixed
-// rubric), even when the gate is open.
-
-const { mockIsFlipt } = vi.hoisted(() => ({
-  mockIsFlipt: vi.fn().mockResolvedValue(false),
-}));
+// endpoint (~/pages/api/mod/daily-challenge/re-review.ts) can mirror it exactly. Any challenge
+// with a valid judgingCategories value is judged by it regardless of source; a malformed/null
+// value falls back to `categories: undefined` (fixed theme/wittiness/humor/aesthetic rubric).
 
 // challenge-helpers.ts also imports dbRead/dbWrite/redis for its other (DB-backed) exports —
 // stub those so importing the module for this pure-function test doesn't construct real
 // Prisma/Redis clients.
 vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/redis/client', () => ({ redis: {}, REDIS_KEYS: {} }));
-
-vi.mock('~/server/flipt/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/server/flipt/client')>();
-  return { ...actual, isFlipt: mockIsFlipt };
-});
 
 const { resolveChallengeReviewInputs } = await import('./challenge-helpers');
 const { ChallengeSource } = await import('~/shared/utils/prisma/enums');
@@ -34,46 +23,26 @@ const VALID_CATEGORIES = [
 // Weight out of range + doesn't sum to 100 -> challengeJudgingCategoriesSchema.safeParse fails.
 const MALFORMED_CATEGORIES = [{ key: 'theme', weight: 150, label: 'Theme', criteria: 'x' }];
 
-beforeEach(() => {
-  vi.clearAllMocks();
-  mockIsFlipt.mockResolvedValue(false);
-});
-
-describe('resolveChallengeReviewInputs — categories gate', () => {
-  it('User source: uses categories regardless of flag (flag off)', async () => {
-    mockIsFlipt.mockResolvedValue(false);
+describe('resolveChallengeReviewInputs — categories resolution', () => {
+  it('User source: uses stored categories', async () => {
     const { categories } = await resolveChallengeReviewInputs({
       source: ChallengeSource.User,
       judgingCategories: VALID_CATEGORIES,
       allowedNsfwLevel: 1,
     });
-    expect(categories).toBeDefined();
     expect(categories?.map((c) => c.key)).toEqual(['theme', 'aesthetic']);
   });
 
-  it('System source, flag off: falls back to fixed rubric (no categories)', async () => {
-    mockIsFlipt.mockResolvedValue(false);
+  it('System source: uses stored categories (no source gate)', async () => {
     const { categories } = await resolveChallengeReviewInputs({
       source: ChallengeSource.System,
       judgingCategories: VALID_CATEGORIES,
       allowedNsfwLevel: 1,
     });
-    expect(categories).toBeUndefined();
-  });
-
-  it('System source, flag on: uses categories', async () => {
-    mockIsFlipt.mockResolvedValue(true);
-    const { categories } = await resolveChallengeReviewInputs({
-      source: ChallengeSource.System,
-      judgingCategories: VALID_CATEGORIES,
-      allowedNsfwLevel: 1,
-    });
-    expect(categories).toBeDefined();
     expect(categories?.map((c) => c.key)).toEqual(['theme', 'aesthetic']);
   });
 
-  it('Mod source, flag on: uses categories (non-User sources generalize identically)', async () => {
-    mockIsFlipt.mockResolvedValue(true);
+  it('Mod source: uses stored categories', async () => {
     const { categories } = await resolveChallengeReviewInputs({
       source: ChallengeSource.Mod,
       judgingCategories: VALID_CATEGORIES,
@@ -82,8 +51,7 @@ describe('resolveChallengeReviewInputs — categories gate', () => {
     expect(categories).toBeDefined();
   });
 
-  it('malformed categories always fall back, even flag on + User source', async () => {
-    mockIsFlipt.mockResolvedValue(true);
+  it('malformed categories fall back to the fixed rubric (any source)', async () => {
     const { categories } = await resolveChallengeReviewInputs({
       source: ChallengeSource.User,
       judgingCategories: MALFORMED_CATEGORIES,
@@ -92,8 +60,7 @@ describe('resolveChallengeReviewInputs — categories gate', () => {
     expect(categories).toBeUndefined();
   });
 
-  it('null categories always fall back regardless of flag/source', async () => {
-    mockIsFlipt.mockResolvedValue(true);
+  it('null categories fall back to the fixed rubric (any source)', async () => {
     const { categories } = await resolveChallengeReviewInputs({
       source: ChallengeSource.System,
       judgingCategories: null,
@@ -103,14 +70,17 @@ describe('resolveChallengeReviewInputs — categories gate', () => {
   });
 
   it('maps key/label/criteria to the key/name/criteria shape generateReview expects', async () => {
-    mockIsFlipt.mockResolvedValue(false);
     const { categories } = await resolveChallengeReviewInputs({
       source: ChallengeSource.User,
       judgingCategories: VALID_CATEGORIES,
       allowedNsfwLevel: 1,
     });
     expect(categories?.[0]).toEqual(
-      expect.objectContaining({ key: 'theme', name: expect.any(String), criteria: expect.any(String) })
+      expect.objectContaining({
+        key: 'theme',
+        name: expect.any(String),
+        criteria: expect.any(String),
+      })
     );
   });
 });

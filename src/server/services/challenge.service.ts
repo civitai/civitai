@@ -2120,16 +2120,13 @@ export async function endChallengeAndPickWinners(challengeId: number) {
       // Resolve event context for cooldown scoping (eventId comes from getChallengeById)
       const eventContext = await resolveEventContext(challenge.eventId);
 
-      // User-source challenges rank by creator-defined weighted categories (see
-      // getJudgedEntries); other sources keep the fixed theme/wittiness/humor/aesthetic rubric
-      // unless DYNAMIC_JUDGING_CATEGORIES is enabled for this environment.
-      const useCategories =
-        challenge.source === ChallengeSource.User ||
-        (await isFlipt(FLIPT_FEATURE_FLAGS.DYNAMIC_JUDGING_CATEGORIES));
-      const userJudgingCategories = useCategories
-        ? challengeJudgingCategoriesSchema.safeParse(challenge.judgingCategories)
-        : undefined;
-      const userCategories = userJudgingCategories?.success
+      // Rank by stored judgingCategories when present (any source); otherwise the fixed
+      // theme/wittiness/humor/aesthetic rubric. Parse defensively — a malformed value falls back
+      // to the fixed schema.
+      const userJudgingCategories = challengeJudgingCategoriesSchema.safeParse(
+        challenge.judgingCategories
+      );
+      const userCategories = userJudgingCategories.success
         ? userJudgingCategories.data
         : undefined;
 
@@ -3081,15 +3078,12 @@ export async function playgroundPickWinners(input: PlaygroundPickWinnersInput) {
   if (!challenge.collectionId)
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'Challenge has no collection' });
 
-  // User-source challenges rank by creator-defined weighted categories (see getJudgedEntries);
-  // other sources keep the fixed rubric unless DYNAMIC_JUDGING_CATEGORIES is enabled.
-  const useCategories =
-    challenge.source === ChallengeSource.User ||
-    (await isFlipt(FLIPT_FEATURE_FLAGS.DYNAMIC_JUDGING_CATEGORIES));
-  const userJudgingCategories = useCategories
-    ? challengeJudgingCategoriesSchema.safeParse(challenge.judgingCategories)
-    : undefined;
-  const userCategories = userJudgingCategories?.success ? userJudgingCategories.data : undefined;
+  // Rank by stored judgingCategories when present (any source); otherwise the fixed rubric. Parse
+  // defensively — a malformed value falls back to the fixed schema.
+  const userJudgingCategories = challengeJudgingCategoriesSchema.safeParse(
+    challenge.judgingCategories
+  );
+  const userCategories = userJudgingCategories.success ? userJudgingCategories.data : undefined;
 
   const entries = await getJudgedEntries(
     challenge.collectionId,

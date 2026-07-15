@@ -11,10 +11,6 @@ import {
   resolveRubricBlock,
   type ChallengeCategoryRow,
 } from '~/server/services/challenge-category.service';
-import {
-  CATEGORY_RUBRICS,
-  getCategoryRubric,
-} from '~/server/games/daily-challenge/category-rubrics';
 import { CHALLENGE_PRESET_CATEGORIES } from '~/shared/constants/challenge.constants';
 
 const row = (overrides: Partial<ChallengeCategoryRow> & { key: string }): ChallengeCategoryRow => ({
@@ -41,14 +37,14 @@ describe('pickCategoryRubric precedence', () => {
     expect(pickCategoryRubric(r, category, { nsfw: true })).toBe('DB SFW');
   });
 
-  it('DB rubric wins over the legacy code rubric', () => {
+  it('uses the DB rubric when present', () => {
     const r = row({ key: 'theme', rubric: 'DB SFW' });
     expect(pickCategoryRubric(r, category)).toBe('DB SFW');
   });
 
-  it('falls back to the legacy code rubric when the DB row has none (structurally-seeded env)', () => {
-    const r = row({ key: 'theme' });
-    expect(pickCategoryRubric(r, category)).toBe(CATEGORY_RUBRICS.theme);
+  it('derives from the DB row label + criteria when the row has no rubric (structurally-seeded env)', () => {
+    const r = row({ key: 'theme', label: 'Theme', criteria: 'stored criteria' });
+    expect(pickCategoryRubric(r, category)).toBe('THEME SCORING (0-10):\nstored criteria');
   });
 
   it('derives from the DB row label + criteria for an un-authored category', () => {
@@ -103,8 +99,10 @@ describe('preset fallback (no DB available)', () => {
     ).rejects.toThrow(/Unknown judging category/);
   });
 
-  it('resolveRubricBlock matches the legacy per-key rubrics for the default categories', async () => {
+  it('resolveRubricBlock derives per-key blocks from the preset library when the DB is unavailable', async () => {
     const block = await resolveRubricBlock([{ key: 'theme' }, { key: 'aesthetic' }]);
-    expect(block).toBe([getCategoryRubric('theme'), getCategoryRubric('aesthetic')].join('\n\n'));
+    const derive = (k: 'theme' | 'aesthetic') =>
+      `${CHALLENGE_PRESET_CATEGORIES[k].label.toUpperCase()} SCORING (0-10):\n${CHALLENGE_PRESET_CATEGORIES[k].criteria}`.trim();
+    expect(block).toBe([derive('theme'), derive('aesthetic')].join('\n\n'));
   });
 });

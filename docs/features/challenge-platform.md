@@ -29,7 +29,8 @@ Two Flipt flags gate the surface:
 
 - **`challenge-platform-enabled`** (feature flag `challengePlatform`) — the whole platform (router, page SSR, nav, job start).
 - **`user-challenges`** (feature flag `userChallenges`) — user creation + management. **This is the flag rolled out to testers via segmented rollout.**
-- **`dynamic-judging-categories`** (`DYNAMIC_JUDGING_CATEGORIES`) — extends category-driven judging to `System`/`Mod` challenges. Defaults OFF, GitOps-managed. `User` challenges use categories regardless.
+
+Judging is category-driven for **all** sources (no feature flag): any challenge that stores `judgingCategories` is judged by them; the rest fall back to the default four.
 
 ---
 
@@ -149,7 +150,7 @@ Judging is category-driven: a challenge's `judgingCategories` (a weighted mix fr
 
 Per-category **weights** live on the challenge instance (`Challenge.judgingCategories Json?`, rows of `{ key, weight, label, criteria }`), not in the library.
 
-**Rubric resolution** (`pickCategoryRubric`, server): DB `rubricNsfw` (when nsfw) → legacy `CATEGORY_RUBRICS_NSFW[key]` → DB `rubric` → legacy `CATEGORY_RUBRICS[key]` → derived from `label`+`criteria`. Always non-empty. `getChallengeCategoryRows` caches the library for 5 min and falls back to `presetFallbackRows()` when the table is unseeded, so code can deploy before the manual seed.
+**Rubric resolution** (`pickCategoryRubric`, server): DB `rubricNsfw` (when nsfw) → DB `rubric` → text derived from `label`+`criteria`. `criteria` is the terse, client-visible one-liner; `rubric` is the detailed scoring guidance and is **not the same thing**. Rich rubric text lives **only in the DB**, never committed to the repo: the row structure + `criteria` are inserted by the committed structural migration, and the rich `rubric`/`rubricNsfw` are added by the gitignored seed (§9). An unseeded table degrades to the terse criteria-derived form, so **seeding is required** for full-quality judging. `getChallengeCategoryRows` caches the library for 5 min and falls back to `presetFallbackRows()` (structure + criteria only) when the table is missing.
 
 **Prompt injection** — the sentinel `{{SCORING_RUBRICS}}` (`SCORING_RUBRICS_SENTINEL`, `generative-content.ts`) sits in a judge's `reviewPrompt` where the rubric block goes:
 - `injectRubrics(reviewPrompt, block)` replaces every sentinel occurrence; **if the sentinel is absent, the prompt is returned byte-for-byte unchanged** (unmigrated judges are unaffected — this is the backward-compat guarantee).
@@ -161,11 +162,11 @@ Net invariants: (a) sentinel absent → identical to legacy; (b) sentinel presen
 ### Judge-prompt migration
 The 3 SFW judges — **CivBot, CivChan, GigaBot** — have their baked `THEME/WITTINESS/HUMOR/AESTHETIC SCORING` blocks replaced by the single `{{SCORING_RUBRICS}}` sentinel (otherwise the model would see the rubric twice). The INTEGRITY-CHECK anti-cheat line moves into the always-present static prompt so it survives the strip. **CivChan NSFW is intentionally excluded** (the `rubricNsfw` set is incomplete in v1, so it stays on its baked blocks).
 
-This is a **DB content change applied manually per environment** (retool/psql) — see §9. Canonical rubric text is kept in `category-rubrics.ts` and the gitignored `scripts/migrations/*.local.sql` so code and DB don't drift.
+This is a **DB content change applied manually per environment** (retool/psql) — see §9. Rich rubric text lives only in the DB and the gitignored `scripts/migrations/*.local.sql`; it is never committed to the repo.
 
 **Prod caveat**: until the sentinel migration is applied to an environment, that env's real judges lack the sentinel, so `injectRubrics` is a no-op and dynamic category selection is inert there (safe legacy behavior). Category rows can be seeded independently; they are dormant until the sentinel is present.
 
-**Status**: category library + injection + fallback + flag-gated read path + mod persistence/UI are **shipped**. Judge-prompt sentinel migration = human-applied per env, **pending** (§9). Historical backfill and the NSFW rubric set are **(deferred)** — the default-rubric fallback makes backfill unnecessary for correctness.
+**Status**: category library + injection + default-rubric fallback + mod persistence/UI are **shipped**, and judging is category-driven for **all sources** — the `dynamic-judging-categories` flag was removed; any challenge that stores `judgingCategories` is judged by them, others fall back to the default four. Judge-prompt sentinel migration + rubric seed = human-applied per env, **required** (§9). Historical backfill and the NSFW rubric set are **(deferred)** — the default-rubric fallback makes backfill unnecessary for correctness.
 
 ---
 
@@ -247,7 +248,6 @@ Creators can **view / edit / delete their own `User` challenges only while `Sche
 |---|---|---|
 | `challenge-platform-enabled` | `challengePlatform` | whole platform |
 | `user-challenges` | `userChallenges` | user create/manage (**tester rollout**) |
-| `dynamic-judging-categories` | `DYNAMIC_JUDGING_CATEGORIES` | category-driven judging for `System`/`Mod` (default OFF) |
 
 Flipt is **GitOps-only** (writes via the GitOps repo, not the API).
 
@@ -261,7 +261,8 @@ gitignored `scripts/migrations/*.local.sql`:
 
 | File | Effect | Depends on |
 |---|---|---|
-| `challenge-category-rubric-seed.local.sql` | Seeds `ChallengeCategory.rubric` / `rubricNsfw` (idempotent UPDATEs by key) | none — deploy-independent |
+| `prisma/migrations/20260709201808_challenge_category_table` (committed) | Creates `ChallengeCategory` + inserts 26 rows (structure + terse `criteria`) | Apply first — the seed below UPDATEs these rows |
+| `challenge-category-rubric-seed.local.sql` | UPDATEs the rich `rubric` / `rubricNsfw` for all 26 categories (idempotent) | **Required** — an unseeded table degrades judging to terse criteria |
 | `dynamic-judging-categories-judge-prompts.local.sql` | Replaces baked blocks → `{{SCORING_RUBRICS}}` sentinel for CivBot/CivChan/GigaBot | **the `buildFallbackMessages` default-rubric fallback must be deployed first** |
 | `test-judge-sentinel.local.sql` | Optional hidden `CivBot Sentinel Test` judge for pre-flight validation | none |
 
@@ -269,7 +270,7 @@ gitignored `scripts/migrations/*.local.sql`:
 
 1. **Deploy** the application code carrying `injectRubrics` / `buildFallbackMessages` default-rubric fallback to the environment.
 2. **Only then** apply `dynamic-judging-categories-judge-prompts.local.sql`. Applying it before the deploy sends a literal `{{SCORING_RUBRICS}}` (with zero scoring criteria) to the LLM — a real regression, not a graceful no-op.
-3. `challenge-category-rubric-seed.local.sql` may be applied any time (dormant until the sentinel is present).
+3. Apply the structural category migration, then `challenge-category-rubric-seed.local.sql` — deploy-independent, but **required** for full-quality judging (an unseeded/partially-seeded table falls back to terse criteria).
 4. Enabling `user-challenges` before the sentinel migration is safe but means testers' custom categories are silently ignored (judge falls back to baked blocks). Prefer: migrate judges, then open the flag.
 
 **Verification** (after applying the judge-prompt file): expect `has_sentinel = true` and `blocks_removed = true` for CivBot/CivChan/GigaBot:

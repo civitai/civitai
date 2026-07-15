@@ -1,8 +1,4 @@
 import { TRPCError } from '@trpc/server';
-import {
-  CATEGORY_RUBRICS,
-  CATEGORY_RUBRICS_NSFW,
-} from '~/server/games/daily-challenge/category-rubrics';
 import type { ChallengeJudgingCategory } from '~/server/schema/challenge.schema';
 import {
   CHALLENGE_CATEGORY_KEYS,
@@ -40,8 +36,8 @@ function presetFallbackRows(): ChallengeCategoryRow[] {
     label: CHALLENGE_PRESET_CATEGORIES[key].label,
     group: CHALLENGE_PRESET_CATEGORIES[key].group,
     criteria: CHALLENGE_PRESET_CATEGORIES[key].criteria,
-    rubric: CATEGORY_RUBRICS[key] ?? null,
-    rubricNsfw: CATEGORY_RUBRICS_NSFW[key] ?? null,
+    rubric: null,
+    rubricNsfw: null,
     sortOrder: i * 10,
     active: true,
   }));
@@ -103,22 +99,17 @@ export async function resolveJudgingCategories(
 
 /**
  * Rich scoring rubric for one category. Precedence: DB NSFW override (when `nsfw`) → DB rubric →
- * legacy code rubric (pre-seed fallback for the 4 defaults) → text derived from label + criteria.
- * Always non-empty for any category that has at least a label.
+ * text derived from label + criteria. The rich rubric text lives only in the DB (seeded manually
+ * per env); an unseeded env degrades to the terse criteria-derived form. Always non-empty for any
+ * category that has at least a label.
  */
 export function pickCategoryRubric(
   row: ChallengeCategoryRow | undefined,
   category: { key: string; name?: string; criteria?: string },
   opts?: { nsfw?: boolean }
 ): string {
-  const legacy = CATEGORY_RUBRICS[category.key as keyof typeof CATEGORY_RUBRICS];
-  const legacyNsfw = CATEGORY_RUBRICS_NSFW[category.key as keyof typeof CATEGORY_RUBRICS_NSFW];
-  if (opts?.nsfw) {
-    const nsfwRubric = row?.rubricNsfw ?? legacyNsfw;
-    if (nsfwRubric) return nsfwRubric;
-  }
-  const rubric = row?.rubric ?? legacy;
-  if (rubric) return rubric;
+  if (opts?.nsfw && row?.rubricNsfw) return row.rubricNsfw;
+  if (row?.rubric) return row.rubric;
   const label = row?.label ?? category.name ?? category.key;
   const criteria = row?.criteria ?? category.criteria ?? '';
   return `${label.toUpperCase()} SCORING (0-10):\n${criteria}`.trim();

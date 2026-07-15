@@ -5,7 +5,6 @@ import {
   injectRubrics,
   RESPONSE_SCHEMA,
 } from './generative-content';
-import { getCategoryRubric } from './category-rubrics';
 import { challengeJudgingCategoriesSchema } from '~/server/schema/challenge.schema';
 import type { JudgingConfig } from './daily-challenge.utils';
 import { stripLeadingWhitespace } from '~/utils/string-helpers';
@@ -54,11 +53,17 @@ const CATS: ReviewCategory[] = [
   { key: 'aesthetic', name: 'Aesthetic', criteria: 'looks good' },
 ];
 
-// The rubric block generateReview resolves (via resolveRubricBlock) before calling
-// buildFallbackMessages. Tests build it from the legacy code rubrics — the DB-less fallback.
-const CATS_BLOCK = [getCategoryRubric('theme'), getCategoryRubric('aesthetic')].join('\n\n');
-const DEFAULT_KEYS = ['theme', 'wittiness', 'humor', 'aesthetic'] as const;
-const DEFAULT_BLOCK = DEFAULT_KEYS.map((k) => getCategoryRubric(k)).join('\n\n');
+// buildFallbackMessages/injectRubrics splice the rubric block STRING the caller (generateReview)
+// already resolved — they never fetch rubric text themselves — so these fixtures stand in for
+// whatever resolveRubricBlock returns. Real rubric text lives only in the DB, never in the repo.
+const RUBRIC: Record<string, string> = {
+  theme: 'THEME SCORING (0-10):\nfixture theme rubric.',
+  wittiness: 'WITTINESS SCORING (0-10):\nfixture wittiness rubric.',
+  humor: 'HUMOR SCORING (0-10):\nfixture humor rubric.',
+  aesthetic: 'AESTHETIC SCORING (0-10):\nfixture aesthetic rubric.',
+};
+const CATS_BLOCK = [RUBRIC.theme, RUBRIC.aesthetic].join('\n\n');
+const DEFAULT_BLOCK = [RUBRIC.theme, RUBRIC.wittiness, RUBRIC.humor, RUBRIC.aesthetic].join('\n\n');
 
 describe('injectRubrics', () => {
   it('returns the prompt unchanged (referentially) when the sentinel is absent', () => {
@@ -113,13 +118,12 @@ describe('buildFallbackMessages — rubric injection', () => {
     const text = systemText(messages);
 
     expect(text).not.toContain('{{SCORING_RUBRICS}}');
-    expect(text).toContain(getCategoryRubric('theme'));
-    expect(text).toContain(getCategoryRubric('aesthetic'));
+    expect(text).toContain(RUBRIC.theme);
+    expect(text).toContain(RUBRIC.aesthetic);
 
-    const injected = `Judge the image below.\n\n${[
-      getCategoryRubric('theme'),
-      getCategoryRubric('aesthetic'),
-    ].join('\n\n')}\n\nBe strict.`;
+    const injected = `Judge the image below.\n\n${[RUBRIC.theme, RUBRIC.aesthetic].join(
+      '\n\n'
+    )}\n\nBe strict.`;
     const expected = `${config.prompts.systemMessage}\n\n${stripLeadingWhitespace(
       injected
     )}\n\nReply with json\n\n${stripLeadingWhitespace(buildCategoryReviewSchema(CATS))}`;
@@ -200,6 +204,6 @@ describe('caller mapping — parsed judging categories carry key', () => {
       makeInput(makeConfig('Judge it.\n\n{{SCORING_RUBRICS}}'), mapped),
       CATS_BLOCK
     );
-    expect(systemText(messages)).toContain(getCategoryRubric('theme'));
+    expect(systemText(messages)).toContain(RUBRIC.theme);
   });
 });

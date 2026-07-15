@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Verifies Task 4: `getJudgedEntries` routes on the presence of `categories`, not `source`
-// (the internal re-check was removed), and the two daily-challenge-processing.ts call sites
-// (review: reviewEntriesForChallenge via reviewEntries(); rank: pickWinnersForChallenge)
-// generalize their `source === ChallengeSource.User` gate to
-// `source === User || isFlipt(DYNAMIC_JUDGING_CATEGORIES)`.
+// Verifies judging-category routing after the DYNAMIC_JUDGING_CATEGORIES flag removal: any
+// challenge with a valid judgingCategories value is judged/ranked by it regardless of source.
+// `getJudgedEntries` routes on the presence of `categories`, not `source`; the two
+// daily-challenge-processing.ts call sites (review: reviewEntriesForChallenge via reviewEntries();
+// rank: pickWinnersForChallenge) parse judgingCategories unconditionally. Malformed/null falls back.
 //
 // `~/server/events` is mocked to cut off its heavy transitive chain (clickhouse/redis/discord) —
 // daily-challenge-processing.ts imports it at module scope but only calls it from
@@ -198,16 +198,6 @@ const JUDGING_CONFIG = {
   reviewTemplate: null,
 } as never;
 
-// Isolates `isFlipt` per flag key: CHALLENGE_PLATFORM_ENABLED always on (unrelated gate that
-// reviewEntries() checks first), DYNAMIC_JUDGING_CATEGORIES controlled per test.
-function setDynamicCategoriesFlag(enabled: boolean) {
-  mockIsFlipt.mockImplementation(async (flag: string) => {
-    if (flag === FLIPT_FEATURE_FLAGS.CHALLENGE_PLATFORM_ENABLED) return true;
-    if (flag === FLIPT_FEATURE_FLAGS.DYNAMIC_JUDGING_CATEGORIES) return enabled;
-    return false;
-  });
-}
-
 beforeEach(() => {
   vi.clearAllMocks();
   mockDbWriteExecuteRaw.mockResolvedValue(1);
@@ -220,7 +210,10 @@ beforeEach(() => {
   mockUpdateChallengeStatus.mockResolvedValue(undefined);
   mockRefundUserChallengeFunds.mockResolvedValue({ refundedEntries: 0 });
   mockDbWriteChallengeFindUnique.mockResolvedValue({ prizePool: 0, prizeDistribution: null });
-  setDynamicCategoriesFlag(false);
+  // reviewEntries() gates on CHALLENGE_PLATFORM_ENABLED first; keep it on. No other flags read.
+  mockIsFlipt.mockImplementation(
+    async (flag: string) => flag === FLIPT_FEATURE_FLAGS.CHALLENGE_PLATFORM_ENABLED
+  );
 });
 
 describe('getJudgedEntries — routes on categories presence, not source', () => {
@@ -321,8 +314,7 @@ describe('pickWinnersForChallenge — judging-category gate', () => {
     return (mockDbReadQueryRaw.mock.calls[1][0] as unknown as string[]).join('');
   }
 
-  it('User source: uses categories regardless of flag (flag off)', async () => {
-    setDynamicCategoriesFlag(false);
+  it('User source + categories: uses the weighted-category path', async () => {
     mockChallengeJudgeRow(ChallengeSource.User, VALID_CATEGORIES);
 
     await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
@@ -331,27 +323,16 @@ describe('pickWinnersForChallenge — judging-category gate', () => {
     expect(mockRefundUserChallengeFunds).toHaveBeenCalledWith(1);
   });
 
-  it('System source, flag off: falls back to fixed rubric', async () => {
-    setDynamicCategoriesFlag(false);
-    mockChallengeJudgeRow(ChallengeSource.System, VALID_CATEGORIES);
-
-    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
-
-    expect(secondQuerySql()).toContain('ROW_NUMBER');
-    expect(mockRefundUserChallengeFunds).not.toHaveBeenCalled();
-  });
-
-  it('System source, flag on: uses categories', async () => {
-    setDynamicCategoriesFlag(true);
+  it('System source + categories: uses the weighted-category path (no source gate)', async () => {
     mockChallengeJudgeRow(ChallengeSource.System, VALID_CATEGORIES);
 
     await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
 
     expect(secondQuerySql()).not.toContain('ROW_NUMBER');
+    expect(mockRefundUserChallengeFunds).not.toHaveBeenCalled();
   });
 
-  it('Mod source, flag on: uses categories (non-User sources generalize identically)', async () => {
-    setDynamicCategoriesFlag(true);
+  it('Mod source + categories: uses the weighted-category path', async () => {
     mockChallengeJudgeRow(ChallengeSource.Mod, VALID_CATEGORIES);
 
     await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
@@ -359,8 +340,7 @@ describe('pickWinnersForChallenge — judging-category gate', () => {
     expect(secondQuerySql()).not.toContain('ROW_NUMBER');
   });
 
-  it('malformed categories always fall back, even flag on + User source', async () => {
-    setDynamicCategoriesFlag(true);
+  it('malformed categories fall back to the fixed rubric (User source)', async () => {
     mockChallengeJudgeRow(ChallengeSource.User, MALFORMED_CATEGORIES);
 
     await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
@@ -368,8 +348,7 @@ describe('pickWinnersForChallenge — judging-category gate', () => {
     expect(secondQuerySql()).toContain('ROW_NUMBER');
   });
 
-  it('null categories always fall back regardless of flag/source', async () => {
-    setDynamicCategoriesFlag(true);
+  it('null categories fall back to the fixed rubric (System source)', async () => {
     mockChallengeJudgeRow(ChallengeSource.System, null);
 
     await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
@@ -442,8 +421,7 @@ describe('reviewEntriesForChallenge (via reviewEntries) — judging-category gat
     });
   }
 
-  it('User source: uses categories regardless of flag (flag off)', async () => {
-    setDynamicCategoriesFlag(false);
+  it('User source: uses categories', async () => {
     mockReviewSequence(ChallengeSource.User, VALID_CATEGORIES);
 
     await reviewEntries();
@@ -454,18 +432,7 @@ describe('reviewEntriesForChallenge (via reviewEntries) — judging-category gat
     expect(arg.categories.map((c: { key: string }) => c.key)).toEqual(['theme', 'aesthetic']);
   });
 
-  it('System source, flag off: falls back to fixed rubric (no categories)', async () => {
-    setDynamicCategoriesFlag(false);
-    mockReviewSequence(ChallengeSource.System, VALID_CATEGORIES);
-
-    await reviewEntries();
-
-    const arg = mockGenerateReview.mock.calls[0][0];
-    expect(arg.categories).toBeUndefined();
-  });
-
-  it('System source, flag on: uses categories', async () => {
-    setDynamicCategoriesFlag(true);
+  it('System source + categories: uses categories (no source gate)', async () => {
     mockReviewSequence(ChallengeSource.System, VALID_CATEGORIES);
 
     await reviewEntries();
@@ -475,8 +442,16 @@ describe('reviewEntriesForChallenge (via reviewEntries) — judging-category gat
     expect(arg.categories.map((c: { key: string }) => c.key)).toEqual(['theme', 'aesthetic']);
   });
 
-  it('malformed categories always fall back, even flag on + User source', async () => {
-    setDynamicCategoriesFlag(true);
+  it('Mod source + categories: uses categories', async () => {
+    mockReviewSequence(ChallengeSource.Mod, VALID_CATEGORIES);
+
+    await reviewEntries();
+
+    const arg = mockGenerateReview.mock.calls[0][0];
+    expect(arg.categories).toBeDefined();
+  });
+
+  it('malformed categories fall back to the fixed rubric (User source)', async () => {
     mockReviewSequence(ChallengeSource.User, MALFORMED_CATEGORIES);
 
     await reviewEntries();
@@ -485,8 +460,7 @@ describe('reviewEntriesForChallenge (via reviewEntries) — judging-category gat
     expect(arg.categories).toBeUndefined();
   });
 
-  it('null categories always fall back regardless of flag/source', async () => {
-    setDynamicCategoriesFlag(true);
+  it('null categories fall back to the fixed rubric (System source)', async () => {
     mockReviewSequence(ChallengeSource.System, null);
 
     await reviewEntries();

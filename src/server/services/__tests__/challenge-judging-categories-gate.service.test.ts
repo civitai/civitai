@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Verifies Task 4: the `source === ChallengeSource.User` gate on judging-category usage is
-// generalized to `source === User || isFlipt(DYNAMIC_JUDGING_CATEGORIES)`, at the two
-// challenge.service.ts call sites (endChallengeAndPickWinners, playgroundPickWinners).
-// getJudgedEntries is mocked so we can assert directly on the `categories` arg it receives —
-// that's the sole observable output of the gate at these two sites.
+// Verifies judging-category routing at the two challenge.service.ts call sites
+// (endChallengeAndPickWinners, playgroundPickWinners) after the DYNAMIC_JUDGING_CATEGORIES flag
+// removal: any challenge that stores judgingCategories is judged by them regardless of source; a
+// malformed/null value falls back to the fixed rubric. getJudgedEntries is mocked so we can assert
+// directly on the `categories` arg it receives — the sole observable output of the routing here.
 
 const {
   mockDbWrite,
@@ -187,7 +187,7 @@ const makeMockChallenge = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-describe('endChallengeAndPickWinners — judging-category gate', () => {
+describe('endChallengeAndPickWinners — judging-category routing', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetChallengeConfig.mockResolvedValue({
@@ -213,8 +213,7 @@ describe('endChallengeAndPickWinners — judging-category gate', () => {
     mockRefundUserChallengeFunds.mockResolvedValue({ refundedEntries: 0 });
   });
 
-  it('User source: uses categories regardless of flag (flag off)', async () => {
-    mockIsFlipt.mockResolvedValue(false);
+  it('User source: uses categories', async () => {
     mockGetChallengeById.mockResolvedValue(
       makeMockChallenge({ source: ChallengeSource.User, judgingCategories: VALID_CATEGORIES })
     );
@@ -227,19 +226,7 @@ describe('endChallengeAndPickWinners — judging-category gate', () => {
     expect(categoriesArg.map((c: { key: string }) => c.key)).toEqual(['theme', 'aesthetic']);
   });
 
-  it('System source, flag off: falls back to fixed rubric (no categories)', async () => {
-    mockIsFlipt.mockResolvedValue(false);
-    mockGetChallengeById.mockResolvedValue(
-      makeMockChallenge({ source: ChallengeSource.System, judgingCategories: VALID_CATEGORIES })
-    );
-
-    await endChallengeAndPickWinners(1);
-
-    expect(mockGetJudgedEntries.mock.calls[0][4]).toBeUndefined();
-  });
-
-  it('System source, flag on: uses categories', async () => {
-    mockIsFlipt.mockResolvedValue(true);
+  it('System source + categories: uses categories (no source gate)', async () => {
     mockGetChallengeById.mockResolvedValue(
       makeMockChallenge({ source: ChallengeSource.System, judgingCategories: VALID_CATEGORIES })
     );
@@ -251,8 +238,7 @@ describe('endChallengeAndPickWinners — judging-category gate', () => {
     expect(categoriesArg.map((c: { key: string }) => c.key)).toEqual(['theme', 'aesthetic']);
   });
 
-  it('Mod source, flag on: uses categories (non-User sources generalize identically)', async () => {
-    mockIsFlipt.mockResolvedValue(true);
+  it('Mod source + categories: uses categories', async () => {
     mockGetChallengeById.mockResolvedValue(
       makeMockChallenge({ source: ChallengeSource.Mod, judgingCategories: VALID_CATEGORIES })
     );
@@ -262,8 +248,7 @@ describe('endChallengeAndPickWinners — judging-category gate', () => {
     expect(mockGetJudgedEntries.mock.calls[0][4]).toBeDefined();
   });
 
-  it('malformed categories always fall back, even flag on + User source', async () => {
-    mockIsFlipt.mockResolvedValue(true);
+  it('malformed categories fall back to the fixed rubric (User source)', async () => {
     mockGetChallengeById.mockResolvedValue(
       makeMockChallenge({ source: ChallengeSource.User, judgingCategories: MALFORMED_CATEGORIES })
     );
@@ -273,8 +258,7 @@ describe('endChallengeAndPickWinners — judging-category gate', () => {
     expect(mockGetJudgedEntries.mock.calls[0][4]).toBeUndefined();
   });
 
-  it('null categories always fall back regardless of flag/source', async () => {
-    mockIsFlipt.mockResolvedValue(true);
+  it('null categories fall back to the fixed rubric (System source)', async () => {
     mockGetChallengeById.mockResolvedValue(
       makeMockChallenge({ source: ChallengeSource.System, judgingCategories: null })
     );
@@ -285,7 +269,7 @@ describe('endChallengeAndPickWinners — judging-category gate', () => {
   });
 });
 
-describe('playgroundPickWinners — judging-category gate', () => {
+describe('playgroundPickWinners — judging-category routing', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetChallengeConfig.mockResolvedValue({
@@ -315,8 +299,7 @@ describe('playgroundPickWinners — judging-category gate', () => {
     mockGenerateWinners.mockResolvedValue({ winners: [], process: '', outcome: '' });
   });
 
-  it('User source: uses categories regardless of flag (flag off)', async () => {
-    mockIsFlipt.mockResolvedValue(false);
+  it('User source: uses categories', async () => {
     mockGetChallengeById.mockResolvedValue(
       makeMockChallenge({
         id: 5,
@@ -333,24 +316,7 @@ describe('playgroundPickWinners — judging-category gate', () => {
     expect(categoriesArg.map((c: { key: string }) => c.key)).toEqual(['theme', 'aesthetic']);
   });
 
-  it('System source, flag off: falls back to fixed rubric (no categories)', async () => {
-    mockIsFlipt.mockResolvedValue(false);
-    mockGetChallengeById.mockResolvedValue(
-      makeMockChallenge({
-        id: 5,
-        collectionId: 100,
-        source: ChallengeSource.System,
-        judgingCategories: VALID_CATEGORIES,
-      })
-    );
-
-    await playgroundPickWinners({ challengeId: 5 } as never);
-
-    expect(mockGetJudgedEntries.mock.calls[0][4]).toBeUndefined();
-  });
-
-  it('System source, flag on: uses categories', async () => {
-    mockIsFlipt.mockResolvedValue(true);
+  it('System source + categories: uses categories (no source gate)', async () => {
     mockGetChallengeById.mockResolvedValue(
       makeMockChallenge({
         id: 5,
@@ -367,8 +333,22 @@ describe('playgroundPickWinners — judging-category gate', () => {
     expect(categoriesArg.map((c: { key: string }) => c.key)).toEqual(['theme', 'aesthetic']);
   });
 
-  it('malformed categories always fall back, even flag on + User source', async () => {
-    mockIsFlipt.mockResolvedValue(true);
+  it('Mod source + categories: uses categories', async () => {
+    mockGetChallengeById.mockResolvedValue(
+      makeMockChallenge({
+        id: 5,
+        collectionId: 100,
+        source: ChallengeSource.Mod,
+        judgingCategories: VALID_CATEGORIES,
+      })
+    );
+
+    await playgroundPickWinners({ challengeId: 5 } as never);
+
+    expect(mockGetJudgedEntries.mock.calls[0][4]).toBeDefined();
+  });
+
+  it('malformed categories fall back to the fixed rubric (User source)', async () => {
     mockGetChallengeById.mockResolvedValue(
       makeMockChallenge({
         id: 5,
