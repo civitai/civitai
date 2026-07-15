@@ -133,3 +133,34 @@ describe('blockWorkflowBodySchema — additionalResources (Page-LoRA)', () => {
     expect((parsed as any).additionalResources[0].strength).toBe(1);
   });
 });
+
+/**
+ * G5 — generic published-content-author key. Opaque, optional, bounded to the
+ * shared-storage key shape (≤64). The server resolves the author from it; the
+ * wire schema only bounds shape.
+ */
+describe('blockWorkflowBodySchema — sharedContentKey (G5)', () => {
+  it('is optional — a body without it parses (field stays undefined)', () => {
+    const parsed = blockWorkflowBodySchema.parse(baseBody());
+    expect((parsed as { sharedContentKey?: unknown }).sharedContentKey).toBeUndefined();
+  });
+
+  it('accepts a bounded opaque key', () => {
+    const parsed = blockWorkflowBodySchema.parse(baseBody({ sharedContentKey: 'k_01ABCDEF' }));
+    expect((parsed as { sharedContentKey?: string }).sharedContentKey).toBe('k_01ABCDEF');
+  });
+
+  it('rejects an over-long key (> 64 chars)', () => {
+    expect(() =>
+      blockWorkflowBodySchema.parse(baseBody({ sharedContentKey: 'k'.repeat(65) }))
+    ).toThrow();
+  });
+
+  it('rejects an empty key', () => {
+    expect(() => blockWorkflowBodySchema.parse(baseBody({ sharedContentKey: '' }))).toThrow();
+  });
+
+  it('rejects a non-string key', () => {
+    expect(() => blockWorkflowBodySchema.parse(baseBody({ sharedContentKey: 123 }))).toThrow();
+  });
+});

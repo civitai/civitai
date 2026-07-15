@@ -33,6 +33,10 @@ const DIM_MAX = 2048;
 const STEPS_MAX = 50;
 const QUANTITY_MAX = 4;
 const CLIP_SKIP_MAX = 12;
+// Bound for the opaque published-content-author key (`sharedContentKey`).
+// Matches the shared-storage key shape (apps-shared.router `sharedKeyInput`
+// is ≤64) so a server-ULID row key or an app counter key both fit.
+const SHARED_CONTENT_KEY_MAX = 64;
 
 // Page-LoRA caps (App Blocks Page-LoRA, Increment 1). Intentionally tighter
 // than the platform per-tier resource cap — these come from an untrusted
@@ -122,6 +126,19 @@ const blockTextToImageBodySchema = z.object({
   // domain-allowed set — the maturity policy is never widened here. See
   // `resolveBlockCurrenciesForAccount`.
   accountType: blockAccountTypeSchema.optional(),
+  // Optional GENERIC published-content-author attribution basis. The opaque
+  // shared-storage `key` of the cross-user published content this generation
+  // is running on behalf of — the app supplies it out-of-band from its own
+  // shared storage (`app_<slug>.shared_kv`). When present, the server resolves
+  // it (SERVER-SIDE, off the submit critical path) to the content's AUTHOR and
+  // records that user as the payout basis on the spend-attribution row. Purely
+  // opaque + advisory here: this is NEVER trusted as an author (the author is
+  // re-derived from the key server-side), so a forged key can at worst point at
+  // a non-existent row (→ no attribution). Bounded to the same key shape as the
+  // shared-storage surface (≤64). Omit when N/A — behavior is unchanged.
+  // FULLY GENERIC: any app that publishes cross-user content can send it — not
+  // tied to any one app kind.
+  sharedContentKey: z.string().min(1).max(SHARED_CONTENT_KEY_MAX).optional(),
   params: z.object({
     prompt: z.string().max(PROMPT_MAX).default(''),
     negativePrompt: z.string().max(NEG_PROMPT_MAX).optional(),

@@ -811,6 +811,22 @@ export type BlockSpendAttribution = {
   spend_share_pct: number;
   app_owner_share_cents: number;
   app_owner_user_id: number;
+  /**
+   * The USER who published the shared content this generation ran on behalf
+   * of (the "content author") — the durable BASIS for a FUTURE creator
+   * payout. Resolved SERVER-SIDE from `sharedContentKey` against the calling
+   * app's own `app_<slug>.shared_kv`, never client-supplied. NULL when no
+   * key was supplied, the row is missing/hidden, or the author is the
+   * spender (self) or the app owner. FULLY GENERIC — any app that publishes
+   * cross-user shared content can populate it — not tied to any one app kind.
+   * TRACK-ONLY today: nothing pays out on it yet.
+   */
+  content_author_user_id: number | null;
+  /**
+   * The opaque shared-storage `key` the app supplied for this generation
+   * (bounded, app-owned). NULL when the app supplied none.
+   */
+  shared_content_key: string | null;
   status: Generated<string>;
   /**
    * 'self_spend' / 'internal_owner' / 'manual_review'. Spend has no

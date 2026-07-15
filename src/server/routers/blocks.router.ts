@@ -3139,6 +3139,12 @@ export const blocksRouter = router({
             appBlockId: claims.appBlockId,
             blockInstanceId: claims.blockInstanceId,
             modelId: resolved.modelId,
+            // GENERIC published-content-author basis: the opaque shared-storage
+            // key the app supplied for the content this generation runs on
+            // behalf of. Passed through OPAQUE — the service resolves the author
+            // SERVER-SIDE from the app's own shared storage (never trusts the
+            // client). Omitted → unchanged app-owner-only attribution.
+            sharedContentKey: input.body.sharedContentKey ?? null,
           });
         })().catch(() => {
           /* best-effort: a failed attribution write never breaks submit */
