@@ -4,6 +4,7 @@ import {
   allowMatureContentForCeiling,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
 
 /**
@@ -84,4 +85,29 @@ export function resolveCatalogBrowsingLevel(
   }
 
   return { browsingLevel, isSfwCeiling };
+}
+
+/**
+ * Whether a generation resource EXCEEDS the clamped catalog `browsingLevel` — used
+ * by the block `generation-resources` rehydrate endpoint to drop mature resources
+ * from a SFW-domain block's response (so a saved-generator rehydrate can't surface
+ * a mature resource's public trained words / recommended settings to a SFW block).
+ *
+ * The resource's maturity signal is the max of its cover-image `nsfwLevel` and the
+ * model's boolean `nsfw` flag (a mature model with no/SFW cover still counts). A 0
+ * signal (no maturity data) is treated as WITHIN the ceiling — the projection
+ * carries no image, and a bare resource with no maturity signal is not "mature".
+ * PURE + server-import-free (like the rest of this module) so it is unit-testable.
+ */
+export function resourceExceedsCatalogCeiling(
+  resource: { imageNsfwLevel?: number | null; modelNsfw?: boolean | null },
+  browsingLevel: number
+): boolean {
+  const imageLevel = resource.imageNsfwLevel ?? 0;
+  // A mature-flagged model with no usable image level still gets a mature floor
+  // (R — the lowest nsfw browsing-level bit).
+  const level = imageLevel !== 0 ? imageLevel : resource.modelNsfw ? NsfwLevel.R : 0;
+  if (level === 0) return false; // no maturity signal → within ceiling
+  // Exceeds when the resource's maturity bit is NOT permitted by the ceiling.
+  return !Flags.intersects(browsingLevel, level);
 }

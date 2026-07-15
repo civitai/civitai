@@ -3,6 +3,7 @@ import {
   grantedPageScopes,
   pageFallbackReason,
   resolveCheckpointPickerRequest,
+  resolveImageUploadRequest,
   resolveResourcePickerRequest,
   PAGE_RESOURCE_PICKER_TYPES,
   type PageHostStatus,
@@ -175,5 +176,31 @@ describe('resolveCheckpointPickerRequest (OPEN_CHECKPOINT_PICKER — dev:live↔
     expect(resolveCheckpointPickerRequest(null)).toBeNull();
     expect(resolveCheckpointPickerRequest('Checkpoint')).toBeNull();
     expect(resolveCheckpointPickerRequest(123)).toBeNull();
+  });
+});
+
+describe('resolveImageUploadRequest (OPEN_IMAGE_UPLOAD — requestId drop rule)', () => {
+  it('accepts a valid string requestId', () => {
+    expect(resolveImageUploadRequest({ requestId: 'u1' })).toEqual({ requestId: 'u1' });
+  });
+
+  it('ignores extra fields (only requestId is threaded — the rest is server-gated)', () => {
+    expect(resolveImageUploadRequest({ requestId: 'u2', junk: 'x', imageId: 5 })).toEqual({
+      requestId: 'u2',
+    });
+  });
+
+  it('DROPS a request with a missing / empty / non-string requestId', () => {
+    expect(resolveImageUploadRequest({})).toBeNull();
+    expect(resolveImageUploadRequest({ requestId: '' })).toBeNull();
+    expect(resolveImageUploadRequest({ requestId: 42 })).toBeNull();
+    expect(resolveImageUploadRequest({ requestId: null })).toBeNull();
+  });
+
+  it('DROPS non-object / nullish payloads', () => {
+    expect(resolveImageUploadRequest(undefined)).toBeNull();
+    expect(resolveImageUploadRequest(null)).toBeNull();
+    expect(resolveImageUploadRequest('u3')).toBeNull();
+    expect(resolveImageUploadRequest(123)).toBeNull();
   });
 });

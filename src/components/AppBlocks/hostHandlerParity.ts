@@ -227,6 +227,21 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // The generator BUILDER's cosmetic-background upload bridge (Custom Generators
+  // Phase-2a PR-C). Host-chrome upload (like OPEN_RESOURCE_PICKER): the page host
+  // opens its own upload modal, runs civitai's session-authed upload → REAL scan →
+  // server-side SFW gate, and returns ONLY a moderated image id. AHEAD of the
+  // published SDK dist union (the SDK contract is external + a co-requisite) —
+  // forward-looking coverage, allowed by the one-directional compile-time gate.
+  // A page-only affordance (the builder is a page app), so N/A for the model host.
+  OPEN_IMAGE_UPLOAD: {
+    request: true,
+    reply: 'IMAGE_UPLOAD_RESULT',
+    IframeHost:
+      'cosmetic-background upload is a page-only generator-builder affordance; the model slot has no such surface',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   SET_USER_CHECKPOINT: {
     request: true,
     reply: 'USER_CHECKPOINT_SET',
