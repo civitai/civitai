@@ -61,6 +61,7 @@ import { createImage, imagesForModelVersionsCache } from '~/server/services/imag
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { resolveJudgingCategories } from '~/server/services/challenge-category.service';
+import { getUserSelectableJudges } from '~/server/services/challenge-judge.service';
 import {
   assertCanCreateUserChallenge,
   assertUserAccountInGoodStanding,
@@ -87,7 +88,6 @@ import {
   getEntryPoolContribution,
   getMinUserChallengeStartsAt,
   getUserChallengeVisibleAt,
-  USER_SELECTABLE_JUDGE_NAMES,
 } from '~/shared/constants/challenge.constants';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
@@ -1381,11 +1381,11 @@ export async function upsertUserChallenge({
   }
 
   // Judge must be an existing, active judge — users can only pick, not create or reprompt one.
-  const judge = await dbRead.challengeJudge.findFirst({
-    where: { id: judgeId, active: true, name: { in: [...USER_SELECTABLE_JUDGE_NAMES] } },
-    select: { id: true },
-  });
-  if (!judge) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Selected judge is not available.' });
+  // Read/write parity: validate against exactly the set the user picker offered (getActiveJudges),
+  // including the whitelist fallback — never a separate query that could drift from the form.
+  const selectableJudges = await getUserSelectableJudges();
+  if (judgeId != null && !selectableJudges.some((j) => j.id === judgeId))
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'Selected judge is not available.' });
 
   const allowedNsfwLevel = rest.allowedNsfwLevel ?? sfwBrowsingLevelsFlag;
   // buzzType is derived from the caller's current domain, but it's immutable once stored — on
@@ -2489,11 +2489,7 @@ export async function getActiveJudges({
     });
   }
 
-  const rows = await dbRead.challengeJudge.findMany({
-    where: { active: true, name: { in: [...USER_SELECTABLE_JUDGE_NAMES] } },
-    orderBy: { name: 'asc' },
-    select: { id: true, name: true, bio: true },
-  });
+  const rows = await getUserSelectableJudges();
   return rows.map((r) => ({ ...r, userId: null, reviewPrompt: null }));
 }
 
@@ -2885,6 +2881,7 @@ export async function getJudgeById(id: number) {
       reviewPrompt: true,
       reviewTemplate: true,
       winnerSelectionPrompt: true,
+      userSelectable: true,
     },
   });
   if (!judge) throw new TRPCError({ code: 'NOT_FOUND', message: 'Judge not found' });
@@ -2925,6 +2922,7 @@ export async function upsertJudge(input: UpsertJudgeInput & { userId: number }) 
       reviewTemplate: data.reviewTemplate ?? null,
       winnerSelectionPrompt: data.winnerSelectionPrompt ?? null,
       active: data.active ?? true,
+      userSelectable: data.userSelectable ?? false,
     },
     update: {
       ...(data.name !== undefined && { name: data.name }),
@@ -2941,6 +2939,7 @@ export async function upsertJudge(input: UpsertJudgeInput & { userId: number }) 
         winnerSelectionPrompt: data.winnerSelectionPrompt,
       }),
       ...(data.active !== undefined && { active: data.active }),
+      ...(data.userSelectable !== undefined && { userSelectable: data.userSelectable }),
     },
   });
 

@@ -623,6 +623,7 @@ export const upsertJudgeSchema = z.object({
   reviewTemplate: z.string().optional().nullable(),
   winnerSelectionPrompt: z.string().optional().nullable(),
   active: z.boolean().optional(),
+  userSelectable: z.boolean().optional(),
 });
 
 // Playground: Generate content for a model version
