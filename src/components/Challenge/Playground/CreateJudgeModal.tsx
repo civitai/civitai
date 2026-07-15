@@ -5,6 +5,7 @@ import { useMemo, useState } from 'react';
 import * as z from 'zod';
 import { Form, InputJson, InputSwitch, InputText, InputTextArea, useForm } from '~/libs/form';
 import { upsertJudgeSchema } from '~/server/schema/challenge.schema';
+import { JUDGE_USER_SELECTABLE_FIELD } from '~/shared/constants/challenge.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { usePlaygroundStore } from './playground.store';
@@ -155,8 +156,8 @@ export function CreateJudgeModal({ opened, onClose }: { opened: boolean; onClose
           />
           <InputSwitch
             name="userSelectable"
-            label="Selectable by users"
-            description="Show this judge in the user challenge-create form"
+            label={JUDGE_USER_SELECTABLE_FIELD.label}
+            description={JUDGE_USER_SELECTABLE_FIELD.description}
           />
           <Group justify="flex-end" mt="sm">
             <Button variant="default" onClick={resetAndClose}>

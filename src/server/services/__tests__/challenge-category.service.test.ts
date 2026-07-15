@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assertCategoryActiveAllowed,
   getJudgingCategoryOptions,
+  mergeCategoryRows,
   pickCategoryRubric,
   resolveJudgingCategories,
   resolveRubricBlock,
@@ -105,6 +106,27 @@ describe('preset fallback (no DB available)', () => {
     const derive = (k: 'theme' | 'aesthetic') =>
       `${CHALLENGE_PRESET_CATEGORIES[k].label.toUpperCase()} SCORING (0-10):\n${CHALLENGE_PRESET_CATEGORIES[k].criteria}`.trim();
     expect(block).toBe([derive('theme'), derive('aesthetic')].join('\n\n'));
+  });
+});
+
+describe('mergeCategoryRows', () => {
+  const preset = row({ key: 'theme', label: 'Theme', sortOrder: 0 });
+  const otherPreset = row({ key: 'humor', label: 'Humor', sortOrder: 20 });
+
+  it('DB rows override presets by key', () => {
+    const dbTheme = row({ key: 'theme', label: 'Theme (edited)', rubric: 'DB', sortOrder: 0 });
+    const merged = mergeCategoryRows([preset, otherPreset], [dbTheme]);
+    expect(merged.find((r) => r.key === 'theme')).toEqual(dbTheme);
+  });
+
+  it('keeps presets that have no DB row (so mandatory theme is never orphaned)', () => {
+    const merged = mergeCategoryRows([preset, otherPreset], [row({ key: 'dread', sortOrder: 5 })]);
+    expect(merged.map((r) => r.key)).toEqual(['theme', 'dread', 'humor']); // sorted by sortOrder
+  });
+
+  it('adds DB-only keys not present in the preset baseline', () => {
+    const merged = mergeCategoryRows([preset], [row({ key: 'custom-x', sortOrder: 10 })]);
+    expect(merged.map((r) => r.key)).toEqual(['theme', 'custom-x']);
   });
 });
 

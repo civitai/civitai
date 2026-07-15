@@ -15,8 +15,10 @@ import {
 } from '@mantine/core';
 import { IconPlus } from '@tabler/icons-react';
 import { useState } from 'react';
+import type { ChallengeCategoryRow } from '~/server/services/challenge-category.service';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { PLAYGROUND_PANEL_HEIGHT } from './playground.constants';
 
 type Draft = {
   key: string;
@@ -42,6 +44,20 @@ const blank: Draft = {
   isNew: true,
 };
 
+// An existing library row → an editable draft (form-coerces the nullable rubric fields to '',
+// locks the key). Used by both the save-success reload and the list-item selection.
+const rowToDraft = (c: ChallengeCategoryRow): Draft => ({
+  key: c.key,
+  label: c.label,
+  group: c.group,
+  criteria: c.criteria,
+  rubric: c.rubric ?? '',
+  rubricNsfw: c.rubricNsfw ?? '',
+  sortOrder: c.sortOrder,
+  active: c.active,
+  isNew: false,
+});
+
 export function CategoriesPanel() {
   const queryUtils = trpc.useUtils();
   const { data: categories, isLoading } = trpc.challenge.getChallengeCategories.useQuery();
@@ -52,17 +68,7 @@ export function CategoriesPanel() {
       await queryUtils.challenge.getChallengeCategories.invalidate();
       // Reload the saved row as a non-new draft so the key locks and a second Save updates
       // (not re-creates) the same row.
-      setDraft({
-        key: row.key,
-        label: row.label,
-        group: row.group,
-        criteria: row.criteria,
-        rubric: row.rubric ?? '',
-        rubricNsfw: row.rubricNsfw ?? '',
-        sortOrder: row.sortOrder,
-        active: row.active,
-        isNew: false,
-      });
+      setDraft(rowToDraft(row));
       showSuccessNotification({ message: 'Category saved' });
     },
     onError: (error) => showErrorNotification({ error: new Error(error.message) }),
@@ -72,11 +78,12 @@ export function CategoriesPanel() {
 
   const save = () => {
     if (!draft) return;
+    // key/label/group/criteria are trimmed by the zod schema; rubric fields need explicit ''→null.
     upsert.mutate({
-      key: draft.key.trim(),
-      label: draft.label.trim(),
-      group: draft.group.trim(),
-      criteria: draft.criteria.trim(),
+      key: draft.key,
+      label: draft.label,
+      group: draft.group,
+      criteria: draft.criteria,
       rubric: draft.rubric.trim() || null,
       rubricNsfw: draft.rubricNsfw.trim() || null,
       sortOrder: draft.sortOrder,
@@ -85,11 +92,7 @@ export function CategoriesPanel() {
   };
 
   return (
-    <Flex
-      h="calc(100vh - var(--header-height) - var(--footer-height) - 110px)"
-      gap={0}
-      style={{ overflow: 'hidden' }}
-    >
+    <Flex h={PLAYGROUND_PANEL_HEIGHT} gap={0} style={{ overflow: 'hidden' }}>
       <Card
         withBorder
         radius={0}
@@ -117,19 +120,7 @@ export function CategoriesPanel() {
                   justify="space-between"
                   p="sm"
                   style={{ cursor: 'pointer' }}
-                  onClick={() =>
-                    setDraft({
-                      key: c.key,
-                      label: c.label,
-                      group: c.group,
-                      criteria: c.criteria,
-                      rubric: c.rubric ?? '',
-                      rubricNsfw: c.rubricNsfw ?? '',
-                      sortOrder: c.sortOrder,
-                      active: c.active,
-                      isNew: false,
-                    })
-                  }
+                  onClick={() => setDraft(rowToDraft(c))}
                 >
                   <div>
                     <Text size="sm">{c.label}</Text>

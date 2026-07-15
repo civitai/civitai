@@ -10,6 +10,7 @@ import {
   Textarea,
 } from '@mantine/core';
 import { IconDeviceFloppy } from '@tabler/icons-react';
+import { JUDGE_USER_SELECTABLE_FIELD } from '~/shared/constants/challenge.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { ModelSelector } from './ModelSelector';
@@ -179,8 +180,8 @@ export function JudgeSettingsPanel() {
             }}
           />
           <Switch
-            label="Selectable by users"
-            description="Show this judge in the user challenge-create form"
+            label={JUDGE_USER_SELECTABLE_FIELD.label}
+            description={JUDGE_USER_SELECTABLE_FIELD.description}
             checked={currentUserSelectable}
             onChange={(e) => {
               if (selectedJudgeId != null)

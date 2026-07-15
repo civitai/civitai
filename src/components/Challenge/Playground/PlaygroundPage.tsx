@@ -7,6 +7,7 @@ import { JudgeListPanel } from './JudgeListPanel';
 import { ActivityPanel } from './ActivityPanel';
 import { JudgeSettingsPanel } from './JudgeSettingsPanel';
 import { CategoriesPanel } from './CategoriesPanel';
+import { PLAYGROUND_PANEL_HEIGHT } from './playground.constants';
 
 export function PlaygroundPage() {
   const currentUser = useCurrentUser();
@@ -42,11 +43,7 @@ export function PlaygroundPage() {
       </Tabs.List>
 
       <Tabs.Panel value="judges">
-        <Flex
-          h="calc(100vh - var(--header-height) - var(--footer-height) - 110px)"
-          gap={0}
-          style={{ overflow: 'hidden' }}
-        >
+        <Flex h={PLAYGROUND_PANEL_HEIGHT} gap={0} style={{ overflow: 'hidden' }}>
           {/* Left panel: Judge list */}
           <Card
             withBorder
