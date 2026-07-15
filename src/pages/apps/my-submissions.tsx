@@ -142,6 +142,7 @@ export default function MySubmissionsPage() {
             submissions={submissions}
             onWithdraw={(id) => withdrawMutation.mutate({ publishRequestId: id })}
             withdrawing={withdrawMutation.isPending}
+            canOpenPage={!!features?.appBlocksPages}
           />
         )}
 

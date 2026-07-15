@@ -21,6 +21,7 @@ import {
   IconRss,
   IconShare3,
   IconInfoCircle,
+  IconShoppingBag,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useMemo, useState } from 'react';
@@ -31,6 +32,8 @@ import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
+import { NextLink } from '~/components/NextLink/NextLink';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { UserContextMenu } from '~/components/Profile/UserContextMenu';
@@ -45,6 +48,7 @@ import { trpc } from '~/utils/trpc';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import type { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
+import type { PrivacySettingsSchema } from '~/server/schema/user-profile.schema';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { openUserProfileEditModal } from '~/components/Dialog/triggers/user-profile-edit';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -97,6 +101,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   const colorScheme = useComputedColorScheme('dark');
   const isMobile = useContainerSmallerThan('sm');
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const { data: user } = trpc.userProfile.get.useQuery({
     username,
   });
@@ -138,6 +143,63 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   const { profile, stats } = user;
   const shouldDisplayStats = stats && !!Object.values(stats).find((stat) => stat !== 0);
   const equippedCosmetics = user?.cosmetics.filter((c) => !!c.equippedAt);
+
+  // Split the badges into the user's highlighted picks (their own section) and
+  // the rest.
+  const highlightedBadgeIds =
+    (profile.privacySettings as PrivacySettingsSchema | null | undefined)?.highlightedBadgeIds ??
+    [];
+  const highlightedSet = new Set(highlightedBadgeIds);
+  const highlightedBadges = highlightedBadgeIds
+    .map((id) => badges.find((b) => b.id === id))
+    .filter((b): b is (typeof badges)[number] => !!b);
+  const otherBadges = badges.filter((b) => !highlightedSet.has(b.id));
+
+  const renderBadge = (award: (typeof badges)[number]) => {
+    const data = (award.data ?? {}) as BadgeCosmetic['data'];
+    const url = (data.url ?? '') as string;
+    if (!url) return null;
+    const isEnlarged = enlargedBadge === award.id;
+    const style = {
+      transition: 'transform 0.1s',
+      cursor: 'pointer',
+      width: sizeOpts.badges,
+      transform: isEnlarged ? 'scale(2)' : undefined,
+      zIndex: isEnlarged ? 100 : undefined,
+      filter: isEnlarged ? 'drop-shadow(0px 0px 3px #000000)' : undefined,
+    };
+    return (
+      <Popover
+        key={award.id}
+        withArrow
+        width={200}
+        position="top"
+        onChange={(opened) =>
+          setEnlargedBadge((curr) => (opened ? award.id : curr === award.id ? null : curr))
+        }
+      >
+        <Popover.Target>
+          <Box style={style}>
+            <EdgeMedia src={url} alt={award.name} />
+          </Box>
+        </Popover.Target>
+        <Popover.Dropdown>
+          <Stack gap={0}>
+            <Text size="sm" align="center" fw={500}>
+              {award.name}
+            </Text>
+            {award.videoUrl && (
+              <Anchor href={award.videoUrl} size="xs" opacity={0.9} mt={4} target="_blank">
+                <span style={{ display: 'flex', alignItems: 'center' }}>
+                  How it was made <IconExternalLink size={14} style={{ marginLeft: 4 }} />
+                </span>
+              </Anchor>
+            )}
+          </Stack>
+        </Popover.Dropdown>
+      </Popover>
+    );
+  };
   const editProfileBtn = isCurrentUser && (
     <Button
       leftSection={isMobile ? undefined : <IconPencilMinus size={16} />}
@@ -193,6 +255,23 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         <IconShare3 size={16} />
       </LegacyActionIcon>
     </ShareButton>
+  );
+
+  // Shown when the user has a live, public Creator Shop.
+  const shopBtn = features.creatorShop && user.creatorShopEnabled && (
+    <Button
+      component={NextLink}
+      href={`/user/${username}/shop`}
+      variant={isMobile ? 'filled' : 'light'}
+      color="yellow"
+      size={sizeOpts.button}
+      radius="xl"
+      leftSection={<IconShoppingBag size={16} />}
+      style={{ fontSize: 14, fontWeight: 590, lineHeight: 1.5 }}
+      fullWidth
+    >
+      Visit shop
+    </Button>
   );
 
   const mutedAlert = isCurrentUser && muted && (
@@ -328,6 +407,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
           </Group>
           <TipBuzzBtn />
           <ChatBtn />
+          {shopBtn}
         </>
       )}
 
@@ -346,89 +426,38 @@ export function ProfileSidebar({ username, className }: { username: string; clas
 
       {badges.length > 0 && profile.privacySettings?.showBadges !== false && (
         <Stack gap={sizeOpts.spacing}>
-          <Text size={sizeOpts.text} c="dimmed" fw={590}>
-            Badges
-          </Text>
-          <Group gap="xs">
-            {(showAllBadges ? badges : badges.slice(0, sizeOpts.badgeCount)).map((award) => {
-              const data = (award.data ?? {}) as BadgeCosmetic['data'];
-              const url = (data.url ?? '') as string;
-              const isEnlarged = enlargedBadge === award.id;
-
-              if (!url) {
-                return null;
-              }
-
-              const style = {
-                transition: 'transform 0.1s',
-                cursor: 'pointer',
-                width: sizeOpts.badges,
-                transform: isEnlarged ? 'scale(2)' : undefined,
-                zIndex: isEnlarged ? 100 : undefined,
-                filter: isEnlarged ? 'drop-shadow(0px 0px 3px #000000)' : undefined,
-              };
-
-              return (
-                <Popover
-                  key={award.id}
-                  withArrow
-                  width={200}
-                  position="top"
-                  onChange={(opened) => {
-                    if (opened) {
-                      setEnlargedBadge(award.id);
-                    } else {
-                      setEnlargedBadge((curr) => (curr === award.id ? null : curr));
-                    }
-                  }}
-                >
-                  <Popover.Target>
-                    {data.animated ? (
-                      <Box style={style}>
-                        <EdgeMedia src={url} alt={award.name} />
-                      </Box>
-                    ) : (
-                      <Box style={style}>
-                        <EdgeMedia src={url} alt={award.name} />
-                      </Box>
-                    )}
-                  </Popover.Target>
-                  <Popover.Dropdown>
-                    <Stack gap={0}>
-                      <Text size="sm" align="center" fw={500}>
-                        {award.name}
-                      </Text>
-                      {award.videoUrl && (
-                        <Anchor
-                          href={award.videoUrl}
-                          size="xs"
-                          opacity={0.9}
-                          mt={4}
-                          target="_blank"
-                        >
-                          <span style={{ display: 'flex', alignItems: 'center' }}>
-                            How it was made <IconExternalLink size={14} style={{ marginLeft: 4 }} />
-                          </span>
-                        </Anchor>
-                      )}
-                    </Stack>
-                  </Popover.Dropdown>
-                </Popover>
-              );
-            })}
-            {badges.length > sizeOpts.badgeCount && (
-              <Button
-                color="gray"
-                variant="light"
-                onClick={() => setShowAllBadges((prev) => !prev)}
-                size="xs"
-                style={{ fontSize: 12, fontWeight: 600 }}
-                fullWidth
-              >
-                {showAllBadges ? 'Show less' : `Show all (${badges.length})`}
-              </Button>
-            )}
-          </Group>
+          {highlightedBadges.length > 0 && (
+            <Stack gap={sizeOpts.spacing}>
+              <Text size={sizeOpts.text} c="dimmed" fw={590}>
+                Highlighted
+              </Text>
+              <Group gap="xs">{highlightedBadges.map(renderBadge)}</Group>
+            </Stack>
+          )}
+          {otherBadges.length > 0 && (
+            <Stack gap={sizeOpts.spacing}>
+              <Text size={sizeOpts.text} c="dimmed" fw={590}>
+                {highlightedBadges.length > 0 ? 'More badges' : 'Badges'}
+              </Text>
+              <Group gap="xs">
+                {(showAllBadges ? otherBadges : otherBadges.slice(0, sizeOpts.badgeCount)).map(
+                  renderBadge
+                )}
+                {otherBadges.length > sizeOpts.badgeCount && (
+                  <Button
+                    color="gray"
+                    variant="light"
+                    onClick={() => setShowAllBadges((prev) => !prev)}
+                    size="xs"
+                    style={{ fontSize: 12, fontWeight: 600 }}
+                    fullWidth
+                  >
+                    {showAllBadges ? 'Show less' : `Show all (${otherBadges.length})`}
+                  </Button>
+                )}
+              </Group>
+            </Stack>
+          )}
         </Stack>
       )}
     </Stack>

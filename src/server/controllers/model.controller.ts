@@ -335,6 +335,7 @@ export const getModelHandler = async ({
 
       return {
         ...version,
+        licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
         metrics: undefined,
         rank: {
           generationCountAllTime: versionMetrics?.generationCount ?? 0,

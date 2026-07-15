@@ -114,13 +114,29 @@ export async function recordScopeGrant(opts: {
  * granted scopes, returning the granted subset to sign + the withheld scopes
  * the host must re-consent for.
  *
- * `block:settings:*` and `apps:storage:*` are intentionally NOT consent-gated
- * here — they are publisher-only / ambient-but-otherwise-gated scopes that have
- * their own issuance-time checks (caller-is-installer, resolveStorageContext).
- * Subjecting them to per-user consent would make the publisher re-consent to
- * their own block's settings on every version bump for no security gain. The
- * remaining user-resource scopes (media/user/ai/buzz/social, models:write)
- * flow through the consent gate.
+ * `block:settings:*` and `apps:storage:*` (per-user KV) are intentionally NOT
+ * consent-gated here — they are publisher-only / ambient-but-otherwise-gated
+ * scopes that have their own issuance-time checks (caller-is-installer,
+ * resolveStorageContext). Subjecting them to per-user consent would make the
+ * publisher re-consent to their own block's settings on every version bump for
+ * no security gain. The remaining user-resource scopes (media/user/ai/buzz/
+ * social, models:write) flow through the consent gate.
+ *
+ * `apps:storage:shared:read` / `apps:storage:shared:write` (the SHARED, app-
+ * global / cross-user datastore) are ALSO exempt — and, unlike the per-user
+ * scopes, they are NOT publisher-only. Their governance is NOT a per-scope
+ * consent prompt but the SERVER-SIDE controls in `resolveSharedContext`
+ * (apps-shared.router.ts): a fail-closed min-trust gate (not-anon, not-banned,
+ * not-muted, onboarding-complete, email-verified, account age ≥ 7d) plus
+ * content moderation and one-vote / per-user-row / rate limits, all enforced at
+ * every read/write REGARDLESS of the token scope. `shared:read` is reading
+ * PUBLIC community data (anon-safe — the router allows anon reads by design);
+ * `shared:write` is trust-gated PUBLIC posting/voting (the resolver rejects anon
+ * and any ineligible caller before touching data, whether or not the scope is
+ * present). A per-scope consent prompt would add nothing that the trust gate +
+ * moderation don't already enforce — so, mirroring the per-user storage scopes,
+ * these sign without a grant. (Pre-GA consideration, NOT built here: an EXPLICIT
+ * shared-WRITE consent prompt if widening the audience beyond the trust gate.)
  *
  * `models:read:self` is ALSO exempt (allow-by-default): a low-sensitivity read
  * of the viewer's OWN models, and a no-op for an anon viewer (no user → nothing
@@ -129,13 +145,41 @@ export async function recordScopeGrant(opts: {
  * is reserved for the money / AI scopes (`ai:write:budgeted`, `buzz:read:self`),
  * which the host requests lazily on the first buzz-spending action (Generate)
  * rather than on load.
+ *
+ * `collections:read:self` / `collections:write:self` are exempt — but
+ * `collections:read:private` is DELIBERATELY NOT (the read split, below). The
+ * exempt pair's gate is SERVER-SIDE per op, not a per-scope consent prompt:
+ * read:self covers own-PUBLIC + any PUBLIC collection (public data — nothing
+ * sensitive to consent to), and the follow write is SELF-BOUND to the token
+ * subject (a bookmark on the caller's OWN account). A per-scope consent prompt
+ * would add nothing the visibility/ownership/subject checks don't already
+ * enforce. Exempting them is ALSO the #3090 fix: a page-app token that declared a
+ * consent-gated scope silently dropped it at mint (the user had no grant row) →
+ * every op 403'd; consent-exempt scopes flow through partitionByConsent
+ * unconditionally, so the minted PAGE token actually carries them end-to-end.
+ *
+ * `collections:read:private` (the subject's OWN PRIVATE collections) is the
+ * CONSENT-GATED half of the read split and is INTENTIONALLY absent from this set:
+ * reading a user's private collections IS sensitive, so it must flow through the
+ * gated branch — the host surfaces it as `needs_consent`, the user grants it, and
+ * only then does a token carry it. (This is the deliberate contrast to the #3090
+ * exemption above: read:self always mints; read:private mints only after consent.)
  */
 const CONSENT_EXEMPT_SCOPES = new Set([
   'block:settings:read',
   'block:settings:write',
   'apps:storage:read',
   'apps:storage:write',
+  // SHARED (cross-user) storage — governed by resolveSharedContext's server-side
+  // min-trust gate + content moderation + rate limits, not per-scope consent.
+  'apps:storage:shared:read',
+  'apps:storage:shared:write',
   'models:read:self',
+  // Collections — server-side visibility/ownership (read) + self-bound subject
+  // (follow) are the gate; see the block collections endpoints. #3090: exempting
+  // them guarantees they reach `claims.scopes` in the minted page token.
+  'collections:read:self',
+  'collections:write:self',
 ]);
 
 export function partitionByConsent(

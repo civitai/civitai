@@ -73,6 +73,20 @@ describe('buildAuthorizeRedirect', () => {
     expect(setCookie).not.toContain('Secure');
   });
 
+  it('adds Domain=<registrable> when cookieDomain is given (survives www↔apex host variation)', () => {
+    const { setCookie } = buildAuthorizeRedirect({
+      selfOrigin: SELF,
+      returnUrl: '/x',
+      cookieDomain: 'civitai.red',
+    });
+    expect(setCookie).toContain('Domain=civitai.red');
+  });
+
+  it('omits Domain (host-only) when no cookieDomain is given', () => {
+    const { setCookie } = buildAuthorizeRedirect({ selfOrigin: SELF, returnUrl: '/x' });
+    expect(setCookie).not.toContain('Domain=');
+  });
+
   it('collapses an unsafe returnUrl to /', () => {
     const { setCookie } = buildAuthorizeRedirect({
       selfOrigin: SELF,

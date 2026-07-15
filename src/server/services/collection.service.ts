@@ -136,7 +136,7 @@ export async function updateCollectionRandomSeed(): Promise<number> {
 }
 
 export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>({
-  input: { limit, cursor, privacy, types, userId, sort, ids, modes },
+  input: { limit, cursor, privacy, types, userId, sort, ids, modes, query },
   user,
   select,
 }: {
@@ -150,6 +150,10 @@ export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>
   if (sort === CollectionSort.MostContributors)
     orderBy.unshift({ contributors: { _count: 'desc' } });
 
+  // Optional case-insensitive name search (additive — `query` is omitted by every
+  // pre-existing caller, so `undefined` leaves the where clause byte-identical).
+  const trimmedQuery = query?.trim();
+
   const collections = await dbRead.collection.findMany({
     take: limit,
     cursor: cursor ? { id: cursor } : undefined,
@@ -159,6 +163,7 @@ export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>
       type: types && types.length > 0 ? { in: types } : undefined,
       userId,
       mode: modes && modes.length > 0 && user?.isModerator ? { in: modes } : undefined,
+      name: trimmedQuery ? { contains: trimmedQuery, mode: 'insensitive' } : undefined,
     },
     select,
     orderBy,

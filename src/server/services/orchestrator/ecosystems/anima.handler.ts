@@ -2,15 +2,15 @@
  * Anima Ecosystem Handler
  *
  * Handles Anima workflows using imageGen step type.
- * Uses the sdcpp engine with AnimaCreateImageGenInput.
+ * Uses the comfy engine with ComfyAnimaCreateImageGenInput.
  */
 
 import type {
-  AnimaCreateImageGenInput,
+  ComfyAnimaCreateImageGenInput,
+  ComfySampler,
+  ComfyScheduler,
   ImageGenStepTemplate,
   PreprocessImageStepTemplate,
-  SdCppSampleMethod,
-  SdCppSchedule,
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
@@ -43,30 +43,29 @@ export const createAnimaInput = defineHandler<
     ctx.baseStepIndex
   );
 
+  const input: ComfyAnimaCreateImageGenInput = {
+    engine: 'comfy',
+    ecosystem: 'anima',
+    operation: 'createImage',
+    prompt: data.prompt,
+    negativePrompt: data.negativePrompt,
+    width: data.aspectRatio?.width,
+    height: data.aspectRatio?.height,
+    cfgScale: data.cfgScale,
+    steps: data.steps,
+    sampler: data.sampler as ComfySampler,
+    scheduler: data.scheduler as ComfyScheduler,
+    seed: data.seed,
+    quantity: data.quantity ?? 1,
+    outputFormat: data.outputFormat,
+    loras: Object.keys(loras).length > 0 ? loras : undefined,
+    diffuserModel,
+    ...(controlNets.length ? { controlNets } : {}),
+  };
+
   const genStep: ImageGenStepTemplate = {
     $type: 'imageGen',
-    input: removeEmpty({
-      engine: 'comfy',
-      ecosystem: 'anima',
-      operation: 'createImage',
-      prompt: data.prompt,
-      negativePrompt: data.negativePrompt,
-      width: data.aspectRatio?.width,
-      height: data.aspectRatio?.height,
-      cfgScale: data.cfgScale,
-      steps: data.steps,
-      sampleMethod: data.sampler as SdCppSampleMethod,
-      schedule: data.scheduler as SdCppSchedule,
-      seed: data.seed,
-      quantity: data.quantity ?? 1,
-      outputFormat: data.outputFormat,
-      loras: Object.keys(loras).length > 0 ? loras : undefined,
-      diffuserModel,
-      ...(controlNets.length ? { controlNets } : {}),
-      // `as any`: (1) published AnimaCreateImageGenInput still declares engine
-      // 'sdcpp' (upstream switched to 'comfy'); (2) controlNets isn't declared on
-      // the type yet but is accepted by the orchestrator for the anima ecosystem.
-    }) as any as AnimaCreateImageGenInput,
+    input: removeEmpty(input),
   };
 
   return [...preprocessSteps, genStep];

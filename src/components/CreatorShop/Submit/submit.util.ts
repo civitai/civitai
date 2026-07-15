@@ -14,7 +14,8 @@ export type PreviewCosmetic = ComponentProps<typeof CosmeticPreview>['cosmetic']
 export const buildData = (type: CosmeticType, imageId: string, animated: boolean) => {
   if (type === CosmeticType.Badge || type === CosmeticType.ProfileDecoration)
     return { url: imageId, animated };
-  if (type === CosmeticType.ProfileBackground) return { url: imageId, type: MediaType.image };
+  if (type === CosmeticType.ProfileBackground)
+    return { url: imageId, type: MediaType.image, animated };
   return { url: imageId };
 };
 

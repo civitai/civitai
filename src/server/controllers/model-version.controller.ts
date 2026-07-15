@@ -281,6 +281,7 @@ const loadModelVersion = async ({
 
     return {
       ...version,
+      licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
       canGenerate,
       wildcardSetId,
       earlyAccessConfig: version.earlyAccessConfig as ModelVersionEarlyAccessConfig | null,

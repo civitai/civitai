@@ -189,6 +189,7 @@ import {
   nsfwBrowsingLevelsArray,
   nsfwBrowsingLevelsFlag,
   onlySelectableLevels,
+  publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
@@ -1334,6 +1335,13 @@ export const getAllImages = async (
 
   // Exclude unselectable browsing levels
   browsingLevel = onlySelectableLevels(browsingLevel);
+
+  // `applyDomainFeature` only backfills an absent `browsingLevel` on capped
+  // (green) domains, so on red/blue it can arrive undefined and reach the SQL as
+  // NULL — `(nsfwLevel & NULL)` is NULL, silently dropping every row. Fail closed
+  // to public rather than to nothing; widening here would serve levels the caller
+  // never asked for.
+  if (!browsingLevel) browsingLevel = publicBrowsingLevelsFlag;
 
   // Parse random cursor seed upfront (needed to determine if we need to fetch seed)
   let parsedRandomCursorSeed: number | undefined;

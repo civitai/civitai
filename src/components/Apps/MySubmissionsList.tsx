@@ -6,15 +6,32 @@ import {
   IconBox,
   IconCheck,
   IconClock,
+  IconCoin,
   IconExternalLink,
+  IconEye,
+  IconEyeOff,
+  IconHistory,
   IconMessage,
+  IconPencil,
   IconUsers,
   IconX,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { AppAnalyticsInline } from '~/components/Apps/AppAnalyticsInline';
+import { getDetailPrimaryAction } from '~/components/Apps/appListingDetailView';
 import { isStaleDeploy } from '~/components/Apps/deploy-status';
+import {
+  canOwnerRepublish,
+  canOwnerUnpublish,
+  ownerListingState,
+  ownerStateChip,
+  type OwnerListingState,
+} from '~/components/Apps/offsiteOwnerControls';
+import {
+  OwnerModerationHistoryModal,
+  OwnerUnpublishModal,
+} from '~/components/Apps/ownerListingModals';
 import {
   bucketGroupsByStatus,
   currentlyPublishedVersionId,
@@ -27,6 +44,8 @@ import {
 } from '~/components/Apps/submissionsTable';
 import { StatusSections, SubmissionSearch, VersionToggle } from '~/components/Apps/submissionsTableUi';
 import { formatDate } from '~/utils/date-helpers';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 
 export type FileSummary = {
   files?: Array<{ path: string; sha256: string; sizeBytes: number }>;
@@ -66,7 +85,41 @@ export type Submission = {
   modelInstallCount: number | null;
   /** Total BlockUserSubscription rows. */
   userSubscriptionCount: number | null;
+  /** W13 P4 owner controls — the backing on-site `AppListing.id` (the target for
+   *  unpublish/republish/history). Null when no listing row exists yet (a pending
+   *  first version, or a pre-W13 backfill gap). */
+  appListingId?: string | null;
+  /** The backing `AppListing`'s TRUE lifecycle status
+   *  (`draft|pending|approved|rejected|removed`) — DISTINCT from `status` (the
+   *  publish-REQUEST status). An owner unpublish flips this to `removed` while the
+   *  request stays `approved`, so it drives the live/hidden/removed owner state. Null
+   *  when there's no backing listing. */
+  listingStatus?: string | null;
+  /** The backing listing's most-recent moderation-event action (populated for a
+   *  `removed` listing) — `owner-unpublish` ⇒ owner-hidden (Republish-eligible),
+   *  anything else (a moderator `delist`/`purge`) ⇒ mod-removed (Republish forbidden). */
+  lastModerationAction?: string | null;
+  /** Whether the backing block's manifest declares a launchable page — drives the
+   *  Open-live → `/apps/run/<slug>` vs standalone-origin vs model-slot branching. */
+  hasPage?: boolean | null;
 };
+
+/** Owner-control handlers threaded from the list down to each latest row. */
+type OnsiteOwnerControls = {
+  onUnpublish: (listingId: string, slug: string) => void;
+  onRepublish: (listingId: string) => void;
+  republishing: boolean;
+  onViewHistory: (listingId: string, slug: string) => void;
+};
+
+/** Derive the owner-control state (live / owner-hidden / mod-removed / inactive) for a
+ *  row from its TRUE backing-listing status + last moderation-event action. */
+function rowOwnerState(s: Submission): OwnerListingState {
+  return ownerListingState({
+    listingStatus: s.listingStatus,
+    lastModerationAction: s.lastModerationAction,
+  });
+}
 
 /** "Month D, YYYY" (e.g. `June 7, 2026`) — the whole-day form used for the
  *  submitted / reviewed timestamps (no hour/minute; those aren't decision-useful
@@ -209,17 +262,29 @@ export function ReviewerNotesButton({
 function StatusCell({
   submission,
   isCurrentlyPublished,
+  ownerState,
 }: {
   submission: Submission;
   isCurrentlyPublished: boolean;
+  /** Owner-facing state; when owner-hidden / mod-removed it OVERRIDES the badge (the
+   *  publish request still reads `approved`, which would misleadingly show "live"). */
+  ownerState: OwnerListingState;
 }) {
   const { status, rejectionReason, approvalNotes } = submission;
   const notes =
     status === 'rejected' ? rejectionReason : status === 'approved' ? approvalNotes : null;
   const variant = status === 'rejected' ? 'rejected' : 'approved';
+  // A removed backing listing (owner-hidden / mod-removed) overrides the deploy/request
+  // badge with the owner-facing state; live/inactive keep the normal badge.
+  const override = ownerStateChip(ownerState);
+  const chip = override ? (
+    <Badge color={override.color}>{override.label}</Badge>
+  ) : (
+    statusBadge(submission, isCurrentlyPublished)
+  );
   return (
     <Stack gap={6} align="flex-start">
-      {statusBadge(submission, isCurrentlyPublished)}
+      {chip}
       {notes && <ReviewerNotesButton notes={notes} variant={variant} />}
     </Stack>
   );
@@ -249,6 +314,8 @@ function OnsiteRow({
   isCurrentlyPublished,
   onWithdraw,
   withdrawing,
+  owner,
+  canOpenPage,
   toggle,
 }: {
   s: Submission;
@@ -256,9 +323,15 @@ function OnsiteRow({
   isCurrentlyPublished: boolean;
   onWithdraw: (id: string) => void;
   withdrawing: boolean;
+  /** Owner-control handlers (wired only on the latest, non-nested row). */
+  owner: OnsiteOwnerControls;
+  /** Mirrors the `appBlocksPages` flag — gates the /apps/run/<slug> Open link. */
+  canOpenPage: boolean;
   toggle?: ReactNode;
 }) {
   const isApproved = s.status === 'approved';
+  // Owner state lives on the latest (non-nested) row only; older versions are history.
+  const ownerState = nested ? ('inactive' as OwnerListingState) : rowOwnerState(s);
   return (
     <>
       <Table.Tr>
@@ -279,7 +352,11 @@ function OnsiteRow({
           <Code>{s.version}</Code>
         </Table.Td>
         <Table.Td>
-          <StatusCell submission={s} isCurrentlyPublished={isCurrentlyPublished} />
+          <StatusCell
+            submission={s}
+            isCurrentlyPublished={isCurrentlyPublished}
+            ownerState={ownerState}
+          />
         </Table.Td>
         <Table.Td>
           <Text size="xs">{formatSubmissionDate(s.submittedAt)}</Text>
@@ -314,6 +391,10 @@ function OnsiteRow({
             isCurrentlyPublished={isCurrentlyPublished}
             onWithdraw={() => onWithdraw(s.id)}
             busy={withdrawing}
+            nested={nested}
+            ownerState={ownerState}
+            owner={owner}
+            canOpenPage={canOpenPage}
           />
         </Table.Td>
       </Table.Tr>
@@ -343,13 +424,38 @@ export function MySubmissionsList({
   submissions,
   onWithdraw,
   withdrawing,
+  canOpenPage = false,
 }: {
   submissions: Submission[];
   onWithdraw: (id: string) => void;
   withdrawing: boolean;
+  /** Mirrors the viewer's `appBlocksPages` flag — an on-site page app only routes to
+   *  the /apps/run/<slug> in-host page when this is true; otherwise the Open-live
+   *  falls back to the standalone origin (never a dead run link). */
+  canOpenPage?: boolean;
 }) {
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [unpublishTarget, setUnpublishTarget] = useState<{ id: string; slug: string } | null>(null);
+  const [historyTarget, setHistoryTarget] = useState<{ id: string; slug: string } | null>(null);
+
+  const utils = trpc.useUtils();
+  const invalidateSubmissions = () => utils.blocks.listMyPublishRequests.invalidate();
+
+  const republishMutation = trpc.appListings.republishOwnListing.useMutation({
+    onSuccess: async () => {
+      showSuccessNotification({ message: 'App republished — it is live again.' });
+      await invalidateSubmissions();
+    },
+    onError: (e) => showErrorNotification({ title: 'Republish failed', error: new Error(e.message) }),
+  });
+
+  const owner: OnsiteOwnerControls = {
+    onUnpublish: (id, slug) => setUnpublishTarget({ id, slug }),
+    onRepublish: (id) => republishMutation.mutate({ appListingId: id }),
+    republishing: republishMutation.isPending,
+    onViewHistory: (id, slug) => setHistoryTarget({ id, slug }),
+  };
 
   // Group by app, apply the text filter, sort newest-first, then partition into
   // status SECTIONS (Live / Pending / Rejected / Withdrawn). Status is now the
@@ -413,6 +519,8 @@ export function MySubmissionsList({
                   isCurrentlyPublished={g.latest.id === publishedId}
                   onWithdraw={onWithdraw}
                   withdrawing={withdrawing}
+                  owner={owner}
+                  canOpenPage={canOpenPage}
                   toggle={
                     g.older.length > 0 ? (
                       <VersionToggle
@@ -434,6 +542,8 @@ export function MySubmissionsList({
                       isCurrentlyPublished={older.id === publishedId}
                       onWithdraw={onWithdraw}
                       withdrawing={withdrawing}
+                      owner={owner}
+                      canOpenPage={canOpenPage}
                     />
                   ))}
               </Fragment>
@@ -460,7 +570,103 @@ export function MySubmissionsList({
           renderTable={renderTable}
         />
       )}
+
+      <OwnerUnpublishModal
+        target={unpublishTarget}
+        onClose={() => setUnpublishTarget(null)}
+        onDone={invalidateSubmissions}
+        testIdPrefix="apps-onsite"
+        variant="offline"
+      />
+      <OwnerModerationHistoryModal
+        target={historyTarget}
+        onClose={() => setHistoryTarget(null)}
+        testIdPrefix="apps-onsite"
+      />
     </Stack>
+  );
+}
+
+/**
+ * The primary "open the running app" affordance for an APPROVED, currently-published,
+ * serving on-site app — graceful, never a dead link. Reuses the shared
+ * {@link getDetailPrimaryAction} matrix (identical to the store detail):
+ *   - page app + canOpenPage → **Open** → `/apps/run/<slug>` (internal in-host page).
+ *   - page app + !canOpenPage → **Open live** → the standalone `<slug>.civit.ai` origin.
+ *   - model-slot app (no page) → informational "Runs on model pages" → the block detail.
+ */
+function OpenLiveAction({
+  submission,
+  canOpenPage,
+}: {
+  submission: Submission;
+  canOpenPage: boolean;
+}) {
+  const action = getDetailPrimaryAction(
+    {
+      slug: submission.slug,
+      kind: 'onsite',
+      kindData: {
+        kind: 'onsite',
+        appBlockId: submission.appBlockId ?? null,
+        hasPage: !!submission.hasPage,
+        // The already-public standalone origin (the pre-P4 hardcoded target).
+        liveUrl: `https://${submission.slug}.civit.ai/`,
+      },
+    },
+    { canOpenPage }
+  );
+  const testId = `apps-submissions-open-${submission.slug}`;
+  if (action.mode === 'open') {
+    return (
+      <Button
+        size="xs"
+        variant="default"
+        component={Link}
+        href={action.href ?? '#'}
+        rightSection={<IconArrowRight size={12} />}
+        data-testid={testId}
+      >
+        {action.label}
+      </Button>
+    );
+  }
+  if (action.mode === 'visit' && action.href) {
+    return (
+      <Button
+        size="xs"
+        variant="default"
+        component="a"
+        href={action.href}
+        target="_blank"
+        rel="noopener noreferrer"
+        rightSection={<IconExternalLink size={12} />}
+        data-testid={testId}
+      >
+        {action.label}
+      </Button>
+    );
+  }
+  // Model-slot / no launchable page → informational; links to the block detail where
+  // the install affordance lives, never a dead standalone link.
+  if (action.href) {
+    return (
+      <Button
+        size="xs"
+        variant="subtle"
+        color="gray"
+        component={Link}
+        href={action.href}
+        data-testid={testId}
+      >
+        {action.label}
+      </Button>
+    );
+  }
+  return (
+    <Text size="xs" c="dimmed" data-testid={testId}>
+      {action.label}
+    </Text>
   );
 }
 
@@ -469,13 +675,22 @@ function SubmissionActions({
   isCurrentlyPublished,
   onWithdraw,
   busy,
+  nested,
+  ownerState,
+  owner,
+  canOpenPage,
 }: {
   submission: Submission;
   isCurrentlyPublished: boolean;
   onWithdraw: () => void;
   busy: boolean;
+  nested: boolean;
+  ownerState: OwnerListingState;
+  owner: OnsiteOwnerControls;
+  canOpenPage: boolean;
 }) {
-  if (submission.status === 'pending') {
+  const s = submission;
+  if (s.status === 'pending') {
     return (
       <Button
         size="xs"
@@ -489,14 +704,42 @@ function SubmissionActions({
       </Button>
     );
   }
-  if (submission.status === 'approved') {
-    // "Open live" belongs ONLY on the currently-published version AND only when
-    // it is actually serving — an older approved version links to nothing live,
-    // and a published version still building / with a failed deploy would link to
-    // a slug that 404s (and disagree with its "deploy failed"/"building" badge).
-    // `null` deployState = legacy/untracked → treated as live (pre-UX-pass behavior).
-    const isLiveNow = submission.deployState === 'live' || submission.deployState == null;
-    if (!isCurrentlyPublished || !isLiveNow) {
+  if (s.status === 'approved') {
+    // A removed backing listing (owner-hidden / mod-removed) is NOT serving — never
+    // offer an Open affordance for it. `null` deployState = legacy/untracked → live.
+    const isRemoved = ownerState === 'owner-hidden' || ownerState === 'mod-removed';
+    const isLiveNow = s.deployState === 'live' || s.deployState == null;
+    const showOpen = isCurrentlyPublished && isLiveNow && !isRemoved;
+
+    // Owner takedown affordances live ONLY on the latest (non-nested) row with a
+    // backing listing id (unpublish/republish/history all target the AppListing).
+    const showOwner = !nested && !!s.appListingId;
+    const listingId = s.appListingId as string;
+    const canUnpublish = showOwner && canOwnerUnpublish(ownerState);
+    const canRepublish = showOwner && canOwnerRepublish(ownerState);
+    const isModRemoved = showOwner && ownerState === 'mod-removed';
+    // History only when there IS history — a removed/hidden listing, or any recorded
+    // moderation event. A pristine, never-moderated live app shows no History button
+    // (it would just open to "No moderation history yet.").
+    const canViewHistory =
+      showOwner &&
+      (ownerState === 'owner-hidden' ||
+        ownerState === 'mod-removed' ||
+        !!s.lastModerationAction);
+    // Surface the manage entry points on any live / owner-hidden app (an app the owner
+    // still controls); a mod takedown hides Edit (mirrors the off-site list), Revenue
+    // stays (earnings are historical + viewable regardless of visibility).
+    const canManage = showOwner && s.appBlockId;
+    const showEdit = canManage && ownerState !== 'mod-removed';
+
+    const hasAny =
+      showOpen ||
+      canUnpublish ||
+      canRepublish ||
+      isModRemoved ||
+      canViewHistory ||
+      canManage;
+    if (!hasAny) {
       return (
         <Text size="xs" c="dimmed">
           —
@@ -504,20 +747,79 @@ function SubmissionActions({
       );
     }
     return (
-      <Button
-        size="xs"
-        variant="default"
-        component="a"
-        href={`https://${submission.slug}.civit.ai/`}
-        target="_blank"
-        rel="noopener"
-        rightSection={<IconExternalLink size={12} />}
-      >
-        Open live
-      </Button>
+      <Group gap={6} wrap="nowrap">
+        {showOpen && <OpenLiveAction submission={s} canOpenPage={canOpenPage} />}
+        {canUnpublish && (
+          <Button
+            size="xs"
+            variant="default"
+            color="orange"
+            onClick={() => owner.onUnpublish(listingId, s.slug)}
+            leftSection={<IconEyeOff size={12} />}
+            data-testid={`apps-onsite-unpublish-${s.slug}`}
+          >
+            Unpublish
+          </Button>
+        )}
+        {canRepublish && (
+          <Button
+            size="xs"
+            variant="default"
+            color="green"
+            onClick={() => owner.onRepublish(listingId)}
+            disabled={owner.republishing}
+            loading={owner.republishing}
+            leftSection={<IconEye size={12} />}
+            data-testid={`apps-onsite-republish-${s.slug}`}
+          >
+            Republish
+          </Button>
+        )}
+        {isModRemoved && (
+          <Text size="xs" c="red" data-testid={`apps-onsite-mod-removed-${s.slug}`}>
+            Removed by a moderator
+          </Text>
+        )}
+        {showEdit && s.appBlockId && (
+          <Button
+            size="xs"
+            variant="default"
+            component={Link}
+            href={`/apps/${encodeURIComponent(s.appBlockId)}/edit-manifest`}
+            leftSection={<IconPencil size={12} />}
+            data-testid={`apps-onsite-edit-${s.slug}`}
+          >
+            Edit
+          </Button>
+        )}
+        {canManage && s.appBlockId && (
+          <Button
+            size="xs"
+            variant="default"
+            component={Link}
+            href={`/apps/${encodeURIComponent(s.appBlockId)}/revenue`}
+            leftSection={<IconCoin size={12} />}
+            data-testid={`apps-onsite-revenue-${s.slug}`}
+          >
+            Revenue
+          </Button>
+        )}
+        {canViewHistory && (
+          <Button
+            size="xs"
+            variant="subtle"
+            color="gray"
+            onClick={() => owner.onViewHistory(listingId, s.slug)}
+            leftSection={<IconHistory size={12} />}
+            data-testid={`apps-onsite-history-${s.slug}`}
+          >
+            History
+          </Button>
+        )}
+      </Group>
     );
   }
-  if (submission.status === 'rejected') {
+  if (s.status === 'rejected') {
     return (
       <Button
         size="xs"

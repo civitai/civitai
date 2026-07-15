@@ -53,6 +53,8 @@ export const privacySettingsSchema = z.object({
   showFollowing: z.boolean().optional(),
   showRating: z.boolean().optional(),
   showBadges: z.boolean().optional(),
+  // Ordered cosmetic ids of badges the user pinned to the top of their profile.
+  highlightedBadgeIds: z.array(z.number()).optional(),
 });
 
 export type UserProfileUpdateSchema = z.infer<typeof userProfileUpdateSchema>;

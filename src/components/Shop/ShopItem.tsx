@@ -22,7 +22,10 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { BuzzPill } from '~/components/Shop/BuzzPill';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
@@ -39,6 +42,7 @@ export const ShopItem = ({
   alreadyOwned = false,
   viaShopUserId,
   creator,
+  layout = 'shop',
 }: {
   item: CosmeticShopItemGetById;
   sectionItemCreatedAt?: Date;
@@ -46,8 +50,13 @@ export const ShopItem = ({
   // Attributes the purchase to this shop owner (Creator Shop cross-creator resale).
   viaShopUserId?: number;
   // The cosmetic's original creator, shown as attribution (Creator Shop only).
-  creator?: { id: number; username: string | null; image: string | null } | null;
+  creator?: UserWithCosmetics | null;
+  // 'shop' = the official /shop cards (default). 'storefront' = the leaner
+  // creator-shop cards: compact artwork, creator avatar attribution, and the
+  // Buzz price on the button instead of beside the title.
+  layout?: 'shop' | 'storefront';
 }) => {
+  const isStorefront = layout === 'storefront';
   const cosmetic = item.cosmetic;
   const isAvailable =
     (item.availableQuantity ?? null) === null || (item.availableQuantity ?? 0) > 0;
@@ -74,8 +83,14 @@ export const ShopItem = ({
     dayjs(sectionItemCreatedAt).isAfter(dayjs(lastViewed));
 
   return (
-    <Paper className={`${classes.card} ${isNew ? classes.newItem : ''}`}>
-      {isNew && (
+    <Paper
+      className={clsx(
+        classes.card,
+        isStorefront && classes.cardStorefront,
+        isNew && !isStorefront && classes.newItem
+      )}
+    >
+      {isNew && !isStorefront && (
         <Badge color="yellow.7" className={classes.newBadge} variant="filled">
           New!
         </Badge>
@@ -136,9 +151,9 @@ export const ShopItem = ({
             }}
             disabled={!isAvailable || outOfStock}
           >
-            <div className={classes.cardHeader}>
+            <div className={clsx(classes.cardHeader, isStorefront && classes.cardHeaderCompact)}>
               <div className={clsx(classes.sampleWrapper, outOfStock && classes.dim)}>
-                <CosmeticSample cosmetic={cosmetic} size="lg" />
+                <CosmeticSample cosmetic={cosmetic} size={isStorefront ? 'md' : 'lg'} />
               </div>
               <Text size="xs" c="dimmed" px={6} component="div" className={classes.type}>
                 {getDisplayName(item.cosmetic.type)}
@@ -153,35 +168,45 @@ export const ShopItem = ({
               )}
             </div>
           </UnstyledButton>
-          <Stack gap={2}>
+          <Stack gap={isStorefront ? 6 : 2}>
             <div className={classes.titleRow}>
-              <Title order={3} className={classes.title}>
+              <Title
+                order={isStorefront ? 4 : 3}
+                className={clsx(classes.title, isStorefront && classes.titleStorefront)}
+              >
                 {item.title}
               </Title>
-              <CurrencyBadge
-                currency={Currency.BUZZ}
-                type={domain === 'green' ? 'green' : 'yellow'}
-                unitAmount={item.unitAmount}
-                variant="transparent"
-                className={clsx('!px-0', classes.price)}
-              />
+              {!isStorefront && (
+                <CurrencyBadge
+                  currency={Currency.BUZZ}
+                  type={domain === 'green' ? 'green' : 'yellow'}
+                  unitAmount={item.unitAmount}
+                  variant="transparent"
+                  className={clsx('!px-0', classes.price)}
+                />
+              )}
             </div>
-            {creator?.username && (
-              <Text size="xs" c="dimmed">
-                by{' '}
-                <Anchor
-                  component={NextLink}
-                  href={`/user/${creator.username}`}
-                  c="blue.4"
-                  fw={500}
-                  underline="always"
-                  // Don't trigger the card's purchase modal.
-                  onClick={(e: MouseEvent) => e.stopPropagation()}
-                >
-                  @{creator.username}
-                </Anchor>
-              </Text>
-            )}
+            {creator?.username &&
+              (isStorefront ? (
+                <div onClick={(e: MouseEvent) => e.stopPropagation()}>
+                  <UserAvatar user={creator} withUsername size="sm" linkToProfile />
+                </div>
+              ) : (
+                <Text size="xs" c="dimmed">
+                  by{' '}
+                  <Anchor
+                    component={NextLink}
+                    href={`/user/${creator.username}`}
+                    c="blue.4"
+                    fw={500}
+                    underline="always"
+                    // Don't trigger the card's purchase modal.
+                    onClick={(e: MouseEvent) => e.stopPropagation()}
+                  >
+                    @{creator.username}
+                  </Anchor>
+                </Text>
+              ))}
           </Stack>
           {!!item.description && (
             <div className={classes.description}>
@@ -192,8 +217,17 @@ export const ShopItem = ({
         <Stack mt="auto" gap={4}>
           <LoginRedirect reason="shop">
             <Button
-              radius="xl"
-              className={clsx(classes.buyButton, domain === 'green' && classes.buyButtonGreen)}
+              radius={isStorefront ? 'sm' : 'xl'}
+              px={isStorefront ? 10 : undefined}
+              className={
+                isStorefront
+                  ? clsx(
+                      classes.buyButton,
+                      domain === 'green' ? classes.buyButtonSolidGreen : classes.buyButtonSolid
+                    )
+                  : clsx(classes.buyButton, domain === 'green' && classes.buyButtonGreen)
+              }
+              styles={isStorefront ? { label: { width: '100%' } } : undefined}
               onClick={() => {
                 dialogStore.trigger({
                   component: CosmeticShopItemPreviewModal,
@@ -202,7 +236,17 @@ export const ShopItem = ({
               }}
               disabled={!isAvailable || outOfStock}
             >
-              Preview
+              {isStorefront ? (
+                <span className={classes.buyButtonInner}>
+                  <span className={classes.buyButtonLabel}>Preview</span>
+                  <BuzzPill
+                    amount={item.unitAmount}
+                    variant={domain === 'green' ? 'green' : 'yellow'}
+                  />
+                </span>
+              ) : (
+                'Preview'
+              )}
             </Button>
           </LoginRedirect>
         </Stack>

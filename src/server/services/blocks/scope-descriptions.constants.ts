@@ -30,6 +30,9 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
   'apps:storage:write': "Write to this app's private per-install data store",
   'apps:storage:shared:read': "Read this app's shared, community-wide data (e.g. everyone's posts + vote counts)",
   'apps:storage:shared:write': "Post + vote in this app's shared, community-wide data — visible to all users of the app",
+  'collections:read:self': 'Browse and read public Civitai collections, and your own public collections',
+  'collections:write:self': 'Bookmark (follow) collections on your behalf',
+  'collections:read:private': 'Read your private collections',
 };
 
 export const SLOT_DESCRIPTIONS: Record<string, string> = {

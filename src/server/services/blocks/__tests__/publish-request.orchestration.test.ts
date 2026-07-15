@@ -38,6 +38,7 @@ const {
   mockNewUlid,
   mockAplSeq,
   mockNewAppListingId,
+  mockProvision,
 } = vi.hoisted(() => {
   const ulidSeq: { i: number } = { i: 0 };
   // Dedicated counter for AppListing ids so minting a listing id does NOT
@@ -143,6 +144,11 @@ const {
       aplSeq.i += 1;
       return `apl_test_${aplSeq.i}`;
     }),
+    // W4 storage-provision-on-approve: approveRequest dynamically imports
+    // AppStorageProvisioner and calls provision() for a storage-declaring app so
+    // its appsDb schema exists at approve (no manual admin backfill). Mocked so
+    // the approve tests never reach the real cnpg-cluster-apps DDL path.
+    mockProvision: vi.fn(async () => undefined),
   };
 });
 
@@ -167,6 +173,13 @@ vi.mock('~/server/services/blocks/forgejo.service', () => mockForgejo);
 // triggers builds). Mock the resolved absolute id the service sees.
 vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   triggerBuild: mockTriggerBuild,
+}));
+
+// approveRequest does `await import('~/server/services/apps/storage-provision.service')`
+// to provision the app's appsDb schema (W4). Mock the resolved id the service
+// sees so the (3c) block never touches the real appsDb/pg module graph.
+vi.mock('~/server/services/apps/storage-provision.service', () => ({
+  AppStorageProvisioner: { provision: mockProvision },
 }));
 
 vi.mock('~/server/utils/app-block-ids', () => ({
@@ -274,6 +287,10 @@ beforeEach(() => {
   mockForgejo.setCommitStatus.mockResolvedValue(undefined);
   mockTriggerBuild.mockClear();
   mockTriggerBuild.mockResolvedValue({ name: 'pipelinerun-mock' });
+  // W4 storage-provision-on-approve default: provision() resolves cleanly. Tests
+  // that exercise the failure path override with mockRejectedValueOnce.
+  mockProvision.mockReset();
+  mockProvision.mockResolvedValue(undefined);
   mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 0 });
   mockDbWrite.appBlock.update.mockResolvedValue(undefined);
   // W13 category-on-approve default: the no-clobber category `updateMany` is a
@@ -2294,6 +2311,155 @@ describe('approveRequest', () => {
       // Pre-validation fails before any category write or listing-create.
       expect(mockDbWrite.appBlock.updateMany).not.toHaveBeenCalled();
       expect(mockDbWrite.appListing.create).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---- W4: per-app storage provisioning-on-approve -----------------------
+  //
+  // approveRequest now provisions the app's appsDb schema (kv / quota /
+  // shared_kv / votes / counters / shared_kv_reports + triggers + role) at
+  // approve — but ONLY when the approved manifest declares any `apps:storage:*`
+  // scope — so a storage-declaring app has its datastore the moment it deploys,
+  // without a manual `/api/admin/apps-storage-backfill` run. It reuses the SAME
+  // `sanitizeAppSlug(blockId)` derivation the backfill uses, is idempotent
+  // (CREATE ... IF NOT EXISTS DDL), and — like (3a)/(3b)/#3085/#3089 — it
+  // log-and-continues on ANY error so provisioning can NEVER gate the deploy.
+  describe('W4: storage provisioning-on-approve', () => {
+    it('provisions the appsDb schema ONCE for a storage-declaring app with slug = sanitized blockId', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({ manifest: manifest({ scopes: ['apps:storage:read', 'apps:storage:write'] }) })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle({
+        scopes: ['apps:storage:read', 'apps:storage:write'],
+      });
+
+      const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      // Provisioned exactly once, with the appBlockId of the freshly-created row
+      // and the sanitized slug (blockId 'hello' → schema slug 'hello').
+      expect(mockProvision).toHaveBeenCalledTimes(1);
+      expect(mockProvision).toHaveBeenCalledWith({ appBlockId: result.appBlockId, slug: 'hello' });
+      // The approve itself completed end-to-end.
+      expect(result.forgejoCommitSha).toBe('commit_sha_abc');
+      expect(mockTriggerBuild).toHaveBeenCalledOnce();
+    });
+
+    it('provisions for a SHARED-storage-only app (apps:storage:shared:*)', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({ manifest: manifest({ scopes: ['apps:storage:shared:read'] }) })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle({ scopes: ['apps:storage:shared:read'] });
+
+      const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      expect(mockProvision).toHaveBeenCalledTimes(1);
+      expect(mockProvision).toHaveBeenCalledWith({ appBlockId: result.appBlockId, slug: 'hello' });
+    });
+
+    it('derives the schema slug from the blockId via sanitizeAppSlug (hyphens → underscores)', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      // blockId 'my-cool-app' → appsDb schema slug 'my_cool_app' (hyphens folded).
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({
+          slug: 'my-cool-app',
+          manifest: manifest({ blockId: 'my-cool-app', scopes: ['apps:storage:write'] }),
+        })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle({
+        blockId: 'my-cool-app',
+        scopes: ['apps:storage:write'],
+      });
+
+      const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      expect(mockProvision).toHaveBeenCalledWith({
+        appBlockId: result.appBlockId,
+        slug: 'my_cool_app',
+      });
+    });
+
+    it('does NOT provision a non-storage app (declares only ai:write:budgeted)', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({ manifest: manifest({ scopes: ['ai:write:budgeted'] }) })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle({ scopes: ['ai:write:budgeted'] });
+
+      const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      // Gen-only app never touches the datastore → no empty 6-table schema minted.
+      expect(mockProvision).not.toHaveBeenCalled();
+      // …and the approve still completes normally.
+      expect(result.forgejoCommitSha).toBe('commit_sha_abc');
+      expect(mockTriggerBuild).toHaveBeenCalledOnce();
+    });
+
+    it('does NOT provision an app with no scopes at all (default manifest)', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle();
+
+      await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      expect(mockProvision).not.toHaveBeenCalled();
+    });
+
+    // TRANSACTION-BOUNDARY / log-and-continue coverage (mirrors the (3b)/(3a)
+    // tx-boundary tests): provisioning is a side effect that must NEVER gate the
+    // approve/deploy. A provision() throw is logged and the approve CONTINUES.
+    it('tx-boundary: a provision() error does NOT abort the approve — commit/finalise/build still run (backfill-recoverable)', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({ manifest: manifest({ scopes: ['apps:storage:read'] }) })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle({ scopes: ['apps:storage:read'] });
+      // The appsDb DDL fails (e.g. cnpg-cluster-apps briefly unavailable).
+      mockProvision.mockRejectedValueOnce(new Error('cnpg-cluster-apps: connection refused'));
+
+      const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      // The provision was attempted and failed…
+      expect(mockProvision).toHaveBeenCalledTimes(1);
+      // …but the approve proceeded end-to-end: AppBlock create, commit, finalise, build.
+      expect(result.forgejoCommitSha).toBe('commit_sha_abc');
+      expect(mockDbWrite.appBlock.create).toHaveBeenCalledOnce();
+      expect(mockForgejo.commitFiles).toHaveBeenCalledOnce();
+      expect(mockDbWrite.appBlockPublishRequest.update).toHaveBeenCalledOnce();
+      expect(mockTriggerBuild).toHaveBeenCalledOnce();
+    });
+
+    it('idempotency: a subsequent-version re-approve provisions again (safe — CREATE ... IF NOT EXISTS)', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({
+          manifest: manifest({ version: '0.2.0', scopes: ['apps:storage:read'] }),
+        })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue({
+        id: 'apb_existing',
+        appId: 'oc_existing',
+        repoUrl: 'https://forgejo.example/civitai-apps/hello',
+        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+      });
+      mockBundleBuffer.current = await makeValidBundle({
+        version: '0.2.0',
+        scopes: ['apps:storage:read'],
+      });
+
+      const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      // Re-runs the idempotent DDL against the EXISTING app block's id + slug.
+      expect(result.appBlockId).toBe('apb_existing');
+      expect(mockProvision).toHaveBeenCalledTimes(1);
+      expect(mockProvision).toHaveBeenCalledWith({ appBlockId: 'apb_existing', slug: 'hello' });
     });
   });
 });

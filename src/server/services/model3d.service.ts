@@ -55,6 +55,7 @@ import type {
 import { Model3DSort } from '~/server/schema/model3d.schema';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
+import { isMature, maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
 import { handlePolyGenWorkflowResult } from '~/server/services/orchestrator/ecosystems/polyGen.handler';
 import type { ImageBlob, PolyGenStep, Workflow, WorkflowStep } from '@civitai/client';
 import type { Context } from '~/server/createContext';
@@ -309,13 +310,11 @@ export const ensureModel3DFromWorkflow = async ({
     if (!workflow.steps?.length) {
       throw throwBadRequestError('Workflow has no steps to materialize');
     }
-    const polyGenStep = workflow.steps.find(
-      (s: WorkflowStep) => s.$type === 'polyGen'
-    ) as PolyGenStep | undefined;
+    const polyGenStep = workflow.steps.find((s: WorkflowStep) => s.$type === 'polyGen') as
+      | PolyGenStep
+      | undefined;
     if (!polyGenStep?.output?.model) {
-      throw throwBadRequestError(
-        'Workflow has no PolyGen output to materialize a 3D model from'
-      );
+      throw throwBadRequestError('Workflow has no PolyGen output to materialize a 3D model from');
     }
 
     // The chained `model3DPreview` step (see polygen-graph.handler) renders the
@@ -326,6 +325,22 @@ export const ensureModel3DFromWorkflow = async ({
       | { output?: { images?: ImageBlob[] } }
       | undefined;
     const thumbnailOverride = previewStep?.output?.images?.find((img) => !!img?.url);
+
+    // Same gate the generator UI applies: the mesh blob is never rated by the
+    // orchestrator, so the effective rating comes from the preview renders /
+    // auto-thumbnail. A mature result generated without mature-content billing
+    // must be unlocked (yellow Buzz → allowMatureContent) before it can be
+    // materialized into a postable draft.
+    const effectiveNsfwLevel = maxNsfwLevel([
+      polyGenStep.output.model.nsfwLevel,
+      polyGenStep.output.thumbnail?.nsfwLevel,
+      ...(previewStep?.output?.images ?? []).map((img) => img?.nsfwLevel),
+    ]);
+    if (workflow.allowMatureContent === false && isMature(effectiveNsfwLevel)) {
+      throw throwBadRequestError(
+        'This 3D model was rated mature. Unlock it with Yellow Buzz before posting.'
+      );
+    }
 
     const meta = (workflow.metadata ?? {}) as Record<string, unknown>;
     const generationParams = (meta.params ?? {}) as Record<string, unknown>;
@@ -1477,8 +1492,8 @@ export const getModel3DRelatedPosts = async ({
     const visibility: Prisma.PostWhereInput = isModerator
       ? {}
       : viewerId
-        ? { OR: [publishedClause, { userId: viewerId }] }
-        : publishedClause;
+      ? { OR: [publishedClause, { userId: viewerId }] }
+      : publishedClause;
 
     const where: Prisma.PostWhereInput = {
       model3dId,

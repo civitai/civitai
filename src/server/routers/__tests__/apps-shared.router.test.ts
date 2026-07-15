@@ -24,6 +24,7 @@ const {
   mockThrowOnBlockedLinkDomain,
   mockAuditPromptServer,
   mockIsRevoked,
+  mockLogToAxiom,
 } = vi.hoisted(() => {
   const mockClient = {
     query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
@@ -36,7 +37,7 @@ const {
   return {
     mockVerifyBlockToken: vi.fn(),
     mockParseSubjectUserId: vi.fn(),
-    mockDbRead: { appBlock: { findUnique: vi.fn() } },
+    mockDbRead: { appBlock: { findUnique: vi.fn() }, account: { count: vi.fn() } },
     mockIsSharedEnabled: vi.fn(async () => true),
     mockPool,
     mockClient,
@@ -46,6 +47,7 @@ const {
     mockThrowOnBlockedLinkDomain: vi.fn(async () => undefined),
     mockAuditPromptServer: vi.fn(async () => undefined),
     mockIsRevoked: vi.fn(async () => false),
+    mockLogToAxiom: vi.fn(async () => undefined),
   };
 });
 
@@ -75,9 +77,15 @@ vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
 vi.mock('~/server/services/block-revocation.service', () => ({
   BlockRevocation: { isRevoked: (...a: unknown[]) => mockIsRevoked(...a) },
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: async () => undefined }));
+vi.mock('~/server/logging/client', () => ({
+  logToAxiom: (...a: unknown[]) => mockLogToAxiom(...a),
+}));
+// NOTE: the report op's Discord notify does a dynamic `import('~/env/server')`; we
+// deliberately do NOT mock env (mocking it clobbers env.LOGGING and breaks the trpc
+// import chain). In the test env DISCORD_WEBHOOK_MOD_ALERTS is unset, so the notify
+// short-circuits to a no-op before any fetch — exactly the fire-and-forget path.
 
-import { appsSharedRouter, appsModRouter } from '../apps-shared.router';
+import { appsSharedRouter, appsModRouter, sanitizeDiscordText } from '../apps-shared.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { OnboardingSteps } from '~/server/common/enums';
 
@@ -139,13 +147,30 @@ beforeEach(() => {
   );
   mockGetSessionUser.mockResolvedValue(trustedUser());
   mockDbRead.appBlock.findUnique.mockResolvedValue({ id: 'apb_test', status: 'approved' });
+  // Default: no linked OAuth account (so an unverified-email subject is still denied
+  // unless a test opts into a linked account). Only consulted when emailVerified is
+  // absent — the verified-email tests never hit this.
+  mockDbRead.account.count.mockResolvedValue(0);
   mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 });
   mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
   mockCheckAppendRl.mockResolvedValue({ allowed: true });
   mockCheckVoteRl.mockResolvedValue({ allowed: true });
   mockThrowOnBlockedLinkDomain.mockResolvedValue(undefined);
   mockAuditPromptServer.mockResolvedValue(undefined);
+  mockLogToAxiom.mockResolvedValue(undefined);
 });
+
+// Helper: the append data path needs the row-count + quota SELECTs to resolve so a
+// trusted write reaches the INSERT.
+function mockAppendDataPath() {
+  mockPool.query.mockImplementation(async (sql: string) => {
+    if (sql.includes('author_user_id') && sql.includes('count(*)'))
+      return { rows: [{ n: '0' }], rowCount: 1 };
+    if (sql.includes('.quota'))
+      return { rows: [{ used_bytes: '0', row_count: '0' }], rowCount: 1 };
+    return { rows: [], rowCount: 0 };
+  });
+}
 
 describe('resolver gates', () => {
   it('rejects an invalid token (UNAUTHORIZED)', async () => {
@@ -253,6 +278,140 @@ describe('H3 min-trust gate (write + vote)', () => {
     await expect(caller().vote({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
     });
+  });
+});
+
+// "Verified email" is satisfied by emailVerified OR a linked OAuth account. civitai
+// only sets emailVerified via the email-CHANGE flow — OAuth sign-in never does — so
+// ~69% of active (OAuth-heavy) users had emailVerified=NULL and were wrongly locked
+// out. A linked OAuth account is a provider-verified identity (a STRONGER anti-sybil
+// signal than an unverified civitai email), so it now satisfies the gate. The other
+// trust conditions (banned/muted/onboarding/age/tier) are UNCHANGED and still take
+// precedence in the SAME order.
+describe('OAuth-linked account satisfies the verified-email trust condition', () => {
+  it('(case 2 — THE FIX) emailVerified NULL + hasLinkedOAuth=true → PASSES', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockGetSessionUser.mockResolvedValueOnce(trustedUser({ emailVerified: undefined }));
+    mockDbRead.account.count.mockResolvedValueOnce(1); // one linked OAuth account
+    mockAppendDataPath();
+    const out = await caller().append({ blockToken: 't', value: { title: 'idea' } });
+    expect(out.key).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+    expect(mockPool.connect).toHaveBeenCalled();
+    // the account query keyed on the SUBJECT userId (from the verified token), not input
+    expect(mockDbRead.account.count).toHaveBeenCalledWith({ where: { userId: 42 } });
+  });
+
+  it('(case 3) emailVerified NULL + hasLinkedOAuth=false → DENIED (Verify your email…)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockGetSessionUser.mockResolvedValueOnce(trustedUser({ emailVerified: undefined }));
+    mockDbRead.account.count.mockResolvedValueOnce(0); // no linked OAuth account
+    await expect(
+      caller().append({ blockToken: 't', value: { title: 'idea' } })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'Verify your email before contributing' });
+    expect(mockPool.connect).not.toHaveBeenCalled();
+  });
+
+  it('(case 1 — unchanged) emailVerified set → PASSES WITHOUT querying account.count', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    // trustedUser() default has emailVerified set
+    mockAppendDataPath();
+    const out = await caller().append({ blockToken: 't', value: { title: 'idea' } });
+    expect(out.key).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+    // query-only-when-needed: a verified-email subject incurs NO account query
+    expect(mockDbRead.account.count).not.toHaveBeenCalled();
+  });
+
+  it('(query-only-when-needed) unverified subject DOES query account.count', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockGetSessionUser.mockResolvedValueOnce(trustedUser({ emailVerified: undefined }));
+    mockDbRead.account.count.mockResolvedValueOnce(1);
+    mockAppendDataPath();
+    await caller().append({ blockToken: 't', value: { title: 'idea' } });
+    expect(mockDbRead.account.count).toHaveBeenCalledTimes(1);
+    expect(mockDbRead.account.count).toHaveBeenCalledWith({ where: { userId: 42 } });
+  });
+
+  // (case 4) the OTHER trust conditions still DENY with their specific messages and
+  // take PRECEDENCE — even when hasLinkedOAuth would be true, the earlier check wins.
+  // These fire BEFORE the email/OAuth check, so account.count is never consulted.
+  const precedence: Array<[string, Record<string, unknown>, string]> = [
+    ['banned', { bannedAt: new Date() }, 'Your account is not eligible for this action'],
+    ['muted', { muted: true }, 'Your account has been restricted'],
+    ['onboarding incomplete', { onboarding: 0 }, 'Complete onboarding before contributing'],
+    ['too-new account', { createdAt: new Date() }, 'Your account is too new to contribute'],
+  ];
+  for (const [name, over, message] of precedence) {
+    it(`(case 4) ${name} still DENIES (precedence preserved) even with a linked OAuth account`, async () => {
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      // emailVerified absent AND a linked OAuth account present — proves the earlier
+      // condition, not the email/OAuth check, is what denies.
+      mockGetSessionUser.mockResolvedValueOnce(trustedUser({ ...over, emailVerified: undefined }));
+      mockDbRead.account.count.mockResolvedValue(1);
+      await expect(
+        caller().append({ blockToken: 't', value: { title: 'idea' } })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN', message });
+      expect(mockPool.connect).not.toHaveBeenCalled();
+    });
+  }
+
+  // Precedence proof for a subject whose email IS verified: banned still denies and
+  // — because emailVerified is present — the account.count query is skipped entirely
+  // (banned wins before the email/OAuth branch is ever relevant).
+  it('(case 4) a verified-email banned subject denies WITHOUT an account query', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockGetSessionUser.mockResolvedValueOnce(trustedUser({ bannedAt: new Date() }));
+    await expect(
+      caller().append({ blockToken: 't', value: { title: 'idea' } })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'Your account is not eligible for this action' });
+    expect(mockDbRead.account.count).not.toHaveBeenCalled();
+    expect(mockPool.connect).not.toHaveBeenCalled();
+  });
+});
+
+// Defense-in-depth for the CONSENT_EXEMPT change (shared scopes now sign into
+// tokens without a per-user consent grant, so an anon/low-trust token can now
+// legitimately CARRY apps:storage:shared:write). These pin that the trust gate
+// is enforced INDEPENDENTLY of the scope: even with the write scope present on
+// the claims, an anon / too-new / unverified subject is rejected BEFORE any data
+// access. `validClaims()` already carries [READ, WRITE], so every claim here has
+// the write scope present.
+describe('trust gate is independent of the (now-exempt) shared:write scope', () => {
+  it('anon subject with the write scope present → UNAUTHORIZED, no DB access', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'anon' })); // scopes include WRITE
+    await expect(
+      caller().append({ blockToken: 't', value: { title: 'x' } })
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(mockPool.connect).not.toHaveBeenCalled();
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
+  const ineligible: Array<[string, Record<string, unknown>]> = [
+    ['banned', { bannedAt: new Date() }],
+    ['muted', { muted: true }],
+    ['too-new account', { createdAt: new Date() }],
+    ['unverified email', { emailVerified: undefined }],
+    ['onboarding incomplete', { onboarding: 0 }],
+  ];
+  for (const [name, over] of ineligible) {
+    it(`authenticated but ineligible (${name}) with the write scope present → FORBIDDEN, no DB access`, async () => {
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims()); // sub: user:42, scopes include WRITE
+      mockGetSessionUser.mockResolvedValueOnce(trustedUser(over));
+      await expect(caller().vote({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+      });
+      expect(mockPool.query).not.toHaveBeenCalled();
+    });
+  }
+
+  it('a trusted subject with the scope present is allowed (reaches the vote CTE)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (sql.trim().startsWith('SELECT 1')) return { rows: [{ x: 1 }], rowCount: 1 };
+      if (sql.includes('WITH ins AS')) return { rows: [{ count: '1' }], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    });
+    const out = await caller().vote({ blockToken: 't', key: 'req1' });
+    expect(out.count).toBe(1);
   });
 });
 
@@ -373,25 +532,59 @@ describe('C3 content safety (blocking on append)', () => {
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 
-  it('HTML in text is stored ESCAPED (C2 stored-XSS)', async () => {
+  // FIX 2: escape-at-rest removed — text is stored RAW. XSS is contained at the
+  // text-render + opaque-origin-sandbox layers (all approved apps are `unverified`
+  // → no `allow-same-origin`), never by escaping the stored form. This test pins
+  // that the raw bytes round-trip un-escaped so the display bug (`Tom &amp; Jerry`)
+  // is gone.
+  it('FIX 2: title/body are stored RAW (un-escaped)', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-    mockPool.query.mockImplementation(async (sql: string) => {
-      if (sql.includes('author_user_id') && sql.includes('count(*)'))
-        return { rows: [{ n: '0' }], rowCount: 1 };
-      if (sql.includes('.quota'))
-        return { rows: [{ used_bytes: '0', row_count: '0' }], rowCount: 1 };
-      return { rows: [], rowCount: 0 };
-    });
+    mockAppendDataPath();
     await caller().append({
       blockToken: 't',
-      value: { title: 'hi <script>alert(1)</script>' },
+      value: { title: `Tom & Jerry <3 "x" 'y'`, body: 'a & b <span>' },
     });
     const insert = (mockClient.query.mock.calls as Array<[string, unknown[]?]>).find((c) =>
       c[0].includes('INSERT INTO "app_app_voting".shared_kv')
     );
     const stored = String((insert![1] as unknown[])[2]);
-    expect(stored).toContain('&lt;script&gt;');
-    expect(stored).not.toContain('<script>');
+    const parsed = JSON.parse(stored) as { title: string; body?: string };
+    // RAW round-trip — the exact bytes the user typed, no HTML entities introduced.
+    expect(parsed.title).toBe(`Tom & Jerry <3 "x" 'y'`);
+    expect(parsed.body).toBe('a & b <span>');
+    expect(stored).not.toContain('&amp;');
+    expect(stored).not.toContain('&lt;');
+    expect(stored).not.toContain('&#x27;');
+    expect(stored).not.toContain('&quot;');
+  });
+
+  // FIX 2 guard: removing escape-at-rest must NOT weaken any OTHER control — the raw
+  // text still runs the full block (minor/POI/link/audit/size).
+  it('FIX 2: other safety controls STILL reject the raw text', async () => {
+    // minor
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    await expect(
+      caller().append({ blockToken: 't', value: { title: '13 year old girl' } })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    // blocked link
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockThrowOnBlockedLinkDomain.mockRejectedValueOnce(new Error('invalid urls'));
+    await expect(
+      caller().append({ blockToken: 't', value: { title: 'visit http://bad.example' } })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    // audit / auto-mute
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockAuditPromptServer.mockRejectedValueOnce(new Error('Your prompt was flagged'));
+    await expect(
+      caller().append({ blockToken: 't', value: { title: 'flagged text' } })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    // oversized title (> SHARED_TITLE_MAX 200) — the zod input schema rejects this
+    // at the procedure boundary BEFORE the handler runs, so verifyBlockToken is
+    // never called (no mock queued on purpose — queuing one would leak an unconsumed
+    // `mockResolvedValueOnce` into the next test).
+    await expect(
+      caller().append({ blockToken: 't', value: { title: 'x'.repeat(201) } })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 
   it('audit rejection (auto-mute path) surfaces BAD_REQUEST', async () => {
@@ -400,6 +593,151 @@ describe('C3 content safety (blocking on append)', () => {
     await expect(
       caller().append({ blockToken: 't', value: { title: 'flagged text' } })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+});
+
+// FIX 1 — make shared-storage abuse OBSERVABLE (pre-GA gate 1). Every alert emit is
+// fire-and-forget (`.catch`) and carries METADATA ONLY, never the content text.
+describe('FIX 1 abuse observability (alert emits)', () => {
+  // Pull the payloads sent on the 'block-audit' channel by name.
+  function auditEmits(name: string) {
+    return (mockLogToAxiom.mock.calls as Array<[Record<string, unknown>, string?]>)
+      .filter((c) => c[1] === 'block-audit' && c[0]?.name === name)
+      .map((c) => c[0]);
+  }
+
+  it('an audit-category block emits the SEPARATE content-block warning (not legal-block)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockAuditPromptServer.mockRejectedValueOnce(new Error('Your prompt was flagged'));
+    await expect(
+      caller().append({ blockToken: 't', value: { title: 'harassment text' } })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    // audit → the lower-urgency content-block/warning event …
+    const contentEmits = auditEmits('app-blocks-shared-storage-content-block');
+    expect(contentEmits).toHaveLength(1);
+    // slug is the SANITIZED schema slug (matches the legal-block emit shape).
+    expect(contentEmits[0]).toMatchObject({
+      type: 'warning',
+      category: 'audit',
+      userId: 42,
+      slug: 'app_voting',
+    });
+    // metadata only — no content text leaked
+    expect(JSON.stringify(contentEmits[0])).not.toContain('harassment');
+    // … and it must NOT dilute the legal-urgency (CSAM/minor) channel.
+    expect(auditEmits('app-blocks-shared-storage-legal-block')).toHaveLength(0);
+  });
+
+  it('minor content STILL emits the legal-block error (NOT the content-block event)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    await expect(
+      caller().append({ blockToken: 't', value: { title: '13 year old girl' } })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    const emits = auditEmits('app-blocks-shared-storage-legal-block');
+    expect(emits).toHaveLength(1);
+    expect(emits[0]).toMatchObject({ type: 'error', category: 'minor' });
+    expect(JSON.stringify(emits[0])).not.toContain('13 year old');
+    // legal signal stays isolated from the general content-block channel.
+    expect(auditEmits('app-blocks-shared-storage-content-block')).toHaveLength(0);
+  });
+
+  it('a successful append emits NO block alert', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockAppendDataPath();
+    await caller().append({ blockToken: 't', value: { title: 'a fine idea' } });
+    expect(auditEmits('app-blocks-shared-storage-legal-block')).toHaveLength(0);
+    expect(auditEmits('app-blocks-shared-storage-content-block')).toHaveLength(0);
+  });
+
+  it('a USER report emits a report alert with metadata only (NO content)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockResolvedValue({ rows: [{ x: 1 }], rowCount: 1 }); // row exists
+    const out = await caller().report({
+      blockToken: 't',
+      key: 'req-123',
+      reason: 'spam and harassment',
+    });
+    expect(out).toEqual({ ok: true });
+    const emits = auditEmits('app-blocks-shared-storage-report');
+    expect(emits).toHaveLength(1);
+    expect(emits[0]).toMatchObject({
+      name: 'app-blocks-shared-storage-report',
+      userId: 42,
+      slug: 'app_voting', // sanitized schema slug
+      appBlockId: 'apb_test',
+      reason: 'spam and harassment',
+      key: 'req-123',
+    });
+    // the payload carries the reporter's reason + key, but never the reported
+    // ROW CONTENT (the op only holds the key).
+    const report = (mockPool.query.mock.calls as Array<[string, unknown[]?]>).find((c) =>
+      c[0].includes('shared_kv_reports')
+    );
+    expect(report).toBeTruthy();
+  });
+
+  it('report emit is FIRE-AND-FORGET: op still succeeds if the alert throws', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockResolvedValue({ rows: [{ x: 1 }], rowCount: 1 });
+    mockLogToAxiom.mockRejectedValueOnce(new Error('axiom down'));
+    const out = await caller().report({ blockToken: 't', key: 'req-9' });
+    expect(out).toEqual({ ok: true }); // the throwing emit did not fail the report
+  });
+
+  it('block-audit emit is FIRE-AND-FORGET: op still FAILS correctly if the alert throws', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockLogToAxiom.mockRejectedValueOnce(new Error('axiom down'));
+    // minor content → BAD_REQUEST regardless of the emit throwing
+    await expect(
+      caller().append({ blockToken: 't', value: { title: '13 year old girl' } })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  it('a report on a missing row NEVER emits (NOT_FOUND before the alert)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 }); // row does not exist
+    await expect(
+      caller().report({ blockToken: 't', key: 'ghost' })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(auditEmits('app-blocks-shared-storage-report')).toHaveLength(0);
+  });
+});
+
+// FIX 1 (Discord phishing vector): the reporter-supplied `reason` is embedded in
+// the mod-alerts Discord message. A hostile reporter must not be able to plant a
+// masked/phishing link or other markdown. `sanitizeDiscordText` neutralizes it and
+// the embed field wraps the result in an inline code span.
+describe('sanitizeDiscordText (mod-alert reason hardening)', () => {
+  it('neutralizes a masked link + backticks (no live markdown survives)', () => {
+    const hostile = 'click [here](https://phish.example) `rm -rf` **bold** ~~s~~ ||spoiler|| > q';
+    const out = sanitizeDiscordText(hostile);
+    // structural markdown / masked-link characters are gone
+    for (const ch of ['[', ']', '(', ')', '`', '*', '_', '~', '|', '>']) {
+      expect(out).not.toContain(ch);
+    }
+    expect(out).not.toMatch(/\]\(/); // the masked-link `](` sequence specifically
+    // the human-readable words survive as inert plain text
+    expect(out).toContain('here');
+    expect(out).toContain('https://phish.example');
+  });
+
+  it('the embed field value (code-span wrapped) contains no live masked link', () => {
+    // mirror the exact construction used in notifyModsOfSharedReport
+    const fieldValue = `\`${sanitizeDiscordText('[x](http://evil) `boom`') || 'user-report'}\``;
+    expect(fieldValue).not.toMatch(/\]\(/); // no masked link
+    // exactly two backticks (the wrapping span) — none survived from the input
+    expect((fieldValue.match(/`/g) ?? []).length).toBe(2);
+    expect(fieldValue.startsWith('`')).toBe(true);
+    expect(fieldValue.endsWith('`')).toBe(true);
+  });
+
+  it('an all-markdown reason collapses to empty → falls back to user-report', () => {
+    const fieldValue = `\`${sanitizeDiscordText('[]()``') || 'user-report'}\``;
+    expect(fieldValue).toBe('`user-report`');
+  });
+
+  it('caps the sanitized output at 500 chars', () => {
+    expect(sanitizeDiscordText('a'.repeat(1000)).length).toBe(500);
   });
 });
 

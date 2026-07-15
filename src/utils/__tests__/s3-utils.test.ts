@@ -286,15 +286,54 @@ describe('classifyS3MultipartError', () => {
     expect(classifyS3MultipartError(err)).toBe('transient');
   });
 
+  it.each(['InvalidPart', 'InvalidPartOrder', 'EntityTooSmall', 'MalformedXML'])(
+    'classifies the parts-manifest fault %s (400) as invalid-parts',
+    (name) => {
+      const err = Object.assign(new Error('parts mismatch'), {
+        name,
+        $metadata: { httpStatusCode: 400 },
+      });
+      expect(classifyS3MultipartError(err)).toBe('invalid-parts');
+    }
+  );
+
+  it('classifies InvalidPart by name even without a status code as invalid-parts', () => {
+    // The dominant dp-prod signature carries $metadata 400, but the name alone is
+    // an unambiguous parts fault.
+    const err = Object.assign(
+      new Error(
+        'One or more of the specified parts could not be found. The part may not have been uploaded, or the specified entity tag may not match the part\'s entity tag.'
+      ),
+      { name: 'InvalidPart' }
+    );
+    expect(classifyS3MultipartError(err)).toBe('invalid-parts');
+  });
+
+  it('classifies InvalidRequest + 400 ("must specify at least one part") as invalid-parts', () => {
+    const err = Object.assign(new Error('You must specify at least one part'), {
+      name: 'InvalidRequest',
+      $metadata: { httpStatusCode: 400 },
+    });
+    expect(classifyS3MultipartError(err)).toBe('invalid-parts');
+  });
+
   it('classifies a generic/unknown error as other (stays a hard 500)', () => {
     expect(classifyS3MultipartError(new Error('boom'))).toBe('other');
   });
 
-  it('classifies a genuine 4xx-that-is-not-404 (e.g. 400) as other', () => {
+  it('does NOT over-broaden: an unknown 4xx name (400) still classifies as other', () => {
+    // Guard against the client-fault bucket swallowing genuine unrecognized 400s —
+    // only the named parts-manifest faults (+ InvalidRequest/400) are invalid-parts.
     const err = Object.assign(new Error('bad request'), {
-      name: 'InvalidPart',
+      name: 'SomeUnknownClientError',
       $metadata: { httpStatusCode: 400 },
     });
+    expect(classifyS3MultipartError(err)).toBe('other');
+  });
+
+  it('does NOT map InvalidRequest without a 400 (e.g. no status) as invalid-parts', () => {
+    // InvalidRequest is a generic name; only a 400 on this path is a parts fault.
+    const err = Object.assign(new Error('generic invalid request'), { name: 'InvalidRequest' });
     expect(classifyS3MultipartError(err)).toBe('other');
   });
 

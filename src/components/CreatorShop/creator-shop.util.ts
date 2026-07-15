@@ -12,9 +12,9 @@ export type CreatorShopData = RouterOutput['creatorShop']['getShop'];
 export type CreatorShopItem = CreatorShopData['cosmetics'][number];
 export type CreatorShopManageItem = RouterOutput['creatorShop']['getManageItems'][number];
 
-export const useQueryCreatorShop = (userId?: number) => {
+export const useQueryCreatorShop = (userId?: number, preview = false) => {
   const { data, ...rest } = trpc.creatorShop.getShop.useQuery(
-    { userId: userId as number },
+    { userId: userId as number, preview },
     { enabled: !!userId }
   );
   return { shop: data, ...rest };

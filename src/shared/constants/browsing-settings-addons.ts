@@ -102,7 +102,6 @@ export const BLOCKED_BROWSING_TAG_IDS: number[] = [
   163032, //female child
   114467, //loli
   6641, //shota
-  250436, //minor
   115249, //teenager
 ];
 
@@ -146,7 +145,6 @@ export const DEFAULT_BROWSING_SETTINGS_ADDONS: BrowsingSettingsAddon[] = [
     excludedTagIds: [
       114467, //loli
       6641, //shota
-      250436, //minor
       115249, //teenager
     ],
   },

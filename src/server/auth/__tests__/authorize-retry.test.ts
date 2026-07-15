@@ -11,6 +11,8 @@ vi.mock('~/server/auth/oauth-bridge', () => ({
   resolveSelfOrigin: () => 'https://civitai.red',
   safePath: (p: unknown) => (typeof p === 'string' ? p : '/'),
   clearBridgeCookie: () => 'oauth_bridge=; Path=/; Max-Age=0; SameSite=Lax',
+  buildBridgeProbeCookie: () =>
+    'oauth_bridge_probe=xyz; Path=/api/auth/callback; HttpOnly; SameSite=None; Secure; Max-Age=3600',
   buildAuthorizeRedirect: () => ({
     location: 'https://auth.test/api/auth/oauth/authorize?x=1',
     setCookie: ['oauth_bridge=abc; Path=/; SameSite=Lax'],

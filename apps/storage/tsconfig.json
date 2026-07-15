@@ -1,0 +1,24 @@
+{
+  // Standalone Node service tsconfig — deliberately NOT extending the repo-root tsconfig.json (that one
+  // is Next.js-oriented). This app is a Fastify API, so it uses a plain Node/ESNext config. Workspace
+  // packages (@civitai/*) resolve through pnpm's node_modules symlinks (bundler resolution).
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["node"],
+    "strict": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "sourceMap": true,
+    "verbatimModuleSyntax": false
+  },
+  "include": ["src/**/*.ts", "scripts/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}
