@@ -94,7 +94,10 @@ function ChallengesPage() {
       <MasonryContainer>
         <Stack gap="xs">
           <Stack gap="xl" align="flex-start">
-            <Title>My Challenges</Title>
+            <Group justify="space-between" w="100%" wrap="nowrap" gap="sm">
+              <Title>My Challenges</Title>
+              {createChallengeButton}
+            </Group>
             <SegmentedControl
               classNames={styles}
               transitionDuration={0}
@@ -112,6 +115,7 @@ function ChallengesPage() {
               excludeEventChallenges: true,
               ...myStatusFilters[myStatus],
             }}
+            emptyAction={createChallengeButton}
           />
         </Stack>
       </MasonryContainer>
@@ -224,7 +228,6 @@ function ChallengesPage() {
           <Group wrap="wrap" gap="sm">
             <Title order={3}>Community Challenges</Title>
             <Group gap="sm" wrap="wrap" ml="auto">
-              {createChallengeButton}
               <ChallengeFeedFilters />
             </Group>
           </Group>
@@ -237,7 +240,6 @@ function ChallengesPage() {
               excludeEventChallenges: true,
               participation,
             }}
-            emptyAction={createChallengeButton}
           />
         </Stack>
       </MasonryContainer>

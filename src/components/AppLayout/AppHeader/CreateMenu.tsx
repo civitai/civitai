@@ -1,4 +1,4 @@
-import { Button, Menu, Text, Popover } from '@mantine/core';
+import { Badge, Button, Menu, Text, Popover } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconBrush, IconChevronDown } from '@tabler/icons-react';
 import type { MouseEventHandler } from 'react';
@@ -153,6 +153,11 @@ function CreateMenuContent() {
                 <link.icon stroke={1.5} color={link.color} />
                 {link.label}
                 {link.currency && <CurrencyIcon currency={Currency.BUZZ} size={16} />}
+                {!!link.newUntil && Date.now() < link.newUntil.getTime() && (
+                  <Badge color="green.8" variant="filled" size="sm" ml={4}>
+                    NEW
+                  </Badge>
+                )}
               </div>
             </Menu.Item>
           );

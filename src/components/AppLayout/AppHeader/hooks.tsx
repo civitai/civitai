@@ -371,6 +371,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       icon: IconTrophy,
       color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
       label: 'Create a Challenge',
+      newUntil: new Date('2026-08-15'),
     },
   ];
 }
