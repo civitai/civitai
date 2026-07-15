@@ -36,7 +36,6 @@ import client, { type Counter, type Histogram, type Registry } from 'prom-client
  */
 export type AppBlockEndpoint =
   | 'tip'
-  | 'buzz'
   | 'images'
   | 'models'
   | 'model_detail'
@@ -47,6 +46,12 @@ export type AppBlockEndpoint =
   | 'shared_storage_top'
   | 'shared_storage_increment'
   | 'generation_resources';
+// NOTE: buzz self-reads (balance/transactions/accounts/daily-compensation) are
+// NOT here — they are host-mediated tRPC MUTATIONS (blocks.getMyBuzz*), not
+// withBlockScope REST routes, so they are not metered via this per-endpoint
+// label (mutations carry their own tRPC metrics). The former 'buzz' /
+// 'buzz_transactions' / 'buzz_daily_compensation' / 'buzz_accounts' REST
+// entries were retired with those endpoints (superseded by the bridges).
 
 export type AppBlockRequestResult = 'success' | 'client_error' | 'server_error' | 'forbidden';
 

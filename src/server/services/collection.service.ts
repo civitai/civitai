@@ -15,6 +15,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { tagIdsForImagesCache, userCollectionCountCache } from '~/server/redis/caches';
@@ -65,6 +66,7 @@ import { getPostsInfinite } from '~/server/services/post.service';
 import {
   throwAuthorizationError,
   throwBadRequestError,
+  throwInsufficientFundsError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getYoutubeRefreshToken } from '~/server/youtube/client';
@@ -1904,6 +1906,38 @@ export function getContributorCount({ collectionIds: ids }: { collectionIds: num
   `;
 }
 
+// Charge the active user-challenge entry fee for `imageIds` on this collection, if any.
+// Idempotent per (challenge, image) — see chargeEntryFees. No-op for moderators, empty input,
+// or collections without an Active fee challenge. Returns the paid/unpaid partition when a
+// charge ran; entry fees are NEVER refunded (see challenge-funding.ts), so callers must
+// commit only `paidImageIds` — an unpaid image self-heals if the user retries.
+const chargeContestEntryFeesForCollection = async ({
+  collectionId,
+  userId,
+  imageIds,
+  isModerator,
+}: {
+  collectionId: number;
+  userId: number;
+  imageIds: number[];
+  isModerator?: boolean;
+}) => {
+  if (isModerator || imageIds.length === 0) return undefined;
+  const feeChallenge = await dbRead.challenge.findFirst({
+    where: { collectionId, source: 'User', entryFee: { gt: 0 }, status: 'Active' },
+    select: { id: true, entryFee: true, buzzType: true },
+  });
+  if (!feeChallenge) return undefined;
+  const { chargeEntryFees } = await import('~/server/games/daily-challenge/challenge-funding');
+  return chargeEntryFees({
+    challengeId: feeChallenge.id,
+    userId,
+    imageIds,
+    entryFee: feeChallenge.entryFee,
+    fromAccountType: feeChallenge.buzzType === 'green' ? 'green' : 'yellow',
+  });
+};
+
 export const validateContestCollectionEntry = async ({
   collectionId,
   userId,
@@ -1913,6 +1947,9 @@ export const validateContestCollectionEntry = async ({
   modelIds = [],
   imageIds = [],
   postIds = [],
+  // bulkSaveItems defers the entry-fee charge until AFTER the CollectionItem write (so a failed
+  // save can't leave a paid-but-missing entry); every other caller charges here, before its write.
+  deferEntryFeeCharge = false,
 }: {
   collectionId: number;
   userId: number;
@@ -1922,6 +1959,7 @@ export const validateContestCollectionEntry = async ({
   modelIds?: number[];
   imageIds?: number[];
   postIds?: number[];
+  deferEntryFeeCharge?: boolean;
 }) => {
   const user = await dbRead.user.findUnique({
     where: { id: userId },
@@ -1935,6 +1973,17 @@ export const validateContestCollectionEntry = async ({
 
   if (userMeta?.contestBanDetails) {
     throw throwBadRequestError('You are banned from participating in contests');
+  }
+
+  // Challenge creators may not enter their own challenge (self-dealing on the prize pool).
+  if (!isModerator) {
+    const ownChallenge = await dbRead.challenge.findFirst({
+      where: { collectionId, createdById: userId },
+      select: { id: true },
+    });
+    if (ownChallenge) {
+      throw throwBadRequestError('You cannot submit entries to your own challenge.');
+    }
   }
 
   // Block re-submitting an image a challenge judge has already scored. Removal
@@ -2125,6 +2174,77 @@ export const validateContestCollectionEntry = async ({
       );
     }
   }
+
+  // Participant cap (user challenges): new participants are rejected once the cap is reached;
+  // existing participants may keep adding entries up to maxEntriesPerUser. Checked before any
+  // charge so a capped-out user is never charged.
+  if (!isModerator) {
+    const cappedChallenge = await dbRead.challenge.findFirst({
+      where: { collectionId, status: 'Active', maxParticipants: { not: null } },
+      select: { maxParticipants: true },
+    });
+    if (cappedChallenge?.maxParticipants) {
+      const [counts] = await dbRead.$queryRaw<{ total: number; mine: number }[]>`
+        SELECT
+          COUNT(DISTINCT "addedById")::int AS total,
+          (COUNT(DISTINCT "addedById") FILTER (WHERE "addedById" = ${userId}))::int AS mine
+        FROM "CollectionItem"
+        WHERE "collectionId" = ${collectionId}
+      `;
+      if (counts && counts.mine === 0 && counts.total >= cappedChallenge.maxParticipants) {
+        throw throwBadRequestError(
+          'This challenge has reached its maximum number of participants.'
+        );
+      }
+    }
+  }
+
+  // Required resource: for challenges with configured modelVersionIds, every submitted image
+  // must use at least one of them (OR logic — mirrors the promotion-time check in
+  // challenge-rewards.ts:promoteChallengeEntries). Checked before the entry-fee charge below so
+  // an off-resource image is never charged: previously this rule was enforced only at
+  // promotion, after the fee already ran, and entry fees are never refunded (see
+  // challenge-funding.ts) — so an off-resource submission was charged then silently rejected.
+  if (imageIds.length > 0 && !isModerator) {
+    const resourceChallenge = await dbRead.challenge.findFirst({
+      where: { collectionId, status: 'Active', modelVersionIds: { isEmpty: false } },
+      select: { modelVersionIds: true },
+    });
+    if (resourceChallenge) {
+      const withRequiredResource = await dbRead.imageResourceNew.findMany({
+        where: {
+          imageId: { in: imageIds },
+          modelVersionId: { in: resourceChallenge.modelVersionIds },
+        },
+        select: { imageId: true },
+        distinct: ['imageId'],
+      });
+      const validImageIds = new Set(withRequiredResource.map((r) => r.imageId));
+      if (imageIds.some((id) => !validImageIds.has(id))) {
+        throw throwBadRequestError('This image does not use a required model for this challenge.');
+      }
+    }
+  }
+
+  // Entry fee: for user-created challenges, charge the participant once per submitted image
+  // (idempotent per challenge+image). Runs only after all other validation has passed. Callers
+  // that defer (bulkSaveItems) charge after their write instead, to avoid a paid-but-missing entry.
+  if (!deferEntryFeeCharge) {
+    const chargeResult = await chargeContestEntryFeesForCollection({
+      collectionId,
+      userId,
+      imageIds,
+      isModerator,
+    });
+    if (chargeResult && chargeResult.unpaidImageIds.length > 0) {
+      // Nothing was written yet, so aborting strands no entry. Any legs that DID charge stay
+      // in the ledger (never refunded — see challenge-funding.ts) and complete idempotently
+      // if the user retries with more Buzz.
+      throw throwInsufficientFundsError(
+        'You do not have enough Buzz to pay the entry fee for every submitted image.'
+      );
+    }
+  }
 };
 
 const validateFeaturedCollectionEntry = async ({
@@ -2249,6 +2369,8 @@ export const bulkSaveItems = async ({
       modelIds,
       imageIds,
       postIds,
+      // Charge the entry fee AFTER the write below (with rollback), not here.
+      deferEntryFeeCharge: true,
     });
   }
 
@@ -2349,9 +2471,69 @@ export const bulkSaveItems = async ({
       }));
   }
 
-  await homeBlockCacheBust(HomeBlockType.Collection, collectionId);
-
   const { count } = await dbWrite.collectionItem.createMany({ data });
+
+  // Entry fee (user challenges): charge AFTER the entries are written so a failed save never
+  // leaves a paid-but-missing entry. Charges are idempotent per (challenge, image) and NEVER
+  // refunded (see challenge-funding.ts) — on a partial charge we keep the paid entries and
+  // roll back only the unpaid rows; a Buzz charge can't be undone by a Postgres rollback.
+  if (collection.mode === CollectionMode.Contest) {
+    const chargeImageIds = data.map((d) => d.imageId).filter(isDefined);
+    const rollbackItems = async (imageIds: number[], originalError: unknown) => {
+      await dbWrite.collectionItem
+        .deleteMany({
+          where: { collectionId, addedById: userId, imageId: { in: imageIds } },
+        })
+        .catch((rollbackError) => {
+          // Rollback failed → unpaid entries persist. Surface loudly; the caller still throws
+          // the original error so the user sees the real failure.
+          logToAxiom({
+            type: 'error',
+            name: 'contest-entry-fee-rollback-failed',
+            message:
+              rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+            stack: rollbackError instanceof Error ? rollbackError.stack : undefined,
+            originalError: originalError instanceof Error ? originalError.message : undefined,
+            collectionId,
+            userId,
+            imageIds,
+          });
+        });
+    };
+
+    let chargeResult;
+    try {
+      chargeResult = await chargeContestEntryFeesForCollection({
+        collectionId,
+        userId,
+        imageIds: chargeImageIds,
+        isModerator,
+      });
+    } catch (e) {
+      // Transport/service failure — per-image payment state is unknown, so remove every row
+      // this call wrote (leaving one would risk an unpaid committed entry). Any legs that DID
+      // charge stay in the ledger and settle as idempotency conflicts on retry.
+      if (chargeImageIds.length > 0) await rollbackItems(chargeImageIds, e);
+      throw e;
+    }
+
+    if (chargeResult && chargeResult.unpaidImageIds.length > 0) {
+      await rollbackItems(chargeResult.unpaidImageIds, new Error('insufficient funds'));
+      // The paid entries above stay committed, so bust the cache before aborting the request.
+      if (chargeResult.paidImageIds.length > 0)
+        await homeBlockCacheBust(HomeBlockType.Collection, collectionId);
+      throw throwInsufficientFundsError(
+        chargeResult.paidImageIds.length > 0
+          ? `You ran out of Buzz partway through: ${chargeResult.paidImageIds.length} ${
+              chargeResult.paidImageIds.length === 1 ? 'entry was' : 'entries were'
+            } submitted, ${chargeResult.unpaidImageIds.length} could not be paid for.`
+          : 'You do not have enough Buzz to pay the entry fee.'
+      );
+    }
+  }
+
+  // Bust AFTER the write so a concurrent read can't repopulate the cache with pre-write data.
+  await homeBlockCacheBust(HomeBlockType.Collection, collectionId);
 
   // Check for challenge entry prize eligibility (Contest mode collections only)
   if (collection.mode === CollectionMode.Contest && count > 0) {

@@ -55,6 +55,8 @@ export type ChallengeDetails = {
 /**
  * @deprecated Use trpc.challenge.getInfinite with status: [ChallengeStatus.Active] instead.
  * This function uses the legacy Article-based system which is being phased out.
+ * Not called by any current UI — `getCurrentChallenge()` is a LIMIT-1 singleton lookup by
+ * design, so with multiple concurrent public challenges this only ever surfaces one of them.
  */
 export async function getCurrentDailyChallenge() {
   const [currentChallenge, customChallenge] = await Promise.all([

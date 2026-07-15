@@ -8,7 +8,15 @@ import {
   PrizeMode,
   PoolTrigger,
 } from '~/shared/utils/prisma/enums';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
+import {
+  CHALLENGE_MAX_ENTRY_FEE,
+  CHALLENGE_MAX_INITIAL_PRIZE,
+  CHALLENGE_MIN_ENTRY_FEE,
+} from '~/shared/constants/challenge.constants';
 import { infiniteQuerySchema } from './base.schema';
 import { imageSchema } from './image.schema';
 import type { ProfileImage } from '~/server/selectors/image.selector';
@@ -37,13 +45,15 @@ export type ChallengeSort = (typeof ChallengeSort)[keyof typeof ChallengeSort];
 
 // Prize structure
 export const prizeSchema = z.object({
-  buzz: z.number(),
-  points: z.number(),
+  // Floors: these feed winner payouts (createBuzzTransaction). A negative prize would be a
+  // grant-instead-of-charge / broken-payout vector, so never allow below zero.
+  buzz: z.number().min(0),
+  points: z.number().min(0),
 });
 export type Prize = z.infer<typeof prizeSchema>;
 
 export const prizeDistributionSchema = z
-  .array(z.number().min(0).max(100))
+  .array(z.number().min(1).max(100))
   .length(3)
   .refine((arr) => arr.reduce((a, b) => a + b, 0) === 100, {
     message: 'Distribution must sum to 100%',
@@ -68,6 +78,8 @@ export type ChallengeListItem = {
   commentCount: number;
   modelVersionIds: number[];
   collectionId: number | null;
+  // Real creator id, distinct from createdBy.id which displays the judge when one is assigned.
+  createdById: number;
   createdBy: {
     id: number;
     username: string | null;
@@ -132,6 +144,7 @@ export type ChallengeDetail = {
   visibleAt: Date;
   status: ChallengeStatus;
   source: ChallengeSource;
+  buzzType: 'green' | 'yellow';
   eventId: number | null;
   nsfwLevel: number;
   allowedNsfwLevel: number;
@@ -154,6 +167,7 @@ export type ChallengeDetail = {
   }>;
   collectionId: number | null;
   maxEntriesPerUser: number;
+  entryFee: number;
   prizes: Prize[];
   entryPrize: Prize | null;
   entryPrizeRequirement: number;
@@ -167,6 +181,8 @@ export type ChallengeDetail = {
   reviewCostType: ChallengeReviewCostType;
   reviewCost: number;
   entryCount: number;
+  // Real creator id, distinct from createdBy.id which displays the judge when one is assigned.
+  createdById: number;
   createdBy: {
     id: number;
     username: string | null;
@@ -186,12 +202,13 @@ export type ChallengeDetail = {
     imageHash: string | null;
     buzzAwarded: number;
     reason: string | null;
-    judgeScore?: JudgeScore | null;
+    judgeScore?: JudgeScore | Record<string, number> | null;
     profilePicture?: ProfileImage | null;
     cosmetics?: UserWithCosmetics['cosmetics'] | null;
   }>;
   completionSummary: ChallengeCompletionSummary | null;
   judgedTagId: number | null;
+  judgingCategories: ChallengeJudgingCategory[] | null;
 };
 
 // Extended type with sensitive/internal fields for moderator edit form
@@ -200,6 +217,8 @@ export type ChallengeDetailForEdit = ChallengeDetail & {
   reviewPercentage: number;
   operationBudget: number;
   themeElements: string[] | null;
+  entryFee: number;
+  maxParticipants: number | null;
 };
 
 export type ModeratorChallengeListItem = {
@@ -299,6 +318,46 @@ export const getModeratorChallengesSchema = infiniteQuerySchema.merge(
   })
 );
 
+// Judging categories, shared by the moderator and user upsert schemas. The client submits only
+// `{ key, weight }` (any client-sent label/criteria are stripped here); the service derives
+// label + criteria from the ChallengeCategory library (resolveJudgingCategories) before persisting,
+// so client text can never reach the AI judge prompt. Keys are validated against the library at
+// resolve time — categories are DB-owned, so there is no static enum to check against.
+export const challengeJudgingCategoryInputSchema = z.object({
+  key: z.string().trim().min(1).max(50),
+  weight: z.number().int().min(1).max(100),
+});
+export type ChallengeJudgingCategoryInput = z.infer<typeof challengeJudgingCategoryInputSchema>;
+
+// Persisted shape: label + criteria were server-derived at write time and are trusted on read.
+export const challengeJudgingCategorySchema = challengeJudgingCategoryInputSchema.extend({
+  label: z.string(),
+  criteria: z.string(),
+});
+export type ChallengeJudgingCategory = z.infer<typeof challengeJudgingCategorySchema>;
+
+const judgingCategoryRefinements = (cats: { key: string; weight: number }[], ctx: z.RefinementCtx) => {
+  if (cats.filter((c) => c.key === 'theme').length !== 1)
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Theme is required exactly once' });
+  const keys = cats.map((c) => c.key);
+  if (new Set(keys).size !== keys.length)
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Each category can be used once' });
+  if (cats.reduce((s, c) => s + c.weight, 0) !== 100)
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Category weights must sum to 100%' });
+};
+
+export const challengeJudgingCategoriesInputSchema = z
+  .array(challengeJudgingCategoryInputSchema)
+  .min(1)
+  .max(4)
+  .superRefine(judgingCategoryRefinements);
+
+export const challengeJudgingCategoriesSchema = z
+  .array(challengeJudgingCategorySchema)
+  .min(1)
+  .max(4)
+  .superRefine(judgingCategoryRefinements);
+
 // Moderator: Create/Update challenge
 // Base schema is a ZodObject so the form can use .omit().extend()
 export const upsertChallengeBaseSchema = z.object({
@@ -314,6 +373,7 @@ export const upsertChallengeBaseSchema = z.object({
   modelVersionIds: z.array(z.number()).default([]),
   judgeId: z.number().optional().nullable(),
   judgingPrompt: z.string().optional().nullable(),
+  judgingCategories: challengeJudgingCategoriesInputSchema.optional().nullable(),
   reviewPercentage: z.number().min(0).max(100).default(100),
   maxReviews: z.number().optional().nullable(),
   maxEntriesPerUser: z.number().min(1).max(100).default(20),
@@ -344,6 +404,40 @@ export const upsertChallengeSchema = upsertChallengeBaseSchema.refine(
   { message: 'End date must be after start date', path: ['endsAt'] }
 );
 export type UpsertChallengeInput = z.infer<typeof upsertChallengeSchema>;
+
+// --- User (public) challenge create/update ---
+// A restricted, safe subset of the moderator upsert: no free-form judgingPrompt, no
+// arbitrary status/source/prizePool. Judging is category-based; funding is entry-fee.
+// The judge must be an existing active judge (validated server-side).
+export const userChallengeUpsertBaseSchema = z.object({
+  id: z.number().optional(),
+  title: z.string().trim().min(3).max(200),
+  description: z.string().min(1).max(5000),
+  theme: z.string().trim().min(1).max(100),
+  themeElements: z.array(z.string().max(100)).max(20).optional(),
+  invitation: z.string().max(300).optional(),
+  coverImage: imageSchema,
+  // Capped at the browsable-levels flag (31): 32 is NsfwLevel.Blocked, and accepting it would
+  // let a user create a Blocked-level challenge whose collection admits Blocked images.
+  allowedNsfwLevel: z.number().min(1).max(allBrowsingLevelsFlag).default(sfwBrowsingLevelsFlag),
+  modelVersionIds: z.array(z.number().int().positive()).max(20).default([]),
+  judgeId: z.number().int().positive(),
+  judgingCategories: challengeJudgingCategoriesInputSchema,
+  entryFee: z.number().int().min(CHALLENGE_MIN_ENTRY_FEE).max(CHALLENGE_MAX_ENTRY_FEE),
+  initialPrizeBuzz: z.number().int().min(0).max(CHALLENGE_MAX_INITIAL_PRIZE).default(0),
+  prizeDistribution: prizeDistributionSchema,
+  maxParticipants: z.number().int().min(1).max(100_000).optional(),
+  maxEntriesPerUser: z.number().int().min(1).max(100).default(5),
+  buzzType: z.enum(['green', 'yellow']).optional(),
+  startsAt: z.date(),
+  endsAt: z.date(),
+});
+
+export const userChallengeUpsertSchema = userChallengeUpsertBaseSchema.refine(
+  (data) => data.endsAt > data.startsAt,
+  { message: 'End date must be after start date', path: ['endsAt'] }
+);
+export type UserChallengeUpsertInput = z.infer<typeof userChallengeUpsertSchema>;
 
 // Moderator: Delete challenge
 export type DeleteChallengeInput = z.infer<typeof deleteChallengeSchema>;
@@ -421,7 +515,7 @@ export type ChallengeWinnerSummary = {
   imageHash: string | null;
   buzzAwarded: number;
   reason?: string | null;
-  judgeScore?: JudgeScore | null;
+  judgeScore?: JudgeScore | Record<string, number> | null;
   profilePicture?: ProfileImage | null;
   cosmetics?: UserWithCosmetics['cosmetics'] | null;
 };
@@ -561,6 +655,8 @@ export const playgroundReviewImageSchema = z.object({
     .optional(),
   reviewTemplate: z.string().optional(),
   aiModel: z.string().min(1).optional(),
+  judgingCategories: challengeJudgingCategoriesInputSchema.optional(),
+  nsfw: z.boolean().optional(),
 });
 
 // Playground: Pick winners from a challenge

@@ -36,6 +36,7 @@ export const loginRedirectReasons = {
   shop: 'You need to be logged in to preview and purchase cosmetics',
   'knights-new-order': 'You need to be logged in to join Knights of the New Order',
   'report-comic': 'You need to be logged in to report this comic',
+  'create-challenge': 'You need to be logged in to create a challenge',
   'submit-challenge': 'You need to be logged in to submit entries to a challenge',
   'view-content': 'You need to log in to view this content',
 };

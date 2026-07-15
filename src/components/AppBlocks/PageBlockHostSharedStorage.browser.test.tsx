@@ -66,6 +66,9 @@ vi.mock('~/utils/trpc', () => ({
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getMyBuzzBalance: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getMyBuzzTransactions: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getMyBuzzAccounts: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getMyDailyCompensation: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       estimateWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       pollWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },

@@ -1,928 +1,296 @@
-# Challenge Queue System Proposal
+# Challenge Platform
 
-## Overview
+Canonical reference for how Civitai's challenge platform works: automated daily/system challenges,
+moderator-created challenges, and user-created ("public") challenges, all AI-judged. This is the
+single source of truth — it supersedes the former `daily-challenge.md`,
+`dynamic-challenge-judging-categories.md`, `dynamic-judging-categories-plan.md`,
+`challenge-design-questions.md`, and the public/user-challenge plan+spec docs.
 
-This document proposes a system for pre-preparing daily challenges, allowing moderators to schedule, view, and edit upcoming challenges before they go live.
-
-## Goals
-
-1. Allow mods to see and manage upcoming challenges
-2. Support manual theme/content override instead of AI generation
-3. Enable theme previews for users (configurable visibility)
-4. Maintain backward compatibility with auto-generation as fallback
+Anything not yet live is tagged **(deferred)**.
 
 ---
 
-## Architecture Decision
+## 1. Overview
 
-### Recommendation: New `ChallengeQueue` Table
+A challenge is a time-boxed, AI-judged creative contest around one or more community models.
+Challenges live in the `Challenge` table; entries are `CollectionItem` rows in each challenge's
+Contest-mode collection. An LLM (via the Civitai LLM client) generates challenge content and scores
+entries/winners.
 
-@ai: I recommend Option A (new table) over extending Article metadata because:
-- Clean separation of concerns (queue management vs content)
-- Proper audit trail (who created/modified)
-- Easy to query and reorder
-- No risk of polluting existing Article data
+`Challenge.source` (`ChallengeSource` enum) determines origin and behavior:
 
-### Schema
+| Source | Origin | Judging | Funding |
+|---|---|---|---|
+| `System` | AI-generated daily challenges (cron) | Fixed daily rubric (unless dynamic-judging flag on) | Platform prizes |
+| `Mod` | Moderator-created | Fixed rubric (unless dynamic-judging flag on) | Mod-configured |
+| `User` | User-created ("public") | Creator-defined **weighted categories** | **Entry-fee funded** |
 
-```prisma
-model ChallengeQueue {
-  id              Int       @id @default(autoincrement())
-  scheduledDate   DateTime  @db.Date  // The date this challenge runs
-  challengeType   String    @default("world-morph")
+Two Flipt flags gate the surface:
 
-  // Content (optional - AI fills gaps if null)
-  theme           String?   // 1-2 word theme
-  modelId         Int?      // Featured model (auto-select if null)
-  title           String?   // Article title override
-  invitation      String?   // Custom invitation text
-  customContent   String?   // Full article body override
+- **`challenge-platform-enabled`** (feature flag `challengePlatform`) — the whole platform (router, page SSR, nav, job start).
+- **`user-challenges`** (feature flag `userChallenges`) — user creation + management. **This is the flag rolled out to testers via segmented rollout.**
 
-  // Lifecycle
-  status          ChallengeQueueStatus @default(Queued)
-  articleId       Int?      // Links to created Article when activated
-
-  // Audit
-  createdById     Int
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-
-  // Relations
-  createdBy       User      @relation(fields: [createdById], references: [id])
-  model           Model?    @relation(fields: [modelId], references: [id])
-  article         Article?  @relation(fields: [articleId], references: [id])
-}
-
-enum ChallengeQueueStatus {
-  Queued      // Waiting to be activated
-  Active      // Currently running
-  Completed   // Finished
-  Skipped     // Manually skipped by mod
-}
-```
-
-@dev: Yeah, I think it makes sense to make a new table here. I almost wonder if we actually stop utilizing the article system altogether and instead actually make unique UI views for challenges and things like that.
-
-@ai: Agreed - if we're building this out as a full feature, the Article system is awkward. Challenges have unique lifecycle, scoring, entries, winners - none of that maps well to Articles. A dedicated `Challenge` table with its own pages makes more sense. We'd have `/challenges` for the public feed and `/challenges/[id]` for individual challenge pages.
-
-@dev: Okay, I like this because it kind of opens it up to other suggestions that you gave me earlier in our conversation. and kind of per-user type things like streak tracking, number of entries they've had reviewed, that sort of stuff.
-
-@ai: Exactly. With a proper Challenge entity we can easily add a `UserChallengeStats` table or computed fields for:
-- Total challenges participated
-- Total wins / placements
-- Current streak (consecutive challenges entered)
-- Entries scored / reviewed
-- Buzz earned from challenges
+Judging is category-driven for **all** sources (no feature flag): any challenge that stores `judgingCategories` is judged by them; the rest fall back to the default four.
 
 ---
 
-## Scheduling Rules
+## 2. Architecture & key files
 
-### How Far Ahead?
+**Server**
+- `src/server/jobs/daily-challenge-processing.ts` — challenge setup + `reviewEntries()` (entry validation + AI scoring), `getJudgedEntries` ranking, `startScheduledChallenge` activation.
+- `src/server/jobs/challenge-auto-queue.ts` — `ensureChallengeHorizon()` (30-day pipeline).
+- `src/server/jobs/challenge-activation.ts` — `runChallengeActivation()` (Scheduled → Active).
+- `src/server/jobs/challenge-completion.ts` — `runChallengeCompletion()` (winner picking).
+- `src/server/games/daily-challenge/generative-content.ts` — LLM content + review generation, rubric injection.
+- `src/server/games/daily-challenge/daily-challenge.utils.ts` — `getChallengeConfig()`, state helpers.
+- `src/server/games/daily-challenge/daily-challenge-scoring.ts` — weighted scoring utils.
+- `src/server/games/daily-challenge/challenge-helpers.ts` — DB helpers, collection creation, winner management.
+- `src/server/services/challenge-category.service.ts` — DB-backed category library + rubric resolution.
+- `src/server/games/daily-challenge/challenge-funding.ts` / `challenge-pool.ts` — entry-fee charge/refund, pool math.
+- `src/server/services/challenge.service.ts` — CRUD, mod actions, user procedures, detail assembly.
+- `src/server/routers/challenge.router.ts` · `src/server/schema/challenge.schema.ts`.
+- `src/shared/constants/challenge.constants.ts` — presets, keys, judge whitelist, economics constants.
+- `src/server/flipt/client.ts` — flag keys.
 
-@ai: I suggest **30 days** as the default horizon. This gives mods enough time to plan around events/holidays without creating excessive maintenance burden.
+**Client**
+- `src/components/Challenge/ChallengeUpsertForm.tsx` (unified create/edit, `variant` prop), `CategoryWeights.tsx`, `ChallengeContextMenu.tsx`, `ChallengeSubmitModal.tsx`, `challenge.utils.ts`.
+- `src/components/Cards/ChallengeCard.tsx`.
+- `src/pages/challenges/index.tsx` (feed + "My Challenges"), `src/pages/challenges/[id]/[[...slug]].tsx` (detail), `src/pages/challenges/[id]/edit.tsx`, `src/pages/challenges/create.tsx`, `src/pages/moderator/challenges.tsx`.
 
-@dev: Sounds good.
+**Config source**: `getChallengeConfig()` reads `REDIS_SYS_KEYS.DAILY_CHALLENGE.CONFIG` from sysRedis with a code-default fallback (fail-open). LLM prompt text comes from the `ChallengeType` table; judge personas from `ChallengeJudge`.
 
-### Auto-Fill Behavior
-
-When the setup job runs, it checks for queued challenges in this priority:
-
-1. **Queued challenge exists for target date** → Use it
-2. **No queued challenge** → Auto-generate via AI (current behavior)
-
-This means the queue is optional - the system continues working if mods don't pre-schedule.
-
-### Conflict Handling
-
-If multiple queue entries exist for the same date:
-- Use the one with lowest `id` (first created)
-- Log warning for mod review
-
-@dev: If we're going to be overhauling the system anyways, let's allow multiple challenges per day and potentially make it so that challenges can run for more than a day, and there's a whole challenges section to the site.
-
-@ai: Makes sense. This means we shift from `scheduledDate` to `startsAt` + `endsAt` fields. Multiple challenges can overlap. The challenges feed would show all active challenges, sorted by end date (soonest ending first) or by creation date. This opens up interesting possibilities:
-- Flash challenges (4-hour sprints)
-- Weekend challenges (Fri-Sun)
-- Week-long epic challenges
-- Multiple concurrent daily challenges with different themes
+**Debug**: `/api/testing/daily-challenge` (actions: `article`, `collection`, `review`, `winners`, `complete-review`, `complete-challenge`, `create-challenge`) — guarded by `WEBHOOK_TOKEN`.
 
 ---
 
-## Mod Interface
+## 3. Lifecycle & states
 
-### Location
-
-New page at `/moderator/challenges` (or `/moderator/daily-challenges`)
-
-@dev: /moderator/challenges
-
-### Views
-
-#### Calendar View
-- Month calendar showing scheduled challenges
-- Color coding: queued (blue), active (green), completed (gray), gaps (red)
-- Click date to create/edit
-
-#### List View
-- Table of upcoming challenges
-- Columns: Date, Theme, Model, Status, Created By, Actions
-- Drag-to-reorder support (updates `scheduledDate`)
-@dev: Let's stick with just a list view for now.
-
-### Create/Edit Modal
+`ChallengeStatus`:
 
 ```
-┌─────────────────────────────────────────────────┐
-│ Schedule Challenge                              │
-├─────────────────────────────────────────────────┤
-│ Date:        [Jan 15, 2026      ▼]             │
-│                                                 │
-│ Model:       [Search models...        ] [Auto] │
-│              Preview: ModelName by Creator      │
-│                                                 │
-│ Theme:       [________________] [✨ Suggest]   │
-│              AI suggestions: "Neon Dreams",     │
-│              "Forgotten Worlds", "Time Loop"    │
-│                                                 │
-│ Title:       [________________] (optional)      │
-│                                                 │
-│ Invitation:  [________________] (optional)      │
-│              Default: AI-generated              │
-│                                                 │
-│ ┌─ Advanced ──────────────────────────────┐    │
-│ │ Custom Article Content (markdown)        │    │
-│ │ [                                    ]   │    │
-│ └──────────────────────────────────────────┘    │
-│                                                 │
-│        [Cancel]  [Preview]  [Save]             │
-└─────────────────────────────────────────────────┘
-```
-
-### Bulk Actions
-
-- **"Auto-fill Next 7 Days"** - Generate AI themes for empty slots
-- **"Skip Challenge"** - Mark a queued challenge as skipped
-- **"Regenerate"** - Re-run AI generation for a queued item
-
-@dev: I think we would want to have a job that automatically adds to the end of the queue so that we always have 30 in the queue or whatever. Basically that the horizon's always full, rather than having an autofill next seven days button or whatever. As for skip challenge, I'd imagine that instead we'd probably want to have just a, I don't know, a regenerate button. I don't think that we need a skip. Maybe if we're going to allow multiple challenges to exist on a specific day, we would need to have a delete button for challenges.
-
-@ai: Got it. So the job becomes "ensure at least N system-generated challenges exist in the queue for the next 30 days". If mods/users have manually created challenges for those dates, those count toward the total. Actions would be:
-- **Delete** - Remove a challenge entirely (with confirmation)
-- **Regenerate** - Re-roll AI fields (theme, title, model) for a queued challenge
-- **Edit** - Manual adjustments
-
----
-
-## Theme Preview (Public)
-
-### Visibility Options
-
-@ai: I suggest a tiered approach:
-
-| Audience | What They See | When |
-|----------|---------------|------|
-| Mods | All queued challenges with full details | Always |
-| Logged-in users | Next 3 themes (theme + model name only) | 24h before each |
-| Public | Current challenge only | When active |
-
-@dev: Maybe we make it so that challenges have a status or like a public flag or something like that. If we're going to be doing flags, we probably should do it as bitwise flags just so that we can add more later. Nah, probably don't need that. Overcomplicating things. Anyway, point is that things should change to, you know, public or whatever once they're within seven days. and then everybody can see them. But then mods can see beyond that. Or maybe we have like a visibility date on the challenge, so that, you know, if we have a really big challenge coming next month, you can see it the month before. I think that probably is even better. And then, um, if we're gonna make it a whole, if we're already making it so that, you know, it's its own thing, I wonder if we actually make it so that users can create challenges as well. How much work would that take?" And then we would just have, you know, AI automatically creates them for kind of us as a system, and then mods would be able to review and manage those. And then obviously mods could edit any challenge, but users would be able to edit their own challenges. And I guess we would need some sort of filter on the challenges feed for users to be able to go see their created challenges, whether they're done or not. and then I guess there'd have to be something to toggle to visible and completed challenges or something.
-
-@ai: I like the `visibleAt` field approach - simple and flexible. Auto-set to 7 days before `startsAt` by default, but manually overridable for big announcements.
-
-**User-created challenges** - this is doable but adds significant scope. Here's what it would require:
-
-**Additional work for user challenges:**
-1. **Approval workflow** - User-created challenges need mod review before going live (status: `Draft` → `Pending` → `Approved` → `Active`) @dev: they wouldn't need mod review.
-   @ai: Got it - no mod gate. Challenges go live automatically once funded. Simplifies the flow significantly.
-
-2. **Prize funding** - Who pays? Options:
-   - User funds prizes from their Buzz balance (escrow on creation) @dev: Yeah, user would fund it.
-   - Site-sponsored prizes only (users just create theme/rules)
-   - Hybrid (user contributes, site matches)
-   @ai: Clear - user escrows Buzz on creation. We'd deduct `prizePool + operationCost` upfront, refund unused operation budget after challenge ends.
-
-3. **Create UI** - Form for users to set theme, duration, prize pool, required resources - @dev: They'd also need a UI for developing the prompt that gets used for judging entries and kind of testing that out. Obviously, that's not a small thing either. Probably a page of its own. In a way, I think that that probably should be, you know, part of the Create Experience, but then something that they can go and review at any time. probably they get a certain number of free checks, and then after that it starts to cost them buzz just to prevent abuse. The limit should be per user, not per challenge.
-   @ai: This is interesting - a "Prompt Lab" for challenge creators. So:
-   - User writes custom judging criteria/prompt
-   - Can test it against sample images (their own or stock examples)
-   - Free tier: 5 tests/day per user (tracked in `UserChallengeStats` or similar)
-   - After that: costs Buzz per test
-   - Prompt gets saved with the challenge and used by the review job
-   This adds meaningful scope but makes user challenges way more powerful. Worth it.
-
-4. **My Challenges page** - `/user/[username]/challenges` showing created + participated
-
-5. **Moderation queue** - Mods need to review/approve user-submitted challenges. @dev: based on non-mod review. We have no model review needed, but we should be assessing the NSFW level of the challenge based on the model that they selected and the theme. Stuff like that. I think we'll need to have an LLM query that we run on what they've created that assigns an NSFW level.
-   @ai: Makes sense - auto-NSFW classification via LLM at creation time. Inputs: model's existing NSFW level, theme text, custom prompt text. Output: challenge NSFW level (1-32 bitwise). This determines who sees the challenge in feeds.
-
-6. **Entry management** - Can challenge creators moderate their own entries? Or only site mods? @dev: entries would still be reviewed by an AI agent. As part of the challenge configuration, they can define how many of the entries, what percentage of the entries are reviewed or whatever, so that, you know, more entries get reviewed. And then the cost for running the challenge kind of is driven by that. So there's the prize pool that they set up, and then there's the cost of actually creating the challenge.
-   @ai: So challenge cost = `prizePool + (reviewBudget * costPerReview)`. User sets `reviewPercentage` (e.g., 50% of entries get scored) or `maxReviews` (e.g., up to 100 entries scored). The job respects this budget. Unused review budget could be refunded or rolled into bonus prizes.
-
-**Rough estimate:**
-- Core challenge system (no user creation): ~2-3 weeks
-- Add user-created challenges: +2-3 weeks
-- Total: ~4-6 weeks
-
-**My suggestion:** Phase it. Ship the core system first (mod management, public feed, proper challenge pages). Then layer on user-created challenges once the foundation is solid. The schema can accommodate both from the start with a `createdById` field and `source` enum (`System` | `Mod` | `User`).
-@dev: Agreed. Let's go ahead and shift the core system first, make sure that everything that we build supports the user-created stuff that we would be adding.
-
-### API Endpoint
-
-```typescript
-// For theme preview widget
-getUpcomingThemes(count: number): {
-  date: string;
-  theme: string;
-  modelName: string;
-  modelCreator: string;
-}[]
-```
-
----
-
-## Job Modifications
-
-### Modified Setup Job Flow
-
-```typescript
-async function createUpcomingChallenge() {
-  const targetDate = getNextChallengeDate();
-
-  // 1. Check for pre-prepared challenge
-  const queued = await db.challengeQueue.findFirst({
-    where: {
-      scheduledDate: targetDate,
-      status: 'Queued',
-    },
-    orderBy: { id: 'asc' },
-  });
-
-  if (queued) {
-    // 2a. Create from queue
-    const article = await createChallengeFromQueue(queued);
-    await db.challengeQueue.update({
-      where: { id: queued.id },
-      data: { status: 'Active', articleId: article.id },
-    });
-    return article;
-  }
-
-  // 2b. Fall back to AI generation (existing logic)
-  return createChallengeFromAI();
-}
-
-async function createChallengeFromQueue(queued: ChallengeQueue) {
-  // Use queued.modelId or auto-select if null
-  const model = queued.modelId
-    ? await getModel(queued.modelId)
-    : await selectRandomModel();
-
-  // Use queued theme or generate if null
-  const theme = queued.theme ?? await generateTheme(model);
-
-  // Use queued content or generate
-  const content = queued.customContent ?? await generateArticle({
-    model,
-    theme,
-    titleOverride: queued.title,
-    invitationOverride: queued.invitation,
-  });
-
-  // Create article and collection (existing logic)
-  // ...
-}
-```
-
----
-
-## Edit Permissions
-
-### Who Can Edit?
-
-@ai: I suggest any moderator can create/edit queued challenges, but **active challenges are locked** to prevent mid-contest changes.
-
-Permissions:
-- Create queued: Any mod
-- Edit queued: Any mod
-- Skip queued: Any mod
-- Edit active: Locked (or admin-only with warning)
-
-@dev: Yeah, active challenges should only be able to have like their title changed or something like that. Basic changes that won't impact how things are going in the competition.
-
-### Audit Log
-
-All changes should be logged:
-```
-[2026-01-13 14:30] @ModName created challenge for Jan 20 (theme: "Neon Dreams")
-[2026-01-13 15:45] @ModName2 updated Jan 20 challenge (changed model)
-[2026-01-14 10:00] System activated Jan 15 challenge
-```
-
-@dev: if we're going to open this up to everybody, I don't think that we need this.
-
----
-
-## Implementation Phases
-
-### Phase 1: Foundation
-- [ ] Create `ChallengeQueue` table and migration
-- [ ] Create tRPC router with CRUD operations
-- [ ] Modify setup job to check queue first
-
-### Phase 2: Mod Interface
-- [ ] Create `/moderator/challenges` page
-- [ ] List view with create/edit/delete
-- [ ] Model search integration
-- [ ] Theme suggestion button (AI helper)
-
-### Phase 3: Enhancements
-- [ ] Calendar view
-- [ ] Drag-to-reorder
-- [ ] Bulk auto-fill action
-- [ ] Preview before publish
-
-### Phase 4: Public Preview
-- [ ] Theme preview API
-- [ ] UI widget for upcoming themes
-- [ ] Visibility controls in config
-
----
-
-## Open Questions
-
-1. **Duplicate dates**: Prevent at creation, or allow and pick first?
-2. **Approval workflow**: Single mod or require approval?
-3. **Theme preview visibility**: How public should upcoming themes be?
-4. **Edit active challenges**: Fully locked, or admin override?
-5. **Audit detail level**: Full log or just timestamps?
-6. **URL structure**: `/moderator/challenges` or elsewhere?
-
----
-
-## Notes
-
-@ai: Ready to start implementation once we align on the open questions. Let me know your thoughts inline with `@dev:` comments.
-@dev: Okay, I asked for some pretty big changes here. What do you think?
-
-@ai: Yeah, this has grown from "mod scheduling tool" into "full challenge platform". I think it's a good direction - challenges are clearly a big engagement driver and deserve first-class treatment rather than being shoehorned into Articles.
-
-The expanded scope is achievable. Key decisions needed:
-1. **Prize funding for user challenges** - This is the thorniest issue. Do users pay, site pays, or hybrid?
-2. **Phase 1 vs full build** - Do you want to ship core system first, or build the whole thing?
-
-I'll revise the schema below to accommodate the full vision. We can always build Phase 1 first and the schema will support adding user creation later.
-
----
-
-## Revised Schema (Full Vision)
-
-```prisma
-model Challenge {
-  id              Int       @id @default(autoincrement())
-
-  // Timing
-  startsAt        DateTime  // When challenge becomes active
-  endsAt          DateTime  // When submissions close
-  visibleAt       DateTime  // When challenge appears in public feed (default: 7 days before start)
-
-  // Content
-  title           String
-  description     String?   // Markdown body (rules, theme explanation)
-  theme           String?   // 1-2 word theme for display
-  invitation      String?   // Short tagline
-  coverImageId    Int?      // Challenge cover image
-  nsfwLevel       Int       @default(1) // Bitwise NSFW level (auto-assessed by LLM)
-
-  // Required resources (optional - null means any resource allowed)
-  modelId         Int?      // Featured/required model
-  modelVersionId  Int?      // Specific version required
-
-  // Judging Configuration
-  judgingPrompt   String?   // Custom prompt for AI judging (user-defined for user challenges)
-  reviewPercentage Int      @default(100) // % of entries to score (affects cost)
-  maxReviews      Int?      // Hard cap on reviews (alternative to percentage)
-
-  // Entries
-  collectionId    Int       // Collection holding submissions
-  maxEntriesPerUser Int     @default(20)
-
-  // Prizes & Costs
-  prizes          Json      // [{place: 1, buzz: 5000, points: 150}, ...]
-  entryPrize      Json?     // {buzz: 200, points: 10, minEntries: 10}
-  prizePool       Int       @default(0) // Buzz escrowed for prizes
-  operationBudget Int       @default(0) // Buzz escrowed for AI review costs
-  operationSpent  Int       @default(0) // Actual Buzz spent on reviews
-
-  // Ownership & Source
-  createdById     Int
-  source          ChallengeSource @default(System)
-
-  // Lifecycle
-  status          ChallengeStatus @default(Scheduled)
-
-  // Metadata
-  metadata        Json?     // Flexible field for challenge-type-specific data
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-
-  // Relations
-  createdBy       User      @relation(fields: [createdById], references: [id])
-  collection      Collection @relation(fields: [collectionId], references: [id])
-  model           Model?    @relation(fields: [modelId], references: [id])
-  coverImage      Image?    @relation(fields: [coverImageId], references: [id])
-  entries         ChallengeEntry[]
-  winners         ChallengeWinner[]
-}
-
-enum ChallengeSource {
-  System    // Auto-generated by AI job
-  Mod       // Created by moderator
-  User      // Created by regular user
-}
-
-enum ChallengeStatus {
-  Scheduled   // Funded and waiting for startsAt
-  Active      // Currently accepting submissions
-  Completed   // Winners announced
-  Cancelled   // Cancelled before completion
-}
-
-// Note: Draft and Judging statuses were removed as they are not needed.
-// Status transitions are controlled by dates and jobs, not manual input:
-// - Challenges are created directly as Scheduled
-// - Jobs automatically transition Scheduled → Active when startsAt is reached
-// - Jobs automatically transition Active → Completed when endsAt is reached
-// - Moderators can use quick actions to end challenges early or void them
-
-model ChallengeEntry {
-  id            Int       @id @default(autoincrement())
-  challengeId   Int
-  imageId       Int
-  userId        Int
-
-  // Scoring
-  score         Json?     // {theme: 8, wittiness: 7, humor: 6, aesthetic: 9, total: 30}
-  aiSummary     String?   // AI-generated description
-
-  // Status
-  status        ChallengeEntryStatus @default(Pending)
-  reviewedAt    DateTime?
-  reviewedById  Int?
-
-  createdAt     DateTime  @default(now())
-
-  // Relations
-  challenge     Challenge @relation(fields: [challengeId], references: [id])
-  image         Image     @relation(fields: [imageId], references: [id])
-  user          User      @relation(fields: [userId], references: [id])
-
-  @@unique([challengeId, imageId])
-}
-
-enum ChallengeEntryStatus {
-  Pending     // Awaiting review
-  Accepted    // Valid entry
-  Rejected    // Invalid (wrong resource, NSFW, etc.)
-  Scored      // AI has scored this entry
-}
-
-model ChallengeWinner {
-  id            Int       @id @default(autoincrement())
-  challengeId   Int
-  userId        Int
-  imageId       Int
-  place         Int       // 1, 2, 3, etc.
-  buzzAwarded   Int
-  pointsAwarded Int
-  reason        String?   // AI explanation for placement
-
-  createdAt     DateTime  @default(now())
-
-  // Relations
-  challenge     Challenge @relation(fields: [challengeId], references: [id])
-  user          User      @relation(fields: [userId], references: [id])
-  image         Image     @relation(fields: [imageId], references: [id])
-
-  @@unique([challengeId, place])
-}
-```
-
----
-
-## Revised Implementation Phases
-
-### Phase 1: Core Challenge System ✅
-**Goal:** Replace Article-based challenges with dedicated Challenge entity
-
-- [x] Create `Challenge`, `ChallengeWinner`, `ChallengeJudge` tables
-- [x] Deprecate Article-based challenges (new challenges no longer create Articles)
-- [x] Create `/challenges` feed page (list view with filters/sorting)
-- [x] Create `/challenges/[id]` detail page (with winners podium, entries, mod actions)
-- [x] Update jobs to use new tables
-- [x] Mod management at `/moderator/challenges` (list + CRUD)
-- [x] Auto-queue job to maintain 30-day horizon (`challenge-auto-queue.ts`)
-- [x] Challenge activation job (`challenge-activation.ts` - every minute)
-- [x] Challenge completion job (`challenge-completion.ts` - every minute)
-- [x] Entry submission modal (My Images, From Generator, Upload New)
-- [x] Image eligibility checking (NSFW level, model version, recency)
-- [x] Judge personas with custom prompts (`ChallengeJudge` table)
-- [x] Judge displayed as challenge creator in UI (display-layer swap)
-- [x] Feature flag gating via Flipt (`CHALLENGE_PLATFORM_ENABLED`)
-- [x] Mobile-optimized detail page and upsert form
-- [x] Collection metadata sync on challenge update
-- [x] Cover image upload and display
-
-### Phase 2: Enhanced Features ✅
-**Goal:** Multi-day challenges, visibility controls, better UX
-
-- [x] Support variable duration (`startsAt`/`endsAt`)
-- [x] `visibleAt` field for preview announcements
-- [x] Countdown timers on challenge cards
-- [x] Filter/sort options on feed (active, upcoming, completed)
-- [x] Challenge search (query filter on title/theme)
-- [ ] NSFW auto-classification via LLM
-
-### Phase 3: User-Created Challenges
-**Goal:** Open challenge creation to users
-
-- [ ] User challenge creation form
-  - Theme, duration, prize pool configuration
-  - Model/resource selection
-  - Review budget slider (% of entries scored)
-- [ ] **Prompt Lab** - Custom judging prompt editor
-  - Write/edit judging criteria
-  - Test against sample images
-  - Free tier: 5 tests/day per user
-  - Buzz cost for additional tests
-- [ ] Prize + operation escrow system (Buzz deduction on creation)
-- [ ] My Challenges page (`/user/[username]/challenges`)
-- [ ] Challenge cost calculator (show estimated total before creation)
-- [ ] Refund system for unused operation budget
-
-### Phase 4: Polish
-**Goal:** Engagement features
-
-- [ ] `UserChallengeStats` table/view
-- [ ] Leaderboard (most wins, most entries, highest scores)
-- [ ] Streak tracking (consecutive challenges entered)
-- [ ] Challenge history on user profiles
-- [ ] Badges/achievements for milestones
-- [ ] "Rematch" - challenge previous winners
-
-@dev: as part of this overhaul. It probably makes sense to try and switch from the OpenAI-specific SDKs to the OpenRouter SDK. https://openrouter.ai/docs/quickstart.md
-
-@ai: Good call. OpenRouter gives us:
-- Model flexibility (GPT-4o, Claude, Gemini, open-source models) without code changes
-- Fallback routing if one provider is down
-- Cost optimization (route to cheaper models for simpler tasks)
-- Single API key management
-
-For challenges specifically, we could:
-- Use GPT-4o or Claude for complex judging (winner selection)
-- Use cheaper models (GPT-4o-mini, Haiku) for entry validation
-- Let user-created challenges specify model preference (within budget)
-
-I'll add this as a Phase 1 task since it affects the foundation.
-
----
-
-## Implementation Status
-
-> **Last Updated:** February 2026
-
-### Phase 1 & 2: Core Challenge System ✅
-
-The challenge platform has been fully implemented and is ready for production release.
-
-#### Database Schema
-- `Challenge` table with timing, content, prizes, and lifecycle fields
-- `ChallengeWinner` table for recording winners
-- `ChallengeJudge` table for AI judge personas (custom prompts, bios)
-- Challenge entries are stored as `CollectionItem` records in the challenge's collection
-- Migrations: `20260113113902_add_challenge_system`, `20260129000000_add_challenge_judge`
-
-#### Challenge Lifecycle
-Status transitions are **automatic and date-driven**, not manually controlled:
-
-```
-Scheduled → Active → Completed
+Scheduled → Active → Completing → Completed
     ↓          ↓
-Cancelled  Cancelled
+Cancelled   Cancelled
 ```
 
-**Final ChallengeStatus enum:**
-- `Scheduled` - Challenge is funded and waiting for `startsAt`
-- `Active` - Currently accepting submissions (between `startsAt` and `endsAt`)
-- `Completed` - Challenge ended, winners announced
-- `Cancelled` - Challenge was voided before completion
+- **Scheduled** — funded, waiting for `startsAt`. The only state a user challenge may be edited/deleted in.
+- **Active** — accepting submissions (between `startsAt` and `endsAt`).
+- **Completing** — winner-picking in progress; guards against duplicate processing.
+- **Completed** — winners announced (terminal).
+- **Cancelled** — voided before completion (terminal); hidden from public, visible to mods.
 
-**Removed statuses:**
-- `Draft` - Not needed since challenges are created directly as Scheduled
-- `Judging` - Not needed since winner picking happens immediately at challenge end
+Transitions are date/job-driven and enforced at the application layer only (no DB constraints).
 
-#### Moderator Quick Actions
-Instead of manual status changes, moderators have contextual quick actions:
+**Scheduling / queue**
+- Horizon = **30 days**; `challenge-auto-queue` tops up `System` challenges so it's always full. Mod/user challenges in the window count toward the total.
+- Auto-created challenges are inserted directly as **Scheduled** (never Draft); the horizon query counts Scheduled only.
+- **Unlimited concurrent active challenges** — jobs process each independently with per-challenge error isolation.
+- `visibleAt` controls public feed appearance (default 7 days before `startsAt`; user challenges = `now()`).
+- Active-challenge edits are restricted to non-competitive fields.
 
-| Status | Available Actions |
-|--------|-------------------|
-| Scheduled | Cancel Challenge |
-| Active | End & Pick Winners, Void Challenge |
-| Completed | (none - terminal state) |
-| Cancelled | (none - terminal state) |
+**Runtime jobs**
 
-**End & Pick Winners:**
-- Closes the collection
-- Runs LLM-based winner selection
-- Awards winner prizes (yellow Buzz)
-- Awards entry participation prizes to eligible non-winners (blue Buzz)
-- Stores completion summary in `Challenge.metadata.completionSummary`
-- Sends notifications to winners and entry prize recipients
-- Sets status to `Completed`
+| Job | Schedule | Function |
+|---|---|---|
+| `daily-challenge-setup` | `0 22 * * *` (10 PM UTC) | `createUpcomingChallenge()` — AI-generate next system challenge (if none upcoming) |
+| `challenge-auto-queue` | `0 6 * * *` (6 AM UTC) | `ensureChallengeHorizon()` — maintain 30-day horizon |
+| `daily-challenge-process-entries` | `*/10 * * * *` | `reviewEntries()` — validate + AI-score across all active challenges |
+| `challenge-activation` | `0 * * * *` (hourly) | `runChallengeActivation()` — Scheduled → Active at `startsAt` |
+| `challenge-completion` | `0 * * * *` (hourly) | `runChallengeCompletion()` — pick winners past `endsAt` |
 
-**Void Challenge:**
-- Closes the collection
-- Does NOT pick winners or award prizes
-- Sets status to `Cancelled`
-
-#### Completion Summary Storage
-
-When a challenge completes (either via job or manual action), the AI-generated judging content is stored:
-
-```typescript
-Challenge.metadata.completionSummary = {
-  judgingProcess: string;  // HTML describing the judging process
-  outcome: string;         // HTML summary of the challenge outcome
-  completedAt: string;     // ISO timestamp
-};
-```
-
-This content is displayed on the challenge detail page in the Winners section.
-
-**Note:** Challenges no longer create or update Articles. The Article-based system has been fully deprecated:
-- New challenges are created directly in the `Challenge` table
-- Cooldown tracking uses the `Challenge` table (not Article metadata)
-- Admin/mod endpoints use Challenge IDs (not Article IDs)
-- The `getChallengeDetails` function (Article-based) is deprecated; use `getChallengeById` instead
-
-#### Multi-Challenge Job Processing
-The daily challenge jobs support **multiple concurrent active challenges**:
-
-- `reviewEntries()` - Processes ALL active challenges, not just one
-- `pickWinners()` - Handles ended challenges (winner picking) and starts scheduled challenges
-- Each challenge is processed independently with error isolation (one failure doesn't stop others)
-- System challenges are auto-created only when no upcoming system challenges exist
-
-**Key helper functions:**
-- `getActiveChallenges()` - Returns all active challenges
-- `getEndedActiveChallenges()` - Returns active challenges past their `endsAt`
-- `getChallengesReadyToStart()` - Returns scheduled challenges ready to activate
-- `getUpcomingSystemChallenge()` - Checks if a system challenge exists
-
-#### Key Files
-
-| Purpose | File |
-|---------|------|
-| Prisma models | `prisma/schema.full.prisma` (Challenge, ChallengeWinner, ChallengeJudge) |
-| Types & Zod schemas | `src/server/schema/challenge.schema.ts` |
-| Service (business logic) | `src/server/services/challenge.service.ts` |
-| tRPC router | `src/server/routers/challenge.router.ts` |
-| DB helpers & shared types | `src/server/games/daily-challenge/challenge-helpers.ts` |
-| Config & legacy adapters | `src/server/games/daily-challenge/daily-challenge.utils.ts` |
-| Challenge activation job | `src/server/jobs/challenge-activation.ts` |
-| Challenge completion job | `src/server/jobs/challenge-completion.ts` |
-| Daily processing jobs | `src/server/jobs/daily-challenge-processing.ts` |
-| Job registration | `src/pages/api/webhooks/run-jobs/[[...run]].ts` |
-| Challenges feed page | `src/pages/challenges/index.tsx` |
-| Challenge detail page | `src/pages/challenges/[id]/[[...slug]].tsx` |
-| Moderator list page | `src/pages/moderator/challenges.tsx` |
-| Create/Edit form | `src/components/Challenge/ChallengeUpsertForm.tsx` |
-| Entry submission modal | `src/components/Challenge/ChallengeSubmitModal.tsx` |
-| Entry image card | `src/components/Challenge/ChallengeSelectableImageCard.tsx` |
-| Generator image import | `src/utils/generator-import.ts` |
-| Feature flag | `src/server/services/feature-flags.service.ts` (`challengePlatform`) |
-
-#### Feature Flag
-
-The entire platform is gated behind the `CHALLENGE_PLATFORM_ENABLED` Flipt flag (key: `challengePlatform`). This controls:
-- All tRPC endpoints (router-level `isFlagProtected`)
-- All pages (SSR-level redirect)
-- Navigation visibility (HomeContentToggle)
-- Background jobs (checked at job start)
-
-#### Judge Display
-
-When a challenge has a `judgeId`, the judge's user profile (avatar, cosmetics, username) is shown as the challenge "creator" in both the feed cards and detail page. The actual `createdById` remains unchanged for auditing. This swap happens in the service layer (`getInfiniteChallenges` and `getChallengeDetail`).
-
-### Future Work
-- [ ] User-created challenges with Buzz escrow
-- [ ] Prompt Lab for custom judging criteria
-- [ ] UserChallengeStats and leaderboards
-- [ ] Streak tracking and badges
-- [ ] NSFW auto-classification via LLM
+**Moderator quick actions** (replace manual status edits): Scheduled → *Cancel*; Active → *End & Pick Winners* / *Void*; terminal states → none. End/void/pick-winners is **moderator-only for all sources**, including user challenges ("mods own ending").
 
 ---
 
-## Developer Testing Guide
+## 4. Entries, scoring & winner selection
 
-This section describes how to set up test data for the challenge system during development.
+**Entry validation** (`reviewEntries()`; failure → rejected):
+1. **NSFW** — image `nsfwLevel` must satisfy the challenge's `allowedNsfwLevel` bitwise flag.
+2. **Required resource** — image must use ≥1 of the challenge's `modelVersionIds` (via `ImageResourceNew.modelVersionId`, SQL `ANY()` OR-match).
+3. **Recency** — image `createdAt` ≥ challenge `startsAt`.
 
-### Testing Endpoints
+**AI scoring** — each accepted entry is scored 0–10 per judging dimension. The LLM also returns a `reaction`, a `comment` (posted to the image), and a `summary`. Score/summary are stored on `CollectionItem.note`.
 
-The testing webhook endpoint at `/api/testing/daily-challenge` provides actions for testing challenge workflows:
+**Ranking**
+- `System`/`Mod` (fixed rubric): `Rating = average(theme, wittiness, humor, aesthetic)`.
+- `User` (weighted categories): `calculateWeightedCategoryScore` — see §6.
 
-| Action | Description |
-|--------|-------------|
-| `article` | Test article content generation for a model |
-| `collection` | Test collection details generation |
-| `review` | Test entry review/scoring for an image |
-| `winners` | Test winner selection logic |
-| `complete-review` | Run the entry review job |
-| `complete-challenge` | Run the winner picking job |
-| `create-challenge` | Create a new scheduled challenge via AI |
+**Winner selection**: close collection → rank → dedup to each user's single best entry → send top `finalReviewAmount` (10) to the LLM for final winner selection with reasons → award winner prizes (yellow Buzz) → award entry-participation prizes (blue Buzz) → store `Challenge.metadata.completionSummary` (`{ judgingProcess, outcome, completedAt }`) → notify.
 
-### Setting Up Test Challenges Manually
+**Base prize structure** (`System`, from config):
 
-Since test data setup requires database writes, use the following SQL queries or Prisma commands to create test challenges.
+| Place | Buzz | Points |
+|---|---|---|
+| 1st | 5,000 | 150 |
+| 2nd | 2,500 | 100 |
+| 3rd | 1,500 | 50 |
 
-#### 1. Create a Test Collection
+Participation prize: users with ≥ `entryPrizeRequirement` (10) valid entries get 200 Buzz + 10 points, awarded immediately on hitting the threshold (winners excluded), plus a completion sweep.
 
-```sql
--- Create a collection for the challenge
-INSERT INTO "Collection" (
-  name, description, "userId", mode, type, read, write, metadata
-) VALUES (
-  '[TEST] My Test Challenge',
-  'Test challenge for development',
-  6235605, -- CivBot user ID (or your user ID)
-  'Contest',
-  'Image',
-  'Public',
-  'Review',
-  '{"maxItemsPerUser": 20, "forcedBrowsingLevel": 1}'
-) RETURNING id;
--- Note the collection ID for the next step
-```
+---
 
-#### 2. Create a Test Challenge
+## 5. Judging system
 
-```sql
--- Create the challenge record
-INSERT INTO "Challenge" (
-  "startsAt", "endsAt", "visibleAt",
-  title, description, theme, invitation,
-  "nsfwLevel", "allowedNsfwLevel",
-  "collectionId", "modelVersionIds",
-  "maxEntriesPerUser", prizes, "entryPrize", "entryPrizeRequirement", "prizePool",
-  "createdById", source, status, metadata
-) VALUES (
-  '2020-01-01', -- Old date so existing images pass recency check
-  NOW() + INTERVAL '1 day', -- Ends tomorrow
-  NOW() - INTERVAL '1 day', -- Already visible
-  '[TEST] Development Challenge',
-  'This is a test challenge for development',
-  'TestTheme',
-  'Submit your test entries!',
-  1, 1,
-  <COLLECTION_ID>, -- From step 1
-  ARRAY[598256], -- Model version IDs (use a popular one)
-  20,
-  '[{"buzz": 5000, "points": 150}, {"buzz": 2500, "points": 100}, {"buzz": 1500, "points": 50}]',
-  '{"buzz": 200, "points": 10}',
-  3,
-  9000,
-  6235605, -- CivBot user ID
-  'System',
-  'Active',
-  '{"challengeType": "world-morph"}'
-) RETURNING id;
-```
+### Judges (`ChallengeJudge`)
+AI judge personas with custom prompts/bios. When `Challenge.judgeId` is set, the judge's profile is shown as the "creator" in feed + detail (**display-layer only** — `createdById` is unchanged, so owner checks must never use the displayed `createdBy.id`, which is `judgeUserId ?? createdById`). Selectable judges are a hardcoded whitelist, not a DB column.
 
-#### 3. Add Test Entries
+### Dynamic judging categories (`ChallengeCategory`)
+Judging is category-driven: a challenge's `judgingCategories` (a weighted mix from a curated library) determines which scoring rubrics the judge applies. Behavior-preserving by default — the default rows (`theme 50 / aesthetic 20 / humor 15 / wittiness 15`) rank identically to the old fixed weights; outcomes change only when categories/weights are reshaped.
 
-To add entries from **multiple different users** (required for testing 3-winner selection):
+**Library table `ChallengeCategory`** (structural migration `prisma/migrations/20260709201808_challenge_category_table`; edit `packages/civitai-db-schema/prisma/schema.full.prisma`, never the slim schema):
 
-```sql
--- Find images from different users that have the required resource
-SELECT DISTINCT ON (i."userId")
-  i.id, i."userId", u.username
-FROM "Image" i
-JOIN "User" u ON u.id = i."userId"
-JOIN "ImageResourceNew" ir ON ir."imageId" = i.id
-WHERE i."nsfwLevel" = 1
-  AND ir."modelVersionId" = 598256 -- Match challenge's modelVersionIds
-ORDER BY i."userId", i."createdAt" DESC
-LIMIT 10;
+| Column | Purpose |
+|---|---|
+| `key` (PK) | stable id (`theme`, `aesthetic`, …) |
+| `label` | picker display + sanitized score-JSON key |
+| `criteria` | terse one-liner — **client-visible** |
+| `rubric` | rich SFW scoring block — **server-only** |
+| `rubricNsfw` | NSFW override; `null` → falls back to `rubric` |
+| `group`, `sortOrder`, `active` | picker grouping/ordering/soft-hide |
 
--- Add each image as a collection item with ACCEPTED status and scores
-INSERT INTO "CollectionItem" (
-  "collectionId", "imageId", "addedById", status, "reviewedAt", note
-) VALUES (
-  <COLLECTION_ID>,
-  <IMAGE_ID>,
-  <USER_ID>,
-  'ACCEPTED',
-  NOW(),
-  '{"score": {"theme": 8, "wittiness": 7, "humor": 6, "aesthetic": 9}, "summary": "Test entry"}'
-);
-```
+Per-category **weights** live on the challenge instance (`Challenge.judgingCategories Json?`, rows of `{ key, weight, label, criteria }`), not in the library.
 
-**Important:** For winner picking to select 3 winners, entries must come from at least 3 different users. The system deduplicates by user (only the top entry per user is considered).
+**Rubric resolution** (`pickCategoryRubric`, server): DB `rubricNsfw` (when nsfw) → DB `rubric` → text derived from `label`+`criteria`. `criteria` is the terse, client-visible one-liner; `rubric` is the detailed scoring guidance and is **not the same thing**. Rich rubric text lives **only in the DB**, never committed to the repo: the row structure + `criteria` are inserted by the committed structural migration, and the rich `rubric`/`rubricNsfw` are added by the gitignored seed (§9). An unseeded table degrades to the terse criteria-derived form, so **seeding is required** for full-quality judging. `getChallengeCategoryRows` caches the library for 5 min and falls back to `presetFallbackRows()` (structure + criteria only) when the table is missing.
 
-#### 4. Test the Challenge Workflow
+**Prompt injection** — the sentinel `{{SCORING_RUBRICS}}` (`SCORING_RUBRICS_SENTINEL`, `generative-content.ts`) sits in a judge's `reviewPrompt` where the rubric block goes:
+- `injectRubrics(reviewPrompt, block)` replaces every sentinel occurrence; **if the sentinel is absent, the prompt is returned byte-for-byte unchanged** (unmigrated judges are unaffected — this is the backward-compat guarantee).
+- `resolveRubricBlock(categories, { nsfw })` assembles the block from the selected categories.
+- `buildFallbackMessages` (the live path) **always resolves the sentinel**: `effectiveCategories = input.categories?.length ? input.categories : DEFAULT_CATEGORY_ROWS`. So a null/empty-category challenge on a migrated judge renders the four pre-migration canonical blocks — never a literal `{{SCORING_RUBRICS}}` — while keeping the fixed `RESPONSE_SCHEMA`. A challenge with real categories gets those categories' rubrics + a category-keyed schema (`buildCategoryReviewSchema`).
 
-```bash
-# Review entries (processes unreviewed REVIEW status items)
-curl "https://your-dev.civitai.com/api/testing/daily-challenge?action=complete-review"
+Net invariants: (a) sentinel absent → identical to legacy; (b) sentinel present + null categories → default blocks + fixed schema; (c) sentinel present + real categories → category rubrics + category schema.
 
-# Pick winners (for ended challenges with status=Active)
-curl "https://your-dev.civitai.com/api/testing/daily-challenge?action=complete-challenge"
-```
+### Judge-prompt migration
+The 3 SFW judges — **CivBot, CivChan, GigaBot** — have their baked `THEME/WITTINESS/HUMOR/AESTHETIC SCORING` blocks replaced by the single `{{SCORING_RUBRICS}}` sentinel (otherwise the model would see the rubric twice). The INTEGRITY-CHECK anti-cheat line moves into the always-present static prompt so it survives the strip. **CivChan NSFW is intentionally excluded** (the `rubricNsfw` set is incomplete in v1, so it stays on its baked blocks).
 
-### Quick Test: Using Existing Challenges
+This is a **DB content change applied manually per environment** (retool/psql) — see §9. Rich rubric text lives only in the DB and the gitignored `scripts/migrations/*.local.sql`; it is never committed to the repo.
 
-If you want to test on an existing challenge:
+**Prod caveat**: until the sentinel migration is applied to an environment, that env's real judges lack the sentinel, so `injectRubrics` is a no-op and dynamic category selection is inert there (safe legacy behavior). Category rows can be seeded independently; they are dormant until the sentinel is present.
 
-1. **Check challenge status:**
-```sql
-SELECT id, title, status, "collectionId", "modelVersionIds", "endsAt"
-FROM "Challenge"
-WHERE status = 'Active'
-ORDER BY "endsAt" DESC
-LIMIT 5;
-```
+**Status**: category library + injection + default-rubric fallback + mod persistence/UI are **shipped**, and judging is category-driven for **all sources** — the `dynamic-judging-categories` flag was removed; any challenge that stores `judgingCategories` is judged by them, others fall back to the default four. Judge-prompt sentinel migration + rubric seed = human-applied per env, **required** (§9). Historical backfill and the NSFW rubric set are **(deferred)** — the default-rubric fallback makes backfill unnecessary for correctness.
 
-2. **Check entry count and user diversity:**
-```sql
-SELECT
-  COUNT(*) as total_entries,
-  COUNT(DISTINCT i."userId") as unique_users
-FROM "CollectionItem" ci
-JOIN "Image" i ON i.id = ci."imageId"
-WHERE ci."collectionId" = <COLLECTION_ID>
-  AND ci.status = 'ACCEPTED';
-```
+---
 
-3. **Manually end a challenge early** (to test winner picking):
-```sql
-UPDATE "Challenge"
-SET "endsAt" = NOW() - INTERVAL '1 hour'
-WHERE id = <CHALLENGE_ID>;
-```
+## 6. Public / user-created challenges
 
-Then run `complete-challenge` action to pick winners.
+Gated by `userChallenges`. Only `User`-source behavior below is new; `System`/`Mod` paths are untouched.
 
-### Debugging Challenge Issues
+### Creation form
+One component, `ChallengeUpsertForm`, with `variant?: 'moderator' | 'user'` (`isUser = variant === 'user'`). `UserChallengeUpsertForm` is a thin `<ChallengeUpsertForm variant="user" />` wrapper; create page `/challenges/create`.
+- **Shared**: basics (title/theme/cover/description), schedule, prize distribution.
+- **User-only**: entry-fee section (`entryFee`, `initialPrizeBuzz`, `dist1/2/3`), `<CategoryWeights />`, restricted judge picker, `InputContentRatingSelect` (browsing level), `source` forced to `User`. The judging-prompt override is hidden.
+- **Mod-only** (hidden for users): source, event, eligible-models multiselect, fixed prize mode, paid-review budget.
+- Submit: `isUser` → `upsertUserChallenge`; else → `upsert`.
 
-#### Entry Not Being Accepted
+### Weighted categories
+Schema in `challenge.schema.ts`: each category `{ key ∈ CHALLENGE_CATEGORY_KEYS, label(1–50), criteria(1–500), weight(1–100) }`; array `.min(1).max(4)` with a `superRefine` requiring **exactly one `theme`** (mandatory), unique preset keys (`custom` may repeat), case-insensitive unique labels, and **weights summing to 100**. `CHALLENGE_CATEGORY_KEYS = ['theme','humor','wittiness','aesthetic','custom']`.
 
-Entries are rejected if they fail any of these checks:
-- `nsfwLevel != 1` (must be SFW)
-- Image doesn't have required resource (`ImageResourceNew.modelVersionId` not in challenge's `modelVersionIds`)
-- Image created before challenge `startsAt` (recency check)
+`CategoryWeights` UI: Theme row pre-selected and non-removable; up to 3 more; preset rows auto-fill read-only label/criteria; custom rows editable; per-row integer weight; live "must total 100%"; add disabled at 4. Editable only while **Scheduled + 0 entries**.
 
-Debug query:
-```sql
-SELECT
-  i.id as image_id,
-  i."nsfwLevel",
-  i."createdAt" as image_created,
-  c."startsAt" as challenge_starts,
-  EXISTS (
-    SELECT 1 FROM "ImageResourceNew" ir
-    WHERE ir."imageId" = i.id
-    AND ir."modelVersionId" = ANY(c."modelVersionIds")
-  ) as has_resource
-FROM "Image" i
-CROSS JOIN "Challenge" c
-WHERE i.id = <IMAGE_ID> AND c.id = <CHALLENGE_ID>;
-```
+**Weighted scoring** (`daily-challenge-scoring.ts`, `calculateWeightedCategoryScore`, keyed by category **label**), theme always gated:
+- `themeScore < 2` (`THEME_DISQUALIFY_THRESHOLD`) → `null` (disqualified).
+- else weighted = `Σ clamp(score, 0, 10) * weight/100`.
+- `themeScore < 4` (`THEME_GATE_THRESHOLD`) → cap result at `5.0` (`THEME_GATE_MAX_SCORE`).
 
-#### Only 1 Winner Selected
+### Selectable judges
+User picker restricted to `USER_SELECTABLE_JUDGE_NAMES = ['CivBot', 'CivChan']` — keyed by **name** (not id/userId; ids differ per env, and `CivChan` shares a `userId` with `"CivChan NSFW"`, so a userId filter would leak the NSFW judge). `getActiveJudgeOptions` filters `{ active: true, name: { in: whitelist } }`; `upsertUserChallenge` re-validates the chosen judge resolves to an allowed name.
 
-This happens when all entries belong to the same user. Check user diversity:
-```sql
-SELECT i."userId", u.username, COUNT(*) as entries
-FROM "CollectionItem" ci
-JOIN "Image" i ON i.id = ci."imageId"
-JOIN "User" u ON u.id = i."userId"
-WHERE ci."collectionId" = <COLLECTION_ID>
-  AND ci.status = 'ACCEPTED'
-GROUP BY i."userId", u.username;
-```
+Review generation for `User` source routes through `buildCategoryReviewSchema` (one 0–10 score per category label). The job passes `categories: judgingCategories.map(c => ({ name: c.label, criteria: c.criteria }))` into `generateReview`; stored `score` is `Record<label, number>`. `getJudgedEntries` computes `weightedRating` in JS for `User`, drops `null`, best entry per user, sorts desc, slices to `finalReviewAmount`. Score consumers (`parseJudgeScore`, `JudgeScoreBadge`, `ReviewImageActivity`) tolerate category-keyed scores.
 
-### Cleanup Test Data
+### Economics (entry-fee model)
+Users fund challenges by an **entry fee** (no fixed prize mode). Hard invariant: **Buzz is never minted** — every pool/refund derives from actual charge transactions, never from row counts. Logic in `challenge-funding.ts` / `challenge-pool.ts`. Constants (`challenge.constants.ts`):
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `CHALLENGE_ENTRY_HOUSE_CUT` | 25 | flat house cut per entry (rest reaches the pool) |
+| `CHALLENGE_MIN_ENTRY_FEE` | 50 | minimum entry fee |
+| `CHALLENGE_MAX_ENTRY_FEE` | 100,000 | maximum entry fee |
+| `CHALLENGE_MIN_CREATOR_SCORE` | 5,000 | minimum creator score to create a challenge (eligibility gate) |
+| `CHALLENGE_MAX_INITIAL_PRIZE` | 10,000,000 | cap on creator-seeded initial prize |
+
+Idempotency-key prefixes: entry fee `challenge-entry-fee-${challengeId}-${imageId}`, initial prize `challenge-initial-prize-${challengeId}`, and matching `-refund-` prefixes.
+
+- **Charges/refunds reverse only real money** — `refundUserChallengeFunds` reverses collected fee charges (unpaid entries can't refund); on partial-charge failure, successful legs are refunded before throwing (no stranded Buzz).
+- **Completion pool uses the REAL collected amount** — `prizePool` seeds to `basePrizePool` at create and increments only from charged entries; `User` completion derives the prize breakdown from `prizePool` + `prizeDistribution` (not from ACCEPTED row count). `System`/`Mod` stay count-based.
+- **Residual refund on zero-winner completion** — a paid `User` challenge that completes with no winners refunds collected fees + initial prize. Partial-winner pro-rata is **(deferred)**.
+
+### Safety / gating
+- **Scan gate** — `getChallengeDetail(id, viewerId?)` returns `null` when `source === 'User' && scanStatus !== 'Scanned' && createdById !== viewer`. Activation excludes unscanned user challenges; a `Blocked` user challenge past its start is **auto-voided + refunded**.
+- **Browsing level** — user challenges are not clamped to SFW; `InputContentRatingSelect` (defaults SFW, user-selectable) drives `allowedNsfwLevel` (1–63). NSFW isolation (real-cover `browsingLevel` exclusion + client `<Gated>` soft-gate) is handled in the blocker-fix work.
+- **Orphan guard** — cover `createImage` runs after eligibility assertion, so an ineligible caller leaves no orphan Image.
+- **Null-safe deleted creator** — `createdById` is nullable (`ON DELETE SET NULL`); `buildChallengeDetail` falls back to system user (`?? -1`).
+
+### User challenge management
+Creators can **view / edit / delete their own `User` challenges only while `Scheduled` with 0 entries**. End/void/pick-winners stay moderator-only.
+- `deleteUserChallenge({ id, userId })` — `protectedProcedure`, both flags; guards owner + `source=User` + `Scheduled` + 0 entries, then `deleteChallenge` (refunds escrowed prize, cascades). Delete re-reads status so it **fails safe** if it races activation (blocks on `Active`); full idempotency under concurrent delete is an open verification item **(deferred)**.
+- `getUserChallengeForEdit({ id, userId })` — owner-gated edit payload.
+- `getInfiniteChallenges`/`getChallengeDetail` expose top-level **`createdById`** (the field all owner checks use).
+- Client: `useDeleteUserChallenge()`, `ChallengeContextMenu` (owner Edit/Delete, self-gating), owner menu on `ChallengeCard` + detail; edit route `/challenges/[id]/edit` (`variant="user"`, standing-only); "My Challenges" mode at `/challenges?engagement=created` (creator exempt from scan gate, `visibleAt=now()`); nav link in the user dropdown.
+
+---
+
+## 7. Anti-gaming
+
+- **User cooldown** 14 days; **resource cooldown** 90 days between features.
+- **Entry cap** `maxEntriesPerUser` (2× the entry requirement); **scored cap** `maxScoredPerUser: 5` (only 5 entries/user get AI-scored).
+- **Best-entry-per-user** in final judgment; **one winner per user** (top-N dedup).
+- **Recency** — only images created during the window qualify.
+- **INTEGRITY CHECK** — text in an image asking for a high score voids the entry.
+
+---
+
+## 8. Configuration & flags
+
+**Config** (sysRedis `DAILY_CHALLENGE.CONFIG`, code-default fallback): `challengeType`, `userCooldown`, `resourceCooldown`, `prizes[]`, `entryPrizeRequirement`, `entryPrize`, `reviewAmount {min,max}`, `maxScoredPerUser`, `finalReviewAmount`. LLM prompt text is per-type in `ChallengeType`.
+
+**Flipt flags**
+
+| Flipt key | Feature flag | Gates |
+|---|---|---|
+| `challenge-platform-enabled` | `challengePlatform` | whole platform |
+| `user-challenges` | `userChallenges` | user create/manage (**tester rollout**) |
+
+Flipt is **GitOps-only** (writes via the GitOps repo, not the API).
+
+---
+
+## 9. Operations: judging-setup migrations & release runbook
+
+DB-content changes for judging are **applied manually per environment** (retool/psql) — the repo does
+not auto-run them (`prisma migrate deploy` is never used here). The rubric SQL is maintained in
+gitignored `scripts/migrations/*.local.sql`:
+
+| File | Effect | Depends on |
+|---|---|---|
+| `prisma/migrations/20260709201808_challenge_category_table` (committed) | Creates `ChallengeCategory` + inserts 26 rows (structure + terse `criteria`) | Apply first — the seed below UPDATEs these rows |
+| `challenge-category-rubric-seed.local.sql` | UPDATEs the rich `rubric` / `rubricNsfw` for all 26 categories (idempotent) | **Required** — an unseeded table degrades judging to terse criteria |
+| `dynamic-judging-categories-judge-prompts.local.sql` | Replaces baked blocks → `{{SCORING_RUBRICS}}` sentinel for CivBot/CivChan/GigaBot | **the `buildFallbackMessages` default-rubric fallback must be deployed first** |
+| `test-judge-sentinel.local.sql` | Optional hidden `CivBot Sentinel Test` judge for pre-flight validation | none |
+
+**⚠️ Ordering (per environment):**
+
+1. **Deploy** the application code carrying `injectRubrics` / `buildFallbackMessages` default-rubric fallback to the environment.
+2. **Only then** apply `dynamic-judging-categories-judge-prompts.local.sql`. Applying it before the deploy sends a literal `{{SCORING_RUBRICS}}` (with zero scoring criteria) to the LLM — a real regression, not a graceful no-op.
+3. Apply the structural category migration, then `challenge-category-rubric-seed.local.sql` — deploy-independent, but **required** for full-quality judging (an unseeded/partially-seeded table falls back to terse criteria).
+4. Enabling `user-challenges` before the sentinel migration is safe but means testers' custom categories are silently ignored (judge falls back to baked blocks). Prefer: migrate judges, then open the flag.
+
+**Verification** (after applying the judge-prompt file): expect `has_sentinel = true` and `blocks_removed = true` for CivBot/CivChan/GigaBot:
 
 ```sql
--- Delete test challenges and their winners
-DELETE FROM "ChallengeWinner" WHERE "challengeId" IN (
-  SELECT id FROM "Challenge" WHERE title LIKE '[TEST]%'
-);
-DELETE FROM "Challenge" WHERE title LIKE '[TEST]%';
-
--- Delete test collections and their items
-DELETE FROM "CollectionItem" WHERE "collectionId" IN (
-  SELECT id FROM "Collection" WHERE name LIKE '[TEST]%'
-);
-DELETE FROM "Collection" WHERE name LIKE '[TEST]%';
+SELECT name,
+  position('{{SCORING_RUBRICS}}' in "reviewPrompt") > 0 AS has_sentinel,
+  "reviewPrompt" NOT LIKE '%THEME SCORING (0-10):%'    AS blocks_removed
+FROM "ChallengeJudge" WHERE name IN ('CivBot','CivChan','GigaBot');
 ```
+
+**Release-to-testers sequence**: merge `feat/public-challenges` → deploy lands in prod → apply the judge-prompt sentinel SQL (verify) → enable `user-challenges` with a segmented rollout to the tester segment.
+
+---
+
+## 10. Database tables
+
+- **`Challenge`** — `startsAt`/`endsAt`/`visibleAt`; `title`/`description`/`theme`/`coverImageId`; `nsfwLevel`/`allowedNsfwLevel` (bitwise); `modelVersionIds Int[]` (OR-match); `collectionId`; `maxEntriesPerUser`; `prizes`/`entryPrize`/`entryPrizeRequirement`/`prizePool`; `judgingCategories Json?`; `createdById` (nullable), `judgeId`, `source`, `status`, `scanStatus`; `metadata Json` (`completionSummary`, `challengeType`).
+- **`ChallengeType`** — LLM prompts (`promptSystemMessage`, `promptCollection`, `promptArticle`, `promptReview`, `promptWinner`).
+- **`ChallengeJudge`** — persona prompts/bios, incl. `reviewPrompt` (carries the sentinel post-migration), `active`.
+- **`ChallengeCategory`** — the judging-category library (§5).
+- **`ChallengeWinner`** — `challengeId`/`userId`/`imageId`/`place`/`buzzAwarded`/`pointsAwarded`/`reason`; `@@unique([challengeId, place])`.
+- **Entries** = `CollectionItem` rows in the challenge collection (`status`, `note` carries score JSON) — no dedicated entry table.
