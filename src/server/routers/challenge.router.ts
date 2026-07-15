@@ -21,6 +21,7 @@ import {
   playgroundGenerateContentSchema,
   playgroundReviewImageSchema,
   playgroundPickWinnersSchema,
+  upsertChallengeCategorySchema,
 } from '~/server/schema/challenge.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import { z } from 'zod';
@@ -65,7 +66,11 @@ import {
   playgroundReviewImage,
   playgroundPickWinners,
 } from '~/server/services/challenge.service';
-import { getJudgingCategoryOptions } from '~/server/services/challenge-category.service';
+import {
+  getChallengeCategoriesFull,
+  getJudgingCategoryOptions,
+  upsertChallengeCategory,
+} from '~/server/services/challenge-category.service';
 import { getUserChallengeCreateEligibility } from '~/server/services/challenge-eligibility.service';
 import { getJudgeCommentForImage } from '~/server/services/commentsv2.service';
 import { deriveDomainCurrency } from '~/server/games/daily-challenge/challenge-currency';
@@ -246,6 +251,17 @@ export const challengeRouter = router({
   getJudgingCategories: protectedProcedure
     .use(isFlagProtected('challengePlatform'))
     .query(() => getJudgingCategoryOptions()),
+
+  // Moderator: full category library incl. server-only rubric text (playground Categories tab).
+  getChallengeCategories: moderatorProcedure
+    .use(isFlagProtected('challengePlatform'))
+    .query(() => getChallengeCategoriesFull()),
+
+  // Moderator: create/update a category library row.
+  upsertChallengeCategory: moderatorProcedure
+    .use(isFlagProtected('challengePlatform'))
+    .input(upsertChallengeCategorySchema)
+    .mutation(({ input }) => upsertChallengeCategory(input)),
 
   // Moderator: Get system challenge config
   getSystemConfig: moderatorProcedure
