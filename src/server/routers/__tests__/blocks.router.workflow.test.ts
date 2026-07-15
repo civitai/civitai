@@ -70,7 +70,23 @@ const {
     // queried via ModelMetric so we can orderBy thumbsUpCount).
     modelMetric: { findFirst: vi.fn() },
   },
-  mockRedis: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
+  // Complete `redis` client stub. `checkBlockCatalogRateLimit` (used by the buzz
+  // self-read mutations) calls incrBy/expire/ttl on this client; the buzz mutations
+  // also mock the limiter itself (below), but stubbing every method the client
+  // exposes keeps ANY redis path — the limiter or a transitive cache read — from
+  // crashing with `redis.<fn> is not a function` in the preview (get/set alone
+  // was the gap the pr-preview surfaced).
+  mockRedis: {
+    get: vi.fn(async () => null),
+    set: vi.fn(async () => undefined),
+    del: vi.fn(async () => 0),
+    incr: vi.fn(async () => 1),
+    incrBy: vi.fn(async () => 1),
+    decrBy: vi.fn(async () => 0),
+    expire: vi.fn(async () => true),
+    ttl: vi.fn(async () => -1),
+    exists: vi.fn(async () => 0),
+  },
   // sysRedis surface used by the cumulative Buzz-cap (audit A7). Default to an
   // empty window (get → null) so the cap is non-binding unless a test seeds it.
   mockSysRedis: {
