@@ -1,18 +1,11 @@
 import { Center, Container, Text } from '@mantine/core';
-import { NotFound } from '~/components/AppLayout/NotFound';
 import { Meta } from '~/components/Meta/Meta';
 import { ChallengeUpsertForm } from '~/components/Challenge/ChallengeUpsertForm';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export default function CreateUserChallengePage() {
   const currentUser = useCurrentUser();
-  const features = useFeatureFlags();
-
-  if (!features.challengePlatform || !features.userChallenges) {
-    return <NotFound />;
-  }
 
   if (!currentUser) {
     return (
@@ -32,4 +25,9 @@ export default function CreateUserChallengePage() {
   );
 }
 
-export const getServerSideProps = createServerSideProps({ useSession: true });
+export const getServerSideProps = createServerSideProps({
+  useSession: true,
+  resolver: async ({ features }) => {
+    if (!features?.challengePlatform || !features?.userChallenges) return { notFound: true };
+  },
+});

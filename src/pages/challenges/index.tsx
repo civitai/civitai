@@ -89,7 +89,7 @@ function ChallengesPage() {
   };
 
   if (mine) {
-    if (!currentUser) return <NotFound />;
+    if (!currentUser || !features.userChallenges) return <NotFound />;
     return (
       <MasonryContainer>
         <Stack gap="xs">
@@ -223,24 +223,29 @@ function ChallengesPage() {
           <DailyChallengesRow />
 
           {/* Community Challenges — user + staff-created, masonry. Sort/filter controls live inline
-              here (moved off the global SubNav) since they only scope this section. */}
-          <Divider />
-          <Group wrap="wrap" gap="sm">
-            <Title order={3}>Community Challenges</Title>
-            <Group gap="sm" wrap="wrap" ml="auto">
-              <ChallengeFeedFilters />
-            </Group>
-          </Group>
-          <ChallengesInfinite
-            filters={{
-              source: [ChallengeSource.User, ChallengeSource.Mod],
-              sort,
-              status: statusArray.length > 0 ? statusArray : undefined,
-              includeEnded,
-              excludeEventChallenges: true,
-              participation,
-            }}
-          />
+              here (moved off the global SubNav) since they only scope this section. Behind the
+              userChallenges flag: with it off, the page shows only the daily-challenge experience. */}
+          {features.userChallenges && (
+            <>
+              <Divider />
+              <Group wrap="wrap" gap="sm">
+                <Title order={3}>Community Challenges</Title>
+                <Group gap="sm" wrap="wrap" ml="auto">
+                  <ChallengeFeedFilters />
+                </Group>
+              </Group>
+              <ChallengesInfinite
+                filters={{
+                  source: [ChallengeSource.User, ChallengeSource.Mod],
+                  sort,
+                  status: statusArray.length > 0 ? statusArray : undefined,
+                  includeEnded,
+                  excludeEventChallenges: true,
+                  participation,
+                }}
+              />
+            </>
+          )}
         </Stack>
       </MasonryContainer>
     </>

@@ -132,6 +132,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           icon: IconTrophy,
           color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'My Challenges',
+          newUntil: new Date('2026-08-15'),
         },
         {
           href: '/user/buzz-dashboard',

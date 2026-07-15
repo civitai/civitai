@@ -38,6 +38,7 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { CreatorCardSimple } from '~/components/CreatorCard/CreatorCardSimple';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -212,6 +213,7 @@ export const getServerSideProps = createServerSideProps({
 function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { data: challenge, isLoading } = useQueryChallenge(id);
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
   const { deleteChallenge: deleteOwnChallenge, deleting: deletingOwn } = useDeleteUserChallenge();
@@ -320,7 +322,8 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
     !!currentUser &&
     currentUser.id === challenge.createdById &&
     challenge.source === ChallengeSource.User;
-  const canManageOwn = isOwner && !currentUser?.isModerator && isScheduled;
+  const canManageOwn =
+    features.userChallenges && isOwner && !currentUser?.isModerator && isScheduled;
 
   const handleOwnerDelete = () => {
     openConfirmModal({

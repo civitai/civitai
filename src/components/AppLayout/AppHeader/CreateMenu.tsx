@@ -139,7 +139,7 @@ function CreateMenuContent() {
   return (
     <>
       {items
-        .filter(({ visible }) => visible !== false)
+        .filter((link) => !('visible' in link) || !!link.visible)
         .map((link, index) => {
           const menuItem = (
             <Menu.Item

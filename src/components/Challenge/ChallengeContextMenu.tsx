@@ -7,6 +7,7 @@ import { useRef } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ActionIconDotsVertical } from '~/components/Cards/components/ActionIconDotsVertical';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useDeleteUserChallenge } from '~/components/Challenge/challenge.utils';
 import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
 
@@ -17,11 +18,13 @@ type Props = MenuProps & {
 
 export function ChallengeContextMenu({ challenge, buttonProps, ...menuProps }: Props) {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const router = useRouter();
   const { deleteChallenge, deleting } = useDeleteUserChallenge();
   const deletingRef = useRef(false);
 
   const canManage =
+    features.userChallenges &&
     !!currentUser &&
     currentUser.id === challenge.createdById &&
     challenge.source === ChallengeSource.User &&
