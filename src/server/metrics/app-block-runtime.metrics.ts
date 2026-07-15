@@ -45,7 +45,10 @@ export type AppBlockEndpoint =
   | 'collection'
   | 'collection_follow'
   | 'shared_storage_top'
-  | 'shared_storage_increment';
+  | 'shared_storage_increment'
+  | 'buzz_transactions'
+  | 'buzz_daily_compensation'
+  | 'buzz_accounts';
 
 export type AppBlockRequestResult = 'success' | 'client_error' | 'server_error' | 'forbidden';
 
