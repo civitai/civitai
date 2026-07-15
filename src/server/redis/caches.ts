@@ -758,7 +758,7 @@ export const userImageVideoCountSfwCache = createUserContentCountCache<UserImage
 );
 export const userImageVideoCountPublicCache = createUserContentCountCache<UserImageVideoCount>(
   'imageVideoCount:public',
-  async (userIds) => dbRead.$queryRaw`
+  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
     SELECT
       "userId" as id,
       COALESCE(SUM(IIF("type" = 'image', 1, 0)), 0)::INT as "imageCount",
@@ -798,8 +798,13 @@ export const userImageVideoCountCaches = {
   refresh: async (userIds: number | number[]) => {
     await Promise.all(userImageVideoCountVariants.map((cache) => cache.refresh(userIds)));
   },
+  // allSettled, not all: unlike refresh(), the underlying bust has no internal
+  // catch, and its cluster read rejects on a Redis stall. This runs on the
+  // scan-result webhook for every image, where a throw would fail the callback
+  // and trigger scanner redelivery against an already-committed row. A dropped
+  // bust only costs staleness until the TTL expires.
   bust: async (userIds: number | number[]) => {
-    await Promise.all(userImageVideoCountVariants.map((cache) => cache.bust(userIds)));
+    await Promise.allSettled(userImageVideoCountVariants.map((cache) => cache.bust(userIds)));
   },
 };
 

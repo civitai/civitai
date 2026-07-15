@@ -5770,9 +5770,10 @@ export async function createImage({
     });
   }
 
-  // No count refresh here: a new image is Pending and unpublished, so it does not
-  // yet satisfy the count predicate. The count is refreshed once it qualifies —
-  // on publish (post.service) and on scan completion (image-scan-result.service).
+  // No count refresh here: a new image is Pending and unpublished, so it cannot
+  // satisfy the count predicate yet, and caching that zero pins it for the TTL.
+  // The count is updated on the transitions that make an image countable —
+  // publish and scan completion.
 
   return result;
 }
