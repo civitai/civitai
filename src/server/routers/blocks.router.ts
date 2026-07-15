@@ -101,6 +101,11 @@ import {
   resolvePageResourceContext,
   snapshotFromWorkflow,
 } from '~/server/services/blocks/workflow.service';
+// G8 — per-app aggregate spend/velocity cap. Type-only import (erased at
+// runtime): the cap functions themselves are dynamic-imported in the submit
+// path (mirrors recordSpendAttribution / the dev-tunnel backstop), so this adds
+// no import-time cost and nothing to mock beyond the dynamic module.
+import type { AppSpendDailyKey } from '~/server/services/blocks/app-spend-cap.service';
 import { getResourceGenerationSupport } from '~/shared/constants/basemodel.constants';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
@@ -2492,6 +2497,60 @@ export const blocksRouter = router({
     }),
 
   /**
+   * G6 — persistent block output queue read. Returns the CALLING VIEWER's OWN
+   * recent workflows for the CALLING app block, newest first, keyset-paginated
+   * + bounded. Lets a block rebuild its in-flight+done generation queue on load
+   * (today the queue is client-side only, held in the iframe's memory, and lost
+   * on reload / device switch).
+   *
+   * SERVER-SCOPED: both the viewer (`userId` from the token `sub`) and the app
+   * block (`claims.appBlockId` from the JWT) are derived from the VERIFIED block
+   * token — NEVER from client input — so a block can only ever read the queue of
+   * the exact viewer whose session minted the token, scoped to that one app
+   * block. Auth model is IDENTICAL to pollWorkflow's block-token gate. A `.query`
+   * (read): returns the PERSISTED status per item; the block polls the
+   * orchestrator for live details/images via `pollWorkflow`.
+   */
+  listMyWorkflows: publicProcedure
+    // Block-JWT-authed (no session for dev:live) — flag evaluated against the
+    // TOKEN subject below, not the `enforceAppBlocksFlag` middleware's ctx.user.
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        limit: z.number().int().min(1).max(50).optional(),
+        cursor: z.string().min(1).max(128).nullish(),
+      })
+    )
+    .query(async ({ input }) => {
+      const claims = await verifyBlockToken(input.blockToken);
+      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      if (!claims.scopes.includes('ai:write:budgeted')) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
+      }
+      const userId = parseSubjectUserId(claims.sub);
+      if (userId == null) {
+        throw new TRPCError({
+          code: 'UNAUTHORIZED',
+          message: 'workflow list requires authenticated viewer',
+        });
+      }
+      // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
+      await assertAppBlocksEnabledForTokenUser(userId);
+      await assertViewerIsAppDeveloper(userId);
+      const { listMyBlockWorkflows } = await import(
+        '~/server/services/blocks/block-workflows.service'
+      );
+      // appBlockId is bound from the token (server-scoped) — a block cannot ask
+      // for another app's queue.
+      return listMyBlockWorkflows({
+        userId,
+        appBlockId: claims.appBlockId,
+        limit: input.limit,
+        cursor: input.cursor,
+      });
+    }),
+
+  /**
    * Cancel a running workflow on the orchestrator (a real server-side stop).
    *
    * Mirrors pollWorkflow's auth + ownership model exactly: we cancel with the
@@ -2919,6 +2978,51 @@ export const blocksRouter = router({
         };
       }
 
+      // G8 — PER-APP aggregate SPEND + VELOCITY cap (generic safety). The
+      // per-user cap above bounds ONE viewer's daily spend but is BLIND to MANY
+      // viewers (a Sybil ring of sockpuppets, each under its own per-user
+      // ceiling) funnelling aggregate spend through ONE app. This is the HARD
+      // PREREQUISITE called out below at the spend-attribution "SYBIL CAP NOTE"
+      // before shareable, spend-driving block apps open to non-mods. Reserve
+      // this generation against the app's rolling DAILY Buzz total + short-window
+      // generation VELOCITY (same atomic INCRBY reserve/refund as the per-user
+      // cap). On breach → refund the per-user daily reservation just made and
+      // reject fail-safe (NO spend).
+      //
+      // EXCLUSION: skipped for DEV/live-harness tokens (`claims.dev === true`),
+      // which carry a synthetic non-FK appBlockId and already have the
+      // per-session dev-tunnel spend backstop below — so a dev iterating locally
+      // is never clamped by the aggregate cap (matches recordSpendAttribution
+      // being inert for a synthetic appId).
+      let appSpendReserve: { key: AppSpendDailyKey; cost: number } | null = null;
+      if (claims.dev !== true) {
+        const { reserveAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+        const appSpend = await reserveAppSpend(claims.appBlockId, cost);
+        if (!appSpend.allowed) {
+          // Roll back the per-user reservation made above so a rejected submit
+          // doesn't burn the viewer's own daily ceiling for a spend that never
+          // happened.
+          await refundBlockBuzzSpend(buzzCapKey, cost);
+          return {
+            snapshot: {
+              workflowId: 'failed',
+              status: 'failed' as const,
+              cost: { total: cost },
+              // Generic, no-number rejection — the exact aggregate ceiling is not
+              // leaked to a (potentially hostile) app.
+              error:
+                appSpend.reason === 'velocity'
+                  ? 'app generation rate limit reached: this app has run too many generations in a short window — please retry shortly'
+                  : appSpend.reason === 'unavailable'
+                  ? 'generation temporarily unavailable — please retry shortly'
+                  : "app daily spend cap reached: this app has hit its aggregate daily generation-spend ceiling — please try again later",
+            },
+          };
+        }
+        // Keep the pinned key so a later throw can refund the reservation.
+        if (appSpend.dailyKey) appSpendReserve = { key: appSpend.dailyKey, cost };
+      }
+
       // APP DEV TUNNEL per-session spend backstop (F4). When the caller has an
       // ACTIVE dev tunnel for THIS block, bound cumulative spend within that ONE
       // dev session (a backstop OVER the per-call budget + the per-user daily cap
@@ -2952,8 +3056,16 @@ export const blocksRouter = router({
           );
           if (!reserved.allowed) {
             // Over the session ceiling → refund the daily reservation made above
-            // (the session reserve rolled ITSELF back on deny) and reject.
+            // (the session reserve rolled ITSELF back on deny) and reject. Also
+            // refund the G8 per-app reservation (present only for non-dev tokens;
+            // a token with `dev !== true` can still have an active dev tunnel).
             await refundBlockBuzzSpend(buzzCapKey, cost);
+            if (appSpendReserve) {
+              const { refundAppSpend } = await import(
+                '~/server/services/blocks/app-spend-cap.service'
+              );
+              await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
+            }
             return {
               snapshot: {
                 workflowId: 'failed',
@@ -3031,6 +3143,15 @@ export const blocksRouter = router({
         // "only record after a resolved submit" behavior) and propagate. Refund
         // against the pinned key, not a re-derived one (midnight-UTC race).
         await refundBlockBuzzSpend(buzzCapKey, cost);
+        // G8 — mirror the daily refund for the per-app aggregate reservation so a
+        // failed submit doesn't permanently burn the app's daily ceiling.
+        // Best-effort; present only for non-dev tokens.
+        if (appSpendReserve) {
+          const { refundAppSpend } = await import(
+            '~/server/services/blocks/app-spend-cap.service'
+          );
+          await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
+        }
         // F4 — mirror the daily refund for the dev-session reservation so a failed
         // submit doesn't permanently burn the session ceiling. Best-effort.
         if (devSessionReserve) {
@@ -3077,6 +3198,42 @@ export const blocksRouter = router({
       })().catch(() => {
         /* swallowed inside helper */
       });
+
+      // G6 — persistent block output queue (generic read-model). Upsert a
+      // `block_workflows` row so the block can rebuild its in-flight+done
+      // generation queue on reload / device switch (today the queue is
+      // client-side only, held in the iframe's memory, and lost on reload).
+      // EVERYTHING is server-derived from the VERIFIED token claims
+      // (appBlockId/blockInstanceId from the JWT, viewer from `sub`) + the
+      // orchestrator workflow id + the submit-time status. Fire-and-forget with
+      // the write's OWN try/catch (mirrors recordScopeInvocation /
+      // recordSpendAttribution): a failed queue write must NEVER add latency to,
+      // or break, the submit response.
+      //
+      // Only on a REAL workflow id, and NOT for dev/live-harness tokens (which
+      // carry a synthetic non-FK appBlockId — the FK would reject them; the
+      // dev/live queue is ephemeral and held in the harness).
+      if (
+        claims.dev !== true &&
+        snapshot.workflowId &&
+        snapshot.workflowId !== 'failed' &&
+        snapshot.workflowId !== 'whatif'
+      ) {
+        void (async () => {
+          const { upsertBlockWorkflowOnSubmit } = await import(
+            '~/server/services/blocks/block-workflows.service'
+          );
+          await upsertBlockWorkflowOnSubmit({
+            workflowId: snapshot.workflowId,
+            appBlockId: claims.appBlockId,
+            blockInstanceId: claims.blockInstanceId,
+            userId,
+            status: snapshot.status,
+          });
+        })().catch(() => {
+          /* best-effort: a failed queue write never breaks (or slows) submit */
+        });
+      }
 
       // W3 flow A — buzz SPEND attribution (author bounty). The block
       // burned the viewer's own Buzz on this generation; accrue the app

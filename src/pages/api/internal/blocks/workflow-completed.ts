@@ -6,6 +6,11 @@ import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { isAppBlocksPipelineEnabled } from '~/server/services/app-blocks-flag';
+import {
+  BLOCK_WORKFLOW_STATUSES,
+  updateBlockWorkflowStatus,
+  type BlockWorkflowStatus,
+} from '~/server/services/blocks/block-workflows.service';
 
 // H2 (audit-10): cap the orchestrator callback body. Realistic payloads are
 // a few hundred bytes (workflowId + blockInstanceId + buzzSpent).
@@ -73,6 +78,13 @@ const requestSchema = z.object({
   blockInstanceId: z.string().regex(BLOCK_INSTANCE_ID_RE, 'expected bki_<26 Crockford base32>'),
   buzzSpent: z.number().int().nonnegative().max(1_000_000),
   modelId: z.number().int().positive().optional(),
+  // G6 — the terminal status the workflow settled to, for the persistent block
+  // output queue read-model. Optional: a settle callback that omits it defaults
+  // to 'succeeded' (the callback fires on completion). The block-contract status
+  // set, matching the block_workflows CHECK constraint.
+  status: z
+    .enum(BLOCK_WORKFLOW_STATUSES as unknown as [BlockWorkflowStatus, ...BlockWorkflowStatus[]])
+    .optional(),
 });
 
 export default withAxiom(async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -84,29 +96,15 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     res.status(401).json({ error: 'Unauthorized' });
     return;
   }
-  // L12: kill switch via Flipt. While the pipeline is gated off in prod,
-  // refuse to record completions even if the orchestrator ships callbacks
-  // ahead of Phase 3. Prevents phantom rows. Decision 1: gated on the dedicated
-  // global `app-blocks-pipeline-enabled` flag (NOT the mod-segmented user flag).
-  //
-  // DECISION (revisit before Phase-3 billing): this is a RUNTIME billing/
-  // attribution callback, not a build event, yet it currently shares the build
-  // kill-switch `app-blocks-pipeline-enabled`. Harmless today (this handler is a
-  // scaffold with no billing + the orchestrator does not emit the callback yet),
-  // but once real billing lands here, flipping the build flag OFF would 503 these
-  // completions and silently drop Buzz attribution. Give it its OWN flag
-  // (e.g. `app-blocks-billing-enabled`) before Phase-3 billing wires real spend.
-  const enabled = await isAppBlocksPipelineEnabled();
-  if (!enabled) {
-    res.status(503).json({ error: 'Apps are not enabled' });
-    return;
-  }
   const parsed = requestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     res.status(400).json({ error: 'Invalid request body', details: parsed.error.flatten() });
     return;
   }
   const { blockInstanceId, workflowId } = parsed.data;
+  // A settle callback that omits the status defaults to 'succeeded' (the callback
+  // fires on completion).
+  const status: BlockWorkflowStatus = parsed.data.status ?? 'succeeded';
 
   // Audit-9 #6: validate the install BEFORE writing the 7-day dedup marker.
   // A malformed/wrong workflowId paired with a bogus blockInstanceId would
@@ -144,14 +142,30 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
-  // Phase 3: ClickHouse insert + developer-revenue attribution. Scaffolded here
-  // so the orchestrator can begin emitting completion callbacks against the
-  // stable shape; the business logic lands in a follow-up PR.
+  // G6 — persist the terminal status into the block_workflows read-model so a
+  // block can rebuild its output queue on load. UN-GATED by the pipeline flag:
+  // this is the queue read-model, NOT billing (no money, no ClickHouse). Keeping
+  // the JOB_TOKEN guard + 7-day idempotency above. Best-effort + fail-safe
+  // (updateBlockWorkflowStatus never throws): a lost update degrades to a stale
+  // status hint — the block can always poll the orchestrator for the live status
+  // — so this stays a no-throw 200 path. A 0-row update (no matching row: the
+  // submit-time write was lost, or this is a non-block workflow) is a silent
+  // no-op.
+  await updateBlockWorkflowStatus({ workflowId, status });
+
+  // L12 kill switch (Phase 3 BILLING only): the dedicated global
+  // `app-blocks-pipeline-enabled` flag gates the FUTURE developer-revenue
+  // attribution + ClickHouse `block_workflows` emission. It NO LONGER gates the
+  // queue read-model status update above (that is not billing). The billing path
+  // is still a scaffold (no-op) — when it lands, prefer giving it its OWN flag
+  // (e.g. `app-blocks-billing-enabled`) rather than the build flag.
   //
   // L13 (audit log): install/uninstall/settings-change/manifest-upsert audit
-  // logging is a Phase 3 line item. A publisher silently swapping iframe.src
-  // via manifest upsert currently leaves no trail other than the
-  // app_blocks.updated_at timestamp. The audit-log table + dual-write
-  // happens alongside the ClickHouse work.
+  // logging is a Phase 3 line item, alongside the ClickHouse work.
+  const billingEnabled = await isAppBlocksPipelineEnabled();
+  if (billingEnabled) {
+    // Phase 3: ClickHouse insert + developer-revenue attribution lands here.
+  }
+
   res.status(200).json({ ok: true });
 });

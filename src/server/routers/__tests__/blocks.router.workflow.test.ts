@@ -144,6 +144,38 @@ vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
   refundDevSessionBuzz: (...a: unknown[]) => mockRefundDevSessionBuzz(...(a as [])),
 }));
 
+// G8 (per-app spend/velocity cap) + G6 (persistent output queue) — submitWorkflow
+// dynamic-imports these, and listMyWorkflows dynamic-imports the queue read. Mock
+// at the module boundary so we drive allow/deny + assert the fire-and-forget queue
+// write; the real services are unit-tested separately.
+const {
+  mockReserveAppSpend,
+  mockRefundAppSpend,
+  mockUpsertBlockWorkflow,
+  mockListMyBlockWorkflows,
+} = vi.hoisted(() => ({
+  mockReserveAppSpend: vi.fn(),
+  mockRefundAppSpend: vi.fn(async () => undefined),
+  mockUpsertBlockWorkflow: vi.fn(async () => undefined),
+  mockListMyBlockWorkflows: vi.fn(),
+}));
+vi.mock('~/server/services/blocks/app-spend-cap.service', () => ({
+  reserveAppSpend: (...a: unknown[]) => mockReserveAppSpend(...(a as [])),
+  refundAppSpend: (...a: unknown[]) => mockRefundAppSpend(...(a as [])),
+}));
+vi.mock('~/server/services/blocks/block-workflows.service', () => ({
+  upsertBlockWorkflowOnSubmit: (...a: unknown[]) => mockUpsertBlockWorkflow(...(a as [])),
+  listMyBlockWorkflows: (...a: unknown[]) => mockListMyBlockWorkflows(...(a as [])),
+}));
+// submitWorkflow fires recordScopeInvocation (detached) which dynamic-imports the
+// REAL, heavy user-app-surface.service. That first-time real import serializes the
+// module runner and starves the sibling detached fire-and-forget writes (G6 queue),
+// making their timing non-deterministic. Mock it (this file exercises no other
+// user-app-surface proc) so every detached write settles promptly.
+vi.mock('~/server/services/blocks/user-app-surface.service', () => ({
+  recordScopeInvocation: vi.fn(async () => undefined),
+}));
+
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   verifyBlockToken: mockVerifyBlockToken,
   parseSubjectUserId: (...args: unknown[]) => mockParseSubjectUserId(...args),
@@ -285,6 +317,12 @@ vi.mock('~/server/middleware.trpc', async () => {
 import { blocksRouter } from '../blocks.router';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+// Warm the module cache for the (mocked) block-workflows.service so the router's
+// DETACHED `await import(...)` of it in submitWorkflow resolves promptly — like
+// buzz-attribution.service, which is statically imported by the router and so
+// already loaded. Without this the dynamic import of a dynamic-only mocked module
+// lags by ~a test, making the fire-and-forget queue write's timing flaky.
+import '~/server/services/blocks/block-workflows.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 
 function validClaims(over: Record<string, unknown> = {}) {
@@ -396,9 +434,25 @@ beforeEach(() => {
     mockGetActiveDevTunnel,
     mockReserveDevSessionBuzz,
     mockRefundDevSessionBuzz,
+    mockReserveAppSpend,
+    mockRefundAppSpend,
+    mockUpsertBlockWorkflow,
+    mockListMyBlockWorkflows,
   ]) {
     fn.mockReset();
   }
+  // G8 default: the per-app aggregate cap ALLOWS (non-binding) with a pinned
+  // daily key so the refund paths have something to refund. G6 default: the
+  // fire-and-forget queue write + the read resolve empty.
+  mockReserveAppSpend.mockResolvedValue({
+    allowed: true,
+    dailyTotal: 0,
+    velocityCount: 1,
+    dailyKey: 'system:blocks:app-spend-cap:apb_test:day',
+  });
+  mockRefundAppSpend.mockResolvedValue(undefined);
+  mockUpsertBlockWorkflow.mockResolvedValue(undefined);
+  mockListMyBlockWorkflows.mockResolvedValue({ items: [], nextCursor: null });
   // F4 defaults: no active dev tunnel (getActiveDevTunnel → null) so the dev
   // spend backstop is inert for every non-dev test. The F4 tests override these.
   mockGetActiveDevTunnel.mockResolvedValue(null);
@@ -694,6 +748,184 @@ describe('blocks.submitWorkflow', () => {
     expect(mockAuditPromptServer).toHaveBeenCalledWith(
       expect.objectContaining({ prompt: 'a cat', userId: 42 })
     );
+  });
+
+  // ---- G8: per-app aggregate spend + velocity cap -------------------------
+  describe('per-app aggregate spend/velocity cap (G8)', () => {
+    function setupSubmit(workflowId = 'wf_real') {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({ id: workflowId, status: 'unassigned', cost: { total: 25 }, steps: [] });
+    }
+
+    it('reserves against the app cap keyed on the TOKEN appBlockId (server-derived)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 100, appBlockId: 'apb_from_token' })
+      );
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({ id: 'wf_real', status: 'unassigned', cost: { total: 25 }, steps: [] });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      // appBlockId from the verified token, cost from the whatIf estimate.
+      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_from_token', 25);
+    });
+
+    it('REJECTS fail-safe when the per-app DAILY cap breaches — no real submit, per-user refunded', async () => {
+      setupSubmit();
+      mockReserveAppSpend.mockResolvedValue({
+        allowed: false,
+        reason: 'daily',
+        dailyTotal: 999,
+        velocityCount: 0,
+      });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.error).toMatch(/app daily spend cap reached/);
+      // Only the whatIf ran; the REAL submit was never reached (no spend).
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+      // The per-user daily reservation made just before was refunded (DECRBY).
+      expect(mockSysRedis.decrBy).toHaveBeenCalled();
+    });
+
+    it('REJECTS with the velocity message when the short-window gen ceiling breaches', async () => {
+      setupSubmit();
+      mockReserveAppSpend.mockResolvedValue({
+        allowed: false,
+        reason: 'velocity',
+        dailyTotal: 0,
+        velocityCount: 121,
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.error).toMatch(/rate limit/i);
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+    });
+
+    it('passes through when UNDER the cap (real submit proceeds)', async () => {
+      setupSubmit();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(2);
+      expect(mockRefundAppSpend).not.toHaveBeenCalled();
+    });
+
+    it('refunds the per-app reservation when the real submit THROWS (downstream failure)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockRejectedValueOnce(new Error('orchestrator down'));
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
+      ).rejects.toThrow(/orchestrator down/);
+      expect(mockRefundAppSpend).toHaveBeenCalledWith('system:blocks:app-spend-cap:apb_test:day', 25);
+    });
+
+    it('is EXCLUDED for dev tokens (claims.dev === true → reserve never called)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100, dev: true }));
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({ id: 'wf_real', status: 'unassigned', cost: { total: 25 }, steps: [] });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---- G6: persistent block output queue (fire-and-forget write) ----------
+  describe('persistent output queue write (G6)', () => {
+    // The queue write is a DETACHED promise (fire-and-forget) that itself does a
+    // dynamic import — poll with vi.waitFor rather than racing a fixed flush.
+    const flushMicrotasks = async () => {
+      for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+    };
+    function happySubmit(workflowId = 'wf_real') {
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({ id: workflowId, status: 'unassigned', cost: { total: 25 }, steps: [] });
+    }
+
+    it('writes a queue row with SERVER-DERIVED args after a resolved submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({
+          buzzBudget: 100,
+          appBlockId: 'apb_from_token',
+          blockInstanceId: 'bki_from_token',
+          sub: 'user:42',
+        })
+      );
+      happyVersionLookup();
+      happyUser();
+      happySubmit('wf_real');
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      // The write is DETACHED — let it settle, then match OUR distinctive call by
+      // the token-derived appBlockId ('apb_from_token' can't collide with a leaked
+      // fire-and-forget from a sibling test that uses default claims).
+      await vi.waitFor(() =>
+        expect(mockUpsertBlockWorkflow).toHaveBeenCalledWith(
+          expect.objectContaining({
+            workflowId: 'wf_real',
+            appBlockId: 'apb_from_token', // from the verified token, NOT the body
+            blockInstanceId: 'bki_from_token',
+            userId: 42, // from claims.sub
+            status: 'pending', // snapshot status (unassigned → pending)
+          })
+        )
+      );
+    });
+
+    it('a queue-write failure NEVER breaks (or changes) the submit response', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+      happyVersionLookup();
+      happyUser();
+      happySubmit('wf_real');
+      mockUpsertBlockWorkflow.mockRejectedValue(new Error('db down'));
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      await flushMicrotasks();
+      // Submit still succeeds with the real workflow id.
+      expect(result.snapshot.workflowId).toBe('wf_real');
+    });
+
+    it('does NOT write for dev tokens (synthetic non-FK appBlockId)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 100, dev: true, appBlockId: 'apb_dev_only' })
+      );
+      happyVersionLookup();
+      happyUser();
+      happySubmit('wf_real');
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      await flushMicrotasks();
+      // Robust against a leaked sibling-test write: assert no write for THIS
+      // (dev) app block specifically — the dev guard skips the write entirely.
+      expect(mockUpsertBlockWorkflow).not.toHaveBeenCalledWith(
+        expect.objectContaining({ appBlockId: 'apb_dev_only' })
+      );
+    });
   });
 
   // ---- F4: dev-tunnel per-session spend backstop --------------------------
@@ -3706,6 +3938,66 @@ describe('blocks.getMyBuzzBalance', () => {
       code: 'FORBIDDEN',
     });
     expect(mockGetUserBuzzAccounts).not.toHaveBeenCalled();
+  });
+});
+
+describe('blocks.listMyWorkflows (G6 — persistent output queue read)', () => {
+  it("returns the caller's own workflows, scoped to the TOKEN appBlockId + viewer", async () => {
+    mockVerifyBlockToken.mockResolvedValue(
+      validClaims({ appBlockId: 'apb_from_token', sub: 'user:42' })
+    );
+    mockListMyBlockWorkflows.mockResolvedValue({
+      items: [{ workflowId: 'wf_2', status: 'succeeded', submittedAt: 'iso2', updatedAt: 'iso2' }],
+      nextCursor: null,
+    });
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.listMyWorkflows({ blockToken: 'tok', limit: 10 });
+
+    expect(result.items.map((i) => i.workflowId)).toEqual(['wf_2']);
+    // userId (from claims.sub) + appBlockId (from the token) are server-scoped —
+    // a block can't read another user's or another app's queue.
+    expect(mockListMyBlockWorkflows).toHaveBeenCalledWith({
+      userId: 42,
+      appBlockId: 'apb_from_token',
+      limit: 10,
+      cursor: undefined,
+    });
+  });
+
+  it('threads a cursor through for keyset pagination', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ appBlockId: 'apb_1', sub: 'user:42' }));
+    mockListMyBlockWorkflows.mockResolvedValue({ items: [], nextCursor: null });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.listMyWorkflows({ blockToken: 'tok', cursor: 'iso|wf_9' });
+    expect(mockListMyBlockWorkflows.mock.calls[0][0].cursor).toBe('iso|wf_9');
+  });
+
+  it('rejects an invalid block token with UNAUTHORIZED and never reads the queue', async () => {
+    mockVerifyBlockToken.mockResolvedValue(null);
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.listMyWorkflows({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(mockListMyBlockWorkflows).not.toHaveBeenCalled();
+  });
+
+  it('rejects a token missing ai:write:budgeted scope with FORBIDDEN', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: [] }));
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.listMyWorkflows({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(mockListMyBlockWorkflows).not.toHaveBeenCalled();
+  });
+
+  it('rejects anon subjects with UNAUTHORIZED', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ sub: 'anon' }));
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.listMyWorkflows({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(mockListMyBlockWorkflows).not.toHaveBeenCalled();
   });
 });
 
