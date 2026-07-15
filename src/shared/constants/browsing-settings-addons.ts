@@ -81,10 +81,15 @@ export function resolveBrowsingSettingsAddons(
   }, emptyResolvedAddons());
 }
 
-// Seed for the hard navigation blocklist (W2). The redis key
-// `system:blocked-browsing-tags` overrides this when present; ops manage the
-// live list there without a deploy. Kept in sync with the POI + minor
-// `excludedTagIds` in DEFAULT_BROWSING_SETTINGS_ADDONS below.
+// Seed for the hard navigation blocklist (W2) — blocks the tag page and nav, not the
+// content carrying the tag. The redis key `system:blocked-browsing-tags` overrides this
+// when present; ops manage the live list there without a deploy.
+//
+// Deliberately NOT a mirror of the addon `excludedTagIds` below: loli/shota/teenager are
+// listed here but excluded from no addon, so their tag pages 404 while their content
+// stays subject to the normal browsing-level rules. Hiding the content was WD14's call to
+// make and it isn't good enough at it — 459,896 `loli` tags at ~59% average confidence,
+// unreviewed. Don't "re-sync" the two lists.
 export const BLOCKED_BROWSING_TAG_IDS: number[] = [
   5161, //actor
   5162, //actress
@@ -137,15 +142,6 @@ export const DEFAULT_BROWSING_SETTINGS_ADDONS: BrowsingSettingsAddon[] = [
       154326, //toddler
       161829, //male child
       163032, //female child
-    ],
-  },
-  {
-    type: 'some',
-    nsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
-    excludedTagIds: [
-      114467, //loli
-      6641, //shota
-      115249, //teenager
     ],
   },
 ] as const;
