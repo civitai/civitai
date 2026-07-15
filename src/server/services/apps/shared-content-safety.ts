@@ -74,26 +74,19 @@ export interface SharedTextSafetyInput {
 }
 
 /**
- * Runs the full BLOCKING safety belt on shared write text. Throws
- * `SharedContentBlockedError` on any block. Returns the RAW, store-ready
- * `{ title, body }` on success (see the C2 note above — the value is stored
- * un-escaped and XSS is contained at the render + sandbox layers, NOT at rest).
+ * The core BLOCKING belt over ONE combined text blob: the C3 legal fail
+ * (minor/POI), the M1 blocked-link reject, and the C3 platform audit + auto-mute
+ * accounting. Shared by `assertSharedTextSafe` (text `{title, body}`) and
+ * `assertGeneratorTextSafe` (a published generator's name/description/prompt
+ * templates) so BOTH surfaces are moderated through the IDENTICAL audit path —
+ * `isGreen:true` forces the SFW + profanity ceiling for community content.
+ * Throws `SharedContentBlockedError` on any block.
  */
-export async function assertSharedTextSafe(
-  input: SharedTextSafetyInput
-): Promise<{ title: string; body?: string }> {
-  const { title, body, userId, isModerator } = input;
-
-  // M3 — belt re-check (the schema is the primary gate).
-  if (title.length > SHARED_TITLE_MAX) {
-    throw new SharedContentBlockedError('size', 'Title exceeds the maximum length');
-  }
-  if (body != null && body.length > SHARED_BODY_MAX) {
-    throw new SharedContentBlockedError('size', 'Body exceeds the maximum length');
-  }
-
-  const combined = body ? `${title}\n${body}` : title;
-
+async function runTextSafetyBelt(
+  combined: string,
+  userId: number,
+  isModerator?: boolean
+): Promise<void> {
   // C3 — HARD legal fail FIRST. These signals (minor age / POI / CSAM composites)
   // must reject + Report regardless of the account's mute state. Kept ahead of the
   // general audit so a minor/POI hit is unambiguously classified for the caller's
@@ -128,9 +121,65 @@ export async function assertSharedTextSafe(
     const message = e instanceof Error ? e.message : 'Content was flagged';
     throw new SharedContentBlockedError('audit', message);
   }
+}
+
+/**
+ * Runs the full BLOCKING safety belt on shared write text. Throws
+ * `SharedContentBlockedError` on any block. Returns the RAW, store-ready
+ * `{ title, body }` on success (see the C2 note above — the value is stored
+ * un-escaped and XSS is contained at the render + sandbox layers, NOT at rest).
+ */
+export async function assertSharedTextSafe(
+  input: SharedTextSafetyInput
+): Promise<{ title: string; body?: string }> {
+  const { title, body, userId, isModerator } = input;
+
+  // M3 — belt re-check (the schema is the primary gate).
+  if (title.length > SHARED_TITLE_MAX) {
+    throw new SharedContentBlockedError('size', 'Title exceeds the maximum length');
+  }
+  if (body != null && body.length > SHARED_BODY_MAX) {
+    throw new SharedContentBlockedError('size', 'Body exceeds the maximum length');
+  }
+
+  const combined = body ? `${title}\n${body}` : title;
+  await runTextSafetyBelt(combined, userId, isModerator);
 
   // Store RAW (Fix 2 / 2026-07 security review): escape-at-rest was removed — see
   // the C2 note. Every safety control above ran on the raw text; the returned value
   // is the un-escaped, store-ready form.
   return { title, body: body != null ? body : undefined };
+}
+
+/**
+ * Runs the SAME BLOCKING content-safety belt on a published generator's free
+ * text (Custom Generators PR-B). The caller passes every moderatable field —
+ * `name`, optional `description`, and every button's `promptTemplate` (see
+ * `collectGeneratorText`). Every field goes through the IDENTICAL
+ * minor/POI/link/audit path shared text uses (`runTextSafetyBelt` →
+ * `auditPromptServer`, `isGreen:true`), so a POI/minor/blocked-link prompt in a
+ * generator is rejected exactly like a POI/minor/blocked-link shared post.
+ *
+ * The per-field length caps are enforced by the generator Zod schema
+ * (generator-value.schema.ts), so — unlike `assertSharedTextSafe` — there is no
+ * size re-check here; every field is already ≤ the belt ceilings. Fields are
+ * audited as ONE combined blob (single external-moderation call), joined with a
+ * newline so multi-word phrases can't be split across the join boundary.
+ *
+ * Throws `SharedContentBlockedError` on the FIRST block (category carried for the
+ * caller's Report/observability routing).
+ */
+export async function assertGeneratorTextSafe(input: {
+  texts: string[];
+  userId: number;
+  isModerator?: boolean;
+}): Promise<void> {
+  const combined = input.texts
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0)
+    .join('\n');
+  // A generator with no free text at all (empty name is impossible per schema,
+  // but defensive) has nothing to moderate.
+  if (!combined) return;
+  await runTextSafetyBelt(combined, input.userId, input.isModerator);
 }

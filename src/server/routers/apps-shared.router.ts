@@ -36,10 +36,20 @@ import { Flags } from '~/shared/utils/flags';
 import { OnboardingSteps } from '~/server/common/enums';
 import {
   assertSharedTextSafe,
+  assertGeneratorTextSafe,
   SharedContentBlockedError,
   SHARED_TITLE_MAX,
   SHARED_BODY_MAX,
 } from '~/server/services/apps/shared-content-safety';
+import {
+  generatorValueSchema,
+  collectGeneratorText,
+  type StoredGeneratorValue,
+} from '~/server/schema/apps/generator-value.schema';
+import {
+  assertGeneratorResourceStackGeneratable,
+  validateGeneratorBackgroundImage,
+} from '~/server/services/apps/generator-publish.service';
 import {
   checkSharedAppendRateLimit,
   checkSharedVoteRateLimit,
@@ -54,6 +64,10 @@ const APP_QUOTA_BYTES = 50 * 1024 * 1024;
 const APP_ROW_LIMIT = 1_000_000;
 // Per individual shared value (title+body already capped; this bounds the jsonb).
 const SHARED_VALUE_BYTE_CAP = 8 * 1024;
+// A published generator is a heavier structured value (up to 8 buttons, each with
+// prompt templates + params + a LoRA stack); its per-value ceiling is larger than
+// the text value cap but still tightly bounded (the Zod schema caps every field).
+const GENERATOR_VALUE_BYTE_CAP = 64 * 1024;
 // Per-USER row cap on shared_kv (design M2): one hostile-but-trusted account can't
 // exhaust the app row budget on its own.
 const SHARED_KV_PER_USER_ROW_CAP = 50;
@@ -70,6 +84,9 @@ type SharedOp =
   | 'list'
   | 'getCount'
   | 'append'
+  // Custom Generators PR-B: publish a STRUCTURED generator value into the same
+  // shared_kv (a WRITE — write-scope + min-trust gated exactly like append).
+  | 'publishGenerator'
   | 'vote'
   | 'unvote'
   | 'withdraw'
@@ -403,57 +420,7 @@ export const appsSharedRouter = router({
           isModerator: subjectUser?.isModerator,
         });
       } catch (e) {
-        if (e instanceof SharedContentBlockedError) {
-          // C3/M5: minor/POI/audit hits file a Report row for mod review. (link/size
-          // are user error, not reportable abuse.)
-          if (e.category === 'minor' || e.category === 'poi' || e.category === 'audit') {
-            await insertSharedReport(schema, {
-              key: null,
-              reporterUserId: uid,
-              reason: `auto:${e.category}`,
-            }).catch(() => {});
-          }
-          // FIX 1 (pre-GA gate 1 — make abuse OBSERVABLE): the `shared_kv_reports`
-          // table has no reader yet, so a moderation-blocked append would otherwise
-          // be silent. Emit a structured, alertable event (METADATA ONLY — NEVER the
-          // content text) so any auto-blocked write is observable before the
-          // mod-queue wiring lands. `link`/`size` stay unalerted (user error, not
-          // reportable abuse). Fire-and-forget (`.catch`) — an alert emit must NEVER
-          // block or fail the op.
-          //
-          // TWO DISTINCT signals (kept separate so the legal-urgency channel is not
-          // diluted): minor/POI are a HARD legal escalation (CSAM/minor) → the
-          // `…-legal-block` / `type:error` event; a general `audit` block (harassment
-          // / spam that trips external moderation) → the lower-urgency
-          // `…-content-block` / `type:warning` event. Same metadata-only shape.
-          if (e.category === 'minor' || e.category === 'poi') {
-            logToAxiom(
-              {
-                name: 'app-blocks-shared-storage-legal-block',
-                type: 'error',
-                category: e.category,
-                userId: uid,
-                slug,
-                appBlockId,
-              },
-              'block-audit'
-            ).catch(() => {});
-          } else if (e.category === 'audit') {
-            logToAxiom(
-              {
-                name: 'app-blocks-shared-storage-content-block',
-                type: 'warning',
-                category: e.category,
-                userId: uid,
-                slug,
-                appBlockId,
-              },
-              'block-audit'
-            ).catch(() => {});
-          }
-          throw new TRPCError({ code: 'BAD_REQUEST', message: e.message });
-        }
-        throw e;
+        throw await handleSharedContentBlocked(e, { schema, uid, slug, appBlockId });
       }
 
       const storedValue = { title: safe.title, ...(safe.body != null ? { body: safe.body } : {}) };
@@ -509,6 +476,141 @@ export const appsSharedRouter = router({
           [key, uid, serialized]
         );
         // Seed the counter cache (votes are the source of truth).
+        await client.query(
+          `INSERT INTO ${schema}.counters (key, count) VALUES ($1, 0)
+           ON CONFLICT (key) DO NOTHING`,
+          [key]
+        );
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        client.release();
+      }
+
+      return { key };
+    }),
+
+  /**
+   * Publish a STRUCTURED generator value (Custom Generators PR-B). Writes into
+   * the SAME `shared_kv` table as `append`, reusing the identical anti-overwrite
+   * (server ULID key), `author_user_id`, per-user + per-app row caps, byte quota,
+   * and daily rate-limit machinery — so a generator and a text request share one
+   * cross-user store and one abuse budget. The stored value is discriminated at
+   * rest by `kind: 'generator'` (vs the text path's `{ title, body }`), so a
+   * reader can branch without a migration.
+   *
+   * Publish-time gates (all BEFORE the row lands, all fail-closed):
+   *   - CONTENT SAFETY: the generator's free text (name, description, every
+   *     button's promptTemplate) runs the SAME belt shared text uses
+   *     (assertGeneratorTextSafe → auditPromptServer, isGreen SFW) — a
+   *     POI/minor/blocked-link prompt is rejected + reported identically.
+   *   - G7 RESOURCE STACK: EVERY pinned resource (each button's checkpoint + LoRA
+   *     versionId) is validated through the platform's canonical generation gate
+   *     (resolveCanGenerateForVersions) — publishing a generator that pins an
+   *     unpublished / unavailable / non-generatable resource is FORBIDDEN.
+   *   - backgroundImageRef (optional): re-validated to exist + be Scanned + SFW.
+   */
+  publishGenerator: publicProcedure
+    .input(blockTokenInput.extend({ value: generatorValueSchema }))
+    .mutation(async ({ input }) => {
+      const { userId, subjectUser, slug, schema, appBlockId } = await resolveSharedContext(
+        input.blockToken,
+        'publishGenerator'
+      );
+      const uid = userId as number; // non-null (write path ran the trust gate)
+
+      // Rate limit FIRST — bounds a flood AND the external-moderation + gate cost
+      // this heavier op would otherwise incur per attempt. Shares the append bucket.
+      const rl = await checkSharedAppendRateLimit(uid, appBlockId);
+      if (!rl.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: `Too many submissions — retry in ${rl.retryAfterSeconds}s`,
+        });
+      }
+
+      const generator = input.value;
+
+      // CONTENT SAFETY — belt over every free-text field. Same category-based
+      // report + observability routing as append.
+      try {
+        await assertGeneratorTextSafe({
+          texts: collectGeneratorText(generator),
+          userId: uid,
+          isModerator: subjectUser?.isModerator,
+        });
+      } catch (e) {
+        throw await handleSharedContentBlocked(e, { schema, uid, slug, appBlockId });
+      }
+
+      // G7 — validate the FULL pinned resource stack through the canonical
+      // generation-entitlement gate. FAIL-CLOSED (NOT_FOUND / FORBIDDEN) before
+      // the row lands. Viewer = the token subject (their real id + isModerator).
+      await assertGeneratorResourceStackGeneratable({
+        generator,
+        viewer: { id: uid, isModerator: subjectUser?.isModerator ?? false },
+      });
+
+      // backgroundImageRef — opaque already-moderated image id (produced by a
+      // separate PR). Re-validate existence + Scanned + SFW ceiling.
+      if (generator.backgroundImageRef) {
+        await validateGeneratorBackgroundImage(generator.backgroundImageRef);
+      }
+
+      const storedValue: StoredGeneratorValue = { kind: 'generator', generator };
+      const serialized = JSON.stringify(storedValue);
+      const byteSize = Buffer.byteLength(serialized, 'utf8');
+      if (byteSize > GENERATOR_VALUE_BYTE_CAP) {
+        throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'generator exceeds size cap' });
+      }
+
+      const pool = requireAppsDb();
+
+      // Per-USER row cap (design M2) — shared with the append path.
+      const userRowCount = Number(
+        (
+          await pool.query<{ n: string }>(
+            `SELECT count(*)::text AS n FROM ${schema}.shared_kv WHERE author_user_id = $1`,
+            [uid]
+          )
+        ).rows[0]?.n ?? '0'
+      );
+      if (userRowCount + 1 > SHARED_KV_PER_USER_ROW_CAP) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'you have reached the maximum number of submissions for this app',
+        });
+      }
+
+      // Per-app byte + row quota (shared with the per-user kv path).
+      const quota = (
+        await pool.query<{ used_bytes: string; row_count: string }>(
+          `SELECT used_bytes::text, row_count::text FROM ${schema}.quota WHERE app_block_id = $1`,
+          [appBlockId]
+        )
+      ).rows[0];
+      const usedBytes = Number(quota?.used_bytes ?? '0');
+      const rowCount = Number(quota?.row_count ?? '0');
+      if (usedBytes + byteSize > APP_QUOTA_BYTES) {
+        throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'app quota exceeded' });
+      }
+      if (rowCount + 1 > APP_ROW_LIMIT) {
+        throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'app row limit exceeded' });
+      }
+
+      const key = newUlid();
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        // GUC drives the shared_kv quota trigger (byte/row accounting).
+        await client.query(`SET LOCAL app.current_app_block_id = ${pgQuoteLiteral(appBlockId)}`);
+        await client.query(
+          `INSERT INTO ${schema}.shared_kv (key, author_user_id, value)
+           VALUES ($1, $2, $3::jsonb)`,
+          [key, uid, serialized]
+        );
         await client.query(
           `INSERT INTO ${schema}.counters (key, count) VALUES ($1, 0)
            ON CONFLICT (key) DO NOTHING`,
@@ -896,6 +998,61 @@ export const appsModRouter = router({
 });
 
 // ── helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Shared handling for a `SharedContentBlockedError` thrown by the content-safety
+ * belt on a WRITE (append or publishGenerator). Files the mod Report row for
+ * reportable categories, emits the metadata-only observability event (legal vs
+ * content channel), and RETURNS the user-facing `TRPCError` for the caller to
+ * `throw`. A non-content error is re-thrown verbatim (never swallowed). Factored
+ * out of `append` so the text and generator publish paths stay byte-identical.
+ */
+async function handleSharedContentBlocked(
+  e: unknown,
+  ctx: { schema: string; uid: number; slug: string; appBlockId: string }
+): Promise<TRPCError> {
+  if (!(e instanceof SharedContentBlockedError)) throw e;
+  const { schema, uid, slug, appBlockId } = ctx;
+  // C3/M5: minor/POI/audit hits file a Report row for mod review. (link/size are
+  // user error, not reportable abuse.)
+  if (e.category === 'minor' || e.category === 'poi' || e.category === 'audit') {
+    await insertSharedReport(schema, {
+      key: null,
+      reporterUserId: uid,
+      reason: `auto:${e.category}`,
+    }).catch(() => {});
+  }
+  // FIX 1 (pre-GA gate 1 — make abuse OBSERVABLE): emit a structured, alertable
+  // event (METADATA ONLY — NEVER the content text). minor/POI are a HARD legal
+  // escalation → the `…-legal-block` / `type:error` event; a general `audit` block
+  // → the lower-urgency `…-content-block` / `type:warning` event. Fire-and-forget.
+  if (e.category === 'minor' || e.category === 'poi') {
+    logToAxiom(
+      {
+        name: 'app-blocks-shared-storage-legal-block',
+        type: 'error',
+        category: e.category,
+        userId: uid,
+        slug,
+        appBlockId,
+      },
+      'block-audit'
+    ).catch(() => {});
+  } else if (e.category === 'audit') {
+    logToAxiom(
+      {
+        name: 'app-blocks-shared-storage-content-block',
+        type: 'warning',
+        category: e.category,
+        userId: uid,
+        slug,
+        appBlockId,
+      },
+      'block-audit'
+    ).catch(() => {});
+  }
+  return new TRPCError({ code: 'BAD_REQUEST', message: e.message });
+}
 
 async function insertSharedReport(
   schema: string,
