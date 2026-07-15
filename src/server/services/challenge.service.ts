@@ -67,10 +67,13 @@ import {
 } from '~/server/services/challenge-eligibility.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
 import {
+  getEffectiveBrowsingLevel,
   isChallengeHiddenByCoverScan,
   isChallengeHiddenByPoiCover,
+  isImageHiddenFromGreenViewer,
 } from '~/server/games/daily-challenge/challenge-visibility';
 import {
+  buildWinnerPayoutTransactions,
   chargeInitialPrize,
   refundUserChallengeFunds,
 } from '~/server/games/daily-challenge/challenge-funding';
@@ -463,9 +466,23 @@ export async function getInfiniteChallenges(
     conditions.push(Prisma.sql`c."eventId" IS NULL`);
   }
 
-  // Content level filter - only show challenges whose allowedNsfwLevel intersects the browsing level
-  if (browsingLevel) {
-    conditions.push(Prisma.sql`(c."allowedNsfwLevel" & ${browsingLevel}) > 0`);
+  // Content level filter — models-style: exclude a challenge outright when its REAL cover image
+  // level doesn't intersect the viewer's effective browsing level, rather than trusting the
+  // challenge's declared `allowedNsfwLevel`. On green the level is capped server-side (see
+  // getEffectiveBrowsingLevel) so a client can't bypass it by omitting `browsingLevel`. Creator
+  // always sees their own. A challenge with no cover is already excluded by the IS NOT NULL gate
+  // above.
+  const effectiveBrowsingLevel = getEffectiveBrowsingLevel({
+    isGreen: isGreen ?? false,
+    isLoggedIn: currentUserId != null,
+    requested: browsingLevel,
+  });
+  if (effectiveBrowsingLevel > 0) {
+    conditions.push(
+      currentUserId
+        ? Prisma.sql`(c."createdById" = ${currentUserId} OR EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0))`
+        : Prisma.sql`EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0)`
+    );
   }
 
   // User participation filter (requires logged-in user)
@@ -896,7 +913,8 @@ export async function getChallengeDetail(
   // POI + cover-scan gate: a cover depicting a real person (Image.poi, set by the image scanner),
   // or one that hasn't finished moderation scanning yet, keeps the challenge out of public view —
   // direct-URL parity with the feed filter. Creator exempt; skip the lookup entirely for trusted
-  // System challenges.
+  // System challenges. NSFW-on-green gating is handled client-side by <Gated> (MatureContentRedirect)
+  // on the detail page, matching how model/image detail pages gate mature content on the safe site.
   if (challenge.source === ChallengeSource.User && challenge.coverImageId) {
     const cover = await dbRead.image.findUnique({
       where: { id: challenge.coverImageId },
@@ -1682,7 +1700,10 @@ export async function updateChallengeStatus(id: number, status: ChallengeStatus)
 }
 
 export async function deleteChallenge(id: number) {
-  const challenge = await dbRead.challenge.findUnique({
+  // Read on the primary, not the read replica: replica lag let a delete see a stale `Scheduled`
+  // status for a challenge the activation job had just flipped to `Active`, then refund + delete a
+  // now-live challenge out from under its entrants.
+  const challenge = await dbWrite.challenge.findUnique({
     where: { id },
     select: { id: true, status: true, collectionId: true, source: true },
   });
@@ -1702,13 +1723,34 @@ export async function deleteChallenge(id: number) {
     });
   }
 
-  // Refund BEFORE deleting: refundUserChallengeFunds reads the Challenge row, so once the row
-  // is gone there is no code path left that can ever return the creator's escrowed prize or
-  // any collected entry fees. Scheduled only — a Cancelled challenge was already refunded by
-  // voidChallenge, and a Completing/Completed challenge's pool was (or is being) paid out to
-  // winners, so refunding it would double-spend from account 0 (minted Buzz). A failure here
-  // aborts the delete so it can be retried.
-  if (challenge.source === ChallengeSource.User && challenge.status === ChallengeStatus.Scheduled) {
+  // Refund BEFORE deleting: refundUserChallengeFunds reads the Challenge row, so once the row is
+  // gone nothing can return the creator's escrowed prize or collected entry fees. Only Scheduled or
+  // already-Cancelled User challenges are refunded — a Completing/Completed pool was (or is being)
+  // paid out to winners, so refunding it would double-spend from account 0.
+  if (
+    challenge.source === ChallengeSource.User &&
+    (challenge.status === ChallengeStatus.Scheduled ||
+      challenge.status === ChallengeStatus.Cancelled)
+  ) {
+    // If still Scheduled, atomically claim it (Scheduled -> Cancelled) first so a delete racing the
+    // activation job can't refund + delete a now-live challenge: if activation won, count is 0 and
+    // we abort. An already-Cancelled challenge (voided, or a delete retried after its refund threw
+    // mid-way) skips the claim and just re-refunds — so a failed refund is self-healing on retry
+    // rather than stranding the funds.
+    if (challenge.status === ChallengeStatus.Scheduled) {
+      const claimed = await dbWrite.challenge.updateMany({
+        where: { id, status: ChallengeStatus.Scheduled },
+        data: { status: ChallengeStatus.Cancelled },
+      });
+      if (claimed.count !== 1) {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'This challenge is no longer in a deletable state.',
+        });
+      }
+    }
+    // Idempotent via deterministic externalTransactionId prefixes (the buzz service dedups), so
+    // re-refunding an already-Cancelled challenge is a net-zero no-op, not a double-spend.
     await refundUserChallengeFunds(id);
   }
 
@@ -2132,14 +2174,13 @@ export async function endChallengeAndPickWinners(challengeId: number) {
       process = generated.process;
       outcome = generated.outcome;
 
-      // Map winners to entries
+      // Map winners to entries by numeric creatorId only. `winner.creator` is the LLM's echo of the
+      // (user-controlled, spoofable) display name — matching on it let a second entrant who set their
+      // name equal to another's hijack `find`'s first-match and steal the payout. judgedEntries is
+      // deduped to one entry per userId, so creatorId alone disambiguates. (Parity with the cron path.)
       winningEntries = generated.winners
         .map((winner, i) => {
-          const entry = judgedEntries.find(
-            (e) =>
-              e.username.toLowerCase() === winner.creator.toLowerCase() ||
-              e.userId === winner.creatorId
-          );
+          const entry = judgedEntries.find((e) => e.userId === winner.creatorId);
           if (!entry) return null;
           return {
             userId: entry.userId,
@@ -2166,20 +2207,18 @@ export async function endChallengeAndPickWinners(challengeId: number) {
       log('ChallengeWinner records created');
     }
 
-    // Send prizes to winners
-    // Note: externalTransactionId uses challengeId-userId-place pattern for idempotency
-    // This ensures retries don't create duplicate payments
+    // Send prizes to winners in the challenge's stored currency (green vs yellow). Routed through
+    // the same builder as the cron completion path — hardcoding 'yellow' here minted yellow and
+    // stranded the collected green pool for green challenges. Deterministic externalTransactionId
+    // (challenge-winner-prize-{cid}-{uid}-place-{n}) keeps retries idempotent.
     await withRetries(() =>
       createBuzzTransactionMany(
-        winningEntries.map((entry) => ({
-          type: TransactionType.Reward,
-          toAccountId: entry.userId,
-          fromAccountId: 0, // central bank
-          amount: entry.prize,
-          description: `Challenge Winner Prize #${entry.position}: ${challenge.title}`,
-          externalTransactionId: `challenge-winner-prize-${challengeId}-${entry.userId}-place-${entry.position}`,
-          toAccountType: 'yellow',
-        }))
+        buildWinnerPayoutTransactions({
+          challengeId,
+          title: challenge.title,
+          buzzType: challenge.buzzType,
+          winners: winningEntries,
+        })
       )
     );
     log('Prizes sent');
@@ -2372,39 +2411,54 @@ export async function voidChallenge(challengeId: number) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'Challenge not found' });
   }
 
-  // Validate status
+  // Validate status. Cancelled is allowed so a void whose refund threw mid-way can be re-run to
+  // finish the (idempotent) refund, rather than stranding the funds.
   if (
     challenge.status !== ChallengeStatus.Active &&
-    challenge.status !== ChallengeStatus.Scheduled
+    challenge.status !== ChallengeStatus.Scheduled &&
+    challenge.status !== ChallengeStatus.Cancelled
   ) {
     throw new TRPCError({
       code: 'PRECONDITION_FAILED',
       message: `Cannot void challenge with status "${String(
         challenge.status
-      )}". Challenge must be Active or Scheduled.`,
+      )}". Challenge must be Active, Scheduled, or Cancelled.`,
     });
   }
 
   log('Voiding challenge:', challengeId);
 
+  // Claim the row (Active/Scheduled -> Cancelled) BEFORE refunding, unless it is already Cancelled
+  // (a retry of a prior void whose refund failed — skip the claim and just re-refund idempotently).
+  // The claim stops (a) two concurrent voids from both refunding, and (b) — critically — a void from
+  // refunding a pool the completion cron is simultaneously claiming to pay to winners, which would
+  // mint (the cron's own Active->Completing claim can no longer win once we've flipped to Cancelled).
+  // If the claim is lost, another void or completion advanced the row; do not refund here — a
+  // stranded refund is recovered by re-running void, which lands on the Cancelled branch below.
+  if (challenge.status !== ChallengeStatus.Cancelled) {
+    const claimed = await dbWrite.challenge.updateMany({
+      where: {
+        id: challengeId,
+        status: { in: [ChallengeStatus.Active, ChallengeStatus.Scheduled] },
+      },
+      data: { status: ChallengeStatus.Cancelled },
+    });
+    if (claimed.count !== 1) {
+      log('Void claim lost (completion or a concurrent void won); skipping refund');
+      return { success: true };
+    }
+    log('Challenge status updated to Cancelled');
+  }
+
   // Close the collection if exists
   await closeChallengeCollection(challenge);
   log('Collection closed');
 
-  // Refund BEFORE flipping to Cancelled: the status guard above makes a Cancelled challenge
-  // un-re-voidable, so refund-after-flip would strand the funds permanently if the buzz call
-  // failed. The refund is idempotent, so a crash between refund and update safely re-runs.
   const { refundedEntries } = await refundUserChallengeFunds(challengeId);
   log(`Refunded ${refundedEntries} entry fees`);
   if (refundedEntries > 0) {
     await notifyEntrantsOfCancellation(challenge);
   }
-
-  await dbWrite.challenge.update({
-    where: { id: challengeId },
-    data: { status: ChallengeStatus.Cancelled },
-  });
-  log('Challenge status updated to Cancelled');
 
   return { success: true };
 }
@@ -3068,9 +3122,9 @@ export async function playgroundPickWinners(input: PlaygroundPickWinnersInput) {
 // ─── Previous Winners Page ───────────────────────────────────────────────────
 
 export async function getCompletedChallengesWithWinners(
-  input: GetCompletedChallengesWithWinnersInput
+  input: GetCompletedChallengesWithWinnersInput & { isGreen?: boolean; currentUserId?: number }
 ) {
-  const { cursor, limit, eventId, browsingLevel, query } = input;
+  const { cursor, limit, eventId, browsingLevel, query, isGreen, currentUserId } = input;
 
   // Phase 1: Query completed challenges with cursor pagination
   const conditions: Prisma.Sql[] = [
@@ -3083,8 +3137,29 @@ export async function getCompletedChallengesWithWinners(
     conditions.push(Prisma.sql`c."eventId" = ${eventId}`);
   }
 
-  if (browsingLevel) {
-    conditions.push(Prisma.sql`(c."allowedNsfwLevel" & ${browsingLevel}) > 0`);
+  // Domain-currency gate — parity with the feed: a user challenge only appears on its own domain
+  // (green on green, yellow off-green). System/mod/event challenges are universal. Creator exempt.
+  const domainCurrency = deriveDomainCurrency(isGreen ?? false);
+  conditions.push(
+    currentUserId
+      ? Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency} OR c."createdById" = ${currentUserId})`
+      : Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency})`
+  );
+
+  // Content level filter — parity with the feed: exclude a challenge whose REAL cover image level
+  // doesn't intersect the viewer's effective (green-capped) browsing level, rather than trusting
+  // the declared allowedNsfwLevel. Creator sees their own.
+  const effectiveBrowsingLevel = getEffectiveBrowsingLevel({
+    isGreen: isGreen ?? false,
+    isLoggedIn: currentUserId != null,
+    requested: browsingLevel,
+  });
+  if (effectiveBrowsingLevel > 0) {
+    conditions.push(
+      currentUserId
+        ? Prisma.sql`(c."createdById" = ${currentUserId} OR EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0))`
+        : Prisma.sql`EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0)`
+    );
   }
 
   if (query) {
@@ -3235,16 +3310,20 @@ export async function getCompletedChallengesWithWinners(
     getCosmeticsForUsers(allUserIds),
   ]);
 
-  // Group winners by challengeId
+  // Group winners by challengeId. Defense-in-depth: on green, null out any winner thumbnail whose
+  // real image level isn't SFW (a green challenge's entries are already SFW by the entry gate, so
+  // this only bites on mislabeled data). The frontend WinnerPodiumCard also keys ImageGuard2 on
+  // imageNsfwLevel.
   const winnersByChallengeId = new Map<number, ChallengeWinnerSummary[]>();
   for (const w of winnerRows) {
     const list = winnersByChallengeId.get(w.challengeId) ?? [];
+    const hideThumb = (isGreen ?? false) && isImageHiddenFromGreenViewer(w.imageNsfwLevel, currentUserId);
     list.push({
       place: w.place,
       userId: w.userId,
       username: w.username,
       imageId: w.imageId,
-      imageUrl: w.imageUrl,
+      imageUrl: hideThumb ? null : w.imageUrl,
       imageNsfwLevel: w.imageNsfwLevel,
       imageHash: w.imageHash,
       buzzAwarded: w.buzzAwarded,

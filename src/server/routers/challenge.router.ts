@@ -108,14 +108,25 @@ export const challengeRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getChallengeWinnersSchema)
     .use(isFlagProtected('challengePlatform'))
-    .query(({ input }) => getChallengeWinners(input.challengeId)),
+    .query(({ input, ctx }) =>
+      getChallengeWinners(input.challengeId, {
+        isGreen: ctx.features.isGreen,
+        viewerId: ctx.user?.id,
+      })
+    ),
 
   // Get completed challenges with inline winners for previous winners page
   getCompletedWithWinners: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getCompletedChallengesWithWinnersSchema)
     .use(isFlagProtected('challengePlatform'))
-    .query(({ input }) => getCompletedChallengesWithWinners(input)),
+    .query(({ input, ctx }) =>
+      getCompletedChallengesWithWinners({
+        ...input,
+        isGreen: ctx.features.isGreen,
+        currentUserId: ctx.user?.id,
+      })
+    ),
 
   // Get winner cooldown status for current user on a challenge
   getWinnerCooldownStatus: protectedProcedure

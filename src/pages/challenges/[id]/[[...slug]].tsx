@@ -349,8 +349,11 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
 
   return (
     <Gated
-      contentNsfwLevel={challenge.allowedNsfwLevel}
-      bypassRating={currentUser?.isModerator ?? false}
+      // Gate on the challenge's allowed rating combined with the cover image's REAL level, so a
+      // challenge whose declared rating is SFW but whose cover scanned NSFW still shows the
+      // MatureContentRedirect on the green (SFW) site instead of leaking the cover.
+      contentNsfwLevel={challenge.allowedNsfwLevel | (challenge.coverImage?.nsfwLevel ?? 0)}
+      bypassRating={isOwner || (currentUser?.isModerator ?? false)}
       meta={{
         title: `${challenge.title} | Civitai Challenges`,
         description:
