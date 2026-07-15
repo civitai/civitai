@@ -33,6 +33,7 @@ import { blockWorkflowBodySchema } from '~/server/schema/blocks/workflow.schema'
 // live in the browser-safe `shared/` tree (no DB/redis), so we import and run
 // them for real in the integration-style test below.
 import { generationGraph } from '~/shared/data-graph/generation/generation-graph';
+import { ECO } from '~/shared/constants/basemodel.constants';
 import { toStepMetadata } from '~/shared/utils/resource.utils';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
@@ -896,6 +897,58 @@ describe('block input yields populated workflow metadata params (real graph path
       expect.objectContaining({ url: 'https://image.civitai.com/abc/def.jpeg' }),
     ]);
   });
+
+  // Edit-capable ecosystems (EDIT_IMG_IDS) route a source-image body to
+  // `img2img:edit`, NOT plain `img2img`. Prove end-to-end that the emitted input
+  // validates through the REAL generation graph AND routes to img2img:edit (i.e.
+  // the ecosystem is NOT silently auto-corrected) for each edit ecosystem — the
+  // same `images` reference node the onsite generator feeds (openai-graph /
+  // flux-kontext-graph / qwen-graph). `checkpointVersionId` uses each ecosystem's
+  // real locked version id so the modelLocked graph doesn't remap it.
+  it.each([
+    ['OpenAI', 'OpenAI', 1733399],
+    ['Qwen', 'Qwen', 2558804],
+    ['Flux.1 Kontext', 'Flux1Kontext', 1892509],
+  ])(
+    'emitted img2img:edit input validates through the REAL graph for %s (ecosystem %s)',
+    (baseModel, ecoKey, versionId) => {
+      const body = {
+        kind: 'textToImage' as const,
+        modelId: 7,
+        modelVersionId: versionId,
+        params: { prompt: 'make the cat wear a hat', quantity: 1 },
+        sourceImage: {
+          url: 'https://image.civitai.com/abc/def.jpeg',
+          width: 1024,
+          height: 1024,
+        },
+      };
+      const resolved = {
+        baseModel,
+        modelType: 'Checkpoint',
+        checkpointVersionId: versionId,
+        checkpointBaseModel: baseModel,
+      };
+      const input = buildImageWorkflowInput(body as never, resolved);
+      // The builder routes to img2img:edit deterministically.
+      expect(input.workflow).toBe('img2img:edit');
+      expect(input.ecosystem).toBe(ecoKey);
+
+      // The REAL graph accepts it AND keeps it routed to img2img:edit on the
+      // asserted ecosystem (no auto-correction to a supported-but-wrong route).
+      const result = generationGraph.safeParse(input, externalCtx);
+      if (!result.success) {
+        throw new Error(`img2img:edit graph validation failed: ${JSON.stringify(result.errors)}`);
+      }
+      const data = result.data as { workflow: string; ecosystem: string; images?: Array<{ url: string }> };
+      expect(data.workflow).toBe('img2img:edit');
+      expect(data.ecosystem).toBe(ecoKey);
+      // The bounded source image rides into the graph's reference `images` node.
+      expect(data.images).toEqual([
+        expect.objectContaining({ url: 'https://image.civitai.com/abc/def.jpeg' }),
+      ]);
+    }
+  );
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -920,15 +973,44 @@ describe('buildImageWorkflowInput (generalized image-workflow bridge)', () => {
     height: 1024,
   };
 
-  it('exposes exactly the image workflow allowlist (txt2img, img2img)', () => {
-    expect([...BLOCK_IMAGE_WORKFLOW_TYPES]).toEqual(['txt2img', 'img2img']);
+  it('exposes exactly the image workflow allowlist (txt2img, img2img, img2img:edit)', () => {
+    expect([...BLOCK_IMAGE_WORKFLOW_TYPES]).toEqual(['txt2img', 'img2img', 'img2img:edit']);
   });
 
-  it('resolveBlockImageWorkflowType derives img2img with a source image, txt2img without', () => {
+  it('resolveBlockImageWorkflowType derives the variant from body + ecosystem', () => {
+    // No source image → txt2img regardless of ecosystem.
     expect(resolveBlockImageWorkflowType(baseBody as never)).toBe('txt2img');
+    expect(resolveBlockImageWorkflowType(baseBody as never, ECO.OpenAI)).toBe('txt2img');
+    // Source image + SD-family ecosystem → img2img.
     expect(
-      resolveBlockImageWorkflowType({ ...baseBody, sourceImage: validSourceImage } as never)
+      resolveBlockImageWorkflowType(
+        { ...baseBody, sourceImage: validSourceImage } as never,
+        ECO.SDXL
+      )
     ).toBe('img2img');
+    // Source image + edit-capable ecosystem → img2img:edit.
+    for (const eco of [ECO.OpenAI, ECO.Qwen, ECO.Flux1Kontext]) {
+      expect(
+        resolveBlockImageWorkflowType({ ...baseBody, sourceImage: validSourceImage } as never, eco)
+      ).toBe('img2img:edit');
+    }
+    // Source image + ecosystem that supports neither img2img variant (Flux.1 →
+    // Flux1, txt2img-only) → BAD_REQUEST.
+    let caught: unknown;
+    try {
+      resolveBlockImageWorkflowType(
+        { ...baseBody, sourceImage: validSourceImage } as never,
+        ECO.Flux1
+      );
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(TRPCError);
+    expect(caught).toMatchObject({ code: 'BAD_REQUEST' });
+    // Source image + unknown ecosystem (undefined) → BAD_REQUEST too.
+    expect(() =>
+      resolveBlockImageWorkflowType({ ...baseBody, sourceImage: validSourceImage } as never)
+    ).toThrow(TRPCError);
   });
 
   it('emits workflow:img2img + an images[] init image when a source image is present', () => {
@@ -1012,14 +1094,17 @@ describe('buildImageWorkflowInput (generalized image-workflow bridge)', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// App Blocks IMAGE bridge (Phase-2a): img2img ecosystem fail-close guard
+// App Blocks IMAGE bridge: img2img variant selection + fail-close guard
 //
-// Plain `img2img` ("Image Variations") is SD-family-only in the generation
-// graph. buildImageWorkflowInput must reject a non-SD-family checkpoint + source
-// image with BAD_REQUEST rather than let DataGraph.safeParse silently auto-
-// correct the ecosystem to SD1 and return a mis-routed graph as success.
+// Plain `img2img` ("Image Variations") is SD-family-only and `img2img:edit` is
+// EDIT_IMG_IDS-only (OpenAI/Qwen/Flux Kontext/…) in the generation graph.
+// buildImageWorkflowInput must (a) route SD-family checkpoints to `img2img`, (b)
+// route edit-capable checkpoints to `img2img:edit`, and (c) reject a checkpoint
+// whose ecosystem supports NEITHER variant with BAD_REQUEST — deterministically,
+// rather than let DataGraph.safeParse silently auto-correct the ecosystem and
+// return a mis-routed graph as success.
 // ─────────────────────────────────────────────────────────────────────────────
-describe('buildImageWorkflowInput img2img ecosystem guard (SD-family only in 2a)', () => {
+describe('buildImageWorkflowInput img2img variant selection + ecosystem guard', () => {
   const baseBody = {
     kind: 'textToImage' as const,
     modelId: 7,
@@ -1049,11 +1134,27 @@ describe('buildImageWorkflowInput img2img ecosystem guard (SD-family only in 2a)
     expect(out.images).toHaveLength(1);
   });
 
-  // Non-SD-family checkpoints: plain img2img is NOT available, so the builder
-  // must throw BAD_REQUEST (not silently emit an SD1-corrected graph). Covers
-  // edit-capable ecosystems (Flux Kontext, Qwen — Phase-2b) and others.
-  it.each(['Flux.1 D', 'Flux.1 Kontext', 'Qwen', 'SD 3.5', 'Chroma', 'SD 2.1'])(
-    'rejects img2img for non-SD-family checkpoint %s with BAD_REQUEST',
+  // Edit-capable checkpoints (EDIT_IMG_IDS): plain img2img is NOT available but
+  // img2img:edit IS — the builder must route them to `img2img:edit` (NOT reject,
+  // NOT silently SD1-correct) and still carry the source image.
+  it.each([
+    ['Flux.1 Kontext', 'Flux1Kontext'],
+    ['Qwen', 'Qwen'],
+    ['OpenAI', 'OpenAI'],
+  ])('builds img2img:edit for edit-capable checkpoint %s (ecosystem %s)', (baseModel, ecoKey) => {
+    const out = buildImageWorkflowInput(baseBody as never, resolved(baseModel));
+    expect(out.workflow).toBe('img2img:edit');
+    expect(out.ecosystem).toBe(ecoKey);
+    expect(out.images).toHaveLength(1);
+    // aspectRatio is omitted for the edit variant (graph default applies).
+    expect(out.aspectRatio).toBeUndefined();
+  });
+
+  // Checkpoints whose ecosystem supports NEITHER img2img variant: the builder
+  // must throw BAD_REQUEST (not silently emit an auto-corrected graph). Flux.1 D
+  // (Flux1) / Chroma are txt2img-only; SD 3.5 / SD 2.1 are in neither set.
+  it.each(['Flux.1 D', 'SD 3.5', 'Chroma', 'SD 2.1'])(
+    'rejects img2img for a no-img2img-variant checkpoint %s with BAD_REQUEST',
     (baseModel) => {
       let caught: unknown;
       try {
@@ -1063,7 +1164,7 @@ describe('buildImageWorkflowInput img2img ecosystem guard (SD-family only in 2a)
       }
       expect(caught).toBeInstanceOf(TRPCError);
       expect(caught).toMatchObject({ code: 'BAD_REQUEST' });
-      expect((caught as TRPCError).message).toMatch(/SD-family/);
+      expect((caught as TRPCError).message).toMatch(/not supported/);
     }
   );
 

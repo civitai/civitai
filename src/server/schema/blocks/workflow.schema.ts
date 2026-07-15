@@ -12,9 +12,11 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 const blockAccountTypeSchema = z.enum(buzzSpendTypes as [BuzzSpendType, ...BuzzSpendType[]]);
 
 // `textToImage` is the block-supported kind. It now covers the whole IMAGE
-// workflow class (App Blocks IMAGE bridge, Phase-2a): a bare body maps to a
-// `txt2img` graph workflow, and a body carrying a bounded `sourceImage` maps to
-// `img2img` — see buildImageWorkflowInput / BLOCK_IMAGE_WORKFLOW_TYPES in
+// workflow class (App Blocks IMAGE bridge): a bare body maps to a `txt2img`
+// graph workflow, and a body carrying a bounded `sourceImage` maps to an img2img
+// workflow whose variant is chosen from the checkpoint's ecosystem — `img2img`
+// (SD-family) or `img2img:edit` (edit-capable: OpenAI/Qwen/Flux Kontext/…). See
+// buildImageWorkflowInput / BLOCK_IMAGE_WORKFLOW_TYPES in
 // workflow.service. A later phase adds a NON-image media class (video/audio/3D)
 // as a NEW discriminated-union `kind` here, which must also (a) extend the
 // discriminator in blocks.router workflow procedures, (b) be exposed by
@@ -106,18 +108,21 @@ const blockTextToImageBodySchema = z.object({
   // base-model-family-matches against the checkpoint before any spend. Capped
   // at MAX_ADDITIONAL_RESOURCES for the iframe posture above.
   additionalResources: z.array(blockAdditionalResourceSchema).max(MAX_ADDITIONAL_RESOURCES).optional(),
-  // Optional img2img init/source image (App Blocks IMAGE bridge, Phase-2a).
-  // When present, the block bridge emits an `img2img` graph workflow (SD-family
-  // "Image Variations") instead of `txt2img`; when absent, behavior is
-  // byte-identical to before (txt2img). Bounded to a Civitai-hosted image (see
+  // Optional img2img init/source image (App Blocks IMAGE bridge).
+  // When present, the block bridge emits an img2img graph workflow whose VARIANT
+  // is chosen from the checkpoint's ecosystem (buildImageWorkflowInput /
+  // resolveBlockImageWorkflowType): SD-family ecosystems → `img2img` ("Image
+  // Variations"); edit-capable ecosystems (OpenAI/Qwen/Flux Kontext/… —
+  // EDIT_IMG_IDS) → `img2img:edit`; when absent, behavior is byte-identical to
+  // before (txt2img). Bounded to a Civitai-hosted image (see
   // blockSourceImageSchema) — never an arbitrary remote URL.
   //
-  // Two hard scope limits are enforced downstream (NOT at the wire schema, which
-  // only bounds shape): (1) blocks.router rejects `sourceImage` on a MODEL-bound
-  // token — img2img is PAGE-only in 2a, mirroring `additionalResources`; (2)
-  // buildImageWorkflowInput rejects a non-SD-family checkpoint fail-closed —
-  // plain `img2img` is SD-family-only in the graph, and edit-capable ecosystems
-  // (Flux Kontext, Qwen → `img2img:edit`) are a Phase-2b follow-up.
+  // Two scope limits are enforced downstream (NOT at the wire schema, which only
+  // bounds shape): (1) blocks.router rejects `sourceImage` on a MODEL-bound token
+  // — img2img is PAGE-only, mirroring `additionalResources`; (2)
+  // buildImageWorkflowInput rejects fail-closed a checkpoint whose ecosystem
+  // supports NEITHER img2img variant (deterministically via `isWorkflowAvailable`,
+  // never relying on the graph's safeParse auto-correction).
   sourceImage: blockSourceImageSchema.optional(),
   // Optional viewer-picked buzz account to spend (money page blocks). Absent →
   // unchanged Auto behavior (domain-allowed currencies drained blue-first). When
