@@ -1,0 +1,198 @@
+import { Prisma } from '@prisma/client';
+import { dbRead, dbWrite } from '~/server/db/client';
+
+/**
+ * G6 — persistent block-generation output queue (generic read-model).
+ *
+ * A block's generation "queue" is otherwise client-side only (the iframe holds
+ * workflowIds in memory and polls each), so it is LOST on reload / device
+ * switch. `block_workflows` is a durable read-model of a viewer's in-flight +
+ * recently-completed generations for one app block, so a block can rebuild its
+ * queue on load by asking the host for the viewer's own recent workflows.
+ *
+ * FULLY GENERIC — there is NO "generator" concept. Every app block that drives
+ * budgeted generation writes exactly one row per submit, keyed on the
+ * orchestrator workflow id. No generator/content columns live here (content-
+ * author / bounty attribution already lives in `block_spend_attribution`, G5).
+ *
+ * Accessed via raw SQL (no Prisma delegate) so the read-model ships without a
+ * Prisma client regen — see the `20260715130000_block_workflows` migration.
+ */
+
+// The block-contract workflow statuses — the exact set BlockWorkflowSnapshot
+// surfaces to the iframe AND the CHECK constraint on the table allows.
+export const BLOCK_WORKFLOW_STATUSES = [
+  'pending',
+  'processing',
+  'succeeded',
+  'failed',
+  'expired',
+  'canceled',
+] as const;
+export type BlockWorkflowStatus = (typeof BLOCK_WORKFLOW_STATUSES)[number];
+
+export function isBlockWorkflowStatus(v: unknown): v is BlockWorkflowStatus {
+  return typeof v === 'string' && (BLOCK_WORKFLOW_STATUSES as readonly string[]).includes(v);
+}
+
+// Bound the read: a block rebuilding its queue never needs more than a page of
+// recent items, and the endpoint is token-authed + per-viewer so a huge limit
+// is pure load with no product value.
+export const BLOCK_WORKFLOWS_DEFAULT_LIMIT = 25;
+export const BLOCK_WORKFLOWS_MAX_LIMIT = 50;
+
+export type BlockWorkflowQueueItem = {
+  workflowId: string;
+  status: BlockWorkflowStatus;
+  /** ISO-8601 UTC. */
+  submittedAt: string;
+  /** ISO-8601 UTC. */
+  updatedAt: string;
+};
+
+/**
+ * Fire-and-forget upsert of the queue row at SUBMIT time. Everything is
+ * server-derived from the VERIFIED block JWT (appBlockId, blockInstanceId,
+ * userId) plus the orchestrator workflow id + the submit-time status.
+ *
+ * NON-BLOCKING + FAIL-SAFE: wrapped in try/catch and NEVER throws — a failed
+ * write must not add latency to, or break, the submit response (the Buzz was
+ * already spent and the snapshot is the user-facing source of truth). Mirrors
+ * the G5 `recordSpendAttribution` fire-and-forget posture.
+ *
+ * `ON CONFLICT DO NOTHING`: a workflow id is unique per submit, so a conflict is
+ * only a re-entry — first write wins and we never regress a status a later
+ * completion callback already advanced. An unknown status is skipped rather than
+ * violating the CHECK constraint (defensive; the caller passes a snapshot status
+ * that is always in-set).
+ *
+ * The CALLER excludes dev/live-harness tokens (`claims.dev === true`, synthetic
+ * non-FK appBlockId) — this only ever runs for a real deployed app block, so the
+ * `app_block_id` FK never sees a synthetic id.
+ */
+export async function upsertBlockWorkflowOnSubmit(input: {
+  workflowId: string;
+  appBlockId: string;
+  blockInstanceId: string;
+  userId: number;
+  status: string;
+}): Promise<void> {
+  const { workflowId, appBlockId, blockInstanceId, userId, status } = input;
+  if (!isBlockWorkflowStatus(status)) return; // defensive — never write a bad status
+  try {
+    await dbWrite.$executeRaw`
+      INSERT INTO "block_workflows"
+        ("workflow_id", "app_block_id", "block_instance_id", "user_id", "status")
+      VALUES (${workflowId}, ${appBlockId}, ${blockInstanceId}, ${userId}, ${status})
+      ON CONFLICT ("workflow_id") DO NOTHING
+    `;
+  } catch {
+    /* best-effort: a failed queue write never breaks (or slows) the submit */
+  }
+}
+
+/**
+ * Update the queue row's status + updated_at on the orchestrator completion
+ * callback. Best-effort + FAIL-SAFE: wrapped in try/catch and returns the
+ * affected-row count (0 when no row exists — e.g. the submit-time write was lost
+ * or this is a non-block workflow), NEVER throws. A missed update degrades to a
+ * stale status HINT — the block can always poll the orchestrator for the live
+ * status — so the callback stays a no-throw 200 path.
+ *
+ * Idempotent by construction: the UPDATE is a pure set of (status, updated_at)
+ * on the primary key, so a retry is harmless; the callback's own 7-day dedup
+ * marker additionally short-circuits duplicate deliveries before this runs.
+ */
+export async function updateBlockWorkflowStatus(input: {
+  workflowId: string;
+  status: string;
+}): Promise<number> {
+  const { workflowId, status } = input;
+  if (!isBlockWorkflowStatus(status)) return 0;
+  try {
+    const affected = await dbWrite.$executeRaw`
+      UPDATE "block_workflows"
+      SET "status" = ${status}, "updated_at" = now()
+      WHERE "workflow_id" = ${workflowId}
+    `;
+    return typeof affected === 'number' ? affected : 0;
+  } catch {
+    return 0;
+  }
+}
+
+type RawQueueRow = {
+  workflowId: string;
+  status: string;
+  submittedAt: Date;
+  updatedAt: Date;
+};
+
+// Opaque keyset cursor: `${submittedAt ISO}|${workflowId}`. The ISO timestamp is
+// fixed-width and contains no '|', and orchestrator workflow ids contain no '|',
+// so a split on the FIRST '|' round-trips exactly.
+function encodeCursor(row: BlockWorkflowQueueItem): string {
+  return `${row.submittedAt}|${row.workflowId}`;
+}
+function decodeCursor(cursor: string): { submittedAt: Date; workflowId: string } | null {
+  const idx = cursor.indexOf('|');
+  if (idx <= 0) return null;
+  const submittedAt = new Date(cursor.slice(0, idx));
+  const workflowId = cursor.slice(idx + 1);
+  if (Number.isNaN(submittedAt.getTime()) || workflowId.length === 0) return null;
+  return { submittedAt, workflowId };
+}
+
+/**
+ * Read the CALLER's OWN recent workflows for ONE app block, newest first,
+ * keyset-paginated. Both `userId` and `appBlockId` are bound SERVER-SIDE from
+ * the verified block token, so a block can only ever read the queue of the exact
+ * viewer whose session minted the token, scoped to the calling app block — never
+ * another user's or another app's rows.
+ *
+ * Keyset on `(submitted_at DESC, workflow_id DESC)` — served directly by
+ * `block_workflows_user_app_idx`. Returns the persisted status per item (the
+ * block polls the orchestrator for live details/images via `pollWorkflow`),
+ * plus an opaque `nextCursor` (null when the page is the last one).
+ */
+export async function listMyBlockWorkflows(input: {
+  userId: number;
+  appBlockId: string;
+  limit?: number;
+  cursor?: string | null;
+}): Promise<{ items: BlockWorkflowQueueItem[]; nextCursor: string | null }> {
+  const { userId, appBlockId } = input;
+  const limit = Math.min(
+    BLOCK_WORKFLOWS_MAX_LIMIT,
+    Math.max(1, Math.floor(input.limit ?? BLOCK_WORKFLOWS_DEFAULT_LIMIT))
+  );
+  const decoded = input.cursor ? decodeCursor(input.cursor) : null;
+  const keyset = decoded
+    ? Prisma.sql`AND ("submitted_at", "workflow_id") < (${decoded.submittedAt}, ${decoded.workflowId})`
+    : Prisma.empty;
+
+  const rows = await dbRead.$queryRaw<RawQueueRow[]>`
+    SELECT
+      "workflow_id"  AS "workflowId",
+      "status",
+      "submitted_at" AS "submittedAt",
+      "updated_at"   AS "updatedAt"
+    FROM "block_workflows"
+    WHERE "user_id" = ${userId} AND "app_block_id" = ${appBlockId}
+    ${keyset}
+    ORDER BY "submitted_at" DESC, "workflow_id" DESC
+    LIMIT ${limit + 1}
+  `;
+
+  const page = rows.slice(0, limit).map(
+    (r): BlockWorkflowQueueItem => ({
+      workflowId: r.workflowId,
+      // The CHECK constraint guarantees an in-set status; narrow defensively.
+      status: isBlockWorkflowStatus(r.status) ? r.status : 'pending',
+      submittedAt: r.submittedAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
+    })
+  );
+  const nextCursor = rows.length > limit && page.length > 0 ? encodeCursor(page[page.length - 1]) : null;
+  return { items: page, nextCursor };
+}
