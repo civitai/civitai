@@ -1,8 +1,8 @@
 import { createServerSideHelpers } from '@trpc/react-query/server';
 import type { GetServerSidePropsContext, GetServerSidePropsResult, Redirect } from 'next';
 import type { Session } from '~/types/session';
-import superjson from 'superjson';
 import { Tracker } from '~/server/clickhouse/client';
+import { unionTransformer } from '~/shared/utils/trpc-union-transformer';
 
 import { appRouter } from '~/server/routers';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
@@ -34,7 +34,10 @@ export const getServerProxySSGHelpers = async (
       apiKeyId: undefined,
       subject: undefined,
     },
-    transformer: superjson,
+    // Phase 1 of the superjson → devalue migration: SSR dehydrate still WRITES
+    // superjson (wire unchanged); the union READ is carried by the client that
+    // hydrates. See src/shared/utils/trpc-union-transformer.ts.
+    transformer: unionTransformer,
   });
   return ssg;
 };
