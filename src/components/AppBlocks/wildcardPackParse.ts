@@ -44,6 +44,12 @@ export function exceedsPreDownloadCap(sizeBytes: unknown): boolean {
   return typeof sizeBytes === 'number' && Number.isFinite(sizeBytes) && sizeBytes > PRE_DOWNLOAD_MAX_BYTES;
 }
 
+/** Max concurrent wildcard fetch+parse operations IN ONE TAB. The server rate-
+ *  limit (30/60s) would otherwise permit ~30 concurrent parses, each inflating
+ *  up to the 16 MB budget — a memory spike in the tab. Excess requests get a
+ *  `busy` result (the block retries) rather than queueing unbounded. */
+export const WILDCARD_MAX_CONCURRENT = 3;
+
 // ── GET_WILDCARD_PACK request contract ───────────────────────────────────────
 
 export interface GetWildcardPackRequest {
@@ -73,7 +79,14 @@ export function resolveGetWildcardPackRequest(raw: unknown): GetWildcardPackRequ
 
 // ── Error discriminants ──────────────────────────────────────────────────────
 
-export type WildcardPackErrorCode = 'not-found' | 'forbidden' | 'too-large' | 'parse-failed';
+export type WildcardPackErrorCode =
+  | 'not-found'
+  | 'forbidden'
+  | 'too-large'
+  | 'parse-failed'
+  // Host-side backpressure: too many wildcard fetch+parse operations already
+  // in flight in THIS tab (see WILDCARD_MAX_CONCURRENT). The block should retry.
+  | 'busy';
 
 /**
  * Map a thrown error to the WILDCARD_PACK_RESULT error discriminant. A tagged
@@ -85,7 +98,13 @@ export type WildcardPackErrorCode = 'not-found' | 'forbidden' | 'too-large' | 'p
 export function classifyWildcardPackError(err: unknown): WildcardPackErrorCode {
   if (err && typeof err === 'object') {
     const tag = (err as { wildcardPackError?: unknown }).wildcardPackError;
-    if (tag === 'too-large' || tag === 'parse-failed' || tag === 'not-found' || tag === 'forbidden') {
+    if (
+      tag === 'too-large' ||
+      tag === 'parse-failed' ||
+      tag === 'not-found' ||
+      tag === 'forbidden' ||
+      tag === 'busy'
+    ) {
       return tag;
     }
     const code = (err as { data?: { code?: unknown } }).data?.code;

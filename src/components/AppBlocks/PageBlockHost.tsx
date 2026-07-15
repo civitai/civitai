@@ -20,6 +20,7 @@ import {
   classifyWildcardPackError,
   exceedsPreDownloadCap,
   resolveGetWildcardPackRequest,
+  WILDCARD_MAX_CONCURRENT,
 } from './wildcardPackParse';
 import { resolveRequestConsent } from './requestConsentGate';
 import { resolveRequestSignIn } from './requestSignInGate';
@@ -571,6 +572,11 @@ export function PageBlockHost({
   // the whole point (the real download gates apply). A MUTATION deliberately: the
   // response carries a short-lived signed URL (see the router comment).
   const resolveWildcardPackMutation = trpc.generation.resolveWildcardPack.useMutation();
+  // In-flight fetch+parse count for the concurrency cap below. A ref (not state)
+  // so incrementing/decrementing never re-renders and the count is read
+  // synchronously in the message handler (JS is single-threaded, so the
+  // check→increment before the first await is atomic per message).
+  const wildcardInFlightRef = useRef<number>(0);
 
   // SUBMIT_WORKFLOW → blocks.submitWorkflow → WORKFLOW_SUBMITTED.
   useEffect(() => {
@@ -1474,6 +1480,15 @@ export function PageBlockHost({
       const req = resolveGetWildcardPackRequest(raw);
       if (!req) return; // missing/invalid requestId or modelVersionId → drop
       const { requestId, modelVersionId } = req;
+      // Concurrency cap (host-side backpressure): bound the per-tab memory. The
+      // check→increment runs synchronously before the first await (single-
+      // threaded), so N concurrent GET_WILDCARD_PACKs can't all pass the gate.
+      // Excess → `busy` (the block retries) rather than an unbounded queue.
+      if (wildcardInFlightRef.current >= WILDCARD_MAX_CONCURRENT) {
+        send('WILDCARD_PACK_RESULT', { requestId, error: 'busy' });
+        return;
+      }
+      wildcardInFlightRef.current += 1;
       try {
         const resolved = await resolveWildcardPackMutation.mutateAsync({ modelVersionId });
         // 32 MB pre-download cap on the server-advertised size — reject BEFORE
@@ -1498,6 +1513,11 @@ export function PageBlockHost({
         // NOT_FOUND / FORBIDDEN (proc) · too-large · parse-failed (fetch/unzip/
         // abort) — a single error discriminant, never a hang.
         send('WILDCARD_PACK_RESULT', { requestId, error: classifyWildcardPackError(err) });
+      } finally {
+        // Release the in-flight slot on EVERY exit (success, too-large early
+        // return, or error) so the concurrency gate can't leak slots and wedge
+        // shut. Only decremented for a request that passed the gate + incremented.
+        wildcardInFlightRef.current -= 1;
       }
     });
     return off;

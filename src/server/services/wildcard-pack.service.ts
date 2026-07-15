@@ -97,19 +97,13 @@ export async function resolveWildcardPackForUser({
     throw new TRPCError({ code: 'NOT_FOUND', message: 'Wildcard pack not found' });
   }
 
-  // 2. AUTHORITATIVE download-gate + URL resolution for THIS user. Every refusal
-  //    status (not-found / unauthorized / archived / downloads-disabled /
-  //    early-access / resolve-failed / error) collapses to NOT_FOUND — no
-  //    probing which gate refused. `requireAuth` is satisfied because a
-  //    protectedProcedure always has a user id.
-  const resolved = await getFileForModelVersion({ modelVersionId, user });
-  if (resolved.status !== 'success') {
-    throw new TRPCError({ code: 'NOT_FOUND', message: 'Wildcard pack not found' });
-  }
-
-  // 3. Maturity ceiling — computed from the viewer's REAL session + domain, not
+  // 2. Maturity ceiling — computed from the viewer's REAL session + domain, not
   //    a token claim. A pack whose nsfwLevel bit is not within the ceiling is
   //    FORBIDDEN. `hasFlag(ceiling, 0)` is true, so an unrated (0) pack passes.
+  //    Checked from the version row we already loaded, BEFORE the download-gate
+  //    resolution below — a forbidden (or wrong-type) request then never reaches
+  //    getFileForModelVersion's delivery-worker SIGNING call (no wasted sign for
+  //    a request we're going to reject on maturity anyway).
   const browsingLevel = getServerBrowsingLevel({ canViewNsfw, user });
   const packLevel = version.nsfwLevel ?? 0;
   if (!Flags.hasFlag(browsingLevel, packLevel)) {
@@ -117,6 +111,18 @@ export async function resolveWildcardPackForUser({
       code: 'FORBIDDEN',
       message: 'This wildcard pack exceeds your content maturity setting',
     });
+  }
+
+  // 3. AUTHORITATIVE download-gate + URL resolution for THIS user. Every refusal
+  //    status (not-found / unauthorized / archived / downloads-disabled /
+  //    early-access / resolve-failed / error) collapses to NOT_FOUND — no
+  //    probing which gate refused. `requireAuth` is satisfied because a
+  //    protectedProcedure always has a user id. This is still the authoritative
+  //    download-gate: a maturity-OK-but-download-hidden pack collapses to
+  //    NOT_FOUND here, unchanged.
+  const resolved = await getFileForModelVersion({ modelVersionId, user });
+  if (resolved.status !== 'success') {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'Wildcard pack not found' });
   }
 
   // 4. Declared size for the host's pre-download cap. Read the sizeKB of the

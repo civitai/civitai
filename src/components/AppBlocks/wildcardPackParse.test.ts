@@ -96,6 +96,7 @@ describe('classifyWildcardPackError', () => {
   it('maps a host-tagged error', () => {
     expect(classifyWildcardPackError(wildcardPackError('too-large'))).toBe('too-large');
     expect(classifyWildcardPackError(wildcardPackError('parse-failed'))).toBe('parse-failed');
+    expect(classifyWildcardPackError(wildcardPackError('busy'))).toBe('busy');
   });
   it('maps a tRPC client error data.code', () => {
     expect(classifyWildcardPackError({ data: { code: 'NOT_FOUND' } })).toBe('not-found');

@@ -2,6 +2,7 @@ import JSZip from 'jszip';
 import { beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
+import { WILDCARD_MAX_CONCURRENT } from '~/components/AppBlocks/wildcardPackParse';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
@@ -200,6 +201,21 @@ describe('PageBlockHost wildcard-pack bridge (W13)', () => {
       expect(payload.pack.maturity).toEqual(RESOLVED_MATURITY);
       expect(payload.pack.truncated).toBe(false);
       expect(payload.pack.truncatedLists).toEqual([]);
+
+      // SECURITY REGRESSION GUARD (the highest-value property of this design):
+      // the signed download URL + fileId are a bearer credential that must NEVER
+      // reach the untrusted iframe. The host posts ONLY {...meta, lists, ...} —
+      // a `...resolved` typo (instead of `...resolved.meta`) would leak the URL
+      // and otherwise pass silently. Pin it: no credential field, and the signed
+      // URL's host/query-token appear NOWHERE in the serialized message.
+      expect(payload.pack.signedUrl).toBeUndefined();
+      expect((payload.pack as { fileId?: unknown }).fileId).toBeUndefined();
+      expect((payload.pack as { url?: unknown }).url).toBeUndefined();
+      const serialized = JSON.stringify(payload);
+      expect(serialized).not.toContain('signedUrl');
+      expect(serialized).not.toContain('fileId');
+      expect(serialized).not.toContain('b2.example'); // the delivery-host
+      expect(serialized).not.toContain('sig=1'); // the signed-URL credential token
     });
     replies.stop();
   });
@@ -310,6 +326,32 @@ describe('PageBlockHost wildcard-pack bridge (W13)', () => {
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({ requestId: 'rq_ab', error: 'parse-failed' });
     });
+    replies.stop();
+  });
+
+  test(`caps concurrent in-flight parses: the (N+1)th request gets busy (N=${WILDCARD_MAX_CONCURRENT})`, async () => {
+    // Make the resolve proc hang so the first N requests occupy every in-flight
+    // slot (each awaits resolve forever), then the (N+1)th must be rejected busy.
+    mocks.resolve.mockReturnValue(new Promise(() => {}));
+
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    // Saturate the N slots, then one more.
+    for (let i = 0; i < WILDCARD_MAX_CONCURRENT; i++) {
+      postFromBlock('GET_WILDCARD_PACK', { requestId: `c${i}`, modelVersionId: 100 });
+    }
+    postFromBlock('GET_WILDCARD_PACK', { requestId: 'overflow', modelVersionId: 100 });
+
+    await vi.waitFor(() => {
+      const r = replies.last('WILDCARD_PACK_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'overflow', error: 'busy' });
+    });
+    // Only the N that acquired a slot called the resolve proc; the overflow
+    // short-circuited to busy BEFORE calling it (so memory stays bounded).
+    expect(mocks.resolve).toHaveBeenCalledTimes(WILDCARD_MAX_CONCURRENT);
     replies.stop();
   });
 

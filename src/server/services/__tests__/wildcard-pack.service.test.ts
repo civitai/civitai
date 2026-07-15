@@ -127,12 +127,15 @@ describe('resolveWildcardPackForUser — download gate (getFileForModelVersion i
 });
 
 describe('resolveWildcardPackForUser — maturity ceiling', () => {
-  it('FORBIDs a mature pack for an under-ceiling (SFW) user', async () => {
+  it('FORBIDs a mature pack for an under-ceiling (SFW) user WITHOUT signing a URL', async () => {
     modelVersionFindFirst.mockResolvedValue(wildcardVersion({ nsfwLevel: NsfwLevel.R }));
     getFileForModelVersionMock.mockResolvedValue(successGate);
     await expect(
       resolveWildcardPackForUser({ modelVersionId: 100, user: sfwUser, canViewNsfw: false })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    // Maturity is checked BEFORE the download-gate resolution, so a forbidden
+    // request never reaches getFileForModelVersion's delivery-worker signing.
+    expect(getFileForModelVersionMock).not.toHaveBeenCalled();
   });
 
   it('serves a mature pack to a user whose ceiling allows it (sfwOnly:false)', async () => {
