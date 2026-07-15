@@ -593,6 +593,48 @@ describe('PageBlockHost workflow bridge (W10 money-path wiring)', () => {
     replies.stop();
   });
 
+  test('GET_BUZZ_TRANSACTIONS ignores a block-supplied blockToken in params (host token is authoritative)', async () => {
+    mocks.transactions.mockResolvedValue({ cursor: null, transactions: [] });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    // A block tries to smuggle its own blockToken via params — it must NOT override
+    // the host's page token (blockToken is spread LAST in the handler).
+    postFromBlock('GET_BUZZ_TRANSACTIONS', {
+      requestId: 'rq_txn_override',
+      params: { accountType: 'yellow', blockToken: 'EVIL_TOKEN' },
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.transactions).toHaveBeenCalled();
+    });
+    const arg = mocks.transactions.mock.calls[0][0] as { blockToken: string; accountType: string };
+    expect(arg.blockToken).toBe('tok_abc'); // the HOST page token, never the block-sent one
+    expect(arg.accountType).toBe('yellow'); // legit params still forwarded
+    replies.stop();
+  });
+
+  test('GET_DAILY_COMPENSATION ignores a block-supplied blockToken in params (host token is authoritative)', async () => {
+    mocks.dailyCompensation.mockResolvedValue({ resources: [], hasPublishedResources: false });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('GET_DAILY_COMPENSATION', {
+      requestId: 'rq_comp_override',
+      params: { date: '2026-07-01', blockToken: 'EVIL_TOKEN' },
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.dailyCompensation).toHaveBeenCalled();
+    });
+    const arg = mocks.dailyCompensation.mock.calls[0][0] as { blockToken: string; date: string };
+    expect(arg.blockToken).toBe('tok_abc');
+    expect(arg.date).toBe('2026-07-01');
+    replies.stop();
+  });
+
   test('GET_BUZZ_ACCOUNTS forwards token and posts BUZZ_ACCOUNTS_RESULT', async () => {
     const result = { accounts: [{ accountType: 'yellow', balance: 100 }] };
     mocks.accounts.mockResolvedValue(result);

@@ -764,9 +764,13 @@ export function PageBlockHost({
         }
         try {
           // params are schema-validated server-side; the host never trusts them.
+          // blockToken is spread LAST so a block-sent `params.blockToken` can never
+          // override the host's authoritative page token (mirrors submitWorkflow's
+          // non-overridable token). blockToken is host-injected only — no
+          // legitimate input field shares that name.
           const result = await getMyBuzzTransactionsMutation.mutateAsync({
-            blockToken: token,
             ...((raw.params as Record<string, unknown>) ?? {}),
+            blockToken: token,
           } as never);
           send('BUZZ_TRANSACTIONS_RESULT', { requestId, result });
         } catch (err) {
@@ -820,9 +824,11 @@ export function PageBlockHost({
           return;
         }
         try {
+          // blockToken spread LAST — host page token is authoritative, a block-sent
+          // `params.blockToken` can never override it (see GET_BUZZ_TRANSACTIONS).
           const result = await getMyDailyCompensationMutation.mutateAsync({
-            blockToken: token,
             ...((raw.params as Record<string, unknown>) ?? {}),
+            blockToken: token,
           } as never);
           send('DAILY_COMPENSATION_RESULT', { requestId, result });
         } catch (err) {
