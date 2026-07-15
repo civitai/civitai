@@ -209,7 +209,11 @@ export const listingHydrateSelect = {
   cover: { select: { url: true } },
   user: { select: { id: true, username: true, image: true } },
   metric: { select: { thumbsUpCount: true, thumbsDownCount: true } },
-  appBlock: { select: { manifest: true } },
+  // `currentVersionDeployedAt` powers the DEPLOY-GATE on the detail read (an
+  // onsite listing whose backing block has never successfully deployed is
+  // treated as unavailable). NULL ⇔ never-deployed; non-null ⇔ live (stays
+  // available while a new version re-builds).
+  appBlock: { select: { manifest: true, currentVersionDeployedAt: true } },
   screenshots: {
     where: { imageId: { not: null } },
     // Stable order: `id` tiebreaks rows with a tied `order` (default 0), which
@@ -454,10 +458,20 @@ export async function listAvailableListings(
     SELECT al.id, ${sortKeyExpr} AS sort_key
     FROM app_listings al
     LEFT JOIN app_listing_metrics m ON m.app_listing_id = al.id
+    -- DEPLOY-GATE: join the backing AppBlock (onsite only) so we can require it
+    -- has actually deployed its slug origin before listing it.
+    LEFT JOIN app_blocks ab ON ab.id = al.app_block_id
     WHERE al.status = 'approved'
       -- Never surface a SHADOW revision draft. Shadows are status='draft' so the
       -- approved-only filter already hides them; this is defense-in-depth.
       AND al.revision_of_id IS NULL
+      -- DEPLOY-GATE (generic, all app-blocks): an ONSITE (block-backed) listing
+      -- only appears once its backing AppBlock has SUCCESSFULLY deployed at least
+      -- once (current_version_deployed_at set on a successful apply, left NULL
+      -- while first-building). A re-deploying app keeps its non-null timestamp,
+      -- so it stays listed. OFFSITE listings have no AppBlock/deploy concept and
+      -- are UNAFFECTED (kind discriminates, never appBlockId nullness).
+      AND (al.kind <> 'onsite' OR ab.current_version_deployed_at IS NOT NULL)
       AND (${kindParam}::text IS NULL OR al.kind = ${kindParam}::text)
       AND (${categoryParam}::text IS NULL OR al.category = ${categoryParam}::text)
       AND ${listingMatureFilter(redCapable)}
@@ -526,6 +540,13 @@ export async function getListingDetail(
   // can't reuse this for a non-public path: a non-approved row returns null
   // exactly like a missing one — never its data.
   if (!row || row.status !== 'approved') return null;
+  // DEPLOY-GATE (generic, all app-blocks): an ONSITE listing whose backing
+  // AppBlock has NEVER successfully deployed is indistinguishable from a missing
+  // one — its `<slug>.<APPS_DOMAIN>` origin would 404. `currentVersionDeployedAt`
+  // is set only on a successful apply and stays set while a NEW version rebuilds,
+  // so a live app mid-re-deploy is still shown. OFFSITE listings have no
+  // AppBlock/deploy concept and are UNAFFECTED (discriminate on `kind`).
+  if (row.kind === 'onsite' && row.appBlock?.currentVersionDeployedAt == null) return null;
   // Maturity gate off a non-red host: a mature listing is indistinguishable from
   // a missing one (mirrors the AppBlock detail's red-only 404).
   if (!redCapable && isMatureContentRating(row.contentRating)) return null;

@@ -60,7 +60,13 @@ export async function createSchema(db: PGlite): Promise<void> {
       manifest      jsonb NOT NULL DEFAULT '{}'::jsonb,
       status        text NOT NULL DEFAULT 'approved',
       render_mode   text NOT NULL DEFAULT 'iframe',
-      trust_tier    text NOT NULL DEFAULT 'unverified'
+      trust_tier    text NOT NULL DEFAULT 'unverified',
+      -- DEPLOY-GATE columns: off-site apps set external_url; current_version_
+      -- deployed_at is non-null once an app has successfully deployed. Default
+      -- now() so a seeded app is "deployed" and the render gate passes unless a
+      -- test deliberately seeds it NULL (never-deployed).
+      external_url  text,
+      current_version_deployed_at timestamptz NOT NULL DEFAULT now()
     );
 
     CREATE TABLE block_user_subscriptions (

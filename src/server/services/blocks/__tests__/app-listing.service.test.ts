@@ -82,6 +82,10 @@ function hydratedRow(over: Record<string, unknown> = {}) {
     user: { id: 7, username: 'dev', image: 'avatar-key' },
     metric: { thumbsUpCount: 9, thumbsDownCount: 1 },
     appBlock: {
+      // DEPLOY-GATE: a deployed onsite block (non-null timestamp) so the detail
+      // read returns its projection. The dedicated deploy-gate suite covers the
+      // never-deployed (NULL → unavailable) onsite case.
+      currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
       manifest: {
         name: 'Cool App',
         page: { path: '/run' },

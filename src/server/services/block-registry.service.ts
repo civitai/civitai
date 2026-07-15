@@ -385,6 +385,13 @@ export interface ResolvedBlockInstance {
     manifest: Record<string, unknown>;
     approvedScopes: string[];
     app: { allowedScopes: number } | null;
+    // DEPLOY-GATE: NULL ⇔ this app has NEVER successfully deployed its
+    // `<slug>.<APPS_DOMAIN>` origin (set to now() ONLY on a successful apply in
+    // build-callback.ts; left UNCHANGED on build failure/timeout AND while a
+    // NEW version re-builds — the old version keeps serving). The token mint
+    // requires this to be non-null so an approved-but-never-deployed app can't
+    // be run against an origin that would 404.
+    currentVersionDeployedAt: Date | null;
   };
 }
 
@@ -755,6 +762,13 @@ export class BlockRegistry {
         WHERE bus.scope = 'publisher_all_my_models'
           AND bus.enabled = TRUE
           AND ab.status = 'approved'
+          -- DEPLOY-GATE (generic, all app-blocks): don't render an installed
+          -- block on a model slot until its slug origin has SUCCESSFULLY deployed
+          -- (else the iframe 404s). Set on a successful apply, unchanged on
+          -- failure AND while a NEW version rebuilds, so a live app mid-re-deploy
+          -- keeps rendering. Off-site apps (external_url) have no iframe to
+          -- install on a slot, but the exemption keeps it uniform.
+          AND (ab.external_url IS NOT NULL OR ab.current_version_deployed_at IS NOT NULL)
           AND bus.slot_id = ${slotId}
           AND ${modelId} = ANY(bus.target_model_ids)
           AND bus.block_instance_id IS NOT NULL
@@ -809,6 +823,13 @@ export class BlockRegistry {
         WHERE bus.scope = 'publisher_all_my_models'
           AND bus.enabled = TRUE
           AND ab.status = 'approved'
+          -- DEPLOY-GATE (generic, all app-blocks): don't render an installed
+          -- block on a model slot until its slug origin has SUCCESSFULLY deployed
+          -- (else the iframe 404s). Set on a successful apply, unchanged on
+          -- failure AND while a NEW version rebuilds, so a live app mid-re-deploy
+          -- keeps rendering. Off-site apps (external_url) have no iframe to
+          -- install on a slot, but the exemption keeps it uniform.
+          AND (ab.external_url IS NOT NULL OR ab.current_version_deployed_at IS NOT NULL)
           AND bus.slot_id IS NULL
           AND cardinality(bus.target_model_ids) = 0
           AND ab.manifest @> ${slotMatch}::jsonb
@@ -880,6 +901,13 @@ export class BlockRegistry {
         WHERE pdb.slot_id = ${slotId}
           AND pdb.enabled = TRUE
           AND ab.status = 'approved'
+          -- DEPLOY-GATE (generic, all app-blocks): don't render an installed
+          -- block on a model slot until its slug origin has SUCCESSFULLY deployed
+          -- (else the iframe 404s). Set on a successful apply, unchanged on
+          -- failure AND while a NEW version rebuilds, so a live app mid-re-deploy
+          -- keeps rendering. Off-site apps (external_url) have no iframe to
+          -- install on a slot, but the exemption keeps it uniform.
+          AND (ab.external_url IS NOT NULL OR ab.current_version_deployed_at IS NOT NULL)
           -- H1 (audit-10): pass NULL when modelType is omitted so the ANY
           -- arm cannot match. The prior coalesce-to-empty-string version
           -- accidentally became an exact-match against the empty string,
@@ -947,6 +975,13 @@ export class BlockRegistry {
           AND bus.user_id = ${viewerUserId ?? -1}
           AND bus.enabled = TRUE
           AND ab.status = 'approved'
+          -- DEPLOY-GATE (generic, all app-blocks): don't render an installed
+          -- block on a model slot until its slug origin has SUCCESSFULLY deployed
+          -- (else the iframe 404s). Set on a successful apply, unchanged on
+          -- failure AND while a NEW version rebuilds, so a live app mid-re-deploy
+          -- keeps rendering. Off-site apps (external_url) have no iframe to
+          -- install on a slot, but the exemption keeps it uniform.
+          AND (ab.external_url IS NOT NULL OR ab.current_version_deployed_at IS NOT NULL)
           AND bus.slot_id IS NULL
           AND cardinality(bus.target_model_ids) = 0
           AND ab.manifest @> ${slotMatch}::jsonb
@@ -1353,6 +1388,7 @@ export class BlockRegistry {
               status: true,
               manifest: true,
               approvedScopes: true,
+              currentVersionDeployedAt: true,
               app: { select: { allowedScopes: true } },
             },
           },
@@ -1413,6 +1449,7 @@ export class BlockRegistry {
           manifest: pinnedInstall.manifest,
           approvedScopes: pinnedInstall.approvedScopes,
           app: sub.appBlock.app ? { allowedScopes: sub.appBlock.app.allowedScopes } : null,
+          currentVersionDeployedAt: sub.appBlock.currentVersionDeployedAt ?? null,
         },
       };
     }
@@ -1436,6 +1473,7 @@ export class BlockRegistry {
               status: true,
               manifest: true,
               approvedScopes: true,
+              currentVersionDeployedAt: true,
               app: { select: { allowedScopes: true } },
             },
           },
@@ -1485,6 +1523,7 @@ export class BlockRegistry {
           manifest: (pdb.appBlock.manifest ?? {}) as Record<string, unknown>,
           approvedScopes: pdb.appBlock.approvedScopes ?? [],
           app: pdb.appBlock.app ? { allowedScopes: pdb.appBlock.app.allowedScopes } : null,
+          currentVersionDeployedAt: pdb.appBlock.currentVersionDeployedAt ?? null,
         },
       };
     }
@@ -1516,6 +1555,7 @@ export class BlockRegistry {
               status: true,
               manifest: true,
               approvedScopes: true,
+              currentVersionDeployedAt: true,
               app: { select: { allowedScopes: true } },
             },
           },
@@ -1591,6 +1631,7 @@ export class BlockRegistry {
           manifest: pinnedPub.manifest,
           approvedScopes: pinnedPub.approvedScopes,
           app: bus.appBlock.app ? { allowedScopes: bus.appBlock.app.allowedScopes } : null,
+          currentVersionDeployedAt: bus.appBlock.currentVersionDeployedAt ?? null,
         },
       };
     }
@@ -1622,6 +1663,7 @@ export class BlockRegistry {
               status: true,
               manifest: true,
               approvedScopes: true,
+              currentVersionDeployedAt: true,
               app: { select: { allowedScopes: true } },
             },
           },
@@ -1707,6 +1749,7 @@ export class BlockRegistry {
           manifest: pinnedView.manifest,
           approvedScopes: pinnedView.approvedScopes,
           app: bus.appBlock.app ? { allowedScopes: bus.appBlock.app.allowedScopes } : null,
+          currentVersionDeployedAt: bus.appBlock.currentVersionDeployedAt ?? null,
         },
       };
     }
@@ -1744,6 +1787,7 @@ export class BlockRegistry {
         status: true,
         manifest: true,
         approvedScopes: true,
+        currentVersionDeployedAt: true,
         app: { select: { allowedScopes: true } },
       },
     });
@@ -1761,6 +1805,7 @@ export class BlockRegistry {
         manifest,
         approvedScopes: ab.approvedScopes ?? [],
         app: ab.app ? { allowedScopes: ab.app.allowedScopes } : null,
+        currentVersionDeployedAt: ab.currentVersionDeployedAt ?? null,
       },
     };
   }
@@ -3035,6 +3080,14 @@ export class BlockRegistry {
       FROM app_blocks ab
       LEFT JOIN "OauthClient" oc ON oc.id = ab.app_id
       WHERE ab.status = 'approved'
+        -- DEPLOY-GATE (generic, all app-blocks): only list an ON-PLATFORM app
+        -- once it has SUCCESSFULLY deployed its slug origin at least once.
+        -- current_version_deployed_at is set on a successful apply and left
+        -- unchanged on build failure/timeout AND while a NEW version rebuilds, so
+        -- NULL means never-served (hide) and non-null means live (show, incl.
+        -- mid-re-deploy). OFF-SITE (external-link) apps host no origin and never
+        -- deploy, so external_url presence exempts them (they use externalUrl).
+        AND (ab.external_url IS NOT NULL OR ab.current_version_deployed_at IS NOT NULL)
         -- PAGE-ONLY LAUNCH GATE: non-mod callers see launch (page) apps only.
         AND ${launchOnlySqlFilter(launchOnly)}
         -- NSFW-APP-RED-ONLY: hide mature (r/x) apps on non-red hosts.
@@ -3153,6 +3206,7 @@ export class BlockRegistry {
       version: string | null;
       approved_scopes: string[] | null;
       external_url: string | null;
+      current_version_deployed_at: Date | null;
       install_count: bigint;
       avg_rating: number | null;
       review_count: bigint;
@@ -3173,6 +3227,7 @@ export class BlockRegistry {
         ab.version,
         ab.approved_scopes,
         ab.external_url,
+        ab.current_version_deployed_at,
         ab.screenshots,
         (SELECT COUNT(DISTINCT bus.user_id)::bigint FROM block_user_subscriptions bus
          WHERE bus.app_block_id = ab.id) AS install_count,
@@ -3194,6 +3249,14 @@ export class BlockRegistry {
     // router surfaces NOT_FOUND (no detail leak). isAppLaunchEligible reuses the
     // same "declares a page" predicate as the listing filter + the page mint.
     if (launchOnly && !isAppLaunchEligible(row.manifest)) return null;
+    // DEPLOY-GATE (generic, all app-blocks): an ON-PLATFORM app that has NEVER
+    // successfully deployed its `<slug>.<APPS_DOMAIN>` origin is indistinguishable
+    // from a missing one — its detail's liveUrl would 404 and it isn't runnable.
+    // `current_version_deployed_at` is NULL until the first successful apply and
+    // stays set while a NEW version rebuilds (so a live app mid-re-deploy still
+    // resolves). OFF-SITE (external-link) apps host no origin and never deploy —
+    // `external_url` presence exempts them.
+    if (row.external_url == null && row.current_version_deployed_at == null) return null;
     // NSFW-APP-RED-ONLY (non-red host): a mature (r/x) app is indistinguishable
     // from a missing one off .red — return null → NOT_FOUND. Uses the
     // authoritative content_rating column (set on approve), not the manifest.
@@ -3296,6 +3359,14 @@ export class BlockRegistry {
       FROM app_blocks ab
       LEFT JOIN "OauthClient" oc ON oc.id = ab.app_id
       WHERE ab.status = 'approved'
+        -- DEPLOY-GATE (generic, all app-blocks): only list an ON-PLATFORM app
+        -- once it has SUCCESSFULLY deployed its slug origin at least once.
+        -- current_version_deployed_at is set on a successful apply and left
+        -- unchanged on build failure/timeout AND while a NEW version rebuilds, so
+        -- NULL means never-served (hide) and non-null means live (show, incl.
+        -- mid-re-deploy). OFF-SITE (external-link) apps host no origin and never
+        -- deploy, so external_url presence exempts them (they use externalUrl).
+        AND (ab.external_url IS NOT NULL OR ab.current_version_deployed_at IS NOT NULL)
         -- PAGE-ONLY LAUNCH GATE: non-mod callers see launch (page) apps only.
         AND ${launchOnlySqlFilter(launchOnly)}
         -- NSFW-APP-RED-ONLY: hide mature (r/x) apps on non-red hosts.
