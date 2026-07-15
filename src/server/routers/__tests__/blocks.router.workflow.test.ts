@@ -285,6 +285,7 @@ vi.mock('~/server/middleware.trpc', async () => {
 import { blocksRouter } from '../blocks.router';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 
 function validClaims(over: Record<string, unknown> = {}) {
   return {

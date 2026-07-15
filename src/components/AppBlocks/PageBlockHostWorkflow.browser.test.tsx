@@ -174,6 +174,9 @@ describe('PageBlockHost workflow bridge (W10 money-path wiring)', () => {
     mocks.poll.mockReset();
     mocks.cancel.mockReset();
     mocks.balance.mockReset();
+    mocks.transactions.mockReset();
+    mocks.accounts.mockReset();
+    mocks.dailyCompensation.mockReset();
     // dialogStore is a module-level zustand store shared across tests — reset it
     // (the OPEN_BUZZ_PURCHASE handler triggers a dialog on it).
     useDialogStore.getState().closeAll();
