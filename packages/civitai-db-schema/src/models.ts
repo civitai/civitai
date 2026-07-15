@@ -624,6 +624,7 @@ export interface User {
   blockAttributionPayouts?: BlockAttributionPayout[];
   blockSpendAttributionsAsSpender?: BlockSpendAttribution[];
   blockSpendAttributionsAsAppOwner?: BlockSpendAttribution[];
+  blockSpendAttributionsAsContentAuthor?: BlockSpendAttribution[];
   blockSubscriptionAttributionsAsPurchaser?: BlockSubscriptionAttribution[];
   blockSubscriptionAttributionsAsAppOwner?: BlockSubscriptionAttribution[];
   publishRequestsSubmitted?: AppBlockPublishRequest[];
@@ -2104,6 +2105,9 @@ export interface BlockSpendAttribution {
   appOwnerShareCents: number;
   appOwnerUserId: number;
   appOwner?: User;
+  contentAuthorUserId: number | null;
+  contentAuthor?: User | null;
+  sharedContentKey: string | null;
   status: string;
   voidedReason: string | null;
   attributedAt: Date;

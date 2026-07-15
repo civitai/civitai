@@ -1379,6 +1379,40 @@ describe('blocks.submitWorkflow', () => {
     expect(arg.buzzAmount).toBe(25);
   });
 
+  it('G5: threads the body sharedContentKey (opaque) through to the spend attribution', async () => {
+    // The published-content-author key is app-supplied on the BODY and passed
+    // OPAQUE to the service (which resolves the author server-side). Assert it
+    // is threaded through; when absent it is null (unchanged behaviour).
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    happySubmitWithWorkflow(25, 'wf_real');
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({
+      blockToken: 'tok',
+      body: validBody({ sharedContentKey: 'k_content_01ABC' }),
+    });
+    await flushMicrotasks();
+
+    expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+    expect(mockRecordSpendAttribution.mock.calls[0][0].sharedContentKey).toBe('k_content_01ABC');
+  });
+
+  it('G5: sharedContentKey is null on the attribution when the body omits it', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    happySubmitWithWorkflow(25, 'wf_real');
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+
+    expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+    expect(mockRecordSpendAttribution.mock.calls[0][0].sharedContentKey).toBeNull();
+  });
+
   // 🟡-1: the bounty must accrue off the REALIZED debit on the submit
   // snapshot, not the whatif preflight ESTIMATE. Drive the whatif and the
   // real submit to DIFFERENT costs so a regression to `Math.ceil(cost)`
