@@ -1374,6 +1374,7 @@ export type ChallengeJudge = {
   reviewTemplate: string | null;
   winnerSelectionPrompt: string | null;
   active: Generated<boolean>;
+  userSelectable: Generated<boolean>;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
