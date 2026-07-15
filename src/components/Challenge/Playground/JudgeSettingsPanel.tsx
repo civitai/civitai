@@ -4,6 +4,7 @@ import {
   Loader,
   ScrollArea,
   Stack,
+  Switch,
   Text,
   TextInput,
   Textarea,
@@ -51,6 +52,7 @@ export function JudgeSettingsPanel() {
   const currentReviewPrompt = draft?.reviewPrompt ?? judge?.reviewPrompt ?? '';
   const currentReviewTemplate = draft?.reviewTemplate ?? judge?.reviewTemplate ?? '';
   const currentWinnerPrompt = draft?.winnerSelectionPrompt ?? judge?.winnerSelectionPrompt ?? '';
+  const currentUserSelectable = draft?.userSelectable ?? judge?.userSelectable ?? false;
 
   const handleSave = () => {
     if (!judge || selectedJudgeId == null) return;
@@ -64,6 +66,7 @@ export function JudgeSettingsPanel() {
       reviewPrompt: currentReviewPrompt || null,
       reviewTemplate: currentReviewTemplate || null,
       winnerSelectionPrompt: currentWinnerPrompt || null,
+      userSelectable: currentUserSelectable,
     });
   };
 
@@ -173,6 +176,15 @@ export function JudgeSettingsPanel() {
                 updateDraft(selectedJudgeId, {
                   winnerSelectionPrompt: e.currentTarget.value || null,
                 });
+            }}
+          />
+          <Switch
+            label="Selectable by users"
+            description="Show this judge in the user challenge-create form"
+            checked={currentUserSelectable}
+            onChange={(e) => {
+              if (selectedJudgeId != null)
+                updateDraft(selectedJudgeId, { userSelectable: e.currentTarget.checked });
             }}
           />
           <ModelSelector />

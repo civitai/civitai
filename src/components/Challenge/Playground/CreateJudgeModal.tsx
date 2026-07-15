@@ -3,7 +3,7 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { IconPlus } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import * as z from 'zod';
-import { Form, InputJson, InputText, InputTextArea, useForm } from '~/libs/form';
+import { Form, InputJson, InputSwitch, InputText, InputTextArea, useForm } from '~/libs/form';
 import { upsertJudgeSchema } from '~/server/schema/challenge.schema';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -26,6 +26,7 @@ const defaultValues: z.infer<typeof schema> = {
   reviewPrompt: null,
   reviewTemplate: null,
   winnerSelectionPrompt: null,
+  userSelectable: false,
 };
 
 export function CreateJudgeModal({ opened, onClose }: { opened: boolean; onClose: () => void }) {
@@ -80,6 +81,7 @@ export function CreateJudgeModal({ opened, onClose }: { opened: boolean; onClose
       reviewPrompt: data.reviewPrompt,
       reviewTemplate: data.reviewTemplate,
       winnerSelectionPrompt: data.winnerSelectionPrompt,
+      userSelectable: data.userSelectable,
     });
   };
 
@@ -150,6 +152,11 @@ export function CreateJudgeModal({ opened, onClose }: { opened: boolean; onClose
             autosize
             minRows={3}
             maxRows={8}
+          />
+          <InputSwitch
+            name="userSelectable"
+            label="Selectable by users"
+            description="Show this judge in the user challenge-create form"
           />
           <Group justify="flex-end" mt="sm">
             <Button variant="default" onClick={resetAndClose}>
