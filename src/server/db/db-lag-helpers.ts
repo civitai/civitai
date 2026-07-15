@@ -1,4 +1,5 @@
 import { createLagTracker } from '@civitai/db';
+import { kyselyRead, kyselyWrite } from '@civitai/db-queries';
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
@@ -48,6 +49,17 @@ export async function getDbWithoutLag(type?: LaggingType, id?: number | string) 
     return isHighReplicationLagMode() ? dbWrite : dbRead;
   }
   return (await lagTracker.isStale(lagKey(type, id))) ? dbWrite : dbRead;
+}
+
+// Kysely twin of getDbWithoutLag — same lag decision, returns the @civitai/db-queries client vars so migrated
+// (Kysely) read paths get identical read-your-writes routing. The write side (preventReplicationLag /
+// markFresh) is shared and unchanged.
+export async function getKyselyWithoutLag(type?: LaggingType, id?: number | string) {
+  if (env.REPLICATION_LAG_DELAY <= 0) return kyselyRead;
+  if (type === undefined || id === undefined || id === null) {
+    return isHighReplicationLagMode() ? kyselyWrite : kyselyRead;
+  }
+  return (await lagTracker.isStale(lagKey(type, id))) ? kyselyWrite : kyselyRead;
 }
 
 export async function preventReplicationLag(type: LaggingType, id?: number | string) {

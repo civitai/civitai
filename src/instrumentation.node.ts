@@ -18,6 +18,10 @@ import { registerCpuProfiler, registerEventLoopStallProfiler } from '~/server/cp
 import { registerEventLoopLongTaskDetector } from '~/server/eventloop-longtask';
 import { registerLivenessHeartbeat } from '~/server/liveness-heartbeat';
 import { registerPyroscope } from '~/server/pyroscope';
+// Wire @civitai/db-queries to this app's Kysely clients once at server start — kyselyDb calls connect() on
+// load, so query modules (e.g. report.service's setReportStatusMany) run against the package's client vars.
+// pg is not OTEL-instrumented, so building the Kysely wrappers here is order-independent.
+import '~/server/db/kyselyDb';
 
 // Arm the on-demand, signal-triggered V8 CPU profiler. Zero steady-state
 // overhead; only does work when signalled. Independent of OTEL so it is

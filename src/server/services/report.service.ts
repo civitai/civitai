@@ -7,6 +7,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 
+import { setReportStatusMany } from '@civitai/db-queries/reports';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -394,44 +395,20 @@ export async function bulkSetReportStatus({
   userId: number;
   ip?: string;
 }) {
-  const statusSetAt = new Date();
-
-  const reports = await dbRead.report.findMany({
-    where: { id: { in: ids }, status: { not: status } },
-    select: { id: true, userId: true, alsoReportedBy: true },
-  });
-
-  if (!reports) return;
-
-  await dbWrite.$transaction(
-    reports.map((report) =>
-      dbWrite.report.update({
-        where: { id: report.id },
-        data: {
-          status,
-          statusSetAt,
-          statusSetBy: userId,
-          previouslyReviewedCount:
-            status === ReportStatus.Actioned ? report.alsoReportedBy.length + 1 : undefined,
-        },
-      })
-    )
-  );
+  // One atomic bulk UPDATE via @civitai/db-queries (setReportStatusMany): the `status != next` guard +
+  // RETURNING reproduce the old findMany({ status: { not } })/update pair — only rows that actually
+  // transition are updated and returned. A single statement is atomic, so no explicit transaction is needed.
+  const actioned = await setReportStatusMany({ ids, status, userId });
 
   // Track mod activity in the background
   trackModReports({ ids, userId: userId });
 
-  // If we're actioning reports, we need to reward the users who reported them
+  // If we're actioning reports, reward the users who reported them (owner + everyone who also reported it).
   if (status === ReportStatus.Actioned) {
-    const prepReports = reports.map((report) => ({
-      id: report.id,
-      userIds: [report.userId, ...report.alsoReportedBy],
-    }));
-
     await Promise.allSettled(
-      prepReports.flatMap((report) =>
-        report.userIds.map((userId) =>
-          reportAcceptedReward.apply({ userId, reportId: report.id }, { ip })
+      actioned.flatMap((report) =>
+        [report.userId, ...report.alsoReportedBy].map((reporterId) =>
+          reportAcceptedReward.apply({ userId: reporterId, reportId: report.id }, { ip })
         )
       )
     );
