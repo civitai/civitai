@@ -1154,6 +1154,7 @@ export function PageBlockHost({
   // token means the block never rendered a usable surface, so the request is
   // dropped without replying (the mint path surfaces no_token/error above).
   const sharedAppendMutation = trpc.apps.shared.append.useMutation();
+  const sharedUpdateMutation = trpc.apps.shared.update.useMutation();
   const sharedVoteMutation = trpc.apps.shared.vote.useMutation();
   const sharedUnvoteMutation = trpc.apps.shared.unvote.useMutation();
   const sharedWithdrawMutation = trpc.apps.shared.withdraw.useMutation();
@@ -1279,6 +1280,44 @@ export function PageBlockHost({
     );
     return off;
   }, [onMessage, send, token, sharedAppendMutation]);
+
+  // SHARED_UPDATE → apps.shared.update → SHARED_UPDATE_RESULT (mutation).
+  // Author-scoped in-place edit of an OWN row: the auth/author-gate/belt/quota all
+  // live in apps.shared.update (server, #3146); the host only forwards {key, value}
+  // and relays the result. Reply is `{ ok, error? }` (SHARED_WITHDRAW-style, NOT
+  // SHARED_APPEND's `{ key }`) — the SDK 0.24 hook treats `!ok || error` as reject,
+  // and its isValidSharedUpdateResult REQUIRES a boolean `ok`, so BOTH paths send
+  // one (the error path MUST carry `ok: false` or the reply is dropped → hang).
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown; value?: unknown } | undefined>(
+      'SHARED_UPDATE',
+      async (raw) => {
+        if (
+          !raw ||
+          typeof raw.requestId !== 'string' ||
+          typeof raw.key !== 'string' ||
+          typeof raw.value !== 'object' ||
+          raw.value === null ||
+          !token
+        )
+          return;
+        const requestId = raw.requestId;
+        try {
+          // Server zod-validates {title, body?}; a malformed value rejects
+          // BAD_REQUEST → the error path below (never a hang).
+          await sharedUpdateMutation.mutateAsync({
+            blockToken: token,
+            key: raw.key,
+            value: raw.value as { title: string; body?: string },
+          });
+          send('SHARED_UPDATE_RESULT', { requestId, ok: true });
+        } catch (err) {
+          send('SHARED_UPDATE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, sharedUpdateMutation]);
 
   // SHARED_VOTE → apps.shared.vote → SHARED_VOTE_RESULT (mutation).
   useEffect(() => {
