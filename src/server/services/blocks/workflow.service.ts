@@ -252,13 +252,45 @@ function defaultDimensions(baseModel: string): { width: number; height: number }
   }
 }
 
+// ── Bounded image-workflow allowlist (App Blocks IMAGE bridge, Phase-2a) ─────
+// The block bridge maps an untrusted block body into a generation-graph input.
+// This phase deliberately produces ONLY image graph workflows. The workflow
+// type is a validated value (checked against this allowlist), never a
+// hardcoded literal — so a body can never drive the block bridge into a
+// non-image graph workflow.
+//
+// EXTENDING to a new media class later (video/audio/3D) is additive and does
+// NOT require a rewrite: (1) add the graph workflow key(s) here, (2) add a
+// per-type param-mapping branch in buildImageWorkflowInput below (its own
+// bounded validator for that class's params), and (3) add the corresponding
+// discriminated-union `kind` in workflow.schema. Everything else — the
+// resource fan-out, the router's per-item entitlement gate, the LoRA gate, the
+// budget preflight — is workflow-type-agnostic and stays as-is.
+export const BLOCK_IMAGE_WORKFLOW_TYPES = ['txt2img', 'img2img'] as const;
+export type BlockImageWorkflowType = (typeof BLOCK_IMAGE_WORKFLOW_TYPES)[number];
+
+function isBlockImageWorkflowType(workflow: string): workflow is BlockImageWorkflowType {
+  return (BLOCK_IMAGE_WORKFLOW_TYPES as readonly string[]).includes(workflow);
+}
+
+/**
+ * Resolve which image graph workflow a block body maps to: `img2img` when a
+ * bounded source/init image is present (image variations), else `txt2img`.
+ * Purely structural — the schema already validated/bounded `sourceImage`.
+ */
+export function resolveBlockImageWorkflowType(
+  body: Extract<BlockWorkflowBody, { kind: 'textToImage' }>
+): BlockImageWorkflowType {
+  return body.sourceImage ? 'img2img' : 'txt2img';
+}
+
 /**
  * Translate the block's narrow body into the platform's generation-graph
  * `input` (the flat `Record<string, unknown>` shape `generateFromGraph` /
- * `createWorkflowStepsFromGraphInput` consume). Defaults are intentionally
- * conservative — matches the comics-router preset (sampler=Euler, steps=25,
- * priority=low) so block submissions and platform submissions share the same
- * orchestrator cost profile.
+ * `createWorkflowStepsFromGraphInput` consume), for the IMAGE workflow class
+ * (txt2img / img2img). Defaults are intentionally conservative — matches the
+ * comics-router preset (sampler=Euler, steps=25, priority=low) so block
+ * submissions and platform submissions share the same orchestrator cost profile.
  *
  * Migrated off the deleted legacy `createTextToImageStep` path (which consumed
  * the old `{ params, resources }` `GenerateImageSchema`). The new graph
@@ -279,21 +311,36 @@ function defaultDimensions(baseModel: string): { width: number; height: number }
  * model is its own anchor). For LoRA installs the resolver returns a different
  * checkpoint; the bound LoRA is pushed into `resources`.
  *
- * DIMENSIONS: the graph's `aspectRatio` node snaps the block-supplied
+ * WORKFLOW TYPE: `workflowType` defaults to the type derived from the body
+ * (`sourceImage` presence → img2img, else txt2img) and is VALIDATED against
+ * BLOCK_IMAGE_WORKFLOW_TYPES — a non-image type is rejected fail-closed with a
+ * BAD_REQUEST rather than silently producing a workflow this phase does not
+ * support. The explicit parameter is the seam a later phase / an explicit-type
+ * body flows through; the router passes nothing and gets the derived type.
+ *
+ * DIMENSIONS: for txt2img the graph's `aspectRatio` node snaps the block-supplied
  * width/height to the ecosystem's nearest canonical bucket (the block sends
- * arbitrary 64–2048 dims from untrusted iframe UI). This is a deliberate
- * behavior change from the deleted path, which passed exact dims through — the
- * orchestrator prefers canonical dims and the main generator already snaps.
+ * arbitrary 64–2048 dims from untrusted iframe UI). For img2img the graph derives
+ * output dimensions from the source image, so aspectRatio is omitted.
  */
-export function buildTextToImageInput(
+export function buildImageWorkflowInput(
   body: Extract<BlockWorkflowBody, { kind: 'textToImage' }>,
   resolved: {
     baseModel: string;
     modelType: string;
     checkpointVersionId: number;
     checkpointBaseModel: string;
-  }
+  },
+  workflowType: string = resolveBlockImageWorkflowType(body)
 ): Record<string, unknown> {
+  if (!isBlockImageWorkflowType(workflowType)) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `unsupported block workflow type '${workflowType}' — only image workflows (${BLOCK_IMAGE_WORKFLOW_TYPES.join(
+        ', '
+      )}) are supported`,
+    });
+  }
   const dims = defaultDimensions(resolved.checkpointBaseModel);
   const width = body.params.width ?? dims.width;
   const height = body.params.height ?? dims.height;
@@ -325,8 +372,8 @@ export function buildTextToImageInput(
   // unrecognized — the resource belt will still gate it.
   const ecosystem = getEcosystem(resolved.checkpointBaseModel)?.key ?? 'SDXL';
 
-  return {
-    workflow: 'txt2img',
+  const input: Record<string, unknown> = {
+    workflow: workflowType,
     ecosystem,
     model: { id: resolved.checkpointVersionId },
     resources,
@@ -340,10 +387,38 @@ export function buildTextToImageInput(
     // pipelines have no clipSkip node (silently ignored); SD1/SDXL apply it at
     // the CLIP-encoder node. Omit when not set so the ecosystem uses its default.
     ...(body.params.clipSkip != null ? { clipSkip: body.params.clipSkip } : {}),
-    // The aspectRatio node accepts { value, width, height } and snaps to the
-    // nearest bucket by dimensions — see the DIMENSIONS note above.
-    aspectRatio: { value: `${width}:${height}`, width, height },
     quantity: body.params.quantity,
     priority: 'low',
   };
+
+  if (workflowType === 'img2img') {
+    // img2img (SD-family image variations): the graph's `images` node is the
+    // init image; the denoise node applies at its default strength (0.75), and
+    // the graph derives output dimensions from the source image — so aspectRatio
+    // is OMITTED here (the SD graph gates aspectRatio to `when: !hasImages`).
+    // `sourceImage` is guaranteed present here (resolveBlockImageWorkflowType
+    // only returns 'img2img' when the body carries one); the fallback keeps the
+    // types honest for an explicit-type caller. The graph's imagesNode reads
+    // { url, width, height }; extra fields are stripped by its object parse.
+    if (body.sourceImage) {
+      input.images = [
+        {
+          url: body.sourceImage.url,
+          width: body.sourceImage.width,
+          height: body.sourceImage.height,
+        },
+      ];
+    }
+    return input;
+  }
+
+  // txt2img: the aspectRatio node accepts { value, width, height } and snaps to
+  // the nearest bucket by dimensions — see the DIMENSIONS note above.
+  input.aspectRatio = { value: `${width}:${height}`, width, height };
+  return input;
 }
+
+// Back-compat alias. Existing router call sites + tests reference
+// `buildTextToImageInput`; it is now the IMAGE-class builder (txt2img when the
+// body has no source image — byte-identical to before — img2img when it does).
+export const buildTextToImageInput = buildImageWorkflowInput;
