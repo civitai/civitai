@@ -46,6 +46,19 @@ import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
  */
 
 /**
+ * ⚠️ GLOBAL DEFAULTS (follow-up before non-mod GA): the ceilings below are ONE
+ * value applied to EVERY app (env-overridable, but not PER-app). Fine while App
+ * Blocks is mod/developer-gated — but a modestly popular app would brush the
+ * velocity ceiling (120 gens / 60s ≈ 2 gens/sec AGGREGATE across all its
+ * viewers). Before App Blocks opens to non-moderators, either (a) make these
+ * limits per-app configurable (e.g. from the app manifest / an admin-set
+ * override keyed on appBlockId), or (b) raise the global defaults to a level a
+ * genuinely popular app won't hit — the guardrail's job is to bound a SYBIL
+ * RING, not to throttle a legitimately busy app. Tracked as the non-mod-GA
+ * prerequisite alongside the payout-rate sign-off.
+ */
+
+/**
  * Per-app daily ceiling on block-initiated generation SPEND, in Buzz.
  *
  * Reasoning for the default (relative to the per-user cap):

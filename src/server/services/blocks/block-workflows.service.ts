@@ -124,22 +124,37 @@ export async function updateBlockWorkflowStatus(input: {
 type RawQueueRow = {
   workflowId: string;
   status: string;
-  submittedAt: Date;
-  updatedAt: Date;
+  // Full-precision (microsecond) ISO strings, formatted by Postgres `to_char`
+  // (NOT a JS Date — a Date truncates the TIMESTAMPTZ(6) column to milliseconds,
+  // which would break the keyset cursor; see decodeCursor / the query below).
+  submittedAt: string;
+  updatedAt: string;
 };
 
-// Opaque keyset cursor: `${submittedAt ISO}|${workflowId}`. The ISO timestamp is
-// fixed-width and contains no '|', and orchestrator workflow ids contain no '|',
-// so a split on the FIRST '|' round-trips exactly.
-function encodeCursor(row: BlockWorkflowQueueItem): string {
-  return `${row.submittedAt}|${row.workflowId}`;
+// Opaque keyset cursor: `${submittedAt microsecond-ISO}|${workflowId}`. The ISO
+// timestamp contains no '|', and orchestrator workflow ids contain no '|', so a
+// split on the FIRST '|' round-trips exactly.
+//
+// PRECISION (correctness): the timestamp is carried as the FULL-precision
+// microsecond ISO string straight from Postgres and is NEVER round-tripped
+// through a JS `Date` (which is millisecond-only). If the cursor were truncated
+// to milliseconds, a row whose `submitted_at` shares a millisecond with the
+// cursor row but has DIFFERENT microseconds could be skipped across a page
+// boundary (its true micro-value would sort as NOT strictly-less-than the
+// truncated cursor). Keeping microseconds + the (submitted_at, workflow_id)
+// compound tiebreak makes the keyset lossless regardless of sub-ms precision.
+function encodeCursor(item: BlockWorkflowQueueItem): string {
+  return `${item.submittedAt}|${item.workflowId}`;
 }
-function decodeCursor(cursor: string): { submittedAt: Date; workflowId: string } | null {
+function decodeCursor(cursor: string): { submittedAt: string; workflowId: string } | null {
   const idx = cursor.indexOf('|');
   if (idx <= 0) return null;
-  const submittedAt = new Date(cursor.slice(0, idx));
+  const submittedAt = cursor.slice(0, idx);
   const workflowId = cursor.slice(idx + 1);
-  if (Number.isNaN(submittedAt.getTime()) || workflowId.length === 0) return null;
+  // Validate the timestamp parses (defensive against a malformed/forged cursor)
+  // WITHOUT lowering its precision — we pass the ORIGINAL micro-ISO string to the
+  // query, letting Postgres cast it to timestamptz at full precision.
+  if (workflowId.length === 0 || Number.isNaN(Date.parse(submittedAt))) return null;
   return { submittedAt, workflowId };
 }
 
@@ -167,16 +182,21 @@ export async function listMyBlockWorkflows(input: {
     Math.max(1, Math.floor(input.limit ?? BLOCK_WORKFLOWS_DEFAULT_LIMIT))
   );
   const decoded = input.cursor ? decodeCursor(input.cursor) : null;
+  // Compound (submitted_at, workflow_id) keyset for the DESC ordering. The cursor
+  // timestamp is cast to timestamptz at FULL microsecond precision (the string is
+  // never truncated through a JS Date), so no same-millisecond row is skipped.
   const keyset = decoded
-    ? Prisma.sql`AND ("submitted_at", "workflow_id") < (${decoded.submittedAt}, ${decoded.workflowId})`
+    ? Prisma.sql`AND ("submitted_at", "workflow_id") < (${decoded.submittedAt}::timestamptz, ${decoded.workflowId})`
     : Prisma.empty;
 
   const rows = await dbRead.$queryRaw<RawQueueRow[]>`
     SELECT
-      "workflow_id"  AS "workflowId",
+      "workflow_id" AS "workflowId",
       "status",
-      "submitted_at" AS "submittedAt",
-      "updated_at"   AS "updatedAt"
+      -- Microsecond-precision ISO (matching TIMESTAMPTZ(6)); NOT a JS Date, whose
+      -- millisecond truncation would break the keyset cursor above.
+      to_char("submitted_at" AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "submittedAt",
+      to_char("updated_at" AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "updatedAt"
     FROM "block_workflows"
     WHERE "user_id" = ${userId} AND "app_block_id" = ${appBlockId}
     ${keyset}
@@ -189,8 +209,9 @@ export async function listMyBlockWorkflows(input: {
       workflowId: r.workflowId,
       // The CHECK constraint guarantees an in-set status; narrow defensively.
       status: isBlockWorkflowStatus(r.status) ? r.status : 'pending',
-      submittedAt: r.submittedAt.toISOString(),
-      updatedAt: r.updatedAt.toISOString(),
+      // Already full-precision ISO strings from the query (see RawQueueRow).
+      submittedAt: r.submittedAt,
+      updatedAt: r.updatedAt,
     })
   );
   const nextCursor = rows.length > limit && page.length > 0 ? encodeCursor(page[page.length - 1]) : null;
