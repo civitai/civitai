@@ -227,6 +227,22 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // The host-mediated block image-upload bridge (App Blocks Phase-2a PR-C). A block
+  // asks the host to let the user upload an image (the app decides what it is for).
+  // Host-chrome upload (like OPEN_RESOURCE_PICKER): the page host opens its own
+  // upload modal, runs civitai's session-authed upload → REAL scan → server-side
+  // SFW + moderation-flag gate, and returns ONLY a moderated image id. AHEAD of the
+  // published SDK dist union (the SDK contract is external + a co-requisite) —
+  // forward-looking coverage, allowed by the one-directional compile-time gate.
+  // A page-only affordance today, so N/A for the model host.
+  OPEN_IMAGE_UPLOAD: {
+    request: true,
+    reply: 'IMAGE_UPLOAD_RESULT',
+    IframeHost:
+      'host-mediated image upload is a page-only affordance today; the model slot has no such surface',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   SET_USER_CHECKPOINT: {
     request: true,
     reply: 'USER_CHECKPOINT_SET',

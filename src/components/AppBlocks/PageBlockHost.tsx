@@ -12,8 +12,11 @@ import {
   grantedPageScopes,
   pageFallbackReason,
   resolveCheckpointPickerRequest,
+  resolveImageUploadRequest,
   resolveResourcePickerRequest,
 } from './pageBlockHostLogic';
+import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
+import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
 import { projectBlockInitMaturity } from './projectBlockInit';
 import { sendBlockRender } from './sendBlockRender';
 import { resolveRequestConsent } from './requestConsentGate';
@@ -38,6 +41,14 @@ const BlockConsentModal = dynamic(() => import('./BlockConsentModal'), { ssr: fa
 // Buy-Buzz modal for the page money path's OPEN_BUZZ_PURCHASE handler (the
 // insufficient-Buzz top-up CTA). Mirrors IframeHost's dynamic import.
 const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
+
+// Host-mediated image-upload modal for the OPEN_IMAGE_UPLOAD bridge. A block asks
+// the host to let the user upload an image; the bytes flow through civitai's
+// session-authed upload + REAL scan, and the iframe only ever gets back a
+// moderated, SFW-ceiling'd, unflagged image id.
+const BlockImageUploadModal = dynamic(() => import('./BlockImageUploadModal'), {
+  ssr: false,
+});
 
 // Login flow for anonymous-conversion (REQUEST_SIGN_IN). The page route renders
 // for logged-out viewers (the BLOCK_INIT context is viewer-scoped, viewer:null),
@@ -1283,24 +1294,18 @@ export function PageBlockHost({
         },
         onSelect: (resource) => {
           answered = true;
-          // Post back ONLY the narrow single-pick allowlist. Never spread the
-          // full GenerationResource — no availability/hasAccess/early-access/
-          // usageControl/minor/poi/sfwOnly/cover-image internals reach the
-          // iframe, only what the block needs to build a body + display it.
+          // Post back ONLY the narrow single-pick allowlist via the canonical
+          // safe projector. Never spread the full GenerationResource — no
+          // availability/hasAccess/early-access/usageControl/minor/poi/sfwOnly/
+          // cover-image internals reach the iframe. The projection is WIDENED
+          // (PR-C) to also carry the PUBLIC recommended settings a block needs —
+          // strength + min/max clamp, trained words, clipSkip — so it can seed a
+          // per-resource weight slider + trigger-word display. Shared with the GET
+          // /api/v1/blocks/generation-resources rehydrate endpoint so the two can
+          // never drift on which fields are public.
           send('RESOURCE_PICKER_RESULT', {
             requestId,
-            selected: {
-              // GenerationResource.id is the modelVersionId at the wire.
-              versionId: resource.id,
-              modelId: resource.model.id,
-              // Public display names of the user-chosen resource — the user
-              // picked it, so surfacing its name is safe (mirrors the
-              // CHECKPOINT_PICKER_RESULT projection in IframeHost.tsx).
-              modelName: resource.model.name,
-              versionName: resource.name,
-              baseModel: resource.baseModel,
-              modelType: resource.model.type,
-            },
+            selected: projectSafeGenerationResource(resource),
           });
         },
         onClose: () => {
@@ -1379,6 +1384,57 @@ export function PageBlockHost({
     });
     return off;
   }, [onMessage, send]);
+
+  // ── OPEN_IMAGE_UPLOAD → IMAGE_UPLOAD_RESULT (host-mediated block image upload) ─
+  //
+  // A block asks the host to let the viewer upload an image (the app decides what
+  // it is for — avatar / cover / background / reference / …). Mirrors
+  // OPEN_RESOURCE_PICKER's host-chrome pattern: the host opens its OWN upload modal,
+  // the iframe never handles the bytes. The upload routes through civitai's
+  // SESSION-AUTHED path → REAL createImage + ingestImage scan → server-side gate
+  // (blockImageUpload.persist + gate), and ONLY a moderated image id that is
+  // scanned-clean, within the SFW ceiling, and unflagged is returned — a publicly-
+  // displayed image is NOT trust-stamped (no createStoredImage).
+  //
+  // Gate on status 'ready' (a pre-handshake block can't summon the modal) via the
+  // same 'error'→'no_token' shim the consent/buzz handlers use. requestId threads
+  // the reply so concurrent uploads never cross. A successful upload posts the
+  // minimal projection; closing without one posts a bare (cancelled) result — the
+  // modal never leaks scan/ownership internals.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown } | undefined>('OPEN_IMAGE_UPLOAD', (raw) => {
+      const gateStatus = status === 'error' ? 'no_token' : status;
+      if (gateStatus !== 'ready') return; // pre-handshake block — drop
+      const req = resolveImageUploadRequest(raw);
+      if (!req) return; // missing / non-string requestId → drop, never open the modal
+      const { requestId } = req;
+
+      let resolved: BlockUploadedImageInfo | null = null;
+      dialogStore.trigger({
+        // Per-request id so multiple OPEN_IMAGE_UPLOAD calls don't dedup against
+        // each other in the dialog store's exists-check.
+        id: `block-image-upload-${requestId}`,
+        component: BlockImageUploadModal,
+        props: {
+          onResolved: (result: BlockUploadedImageInfo) => {
+            resolved = result;
+          },
+        },
+        options: {
+          onClose: () => {
+            // A successful upload set `resolved` before the modal closed itself;
+            // otherwise the user cancelled → reply with a bare (cancelled) result.
+            if (resolved) {
+              send('IMAGE_UPLOAD_RESULT', { requestId, selected: resolved });
+            } else {
+              send('IMAGE_UPLOAD_RESULT', { requestId });
+            }
+          },
+        },
+      });
+    });
+    return off;
+  }, [onMessage, send, status]);
 
   // ── SET_USER_CHECKPOINT → USER_CHECKPOINT_SET (fail-fast NACK on a page) ──────
   //

@@ -123,6 +123,35 @@ export function resolveCheckpointPickerRequest(raw: unknown): CheckpointPickerRe
   return { requestId: obj.requestId, ...(baseModelGroup ? { baseModelGroup } : {}) };
 }
 
+// ── OPEN_IMAGE_UPLOAD (host-mediated block image-upload bridge) ──────────────
+//
+// A block asks the HOST to open its native upload modal so the viewer can upload
+// an image (the app decides what it is for). The iframe never handles the bytes:
+// they flow through civitai's session-authed upload → REAL scan → SFW/flag gate,
+// and only a moderated image id (never above the SFW ceiling, never flagged) comes
+// back via IMAGE_UPLOAD_RESULT. The only wire-validation is: require a string
+// requestId (drop otherwise, never open the modal) — everything security-relevant
+// (scan + SFW ceiling + flag rejection) is enforced server-side. Kept pure +
+// unit-tested for the same reason as resolveResourcePickerRequest (the drop rule
+// is the relevant part).
+
+export type ImageUploadRequest = {
+  requestId: string;
+};
+
+/**
+ * Validate a raw OPEN_IMAGE_UPLOAD payload from an untrusted iframe. Returns the
+ * sanitized request, or `null` when it must be DROPPED (missing/non-string
+ * requestId). The CALLER opens the native upload modal — this only decides whether
+ * to. There is no other client-side gate: the scan + SFW ceiling live server-side.
+ */
+export function resolveImageUploadRequest(raw: unknown): ImageUploadRequest | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.requestId !== 'string' || obj.requestId.length === 0) return null;
+  return { requestId: obj.requestId };
+}
+
 export type PageFallbackReason = 'timeout' | 'token_error' | 'fatal_block_error';
 
 /**
