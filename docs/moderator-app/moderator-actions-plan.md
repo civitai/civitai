@@ -63,8 +63,13 @@ faithful choice (no callback, no query/packed-write duplication).
 ### Ingestion error resolve — `resolveIngestionError`  ·  (ingestion-error-review) — ✅ complete
 - [x] Bust `imageMetadataCache` + `tagIdsForImagesCache` — **Redis** (`bustCachedObject`). Main-app procedure/service already removed (only a `NOTE(moderator-migration)` marker remains) — no cutover needed.
 
-### Reports set-status — `setReportStatus`  ·  (reports)
-- [ ] Reward reporter(s) on Actioned (`reportAcceptedReward`, incl. `alsoReportedBy`, with `ip`) — **buzz + ClickHouse**
+### Reports set-status — `setReportStatus`  ·  (reports) — ✅ complete
+- [x] Reward reporter(s) on Actioned (`reportAcceptedReward`, incl. `alsoReportedBy`, with `ip`) — **ClickHouse** (`buzzEvents` pending row), in `lib/server/rewards.ts`.
+  - `reportAcceptedReward` is a **processable** reward (has `caps`, not `onDemand`): the main app's inline `apply` only inserts a `pending` `buzzEvents` row; the actual cap-enforcement + buzz grant happens in the main-app `process-rewards` cron (every minute), which reads pending rows **regardless of which app wrote them**. So the spoke rewards reporters simply by writing that pending row — no rewards engine / buzz-grant on the spoke.
+  - `rewardReportReporters` builds the `buzzEvents` row inline (field set + `pending` status + ip/transactionDetails normalization mirror `base.reward.ts`; `awardAmount=50` mirrors `reportAccepted.reward.ts`) and inserts via `getClickhouse()`. Kept in sync by doc-comments — it's a faithful copy of the main-app shapes, not a shared package (a spoke-only recorder needs no cross-app contract; the row shape is enforced by the CH table DDL both apps write to).
+  - Multiplier is resolved spoke-side: base supporter multiplier read from the **shared** `MULTIPLIERS_FOR_USER` cache the main app populates (cold miss → 1), × the active global bonus event (`RewardsBonusEvent`, `multiplier/10` clamped to `[1, 5]`) — a faithful port of `getMultipliersForUser`.
+  - Wired into `setReportStatus` via `UPDATE … RETURNING userId, alsoReportedBy` so only a real transition to Actioned rewards (re-actioning can't double-reward). Page action threads the moderator `ip` via `getClientAddress()`.
+- **No cutover** (`bulkSetReportStatus` stays): its 3 callers — `pages/api/mod/action-report.ts` (retool webhook), `csam.controller.ts` (CSAM flow), `image.service.ts` (image-TOS flow) — are internal/external **server** flows, **not** the migrated reports page (which uses the spoke's own `setReportStatus`). Exactly like `handleBlockImages` + the KoNO game, these keep the main-app primitive; repointing internal flows to HTTP-call the spoke isn't warranted. `bulkSetReportStatus` retires when *those* slices migrate. See Deliverable 2 below.
 
 ### Article restore — `restoreArticle`  ·  (articles) — ✅ complete
 - [x] Recompute ingestion state (`recomputeArticleIngestionInTx` — image/text scan-state → Blocked/Error/Scanned/Pending) — **DB**
@@ -97,14 +102,15 @@ main-app procedure deleted. Everything else stays spoke-owned (no endpoint).
 - **Out of this slice:** `image.setTosViolation` (the inline "Report TOS Violation" context-menu action, `useReportTosViolation`)
   is a distinct workflow with its own handler + no spoke equivalent — a separate future slice, left in the main app.
 
-### ⬜ NOT STARTED — Endpoint: `report-set-status`
-- Nothing implemented yet: `@civitai/moderation` `MOD_ACTION` only defines `imageModerate`; the registry has no
-  `report-set-status` entry; the spoke's `setReportStatus` still carries the reporter-reward `TODO`; and the
-  main-app `bulkSetReportStatus` is not repointed/deleted.
-- Backs (when built): the spoke's `setReportStatus` **and** the main app's `bulkSetReportStatus` (callers
-  `pages/api/mod/action-report.ts`, `csam.controller.ts`, `image.service.ts`).
-- Plan: complete the reporter-reward (Deliverable 1), add the action to `@civitai/moderation` + the registry,
-  expose at `/api/mod/report-set-status`, repoint the main-app callers, delete `bulkSetReportStatus`.
+### ❎ NOT AN ENDPOINT — `report-set-status` (no cutover)
+- Re-scoped after inspecting the callers. `bulkSetReportStatus`'s only callers are internal/external **server**
+  flows — `pages/api/mod/action-report.ts` (retool webhook), `csam.controller.ts` (CSAM flow),
+  `image.service.ts` (image-TOS flow) — **not** the migrated reports page. The reports page uses the spoke's
+  own `setReportStatus` directly, so there is no duplicated *page* mutation to lift into an endpoint.
+- This is the same call as `handleBlockImages` + the KoNO game: an internal main-app primitive with non-page
+  consumers stays in the main app; repointing an internal server flow to HTTP-call the spoke isn't warranted.
+- The migrated page's only real gap — the reporter reward — is done in Deliverable 1 (`lib/server/rewards.ts`).
+  `bulkSetReportStatus` retires when the CSAM / image-TOS / retool-report slices themselves migrate.
 
 ### ⚠️ Not clean endpoints — decide explicitly
 - **`updateImageNsfwLevel`** — still used by `SetBrowsingLevelModal`, which is **owner-or-mod** (dual-gated).
@@ -123,7 +129,7 @@ are now orphaned and remove them** (no live callers found) — a cleanup, not an
 
 ---
 
-## Architecture — the `/api/mod` surface  _(image-moderate shipped; report-set-status follows the same shape)_
+## Architecture — the `/api/mod` surface  _(image-moderate shipped; future mod-only page mutations follow the same shape)_
 
 ```
 packages/civitai-moderation/                 # SHARED contract + client (dep of both apps)
@@ -177,8 +183,9 @@ Scoped to what the migrated actions actually need:
    migrated pages (/images, comics-review, appeals) to `dispatch('image-moderate', …)`.
 4. **Repoint `image.moderate` + `image.setTosViolation`** callers (`NeedsReviewBadge`, `UnblockImage`,
    `useReportTosViolation`) to `/api/mod/image-moderate`; delete the main-app procedures + `moderateImages`.
-5. **Same for `report-set-status`**: complete reporter-reward, register, repoint `action-report` +
-   `csam.controller`, delete `bulkSetReportStatus`.
+5. **Reporter reward (no endpoint)**: complete the spoke `setReportStatus` reporter-reward by writing the
+   pending `buzzEvents` row inline (`lib/server/rewards.ts`). `bulkSetReportStatus` stays for its internal
+   callers (`action-report`, `csam`, image-TOS) — not a page mutation, so no cutover (see Deliverable 2). ✅ done.
 6. **Finish the page-only fidelity gaps** (Deliverable 1: nsfwLevel, ingestion, article restore/delete/rating)
    as direct spoke service work — no endpoint. Remove orphaned main-app article restore/delete.
 7. **Graceful degradation** on the repointed main-app callers (spoke unreachable → surfaced error).

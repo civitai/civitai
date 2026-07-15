@@ -1,6 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead, dbWrite } from './db';
 import { recordModActivity } from './mod-activity';
+import { rewardReportReporters } from './rewards';
 import { ReportEntity, ReportStatus, type ReportReason } from '$lib/reports';
 
 // Each report points at its entity through a per-type join table (`<Entity>Report`: `{ reportId, <x>Id }`).
@@ -109,13 +110,14 @@ export async function setReportStatus({
   id,
   status,
   userId,
+  ip,
 }: {
   id: number;
   status: ReportStatus;
   userId: number;
   ip?: string;
 }) {
-  await dbWrite
+  const updated = await dbWrite
     .updateTable('Report')
     .set({
       status,
@@ -130,12 +132,18 @@ export async function setReportStatus({
     })
     .where('id', '=', id)
     .where('status', '!=', status)
-    .execute();
+    .returning(['userId', 'alsoReportedBy'])
+    .executeTakeFirst();
 
   await recordModActivity({ userId, entityType: 'report', entityId: id, activity: 'review' });
 
-  // TODO(moderator-migration): on Actioned the main app rewards reporters via `reportAcceptedReward`
-  // (buzz, Wave 6) — deferred; reporters aren't rewarded from the moderator app until that's wired.
+  // On a real transition to Actioned, reward every reporter (original + alsoReportedBy) — parity with the
+  // main app's bulkSetReportStatus. `updated` is set only when the row actually changed (the status != guard
+  // matched), so re-actioning an already-Actioned report never double-rewards.
+  if (status === ReportStatus.Actioned && updated) {
+    const reporterIds = [updated.userId, ...(updated.alsoReportedBy ?? [])];
+    await rewardReportReporters({ reportId: id, reporterIds, ip });
+  }
 }
 
 export async function updateReportNotes({

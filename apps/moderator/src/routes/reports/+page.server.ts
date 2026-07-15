@@ -51,13 +51,13 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
 // Access is gated globally in hooks.server.ts (route-tier check), so actions don't re-check here.
 export const actions: Actions = {
-  setStatus: async ({ request, locals }) => {
+  setStatus: async ({ request, locals, getClientAddress }) => {
     const data = await request.formData();
     const id = Number(data.get('id'));
     const status = String(data.get('status'));
     if (!id || !isStatus(status)) return fail(400, { message: 'Invalid input' });
 
-    await setReportStatus({ id, status, userId: locals.user.id });
+    await setReportStatus({ id, status, userId: locals.user.id, ip: getClientAddress() });
     return { success: true };
   },
   saveNotes: async ({ request }) => {
