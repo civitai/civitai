@@ -6,16 +6,18 @@ Per-page design docs for `creator.civitai.com`. These sit **under** the umbrella
 - [../creator-studio-overview.md](../creator-studio-overview.md) — one-page packages + pages summary.
 - [../buzz-client-handoff.md](../buzz-client-handoff.md) — the `@civitai/buzz` client (built).
 
-**Implementation tracking:**
+**Implementation tracking — the single source of truth for status:**
 
-- [implementation-checklist.md](implementation-checklist.md) — per-page progress checklist (what's built vs. blocked/deferred).
+- [implementation-checklist.md](implementation-checklist.md) — **everything open lives here**: per-page build status, open decisions, backend blockers, flagged bugs, deferred work. Start here.
 
-**Pre-implementation review (open questions):**
+**Decisions & Q&A (answered — reference/rationale):**
 
-- [pre-implementation-decisions.md](pre-implementation-decisions.md) — every open question, grouped by owner (A/B/C), with what it blocks + a recommended default.
-- [questions-koen-backend.md](questions-koen-backend.md) — backend/data questions for **Koen** to answer inline (A1–A5).
-- [questions-justin-product.md](questions-justin-product.md) — product/business questions for **Justin** to answer inline (B1–B11).
-- [questions-justin-models-scope.md](questions-justin-models-scope.md) — follow-up `/models` scope questions for **Justin** (early-access config fields; publish/schedule in v1).
+- [pre-implementation-decisions.md](pre-implementation-decisions.md) — the A/B/C decision log (mostly decided; the checklist tracks the few still-open ones).
+- [questions-koen-backend.md](questions-koen-backend.md) — backend/data Q&A for **Koen** (A1–A5, answered).
+- [questions-justin-product.md](questions-justin-product.md) — product/business Q&A for **Justin** (B1–B11, answered).
+- [questions-justin-models-scope.md](questions-justin-models-scope.md) — `/models` scope Q&A for **Justin** (B12–B13).
+- [feedback-justin-round-2.md](feedback-justin-round-2.md) / [models-feedback-justin.md](models-feedback-justin.md) — Justin's review notes (open items tracked in the checklist).
+- [owner-rollup-handoff.md](owner-rollup-handoff.md) + [cdc-koen.md](cdc-koen.md) — the A1 owner-keyed rollup spec / the CDC ask for Koen.
 
 Each page doc follows the same template: **Route & purpose → User story → Layout & components → Data (reads) →
 Actions (writes) → States → Gating → Shared/cross-refs → Open questions.**
@@ -43,18 +45,12 @@ Actions (writes) → States → Gating → Shared/cross-refs → Open questions.
   ([plan §5.3](../creator-studio-plan.md#53-new-monetization-operations-creator-studio-module-extract-to-a-package-at-consolidation)).
 - **Analytics reads** — ClickHouse via `@civitai/clickhouse`, daily aggregates ([plan §7.6](../creator-studio-plan.md#76-clickhouse-analytics--materialized-views)).
 
-## Cross-cutting decisions needed (answer once — they recur across pages)
+## Cross-cutting decisions
 
-These surfaced in ≥2 page docs; deciding them once keeps the specs from drifting. **Justin's product/business review
-questions** are consolidated in [plan §9](../creator-studio-plan.md#questions-for-justin--review-pass-2026-07-02).
+The recurring cross-page questions that once lived here are **now decided** and captured in
+[pre-implementation-decisions.md](pre-implementation-decisions.md): `/licensing` = `?mode=bulk` on `/models` (C2),
+owner-keyed rollup = build it (A1), charting = Chart.js (C1), cash home = `/earnings` (C6), page boundaries (C5),
+member gate = full CP membership (B1), access/cosmetic sales in v1 (A5/B3), no per-account default fee (B9).
 
-| # | Decision | Affects | Owner |
-|---|---|---|---|
-| 1 | **`/licensing`: separate page vs a mode/tab of `/models`** (they share rows + the fee action) | [licensing](licensing.md), [models](models.md) | eng/design |
-| 2 | **Owner-keyed earnings rollup** (§7.6 gap #1) — earnings tables key on `modelVersionId`, not the creator's `userId`; needed to scope "my" earnings/usage at scale | [dashboard](dashboard.md), [analytics](analytics.md), [earnings](earnings.md) | **backend / Koen** |
-| 3 | **Charting library** (no chart primitive in `@civitai/ui`; Chart.js is React-only) + **date-range/calendar** control (no calendar primitive) | [analytics](analytics.md), [earnings](earnings.md), [dashboard](dashboard.md) | eng |
-| 4 | **CP cash + withdrawal home** — dashboard vs `/earnings` vs `/settings` (pick one entry point) | [dashboard](dashboard.md), [earnings](earnings.md), [settings](settings.md) | design |
-| 5 | **`/earnings` vs `/earnings/analytics` vs dashboard boundary** — what's unique to each so the same numbers don't appear (and drift) in three places | [dashboard](dashboard.md), [earnings](earnings.md), [analytics](analytics.md) | design |
-| 6 | **Member gate: subscription `tier` vs full CP membership** (score ≥40k) — changes gating + `/join` CTA. Justin scoped **indefinite-sale to CP members**, so gates may be **feature-specific** (fee = `tier`, indefinite-sale = CP) | [join](join.md), [models](models.md), [licensing](licensing.md), [settings](settings.md) | **Justin** ([plan §9](../creator-studio-plan.md#9-decisions--open-questions)) |
-| 7 | **Access-sale + cosmetic-sale earnings** (§7.6 gap #2, a per-`toAccountId` buzz rollup) — in v1 or defer? | [earnings](earnings.md), [dashboard](dashboard.md) | design + backend |
-| 8 | **Default fee suggestion — per-account vs per-version** *(settlement currency resolved: not a creator choice — Civitai-only, special cases)* | [settings](settings.md), [models](models.md) | design |
+The few still-open ones (fee-defaults editability #17, early-access reframing #23, publish/schedule B13) are tracked
+in the **[implementation checklist](implementation-checklist.md) → "Open — needs a decision"**.

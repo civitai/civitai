@@ -78,11 +78,13 @@ Code fixes committed on `creator-studio-implementation`: **`d70d871`** (models/s
 
 ## Next / open (the non-✅ items)
 
-- **🚩 Fee-defaults settable + apply-to-all (#17)** — reconcile with B9 (product).
-- **🚩 Early-access reframing (#23)** — manage-only / enable-at-publish (product).
-- **⏸ Bulk select-all-matching + base-model filter (#24)** — highest-value remaining build for bulk fee-setting.
-- **⏸ Synchronized crosshair (#11)** — Chart plugin + shared hover store; add a `plugins` prop to the `Chart`
-  wrapper first.
-- **🔵 Analytics owner-keyed daily MVs (#10, B4)** — backend; removes the 90-day raw-scan load.
-- **TODO (#16)** — wire the settled-cash read so payout setup unlocks at ≥ $50.
+> All of these are now tracked in the **[implementation checklist](implementation-checklist.md)** (the single
+> status source). Listed here for round-2 context only.
+
+- **✅ #16 — payout unlock** — DONE: the settled-cash read (`getCreatorCash`) now unlocks the "Set up payouts" prompt at ≥ $50.
+- **🚩 Fee-defaults settable + apply-to-all (#17)** — reconcile with B9 (product decision, open).
+- **🚩 Early-access reframing (#23)** — manage-only / enable-at-publish (product decision, open).
+- **⏸ Bulk select-all-matching + base-model filter (#24)** — highest-value remaining bulk-fee build.
+- **⏸ Synchronized crosshair (#11)** — Chart plugin + shared hover store; add a `plugins` prop to the `Chart` wrapper first.
+- **🔵 Analytics owner-keyed daily MVs (#10, B4)** — backend; removes the 90-day raw-scan load (perf, not blocking).
 - **⏸ Dashboard charts (#4)** — low priority.

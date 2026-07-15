@@ -83,11 +83,11 @@ Per [implementation-checklist.md](implementation-checklist.md) / the page specs:
 | Set / adjust / clear **per-image licensing fees** (single + bulk) | `/models` | ✅ built |
 | Edit **early / paid access** config (duration, download/gen price, trials, donation goal) | `/models` | ✅ built |
 | **Sell access indefinitely** | `/models` | 🚧 A4 (backend) |
-| Publish / schedule a version | `/models` | ⏭ open (Q2) |
-| **Earnings by source** (comp / license / tips / access / cosmetic) | `/earnings` | 🚧 A1/A5 |
-| **Usage & earnings analytics** (generations, downloads, reactions, followers…) | `/earnings/analytics` | 🚧 A1/C1 |
-| **CP cash status** (pending / settled) + **Withdraw link-out** | `/earnings`, dashboard | 🚧 A1 |
-| **Payout (Tipalti) status** + membership/tier status | `/settings` | ◻ not started |
+| Publish / schedule a version | `/models` | 🟢 open (B13) |
+| **Earnings by source** (comp / license / tips / access / cosmetic) | `/earnings` | ✅ built (A1 Part 1 — reads `buzzTransactions` directly) |
+| **Usage & earnings analytics** | `/analytics` | ✅ content section (userId-keyed) · 🚧 model section (A1 Part 2) |
+| **CP cash status** (ready / pending / withdrawn) + **Withdraw link-out** | `/earnings`, dashboard | ✅ built (authoritative via `@civitai/buzz`) |
+| **Payout (Tipalti) status** + membership/tier status + **$50 setup unlock** | `/settings` | ✅ built |
 | **Creator Program upsell** + live creator score + how-to-grow | `/join` | ✅ built |
 
 ---
