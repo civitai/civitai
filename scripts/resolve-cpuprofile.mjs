@@ -29,6 +29,13 @@
 //                       repo:tag reference. Requires `crane` (or `oras`) on PATH and
 //                       registry read auth (e.g. `crane auth login ghcr.io`, or a
 //                       docker config already logged in). Mutually exclusive with --maps.
+//   --image-sha <sha>   Like --image, but you pass only the commit sha. The runtime
+//                       image tag (<ts1>-<sha>) and the maps tag (<ts2>-<sha>) share
+//                       the sha but not the build timestamp, so a runtime tag would
+//                       404 as a maps tag. This lists --maps-repo via `crane ls` and
+//                       picks the newest tag ending in `-<sha>`. If both --image and
+//                       --image-sha are given, --image-sha wins. Mutually exclusive
+//                       with --maps.
 //   --maps-repo <repo>  Override the maps artifact repo used to expand a bare --image
 //                       tag (default ghcr.io/civitai/civitai-web-maps).
 //   --maps <dir>        Directory to search recursively for `<chunk>.js.map` files
@@ -39,7 +46,7 @@
 //   --json              Emit the full resolved profile as JSON instead of a report.
 //   --no-resolve        Skip map resolution (raw frames) — useful to diff before/after.
 //
-// Exactly one of --image or --maps is required (unless --no-resolve).
+// Exactly one of --image / --image-sha or --maps is required (unless --no-resolve).
 //
 // "Longest synchronous block": V8 sampling profiles record per-sample deltas
 // (`timeDeltas`). A run of consecutive samples that stay inside the same top-of-stack
@@ -79,6 +86,7 @@ function parseArgs(argv) {
     profile: /** @type {string | null} */ (null),
     mapsDir: /** @type {string | null} */ (null),
     image: /** @type {string | null} */ (null),
+    imageSha: /** @type {string | null} */ (null),
     mapsRepo: DEFAULT_MAPS_REPO,
     top: 25,
     block: false,
@@ -89,6 +97,7 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === '--maps') args.mapsDir = argv[++i];
     else if (a === '--image') args.image = argv[++i];
+    else if (a === '--image-sha') args.imageSha = argv[++i];
     else if (a === '--maps-repo') args.mapsRepo = argv[++i];
     else if (a === '--top') args.top = Number(argv[++i]);
     else if (a === '--block') args.block = true;
@@ -108,7 +117,7 @@ function parseArgs(argv) {
 
 function printHelp() {
   console.log(
-    'Usage: node scripts/resolve-cpuprofile.mjs <profile.cpuprofile> (--image <tag-or-ref> | --maps <dir>)\n' +
+    'Usage: node scripts/resolve-cpuprofile.mjs <profile.cpuprofile> (--image <tag-or-ref> | --image-sha <sha> | --maps <dir>)\n' +
       '         [--maps-repo <repo>] [--top N] [--block] [--json] [--no-resolve]'
   );
 }
@@ -120,6 +129,39 @@ function resolveImageRef(image, mapsRepo) {
   if (image.includes('/')) return image; // already repo[:tag] or registry/repo:tag
   // bare tag (possibly with a leading ':' someone added) -> repo:tag
   const tag = image.startsWith(':') ? image.slice(1) : image;
+  return `${mapsRepo}:${tag}`;
+}
+
+// Resolve a bare commit sha to a full maps-image reference by listing the maps repo
+// and picking the newest tag ending in `-<sha>`. The runtime image tag and the maps
+// tag share the sha but carry different build timestamps (`<ts>-<sha>`), so a caller
+// who only knows the runtime sha can't name the maps tag directly. Requires `crane`
+// on PATH and registry read auth.
+//
+// Tag selection: build tags are `<timestamp>-<sha>`, but a floating `sha-<sha>` alias
+// may also match `-<sha>`. Prefer the newest *timestamped* tag (largest numeric
+// prefix = newest build); fall back to the lexically-largest match only when no
+// timestamped tag is present. Pure/side-effect-free so it can be unit-tested.
+function pickTagBySha(tags, sha) {
+  const matches = tags.map((t) => t.trim()).filter((t) => t && t.endsWith(`-${sha}`));
+  if (!matches.length) return null;
+  const timestamped = matches
+    .filter((t) => /^\d+-/.test(t))
+    .sort((a, b) => Number(a.split('-')[0]) - Number(b.split('-')[0]));
+  if (timestamped.length) return timestamped[timestamped.length - 1];
+  return matches.sort()[matches.length - 1];
+}
+
+function resolveTagBySha(sha, mapsRepo) {
+  const r = spawnSync('crane', ['ls', mapsRepo], { encoding: 'utf8' });
+  if (r.status !== 0) {
+    throw new Error(
+      `crane ls ${mapsRepo} failed (exit ${r.status}): ${(r.stderr || '').trim()}. ` +
+        'Ensure `crane` is on PATH and registry read auth is configured.'
+    );
+  }
+  const tag = pickTagBySha(r.stdout.split('\n'), sha);
+  if (!tag) throw new Error(`no maps tag ending in -${sha} found in ${mapsRepo}`);
   return `${mapsRepo}:${tag}`;
 }
 
@@ -294,12 +336,14 @@ async function main() {
     printHelp();
     process.exit(1);
   }
-  if (args.image && args.mapsDir) {
-    console.error('error: pass only one of --image or --maps, not both.');
+  if ((args.image || args.imageSha) && args.mapsDir) {
+    console.error('error: pass only one of --image / --image-sha or --maps, not both.');
     process.exit(1);
   }
-  if (args.resolve && !args.mapsDir && !args.image) {
-    console.error('error: --image <tag-or-ref> or --maps <dir> is required (or pass --no-resolve).');
+  if (args.resolve && !args.mapsDir && !args.image && !args.imageSha) {
+    console.error(
+      'error: --image <tag-or-ref>, --image-sha <sha>, or --maps <dir> is required (or pass --no-resolve).'
+    );
     process.exit(1);
   }
   if (args.mapsDir && !existsSync(args.mapsDir)) {
@@ -319,8 +363,13 @@ async function main() {
   // resolve against it (cleaned up before we return).
   let mapsDir = args.mapsDir;
   let fetchCleanup = null;
-  if (args.resolve && args.image) {
-    const ref = resolveImageRef(args.image, args.mapsRepo);
+  if (args.resolve && (args.image || args.imageSha)) {
+    // --image-sha wins if both are passed: it auto-resolves the maps tag from the
+    // commit sha, whereas --image expects an exact tag/ref.
+    const ref = args.imageSha
+      ? resolveTagBySha(args.imageSha, args.mapsRepo)
+      : resolveImageRef(args.image, args.mapsRepo);
+    if (args.imageSha) console.error(`info: resolved --image-sha ${args.imageSha} -> ${ref}`);
     const fetched = await fetchMapsImage(ref);
     mapsDir = fetched.dir;
     fetchCleanup = fetched.cleanup;
@@ -371,12 +420,20 @@ async function main() {
   }
 
   if (args.json) {
-    const out = profile.nodes.map((n) => ({
-      id: n.id,
-      original: nodeInfo.get(n.id).original,
-      callFrame: n.callFrame,
-      selfTimeMicros: selfTime.get(n.id) || 0,
-    }));
+    const out = profile.nodes.map((n) => {
+      const info = nodeInfo.get(n.id);
+      const o = info.original;
+      return {
+        id: n.id,
+        // Resolved location. `original` is { source, line, column, name } with no
+        // `url` key, so add a `url` alias (== source) for consumers that key on
+        // `.url`, plus a ready-made "fn @ source:line:col" label.
+        original: o ? { ...o, url: o.source ?? null } : null,
+        label: info.label,
+        callFrame: n.callFrame,
+        selfTimeMicros: selfTime.get(n.id) || 0,
+      };
+    });
     process.stdout.write(JSON.stringify({ nodes: out }, null, 2) + '\n');
     if (resolver) resolver.destroy();
     if (fetchCleanup) await fetchCleanup();
