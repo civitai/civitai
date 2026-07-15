@@ -216,6 +216,9 @@ export const ECO = {
   // Boogu
   Boogu: 74,
 
+  // Reve AI
+  Reve: 77,
+
   // Child ecosystems of SDXL
   Pony: 100,
   Illustrious: 101,
@@ -643,6 +646,15 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 180,
   },
 
+  // Reve AI Family (familyId: 24)
+  {
+    id: ECO.Reve,
+    key: 'Reve',
+    displayName: 'Reve',
+    familyId: 24,
+    sortOrder: 190,
+  },
+
   // HiDream Family (familyId: 19)
   {
     id: ECO.HiDream,
@@ -1016,6 +1028,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // MAI - checkpoint only (Microsoft MAI-Image-2.5, locked, no LoRA support)
   { ecosystemId: ECO.MAI, supportType: 'generation', modelTypes: checkpointOnly },
+
+  // Reve - checkpoint only (Reve 2.1, locked, FAL engine, no LoRA support)
+  { ecosystemId: ECO.Reve, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Lens - checkpoint and LORA (Civitai-internal, normal + turbo variants)
   { ecosystemId: ECO.Lens, supportType: 'generation', modelTypes: checkpointAndLora },
@@ -1509,6 +1524,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
       modelLocked: true,
     },
   },
+  {
+    ecosystemId: ECO.Reve,
+    defaults: {
+      model: { id: 3133202 },
+      modelLocked: true,
+    },
+  },
 ];
 
 // =============================================================================
@@ -1974,6 +1996,7 @@ export const BM = {
   PolyGen: 92,
   Tripo: 94,
   Hunyuan3D: 95,
+  Reve: 96,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2233,6 +2256,11 @@ export const licenses: LicenseRecord[] = [
     disableMature: true,
     nonCommercial: true,
   },
+  {
+    id: 38,
+    name: 'Reve AI Terms of Service',
+    url: 'https://app.reve.com/terms',
+  },
 ];
 
 export const licenseById = new Map(licenses.map((l) => [l.id, l]));
@@ -2356,6 +2384,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     id: 23,
     name: 'Boogu',
     description: "Boogu's unified multimodal image generation and editing models",
+  },
+  {
+    id: 24,
+    name: 'Reve AI',
+    description: "Reve AI's controllable 4K text-to-image generation and editing models",
   },
 ];
 
@@ -3010,6 +3043,16 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.SDXLDistilled,
     hidden: true,
     licenseId: 3,
+  },
+
+  // Reve
+  {
+    id: BM.Reve,
+    name: 'Reve',
+    description: "Reve AI's controllable 4K text-to-image generation and editing model",
+    type: 'image',
+    ecosystemId: ECO.Reve,
+    licenseId: 38,
   },
 
   // Seedream
