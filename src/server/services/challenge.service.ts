@@ -1724,26 +1724,33 @@ export async function deleteChallenge(id: number) {
   }
 
   // Refund BEFORE deleting: refundUserChallengeFunds reads the Challenge row, so once the row is
-  // gone nothing can return the creator's escrowed prize or collected entry fees. Scheduled only —
-  // a Cancelled challenge was already refunded by voidChallenge, and a Completing/Completed pool
-  // was (or is being) paid out to winners, so refunding it would double-spend from account 0.
-  if (challenge.source === ChallengeSource.User && challenge.status === ChallengeStatus.Scheduled) {
-    // Atomically claim the row (Scheduled -> Cancelled) before refunding. This does double duty:
-    // (a) two concurrent deletes / a delete racing the activation job can't both refund — only the
-    // caller whose conditional update affects 1 row proceeds; (b) if activation won the race the
-    // status is no longer Scheduled, count is 0, and we abort rather than refunding a live/other
-    // challenge. Refunds are also idempotent via deterministic externalTransactionId prefixes, so a
-    // rare crash after the claim is safe to re-run manually.
-    const claimed = await dbWrite.challenge.updateMany({
-      where: { id, status: ChallengeStatus.Scheduled },
-      data: { status: ChallengeStatus.Cancelled },
-    });
-    if (claimed.count !== 1) {
-      throw new TRPCError({
-        code: 'PRECONDITION_FAILED',
-        message: 'This challenge is no longer in a deletable state.',
+  // gone nothing can return the creator's escrowed prize or collected entry fees. Only Scheduled or
+  // already-Cancelled User challenges are refunded — a Completing/Completed pool was (or is being)
+  // paid out to winners, so refunding it would double-spend from account 0.
+  if (
+    challenge.source === ChallengeSource.User &&
+    (challenge.status === ChallengeStatus.Scheduled ||
+      challenge.status === ChallengeStatus.Cancelled)
+  ) {
+    // If still Scheduled, atomically claim it (Scheduled -> Cancelled) first so a delete racing the
+    // activation job can't refund + delete a now-live challenge: if activation won, count is 0 and
+    // we abort. An already-Cancelled challenge (voided, or a delete retried after its refund threw
+    // mid-way) skips the claim and just re-refunds — so a failed refund is self-healing on retry
+    // rather than stranding the funds.
+    if (challenge.status === ChallengeStatus.Scheduled) {
+      const claimed = await dbWrite.challenge.updateMany({
+        where: { id, status: ChallengeStatus.Scheduled },
+        data: { status: ChallengeStatus.Cancelled },
       });
+      if (claimed.count !== 1) {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'This challenge is no longer in a deletable state.',
+        });
+      }
     }
+    // Idempotent via deterministic externalTransactionId prefixes (the buzz service dedups), so
+    // re-refunding an already-Cancelled challenge is a net-zero no-op, not a double-spend.
     await refundUserChallengeFunds(id);
   }
 
@@ -2404,41 +2411,44 @@ export async function voidChallenge(challengeId: number) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'Challenge not found' });
   }
 
-  // Validate status
+  // Validate status. Cancelled is allowed so a void whose refund threw mid-way can be re-run to
+  // finish the (idempotent) refund, rather than stranding the funds.
   if (
     challenge.status !== ChallengeStatus.Active &&
-    challenge.status !== ChallengeStatus.Scheduled
+    challenge.status !== ChallengeStatus.Scheduled &&
+    challenge.status !== ChallengeStatus.Cancelled
   ) {
     throw new TRPCError({
       code: 'PRECONDITION_FAILED',
       message: `Cannot void challenge with status "${String(
         challenge.status
-      )}". Challenge must be Active or Scheduled.`,
+      )}". Challenge must be Active, Scheduled, or Cancelled.`,
     });
   }
 
   log('Voiding challenge:', challengeId);
 
-  // Atomically claim the row (Active/Scheduled -> Cancelled) BEFORE refunding. Only the caller whose
-  // conditional update affects one row proceeds. This stops (a) two concurrent voids from both
-  // refunding, and (b) — critically — a void from refunding a pool the completion cron is
-  // simultaneously claiming to pay out to winners, which would mint (the cron's own Active->Completing
-  // claim can no longer win once we've flipped to Cancelled). If the claim is lost, the challenge
-  // already moved on; there is nothing to refund. Refunds are idempotent via deterministic
-  // externalTransactionId prefixes (the buzz service dedups), so a rare crash after a won claim is
-  // safe to re-run manually.
-  const claimed = await dbWrite.challenge.updateMany({
-    where: {
-      id: challengeId,
-      status: { in: [ChallengeStatus.Active, ChallengeStatus.Scheduled] },
-    },
-    data: { status: ChallengeStatus.Cancelled },
-  });
-  if (claimed.count !== 1) {
-    log('Void claim lost (already cancelled or claimed for completion); skipping refund');
-    return { success: true };
+  // Claim the row (Active/Scheduled -> Cancelled) BEFORE refunding, unless it is already Cancelled
+  // (a retry of a prior void whose refund failed — skip the claim and just re-refund idempotently).
+  // The claim stops (a) two concurrent voids from both refunding, and (b) — critically — a void from
+  // refunding a pool the completion cron is simultaneously claiming to pay to winners, which would
+  // mint (the cron's own Active->Completing claim can no longer win once we've flipped to Cancelled).
+  // If the claim is lost, another void or completion advanced the row; do not refund here — a
+  // stranded refund is recovered by re-running void, which lands on the Cancelled branch below.
+  if (challenge.status !== ChallengeStatus.Cancelled) {
+    const claimed = await dbWrite.challenge.updateMany({
+      where: {
+        id: challengeId,
+        status: { in: [ChallengeStatus.Active, ChallengeStatus.Scheduled] },
+      },
+      data: { status: ChallengeStatus.Cancelled },
+    });
+    if (claimed.count !== 1) {
+      log('Void claim lost (completion or a concurrent void won); skipping refund');
+      return { success: true };
+    }
+    log('Challenge status updated to Cancelled');
   }
-  log('Challenge status updated to Cancelled');
 
   // Close the collection if exists
   await closeChallengeCollection(challenge);

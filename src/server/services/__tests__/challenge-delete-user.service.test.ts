@@ -32,7 +32,9 @@ vi.mock('~/server/search-index', () => ({
 }));
 vi.mock('~/utils/logging', () => ({ createLogger: vi.fn(() => vi.fn()) }));
 
-const { deleteUserChallenge } = await import('~/server/services/challenge.service');
+const { deleteUserChallenge, deleteChallenge } = await import(
+  '~/server/services/challenge.service'
+);
 const { ChallengeSource, ChallengeStatus } = await import('~/shared/utils/prisma/enums');
 
 const OWNER = 42;
@@ -113,5 +115,32 @@ describe('deleteUserChallenge', () => {
   it('missing challenge throws NOT_FOUND', async () => {
     mockDbRead.challenge.findUnique.mockResolvedValue(null);
     await expect(deleteUserChallenge({ id: 1, userId: OWNER })).rejects.toThrow(/not found/i);
+  });
+});
+
+describe('deleteChallenge (direct)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDbWrite.challenge.updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it('already-Cancelled User challenge: re-refunds idempotently without re-claiming, then deletes', async () => {
+    mockDbWrite.challenge.findUnique.mockResolvedValue(
+      makeChallenge({ status: ChallengeStatus.Cancelled })
+    );
+    await deleteChallenge(1);
+    // No claim on an already-Cancelled row (nothing to flip); refund is the idempotent recovery.
+    expect(mockDbWrite.challenge.updateMany).not.toHaveBeenCalled();
+    expect(mockRefundUserChallengeFunds).toHaveBeenCalledWith(1);
+    expect(mockDbWrite.challenge.delete).toHaveBeenCalledWith({ where: { id: 1 } });
+  });
+
+  it('blocks deleting an Active challenge', async () => {
+    mockDbWrite.challenge.findUnique.mockResolvedValue(
+      makeChallenge({ status: ChallengeStatus.Active })
+    );
+    await expect(deleteChallenge(1)).rejects.toThrow(/active/i);
+    expect(mockRefundUserChallengeFunds).not.toHaveBeenCalled();
+    expect(mockDbWrite.challenge.delete).not.toHaveBeenCalled();
   });
 });
