@@ -19,6 +19,8 @@ import { renderWithProviders } from '../../../test/component-setup';
 const mocks = vi.hoisted(() => ({
   uploadConsumerBlob: vi.fn(),
   getImageDimensions: vi.fn(),
+  resizeImage: vi.fn(),
+  imageToJpegBlob: vi.fn(),
   persistMutate: vi.fn(),
   gateMutate: vi.fn(),
 }));
@@ -31,6 +33,20 @@ vi.mock('~/utils/image-utils', async (orig) => {
   const actual = await orig<typeof import('~/utils/image-utils')>();
   return { ...actual, getImageDimensions: mocks.getImageDimensions };
 });
+
+// The generator's client-side resize/re-encode helpers. Mocked here as SPIES so
+// we can assert the modal downscales to the SCHEMA bound (DIM_MAX) before upload
+// — the actual canvas pixel-clamp is canvas-utils' own well-tested contract
+// (calculateAspectRatioFit). They're also mocked out of necessity: their real
+// path (imageToJpegBlob → canvasToBlobWithImageExif) uses `Buffer`, which Next
+// polyfills in the browser bundle (the shipped generator relies on exactly this)
+// but the vitest browser env does not provide. So the real pixel path is
+// exercised in production via SourceImageUpload; here we lock the ORCHESTRATION
+// (which bounds, in which order).
+vi.mock('~/shared/utils/canvas-utils', () => ({
+  resizeImage: mocks.resizeImage,
+  imageToJpegBlob: mocks.imageToJpegBlob,
+}));
 
 // The moderated scan/gate service. This modal must NEVER call it — the spies
 // stay untouched on the generationSource branch (the orchestrator scans the
@@ -51,17 +67,15 @@ import BlockGenerationSourceUploadModal from '~/components/AppBlocks/BlockGenera
 import { DialogProvider } from '~/components/Dialog/DialogProvider';
 // eslint-disable-next-line import/first
 import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
+// eslint-disable-next-line import/first
+import { DIM_MAX, DIM_MIN } from '~/server/schema/blocks/workflow.schema';
 
 const BLOB_URL =
   'https://orchestration.civitai.com/v2/consumer/blobs/ABC123.jpeg?sig=x&exp=2030-01-01T00:00:00Z';
 
-/** A REAL png File (canvas → toBlob); uploadConsumerBlob is mocked so bytes are inert. */
-async function makeImageFile(name = 'source.png'): Promise<File> {
-  const canvas = document.createElement('canvas');
-  canvas.width = 4;
-  canvas.height = 4;
-  const blob: Blob = await new Promise((res) => canvas.toBlob((b) => res(b!), 'image/png'));
-  return new File([blob], name, { type: 'image/png' });
+/** A minimal image File. The resize/encode helpers are mocked, so bytes are inert. */
+function makeImageFile(name = 'source.png', type = 'image/png'): File {
+  return new File([new Uint8Array([1, 2, 3, 4])], name, { type });
 }
 
 /** The hidden native <input type=file> Mantine's FileInput renders. */
@@ -82,6 +96,11 @@ function openModal(onResolved: (r: unknown) => void) {
   });
 }
 
+// Sentinel blobs threaded through the mocked resize → encode → upload pipeline so
+// each stage's output can be asserted as the next stage's input.
+const RESIZED_BLOB = new Blob(['resized-png'], { type: 'image/png' });
+const JPEG_BLOB = new Blob(['jpeg-bytes'], { type: 'image/jpeg' });
+
 describe('BlockGenerationSourceUploadModal (generationSource — unscanned source)', () => {
   beforeEach(() => {
     useDialogStore.getState().closeAll();
@@ -89,24 +108,31 @@ describe('BlockGenerationSourceUploadModal (generationSource — unscanned sourc
     mocks.getImageDimensions.mockReset();
     mocks.persistMutate.mockReset();
     mocks.gateMutate.mockReset();
+    // Happy-path resize/encode by default (individual tests assert the args).
+    mocks.resizeImage.mockReset().mockResolvedValue(RESIZED_BLOB);
+    mocks.imageToJpegBlob.mockReset().mockResolvedValue(JPEG_BLOB);
   });
 
-  test('uploads via uploadConsumerBlob and resolves { url, width, height } — no createImage/scan/gate', async () => {
+  test('resizes+re-encodes then uploads via uploadConsumerBlob, resolving { url, width, height } — no createImage/scan/gate', async () => {
     mocks.uploadConsumerBlob.mockResolvedValue({ url: BLOB_URL });
     mocks.getImageDimensions.mockResolvedValue({ width: 640, height: 480 });
     const onResolved = vi.fn();
 
     openModal(onResolved);
-    await userEvent.upload(await fileInputEl(), await makeImageFile());
+    await userEvent.upload(await fileInputEl(), makeImageFile());
 
     await vi.waitFor(() => expect(onResolved).toHaveBeenCalledTimes(1));
     // Exactly the source projection — no imageId / nsfwLevel / contentRating.
     expect(onResolved).toHaveBeenCalledWith({ url: BLOB_URL, width: 640, height: 480 });
     expect(Object.keys(onResolved.mock.calls[0][0]).sort()).toEqual(['height', 'url', 'width']);
 
-    // Reused the generator's consumer-blob util with the real File.
+    // Pipeline mirrors SourceImageUpload: resizeImage → imageToJpegBlob →
+    // uploadConsumerBlob (the RE-ENCODED jpeg blob, not the raw File).
+    expect(mocks.resizeImage).toHaveBeenCalledTimes(1);
+    expect(mocks.imageToJpegBlob).toHaveBeenCalledTimes(1);
+    expect(mocks.imageToJpegBlob).toHaveBeenCalledWith(RESIZED_BLOB);
     expect(mocks.uploadConsumerBlob).toHaveBeenCalledTimes(1);
-    expect(mocks.uploadConsumerBlob.mock.calls[0][0]).toBeInstanceOf(File);
+    expect(mocks.uploadConsumerBlob).toHaveBeenCalledWith(JPEG_BLOB);
     // Real dims derived from the uploaded blob URL (mirrors SourceImageUpload).
     expect(mocks.getImageDimensions).toHaveBeenCalledWith(BLOB_URL);
 
@@ -120,9 +146,62 @@ describe('BlockGenerationSourceUploadModal (generationSource — unscanned sourc
     const onResolved = vi.fn();
 
     openModal(onResolved);
-    await userEvent.upload(await fileInputEl(), await makeImageFile());
+    await userEvent.upload(await fileInputEl(), makeImageFile());
 
     await expect.element(page.getByText(/Failed to upload blob/i)).toBeInTheDocument();
+    expect(onResolved).not.toHaveBeenCalled();
+    expect(mocks.persistMutate).not.toHaveBeenCalled();
+    expect(mocks.gateMutate).not.toHaveBeenCalled();
+  });
+
+  test('downscales to the blockSourceImageSchema bound (DIM_MAX, not the generator maxUpscaleSize) so a large image passes submit', async () => {
+    mocks.uploadConsumerBlob.mockResolvedValue({ url: BLOB_URL });
+    // The uploaded (resized) blob's dims are read here; set to the schema bound so
+    // the resolved source is within DIM_MIN..DIM_MAX (would pass blockSourceImageSchema).
+    mocks.getImageDimensions.mockResolvedValue({ width: DIM_MAX, height: 1365 });
+    const onResolved = vi.fn();
+
+    openModal(onResolved);
+    await userEvent.upload(await fileInputEl(), makeImageFile('big.png'));
+
+    await vi.waitFor(() => expect(onResolved).toHaveBeenCalledTimes(1));
+
+    // THE FIX: the modal caps the pre-upload resize at the sourceImage schema
+    // bound (DIM_MAX = 2048), NOT the generator's larger maxUpscaleSize (3840).
+    // resizeImage's contract (calculateAspectRatioFit) then guarantees every side
+    // ≤ maxWidth/maxHeight, so the uploaded source always lands within
+    // DIM_MIN..DIM_MAX and is accepted at workflow submit instead of clamped-rejected.
+    expect(mocks.resizeImage).toHaveBeenCalledTimes(1);
+    const [srcArg, optsArg] = mocks.resizeImage.mock.calls[0];
+    expect(srcArg).toBeInstanceOf(File);
+    expect(optsArg).toEqual({
+      maxWidth: DIM_MAX,
+      maxHeight: DIM_MAX,
+      minWidth: DIM_MIN,
+      minHeight: DIM_MIN,
+    });
+    expect(optsArg.maxWidth).toBe(2048);
+
+    // The resolved dims are within the schema bounds.
+    const resolved = onResolved.mock.calls[0][0] as { width: number; height: number };
+    expect(Math.max(resolved.width, resolved.height)).toBeLessThanOrEqual(DIM_MAX);
+    expect(Math.min(resolved.width, resolved.height)).toBeGreaterThanOrEqual(DIM_MIN);
+
+    expect(mocks.persistMutate).not.toHaveBeenCalled();
+    expect(mocks.gateMutate).not.toHaveBeenCalled();
+  });
+
+  test('a VIDEO file is rejected with a clear message and never resized or uploaded', async () => {
+    const onResolved = vi.fn();
+    openModal(onResolved);
+
+    // uploadConsumerBlob would accept video/mp4, but a video can't be an img2img
+    // source — the modal must reject it before touching the resize/upload path.
+    await userEvent.upload(await fileInputEl(), makeImageFile('clip.mp4', 'video/mp4'));
+
+    await expect.element(page.getByText(/choose an image file/i)).toBeInTheDocument();
+    expect(mocks.resizeImage).not.toHaveBeenCalled();
+    expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
     expect(onResolved).not.toHaveBeenCalled();
     expect(mocks.persistMutate).not.toHaveBeenCalled();
     expect(mocks.gateMutate).not.toHaveBeenCalled();

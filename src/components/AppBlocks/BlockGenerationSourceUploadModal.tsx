@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { uploadConsumerBlob } from '~/utils/consumer-blob-upload';
 import { getImageDimensions } from '~/utils/image-utils';
+import { imageToJpegBlob, resizeImage } from '~/shared/utils/canvas-utils';
+import { DIM_MAX, DIM_MIN } from '~/server/schema/blocks/workflow.schema';
 
 /**
  * App Blocks — the host modal behind PageBlockHost's `OPEN_IMAGE_UPLOAD` bridge
@@ -58,15 +60,42 @@ export default function BlockGenerationSourceUploadModal({
     const localPreview = URL.createObjectURL(file);
     objectUrlRef.current = localPreview;
     setPreviewUrl(localPreview);
-    setStatus('uploading');
     setMessage(null);
+
+    // Images only — matches the FileInput `accept` and the img2img source
+    // contract. uploadConsumerBlob would also accept video/mp4|webm, but a video
+    // can't be an img2img source (getImageDimensions would fail downstream), so
+    // reject it here with a clear message instead of a confusing error later.
+    if (!file.type.startsWith('image/')) {
+      setStatus('error');
+      setMessage('Please choose an image file (PNG, JPEG or WebP).');
+      return;
+    }
+
+    setStatus('uploading');
     try {
-      // The SAME util the generator's SourceImageUpload uses: a presigned PUT to
-      // the orchestrator consumer-blob store. NO createImage, NO scan, NO gate.
-      const blob = await uploadConsumerBlob(file);
+      // Mirror the generator's SourceImageUpload pre-upload step (handleDropCapture):
+      // downscale to fit the block source-image max dimension + re-encode to JPEG
+      // BEFORE upload, reusing the SAME resizeImage + imageToJpegBlob helpers.
+      // Capped at DIM_MAX (the sourceImage schema bound, NOT the generator's larger
+      // maxUpscaleSize) so a large-but-valid photo is downscaled to WITHIN the
+      // blockSourceImageSchema DIM bounds and works — instead of uploading fine
+      // then being rejected at workflow submit (the server clamps width/height to
+      // DIM_MIN..DIM_MAX). A too-small image throws a clear minimum-size error here.
+      const resized = await resizeImage(file, {
+        maxWidth: DIM_MAX,
+        maxHeight: DIM_MAX,
+        minWidth: DIM_MIN,
+        minHeight: DIM_MIN,
+      });
+      const jpegBlob = await imageToJpegBlob(resized);
+      // The SAME util the generator uses: a presigned PUT to the orchestrator
+      // consumer-blob store (it enforces its own 64MB cap on the uploaded blob).
+      // NO createImage, NO scan, NO gate.
+      const blob = await uploadConsumerBlob(jpegBlob);
       if (epoch !== epochRef.current) return;
       if (!blob.url) throw new Error('Upload did not return a URL');
-      // Real dimensions from the uploaded blob (mirrors SourceImageUpload).
+      // Real dimensions from the uploaded (resized) blob (mirrors SourceImageUpload).
       const { width, height } = await getImageDimensions(blob.url);
       if (epoch !== epochRef.current) return;
       setStatus('ready');
