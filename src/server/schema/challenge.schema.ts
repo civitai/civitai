@@ -362,7 +362,12 @@ export const challengeJudgingCategoriesSchema = z
 // `key` is the PK and the join key on stored Challenge.judgingCategories, so it is create-only.
 export type UpsertChallengeCategoryInput = z.infer<typeof upsertChallengeCategorySchema>;
 export const upsertChallengeCategorySchema = z.object({
-  key: z.string().trim().min(1).max(50),
+  key: z
+    .string()
+    .trim()
+    .min(1)
+    .max(50)
+    .regex(/^[a-z0-9_-]+$/, 'Key must be lowercase letters, numbers, hyphens, or underscores'),
   label: z.string().trim().min(1).max(100),
   group: z.string().trim().min(1).max(50),
   criteria: z.string().trim().min(1).max(500),

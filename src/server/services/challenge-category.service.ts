@@ -138,12 +138,24 @@ export async function resolveRubricBlock(
   return categories.map((c) => pickCategoryRubric(byKey.get(c.key), c, opts)).join('\n\n');
 }
 
+const CATEGORY_ROW_SELECT = {
+  key: true,
+  label: true,
+  group: true,
+  criteria: true,
+  rubric: true,
+  rubricNsfw: true,
+  sortOrder: true,
+  active: true,
+} as const;
+
 /** Full category rows incl. server-only rubric text — MODERATOR ONLY. Reads fresh (bypasses the
  *  public 5-min cache) so the playground always shows current state. */
 export async function getChallengeCategoriesFull(): Promise<ChallengeCategoryRow[]> {
   const { dbRead } = await import('~/server/db/client');
   return dbRead.challengeCategory.findMany({
     orderBy: [{ sortOrder: 'asc' }, { label: 'asc' }],
+    select: CATEGORY_ROW_SELECT,
   });
 }
 
@@ -155,10 +167,25 @@ export async function upsertChallengeCategory(
   assertCategoryActiveAllowed(input.key, input.active);
   const { dbWrite } = await import('~/server/db/client');
   const { key, ...data } = input;
+
+  // getChallengeCategoryRows is DB-replaces-all once ANY row exists (`rows.length ? rows : presets`).
+  // The committed structural migration seeds all 26 presets, so a populated table already contains
+  // the mandatory `theme`. But creating the FIRST row into an (unexpectedly) empty table would drop
+  // the preset baseline and make resolveJudgingCategories throw on `theme` for every new challenge —
+  // so materialize the presets first, keeping the DB the single source without orphaning `theme`.
+  const existing = await dbWrite.challengeCategory.count();
+  if (existing === 0) {
+    await dbWrite.challengeCategory.createMany({
+      data: presetFallbackRows(),
+      skipDuplicates: true,
+    });
+  }
+
   const row = await dbWrite.challengeCategory.upsert({
     where: { key },
     create: { key, ...data },
     update: data,
+    select: CATEGORY_ROW_SELECT,
   });
   clearChallengeCategoryCache();
   return row;

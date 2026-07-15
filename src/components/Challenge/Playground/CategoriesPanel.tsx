@@ -48,8 +48,21 @@ export function CategoriesPanel() {
   const [draft, setDraft] = useState<Draft | null>(null);
 
   const upsert = trpc.challenge.upsertChallengeCategory.useMutation({
-    onSuccess: async () => {
+    onSuccess: async (row) => {
       await queryUtils.challenge.getChallengeCategories.invalidate();
+      // Reload the saved row as a non-new draft so the key locks and a second Save updates
+      // (not re-creates) the same row.
+      setDraft({
+        key: row.key,
+        label: row.label,
+        group: row.group,
+        criteria: row.criteria,
+        rubric: row.rubric ?? '',
+        rubricNsfw: row.rubricNsfw ?? '',
+        sortOrder: row.sortOrder,
+        active: row.active,
+        isNew: false,
+      });
       showSuccessNotification({ message: 'Category saved' });
     },
     onError: (error) => showErrorNotification({ error: new Error(error.message) }),
