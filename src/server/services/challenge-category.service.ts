@@ -1,5 +1,8 @@
 import { TRPCError } from '@trpc/server';
-import type { ChallengeJudgingCategory } from '~/server/schema/challenge.schema';
+import type {
+  ChallengeJudgingCategory,
+  UpsertChallengeCategoryInput,
+} from '~/server/schema/challenge.schema';
 import {
   CHALLENGE_CATEGORY_KEYS,
   CHALLENGE_PRESET_CATEGORIES,
@@ -133,4 +136,30 @@ export async function resolveRubricBlock(
   const rows = await getChallengeCategoryRows();
   const byKey = new Map(rows.map((r) => [r.key, r]));
   return categories.map((c) => pickCategoryRubric(byKey.get(c.key), c, opts)).join('\n\n');
+}
+
+/** Full category rows incl. server-only rubric text — MODERATOR ONLY. Reads fresh (bypasses the
+ *  public 5-min cache) so the playground always shows current state. */
+export async function getChallengeCategoriesFull(): Promise<ChallengeCategoryRow[]> {
+  const { dbRead } = await import('~/server/db/client');
+  return dbRead.challengeCategory.findMany({
+    orderBy: [{ sortOrder: 'asc' }, { label: 'asc' }],
+  });
+}
+
+/** Create or update a category library row, then bust the in-process category cache. In-process
+ *  only — other instances refresh within the 5-min TTL (acceptable for a mod config surface). */
+export async function upsertChallengeCategory(
+  input: UpsertChallengeCategoryInput
+): Promise<ChallengeCategoryRow> {
+  assertCategoryActiveAllowed(input.key, input.active);
+  const { dbWrite } = await import('~/server/db/client');
+  const { key, ...data } = input;
+  const row = await dbWrite.challengeCategory.upsert({
+    where: { key },
+    create: { key, ...data },
+    update: data,
+  });
+  clearChallengeCategoryCache();
+  return row;
 }
