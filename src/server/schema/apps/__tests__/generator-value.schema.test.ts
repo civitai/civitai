@@ -179,14 +179,20 @@ describe('collector helpers', () => {
     expect(collectGeneratorVersionIds(gen).sort((a, b) => a - b)).toEqual([100, 200, 300]);
   });
 
-  it('collectGeneratorText gathers name, description, and non-empty promptTemplates', () => {
+  it('collectGeneratorText gathers name, description, every label, non-empty promptTemplates + negativePrompts', () => {
     const gen = generatorValueSchema.parse(
       validGenerator({
         name: 'N',
         description: 'D',
-        buttons: [validButton({ promptTemplate: 'P1' }), validButton({ promptTemplate: '' })],
+        buttons: [
+          validButton({ label: 'L1', promptTemplate: 'P1', params: { negativePrompt: 'NEG1' } }),
+          validButton({ label: 'L2', promptTemplate: '', params: {} }),
+        ],
       })
     ) as GeneratorValue;
-    expect(collectGeneratorText(gen)).toEqual(['N', 'D', 'P1']);
+    // name, description, then per button: label, (promptTemplate if non-empty),
+    // (negativePrompt if present). Button 2 has an empty promptTemplate + no
+    // negativePrompt, so only its label flows through.
+    expect(collectGeneratorText(gen)).toEqual(['N', 'D', 'L1', 'P1', 'NEG1', 'L2']);
   });
 });

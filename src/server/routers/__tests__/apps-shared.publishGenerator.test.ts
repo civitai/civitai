@@ -290,6 +290,51 @@ describe('publishGenerator — content-safety belt on prompts', () => {
     expect(mockAssertResources).not.toHaveBeenCalled();
   });
 
+  it('rejects a minor-content button LABEL (BAD_REQUEST), no INSERT', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    await expect(
+      caller().publishGenerator({
+        blockToken: 't',
+        value: validGenerator({
+          buttons: [
+            {
+              label: '13 year old girl',
+              workflowType: 'textToImage',
+              checkpointVersionId: 100,
+              params: { quantity: 1 },
+              promptTemplate: '',
+            },
+          ],
+        }),
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockAssertResources).not.toHaveBeenCalled();
+    expect(mockPool.connect).not.toHaveBeenCalled();
+  });
+
+  it('rejects a blocked-link negativePrompt (BAD_REQUEST), no INSERT', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockThrowOnBlockedLinkDomain.mockRejectedValueOnce(new Error('invalid urls'));
+    await expect(
+      caller().publishGenerator({
+        blockToken: 't',
+        value: validGenerator({
+          buttons: [
+            {
+              label: 'ok',
+              workflowType: 'textToImage',
+              checkpointVersionId: 100,
+              params: { quantity: 1, negativePrompt: 'avoid http://bad.example' },
+              promptTemplate: 'nice',
+            },
+          ],
+        }),
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockAssertResources).not.toHaveBeenCalled();
+    expect(mockPool.connect).not.toHaveBeenCalled();
+  });
+
   it('rejects an audit-flagged name (BAD_REQUEST) + emits the content-block warning', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     mockAuditPromptServer.mockRejectedValueOnce(new Error('Your prompt was flagged'));

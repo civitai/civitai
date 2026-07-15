@@ -96,7 +96,11 @@ export async function assertGeneratorResourceStackGeneratable(opts: {
  * community-facing forced-SFW, mirroring the text belt's `isGreen`).
  *
  * Fail-closed: missing → NOT_FOUND; not yet `Scanned` (or terminally
- * Blocked/NotFound) → BAD_REQUEST; NSFW level → BAD_REQUEST.
+ * Blocked/NotFound) → BAD_REQUEST; moderator-flagged (`tosViolation`) or pending
+ * human review (`needsReview` non-null) → BAD_REQUEST; NSFW level → BAD_REQUEST.
+ * The tos/review checks matter because a `Scanned` + SFW-level image can still be
+ * moderator-flagged or awaiting manual review — the automated scan level alone is
+ * not a clean bill of health.
  */
 export async function validateGeneratorBackgroundImage(imageRef: string): Promise<void> {
   const imageId = Number(imageRef);
@@ -105,7 +109,7 @@ export async function validateGeneratorBackgroundImage(imageRef: string): Promis
   }
   const image = await dbRead.image.findUnique({
     where: { id: imageId },
-    select: { id: true, ingestion: true, nsfwLevel: true },
+    select: { id: true, ingestion: true, nsfwLevel: true, tosViolation: true, needsReview: true },
   });
   if (!image) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'background image not found' });
@@ -114,6 +118,14 @@ export async function validateGeneratorBackgroundImage(imageRef: string): Promis
     throw new TRPCError({
       code: 'BAD_REQUEST',
       message: 'background image is not available (still scanning or was rejected)',
+    });
+  }
+  // A Scanned + SFW image can still be moderator-flagged (tosViolation) or pending
+  // human review (needsReview non-null) — fail-closed on both.
+  if (image.tosViolation || image.needsReview != null) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'background image is flagged or pending review',
     });
   }
   // SFW ceiling — a published generator is community-facing forced-SFW.

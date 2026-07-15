@@ -162,9 +162,15 @@ describe('G7 — assertGeneratorResourceStackGeneratable', () => {
 });
 
 describe('backgroundImageRef — validateGeneratorBackgroundImage', () => {
-  it('accepts a Scanned, SFW image', async () => {
+  it('accepts a Scanned, SFW, unflagged image', async () => {
     // NsfwLevel.PG = 1 → SFW.
-    mockImageFindUnique.mockResolvedValue({ id: 5, ingestion: 'Scanned', nsfwLevel: 1 });
+    mockImageFindUnique.mockResolvedValue({
+      id: 5,
+      ingestion: 'Scanned',
+      nsfwLevel: 1,
+      tosViolation: false,
+      needsReview: null,
+    });
     await expect(validateGeneratorBackgroundImage('5')).resolves.toBeUndefined();
   });
 
@@ -181,7 +187,39 @@ describe('backgroundImageRef — validateGeneratorBackgroundImage', () => {
   });
 
   it('rejects a still-scanning image (BAD_REQUEST)', async () => {
-    mockImageFindUnique.mockResolvedValue({ id: 5, ingestion: 'Pending', nsfwLevel: 1 });
+    mockImageFindUnique.mockResolvedValue({
+      id: 5,
+      ingestion: 'Pending',
+      nsfwLevel: 1,
+      tosViolation: false,
+      needsReview: null,
+    });
+    await expect(validateGeneratorBackgroundImage('5')).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+  });
+
+  it('rejects a tosViolation image even if Scanned + SFW (BAD_REQUEST)', async () => {
+    mockImageFindUnique.mockResolvedValue({
+      id: 5,
+      ingestion: 'Scanned',
+      nsfwLevel: 1,
+      tosViolation: true,
+      needsReview: null,
+    });
+    await expect(validateGeneratorBackgroundImage('5')).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+  });
+
+  it('rejects a needsReview image even if Scanned + SFW (BAD_REQUEST)', async () => {
+    mockImageFindUnique.mockResolvedValue({
+      id: 5,
+      ingestion: 'Scanned',
+      nsfwLevel: 1,
+      tosViolation: false,
+      needsReview: 'poi',
+    });
     await expect(validateGeneratorBackgroundImage('5')).rejects.toMatchObject({
       code: 'BAD_REQUEST',
     });
@@ -189,7 +227,13 @@ describe('backgroundImageRef — validateGeneratorBackgroundImage', () => {
 
   it('rejects an NSFW image above the SFW ceiling (BAD_REQUEST)', async () => {
     // NsfwLevel.XXX = 16 → not SFW.
-    mockImageFindUnique.mockResolvedValue({ id: 5, ingestion: 'Scanned', nsfwLevel: 16 });
+    mockImageFindUnique.mockResolvedValue({
+      id: 5,
+      ingestion: 'Scanned',
+      nsfwLevel: 16,
+      tosViolation: false,
+      needsReview: null,
+    });
     await expect(validateGeneratorBackgroundImage('5')).rejects.toMatchObject({
       code: 'BAD_REQUEST',
     });

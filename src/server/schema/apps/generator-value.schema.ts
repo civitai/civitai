@@ -138,12 +138,22 @@ export function collectGeneratorVersionIds(generator: GeneratorValue): number[] 
   return [...ids];
 }
 
-/** Collect every moderatable free-text field for the content-safety belt. */
+/**
+ * Collect every moderatable, CROSS-USER-VISIBLE free-text field for the
+ * content-safety belt. Publish-time is the SOLE moderation gate for the
+ * immutable stored row, so this must cover EVERY client-supplied string another
+ * user can see: the generator `name`/`description`, and per button the `label`
+ * (the button caption other users see), the `promptTemplate`, and the stored
+ * `params.negativePrompt`. A POI/slur/phishing string fits in a 60-char label,
+ * so the label is audited exactly like a prompt.
+ */
 export function collectGeneratorText(generator: GeneratorValue): string[] {
   const out: string[] = [generator.name];
   if (generator.description) out.push(generator.description);
   for (const button of generator.buttons) {
+    out.push(button.label);
     if (button.promptTemplate) out.push(button.promptTemplate);
+    if (button.params.negativePrompt) out.push(button.params.negativePrompt);
   }
   return out;
 }
