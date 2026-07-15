@@ -201,6 +201,20 @@ export const trpcProcedureDuration = registerHistogram({
   buckets: [0.05, 0.25, 1, 2, 5, 10, 30],
 });
 
+// Web-client READ-capability saturation for the superjson → devalue serializer
+// migration. Incremented per web tRPC procedure, bucketed by whether the request's
+// reported `x-client-version` belongs to a build that can decode the union
+// serializer (Phase-1-capable). LOW cardinality by construction: a single boolean
+// label (`phase1_capable` = 'true' | 'false') — NOT the raw version string. The
+// Phase-2 write-flip go/no-go reads the saturation ratio:
+//   rate(...{phase1_capable="true"}) / rate(...) — the fraction of live web traffic
+//   that can safely decode a devalue response.
+export const trpcClientReadCapabilityRequests = registerCounterWithLabels({
+  name: 'trpc_client_read_capability_requests_total',
+  help: 'Web tRPC procedures bucketed by client union-decode (Phase-1) capability',
+  labelNames: ['phase1_capable'] as const,
+});
+
 // Image feed metrics
 export const imagesFeedWithoutIndexCounter = registerCounter({
   name: 'images_feed_without_index_total',
