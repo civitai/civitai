@@ -611,6 +611,22 @@ describe('blocks.estimateWorkflow', () => {
       caller.estimateWorkflow({ blockToken: 'tok', body: validBody() })
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
   });
+
+  it('rejects a source image (img2img) on a MODEL-bound token — img2img is PAGE-only in 2a', async () => {
+    // The default validClaims() is a model-bound token (ctx.modelId=7). img2img
+    // via sourceImage is a page-only feature this phase, so a model-bound token
+    // carrying one must be rejected fail-closed BEFORE any spend.
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.estimateWorkflow({
+        blockToken: 'tok',
+        body: validBody({
+          sourceImage: { url: 'https://image.civitai.com/abc/def.jpeg', width: 768, height: 1024 },
+        }),
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
 });
 
 describe('blocks.submitWorkflow', () => {
@@ -1085,6 +1101,19 @@ describe('blocks.submitWorkflow', () => {
     const caller = blocksRouter.createCaller(fakeCtx() as never);
     await expect(
       caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('rejects a source image (img2img) on a MODEL-bound token — img2img is PAGE-only in 2a', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.submitWorkflow({
+        blockToken: 'tok',
+        body: validBody({
+          sourceImage: { url: 'https://image.civitai.com/abc/def.jpeg', width: 768, height: 1024 },
+        }),
+      })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
