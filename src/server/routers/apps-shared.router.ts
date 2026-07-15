@@ -475,16 +475,29 @@ export const appsSharedRouter = router({
       }
 
       // `safe.title`/`safe.body` are the MODERATED text; `input.value.data` is the
-      // opaque app-owned payload stored VERBATIM and UNMODERATED (see the
-      // appendValueInput note — belt runs on title/body only). Its bytes are folded
-      // into the serialized value below, so the whole-value cap + the app quota
-      // bound it exactly like the text.
+      // opaque app-owned payload stored UNMODERATED (see the appendValueInput note —
+      // belt runs on title/body only). `data` holds PLAIN-JSON app state: it is
+      // round-tripped as JSON, so superjson-special types are NOT preserved
+      // (Date → ISO string, Map/Set → `{}`, BigInt → throws, nested `undefined`
+      // dropped) — apps should store plain JSON. Its bytes are folded into the
+      // serialized value below, so the whole-value cap + the app quota bound it
+      // exactly like the text.
       const storedValue = {
         title: safe.title,
         ...(safe.body != null ? { body: safe.body } : {}),
         ...(input.value.data !== undefined ? { data: input.value.data } : {}),
       };
-      const serialized = JSON.stringify(storedValue);
+      // `z.unknown()` does NO validation and superjson has already reconstructed
+      // real JS values (BigInt / circular refs / Map / Set) before we see `data`, so
+      // JSON.stringify can THROW ("Do not know how to serialize a BigInt", circular
+      // structure). Guard it so a non-serializable `data` is a clean 4xx, not an
+      // unhandled 500 — this runs BEFORE any DB write, so no row is ever written.
+      let serialized: string;
+      try {
+        serialized = JSON.stringify(storedValue);
+      } catch {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'value is not serializable' });
+      }
       const byteSize = Buffer.byteLength(serialized, 'utf8');
       if (byteSize > SHARED_VALUE_BYTE_CAP) {
         throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'value exceeds size cap' });

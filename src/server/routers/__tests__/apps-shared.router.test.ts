@@ -847,7 +847,7 @@ describe('append `data` blob (opaque, unmoderated app payload)', () => {
     );
   }
 
-  it('stores `data` VERBATIM alongside the moderated title/body', async () => {
+  it('stores plain-JSON `data` alongside the moderated title/body', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     mockAppendDataPath();
     const data = { buttons: [{ id: 1, weight: 0.8 }], nested: { a: [1, 2, 3] }, s: 'hello' };
@@ -864,7 +864,7 @@ describe('append `data` blob (opaque, unmoderated app payload)', () => {
     };
     expect(stored.title).toBe('my config');
     expect(stored.body).toBe('notes');
-    // data round-trips byte-for-byte (structure preserved).
+    // plain-JSON `data` round-trips as JSON (structure preserved).
     expect(stored.data).toEqual(data);
   });
 
@@ -958,6 +958,31 @@ describe('append `data` blob (opaque, unmoderated app payload)', () => {
         value: { title: 'ok', data: { pad: 'y'.repeat(500) } },
       })
     ).rejects.toMatchObject({ code: 'PAYLOAD_TOO_LARGE', message: 'app quota exceeded' });
+    expect(mockClient.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-JSON-serializable `data` (BigInt / circular) with BAD_REQUEST, no row written', async () => {
+    // superjson reconstructs real JS values (BigInt / circular / Map / Set) before
+    // the handler sees `data`, and z.unknown() does no validation — so JSON.stringify
+    // can THROW. The guard must turn that into a clean 4xx, never an unhandled 500,
+    // and never write a row.
+
+    // BigInt → "Do not know how to serialize a BigInt".
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockAppendDataPath();
+    await expect(
+      caller().append({ blockToken: 't', value: { title: 'ok', data: 1n } as never })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'value is not serializable' });
+    expect(mockClient.query).not.toHaveBeenCalled();
+
+    // Circular structure → "Converting circular structure to JSON".
+    const circular: Record<string, unknown> = { a: 1 };
+    circular.self = circular;
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockAppendDataPath();
+    await expect(
+      caller().append({ blockToken: 't', value: { title: 'ok', data: circular } as never })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'value is not serializable' });
     expect(mockClient.query).not.toHaveBeenCalled();
   });
 
