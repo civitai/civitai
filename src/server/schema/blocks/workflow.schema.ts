@@ -30,8 +30,12 @@ const blockAccountTypeSchema = z.enum(buzzSpendTypes as [BuzzSpendType, ...BuzzS
 
 const PROMPT_MAX = 1500;
 const NEG_PROMPT_MAX = 1500;
-const DIM_MIN = 64;
-const DIM_MAX = 2048;
+// Exported so the client-side generationSource upload modal
+// (BlockGenerationSourceUploadModal) can downscale a chosen image to fit the
+// SAME bounds the sourceImage schema enforces BEFORE upload — a single source of
+// truth, so the client resize target can never drift from the server clamp.
+export const DIM_MIN = 64;
+export const DIM_MAX = 2048;
 const STEPS_MAX = 50;
 const QUANTITY_MAX = 4;
 const CLIP_SKIP_MAX = 12;

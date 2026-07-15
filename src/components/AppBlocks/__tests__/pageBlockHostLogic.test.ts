@@ -179,15 +179,39 @@ describe('resolveCheckpointPickerRequest (OPEN_CHECKPOINT_PICKER — dev:live↔
   });
 });
 
-describe('resolveImageUploadRequest (OPEN_IMAGE_UPLOAD — requestId drop rule)', () => {
-  it('accepts a valid string requestId', () => {
-    expect(resolveImageUploadRequest({ requestId: 'u1' })).toEqual({ requestId: 'u1' });
+describe('resolveImageUploadRequest (OPEN_IMAGE_UPLOAD — requestId drop rule + purpose)', () => {
+  it('accepts a valid string requestId and defaults purpose to display', () => {
+    expect(resolveImageUploadRequest({ requestId: 'u1' })).toEqual({
+      requestId: 'u1',
+      purpose: 'display',
+    });
   });
 
-  it('ignores extra fields (only requestId is threaded — the rest is server-gated)', () => {
+  it('ignores extra fields (only requestId + purpose are threaded — the rest is server-gated)', () => {
     expect(resolveImageUploadRequest({ requestId: 'u2', junk: 'x', imageId: 5 })).toEqual({
       requestId: 'u2',
+      purpose: 'display',
     });
+  });
+
+  it('threads purpose:generationSource when the block requests the unscanned source mode', () => {
+    expect(
+      resolveImageUploadRequest({ requestId: 'u_src', purpose: 'generationSource' })
+    ).toEqual({ requestId: 'u_src', purpose: 'generationSource' });
+  });
+
+  it('normalizes an absent purpose to display (SDK back-compat — current SDK sends none)', () => {
+    expect(resolveImageUploadRequest({ requestId: 'u_def' }).purpose).toBe('display');
+  });
+
+  it('normalizes an unknown / non-string purpose to the safe moderated default (display)', () => {
+    expect(resolveImageUploadRequest({ requestId: 'u_x', purpose: 'evil' }).purpose).toBe('display');
+    expect(resolveImageUploadRequest({ requestId: 'u_y', purpose: 42 }).purpose).toBe('display');
+    expect(resolveImageUploadRequest({ requestId: 'u_z', purpose: null }).purpose).toBe('display');
+    // Case-sensitive: only the exact literal opts into the unscanned path.
+    expect(resolveImageUploadRequest({ requestId: 'u_c', purpose: 'GenerationSource' }).purpose).toBe(
+      'display'
+    );
   });
 
   it('DROPS a request with a missing / empty / non-string requestId', () => {
