@@ -218,14 +218,17 @@ describe('GET /api/v1/blocks/buzz/transactions', () => {
     expect(order).toEqual(['rate', 'service']);
   });
 
-  it('F1: allowlists details — DROPS stripePaymentIntentId, keeps attribution fields', async () => {
-    // A Purchase row: buzz.service stores the Stripe payment-intent ref inside
-    // details.passthrough(). It must never reach the block iframe.
+  it('F1: Purchase row DROPS details.stripePaymentIntentId AND nulls the top-level externalTransactionId, keeps attribution', async () => {
+    // A Purchase row (every external buy-in flow — Stripe/Paddle/PayPal/crypto —
+    // lands as TransactionType.Purchase). buzz.service stores the Stripe
+    // payment-intent ref BOTH inside details.passthrough() AND as the top-level
+    // externalTransactionId (= paymentIntent.id). Neither may reach the iframe.
     mockGetTransactions.mockResolvedValueOnce({
       cursor: null,
       transactions: [
         {
           ...sampleRow,
+          type: TransactionType.Purchase,
           details: {
             user: 'buyer',
             entityId: 5,
@@ -242,7 +245,8 @@ describe('GET /api/v1/blocks/buzz/transactions', () => {
     const { req, res } = createMocks();
     await handler(req as never, res as never);
     const body = res._json() as { transactions: Record<string, unknown>[] };
-    const details = body.transactions[0].details as Record<string, unknown>;
+    const row = body.transactions[0];
+    const details = row.details as Record<string, unknown>;
     expect(details).not.toHaveProperty('stripePaymentIntentId');
     expect(details).not.toHaveProperty('someOtherPassthrough');
     // Attribution fields the dashboard renders are preserved.
@@ -253,6 +257,25 @@ describe('GET /api/v1/blocks/buzz/transactions', () => {
       url: '/models/5',
       toAccountType: 'yellow',
     });
+    // The processor reference is stripped from the top-level field too.
+    expect(row.externalTransactionId).toBeNull();
+  });
+
+  it('F1: non-Purchase (Reward/challenge) row KEEPS externalTransactionId — the prize classifier the dashboard needs', async () => {
+    mockGetTransactions.mockResolvedValueOnce({
+      cursor: null,
+      transactions: [
+        {
+          ...sampleRow,
+          type: TransactionType.Reward,
+          externalTransactionId: 'challenge-winner-prize-2026-07',
+        },
+      ],
+    });
+    const { req, res } = createMocks();
+    await handler(req as never, res as never);
+    const body = res._json() as { transactions: Record<string, unknown>[] };
+    expect(body.transactions[0].externalTransactionId).toBe('challenge-winner-prize-2026-07');
   });
 
   it('200: passes attribution fields through and projects counterparties to {id, username}', async () => {
