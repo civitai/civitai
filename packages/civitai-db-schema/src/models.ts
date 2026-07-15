@@ -948,6 +948,18 @@ export interface ModelVersion {
   coveredCheckpoints?: CoveredCheckpoint[];
   wildcardSet?: WildcardSet | null;
   baseModelLicensingFees?: BaseModelLicensingFee[];
+  licensingRoot?: LicensingRoot | null;
+}
+
+export interface LicensingRoot {
+  id: number;
+  baseModel: string;
+  modelType: ModelType;
+  modelVersionId: number;
+  modelVersion?: ModelVersion;
+  isDefault: boolean;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface BaseModelLicensingFee {

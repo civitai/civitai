@@ -1080,9 +1080,27 @@ model ModelVersion {
   coveredCheckpoints      CoveredCheckpoint[]
   wildcardSet             WildcardSet?
   baseModelLicensingFees  BaseModelLicensingFee[]
+  licensingRoot           LicensingRoot?
 
   @@index([modelId], type: Hash)
   @@index([licensingSourceVersionId])
+}
+
+// A version registered as a chargeable licensing root for its (baseModel,
+// modelType). Membership = a row exists; `isDefault` marks the one root a
+// derivative pre-selects (enforced one-per-scope by a partial unique index).
+// Replaces the ModelVersion.LicensingRoot flag + BaseModelLicensingFee pointer.
+model LicensingRoot {
+  id             Int          @id @default(autoincrement())
+  baseModel      String
+  modelType      ModelType
+  modelVersionId Int          @unique
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  isDefault      Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([baseModel, modelType])
 }
 
 model BaseModelLicensingFee {

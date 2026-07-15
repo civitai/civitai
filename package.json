@@ -8,7 +8,7 @@
     "start": "next start",
     "start-debug": "NODE_OPTIONS='--inspect' next start",
     "build:workers": "node scripts/build-workers.mjs",
-    "clean": "rm -rf .next",
+    "clean": "node -e \"fs.rmSync('.next',{recursive:true,force:true})\"",
     "predev": "pnpm build:workers",
     "dev": "next dev",
     "dev:auth": "pnpm --filter @civitai/auth-app dev",

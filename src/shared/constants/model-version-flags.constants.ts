@@ -12,6 +12,9 @@ export const ModelVersionFlag = {
 
   /** This version defines a licensing-fee lineage that other versions can inherit via `licensingSourceVersionId` (e.g. an ecosystem's Base / Turbo checkpoint). Selectable as a "licensing base" in the version form. */
   LicensingRoot: 1 << 1, // 2
+
+  /** This version is not a derivative of a licensing root — so the version form doesn't require or auto-select a "fine-tuned from" parent for it (e.g. an ecosystem's API-only official checkpoints). It can still set its own licensing fee. Moderator-controlled. */
+  NotDerivative: 1 << 2, // 4
 } as const;
 
 export type ModelVersionFlagValue = (typeof ModelVersionFlag)[keyof typeof ModelVersionFlag];
@@ -19,4 +22,5 @@ export type ModelVersionFlagValue = (typeof ModelVersionFlag)[keyof typeof Model
 export const modelVersionFlagLabels: Record<number, string> = {
   [ModelVersionFlag.DisablePayout]: 'Disable creator payouts',
   [ModelVersionFlag.LicensingRoot]: 'Licensing lineage root',
+  [ModelVersionFlag.NotDerivative]: 'Not a derivative (no licensing parent)',
 };

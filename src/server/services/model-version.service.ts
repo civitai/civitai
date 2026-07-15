@@ -271,13 +271,11 @@ export const getUserEarlyAccessModelVersions = async ({ userId }: { userId: numb
   });
 };
 
-// Licensing lineage roots selectable for a given base model — the versions
-// flagged LicensingRoot that define a fee others can inherit (e.g. an
-// ecosystem's Base / Turbo checkpoints). Feeds the version-form picker.
-// `standard*` describes the (baseModel, modelType) BaseModelLicensingFee rule's
-// root version — the "Default" option's live fee/name. The id lets the client
-// drop that version from `roots` so it can't appear as both Default and a pick.
-type StandardRule = { versionId: number; licensingFee: number | null; versionName: string | null };
+// Licensing lineage roots selectable for a given base model — versions
+// registered in `LicensingRoot` whose fee others inherit (e.g. an ecosystem's
+// Base / Turbo checkpoints). Scoped to the caller's model type so a LoRA isn't
+// offered a checkpoint's fee. `defaultVersionId` is the root a derivative
+// pre-selects. Feeds the version-form picker.
 export const getLicensingRoots = async ({
   baseModel,
   modelType,
@@ -285,57 +283,39 @@ export const getLicensingRoots = async ({
   baseModel: string;
   modelType?: ModelType;
 }) => {
-  const [roots, standardRows] = await Promise.all([
-    dbRead.$queryRaw<
-      Array<{
-        id: number;
-        modelId: number;
-        versionName: string;
-        licensingFee: number | null;
-        licensingFeeType: LicensingFeeType | null;
-        licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
-      }>
-    >`
-      SELECT
-        mv.id,
-        mv."modelId",
-        mv.name AS "versionName",
-        mv."licensingFee"::float8 AS "licensingFee",
-        mv."licensingFeeType",
-        mv."licensingFeeSettlementCurrency"
-      FROM "ModelVersion" mv
-      JOIN "Model" m ON m.id = mv."modelId"
-      WHERE mv."baseModel" = ${baseModel}
-        AND (mv.flags & ${ModelVersionFlag.LicensingRoot}) = ${ModelVersionFlag.LicensingRoot}
-        AND mv.status = ${ModelStatus.Published}::"ModelStatus"
-        AND mv."licensingFee" IS NOT NULL
-        AND mv."licensingFee" > 0
-        AND m.status = ${ModelStatus.Published}::"ModelStatus"
-        AND m.availability = ${Availability.Public}::"Availability"
-        AND m."deletedAt" IS NULL
-      ORDER BY m.name, mv.index
-    `,
-    modelType
-      ? dbRead.$queryRaw<StandardRule[]>`
-          SELECT
-            rmv.id AS "versionId",
-            rmv."licensingFee"::float8 AS "licensingFee",
-            rmv.name AS "versionName"
-          FROM "BaseModelLicensingFee" bmlf
-          JOIN "ModelVersion" rmv ON rmv.id = bmlf."modelVersionId"
-          WHERE bmlf."baseModel" = ${baseModel}
-            AND bmlf."modelType" = ${modelType}::"ModelType"
-        `
-      : Promise.resolve([] as StandardRule[]),
-  ]);
+  const roots = await dbRead.$queryRaw<
+    Array<{
+      id: number;
+      modelId: number;
+      versionName: string;
+      licensingFee: number | null;
+      licensingFeeType: LicensingFeeType | null;
+      licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
+      isDefault: boolean;
+    }>
+  >`
+    SELECT
+      mv.id,
+      mv."modelId",
+      mv.name AS "versionName",
+      mv."licensingFee"::float8 AS "licensingFee",
+      mv."licensingFeeType",
+      mv."licensingFeeSettlementCurrency",
+      lr."isDefault"
+    FROM "LicensingRoot" lr
+    JOIN "ModelVersion" mv ON mv.id = lr."modelVersionId"
+    JOIN "Model" m ON m.id = mv."modelId"
+    WHERE lr."baseModel" = ${baseModel}
+      AND mv.status = ${ModelStatus.Published}::"ModelStatus"
+      AND m.status = ${ModelStatus.Published}::"ModelStatus"
+      AND m.availability = ${Availability.Public}::"Availability"
+      AND m."deletedAt" IS NULL
+      ${modelType ? Prisma.sql`AND lr."modelType" = ${modelType}::"ModelType"` : Prisma.empty}
+    ORDER BY lr."isDefault" DESC, m.name, mv.index
+  `;
 
-  const rule = standardRows[0];
-  return {
-    roots,
-    standardVersionId: rule?.versionId ?? null,
-    standardFee: rule?.licensingFee ?? null,
-    standardVersionName: rule?.versionName ?? null,
-  };
+  const defaultVersionId = roots.find((r) => r.isDefault)?.id ?? null;
+  return { roots, defaultVersionId };
 };
 
 // Field-level early-access requirements (status-independent): a timeframe needs
@@ -415,15 +395,15 @@ export const upsertModelVersion = async ({
 }) => {
   if (data.description) await throwOnBlockedLinkDomain(data.description);
 
+  const existingFlags = id
+    ? (await dbRead.modelVersion.findUnique({ where: { id }, select: { flags: true } }))?.flags ?? 0
+    : 0;
+
   // Versions with a license fee earn through that channel, so they opt out of
   // tip + creator-comp payouts. We only ever ADD the flag — clearing the fee
   // doesn't strip it, since a creator may have set the bit independently.
   let flagsOverride: number | undefined;
   if (data.licensingFee != null && data.licensingFee > 0) {
-    const existingFlags = id
-      ? (await dbRead.modelVersion.findUnique({ where: { id }, select: { flags: true } }))?.flags ??
-        0
-      : 0;
     flagsOverride = Flags.addFlag(existingFlags, ModelVersionFlag.DisablePayout);
   }
 

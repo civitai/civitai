@@ -2284,6 +2284,15 @@ export type LicenseToModel = {
   A: number;
   B: number;
 };
+export type LicensingRoot = {
+  id: Generated<number>;
+  baseModel: string;
+  modelType: ModelType;
+  modelVersionId: number;
+  isDefault: Generated<boolean>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
 export type Link = {
   id: Generated<number>;
   url: string;
@@ -3949,6 +3958,7 @@ export type DB = {
   Leaderboard: Leaderboard;
   LeaderboardResult: LeaderboardResult;
   License: License;
+  LicensingRoot: LicensingRoot;
   Link: Link;
   ModActivity: ModActivity;
   Model: Model;
