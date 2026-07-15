@@ -14,18 +14,18 @@ import {
 } from '~/server/utils/block-catalog-maturity';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
-import { projectSafeGeneratorResource } from '~/server/schema/blocks/generator-resource-projection';
+import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
 
 /**
  * GET /api/v1/blocks/generation-resources?ids=1,2,3
  *
- * Custom Generators (Phase-2a PR-C) — block-token-gated REHYDRATE of a saved
- * generator's resources. When a builder loads a saved generator it holds only the
+ * App Blocks (Phase-2a PR-C) — block-token-gated REHYDRATE of generation resources
+ * by version id. When a block loads a saved set of resources it holds only the
  * picked modelVersionIds; this endpoint returns the SAME public "safe subset" the
- * OPEN_RESOURCE_PICKER result carries (`projectSafeGeneratorResource`) for those
+ * OPEN_RESOURCE_PICKER result carries (`projectSafeGenerationResource`) for those
  * ids, WITHOUT re-opening the picker. It never returns availability / hasAccess /
  * usageControl / early-access / minor / poi / sfwOnly / cover-image internals —
- * only the public recommended settings + trained words the builder renders.
+ * only the public recommended settings + trained words a block renders.
  *
  * Mirrors /api/v1/blocks/models EXACTLY on auth + maturity:
  *   - withBlockScope (any valid block JWT, no required scope — like models.ts,
@@ -116,7 +116,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
             browsingLevel
           )
       )
-      .map((r) => projectSafeGeneratorResource(r));
+      .map((r) => projectSafeGenerationResource(r));
 
     res.status(200).json({
       items,

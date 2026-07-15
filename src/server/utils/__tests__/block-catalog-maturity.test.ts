@@ -10,7 +10,7 @@ import {
 import { NsfwLevel } from '~/server/common/enums';
 
 /**
- * Custom Generators (Phase-2a PR-C) — resourceExceedsCatalogCeiling drives the
+ * App Blocks (Phase-2a PR-C) — resourceExceedsCatalogCeiling drives the
  * generation-resources rehydrate endpoint's maturity clamp (drop mature resources
  * from a SFW-domain block). resolveCatalogBrowsingLevel is re-exercised for the
  * clamp bits the endpoint relies on.

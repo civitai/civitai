@@ -3,21 +3,22 @@ import { TRPCError } from '@trpc/server';
 import { dbRead } from '~/server/db/client';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import {
-  classifyCosmeticImageScan,
-  type CosmeticImageScanOutcome,
-} from '~/server/services/blocks/generator-cosmetic-image.logic';
+  classifyBlockImageUploadScan,
+  type BlockImageUploadScanOutcome,
+} from '~/server/services/blocks/block-image-upload.logic';
 import type { OffsiteRatingValue } from '~/shared/constants/browsingLevel.constants';
-import type { PersistGeneratorCosmeticImageInput } from '~/server/schema/blocks/generator-cosmetic-image.schema';
+import type { PersistBlockUploadImageInput } from '~/server/schema/blocks/block-image-upload.schema';
 import type { SessionUser } from '~/types/session';
 
 /**
- * Custom Generators (Phase-2a PR-C) — server glue for the `OPEN_IMAGE_UPLOAD`
- * page-host bridge. The generator builder uploads a cosmetic background; the host
- * modal calls {@link persistGeneratorCosmeticImage} (materialise + REAL scan) then
- * polls {@link gateGeneratorCosmeticImage} until the image is scanned-clean AND
- * within the SFW ceiling, and only THEN hands the moderated id back to the block.
+ * App Blocks (Phase-2a PR-C) — server glue for the host-mediated `OPEN_IMAGE_UPLOAD`
+ * block image-upload bridge. A sandboxed block asks the host to let the user upload
+ * an image; the host modal calls {@link persistBlockUploadImage} (materialise +
+ * REAL scan) then polls {@link gateBlockUploadImage} until the image is
+ * scanned-clean, within the SFW ceiling, and unflagged, and only THEN hands the
+ * moderated id back to the block.
  *
- * The scan-gate DECISION is the pure {@link classifyCosmeticImageScan}
+ * The scan-gate DECISION is the pure {@link classifyBlockImageUploadScan}
  * (node-unit-tested); this module is the thin dbRead/createImage wiring around it.
  */
 
@@ -25,13 +26,13 @@ import type { SessionUser } from '~/types/session';
  * Materialise a CF-uploaded image into an `Image` row owned by the caller and
  * kick off the STANDARD scan pipeline — `createImage` with DEFAULT ingestion, i.e.
  * NO `skipIngestion` and NEVER `createStoredImage` (which would trust-stamp the
- * bytes as pre-scanned). A public cosmetic image must go through the real NSFW
- * scan; the gate below refuses to return an id until it has. `createImage` is
+ * bytes as pre-scanned). A publicly-displayed block image must go through the real
+ * NSFW scan; the gate below refuses to return an id until it has. `createImage` is
  * dynamically imported so the heavy `image.service` module stays out of this
  * service's static graph (mirrors `persistListingAssetImage`).
  */
-export async function persistGeneratorCosmeticImage(opts: {
-  input: PersistGeneratorCosmeticImageInput;
+export async function persistBlockUploadImage(opts: {
+  input: PersistBlockUploadImageInput;
   userId: number;
 }): Promise<{ imageId: number }> {
   const { input, userId } = opts;
@@ -52,12 +53,13 @@ export async function persistGeneratorCosmeticImage(opts: {
 
 /**
  * The gate result the host modal polls: a still-scanning image is a NON-error
- * `{ status: 'pending' }` (re-poll), a clean+SFW image is `{ status: 'ready', … }`
- * with the MINIMAL public projection the block needs to display the background.
- * A TERMINAL failure (not-found / not-owned / scan-blocked / above the SFW ceiling
- * / import-failed) THROWS so the client shows the message + stops polling.
+ * `{ status: 'pending' }` (re-poll), a clean+SFW+unflagged image is
+ * `{ status: 'ready', … }` with the MINIMAL public projection the block needs to
+ * display it. A TERMINAL failure (not-found / not-owned / scan-blocked / above the
+ * SFW ceiling / moderation-flagged / import-failed) THROWS so the client shows the
+ * message + stops polling.
  */
-export type GateGeneratorCosmeticImageResult =
+export type GateBlockUploadImageResult =
   | { status: 'pending' }
   | {
       status: 'ready';
@@ -68,11 +70,11 @@ export type GateGeneratorCosmeticImageResult =
     };
 
 /**
- * Map a terminal {@link CosmeticImageScanOutcome} to the client-facing TRPCError.
- * All are BAD_REQUEST — a bad/mature/unfetchable image is a client-correctable
- * upload problem, not an infra fault.
+ * Map a terminal {@link BlockImageUploadScanOutcome} to the client-facing TRPCError.
+ * All are BAD_REQUEST — a bad/mature/flagged/unfetchable image is a client-
+ * correctable upload problem, not an infra fault.
  */
-function throwForTerminalOutcome(outcome: CosmeticImageScanOutcome): never {
+function throwForTerminalOutcome(outcome: BlockImageUploadScanOutcome): never {
   switch (outcome.status) {
     case 'import-failed':
       throw new TRPCError({
@@ -88,7 +90,7 @@ function throwForTerminalOutcome(outcome: CosmeticImageScanOutcome): never {
       throw new TRPCError({
         code: 'BAD_REQUEST',
         message:
-          'that image is above the safe-for-work limit for a public background — choose a SFW image',
+          'that image is above the safe-for-work limit for a public image — choose a SFW image',
       });
     case 'blocked-flagged':
       throw new TRPCError({
@@ -102,16 +104,17 @@ function throwForTerminalOutcome(outcome: CosmeticImageScanOutcome): never {
 }
 
 /**
- * Gate a persisted cosmetic image: assert the caller owns it (or is a mod), then
- * run the pure {@link classifyCosmeticImageScan} over its live scan state. Returns
- * `{ status: 'pending' }` while scanning, `{ status: 'ready', … }` once Scanned +
- * within the SFW ceiling. THROWS NOT_FOUND (missing) / FORBIDDEN (not owned) /
- * BAD_REQUEST (scan-blocked / above-SFW / import-failed).
+ * Gate a persisted block-uploaded image: assert the caller owns it (or is a mod),
+ * then run the pure {@link classifyBlockImageUploadScan} over its live scan state.
+ * Returns `{ status: 'pending' }` while scanning, `{ status: 'ready', … }` once
+ * Scanned + within the SFW ceiling + unflagged. THROWS NOT_FOUND (missing) /
+ * FORBIDDEN (not owned) / BAD_REQUEST (scan-blocked / above-SFW / flagged /
+ * import-failed).
  */
-export async function gateGeneratorCosmeticImage(opts: {
+export async function gateBlockUploadImage(opts: {
   imageId: number;
   user: SessionUser;
-}): Promise<GateGeneratorCosmeticImageResult> {
+}): Promise<GateBlockUploadImageResult> {
   const { imageId, user } = opts;
   const image = await dbRead.image.findUnique({
     where: { id: imageId },
@@ -122,8 +125,7 @@ export async function gateGeneratorCosmeticImage(opts: {
       ingestion: true,
       nsfwLevel: true,
       // Moderation flags a `Scanned` ingestion does NOT clear — a PUBLIC, un-mod-
-      // reviewed cosmetic background must fail closed on any of them (see the pure
-      // classifier). Mirrors PR-B's validateGeneratorBackgroundImage tightening.
+      // reviewed block image must fail closed on any of them (see the pure classifier).
       needsReview: true,
       poi: true,
       minor: true,
@@ -135,7 +137,7 @@ export async function gateGeneratorCosmeticImage(opts: {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not own this image' });
   }
 
-  const outcome = classifyCosmeticImageScan({
+  const outcome = classifyBlockImageUploadScan({
     ingestion: image.ingestion,
     nsfwLevel: image.nsfwLevel,
     needsReview: image.needsReview,
@@ -151,8 +153,8 @@ export async function gateGeneratorCosmeticImage(opts: {
       imageId: image.id,
       nsfwLevel: image.nsfwLevel,
       contentRating: outcome.contentRating,
-      // A displayable edge URL for the (public, SFW) cosmetic background. Minimal
-      // projection — no ownership / scan-internal fields reach the block.
+      // A displayable edge URL for the (public, SFW) image. Minimal projection —
+      // no ownership / scan-internal fields reach the block.
       url: getEdgeUrl(image.url, { width: 1200 }),
     };
   }

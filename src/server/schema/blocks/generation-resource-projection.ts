@@ -1,17 +1,17 @@
 /**
- * Custom Generators (Phase-2a PR-C) — the SINGLE canonical "safe subset" a picked
- * or rehydrated generation resource is projected to before it crosses the trust
+ * App Blocks (Phase-2a PR-C) — the SINGLE canonical "safe subset" a picked or
+ * rehydrated generation resource is projected to before it crosses the trust
  * boundary into a block iframe. Used by BOTH:
  *   1. PageBlockHost's `RESOURCE_PICKER_RESULT` (the widened OPEN_RESOURCE_PICKER
  *      projection), and
- *   2. `GET /api/v1/blocks/generation-resources` (rehydrate a saved generator's
- *      resources on load).
+ *   2. `GET /api/v1/blocks/generation-resources` (rehydrate a saved set of
+ *      generation resources on load, by version id).
  *
  * Keeping it in ONE place guarantees the picker result and the rehydrate endpoint
  * can NEVER drift on which fields are public — the security-relevant invariant.
  *
  * PUBLIC fields ONLY — the user's own recommended-settings + public trained words,
- * everything the builder needs to render a per-LoRA weight slider (strength +
+ * everything a block needs to render a per-resource weight slider (strength +
  * clamp range), show trigger words, and label the resource. NEVER project
  * availability / hasAccess / usageControl / earlyAccess / minor / poi / sfwOnly /
  * cover-image / substitute internals.
@@ -21,7 +21,7 @@
  */
 
 /** The public projection handed to a block for one generation resource. */
-export type SafeGeneratorResource = {
+export type SafeGenerationResource = {
   /** GenerationResource.id — the modelVersionId at the wire. */
   versionId: number;
   modelId: number;
@@ -29,7 +29,7 @@ export type SafeGeneratorResource = {
   versionName: string;
   baseModel: string;
   modelType: string;
-  /** Recommended default LoRA weight (public). */
+  /** Recommended default resource weight (public). */
   strength: number;
   /** Recommended min/max weight clamp (public). */
   minStrength: number;
@@ -47,7 +47,7 @@ export type SafeGeneratorResource = {
  * `model.{id,name,type}`. Typed structurally (not against the full
  * `GenerationResource`) so this module needs no server-type import.
  */
-export type ProjectableGeneratorResource = {
+export type ProjectableGenerationResource = {
   id: number;
   name: string;
   baseModel: string;
@@ -60,13 +60,15 @@ export type ProjectableGeneratorResource = {
 };
 
 /**
- * Project a resource to the public {@link SafeGeneratorResource} subset. Applies
+ * Project a resource to the public {@link SafeGenerationResource} subset. Applies
  * the SAME recommended-setting defaults `getResourceData` uses (`strength ?? 1`,
  * `minStrength ?? -1`, `maxStrength ?? 2`, `trainedWords ?? []`) so a picked
  * resource and a rehydrated one look identical to the block. `clipSkip` has no
  * server default (a resource legitimately has none) → `null`.
  */
-export function projectSafeGeneratorResource(r: ProjectableGeneratorResource): SafeGeneratorResource {
+export function projectSafeGenerationResource(
+  r: ProjectableGenerationResource
+): SafeGenerationResource {
   return {
     versionId: r.id,
     modelId: r.model.id,

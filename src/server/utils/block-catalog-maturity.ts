@@ -90,7 +90,7 @@ export function resolveCatalogBrowsingLevel(
 /**
  * Whether a generation resource EXCEEDS the clamped catalog `browsingLevel` — used
  * by the block `generation-resources` rehydrate endpoint to drop mature resources
- * from a SFW-domain block's response (so a saved-generator rehydrate can't surface
+ * from a SFW-domain block's response (so a saved-resource rehydrate can't surface
  * a mature resource's public trained words / recommended settings to a SFW block).
  *
  * The resource's maturity signal is the max of its cover-image `nsfwLevel` and the

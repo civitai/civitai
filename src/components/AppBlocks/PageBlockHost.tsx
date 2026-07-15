@@ -15,8 +15,8 @@ import {
   resolveImageUploadRequest,
   resolveResourcePickerRequest,
 } from './pageBlockHostLogic';
-import { projectSafeGeneratorResource } from '~/server/schema/blocks/generator-resource-projection';
-import type { GeneratorCosmeticImageResult } from './GeneratorImageUploadModal';
+import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
+import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
 import { projectBlockInitMaturity } from './projectBlockInit';
 import { sendBlockRender } from './sendBlockRender';
 import { resolveRequestConsent } from './requestConsentGate';
@@ -42,10 +42,11 @@ const BlockConsentModal = dynamic(() => import('./BlockConsentModal'), { ssr: fa
 // insufficient-Buzz top-up CTA). Mirrors IframeHost's dynamic import.
 const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
 
-// Cosmetic-background upload modal for the generator BUILDER's OPEN_IMAGE_UPLOAD
-// bridge. The bytes flow through civitai's session-authed upload + REAL scan; the
-// iframe only ever gets back a moderated, SFW-ceiling'd image id.
-const GeneratorImageUploadModal = dynamic(() => import('./GeneratorImageUploadModal'), {
+// Host-mediated image-upload modal for the OPEN_IMAGE_UPLOAD bridge. A block asks
+// the host to let the user upload an image; the bytes flow through civitai's
+// session-authed upload + REAL scan, and the iframe only ever gets back a
+// moderated, SFW-ceiling'd, unflagged image id.
+const BlockImageUploadModal = dynamic(() => import('./BlockImageUploadModal'), {
   ssr: false,
 });
 
@@ -1297,14 +1298,14 @@ export function PageBlockHost({
           // safe projector. Never spread the full GenerationResource — no
           // availability/hasAccess/early-access/usageControl/minor/poi/sfwOnly/
           // cover-image internals reach the iframe. The projection is WIDENED
-          // (PR-C) to also carry the PUBLIC recommended settings the builder
-          // needs — strength + min/max clamp, trained words, clipSkip — so it can
-          // seed a per-LoRA weight slider + trigger-word display. Shared with the
-          // GET /api/v1/blocks/generation-resources rehydrate endpoint so the two
-          // can never drift on which fields are public.
+          // (PR-C) to also carry the PUBLIC recommended settings a block needs —
+          // strength + min/max clamp, trained words, clipSkip — so it can seed a
+          // per-resource weight slider + trigger-word display. Shared with the GET
+          // /api/v1/blocks/generation-resources rehydrate endpoint so the two can
+          // never drift on which fields are public.
           send('RESOURCE_PICKER_RESULT', {
             requestId,
-            selected: projectSafeGeneratorResource(resource),
+            selected: projectSafeGenerationResource(resource),
           });
         },
         onClose: () => {
@@ -1384,15 +1385,16 @@ export function PageBlockHost({
     return off;
   }, [onMessage, send]);
 
-  // ── OPEN_IMAGE_UPLOAD → IMAGE_UPLOAD_RESULT (generator cosmetic background) ───
+  // ── OPEN_IMAGE_UPLOAD → IMAGE_UPLOAD_RESULT (host-mediated block image upload) ─
   //
-  // The generator BUILDER block asks the host to let the viewer pick a cosmetic
-  // BACKGROUND image. Mirrors OPEN_RESOURCE_PICKER's host-chrome pattern: the host
-  // opens its OWN upload modal, the iframe never handles the bytes. The upload
-  // routes through civitai's SESSION-AUTHED path → REAL createImage + ingestImage
-  // scan → server-side SFW gate (generatorCosmetic.persistImage + gateImage), and
-  // ONLY a moderated image id that is scanned-clean AND within the SFW ceiling is
-  // returned — a public cosmetic image is NOT trust-stamped (no createStoredImage).
+  // A block asks the host to let the viewer upload an image (the app decides what
+  // it is for — avatar / cover / background / reference / …). Mirrors
+  // OPEN_RESOURCE_PICKER's host-chrome pattern: the host opens its OWN upload modal,
+  // the iframe never handles the bytes. The upload routes through civitai's
+  // SESSION-AUTHED path → REAL createImage + ingestImage scan → server-side gate
+  // (blockImageUpload.persist + gate), and ONLY a moderated image id that is
+  // scanned-clean, within the SFW ceiling, and unflagged is returned — a publicly-
+  // displayed image is NOT trust-stamped (no createStoredImage).
   //
   // Gate on status 'ready' (a pre-handshake block can't summon the modal) via the
   // same 'error'→'no_token' shim the consent/buzz handlers use. requestId threads
@@ -1407,14 +1409,14 @@ export function PageBlockHost({
       if (!req) return; // missing / non-string requestId → drop, never open the modal
       const { requestId } = req;
 
-      let resolved: GeneratorCosmeticImageResult | null = null;
+      let resolved: BlockUploadedImageInfo | null = null;
       dialogStore.trigger({
         // Per-request id so multiple OPEN_IMAGE_UPLOAD calls don't dedup against
         // each other in the dialog store's exists-check.
-        id: `generator-cosmetic-upload-${requestId}`,
-        component: GeneratorImageUploadModal,
+        id: `block-image-upload-${requestId}`,
+        component: BlockImageUploadModal,
         props: {
-          onResolved: (result: GeneratorCosmeticImageResult) => {
+          onResolved: (result: BlockUploadedImageInfo) => {
             resolved = result;
           },
         },

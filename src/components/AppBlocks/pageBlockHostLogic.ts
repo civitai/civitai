@@ -123,16 +123,17 @@ export function resolveCheckpointPickerRequest(raw: unknown): CheckpointPickerRe
   return { requestId: obj.requestId, ...(baseModelGroup ? { baseModelGroup } : {}) };
 }
 
-// ── OPEN_IMAGE_UPLOAD (generator cosmetic-background upload bridge) ───────────
+// ── OPEN_IMAGE_UPLOAD (host-mediated block image-upload bridge) ──────────────
 //
-// A generator BUILDER block asks the HOST to open its native upload modal so the
-// viewer can pick a cosmetic background image. The iframe never handles the bytes:
-// they flow through civitai's session-authed upload → REAL scan → SFW gate, and
-// only a moderated image id (never above the SFW ceiling) comes back via
-// IMAGE_UPLOAD_RESULT. The only wire-validation is: require a string requestId
-// (drop otherwise, never open the modal) — everything security-relevant (scan +
-// SFW ceiling) is enforced server-side. Kept pure + unit-tested for the same
-// reason as resolveResourcePickerRequest (the drop rule is the relevant part).
+// A block asks the HOST to open its native upload modal so the viewer can upload
+// an image (the app decides what it is for). The iframe never handles the bytes:
+// they flow through civitai's session-authed upload → REAL scan → SFW/flag gate,
+// and only a moderated image id (never above the SFW ceiling, never flagged) comes
+// back via IMAGE_UPLOAD_RESULT. The only wire-validation is: require a string
+// requestId (drop otherwise, never open the modal) — everything security-relevant
+// (scan + SFW ceiling + flag rejection) is enforced server-side. Kept pure +
+// unit-tested for the same reason as resolveResourcePickerRequest (the drop rule
+// is the relevant part).
 
 export type ImageUploadRequest = {
   requestId: string;

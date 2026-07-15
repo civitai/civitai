@@ -1,13 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
-  projectSafeGeneratorResource,
-  type ProjectableGeneratorResource,
-} from '~/server/schema/blocks/generator-resource-projection';
+  projectSafeGenerationResource,
+  type ProjectableGenerationResource,
+} from '~/server/schema/blocks/generation-resource-projection';
 
 /**
- * Custom Generators (Phase-2a PR-C) — the canonical safe projection shared by the
- * widened OPEN_RESOURCE_PICKER result AND the generation-resources rehydrate
- * endpoint. Proves the WIDENED public fields are carried and internals never are.
+ * App Blocks (Phase-2a PR-C) — the canonical safe projection shared by the widened
+ * OPEN_RESOURCE_PICKER result AND the generation-resources rehydrate endpoint.
+ * Proves the WIDENED public fields are carried and internals never are.
  */
 
 // A resource shaped like a full GenerationResource with the private internals a
@@ -32,11 +32,11 @@ const fullResource = {
   covered: true,
   image: { id: 7, url: 'abc', nsfwLevel: 4 },
   substitute: { id: 999 },
-} as unknown as ProjectableGeneratorResource;
+} as unknown as ProjectableGenerationResource;
 
-describe('projectSafeGeneratorResource — widened public subset, no internals', () => {
+describe('projectSafeGenerationResource — widened public subset, no internals', () => {
   it('carries the widened public recommended-settings + trained words', () => {
-    const out = projectSafeGeneratorResource(fullResource);
+    const out = projectSafeGenerationResource(fullResource);
     expect(out).toEqual({
       versionId: 1234,
       modelId: 55,
@@ -53,7 +53,7 @@ describe('projectSafeGeneratorResource — widened public subset, no internals',
   });
 
   it('NEVER leaks availability / hasAccess / earlyAccess / image / substitute internals', () => {
-    const out = projectSafeGeneratorResource(fullResource) as Record<string, unknown>;
+    const out = projectSafeGenerationResource(fullResource) as Record<string, unknown>;
     for (const leaked of [
       'hasAccess',
       'availability',
@@ -74,13 +74,13 @@ describe('projectSafeGeneratorResource — widened public subset, no internals',
   });
 
   it('applies the getResourceData defaults when settings are absent (parity picker⇄rehydrate)', () => {
-    const bare: ProjectableGeneratorResource = {
+    const bare: ProjectableGenerationResource = {
       id: 2,
       name: 'v1',
       baseModel: 'SDXL 1.0',
       model: { id: 3, name: 'M', type: 'Checkpoint' },
     };
-    const out = projectSafeGeneratorResource(bare);
+    const out = projectSafeGenerationResource(bare);
     expect(out.strength).toBe(1);
     expect(out.minStrength).toBe(-1);
     expect(out.maxStrength).toBe(2);
@@ -89,7 +89,7 @@ describe('projectSafeGeneratorResource — widened public subset, no internals',
   });
 
   it('treats null settings the same as absent (nullish coalescing)', () => {
-    const out = projectSafeGeneratorResource({
+    const out = projectSafeGenerationResource({
       id: 4,
       name: 'v',
       baseModel: 'SD 1.5',

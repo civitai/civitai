@@ -8,23 +8,24 @@ import type { OffsiteRatingValue } from '~/shared/constants/browsingLevel.consta
 import { trpc } from '~/utils/trpc';
 
 /**
- * Custom Generators (Phase-2a PR-C) — the host modal behind PageBlockHost's
- * `OPEN_IMAGE_UPLOAD` bridge. A generator builder block asks the host to let the
- * viewer pick a cosmetic BACKGROUND image; the bytes flow through civitai's OWN
- * session-authed upload path (the iframe never touches them), the REAL scan runs,
- * and only a MODERATED, SFW-ceiling'd image id is handed back.
+ * App Blocks (Phase-2a PR-C) — the host modal behind PageBlockHost's
+ * `OPEN_IMAGE_UPLOAD` bridge. A sandboxed block asks the host to let the user
+ * upload an image (the app decides what it is for — avatar / cover / background /
+ * reference / …); the bytes flow through civitai's OWN session-authed upload path
+ * (the iframe never touches them), the REAL scan runs, and only a MODERATED,
+ * SFW-clean, unflagged image id is handed back.
  *
  * Flow (mirrors the app-listing asset step, single image):
- *   uploadToCF → generatorCosmetic.persistImage (createImage + real ingestImage) →
- *   poll generatorCosmetic.gateImage until `{ status: 'ready' }` (scanned + within
- *   the SFW ceiling) or a THROWN terminal error (scan-blocked / above-SFW /
- *   import-failed → stop, show message). On ready we call `onResolved` with the
- *   MINIMAL public projection and close; the host posts IMAGE_UPLOAD_RESULT. If the
- *   user closes without a successful upload, the host posts a bare (cancelled)
- *   result — see the OPEN_IMAGE_UPLOAD handler's `options.onClose`.
+ *   uploadToCF → blockImageUpload.persist (createImage + real ingestImage) → poll
+ *   blockImageUpload.gate until `{ status: 'ready' }` (scanned + within the SFW
+ *   ceiling + unflagged) or a THROWN terminal error (scan-blocked / above-SFW /
+ *   flagged / import-failed → stop, show message). On ready we call `onResolved`
+ *   with the MINIMAL public projection and close; the host posts IMAGE_UPLOAD_RESULT.
+ *   If the user closes without a successful upload, the host posts a bare
+ *   (cancelled) result — see the OPEN_IMAGE_UPLOAD handler's `options.onClose`.
  */
 
-export type GeneratorCosmeticImageResult = {
+export type BlockUploadedImageInfo = {
   imageId: number;
   nsfwLevel: number;
   contentRating: OffsiteRatingValue;
@@ -42,11 +43,11 @@ async function readImageDimensions(file: File): Promise<{ width: number; height:
   }
 }
 
-export default function GeneratorImageUploadModal({
+export default function BlockImageUploadModal({
   onResolved,
 }: {
-  /** Called ONCE with the moderated result when a clean+SFW image lands. */
-  onResolved: (result: GeneratorCosmeticImageResult) => void;
+  /** Called ONCE with the moderated result when a clean+SFW+unflagged image lands. */
+  onResolved: (result: BlockUploadedImageInfo) => void;
 }) {
   const dialog = useDialogContext();
   const { uploadToCF } = useCFImageUpload();
@@ -54,8 +55,8 @@ export default function GeneratorImageUploadModal({
   const [message, setMessage] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
-  const persistMutation = trpc.generatorCosmetic.persistImage.useMutation();
-  const gateMutation = trpc.generatorCosmetic.gateImage.useMutation();
+  const persistMutation = trpc.blockImageUpload.persist.useMutation();
+  const gateMutation = trpc.blockImageUpload.gate.useMutation();
 
   // Guard against a resolved poll landing after the modal unmounts / a new upload
   // supersedes it (epoch bump) — and clean up the object-URL preview + timer.
@@ -77,7 +78,7 @@ export default function GeneratorImageUploadModal({
   }, []);
 
   async function pollGate(imageId: number, attempt: number, epoch: number) {
-    let ready: GeneratorCosmeticImageResult | null = null;
+    let ready: BlockUploadedImageInfo | null = null;
     try {
       const res = await gateMutation.mutateAsync({ imageId });
       if (epoch !== epochRef.current) return;
@@ -90,7 +91,7 @@ export default function GeneratorImageUploadModal({
         };
       }
     } catch (err) {
-      // A THROWN error is terminal (scan-blocked / above-SFW / import-failed).
+      // A THROWN error is terminal (scan-blocked / above-SFW / flagged / import-failed).
       if (epoch !== epochRef.current) return;
       clearTimer();
       setStatus('error');
@@ -152,11 +153,11 @@ export default function GeneratorImageUploadModal({
   const busy = status === 'uploading' || status === 'scanning';
 
   return (
-    <Modal {...dialog} withCloseButton title="Choose a background image">
+    <Modal {...dialog} withCloseButton title="Upload an image">
       <Stack gap="md">
         <Alert color="blue" variant="light" icon={<IconPhoto size={16} />}>
           <Text size="sm">
-            This background is <strong>public</strong>, so it&apos;s scanned and must be
+            This image is <strong>public</strong>, so it&apos;s scanned and must be
             safe-for-work. Upload a PNG, JPEG or WebP.
           </Text>
         </Alert>
@@ -167,8 +168,8 @@ export default function GeneratorImageUploadModal({
             radius="sm"
             fit="contain"
             mah={220}
-            alt="background preview"
-            data-testid="generator-cosmetic-preview"
+            alt="image preview"
+            data-testid="block-image-upload-preview"
           />
         )}
 
@@ -177,7 +178,7 @@ export default function GeneratorImageUploadModal({
         </Group>
 
         <FileInput
-          label="Background image"
+          label="Image"
           placeholder="Select an image"
           accept="image/png,image/jpeg,image/webp"
           clearable
@@ -185,7 +186,7 @@ export default function GeneratorImageUploadModal({
           leftSection={<IconUpload size={16} />}
           value={null}
           onChange={(f: File | null) => void handleFile(f)}
-          data-testid="generator-cosmetic-file-input"
+          data-testid="block-image-upload-file-input"
         />
 
         {message && (

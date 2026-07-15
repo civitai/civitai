@@ -9,10 +9,10 @@ import { NsfwLevel } from '~/server/common/enums';
 import type { BlockTokenClaims } from '~/server/middleware/block-scope.middleware';
 
 /**
- * Custom Generators (Phase-2a PR-C) — endpoint-wiring tests for
- * GET /api/v1/blocks/generation-resources (rehydrate a saved generator's
- * resources). Proves: the projected safe subset, the maturity clamp (mature
- * resources dropped on a SFW ceiling), the ≤30 ids bound, and the no-claims 401.
+ * App Blocks (Phase-2a PR-C) — endpoint-wiring tests for
+ * GET /api/v1/blocks/generation-resources (rehydrate a saved set of generation
+ * resources by version id). Proves: the projected safe subset, the maturity clamp
+ * (mature resources dropped on a SFW ceiling), the ≤30 ids bound, and the no-claims 401.
  *
  * withBlockScope is mocked as a passthrough that stamps req.blockClaims; getResourceData
  * is mocked so no Prisma client loads.
