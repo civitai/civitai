@@ -12,6 +12,8 @@ import {
   resolveGetWildcardPackRequest,
   wildcardPackError,
   WILDCARD_PACK_CAPS,
+  YAML_MAX_LISTS,
+  YAML_MAX_NODE_VISITS,
   type RawZipEntry,
 } from './wildcardPackParse';
 
@@ -165,31 +167,81 @@ describe('finalizeOptions (dedupe + caps)', () => {
 });
 
 describe('flattenYamlLists', () => {
-  it('flattens nested maps to parent/child names', () => {
+  it('flattens nested maps to parent/child names (legit tree, no truncation)', () => {
     const parsed = {
       colors: ['red', 'blue'],
       clothing: { tops: ['shirt', 'blouse'], bottoms: ['jeans'] },
     };
-    const lists = flattenYamlLists(parsed);
+    const { lists, truncated } = flattenYamlLists(parsed);
     expect(lists).toEqual([
       { name: 'colors', options: ['red', 'blue'] },
       { name: 'clothing/tops', options: ['shirt', 'blouse'] },
       { name: 'clothing/bottoms', options: ['jeans'] },
     ]);
+    expect(truncated).toBe(false);
   });
   it('coerces scalar leaves to a one-element list and trims', () => {
-    expect(flattenYamlLists({ mood: '  happy  ' })).toEqual([{ name: 'mood', options: ['happy'] }]);
+    expect(flattenYamlLists({ mood: '  happy  ' }).lists).toEqual([
+      { name: 'mood', options: ['happy'] },
+    ]);
   });
   it('is first-write-wins on a case-insensitive name collision', () => {
     // Two sibling keys differing only in case collide → the first wins.
     const parsed = { Colors: ['red'], colors: ['blue'] };
-    const lists = flattenYamlLists(parsed);
-    expect(lists).toEqual([{ name: 'Colors', options: ['red'] }]);
+    expect(flattenYamlLists(parsed).lists).toEqual([{ name: 'Colors', options: ['red'] }]);
   });
-  it('tolerates a non-object root (returns [])', () => {
-    expect(flattenYamlLists(null)).toEqual([]);
-    expect(flattenYamlLists(42)).toEqual([]);
-    expect(flattenYamlLists(['a', 'b'])).toEqual([]); // bare array handled by the caller
+  it('tolerates a non-object root (lists: [])', () => {
+    expect(flattenYamlLists(null).lists).toEqual([]);
+    expect(flattenYamlLists(42).lists).toEqual([]);
+    expect(flattenYamlLists(['a', 'b']).lists).toEqual([]); // bare array handled by the caller
+  });
+});
+
+describe('flattenYamlLists — YAML alias-expansion DoS guard (billion-laughs)', () => {
+  it('BOUNDS a shared-reference alias bomb — no exponential blowup, sets truncated, completes fast', () => {
+    // js-yaml resolves aliases BY REFERENCE, so a tiny `.yaml` like
+    //   a: &a { leaf: [x] }
+    //   b: { p: *a, q: *a }
+    //   c: { p: *b, q: *b }
+    //   ... top: { p: *y, q: *y }
+    // parses to a DAG where each level has TWO children pointing at the SAME
+    // next-level object. A naive DFS visits 2^depth leaves. We reproduce that
+    // exact object graph directly (shared refs, no js-yaml dependency) at depth
+    // 30 → 2^30 (~1.07 BILLION) root→leaf paths — which WITHOUT the budget would
+    // freeze the tab. The budget must keep this bounded + fast.
+    const leaf: unknown = { leaf: ['x'] };
+    let node: unknown = leaf;
+    for (let i = 0; i < 30; i++) node = { p: node, q: node }; // 2^30 leaf-paths
+
+    const start = performance.now();
+    const { lists, truncated } = flattenYamlLists(node);
+    const elapsedMs = performance.now() - start;
+
+    // Bounded output (never the exponential blowup) + the truncation signal.
+    expect(truncated).toBe(true);
+    expect(lists.length).toBeLessThanOrEqual(YAML_MAX_LISTS);
+    // And it completed quickly — the node-visit budget caps total work at
+    // ~YAML_MAX_NODE_VISITS steps, so this is milliseconds, not a hang.
+    expect(elapsedMs).toBeLessThan(1000);
+    expect(YAML_MAX_NODE_VISITS).toBeGreaterThan(0); // referenced (budget exists)
+  });
+
+  it('does NOT truncate a legitimate deep-but-narrow tree (a few levels)', () => {
+    const parsed = {
+      characters: {
+        female: { modern: ['a', 'b'], fantasy: ['c'] },
+        male: { modern: ['d'] },
+      },
+      scenes: ['forest', 'city'],
+    };
+    const { lists, truncated } = flattenYamlLists(parsed);
+    expect(truncated).toBe(false);
+    expect(lists).toEqual([
+      { name: 'characters/female/modern', options: ['a', 'b'] },
+      { name: 'characters/female/fantasy', options: ['c'] },
+      { name: 'characters/male/modern', options: ['d'] },
+      { name: 'scenes', options: ['forest', 'city'] },
+    ]);
   });
 });
 

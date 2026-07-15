@@ -193,16 +193,39 @@ export interface RawList {
   options: string[];
 }
 
+// Traversal budget for flattenYamlLists — bounds a YAML alias-expansion
+// (billion-laughs) DoS. js-yaml resolves aliases BY REFERENCE, so parsing stays
+// linear/cheap, but a <1 KB `.yaml` (well under the 1 MB per-entry byte cap)
+// whose aliases form a DAG expands to an EXPONENTIAL number of root→leaf paths
+// when the flatten DFS traverses it — the amplification is in the TRAVERSAL, not
+// the source bytes, so the byte/inflate caps don't bound it. The walk runs
+// synchronously on the main thread (the fetch AbortSignal can't interrupt it), so
+// an unbounded traversal freezes / OOMs the importing user's authed tab. These
+// caps bound ANY pathological traversal (exponential width via shared refs, or a
+// deep chain) regardless of mechanism, deterministically. Far above any
+// legitimate wildcard pack (shallow trees, a few hundred nodes).
+export const YAML_MAX_NODE_VISITS = 50_000;
+export const YAML_MAX_LISTS = 4096;
+export const YAML_MAX_DEPTH = 256;
+
 /**
  * Flatten a parsed (Dynamic-Prompts) YAML tree into named lists, joining the
  * path from root to each leaf array/scalar with `/` (`clothing/tops`). Mirrors
  * the canonical server `walkYamlTree`: mixed array+map siblings work, scalar
  * leaves become one-element lists, and name collisions are first-write-wins
- * (case-insensitive). Tolerant of a non-object root (returns []).
+ * (case-insensitive). Tolerant of a non-object root (`lists: []`).
+ *
+ * DoS-bounded (see YAML_MAX_* above): the DFS carries a node-visit counter, a
+ * recursion-depth cap, and an emitted-list cap. If any is breached the traversal
+ * aborts and `truncated` is set — TRUNCATE-AND-FLAG, never throw (consistent with
+ * the other caps). Legit small packs are far under every budget → byte-identical
+ * output + `truncated: false`.
  */
-export function flattenYamlLists(parsed: unknown): RawList[] {
+export function flattenYamlLists(parsed: unknown): { lists: RawList[]; truncated: boolean } {
   const out: RawList[] = [];
   const seen = new Set<string>();
+  let visits = 0;
+  let truncated = false;
 
   const pushLeaf = (name: string, items: unknown[]) => {
     const lower = name.toLowerCase();
@@ -216,7 +239,16 @@ export function flattenYamlLists(parsed: unknown): RawList[] {
     out.push({ name, options });
   };
 
-  const walk = (node: unknown, prefix: string) => {
+  const walk = (node: unknown, prefix: string, depth: number) => {
+    // Budget guards — the alias-expansion DoS bound. Checked at ENTRY so once any
+    // cap is hit no further node is visited: the visit counter bounds total work
+    // (exponential-width DAG), the depth cap prevents a deep chain from
+    // stack-overflowing this recursive walk, and the list cap bounds output.
+    if (truncated) return;
+    if (++visits > YAML_MAX_NODE_VISITS || depth > YAML_MAX_DEPTH || out.length >= YAML_MAX_LISTS) {
+      truncated = true;
+      return;
+    }
     if (Array.isArray(node)) {
       if (prefix) pushLeaf(prefix, node);
       return;
@@ -224,7 +256,8 @@ export function flattenYamlLists(parsed: unknown): RawList[] {
     if (node && typeof node === 'object') {
       for (const [key, child] of Object.entries(node as Record<string, unknown>)) {
         if (!key) continue;
-        walk(child, prefix ? `${prefix}/${key}` : key);
+        walk(child, prefix ? `${prefix}/${key}` : key, depth + 1);
+        if (truncated) return; // budget hit mid-iteration → stop the siblings too
       }
       return;
     }
@@ -235,9 +268,9 @@ export function flattenYamlLists(parsed: unknown): RawList[] {
 
   // Top-level array with no key namespace is handled by the caller (named after
   // the file) — walk with empty prefix so object roots namespace by their keys.
-  if (Array.isArray(parsed)) return out; // caller names a bare-array yaml
-  walk(parsed, '');
-  return out;
+  if (Array.isArray(parsed)) return { lists: out, truncated }; // caller names a bare-array yaml
+  walk(parsed, '', 0);
+  return { lists: out, truncated };
 }
 
 // ── option finalization (dedupe + caps) ──────────────────────────────────────
@@ -397,7 +430,9 @@ export async function processWildcardEntries(
         .filter((s) => s.length > 0);
       if (name) addList(name, options);
     } else {
-      for (const list of flattenYamlLists(parsed)) addList(list.name, list.options);
+      const flat = flattenYamlLists(parsed);
+      if (flat.truncated) truncated = true; // alias-expansion budget was hit
+      for (const list of flat.lists) addList(list.name, list.options);
     }
   }
 
