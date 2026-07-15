@@ -90,6 +90,11 @@ function throwForTerminalOutcome(outcome: CosmeticImageScanOutcome): never {
         message:
           'that image is above the safe-for-work limit for a public background — choose a SFW image',
       });
+    case 'blocked-flagged':
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'that image was flagged during review — choose a different image',
+      });
     // pending / ready are handled by the caller and never reach here.
     default:
       throw new TRPCError({ code: 'BAD_REQUEST', message: 'that image could not be used' });
@@ -110,7 +115,20 @@ export async function gateGeneratorCosmeticImage(opts: {
   const { imageId, user } = opts;
   const image = await dbRead.image.findUnique({
     where: { id: imageId },
-    select: { id: true, userId: true, url: true, ingestion: true, nsfwLevel: true },
+    select: {
+      id: true,
+      userId: true,
+      url: true,
+      ingestion: true,
+      nsfwLevel: true,
+      // Moderation flags a `Scanned` ingestion does NOT clear — a PUBLIC, un-mod-
+      // reviewed cosmetic background must fail closed on any of them (see the pure
+      // classifier). Mirrors PR-B's validateGeneratorBackgroundImage tightening.
+      needsReview: true,
+      poi: true,
+      minor: true,
+      tosViolation: true,
+    },
   });
   if (!image) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
   if (image.userId !== user.id && !user.isModerator) {
@@ -120,6 +138,10 @@ export async function gateGeneratorCosmeticImage(opts: {
   const outcome = classifyCosmeticImageScan({
     ingestion: image.ingestion,
     nsfwLevel: image.nsfwLevel,
+    needsReview: image.needsReview,
+    poi: image.poi,
+    minor: image.minor,
+    tosViolation: image.tosViolation,
   });
 
   if (outcome.status === 'pending') return { status: 'pending' };

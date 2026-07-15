@@ -157,6 +157,21 @@ describe('/api/v1/blocks/generation-resources — projection + clamp + bounds', 
     expect(res.body.maturity).toEqual({ browsingLevel: sfwBrowsingLevelsFlag, sfwOnly: true });
   });
 
+  it('DROPS a non-public (hasAccess=false) version — no name/trigger-word enumeration oracle', async () => {
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    mockGetResourceData.mockResolvedValue([
+      row({ id: 100, hasAccess: true, availability: 'Public' }),
+      // getResourceData returns Draft/Private/Unpublished rows with hasAccess=false;
+      // they must NOT leak their name/trainedWords.
+      row({ id: 200, hasAccess: false, availability: 'Private', name: 'secret-v', trainedWords: ['secretTrigger'] }),
+    ]);
+    const res = await invoke({ ids: '100,200' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.items.map((i: any) => i.versionId)).toEqual([100]);
+    expect(JSON.stringify(res.body.items)).not.toContain('secret');
+  });
+
   it('DROPS a mature resource for a SFW token (maturity clamp)', async () => {
     claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
     mockGetResourceData.mockResolvedValue([

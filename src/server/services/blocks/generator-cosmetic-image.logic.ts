@@ -23,13 +23,20 @@ import { Flags } from '~/shared/utils/flags';
  *   - `pending`      — scan in-flight (Pending / Error-retry / PendingManualAssignment).
  *                      NON-error; the caller returns `{ status: 'pending' }` and the
  *                      client re-polls.
- *   - `ready`        — Scanned AND within the SFW ceiling. Carries the derived
- *                      `contentRating` (never above `pg13`).
+ *   - `ready`        — Scanned AND within the SFW ceiling AND carrying NO moderation
+ *                      flag. Carries the derived `contentRating` (never above `pg13`).
  *   - `blocked-scan` — TERMINAL: the scanner rejected the bytes (prohibited content).
  *   - `blocked-nsfw` — TERMINAL: scanned clean but the content rating is above the
  *                      SFW ceiling (R/X/…). A public cosmetic image may not be mature.
+ *   - `blocked-flagged` — TERMINAL: `Scanned` but carrying a moderation flag
+ *                      (`needsReview` / `poi` / `minor` / `tosViolation`). Since this
+ *                      background is PUBLIC with NO mod review before it renders, a
+ *                      flag that would normally be resolved by a human must fail
+ *                      closed here — a `Scanned` ingestion does NOT clear these
+ *                      (they're set at/after scan without flipping ingestion). Mirrors
+ *                      PR-B's `validateGeneratorBackgroundImage` tightening.
  *   - `import-failed`— TERMINAL: the scanner couldn't fetch the bytes (NotFound).
- * The caller THROWS on the three terminal outcomes (client shows the message +
+ * The caller THROWS on the four terminal outcomes (client shows the message +
  * stops polling); `pending`/`ready` are non-error 200s.
  */
 export type CosmeticImageScanOutcome =
@@ -37,6 +44,7 @@ export type CosmeticImageScanOutcome =
   | { status: 'ready'; contentRating: OffsiteRatingValue }
   | { status: 'blocked-scan' }
   | { status: 'blocked-nsfw'; contentRating: OffsiteRatingValue }
+  | { status: 'blocked-flagged' }
   | { status: 'import-failed' };
 
 /**
@@ -60,8 +68,13 @@ export function isWithinSfwCosmeticCeiling(nsfwLevel: number): boolean {
 export function classifyCosmeticImageScan(image: {
   ingestion: ImageIngestionStatus | string;
   nsfwLevel: number;
+  /** Moderation flags that a `Scanned` ingestion does NOT clear (see docstring). */
+  needsReview?: string | null;
+  poi?: boolean | null;
+  minor?: boolean | null;
+  tosViolation?: boolean | null;
 }): CosmeticImageScanOutcome {
-  const { ingestion, nsfwLevel } = image;
+  const { ingestion, nsfwLevel, needsReview, poi, minor, tosViolation } = image;
 
   // TERMINAL scan failures first.
   if (ingestion === ImageIngestionStatus.NotFound) return { status: 'import-failed' };
@@ -69,6 +82,13 @@ export function classifyCosmeticImageScan(image: {
 
   // Still scanning — any non-Scanned, non-terminal state is a poll-able pending.
   if (ingestion !== ImageIngestionStatus.Scanned) return { status: 'pending' };
+
+  // Scanned but FLAGGED: a Scanned ingestion does NOT clear needsReview/poi/minor/
+  // tosViolation (they're set at/after scan without flipping ingestion). A PUBLIC,
+  // un-mod-reviewed background must fail closed on ANY of them.
+  if (needsReview != null || poi === true || minor === true || tosViolation === true) {
+    return { status: 'blocked-flagged' };
+  }
 
   // Scanned: enforce the SFW ceiling on a PUBLIC cosmetic image.
   const contentRating = contentRatingFromNsfwLevel(nsfwLevel);

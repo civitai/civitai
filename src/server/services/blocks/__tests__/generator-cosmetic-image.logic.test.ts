@@ -53,6 +53,46 @@ describe('classifyCosmeticImageScan — pending / scanned / blocked + SFW ceilin
     }
   });
 
+  it('BLOCKED-FLAGGED when Scanned but carrying a moderation flag (needsReview/poi/minor/tosViolation)', () => {
+    const scanned = { ingestion: ImageIngestionStatus.Scanned, nsfwLevel: NsfwLevel.PG };
+    expect(classifyCosmeticImageScan({ ...scanned, needsReview: 'poi' })).toEqual({
+      status: 'blocked-flagged',
+    });
+    expect(classifyCosmeticImageScan({ ...scanned, poi: true })).toEqual({
+      status: 'blocked-flagged',
+    });
+    expect(classifyCosmeticImageScan({ ...scanned, minor: true })).toEqual({
+      status: 'blocked-flagged',
+    });
+    expect(classifyCosmeticImageScan({ ...scanned, tosViolation: true })).toEqual({
+      status: 'blocked-flagged',
+    });
+  });
+
+  it('a flag takes PRECEDENCE over an otherwise-ready SFW image', () => {
+    // Even a perfectly SFW (PG) scanned image is blocked when flagged.
+    expect(
+      classifyCosmeticImageScan({
+        ingestion: ImageIngestionStatus.Scanned,
+        nsfwLevel: NsfwLevel.PG,
+        minor: true,
+      }).status
+    ).toBe('blocked-flagged');
+  });
+
+  it('READY is unaffected by explicitly-cleared flags (false / null)', () => {
+    expect(
+      classifyCosmeticImageScan({
+        ingestion: ImageIngestionStatus.Scanned,
+        nsfwLevel: NsfwLevel.PG,
+        needsReview: null,
+        poi: false,
+        minor: false,
+        tosViolation: false,
+      })
+    ).toEqual({ status: 'ready', contentRating: 'g' });
+  });
+
   it('BLOCKED-SCAN when the scanner rejected the bytes (Blocked)', () => {
     expect(
       classifyCosmeticImageScan({

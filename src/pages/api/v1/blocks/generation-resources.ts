@@ -96,9 +96,18 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     const resources = await getResourceData(parsed.data.ids);
 
     const items = resources
-      // Maturity clamp: on a SFW ceiling, drop any resource whose cover-image level
-      // or model nsfw flag exceeds the clamped browsing level (never leak a mature
-      // resource's public data to a SFW-domain block).
+      // PUBLIC-ONLY gate: getResourceData's backing fetch has NO status/availability
+      // filter — it returns name/trainedWords/baseModel for ANY version id incl.
+      // Draft/Training/Private/Unpublished, merely setting hasAccess=false. Dropping
+      // !hasAccess here prevents a block-token holder from harvesting names + trigger
+      // words of non-public versions by enumerating ids. The computed `hasAccess`
+      // (anon read) encodes "Published & Public".
+      .filter((r) => r.hasAccess)
+      // Maturity clamp: on a SFW ceiling, drop any resource that exceeds the clamped
+      // browsing level (never leak a mature resource's public data to a SFW-domain
+      // block). `model.nsfw` is the ACTIVE clamp signal in this path; `imageNsfwLevel`
+      // is passed defensively (getResourceData does not populate a cover image here,
+      // so it is typically undefined — kept so a future cover level is honored).
       .filter(
         (r) =>
           !isSfwCeiling ||
