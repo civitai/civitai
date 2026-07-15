@@ -1,7 +1,6 @@
 import { initTRPC, TRPCError } from '@trpc/server';
 import type { NextApiRequest } from 'next';
 import semver from 'semver';
-import superjson from 'superjson';
 import { OnboardingSteps } from '~/server/common/enums';
 import { withSpan } from '~/server/utils/otel-helpers';
 import {
@@ -13,7 +12,7 @@ import { trpcProcedureDuration } from '~/server/prom/client';
 import { maybeLogTrpcSlow } from '~/server/logging/trpc-slow-log';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
 import { instrumentSerialize } from '~/server/logging/trpc-serialize-log';
-import { unionDeserialize } from '~/shared/utils/trpc-union-transformer';
+import { buildTransformer, writeSerialize } from '~/shared/utils/trpc-union-transformer';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
@@ -45,31 +44,23 @@ const t = initTRPC
   .context<Context>()
   .meta<TRPCMeta>()
   .create({
-    // Phase 1 of the superjson → devalue transformer migration (additive, wire
-    // unchanged). Split into a CombinedDataTransformer so READ and WRITE flip
-    // independently in later phases. WRITE (serialize) stays 100% superjson;
-    // READ (deserialize) becomes the format-sniffing UNION so the server can
-    // decode either format before any writer ever emits devalue. `input` is the
-    // request-read path (the only one exercised server-side); `output` is filled
-    // for a complete transformer.
-    transformer: {
-      input: {
-        serialize: (data: any) => superjson.serialize(data),
-        deserialize: unionDeserialize,
-      },
-      output: {
-        // instrumentSerialize times the serialize (the exact frame that pegs the
-        // loop on an oversized response — see trpc-serialize-log.ts) and, only
-        // above a cheap duration floor, logs the offending procedure + byte size.
-        // Disarmed by default: a single boolean branch, then the original
-        // withSpan+superjson. Kept EXACTLY as before — the write stays superjson.
-        serialize: (data: any) =>
-          instrumentSerialize(() =>
-            withSpan('trpc:serialize:superjson', () => superjson.serialize(data))
-          ),
-        deserialize: unionDeserialize,
-      },
-    },
+    // Phase 2 of the superjson → devalue transformer migration: flip the WRITE
+    // to devalue while READ stays the format-sniffing UNION (so a stale peer that
+    // still writes superjson is decoded fine, and rollback is a one-line flip of
+    // the write format back to superjson). The shared `buildTransformer` fills
+    // the request-read/response-read (union) and request-write (devalue) slots;
+    // the ONLY server-specific difference is the instrumented response-serialize
+    // below, whose inner call is still the single-sourced `writeSerialize`.
+    transformer: buildTransformer((data: any) =>
+      // instrumentSerialize times the serialize (the exact frame that pegs the
+      // loop on an oversized response — see trpc-serialize-log.ts) and, only
+      // above a cheap duration floor, logs the offending procedure + byte size.
+      // Disarmed by default: a single boolean branch, then withSpan+writeSerialize.
+      // The wrappers are pass-through — they return writeSerialize's result verbatim.
+      instrumentSerialize(() =>
+        withSpan('trpc:serialize:devalue', () => writeSerialize(data))
+      )
+    ),
     errorFormatter({ shape }) {
       return shape;
     },

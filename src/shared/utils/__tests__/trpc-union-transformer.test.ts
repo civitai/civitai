@@ -1,17 +1,25 @@
 import { stringify as devalueStringify } from 'devalue';
 import superjson from 'superjson';
 import { describe, expect, it } from 'vitest';
-import { unionDeserialize, unionTransformer } from '~/shared/utils/trpc-union-transformer';
+import {
+  buildTransformer,
+  unionDeserialize,
+  unionTransformer,
+  writeSerialize,
+} from '~/shared/utils/trpc-union-transformer';
 
 /**
- * Phase 1 of the superjson → devalue tRPC transformer migration adds a
- * format-sniffing UNION deserializer so every reader can decode BOTH formats
- * before any writer emits devalue (the wire stays superjson in Phase 1).
- *
- * The contract under test: `unionDeserialize(write(x))` deep-equals `x` for both
- * writers, across the non-POJO types that actually reach the transformer on the
- * response/request paths — Date, top-level BigInt (feed cursor), `undefined`
- * fields, nested arrays/objects, and Map. Pure (no DB/Prisma), so it runs locally.
+ * Phase 2 of the superjson → devalue tRPC transformer migration flips every WRITE
+ * slot to devalue while the READ slots stay the format-sniffing UNION. The tests
+ * assert two contracts:
+ *   1. UNION READ is version-agnostic — a devalue-WRITTEN payload AND a legacy
+ *      superjson-WRITTEN payload BOTH round-trip through `unionDeserialize`. This
+ *      backward-read compat is what makes the write-flip safe: a stale peer that
+ *      still writes superjson is decoded fine, and rollback is one line.
+ *   2. WRITE is now devalue — every serialize slot (`writeSerialize`, the shared
+ *      `unionTransformer`, and a server-shaped `buildTransformer(...)`) emits a
+ *      devalue string, not a superjson object.
+ * Pure (no DB/Prisma), so it runs locally.
  */
 
 // A representative payload mixing the rich types the feed handlers emit.
@@ -45,18 +53,18 @@ const sample = () => ({
   ]),
 });
 
-describe('unionDeserialize', () => {
-  it('round-trips a superjson-written payload (object shape → superjson branch)', () => {
-    const x = sample();
-    const written = superjson.serialize(x); // ALWAYS an object { json, meta? }
-    expect(typeof written).not.toBe('string');
-    expect(unionDeserialize(written)).toEqual(x);
-  });
-
-  it('round-trips a devalue-written payload (string shape → devalue branch)', () => {
+describe('unionDeserialize (READ stays union in Phase 2)', () => {
+  it('round-trips a devalue-WRITTEN payload (string shape → devalue branch)', () => {
     const x = sample();
     const written = devalueStringify(x); // ALWAYS a string
     expect(typeof written).toBe('string');
+    expect(unionDeserialize(written)).toEqual(x);
+  });
+
+  it('STILL decodes a legacy superjson-WRITTEN payload (backward-read compat / rollback safety)', () => {
+    const x = sample();
+    const written = superjson.serialize(x); // ALWAYS an object { json, meta? }
+    expect(typeof written).not.toBe('string');
     expect(unionDeserialize(written)).toEqual(x);
   });
 
@@ -76,22 +84,60 @@ describe('unionDeserialize', () => {
     }
   });
 
-  it('falls to the superjson branch for null/undefined input (today’s behavior)', () => {
+  it('falls to the superjson branch for null/undefined input (empty-input behavior)', () => {
     // superjson.deserialize of an empty-ish payload — not a string, so it must
     // NOT hit devalue.parse (which would throw on null). Matches how tRPC hands
     // back an absent/empty transformer payload.
     expect(unionDeserialize(superjson.serialize(undefined))).toBeUndefined();
     expect(unionDeserialize(superjson.serialize(null))).toBeNull();
   });
+});
 
-  it('exposes a complete CombinedDataTransformer whose serialize slots stay superjson', () => {
-    // Phase 1 invariant: every WRITE slot is superjson (wire unchanged). Assert by
-    // shape-equality against superjson's own output.
-    const x = { when: new Date('2024-01-01T00:00:00.000Z'), cursor: 42n };
-    expect(unionTransformer.input.serialize(x)).toEqual(superjson.serialize(x));
-    expect(unionTransformer.output.serialize(x)).toEqual(superjson.serialize(x));
-    // READ slots are the union sniffer.
-    expect(unionTransformer.input.deserialize(superjson.serialize(x))).toEqual(x);
-    expect(unionTransformer.output.deserialize(devalueStringify(x))).toEqual(x);
+describe('WRITE is devalue in Phase 2', () => {
+  const x = { when: new Date('2024-01-01T00:00:00.000Z'), cursor: 42n };
+
+  it('writeSerialize is the single-sourced devalue write', () => {
+    const out = writeSerialize(x);
+    expect(typeof out).toBe('string');
+    expect(out).toBe(devalueStringify(x));
+    // and it round-trips through the union read
+    expect(unionDeserialize(out)).toEqual(x);
+  });
+
+  it('unionTransformer (client/SSR) writes devalue strings and reads the union', () => {
+    // WRITE slots: devalue STRING (not a superjson object).
+    expect(typeof unionTransformer.input.serialize(x)).toBe('string');
+    expect(typeof unionTransformer.output.serialize(x)).toBe('string');
+    expect(unionTransformer.input.serialize(x)).toBe(devalueStringify(x));
+    expect(unionTransformer.output.serialize(x)).toBe(devalueStringify(x));
+    // READ slots: the union sniffer decodes BOTH formats.
+    expect(unionTransformer.input.deserialize(devalueStringify(x))).toEqual(x);
+    expect(unionTransformer.output.deserialize(superjson.serialize(x))).toEqual(x);
+  });
+
+  it('server transformer (buildTransformer with an instrumentation-shaped wrapper): serialize == devalue, deserialize == union', () => {
+    // The server passes an instrumented output.serialize whose wrappers are
+    // pass-through (they time/trace, then return writeSerialize's result verbatim).
+    // Model that here with a wrapper that observes the call and returns the value
+    // unchanged — the wire contract must be identical to plain devalue.
+    let wrapped = 0;
+    const instrumentedSerialize = (data: any) => {
+      wrapped++;
+      return writeSerialize(data); // == devalue string, single-sourced
+    };
+    const serverTransformer = buildTransformer(instrumentedSerialize);
+
+    // WRITE: response-serialize is the instrumented devalue path; request-serialize
+    // is the plain single-sourced devalue write.
+    const written = serverTransformer.output.serialize(x);
+    expect(wrapped).toBe(1);
+    expect(typeof written).toBe('string');
+    expect(written).toBe(devalueStringify(x));
+    expect(serverTransformer.input.serialize(x)).toBe(devalueStringify(x));
+
+    // READ: both slots are the union sniffer — devalue string AND legacy superjson.
+    expect(serverTransformer.input.deserialize(devalueStringify(x))).toEqual(x);
+    expect(serverTransformer.input.deserialize(superjson.serialize(x))).toEqual(x);
+    expect(serverTransformer.output.deserialize(written)).toEqual(x);
   });
 });

@@ -11,7 +11,7 @@ import {
 import type { CreateTRPCNext } from '@trpc/next';
 import { createTRPCNext } from '@trpc/next';
 import type { NextPageContext } from 'next';
-import superjson from 'superjson';
+import { stringify as devalueStringify } from 'devalue';
 import type { AppRouter } from '~/server/routers';
 import { unionTransformer } from '~/shared/utils/trpc-union-transformer';
 import { isDev } from '~/env/other';
@@ -44,10 +44,13 @@ const url = '/api/trpc';
 /**
  * Encoded-URL budget (percent-encoded chars) for a single query's input on the BATCH link.
  * Measured against the ACTUAL wire cost — `encodeURIComponent(JSON.stringify(
- * superjson.serialize(input)))`, the same transform tRPC applies when building the GET URL —
- * NOT a raw-char heuristic. Sits ~280 under the batch link's `maxURLLength: 2083` to absorb
- * the path (`/api/trpc/<proc>`) + `?batch=1&input={"0":…}` wrapper overhead, so a single op
- * can never overflow the batched GET regardless of how punctuation-dense its JSON is.
+ * devalueStringify(input)))`, the same transform tRPC applies when building the GET URL —
+ * NOT a raw-char heuristic. It MUST use the same serializer the client actually writes with
+ * (Phase 2: devalue via `input.serialize`); sizing with a different serializer would let the
+ * GET/POST batching decision drift from the real wire length. Sits ~280 under the batch link's
+ * `maxURLLength: 2083` to absorb the path (`/api/trpc/<proc>`) + `?batch=1&input={"0":…}`
+ * wrapper overhead, so a single op can never overflow the batched GET regardless of how
+ * punctuation-dense its JSON is.
  *
  * Why encoded, not raw: JSON near the limit is structurally dense (`{}",:[]`, each → %XX), so
  * the encoded URL runs ~1.75–1.9× the raw JSON — not the ~1.4× a fixed factor assumes. A raw
@@ -63,17 +66,19 @@ const URL_INPUT_BUDGET = 1800;
  * so it can never trip the "Input is too big for a single dispatch" throw.
  *
  * Measures the ACTUAL encoded wire cost — the exact `encodeURIComponent(JSON.stringify(
- * superjson.serialize(input)))` tRPC builds the GET URL from — against `URL_INPUT_BUDGET`. No
- * length-based short-circuit: a byte/char-count proxy underestimates the encoded length in the
- * unsafe direction (a small-count input can encode large — `superjson` expands special types,
- * and `encodeURIComponent` expands one non-ASCII UTF-16 unit to up to 9 chars, e.g. `中` →
- * `%E4%B8%AD`), which twice let an overflowing op stay batched. `serialize` + `stringify`
- * already run unconditionally, so the encode walk is a marginal added cost, not worth the hole.
+ * devalueStringify(input)))` tRPC builds the GET URL from — against `URL_INPUT_BUDGET`. Uses
+ * the SAME serializer the client links write with (Phase 2: devalue), so the sizer can't drift
+ * from the real URL. No length-based short-circuit: a byte/char-count proxy underestimates the
+ * encoded length in the unsafe direction (a small-count input can encode large — the serializer
+ * expands special types, and `encodeURIComponent` expands one non-ASCII UTF-16 unit to up to 9
+ * chars, e.g. `中` → `%E4%B8%AD`), which twice let an overflowing op stay batched. `stringify`
+ * already runs unconditionally on the write path, so the encode walk is a marginal added cost,
+ * not worth the hole.
  */
 export function isTooLargeToBatch(op: { type: string; input: unknown }) {
   if (op.type !== 'query' || op.input == null) return false;
   try {
-    return encodeURIComponent(JSON.stringify(superjson.serialize(op.input))).length > URL_INPUT_BUDGET;
+    return encodeURIComponent(JSON.stringify(devalueStringify(op.input))).length > URL_INPUT_BUDGET;
   } catch {
     return false;
   }
@@ -405,7 +410,7 @@ export const trpc: CreateTRPCNext<AppRouter, NextPageContext> = createTRPCNext<A
   },
   // v11: `createTRPCNext` requires the transformer at the top level of its options
   // (WithTRPCOptions intersects TransformerOptions). The link carries it too for the
-  // actual wire (de)serialization. Phase 1: union READ, superjson WRITE (wire unchanged).
+  // actual wire (de)serialization. Phase 2: union READ, devalue WRITE.
   transformer: unionTransformer,
   ssr: false,
 });
