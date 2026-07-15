@@ -27,10 +27,60 @@ import { TransactionType } from '~/shared/constants/buzz.constants';
  * Response: `{ cursor, transactions[] }`. Rows keep `description` and an
  * allowlisted `details` (entity attribution only — no passthrough); `type` is
  * serialized as its name; counterparties are projected to `{ id, username }`
- * only. `externalTransactionId` is exposed ONLY for non-Purchase rows (its
- * reward/challenge classifier); it is NULLED on Purchase rows, where it is the
- * payment-processor reference (Stripe/Paddle/PayPal/crypto).
+ * only. `externalTransactionId` is exposed only where it is a civitai-internal
+ * reward/prize classifier; it is NULLED wherever it holds a payment-processor /
+ * external-financial reference (money-movement types + the merch Shopify value —
+ * see projectExternalTransactionId).
  */
+
+// `externalTransactionId` is DUAL-USE across the ledger, and TransactionType
+// does NOT cleanly separate the two uses — so the block projection strips it
+// deny-first. Two rules (an evidence-based sweep of every `externalTransactionId`
+// assignment in the buzz + payment services):
+//
+//  (1) SENSITIVE TYPES — the money-movement types where the field holds a raw
+//      payment-processor / external-financial reference. Nulled wholesale so a
+//      third-party block never receives the user's processor ids:
+//        • Purchase   – every external buy-in lands here via grantBuzzPurchase /
+//                       completeStripeBuzzPurchase: Stripe paymentIntent.id +
+//                       invoice.id, Paddle transaction.id, `PAYPAL_ORDER:<id>`,
+//                       NOWPayments/Coinbase/EmerchantPay order ids, subscription
+//                       payment refs.
+//        • Refund     – a PayPal reversal stores the BARE PayPal transaction id
+//                       (paypal.service) with no distinguishing prefix, so the
+//                       value can't be told apart from the internal ones — null
+//                       the whole type.
+//        • ChargeBack / Withdrawal – payment-dispute / cash-out financial-movement
+//                       types; nulled defensively (no dashboard classifier need;
+//                       future processor/bank refs land here by convention).
+//  (2) SENSITIVE VALUE PREFIX — the ONE external reference that rides a
+//      non-money-movement type: merch grants a Shopify order id under type
+//      *Reward* as `merchPurchase:<shopifyOrderId>` (merch.service). Nulled by
+//      prefix so it doesn't leak through the kept-Reward path.
+//
+// Every OTHER row keeps its externalTransactionId — it is a civitai-internal
+// semantic classifier the dashboard renders (challenge-entry/winner prizes,
+// `referral-reward:*`, generic reward-event ids, bounty/compensation tags).
+const EXTERNAL_TXN_ID_SENSITIVE_TYPES = new Set<TransactionType>([
+  TransactionType.Purchase,
+  TransactionType.Refund,
+  TransactionType.ChargeBack,
+  TransactionType.Withdrawal,
+]);
+const EXTERNAL_TXN_ID_SENSITIVE_VALUE_PREFIXES = ['merchPurchase:'];
+
+function projectExternalTransactionId(
+  type: TransactionType,
+  externalTransactionId: string | null | undefined
+): string | null {
+  if (EXTERNAL_TXN_ID_SENSITIVE_TYPES.has(type)) return null;
+  if (
+    externalTransactionId != null &&
+    EXTERNAL_TXN_ID_SENSITIVE_VALUE_PREFIXES.some((p) => externalTransactionId.startsWith(p))
+  )
+    return null;
+  return externalTransactionId ?? null;
+}
 
 const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
@@ -107,18 +157,11 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
               toAccountType: details.toAccountType,
             }
           : details,
-        // externalTransactionId is DUAL-USE. On Purchase rows it is the payment-
-        // processor reference — the SAME value F1 stripped from `details`
-        // (Stripe `paymentIntent.id`, Paddle `transaction.id`, `PAYPAL_ORDER:…`,
-        // crypto order ids — every external buy-in flow lands as
-        // TransactionType.Purchase via grantBuzzPurchase / completeStripeBuzzPurchase).
-        // Null it for Purchase so the processor ref never reaches the block iframe.
-        // On Reward/challenge/etc. rows it is a non-sensitive semantic classifier
-        // (`challenge-entry-prize-…`, `referral-reward:…`) the dashboard needs to
-        // categorize prizes — keep it. Type-based, NOT a string-prefix check:
-        // Stripe/Paddle refs are bare ids with no distinctive prefix.
-        externalTransactionId:
-          t.type === TransactionType.Purchase ? null : externalTransactionId,
+        // Strip externalTransactionId wherever it holds a payment-processor /
+        // external-financial reference (money-movement types + the merch Shopify
+        // value); keep it where it is a civitai-internal prize/reward classifier
+        // the dashboard renders. See projectExternalTransactionId above.
+        externalTransactionId: projectExternalTransactionId(t.type, externalTransactionId),
         toUser: toUser ? { id: toUser.id, username: toUser.username } : undefined,
         fromUser: fromUser ? { id: fromUser.id, username: fromUser.username } : undefined,
       })),

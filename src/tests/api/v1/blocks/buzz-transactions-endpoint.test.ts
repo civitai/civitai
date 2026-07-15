@@ -261,21 +261,63 @@ describe('GET /api/v1/blocks/buzz/transactions', () => {
     expect(row.externalTransactionId).toBeNull();
   });
 
-  it('F1: non-Purchase (Reward/challenge) row KEEPS externalTransactionId — the prize classifier the dashboard needs', async () => {
+  it('F1: nulls externalTransactionId for EVERY money-movement / external-financial type', async () => {
+    // Each of these types carries a raw payment-processor / external reference in
+    // externalTransactionId (Purchase: Stripe/Paddle/PayPal/crypto; Refund: bare
+    // PayPal txn id; ChargeBack/Withdrawal: dispute / cash-out refs). None may
+    // reach the block iframe. The value used here stands in for the processor id.
+    const sensitiveTypes = [
+      TransactionType.Purchase,
+      TransactionType.Refund,
+      TransactionType.ChargeBack,
+      TransactionType.Withdrawal,
+    ];
+    for (const type of sensitiveTypes) {
+      mockGetTransactions.mockResolvedValueOnce({
+        cursor: null,
+        transactions: [{ ...sampleRow, type, externalTransactionId: 'processor-ref-xyz' }],
+      });
+      const { req, res } = createMocks();
+      await handler(req as never, res as never);
+      const body = res._json() as { transactions: Record<string, unknown>[] };
+      expect(body.transactions[0].externalTransactionId, `type ${TransactionType[type]}`).toBeNull();
+    }
+  });
+
+  it('F1: nulls externalTransactionId when it is a merch Shopify ref, even under type Reward', async () => {
+    // merch.service grants buzz as a Reward but stores the Shopify order id as
+    // `merchPurchase:<shopifyOrderId>` — a cross-type external-commerce ref that
+    // the value-prefix guard must strip even though Reward is otherwise kept.
     mockGetTransactions.mockResolvedValueOnce({
       cursor: null,
       transactions: [
-        {
-          ...sampleRow,
-          type: TransactionType.Reward,
-          externalTransactionId: 'challenge-winner-prize-2026-07',
-        },
+        { ...sampleRow, type: TransactionType.Reward, externalTransactionId: 'merchPurchase:SHOP-9981' },
       ],
     });
     const { req, res } = createMocks();
     await handler(req as never, res as never);
     const body = res._json() as { transactions: Record<string, unknown>[] };
-    expect(body.transactions[0].externalTransactionId).toBe('challenge-winner-prize-2026-07');
+    expect(body.transactions[0].externalTransactionId).toBeNull();
+  });
+
+  it('F1: KEEPS externalTransactionId for civitai-internal reward/prize classifiers the dashboard renders', async () => {
+    const keptClassifiers = [
+      { type: TransactionType.Reward, id: 'challenge-winner-prize-2026-07-place-1' },
+      { type: TransactionType.Reward, id: 'referral-reward:1234' },
+      { type: TransactionType.Reward, id: 'appBlockReview:ab_42' },
+      { type: TransactionType.Bounty, id: 'bounty-award-88-yellow' },
+      { type: TransactionType.Compensation, id: 'license-fee-2026-07-01-42-blue' },
+    ];
+    for (const { type, id } of keptClassifiers) {
+      mockGetTransactions.mockResolvedValueOnce({
+        cursor: null,
+        transactions: [{ ...sampleRow, type, externalTransactionId: id }],
+      });
+      const { req, res } = createMocks();
+      await handler(req as never, res as never);
+      const body = res._json() as { transactions: Record<string, unknown>[] };
+      expect(body.transactions[0].externalTransactionId, `type ${TransactionType[type]}`).toBe(id);
+    }
   });
 
   it('200: passes attribution fields through and projects counterparties to {id, username}', async () => {
