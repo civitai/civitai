@@ -995,3 +995,288 @@ describe('append `data` blob (opaque, unmoderated app payload)', () => {
     expect('data' in stored).toBe(false);
   });
 });
+
+// Author-scoped in-place UPDATE (`apps.shared.update`). Generic edit of an author's
+// OWN published row by key (no app-specific "generator" concept). Write-gated exactly
+// like append (shared:write scope + min-trust). Resolves the row by key in the
+// caller's app schema, author-gates it, re-runs the belt on the new title/body, caps
+// + quota-delta-checks the value, then UPDATEs value + updated_at IN PLACE —
+// preserving key / author_user_id / created_at / votes / counters / reports.
+describe('apps.shared.update (author-scoped in-place edit)', () => {
+  // Mock the update happy-path SELECTs (existing row + quota) and the UPDATE.
+  function mockUpdatePath(opts: { author?: number; sizeBytes?: number; usedBytes?: number; updatedRows?: number } = {}) {
+    const { author = 42, sizeBytes = 100, usedBytes = 0, updatedRows = 1 } = opts;
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('author_user_id, size_bytes'))
+        return { rows: [{ author_user_id: author, size_bytes: sizeBytes }], rowCount: 1 };
+      if (sql.includes('.quota')) return { rows: [{ used_bytes: String(usedBytes) }], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    });
+    mockClient.query.mockImplementation(async (sql: string) => {
+      if (sql.trim().startsWith('UPDATE')) return { rows: [], rowCount: updatedRows };
+      return { rows: [], rowCount: 0 };
+    });
+  }
+  // No existing row (missing OR hidden — the SELECT filters hidden_at IS NULL).
+  function mockUpdateNoRow() {
+    mockPool.query.mockImplementation(async () => ({ rows: [], rowCount: 0 }));
+  }
+  function findUpdate() {
+    return (mockClient.query.mock.calls as Array<[string, unknown[]?]>).find((c) =>
+      c[0].trim().startsWith('UPDATE')
+    );
+  }
+
+  it('author edits their OWN row in place — value changed, SAME key, no key/author/created_at/vote reset', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockUpdatePath();
+    const out = await caller().update({
+      blockToken: 't',
+      key: 'ROW-KEY-1',
+      value: { title: 'edited title', body: 'edited body' },
+    });
+    expect(out).toEqual({ ok: true });
+
+    const upd = findUpdate();
+    expect(upd).toBeTruthy();
+    // In-place: only value + updated_at change; author + visibility gated in WHERE.
+    expect(upd![0]).toContain('"app_app_voting".shared_kv');
+    expect(upd![0]).toContain('SET value = $2::jsonb');
+    expect(upd![0]).toContain('updated_at = now()');
+    expect(upd![0]).toContain('WHERE key = $1');
+    expect(upd![0]).toContain('author_user_id = $3');
+    expect(upd![0]).toContain('hidden_at IS NULL');
+    // Preservation proof: the key is NOT rewritten, created_at is NOT touched, and the
+    // votes/counters/reports tables are never referenced (no DELETE, no cascade).
+    expect(upd![0]).not.toContain('created_at');
+    expect(upd![0]).not.toMatch(/\.votes\b/);
+    expect(upd![0]).not.toMatch(/\.counters\b/);
+    expect(upd![0]).not.toMatch(/shared_kv_reports/);
+    const delCall = (mockClient.query.mock.calls as Array<[string]>).find((c) =>
+      c[0].trim().startsWith('DELETE')
+    );
+    expect(delCall).toBeFalsy();
+    // Params: key preserved (param[0]), new value serialized (param[1]), uid (param[2]).
+    const params = upd![1] as unknown[];
+    expect(params[0]).toBe('ROW-KEY-1'); // key unchanged
+    expect(params[2]).toBe(42); // the token-subject uid, not client input
+    const stored = JSON.parse(String(params[1])) as { title: string; body?: string };
+    expect(stored.title).toBe('edited title');
+    expect(stored.body).toBe('edited body');
+    // Quota GUC set so the UPDATE trigger reclaims the byte delta.
+    const guc = (mockClient.query.mock.calls as Array<[string]>).find((c) =>
+      c[0].includes('SET LOCAL app.current_app_block_id')
+    );
+    expect(guc).toBeTruthy();
+  });
+
+  it('a non-author is FORBIDDEN and nothing is written', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockUpdatePath({ author: 999 }); // row owned by someone else
+    await expect(
+      caller().update({ blockToken: 't', key: 'ROW-KEY-1', value: { title: 'hijack' } })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockPool.connect).not.toHaveBeenCalled();
+  });
+
+  it('a missing key is NOT_FOUND', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockUpdateNoRow();
+    await expect(
+      caller().update({ blockToken: 't', key: 'ghost', value: { title: 'x' } })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(mockPool.connect).not.toHaveBeenCalled();
+  });
+
+  it('a HIDDEN key is NOT_FOUND (the resolve SELECT filters hidden_at IS NULL)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    // A hidden row returns no rows from the `hidden_at IS NULL` SELECT → NOT_FOUND.
+    mockUpdateNoRow();
+    await expect(
+      caller().update({ blockToken: 't', key: 'hidden-row', value: { title: 'x' } })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    const sel = (mockPool.query.mock.calls as Array<[string]>).find((c) =>
+      c[0].includes('author_user_id, size_bytes')
+    );
+    expect(sel![0]).toContain('hidden_at IS NULL');
+    expect(mockPool.connect).not.toHaveBeenCalled();
+  });
+
+  it('a policy-violating (minor) title edit is REJECTED by the belt — no write, report filed', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockUpdatePath();
+    await expect(
+      caller().update({ blockToken: 't', key: 'ROW-KEY-1', value: { title: '13 year old girl' } })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    // no in-place write happened
+    expect(findUpdate()).toBeFalsy();
+    expect(mockPool.connect).not.toHaveBeenCalled();
+    // the belt filed an auto: report (same machinery as append)
+    const report = (mockPool.query.mock.calls as Array<[string, unknown[]?]>).find((c) =>
+      c[0].includes('shared_kv_reports')
+    );
+    expect(report).toBeTruthy();
+    expect(String((report![1] as unknown[])[3])).toContain('auto:');
+  });
+
+  it('a blocked-link body edit is REJECTED (belt runs on the new text) — no write', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockUpdatePath();
+    mockThrowOnBlockedLinkDomain.mockRejectedValueOnce(new Error('invalid urls'));
+    await expect(
+      caller().update({
+        blockToken: 't',
+        key: 'ROW-KEY-1',
+        value: { title: 'ok', body: 'visit http://bad.example' },
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(findUpdate()).toBeFalsy();
+  });
+
+  it('an oversized value (data pushes over the 64KB cap) → PAYLOAD_TOO_LARGE, no write', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockUpdatePath();
+    await expect(
+      caller().update({
+        blockToken: 't',
+        key: 'ROW-KEY-1',
+        value: { title: 'ok', data: { big: 'x'.repeat(70 * 1024) } },
+      })
+    ).rejects.toMatchObject({ code: 'PAYLOAD_TOO_LARGE' });
+    expect(mockPool.connect).not.toHaveBeenCalled();
+  });
+
+  it('a non-JSON-serializable value (BigInt) → BAD_REQUEST, no write', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockUpdatePath();
+    await expect(
+      caller().update({ blockToken: 't', key: 'ROW-KEY-1', value: { title: 'ok', data: 1n } as never })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'value is not serializable' });
+    expect(mockPool.connect).not.toHaveBeenCalled();
+  });
+
+  it('quota DELTA respected: a growing edit that exceeds the app quota → PAYLOAD_TOO_LARGE', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    const APP_QUOTA_BYTES = 50 * 1024 * 1024;
+    // old row is 100 bytes; used_bytes sits 50 under the cap; a ~500-byte pad grows
+    // the value so used + (new − 100) > cap.
+    mockUpdatePath({ sizeBytes: 100, usedBytes: APP_QUOTA_BYTES - 50 });
+    await expect(
+      caller().update({
+        blockToken: 't',
+        key: 'ROW-KEY-1',
+        value: { title: 'ok', data: { pad: 'y'.repeat(500) } },
+      })
+    ).rejects.toMatchObject({ code: 'PAYLOAD_TOO_LARGE', message: 'app quota exceeded' });
+    expect(mockPool.connect).not.toHaveBeenCalled();
+  });
+
+  it('quota DELTA respected: a SHRINKING edit passes even when the app is near the cap', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    const APP_QUOTA_BYTES = 50 * 1024 * 1024;
+    // old row is huge (10KB) and the app is 10 bytes under the cap; the tiny new value
+    // makes the delta NEGATIVE, so it must fit — proving the check is on the delta.
+    mockUpdatePath({ sizeBytes: 10 * 1024, usedBytes: APP_QUOTA_BYTES - 10 });
+    const out = await caller().update({ blockToken: 't', key: 'ROW-KEY-1', value: { title: 'tiny' } });
+    expect(out).toEqual({ ok: true });
+    expect(findUpdate()).toBeTruthy();
+  });
+
+  it('`data` bypasses the belt (freely updatable) while title/body stay moderated', async () => {
+    // A clean title + a "bad" string inside data → stored, not rejected.
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockUpdatePath();
+    const out = await caller().update({
+      blockToken: 't',
+      key: 'ROW-KEY-1',
+      value: { title: 'clean title', data: { note: '13 year old girl' } },
+    });
+    expect(out).toEqual({ ok: true });
+    // belt audited ONLY the moderated title, never the data blob
+    expect(mockAuditPromptServer).toHaveBeenCalledTimes(1);
+    const audited = String((mockAuditPromptServer.mock.calls[0][0] as { prompt: string }).prompt);
+    expect(audited).toContain('clean title');
+    expect(audited).not.toContain('13 year old girl');
+    const stored = JSON.parse(String((findUpdate()![1] as unknown[])[1])) as { data?: { note?: string } };
+    expect(stored.data?.note).toBe('13 year old girl');
+
+    // But a bad TITLE with a data blob present still rejects (belt runs on title).
+    // Reset the connect/client spies so we can assert THIS attempt never wrote.
+    mockPool.connect.mockClear();
+    mockClient.query.mockClear();
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockUpdatePath();
+    await expect(
+      caller().update({
+        blockToken: 't',
+        key: 'ROW-KEY-1',
+        value: { title: '13 year old girl', data: { anything: true } },
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockPool.connect).not.toHaveBeenCalled();
+  });
+
+  it('lost race: the in-place UPDATE affects 0 rows → NOT_FOUND', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockUpdatePath({ updatedRows: 0 }); // row vanished/hidden/reassigned mid-op
+    await expect(
+      caller().update({ blockToken: 't', key: 'ROW-KEY-1', value: { title: 'ok' } })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('shares append’s daily rate-limit bucket (over cap → TOO_MANY_REQUESTS, no row lookup)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockCheckAppendRl.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 60 });
+    await expect(
+      caller().update({ blockToken: 't', key: 'ROW-KEY-1', value: { title: 'x' } })
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(mockCheckAppendRl).toHaveBeenCalledTimes(1);
+    expect(mockPool.query).not.toHaveBeenCalled();
+    expect(mockPool.connect).not.toHaveBeenCalled();
+  });
+
+  // Scope + trust gating is IDENTICAL to append (both are non-read write ops).
+  describe('scope + trust gating identical to append', () => {
+    it('a token missing the write scope → FORBIDDEN', async () => {
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ scopes: [READ] }));
+      await expect(
+        caller().update({ blockToken: 't', key: 'k', value: { title: 'x' } })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockPool.query).not.toHaveBeenCalled();
+    });
+
+    it('an anon subject → UNAUTHORIZED (writes require an authenticated viewer)', async () => {
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'anon' }));
+      await expect(
+        caller().update({ blockToken: 't', key: 'k', value: { title: 'x' } })
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+      expect(mockPool.query).not.toHaveBeenCalled();
+    });
+
+    const untrusted: Array<[string, Record<string, unknown>]> = [
+      ['banned', { bannedAt: new Date() }],
+      ['muted', { muted: true }],
+      ['too-new account', { createdAt: new Date() }],
+      ['unverified email', { emailVerified: undefined }],
+      ['onboarding incomplete', { onboarding: 0 }],
+    ];
+    for (const [name, over] of untrusted) {
+      it(`an untrusted writer (${name}) → FORBIDDEN, no DB access`, async () => {
+        mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+        mockGetSessionUser.mockResolvedValueOnce(trustedUser(over));
+        await expect(
+          caller().update({ blockToken: 't', key: 'k', value: { title: 'x' } })
+        ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+        expect(mockPool.query).not.toHaveBeenCalled();
+      });
+    }
+
+    it('the FLAG DARK kill-switch refuses update (FORBIDDEN)', async () => {
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      mockIsSharedEnabled.mockResolvedValueOnce(false);
+      await expect(
+        caller().update({ blockToken: 't', key: 'k', value: { title: 'x' } })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    });
+  });
+});

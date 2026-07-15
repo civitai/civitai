@@ -73,6 +73,9 @@ type SharedOp =
   | 'list'
   | 'getCount'
   | 'append'
+  // Author-scoped in-place edit of an OWN published row (write-gated exactly like
+  // append: shared:write scope + min-trust). Author-only; see the `update` mutation.
+  | 'update'
   | 'vote'
   | 'unvote'
   | 'withdraw'
@@ -409,99 +412,19 @@ export const appsSharedRouter = router({
         });
       }
 
-      // BLOCKING content safety → RAW, store-ready text (Fix 2: escape-at-rest
-      // removed; XSS is contained at the text-render + opaque-origin-sandbox layers,
-      // never at rest — see shared-content-safety.ts C2 note).
-      let safe: { title: string; body?: string };
-      try {
-        safe = await assertSharedTextSafe({
-          title: input.value.title,
-          body: input.value.body,
-          userId: uid,
-          isModerator: subjectUser?.isModerator,
-        });
-      } catch (e) {
-        if (e instanceof SharedContentBlockedError) {
-          // C3/M5: minor/POI/audit hits file a Report row for mod review. (link/size
-          // are user error, not reportable abuse.)
-          if (e.category === 'minor' || e.category === 'poi' || e.category === 'audit') {
-            await insertSharedReport(schema, {
-              key: null,
-              reporterUserId: uid,
-              reason: `auto:${e.category}`,
-            }).catch(() => {});
-          }
-          // FIX 1 (pre-GA gate 1 — make abuse OBSERVABLE): the `shared_kv_reports`
-          // table has no reader yet, so a moderation-blocked append would otherwise
-          // be silent. Emit a structured, alertable event (METADATA ONLY — NEVER the
-          // content text) so any auto-blocked write is observable before the
-          // mod-queue wiring lands. `link`/`size` stay unalerted (user error, not
-          // reportable abuse). Fire-and-forget (`.catch`) — an alert emit must NEVER
-          // block or fail the op.
-          //
-          // TWO DISTINCT signals (kept separate so the legal-urgency channel is not
-          // diluted): minor/POI are a HARD legal escalation (CSAM/minor) → the
-          // `…-legal-block` / `type:error` event; a general `audit` block (harassment
-          // / spam that trips external moderation) → the lower-urgency
-          // `…-content-block` / `type:warning` event. Same metadata-only shape.
-          if (e.category === 'minor' || e.category === 'poi') {
-            logToAxiom(
-              {
-                name: 'app-blocks-shared-storage-legal-block',
-                type: 'error',
-                category: e.category,
-                userId: uid,
-                slug,
-                appBlockId,
-              },
-              'block-audit'
-            ).catch(() => {});
-          } else if (e.category === 'audit') {
-            logToAxiom(
-              {
-                name: 'app-blocks-shared-storage-content-block',
-                type: 'warning',
-                category: e.category,
-                userId: uid,
-                slug,
-                appBlockId,
-              },
-              'block-audit'
-            ).catch(() => {});
-          }
-          throw new TRPCError({ code: 'BAD_REQUEST', message: e.message });
-        }
-        throw e;
-      }
-
-      // `safe.title`/`safe.body` are the MODERATED text; `input.value.data` is the
-      // opaque app-owned payload stored UNMODERATED (see the appendValueInput note —
-      // belt runs on title/body only). `data` holds PLAIN-JSON app state: it is
-      // round-tripped as JSON, so superjson-special types are NOT preserved
-      // (Date → ISO string, Map/Set → `{}`, BigInt → throws, nested `undefined`
-      // dropped) — apps should store plain JSON. Its bytes are folded into the
-      // serialized value below, so the whole-value cap + the app quota bound it
-      // exactly like the text.
-      const storedValue = {
-        title: safe.title,
-        ...(safe.body != null ? { body: safe.body } : {}),
-        ...(input.value.data !== undefined ? { data: input.value.data } : {}),
-      };
-      // `z.unknown()` does NO validation and superjson has already reconstructed
-      // real JS values (BigInt / circular refs / Map / Set) before we see `data`, so
-      // JSON.stringify can THROW ("Do not know how to serialize a BigInt", circular
-      // structure). Guard it so a non-serializable `data` is a clean 4xx, not an
-      // unhandled 500 — this runs BEFORE any DB write, so no row is ever written.
-      let serialized: string;
-      try {
-        serialized = JSON.stringify(storedValue);
-      } catch {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: 'value is not serializable' });
-      }
-      const byteSize = Buffer.byteLength(serialized, 'utf8');
-      if (byteSize > SHARED_VALUE_BYTE_CAP) {
-        throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'value exceeds size cap' });
-      }
+      // BLOCKING content safety (belt on title/body) + serialize-guard + whole-value
+      // byte cap → RAW, store-ready serialized JSON. Shared verbatim with `update`
+      // (see assertSharedValueSafeAndSerialize): a policy-violating edit and a create
+      // are moderated identically. Throws a clean 4xx on any rejection — no row is
+      // ever written on failure.
+      const { serialized, byteSize } = await assertSharedValueSafeAndSerialize({
+        schema,
+        slug,
+        appBlockId,
+        uid,
+        subjectUser,
+        value: input.value,
+      });
 
       const pool = requireAppsDb();
 
@@ -563,6 +486,123 @@ export const appsSharedRouter = router({
       }
 
       return { key };
+    }),
+
+  /**
+   * Author-scoped in-place UPDATE of an OWN published row (fixes "editing creates a
+   * new one" — `append` is INSERT-only). GENERIC: it edits any shared_kv row by key,
+   * no app-specific concept. Gated identically to `append` (shared:write scope +
+   * min-trust, enforced in resolveSharedContext). The row is resolved by `key` in
+   * the CALLER'S app schema (derived from the verified token, never client input):
+   *   - NOT_FOUND if the key is missing OR hidden (hidden_at IS NOT NULL)
+   *   - FORBIDDEN unless author_user_id = the token subject (a non-author cannot edit;
+   *     mods use apps.mod.purgeSharedRow, not this)
+   * The new title/body run the SAME blocking content-safety belt as append (a
+   * policy-violating edit is rejected, no write); the opaque `data` blob stays
+   * UNMODERATED (same trust boundary as append). The whole value is serialize-guarded
+   * + capped, and the per-app quota is re-checked on the byte DELTA (new − old) BEFORE
+   * the write. The write is IN PLACE: value + updated_at (+ the generated size_bytes,
+   * which the shared_kv UPDATE quota trigger folds into used_bytes) change; the key,
+   * author_user_id, created_at, and the row's votes/counters/reports are PRESERVED.
+   * Shares append's daily rate-limit bucket so an edit isn't an unbounded write.
+   */
+  update: publicProcedure
+    .input(blockTokenInput.extend({ key: sharedKeyInput, value: appendValueInput }))
+    .mutation(async ({ input }) => {
+      const { userId, subjectUser, slug, schema, appBlockId } = await resolveSharedContext(
+        input.blockToken,
+        'update'
+      );
+      // userId is non-null (trust gate ran in the resolver).
+      const uid = userId as number;
+
+      // Same daily bucket as append (design H4) so repeated edits can't become an
+      // unbounded write — AND it bounds the external-moderation cost the belt incurs.
+      const rl = await checkSharedAppendRateLimit(uid, appBlockId);
+      if (!rl.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: `Too many submissions — retry in ${rl.retryAfterSeconds}s`,
+        });
+      }
+
+      const pool = requireAppsDb();
+
+      // Resolve the target row in THIS app's schema (schema is server-derived from the
+      // verified token, never client-supplied). Missing OR hidden → NOT_FOUND. The
+      // stored size_bytes is the CURRENT byte weight, used for the quota delta below.
+      const existing = (
+        await pool.query<{ author_user_id: number; size_bytes: number }>(
+          `SELECT author_user_id, size_bytes FROM ${schema}.shared_kv
+            WHERE key = $1 AND hidden_at IS NULL`,
+          [input.key]
+        )
+      ).rows[0];
+      if (!existing) throw new TRPCError({ code: 'NOT_FOUND', message: 'request not found' });
+      // Author gate: only the row's author may edit it. A non-author is FORBIDDEN
+      // (mods hide/purge via apps.mod.purgeSharedRow, never this write path).
+      if (existing.author_user_id !== uid) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'you can only edit your own submissions',
+        });
+      }
+
+      // Belt on the NEW title/body + serialize-guard + whole-value byte cap (mirrors
+      // append EXACTLY — same helper). A policy-violating edit throws here, before any
+      // write, so the stored row is never touched.
+      const { serialized, byteSize } = await assertSharedValueSafeAndSerialize({
+        schema,
+        slug,
+        appBlockId,
+        uid,
+        subjectUser,
+        value: input.value,
+      });
+
+      // Per-app byte quota re-checked on the DELTA (new − old). A shrinking edit always
+      // fits; a growing edit must sit within the remaining budget. Row count is
+      // UNCHANGED by an in-place update, so there's no row-limit / per-user-row check.
+      const quota = (
+        await pool.query<{ used_bytes: string }>(
+          `SELECT used_bytes::text FROM ${schema}.quota WHERE app_block_id = $1`,
+          [appBlockId]
+        )
+      ).rows[0];
+      const usedBytes = Number(quota?.used_bytes ?? '0');
+      const oldBytes = Number(existing.size_bytes ?? 0);
+      if (usedBytes + (byteSize - oldBytes) > APP_QUOTA_BYTES) {
+        throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'app quota exceeded' });
+      }
+
+      // In-place UPDATE under the quota GUC (the shared_kv UPDATE trigger reclaims the
+      // byte delta into quota.used_bytes automatically). Author-gated + visibility-
+      // gated in the WHERE too — belt-and-suspenders against a race between the SELECT
+      // above and this write. Only `value`/`updated_at` change → key, author_user_id,
+      // created_at and the FK'd votes/counters/reports are all PRESERVED.
+      const client = await pool.connect();
+      let updated = 0;
+      try {
+        await client.query('BEGIN');
+        await client.query(`SET LOCAL app.current_app_block_id = ${pgQuoteLiteral(appBlockId)}`);
+        const result = await client.query(
+          `UPDATE ${schema}.shared_kv
+              SET value = $2::jsonb, updated_at = now()
+            WHERE key = $1 AND author_user_id = $3 AND hidden_at IS NULL`,
+          [input.key, serialized, uid]
+        );
+        updated = result.rowCount ?? 0;
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        client.release();
+      }
+      // Lost a race (row vanished / was hidden / reassigned between SELECT and UPDATE).
+      if (updated === 0) throw new TRPCError({ code: 'NOT_FOUND', message: 'request not found' });
+
+      return { ok: true as const };
     }),
 
   /**
@@ -936,6 +976,109 @@ export const appsModRouter = router({
 });
 
 // ── helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Shared belt + serialize + cap path used by BOTH `append` (create) and `update`
+ * (author-scoped in-place edit) so the two are moderated identically (no drift).
+ *
+ * Runs the BLOCKING content-safety belt on the MODERATED title/body (Fix 2: text is
+ * stored RAW — XSS is contained at the text-render + opaque-origin-sandbox layers,
+ * never escaped at rest). On a policy block it files a Report row (minor/POI/audit)
+ * and emits the metadata-only, fire-and-forget abuse alert (legal-block for
+ * minor/POI; the separate lower-urgency content-block for a general audit hit) — the
+ * SAME observability append historically had inline — then throws BAD_REQUEST.
+ *
+ * `data` is the OPAQUE, app-owned, UNMODERATED payload: it is folded into the stored
+ * value but NEVER runs the belt (same trust boundary as append). It holds PLAIN-JSON
+ * app state round-tripped as JSON (superjson-special types are NOT preserved), and
+ * because `z.unknown()` does no validation, JSON.stringify can THROW (BigInt /
+ * circular) — guarded to a clean BAD_REQUEST, never an unhandled 500. The whole
+ * serialized value is bounded by SHARED_VALUE_BYTE_CAP.
+ *
+ * Returns the store-ready serialized JSON + its byte size (for the caller's per-app
+ * quota accounting). Runs BEFORE any DB write, so no row is ever written on failure.
+ */
+async function assertSharedValueSafeAndSerialize(params: {
+  schema: string;
+  slug: string;
+  appBlockId: string;
+  uid: number;
+  subjectUser: SessionUser | null;
+  value: { title: string; body?: string; data?: unknown };
+}): Promise<{ serialized: string; byteSize: number }> {
+  const { schema, slug, appBlockId, uid, subjectUser, value } = params;
+
+  let safe: { title: string; body?: string };
+  try {
+    safe = await assertSharedTextSafe({
+      title: value.title,
+      body: value.body,
+      userId: uid,
+      isModerator: subjectUser?.isModerator,
+    });
+  } catch (e) {
+    if (e instanceof SharedContentBlockedError) {
+      // C3/M5: minor/POI/audit hits file a Report row for mod review. (link/size are
+      // user error, not reportable abuse.)
+      if (e.category === 'minor' || e.category === 'poi' || e.category === 'audit') {
+        await insertSharedReport(schema, {
+          key: null,
+          reporterUserId: uid,
+          reason: `auto:${e.category}`,
+        }).catch(() => {});
+      }
+      // TWO DISTINCT signals kept separate so the legal-urgency channel is not
+      // diluted: minor/POI → the `…-legal-block` / `type:error` event; a general
+      // `audit` block → the lower-urgency `…-content-block` / `type:warning` event.
+      // METADATA ONLY (never the content text); fire-and-forget (an alert emit must
+      // never block or fail the op).
+      if (e.category === 'minor' || e.category === 'poi') {
+        logToAxiom(
+          {
+            name: 'app-blocks-shared-storage-legal-block',
+            type: 'error',
+            category: e.category,
+            userId: uid,
+            slug,
+            appBlockId,
+          },
+          'block-audit'
+        ).catch(() => {});
+      } else if (e.category === 'audit') {
+        logToAxiom(
+          {
+            name: 'app-blocks-shared-storage-content-block',
+            type: 'warning',
+            category: e.category,
+            userId: uid,
+            slug,
+            appBlockId,
+          },
+          'block-audit'
+        ).catch(() => {});
+      }
+      throw new TRPCError({ code: 'BAD_REQUEST', message: e.message });
+    }
+    throw e;
+  }
+
+  const storedValue = {
+    title: safe.title,
+    ...(safe.body != null ? { body: safe.body } : {}),
+    ...(value.data !== undefined ? { data: value.data } : {}),
+  };
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(storedValue);
+  } catch {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'value is not serializable' });
+  }
+  const byteSize = Buffer.byteLength(serialized, 'utf8');
+  if (byteSize > SHARED_VALUE_BYTE_CAP) {
+    throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'value exceeds size cap' });
+  }
+  return { serialized, byteSize };
+}
 
 async function insertSharedReport(
   schema: string,
