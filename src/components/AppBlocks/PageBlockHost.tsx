@@ -17,6 +17,7 @@ import {
 } from './pageBlockHostLogic';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
 import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
+import type { BlockSourceImageInfo } from './BlockGenerationSourceUploadModal';
 import { projectBlockInitMaturity } from './projectBlockInit';
 import { sendBlockRender } from './sendBlockRender';
 import {
@@ -55,6 +56,16 @@ const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
 const BlockImageUploadModal = dynamic(() => import('./BlockImageUploadModal'), {
   ssr: false,
 });
+
+// Sibling of BlockImageUploadModal for the OPEN_IMAGE_UPLOAD bridge's
+// `purpose: 'generationSource'` mode: an UNSCANNED private generation input (an
+// img2img source), uploaded through the SAME consumer-blob util the generator
+// uses (uploadConsumerBlob) — no createImage/scan/gate. The orchestrator scans
+// the generation OUTPUT. Returns only { url, width, height }.
+const BlockGenerationSourceUploadModal = dynamic(
+  () => import('./BlockGenerationSourceUploadModal'),
+  { ssr: false }
+);
 
 // Login flow for anonymous-conversion (REQUEST_SIGN_IN). The page route renders
 // for logged-out viewers (the BLOCK_INIT context is viewer-scoped, viewer:null),
@@ -1405,51 +1416,94 @@ export function PageBlockHost({
   // ── OPEN_IMAGE_UPLOAD → IMAGE_UPLOAD_RESULT (host-mediated block image upload) ─
   //
   // A block asks the host to let the viewer upload an image (the app decides what
-  // it is for — avatar / cover / background / reference / …). Mirrors
-  // OPEN_RESOURCE_PICKER's host-chrome pattern: the host opens its OWN upload modal,
-  // the iframe never handles the bytes. The upload routes through civitai's
-  // SESSION-AUTHED path → REAL createImage + ingestImage scan → server-side gate
-  // (blockImageUpload.persist + gate), and ONLY a moderated image id that is
-  // scanned-clean, within the SFW ceiling, and unflagged is returned — a publicly-
-  // displayed image is NOT trust-stamped (no createStoredImage).
+  // it is for). Mirrors OPEN_RESOURCE_PICKER's host-chrome pattern: the host opens
+  // its OWN upload modal, the iframe never handles the bytes. The request's
+  // optional `purpose` (normalized by resolveImageUploadRequest — absent ⇒
+  // 'display', so this stays byte-compatible with an SDK that sends none) selects
+  // the mode:
+  //
+  //   • 'display' (DEFAULT — PUBLIC image, e.g. a cosmetic background): the upload
+  //     routes through civitai's SESSION-AUTHED path → REAL createImage +
+  //     ingestImage scan → server-side gate (blockImageUpload.persist + gate), and
+  //     ONLY a moderated image id that is scanned-clean, within the SFW ceiling,
+  //     and unflagged is returned. UNCHANGED behavior.
+  //
+  //   • 'generationSource' (PRIVATE generation input — an img2img source): the
+  //     upload routes through the SAME lightweight consumer-blob util the generator
+  //     uses (uploadConsumerBlob, in BlockGenerationSourceUploadModal) — NO
+  //     createImage, NO scan, NO SFW gate, NO imageId/nsfwLevel. It returns only
+  //     the source shape { url, width, height } (the blob's real dims). Platform
+  //     safety is preserved because the ORCHESTRATOR scans the generation OUTPUT,
+  //     exactly as civitai's own generator does for its img2img sources. The blob
+  //     url is an `orchestration…civitai.com` host that passes the img2img
+  //     blockSourceImageSchema allowlist (workflow.schema) unchanged.
   //
   // Gate on status 'ready' (a pre-handshake block can't summon the modal) via the
   // same 'error'→'no_token' shim the consent/buzz handlers use. requestId threads
   // the reply so concurrent uploads never cross. A successful upload posts the
-  // minimal projection; closing without one posts a bare (cancelled) result — the
-  // modal never leaks scan/ownership internals.
+  // minimal projection; closing without one posts a bare (cancelled) result.
   useEffect(() => {
-    const off = onMessage<{ requestId?: unknown } | undefined>('OPEN_IMAGE_UPLOAD', (raw) => {
-      const gateStatus = status === 'error' ? 'no_token' : status;
-      if (gateStatus !== 'ready') return; // pre-handshake block — drop
-      const req = resolveImageUploadRequest(raw);
-      if (!req) return; // missing / non-string requestId → drop, never open the modal
-      const { requestId } = req;
+    const off = onMessage<{ requestId?: unknown; purpose?: unknown } | undefined>(
+      'OPEN_IMAGE_UPLOAD',
+      (raw) => {
+        const gateStatus = status === 'error' ? 'no_token' : status;
+        if (gateStatus !== 'ready') return; // pre-handshake block — drop
+        const req = resolveImageUploadRequest(raw);
+        if (!req) return; // missing / non-string requestId → drop, never open the modal
+        const { requestId, purpose } = req;
 
-      let resolved: BlockUploadedImageInfo | null = null;
-      dialogStore.trigger({
-        // Per-request id so multiple OPEN_IMAGE_UPLOAD calls don't dedup against
-        // each other in the dialog store's exists-check.
-        id: `block-image-upload-${requestId}`,
-        component: BlockImageUploadModal,
-        props: {
-          onResolved: (result: BlockUploadedImageInfo) => {
-            resolved = result;
+        // generationSource: UNSCANNED private img2img source (orchestrator scans
+        // the OUTPUT). Reply carries the source shape { url, width, height }; the
+        // moderated 'display' branch below is untouched.
+        if (purpose === 'generationSource') {
+          let resolvedSource: BlockSourceImageInfo | null = null;
+          dialogStore.trigger({
+            id: `block-generation-source-upload-${requestId}`,
+            component: BlockGenerationSourceUploadModal,
+            props: {
+              onResolved: (result: BlockSourceImageInfo) => {
+                resolvedSource = result;
+              },
+            },
+            options: {
+              onClose: () => {
+                if (resolvedSource) {
+                  send('IMAGE_UPLOAD_RESULT', { requestId, selected: resolvedSource });
+                } else {
+                  send('IMAGE_UPLOAD_RESULT', { requestId });
+                }
+              },
+            },
+          });
+          return;
+        }
+
+        // display (default): moderated public-image path — UNCHANGED.
+        let resolved: BlockUploadedImageInfo | null = null;
+        dialogStore.trigger({
+          // Per-request id so multiple OPEN_IMAGE_UPLOAD calls don't dedup against
+          // each other in the dialog store's exists-check.
+          id: `block-image-upload-${requestId}`,
+          component: BlockImageUploadModal,
+          props: {
+            onResolved: (result: BlockUploadedImageInfo) => {
+              resolved = result;
+            },
           },
-        },
-        options: {
-          onClose: () => {
-            // A successful upload set `resolved` before the modal closed itself;
-            // otherwise the user cancelled → reply with a bare (cancelled) result.
-            if (resolved) {
-              send('IMAGE_UPLOAD_RESULT', { requestId, selected: resolved });
-            } else {
-              send('IMAGE_UPLOAD_RESULT', { requestId });
-            }
+          options: {
+            onClose: () => {
+              // A successful upload set `resolved` before the modal closed itself;
+              // otherwise the user cancelled → reply with a bare (cancelled) result.
+              if (resolved) {
+                send('IMAGE_UPLOAD_RESULT', { requestId, selected: resolved });
+              } else {
+                send('IMAGE_UPLOAD_RESULT', { requestId });
+              }
+            },
           },
-        },
-      });
-    });
+        });
+      }
+    );
     return off;
   }, [onMessage, send, status]);
 
