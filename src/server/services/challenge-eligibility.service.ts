@@ -20,6 +20,17 @@ type UserChallengeStanding = {
   activeStrikes: number;
 };
 
+export type ChallengeCreateRequirement =
+  | { key: 'score'; met: boolean; current: number; min: number }
+  | { key: 'standing'; met: boolean; muted: boolean; activeStrikes: number; banned: boolean }
+  | { key: 'dailyLimit'; met: boolean; recentCount: number; limit: number }
+  | { key: 'activeLimit'; met: boolean; activeCount: number; limit: number };
+
+export type ChallengeCreateEligibility = {
+  canCreate: boolean;
+  requirements: ChallengeCreateRequirement[];
+};
+
 export async function getUserChallengeStanding(userId: number): Promise<UserChallengeStanding> {
   const user = await dbRead.user.findUnique({
     where: { id: userId },
@@ -68,19 +79,35 @@ export async function assertUserInGoodStanding(userId: number): Promise<UserChal
   return standing;
 }
 
-/** Throws if the user has created CHALLENGE_CREATE_DAILY_LIMIT or more User-source challenges in
- * the last 24h. Anti-spam/abuse guard against rapid create->delete churn (deleted rows drop out of
- * this count, so a determined churner can still evade it — see constant's doc comment). */
-export async function assertUnderDailyCreateLimit(
-  userId: number
-): Promise<{ limit: number; recentCount: number }> {
-  const recentCount = await dbRead.challenge.count({
+/** User-source challenges the user created in the last 24h (rolling window). */
+function countRecentUserChallenges(userId: number): Promise<number> {
+  return dbRead.challenge.count({
     where: {
       createdById: userId,
       source: ChallengeSource.User,
       createdAt: { gt: new Date(Date.now() - 24 * 60 * 60 * 1000) },
     },
   });
+}
+
+/** User-source challenges the user currently has in Scheduled or Active status. */
+function countActiveUserChallenges(userId: number): Promise<number> {
+  return dbRead.challenge.count({
+    where: {
+      createdById: userId,
+      source: ChallengeSource.User,
+      status: { in: [ChallengeStatus.Scheduled, ChallengeStatus.Active] },
+    },
+  });
+}
+
+/** Throws if the user has created CHALLENGE_CREATE_DAILY_LIMIT or more User-source challenges in
+ * the last 24h. Anti-spam/abuse guard against rapid create->delete churn (deleted rows drop out of
+ * this count, so a determined churner can still evade it — see constant's doc comment). */
+export async function assertUnderDailyCreateLimit(
+  userId: number
+): Promise<{ limit: number; recentCount: number }> {
+  const recentCount = await countRecentUserChallenges(userId);
 
   if (recentCount >= CHALLENGE_CREATE_DAILY_LIMIT)
     throw forbidden(
@@ -95,13 +122,7 @@ export async function assertUnderActiveChallengeLimit(
 ): Promise<{ limit: number; activeCount: number }> {
   const [subscription, activeCount] = await Promise.all([
     getHighestTierSubscription(userId),
-    dbRead.challenge.count({
-      where: {
-        createdById: userId,
-        source: ChallengeSource.User,
-        status: { in: [ChallengeStatus.Scheduled, ChallengeStatus.Active] },
-      },
-    }),
+    countActiveUserChallenges(userId),
   ]);
 
   const limit = getChallengeActiveLimit(subscription?.tier);
@@ -117,4 +138,47 @@ export async function assertCanCreateUserChallenge(userId: number): Promise<void
   await assertUserInGoodStanding(userId);
   await assertUnderDailyCreateLimit(userId);
   await assertUnderActiveChallengeLimit(userId);
+}
+
+/** Non-throwing counterpart to `assertCanCreateUserChallenge` for surfacing the create requirements
+ * in the UI. Evaluates every gate and returns each one's status; reuses the same standing/count
+ * helpers and constants as the `assert*` path, so `canCreate` matches whether the mutation would be
+ * allowed. */
+export async function getUserChallengeCreateEligibility(
+  userId: number
+): Promise<ChallengeCreateEligibility> {
+  const [standing, recentCount, activeCount, subscription] = await Promise.all([
+    getUserChallengeStanding(userId),
+    countRecentUserChallenges(userId),
+    countActiveUserChallenges(userId),
+    getHighestTierSubscription(userId),
+  ]);
+
+  const activeLimit = getChallengeActiveLimit(subscription?.tier);
+  const banned = !!(standing.bannedAt || standing.deletedAt);
+
+  const requirements: ChallengeCreateRequirement[] = [
+    {
+      key: 'score',
+      met: standing.scoreTotal >= CHALLENGE_MIN_CREATOR_SCORE,
+      current: standing.scoreTotal,
+      min: CHALLENGE_MIN_CREATOR_SCORE,
+    },
+    {
+      key: 'standing',
+      met: !banned && !standing.muted && standing.activeStrikes === 0,
+      muted: standing.muted,
+      activeStrikes: standing.activeStrikes,
+      banned,
+    },
+    {
+      key: 'dailyLimit',
+      met: recentCount < CHALLENGE_CREATE_DAILY_LIMIT,
+      recentCount,
+      limit: CHALLENGE_CREATE_DAILY_LIMIT,
+    },
+    { key: 'activeLimit', met: activeCount < activeLimit, activeCount, limit: activeLimit },
+  ];
+
+  return { canCreate: requirements.every((r) => r.met), requirements };
 }

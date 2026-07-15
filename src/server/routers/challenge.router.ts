@@ -66,6 +66,7 @@ import {
   playgroundPickWinners,
 } from '~/server/services/challenge.service';
 import { getJudgingCategoryOptions } from '~/server/services/challenge-category.service';
+import { getUserChallengeCreateEligibility } from '~/server/services/challenge-eligibility.service';
 import { getJudgeCommentForImage } from '~/server/services/commentsv2.service';
 import { deriveDomainCurrency } from '~/server/games/daily-challenge/challenge-currency';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -168,6 +169,15 @@ export const challengeRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('challengePlatform'))
     .query(({ input }) => getChallengeForEdit(input.id)),
+
+  // User: create-eligibility status for the create page (non-throwing; mirrors the create gate).
+  // Read-only and returns only the caller's own score/limits, so it is NOT behind `userChallenges`:
+  // that flag evaluates to false in static tRPC middleware for non-mods (availability ['mod']) even
+  // when the page's SSR gate lets them in via Flipt, which would FORBIDDEN this query and hide the
+  // requirements card. The write path (upsertUserChallenge) keeps the `userChallenges` guard.
+  getCreateEligibility: protectedProcedure
+    .use(isFlagProtected('challengePlatform'))
+    .query(({ ctx }) => getUserChallengeCreateEligibility(ctx.user.id)),
 
   // User: fetch own Scheduled challenge for editing (owner-guarded in the service).
   getUserChallengeForEdit: protectedProcedure
