@@ -141,3 +141,66 @@ describe('WRITE is devalue in Phase 2', () => {
     expect(serverTransformer.output.deserialize(written)).toEqual(x);
   });
 });
+
+/**
+ * The wire-output-must-be-a-POJO contract.
+ *
+ * superjson SILENTLY coerced non-POJO tRPC outputs (a returned `Error` → `{}`, an
+ * SDK class instance → a stripped plain object), swallowing latent bugs. devalue
+ * is strict: it THROWS on any value it can't faithfully represent, which turns
+ * those same returns into a 500 the moment the write path is devalue. This encodes
+ * that boundary so a future procedure that returns a non-POJO (a raw `@paddle`/
+ * Stripe/AWS SDK entity, a caught `Error`, a symbol-keyed object, a Promise) is
+ * caught here rather than in prod. It is the invariant the paddle/buzz-withdrawal
+ * write-path fixes in this PR restore.
+ *
+ * NOTE: this guards the SERIALIZER choice, not every call site — grep can't find a
+ * positionally-returned class instance. The real defense is mapping SDK results to
+ * plain objects at the service boundary (see paddle.service `getAdjustmentsInfinite`).
+ */
+describe('write path rejects non-POJO tRPC outputs (devalue is strict)', () => {
+  class SdkEntity {
+    readonly id = 'adj_123';
+    readonly createdAt = '2024-01-01T00:00:00.000Z';
+    constructor() {}
+    // a method makes the prototype non-Object — exactly the Paddle `Adjustment` shape
+    toJSON() {
+      return { id: this.id };
+    }
+  }
+
+  it('throws on a returned Error instance (the cancelSubscriptionPlan / buzz-withdrawal class)', () => {
+    expect(() => writeSerialize(new Error('boom'))).toThrow();
+    // nested in a response object is just as fatal
+    expect(() => writeSerialize({ ok: false, error: new Error('boom') })).toThrow();
+  });
+
+  it('throws on an arbitrary class instance (the Paddle SDK `Adjustment` class)', () => {
+    expect(() => writeSerialize(new SdkEntity())).toThrow();
+    // the exact getAdjustmentsInfinite shape: { items: [<class instance>] }
+    expect(() => writeSerialize({ items: [new SdkEntity()], nextCursor: undefined })).toThrow();
+  });
+
+  it('throws on symbol-keyed objects, symbol/function values, and Promises', () => {
+    expect(() => writeSerialize({ [Symbol('k')]: 1 })).toThrow();
+    expect(() => writeSerialize({ a: Symbol('v') })).toThrow();
+    expect(() => writeSerialize({ fn: () => 1 })).toThrow();
+    expect(() => writeSerialize(Promise.resolve(1))).toThrow();
+  });
+
+  it('ACCEPTS the POJO fix shape — mapping the SDK entity to a plain object round-trips', () => {
+    // The fix: JSON round-trip (or an explicit map) turns the class instance into a
+    // POJO. This is what `getAdjustmentsInfinite` now returns.
+    const pojo = JSON.parse(JSON.stringify({ items: [new SdkEntity()], nextCursor: 'adj_9' }));
+    const out = writeSerialize(pojo);
+    expect(typeof out).toBe('string');
+    expect(unionDeserialize(out)).toEqual(pojo);
+  });
+
+  it('still ACCEPTS the rich POJO types real handlers emit (Date/Map/Set/BigInt are fine)', () => {
+    // devalue represents these faithfully — the contract rejects non-POJOs, NOT
+    // these first-class rich types (so the fix is narrow: only class instances /
+    // Errors / symbols / Promises are the hazard).
+    expect(() => writeSerialize({ d: new Date(), m: new Map([['a', 1]]), s: new Set([1]), n: 2n })).not.toThrow();
+  });
+});
