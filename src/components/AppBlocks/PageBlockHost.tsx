@@ -588,6 +588,12 @@ export function PageBlockHost({
   // bearer credential a .query would leak into the ?input=… URL / logs / Referer
   // where it's replayable within its TTL. See blocks.router getMyBuzzBalance.
   const getMyBuzzBalanceMutation = trpc.blocks.getMyBuzzBalance.useMutation();
+  // Buzz self-read bridges (a Buzz-dashboard page app): ledger / all-pool
+  // balances / per-model earnings. MUTATIONS for the same bearer-token reason as
+  // getMyBuzzBalance; each requires the `buzz:read:self` scope server-side.
+  const getMyBuzzTransactionsMutation = trpc.blocks.getMyBuzzTransactions.useMutation();
+  const getMyBuzzAccountsMutation = trpc.blocks.getMyBuzzAccounts.useMutation();
+  const getMyDailyCompensationMutation = trpc.blocks.getMyDailyCompensation.useMutation();
 
   // Wildcard-pack import (W13). SESSION-authed (protectedProcedure) — it does NOT
   // take a block token; the viewer's real cookie session authenticates, which is
@@ -739,6 +745,96 @@ export function PageBlockHost({
     );
     return off;
   }, [onMessage, send, token, getMyBuzzBalanceMutation]);
+
+  // GET_BUZZ_TRANSACTIONS → blocks.getMyBuzzTransactions → BUZZ_TRANSACTIONS_RESULT.
+  // The Buzz-dashboard ledger read. Host-MEDIATED (the iframe never holds the
+  // scope-gated token's power directly); the server self-binds off the token
+  // `sub` + requires `buzz:read:self`. REQUEST-style ⇒ every path MUST reply or
+  // the block hangs; on a null token we reply with the ERROR variant (mirrors
+  // GET_BUZZ_BALANCE) rather than dropping. A missing requestId is dropped.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; params?: unknown } | undefined>(
+      'GET_BUZZ_TRANSACTIONS',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string') return;
+        const requestId = raw.requestId;
+        if (!token) {
+          send('BUZZ_TRANSACTIONS_RESULT', { requestId, error: 'no block token' });
+          return;
+        }
+        try {
+          // params are schema-validated server-side; the host never trusts them.
+          const result = await getMyBuzzTransactionsMutation.mutateAsync({
+            blockToken: token,
+            ...((raw.params as Record<string, unknown>) ?? {}),
+          } as never);
+          send('BUZZ_TRANSACTIONS_RESULT', { requestId, result });
+        } catch (err) {
+          send('BUZZ_TRANSACTIONS_RESULT', {
+            requestId,
+            error: err instanceof Error ? err.message : 'unknown',
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, getMyBuzzTransactionsMutation]);
+
+  // GET_BUZZ_ACCOUNTS → blocks.getMyBuzzAccounts → BUZZ_ACCOUNTS_RESULT. All-pool
+  // balances (spendable + creator payout pools). Same host-mediated + consent +
+  // reply-always contract as GET_BUZZ_TRANSACTIONS.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown } | undefined>(
+      'GET_BUZZ_ACCOUNTS',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string') return;
+        const requestId = raw.requestId;
+        if (!token) {
+          send('BUZZ_ACCOUNTS_RESULT', { requestId, error: 'no block token' });
+          return;
+        }
+        try {
+          const result = await getMyBuzzAccountsMutation.mutateAsync({ blockToken: token });
+          send('BUZZ_ACCOUNTS_RESULT', { requestId, result });
+        } catch (err) {
+          send('BUZZ_ACCOUNTS_RESULT', {
+            requestId,
+            error: err instanceof Error ? err.message : 'unknown',
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, getMyBuzzAccountsMutation]);
+
+  // GET_DAILY_COMPENSATION → blocks.getMyDailyCompensation → DAILY_COMPENSATION_RESULT.
+  // Per-modelVersion generation earnings for the month of `date`. Same contract.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; params?: unknown } | undefined>(
+      'GET_DAILY_COMPENSATION',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string') return;
+        const requestId = raw.requestId;
+        if (!token) {
+          send('DAILY_COMPENSATION_RESULT', { requestId, error: 'no block token' });
+          return;
+        }
+        try {
+          const result = await getMyDailyCompensationMutation.mutateAsync({
+            blockToken: token,
+            ...((raw.params as Record<string, unknown>) ?? {}),
+          } as never);
+          send('DAILY_COMPENSATION_RESULT', { requestId, result });
+        } catch (err) {
+          send('DAILY_COMPENSATION_RESULT', {
+            requestId,
+            error: err instanceof Error ? err.message : 'unknown',
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, getMyDailyCompensationMutation]);
 
   // OPEN_BUZZ_PURCHASE → BUZZ_PURCHASE_RESULT. The generator's insufficient-Buzz
   // top-up CTA. Gate on BLOCK_READY (+ payload validity) via the shared

@@ -23,6 +23,10 @@ const {
   mockBuildGenerationContext,
   mockAuditPromptServer,
   mockGetUserById,
+  mockGetUserBuzzTransactions,
+  mockGetUserBuzzAccount,
+  mockGetDailyCompensation,
+  mockCheckBlockCatalogRateLimit,
   mockGetSessionUser,
   mockDbRead,
   mockRedis,
@@ -46,6 +50,11 @@ const {
   mockBuildGenerationContext: vi.fn(),
   mockAuditPromptServer: vi.fn(),
   mockGetUserById: vi.fn(),
+  // Buzz self-read bridges (getMyBuzzTransactions/Accounts + getMyDailyCompensation).
+  mockGetUserBuzzTransactions: vi.fn(),
+  mockGetUserBuzzAccount: vi.fn(),
+  mockGetDailyCompensation: vi.fn(),
+  mockCheckBlockCatalogRateLimit: vi.fn(async () => ({ allowed: true })),
   // assertAppBlocksEnabledForTokenUser now resolves the FULL SessionUser (so the
   // Flipt context carries the real tier/isMember). isAppBlocksEnabled is mocked
   // here, but getSessionUser must still be stubbed so the real resolver doesn't
@@ -191,6 +200,12 @@ vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
 }));
 vi.mock('~/server/services/buzz.service', () => ({
   getUserBuzzAccounts: (...args: unknown[]) => mockGetUserBuzzAccounts(...args),
+  getUserBuzzTransactions: (...args: unknown[]) => mockGetUserBuzzTransactions(...args),
+  getUserBuzzAccount: (...args: unknown[]) => mockGetUserBuzzAccount(...args),
+  getDailyCompensationRewardByUser: (...args: unknown[]) => mockGetDailyCompensation(...args),
+}));
+vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
+  checkBlockCatalogRateLimit: (...args: unknown[]) => mockCheckBlockCatalogRateLimit(...args),
 }));
 vi.mock('~/server/services/generation/generation.service', () => ({
   resolveCanGenerateForVersions: (...args: unknown[]) =>
@@ -348,6 +363,10 @@ beforeEach(() => {
     mockDailyBoostApply,
     mockDailyBoostGetDetails,
     mockGetUserBuzzAccounts,
+    mockGetUserBuzzTransactions,
+    mockGetUserBuzzAccount,
+    mockGetDailyCompensation,
+    mockCheckBlockCatalogRateLimit,
     mockLogToAxiom,
     mockSysRedis.get,
     mockSysRedis.incrBy,
@@ -391,6 +410,8 @@ beforeEach(() => {
   mockSysRedis.decrBy.mockResolvedValue(0);
   mockSysRedis.expire.mockResolvedValue(true);
   mockSysRedis.ttl.mockResolvedValue(-1);
+  // Buzz self-read bridges: default the per-instance rate limit to allowed.
+  mockCheckBlockCatalogRateLimit.mockResolvedValue({ allowed: true });
   // Defaults — every test starts with the flag on, a valid claim, an
   // authenticated subject, a fresh user/version row. Tests override only the
   // gate they're exercising. NB: mockReset wipes the implementation, so the
@@ -3668,5 +3689,178 @@ describe('blocks.getMyBuzzBalance', () => {
       code: 'FORBIDDEN',
     });
     expect(mockGetUserBuzzAccounts).not.toHaveBeenCalled();
+  });
+});
+
+// ---- Buzz self-read bridges (getMyBuzz{Transactions,Accounts} + -----------
+// getMyDailyCompensation) — host-mediated, token-bound, buzz:read:self consent.
+// A `buzz:read:self` claim is REQUIRED (unlike the scope-free getMyBuzzBalance).
+// ---------------------------------------------------------------------------
+const BUZZ_READ = ['buzz:read:self'];
+
+describe('blocks.getMyBuzzTransactions', () => {
+  it('returns the SELF-BOUND ledger with the hardened projection (details allowlist + externalTransactionId nulled)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: BUZZ_READ }));
+    happyUser();
+    mockGetUserBuzzTransactions.mockResolvedValue({
+      cursor: new Date('2026-06-30T00:00:00Z'),
+      transactions: [
+        {
+          date: new Date('2026-07-01T00:00:00Z'),
+          type: TransactionType.Purchase,
+          fromAccountId: 0,
+          toAccountId: 42,
+          fromAccountType: 'yellow',
+          toAccountType: 'yellow',
+          amount: 100,
+          description: 'buy',
+          details: { entityId: 5, entityType: 'Model', stripePaymentIntentId: 'pi_secret' },
+          externalTransactionId: 'pi_secret',
+          toUser: { id: 42, username: 'me', status: 'active' },
+          fromUser: undefined,
+        },
+      ],
+    });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.getMyBuzzTransactions({ blockToken: 'tok', accountType: 'yellow' });
+    // Self-bound: accountId is always the token subject (42), never client input.
+    expect(mockGetUserBuzzTransactions).toHaveBeenCalledWith(
+      expect.objectContaining({ accountId: 42, accountType: 'yellow' })
+    );
+    const row = result.transactions[0];
+    expect(row.type).toBe('Purchase');
+    // Details allowlist drops the Stripe payment-intent ref.
+    expect(row.details).not.toHaveProperty('stripePaymentIntentId');
+    // Purchase row → externalTransactionId nulled (processor-reference leak class).
+    expect(row.externalTransactionId).toBeNull();
+    // Counterparty stripped to {id, username}.
+    expect(row.toUser).toEqual({ id: 42, username: 'me' });
+  });
+
+  it('maps the TransactionType NAME to the enum for the service call', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: BUZZ_READ }));
+    happyUser();
+    mockGetUserBuzzTransactions.mockResolvedValue({ cursor: null, transactions: [] });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.getMyBuzzTransactions({ blockToken: 'tok', type: 'Tip', limit: 200 });
+    expect(mockGetUserBuzzTransactions).toHaveBeenCalledWith(
+      expect.objectContaining({ accountId: 42, type: TransactionType.Tip, limit: 200 })
+    );
+  });
+
+  it('FORBIDDEN without the buzz:read:self scope (consent gate), before any read', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: ['models:read:self'] }));
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyBuzzTransactions({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(mockGetUserBuzzTransactions).not.toHaveBeenCalled();
+  });
+
+  it('UNAUTHORIZED for an invalid token / anon subject (never reads)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(null);
+    let caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyBuzzTransactions({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: BUZZ_READ, sub: 'anon' }));
+    caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyBuzzTransactions({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(mockGetUserBuzzTransactions).not.toHaveBeenCalled();
+  });
+
+  it('rate-limit trips → TOO_MANY_REQUESTS BEFORE the service call', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: BUZZ_READ }));
+    happyUser();
+    mockCheckBlockCatalogRateLimit.mockResolvedValue({ allowed: false, retryAfterSeconds: 7 });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyBuzzTransactions({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+    });
+    expect(mockCheckBlockCatalogRateLimit).toHaveBeenCalledWith('bki_test');
+    expect(mockGetUserBuzzTransactions).not.toHaveBeenCalled();
+  });
+
+  it('rejects a bad accountType at the input boundary (never reads)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: BUZZ_READ }));
+    happyUser();
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.getMyBuzzTransactions({ blockToken: 'tok', accountType: 'red' } as never)
+    ).rejects.toBeDefined();
+    expect(mockGetUserBuzzTransactions).not.toHaveBeenCalled();
+  });
+});
+
+describe('blocks.getMyBuzzAccounts', () => {
+  it('reads every exposed pool for the SELF-BOUND subject, projecting {accountType, balance}', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: BUZZ_READ }));
+    happyUser();
+    mockGetUserBuzzAccount.mockResolvedValue([
+      { id: 42, balance: 100, lifetimeBalance: null, accountType: 'yellow' },
+      { id: 42, balance: 5, lifetimeBalance: null, accountType: 'cashSettled' },
+    ]);
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.getMyBuzzAccounts({ blockToken: 'tok' });
+    expect(mockGetUserBuzzAccount).toHaveBeenCalledWith(
+      expect.objectContaining({ accountId: 42 })
+    );
+    expect(result.accounts).toEqual([
+      { accountType: 'yellow', balance: 100 },
+      { accountType: 'cashSettled', balance: 5 },
+    ]);
+  });
+
+  it('FORBIDDEN without buzz:read:self; UNAUTHORIZED for invalid token', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: ['models:read:self'] }));
+    let caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyBuzzAccounts({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    mockVerifyBlockToken.mockResolvedValue(null);
+    caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyBuzzAccounts({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(mockGetUserBuzzAccount).not.toHaveBeenCalled();
+  });
+});
+
+describe('blocks.getMyDailyCompensation', () => {
+  it('reads the SELF-BOUND per-model compensation for the month of date', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: BUZZ_READ }));
+    happyUser();
+    mockGetDailyCompensation.mockResolvedValue({ resources: [], hasPublishedResources: false });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.getMyDailyCompensation({
+      blockToken: 'tok',
+      date: new Date('2026-07-01'),
+    });
+    expect(result).toEqual({ resources: [], hasPublishedResources: false });
+    expect(mockGetDailyCompensation).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 42, source: 'compensation' })
+    );
+  });
+
+  it('rate-limit trips → TOO_MANY_REQUESTS before the ClickHouse-backed read', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: BUZZ_READ }));
+    happyUser();
+    mockCheckBlockCatalogRateLimit.mockResolvedValue({ allowed: false, retryAfterSeconds: 7 });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.getMyDailyCompensation({ blockToken: 'tok', date: new Date('2026-07-01') })
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(mockGetDailyCompensation).not.toHaveBeenCalled();
+  });
+
+  it('FORBIDDEN without buzz:read:self (consent gate)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: ['models:read:self'] }));
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.getMyDailyCompensation({ blockToken: 'tok', date: new Date('2026-07-01') })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockGetDailyCompensation).not.toHaveBeenCalled();
   });
 });

@@ -105,10 +105,9 @@ const ENDPOINTS: Array<{ module: string; requiredScope: string }> = [
     requiredScope: 'collections:write:self',
   },
   { module: '~/pages/api/v1/blocks/tip', requiredScope: 'social:tip:self' },
-  { module: '~/pages/api/v1/blocks/buzz', requiredScope: 'buzz:read:self' },
-  { module: '~/pages/api/v1/blocks/buzz/transactions', requiredScope: 'buzz:read:self' },
-  { module: '~/pages/api/v1/blocks/buzz/daily-compensation', requiredScope: 'buzz:read:self' },
-  { module: '~/pages/api/v1/blocks/buzz/accounts', requiredScope: 'buzz:read:self' },
+  // NOTE: the buzz self-reads (balance/transactions/accounts/daily-compensation)
+  // are host-mediated tRPC MUTATIONS now (blocks.getMyBuzz*), not withBlockScope
+  // REST routes, so they have no CORS wiring to guard here.
   {
     module: '~/pages/api/v1/blocks/shared-storage/increment',
     requiredScope: 'apps:storage:shared:write',

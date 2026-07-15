@@ -203,21 +203,32 @@ const transactionTypeNames = Object.keys(TransactionType).filter((key) =>
   Number.isNaN(Number(key))
 ) as [keyof typeof TransactionType, ...(keyof typeof TransactionType)[]];
 
-// Query-string contracts for GET /api/v1/blocks/buzz/* — everything arrives as
-// strings, hence the coercions. `type` takes the TransactionType NAME ("Tip"),
-// not the numeric value.
-export type GetBlockBuzzTransactionsQuery = z.infer<typeof getBlockBuzzTransactionsQuery>;
-export const getBlockBuzzTransactionsQuery = z.object({
+// tRPC input contracts for the block-token-authed buzz self-read MUTATIONS
+// (host-mediated page-block bridges — blocks.router `getMyBuzz{Transactions,
+// Accounts}` / `getMyDailyCompensation`). Each carries the page's block token;
+// the account/user is SELF-BOUND server-side off `claims.sub` (never these
+// inputs). `type` takes the TransactionType NAME ("Tip"), not the numeric value.
+// Dates use `z.coerce.date` so an ISO string OR a Date from the host bridge both
+// parse; `limit` is a real number (mutation body, not a query string).
+export type GetMyBuzzTransactionsInput = z.infer<typeof getMyBuzzTransactionsInput>;
+export const getMyBuzzTransactionsInput = z.object({
+  blockToken: z.string().min(1),
   accountType: z.enum(blockBuzzAccountTypes).default('yellow'),
   type: z.enum(transactionTypeNames).optional(),
   cursor: z.coerce.date().optional(),
   start: z.coerce.date().optional(),
   end: z.coerce.date().optional(),
-  limit: z.coerce.number().int().min(1).max(200).default(50),
+  limit: z.number().int().min(1).max(200).default(50),
 });
 
-export type GetBlockBuzzDailyCompensationQuery = z.infer<typeof getBlockBuzzDailyCompensationQuery>;
-export const getBlockBuzzDailyCompensationQuery = z.object({
+export type GetMyBuzzAccountsInput = z.infer<typeof getMyBuzzAccountsInput>;
+export const getMyBuzzAccountsInput = z.object({
+  blockToken: z.string().min(1),
+});
+
+export type GetMyDailyCompensationInput = z.infer<typeof getMyDailyCompensationInput>;
+export const getMyDailyCompensationInput = z.object({
+  blockToken: z.string().min(1),
   date: z.coerce.date(),
   source: z.enum(compensationSources).default('compensation'),
   accountType: z.enum(blockBuzzAccountTypes).optional(),

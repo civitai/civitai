@@ -13,7 +13,20 @@ import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-tok
 import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-scope.middleware';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { dailyBoostReward } from '~/server/rewards/active/dailyBoost.reward';
-import { getUserBuzzAccounts } from '~/server/services/buzz.service';
+import {
+  getDailyCompensationRewardByUser,
+  getUserBuzzAccount,
+  getUserBuzzAccounts,
+  getUserBuzzTransactions,
+} from '~/server/services/buzz.service';
+import { projectBlockBuzzTransaction } from '~/server/services/blocks/block-buzz-read.projection';
+import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
+import {
+  blockBuzzAccountTypes,
+  getMyBuzzAccountsInput,
+  getMyBuzzTransactionsInput,
+  getMyDailyCompensationInput,
+} from '~/server/schema/buzz.schema';
 import { manifestSettingsSchema } from '~/server/schema/blocks/manifest-settings.meta.schema';
 import { validateBlockSettings } from '~/server/services/blocks/settings-validator.service';
 import {
@@ -91,7 +104,7 @@ import {
 import { getResourceGenerationSupport } from '~/shared/constants/basemodel.constants';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
-import { BuzzTypes } from '~/shared/constants/buzz.constants';
+import { BuzzTypes, TransactionType } from '~/shared/constants/buzz.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import {
   getBlockAllowedAccountTypes,
@@ -236,6 +249,50 @@ async function assertAppBlocksEnabledForTokenUser(userId: number): Promise<void>
   if (!(await isAppBlocksEnabled({ user: user ?? undefined }))) {
     throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
   }
+}
+
+/**
+ * Shared authorization gate for the buzz self-read bridges (`getMyBuzz*` below).
+ * Mirrors `getMyBuzzBalance`'s gate but adds the `buzz:read:self` CONSENT check:
+ * these reads (full ledger / all-pool balances incl. creator payout pools /
+ * per-model earnings) are MORE sensitive than the spendable-balance convenience
+ * read, so unlike the scope-free `getMyBuzzBalance` they require the token to
+ * carry the declared+granted `buzz:read:self` scope.
+ *
+ * Order (each step fail-closed): verify token → require consent scope → self-bind
+ * the userId off `claims.sub` (never client input) → App-Blocks kill-switch +
+ * author gate against the token subject → per-instance rate limit (keyed on the
+ * stable `blockInstanceId`, BEFORE any db/ClickHouse work). Returns the
+ * self-bound `userId` + verified `claims`.
+ */
+async function authorizeBlockBuzzRead(
+  blockToken: string
+): Promise<{ userId: number; claims: NonNullable<Awaited<ReturnType<typeof verifyBlockToken>>> }> {
+  const claims = await verifyBlockToken(blockToken);
+  if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+  if (!claims.scopes.includes('buzz:read:self')) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks buzz:read:self scope' });
+  }
+  const userId = parseSubjectUserId(claims.sub);
+  if (userId == null) {
+    throw new TRPCError({
+      code: 'UNAUTHORIZED',
+      message: 'buzz read requires an authenticated viewer',
+    });
+  }
+  await assertAppBlocksEnabledForTokenUser(userId);
+  await assertViewerIsAppDeveloper(userId);
+  // Per-instance rate limit (shared blocks limiter) — bounds a block hammering
+  // these private reads (esp. daily-compensation → ClickHouse) onto the origin.
+  // Runs BEFORE any service call. Fail-open on a redis incident.
+  const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+  if (!rate.allowed) {
+    throw new TRPCError({
+      code: 'TOO_MANY_REQUESTS',
+      message: 'Rate limit exceeded, please retry shortly.',
+    });
+  }
+  return { userId, claims };
 }
 
 // ---- W10 page generation spend --------------------------------------------
@@ -3161,13 +3218,14 @@ export const blocksRouter = router({
    * `buzz:read:self` scope.
    *
    * NOTE: `buzz:read:self` is page-safe (PAGE_FORBIDDEN_SCOPES is empty — see
-   * slot-registry.ts), so a page CAN declare the scope and hit the
-   * /api/v1/blocks/buzz/* REST endpoints directly. This procedure remains the
-   * scope-free convenience path: the FIRST-PARTY host exposing the viewer's OWN
-   * balance to their OWN page session, mediated by the proof-of-session block
-   * token — userId is derived from the token `sub` (self-bound), NEVER from
-   * client input, so a page can only ever read the balance of the exact user
-   * whose session minted the token.
+   * slot-registry.ts), and the richer self-reads (ledger / all-pool balances /
+   * per-model earnings) live on the sibling `getMyBuzz{Transactions,Accounts}` /
+   * `getMyDailyCompensation` bridges, which REQUIRE that scope. This procedure
+   * stays the scope-free convenience path: the FIRST-PARTY host exposing the
+   * viewer's OWN spendable balance to their OWN page session, mediated by the
+   * proof-of-session block token — userId is derived from the token `sub`
+   * (self-bound), NEVER from client input, so a page can only ever read the
+   * balance of the exact user whose session minted the token.
    *
    * Auth model is IDENTICAL to submitWorkflow's block-token gate: verify the
    * token, require an authenticated (non-anon) subject, then the App-Blocks
@@ -3209,6 +3267,74 @@ export const blocksRouter = router({
         green: accounts.green ?? 0,
         yellow: accounts.yellow ?? 0,
       };
+    }),
+
+  /**
+   * HOST-MEDIATED buzz LEDGER read for the token-bound viewer (money page
+   * blocks — a Buzz dashboard). Pages the SUBJECT's own transactions for ONE
+   * pool per call. MUTATION (not query) for the same reason as getMyBuzzBalance:
+   * a .query leaks the bearer block token into the ?input= URL / logs / Referer.
+   *
+   * CONSENT: requires the `buzz:read:self` scope (see authorizeBlockBuzzRead) —
+   * the ledger is more sensitive than the spendable-balance convenience read.
+   *
+   * Response rows carry the SECURITY-HARDENED projection
+   * (projectBlockBuzzTransaction): `details` allowlisted to entity-attribution
+   * only (no passthrough / no stripePaymentIntentId), `externalTransactionId`
+   * nulled for payment-processor-reference rows, counterparties stripped to
+   * `{ id, username }`, `type` serialized as its name.
+   */
+  getMyBuzzTransactions: publicProcedure
+    .input(getMyBuzzTransactionsInput)
+    .mutation(async ({ input }) => {
+      const { userId } = await authorizeBlockBuzzRead(input.blockToken);
+      const { accountType, type, cursor, start, end, limit } = input;
+      const { cursor: nextCursor, transactions } = await getUserBuzzTransactions({
+        accountId: userId, // SELF-BOUND — never client input.
+        accountType,
+        type: type ? TransactionType[type] : undefined,
+        cursor,
+        start,
+        end,
+        limit,
+      });
+      return { cursor: nextCursor, transactions: transactions.map(projectBlockBuzzTransaction) };
+    }),
+
+  /**
+   * HOST-MEDIATED all-pool balance read for the token-bound viewer. Returns the
+   * SUBJECT's balance for every pool in `blockBuzzAccountTypes` (the three
+   * spendable types PLUS the creator payout pools the spendable-only
+   * getMyBuzzBalance omits). MUTATION + `buzz:read:self` consent, self-bound.
+   */
+  getMyBuzzAccounts: publicProcedure
+    .input(getMyBuzzAccountsInput)
+    .mutation(async ({ input }) => {
+      const { userId } = await authorizeBlockBuzzRead(input.blockToken);
+      const accounts = await getUserBuzzAccount({
+        accountId: userId, // SELF-BOUND — never client input.
+        accountTypes: [...blockBuzzAccountTypes],
+      });
+      return { accounts: accounts.map(({ accountType, balance }) => ({ accountType, balance })) };
+    }),
+
+  /**
+   * HOST-MEDIATED per-modelVersion generation-compensation read for the
+   * token-bound viewer (the month containing `date`). MUTATION + `buzz:read:self`
+   * consent, self-bound. Fans out to Postgres + ClickHouse — the rate limit in
+   * authorizeBlockBuzzRead runs first. Cash amounts stay in tenths-of-a-penny as
+   * the service returns them.
+   */
+  getMyDailyCompensation: publicProcedure
+    .input(getMyDailyCompensationInput)
+    .mutation(async ({ input }) => {
+      const { userId } = await authorizeBlockBuzzRead(input.blockToken);
+      return getDailyCompensationRewardByUser({
+        userId, // SELF-BOUND — never client input.
+        date: input.date,
+        source: input.source,
+        accountType: input.accountType,
+      });
     }),
 
   /**

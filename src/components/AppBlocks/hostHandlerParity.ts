@@ -204,6 +204,34 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // Buzz self-read dashboard bridges (ledger / all-pool balances / per-model
+  // earnings) — host-mediated via the `buzz:read:self`-gated `blocks.getMyBuzz*`
+  // MUTATIONS. AHEAD of the published SDK dist union (SDK co-requisite —
+  // forward-looking coverage, allowed by the one-directional compile-time gate).
+  // PAGE-ONLY affordance (a Buzz-dashboard page app; model-slot apps are
+  // deferred + will get page-host too), so N/A for the model host — mirrors
+  // OPEN_RESOURCE_PICKER / OPEN_IMAGE_UPLOAD.
+  GET_BUZZ_TRANSACTIONS: {
+    request: true,
+    reply: 'BUZZ_TRANSACTIONS_RESULT',
+    IframeHost: 'buzz self-read dashboard is a page-only affordance; slot-apps deferred',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  GET_BUZZ_ACCOUNTS: {
+    request: true,
+    reply: 'BUZZ_ACCOUNTS_RESULT',
+    IframeHost: 'buzz self-read dashboard is a page-only affordance; slot-apps deferred',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  GET_DAILY_COMPENSATION: {
+    request: true,
+    reply: 'DAILY_COMPENSATION_RESULT',
+    IframeHost: 'buzz self-read dashboard is a page-only affordance; slot-apps deferred',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   OPEN_CHECKPOINT_PICKER: {
     request: true,
     reply: 'CHECKPOINT_PICKER_RESULT',
