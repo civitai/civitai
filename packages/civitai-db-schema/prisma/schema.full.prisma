@@ -1079,7 +1079,6 @@ model ModelVersion {
   ImageResourceNew        ImageResourceNew[]
   coveredCheckpoints      CoveredCheckpoint[]
   wildcardSet             WildcardSet?
-  baseModelLicensingFees  BaseModelLicensingFee[]
   licensingRoot           LicensingRoot?
 
   @@index([modelId], type: Hash)
@@ -1101,18 +1100,6 @@ model LicensingRoot {
   updatedAt      DateTime     @updatedAt
 
   @@index([baseModel, modelType])
-}
-
-model BaseModelLicensingFee {
-  baseModel      String
-  modelType      ModelType
-  modelVersionId Int
-  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-
-  @@id([baseModel, modelType])
-  @@index([modelVersionId])
 }
 
 enum LicensingFeeType {

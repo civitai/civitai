@@ -45,9 +45,11 @@ dedups to **Anima 5 + Finetune 1 + LoRA 0.1 = 3 fees, 3 recipients, from 2 resou
 
 - [x] Emit `recipientUserId` (owner `User.id`) on every `fees[]` entry — the top-level `modelUserId` plus the
       per-fee recipient owner, exactly what task 868kcpzzt consumes.
-- [x] Resolve the single base/lineage recipient owner via two SELECT columns
-      (`baseLicensingFeeRecipientUserId` via the `BaseModelLicensingFee` rule, `sourceLicensingFeeRecipientUserId`
-      via `licensingSourceVersionId`) + the version's own `modelUserId`.
+- [x] Resolve the single base/lineage recipient owner from the fee tiers: a version that is itself a
+      `LicensingRoot` (a row in the `LicensingRoot` table) settles its own fee to its own `modelUserId`;
+      otherwise `licensingSourceVersionId` settles to `sourceLicensingFeeRecipientUserId` (the parent root's
+      owner). There is **no** `(baseModel, modelType)` fallback — a null parent on a non-root means no lineage
+      fee. (The old `BaseModelLicensingFee` tier-3 rule was removed.)
 - [x] No chain walk / recipient array needed — single ancestor is enforced at write time
       (`model-version.controller.ts` requires `licensingSourceVersionId` to be a `LicensingRoot` sharing the same
       base model), so the ≤2-fee `fees[]` block is complete.

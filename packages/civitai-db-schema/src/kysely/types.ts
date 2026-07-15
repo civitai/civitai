@@ -670,13 +670,6 @@ export type AuctionBase = {
   validForDays: Generated<number>;
   description: string | null;
 };
-export type BaseModelLicensingFee = {
-  baseModel: string;
-  modelType: ModelType;
-  modelVersionId: number;
-  createdAt: Generated<Timestamp>;
-  updatedAt: Timestamp;
-};
 export type Bid = {
   id: Generated<number>;
   auctionId: number;
@@ -3831,7 +3824,6 @@ export type DB = {
   ArticleStat: ArticleStat;
   Auction: Auction;
   AuctionBase: AuctionBase;
-  BaseModelLicensingFee: BaseModelLicensingFee;
   Bid: Bid;
   BidRecurring: BidRecurring;
   block_attribution_payout: BlockAttributionPayout;

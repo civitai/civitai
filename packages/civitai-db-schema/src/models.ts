@@ -947,7 +947,6 @@ export interface ModelVersion {
   ImageResourceNew?: ImageResourceNew[];
   coveredCheckpoints?: CoveredCheckpoint[];
   wildcardSet?: WildcardSet | null;
-  baseModelLicensingFees?: BaseModelLicensingFee[];
   licensingRoot?: LicensingRoot | null;
 }
 
@@ -958,15 +957,6 @@ export interface LicensingRoot {
   modelVersionId: number;
   modelVersion?: ModelVersion;
   isDefault: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface BaseModelLicensingFee {
-  baseModel: string;
-  modelType: ModelType;
-  modelVersionId: number;
-  modelVersion?: ModelVersion;
   createdAt: Date;
   updatedAt: Date;
 }
