@@ -1,9 +1,13 @@
 <script lang="ts">
-  import { Chart, chartColor } from '@civitai/ui/components/ui/chart/index.js';
+  import { Chart, chartColor, createSyncedCrosshair } from '@civitai/ui/components/ui/chart/index.js';
   import type { TimePoint } from '$lib/server/analytics';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
+
+  // One shared crosshair across every chart on the page — all share the same date axis, so hovering one draws a
+  // vertical line at that date on all of them.
+  const crosshair = createSyncedCrosshair();
 
   const RANGES = [7, 30, 90] as const;
   const num = (n: number) => n.toLocaleString();
@@ -113,7 +117,7 @@
   </div>
 {:else}
   <p class="mb-2 text-xs text-dark-3">Totals {periodLabel}</p>
-  <section class="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
+  <section class="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-5">
     {#each tiles as tile (tile.label)}
       <div class="rounded-lg border border-dark-4 bg-dark-6 p-3">
         <p class="text-xs uppercase tracking-wide text-dark-3">{tile.label}</p>
@@ -121,11 +125,17 @@
       </div>
     {/each}
   </section>
+  {#if data.allTime}
+    <p class="mb-6 text-xs text-dark-3">
+      All-time on your images: <strong class="text-dark-1">{num(data.allTime.reactions)}</strong> reactions ·
+      <strong class="text-dark-1">{num(data.allTime.comments)}</strong> comments
+    </p>
+  {/if}
 
   <div class="mb-4 rounded-lg border border-dark-4 bg-dark-6 p-4">
     <p class="mb-3 text-sm text-dark-2">Reactions received over time</p>
     <div class="h-64">
-      <Chart type="line" data={lineData(data.analytics.reactions, 'Reactions', 0)} options={commonOptions} class="h-full" />
+      <Chart type="line" data={lineData(data.analytics.reactions, 'Reactions', 0)} options={commonOptions} plugins={[crosshair]} class="h-full" />
     </div>
   </div>
 
@@ -134,7 +144,7 @@
       <div class="rounded-lg border border-dark-4 bg-dark-6 p-4">
         <p class="mb-3 text-sm text-dark-2">{c.title}</p>
         <div class="h-48">
-          <Chart type="line" data={lineData(c.series, c.title, c.color)} options={commonOptions} class="h-full" />
+          <Chart type="line" data={lineData(c.series, c.title, c.color)} options={commonOptions} plugins={[crosshair]} class="h-full" />
         </div>
       </div>
     {/each}

@@ -28,6 +28,10 @@ export const ANALYTICS_RANGES = [7, 30, 90] as const;
 export type AnalyticsRange = (typeof ANALYTICS_RANGES)[number];
 export type Granularity = 'day' | 'week';
 
+// All-time reactions + comments on the creator's images, from the per-creator `image_metrics_user` rollup (a cheap
+// point lookup — comments have no fast period-scoped source, so this is the one place we surface them).
+export type AllTimeTotals = { reactions: number; comments: number };
+
 // Analytics reads are cached in Redis so page reloads hit the cache, not ClickHouse (fail-open). Wider windows
 // are both more expensive to compute (the 90-day query is slow) and less volatile (an extra hour barely moves a
 // 90-day total), so they cache longer; the cheap, freshness-sensitive 7-day window caches briefly.
@@ -45,6 +49,18 @@ export const getContentTotals = createCache({
   name: 'analytics:totals',
   fetch: ({ userId, days }: { userId: number; days: number }) => fetchContentTotals(userId, days),
   ttlSeconds: ({ days }) => rangeTtlSeconds(days),
+}).get;
+
+export const getAllTimeTotals = createCache({
+  name: 'analytics:alltime',
+  fetch: async ({ userId }: { userId: number }): Promise<AllTimeTotals> => {
+    const uid = Number(userId);
+    const rows = await getClickhouse().$query<{ reactions: number | string; comments: number | string }>(
+      `SELECT sumMerge(reactions) AS reactions, sumMerge(comments) AS comments FROM image_metrics_user WHERE userId = ${uid}`
+    );
+    return { reactions: Number(rows[0]?.reactions ?? 0), comments: Number(rows[0]?.comments ?? 0) };
+  },
+  ttlSeconds: 3600,
 }).get;
 
 // Gap-filled daily/weekly count query for `table`, keyed to the creator via `filter`. WITH FILL synthesizes the

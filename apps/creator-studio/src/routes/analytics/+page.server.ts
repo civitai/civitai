@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { PageServerLoad } from './$types';
-import { getContentAnalytics, ANALYTICS_RANGES } from '$lib/server/analytics';
+import { getContentAnalytics, getAllTimeTotals, ANALYTICS_RANGES } from '$lib/server/analytics';
 
 const daysSchema = z.coerce
   .number()
@@ -12,11 +12,11 @@ const granularitySchema = z.enum(['day', 'week']).catch('day');
 export const load: PageServerLoad = async ({ locals, url }) => {
   const days = daysSchema.parse(url.searchParams.get('days') ?? undefined);
   const granularity = granularitySchema.parse(url.searchParams.get('g') ?? undefined);
-  try {
-    const analytics = await getContentAnalytics({ userId: locals.user.id, days, granularity });
-    return { analytics, days, granularity };
-  } catch {
-    // ClickHouse unreachable/misconfigured — degrade gracefully rather than 500 the page.
-    return { analytics: null, days, granularity };
-  }
+  const userId = locals.user.id;
+  // Period analytics + the all-time totals degrade independently (ClickHouse hiccup shouldn't blank both).
+  const [analytics, allTime] = await Promise.all([
+    getContentAnalytics({ userId, days, granularity }).catch(() => null),
+    getAllTimeTotals({ userId }).catch(() => null),
+  ]);
+  return { analytics, allTime, days, granularity };
 };

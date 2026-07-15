@@ -4,3 +4,4 @@
 // series colours (Chart.js can't read CSS variables off a canvas).
 export { default as Chart } from './chart.svelte';
 export { chartColor, chartColors } from './chart-colors.js';
+export { createSyncedCrosshair } from './crosshair.js';

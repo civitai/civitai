@@ -65,7 +65,7 @@ Legend: `[x]` done · `[ ]` not started · `[~]` partial · **🚧** blocked on 
 
 ## Open — needs a product decision (Justin)
 - 🟢 **#17 — Fee defaults: read-only vs. editable + "apply to all"?** Justin expected the settings section to *set* a default rate + a bulk-apply button; **B9** decided fixed system defaults (read-only). Reconcile — is B9 being reversed? ([feedback #17](feedback-justin-round-2.md))
-- 🟢 **#23 — Early-access reframing.** Allow *enabling* EA on an already-published model from the studio, or only *manage* when already on / enable-at-publish? *(Cheap pre-check available: does `POST /api/v1/model-versions/early-access` even allow enabling on a published version?)* ([feedback #23](feedback-justin-round-2.md))
+- 🟢 **#23 — Early-access reframing.** **Pre-check answered — the backend already enforces manage-only.** `mergeEarlyAccessConfigUpdate` (`model-version.service.ts:341`) throws *"You cannot add early access on a model after it has been published"*; on a published version with existing EA you can only *loosen* terms (no price↑, no timeframe↑, no donation-goal change). So enabling-on-published is impossible server-side — the studio drawer currently lets you try and eats a 400. Remaining work is UX in `/models` (disable "enable EA" for published-without-config versions; allow manage-only), not a product decision. ([feedback #23](feedback-justin-round-2.md))
 - 🟢 **B13 — Publish / schedule a version in v1?** Recommended default: fast-follow (not v1). ([decisions B13](pre-implementation-decisions.md))
 
 ## Blocked — backend / main-app dependency
@@ -82,7 +82,7 @@ Legend: `[x]` done · `[ ]` not started · `[~]` partial · **🚧** blocked on 
 ## Deferred / unblocked builds (buildable when prioritized)
 - ⏭ **Model analytics via the in-spoke fallback** — Postgres version-ids → `IN()` over `daily_resource_generation_counts` / `daily_downloads` / `buzz_resource_compensation`, capped by version count, Redis-cached. Ships per-model usage/earnings + top-models for small/moderate creators *now*; swap the read to the A1 dictionary when it lands (UI/contract unchanged). *(Scoped + measured; paused by request.)*
 - ⏭ **#24 — Bulk "select all matching" + base-model filter** (`/models`) — highest-value remaining bulk-fee build. ([feedback #24](feedback-justin-round-2.md))
-- ⏭ **#11 — Synchronized crosshair across charts** — needs a Chart.js plugin + shared hover store (add a `plugins` prop to the `Chart` wrapper first). ([feedback #11](feedback-justin-round-2.md))
-- ⏭ **#4 — Dashboard charts** — low priority. ([feedback #4](feedback-justin-round-2.md))
+- [x] **#11 — Synchronized crosshair across charts** — DONE: added a `plugins` prop to the `@civitai/ui` `Chart` wrapper + a `createSyncedCrosshair()` plugin (shared hover index across charts sharing a date axis); wired across the `/analytics` charts.
+- ⏭ **#4 — Dashboard charts** — low priority, no spec (Justin: "low priority, deferred"; `dashboard.md` only floats an *earnings-summary* sparkline, not content). A reactions chart was tried and reverted — wrong metric for an earnings/at-a-glance surface. If revisited, do a buzz-earned sparkline (via `getEarningsSeries`).
+- [x] **Lifetime "total comments received" stat** — DONE: `getAllTimeTotals` (`image_metrics_user`) surfaces all-time reactions + comments as a context line on `/analytics` (the one place comments appear — no fast period-scoped source).
 - ⏭ **Access-config drawer URL-addressable** (`?version=` shallow routing) — `/models` polish.
-- ⏭ **Lifetime "total comments received" stat** — fast (`image_metrics_user`), but lifetime-only (doesn't fit the period-scoped page).

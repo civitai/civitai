@@ -5,6 +5,7 @@
     type ChartData,
     type ChartOptions,
     type ChartType,
+    type Plugin,
     BarController,
     BarElement,
     CategoryScale,
@@ -39,11 +40,14 @@
     type,
     data,
     options,
+    plugins,
     class: className = '',
   }: {
     type: ChartType;
     data: ChartData;
     options?: ChartOptions;
+    /** Per-instance Chart.js plugins (e.g. the synced crosshair). Fixed at creation. */
+    plugins?: Plugin[];
     class?: string;
   } = $props();
 
@@ -51,7 +55,7 @@
   let chart: ChartJS | undefined;
 
   onMount(() => {
-    chart = new ChartJS(canvas, { type, data, options });
+    chart = new ChartJS(canvas, { type, data, options, plugins });
     return () => chart?.destroy();
   });
 
