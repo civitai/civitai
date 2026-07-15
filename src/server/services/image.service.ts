@@ -79,7 +79,6 @@ import {
   tagCache,
   tagIdsForImagesCache,
   thumbnailCache,
-  userImageVideoCountCache,
 } from '~/server/redis/caches';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import {
@@ -5771,7 +5770,10 @@ export async function createImage({
     });
   }
 
-  await userImageVideoCountCache.refresh(image.userId);
+  // No count refresh here: a new image is Pending and unpublished, so it cannot
+  // satisfy the count predicate yet, and caching that zero pins it for the TTL.
+  // The count is updated on the transitions that make an image countable —
+  // publish and scan completion.
 
   return result;
 }

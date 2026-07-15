@@ -20,6 +20,7 @@ import {
   thumbnailCache,
   imageMetadataCache,
   userBasicCache,
+  userImageVideoCountCaches,
   userPostCountCache,
 } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -950,6 +951,7 @@ export const updatePost = async ({
         action: SearchIndexUpdateQueueAction.Update,
       });
     }
+    await userImageVideoCountCaches.refresh(post.userId);
   }
 
   return post;
