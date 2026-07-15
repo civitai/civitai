@@ -9,7 +9,7 @@ import { describe, it, expect, vi } from 'vitest';
  * `src/server/middleware/__tests__/block-scope.anytoken-mode.test.ts`. And the
  * two CATALOG endpoints are guarded by `catalog-cors-wiring.test.ts`.
  *
- * But those prove nothing about whether these six per-user endpoints actually
+ * But those prove nothing about whether these per-user endpoints actually
  * OPT IN. The endpoint-behavior tests (buzz-endpoint / tip-endpoint /
  * collections-endpoint / …) mock `withBlockScope` as a passthrough whose
  * `res.setHeader` is a no-op, so the real CORS layer never runs there — dropping
@@ -80,7 +80,12 @@ vi.mock('~/server/utils/block-tip-rate-limit', () => ({
   refundBlockTipSpend: vi.fn(),
   reserveBlockTipSpend: vi.fn(),
 }));
-vi.mock('~/server/services/buzz.service', () => ({ getUserBuzzAccount: vi.fn() }));
+vi.mock('~/server/services/buzz.service', () => ({
+  getUserBuzzAccount: vi.fn(),
+  getUserBuzzTransactions: vi.fn(),
+  getDailyCompensationRewardByUser: vi.fn(),
+}));
+vi.mock('~/server/utils/endpoint-helpers', () => ({ handleEndpointError: vi.fn() }));
 vi.mock('~/server/routers/apps-shared.router', () => ({
   assertValidCounterKey: vi.fn(),
   incrementSharedCounter: vi.fn(),
@@ -91,32 +96,48 @@ vi.mock('~/server/routers/apps-shared.router', () => ({
 // `captured` index; asserting the scope proves the CORS change didn't drop it.
 const ENDPOINTS: Array<{ module: string; requiredScope: string }> = [
   { module: '~/pages/api/v1/blocks/collections/index', requiredScope: 'collections:read:self' },
-  { module: '~/pages/api/v1/blocks/collections/[id]/index', requiredScope: 'collections:read:self' },
-  { module: '~/pages/api/v1/blocks/collections/[id]/follow', requiredScope: 'collections:write:self' },
+  {
+    module: '~/pages/api/v1/blocks/collections/[id]/index',
+    requiredScope: 'collections:read:self',
+  },
+  {
+    module: '~/pages/api/v1/blocks/collections/[id]/follow',
+    requiredScope: 'collections:write:self',
+  },
   { module: '~/pages/api/v1/blocks/tip', requiredScope: 'social:tip:self' },
   { module: '~/pages/api/v1/blocks/buzz', requiredScope: 'buzz:read:self' },
-  { module: '~/pages/api/v1/blocks/shared-storage/increment', requiredScope: 'apps:storage:shared:write' },
+  { module: '~/pages/api/v1/blocks/buzz/transactions', requiredScope: 'buzz:read:self' },
+  { module: '~/pages/api/v1/blocks/buzz/daily-compensation', requiredScope: 'buzz:read:self' },
+  { module: '~/pages/api/v1/blocks/buzz/accounts', requiredScope: 'buzz:read:self' },
+  {
+    module: '~/pages/api/v1/blocks/shared-storage/increment',
+    requiredScope: 'apps:storage:shared:write',
+  },
   { module: '~/pages/api/v1/blocks/shared-storage/top', requiredScope: 'apps:storage:shared:read' },
 ];
 
 describe('scoped block endpoints — opaque-origin CORS wiring', () => {
   // The `await import(...)` cold-transforms a Next API page graph each; give the
   // import-bound test a generous budget (mirrors catalog-cors-wiring.test.ts).
-  it('every collections/tip/buzz/shared-storage endpoint opts into allowOpaqueOrigin while keeping its requiredScope', { timeout: 60000 }, async () => {
-    for (const { module } of ENDPOINTS) {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-      await import(module);
+  it(
+    'every collections/tip/buzz/shared-storage endpoint opts into allowOpaqueOrigin while keeping its requiredScope',
+    { timeout: 60000 },
+    async () => {
+      for (const { module } of ENDPOINTS) {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        await import(module);
+      }
+
+      expect(captured).toHaveLength(ENDPOINTS.length);
+
+      ENDPOINTS.forEach(({ requiredScope }, i) => {
+        const opts = captured[i];
+        // Must opt in — else an unverified (opaque-origin) block's direct fetch
+        // 405s on the CORS preflight again.
+        expect(opts.allowOpaqueOrigin).toBe(true);
+        // CORS-only change: the per-user authorization gate must be unchanged.
+        expect(opts.requiredScope).toBe(requiredScope);
+      });
     }
-
-    expect(captured).toHaveLength(ENDPOINTS.length);
-
-    ENDPOINTS.forEach(({ requiredScope }, i) => {
-      const opts = captured[i];
-      // Must opt in — else an unverified (opaque-origin) block's direct fetch
-      // 405s on the CORS preflight again.
-      expect(opts.allowOpaqueOrigin).toBe(true);
-      // CORS-only change: the per-user authorization gate must be unchanged.
-      expect(opts.requiredScope).toBe(requiredScope);
-    });
-  });
+  );
 });

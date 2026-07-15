@@ -3160,14 +3160,14 @@ export const blocksRouter = router({
    * account picker + "you have N buzz" without the page ever holding the
    * `buzz:read:self` scope.
    *
-   * POLICY REVERSAL (intentional, scoped): App Blocks pages are deliberately
-   * FORBIDDEN the `buzz:read:self` scope — a page has no business reading the
-   * viewer's balance directly. This procedure is the FIRST-PARTY host exposing
-   * the viewer's OWN balance to their OWN page session, mediated by the
-   * proof-of-session block token: userId is derived from the token `sub`
-   * (self-bound), NEVER from client input, so a page can only ever read the
-   * balance of the exact user whose session minted the token. This does NOT
-   * lift the scope forbid; `buzz:read:self` stays denied for pages.
+   * NOTE: `buzz:read:self` is page-safe (PAGE_FORBIDDEN_SCOPES is empty — see
+   * slot-registry.ts), so a page CAN declare the scope and hit the
+   * /api/v1/blocks/buzz/* REST endpoints directly. This procedure remains the
+   * scope-free convenience path: the FIRST-PARTY host exposing the viewer's OWN
+   * balance to their OWN page session, mediated by the proof-of-session block
+   * token — userId is derived from the token `sub` (self-bound), NEVER from
+   * client input, so a page can only ever read the balance of the exact user
+   * whose session minted the token.
    *
    * Auth model is IDENTICAL to submitWorkflow's block-token gate: verify the
    * token, require an authenticated (non-anon) subject, then the App-Blocks

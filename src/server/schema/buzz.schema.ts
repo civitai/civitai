@@ -1,5 +1,5 @@
 import * as z from 'zod';
-import type { BuzzApiAccountType } from '~/shared/constants/buzz.constants';
+import type { BuzzAccountType, BuzzApiAccountType } from '~/shared/constants/buzz.constants';
 import {
   BuzzTypes,
   TransactionType,
@@ -185,6 +185,42 @@ export const getDailyBuzzCompensationInput = z.object({
   date: z.coerce.date(),
   accountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes)).optional(),
   source: z.enum(compensationSources).default('compensation'),
+});
+
+// The pools the block API exposes: the three spendable types plus the creator
+// payout pools. `red` (disabled) and `club` (legacy) are deliberately excluded.
+export const blockBuzzAccountTypes = [
+  'yellow',
+  'blue',
+  'green',
+  'creatorProgramBank',
+  'creatorProgramBankGreen',
+  'cashPending',
+  'cashSettled',
+] as const satisfies readonly BuzzAccountType[];
+
+const transactionTypeNames = Object.keys(TransactionType).filter((key) =>
+  Number.isNaN(Number(key))
+) as [keyof typeof TransactionType, ...(keyof typeof TransactionType)[]];
+
+// Query-string contracts for GET /api/v1/blocks/buzz/* — everything arrives as
+// strings, hence the coercions. `type` takes the TransactionType NAME ("Tip"),
+// not the numeric value.
+export type GetBlockBuzzTransactionsQuery = z.infer<typeof getBlockBuzzTransactionsQuery>;
+export const getBlockBuzzTransactionsQuery = z.object({
+  accountType: z.enum(blockBuzzAccountTypes).default('yellow'),
+  type: z.enum(transactionTypeNames).optional(),
+  cursor: z.coerce.date().optional(),
+  start: z.coerce.date().optional(),
+  end: z.coerce.date().optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+});
+
+export type GetBlockBuzzDailyCompensationQuery = z.infer<typeof getBlockBuzzDailyCompensationQuery>;
+export const getBlockBuzzDailyCompensationQuery = z.object({
+  date: z.coerce.date(),
+  source: z.enum(compensationSources).default('compensation'),
+  accountType: z.enum(blockBuzzAccountTypes).optional(),
 });
 
 export type ClaimWatchedAdRewardInput = z.infer<typeof claimWatchedAdRewardSchema>;
