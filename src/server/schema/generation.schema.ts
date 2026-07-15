@@ -384,3 +384,11 @@ export const resolveImageMetaSchema = z.object({
   /** Raw EXIF metadata extracted from the image */
   metadata: z.record(z.string(), z.unknown()),
 });
+
+export type ResolveWildcardPackInput = z.infer<typeof resolveWildcardPackSchema>;
+export const resolveWildcardPackSchema = z.object({
+  /** The `Wildcards`-type ModelVersion whose zip pack to gate + resolve a
+   *  short-lived signed download URL for (the App Blocks page-host bridge then
+   *  fetches + unzips it client-side, as the logged-in user). */
+  modelVersionId: z.number().int().positive(),
+});
