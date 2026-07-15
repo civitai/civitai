@@ -52,8 +52,11 @@ import { moderatorProcedure, publicProcedure, router } from '~/server/trpc';
 // budget. Votes/counters/reports carry NO quota trigger → excluded from bytes.
 const APP_QUOTA_BYTES = 50 * 1024 * 1024;
 const APP_ROW_LIMIT = 1_000_000;
-// Per individual shared value (title+body already capped; this bounds the jsonb).
-const SHARED_VALUE_BYTE_CAP = 8 * 1024;
+// Per individual shared value (the whole jsonb: the moderated title+body PLUS the
+// optional opaque app-owned `data` blob). Raised from 8KB → 64KB so apps can store
+// real structured state in `data`; still tightly bounded and enforced BEFORE the DB
+// write, and the bytes count toward the per-app `size_bytes`/quota + row caps below.
+const SHARED_VALUE_BYTE_CAP = 64 * 1024;
 // Per-USER row cap on shared_kv (design M2): one hostile-but-trusted account can't
 // exhaust the app row budget on its own.
 const SHARED_KV_PER_USER_ROW_CAP = 50;
@@ -249,10 +252,25 @@ function pgQuoteLiteral(value: string): string {
 const blockTokenInput = z.object({ blockToken: z.string().min(1) });
 const sharedKeyInput = z.string().min(1).max(64);
 
-// Structured, moderatable append payload (design M3: title ≤200, body ≤ few KB).
+// Structured append payload (design M3: title ≤200, body ≤ few KB).
+//
+// `title`/`body` are the MODERATED, user-visible TEXT — they run the full
+// content-safety belt (assertSharedTextSafe) synchronously on every append.
+//
+// `data` is an OPTIONAL, opaque, app-owned, UNMODERATED structured payload stored
+// alongside the moderated text. It is NOT run through the content-safety belt: it
+// is opaque app-structured state (e.g. an app's own saved-config JSON), rendered
+// ONLY inside the app's opaque-origin iframe sandbox — the SAME trust boundary as
+// the rest of shared storage (all approved apps are `unverified` tier → no
+// `allow-same-origin`, so even hostile bytes in `data` run in an origin that can't
+// touch civitai). 🔴 Apps MUST place all user-VISIBLE TEXT in `title`/`body`
+// (which is moderated); `data` must carry ONLY opaque app structure, never a text
+// surface shown to other users outside the sandbox. Size is bounded by the whole-
+// value SHARED_VALUE_BYTE_CAP (below) and its bytes count toward the app quota.
 const appendValueInput = z.object({
   title: z.string().min(1).max(SHARED_TITLE_MAX),
   body: z.string().max(SHARED_BODY_MAX).optional(),
+  data: z.unknown().optional(),
 });
 
 export const appsSharedRouter = router({
@@ -456,8 +474,30 @@ export const appsSharedRouter = router({
         throw e;
       }
 
-      const storedValue = { title: safe.title, ...(safe.body != null ? { body: safe.body } : {}) };
-      const serialized = JSON.stringify(storedValue);
+      // `safe.title`/`safe.body` are the MODERATED text; `input.value.data` is the
+      // opaque app-owned payload stored UNMODERATED (see the appendValueInput note —
+      // belt runs on title/body only). `data` holds PLAIN-JSON app state: it is
+      // round-tripped as JSON, so superjson-special types are NOT preserved
+      // (Date → ISO string, Map/Set → `{}`, BigInt → throws, nested `undefined`
+      // dropped) — apps should store plain JSON. Its bytes are folded into the
+      // serialized value below, so the whole-value cap + the app quota bound it
+      // exactly like the text.
+      const storedValue = {
+        title: safe.title,
+        ...(safe.body != null ? { body: safe.body } : {}),
+        ...(input.value.data !== undefined ? { data: input.value.data } : {}),
+      };
+      // `z.unknown()` does NO validation and superjson has already reconstructed
+      // real JS values (BigInt / circular refs / Map / Set) before we see `data`, so
+      // JSON.stringify can THROW ("Do not know how to serialize a BigInt", circular
+      // structure). Guard it so a non-serializable `data` is a clean 4xx, not an
+      // unhandled 500 — this runs BEFORE any DB write, so no row is ever written.
+      let serialized: string;
+      try {
+        serialized = JSON.stringify(storedValue);
+      } catch {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'value is not serializable' });
+      }
       const byteSize = Buffer.byteLength(serialized, 'utf8');
       if (byteSize > SHARED_VALUE_BYTE_CAP) {
         throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'value exceeds size cap' });
