@@ -1926,6 +1926,9 @@ export const REDIS_KEYS = {
     REVOKED_INSTANCE: 'blocks:revoked-instance',
     // Per-ecosystem-key most-popular-Checkpoint cache (JSON ValidatedCheckpoint, 1h TTL).
     POPULAR_CHECKPOINT: 'blocks:popular-checkpoint',
+    // Parsed wildcard-pack content cache, keyed `blocks:wildcard-pack:${modelVersionId}`
+    // (JSON lists + attribution, ~7d TTL — parsed content is immutable per version).
+    WILDCARD_PACK: 'blocks:wildcard-pack',
   },
   DOWNLOAD: {
     COUNT: 'download:count',

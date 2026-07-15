@@ -45,7 +45,8 @@ export type AppBlockEndpoint =
   | 'collection'
   | 'collection_follow'
   | 'shared_storage_top'
-  | 'shared_storage_increment';
+  | 'shared_storage_increment'
+  | 'wildcards';
 
 export type AppBlockRequestResult = 'success' | 'client_error' | 'server_error' | 'forbidden';
 

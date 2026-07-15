@@ -38,6 +38,10 @@ vi.mock('~/server/services/model-search.service', () => ({
 vi.mock('~/server/services/image-search.service', () => ({
   runImageSearch: vi.fn(),
 }));
+vi.mock('~/server/services/blocks/wildcard-pack.service', () => ({
+  getWildcardPackContent: vi.fn(),
+  MAX_PACK_FILE_KB: 32 * 1024,
+}));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
 vi.mock('~/server/utils/endpoint-helpers', () => ({ handleEndpointError: vi.fn() }));
 vi.mock('~/server/utils/pagination-helpers', () => ({
@@ -54,12 +58,13 @@ describe('block catalog endpoints — opaque-origin CORS wiring (PR #2681)', () 
   // The two `await import(...)` cold-transform a Next API page graph (~10s on a
   // loaded box) — right at the 10s global default, so worker-pool contention pushed
   // it over and flaked. Give this import-bound test a generous explicit budget.
-  it('both /api/v1/blocks/{models,images} opt into allowOpaqueOrigin', { timeout: 60000 }, async () => {
-    // Import order: models then images → captured = [modelsOpts, imagesOpts].
+  it('all of /api/v1/blocks/{models,images,wildcards/*} opt into allowOpaqueOrigin', { timeout: 60000 }, async () => {
+    // Import order: models, images, wildcards → captured in that order.
     await import('~/pages/api/v1/blocks/models');
     await import('~/pages/api/v1/blocks/images');
+    await import('~/pages/api/v1/blocks/wildcards/[modelVersionId]');
 
-    expect(captured).toHaveLength(2);
+    expect(captured).toHaveLength(3);
     // Every catalog endpoint must opt in — else an unverified (opaque-origin)
     // block's direct catalog fetch 405s on the CORS preflight again.
     for (const opts of captured) {
