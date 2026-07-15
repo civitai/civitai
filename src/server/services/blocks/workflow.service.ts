@@ -267,7 +267,7 @@ function defaultDimensions(baseModel: string): { width: number; height: number }
 // discriminated-union `kind` in workflow.schema. Everything else — the
 // resource fan-out, the router's per-item entitlement gate, the LoRA gate, the
 // budget preflight — is workflow-type-agnostic and stays as-is.
-export const BLOCK_IMAGE_WORKFLOW_TYPES = ['txt2img', 'img2img'] as const;
+export const BLOCK_IMAGE_WORKFLOW_TYPES = ['txt2img', 'img2img', 'img2img:edit'] as const;
 export type BlockImageWorkflowType = (typeof BLOCK_IMAGE_WORKFLOW_TYPES)[number];
 
 function isBlockImageWorkflowType(workflow: string): workflow is BlockImageWorkflowType {
@@ -275,14 +275,35 @@ function isBlockImageWorkflowType(workflow: string): workflow is BlockImageWorkf
 }
 
 /**
- * Resolve which image graph workflow a block body maps to: `img2img` when a
- * bounded source/init image is present (image variations), else `txt2img`.
- * Purely structural — the schema already validated/bounded `sourceImage`.
+ * Resolve which image graph workflow a block body maps to when combined with the
+ * checkpoint's ecosystem:
+ *   - no source image                          → `txt2img`
+ *   - source image + SD-family ecosystem       → `img2img`      (Image Variations)
+ *   - source image + edit-capable ecosystem    → `img2img:edit` (OpenAI / Qwen /
+ *                                                Flux Kontext / … — EDIT_IMG_IDS)
+ *   - source image + neither variant available → BAD_REQUEST
+ *
+ * Variant selection is DETERMINISTIC via `isWorkflowAvailable` (the same
+ * availability check the generation graph uses) — it never leans on
+ * `DataGraph.safeParse` auto-correcting a mis-routed ecosystem (the #3127 bug
+ * class: safeParse runs `_evaluate` before `_validate`, silently rewriting an
+ * unsupported ecosystem to a supported one and returning a mis-routed graph as
+ * success). `ecosystemId` is the checkpoint's resolved ecosystem id; when it is
+ * omitted (unrecognized base model) a source-image body is rejected fail-closed.
  */
 export function resolveBlockImageWorkflowType(
-  body: Extract<BlockWorkflowBody, { kind: 'textToImage' }>
+  body: Extract<BlockWorkflowBody, { kind: 'textToImage' }>,
+  ecosystemId?: number
 ): BlockImageWorkflowType {
-  return body.sourceImage ? 'img2img' : 'txt2img';
+  if (!body.sourceImage) return 'txt2img';
+  if (ecosystemId != null && isWorkflowAvailable('img2img', ecosystemId)) return 'img2img';
+  if (ecosystemId != null && isWorkflowAvailable('img2img:edit', ecosystemId)) return 'img2img:edit';
+  throw new TRPCError({
+    code: 'BAD_REQUEST',
+    message:
+      'img2img (source image) is not supported for this checkpoint — its ecosystem supports ' +
+      'neither img2img (SD-family) nor img2img:edit (edit-capable: OpenAI/Qwen/Flux Kontext/…)',
+  });
 }
 
 /**
@@ -312,17 +333,22 @@ export function resolveBlockImageWorkflowType(
  * model is its own anchor). For LoRA installs the resolver returns a different
  * checkpoint; the bound LoRA is pushed into `resources`.
  *
- * WORKFLOW TYPE: `workflowType` defaults to the type derived from the body
- * (`sourceImage` presence → img2img, else txt2img) and is VALIDATED against
- * BLOCK_IMAGE_WORKFLOW_TYPES — a non-image type is rejected fail-closed with a
- * BAD_REQUEST rather than silently producing a workflow this phase does not
- * support. The explicit parameter is the seam a later phase / an explicit-type
- * body flows through; the router passes nothing and gets the derived type.
+ * WORKFLOW TYPE: with no override, the variant is derived from the body + the
+ * checkpoint's ecosystem (`resolveBlockImageWorkflowType`): no source image →
+ * txt2img; source image + SD-family → img2img; source image + edit-capable
+ * ecosystem (OpenAI/Qwen/Flux Kontext/… — EDIT_IMG_IDS) → img2img:edit; source
+ * image + neither variant → BAD_REQUEST. Selection is DETERMINISTIC via
+ * `isWorkflowAvailable`, never safeParse auto-correction (#3127). The resolved
+ * type is VALIDATED against BLOCK_IMAGE_WORKFLOW_TYPES — a non-image type is
+ * rejected fail-closed. The explicit `workflowTypeOverride` parameter is the
+ * seam a later phase / an explicit-type body flows through; the router passes
+ * nothing and gets the derived type.
  *
  * DIMENSIONS: for txt2img the graph's `aspectRatio` node snaps the block-supplied
  * width/height to the ecosystem's nearest canonical bucket (the block sends
- * arbitrary 64–2048 dims from untrusted iframe UI). For img2img the graph derives
- * output dimensions from the source image, so aspectRatio is omitted.
+ * arbitrary 64–2048 dims from untrusted iframe UI). For both img2img variants the
+ * graph derives output dimensions from the source image (SD) or the ecosystem's
+ * aspectRatio default (edit), so aspectRatio is omitted.
  */
 export function buildImageWorkflowInput(
   body: Extract<BlockWorkflowBody, { kind: 'textToImage' }>,
@@ -332,8 +358,21 @@ export function buildImageWorkflowInput(
     checkpointVersionId: number;
     checkpointBaseModel: string;
   },
-  workflowType: string = resolveBlockImageWorkflowType(body)
+  workflowTypeOverride?: string
 ): Record<string, unknown> {
+  // Ecosystem drives the graph's branch + resource enrichment AND the img2img
+  // variant selection. Fall back to SDXL (the graph's ultimate fallback) if the
+  // checkpoint's baseModel is unrecognized — the resource belt will still gate it.
+  const ecoRecord = getEcosystem(resolved.checkpointBaseModel);
+  const ecosystem = ecoRecord?.key ?? 'SDXL';
+
+  // Resolve the workflow variant. The router passes no override → derive it from
+  // the body + ecosystem (txt2img / img2img / img2img:edit, DETERMINISTICALLY via
+  // isWorkflowAvailable — see resolveBlockImageWorkflowType). An explicit override
+  // is the seam a later phase / an explicit-type body flows through; it is
+  // validated against the image allowlist + the ecosystem-variant guard below.
+  const workflowType = workflowTypeOverride ?? resolveBlockImageWorkflowType(body, ecoRecord?.id);
+
   if (!isBlockImageWorkflowType(workflowType)) {
     throw new TRPCError({
       code: 'BAD_REQUEST',
@@ -342,6 +381,28 @@ export function buildImageWorkflowInput(
       )}) are supported`,
     });
   }
+
+  // Deterministic ecosystem/variant guard (covers BOTH the derive- and
+  // override-paths). Plain `img2img` ("Image Variations") is SD-family-only and
+  // `img2img:edit` is EDIT_IMG_IDS-only (OpenAI/Qwen/Flux Kontext/…) in the
+  // generation graph. Reject a variant the checkpoint's ecosystem doesn't support
+  // HERE rather than lean on the graph: `DataGraph.safeParse` runs its auto-
+  // correct pass (`_evaluate`) BEFORE `_validate`, so an unsupported checkpoint
+  // would be silently REWRITTEN to a supported ecosystem (keeping the caller's
+  // checkpoint version id) and returned as a SUCCESSFUL but mis-routed graph —
+  // the whatIf preflight would price that mis-route too. Deriving support from
+  // `isWorkflowAvailable(workflowType, …)` keeps this in lockstep with the graph
+  // config (single source of truth) — the #3127 bug class.
+  if (
+    (workflowType === 'img2img' || workflowType === 'img2img:edit') &&
+    (!ecoRecord || !isWorkflowAvailable(workflowType, ecoRecord.id))
+  ) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `workflow '${workflowType}' is not supported for base model '${resolved.checkpointBaseModel}'`,
+    });
+  }
+
   const dims = defaultDimensions(resolved.checkpointBaseModel);
   const width = body.params.width ?? dims.width;
   const height = body.params.height ?? dims.height;
@@ -368,33 +429,6 @@ export function buildImageWorkflowInput(
     }
   }
 
-  // Ecosystem drives the graph's branch + resource enrichment. Fall back to
-  // SDXL (the graph's ultimate fallback) if the checkpoint's baseModel is
-  // unrecognized — the resource belt will still gate it.
-  const ecoRecord = getEcosystem(resolved.checkpointBaseModel);
-  const ecosystem = ecoRecord?.key ?? 'SDXL';
-
-  // img2img fail-CLOSED ecosystem guard (Phase-2a). Plain `img2img`
-  // ("Image Variations") is configured SD-family-only in the generation graph
-  // (config/workflows: SD_FAMILY_IDS = SD1/SDXL/Pony/Illustrious/NoobAI). We
-  // MUST reject a non-SD-family checkpoint here rather than lean on the graph:
-  // `DataGraph.safeParse` runs its auto-correct pass (`_evaluate`) BEFORE
-  // `_validate`, so a Flux / Flux Kontext / Qwen / SD3 / Chroma / SD2 checkpoint
-  // would be silently REWRITTEN to `ecosystem: 'SD1'` (while keeping the caller's
-  // checkpoint version id) and returned as a SUCCESSFUL but mis-routed graph —
-  // the whatIf preflight would price that mis-route too. Deriving support from
-  // `isWorkflowAvailable('img2img', …)` keeps this in lockstep with the graph
-  // config (single source of truth). Edit-capable ecosystems (Flux Kontext,
-  // Qwen) route through `img2img:edit`, NOT plain `img2img` — mapping those is a
-  // Phase-2b follow-up; for 2a every non-SD-family checkpoint + source image is
-  // a hard BAD_REQUEST.
-  if (workflowType === 'img2img' && (!ecoRecord || !isWorkflowAvailable('img2img', ecoRecord.id))) {
-    throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message: `img2img (source image) is only supported for SD-family checkpoints (SD1/SDXL/Pony/Illustrious/NoobAI) in this phase; base model '${resolved.checkpointBaseModel}' is not supported`,
-    });
-  }
-
   const input: Record<string, unknown> = {
     workflow: workflowType,
     ecosystem,
@@ -414,15 +448,20 @@ export function buildImageWorkflowInput(
     priority: 'low',
   };
 
-  if (workflowType === 'img2img') {
-    // img2img (SD-family image variations): the graph's `images` node is the
-    // init image; the denoise node applies at its default strength (0.75), and
-    // the graph derives output dimensions from the source image — so aspectRatio
-    // is OMITTED here (the SD graph gates aspectRatio to `when: !hasImages`).
-    // `sourceImage` is guaranteed present here (resolveBlockImageWorkflowType
-    // only returns 'img2img' when the body carries one); the fallback keeps the
-    // types honest for an explicit-type caller. The graph's imagesNode reads
-    // { url, width, height }; extra fields are stripped by its object parse.
+  if (workflowType === 'img2img' || workflowType === 'img2img:edit') {
+    // Both img2img variants take the bounded source image as the graph's
+    // `images` init/reference node — SD-family "Image Variations" (`img2img`)
+    // AND edit-capable "img2img:edit" (OpenAI/Qwen/Flux Kontext/…). This mirrors
+    // the onsite generator, which feeds the source image into the same `images`
+    // node for these ecosystems (see openai-graph / flux-kontext-graph /
+    // qwen-graph: `images` node shown `when: !workflow.startsWith('txt')`). The
+    // denoise/edit node applies at its default and output dimensions derive from
+    // the source (SD) or the ecosystem's aspectRatio default (edit) — so
+    // aspectRatio is OMITTED here. `sourceImage` is guaranteed present (the
+    // variant only resolves to an img2img* type when the body carries one); the
+    // fallback keeps the types honest for an explicit-type caller. The graph's
+    // imagesNode reads { url, width, height }; extra fields are stripped by its
+    // object parse.
     if (body.sourceImage) {
       input.images = [
         {
