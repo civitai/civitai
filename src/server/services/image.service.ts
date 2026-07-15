@@ -18,6 +18,7 @@ import {
   METRICS_IMAGES_SEARCH_INDEX,
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
+import { imageReviewedSql } from '~/server/common/image-visibility';
 import {
   BlockedReason,
   ImageScanType,
@@ -4876,7 +4877,7 @@ export const getImage = async ({
     AND.push(
       Prisma.sql`(${Prisma.join(
         [
-          Prisma.sql`i."needsReview" IS NULL AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
+          Prisma.sql`i."needsReview" IS NULL AND ${imageReviewedSql()}`,
           withoutPost
             ? null
             : Prisma.sql`
