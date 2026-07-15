@@ -19,6 +19,12 @@ import { projectSafeGenerationResource } from '~/server/schema/blocks/generation
 import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
 import { projectBlockInitMaturity } from './projectBlockInit';
 import { sendBlockRender } from './sendBlockRender';
+import {
+  classifyWildcardPackError,
+  exceedsPreDownloadCap,
+  resolveGetWildcardPackRequest,
+  WILDCARD_MAX_CONCURRENT,
+} from './wildcardPackParse';
 import { resolveRequestConsent } from './requestConsentGate';
 import { resolveRequestSignIn } from './requestSignInGate';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
@@ -571,6 +577,17 @@ export function PageBlockHost({
   // bearer credential a .query would leak into the ?input=… URL / logs / Referer
   // where it's replayable within its TTL. See blocks.router getMyBuzzBalance.
   const getMyBuzzBalanceMutation = trpc.blocks.getMyBuzzBalance.useMutation();
+
+  // Wildcard-pack import (W13). SESSION-authed (protectedProcedure) — it does NOT
+  // take a block token; the viewer's real cookie session authenticates, which is
+  // the whole point (the real download gates apply). A MUTATION deliberately: the
+  // response carries a short-lived signed URL (see the router comment).
+  const resolveWildcardPackMutation = trpc.generation.resolveWildcardPack.useMutation();
+  // In-flight fetch+parse count for the concurrency cap below. A ref (not state)
+  // so incrementing/decrementing never re-renders and the count is read
+  // synchronously in the message handler (JS is single-threaded, so the
+  // check→increment before the first await is atomic per message).
+  const wildcardInFlightRef = useRef<number>(0);
 
   // SUBMIT_WORKFLOW → blocks.submitWorkflow → WORKFLOW_SUBMITTED.
   useEffect(() => {
@@ -1487,6 +1504,80 @@ export function PageBlockHost({
     });
     return off;
   }, [onMessage, send]);
+
+  // ── GET_WILDCARD_PACK → WILDCARD_PACK_RESULT (W13 wildcard-pack import) ──────
+  //
+  // A page block posts GET_WILDCARD_PACK{ requestId, modelVersionId } to import a
+  // wildcard pack's parsed prompt lists. The HOST — running in the civitai page
+  // with the viewer's REAL authenticated session — resolves + fetches + unzips +
+  // parses it AS THE USER, and posts only the parsed JSON back. The untrusted
+  // iframe never sees the session, the signed URL, or the raw bytes.
+  //
+  // Why host-mediated (vs. a block-JWT REST endpoint that server-side fetches +
+  // unzips, the #3130 alternative):
+  //   1. `generation.resolveWildcardPack` runs as a protectedProcedure (session
+  //      auth), so `getFileForModelVersion` enforces every REAL creator/user
+  //      download gate authoritatively — requireAuth (satisfied by the session),
+  //      usageControl/downloads-disabled, early-access/entitlement, the viewer's
+  //      maturity ceiling — instead of a hand-rolled partial re-derivation.
+  //   2. The fetch + unzip run in the USER'S BROWSER TAB (bounded, streamed
+  //      inflate in wildcardPackHost), so a zip-bomb OOMs one tab, not a serving
+  //      web pod. The bytes never touch a pod's heap.
+  //
+  // token-INDEPENDENT (unlike every other handler above): the resolve proc is
+  // session-authed, not block-token-authed, so this does NOT gate on the page
+  // `token` prop. A missing/invalid requestId is dropped (nothing to reply to);
+  // every OTHER path posts a WILDCARD_PACK_RESULT (a `pack` or an `error`
+  // discriminant) so the block's SDK request never hangs. The zip + fetch shell
+  // (jszip/js-yaml) is dynamically imported so it never enters the page-block
+  // bundle unless a pack is actually requested.
+  useEffect(() => {
+    const off = onMessage<unknown>('GET_WILDCARD_PACK', async (raw) => {
+      const req = resolveGetWildcardPackRequest(raw);
+      if (!req) return; // missing/invalid requestId or modelVersionId → drop
+      const { requestId, modelVersionId } = req;
+      // Concurrency cap (host-side backpressure): bound the per-tab memory. The
+      // check→increment runs synchronously before the first await (single-
+      // threaded), so N concurrent GET_WILDCARD_PACKs can't all pass the gate.
+      // Excess → `busy` (the block retries) rather than an unbounded queue.
+      if (wildcardInFlightRef.current >= WILDCARD_MAX_CONCURRENT) {
+        send('WILDCARD_PACK_RESULT', { requestId, error: 'busy' });
+        return;
+      }
+      wildcardInFlightRef.current += 1;
+      try {
+        const resolved = await resolveWildcardPackMutation.mutateAsync({ modelVersionId });
+        // 32 MB pre-download cap on the server-advertised size — reject BEFORE
+        // fetching a byte.
+        if (exceedsPreDownloadCap(resolved.sizeBytes)) {
+          send('WILDCARD_PACK_RESULT', { requestId, error: 'too-large' });
+          return;
+        }
+        const { fetchAndParseWildcardPack, WILDCARD_FETCH_TIMEOUT_MS } = await import(
+          './wildcardPackHost'
+        );
+        const { lists, truncated, truncatedLists } = await fetchAndParseWildcardPack({
+          signedUrl: resolved.signedUrl,
+          sizeBytes: resolved.sizeBytes,
+          signal: AbortSignal.timeout(WILDCARD_FETCH_TIMEOUT_MS),
+        });
+        send('WILDCARD_PACK_RESULT', {
+          requestId,
+          pack: { ...resolved.meta, lists, truncated, truncatedLists, maturity: resolved.maturity },
+        });
+      } catch (err) {
+        // NOT_FOUND / FORBIDDEN (proc) · too-large · parse-failed (fetch/unzip/
+        // abort) — a single error discriminant, never a hang.
+        send('WILDCARD_PACK_RESULT', { requestId, error: classifyWildcardPackError(err) });
+      } finally {
+        // Release the in-flight slot on EVERY exit (success, too-large early
+        // return, or error) so the concurrency gate can't leak slots and wedge
+        // shut. Only decremented for a request that passed the gate + incremented.
+        wildcardInFlightRef.current -= 1;
+      }
+    });
+    return off;
+  }, [onMessage, send, resolveWildcardPackMutation]);
 
   const showIframe = status === 'loading' || status === 'ready';
   const isReady = status === 'ready';

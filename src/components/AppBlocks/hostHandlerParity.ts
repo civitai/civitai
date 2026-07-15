@@ -348,6 +348,26 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // ── Wildcard-pack import (W13, page-host bridge) ───────────────────────────
+  // A page block asks the HOST to resolve + fetch + unzip + parse a wildcard
+  // pack's list files, as the logged-in user (the host holds the real session).
+  // REQUEST-style ⇒ an unhandled one HANGS the block. Ahead of the published SDK
+  // dist union (forward-looking coverage, like OPEN_IMAGE_UPLOAD / SHARED_* were)
+  // — the compile-time gate is one-directional so an extra key here is fine.
+  //
+  // PAGE-ONLY affordance: the resolve+parse runs against the viewer's real
+  // session + browsing-level ceiling and is a full-page import flow. The model
+  // slot (IframeHost) has no wildcard-import surface — a model-column panel
+  // doesn't import prompt-list packs — so it's N/A there, exactly as the wider
+  // OPEN_RESOURCE_PICKER is page-only.
+  GET_WILDCARD_PACK: {
+    request: true,
+    reply: 'WILDCARD_PACK_RESULT',
+    IframeHost:
+      'model slot has no wildcard-pack import surface; the resolve+parse bridge is a page-only affordance',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
 } satisfies Record<string, MessageSpec>;
 
 /**
