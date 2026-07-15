@@ -8,6 +8,8 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { JudgeScoreBadge } from '~/components/Image/JudgeScoreBadge/JudgeScoreBadge';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { useServerDomains } from '~/providers/AppProvider';
+import { syncAccount } from '~/utils/sync-account';
 import type { JudgeInfo } from '~/components/Image/Providers/ImagesProvider';
 import { Currency, MediaType } from '~/shared/utils/prisma/enums';
 import type { ProfileImage } from '~/server/selectors/image.selector';
@@ -103,6 +105,8 @@ export function WinnerPodiumCard({
   // blurhash, so `imageId + imageHash + no imageUrl` means "gated for this domain", distinct from a
   // genuinely removed image (no hash).
   const isGatedThumb = !!winner.imageId && !winner.imageUrl && !!winner.imageHash;
+  // Cross-domain link to the image on the mature site, mirroring the Gated MatureContentRedirect CTA.
+  const redImageUrl = syncAccount(`//${useServerDomains().red}/images/${winner.imageId}`);
 
   return (
     <div
@@ -181,18 +185,22 @@ export function WinnerPodiumCard({
           </ImageGuard2>
         </div>
       ) : isGatedThumb ? (
-        <div className={`relative w-full overflow-hidden ${mediaAspectClass}`}>
+        <a
+          href={redImageUrl}
+          rel="noreferrer nofollow"
+          className={`relative block w-full overflow-hidden ${mediaAspectClass}`}
+        >
           <MediaHash hash={winner.imageHash ?? null} width={450} height={450} />
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/40 p-2 text-center text-white">
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/40 p-2 text-center text-white transition-colors hover:bg-black/50">
             <IconEyeOff size={compact ? 20 : 28} stroke={1.5} />
             <Text size={compact ? 'xs' : 'sm'} fw={600}>
               Mature content
             </Text>
-            <Text size="xs" className="opacity-80">
+            <Text size="xs" fw={600} className="text-red-4 underline">
               View on civitai.red
             </Text>
           </div>
-        </div>
+        </a>
       ) : (
         <div
           className={`relative flex w-full items-center justify-center overflow-hidden bg-gray-100 dark:bg-dark-5 ${mediaAspectClass}`}
