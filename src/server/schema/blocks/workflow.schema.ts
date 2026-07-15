@@ -104,9 +104,16 @@ const blockTextToImageBodySchema = z.object({
   additionalResources: z.array(blockAdditionalResourceSchema).max(MAX_ADDITIONAL_RESOURCES).optional(),
   // Optional img2img init/source image (App Blocks IMAGE bridge, Phase-2a).
   // When present, the block bridge emits an `img2img` graph workflow (SD-family
-  // image variations) instead of `txt2img`; when absent, behavior is
+  // "Image Variations") instead of `txt2img`; when absent, behavior is
   // byte-identical to before (txt2img). Bounded to a Civitai-hosted image (see
   // blockSourceImageSchema) — never an arbitrary remote URL.
+  //
+  // Two hard scope limits are enforced downstream (NOT at the wire schema, which
+  // only bounds shape): (1) blocks.router rejects `sourceImage` on a MODEL-bound
+  // token — img2img is PAGE-only in 2a, mirroring `additionalResources`; (2)
+  // buildImageWorkflowInput rejects a non-SD-family checkpoint fail-closed —
+  // plain `img2img` is SD-family-only in the graph, and edit-capable ecosystems
+  // (Flux Kontext, Qwen → `img2img:edit`) are a Phase-2b follow-up.
   sourceImage: blockSourceImageSchema.optional(),
   // Optional viewer-picked buzz account to spend (money page blocks). Absent →
   // unchanged Auto behavior (domain-allowed currencies drained blue-first). When

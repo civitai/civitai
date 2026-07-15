@@ -1012,6 +1012,73 @@ describe('buildImageWorkflowInput (generalized image-workflow bridge)', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// App Blocks IMAGE bridge (Phase-2a): img2img ecosystem fail-close guard
+//
+// Plain `img2img` ("Image Variations") is SD-family-only in the generation
+// graph. buildImageWorkflowInput must reject a non-SD-family checkpoint + source
+// image with BAD_REQUEST rather than let DataGraph.safeParse silently auto-
+// correct the ecosystem to SD1 and return a mis-routed graph as success.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('buildImageWorkflowInput img2img ecosystem guard (SD-family only in 2a)', () => {
+  const baseBody = {
+    kind: 'textToImage' as const,
+    modelId: 7,
+    modelVersionId: 99,
+    params: { prompt: 'a cat', quantity: 1 },
+    sourceImage: { url: 'https://image.civitai.com/abc/def.jpeg', width: 768, height: 1024 },
+  };
+  const resolved = (checkpointBaseModel: string) => ({
+    baseModel: checkpointBaseModel,
+    modelType: 'Checkpoint',
+    checkpointVersionId: 99,
+    checkpointBaseModel,
+  });
+
+  // baseModel → expected graph ecosystem key. These are the SD-family members
+  // configured for plain img2img (SD_FAMILY_IDS).
+  it.each([
+    ['SDXL 1.0', 'SDXL'],
+    ['SD 1.5', 'SD1'],
+    ['Pony', 'Pony'],
+    ['Illustrious', 'Illustrious'],
+    ['NoobAI', 'NoobAI'],
+  ])('builds img2img for SD-family checkpoint %s (ecosystem %s)', (baseModel, ecoKey) => {
+    const out = buildImageWorkflowInput(baseBody as never, resolved(baseModel));
+    expect(out.workflow).toBe('img2img');
+    expect(out.ecosystem).toBe(ecoKey);
+    expect(out.images).toHaveLength(1);
+  });
+
+  // Non-SD-family checkpoints: plain img2img is NOT available, so the builder
+  // must throw BAD_REQUEST (not silently emit an SD1-corrected graph). Covers
+  // edit-capable ecosystems (Flux Kontext, Qwen — Phase-2b) and others.
+  it.each(['Flux.1 D', 'Flux.1 Kontext', 'Qwen', 'SD 3.5', 'Chroma', 'SD 2.1'])(
+    'rejects img2img for non-SD-family checkpoint %s with BAD_REQUEST',
+    (baseModel) => {
+      let caught: unknown;
+      try {
+        buildImageWorkflowInput(baseBody as never, resolved(baseModel));
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(TRPCError);
+      expect(caught).toMatchObject({ code: 'BAD_REQUEST' });
+      expect((caught as TRPCError).message).toMatch(/SD-family/);
+    }
+  );
+
+  it('still builds txt2img (no source image) for a non-SD-family checkpoint (guard is img2img-only)', () => {
+    // The guard must not affect the txt2img path — a Flux block with no source
+    // image is unchanged.
+    const { sourceImage, ...txtBody } = baseBody;
+    void sourceImage;
+    const out = buildImageWorkflowInput(txtBody as never, resolved('Flux.1 D'));
+    expect(out.workflow).toBe('txt2img');
+    expect(out.ecosystem).toBe('Flux1');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // App Blocks IMAGE bridge (Phase-2a): source-image URL bound (untrusted iframe)
 // ─────────────────────────────────────────────────────────────────────────────
 describe('blockWorkflowBodySchema sourceImage bound (SSRF / arbitrary-URL guard)', () => {

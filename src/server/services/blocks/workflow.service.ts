@@ -4,6 +4,7 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { dbRead } from '~/server/db/client';
 import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { getEcosystem } from '~/shared/constants/basemodel.constants';
+import { isWorkflowAvailable } from '~/shared/data-graph/generation/config/workflows';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import type {
   BlockWorkflowBody,
@@ -370,7 +371,29 @@ export function buildImageWorkflowInput(
   // Ecosystem drives the graph's branch + resource enrichment. Fall back to
   // SDXL (the graph's ultimate fallback) if the checkpoint's baseModel is
   // unrecognized — the resource belt will still gate it.
-  const ecosystem = getEcosystem(resolved.checkpointBaseModel)?.key ?? 'SDXL';
+  const ecoRecord = getEcosystem(resolved.checkpointBaseModel);
+  const ecosystem = ecoRecord?.key ?? 'SDXL';
+
+  // img2img fail-CLOSED ecosystem guard (Phase-2a). Plain `img2img`
+  // ("Image Variations") is configured SD-family-only in the generation graph
+  // (config/workflows: SD_FAMILY_IDS = SD1/SDXL/Pony/Illustrious/NoobAI). We
+  // MUST reject a non-SD-family checkpoint here rather than lean on the graph:
+  // `DataGraph.safeParse` runs its auto-correct pass (`_evaluate`) BEFORE
+  // `_validate`, so a Flux / Flux Kontext / Qwen / SD3 / Chroma / SD2 checkpoint
+  // would be silently REWRITTEN to `ecosystem: 'SD1'` (while keeping the caller's
+  // checkpoint version id) and returned as a SUCCESSFUL but mis-routed graph —
+  // the whatIf preflight would price that mis-route too. Deriving support from
+  // `isWorkflowAvailable('img2img', …)` keeps this in lockstep with the graph
+  // config (single source of truth). Edit-capable ecosystems (Flux Kontext,
+  // Qwen) route through `img2img:edit`, NOT plain `img2img` — mapping those is a
+  // Phase-2b follow-up; for 2a every non-SD-family checkpoint + source image is
+  // a hard BAD_REQUEST.
+  if (workflowType === 'img2img' && (!ecoRecord || !isWorkflowAvailable('img2img', ecoRecord.id))) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `img2img (source image) is only supported for SD-family checkpoints (SD1/SDXL/Pony/Illustrious/NoobAI) in this phase; base model '${resolved.checkpointBaseModel}' is not supported`,
+    });
+  }
 
   const input: Record<string, unknown> = {
     workflow: workflowType,

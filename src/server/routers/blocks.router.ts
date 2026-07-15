@@ -2523,6 +2523,16 @@ export const blocksRouter = router({
             message: 'additionalResources are not supported for model-bound blocks',
           });
         }
+        // IMAGE bridge (Phase-2a): img2img via `sourceImage` is a PAGE-ONLY
+        // feature. Custom Generators is a page app; model-bound img2img is out
+        // of scope and unvetted for 2a, so reject it fail-closed on the model
+        // path (mirrors the additionalResources guard above).
+        if (input.body.sourceImage) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'source image (img2img) is not supported for model-bound blocks',
+          });
+        }
       }
       const userId = parseSubjectUserId(claims.sub);
       if (userId == null) {
@@ -2668,6 +2678,15 @@ export const blocksRouter = router({
           throw new TRPCError({
             code: 'FORBIDDEN',
             message: 'additionalResources are not supported for model-bound blocks',
+          });
+        }
+        // IMAGE bridge (Phase-2a): img2img via `sourceImage` is PAGE-ONLY.
+        // Reject it fail-closed on the model path (see estimateWorkflow for the
+        // same guard). Custom Generators is a page app.
+        if (input.body.sourceImage) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'source image (img2img) is not supported for model-bound blocks',
           });
         }
       }
