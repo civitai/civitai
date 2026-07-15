@@ -834,3 +834,139 @@ describe('M4 mod-purge (session moderatorProcedure)', () => {
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 });
+
+// Generic opaque `data` blob on append: an app-owned, UNMODERATED structured
+// payload stored alongside the MODERATED {title, body}. The belt runs on
+// title/body ONLY; `data` is contained by the opaque-origin sandbox (same trust
+// boundary as the rest of shared storage). Bytes count toward the whole-value cap
+// + the per-app quota. See the appendValueInput note in apps-shared.router.ts.
+describe('append `data` blob (opaque, unmoderated app payload)', () => {
+  function findInsert() {
+    return (mockClient.query.mock.calls as Array<[string, unknown[]?]>).find((c) =>
+      c[0].includes('INSERT INTO "app_app_voting".shared_kv')
+    );
+  }
+
+  it('stores `data` VERBATIM alongside the moderated title/body', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockAppendDataPath();
+    const data = { buttons: [{ id: 1, weight: 0.8 }], nested: { a: [1, 2, 3] }, s: 'hello' };
+    const out = await caller().append({
+      blockToken: 't',
+      value: { title: 'my config', body: 'notes', data },
+    });
+    expect(out.key).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+    const insert = findInsert();
+    const stored = JSON.parse(String((insert![1] as unknown[])[2])) as {
+      title: string;
+      body?: string;
+      data?: unknown;
+    };
+    expect(stored.title).toBe('my config');
+    expect(stored.body).toBe('notes');
+    // data round-trips byte-for-byte (structure preserved).
+    expect(stored.data).toEqual(data);
+  });
+
+  it('list/read returns the raw `value` including `data`', async () => {
+    // list returns `value: r.value` verbatim — the jsonb (title/body/data) flows
+    // straight through with no belt / no reshaping on read.
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    const rowValue = { title: 't', body: 'b', data: { k: 'v', n: 42 } };
+    mockPool.query.mockResolvedValueOnce({
+      rows: [
+        {
+          key: 'K',
+          author_user_id: 42,
+          value: rowValue,
+          count: '0',
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+      ],
+      rowCount: 1,
+    });
+    const out = await caller().list({ blockToken: 't' });
+    expect(out.items[0].value).toEqual(rowValue);
+    expect((out.items[0].value as { data?: unknown }).data).toEqual({ k: 'v', n: 42 });
+  });
+
+  it('does NOT run `data` through the content-safety belt (a "bad" string in data is stored, not rejected)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockAppendDataPath();
+    // The SAME string would be REJECTED in `title` (includesMinor); inside `data`
+    // it is opaque app state and must pass straight through.
+    const out = await caller().append({
+      blockToken: 't',
+      value: { title: 'clean title', data: { note: '13 year old girl' } },
+    });
+    expect(out.key).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+    // The belt audited ONLY the moderated text (title), never the data blob.
+    expect(mockAuditPromptServer).toHaveBeenCalledTimes(1);
+    const auditedPrompt = String((mockAuditPromptServer.mock.calls[0][0] as { prompt: string }).prompt);
+    expect(auditedPrompt).toContain('clean title');
+    expect(auditedPrompt).not.toContain('13 year old girl');
+    const stored = JSON.parse(String((findInsert()![1] as unknown[])[2])) as { data?: { note?: string } };
+    expect(stored.data?.note).toBe('13 year old girl');
+  });
+
+  it('title/body moderation is UNCHANGED even when a `data` blob is present', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    // A bad TITLE still rejects (belt runs on title) regardless of the data blob.
+    await expect(
+      caller().append({
+        blockToken: 't',
+        value: { title: '13 year old girl', data: { anything: true } },
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockClient.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects an oversized value when `data` pushes the whole value over the cap', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockAppendDataPath();
+    // title/body are within their own caps; the 70KB data string pushes the whole
+    // serialized value over SHARED_VALUE_BYTE_CAP (64KB) → PAYLOAD_TOO_LARGE.
+    await expect(
+      caller().append({
+        blockToken: 't',
+        value: { title: 'ok', body: 'ok', data: { big: 'x'.repeat(70 * 1024) } },
+      })
+    ).rejects.toMatchObject({ code: 'PAYLOAD_TOO_LARGE' });
+    expect(mockClient.query).not.toHaveBeenCalled();
+  });
+
+  it('counts `data` bytes toward the per-app quota', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    // usedBytes is 50 bytes under the app quota; a data blob larger than that pushes
+    // usedBytes + byteSize over APP_QUOTA_BYTES → 'app quota exceeded' (proving the
+    // data bytes are included in byteSize).
+    const APP_QUOTA_BYTES = 50 * 1024 * 1024;
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('author_user_id') && sql.includes('count(*)'))
+        return { rows: [{ n: '0' }], rowCount: 1 };
+      if (sql.includes('.quota'))
+        return {
+          rows: [{ used_bytes: String(APP_QUOTA_BYTES - 50), row_count: '0' }],
+          rowCount: 1,
+        };
+      return { rows: [], rowCount: 0 };
+    });
+    await expect(
+      caller().append({
+        blockToken: 't',
+        value: { title: 'ok', data: { pad: 'y'.repeat(500) } },
+      })
+    ).rejects.toMatchObject({ code: 'PAYLOAD_TOO_LARGE', message: 'app quota exceeded' });
+    expect(mockClient.query).not.toHaveBeenCalled();
+  });
+
+  it('append with NO `data` stores no `data` key (byte-identical to base)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockAppendDataPath();
+    await caller().append({ blockToken: 't', value: { title: 'plain' } });
+    const stored = JSON.parse(String((findInsert()![1] as unknown[])[2])) as Record<string, unknown>;
+    expect(stored).toEqual({ title: 'plain' });
+    expect('data' in stored).toBe(false);
+  });
+});
