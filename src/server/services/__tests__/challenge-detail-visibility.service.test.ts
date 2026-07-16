@@ -209,4 +209,34 @@ describe('getChallengeDetail — mod/owner preview of hidden user challenges', (
       expect(await getChallengeDetail(400, RANDO_ID, false, false)).toBeNull();
     });
   });
+
+  describe('domain-currency gate', () => {
+    it('returns the detail for a moderator despite domain mismatch', async () => {
+      mockGetChallengeById.mockResolvedValue(
+        makeUserChallenge({ ingestion: 'Scanned', buzzType: 'yellow' })
+      );
+
+      // green site viewer + yellow challenge would normally be hidden by domain-currency gate
+      const result = await getChallengeDetail(400, MOD_ID, true, true);
+      expect(result).not.toBeNull();
+    });
+
+    it('returns the detail for the owner despite domain mismatch', async () => {
+      mockGetChallengeById.mockResolvedValue(
+        makeUserChallenge({ ingestion: 'Scanned', buzzType: 'yellow' })
+      );
+
+      const result = await getChallengeDetail(400, OWNER_ID, true, false);
+      expect(result).not.toBeNull();
+    });
+
+    it('stays hidden from other users when domain mismatches', async () => {
+      mockGetChallengeById.mockResolvedValue(
+        makeUserChallenge({ ingestion: 'Scanned', buzzType: 'yellow' })
+      );
+
+      expect(await getChallengeDetail(400, RANDO_ID, true, false)).toBeNull();
+      expect(await getChallengeDetail(400, undefined, true, false)).toBeNull();
+    });
+  });
 });
