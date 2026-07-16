@@ -1,7 +1,19 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
+
+// AppBlockChrome now calls useCurrentUser() (moderator gate for the platform-nav
+// "Review" item). This suite renders it WITHOUT a CivitaiSessionProvider, and
+// useCurrentUser → useCivitaiSessionContext throws "missing CivitaiSessionContext"
+// with no provider. Mock it to a stable anon (non-mod) viewer so these
+// pre-existing chrome/breadcrumb assertions keep rendering network-free.
+vi.mock('~/hooks/useCurrentUser', () => ({
+  useCurrentUser: () => null,
+}));
+
+// eslint-disable-next-line import/first
 import { AppBlockChrome } from '~/components/AppBlocks/IframeHost';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
+// eslint-disable-next-line import/first
 import { renderWithProviders } from '../../../test/component-setup';
 
 // H2: the host-rendered "trust frame" around an in-model app block must NAME the

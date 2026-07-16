@@ -39,6 +39,10 @@ import { renderWithProviders } from '../../../test/component-setup';
 // PageBlockHost wires the workflow + storage bridges too; stub trpc so it mounts
 // network-free (the resource picker itself makes NO tRPC call — it reuses the
 // native modal which talks to Meili in the parent context).
+// AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
+// moderator gate; these suites render the real host without a CivitaiSessionProvider.
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+
 vi.mock('~/utils/trpc', () => ({
   // FeatureFlagsProvider (in PageBlockHost's real render graph) statically imports
   // `setTrpcBatchingEnabled` from this module (#2946). vi.mock replaces the module

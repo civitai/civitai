@@ -1948,7 +1948,12 @@ export function PageBlockHost({
       // silently swallowed.
       data-needs-consent={needsConsent ? 'true' : 'false'}
     >
-      <AppBlockChrome blockInstanceId={blockInstanceId} appName={appName} slotId={PAGE_SLOT_ID} />
+      <AppBlockChrome
+        blockInstanceId={blockInstanceId}
+        appBlockId={appBlockId}
+        appName={appName}
+        slotId={PAGE_SLOT_ID}
+      />
       {/* Async cosmetic-image scan pollers (non-blocking OPEN_IMAGE_UPLOAD). Each
           renders nothing; it polls the authoritative scan gate in the background —
           SURVIVING the upload modal's close — and on a verdict fires

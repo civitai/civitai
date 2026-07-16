@@ -13,6 +13,10 @@ import { renderWithProviders } from '../../../test/component-setup';
 // without a real tRPC provider. The workflow + storage bridges are exercised in
 // PageBlockHostWorkflow / PageBlockHostStorage.browser.test.tsx; here they're
 // inert stubs.
+// AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
+// moderator gate; these suites render the real host without a CivitaiSessionProvider.
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+
 vi.mock('~/utils/trpc', () => ({
   // FeatureFlagsProvider (pulled into PageBlockHost's real render graph) statically
   // imports `setTrpcBatchingEnabled` from this module (added in #2946). Because

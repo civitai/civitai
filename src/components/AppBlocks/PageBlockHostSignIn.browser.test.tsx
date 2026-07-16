@@ -25,6 +25,10 @@ import { renderWithProviders } from '../../../test/component-setup';
 
 // trpc is mocked so PageBlockHost's workflow + storage bridges mount network-free
 // (inert stubs here — exercised in their own suites).
+// AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
+// moderator gate; these suites render the real host without a CivitaiSessionProvider.
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+
 vi.mock('~/utils/trpc', () => ({
   // FeatureFlagsProvider (in PageBlockHost's real render graph) statically imports
   // `setTrpcBatchingEnabled` from this module (#2946). vi.mock replaces the module

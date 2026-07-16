@@ -24,6 +24,10 @@ import { renderWithProviders } from '../../../test/component-setup';
 
 const h = vi.hoisted(() => ({ gateMutateAsync: vi.fn() }));
 
+// AppBlockChrome (rendered by the host) calls useCurrentUser; stub it so the
+// provider-less test render doesn't crash with "missing CivitaiSessionContext".
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+
 vi.mock('~/utils/trpc', () => ({
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {
@@ -39,6 +43,7 @@ vi.mock('~/utils/trpc', () => ({
       getMyBuzzTransactions: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getMyBuzzAccounts: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getMyDailyCompensation: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getMyViewer: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       estimateWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       pollWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },

@@ -1756,6 +1756,10 @@ export const blocksRouter = router({
       z.object({
         limit: z.number().int().min(1).max(100).optional(),
         cursor: z.string().max(64).optional(),
+        // Optional per-app drill-down ("what has THIS app spent on my behalf")
+        // for the run-frame Permissions & activity drawer. Mirrors
+        // listMyScopeInvocations so the per-app Buzz feed paginates server-side.
+        appBlockId: z.string().min(1).max(64).optional(),
       })
     )
     .query(async ({ ctx, input }) => {
@@ -1770,6 +1774,7 @@ export const blocksRouter = router({
         userId: ctx.user.id,
         limit: input.limit,
         cursor: input.cursor,
+        appBlockId: input.appBlockId,
       });
     }),
 
