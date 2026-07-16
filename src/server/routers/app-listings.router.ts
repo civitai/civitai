@@ -895,6 +895,34 @@ export const appListingsRouter = router({
     }),
 
   /**
+   * MOD reset an approved ON-SITE (hosted app-block) listing back into the block
+   * review queue (approved → pending) — the W13-deferred onsite reset, now built.
+   * Suspends the backing block (the real runtime stop), clones the latest approved
+   * `AppBlockPublishRequest` into a fresh pending one (assets/version KEPT, NO owner
+   * resubmit) so it re-enters `listPendingRequests`, writes a `reset-to-pending` audit
+   * event, and notifies the owner; a mod re-approves it through the existing block
+   * review flow (which restores the listing + un-suspends the block). DARK backend
+   * capability — no UI wiring yet (the mgmt-table Reset button is a downstream PR).
+   * Same input shape + posture as the offsite reset; typed failures map via
+   * `mapOffsiteError` (NOT_FOUND→NOT_FOUND, NOT_TRANSITIONABLE→BAD_REQUEST).
+   */
+  resetOnsiteListingToPending: moderatorProcedure
+    .input(resetListingToPendingSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Resetting on-site listings is restricted to civitai team');
+      }
+      const { resetOnsiteListingToPending } = await import(
+        '~/server/services/blocks/offsite-moderation.service'
+      );
+      try {
+        return await resetOnsiteListingToPending({ input, reviewerUserId: ctx.user.id });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
    * OWNER unpublish their OWN approved off-site listing (approved → removed) — a
    * self-service visibility toggle (no re-review). Owner-bound in the service
    * (NOT_OWNED→FORBIDDEN); NOT_TRANSITIONABLE when not approved. Typed failures map

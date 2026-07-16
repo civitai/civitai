@@ -23,12 +23,19 @@ const {
 } = vi.hoisted(() => ({
   mockDbRead: {
     appBlockPublishRequest: { findUnique: vi.fn(), findMany: vi.fn(async () => []) },
+    // Fix #1 (onsite): withdrawRequest now probes for a reset listing to close. No reset
+    // listing in these sandbox tests → findFirst returns null → the close early-returns.
+    appListing: { findFirst: vi.fn(async () => null) },
+    appListingModerationEvent: { findFirst: vi.fn(async () => null) },
   },
   mockDbWrite: {
     appBlockPublishRequest: {
       updateMany: vi.fn(async () => ({ count: 1 })),
       update: vi.fn(async () => ({})),
     },
+    $transaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => cb({})),
+    appListing: { updateMany: vi.fn(async () => ({ count: 0 })) },
+    appListingModerationEvent: { create: vi.fn(async () => ({})) },
   },
   mockGetReviewHead: vi.fn(async () => 'a'.repeat(40)),
   mockTriggerReviewBuild: vi.fn(async () => ({ name: 'review-pr-1' })),

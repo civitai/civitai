@@ -68,7 +68,11 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
     // W13 owner controls: the batched last-moderation-event lookup (removed listings).
     appListingModerationEvent: {
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      create: vi.fn(async (args: { data: unknown }) => args.data),
     },
+    // Fix B4: listMySubmissions' last-event batch is now a raw `DISTINCT ON` query.
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
   });
   const mockRead = makeClient();
   const mockWrite = makeClient() as ReturnType<typeof makeClient> & {
@@ -103,6 +107,11 @@ function resetAll() {
     client.appListing.update.mockReset().mockImplementation(async (a: { data: unknown }) => a.data);
     client.appListing.updateMany.mockReset().mockResolvedValue({ count: 1 });
     client.appListing.deleteMany.mockReset().mockResolvedValue({ count: 1 });
+    client.appListingModerationEvent.findFirst.mockReset().mockResolvedValue(null);
+    client.appListingModerationEvent.create
+      .mockReset()
+      .mockImplementation(async (a: { data: unknown }) => a.data);
+    client.$queryRaw.mockReset().mockResolvedValue([]);
     client.appListingScreenshot.count.mockReset().mockResolvedValue(0);
     client.appListingScreenshot.findMany.mockReset().mockResolvedValue([]);
     client.appListingScreenshot.createMany.mockReset().mockResolvedValue({ count: 0 });
@@ -875,21 +884,15 @@ describe('listMySubmissions (lastModerationAction for removed listings)', () => 
     mockRead.appListingPublishRequest.findMany
       .mockResolvedValueOnce([removedRequestRow])
       .mockResolvedValueOnce([]); // no pending revision
-    mockRead.appListingModerationEvent.findMany.mockResolvedValueOnce([
+    // Fix B4: the last-event batch is a raw `DISTINCT ON` query — one row per listing.
+    mockRead.$queryRaw.mockResolvedValueOnce([
       { appListingId: 'apl_removed', action: 'owner-unpublish' },
     ]);
 
     const res = await listMySubmissions({ userId: OWNER });
 
-    // The last-event query is scoped to the removed listing id, newest-first, distinct.
-    const eventArgs = mockRead.appListingModerationEvent.findMany.mock.calls[0][0] as Record<
-      string,
-      unknown
-    >;
-    expect(eventArgs).toMatchObject({
-      where: { appListingId: { in: ['apl_removed'] } },
-      distinct: ['appListingId'],
-    });
+    // The raw last-event query is issued exactly once for the removed listing set.
+    expect(mockRead.$queryRaw).toHaveBeenCalledTimes(1);
     expect(res.items[0]).toMatchObject({ lastModerationAction: 'owner-unpublish' });
   });
 
@@ -897,9 +900,7 @@ describe('listMySubmissions (lastModerationAction for removed listings)', () => 
     mockRead.appListingPublishRequest.findMany
       .mockResolvedValueOnce([removedRequestRow])
       .mockResolvedValueOnce([]);
-    mockRead.appListingModerationEvent.findMany.mockResolvedValueOnce([
-      { appListingId: 'apl_removed', action: 'delist' },
-    ]);
+    mockRead.$queryRaw.mockResolvedValueOnce([{ appListingId: 'apl_removed', action: 'delist' }]);
     const res = await listMySubmissions({ userId: OWNER });
     expect(res.items[0]).toMatchObject({ lastModerationAction: 'delist' });
   });
@@ -909,7 +910,7 @@ describe('listMySubmissions (lastModerationAction for removed listings)', () => 
       .mockResolvedValueOnce([liveRequestRow])
       .mockResolvedValueOnce([]);
     const res = await listMySubmissions({ userId: OWNER });
-    expect(mockRead.appListingModerationEvent.findMany).not.toHaveBeenCalled();
+    expect(mockRead.$queryRaw).not.toHaveBeenCalled();
     expect(res.items[0]).toMatchObject({ lastModerationAction: null });
   });
 });

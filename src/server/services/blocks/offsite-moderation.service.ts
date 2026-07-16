@@ -24,6 +24,7 @@ import {
   newAppListingModerationEventId,
   newAppListingPublishRequestId,
   newAppListingReportId,
+  newUlid,
 } from '~/server/utils/app-block-ids';
 
 /**
@@ -1031,6 +1032,196 @@ export async function resetListingToPending(opts: {
     userId: ownerUserId,
     key: `app-listing-reset-to-pending:${eventId}`,
     details: { slug, name, listingId: input.appListingId, reason },
+  });
+
+  return { appListingId: input.appListingId, status: 'pending', publishRequestId };
+}
+
+export type ResetOnsiteListingToPendingResult = {
+  appListingId: string;
+  status: 'pending';
+  publishRequestId: string;
+};
+
+/**
+ * MOD reset an APPROVED ON-SITE (hosted app-block) listing back into the block
+ * review queue (the W13-deferred onsite reset-to-pending — now built). Mirrors the
+ * offsite `resetListingToPending` semantics across the DIFFERENT onsite plumbing:
+ * onsite review runs through the SEPARATE `app_block_publish_requests` table + the
+ * iframe sandbox (not the offsite `AppListingPublishRequest` queue), and the block's
+ * RUNTIME serving gate reads `app_blocks.status` — so an onsite reset must ALSO stop
+ * the block serving, not merely hide the store listing.
+ *
+ * PARALLEL PATH (design choice): kept as a SEPARATE function rather than folding
+ * onsite into `resetListingToPending`, because the two re-queue mechanics share no
+ * writes — offsite mints an `AppListingPublishRequest`, onsite CLONES the most-recent
+ * approved `AppBlockPublishRequest` (assets/version/manifest KEPT) so the block
+ * re-enters the queue with NO owner resubmit. A dual-kind merge would be a tangle of
+ * `if (onsite)` branches over two tables; two focused functions read cleaner.
+ *
+ * In ONE tx (authoritative on the PRIMARY):
+ *   1. guard-flip the listing approved → pending (onsite + status-guarded; 0-count →
+ *      NOT_TRANSITIONABLE),
+ *   2. suspend the backing block approved → suspended (`flipBackingBlockStatus`) — the
+ *      REAL runtime stop, so `<slug>.civit.ai` / the run page stops serving while it
+ *      re-reviews (a store-hide alone would leave it live),
+ *   3. clone the latest APPROVED block publish request into a FRESH `pending` one
+ *      (owned by the listing owner) so it re-enters `listPendingRequests`; a mod then
+ *      re-approves it through the EXISTING `approveRequest` flow (which restores the
+ *      listing pending → approved + un-suspends the block — see the approve widen),
+ *   4. write a `reset-to-pending` audit event.
+ * Post-commit, best-effort: notify the owner their app needs another review.
+ *
+ * ONSITE-only (mirrors the offsite kind guard): a missing OR off-site listing → generic
+ * NOT_FOUND. No approved version to clone (an app never fully approved) → NOT_TRANSITIONABLE.
+ * A pending block request already open for the slug → NOT_TRANSITIONABLE (the partial-
+ * unique `app_block_publish_requests_one_pending_per_slug` also enforces it; we
+ * pre-check for a friendly error and catch its P2002 as a race backstop).
+ */
+export async function resetOnsiteListingToPending(opts: {
+  input: ResetListingToPendingInput;
+  reviewerUserId: number;
+}): Promise<ResetOnsiteListingToPendingResult> {
+  const { input, reviewerUserId } = opts;
+  const reason = requireModReason(input.reason);
+
+  // Classify on the replica: must be an ON-SITE listing with a backing block. A
+  // missing/off-site listing → generic NOT_FOUND (kind-probe guard, mirrors offsite).
+  const listing = await dbRead.appListing.findUnique({
+    where: { id: input.appListingId },
+    select: {
+      id: true,
+      kind: true,
+      status: true,
+      slug: true,
+      name: true,
+      userId: true,
+      appBlockId: true,
+    },
+  });
+  if (!listing || listing.kind !== 'onsite' || !listing.appBlockId) {
+    throw new OffsiteModerationError('NOT_FOUND', 'On-site listing not found.');
+  }
+  const appBlockId = listing.appBlockId;
+
+  // The version to re-review is the CURRENTLY-approved one: clone the most-recent
+  // approved block publish request (assets/version/manifest KEPT — no owner resubmit).
+  const lastApproved = await dbRead.appBlockPublishRequest.findFirst({
+    where: { slug: listing.slug, status: 'approved' },
+    orderBy: [{ submittedAt: 'desc' }],
+    select: {
+      appBlockId: true,
+      version: true,
+      manifest: true,
+      bundleKey: true,
+      bundleSha256: true,
+      bundleSizeBytes: true,
+      fileSummary: true,
+      manifestDiffSummary: true,
+      forgejoCommitSha: true,
+    },
+  });
+  if (!lastApproved) {
+    throw new OffsiteModerationError(
+      'NOT_TRANSITIONABLE',
+      'This app has no approved version to re-review.'
+    );
+  }
+
+  // Friendly pre-check: an open pending request for this slug means a review is
+  // already in flight — the DB partial-unique index would otherwise reject the clone
+  // with a raw P2002.
+  const openPending = await dbRead.appBlockPublishRequest.findFirst({
+    where: { slug: listing.slug, status: 'pending' },
+    select: { id: true },
+  });
+  if (openPending) {
+    throw new OffsiteModerationError(
+      'NOT_TRANSITIONABLE',
+      'A review is already pending for this app.'
+    );
+  }
+
+  const eventId = newAppListingModerationEventId();
+  const publishRequestId = `pubreq_${newUlid()}`;
+
+  try {
+    await dbWrite.$transaction(async (tx) => {
+      // (1) guard-flip listing approved → pending (onsite + status-guarded TOCTOU).
+      const flipped = await tx.appListing.updateMany({
+        where: { id: input.appListingId, kind: 'onsite', status: 'approved' },
+        data: { status: 'pending' },
+      });
+      if (flipped.count === 0) {
+        throw new OffsiteModerationError(
+          'NOT_TRANSITIONABLE',
+          'Only an approved listing can be reset to pending.'
+        );
+      }
+
+      // (2) suspend the backing block (approved → suspended) — the real runtime stop.
+      // Status-guarded to `approved`; non-fatal on a 0-count (a drifted/already-
+      // suspended block; the LISTING flip is the authoritative gate). Mirrors delist.
+      await flipBackingBlockStatus(tx, {
+        isOnsite: true,
+        appBlockId,
+        from: 'approved',
+        to: 'suspended',
+      });
+
+      // (3) re-enter the review queue: clone the latest approved request into a FRESH
+      // `pending` one, submitted-by the OWNER (so my-submissions + the queue attribute
+      // it to the owner, not the acting mod). Same assets/version/manifest → a mod
+      // re-approves with no owner resubmit. The partial-unique index (one pending per
+      // slug) is satisfied (we pre-checked); a raced create fires P2002 → caught below.
+      await tx.appBlockPublishRequest.create({
+        data: {
+          id: publishRequestId,
+          appBlockId: lastApproved.appBlockId ?? appBlockId,
+          slug: listing.slug,
+          submittedByUserId: listing.userId,
+          version: lastApproved.version,
+          manifest: lastApproved.manifest as Prisma.InputJsonValue,
+          bundleKey: lastApproved.bundleKey,
+          bundleSha256: lastApproved.bundleSha256,
+          bundleSizeBytes: lastApproved.bundleSizeBytes,
+          fileSummary: lastApproved.fileSummary as Prisma.InputJsonValue,
+          manifestDiffSummary: lastApproved.manifestDiffSummary as Prisma.InputJsonValue,
+          forgejoCommitSha: lastApproved.forgejoCommitSha,
+          status: 'pending',
+        },
+      });
+
+      // (4) audit event.
+      await tx.appListingModerationEvent.create({
+        data: {
+          id: eventId,
+          appListingId: input.appListingId,
+          slug: listing.slug,
+          action: 'reset-to-pending',
+          actorUserId: reviewerUserId,
+          reason,
+          before: { status: 'approved' },
+          after: { status: 'pending' },
+        },
+      });
+    });
+  } catch (err) {
+    // A concurrent submit/reset won the one-pending-per-slug race → friendly error.
+    if ((err as { code?: unknown })?.code === 'P2002') {
+      throw new OffsiteModerationError(
+        'NOT_TRANSITIONABLE',
+        'A review is already pending for this app.'
+      );
+    }
+    throw err;
+  }
+
+  await notifyAppListingOwner({
+    type: 'app-listing-reset-to-pending',
+    userId: listing.userId,
+    key: `app-listing-reset-to-pending:${eventId}`,
+    details: { slug: listing.slug, name: listing.name, listingId: input.appListingId, reason },
   });
 
   return { appListingId: input.appListingId, status: 'pending', publishRequestId };
