@@ -25,7 +25,17 @@ export function createTtlMemo<T>(
   ttlMs: number,
   // Injectable clock so tests can advance time deterministically without
   // wall-clock sleeps. Defaults to Date.now in production.
-  now: () => number = Date.now
+  now: () => number = Date.now,
+  // When `freeze` is true, a resolved object/array value is Object.freeze()d
+  // (shallow) before it is stored in — and returned from — the single memo slot.
+  // The SAME reference is served to every caller for the whole TTL window, so
+  // this enforces the "don't mutate the shared cached blob" invariant
+  // STRUCTURALLY: an accidental `.push()`/`.sort()`/element write throws (strict
+  // mode) instead of silently corrupting the shared blob for every concurrent
+  // request on the pod. No-op for primitive/null values. Opt-in — most memoized
+  // values (e.g. the raw sysRedis strings, which are re-parsed into a fresh
+  // object per call outside the memo) don't need it.
+  { freeze = false }: { freeze?: boolean } = {}
 ): TtlMemo<T> {
   let cache: { value: T; expiresAt: number } | null = null;
 
@@ -35,6 +45,9 @@ export function createTtlMemo<T>(
     // Await BEFORE assigning: a rejection skips the cache write (fail-open),
     // exactly like getClientConfigCached only caching successful reads.
     const value = await fetcher();
+    // Freeze in place (Object.freeze returns the same ref) so the value we
+    // cache AND return is immutable; keep `value` typed as T for callers.
+    if (freeze && value !== null && typeof value === 'object') Object.freeze(value);
     cache = { value, expiresAt: now() + ttlMs };
     return value;
   }) as TtlMemo<T>;

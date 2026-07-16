@@ -97,6 +97,34 @@ describe('createTtlMemo', () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
+  it('freeze: the cached array is frozen so an accidental in-place mutation throws instead of corrupting the shared blob', async () => {
+    const clock = makeClock();
+    const fetcher = vi.fn(async () => [{ id: 1, name: 'tag' }]);
+    const memo = createTtlMemo(fetcher, 30_000, clock.now, { freeze: true });
+
+    const arr = await memo();
+    expect(Object.isFrozen(arr)).toBe(true);
+    // Array-level mutation must throw (strict mode) rather than silently mutate
+    // the reference shared across the TTL window.
+    expect(() => arr.push({ id: 2, name: 'other' })).toThrow();
+    expect(() => ((arr as { id: number; name: string }[]).length = 0)).toThrow();
+
+    // The SAME frozen reference is served for the rest of the TTL.
+    clock.advance(5_000);
+    const again = await memo();
+    expect(again).toBe(arr);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not freeze by default (freeze is opt-in)', async () => {
+    const clock = makeClock();
+    const fetcher = vi.fn(async () => [{ id: 1 }]);
+    const memo = createTtlMemo(fetcher, 30_000, clock.now);
+
+    const arr = await memo();
+    expect(Object.isFrozen(arr)).toBe(false);
+  });
+
   it('caches a legitimate null result (an unset key is a real value, not an error)', async () => {
     const clock = makeClock();
     const fetcher = vi.fn(async () => null as string | null);

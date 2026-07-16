@@ -42,6 +42,15 @@ const SYSTEM_CACHE_EXPIRY = 60 * 60 * 4;
 // to propagate, PER POD, on top of the already-4h redis staleness. Kept short (30s)
 // so that marginal delay is trivial. None of these keys are `redis.del`-invalidated
 // (verified), so the in-proc layer cannot shadow an intended prompt invalidation.
+//
+// The three fully-wrapped content getters (getModeratedTags,
+// getBlockedBrowsingTags, getHomeExcludedTags) now return the SAME array
+// reference for the whole TTL window, so they opt into `{ freeze: true }`: the
+// memoized array is Object.freeze()d (shallow) before it is stored/returned. An
+// accidental in-place mutation (`.sort()`/`.push()`/element write) by any caller
+// would otherwise silently corrupt the shared moderation/tags blob for every
+// concurrent request on the pod — freezing makes that throw instead of corrupt.
+// Current callers only `.map`/`.filter`/`.some`/spread into new arrays (verified).
 const SYSTEM_CACHE_INPROC_TTL_MS = 30_000;
 
 // LIVE_FEATURE_FLAGS behaves like an operational toggle (ops can flip a feature on/off
@@ -94,7 +103,7 @@ const getModeratedTagsMemo = createTtlMemo<SystemModerationTag[]>(async () => {
 
   log('got moderation tags');
   return combined;
-}, SYSTEM_CACHE_INPROC_TTL_MS);
+}, SYSTEM_CACHE_INPROC_TTL_MS, undefined, { freeze: true });
 
 export async function getModeratedTags(): Promise<SystemModerationTag[]> {
   return getModeratedTagsMemo();
@@ -289,7 +298,7 @@ const getBlockedBrowsingTagsMemo = createTtlMemo<{ id: number; name: string }[]>
 
   log('got blocked browsing tags');
   return tags;
-}, SYSTEM_CACHE_INPROC_TTL_MS);
+}, SYSTEM_CACHE_INPROC_TTL_MS, undefined, { freeze: true });
 
 export async function getBlockedBrowsingTags(): Promise<{ id: number; name: string }[]> {
   return getBlockedBrowsingTagsMemo();
@@ -312,7 +321,7 @@ const getHomeExcludedTagsMemo = createTtlMemo<{ id: number; name: string }[]>(as
 
   log('got home excluded tags');
   return tags;
-}, SYSTEM_CACHE_INPROC_TTL_MS);
+}, SYSTEM_CACHE_INPROC_TTL_MS, undefined, { freeze: true });
 
 export async function getHomeExcludedTags() {
   return getHomeExcludedTagsMemo();
