@@ -7,11 +7,12 @@ import { mapBitdexDoc } from '~/server/services/image.service';
 //   - a number   → a real, visibility-gated model3d link
 //   - null       → "confirmed no link" (Meili only; suppresses the fallback)
 //   - undefined  → "not indexed by this backend" → self-healing postId fallback
-// BitDex is the `undefined` producer. mapBitdexDoc must therefore emit model3dId
-// ONLY when the doc actually carries a value, and must NEVER coerce a missing
-// value to null — a `?? null` regression here would silently assert "no link"
-// for genuinely-linked images in the window before the redump populates the
-// field, suppressing the fallback that would otherwise heal them.
+// BitDex is the `undefined` producer. mapBitdexDoc therefore emits model3dId
+// ONLY when the doc actually carries a value, and does not coerce a missing
+// value to null. This keeps the doc-level signal honest (belt-and-suspenders):
+// the getAllImagesIndex fallback ultimately keys off page-level `searchSource`,
+// so a stray null would NOT by itself break the fallback — but null reads as
+// "confirmed no link" and muddies the signal, so we keep it absent.
 
 // Minimal BitDex doc with the fields mapBitdexDoc reads (sortAt is required —
 // it is multiplied for sortAtUnix). Everything else defaults through `?? ...`.
@@ -36,9 +37,9 @@ describe('mapBitdexDoc model3dId three-state contract', () => {
 
   it('leaves model3dId undefined (key absent) when the doc has no value — NOT null', () => {
     const mapped = mapBitdexDoc(makeDoc());
-    // The key must be absent so downstream sees `undefined` and takes the
-    // self-healing postId fallback. `null` would wrongly read as "confirmed no
-    // link" for the whole BitDex page.
+    // The key stays absent so downstream sees `undefined` (a number is the only
+    // positive signal). Not fallback-critical — searchSource drives that — but a
+    // stray `null` would read as "confirmed no link" and muddy the doc signal.
     expect('model3dId' in mapped).toBe(false);
     expect((mapped as { model3dId?: number }).model3dId).toBeUndefined();
   });

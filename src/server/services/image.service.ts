@@ -3711,12 +3711,12 @@ export function mapBitdexDoc(doc: Record<string, unknown>) {
     postId: (doc.postId as number) ?? null,
     postedToId: (doc.postedToId as number) ?? null,
     // Emit model3dId ONLY when the doc actually carries a value. Leaving the key
-    // absent (→ undefined downstream) preserves the three-state contract in
-    // getAllImagesIndex: undefined = "not indexed by BitDex" → self-healing
-    // postId fallback; a number = gated model3d link. We must NOT coerce a
-    // missing value to null here — null means "confirmed no link" and would
-    // suppress the fallback for genuinely-linked images before the redump that
-    // populates model3dId lands. Inert until then (BitDex returns no such field).
+    // absent (→ undefined downstream) keeps the doc-level signal honest for the
+    // three-state chip in getAllImagesIndex: a number = gated model3d link,
+    // absent = no doc-level link. Prefer omit over `?? null` (belt-and-suspenders):
+    // the fallback there keys off page-level searchSource, so a stray null would
+    // NOT actually break it — but null reads as "confirmed no link" and muddies
+    // the signal. Inert until BitDex indexes the field (no such field today).
     ...(doc.model3dId != null ? { model3dId: doc.model3dId as number } : {}),
     remixOfId: (doc.remixOfId as number) ?? null,
     hasMeta: doc.hasMeta as boolean,
