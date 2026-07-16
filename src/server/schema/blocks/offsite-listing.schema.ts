@@ -6,7 +6,10 @@ import {
   validateExternalUrl,
 } from '~/server/schema/blocks/external-app.schema';
 import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
-import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
+import {
+  OFFSITE_MOD_REASON_MAX,
+  OFFSITE_MOD_REASON_MIN,
+} from '~/server/schema/blocks/offsite-moderation.schema';
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
 
 /**
@@ -48,7 +51,14 @@ export const OFFSITE_APPROVAL_NOTES_MAX = 2000;
 // so the reject field matches every other mod-reason field on /apps/review and
 // the client gate + server schema agree — no divergent magic `10`.
 export const OFFSITE_REJECTION_REASON_MIN = OFFSITE_MOD_REASON_MIN;
-export const OFFSITE_REJECTION_REASON_MAX = 2000;
+// Unified with the shared mod-reason CEILING (`OFFSITE_MOD_REASON_MAX`, 1000).
+// A reject of a reset-to-pending listing writes a `delist` moderation event
+// carrying THIS rejectionReason (offsite-listing.service `rejectExternalRequest` →
+// `closeTerminalListing`), so its ceiling must not exceed what a direct mod action
+// (`delistListing`, bounded by `OFFSITE_MOD_REASON_MAX`) allows — otherwise a
+// rejected-reset could persist a longer reason than the schema permits on the same
+// audit surface. (Was 2000; tightened to 1000 for parity.)
+export const OFFSITE_REJECTION_REASON_MAX = OFFSITE_MOD_REASON_MAX;
 
 /**
  * Author submit input for a pure external-link off-site listing.

@@ -1,5 +1,8 @@
 import { TRPCError } from '@trpc/server';
-import type { Prisma } from '@prisma/client';
+// Value import (not `import type`) — `Prisma.sql`/`Prisma.join` are runtime helpers
+// used by the raw `DISTINCT ON` in `listMySubmissions`. The namespace still supplies
+// every `Prisma.*` TYPE this module references.
+import { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
@@ -355,8 +358,11 @@ export type CloseTerminalListingOutcome = 'deleted' | 'removed' | 'none';
  *                 owner-republish guard sees the correct last-event ACTOR:
  *                   * reject  → `delist` (a mod re-review takedown — the owner may NOT
  *                     self-restore it).
- *                   * withdraw→ `owner-unpublish` (the owner withdrew their own
- *                     re-review — they MAY later republish it).
+ *                   * withdraw→ `owner-unpublish` ONLY when the pending cycle was NOT
+ *                     mod-mandated; if the listing's most-recent event is a
+ *                     `reset-to-pending` (a mod bounced it), the withdraw is
+ *                     downgraded to `delist` so the owner canNOT republish the
+ *                     pre-reset content without a mod relist (Fix #1 authz).
  *   - anything else (approved/removed) → no-op (a terminal request never targets one;
  *                 guarded defensively).
  *
@@ -391,12 +397,39 @@ async function closeTerminalListing(
       data: { status: 'removed' },
     });
     if (flipped.count === 0) return 'none';
+
+    // 🔴 AUTHZ (Fix #1): resolve the AUDIT ACTION so an owner cannot defeat a mod's
+    // re-review. The reject path passes `delist` explicitly (a mod takedown) — kept
+    // verbatim. The WITHDRAW path passes `owner-unpublish` (owner withdrew their own
+    // re-review → normally self-restorable). BUT if THIS pending cycle was
+    // MOD-MANDATED (the mod ran `resetListingToPending`, whose newest event is a
+    // `reset-to-pending`), an owner-unpublish would satisfy `republishOwnListing`'s
+    // guard and let the owner republish the pre-reset content LIVE with NO re-review
+    // — defeating the mandated review. Detect that robustly (the listing's
+    // most-recent moderation event is `reset-to-pending`) and downgrade the withdraw
+    // to a `delist` event: the republish guard (last event must be `owner-unpublish`)
+    // then correctly FORBIDS the owner, so a mod must relist. A genuine owner-
+    // initiated pending close (no reset-to-pending as the latest event) keeps
+    // `owner-unpublish` and stays owner-republishable. First-time draft withdraws
+    // never reach here (the `draft` branch above deletes them).
+    let effectiveAction: 'delist' | 'owner-unpublish' = event.action;
+    if (event.action === 'owner-unpublish') {
+      const lastEvent = await client.appListingModerationEvent.findFirst({
+        where: { appListingId },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        select: { action: true },
+      });
+      if (lastEvent?.action === 'reset-to-pending') {
+        effectiveAction = 'delist';
+      }
+    }
+
     await client.appListingModerationEvent.create({
       data: {
         id: newAppListingModerationEventId(),
         appListingId,
         slug: listing.slug,
-        action: event.action,
+        action: effectiveAction,
         actorUserId: event.actorUserId,
         reason: event.reason,
         before: { status: 'pending' },
@@ -1398,13 +1431,20 @@ export async function approveExternalRequest(opts: {
         `cannot approve — the draft/pending listing is no longer available`
       );
     }
-    // Supersede any OTHER pending off-site request for this slug (parity with the
-    // on-site approve). With `AppListing.slug @unique` a sibling draft can't exist,
-    // so this is a rarely-non-empty safety net; scoped to NOT touch the approved
-    // row.
+    // Supersede any OTHER pending off-site request pointing at the SAME listing row
+    // (`appListingId`), NOT merely the same slug. 🔴 A pending REVISION request
+    // denormalizes the PARENT slug (`submitListingRevision` sets its
+    // `slug = shadow.revisionOf.slug`) but targets a DISTINCT shadow listing
+    // (`appListingId = shadowId`, `revisionOfId != null`). Scoping the supersede by
+    // slug therefore swept an owner's in-flight revision when a mod approved a
+    // reset-to-pending request for the same parent — orphaning the shadow with no
+    // notice. Scoping by `appListingId` supersedes only genuine siblings on THIS
+    // exact listing (e.g. a duplicate reset request) and leaves a legitimately-
+    // competing revision (a different appListingId) pending. Still scoped to NOT
+    // touch the approved row.
     await tx.appListingPublishRequest.updateMany({
       where: {
-        slug: request.slug,
+        appListingId,
         status: 'pending',
         kind: 'offsite',
         NOT: { id: publishRequestId },
@@ -1849,21 +1889,29 @@ export async function listMySubmissions(
   // fetch its MOST-RECENT moderation-event action so the my-submissions UI can tell
   // an owner-hidden listing (last event `owner-unpublish` → republish-eligible) from
   // a moderator takedown (last event `delist` → republish FORBIDDEN, shown as
-  // "removed by a moderator") WITHOUT a per-row history fetch. This mirrors the
-  // `hasPendingRevision` batched second query above. `distinct` + `orderBy desc`
-  // returns exactly the latest event per listing in ONE query. Only removed listings
-  // are queried (a live listing needs no last-action), bounding the cost.
+  // "removed by a moderator") WITHOUT a per-row history fetch.
+  //
+  // Fix B4 (scaling): a Prisma `findMany({ distinct, orderBy: createdAt })` CANNOT
+  // emit Postgres `DISTINCT ON` here — the `distinct` column (`appListingId`) is not
+  // the leading `orderBy` key (`createdAt`), so Prisma fetches EVERY moderation event
+  // for every removed listing on the page and dedups in memory (unbounded per listing
+  // — a heavily-moderated listing has an arbitrarily long history). Use a raw
+  // `DISTINCT ON (app_listing_id) ... ORDER BY app_listing_id, created_at DESC, id
+  // DESC` so Postgres returns exactly ONE row per listing (the latest event). Same
+  // result contract (last action per appListingId), bounded to one row per listing.
   const removedParentIds = page
     .filter((r) => r.appListingId != null && r.appListing?.status === 'removed')
     .map((r) => r.appListingId as string);
   const lastEvents =
     removedParentIds.length > 0
-      ? await dbRead.appListingModerationEvent.findMany({
-          where: { appListingId: { in: removedParentIds } },
-          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-          distinct: ['appListingId'],
-          select: { appListingId: true, action: true },
-        })
+      ? await dbRead.$queryRaw<Array<{ appListingId: string; action: string }>>(Prisma.sql`
+          SELECT DISTINCT ON (app_listing_id)
+            app_listing_id AS "appListingId",
+            action
+          FROM app_listing_moderation_events
+          WHERE app_listing_id IN (${Prisma.join(removedParentIds)})
+          ORDER BY app_listing_id, created_at DESC, id DESC
+        `)
       : [];
   const lastActionByListing = new Map(
     lastEvents

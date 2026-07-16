@@ -52,7 +52,12 @@ type Client = {
     updateMany: ReturnType<typeof vi.fn>;
   };
   // reject/withdraw close a reset-to-pending listing by writing a moderation event.
-  appListingModerationEvent: { create: ReturnType<typeof vi.fn> };
+  // `findFirst` (Fix #1): the withdraw close reads the listing's latest mod event to
+  // decide owner-unpublish vs delist (a mod-mandated reset withdraw becomes a delist).
+  appListingModerationEvent: {
+    create: ReturnType<typeof vi.fn>;
+    findFirst: ReturnType<typeof vi.fn>;
+  };
 };
 
 // `persistListingAssetImage` dynamically imports `createImage` from the image
@@ -88,6 +93,7 @@ const { mockRead, mockWrite, ids } = vi.hoisted(() => {
     },
     appListingModerationEvent: {
       create: vi.fn(async (args: { data: unknown }) => args.data),
+      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
     },
   });
   const mockRead = makeClient();
@@ -142,6 +148,7 @@ function resetClient(c: Client) {
   c.appListingModerationEvent.create
     .mockReset()
     .mockImplementation(async (a: { data: unknown }) => a.data);
+  c.appListingModerationEvent.findFirst.mockReset().mockResolvedValue(null);
 }
 
 beforeEach(() => {
@@ -343,7 +350,7 @@ describe('withdrawExternalRequest', () => {
     expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
   });
 
-  it('🔴 reset-originated (PENDING, formerly-live) withdraw → listing set REMOVED + an OWNER-UNPUBLISH mod event (owner may later republish)', async () => {
+  it('🔴 Fix #1: MOD-MANDATED reset (last event reset-to-pending) withdraw → REMOVED + a DELIST event (owner canNOT republish)', async () => {
     mockRead.appListingPublishRequest.findUnique.mockResolvedValue({
       id: 'alpr_1',
       status: 'pending',
@@ -352,6 +359,9 @@ describe('withdrawExternalRequest', () => {
     });
     // The in-tx close reads status → `pending` = a reset-to-pending, formerly-live listing.
     mockWrite.appListing.findUnique.mockResolvedValue({ status: 'pending', slug: 'cool-app' });
+    // The listing's most-recent moderation event is a mod `reset-to-pending` — so this
+    // pending cycle was MOD-MANDATED and the owner must not be able to defeat it.
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValue({ action: 'reset-to-pending' });
     await withdrawExternalRequest({ publishRequestId: 'alpr_1', userId: CALLER });
 
     // NOT deleted — transitioned to `removed`.
@@ -360,14 +370,38 @@ describe('withdrawExternalRequest', () => {
       where: { id: 'apl_1', status: 'pending' },
       data: { status: 'removed' },
     });
-    // An `owner-unpublish` event (the OWNER withdrew their OWN re-review) → the owner
-    // CAN later republishOwnListing (last event actor is the owner, not a moderator).
+    // 🔴 A `delist` event (NOT owner-unpublish): the last event is now a takedown, so
+    // `republishOwnListing`'s guard FORBIDS the owner — a mod must relist.
+    expect(mockWrite.appListingModerationEvent.create).toHaveBeenCalledTimes(1);
+    expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data).toMatchObject({
+      action: 'delist',
+      actorUserId: CALLER,
+      before: { status: 'pending' },
+      after: { status: 'removed' },
+    });
+  });
+
+  it('Fix #1 fallback: a PENDING listing whose latest event is NOT reset-to-pending keeps owner-unpublish (owner-republishable)', async () => {
+    mockRead.appListingPublishRequest.findUnique.mockResolvedValue({
+      id: 'alpr_1',
+      status: 'pending',
+      submittedByUserId: CALLER,
+      appListingId: 'apl_1',
+    });
+    mockWrite.appListing.findUnique.mockResolvedValue({ status: 'pending', slug: 'cool-app' });
+    // No reset-to-pending as the latest event (default findFirst → null) → the pending
+    // close was NOT mod-mandated, so the owner-initiated `owner-unpublish` is preserved.
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValue(null);
+    await withdrawExternalRequest({ publishRequestId: 'alpr_1', userId: CALLER });
+
+    expect(mockWrite.appListing.updateMany).toHaveBeenCalledWith({
+      where: { id: 'apl_1', status: 'pending' },
+      data: { status: 'removed' },
+    });
     expect(mockWrite.appListingModerationEvent.create).toHaveBeenCalledTimes(1);
     expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data).toMatchObject({
       action: 'owner-unpublish',
       actorUserId: CALLER,
-      before: { status: 'pending' },
-      after: { status: 'removed' },
     });
   });
 
@@ -575,6 +609,28 @@ describe('approveExternalRequest', () => {
     );
   });
 
+  it('🟡 Fix #2: supersede is scoped by appListingId (NOT slug) so a concurrent REVISION survives an approve-of-reset', async () => {
+    // Approving a reset request for the PARENT listing (apl_1) must not sweep the
+    // owner's in-flight REVISION request — a revision denormalizes the PARENT slug but
+    // targets a DISTINCT shadow (a different appListingId). Scoping the supersede by
+    // appListingId leaves the revision (different id) pending.
+    stageApproveScenario({ iconId: 1, coverId: 2, screenshotCount: 1, status: 'pending' });
+    await approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD });
+
+    // updateMany call[0] = the guarded request flip; call[1] = the supersede.
+    const supersede = mockWrite.appListingPublishRequest.updateMany.mock.calls[1][0] as {
+      where: Record<string, unknown>;
+    };
+    expect(supersede.where).toMatchObject({
+      appListingId: 'apl_1',
+      status: 'pending',
+      kind: 'offsite',
+      NOT: { id: 'alpr_1' },
+    });
+    // 🔴 It must NOT scope by slug (which would sweep the same-slug revision request).
+    expect(supersede.where).not.toHaveProperty('slug');
+  });
+
   it('the AUTHORITATIVE asset gate reads the PRIMARY (tx), not the replica', async () => {
     stageApproveScenario({ iconId: 1, coverId: 2, screenshotCount: 1 });
     await approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD });
@@ -623,20 +679,23 @@ describe('approveExternalRequest', () => {
     expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
   });
 
-  it('supersedes any SIBLING pending request for the same slug (parity with on-site)', async () => {
+  it('supersedes any SIBLING pending request for the SAME LISTING (appListingId-scoped, Fix #2)', async () => {
     stageApproveScenario({ iconId: 1, coverId: 2, screenshotCount: 1 });
     await approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD });
-    // The 2nd request updateMany is the supersede: same slug, pending, NOT this row.
+    // The 2nd request updateMany is the supersede: same LISTING (appListingId), pending,
+    // NOT this row. Scoped by appListingId (not slug) so a same-slug REVISION request
+    // (different appListingId / shadow) is left pending — see the dedicated Fix #2 test.
     const supersede = mockWrite.appListingPublishRequest.updateMany.mock.calls[1][0] as {
       where: Record<string, unknown>;
       data: Record<string, unknown>;
     };
     expect(supersede.where).toMatchObject({
-      slug: 'cool-app',
+      appListingId: 'apl_1',
       status: 'pending',
       kind: 'offsite',
       NOT: { id: 'alpr_1' },
     });
+    expect(supersede.where).not.toHaveProperty('slug');
     expect(supersede.data).toEqual({ status: 'withdrawn' });
   });
 

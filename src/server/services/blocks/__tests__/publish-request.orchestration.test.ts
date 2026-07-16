@@ -61,7 +61,10 @@ const {
       oauthClient: { findUnique: vi.fn() },
       // W13 auto-create-on-approve: approveRequest checks for an existing onsite
       // AppListing (idempotency, keyed on appBlockId) before creating one.
-      appListing: { findUnique: vi.fn() },
+      appListing: { findUnique: vi.fn(), findFirst: vi.fn(async () => null) },
+      // Fix #1 (onsite): withdrawRequest probes the listing's latest mod event to
+      // decide whether a reset withdraw closes the listing. Null → no reset in flight.
+      appListingModerationEvent: { findFirst: vi.fn(async () => null) },
     },
     mockDbWrite: {
       // `updateMany` added (no-trust-on-push fix): approveRequest now supersedes
@@ -101,7 +104,14 @@ const {
       // W13 auto-create-on-approve: approveRequest mints the onsite AppListing
       // (idempotent skip-if-exists, P2002-tolerant) right after the AppBlock row
       // exists so the app appears on the /apps grid without a manual backfill.
-      appListing: { create: vi.fn() },
+      // `updateMany` (W13 onsite reset re-approve): approveRequest restores a reset
+      // (`pending`) onsite listing back to `approved`; default 0-count no-op.
+      appListing: { create: vi.fn(), updateMany: vi.fn(async () => ({ count: 0 })) },
+      // Fix #1 (onsite) withdraw close: the reset-withdraw path flips the listing
+      // pending→removed + writes a delist event inside a tx. `$transaction` is wired
+      // post-hoist (below) to run its callback against this same write mock.
+      appListingModerationEvent: { create: vi.fn(async () => ({})) },
+      $transaction: vi.fn(),
     },
     mockS3Send: vi.fn(),
     mockBundleBuffer: { current: null as Buffer | null },
@@ -152,6 +162,13 @@ const {
   };
 });
 
+// Wire the write mock's interactive transaction to run its callback against the same
+// mock (so tx-scoped writes in the withdraw reset-close land on these spies). Done
+// post-hoist to avoid referencing `mockDbWrite` inside its own hoisted factory.
+(mockDbWrite.$transaction as ReturnType<typeof vi.fn>).mockImplementation(
+  async (cb: (tx: unknown) => Promise<unknown>) => cb(mockDbWrite)
+);
+
 vi.mock('~/server/db/client', () => ({
   dbRead: mockDbRead,
   dbWrite: mockDbWrite,
@@ -185,6 +202,8 @@ vi.mock('~/server/services/apps/storage-provision.service', () => ({
 vi.mock('~/server/utils/app-block-ids', () => ({
   newUlid: mockNewUlid,
   newAppListingId: mockNewAppListingId,
+  // Fix #1 (onsite) withdraw close writes a delist moderation event.
+  newAppListingModerationEventId: () => 'alme_reset_close',
 }));
 
 // Override the global env mock with the keys submitVersion / approveRequest /
@@ -703,6 +722,62 @@ describe('withdrawRequest', () => {
     await withdrawRequest({ publishRequestId: 'pubreq_x', userId: 42 });
     expect(mockDbWrite.appBlockPublishRequest.updateMany).not.toHaveBeenCalled();
     expect(mockDbWrite.appBlockPublishRequest.update).not.toHaveBeenCalled();
+  });
+
+  it('🔴 Fix #1 (onsite): withdrawing a MOD-MANDATED reset closes the listing REMOVED + a DELIST event (owner canNOT republish)', async () => {
+    const { withdrawRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: 'pubreq_reset',
+      status: 'pending',
+      submittedByUserId: 42,
+      slug: 'my-app',
+    });
+    mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 1 });
+    // beforeEach's mockReset strips the tx impl — re-wire it to run the callback.
+    mockDbWrite.$transaction.mockImplementation(
+      async (cb: (tx: unknown) => Promise<unknown>) => cb(mockDbWrite)
+    );
+    // The reset target: an onsite listing for this slug is currently `pending` and its
+    // most-recent moderation event is a mod `reset-to-pending` (mod-mandated cycle).
+    mockDbRead.appListing.findFirst.mockResolvedValue({ id: 'apl_1', slug: 'my-app' });
+    mockDbRead.appListingModerationEvent.findFirst.mockResolvedValue({ action: 'reset-to-pending' });
+    mockDbWrite.appListing.updateMany.mockResolvedValue({ count: 1 });
+
+    await withdrawRequest({ publishRequestId: 'pubreq_reset', userId: 42 });
+
+    // The request is withdrawn AND the reset listing is closed to `removed`.
+    expect(mockDbWrite.appListing.updateMany).toHaveBeenCalledWith({
+      where: { id: 'apl_1', kind: 'onsite', status: 'pending' },
+      data: { status: 'removed' },
+    });
+    // 🔴 A `delist` event (owner as actor) → republishOwnListing's guard FORBIDS the
+    // owner; a mod must relist (which also un-suspends the block).
+    const evtArg = mockDbWrite.appListingModerationEvent.create.mock.calls[0][0].data;
+    expect(evtArg).toMatchObject({
+      appListingId: 'apl_1',
+      action: 'delist',
+      actorUserId: 42,
+      before: { status: 'pending' },
+      after: { status: 'removed' },
+    });
+  });
+
+  it('Fix #1 (onsite): a FIRST-TIME submission withdraw (no reset listing) does NOT close any listing', async () => {
+    const { withdrawRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: 'pubreq_first',
+      status: 'pending',
+      submittedByUserId: 42,
+      slug: 'brand-new',
+    });
+    mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 1 });
+    // No approved listing yet for a never-approved app → the reset probe finds nothing.
+    mockDbRead.appListing.findFirst.mockResolvedValue(null);
+
+    await withdrawRequest({ publishRequestId: 'pubreq_first', userId: 42 });
+
+    expect(mockDbWrite.appListing.updateMany).not.toHaveBeenCalled();
+    expect(mockDbWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
   });
 
   it('throws NOT_OWNED for a request owned by a different user', async () => {
@@ -1270,6 +1345,27 @@ describe('approveRequest', () => {
     // ...and the app_blocks row stores the same canonical value.
     const abArg = mockDbWrite.appBlock.create.mock.calls[0][0].data;
     expect((abArg.manifest as any).iframe.src).toBe('https://hello.civit.ai/');
+  });
+
+  it('W13 onsite reset re-approve: restores a reset (`pending`) listing back to approved (status-guarded)', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockBundleBuffer.current = await makeValidBundle();
+    // Simulate a reset listing being restored (one row flipped pending → approved).
+    mockDbWrite.appListing.updateMany.mockResolvedValue({ count: 1 });
+
+    await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+    // The approve widen restores a reset onsite listing back to approved — guarded to
+    // `pending` so a normal approve (listing already approved / none) is a 0-row no-op
+    // and it never touches category/featured (only `status`).
+    expect(mockDbWrite.appListing.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ kind: 'onsite', status: 'pending' }),
+        data: { status: 'approved' },
+      })
+    );
   });
 
   // PUSH-ORIGINATED approve (Phase 3 git-push authoring). The git-push webhook

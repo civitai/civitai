@@ -1243,6 +1243,67 @@ export class WithdrawRequestError extends Error {
 }
 
 /**
+ * 🔴 Fix #1 (ONSITE reset coverage) — when an owner withdraws the block publish
+ * request that `resetOnsiteListingToPending` re-queued, close the reset listing so the
+ * owner can't defeat the mod's mandated re-review. This is the onsite mirror of the
+ * offsite `closeTerminalListing` pending→removed+`delist` withdraw path.
+ *
+ * ONLY fires when BOTH hold: (a) an ONSITE `AppListing` for this slug is currently
+ * `pending` (the reset target), and (b) its most-recent moderation event is a
+ * `reset-to-pending` (a mod actually bounced it — a robust "was this mod-mandated?"
+ * check). Then flip the listing `pending → removed` (status-guarded TOCTOU) + write a
+ * `delist` audit event with the OWNER as actor: the last event is now a takedown, so
+ * `republishOwnListing`'s guard FORBIDS the owner and a mod must `relistListing`
+ * (`removed → approved`, which also un-suspends the backing block). The block is left
+ * `suspended` (already so from the reset) — correct, relist restores it.
+ *
+ * A first-time submission withdraw (no approved listing yet → no `pending` onsite
+ * listing) is a no-op, as is a withdraw whose pending cycle was not a reset.
+ */
+async function closeOnsiteResetListingOnWithdraw(opts: {
+  slug: string;
+  actorUserId: number;
+}): Promise<void> {
+  const { dbRead, dbWrite } = await import('~/server/db/client');
+
+  const listing = await dbRead.appListing.findFirst({
+    where: { slug: opts.slug, kind: 'onsite', status: 'pending' },
+    select: { id: true, slug: true },
+  });
+  if (!listing) return; // not a reset withdraw (first-time submission, or already closed)
+
+  const lastEvent = await dbRead.appListingModerationEvent.findFirst({
+    where: { appListingId: listing.id },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    select: { action: true },
+  });
+  if (lastEvent?.action !== 'reset-to-pending') return; // pending cycle was not mod-mandated
+
+  // Imported only on the (rare) mod-mandated-reset branch — keeps the common no-reset
+  // withdraw path free of the id-gen module.
+  const { newAppListingModerationEventId } = await import('~/server/utils/app-block-ids');
+  await dbWrite.$transaction(async (tx) => {
+    const flipped = await tx.appListing.updateMany({
+      where: { id: listing.id, kind: 'onsite', status: 'pending' },
+      data: { status: 'removed' },
+    });
+    if (flipped.count === 0) return; // raced (mod re-approved/relisted) → leave as-is
+    await tx.appListingModerationEvent.create({
+      data: {
+        id: newAppListingModerationEventId(),
+        appListingId: listing.id,
+        slug: listing.slug,
+        action: 'delist',
+        actorUserId: opts.actorUserId,
+        reason: null,
+        before: { status: 'pending' },
+        after: { status: 'removed' },
+      },
+    });
+  });
+}
+
+/**
  * Dev-facing withdrawal of their own pending request. Idempotent
  * (re-withdrawing is a no-op if already withdrawn). Throws a typed
  * {@link WithdrawRequestError} on a missing row, another user's row, or a
@@ -1280,7 +1341,9 @@ export async function withdrawRequest(opts: {
     // orphans (the apply Job's ttlSecondsAfterFinished only reaps the Job, not the
     // workloads it applied). Captured here so we can fire teardownReviewForRequest
     // after the withdraw lands.
-    select: { id: true, status: true, submittedByUserId: true, deployState: true },
+    // `slug` (Fix #1 onsite coverage): a withdraw of a mod-mandated reset re-queue must
+    // close the reset listing so the owner can't defeat the re-review — see below.
+    select: { id: true, status: true, submittedByUserId: true, deployState: true, slug: true },
   });
   if (!row) {
     throw new WithdrawRequestError('NOT_FOUND', `publish request ${publishRequestId} not found`);
@@ -1305,6 +1368,15 @@ export async function withdrawRequest(opts: {
     data: { status: 'withdrawn' },
   });
   if (count > 0) {
+    // 🔴 Fix #1 (ONSITE coverage): if this withdrawn request was a MOD-MANDATED reset
+    // re-queue (`resetOnsiteListingToPending` bounced an approved onsite listing to
+    // `pending` + suspended the block + cloned this pending request), the owner
+    // withdrawing it must NOT leave them able to defeat the re-review. Close the reset
+    // listing to `removed` + write a `delist` event (the onsite mirror of the offsite
+    // `closeTerminalListing` withdraw path) so `republishOwnListing`'s guard FORBIDS an
+    // owner self-restore — a mod must `relistListing` (which also un-suspends the
+    // block). A first-time submission withdraw has no `pending` onsite listing → no-op.
+    await closeOnsiteResetListingOnWithdraw({ slug: row.slug, actorUserId: userId });
     // MOD REVIEW SANDBOX (#2831) — tear down any review env spun up for this
     // request. Best-effort + non-blocking (mirrors approveRequest/rejectRequest):
     // the withdraw has already committed, so a teardown failure must never affect
@@ -2322,6 +2394,35 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
           }`
       );
     }
+  }
+
+  // (3b-reset) W13 ONSITE reset-to-pending re-approve — restore store visibility.
+  // `resetOnsiteListingToPending` (offsite-moderation.service) bounces an approved
+  // onsite listing to `pending` (+ suspends the block) and re-queues THIS request, so
+  // re-approving it must flip the listing back `pending → approved` (the block status
+  // is already re-set to `approved` by the appBlock.update above). This is the onsite
+  // mirror of the offsite approve's widened `{draft,pending}` listing-flip guard.
+  //
+  // Status-GUARDED to `pending`: a normal first/subsequent-version approve (listing
+  // already `approved`, or none yet) matches 0 rows → a no-op, and a mod-REMOVED
+  // listing (status `removed`) is deliberately NOT silently restored here (relist is
+  // the mod's explicit path). It ONLY touches `status` (never category/featured), so
+  // it can't clobber curator edits — safe alongside the never-update-existing (3b)
+  // rule above. Same log-and-continue posture: the listing is a convenience and must
+  // NEVER gate the approve/deploy.
+  try {
+    await dbWrite.appListing.updateMany({
+      where: { appBlockId, kind: 'onsite', status: 'pending' },
+      data: { status: 'approved' },
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[approveRequest] onsite reset-to-pending listing restore failed (slug=${request.slug}, appBlockId=${appBlockId}); ` +
+        `approve/deploy CONTINUES — a reset listing may stay hidden from /apps until relisted: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+    );
   }
 
   // (3c) Per-app storage provisioning (W4) — create the app's appsDb schema +

@@ -205,11 +205,20 @@ describe('rejectExternalRequestSchema', () => {
     expect(rejectExternalRequestSchema.safeParse({ publishRequestId: 'alpr_1' }).success).toBe(false);
   });
 
-  it('rejects an over-long reason (>2000)', () => {
+  it('accepts a reason at the unified mod-reason ceiling (OFFSITE_MOD_REASON_MAX=1000)', () => {
     expect(
       rejectExternalRequestSchema.safeParse({
         publishRequestId: 'alpr_1',
-        rejectionReason: 'x'.repeat(2001),
+        rejectionReason: 'x'.repeat(1000),
+      }).success
+    ).toBe(true);
+  });
+
+  it('rejects an over-long reason (>1000, the unified mod-reason ceiling)', () => {
+    expect(
+      rejectExternalRequestSchema.safeParse({
+        publishRequestId: 'alpr_1',
+        rejectionReason: 'x'.repeat(1001),
       }).success
     ).toBe(false);
   });
