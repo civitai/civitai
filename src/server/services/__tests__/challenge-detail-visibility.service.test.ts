@@ -88,6 +88,10 @@ vi.mock('~/server/services/text-moderation.service', () => ({
   submitTextModeration: vi.fn(),
 }));
 
+vi.mock('~/server/logging/client', () => ({
+  logToAxiom: vi.fn(),
+}));
+
 vi.mock('~/utils/errorHandling', () => ({
   withRetries: vi.fn((fn: () => unknown) => fn()),
 }));
