@@ -46,10 +46,12 @@ export type CosmeticImageRequirement = {
 };
 export const cosmeticImageRequirements = (type: CosmeticType): CosmeticImageRequirement => {
   switch (type) {
+    // Sizes are minimums + a required aspect ratio (not exact) — a larger upload
+    // at the same ratio (e.g. a 500×500 avatar frame) is fine.
     case CosmeticType.ProfileDecoration:
-      return { width: 120, height: 120, exact: true, requireTransparency: true };
+      return { width: 120, height: 120, exact: false, requireTransparency: true };
     case CosmeticType.ProfileBackground:
-      return { width: 450, height: 144, exact: true, requireTransparency: false };
+      return { width: 450, height: 144, exact: false, requireTransparency: false };
     case CosmeticType.ContentDecoration:
       return { width: 256, height: 256, exact: false, requireTransparency: true };
     case CosmeticType.Badge:
