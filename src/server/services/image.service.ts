@@ -3696,7 +3696,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
 // but output matches input). Sort fields are u32 unix seconds. Nullable fields return null directly.
 
 /** Map a raw BitDex document to the shape consumers expect (matching Meili search result). */
-function mapBitdexDoc(doc: Record<string, unknown>) {
+export function mapBitdexDoc(doc: Record<string, unknown>) {
   const sortAtUnix = (doc.sortAt as number) * 1000; // u32 seconds → epoch ms
   const publishedAtRaw = doc.publishedAt as number | null;
   return {
@@ -3710,6 +3710,14 @@ function mapBitdexDoc(doc: Record<string, unknown>) {
     baseModel: (doc.baseModel as string) ?? null,
     postId: (doc.postId as number) ?? null,
     postedToId: (doc.postedToId as number) ?? null,
+    // Emit model3dId ONLY when the doc actually carries a value. Leaving the key
+    // absent (→ undefined downstream) preserves the three-state contract in
+    // getAllImagesIndex: undefined = "not indexed by BitDex" → self-healing
+    // postId fallback; a number = gated model3d link. We must NOT coerce a
+    // missing value to null here — null means "confirmed no link" and would
+    // suppress the fallback for genuinely-linked images before the redump that
+    // populates model3dId lands. Inert until then (BitDex returns no such field).
+    ...(doc.model3dId != null ? { model3dId: doc.model3dId as number } : {}),
     remixOfId: (doc.remixOfId as number) ?? null,
     hasMeta: doc.hasMeta as boolean,
     onSite: doc.onSite as boolean,
@@ -3751,6 +3759,7 @@ export async function getImagesFromBitdexPreFilter(
   const {
     sort,
     modelVersionId,
+    model3dId,
     types,
     withMeta,
     fromPlatform,
@@ -3883,6 +3892,19 @@ export async function getImagesFromBitdexPreFilter(
     if (!hideManualResources) vClauses.push(_in('modelVersionIdsManual', [_int(modelVersionId)]));
     filters.push(_or(...vClauses));
   }
+
+  // --- Model3D gallery ---
+  // `model3dId` is the index analog of `postedToId` (set at index time from
+  // `Post.model3dId`, per-image like postedToId). Lets the 3D-model detail page
+  // serve its gallery from BitDex. Mirrors the Meili path (`= ${model3dId}`).
+  // DEPLOY ORDERING (hard): BitDex does not know this field until the model3dId
+  // config + redump land (bitdex-v2 task #8 + Wave 4 redump). A filter on an
+  // UNCONFIGURED field name is NOT ignored — BitDex returns HTTP 400 and fails
+  // the WHOLE query (executor.rs FieldNotFound → BAD_REQUEST), so shipping this
+  // builder before the redump would 400 every 3D-gallery request. This builder
+  // MUST deploy after the config+redump. (Only an unknown VALUE on a configured
+  // field degrades to an empty match; an unknown field name does not.)
+  if (model3dId) filters.push(_eq('model3dId', _int(model3dId)));
 
   // --- Remix ---
   if (remixOfId) filters.push(_eq('remixOfId', _int(remixOfId)));
