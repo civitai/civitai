@@ -943,7 +943,11 @@ export async function getChallengeDetail(
 
   // Domain-currency gate — direct-URL parity with the feed filter. Like the other gates above,
   // moderators and creators can preview unpublished/hidden challenges regardless of domain.
+  // On the green site a mismatched (yellow) challenge is returned anyway: the detail page's
+  // <Gated> shows the civitai.red redirect card instead of a bare 404. The red side keeps
+  // hiding green challenges — there's no equivalent redirect surface pointing back to green.
   if (
+    !isGreen &&
     !canPreviewUnpublished &&
     isChallengeHiddenByDomainCurrency(
       {

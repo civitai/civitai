@@ -230,13 +230,22 @@ describe('getChallengeDetail — mod/owner preview of hidden user challenges', (
       expect(result).not.toBeNull();
     });
 
-    it('stays hidden from other users when domain mismatches', async () => {
+    it('returns a yellow challenge on the green site so the client can render the redirect gate', async () => {
       mockGetChallengeById.mockResolvedValue(
         makeUserChallenge({ ingestion: 'Scanned', buzzType: 'yellow' })
       );
 
-      expect(await getChallengeDetail(400, RANDO_ID, true, false)).toBeNull();
-      expect(await getChallengeDetail(400, undefined, true, false)).toBeNull();
+      expect(await getChallengeDetail(400, RANDO_ID, true, false)).not.toBeNull();
+      expect(await getChallengeDetail(400, undefined, true, false)).not.toBeNull();
+    });
+
+    it('keeps green challenges hidden from other users on the red site', async () => {
+      mockGetChallengeById.mockResolvedValue(
+        makeUserChallenge({ ingestion: 'Scanned', buzzType: 'green' })
+      );
+
+      expect(await getChallengeDetail(400, RANDO_ID, false, false)).toBeNull();
+      expect(await getChallengeDetail(400, undefined, false, false)).toBeNull();
     });
   });
 });
