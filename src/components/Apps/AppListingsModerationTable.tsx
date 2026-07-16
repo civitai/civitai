@@ -5,21 +5,22 @@ import {
   Card,
   Code,
   Group,
-  Modal,
   NumberInput,
   SegmentedControl,
   Stack,
   Table,
   Text,
-  Textarea,
-  TextInput,
 } from '@mantine/core';
+import { useDebouncedValue } from '@mantine/hooks';
 import { IconAlertTriangle, IconBox, IconThumbUp } from '@tabler/icons-react';
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { keepPreviousData } from '@tanstack/react-query';
+import { Fragment, useMemo, useState } from 'react';
 import {
   OffsiteReviewModal,
   type OffsitePendingRow,
 } from '~/components/Apps/OffsiteReviewQueue';
+import { ModQueryError, isModAuthzError } from '~/components/Apps/ModQuerySurface';
+import { ReasonGatedActionModal } from '~/components/Apps/ReasonGatedActionModal';
 import { listingStatusChip } from '~/components/Apps/appListingModerationView';
 import {
   isDestructiveListingModAction,
@@ -138,40 +139,68 @@ export function AppListingsModerationTable() {
     row: ModerationListingRow;
   } | null>(null);
 
-  // A filter change = a NEW result set → reset pagination (don't append across it).
-  const trimmedSearch = search.trim();
-  const filterKey = `${statusFilter}|${kind}|${trimmedSearch}`;
-  useEffect(() => {
+  // A filter/search change = a NEW result set → reset pagination SYNCHRONOUSLY in the
+  // onChange handler (batched with the filter state change in the same React event) so
+  // there's no render where the OLD cursor is paired with the NEW filter — that stale
+  // window fired one query with a mismatched cursor. Search is DEBOUNCED so keystrokes
+  // don't storm the server; the raw `search` drives the input, `debouncedSearch` the
+  // query. Resetting on each keystroke keeps the debounced query cursor-clean.
+  const [debouncedSearch] = useDebouncedValue(search.trim(), 300);
+  const resetPaging = () => {
     setAccumulated([]);
     setCursor(undefined);
-  }, [filterKey]);
+  };
+  const onSearchChange = (value: string) => {
+    resetPaging();
+    setSearch(value);
+  };
+  const onKindChange = (value: KindFilter) => {
+    resetPaging();
+    setKind(value);
+  };
+  const onStatusChange = (value: StatusFilter) => {
+    resetPaging();
+    setStatusFilter(value);
+  };
 
   const query = trpc.appListings.listAllListingsForModeration.useQuery(
     {
       limit: PAGE_SIZE,
-      search: trimmedSearch || undefined,
+      search: debouncedSearch || undefined,
       kind: kind === 'all' ? undefined : kind,
       status: statusFilter === 'all' ? undefined : statusFilter,
       cursor,
     },
-    { enabled: !!features?.appBlocks, retry: false }
+    {
+      enabled: !!features?.appBlocks,
+      retry: false,
+      // Keep the last page visible WHILE the next one loads so the Load-more block
+      // (driven by `query.data.nextCursor`) doesn't unmount mid-fetch and flicker.
+      placeholderData: keepPreviousData,
+    }
   );
 
   // Reset to page 1 on a mutation (a listing's status/order may shift) + invalidate.
   const invalidate = () => {
-    setAccumulated([]);
-    setCursor(undefined);
+    resetPaging();
     return utils.appListings.listAllListingsForModeration.invalidate();
   };
 
   const page = (query.data?.items ?? []) as ModerationListingRow[];
   const nextCursor = query.data?.nextCursor ?? null;
 
-  // Merge the current page into the accumulated set (dedupe by id — defensive).
+  // Merge the current page into the accumulated set (dedupe by id — defensive), then
+  // drop on-site + pending rows: those live in the actionable on-site review FIFO queue
+  // (with a Review action); here they'd render as a dead-end `—`-action row. Off-site
+  // pending stays (it carries the Review action).
   const items = useMemo(() => {
-    if (!cursor) return page;
-    const seen = new Set(accumulated.map((r) => r.id));
-    return [...accumulated, ...page.filter((r) => !seen.has(r.id))];
+    const merged = !cursor
+      ? page
+      : (() => {
+          const seen = new Set(accumulated.map((r) => r.id));
+          return [...accumulated, ...page.filter((r) => !seen.has(r.id))];
+        })();
+    return merged.filter((r) => !(r.kind === 'onsite' && r.status === 'pending'));
   }, [accumulated, page, cursor]);
 
   // Group (one group per listing — the mod view isn't version-collapsed), apply the
@@ -185,9 +214,24 @@ export function AppListingsModerationTable() {
 
   const totalGroups = MOD_STATUS_SECTION_ORDER.reduce((n, b) => n + buckets[b].length, 0);
 
-  // The query errors when the caller isn't a mod / the flag is off → render nothing
-  // (unobtrusive, mirrors the sibling mod queues).
-  if (query.error) return null;
+  // Dark posture: the flag being off → render nothing (the query never runs). An
+  // AUTHZ error (a non-mod somehow reaching the moderatorProcedure) → also nothing.
+  // But a TRANSIENT error (500 / network) must NOT silently blank the whole surface —
+  // it renders a retryable Alert instead, so a flaky load isn't indistinguishable from
+  // "you're not a mod".
+  if (!features?.appBlocks) return null;
+  if (query.error) {
+    if (isModAuthzError(query.error)) return null;
+    return (
+      <ModQueryError
+        error={query.error}
+        onRetry={() => query.refetch()}
+        isRetrying={query.isFetching}
+        title="Couldn’t load listings"
+        testId="apps-mod-listings-error"
+      />
+    );
+  }
 
   const onSort = (column: SortColumn) =>
     setSort((s) => nextSortState(s ?? { column: 'app', direction: 'desc' }, column));
@@ -332,7 +376,7 @@ export function AppListingsModerationTable() {
       <Group justify="space-between" align="flex-end">
         <SubmissionSearch
           value={search}
-          onChange={setSearch}
+          onChange={onSearchChange}
           testId="apps-mod-listings-filter"
           placeholder="Filter by app name or slug…"
         />
@@ -340,14 +384,14 @@ export function AppListingsModerationTable() {
           <SegmentedControl
             size="xs"
             value={statusFilter}
-            onChange={(v) => setStatusFilter(v as StatusFilter)}
+            onChange={(v) => onStatusChange(v as StatusFilter)}
             data={STATUS_FILTER_OPTIONS}
             aria-label="Filter by status"
           />
           <SegmentedControl
             size="xs"
             value={kind}
-            onChange={(v) => setKind(v as KindFilter)}
+            onChange={(v) => onKindChange(v as KindFilter)}
             data={[
               { label: 'All', value: 'all' },
               { label: 'On-site', value: 'onsite' },
@@ -423,7 +467,12 @@ export function AppListingsModerationTable() {
  * The reason/confirm modal for a single lifecycle action (reset-to-pending / hide /
  * relist / claim / purge). Every action requires a reason (≥{@link
  * OFFSITE_MOD_REASON_MIN} chars, audited); `claim` also needs a numeric target
- * owner id; `purge` is destructive → an extra warning + a permanent confirm label.
+ * owner id; `purge` is destructive → an extra warning + a typed-slug confirm.
+ *
+ * The reason field + counter + inline error + disabled-with-Tooltip submit come from
+ * the shared {@link ReasonGatedActionModal} (identical UX to the reject paths). Reset
+ * routes by kind: an on-site listing calls `resetOnsiteListingToPending` (suspend +
+ * re-queue the block review, #3165), an off-site one `resetListingToPending`.
  */
 function ListingModActionModal({
   pending,
@@ -457,6 +506,11 @@ function ListingModActionModal({
     onSuccess: () => afterSuccess('Listing reset to pending.'),
     onError: onError('Reset failed'),
   });
+  // On-site reset routes through the block-review re-queue proc (#3165).
+  const resetOnsiteMut = trpc.appListings.resetOnsiteListingToPending.useMutation({
+    onSuccess: () => afterSuccess('Listing reset to pending.'),
+    onError: onError('Reset failed'),
+  });
   const delistMut = trpc.appListings.delistListing.useMutation({
     onSuccess: () => afterSuccess('Listing hidden.'),
     onError: onError('Hide failed'),
@@ -476,6 +530,7 @@ function ListingModActionModal({
 
   const busy =
     resetMut.isPending ||
+    resetOnsiteMut.isPending ||
     delistMut.isPending ||
     relistMut.isPending ||
     claimMut.isPending ||
@@ -488,18 +543,13 @@ function ListingModActionModal({
   const trimmed = reason.trim();
   const validTarget =
     typeof targetUserId === 'number' && Number.isInteger(targetUserId) && targetUserId > 0;
-  // Purge additionally requires the mod to type the exact listing slug (typed-confirm).
-  const confirmMatches = confirmText.trim() === row.slug;
-  const canSubmit =
-    !busy &&
-    trimmed.length >= OFFSITE_MOD_REASON_MIN &&
-    (!isClaim || validTarget) &&
-    (!destructive || confirmMatches);
 
   function submit() {
     switch (action) {
       case 'reset-to-pending':
-        return resetMut.mutate({ appListingId: row.id, reason: trimmed });
+        return row.kind === 'onsite'
+          ? resetOnsiteMut.mutate({ appListingId: row.id, reason: trimmed })
+          : resetMut.mutate({ appListingId: row.id, reason: trimmed });
       case 'hide':
         return delistMut.mutate({ appListingId: row.id, reason: trimmed });
       case 'relist':
@@ -520,46 +570,32 @@ function ListingModActionModal({
   }
 
   return (
-    <Modal
+    <ReasonGatedActionModal
       opened={!!pending}
-      onClose={() => {
-        if (busy) return;
-        reset();
-      }}
+      onCancel={reset}
+      busy={busy}
       title={
         <Text fw={600}>
           {listingModActionLabel(action)} — {row.slug}
         </Text>
       }
-      centered
-    >
-      <Stack gap="md">
-        {destructive && (
-          <>
-            <Alert color="red" variant="light" icon={<IconAlertTriangle size={16} />}>
-              <Text size="sm">
-                Purge PERMANENTLY deletes this listing and its screenshots + reports. The audit
-                event (with the slug snapshot) is kept. This cannot be undone.
-              </Text>
-            </Alert>
-            <TextInput
-              label={
-                <Text size="sm">
-                  Type the slug <Code>{row.slug}</Code> to confirm
-                </Text>
-              }
-              placeholder={row.slug}
-              value={confirmText}
-              onChange={(e) => setConfirmText(e.currentTarget.value)}
-              disabled={busy}
-              error={
-                confirmText.length > 0 && !confirmMatches ? 'Does not match the slug' : undefined
-              }
-              data-testid="apps-mod-purge-confirm"
-            />
-          </>
-        )}
-        {isClaim && (
+      reason={reason}
+      onReasonChange={setReason}
+      reasonLabel={`Reason (≥${OFFSITE_MOD_REASON_MIN} chars, audited)`}
+      reasonTestId="apps-mod-action-reason"
+      destructive={destructive}
+      destructiveWarning={
+        <Text size="sm">
+          Purge PERMANENTLY deletes this listing and its screenshots + reports. The audit event
+          (with the slug snapshot) is kept. This cannot be undone.
+        </Text>
+      }
+      confirmSlug={destructive ? row.slug : undefined}
+      confirmValue={confirmText}
+      onConfirmChange={setConfirmText}
+      confirmTestId="apps-mod-purge-confirm"
+      extraSlot={
+        isClaim ? (
           <>
             <Alert color="blue" variant="light" icon={<IconAlertTriangle size={16} />}>
               <Text size="sm">
@@ -579,33 +615,13 @@ function ListingModActionModal({
               data-testid="apps-mod-claim-target"
             />
           </>
-        )}
-        <Textarea
-          label={`Reason (≥${OFFSITE_MOD_REASON_MIN} chars, audited)`}
-          autosize
-          minRows={3}
-          maxRows={8}
-          placeholder="Why this action — recorded in the audit trail."
-          value={reason}
-          onChange={(e) => setReason(e.currentTarget.value)}
-          disabled={busy}
-          data-testid="apps-mod-action-reason"
-        />
-        <Group justify="flex-end" gap="xs">
-          <Button variant="default" onClick={reset} disabled={busy}>
-            Cancel
-          </Button>
-          <Button
-            color={destructive ? 'red' : undefined}
-            onClick={submit}
-            disabled={!canSubmit}
-            loading={busy}
-            data-testid="apps-mod-action-confirm"
-          >
-            {destructive ? 'Purge permanently' : listingModActionLabel(action)}
-          </Button>
-        </Group>
-      </Stack>
-    </Modal>
+        ) : undefined
+      }
+      extraGateSatisfied={!isClaim || validTarget}
+      extraGateTooltip="Enter a valid new owner id."
+      submitLabel={destructive ? 'Purge permanently' : listingModActionLabel(action)}
+      submitTestId="apps-mod-action-confirm"
+      onSubmit={submit}
+    />
   );
 }

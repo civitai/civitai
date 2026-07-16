@@ -2,7 +2,6 @@ import {
   Accordion,
   Alert,
   Badge,
-  Box,
   Button,
   Card,
   Code,
@@ -38,6 +37,11 @@ import {
   ManifestDiffPreview,
   type FileLineDiff,
 } from '~/components/Apps/reviewDiffPanels';
+import {
+  ReasonGatedField,
+  ReasonGatedSubmitButton,
+  reasonMeetsMin,
+} from '~/components/Apps/ReasonGatedActionModal';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
 import {
@@ -394,65 +398,37 @@ export function OnsiteReviewModal({
         </Stack>
 
         {readOnly ? null : actionMode === 'reject' ? (
-          (() => {
-            const reasonLen = rejectionReason.trim().length;
-            const reasonTooShort = reasonLen < OFFSITE_MOD_REASON_MIN;
-            const rejectDisabled = busy || reasonTooShort;
-            return (
-              <Stack gap="xs">
-                <Text size="sm" fw={600}>
-                  Rejection reason
-                </Text>
-                <Textarea
-                  autosize
-                  minRows={3}
-                  maxRows={10}
-                  placeholder={`Explain what needs to change before this can be approved (≥${OFFSITE_MOD_REASON_MIN} chars, shown to the dev).`}
-                  description={`${reasonLen}/${OFFSITE_MOD_REASON_MIN} characters minimum`}
-                  error={
-                    reasonTooShort && reasonLen > 0
-                      ? `Enter at least ${OFFSITE_MOD_REASON_MIN} characters.`
-                      : undefined
-                  }
-                  value={rejectionReason}
-                  onChange={(e) => setRejectionReason(e.currentTarget.value)}
-                  disabled={busy}
-                  data-testid="apps-review-reject-reason"
-                />
-                <Group justify="flex-end" gap="xs">
-                  <Button variant="default" onClick={() => setActionMode('view')} disabled={busy}>
-                    Cancel
-                  </Button>
-                  <Tooltip
-                    label={`Enter a reason — at least ${OFFSITE_MOD_REASON_MIN} characters.`}
-                    disabled={!reasonTooShort}
-                    withArrow
-                  >
-                    {/* A native disabled <button> fires no pointer events, so the
-                        Tooltip must attach to a wrapper to show in the exact state
-                        it explains (Mantine's documented disabled-target pattern). */}
-                    <Box>
-                      <Button
-                        color="red"
-                        leftSection={<IconX size={14} />}
-                        onClick={() =>
-                          rejectMut.mutate({
-                            publishRequestId: request.id,
-                            rejectionReason: rejectionReason.trim(),
-                          })
-                        }
-                        disabled={rejectDisabled}
-                        loading={rejectMut.isPending}
-                        data-testid="apps-review-reject-confirm"
-                      >
-                        Reject
-                      </Button>
-                    </Box>
-                  </Tooltip>
-                </Group>
-              </Stack>
-            );
-          })()
+          <Stack gap="xs">
+            <ReasonGatedField
+              value={rejectionReason}
+              onChange={setRejectionReason}
+              disabled={busy}
+              label="Rejection reason"
+              placeholder={`Explain what needs to change before this can be approved (≥${OFFSITE_MOD_REASON_MIN} chars, shown to the dev).`}
+              testId="apps-review-reject-reason"
+              minRows={3}
+              maxRows={10}
+            />
+            <Group justify="flex-end" gap="xs">
+              <Button variant="default" onClick={() => setActionMode('view')} disabled={busy}>
+                Cancel
+              </Button>
+              <ReasonGatedSubmitButton
+                onClick={() =>
+                  rejectMut.mutate({
+                    publishRequestId: request.id,
+                    rejectionReason: rejectionReason.trim(),
+                  })
+                }
+                gateOpen={reasonMeetsMin(rejectionReason)}
+                busy={rejectMut.isPending}
+                color="red"
+                leftSection={<IconX size={14} />}
+                label="Reject"
+                testId="apps-review-reject-confirm"
+              />
+            </Group>
+          </Stack>
         ) : (
           <Stack gap="xs">
             <Textarea
