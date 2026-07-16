@@ -45,7 +45,7 @@ vi.mock('~/server/utils/block-tip-rate-limit', () => ({
   reserveBlockTipSpend: mockReserve,
 }));
 
-import { baseHandler } from '../tip';
+import { baseHandler } from '~/pages/api/v1/blocks/tip';
 import { readBlockActionDetail } from '~/server/middleware/block-scope.middleware';
 
 function makeRes(): NextApiResponse & { body?: unknown } {
