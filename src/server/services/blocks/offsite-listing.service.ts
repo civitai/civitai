@@ -1590,7 +1590,8 @@ async function applyApprovedRevision(opts: {
 }
 
 /**
- * MOD reject of a pending off-site request. Requires a `rejectionReason` of ≥10
+ * MOD reject of a pending off-site request. Requires a `rejectionReason` of
+ * ≥`OFFSITE_REJECTION_REASON_MIN` (the shared `OFFSITE_MOD_REASON_MIN`, 3)
  * (trimmed) chars, then — in ONE transaction — flips the request
  * `pending → rejected` + sets `reviewedBy*` / `rejectionReason` and DELETES the
  * draft `AppListing` (status-guarded `deleteMany({ id, status:'draft' })` so it can

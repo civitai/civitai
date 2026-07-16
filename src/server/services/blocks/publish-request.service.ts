@@ -9,6 +9,8 @@ import {
   MAX_SCREENSHOT_SIZE_BYTES,
   MAX_SCREENSHOTS,
   MAX_TOTAL_DECOMPRESSED_BYTES,
+  PUBLISH_REJECTION_REASON_MAX,
+  PUBLISH_REJECTION_REASON_MIN,
   SCREENSHOT_DIR,
   SCREENSHOT_EXTENSIONS,
   type ScreenshotExtension,
@@ -3399,11 +3401,15 @@ export type RejectRequestParams = {
 export async function rejectRequest(params: RejectRequestParams): Promise<void> {
   const { dbRead, dbWrite } = await import('~/server/db/client');
   const reason = params.rejectionReason.trim();
-  if (reason.length < 10) {
-    throw new Error('rejection reason must be at least 10 characters');
+  if (reason.length < PUBLISH_REJECTION_REASON_MIN) {
+    throw new Error(
+      `rejection reason must be at least ${PUBLISH_REJECTION_REASON_MIN} characters`
+    );
   }
-  if (reason.length > 2000) {
-    throw new Error('rejection reason must be at most 2000 characters');
+  if (reason.length > PUBLISH_REJECTION_REASON_MAX) {
+    throw new Error(
+      `rejection reason must be at most ${PUBLISH_REJECTION_REASON_MAX} characters`
+    );
   }
 
   const row = await dbRead.appBlockPublishRequest.findUnique({
