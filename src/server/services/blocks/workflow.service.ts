@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import type { Workflow, WorkflowStatus } from '@civitai/client';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { dbRead } from '~/server/db/client';
+import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
 import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { getEcosystem } from '~/shared/constants/basemodel.constants';
 import { isWorkflowAvailable } from '~/shared/data-graph/generation/config/workflows';
@@ -68,6 +69,102 @@ export function snapshotFromWorkflow(workflow: Workflow): BlockWorkflowSnapshot 
     // optional — omitted when there's no debit to report so every existing
     // snapshot stays byte-identical to before.
     ...(spentAccountType ? { spentAccountType } : {}),
+  };
+}
+
+/**
+ * The per-APP "subqueue" tag. Every app-submitted workflow is server-stamped
+ * with this tag at submit (`buildWorkflowTags` in blocks.router), so a POSITIVE
+ * `tags:['app-block:<appId>']` filter on the orchestrator LIST returns exactly
+ * the calling app's own generations — never the user's personal queue.
+ *
+ * SINGLE SOURCE OF TRUTH: the submit-time STAMP and the read-time FILTER both
+ * call this, so the tag format can never silently desync (a mismatch would make
+ * the subqueue read return an empty list forever, or — worse if the read hard-
+ * coded a looser prefix — widen it). `appId` is always the OauthClient.id read
+ * from the VERIFIED block token, never client input.
+ */
+export function appBlockTag(appId: string): string {
+  return `app-block:${appId}`;
+}
+
+/**
+ * The clean, wire-stable projection of an orchestrator Workflow the App Blocks
+ * generator SUBQUEUE read (`blocks.queryAppWorkflows`) hands to a block. This is
+ * the CONTRACT the SDK matches — keep it minimal + additive-only. It deliberately
+ * DROPS every internal/sensitive workflow field (steps, params, prompts,
+ * resources, tokens, transactions, metadata, tags) so a block can never read
+ * generation internals of a queue it only owns by tag.
+ *
+ *   images: only blobs that are `available` with a non-null url are surfaced —
+ *           pending/blocked/expired blobs are dropped rather than handing the
+ *           block dead links (mirrors `snapshotFromWorkflow`). `width`/`height`
+ *           are null when the orchestrator hasn't populated them. `nsfwLevel` is
+ *           the numeric civitai browsing-level bitflag (1/2/4/8/16) mapped from
+ *           the orchestrator's string rating; `null` for an unrated ('na') blob.
+ *   cost:   the workflow's realized/estimated buzz total, or null when absent.
+ *   status: the block-contract status (see ORCH_STATUS_MAP) — the orchestrator's
+ *           unassigned/preparing/scheduled all collapse to `pending`.
+ */
+export type AppWorkflowImage = {
+  url: string;
+  width: number | null;
+  height: number | null;
+  nsfwLevel: number | null;
+};
+export type AppWorkflow = {
+  workflowId: string;
+  status: BlockWorkflowSnapshot['status'];
+  images: AppWorkflowImage[];
+  cost: number | null;
+  createdAt: string;
+};
+
+/**
+ * Pure projection Workflow → AppWorkflow. No IO, no throws — safe to map over a
+ * whole page of LIST results. See `AppWorkflow` for the field-by-field contract.
+ */
+export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
+  const status = ORCH_STATUS_MAP[workflow.status] ?? 'pending';
+  const images: AppWorkflowImage[] = [];
+  for (const step of workflow.steps ?? []) {
+    if (step.$type !== 'textToImage' && step.$type !== 'imageGen' && step.$type !== 'comfy') {
+      continue;
+    }
+    const stepOutput = (
+      step as unknown as {
+        output?: {
+          images?: Array<{
+            url?: string | null;
+            available?: boolean;
+            width?: number | null;
+            height?: number | null;
+            nsfwLevel?: string | null;
+          }>;
+        };
+      }
+    ).output;
+    for (const img of stepOutput?.images ?? []) {
+      if (!img.available || typeof img.url !== 'string' || img.url.length === 0) continue;
+      images.push({
+        url: img.url,
+        width: typeof img.width === 'number' ? img.width : null,
+        height: typeof img.height === 'number' ? img.height : null,
+        // Map the orchestrator's string rating ('pg'|'pg13'|'r'|'x'|'xxx') to the
+        // numeric civitai browsing-level bitflag. 'na'/unset/unknown → null.
+        nsfwLevel: img.nsfwLevel ? orchestratorNsfwLevelMap[img.nsfwLevel] ?? null : null,
+      });
+    }
+  }
+  const total = workflow.cost?.total;
+  return {
+    // A real LIST/GET item always carries an id; empty-string only if the
+    // orchestrator ever omits it (never for a persisted workflow).
+    workflowId: workflow.id ?? '',
+    status,
+    images,
+    cost: typeof total === 'number' ? total : null,
+    createdAt: workflow.createdAt,
   };
 }
 

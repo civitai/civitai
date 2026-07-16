@@ -609,6 +609,14 @@ export function PageBlockHost({
   // MUTATION for the same bearer-token reason as getMyBuzzBalance; requires the
   // `user:read:self` scope server-side.
   const getMyViewerMutation = trpc.blocks.getMyViewer.useMutation();
+  // App generator SUBQUEUE bridges (tag-scoped). queryAppWorkflows reads the
+  // calling app's OWN slice of the viewer's generation queue (the SERVER forces
+  // the per-app `app-block:<appId>` tag filter — a block can't widen it);
+  // cancelAppWorkflow stops one, FAIL-CLOSED behind the server ownership+tag
+  // guard. MUTATIONS for the same bearer-token-in-URL reason as the other
+  // block-token bridges (a .query would leak the JWT into the ?input= URL).
+  const queryAppWorkflowsMutation = trpc.blocks.queryAppWorkflows.useMutation();
+  const cancelAppWorkflowMutation = trpc.blocks.cancelAppWorkflow.useMutation();
 
   // Wildcard-pack import (W13). SESSION-authed (protectedProcedure) — it does NOT
   // take a block token; the viewer's real cookie session authenticates, which is
@@ -722,6 +730,83 @@ export function PageBlockHost({
     );
     return off;
   }, [onMessage, send, token, cancelWorkflowMutation]);
+
+  // QUERY_APP_WORKFLOWS → blocks.queryAppWorkflows → APP_WORKFLOWS_RESULT. The
+  // app's OWN tag-scoped generation subqueue (host page token + SERVER-forced
+  // per-app tag; a block can't widen the filter — the input has no `tags` field).
+  // params are spread FIRST then blockToken LAST so a block-sent
+  // `params.blockToken` can never override the authoritative page token (mirrors
+  // GET_BUZZ_TRANSACTIONS). REQUEST-style ⇒ every path MUST reply or the block
+  // hangs; on a null token we reply with the ERROR variant rather than dropping.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; params?: unknown } | undefined>(
+      'QUERY_APP_WORKFLOWS',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string') return;
+        const requestId = raw.requestId;
+        if (!token) {
+          send('APP_WORKFLOWS_RESULT', { requestId, error: 'no block token' });
+          return;
+        }
+        try {
+          // params (cursor/limit) are schema-validated server-side; the host never
+          // trusts them. blockToken spread LAST — non-overridable page token.
+          const result = await queryAppWorkflowsMutation.mutateAsync({
+            ...((raw.params as Record<string, unknown>) ?? {}),
+            blockToken: token,
+          } as never);
+          send('APP_WORKFLOWS_RESULT', { requestId, result });
+        } catch (err) {
+          send('APP_WORKFLOWS_RESULT', {
+            requestId,
+            error: err instanceof Error ? err.message : 'unknown',
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, queryAppWorkflowsMutation]);
+
+  // CANCEL_APP_WORKFLOW → blocks.cancelAppWorkflow → CANCEL_APP_WORKFLOW_RESULT.
+  // FAIL-CLOSED server-side (ownership + app-tag guard — the orchestrator by-id
+  // endpoints don't check ownership, so the router compensates). The host just
+  // forwards the (untrusted, server-validated) workflowId + the page token.
+  // REQUEST-style ⇒ reply on every path; on a null token we reply with the ERROR
+  // variant. A missing/empty workflowId is dropped without a reply (mirrors
+  // CANCEL_WORKFLOW — there's nothing legitimate to cancel).
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; workflowId?: unknown } | undefined>(
+      'CANCEL_APP_WORKFLOW',
+      async (raw) => {
+        if (
+          !raw ||
+          typeof raw.requestId !== 'string' ||
+          typeof raw.workflowId !== 'string' ||
+          raw.workflowId.length === 0
+        ) {
+          return;
+        }
+        const requestId = raw.requestId;
+        if (!token) {
+          send('CANCEL_APP_WORKFLOW_RESULT', { requestId, error: 'no block token' });
+          return;
+        }
+        try {
+          const result = await cancelAppWorkflowMutation.mutateAsync({
+            blockToken: token,
+            workflowId: raw.workflowId,
+          });
+          send('CANCEL_APP_WORKFLOW_RESULT', { requestId, result });
+        } catch (err) {
+          send('CANCEL_APP_WORKFLOW_RESULT', {
+            requestId,
+            error: err instanceof Error ? err.message : 'unknown',
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, cancelAppWorkflowMutation]);
 
   // GET_BUZZ_BALANCE → blocks.getMyBuzzBalance → BUZZ_BALANCE_RESULT. The block's
   // per-account (blue/green/yellow) balance read that backs the SDK

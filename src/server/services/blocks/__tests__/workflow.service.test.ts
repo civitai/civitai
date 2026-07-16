@@ -17,10 +17,12 @@ const { mockDbRead } = vi.hoisted(() => ({
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead }));
 
 import {
+  appBlockTag,
   buildImageWorkflowInput,
   buildTextToImageInput,
   BLOCK_IMAGE_WORKFLOW_TYPES,
   isPageLoraResource,
+  projectAppWorkflow,
   resolveBlockImageWorkflowType,
   resolveBlockVersionContext,
   resolvePageResourceContext,
@@ -352,6 +354,190 @@ describe('snapshotFromWorkflow', () => {
       );
       expect(snap.spentAccountType).toBeUndefined();
     });
+  });
+});
+
+describe('appBlockTag', () => {
+  it('formats the per-app subqueue tag', () => {
+    expect(appBlockTag('app_abc')).toBe('app-block:app_abc');
+  });
+  it('is the SAME format the submit path stamps (stamp/read cannot desync)', () => {
+    // buildWorkflowTags (blocks.router) stamps `app-block:${claims.appId}`; the
+    // read filter calls appBlockTag(claims.appId). Pin the literal so a change to
+    // one without the other is caught.
+    const appId = 'oauthClient_123';
+    expect(appBlockTag(appId)).toBe(`app-block:${appId}`);
+  });
+});
+
+describe('projectAppWorkflow', () => {
+  it('projects the happy path to the clean AppWorkflow wire shape', () => {
+    const wf = fakeWorkflow({
+      id: 'wf_a',
+      createdAt: '2026-07-15T12:00:00.000Z',
+      status: 'succeeded',
+      cost: { total: 30 },
+      steps: [
+        {
+          $type: 'textToImage',
+          name: 's1',
+          status: 'succeeded',
+          metadata: {},
+          output: {
+            images: [
+              {
+                id: 'b1',
+                url: 'https://cdn/i1.png',
+                available: true,
+                width: 1024,
+                height: 768,
+                nsfwLevel: 'pg',
+                type: 'image',
+              },
+            ],
+          },
+        },
+      ],
+    });
+    expect(projectAppWorkflow(wf as never)).toEqual({
+      workflowId: 'wf_a',
+      status: 'succeeded',
+      images: [{ url: 'https://cdn/i1.png', width: 1024, height: 768, nsfwLevel: 1 }],
+      cost: 30,
+      createdAt: '2026-07-15T12:00:00.000Z',
+    });
+  });
+
+  it('maps the orchestrator string nsfwLevel to the numeric browsing-level bitflag', () => {
+    const cases: Array<[string, number | null]> = [
+      ['pg', 1],
+      ['pg13', 2],
+      ['r', 4],
+      ['x', 8],
+      ['xxx', 16],
+      ['na', null], // unrated → null
+    ];
+    for (const [rating, expected] of cases) {
+      const wf = fakeWorkflow({
+        steps: [
+          {
+            $type: 'textToImage',
+            name: 's1',
+            status: 'succeeded',
+            metadata: {},
+            output: {
+              images: [{ id: 'b', url: 'https://cdn/x.png', available: true, nsfwLevel: rating }],
+            },
+          },
+        ],
+      });
+      expect(projectAppWorkflow(wf as never).images[0].nsfwLevel).toBe(expected);
+    }
+  });
+
+  it('nulls width/height/nsfwLevel when the orchestrator omits them', () => {
+    const wf = fakeWorkflow({
+      steps: [
+        {
+          $type: 'textToImage',
+          name: 's1',
+          status: 'succeeded',
+          metadata: {},
+          output: { images: [{ id: 'b', url: 'https://cdn/x.png', available: true }] },
+        },
+      ],
+    });
+    expect(projectAppWorkflow(wf as never).images[0]).toEqual({
+      url: 'https://cdn/x.png',
+      width: null,
+      height: null,
+      nsfwLevel: null,
+    });
+  });
+
+  it('drops pending/blocked/urless blobs (no dead links leaked)', () => {
+    const wf = fakeWorkflow({
+      steps: [
+        {
+          $type: 'textToImage',
+          name: 's1',
+          status: 'processing',
+          metadata: {},
+          output: {
+            images: [
+              { id: 'b1', url: 'https://cdn/ok.png', available: true, type: 'image' },
+              { id: 'b2', url: null, available: false, type: 'image' },
+              { id: 'b3', url: 'https://cdn/blocked.png', available: false, type: 'image' },
+              { id: 'b4', url: '', available: true, type: 'image' },
+            ],
+          },
+        },
+      ],
+    });
+    expect(projectAppWorkflow(wf as never).images).toEqual([
+      { url: 'https://cdn/ok.png', width: null, height: null, nsfwLevel: null },
+    ]);
+  });
+
+  it('maps orchestrator-internal statuses to the block-contract status set', () => {
+    const map: Array<[string, string]> = [
+      ['unassigned', 'pending'],
+      ['preparing', 'pending'],
+      ['scheduled', 'pending'],
+      ['processing', 'processing'],
+      ['succeeded', 'succeeded'],
+      ['failed', 'failed'],
+      ['expired', 'expired'],
+      ['canceled', 'canceled'],
+    ];
+    for (const [orch, contract] of map) {
+      expect(projectAppWorkflow(fakeWorkflow({ status: orch }) as never).status).toBe(contract);
+    }
+  });
+
+  it('returns cost:null when the orchestrator omits a total, and an empty images list for a pending workflow', () => {
+    const wf = fakeWorkflow({ status: 'preparing', cost: {}, steps: [] });
+    const projected = projectAppWorkflow(wf as never);
+    expect(projected.cost).toBeNull();
+    expect(projected.images).toEqual([]);
+    expect(projected.status).toBe('pending');
+  });
+
+  it('does NOT leak internal fields (steps/params/tags/transactions/metadata)', () => {
+    const wf = fakeWorkflow({
+      steps: [
+        {
+          $type: 'textToImage',
+          name: 's1',
+          status: 'succeeded',
+          metadata: { params: { prompt: 'secret prompt' } },
+          output: { images: [{ id: 'b', url: 'https://cdn/x.png', available: true }] },
+        },
+      ],
+      tags: ['civitai', 'app-block:app_x'],
+      transactions: { list: [{ type: 'debit', amount: 30, accountType: 'yellow' }] },
+    });
+    const projected = projectAppWorkflow(wf as never);
+    expect(Object.keys(projected).sort()).toEqual(
+      ['cost', 'createdAt', 'images', 'status', 'workflowId'].sort()
+    );
+    expect(JSON.stringify(projected)).not.toContain('secret prompt');
+    expect(JSON.stringify(projected)).not.toContain('transactions');
+  });
+
+  it('ignores non-image-producing step types (no image leak from e.g. chatCompletion)', () => {
+    const wf = fakeWorkflow({
+      steps: [
+        {
+          $type: 'chatCompletion',
+          name: 's1',
+          status: 'succeeded',
+          metadata: {},
+          output: { images: [{ id: 'x', url: 'https://leak/', available: true }] },
+        },
+      ],
+    });
+    expect(projectAppWorkflow(wf as never).images).toEqual([]);
   });
 });
 

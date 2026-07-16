@@ -67,7 +67,10 @@ vi.mock('~/utils/trpc', () => ({
       estimateWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       pollWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-    },
+      queryAppWorkflows: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      cancelAppWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+  
+      },
     apps: {
       shared: {
         append: { useMutation: () => ({ mutateAsync: vi.fn() }) },
