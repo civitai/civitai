@@ -3127,6 +3127,34 @@ export async function getReviewStatus(opts: {
   };
 }
 
+/**
+ * MOD REVIEW SANDBOX (#2831) — resolve the target for a full-page review preview
+ * mount (`/apps/review/preview/<publishRequestId>`).
+ *
+ * The page needs the `slug` to drive `ReviewBlockPreviewHost`, but the shared
+ * `getReviewStatus` return shape deliberately does NOT carry it (that shape feeds
+ * the modal poll and is kept minimal). This resolves the row by id server-side in
+ * the page's `getServerSideProps` instead of widening `getReviewStatus`.
+ *
+ * Returns `{ id, slug }` ONLY for an EXISTING, PENDING request — the only state a
+ * review preview can ever be live against (teardown clears the preview on
+ * approve/reject, matching `mintReviewBlockToken`'s pending gate). Returns null
+ * for a missing / non-pending request so the page fails closed with a 404 and
+ * never leaks which of the two it was.
+ */
+export async function resolveReviewPreviewTarget(
+  publishRequestId: string
+): Promise<{ id: string; slug: string } | null> {
+  const { dbRead } = await import('~/server/db/client');
+  const row = await dbRead.appBlockPublishRequest.findUnique({
+    where: { id: publishRequestId },
+    select: { id: true, status: true, slug: true },
+  });
+  if (!row) return null;
+  if (row.status !== 'pending') return null;
+  return { id: row.id, slug: row.slug };
+}
+
 export type MintReviewBlockTokenResult = {
   /** The signed, self-bound, scope-stripped block JWT for the review preview. */
   token: string;
