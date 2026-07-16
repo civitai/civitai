@@ -13,6 +13,7 @@ import {
 } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { AppPermissionsActivityDrawer } from './AppPermissionsActivityDrawer';
 import { BlockFallback } from './BlockFallback';
 import { failureSnapshot } from './failureSnapshot';
@@ -166,11 +167,13 @@ export function AppBlockChrome({
    *  surface. Omitted → treated as a model surface (Hide shown). */
   slotId?: string;
 }) {
-  // Moderator gate for the platform-nav "Review" item (the /apps/review page is
-  // itself isModerator-gated server-side; this just hides the shortcut for
-  // non-mods). useCurrentUser returns null for anon → not a moderator.
+  // Gate the platform-nav "Review" item with the SAME greppable predicate the
+  // /apps/review page + its server gate use (isAppReviewer), so the run-nav
+  // shortcut can't drift from the real reviewer gate — this stays moderator-only
+  // even after external-dev submission (W11) widens isAppDeveloper. useCurrentUser
+  // returns null for anon → not a reviewer.
   const currentUser = useCurrentUser();
-  const isModerator = currentUser?.isModerator ?? false;
+  const isModerator = isAppReviewer(currentUser);
   // Per-app "Permissions & activity" drawer open state (only reachable when
   // appBlockId was threaded through).
   const [permsOpen, setPermsOpen] = useState(false);

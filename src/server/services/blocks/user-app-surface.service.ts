@@ -194,10 +194,12 @@ const APP_ACTIVITY_MAX_LIMIT = 100;
  */
 export async function listMyAppActivity({
   userId,
+  appBlockId,
   limit,
   cursor,
 }: {
   userId: number;
+  appBlockId?: string;
   limit?: number;
   cursor?: string;
 }): Promise<AppActivityPage> {
@@ -213,7 +215,14 @@ export async function listMyAppActivity({
     appBlock: { blockId: string; manifest: unknown } | null;
   };
   const rows = (await dbRead.blockBuzzAttribution.findMany({
-    where: { userId },
+    where: {
+      userId,
+      // Optional per-app drill-down (mirrors listMyScopeInvocations). Server-side
+      // so the cursor paginates the SINGLE app's Buzz feed — a whole-account fetch
+      // + client filter would under-report this app's spend behind other apps'
+      // rows on page 1 ("No activity yet" false negative).
+      ...(appBlockId ? { appBlockId } : {}),
+    },
     orderBy: [{ attributedAt: 'desc' }, { id: 'desc' }],
     take: cappedLimit + 1,
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),

@@ -253,6 +253,14 @@ describe('listMyAppActivity', () => {
     );
   });
 
+  it('server-filters by appBlockId when the per-app drill-down is passed', async () => {
+    const { listMyAppActivity } = await import('../user-app-surface.service');
+    await listMyAppActivity({ userId: 42, appBlockId: 'apb_1' });
+    expect(mockDbRead.blockBuzzAttribution.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: 42, appBlockId: 'apb_1' } })
+    );
+  });
+
   it('joins the AppBlock and exposes appName + appSlug per item', async () => {
     const { listMyAppActivity } = await import('../user-app-surface.service');
     mockDbRead.blockBuzzAttribution.findMany.mockResolvedValue([

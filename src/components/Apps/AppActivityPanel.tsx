@@ -27,10 +27,11 @@ import { trpc } from '~/utils/trpc';
  * attribution) + `blocks.listMyScopeInvocations` (scope-gated call audit) —
  * merged into one timeline sorted by createdAt desc.
  *
- * `appBlockId` drill-down: `listMyScopeInvocations` filters SERVER-side (the
- * query supports the optional `appBlockId` input). `listMyAppActivity` has no
- * server filter, so its rows are filtered CLIENT-side by `item.appBlockId` (the
- * item carries it). When `appBlockId` is omitted the feed is whole-account —
+ * `appBlockId` drill-down: BOTH queries filter SERVER-side by the optional
+ * `appBlockId` input, so each per-app feed paginates correctly (a whole-account
+ * fetch + client filter would under-report this app's Buzz behind other apps'
+ * rows on page 1). A client-side `item.appBlockId` check is kept as cheap
+ * belt-and-suspenders. When `appBlockId` is omitted the feed is whole-account —
  * exactly the /apps/installed behaviour, unchanged.
  *
  * `enabled` gates the queries: pass `false` for an anonymous viewer (these
@@ -172,7 +173,7 @@ export function AppActivityPanel({
   enabled?: boolean;
 }) {
   const buzz = trpc.blocks.listMyAppActivity.useInfiniteQuery(
-    { limit: 25 },
+    { limit: 25, ...(appBlockId ? { appBlockId } : {}) },
     { getNextPageParam: (last) => last.nextCursor ?? undefined, enabled }
   );
   const scopes = trpc.blocks.listMyScopeInvocations.useInfiniteQuery(
@@ -184,8 +185,8 @@ export function AppActivityPanel({
     const buzzRows: ActivityFeedRow[] =
       buzz.data?.pages.flatMap((p) =>
         p.items
-          // Buzz has no server-side appBlockId filter — narrow client-side so a
-          // per-app drill-down doesn't leak other apps' spends into the timeline.
+          // Server already filters by appBlockId (see the query above); this
+          // client check is cheap belt-and-suspenders against a stale page.
           .filter((item) => !appBlockId || item.appBlockId === appBlockId)
           .map<ActivityFeedRow>((item) => ({
             kind: 'buzz',

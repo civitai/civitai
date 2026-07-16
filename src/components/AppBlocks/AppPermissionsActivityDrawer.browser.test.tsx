@@ -58,6 +58,8 @@ vi.mock('~/utils/trpc', () => {
 // eslint-disable-next-line import/first
 import { AppPermissionsActivityDrawer } from '~/components/AppBlocks/AppPermissionsActivityDrawer';
 // eslint-disable-next-line import/first
+import { AppActivityPanel } from '~/components/Apps/AppActivityPanel';
+// eslint-disable-next-line import/first
 import { renderWithProviders } from '../../../test/component-setup';
 
 beforeEach(() => {
@@ -126,17 +128,37 @@ describe('AppPermissionsActivityDrawer (Part B — per-app permissions & activit
       .toBeInTheDocument();
   });
 
-  test('the scope-invocation query is called with the current appBlockId', async () => {
+  test('BOTH activity queries (Buzz + scope-invocations) are server-filtered by the current appBlockId', async () => {
     renderWithProviders(
       <AppPermissionsActivityDrawer appBlockId="ab-42" appName="Scoped" opened onClose={() => {}} />
     );
     await expect
       .element(page.getByTestId('app-permissions-activity-drawer'))
       .toBeInTheDocument();
+    // Scope-invocation audit — server-filtered.
     expect(m.scopeSpy).toHaveBeenCalledWith(
       expect.objectContaining({ appBlockId: 'ab-42' }),
       expect.anything()
     );
+    // Buzz attribution — now ALSO server-filtered (the fix): the per-app Buzz
+    // timeline paginates the single app's feed, not the whole account.
+    expect(m.buzzSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ appBlockId: 'ab-42' }),
+      expect.anything()
+    );
+  });
+
+  test('whole-account panel (installed page, no appBlockId) does NOT pass an appBlockId filter — unchanged behaviour', async () => {
+    // The shared AppActivityPanel rendered without an appBlockId (the
+    // /apps/installed "Recent activity" tab) must keep fetching the whole-account
+    // feed — neither query carries an appBlockId.
+    renderWithProviders(<AppActivityPanel />);
+    // Await the rendered empty state so the query hooks have run before asserting.
+    await expect.element(page.getByText(/No activity yet\./)).toBeInTheDocument();
+    expect(m.buzzSpy).toHaveBeenCalled();
+    expect(m.scopeSpy).toHaveBeenCalled();
+    expect(m.buzzSpy.mock.calls[0][0]).not.toHaveProperty('appBlockId');
+    expect(m.scopeSpy.mock.calls[0][0]).not.toHaveProperty('appBlockId');
   });
 
   test('empty state when the viewer has no grants and no activity for this app', async () => {

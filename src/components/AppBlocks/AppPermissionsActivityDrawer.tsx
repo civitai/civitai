@@ -105,7 +105,8 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
             Sign in to see this app's recent activity on your account.
           </Text>
         ) : (
-          <AppActivityPanel appBlockId={appBlockId} enabled={isAuthed} />
+          // Only rendered in the authed branch, so enabled defaults to true.
+          <AppActivityPanel appBlockId={appBlockId} />
         )}
       </Stack>
     </Stack>
