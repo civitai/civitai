@@ -49,6 +49,9 @@ import { booleanString } from '~/utils/zod-helpers';
  *     `PROGRESS_KEY`; a re-run with resume=true (default) continues from there.
  *
  * Dry-run by default — counts rows that WOULD change per batch, writes nothing.
+ * Note: a dry run also honors the saved resume cursor, so after a partial apply it
+ * estimates only the REMAINING id-range. For a full-table estimate pass
+ * resume=false (dry runs never write the cursor, so this is safe).
  *
  * Trigger:
  *   /api/admin/temp/migrate-imageSortAt?token=$WEBHOOK_TOKEN                 (dry run)

@@ -21,10 +21,20 @@ import { booleanString } from '~/utils/zod-helpers';
  *             (civitai-index.yaml: `sortAtUnix -> sortAt, ms_to_seconds: true`).
  *
  * Modes (interpretation only — raw counts are always reported):
- *   - mode=pre  (default): BitDex sortAt is still ENGINE-COMPUTED
- *     GREATEST(existedAt, publishedAt) with NO scannedAt. Mismatches where
- *     scannedAt is the max are EXPECTED — they are exactly the rows the migration
- *     changes. Pre-cutover this run measures that divergence + proves the fetch/
+ *   - mode=pre  (default): BitDex sortAt is still ENGINE-COMPUTED as
+ *     GREATEST(existedAt, publishedAt), where existedAt = GREATEST(scannedAt,
+ *     createdAt). That is MATHEMATICALLY IDENTICAL to the trigger formula, so a
+ *     correctly-recomputed engine value MATCHES. Pre-cutover mismatches therefore
+ *     do NOT come from a formula difference; they come from two known classes:
+ *       (a) DOMINANT — the engine silently fails to fold a delivered publishedAt
+ *           into sortAt on ~7-28% of recent publishes (W1-4 specimens,
+ *           docs/_in/sortat-divergence-specimens-2026-07-16.md), leaving sortAt
+ *           stuck at existedAt. These are exactly the rows ingestion fixes.
+ *       (b) the scheduled / future-publishedAt head (quarantined, isPublished=
+ *           false) whose engine sortAt has not crossed Tf.
+ *     A clean-ish recent-window baseline is NOT a broken instrument — it means the
+ *     recompute happened to succeed on the sample; mismatches concentrate in
+ *     class (a). Pre-cutover this run measures that divergence + proves the fetch/
  *     compare path works; it is NOT a pass/fail gate.
  *   - mode=post: BitDex sortAt is INGESTED from the trigger value. Any mismatch is
  *     a real drift; `ok` is false if mismatches > 0.
@@ -138,7 +148,7 @@ async function audit(req: NextApiRequest) {
     seedProven,
     note:
       params.mode === 'pre'
-        ? 'pre-cutover: BitDex sortAt is still engine-computed (no scannedAt); mismatches are the rows the migration will change, not failures.'
+        ? 'pre-cutover: engine sortAt = GREATEST(existedAt, publishedAt) is formula-identical to the trigger; mismatches are the engine recompute-failure class (~7-28% of recent publishes, sortAt stuck at existedAt) + the scheduled future-publishedAt head, not failures of this audit.'
         : 'post-cutover: BitDex sortAt is ingested; any mismatch is real drift.',
     specimens: mismatches.slice(0, params.specimenLimit),
   };
