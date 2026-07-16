@@ -199,11 +199,12 @@ export const trpcProcedureDuration = registerHistogram({
   name: 'trpc_procedure_duration_seconds',
   help: 'tRPC procedure wall-clock duration (full chain + resolver) by path',
   labelNames: ['path'] as const,
-  // Trimmed 7→5 explicit boundaries (le 8→6 incl. +Inf, ~25% fewer _bucket
+  // Trimmed 7→6 explicit boundaries (le 8→7 incl. +Inf, ~12% fewer _bucket
   // series) to cut Prometheus cardinality on this high-`path` histogram while
-  // keeping boundaries near typical p95/p99 so per-path quantile interpolation
-  // stays meaningful. Dropped the 50ms floor and the coarse 5s/30s tail.
-  buckets: [0.1, 0.5, 1, 2.5, 10],
+  // keeping boundaries near typical p95/p99. Dropped only the 50ms floor; the
+  // 30s tail boundary is retained so _bucket-based p99 can still resolve the
+  // 10–30s range (the parked-handler / slow-procedure diagnostic band).
+  buckets: [0.1, 0.5, 1, 2.5, 10, 30],
 });
 
 // Web-client READ-capability saturation for the superjson → devalue serializer
