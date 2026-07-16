@@ -104,7 +104,7 @@ export default function CategoryWeights({ disabled = false }: { disabled?: boole
                 step={1}
                 allowDecimal={false}
                 allowNegative={false}
-                clampBehavior="blur"
+                clampBehavior="none"
                 className="w-24 shrink-0"
                 disabled={disabled}
               />
