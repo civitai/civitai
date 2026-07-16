@@ -3666,6 +3666,7 @@ export interface ChallengeJudge {
   reviewTemplate: string | null;
   winnerSelectionPrompt: string | null;
   active: boolean;
+  userSelectable: boolean;
   createdAt: Date;
   updatedAt: Date;
   challenges?: Challenge[];

@@ -156,6 +156,13 @@ export const DEFAULT_CATEGORY_ROWS: CategoryWeightRow[] = [
 // NSFW entries are judged with the standard rubrics for now (product call pending).
 export const USER_SELECTABLE_JUDGE_NAMES = ['CivBot', 'CivChan'] as const;
 
+// Shared copy for the "offer this judge to users" toggle (raw Switch in JudgeSettingsPanel, RHF
+// InputSwitch in CreateJudgeModal) so both stay in sync.
+export const JUDGE_USER_SELECTABLE_FIELD = {
+  label: 'Selectable by users',
+  description: 'Show this judge in the user challenge-create form',
+} as const;
+
 /** Max challenges processed concurrently inside a single job run. Bounded by DB load + OpenRouter rate limits. */
 export const CHALLENGE_JOB_CONCURRENCY = 5;
 /** Max challenges a single job run pulls from a selector. Remaining work rolls to the next tick. */

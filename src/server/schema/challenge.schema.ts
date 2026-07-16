@@ -358,6 +358,25 @@ export const challengeJudgingCategoriesSchema = z
   .max(4)
   .superRefine(judgingCategoryRefinements);
 
+// Moderator: create/update a ChallengeCategory library row (playground Categories tab).
+// `key` is the PK and the join key on stored Challenge.judgingCategories, so it is create-only.
+export type UpsertChallengeCategoryInput = z.infer<typeof upsertChallengeCategorySchema>;
+export const upsertChallengeCategorySchema = z.object({
+  key: z
+    .string()
+    .trim()
+    .min(1)
+    .max(50)
+    .regex(/^[a-z0-9_-]+$/, 'Key must be lowercase letters, numbers, hyphens, or underscores'),
+  label: z.string().trim().min(1).max(100),
+  group: z.string().trim().min(1).max(50),
+  criteria: z.string().trim().min(1).max(500),
+  rubric: z.string().optional().nullable(),
+  rubricNsfw: z.string().optional().nullable(),
+  sortOrder: z.number().int().default(0),
+  active: z.boolean().default(true),
+});
+
 // Moderator: Create/Update challenge
 // Base schema is a ZodObject so the form can use .omit().extend()
 export const upsertChallengeBaseSchema = z.object({
@@ -623,6 +642,7 @@ export const upsertJudgeSchema = z.object({
   reviewTemplate: z.string().optional().nullable(),
   winnerSelectionPrompt: z.string().optional().nullable(),
   active: z.boolean().optional(),
+  userSelectable: z.boolean().optional(),
 });
 
 // Playground: Generate content for a model version
