@@ -19,7 +19,8 @@ type CommentEntityType =
   | 'bountyEntry'
   | 'challenge'
   | 'comment'
-  | 'image';
+  | 'image'
+  | 'appListing';
 
 export default function HiddenCommentsModal({
   entityId,
