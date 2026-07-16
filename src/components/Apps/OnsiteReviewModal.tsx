@@ -31,6 +31,7 @@ import {
 } from '@tabler/icons-react';
 import { useMemo, useRef, useState } from 'react';
 import { pickReviewIframeSrc } from '~/components/Apps/reviewIframeSrc';
+import { ReviewBlockPreviewHost } from '~/components/Apps/ReviewBlockPreviewHost';
 import {
   FileDiffEntry,
   FileListPreview,
@@ -655,24 +656,29 @@ function ReviewPreviewPanel({
         </Alert>
       )}
       {isLive && stableIframeSrc && (
-        <iframe
-          title={`Review preview for ${slug}`}
-          src={stableIframeSrc}
-          // no-referrer: the `?mr=<token>` entry-token URL must NOT leak via the
-          // `Referer` header to assets the previewed (untrusted) block loads.
-          // (We deliberately do NOT bind the token to a publishRequestId: that
-          // binding isn't statelessly verifiable at the mod-gate without a DB
-          // lookup, which the stateless forwardAuth gate intentionally avoids.
-          // Host + mod + short TTL + no-referrer is the chosen containment.)
-          referrerPolicy="no-referrer"
+        // Mount the REAL PageBlockHost (via ReviewBlockPreviewHost) instead of a
+        // raw <iframe>: the bug was that a raw iframe had NO host bridge, so
+        // nothing posted BLOCK_INIT and the SDK block hung on "Connecting to host".
+        // The host mints a self-bound, scope-stripped block token, forces
+        // trustTier:'unverified' (opaque origin — drops allow-same-origin), and
+        // runs reviewMode (read-only NACKs). The `?mr=` entry-token URL keeps its
+        // pickReviewIframeSrc stabilization here; PageBlockHost's own iframe sets
+        // referrerPolicy="no-referrer" so the entry token never leaks via Referer.
+        <div
           style={{
             width: '100%',
             height: 420,
             border: '1px solid var(--mantine-color-default-border)',
             borderRadius: 6,
+            overflow: 'hidden',
           }}
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-        />
+        >
+          <ReviewBlockPreviewHost
+            publishRequestId={publishRequestId}
+            slug={slug}
+            iframeSrc={stableIframeSrc}
+          />
+        </div>
       )}
       {statusQuery.error && (
         <Text size="xs" c="dimmed">

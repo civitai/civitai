@@ -111,6 +111,42 @@ export const TUNNEL_HOST_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<str
 ]);
 
 /**
+ * The MOD-REVIEW-SANDBOX host-mint allowlist (#2831 review preview). RENDER-ONLY:
+ * the STRICTEST of the three allowlists. A mod runs UNAPPROVED, untrusted code
+ * with their OWN session, so the review token must carry the minimum a block needs
+ * to render — self-bound reads ONLY, NEVER money / private / cross-user / write.
+ *
+ * KEEP (render-only survivors, all self-bound reads):
+ *   - `models:read:self`   the caller's own models (self-bound)
+ *   - `media:read:owned`   the caller's own media
+ *   - `user:read:self`     the caller's own identity (also force-granted post-clamp)
+ *   - `collections:read:self` own-PUBLIC + any PUBLIC collection (no per-app namespace)
+ *
+ * WITHHELD (stripped regardless of what the pending manifest declares — the clamp
+ * drops any scope not in this set, so none of these can EVER reach the review JWT):
+ *   - `ai:write:budgeted`         real Buzz spend (ALSO stripped by keyCanSpend:false)
+ *   - `apps:storage:read|write`   per-user App Storage (synthetic appId → no namespace)
+ *   - `apps:storage:shared:read|write` cross-user shared datastore (write = abuse)
+ *   - `collections:read:private`  the caller's OWN private collections (consent-gated)
+ *   - `collections:write:self`    a write surface
+ *   - `social:tip:self`           real money OUT
+ *   - `buzz:read:self`            private financial (balance / ledger / earnings)
+ *
+ * These strings are verified against block-scope.constants.ts. Modelled on
+ * TUNNEL_HOST_MINT_SCOPE_ALLOWLIST but WITHOUT `ai:write:budgeted`,
+ * `collections:write:self`, and `collections:read:private`: the dev tunnel is the
+ * AUTHOR previewing their OWN app (spend on their own Buzz is intended); the review
+ * sandbox is a MOD previewing SOMEONE ELSE'S un-approved app, so nothing that
+ * spends, writes, or reads private/cross-user data is ever granted.
+ */
+export const REVIEW_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
+  'models:read:self',
+  'media:read:owned',
+  'user:read:self',
+  'collections:read:self',
+]);
+
+/**
  * The AUDITED scope clamp belt (dev-token.ts steps 7a–7g), extracted verbatim.
  * Start from `scopeSource` (the app's approved snapshot, an owned pending request's
  * un-reviewed `manifest.scopes`, or the caller's self-declared body scopes) and:
