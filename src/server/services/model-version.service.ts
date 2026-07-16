@@ -1753,6 +1753,15 @@ export const earlyAccessPurchase = async ({
       ? (earlyAccesConfig.downloadPrice as number)
       : (earlyAccesConfig.generationPrice as number);
 
+  const accessRecord = await dbWrite.entityAccess.findFirst({
+    where: {
+      accessorId: userId,
+      accessorType: 'User',
+      accessToId: modelVersionId,
+      accessToType: 'ModelVersion',
+    },
+  });
+
   try {
     const externalTransactionIdPrefix = `early-access-${modelVersionId}-${type}-${userId}`;
     const data = await createMultiAccountBuzzTransaction({
@@ -1770,14 +1779,7 @@ export const earlyAccessPurchase = async ({
       throw throwBadRequestError('Failed to create Buzz transaction.');
 
     buzzTransactionId = externalTransactionIdPrefix;
-    const accessRecord = await dbWrite.entityAccess.findFirst({
-      where: {
-        accessorId: userId,
-        accessorType: 'User',
-        accessToId: modelVersionId,
-        accessToType: 'ModelVersion',
-      },
-    });
+    
 
     await dbWrite.$transaction(
       async (tx) => {
@@ -1883,6 +1885,18 @@ export const earlyAccessPurchase = async ({
         externalTransactionIdPrefix: buzzTransactionId,
         description: `Refund early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
       });
+
+      if (!accessRecord) {
+        // Remove the entity access record if it was created during this transaction.
+        await dbWrite.entityAccess.deleteMany({
+          where: {
+            accessorId: userId,
+            accessorType: 'User',
+            accessToId: modelVersionId,
+            accessToType: 'ModelVersion',
+          },
+        });
+      }
 
       logToAxiom({
         type: 'error',
