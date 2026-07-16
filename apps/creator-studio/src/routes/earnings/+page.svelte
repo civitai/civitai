@@ -1,7 +1,14 @@
 <script lang="ts">
   import { Chart } from '@civitai/ui/components/ui/chart/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { EARNINGS_SOURCES, SOURCE_LABEL, currencyMeta, currencySort, formatAmount } from '$lib/earnings';
+  import {
+    EARNINGS_SOURCES,
+    SOURCE_LABEL,
+    SOURCE_COLOR,
+    currencyMeta,
+    currencySort,
+    formatAmount,
+  } from '$lib/earnings';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -35,24 +42,39 @@
 
   const hasBuzzEarnings = $derived(currencyTotals.length > 0);
 
+  // Buzz earned per source (buzz colors summed — same unit) so licensing fees / tips / compensation are legible at
+  // a glance, not just the currency split. Cash-denominated source earnings stay in the cash panel + table.
+  const num = (n: number) => n.toLocaleString();
+  const sourceTotals = $derived(
+    sources
+      .map((s) => ({
+        source: s,
+        total: (data.summary ?? [])
+          .filter((b) => b.source === s && currencyMeta(b.currency).family === 'buzz')
+          .reduce((acc, b) => acc + b.total, 0),
+      }))
+      .filter((x) => x.total > 0)
+  );
+
   // Authoritative Creator Program cash — the buzz-account balance from the service (matches the Buzz dashboard),
   // NOT a ClickHouse period sum. `formatAmount` renders these cash values in USD.
   const cash = $derived(data.cash);
   const hasCash = $derived(!!cash && (cash.settled > 0 || cash.pending > 0 || cash.withdrawn > 0));
 
-  // Trend is buzz-only: buzz colors share one unit (a common y-axis), whereas cash is USD and settles in lumpy
-  // monthly batches — a poor daily trend line and unmixable on the same axis. Cash totals live in the cards/table.
+  // Trend is a buzz-only per-source line chart (cash is USD + lumpy → lives in the panel). Chips toggle sources.
+  const seriesSources = $derived(EARNINGS_SOURCES.filter((s) => (data.series ?? []).some((p) => p.source === s)));
+  const hiddenSources = $state<Record<string, boolean>>({});
   const chartData = $derived.by(() => {
-    const series = (data.series ?? []).filter((p) => currencyMeta(p.currency).family === 'buzz');
+    const series = data.series ?? [];
     const dates = [...new Set(series.map((p) => p.date))].sort();
-    const curs = [...new Set(series.map((p) => p.currency))].sort(currencySort);
+    const shown = seriesSources.filter((s) => !hiddenSources[s]);
     return {
       labels: dates,
-      datasets: curs.map((c) => ({
-        label: currencyMeta(c).label,
-        data: dates.map((d) => series.find((p) => p.date === d && p.currency === c)?.total ?? 0),
-        borderColor: currencyMeta(c).color,
-        backgroundColor: currencyMeta(c).color,
+      datasets: shown.map((s) => ({
+        label: SOURCE_LABEL[s],
+        data: dates.map((d) => series.find((p) => p.date === d && p.source === s)?.total ?? 0),
+        borderColor: SOURCE_COLOR[s],
+        backgroundColor: SOURCE_COLOR[s],
         tension: 0.3,
         fill: false,
         pointRadius: dates.length > 45 ? 0 : 2,
@@ -64,7 +86,7 @@
     responsive: true,
     maintainAspectRatio: false,
     interaction: { mode: 'index' as const, intersect: false },
-    plugins: { legend: { display: true, position: 'bottom' as const, labels: { color: '#a6a7ab' } } },
+    plugins: { legend: { display: false } },
     scales: { x: { ticks: { maxTicksLimit: 8, autoSkip: true } } },
   };
 </script>
@@ -109,16 +131,16 @@
         <p class="text-xs uppercase tracking-wide text-green-4">Creator Program cash</p>
         <div class="mt-1 flex flex-wrap items-end gap-x-8 gap-y-3">
           <div>
+            <p class="text-2xl font-semibold text-white">{formatAmount(cash.pending, 'cashPending')}</p>
+            <p class="text-xs text-green-3">Pending settlement</p>
+          </div>
+          <div>
             <p class="text-2xl font-semibold text-white">{formatAmount(cash.settled, 'cashSettled')}</p>
-            <p class="text-xs text-dark-3">Ready to withdraw</p>
+            <p class="text-xs text-green-3">Ready to withdraw</p>
           </div>
           <div>
-            <p class="text-2xl font-semibold text-dark-1">{formatAmount(cash.pending, 'cashPending')}</p>
-            <p class="text-xs text-dark-3">Pending</p>
-          </div>
-          <div>
-            <p class="text-2xl font-semibold text-dark-1">{formatAmount(cash.withdrawn, 'cashSettled')}</p>
-            <p class="text-xs text-dark-3">Withdrawn</p>
+            <p class="text-2xl font-semibold text-white">{formatAmount(cash.withdrawn, 'cashSettled')}</p>
+            <p class="text-xs text-green-3">Withdrawn</p>
           </div>
         </div>
       </div>
@@ -126,7 +148,7 @@
         Buzz Dashboard
       </Button>
     </div>
-    <p class="mt-3 text-xs text-dark-3">
+    <p class="mt-3 text-xs text-green-3">
       Your current cash balance from the Creator Program. Withdrawals happen on the Buzz dashboard.
     </p>
   </section>
@@ -135,30 +157,53 @@
 {#if !data.summary}
   <div class="placeholder">Earnings are temporarily unavailable — please try again shortly.</div>
 {:else if !hasBuzzEarnings}
-  <div class="placeholder">
+  <div class="placeholder flex flex-col items-center justify-center h-full">
     {#if data.membership.isCreatorProgramMember}
-      No buzz earnings {periodLabel}. Set licensing fees or access prices on
-      <a href="/models" class="underline">your models</a> to start earning.
+      <span>No buzz earnings {periodLabel}. Set licensing fees or access prices on
+      <a href="/models" class="underline">your models</a> to start earning.</span>
     {:else}
-      You're not in the Creator Program yet, so there's nothing to show here.
-      <a href="/join" class="underline">Join to start earning</a> from your models.
+      <span>You're not in the Creator Program yet, so there's nothing to show here.</span>
+      <span><a href="/join" class="underline">Join to start earning</a> from your models.</span>
     {/if}
   </div>
 {:else}
-  <p class="mb-2 text-xs text-dark-3">Buzz earned {periodLabel}</p>
-  <section class="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-    {#each currencyTotals as t (t.currency)}
+  <p class="mb-2 text-xs text-dark-3">Earned by source · buzz {periodLabel}</p>
+  <section class="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+    {#each sourceTotals as st (st.source)}
       <div class="rounded-lg border border-dark-4 bg-dark-6 p-3">
-        <p class="text-xs uppercase tracking-wide text-dark-3">{currencyMeta(t.currency).label}</p>
-        <p class="mt-1 text-xl font-semibold text-white">{formatAmount(t.total, t.currency)}</p>
+        <p class="text-xs uppercase tracking-wide text-dark-3">{SOURCE_LABEL[st.source]}</p>
+        <p class="mt-1 text-xl font-semibold text-white">⚡ {num(st.total)}</p>
       </div>
     {/each}
   </section>
 
   <div class="mb-6 rounded-lg border border-dark-4 bg-dark-6 p-4">
-    <p class="mb-3 text-sm text-dark-2">
-      Buzz earned over time <span class="text-xs text-dark-3">· cash shown in the panel above</span>
-    </p>
+    <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <p class="text-sm text-dark-2">
+        Buzz earned by source over time <span class="text-xs text-dark-3">· cash shown in the panel above</span>
+      </p>
+      <div class="flex flex-wrap gap-1.5">
+        {#each seriesSources as s (s)}
+          <button
+            type="button"
+            onclick={() => (hiddenSources[s] = !hiddenSources[s])}
+            class="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors {hiddenSources[
+              s
+            ]
+              ? 'border-dark-4 text-dark-3'
+              : 'border-dark-3 text-white'}"
+          >
+            <span
+              class="inline-block h-2 w-2 rounded-full"
+              style="background:{hiddenSources[s] ? 'transparent' : SOURCE_COLOR[s]};border:1px solid {SOURCE_COLOR[
+                s
+              ]}"
+            ></span>
+            {SOURCE_LABEL[s]}
+          </button>
+        {/each}
+      </div>
+    </div>
     <div class="h-72">
       <Chart type="line" data={chartData} options={chartOptions} class="h-full" />
     </div>

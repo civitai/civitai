@@ -18,6 +18,15 @@ export const SOURCE_LABEL: Record<EarningsSource, string> = {
   cosmeticSale: 'Cosmetic sales',
 };
 
+// Per-source line colors for the earnings trend chart (distinct hues; not the buzz-currency palette).
+export const SOURCE_COLOR: Record<EarningsSource, string> = {
+  compensation: '#4dabf7',
+  tip: '#f59f00',
+  licenseFee: '#40c057',
+  accessSale: '#9775fa',
+  cosmeticSale: '#f783ac',
+};
+
 // Currencies are the raw `toAccountType` values, never converted or merged (B8 / D1). `family` only drives visual
 // grouping/formatting (⚡ for buzz), never summing across families.
 export type CurrencyFamily = 'buzz' | 'cash' | 'bank';

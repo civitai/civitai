@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Chart, chartColor, createSyncedCrosshair } from '@civitai/ui/components/ui/chart/index.js';
+  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import type { TimePoint } from '$lib/server/analytics';
   import type { PageData } from './$types';
 
@@ -74,6 +75,8 @@
   const hasActivity = $derived(
     !!data.analytics && Object.values(data.analytics.totals).some((v) => v > 0)
   );
+
+  console.log(data)
 </script>
 
 <header class="page-header flex flex-wrap items-start gap-3">
@@ -155,33 +158,35 @@
       <p class="mb-3 text-sm text-dark-2">
         Top images by reactions <span class="text-xs text-dark-3">{periodLabel}</span>
       </p>
-      <table class="w-full text-sm">
-        <thead>
-          <tr class="border-b border-dark-4 text-left text-xs uppercase tracking-wide text-dark-3">
-            <th class="w-10 py-2 font-medium">#</th>
-            <th class="py-2 font-medium">Image</th>
-            <th class="w-28 py-2 text-right font-medium">Reactions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each data.analytics.topImages as img, i (img.imageId)}
-            <tr class="border-b border-dark-6">
-              <td class="py-2 text-dark-3">{i + 1}</td>
-              <td class="py-2">
-                <a
-                  href="https://civitai.com/images/{img.imageId}"
-                  target="_blank"
-                  rel="noreferrer"
-                  class="text-white underline decoration-dark-4 hover:decoration-white"
-                >
-                  Image #{img.imageId}
-                </a>
-              </td>
-              <td class="py-2 text-right font-medium text-white">{num(img.reactions)}</td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
+      <div class="grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-5">
+        {#each data.analytics.topImages as img, i (img.imageId)}
+          <!-- mature (nsfwLevel > 3) links to civitai.red; deleted images are filtered out server-side -->
+          <a
+            href="https://civitai.{img.nsfwLevel > 3 ? 'red' : 'com'}/images/{img.imageId}"
+            target="_blank"
+            rel="noreferrer"
+            class="group relative block aspect-square overflow-hidden rounded-lg border border-dark-4 bg-dark-7"
+          >
+            <EdgeMedia
+              src={img.url}
+              type={img.type}
+              width={450}
+              alt="Top image #{img.imageId}"
+              class="h-full w-full object-cover transition-transform group-hover:scale-105"
+            />
+            <div
+              class="absolute inset-x-0 top-0 flex justify-start bg-linear-to-b from-black/60 to-transparent px-2 py-1"
+            >
+              <span class="text-xs font-semibold text-white">#{i + 1}</span>
+            </div>
+            <div
+              class="absolute inset-x-0 bottom-0 flex justify-end bg-linear-to-t from-black/70 to-transparent px-2 py-1.5"
+            >
+              <span class="text-xs font-semibold text-white">♥ {num(img.reactions)}</span>
+            </div>
+          </a>
+        {/each}
+      </div>
     </div>
   {/if}
 {/if}

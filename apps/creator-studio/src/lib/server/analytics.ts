@@ -1,4 +1,5 @@
 import { getClickhouse } from '$lib/server/clickhouse';
+import { dbRead } from '$lib/server/db';
 import { createCache } from '$lib/server/cache';
 
 // Content/Creator analytics (B4 section b). Every metric is keyed **directly to the creator's userId** in
@@ -6,7 +7,16 @@ import { createCache } from '$lib/server/cache';
 // charts are continuous. Model-usage/earnings metrics (keyed by modelVersionId) wait on A1 and are not here.
 
 export type TimePoint = { date: string; value: number };
-export type TopImage = { imageId: number; reactions: number };
+// `url` is the Cloudflare media path (EdgeMedia builds the thumbnail URL); `type` is image|video; `nsfwLevel` is
+// the bitwise level (blur mature + route to civitai.red). From a Postgres lookup by imageId — deleted images (no
+// row) are dropped server-side, so every entry here is a live image.
+export type TopImage = {
+  imageId: number;
+  reactions: number;
+  url: string;
+  nsfwLevel: number;
+  type: 'image' | 'video' | 'audio';
+};
 export type ContentTotals = {
   reactions: number;
   followers: number;
@@ -128,11 +138,38 @@ async function fetchContentAnalytics(
       posts: sum(posts),
       profileViews: sum(profileViews),
     },
-    topImages: topImagesRaw.map((r) => ({
-      imageId: Number(r.imageId),
-      reactions: Number(r.reactions),
-    })),
+    topImages: await enrichTopImages(topImagesRaw),
   };
+}
+
+// Look up the CF url + nsfwLevel for the top images (Postgres, by primary key) so the analytics grid can show real
+// thumbnails instead of bare IDs. Order is preserved from the ClickHouse ranking.
+async function enrichTopImages(
+  raw: { imageId: number | string; reactions: number | string }[]
+): Promise<TopImage[]> {
+  const ids = raw.map((r) => Number(r.imageId));
+  const rows = ids.length
+    ? await dbRead
+        .selectFrom('Image')
+        .where('id', 'in', ids)
+        .select(['id', 'url', 'nsfwLevel', 'type'])
+        .execute()
+    : [];
+  const byId = new Map(rows.map((i) => [i.id, i]));
+  // Drop deleted images (no Image row / no url) — we don't surface them in the grid.
+  return raw
+    .map((r): TopImage | null => {
+      const img = byId.get(Number(r.imageId));
+      if (!img?.url) return null;
+      return {
+        imageId: Number(r.imageId),
+        reactions: Number(r.reactions),
+        url: img.url,
+        nsfwLevel: Number(img.nsfwLevel ?? 0),
+        type: img.type as 'image' | 'video' | 'audio',
+      };
+    })
+    .filter((x): x is TopImage => x !== null);
 }
 
 // Just the period totals (no series / top-images) — cheap enough for the dashboard's activity row.

@@ -33,16 +33,16 @@
     data.membership.isCreatorProgramMember
       ? [
           {
-            label: 'Cash ready',
-            value: data.cash ? formatAmount(data.cash.settled, 'cashSettled') : null,
-            pending: false,
-            hint: 'Available to withdraw',
-          },
-          {
             label: 'Cash pending',
             value: data.cash ? formatAmount(data.cash.pending, 'cashPending') : null,
             pending: false,
-            hint: 'Accruing to cash',
+            hint: 'Pending settlement',
+          },
+          {
+            label: 'Cash settled',
+            value: data.cash ? formatAmount(data.cash.settled, 'cashSettled') : null,
+            pending: false,
+            hint: 'Available to withdraw',
           },
           {
             label: 'Withdrawn',
@@ -105,24 +105,30 @@
   {/if}
 </section>
 
-<section class="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-  {#each stats as stat (stat.label)}
-    <Card>
-      <CardHeader>
-        <CardTitle class="text-sm font-medium text-dark-2">{stat.label}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {#if stat.value != null}
-          <p class="text-xl font-semibold text-white">{stat.value}</p>
-        {:else if stat.pending}
-          <p class="text-xl font-semibold text-dark-4">—</p>
-        {:else}
-          <Skeleton class="h-7 w-24" />
-        {/if}
-        <p class="mt-2 text-xs text-dark-3">{stat.hint}</p>
-      </CardContent>
-    </Card>
-  {/each}
+<section class="mb-8">
+  <div class="mb-2 flex items-center justify-between">
+    <p class="text-xs uppercase tracking-wide text-dark-3">Earnings</p>
+    <a href="/earnings" class="text-xs text-dark-2 hover:text-white">View earnings →</a>
+  </div>
+  <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+    {#each stats as stat (stat.label)}
+      <Card>
+        <CardHeader>
+          <CardTitle class="text-sm font-medium text-dark-2">{stat.label}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {#if stat.value != null}
+            <p class="text-xl font-semibold text-white">{stat.value}</p>
+          {:else if stat.pending}
+            <p class="text-xl font-semibold text-dark-4">—</p>
+          {:else}
+            <Skeleton class="h-7 w-24" />
+          {/if}
+          <p class="mt-2 text-xs text-dark-3">{stat.hint}</p>
+        </CardContent>
+      </Card>
+    {/each}
+  </div>
 </section>
 
 <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">

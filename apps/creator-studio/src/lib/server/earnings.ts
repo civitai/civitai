@@ -22,7 +22,9 @@ export type EarningsBucket = {
   total: number;
   count: number;
 };
-export type EarningsPoint = { date: string; currency: string; total: number };
+// The trend series is per-source, buzz-only (the chart is a buzz trend; cash lives in the panel). One line per
+// source with toggle chips (E4). Currency detail stays in the by-source×currency summary/table.
+export type EarningsPoint = { date: string; source: EarningsSource; total: number };
 
 const rangeTtlSeconds = (days: number) => (days >= 90 ? 3600 : days >= 30 ? 900 : 300);
 
@@ -77,16 +79,16 @@ async function fetchSeries({
   const bucket = granularity === 'week' ? 'toStartOfWeek(date, 1)' : 'toDate(date)';
   const rows = await getClickhouse().$query<{
     date: string;
-    currency: string;
+    source: EarningsSource;
     total: number | string;
   }>(
-    `SELECT ${bucket} AS date, toAccountType AS currency, sum(amount) AS total
+    `SELECT ${bucket} AS date, ${SOURCE_EXPR} AS source, sum(amount) AS total
      FROM default.buzzTransactions
-     WHERE ${whereClause(uid, d)}
-     GROUP BY date, currency
+     WHERE ${whereClause(uid, d)} AND toAccountType IN ('yellow','blue','green','club')
+     GROUP BY date, source
      ORDER BY date`
   );
-  return rows.map((r) => ({ date: String(r.date), currency: r.currency, total: Number(r.total) }));
+  return rows.map((r) => ({ date: String(r.date), source: r.source, total: Number(r.total) }));
 }
 
 // By-source × currency totals over the window — the /earnings source cards and the dashboard headline.

@@ -28,13 +28,20 @@ export type CreatorModel = {
 
 export type ModelsSort = 'recent' | 'name';
 export type FeeFilter = 'set' | 'off';
+// Default (undefined) hides drafts (M3); 'all' shows them, 'published'/'draft' narrow to one.
+export type StatusFilter = 'all' | 'published' | 'draft';
 
 export type ModelsQuery = {
   userId: number;
   q?: string;
   fee?: FeeFilter;
+  baseModel?: string;
+  status?: StatusFilter;
+  access?: boolean; // has early / paid access on a version
   sort?: ModelsSort;
   page?: number;
+  /** Also compute the full matching version-id set for bulk "select all" (only needed in bulk mode). */
+  withMatchingVersionIds?: boolean;
 };
 
 export type CreatorModelsResult = {
@@ -42,58 +49,66 @@ export type CreatorModelsResult = {
   total: number;
   page: number;
   pageCount: number;
+  baseModels: string[];
+  matchingVersionIds: number[];
 };
 
 export const MODELS_PER_PAGE = 20;
 
-// The creator's models with versions nested (drafts included), with URL-driven search / fee filter / sort /
-// pagination. Two queries + in-memory grouping so the columns stay typed against the schema.
+// The creator's models with versions nested, filterable by search / fee / base model / status / access, with
+// sort + pagination. Version-level filters (fee/baseModel/access) both narrow the model list (models with ≥1
+// matching version) AND restrict the versions shown, so "select all" selects exactly what's on screen.
 export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModelsResult> {
-  const { userId, q, fee, sort = 'recent' } = query;
+  const { userId, q, fee, baseModel, status, access, sort = 'recent' } = query;
   const page = Math.max(1, query.page ?? 1);
   const perPage = MODELS_PER_PAGE;
 
-  // Filters shared between the count and the page query (kysely builders are immutable, so we branch off one).
-  let filtered = dbRead
-    .selectFrom('Model')
-    .where('userId', '=', userId)
-    .where('deletedAt', 'is', null);
+  // Model-list filter (shared by count + page query; kysely builders are immutable, so branch off one).
+  let filtered = dbRead.selectFrom('Model').where('userId', '=', userId).where('deletedAt', 'is', null);
   if (q) filtered = filtered.where('name', 'ilike', `%${q}%`);
-  if (fee === 'set')
+  if (status === 'published') filtered = filtered.where('status', '=', 'Published');
+  else if (status === 'draft') filtered = filtered.where('status', '=', 'Draft');
+  else if (status !== 'all') filtered = filtered.where('status', '!=', 'Draft'); // default: hide drafts
+  const hasVersionFilter = !!baseModel || !!access || !!fee;
+  if (hasVersionFilter)
     filtered = filtered.where((eb) =>
       eb.exists(
         eb
           .selectFrom('ModelVersion as mv')
           .select('mv.id')
           .whereRef('mv.modelId', '=', 'Model.id')
-          .where('mv.licensingFee', 'is not', null)
-      )
-    );
-  if (fee === 'off')
-    filtered = filtered.where((eb) =>
-      eb.not(
-        eb.exists(
-          eb
-            .selectFrom('ModelVersion as mv')
-            .select('mv.id')
-            .whereRef('mv.modelId', '=', 'Model.id')
-            .where('mv.licensingFee', 'is not', null)
-        )
+          .$if(!!baseModel, (b) => b.where('mv.baseModel', '=', baseModel!))
+          .$if(!!access, (b) => b.where('mv.earlyAccessEndsAt', 'is not', null))
+          .$if(fee === 'set', (b) => b.where('mv.licensingFee', 'is not', null))
+          .$if(fee === 'off', (b) => b.where('mv.licensingFee', 'is', null))
       )
     );
 
-  const totalRow = await filtered.select((eb) => eb.fn.countAll().as('count')).executeTakeFirst();
+  const [totalRow, models, baseModelRows] = await Promise.all([
+    filtered.select((eb) => eb.fn.countAll().as('count')).executeTakeFirst(),
+    filtered
+      .select(['id', 'name', 'type', 'status'])
+      .orderBy(sort === 'name' ? 'name' : 'lastVersionAt', sort === 'name' ? 'asc' : 'desc')
+      .limit(perPage)
+      .offset((page - 1) * perPage)
+      .execute(),
+    // Distinct base models the creator actually has — the base-model filter options.
+    dbRead
+      .selectFrom('ModelVersion as mv')
+      .innerJoin('Model as m', 'm.id', 'mv.modelId')
+      .where('m.userId', '=', userId)
+      .where('m.deletedAt', 'is', null)
+      .select('mv.baseModel')
+      .distinct()
+      .orderBy('mv.baseModel', 'asc')
+      .execute(),
+  ]);
   const total = Number(totalRow?.count ?? 0);
-
-  const models = await filtered
-    .select(['id', 'name', 'type', 'status'])
-    .orderBy(sort === 'name' ? 'name' : 'lastVersionAt', sort === 'name' ? 'asc' : 'desc')
-    .limit(perPage)
-    .offset((page - 1) * perPage)
-    .execute();
+  const baseModels = baseModelRows.map((r) => r.baseModel).filter(Boolean);
 
   const pageCount = Math.max(1, Math.ceil(total / perPage));
-  if (models.length === 0) return { models: [], total, page, pageCount };
+  if (models.length === 0)
+    return { models: [], total, page, pageCount, baseModels, matchingVersionIds: [] };
 
   const versions = await dbRead
     .selectFrom('ModelVersion')
@@ -113,8 +128,35 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
       'in',
       models.map((m) => m.id)
     )
+    .$if(!!baseModel, (b) => b.where('baseModel', '=', baseModel!))
+    .$if(!!access, (b) => b.where('earlyAccessEndsAt', 'is not', null))
+    .$if(fee === 'set', (b) => b.where('licensingFee', 'is not', null))
+    .$if(fee === 'off', (b) => b.where('licensingFee', 'is', null))
     .orderBy('index', 'asc')
     .execute();
+
+  // Select-all set: every version matching the filter across ALL pages (bulk mode only — it can be large).
+  let matchingVersionIds: number[] = [];
+  if (query.withMatchingVersionIds) {
+    const idRows = await dbRead
+      .selectFrom('ModelVersion as mv')
+      .innerJoin('Model as m', 'm.id', 'mv.modelId')
+      .where('m.userId', '=', userId)
+      .where('m.deletedAt', 'is', null)
+      .$if(!!q, (b) => b.where('m.name', 'ilike', `%${q}%`))
+      .$if(status === 'published', (b) => b.where('m.status', '=', 'Published'))
+      .$if(status === 'draft', (b) => b.where('m.status', '=', 'Draft'))
+      .$if(!status || (status !== 'all' && status !== 'published' && status !== 'draft'), (b) =>
+        b.where('m.status', '!=', 'Draft')
+      )
+      .$if(!!baseModel, (b) => b.where('mv.baseModel', '=', baseModel!))
+      .$if(!!access, (b) => b.where('mv.earlyAccessEndsAt', 'is not', null))
+      .$if(fee === 'set', (b) => b.where('mv.licensingFee', 'is not', null))
+      .$if(fee === 'off', (b) => b.where('mv.licensingFee', 'is', null))
+      .select('mv.id')
+      .execute();
+    matchingVersionIds = idRows.map((r) => r.id);
+  }
 
   const byModel = new Map<number, CreatorModelVersion[]>();
   for (const v of versions) {
@@ -148,5 +190,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
     total,
     page,
     pageCount,
+    baseModels,
+    matchingVersionIds,
   };
 }

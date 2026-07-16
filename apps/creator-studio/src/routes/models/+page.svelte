@@ -23,6 +23,7 @@
     SheetDescription,
     SheetFooter,
   } from '@civitai/ui/components/ui/sheet/index.js';
+  import * as Popover from '@civitai/ui/components/ui/popover/index.js';
   import {
     MIN_DOWNLOAD_PRICE,
     MIN_GENERATION_PRICE,
@@ -71,6 +72,34 @@
   // "early access is on" and nothing else.
   const eaChipCls = 'border-green-5/30 bg-green-5/10 text-green-5';
 
+  // Version status as a distinct tag (M5) — green when Published, dim for Draft/other — so it reads as a badge
+  // rather than blending into the base-model text.
+  function statusBadgeCls(status: string): string {
+    return status === 'Published'
+      ? 'border-green-5/30 bg-green-5/10 text-green-5'
+      : 'border-dark-4 bg-dark-6 text-dark-3';
+  }
+
+  // Filter popover options (M3). Empty status = the default "hide drafts" view.
+  const statusOptions = [
+    { value: '', label: 'Active (hide drafts)' },
+    { value: 'published', label: 'Published only' },
+    { value: 'draft', label: 'Drafts only' },
+    { value: 'all', label: 'All statuses' },
+  ];
+  const feeOptions = [
+    { value: '', label: 'All fees' },
+    { value: 'set', label: 'Has a fee' },
+    { value: 'off', label: 'No fee' },
+  ];
+  // Count only non-default filters (an empty status is the default, so it doesn't count).
+  const activeFilterCount = $derived(
+    (data.query.status ? 1 : 0) +
+      (data.query.bm ? 1 : 0) +
+      (data.query.access ? 1 : 0) +
+      (data.query.fee ? 1 : 0)
+  );
+
   // --- URL-driven table state (search / fee filter / sort / pagination) ---
   function navigate(params: Record<string, string | null>) {
     const url = new URL(page.url);
@@ -86,6 +115,22 @@
     const q = String(raw ?? '').trim();
     if (q === (data.query.q ?? '')) return;
     navigate({ q: q || null, page: null });
+  }
+
+  // Windowed page numbers (M1): always the first + last page, plus a ±2 window around the current one, with 'gap'
+  // markers collapsed to an ellipsis. So a creator with many pages can jump anywhere, not just one at a time.
+  function pageNumbers(current: number, count: number): (number | 'gap')[] {
+    const keep = new Set<number>([1, count]);
+    for (let i = current - 2; i <= current + 2; i++) if (i >= 1 && i <= count) keep.add(i);
+    const nums = [...keep].sort((a, b) => a - b);
+    const out: (number | 'gap')[] = [];
+    let prev = 0;
+    for (const n of nums) {
+      if (prev && n - prev > 1) out.push('gap');
+      out.push(n);
+      prev = n;
+    }
+    return out;
   }
 
   // --- Bulk mode ---
@@ -143,7 +188,9 @@
     }
   };
 
-  const filterActive = $derived(!!data.query.q || !!data.query.fee);
+  const filterActive = $derived(
+    !!data.query.q || !!data.query.fee || !!data.query.bm || !!data.query.status || data.query.access
+  );
 
   // --- Early/paid-access editor (per-version drawer) ---
   let editing = $state<CreatorModelVersion | null>(null);
@@ -226,19 +273,78 @@
       <IconSearch size={16} />
     </button>
   </form>
-  <div class="flex items-center gap-1 rounded border border-dark-4 bg-dark-7 pl-2" title="Filter">
-    <IconFilter size={16} class="text-dark-3" />
-    <select
-      aria-label="Filter by fee"
-      value={data.query.fee}
-      onchange={(e) => navigate({ fee: e.currentTarget.value || null, page: null })}
-      class="bg-transparent py-1.5 pr-2 text-sm text-white outline-none [&>option]:bg-dark-7 [&>option]:text-white"
+  <Popover.Root>
+    <Popover.Trigger
+      class="flex items-center gap-1.5 rounded border border-dark-4 bg-dark-7 px-2.5 py-1.5 text-sm text-white hover:border-dark-3"
     >
-      <option value="">All fees</option>
-      <option value="set">Has a fee</option>
-      <option value="off">No fee</option>
-    </select>
-  </div>
+      <IconFilter size={16} class="text-dark-3" />
+      Filters
+      {#if activeFilterCount > 0}
+        <span class="rounded-full bg-blue-8 px-1.5 text-xs font-medium text-white">{activeFilterCount}</span>
+      {/if}
+    </Popover.Trigger>
+    <Popover.Content class="w-64 space-y-4 border-dark-4 bg-dark-7 p-4 text-sm text-white">
+      <fieldset class="space-y-1.5">
+        <legend class="mb-1 text-xs font-medium uppercase tracking-wide text-dark-3">Status</legend>
+        {#each statusOptions as opt (opt.value)}
+          <label class="flex cursor-pointer items-center gap-2">
+            <input
+              type="radio"
+              name="status"
+              checked={(data.query.status ?? '') === opt.value}
+              onchange={() => navigate({ status: opt.value || null, page: null })}
+            />
+            {opt.label}
+          </label>
+        {/each}
+      </fieldset>
+      <div class="space-y-1">
+        <label for="filter-bm" class="text-xs font-medium uppercase tracking-wide text-dark-3">Base model</label>
+        <select
+          id="filter-bm"
+          value={data.query.bm}
+          onchange={(e) => navigate({ bm: e.currentTarget.value || null, page: null })}
+          class="w-full rounded border border-dark-4 bg-dark-6 px-2 py-1.5 text-sm text-white [&>option]:bg-dark-7"
+        >
+          <option value="">All base models</option>
+          {#each data.baseModels as bm (bm)}
+            <option value={bm}>{bm}</option>
+          {/each}
+        </select>
+      </div>
+      <label class="flex cursor-pointer items-center gap-2">
+        <input
+          type="checkbox"
+          checked={data.query.access}
+          onchange={(e) => navigate({ access: e.currentTarget.checked ? '1' : null, page: null })}
+        />
+        Has early / paid access
+      </label>
+      <fieldset class="space-y-1.5">
+        <legend class="mb-1 text-xs font-medium uppercase tracking-wide text-dark-3">Licensing fee</legend>
+        {#each feeOptions as opt (opt.value)}
+          <label class="flex cursor-pointer items-center gap-2">
+            <input
+              type="radio"
+              name="fee"
+              checked={(data.query.fee ?? '') === opt.value}
+              onchange={() => navigate({ fee: opt.value || null, page: null })}
+            />
+            {opt.label}
+          </label>
+        {/each}
+      </fieldset>
+      {#if activeFilterCount > 0}
+        <button
+          type="button"
+          onclick={() => navigate({ status: null, bm: null, access: null, fee: null, page: null })}
+          class="text-xs text-blue-4 hover:underline"
+        >
+          Clear filters
+        </button>
+      {/if}
+    </Popover.Content>
+  </Popover.Root>
   <div class="flex items-center gap-1 rounded border border-dark-4 bg-dark-7 pl-2" title="Sort">
     <IconArrowsSort size={16} class="text-dark-3" />
     <select
@@ -251,20 +357,17 @@
       <option value="name">Name</option>
     </select>
   </div>
-  <span class="ml-auto text-xs text-dark-3">{data.total} model{data.total === 1 ? '' : 's'}</span>
-</div>
-
-<!-- Bulk actions toolbar — entry points for bulk operations (room for more actions here later). -->
-{#if data.canSetFee && data.total > 0 && !bulkMode}
-  <div class="mb-4 flex flex-wrap items-center gap-2">
+  {#if data.canSetFee && data.total > 0 && !bulkMode}
     <a
       href="/models?mode=bulk"
-      class="rounded-md border border-dark-4 bg-dark-6 px-3 py-1.5 text-sm text-white hover:border-dark-3"
+      class="ml-auto rounded-md border border-dark-4 bg-dark-6 px-3 py-1.5 text-sm text-white hover:border-dark-3"
     >
       Bulk edit fees
     </a>
-  </div>
-{/if}
+  {/if}
+</div>
+
+<p class="mb-4 text-xs text-dark-3">{data.total} model{data.total === 1 ? '' : 's'}</p>
 
 {#if bulkMode}
   <div
@@ -273,6 +376,25 @@
     <span class="text-sm font-medium text-white">
       {selected.size > 0 ? `${selected.size} selected` : 'Select versions to edit'}
     </span>
+    {#if data.matchingVersionIds.length > 0}
+      <button
+        type="button"
+        onclick={() => (selected = new Set(data.matchingVersionIds))}
+        title="Select every version matching the current filters (all pages)"
+        class="rounded border border-dark-4 px-2 py-1 text-xs text-white hover:border-dark-3"
+      >
+        Select all {data.matchingVersionIds.length}
+      </button>
+    {/if}
+    {#if selected.size > 0}
+      <button
+        type="button"
+        onclick={() => (selected = new Set())}
+        class="rounded border border-dark-4 px-2 py-1 text-xs text-white hover:border-dark-3"
+      >
+        Clear
+      </button>
+    {/if}
     <form bind:this={bulkForm} method="POST" action="?/bulkSetFee" use:enhance={bulkEnhance} class="contents">
       <input type="hidden" name="versionIds" value={[...selected].join(',')} />
       <NumberInput
@@ -318,7 +440,10 @@
 {#if data.models.length === 0}
   <div class="placeholder">
     {#if filterActive}
-      No models match your filters. <button class="underline" onclick={() => navigate({ q: null, fee: null, page: null })}>Clear</button>
+      No models match your filters. <button
+        class="underline"
+        onclick={() => navigate({ q: null, fee: null, bm: null, status: null, access: null, page: null })}
+      >Clear</button>
     {:else}
       You have no models yet. <a href="https://civitai.com/models/create">Upload one on civitai.com</a> to get started.
     {/if}
@@ -378,9 +503,20 @@
                         aria-label="Select {version.name}"
                         class="size-4 shrink-0"
                       />
-                      <span class="flex min-w-0 flex-1 flex-col">
+                      <span class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                         <span class="truncate text-sm font-medium text-white">{version.name}</span>
-                        <span class="truncate text-xs text-dark-2">{version.baseModel} · {version.status}</span>
+                        <span
+                          class="shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide {statusBadgeCls(
+                            version.status
+                          )}"
+                        >
+                          {version.status}
+                        </span>
+                        <span
+                          class="shrink-0 rounded border border-dark-4 bg-dark-6 px-1.5 py-0.5 text-[10px] font-medium text-dark-2"
+                        >
+                          {version.baseModel}
+                        </span>
                       </span>
                       <span
                         class="shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium {chip.cls}"
@@ -394,9 +530,20 @@
                       onclick={() => openEditor(version)}
                       class="flex w-full cursor-pointer items-center gap-3 px-5 py-3 text-left hover:bg-dark-6/40"
                     >
-                      <span class="flex min-w-0 flex-1 flex-col">
+                      <span class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                         <span class="truncate text-sm font-medium text-white">{version.name}</span>
-                        <span class="truncate text-xs text-dark-2">{version.baseModel} · {version.status}</span>
+                        <span
+                          class="shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide {statusBadgeCls(
+                            version.status
+                          )}"
+                        >
+                          {version.status}
+                        </span>
+                        <span
+                          class="shrink-0 rounded border border-dark-4 bg-dark-6 px-1.5 py-0.5 text-[10px] font-medium text-dark-2"
+                        >
+                          {version.baseModel}
+                        </span>
                       </span>
                       <span class="flex shrink-0 items-center gap-2">
                         {#if version.hasEarlyAccess}
@@ -424,23 +571,53 @@
   </div>
 
   {#if data.pageCount > 1}
-    <div class="mt-6 flex items-center justify-center gap-4 text-sm">
+    {@const btn =
+      'flex h-8 min-w-8 items-center justify-center rounded border border-dark-4 px-2 text-white hover:border-dark-3 disabled:cursor-not-allowed disabled:opacity-40'}
+    <nav class="mt-6 flex items-center justify-center gap-1 text-sm" aria-label="Pagination">
+      <button disabled={data.page <= 1} onclick={() => navigate({ page: '1' })} class={btn} aria-label="First page">
+        «
+      </button>
       <button
         disabled={data.page <= 1}
         onclick={() => navigate({ page: String(data.page - 1) })}
-        class="rounded border border-dark-4 px-3 py-1 text-white disabled:opacity-40 hover:border-dark-3"
+        class={btn}
+        aria-label="Previous page"
       >
-        Previous
+        ‹
       </button>
-      <span class="text-dark-2">Page {data.page} of {data.pageCount}</span>
+      {#each pageNumbers(data.page, data.pageCount) as p, i (p === 'gap' ? `gap-${i}` : p)}
+        {#if p === 'gap'}
+          <span class="px-1 text-dark-3">…</span>
+        {:else}
+          <button
+            onclick={() => navigate({ page: String(p) })}
+            aria-label="Page {p}"
+            aria-current={p === data.page ? 'page' : undefined}
+            class="flex h-8 min-w-8 items-center justify-center rounded border px-2 {p === data.page
+              ? 'border-blue-8 bg-blue-8 font-medium text-white'
+              : 'border-dark-4 text-white hover:border-dark-3'}"
+          >
+            {p}
+          </button>
+        {/if}
+      {/each}
       <button
         disabled={data.page >= data.pageCount}
         onclick={() => navigate({ page: String(data.page + 1) })}
-        class="rounded border border-dark-4 px-3 py-1 text-white disabled:opacity-40 hover:border-dark-3"
+        class={btn}
+        aria-label="Next page"
       >
-        Next
+        ›
       </button>
-    </div>
+      <button
+        disabled={data.page >= data.pageCount}
+        onclick={() => navigate({ page: String(data.pageCount) })}
+        class={btn}
+        aria-label="Last page"
+      >
+        »
+      </button>
+    </nav>
   {/if}
 {/if}
 

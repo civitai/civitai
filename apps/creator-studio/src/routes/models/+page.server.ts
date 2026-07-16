@@ -32,6 +32,9 @@ const clearFlagSchema = z.preprocess((v) => v === 'on' || v === 'true', z.boolea
 const modelsQuerySchema = z.object({
   q: z.string().optional(),
   fee: z.enum(['set', 'off']).optional().catch(undefined),
+  bm: z.string().optional(),
+  status: z.enum(['all', 'published', 'draft']).optional().catch(undefined),
+  access: z.enum(['1']).optional().catch(undefined),
   sort: z.enum(['recent', 'name']).catch('recent'),
   page: z.coerce.number().int().min(1).catch(1),
 });
@@ -40,23 +43,38 @@ const firstError = (e: z.ZodError) => e.issues[0]?.message ?? 'Invalid input.';
 
 export const load: PageServerLoad = async ({ locals, parent, url }) => {
   const { membership } = await parent();
-  const {
-    q: rawQ,
-    fee,
-    sort,
-    page,
-  } = modelsQuerySchema.parse(Object.fromEntries(url.searchParams));
-  const q = rawQ?.trim() || undefined;
+  const parsed = modelsQuerySchema.parse(Object.fromEntries(url.searchParams));
+  const q = parsed.q?.trim() || undefined;
+  const baseModel = parsed.bm?.trim() || undefined;
+  const access = parsed.access === '1';
+  const bulkMode = url.searchParams.get('mode') === 'bulk';
 
   const [result, modelsScore] = await Promise.all([
-    getCreatorModels({ userId: locals.user.id, q, fee, sort, page }),
+    getCreatorModels({
+      userId: locals.user.id,
+      q,
+      fee: parsed.fee,
+      baseModel,
+      status: parsed.status,
+      access,
+      sort: parsed.sort,
+      page: parsed.page,
+      withMatchingVersionIds: bulkMode,
+    }),
     getModelsScore(locals.user.id),
   ]);
   return {
     ...result,
     canSetFee: canSetLicensingFee(membership),
     maxEarlyAccessDays: earlyAccessDaysForScore(modelsScore),
-    query: { q: q ?? '', fee: fee ?? '', sort },
+    query: {
+      q: q ?? '',
+      fee: parsed.fee ?? '',
+      bm: baseModel ?? '',
+      status: parsed.status ?? '',
+      access,
+      sort: parsed.sort,
+    },
   };
 };
 
