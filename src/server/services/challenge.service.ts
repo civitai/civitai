@@ -1430,8 +1430,8 @@ export async function upsertUserChallenge({
   // only covers text.
   let coverImageId: number;
   if (coverImage.id != null) {
-    // Moderators may edit challenges whose cover belongs to the creator, so ownership is
-    // only enforced for regular users.
+    // Regular users must own the reused image. Moderators skip the ownership check entirely
+    // (trusted role — typically re-saving the creator's existing cover during a mod edit).
     const ownedImage = await dbRead.image.findFirst({
       where: isModerator ? { id: coverImage.id } : { id: coverImage.id, userId },
       select: { id: true },
@@ -1545,6 +1545,13 @@ export async function upsertUserChallenge({
         themeElements: parseChallengeMetadata(existing.metadata).themeElements,
       });
 
+    // Write themeElements on every edit — including clears. A dropped clear would make the
+    // reset scan resubmit byte-identical text, hit the contentHash dedup, and strand the
+    // challenge at Pending until the activation job voids it (the #3160 deadlock).
+    const nextMetadata = { ...parseChallengeMetadata(existing.metadata) };
+    if (themeEls) nextMetadata.themeElements = themeEls;
+    else delete nextMetadata.themeElements;
+
     const updated = await dbWrite.$transaction(async (tx) => {
       // Conditional on status IN THE WRITE: the Scheduled/entry-count checks above ran on the
       // read replica, so the hourly activation job (or a racing entry charge) could have flipped
@@ -1566,9 +1573,7 @@ export async function upsertUserChallenge({
           }),
           // Recompute the visibility window from the (possibly updated) start date.
           visibleAt: getUserChallengeVisibleAt(rest.startsAt),
-          ...(themeEls && {
-            metadata: { ...parseChallengeMetadata(existing.metadata), themeElements: themeEls },
-          }),
+          metadata: nextMetadata,
         },
       });
       if (count === 0)

@@ -209,6 +209,43 @@ describe('upsertUserChallenge (edit branch) — ingestion reset scoped to modera
     expect(data.ingestion).toBe('Pending');
     expect(mockSubmitTextModeration).toHaveBeenCalledTimes(1);
   });
+
+  it('persists clearing themeElements so the rescan content actually changes', async () => {
+    // If the clear were dropped (old `...(themeEls && ...)` guard), the reset scan would submit
+    // byte-identical text, hit the contentHash dedup, and the challenge would sit Pending until
+    // voided — the exact deadlock this file's header describes.
+    mockDbRead.challenge.findUnique.mockResolvedValue({
+      ...existingChallenge,
+      metadata: { themeElements: ['cute cat', 'silly hat'] },
+    });
+
+    await upsertUserChallenge({
+      ...baseEditInput,
+      themeElements: undefined,
+    } as never);
+
+    expect(mockTx.challenge.updateMany).toHaveBeenCalledTimes(1);
+    const { data } = mockTx.challenge.updateMany.mock.calls[0][0];
+    expect(data.metadata).not.toHaveProperty('themeElements');
+    expect(data.ingestion).toBe('Pending');
+    expect(mockSubmitTextModeration).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not reset the scan when stored themeElements are resubmitted unchanged', async () => {
+    mockDbRead.challenge.findUnique.mockResolvedValue({
+      ...existingChallenge,
+      metadata: { themeElements: ['cute cat', 'silly hat'] },
+    });
+
+    await upsertUserChallenge({
+      ...baseEditInput,
+      themeElements: ['cute cat', 'silly hat'],
+    } as never);
+
+    const { data } = mockTx.challenge.updateMany.mock.calls[0][0];
+    expect(data).not.toHaveProperty('ingestion');
+    expect(mockSubmitTextModeration).not.toHaveBeenCalled();
+  });
 });
 
 describe('upsertUserChallenge (edit branch) — moderator edit access', () => {
