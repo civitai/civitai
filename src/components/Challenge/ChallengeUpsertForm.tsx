@@ -819,7 +819,8 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                 <Alert icon={<IconInfoCircle size={16} />} color="blue">
                   Entry fees &amp; prizes use <b>{buzzLabel} Buzz</b>. Your challenge is funded by
                   entry fees — each entry pays the entry fee; {CHALLENGE_ENTRY_HOUSE_CUT} Buzz per
-                  entry covers AI judging and the rest grows the prize pool.
+                  entry covers AI judging and the rest grows the prize pool. Entry fees are
+                  non-refundable once paid.
                 </Alert>
                 <SimpleGrid cols={{ base: 1, sm: 2 }}>
                   <InputNumber
@@ -832,7 +833,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                     step={10}
                     allowNegative={false}
                     clampBehavior="none"
-                    description={`Minimum ${CHALLENGE_MIN_ENTRY_FEE} Buzz. ${perEntryToPool} Buzz of each entry goes to the prize pool. Entry fees are non-refundable once paid.`}
+                    description={`Min ${CHALLENGE_MIN_ENTRY_FEE} Buzz. ${perEntryToPool} Buzz of each entry goes to the prize pool.`}
                     withAsterisk
                     disabled={isTerminal}
                   />
