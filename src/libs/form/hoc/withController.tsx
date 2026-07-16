@@ -23,11 +23,13 @@ export function withController<
     fieldState,
     formState,
     props,
+    form,
   }: {
     field: ControllerRenderProps<TFieldValues, TName>;
     fieldState: ControllerFieldState;
     formState: UseFormStateReturn<TFieldValues>;
     props: TComponentProps;
+    form: Omit<ReturnType<typeof useFormContext<TFieldValues>>, 'control'>;
   }) => Partial<TComponentProps>
 ) {
   const ControlledInput = forwardRef<HTMLElement, TComponentProps & { name: TName }>(
@@ -38,7 +40,7 @@ export function withController<
           control={control}
           name={name}
           render={({ field, fieldState, formState }) => {
-            const mappedProps = mapper?.({ field, fieldState, formState, props: props as any }); //eslint-disable-line
+            const mappedProps = mapper?.({ field, fieldState, formState, props: props as any, form }); //eslint-disable-line
 
             const handleChange = (...values: any) => {
               //eslint-disable-line

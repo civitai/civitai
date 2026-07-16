@@ -101,8 +101,8 @@ export function useDeleteUserChallenge() {
   const utils = trpc.useUtils();
 
   const deleteUserChallengeMutation = trpc.challenge.deleteUserChallenge.useMutation({
-    async onSuccess() {
-      await utils.challenge.getInfinite.invalidate();
+    onSuccess() {
+      void utils.challenge.getInfinite.invalidate();
       showSuccessNotification({
         message: 'Challenge deleted — your escrowed Buzz has been refunded.',
       });

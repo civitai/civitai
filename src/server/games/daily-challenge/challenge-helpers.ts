@@ -38,12 +38,18 @@ export { computeDynamicPool, distributePrizes } from './challenge-pool';
 export function buildChallengeModerationText(challenge: {
   title: string | null;
   theme: string | null;
+  themeElements?: string[] | null;
   description: string | null;
   invitation: string | null;
 }) {
+  const themeElementsLine = challenge.themeElements?.length
+    ? challenge.themeElements.join(', ')
+    : null;
+
   return [
     challenge.title,
     challenge.theme,
+    themeElementsLine,
     challenge.description ? removeTags(challenge.description) : null,
     challenge.invitation,
   ]

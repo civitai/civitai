@@ -17,6 +17,7 @@ const {
       delete: vi.fn().mockResolvedValue(undefined),
     },
     collection: { delete: vi.fn().mockResolvedValue(undefined) },
+    $transaction: vi.fn(),
   },
   mockRefundUserChallengeFunds: vi.fn().mockResolvedValue({ refundedEntries: 0 }),
   mockQueueUpdate: vi.fn(),
@@ -52,6 +53,9 @@ describe('deleteUserChallenge', () => {
     vi.clearAllMocks();
     mockDbRead.collectionItem.count.mockResolvedValue(0);
     mockDbWrite.challenge.updateMany.mockResolvedValue({ count: 1 });
+    mockDbWrite.$transaction.mockImplementation(async (fn: any) =>
+      fn({ challenge: mockDbWrite.challenge, collection: mockDbWrite.collection })
+    );
   });
 
   it('owner + Scheduled + 0 entries: claims, refunds and deletes', async () => {
@@ -122,6 +126,9 @@ describe('deleteChallenge (direct)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockDbWrite.challenge.updateMany.mockResolvedValue({ count: 1 });
+    mockDbWrite.$transaction.mockImplementation(async (fn: any) =>
+      fn({ challenge: mockDbWrite.challenge, collection: mockDbWrite.collection })
+    );
   });
 
   it('already-Cancelled User challenge: re-refunds idempotently without re-claiming, then deletes', async () => {
@@ -133,6 +140,14 @@ describe('deleteChallenge (direct)', () => {
     expect(mockDbWrite.challenge.updateMany).not.toHaveBeenCalled();
     expect(mockRefundUserChallengeFunds).toHaveBeenCalledWith(1);
     expect(mockDbWrite.challenge.delete).toHaveBeenCalledWith({ where: { id: 1 } });
+  });
+
+  it('fails atomically when collection deletion fails', async () => {
+    mockDbWrite.challenge.findUnique.mockResolvedValue(makeChallenge());
+    mockDbWrite.collection.delete.mockRejectedValueOnce(new Error('collection delete failed'));
+
+    await expect(deleteChallenge(1)).rejects.toThrow(/collection delete failed/i);
+    expect(mockQueueUpdate).not.toHaveBeenCalled();
   });
 
   it('blocks deleting an Active challenge', async () => {

@@ -941,8 +941,14 @@ export async function getChallengeDetail(
       return null;
   }
 
-  // Domain-currency gate — direct-URL parity with the feed filter; user-scoped, creator exempt.
+  // Domain-currency gate — direct-URL parity with the feed filter. Like the other gates above,
+  // moderators and creators can preview unpublished/hidden challenges regardless of domain.
+  // On the green site a mismatched (yellow) challenge is returned anyway: the detail page's
+  // <Gated> shows the civitai.red redirect card instead of a bare 404. The red side keeps
+  // hiding green challenges — there's no equivalent redirect surface pointing back to green.
   if (
+    !isGreen &&
+    !canPreviewUnpublished &&
     isChallengeHiddenByDomainCurrency(
       {
         source: challenge.source,
@@ -1350,8 +1356,13 @@ export async function upsertChallenge({
 export async function upsertUserChallenge({
   userId,
   buzzType,
+  isModerator,
   ...input
-}: UserChallengeUpsertInput & { userId: number; buzzType: ChallengeBuzzType }) {
+}: UserChallengeUpsertInput & {
+  userId: number;
+  buzzType: ChallengeBuzzType;
+  isModerator?: boolean;
+}) {
   const {
     id,
     coverImage,
@@ -1419,8 +1430,10 @@ export async function upsertUserChallenge({
   // only covers text.
   let coverImageId: number;
   if (coverImage.id != null) {
+    // Regular users must own the reused image. Moderators skip the ownership check entirely
+    // (trusted role — typically re-saving the creator's existing cover during a mod edit).
     const ownedImage = await dbRead.image.findFirst({
-      where: { id: coverImage.id, userId },
+      where: isModerator ? { id: coverImage.id } : { id: coverImage.id, userId },
       select: { id: true },
     });
     if (!ownedImage)
@@ -1480,7 +1493,7 @@ export async function upsertUserChallenge({
     if (!existing) throw throwNotFoundError('Challenge not found');
     if (existing.source !== ChallengeSource.User)
       throw new TRPCError({ code: 'FORBIDDEN', message: 'This challenge cannot be edited here.' });
-    if (existing.createdById !== userId)
+    if (existing.createdById !== userId && !isModerator)
       throw new TRPCError({ code: 'FORBIDDEN', message: 'You can only edit your own challenges.' });
     // Text/config locks once live: only Scheduled challenges with no entries yet are editable.
     if (existing.status !== ChallengeStatus.Scheduled)
@@ -1524,7 +1537,20 @@ export async function upsertUserChallenge({
     // EntityModeration row, so no webhook ever flips ingestion back to Scanned and the challenge
     // sits hidden until the activation job voids it.
     const moderatedTextChanged =
-      buildChallengeModerationText(commonData) !== buildChallengeModerationText(existing);
+      // themeElements lives in metadata (no Challenge column), so it rides along only for the
+      // moderation-text comparison — never in the commonData row write.
+      buildChallengeModerationText({ ...commonData, themeElements: themeEls ?? null }) !==
+      buildChallengeModerationText({
+        ...existing,
+        themeElements: parseChallengeMetadata(existing.metadata).themeElements,
+      });
+
+    // Write themeElements on every edit — including clears. A dropped clear would make the
+    // reset scan resubmit byte-identical text, hit the contentHash dedup, and strand the
+    // challenge at Pending until the activation job voids it (the #3160 deadlock).
+    const nextMetadata = { ...parseChallengeMetadata(existing.metadata) };
+    if (themeEls) nextMetadata.themeElements = themeEls;
+    else delete nextMetadata.themeElements;
 
     const updated = await dbWrite.$transaction(async (tx) => {
       // Conditional on status IN THE WRITE: the Scheduled/entry-count checks above ran on the
@@ -1547,9 +1573,7 @@ export async function upsertUserChallenge({
           }),
           // Recompute the visibility window from the (possibly updated) start date.
           visibleAt: getUserChallengeVisibleAt(rest.startsAt),
-          ...(themeEls && {
-            metadata: { ...parseChallengeMetadata(existing.metadata), themeElements: themeEls },
-          }),
+          metadata: nextMetadata,
         },
       });
       if (count === 0)
@@ -1679,7 +1703,7 @@ export async function upsertUserChallenge({
 export async function scanUserChallenge(challengeId: number): Promise<void> {
   const challenge = await dbRead.challenge.findUnique({
     where: { id: challengeId },
-    select: { title: true, description: true, theme: true, invitation: true },
+    select: { title: true, description: true, theme: true, invitation: true, metadata: true },
   });
   if (!challenge) return;
 
@@ -1687,7 +1711,10 @@ export async function scanUserChallenge(challengeId: number): Promise<void> {
     await submitTextModeration({
       entityType: 'Challenge',
       entityId: challengeId,
-      content: buildChallengeModerationText(challenge),
+      content: buildChallengeModerationText({
+        ...challenge,
+        themeElements: parseChallengeMetadata(challenge.metadata).themeElements,
+      }),
       labels: ['nsfw'],
       priority: 'low',
     });
@@ -1770,13 +1797,19 @@ export async function deleteChallenge(id: number) {
 
   const collectionId = challenge.collectionId;
 
-  // Delete challenge first (cascades to ChallengeWinner)
-  await dbWrite.challenge.delete({ where: { id } });
+  // Keep challenge + collection deletion in one transaction so a failed collection delete
+  // cannot leave an orphaned contest collection after the challenge row is removed.
+  await dbWrite.$transaction(async (tx) => {
+    // Delete challenge first (cascades to ChallengeWinner)
+    await tx.challenge.delete({ where: { id } });
 
-  // Delete the associated collection and all its data
+    // Delete the associated collection and all its data
+    if (collectionId) {
+      await tx.collection.delete({ where: { id: collectionId } });
+    }
+  });
+
   if (collectionId) {
-    await dbWrite.collection.delete({ where: { id: collectionId } });
-
     // Remove from search index
     await collectionsSearchIndex.queueUpdate([
       { id: collectionId, action: SearchIndexUpdateQueueAction.Delete },
@@ -1821,14 +1854,25 @@ export async function deleteUserChallenge({ id, userId }: { id: number; userId: 
 
 // User-safe fetch for the edit form. getChallengeForEdit is moderator-only; this guards ownership
 // first, then returns the same shape. User challenges have judgingPrompt = null, so nothing
-// moderator-sensitive is exposed.
-export async function getUserChallengeForEdit({ id, userId }: { id: number; userId: number }) {
+// moderator-sensitive is exposed. Moderators bypass ownership (they manage user challenges through
+// this same form); non-User challenges stay on the moderator edit page regardless.
+export async function getUserChallengeForEdit({
+  id,
+  userId,
+  isModerator,
+}: {
+  id: number;
+  userId: number;
+  isModerator?: boolean;
+}) {
   const existing = await dbRead.challenge.findUnique({
     where: { id },
     select: { source: true, createdById: true, status: true },
   });
   if (!existing) throw throwNotFoundError('Challenge not found');
-  if (existing.source !== ChallengeSource.User || existing.createdById !== userId)
+  if (existing.source !== ChallengeSource.User)
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'This challenge cannot be edited here.' });
+  if (existing.createdById !== userId && !isModerator)
     throw new TRPCError({ code: 'FORBIDDEN', message: 'You can only edit your own challenges.' });
   if (existing.status !== ChallengeStatus.Scheduled)
     throw new TRPCError({

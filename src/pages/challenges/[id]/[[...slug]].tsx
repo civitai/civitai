@@ -356,6 +356,16 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
       // challenge whose declared rating is SFW but whose cover scanned NSFW still shows the
       // MatureContentRedirect on the green (SFW) site instead of leaking the cover.
       contentNsfwLevel={challenge.allowedNsfwLevel | (challenge.coverImage?.nsfwLevel ?? 0)}
+      // Yellow user challenges live on civitai.red regardless of rating — the server returns
+      // them on green so this renders the redirect card instead of a 404 (inert on red).
+      // Owner/mods keep detail access on green for SFW yellow challenges, mirroring the
+      // server-side preview exemption; NSFW ones still redirect via contentNsfwLevel.
+      nsfw={
+        challenge.source === ChallengeSource.User &&
+        challenge.buzzType === 'yellow' &&
+        !isOwner &&
+        !currentUser?.isModerator
+      }
       bypassRating={isOwner || (currentUser?.isModerator ?? false)}
       meta={{
         title: `${challenge.title} | Civitai Challenges`,
@@ -392,7 +402,13 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                         <Menu.Item
                           leftSection={<IconPencil size={14} stroke={1.5} />}
                           component={Link}
-                          href={`/moderator/challenges/${challenge.id}/edit`}
+                          // User challenges use the user form (entry fee / judging categories);
+                          // the moderator form's prize model doesn't apply to them.
+                          href={
+                            challenge.source === ChallengeSource.User
+                              ? `/challenges/${challenge.id}/edit`
+                              : `/moderator/challenges/${challenge.id}/edit`
+                          }
                         >
                           Edit Challenge
                         </Menu.Item>

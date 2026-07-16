@@ -93,9 +93,9 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
         fixedDecimalScale={isCurrency}
         onChange={handleChange}
         value={parsedValue}
-        min={min ? (isCurrency ? min / 100 : min) : undefined}
-        max={max ? (isCurrency ? max / 100 : max) : undefined}
-        step={step ? (isCurrency ? step / 100 : step) : undefined}
+        min={min != null ? (isCurrency ? min / 100 : min) : undefined}
+        max={max != null ? (isCurrency ? max / 100 : max) : undefined}
+        step={step != null ? (isCurrency ? step / 100 : step) : undefined}
         {...props}
       />
     );
