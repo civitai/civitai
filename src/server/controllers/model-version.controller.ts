@@ -510,7 +510,12 @@ export const upsertModelVersionHandler = async ({
 
     await dataForModelsCache.refresh(version.modelId);
 
-    return version;
+    // The service returns a full Prisma row; devalue (TRPC_WRITE_DEVALUE pools)
+    // throws on a raw `Decimal`, so convert before it hits the wire.
+    return {
+      ...version,
+      licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -535,7 +540,11 @@ export const deleteModelVersionHandler = async ({
 
     await dataForModelsCache.refresh(version.modelId);
 
-    return version;
+    // `deleteVersionById` returns the full deleted row — same Decimal hazard as upsert above.
+    return {
+      ...version,
+      licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
