@@ -634,7 +634,8 @@ export const appListingsRouter = router({
     }),
 
   /**
-   * MOD: reject a pending off-site request (PR-b). Requires `rejectionReason` ≥10
+   * MOD: reject a pending off-site request (PR-b). Requires `rejectionReason`
+   * ≥`OFFSITE_REJECTION_REASON_MIN` (the shared `OFFSITE_MOD_REASON_MIN`, 3)
    * chars; in ONE tx flips the request→rejected + sets `reviewedBy*` and DELETES
    * the draft listing (status-guarded — releases the slug, never removes an
    * approved listing). Failure modes are mapped by `mapOffsiteError` (typed

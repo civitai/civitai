@@ -18,6 +18,7 @@ import {
   Text,
   Textarea,
   ThemeIcon,
+  Tooltip,
 } from '@mantine/core';
 import {
   IconAlertTriangle,
@@ -492,41 +493,60 @@ export function OffsiteReviewModal({
         )}
 
         {actionMode === 'reject' ? (
-          <Stack gap="xs">
-            <Text size="sm" fw={600}>
-              Rejection reason
-            </Text>
-            <Textarea
-              autosize
-              minRows={3}
-              maxRows={10}
-              placeholder="Explain what needs to change (≥10 chars, shown to the author)."
-              value={rejectionReason}
-              onChange={(e) => setRejectionReason(e.currentTarget.value)}
-              disabled={busy}
-              data-testid="apps-offsite-reject-reason"
-            />
-            <Group justify="flex-end" gap="xs">
-              <Button variant="default" onClick={() => setActionMode('view')} disabled={busy}>
-                Cancel
-              </Button>
-              <Button
-                color="red"
-                leftSection={<IconX size={14} />}
-                onClick={() =>
-                  rejectMut.mutate({
-                    publishRequestId: request.id,
-                    rejectionReason: rejectionReason.trim(),
-                  })
-                }
-                disabled={busy || rejectionReason.trim().length < 10}
-                loading={rejectMut.isPending}
-                data-testid="apps-offsite-reject-confirm"
-              >
-                Reject
-              </Button>
-            </Group>
-          </Stack>
+          (() => {
+            const reasonLen = rejectionReason.trim().length;
+            const reasonTooShort = reasonLen < OFFSITE_MOD_REASON_MIN;
+            const rejectDisabled = busy || reasonTooShort;
+            return (
+              <Stack gap="xs">
+                <Text size="sm" fw={600}>
+                  Rejection reason
+                </Text>
+                <Textarea
+                  autosize
+                  minRows={3}
+                  maxRows={10}
+                  placeholder={`Explain what needs to change (≥${OFFSITE_MOD_REASON_MIN} chars, shown to the author).`}
+                  description={`${reasonLen}/${OFFSITE_MOD_REASON_MIN} characters minimum`}
+                  error={
+                    reasonTooShort && reasonLen > 0
+                      ? `Enter at least ${OFFSITE_MOD_REASON_MIN} characters.`
+                      : undefined
+                  }
+                  value={rejectionReason}
+                  onChange={(e) => setRejectionReason(e.currentTarget.value)}
+                  disabled={busy}
+                  data-testid="apps-offsite-reject-reason"
+                />
+                <Group justify="flex-end" gap="xs">
+                  <Button variant="default" onClick={() => setActionMode('view')} disabled={busy}>
+                    Cancel
+                  </Button>
+                  <Tooltip
+                    label={`Enter a reason — at least ${OFFSITE_MOD_REASON_MIN} characters.`}
+                    disabled={!reasonTooShort}
+                    withArrow
+                  >
+                    <Button
+                      color="red"
+                      leftSection={<IconX size={14} />}
+                      onClick={() =>
+                        rejectMut.mutate({
+                          publishRequestId: request.id,
+                          rejectionReason: rejectionReason.trim(),
+                        })
+                      }
+                      disabled={rejectDisabled}
+                      loading={rejectMut.isPending}
+                      data-testid="apps-offsite-reject-confirm"
+                    >
+                      Reject
+                    </Button>
+                  </Tooltip>
+                </Group>
+              </Stack>
+            );
+          })()
         ) : actionMode === 'approve' ? (
           <Stack gap="xs">
             <Select
