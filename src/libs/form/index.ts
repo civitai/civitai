@@ -40,8 +40,11 @@ export type { FormProps } from '~/libs/form/components/Form';
 export { useForm } from './hooks/useForm';
 
 export const InputText = withController(TextInputWrapper);
-export const InputNumber = withController(NumberInputWrapper, ({ field }) => ({
-  value: field.value,
+export const InputNumber = withController(NumberInputWrapper, ({ field, form }) => ({
+  // RHF's useController substitutes the field's defaultValue whenever the stored value is
+  // undefined, which resurrects the old value in the UI right after the user clears the input.
+  // getValues() reads the raw store without that substitution, so a cleared field stays empty.
+  value: form.getValues(field.name),
 }));
 export const InputTextArea = withController(Textarea);
 export const InputSelect = withController(SelectWrapper);
