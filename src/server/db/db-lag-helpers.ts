@@ -1,5 +1,5 @@
 import { createLagTracker } from '@civitai/db';
-import { kyselyRead, kyselyWrite } from '@civitai/db-queries';
+import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';

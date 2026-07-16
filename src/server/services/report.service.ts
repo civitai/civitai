@@ -9,6 +9,7 @@ import {
 
 import { setReportStatusMany } from '@civitai/db-queries/reports';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { kyselyWrite } from '~/server/db/kyselyDb';
 import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType, type BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -398,7 +399,7 @@ export async function bulkSetReportStatus({
   // One atomic bulk UPDATE via @civitai/db-queries (setReportStatusMany): the `status != next` guard +
   // RETURNING reproduce the old findMany({ status: { not } })/update pair — only rows that actually
   // transition are updated and returned. A single statement is atomic, so no explicit transaction is needed.
-  const actioned = await setReportStatusMany({ ids, status, userId });
+  const actioned = await setReportStatusMany(kyselyWrite, { ids, status, userId });
 
   // Track mod activity in the background
   trackModReports({ ids, userId: userId });
@@ -683,7 +684,6 @@ export async function resolveEntityAppeal({
         resolvedMessage,
       },
     });
-
   }
 
   // Email each affected user once, listing every item they appealed in this

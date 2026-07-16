@@ -1,18 +1,23 @@
 import { createKyselyClients } from '@civitai/db/kysely';
-import { connect } from '@civitai/db-queries';
 import type { DB } from '@civitai/db-schema/kysely';
 import { pgDbRead, pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
 import { datapacketDbRead } from '~/server/db/datapacketDb';
 
-// Build Kysely clients over the app's EXISTING pg pools (pgDb / datapacketDb) — no new pools, no new
-// connections — and hand them to @civitai/db-queries, which owns the client vars every query module imports.
-// Prisma stays the schema/migration source of truth and the Kysely type generator; this is queries only.
-// Imported at boot from instrumentation.node.ts so connect() runs before any query.
+// Kysely clients over the app's EXISTING pg pools (pgDb / datapacketDb) — no new pools, no new connections.
+// @civitai/db-queries functions take a client as their first argument (executor injection); these are the
+// clients callers pass in. Prisma stays the schema/migration source of truth and the Kysely type generator;
+// this is queries only. Pass `kyselyWrite` (or an open transaction from it) to compose statements atomically;
+// use `getKyselyWithoutLag` (db-lag-helpers) to pick the read-your-writes-correct client for read paths.
 const { dbRead, dbWrite } = createKyselyClients<DB>({ pool: pgDbWrite, readPool: pgDbRead });
 
-connect({
-  read: dbRead,
-  write: dbWrite,
-  readLong: createKyselyClients<DB>({ pool: pgDbReadLong, singleClient: true }).db,
-  datapacket: createKyselyClients<DB>({ pool: datapacketDbRead, singleClient: true }).db,
-});
+export const kyselyRead = dbRead;
+export const kyselyWrite = dbWrite;
+// Main-app-only tiers. Available for dynamic per-call routing (long-running reads, the datapacket replica).
+export const kyselyReadLong = createKyselyClients<DB>({
+  pool: pgDbReadLong,
+  singleClient: true,
+}).db;
+export const kyselyDatapacket = createKyselyClients<DB>({
+  pool: datapacketDbRead,
+  singleClient: true,
+}).db;

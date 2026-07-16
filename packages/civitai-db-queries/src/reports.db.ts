@@ -1,6 +1,9 @@
-import { sql } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { kyselyRead, kyselyWrite } from './infra/client';
+
+// Query functions take a Kysely client (or transaction) as their first argument — the caller decides which
+// tier (read/write/replica) or transaction the query runs on. `Transaction<DB>` satisfies `Kysely<DB>`, so a
+// caller can pass an open transaction to compose several statements atomically.
 
 // The `Report.status`/`Report.reason` enums, derived from the schema so this module needs no separate enum
 // import.
@@ -51,17 +54,55 @@ export type GetReportsParams = {
   reportedBy?: string;
 };
 
+// The status-transition SET clause. On Actioned, stamp how many reporters the report resolved.
+const statusSet = (status: ReportStatusValue, userId: number) => ({
+  status,
+  statusSetAt: new Date(),
+  statusSetBy: userId,
+  ...(status === 'Actioned'
+    ? { previouslyReviewedCount: sql<number>`coalesce(array_length("alsoReportedBy", 1), 0) + 1` }
+    : {}),
+});
+
+// Transition one report; RETURNs the reporters only if the row actually changed (the `status != next`
+// guard), so a caller can reward exactly once — a no-op re-transition returns undefined. Follow-on side
+// effects (rewards, activity) stay with the caller.
+export function setReportStatus(
+  db: Kysely<DB>,
+  input: { id: number; status: ReportStatusValue; userId: number }
+) {
+  return db
+    .updateTable('Report')
+    .set(statusSet(input.status, input.userId))
+    .where('id', '=', input.id)
+    .where('status', '!=', input.status)
+    .returning(['userId', 'alsoReportedBy'])
+    .executeTakeFirst();
+}
+
+// Bulk variant: transition many reports in one atomic statement (no explicit transaction needed) and RETURN
+// the changed rows' id + reporters.
+export async function setReportStatusMany(
+  db: Kysely<DB>,
+  input: { ids: number[]; status: ReportStatusValue; userId: number }
+) {
+  if (!input.ids.length) return [];
+  return db
+    .updateTable('Report')
+    .set(statusSet(input.status, input.userId))
+    .where('id', 'in', input.ids)
+    .where('status', '!=', input.status)
+    .returning(['id', 'userId', 'alsoReportedBy'])
+    .execute();
+}
+
 // A page of reports of one entity type, newest first, with reporter identity, the also-reported count, and
 // the reported entity's id (both via correlated subqueries against the type's join table). Returns the page
 // items plus the total for pagination.
-export async function getReports({
-  type,
-  page = 1,
-  limit = 20,
-  statuses,
-  reasons,
-  reportedBy,
-}: GetReportsParams): Promise<{
+export async function getReports(
+  db: Kysely<DB>,
+  { type, page = 1, limit = 20, statuses, reasons, reportedBy }: GetReportsParams
+): Promise<{
   items: ModeratorReportRow[];
   totalItems: number;
   page: number;
@@ -78,7 +119,7 @@ export async function getReports({
     join.table
   )} er where er."reportId" = "Report"."id" limit 1)`;
 
-  let base = kyselyRead
+  let base = db
     .selectFrom('Report')
     .leftJoin('User', 'User.id', 'Report.userId')
     .where(entityExists);
@@ -115,50 +156,13 @@ export async function getReports({
 }
 
 // Set a report's moderator-only internal notes.
-export function updateReportNotes(input: { id: number; internalNotes: string | null }) {
-  return kyselyWrite
+export function updateReportNotes(
+  db: Kysely<DB>,
+  input: { id: number; internalNotes: string | null }
+) {
+  return db
     .updateTable('Report')
     .set({ internalNotes: input.internalNotes })
     .where('id', '=', input.id)
-    .execute();
-}
-
-// The status-transition SET clause. On Actioned, stamp how many reporters the report resolved.
-const statusSet = (status: ReportStatusValue, userId: number) => ({
-  status,
-  statusSetAt: new Date(),
-  statusSetBy: userId,
-  ...(status === 'Actioned'
-    ? { previouslyReviewedCount: sql<number>`coalesce(array_length("alsoReportedBy", 1), 0) + 1` }
-    : {}),
-});
-
-// Transition one report; RETURNs the reporters only if the row actually changed (the `status != next`
-// guard), so a caller can reward exactly once — a no-op re-transition returns undefined. Used by the
-// moderator spoke. Follow-on side effects (rewards, activity) stay with the caller.
-export function setReportStatus(input: { id: number; status: ReportStatusValue; userId: number }) {
-  return kyselyWrite
-    .updateTable('Report')
-    .set(statusSet(input.status, input.userId))
-    .where('id', '=', input.id)
-    .where('status', '!=', input.status)
-    .returning(['userId', 'alsoReportedBy'])
-    .executeTakeFirst();
-}
-
-// Bulk variant: transition many reports in one atomic statement (no explicit transaction needed) and RETURN
-// the changed rows' id + reporters. Used by the main app's bulkSetReportStatus.
-export async function setReportStatusMany(input: {
-  ids: number[];
-  status: ReportStatusValue;
-  userId: number;
-}) {
-  if (!input.ids.length) return [];
-  return kyselyWrite
-    .updateTable('Report')
-    .set(statusSet(input.status, input.userId))
-    .where('id', 'in', input.ids)
-    .where('status', '!=', input.status)
-    .returning(['id', 'userId', 'alsoReportedBy'])
     .execute();
 }

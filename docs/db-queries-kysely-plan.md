@@ -16,7 +16,7 @@ schema + migrations + type generation; Kysely for every query.**
 
 ### Why
 
-- The main app already runs huge amounts of **untyped** SQL via `pgDb.query(\`…\`)` and `$queryRaw`. Kysely
+- The main app already runs huge amounts of **untyped** SQL via `pgDb.query(\`…\`)`and`$queryRaw`. Kysely
   replaces those strings with type-checked queries generating the same SQL — a strict upgrade.
 - One query API instead of Prisma + `pgDb` raw + `$queryRaw` sprawl.
 - Query logic becomes **shareable** across apps (the moderator spoke already reimplements main-app logic in
@@ -33,91 +33,101 @@ schema + migrations + type generation; Kysely for every query.**
 
 ## Architecture — deliberately simple
 
-### The package owns the client vars; each app connects them once
+### Executor injection: every query takes the client as its first argument
 
-No injection ceremony, no per-query accessors. The package exports the Kysely clients as module vars; each
-app calls `connect()` **once at boot**, handing over clients it built over its **existing** pools — so no new
-pools or connections are created.
-
-```ts
-// packages/civitai-db-queries/src/infra/client.ts
-// connect() stores the clients on globalThis; the exported vars are lazy proxies that resolve through it — so
-// they're correct even if a bundler emits multiple copies of this module (Next instrumentation vs routes),
-// survive HMR, and don't depend on init order. Query modules just `import { kyselyWrite }` and use it.
-export const kyselyRead: Kysely<DB>;        // proxy → globalThis clients.read
-export const kyselyWrite: Kysely<DB>;       // proxy → globalThis clients.write
-export const kyselyReadLong: Kysely<DB>;    // main-app-only tiers (throw in the spoke, which never provides them)
-export const kyselyDatapacket: Kysely<DB>;
-export function connect(clients): void;     // called once per app at boot
-```
+The package owns **no** client vars and does no boot-time wiring (no `connect()`, no globalThis, no proxies).
+Every query function takes `db: Kysely<DB>` as its first parameter; the **caller** decides which client — read,
+write, a replica, or an open transaction. Each app builds its clients over its **existing** pools and passes
+one in per call.
 
 ```ts
-// main app — src/server/db/kyselyDb.ts  (rides the EXISTING pgDb / datapacketDb pools; imported at boot)
-connect({
-  read:  createKyselyClients<DB>({ pool: pgDbWrite, readPool: pgDbRead }).dbRead,
-  write: createKyselyClients<DB>({ pool: pgDbWrite, readPool: pgDbRead }).dbWrite,
-  readLong:   createKyselyClients<DB>({ pool: pgDbReadLong,     singleClient: true }).db,
-  datapacket: createKyselyClients<DB>({ pool: datapacketDbRead, singleClient: true }).db,
-});
+// packages/civitai-db-queries/src/reports.db.ts — db-first, cross-app
+import type { Kysely } from 'kysely';
+import type { DB } from '@civitai/db-schema/kysely';
 
-// spoke — db.ts  (its own clients; readLong/datapacket left undefined)
-connect({ read: dbRead, write: dbWrite });
-```
-
-`connect()` sets ESM live bindings at boot; queries read them at request time, so the vars are always
-populated when a query runs. Each process connects with its own clients — cross-app sharing is *code* reuse
-(same query modules), not shared connections.
-
-### Queries import the vars directly
-
-```ts
-// packages/civitai-db-queries/src/reports.db.ts  — zero-arg, cross-app
-import { kyselyWrite } from './infra/client';
-export function setReportStatus(input) {
-  return kyselyWrite.updateTable('Report').set(/* … */).where('id', '=', input.id)
-    .where('status', '!=', input.status).returning(['userId', 'alsoReportedBy']).executeTakeFirst();
+export function setReportStatus(db: Kysely<DB>, input) {
+  return db
+    .updateTable('Report')
+    .set(/* … */)
+    .where('id', '=', input.id)
+    .where('status', '!=', input.status)
+    .returning(['userId', 'alsoReportedBy'])
+    .executeTakeFirst();
 }
 ```
+
+```ts
+// main app — src/server/db/kyselyDb.ts (rides the EXISTING pgDb / datapacketDb pools; no new connections)
+const { dbRead, dbWrite } = createKyselyClients<DB>({ pool: pgDbWrite, readPool: pgDbRead });
+export const kyselyRead = dbRead;
+export const kyselyWrite = dbWrite;
+export const kyselyReadLong = createKyselyClients<DB>({
+  pool: pgDbReadLong,
+  singleClient: true,
+}).db;
+export const kyselyDatapacket = createKyselyClients<DB>({
+  pool: datapacketDbRead,
+  singleClient: true,
+}).db;
+
+// call site: await setReportStatus(kyselyWrite, input);
+// spoke owns its own dbRead/dbWrite the same way; readLong/datapacket simply never get passed there.
+```
+
+Why db-first rather than an ambient singleton: transactions **compose** (see below), functions stay
+**tree-shakeable** (`"sideEffects": false`; import one query from a big domain module, bundle only that query)
+and trivially testable (pass a client — no global to mutate), and read/write/replica/lag routing is a per-call
+decision instead of frozen into the query. If passing `db` at every call site is noisy, an app can add a
+thin **local** binder (`createReportsRepo(db)` → `db`-free methods) so `db` appears once per scope; keep it
+app-side (a factory closing over every builder would defeat tree-shaking).
 
 ### Transactions — native Kysely, no magic
 
-`await kyselyWrite.transaction().execute(async (trx) => { … use trx … })`. A query that must run inside a
-transaction takes an explicit `trx`; most queries don't need one. Where a single atomic statement suffices
-(e.g. a bulk `UPDATE … WHERE id IN (…) RETURNING`), no transaction is needed at all — that's how the
-`bulkSetReportStatus` repoint works (`setReportStatusMany`). **Prisma and Kysely transactions still don't
-compose**, so migrate whole transactional units together.
+A compose function takes `db` and opens the transaction on it — `await db.transaction().execute(async (trx) =>
+{ … })` — passing `trx` as the first arg to each statement function (`Transaction<DB>` satisfies `Kysely<DB>`,
+so the same functions work inside or outside a transaction). Where a single atomic statement suffices (e.g. a
+bulk `UPDATE … WHERE id IN (…) RETURNING`), no transaction is needed — that's the `bulkSetReportStatus` repoint
+(`setReportStatusMany`). **Prisma and Kysely transactions still don't compose**, so migrate whole
+transactional units together.
 
 ### Lag / read-your-writes — reuse the existing helpers
 
-The lag decision is just a boolean (`lagTracker.isStale`), so the Kysely twin returns the package's client
-vars with the same logic:
+The lag decision is just a boolean (`lagTracker.isStale`), so the Kysely twin **returns the client** the
+caller then passes as `db`:
 
 ```ts
-// main app db-lag-helpers.ts — beside getDbWithoutLag, same lagTracker
+// main app db-lag-helpers.ts — beside getDbWithoutLag, same lagTracker; kyselyRead/Write from kyselyDb.ts
 export async function getKyselyWithoutLag(type?, id?) {
   if (env.REPLICATION_LAG_DELAY <= 0) return kyselyRead;
-  if (type === undefined || id === undefined) return isHighReplicationLagMode() ? kyselyWrite : kyselyRead;
+  if (type === undefined || id === undefined)
+    return isHighReplicationLagMode() ? kyselyWrite : kyselyRead;
   return (await lagTracker.isStale(lagKey(type, id))) ? kyselyWrite : kyselyRead;
 }
+// call site: const db = await getKyselyWithoutLag('model', id); await getModel(db, input);
 ```
 
 The write side (`preventReplicationLag`/`markFresh`) is shared and unchanged.
 
 ### Dynamic, per-call routing (`image.service.ts:1306`)
 
-Some queries pick their pool from caller input + query shape + a Flipt flag. That routing logic stays *in the
-query* and just selects among the package vars — a straight find-replace of the concrete pools:
+Some queries pick their pool from caller input + query shape + a Flipt flag. That routing now lives at the
+**call site** (or a thin wrapper), which selects a client and passes it as `db`:
 
 ```ts
 let dbTarget = input.dbTarget ?? 'read';
-if (joinsImageResourceNew && dbTarget !== 'write' && (await isFlipt(FLIPT.IMAGE_RESOURCE_USE_WRITE)))
+if (
+  joinsImageResourceNew &&
+  dbTarget !== 'write' &&
+  (await isFlipt(FLIPT.IMAGE_RESOURCE_USE_WRITE))
+)
   dbTarget = 'write';
-const imageDb = dbTarget === 'write' ? kyselyWrite : dbTarget === 'datapacket' ? kyselyDatapacket : kyselyRead;
-// was: … ? pgDbWrite : … ? datapacketDbRead : pgDbRead
+const imageDb =
+  dbTarget === 'write' ? kyselyWrite : dbTarget === 'datapacket' ? kyselyDatapacket : kyselyRead;
+await getImages(imageDb, input); // was: pgDbWrite / datapacketDbRead / pgDbRead
 ```
 
 `datapacket` is a **same-schema read replica** (the code runs the same feed query against it), so it's just
-another client var — not a separate database/binding.
+another client the caller can pass — not a separate database/binding.
 
 ### Package organization & conventions
 
@@ -157,14 +167,53 @@ source of truth so this plan and the code don't drift.
 
 ## Phased plan
 
-- **Phase 0 — Foundation** *(scaffolded).* Package client vars (globalThis proxies) + `connect`, the main-app
-  `kyselyDb.ts` over existing pools, `getKyselyWithoutLag`, the json read/`toJson` write helpers, and `reports`
-  (`setReportStatus`/`setReportStatusMany`) as the reference. Consumers: spoke `setReportStatus`, main-app
-  `bulkSetReportStatus`.
+- **Phase 0 — Foundation** _(scaffolded)._ Executor-injection convention (every query takes `db: Kysely<DB>`
+  first), the main-app `kyselyDb.ts` that owns the clients over existing pools, `getKyselyWithoutLag`, the json
+  read/`toJson` write helpers, and `reports` (`setReportStatus`/`setReportStatusMany`) as the reference.
+  Consumers: spoke `setReportStatus`, main-app `bulkSetReportStatus`.
 - **Phase 1 — Raw-SQL beachhead.** Port a first high-value raw-SQL cluster to typed Kysely as the
   pattern-setter.
 - **Phase 2 — Domain rollout.** Port domain by domain, transactional-units-whole, subpath by subpath.
 - **Phase 3 — Convergence.** Prisma reduced to schema/migrations/type-gen; queries live in the package.
+
+## Moderator-app migration status
+
+The moderator app (`apps/moderator`, a separate checkout) already writes typed Kysely against the same
+`@civitai/db-schema/kysely` `DB` type, so porting is mostly mechanical: lift the **pure Postgres query cores**
+into `@civitai/db-queries/<domain>` (each function takes the app's client as its first `db` argument instead
+of reaching a `dbRead`/`dbWrite` singleton),
+leaving side-effects (mod-activity logging, search-index sync, cache busts, notifications, rewards, redis,
+emails, orchestrator calls) in the app service, which calls the ported query. Heavily-mixed functions are
+**decomposed into one pure statement per fn** (e.g. `image-moderation`'s `acceptImage` → `getImageForModeration`
+
+- `setImageAccepted` + `deleteImageTagsForReview` + `recomputeImageNsfwLevel` + …), each `trx?`-composable so
+  the app re-assembles the original transaction. The app-side switch to consume the package lands **after** this
+  merges to `main` and the moderator app pulls it in.
+
+**Ported (19 modules, ~60 query fns, each with compile-SQL + DB-backed EXPLAIN tests):** `reports`, `users`,
+`model3d`, `cosmetics`, `mod-activity`, `comics`, `ingestion`, `blocklist`, `image-rating-review`,
+`image-review`, `image-moderation`, `image-moderation-effects`, `image-tags`, `articles`,
+`article-rating-review`, `scanner`, `tags-on-image`, `sidebar-counts`, `rewards`. Each is exported at its
+`@civitai/db-queries/<domain>` subpath.
+
+**Out of scope — ClickHouse (deliberately not ported).** `@civitai/db-queries` is Postgres/Kysely-only; the
+following moderator queries are ClickHouse and stay in the app (or await a future CH mechanism), listed so
+nothing is silently dropped:
+
+- Whole CH-driven files: `page-visits.ts` (`recordPageVisit`, `getPageVisitSummary`, `getRouteUserBreakdown`),
+  `prohibited-prompts.service.ts` (`getTodaysProhibitedPrompts`, `getTodaysProhibitedUserCounts`),
+  `downleveled-review.service.ts` (`getDownleveledImages`). Their incidental PG id-enrichment reads were not
+  extracted (low standalone value without the CH driver).
+- CH functions inside otherwise-ported domains: `scanner` (`listScans`, `focusedRun`, `getActiveLabels` cores),
+  `rewards` (`rewardReportReporters` CH+redis; `getBaseRewardsMultiplier` redis), `image-moderation-effects`
+  (`addImagesToBlocklist`/`removeImagesFromBlocklist` and the `trackImageDeleteTos` analytics insert),
+  `image-review` (`getAppealImageQueue`'s `tosReason` CH enrich — field returned `null`, left to the app).
+
+**Testing note.** Every ported query has a compile-SQL test (exact SQL + params, offline) and a DB-backed
+`EXPLAIN` test (validates columns/joins/types/proc-signatures against the live schema; env-gated, skips with no
+DB). A few secondary hydration queries that only fire when a primary query returns rows are compile-tested but
+not EXPLAIN-covered under the offline harness (noted in-file) — extract them to standalone fns if stricter
+coverage is wanted.
 
 ## Open decisions — need `@dev:`
 
@@ -176,7 +225,8 @@ source of truth so this plan and the code don't drift.
    metric tables — plus the hard dynamic routing). `@dev:*`
 3. **Package boundary.** One `@civitai/db-queries` with subpaths (recommended) vs per-domain packages.
    `@dev:*`
-4. **`connect()` wiring.** ~~Live-binding through both bundlers?~~ **Resolved: the clients are stored on
-   `globalThis` and read via lazy proxies** (bundle-duplication / HMR / boot-order safe) — no `export let`
-   live-binding dependency. Still worth a dev smoke test of one end-to-end query per app before Phase 1.
-   `@dev:*`
+4. **Client access.** ~~`connect()` + globalThis proxies vs live-binding?~~ **Resolved: executor injection —
+   every query takes `db: Kysely<DB>` as its first arg; the app owns the clients (`kyselyDb.ts`) and passes one
+   per call.** No `connect()`/globalThis/proxy machinery (deleted). Chosen for composable transactions,
+   tree-shaking, and per-call routing; an app can add a local `createXRepo(db)` binder if per-call `db` passing
+   is noisy. `@dev:*`
