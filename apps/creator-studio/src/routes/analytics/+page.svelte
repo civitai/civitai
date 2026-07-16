@@ -2,6 +2,7 @@
   import { Chart, chartColor, createSyncedCrosshair } from '@civitai/ui/components/ui/chart/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import type { TimePoint } from '$lib/server/analytics';
+  import { formatAmount, currencyMeta, currencySort } from '$lib/earnings';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -76,7 +77,17 @@
     !!data.analytics && Object.values(data.analytics.totals).some((v) => v > 0)
   );
 
-  console.log(data)
+  // Per-model earnings: one column per currency present (buzz colors + cash) so each value is identifiable by its
+  // header — currencies are never merged (B8). Cell is the model's total in that currency, or 0.
+  const modelCurrencies = $derived(
+    data.modelEarnings
+      ? [...new Set(data.modelEarnings.flatMap((m) => m.currencies.map((c) => c.currency)))].sort(currencySort)
+      : []
+  );
+  const modelCell = (m: NonNullable<PageData['modelEarnings']>[number], currency: string) =>
+    m.currencies.find((c) => c.currency === currency)?.total ?? 0;
+
+    console.log(data)
 </script>
 
 <header class="page-header flex flex-wrap items-start gap-3">
@@ -191,8 +202,63 @@
   {/if}
 {/if}
 
-<div class="mt-8 rounded-lg border border-dashed border-dark-4 p-4 text-sm text-dark-3">
-  <strong class="text-dark-2">Model usage & earnings</strong> — generations, downloads, and per-model earnings
-  are keyed by model version, so they wait on the owner-keyed rollup (<strong>A1</strong>) before they can be
-  charted here.
+{#if data.modelEarnings && data.modelEarnings.length > 0}
+  <div class="mt-4 rounded-lg border border-dark-4 bg-dark-6 p-4">
+    <p class="mb-3 text-sm text-dark-2">
+      Per-model earnings <span class="text-xs text-dark-3">{periodLabel}</span>
+    </p>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="border-b border-dark-4 text-left text-xs uppercase tracking-wide text-dark-3">
+            <th class="py-2 pr-4 font-medium">Model</th>
+            <th class="py-2 pr-4 font-medium">Type</th>
+            {#each modelCurrencies as c (c)}
+              <th class="py-2 pl-4 text-right font-medium">{currencyMeta(c).label}</th>
+            {/each}
+          </tr>
+        </thead>
+        <tbody>
+          {#each data.modelEarnings as m (m.modelVersionId)}
+            <tr class="border-b border-dark-6">
+              <td class="py-2 pr-4">
+                {#if m.modelId}
+                  <!-- NSFW models link to civitai.red (mature domain), same split as the top-images grid -->
+                  <a
+                    href="https://civitai.{m.nsfw ? 'red' : 'com'}/models/{m.modelId}?modelVersionId={m.modelVersionId}"
+                    target="_blank"
+                    rel="noreferrer"
+                    class="text-dark-1 hover:text-white hover:underline"
+                  >
+                    {m.modelName ?? `Model ${m.modelId}`}
+                  </a>
+                {:else}
+                  <span class="text-dark-2">Version {m.modelVersionId}</span>
+                {/if}
+                {#if m.versionName}<span class="text-dark-3"> · {m.versionName}</span>{/if}
+              </td>
+              <td class="py-2 pr-4 text-dark-2">{m.modelType ?? '—'}</td>
+              {#each modelCurrencies as c (c)}
+                {@const v = modelCell(m, c)}
+                <td class="py-2 pl-4 text-right {v ? 'font-medium text-white' : 'text-dark-4'}">
+                  {v ? formatAmount(v, c) : '—'}
+                </td>
+              {/each}
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{:else if data.modelEarnings === null}
+  <div class="placeholder mt-4">Per-model earnings are temporarily unavailable — please try again shortly.</div>
+{:else}
+  <div class="mt-4 rounded-lg border border-dashed border-dark-4 p-4 text-sm text-dark-3">
+    <strong class="text-dark-2">Per-model earnings</strong> — no model earnings {periodLabel} yet.
+  </div>
+{/if}
+
+<div class="mt-4 rounded-lg border border-dashed border-dark-4 p-4 text-sm text-dark-3">
+  <strong class="text-dark-2">Model usage</strong> — per-model generation & download counts are keyed by model
+  version and are still to come.
 </div>

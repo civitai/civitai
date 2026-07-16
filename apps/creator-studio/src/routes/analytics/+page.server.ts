@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { PageServerLoad } from './$types';
 import { getContentAnalytics, getAllTimeTotals, ANALYTICS_RANGES } from '$lib/server/analytics';
+import { getModelEarnings } from '$lib/server/models-earnings';
 
 const daysSchema = z.coerce
   .number()
@@ -13,10 +14,12 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   const days = daysSchema.parse(url.searchParams.get('days') ?? undefined);
   const granularity = granularitySchema.parse(url.searchParams.get('g') ?? undefined);
   const userId = locals.user.id;
-  // Period analytics + the all-time totals degrade independently (ClickHouse hiccup shouldn't blank both).
-  const [analytics, allTime] = await Promise.all([
+  // Period analytics + all-time totals + per-model earnings degrade independently (a ClickHouse hiccup on one
+  // shouldn't blank the others).
+  const [analytics, allTime, modelEarnings] = await Promise.all([
     getContentAnalytics({ userId, days, granularity }).catch(() => null),
     getAllTimeTotals({ userId }).catch(() => null),
+    getModelEarnings({ userId, days }).catch(() => null),
   ]);
-  return { analytics, allTime, days, granularity };
+  return { analytics, allTime, modelEarnings, days, granularity };
 };

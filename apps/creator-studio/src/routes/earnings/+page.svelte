@@ -8,6 +8,7 @@
     currencyMeta,
     currencySort,
     formatAmount,
+    formatBuzz,
   } from '$lib/earnings';
   import type { PageData } from './$types';
 
@@ -172,7 +173,7 @@
     {#each sourceTotals as st (st.source)}
       <div class="rounded-lg border border-dark-4 bg-dark-6 p-3">
         <p class="text-xs uppercase tracking-wide text-dark-3">{SOURCE_LABEL[st.source]}</p>
-        <p class="mt-1 text-xl font-semibold text-white">⚡ {num(st.total)}</p>
+        <p class="mt-1 text-xl font-semibold text-white">{formatBuzz(st.total)}</p>
       </div>
     {/each}
   </section>
@@ -240,6 +241,6 @@
 {/if}
 
 <div class="mt-8 rounded-lg border border-dashed border-dark-4 p-4 text-sm text-dark-3">
-  <strong class="text-dark-2">Per-model earnings</strong> — breaking earnings down by individual model waits on
-  the owner-keyed rollup (<strong>A1 Part 2</strong>); these totals are creator-level.
+  <strong class="text-dark-2">These totals are creator-level.</strong> For earnings broken down by individual
+  model, see <a href="/analytics" class="underline">Analytics</a>.
 </div>

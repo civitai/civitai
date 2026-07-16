@@ -63,9 +63,15 @@ const usd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' 
 export const CASH_CENTS_PER_USD = 100;
 export const centsToUsd = (cents: number) => cents / CASH_CENTS_PER_USD;
 
-// Buzz + banked balances show a ⚡ with the raw buzz count; cash (settled/pending) is USD-cents → shown as $.
+// Buzz is a whole-unit currency — the underlying compensation amounts are fractional (Float64), but we never show
+// partial buzz, so floor before formatting. (Cash is real USD cents and keeps its precision.)
+export function formatBuzz(amount: number): string {
+  return `⚡ ${nf.format(Math.floor(amount))}`;
+}
+
+// Buzz + banked balances show a ⚡ with the (floored) buzz count; cash (settled/pending) is USD-cents → shown as $.
 // Never mix families in one total — callers only ever format a single-currency amount.
 export function formatAmount(amount: number, currency: string): string {
   const { family } = currencyMeta(currency);
-  return family === 'cash' ? usd.format(centsToUsd(amount)) : `⚡ ${nf.format(amount)}`;
+  return family === 'cash' ? usd.format(centsToUsd(amount)) : formatBuzz(amount);
 }

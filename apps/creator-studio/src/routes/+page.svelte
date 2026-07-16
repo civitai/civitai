@@ -3,7 +3,7 @@
   import { Skeleton } from '@civitai/ui/components/ui/skeleton/index.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { IconArrowRight } from '@tabler/icons-svelte';
-  import { currencyMeta, formatAmount } from '$lib/earnings';
+  import { currencyMeta, formatAmount, formatBuzz } from '$lib/earnings';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -53,15 +53,22 @@
         ]
       : []
   );
+  const topModel = $derived(data.topModels?.[0] ?? null);
   const stats = $derived([
     {
       label: 'Buzz earned',
-      value: data.earnings ? `⚡ ${num(sumWhere((c) => currencyMeta(c).family === 'buzz'))}` : null,
+      value: data.earnings ? formatBuzz(sumWhere((c) => currencyMeta(c).family === 'buzz')) : null,
       pending: false,
       hint: 'Yellow, blue & green — last 30 days',
     },
     ...cashStats,
-    { label: 'Top-earning model', value: null, pending: true, hint: 'Needs owner-keyed rollup (A1 Part 2)' },
+    {
+      label: 'Top-earning model',
+      value: topModel ? (topModel.modelName ?? topModel.versionName ?? `Version ${topModel.modelVersionId}`) : null,
+      // Loaded-but-empty shows the em dash; a failed load (null) falls through to the skeleton.
+      pending: data.topModels != null && !topModel,
+      hint: topModel ? `${formatBuzz(topModel.buzzTotal)} — last 30 days` : 'No model earnings yet',
+    },
   ]);
 
   const sections = [
