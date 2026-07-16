@@ -392,7 +392,13 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                         <Menu.Item
                           leftSection={<IconPencil size={14} stroke={1.5} />}
                           component={Link}
-                          href={`/moderator/challenges/${challenge.id}/edit`}
+                          // User challenges use the user form (entry fee / judging categories);
+                          // the moderator form's prize model doesn't apply to them.
+                          href={
+                            challenge.source === ChallengeSource.User
+                              ? `/challenges/${challenge.id}/edit`
+                              : `/moderator/challenges/${challenge.id}/edit`
+                          }
                         >
                           Edit Challenge
                         </Menu.Item>

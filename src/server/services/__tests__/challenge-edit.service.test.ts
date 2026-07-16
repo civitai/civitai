@@ -108,7 +108,7 @@ vi.mock('~/server/utils/errorHandling', () => ({
 }));
 
 // Import after mocks are set up (top-level, not in beforeEach)
-const { getChallengeForEdit, upsertUserChallenge } = await import(
+const { getChallengeForEdit, getUserChallengeForEdit, upsertUserChallenge } = await import(
   '~/server/services/challenge.service'
 );
 
@@ -275,5 +275,48 @@ describe('upsertUserChallenge (edit branch) — creator standing re-check', () =
     expect(mockAssertCanCreateUserChallenge).not.toHaveBeenCalled();
     // The edit branch must never reach for the score-bundled check.
     expect(mockAssertUserInGoodStanding).not.toHaveBeenCalled();
+  });
+});
+
+describe('getUserChallengeForEdit — ownership/moderator gate', () => {
+  const guardRow = {
+    source: 'User' as const,
+    createdById: 111,
+    status: 'Scheduled' as const,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetChallengeConfig.mockResolvedValue(mockConfig);
+    mockDbRead.$queryRaw.mockResolvedValue([
+      { id: 111, username: 'creator', image: null, deletedAt: null },
+    ]);
+    mockDbRead.challenge.findUnique.mockResolvedValue(guardRow);
+    mockGetChallengeById.mockResolvedValue(
+      makeMockChallenge({ source: 'User', createdById: 111, status: 'Scheduled' })
+    );
+  });
+
+  it('returns the challenge for its owner', async () => {
+    const result = await getUserChallengeForEdit({ id: 1, userId: 111 });
+    expect(result?.id).toBe(1);
+  });
+
+  it('returns the challenge for a moderator who is not the owner', async () => {
+    const result = await getUserChallengeForEdit({ id: 1, userId: 222, isModerator: true });
+    expect(result?.id).toBe(1);
+  });
+
+  it('rejects a non-owner without moderator status', async () => {
+    await expect(getUserChallengeForEdit({ id: 1, userId: 222 })).rejects.toThrow(
+      'You can only edit your own challenges.'
+    );
+  });
+
+  it('rejects non-User challenges even for moderators (mod form owns those)', async () => {
+    mockDbRead.challenge.findUnique.mockResolvedValue({ ...guardRow, source: 'System' });
+    await expect(
+      getUserChallengeForEdit({ id: 1, userId: 222, isModerator: true })
+    ).rejects.toThrow('This challenge cannot be edited here.');
   });
 });

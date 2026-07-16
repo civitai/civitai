@@ -194,4 +194,56 @@ describe('upsertUserChallenge (edit branch) — ingestion reset scoped to modera
     expect(data.scannedAt).toBeNull();
     expect(mockSubmitTextModeration).toHaveBeenCalledTimes(1);
   });
+
+  it('keeps themeElements out of the challenge row write (metadata-only, no such column)', async () => {
+    await upsertUserChallenge({
+      ...baseEditInput,
+      themeElements: ['cute cat', 'silly hat'],
+    } as never);
+
+    expect(mockTx.challenge.updateMany).toHaveBeenCalledTimes(1);
+    const { data } = mockTx.challenge.updateMany.mock.calls[0][0];
+    expect(data).not.toHaveProperty('themeElements');
+    expect(data.metadata).toEqual({ themeElements: ['cute cat', 'silly hat'] });
+    // Adding theme elements changes the moderated text, so the scan verdict must reset.
+    expect(data.ingestion).toBe('Pending');
+    expect(mockSubmitTextModeration).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('upsertUserChallenge (edit branch) — moderator edit access', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDbRead.image.findFirst.mockResolvedValue({ id: 555 });
+    mockDbRead.challenge.findUnique.mockResolvedValue(existingChallenge);
+    mockTx.challenge.updateMany.mockResolvedValue({ count: 1 });
+    mockTx.challenge.findUniqueOrThrow.mockResolvedValue({ id: 42 });
+  });
+
+  it('rejects a non-owner without moderator status', async () => {
+    await expect(
+      upsertUserChallenge({ ...baseEditInput, userId: 222 } as never)
+    ).rejects.toThrow('You can only edit your own challenges.');
+    expect(mockTx.challenge.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('lets a moderator edit another user challenge', async () => {
+    await upsertUserChallenge({ ...baseEditInput, userId: 222, isModerator: true } as never);
+
+    expect(mockTx.challenge.updateMany).toHaveBeenCalledTimes(1);
+    // Cover reuse must not require the moderator to own the creator's image.
+    expect(mockDbRead.image.findFirst).toHaveBeenCalledWith({
+      where: { id: 555 },
+      select: { id: true },
+    });
+  });
+
+  it('still requires image ownership for a non-moderator owner', async () => {
+    await upsertUserChallenge(baseEditInput as never);
+
+    expect(mockDbRead.image.findFirst).toHaveBeenCalledWith({
+      where: { id: 555, userId: 111 },
+      select: { id: true },
+    });
+  });
 });

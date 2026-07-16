@@ -1352,8 +1352,13 @@ export async function upsertChallenge({
 export async function upsertUserChallenge({
   userId,
   buzzType,
+  isModerator,
   ...input
-}: UserChallengeUpsertInput & { userId: number; buzzType: ChallengeBuzzType }) {
+}: UserChallengeUpsertInput & {
+  userId: number;
+  buzzType: ChallengeBuzzType;
+  isModerator?: boolean;
+}) {
   const {
     id,
     coverImage,
@@ -1421,8 +1426,10 @@ export async function upsertUserChallenge({
   // only covers text.
   let coverImageId: number;
   if (coverImage.id != null) {
+    // Moderators may edit challenges whose cover belongs to the creator, so ownership is
+    // only enforced for regular users.
     const ownedImage = await dbRead.image.findFirst({
-      where: { id: coverImage.id, userId },
+      where: isModerator ? { id: coverImage.id } : { id: coverImage.id, userId },
       select: { id: true },
     });
     if (!ownedImage)
@@ -1439,7 +1446,6 @@ export async function upsertUserChallenge({
     description: rest.description ?? null,
     theme: rest.theme,
     invitation: rest.invitation ?? null,
-    themeElements: themeEls ?? null,
     coverImageId,
     allowedNsfwLevel,
     nsfwLevel: deriveChallengeNsfwLevel(allowedNsfwLevel),
@@ -1483,7 +1489,7 @@ export async function upsertUserChallenge({
     if (!existing) throw throwNotFoundError('Challenge not found');
     if (existing.source !== ChallengeSource.User)
       throw new TRPCError({ code: 'FORBIDDEN', message: 'This challenge cannot be edited here.' });
-    if (existing.createdById !== userId)
+    if (existing.createdById !== userId && !isModerator)
       throw new TRPCError({ code: 'FORBIDDEN', message: 'You can only edit your own challenges.' });
     // Text/config locks once live: only Scheduled challenges with no entries yet are editable.
     if (existing.status !== ChallengeStatus.Scheduled)
@@ -1527,7 +1533,9 @@ export async function upsertUserChallenge({
     // EntityModeration row, so no webhook ever flips ingestion back to Scanned and the challenge
     // sits hidden until the activation job voids it.
     const moderatedTextChanged =
-      buildChallengeModerationText(commonData) !==
+      // themeElements lives in metadata (no Challenge column), so it rides along only for the
+      // moderation-text comparison — never in the commonData row write.
+      buildChallengeModerationText({ ...commonData, themeElements: themeEls ?? null }) !==
       buildChallengeModerationText({
         ...existing,
         themeElements: parseChallengeMetadata(existing.metadata).themeElements,
@@ -1837,14 +1845,25 @@ export async function deleteUserChallenge({ id, userId }: { id: number; userId: 
 
 // User-safe fetch for the edit form. getChallengeForEdit is moderator-only; this guards ownership
 // first, then returns the same shape. User challenges have judgingPrompt = null, so nothing
-// moderator-sensitive is exposed.
-export async function getUserChallengeForEdit({ id, userId }: { id: number; userId: number }) {
+// moderator-sensitive is exposed. Moderators bypass ownership (they manage user challenges through
+// this same form); non-User challenges stay on the moderator edit page regardless.
+export async function getUserChallengeForEdit({
+  id,
+  userId,
+  isModerator,
+}: {
+  id: number;
+  userId: number;
+  isModerator?: boolean;
+}) {
   const existing = await dbRead.challenge.findUnique({
     where: { id },
     select: { source: true, createdById: true, status: true },
   });
   if (!existing) throw throwNotFoundError('Challenge not found');
-  if (existing.source !== ChallengeSource.User || existing.createdById !== userId)
+  if (existing.source !== ChallengeSource.User)
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'This challenge cannot be edited here.' });
+  if (existing.createdById !== userId && !isModerator)
     throw new TRPCError({ code: 'FORBIDDEN', message: 'You can only edit your own challenges.' });
   if (existing.status !== ChallengeStatus.Scheduled)
     throw new TRPCError({
