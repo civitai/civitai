@@ -3141,6 +3141,11 @@ export async function getReviewStatus(opts: {
  * approve/reject, matching `mintReviewBlockToken`'s pending gate). Returns null
  * for a missing / non-pending request so the page fails closed with a 404 and
  * never leaks which of the two it was.
+ *
+ * NO AUTHORIZATION is performed here (like `getReviewStatus` / `mintReviewBlockToken`,
+ * which rely on their router gate) — this leaks a pending app's slug by id, so
+ * EVERY caller MUST already be moderator-gated (today: the page resolver runs the
+ * `isAppReviewer` gate before calling). Do not call from a non-mod-gated path.
  */
 export async function resolveReviewPreviewTarget(
   publishRequestId: string
