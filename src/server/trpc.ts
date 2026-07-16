@@ -12,7 +12,11 @@ import { trpcProcedureDuration } from '~/server/prom/client';
 import { maybeLogTrpcSlow } from '~/server/logging/trpc-slow-log';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
 import { instrumentSerialize } from '~/server/logging/trpc-serialize-log';
-import { buildTransformer, writeSerialize } from '~/shared/utils/trpc-union-transformer';
+import {
+  buildTransformer,
+  serverWriteSerialize,
+  WRITE_DEVALUE,
+} from '~/shared/utils/trpc-union-transformer';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
@@ -44,21 +48,28 @@ const t = initTRPC
   .context<Context>()
   .meta<TRPCMeta>()
   .create({
-    // Phase 2 of the superjson → devalue transformer migration: flip the WRITE
-    // to devalue while READ stays the format-sniffing UNION (so a stale peer that
-    // still writes superjson is decoded fine, and rollback is a one-line flip of
-    // the write format back to superjson). The shared `buildTransformer` fills
-    // the request-read/response-read (union) and request-write (devalue) slots;
-    // the ONLY server-specific difference is the instrumented response-serialize
-    // below, whose inner call is still the single-sourced `writeSerialize`.
+    // Phase 2 of the superjson → devalue transformer migration: the response
+    // WRITE is env-gated PER POOL (`TRPC_WRITE_DEVALUE`, resolved once at module
+    // load into `serverWriteSerialize`) while READ stays the format-sniffing
+    // UNION (so a peer that still writes superjson is decoded fine, and rollback
+    // is unsetting the env + a pod restart). Default (flag unset) =
+    // `superjson.serialize` = byte-for-byte the Phase-1 wire, so this is safe to
+    // merge; setting the env `true` on ONE pool makes only that pool write
+    // devalue responses. The shared `buildTransformer` fills the request-read /
+    // response-read (union) and request-write (superjson, never exercised
+    // server-side) slots; the ONLY server-specific difference is the instrumented
+    // response-serialize below, whose inner call is still `serverWriteSerialize`.
     transformer: buildTransformer((data: any) =>
       // instrumentSerialize times the serialize (the exact frame that pegs the
       // loop on an oversized response — see trpc-serialize-log.ts) and, only
       // above a cheap duration floor, logs the offending procedure + byte size.
-      // Disarmed by default: a single boolean branch, then withSpan+writeSerialize.
-      // The wrappers are pass-through — they return writeSerialize's result verbatim.
+      // The span label is derived from the live gate so the freeze-instrumentation
+      // frame name matches what is ACTUALLY written (superjson vs devalue).
+      // The wrappers are pass-through — they return serverWriteSerialize's result.
       instrumentSerialize(() =>
-        withSpan('trpc:serialize:devalue', () => writeSerialize(data))
+        withSpan(`trpc:serialize:${WRITE_DEVALUE ? 'devalue' : 'superjson'}`, () =>
+          serverWriteSerialize(data)
+        )
       )
     ),
     errorFormatter({ shape }) {
