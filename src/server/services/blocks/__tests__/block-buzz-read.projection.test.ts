@@ -117,4 +117,58 @@ describe('projectBlockBuzzTransaction', () => {
   it('passes a null details through unchanged', () => {
     expect(projectBlockBuzzTransaction(row({ details: null })).details).toBeNull();
   });
+
+  it('keeps the reward classifier keys: details.type + numeric forId', () => {
+    const out = projectBlockBuzzTransaction(
+      row({
+        type: TransactionType.Reward,
+        details: { type: 'dailyBoost', forId: 20260714, byUserId: 42 },
+      })
+    );
+    const details = out.details as Record<string, unknown>;
+    expect(details.type).toBe('dailyBoost');
+    expect(details.forId).toBe(20260714);
+    // Who triggered the reward stays private (reactions are anonymous on-site).
+    expect(details).not.toHaveProperty('byUserId');
+  });
+
+  it('drops a STRING forId — the adWatched ad-session token leak guard', () => {
+    const out = projectBlockBuzzTransaction(
+      row({
+        type: TransactionType.Reward,
+        details: { type: 'adWatched', forId: 'ad-session-token-abc123' },
+      })
+    );
+    const details = out.details as Record<string, unknown>;
+    expect(details.type).toBe('adWatched');
+    expect(details.forId).toBeUndefined();
+  });
+
+  it('keeps the early-access sale classifiers: modelVersionId + type', () => {
+    const out = projectBlockBuzzTransaction(
+      row({
+        type: TransactionType.Purchase,
+        details: { modelVersionId: 501001, type: 'generation', earlyAccessPurchase: true },
+      })
+    );
+    const details = out.details as Record<string, unknown>;
+    expect(details.modelVersionId).toBe(501001);
+    expect(details.type).toBe('generation');
+    // The flag itself stays passthrough-dropped; a non-numeric value never leaks.
+    expect(details).not.toHaveProperty('earlyAccessPurchase');
+    expect(
+      (
+        projectBlockBuzzTransaction(
+          row({ details: { modelVersionId: 'not-a-number' } })
+        ).details as Record<string, unknown>
+      ).modelVersionId
+    ).toBeUndefined();
+  });
+
+  it('drops a non-string details.type (never widens beyond internal tags)', () => {
+    const out = projectBlockBuzzTransaction(
+      row({ details: { type: { nested: 'object' } } })
+    );
+    expect((out.details as Record<string, unknown>).type).toBeUndefined();
+  });
 });
