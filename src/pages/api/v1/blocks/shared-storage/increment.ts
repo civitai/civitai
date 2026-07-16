@@ -60,7 +60,18 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     const result = await incrementSharedCounter(bearer(req), key);
     // W13 richer audit detail — stash a structured ref so the middleware
     // finish-writer records "Bumped shared counter <key>". Best-effort.
-    stashBlockActionDetail(res, { action: 'storage.increment', key, outcome: 'ok' });
+    //
+    // 🔴 The ENTIRE enrichment (detail construction AND the stash call) is wrapped
+    // in a swallow-everything try/catch so it can NEVER change this endpoint's
+    // outcome. A successful increment ALWAYS returns its real 200 even if
+    // enrichment throws (undefined stash export, non-writable `res`, …) — the audit
+    // row is simply skipped. (Regression: #3161's stash sat inside the handler try
+    // and a throw at the call site surfaced as a 500 on the happy path.)
+    try {
+      stashBlockActionDetail(res, { action: 'storage.increment', key, outcome: 'ok' });
+    } catch {
+      /* audit enrichment is best-effort — it must never perturb the response */
+    }
     res.status(200).json(result);
     return;
   } catch (error) {

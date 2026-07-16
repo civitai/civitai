@@ -58,17 +58,25 @@ vi.mock('~/server/middleware/block-scope.middleware', () => ({
     if (!/^user:\d+$/.test(sub)) throw new ForbiddenError('bad');
     return Number.parseInt(sub.slice('user:'.length), 10);
   },
+  // W13 audit-detail stash — the endpoint imports + calls this on the happy path.
+  // Omitting it (as this mock originally did) is exactly what made the call site
+  // `undefined(...)` → TypeError → 500 on a successful tip (#3161 regression); it
+  // is exported here so the happy path exercises a real fn, and the regression
+  // test below overrides it to throw to prove the enrichment can never 500.
+  stashBlockActionDetail: (...args: unknown[]) => mockStash(...args),
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: any) => h }));
 
-const { mockTip, mockHydrate, mockRate, mockReserve, mockRefund, mockUserFind } = vi.hoisted(() => ({
-  mockTip: vi.fn(),
-  mockHydrate: vi.fn(),
-  mockRate: vi.fn(),
-  mockReserve: vi.fn(),
-  mockRefund: vi.fn(),
-  mockUserFind: vi.fn(),
-}));
+const { mockTip, mockHydrate, mockRate, mockReserve, mockRefund, mockUserFind, mockStash } =
+  vi.hoisted(() => ({
+    mockTip: vi.fn(),
+    mockHydrate: vi.fn(),
+    mockRate: vi.fn(),
+    mockReserve: vi.fn(),
+    mockRefund: vi.fn(),
+    mockUserFind: vi.fn(),
+    mockStash: vi.fn(),
+  }));
 
 vi.mock('~/server/controllers/buzz.controller', () => ({
   createBuzzTipTransactionHandler: mockTip,
@@ -258,6 +266,30 @@ describe('POST /api/v1/blocks/tip', () => {
         ctx: expect.objectContaining({ user: expect.objectContaining({ id: 42 }) }),
       })
     );
+  });
+
+  it('REGRESSION: audit-detail enrichment that THROWS still returns the real 200 (never 500)', async () => {
+    // #3161 added a best-effort audit-detail stash on the happy path. It sat inside
+    // the money-path try/catch, so ANY throw at the enrichment call site (a missing
+    // stash export → `undefined(...)`, a null-deref building the detail, or a
+    // non-writable `res`) surfaced as a 500 on a tip whose money already moved.
+    // The endpoint now wraps the entire enrichment in a swallow-everything guard:
+    // enrichment failure must NEVER change the response.
+    mockStash.mockImplementationOnce(() => {
+      throw new Error('stash boom (detail-build / non-writable res)');
+    });
+    const { req, res } = createMocks({ body: { toUserId: 5, amount: 25 } });
+    await handler(req as never, res as never);
+    // The tip still moved money and the real success body is returned intact.
+    expect(res._status()).toBe(200);
+    expect(res._json()).toEqual({
+      ok: true,
+      tip: { toUserId: 5, amount: 25, entityType: null, entityId: null },
+    });
+    expect(mockTip).toHaveBeenCalledTimes(1);
+    // No refund — a post-success enrichment throw is not a money failure.
+    expect(mockRefund).not.toHaveBeenCalled();
+    expect(mockStash).toHaveBeenCalledTimes(1);
   });
 
   it('surfaces insufficient balance as a clean 400 (not a 500)', async () => {
