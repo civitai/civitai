@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
@@ -55,6 +55,15 @@ const ONSITE_APPROVED = {
   reviewedBy: { id: 99, username: 'mod-user', image: null },
 };
 
+// A SECOND pending request (distinct `id`) used to prove the transient
+// approve/reject state does not leak when the mod switches from one app to
+// another in the same long-lived modal.
+const ONSITE_PENDING_B = {
+  ...ONSITE_PENDING,
+  id: 'onsite-req-3',
+  slug: 'other-onsite-block',
+};
+
 const mocks = vi.hoisted(() => ({
   invalidate: vi.fn().mockResolvedValue(undefined),
   mutate: vi.fn(),
@@ -62,6 +71,9 @@ const mocks = vi.hoisted(() => ({
   // Drives the getReviewStatus mock so a test can flip the Review-preview panel
   // into the live state (default undefined = no preview → "Start preview").
   reviewStatus: undefined as unknown,
+  // When true, the approve/reject mutation mocks report `isPending: true` so the
+  // component's `busy` state (and the ref-published close-guard) can be exercised.
+  pending: false,
 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
@@ -93,7 +105,7 @@ vi.mock('~/utils/trpc', () => {
         else void opts?.onSuccess?.();
       },
       mutateAsync: vi.fn(),
-      isPending: false,
+      isPending: mocks.pending,
     });
   const inert = { invalidate: mocks.invalidate };
   const utils = {
@@ -145,6 +157,7 @@ beforeEach(() => {
   mocks.mutate.mockClear();
   mocks.errorMode = false;
   mocks.reviewStatus = undefined;
+  mocks.pending = false;
   showError.mockClear();
 });
 
@@ -256,6 +269,112 @@ describe('OnsiteReviewModal — onsite reject: reason gate + fired mutation', ()
       publishRequestId: 'onsite-req-1',
       rejectionReason: 'needs changes',
     });
+  });
+});
+
+describe('OnsiteReviewModal — transient approve/reject state resets per request', () => {
+  test('switching from a request in reject-mode to a different request opens in the default view mode with an empty reason', async () => {
+    // Render request A and put it into reject mode with a typed reason.
+    const { rerender } = await renderWithProviders(
+      <OnsiteReviewModal
+        selection={{ request: ONSITE_PENDING, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
+    );
+    await page.getByRole('button', { name: 'Reject…' }).click();
+    const reasonA = page.getByTestId('apps-review-reject-reason');
+    await expect.element(reasonA).toBeInTheDocument();
+    await reasonA.fill('this needs changes before approval');
+    await expect.element(reasonA).toHaveValue('this needs changes before approval');
+
+    // Switch the SAME long-lived modal to a DIFFERENT pending request (new id).
+    await rerender(
+      <OnsiteReviewModal
+        selection={{ request: ONSITE_PENDING_B, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
+    );
+
+    // B must open in the DEFAULT view mode: the approve/notes UI is shown and
+    // the reject textarea is gone (actionMode reset to 'view' via the keyed
+    // remount — not carried over from A).
+    await expect
+      .element(page.getByRole('textbox', { name: 'Approval notes (optional)' }))
+      .toBeInTheDocument();
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeInTheDocument();
+    await expect.element(page.getByRole('button', { name: 'Reject…' })).toBeInTheDocument();
+    // The reject reason field from A must NOT be present (and thus carries no text).
+    expect(page.getByTestId('apps-review-reject-reason').elements()).toHaveLength(0);
+
+    // And re-entering reject mode on B starts from an EMPTY reason (A's text did
+    // not leak into B's state).
+    await page.getByRole('button', { name: 'Reject…' }).click();
+    await expect.element(page.getByTestId('apps-review-reject-reason')).toHaveValue('');
+  });
+
+  test('the real close-then-reopen path (A → selection=null → B) also opens B fresh', async () => {
+    // Production never swaps A→B directly: the parent sets `selection=null`
+    // (closing the modal) and later sets it to B. This pins the
+    // `{selection && <Body/>}` unmount-gate — B mounts fresh because the body
+    // was unmounted at null — independently of the per-id `key` remount above.
+    const { rerender } = await renderWithProviders(
+      <OnsiteReviewModal
+        selection={{ request: ONSITE_PENDING, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
+    );
+    await page.getByRole('button', { name: 'Reject…' }).click();
+    const reasonA = page.getByTestId('apps-review-reject-reason');
+    await reasonA.fill('leaky reason that must not survive a close');
+    await expect.element(reasonA).toHaveValue('leaky reason that must not survive a close');
+
+    // Close the modal (selection → null): the body unmounts.
+    await rerender(<OnsiteReviewModal selection={null} onClose={vi.fn()} />);
+    expect(page.getByTestId('apps-review-reject-reason').elements()).toHaveLength(0);
+
+    // Reopen with a different request B: the body remounts fresh.
+    await rerender(
+      <OnsiteReviewModal
+        selection={{ request: ONSITE_PENDING_B, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
+    );
+
+    // B opens in the default view mode, no leaked reject state.
+    await expect
+      .element(page.getByRole('textbox', { name: 'Approval notes (optional)' }))
+      .toBeInTheDocument();
+    expect(page.getByTestId('apps-review-reject-reason').elements()).toHaveLength(0);
+    await page.getByRole('button', { name: 'Reject…' }).click();
+    await expect.element(page.getByTestId('apps-review-reject-reason')).toHaveValue('');
+  });
+});
+
+describe('OnsiteReviewModal — busy close-guard while a mutation is in flight', () => {
+  test('does not call onClose via Escape or the close button while a mutation is pending', async () => {
+    // Both mutation mocks report isPending:true → the modal is `busy`, so the
+    // body publishes busy=true to the shell via the ref. The shell's onClose
+    // (Escape / overlay / the X) must then refuse to invoke the parent onClose.
+    mocks.pending = true;
+    const onClose = vi.fn();
+    renderWithProviders(
+      <OnsiteReviewModal selection={{ request: ONSITE_PENDING, mode: 'pending' }} onClose={onClose} />
+    );
+    // Modal is open (body rendered).
+    await expect.element(page.getByText('View code in Forgejo')).toBeInTheDocument();
+
+    // Close vector 1 — the modal's close (X) button (Mantine static class).
+    const closeBtn = document.querySelector<HTMLButtonElement>('.mantine-Modal-close');
+    expect(closeBtn).not.toBeNull();
+    await userEvent.click(closeBtn!);
+
+    // Close vector 2 — Escape (Mantine `closeOnEscape`).
+    await userEvent.keyboard('{Escape}');
+
+    // The busy guard swallowed both — the parent onClose was never called and the
+    // modal is still mounted.
+    expect(onClose).not.toHaveBeenCalled();
+    await expect.element(page.getByText('View code in Forgejo')).toBeInTheDocument();
   });
 });
 

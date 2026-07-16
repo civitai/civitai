@@ -29,7 +29,7 @@ import {
   IconWindow,
   IconX,
 } from '@tabler/icons-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { ReviewBlockPreviewHost } from '~/components/Apps/ReviewBlockPreviewHost';
 import { useReviewPreview } from '~/components/Apps/useReviewPreview';
 import {
@@ -151,6 +151,19 @@ export function formatDate(d: string | Date | null | undefined): string {
 // prominently.
 // ---------------------------------------------------------------------------
 
+/**
+ * Thin outer shell. Owns the Mantine `<Modal>` (kept mounted + `opened`-toggled
+ * so open/close still animates and doesn't flash) and derives only the static,
+ * per-request title from `selection`. The interactive body — which holds the
+ * transient approve/reject UI state — is rendered as a SEPARATE component keyed
+ * on `selection.request.id` so it REMOUNTS whenever a different request is
+ * selected. That remount is what deterministically resets `approvalNotes` /
+ * `rejectionReason` / `actionMode` per request: previously this state lived on
+ * one long-lived component that only swapped its `selection` prop, so switching
+ * from one app to another leaked the prior app's reject-mode + reason text (a
+ * mod who clicked "Reject…" on app A then opened app B saw B stuck in reject
+ * mode with A's reason). Keying here means no caller has to remember to key it.
+ */
 export function OnsiteReviewModal({
   selection,
   onClose,
@@ -158,15 +171,92 @@ export function OnsiteReviewModal({
   selection: OnsiteReviewSelection;
   onClose: () => void;
 }) {
+  // Set by the body while an approve/reject mutation is in flight so this shell's
+  // onClose (Escape / overlay click / the X) refuses to close mid-action — the
+  // same guard the pre-split modal had inline. Written by the body during its
+  // render; only read here in the (post-commit) close handler, so the value is
+  // always current by the time a close is triggered.
+  const busyRef = useRef(false);
+
+  return (
+    <Modal
+      opened={!!selection}
+      onClose={() => {
+        if (busyRef.current) return;
+        onClose();
+      }}
+      title={selection ? <OnsiteReviewModalTitle selection={selection} /> : null}
+      size="xl"
+      centered
+    >
+      {selection && (
+        <OnsiteReviewModalBody
+          key={selection.request.id}
+          selection={selection}
+          onClose={onClose}
+          busyRef={busyRef}
+        />
+      )}
+    </Modal>
+  );
+}
+
+/** Static, per-request modal title (slug + version + a mode/first-version badge).
+ *  Derived purely from `selection` — no transient state — so it lives on the
+ *  stable shell, not the keyed body. */
+function OnsiteReviewModalTitle({ selection }: { selection: NonNullable<OnsiteReviewSelection> }) {
+  const { request, mode } = selection;
+  const mds = (request.manifestDiffSummary ?? {}) as ManifestDiffSummary;
+  return (
+    <Group gap={6}>
+      <Text fw={600}>{request.slug}</Text>
+      <Code>{request.version}</Code>
+      {mds.kind === 'first-version' && (
+        <Badge color="violet" size="sm">
+          first version
+        </Badge>
+      )}
+      {mode === 'approved' && (
+        <Badge color="green" size="sm">
+          approved
+        </Badge>
+      )}
+      {mode === 'rejected' && (
+        <Badge color="red" size="sm">
+          rejected
+        </Badge>
+      )}
+    </Group>
+  );
+}
+
+/**
+ * Interactive review body. Holds the transient approve/reject UI state
+ * (`approvalNotes` / `rejectionReason` / `actionMode`) plus the approve/reject
+ * mutations. The parent keys this on `selection.request.id`, so all of that
+ * state is fresh on every request switch — no manual reset needed, and the
+ * `onSuccess → onClose` paths are safe because the next open remounts fresh.
+ */
+function OnsiteReviewModalBody({
+  selection,
+  onClose,
+  busyRef,
+}: {
+  selection: NonNullable<OnsiteReviewSelection>;
+  onClose: () => void;
+  busyRef: { current: boolean };
+}) {
   const utils = trpc.useUtils();
   const [approvalNotes, setApprovalNotes] = useState('');
   const [rejectionReason, setRejectionReason] = useState('');
   const [actionMode, setActionMode] = useState<'view' | 'reject'>('view');
 
+  const { request, mode } = selection;
+
   const approveMut = trpc.blocks.approveRequest.useMutation({
     onSuccess: async () => {
       showSuccessNotification({
-        message: `Approved ${selection?.request.slug} v${selection?.request.version}. Build started.`,
+        message: `Approved ${request.slug} v${request.version}. Build started.`,
       });
       await utils.blocks.listPendingRequests.invalidate();
       await utils.blocks.listApprovedRequests.invalidate();
@@ -182,7 +272,7 @@ export function OnsiteReviewModal({
   const rejectMut = trpc.blocks.rejectRequest.useMutation({
     onSuccess: async () => {
       showSuccessNotification({
-        message: `Rejected ${selection?.request.slug} v${selection?.request.version}.`,
+        message: `Rejected ${request.slug} v${request.version}.`,
       });
       await utils.blocks.listPendingRequests.invalidate();
       await utils.blocks.listRejectedRequests.invalidate();
@@ -196,53 +286,20 @@ export function OnsiteReviewModal({
     },
   });
 
-  if (!selection) return null;
-  const { request, mode } = selection;
   const readOnly = mode !== 'pending';
 
   const manifest = request.manifest as Record<string, unknown>;
   const fs = (request.fileSummary ?? {}) as FileSummary;
   const mds = (request.manifestDiffSummary ?? {}) as ManifestDiffSummary;
   const busy = approveMut.isPending || rejectMut.isPending;
+  // Publish the in-flight state up to the shell so its onClose can guard on it.
+  busyRef.current = busy;
 
   const approved = mode === 'approved' ? (request as ApprovedRequest) : null;
   const rejected = mode === 'rejected' ? (request as RejectedRequest) : null;
 
   return (
-    <Modal
-      opened={!!selection}
-      onClose={() => {
-        if (busy) return;
-        setApprovalNotes('');
-        setRejectionReason('');
-        setActionMode('view');
-        onClose();
-      }}
-      title={
-        <Group gap={6}>
-          <Text fw={600}>{request.slug}</Text>
-          <Code>{request.version}</Code>
-          {mds.kind === 'first-version' && (
-            <Badge color="violet" size="sm">
-              first version
-            </Badge>
-          )}
-          {mode === 'approved' && (
-            <Badge color="green" size="sm">
-              approved
-            </Badge>
-          )}
-          {mode === 'rejected' && (
-            <Badge color="red" size="sm">
-              rejected
-            </Badge>
-          )}
-        </Group>
-      }
-      size="xl"
-      centered
-    >
-      <Stack gap="md">
+    <Stack gap="md">
         <Group gap="xs" align="flex-start">
           <Text size="xs" c="dimmed">
             Submitter:
@@ -470,7 +527,6 @@ export function OnsiteReviewModal({
           </Stack>
         )}
       </Stack>
-    </Modal>
   );
 }
 
