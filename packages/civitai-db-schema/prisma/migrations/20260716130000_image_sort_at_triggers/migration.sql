@@ -38,6 +38,16 @@
 -- the source of truth here. Safe to run in a transaction (DDL only; no backfill —
 -- existing rows keep their current sortAt until the separate backfill runs).
 
+-- 0. Retire the 2024 predecessor (migration 20240719172747) --------------------
+-- new_image_sort_at (AFTER UPDATE OF postId OR INSERT ON "Image") still writes
+-- sortAt = coalesce(publishedAt, createdAt). As an AFTER trigger it would clobber
+-- the value set_image_sort_at() computes below with the older, scannedAt-less
+-- formula. The new BEFORE trigger is a strict superset of its firing conditions,
+-- so drop it. (Its Post-side sibling update_image_sort_at() is REPLACED in place
+-- below; post_published_at_change keeps its name.)
+DROP TRIGGER IF EXISTS new_image_sort_at ON "Image";
+DROP FUNCTION IF EXISTS update_new_image_sort_at();
+
 -- 1. Per-row author -----------------------------------------------------------
 CREATE OR REPLACE FUNCTION set_image_sort_at()
   RETURNS TRIGGER AS

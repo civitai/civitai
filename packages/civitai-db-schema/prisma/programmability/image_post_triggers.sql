@@ -16,6 +16,18 @@
 -- fan-out's UPDATE does not re-fire the BEFORE trigger (no recursion), and even
 -- if it did both paths compute the identical GREATEST value (idempotent).
 
+-- Retire the 2024 predecessors (migration 20240719172747). Two authors wrote
+-- sortAt back then: update_image_sort_at() (Post side, later neutered by this
+-- file to an updatedAt-only body) and new_image_sort_at/update_new_image_sort_at()
+-- (Image side, AFTER UPDATE OF postId OR INSERT, formula coalesce(publishedAt,
+-- createdAt)). The Image-side pair was never replaced and is still live: as an
+-- AFTER trigger it would OVERWRITE the value set_image_sort_at() computes below,
+-- with the older scannedAt-less formula. Drop it so the new BEFORE trigger — a
+-- strict superset of its firing conditions — is the sole Image-side author.
+DROP TRIGGER IF EXISTS new_image_sort_at ON "Image";
+---
+DROP FUNCTION IF EXISTS update_new_image_sort_at();
+---
 -- 1. Per-row author. Reads the parent Post's publishedAt directly, so a fresh
 --    insert, a scan completing (scannedAt bump), or an image moving between
 --    posts (postId change) all restamp sortAt from the correct post.
