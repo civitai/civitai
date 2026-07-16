@@ -830,8 +830,9 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                     min={CHALLENGE_MIN_ENTRY_FEE}
                     max={CHALLENGE_MAX_ENTRY_FEE}
                     step={10}
+                    allowNegative={false}
                     clampBehavior="none"
-                    description={`${perEntryToPool} Buzz of each entry goes to the prize pool. Entry fees are non-refundable once paid.`}
+                    description={`Minimum ${CHALLENGE_MIN_ENTRY_FEE} Buzz. ${perEntryToPool} Buzz of each entry goes to the prize pool. Entry fees are non-refundable once paid.`}
                     withAsterisk
                     disabled={isTerminal}
                   />
@@ -842,6 +843,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                     currency={Currency.BUZZ}
                     min={0}
                     step={100}
+                    allowNegative={false}
                     description="Buzz you seed the pool with (charged to you on creation)."
                     disabled={isTerminal}
                   />
