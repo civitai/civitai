@@ -1471,6 +1471,10 @@ export async function upsertUserChallenge({
         metadata: true,
         buzzType: true,
         startsAt: true,
+        title: true,
+        description: true,
+        theme: true,
+        invitation: true,
       },
     });
     if (!existing) throw throwNotFoundError('Challenge not found');
@@ -1515,6 +1519,13 @@ export async function upsertUserChallenge({
         message: 'Challenge must start at least 3 hours from now.',
       });
 
+    // Only reset the scan verdict when the moderated text actually changed. Resetting on every
+    // edit deadlocks: the re-scan submit dedups on contentHash against the already-Succeeded
+    // EntityModeration row, so no webhook ever flips ingestion back to Scanned and the challenge
+    // sits hidden until the activation job voids it.
+    const moderatedTextChanged =
+      buildChallengeModerationText(commonData) !== buildChallengeModerationText(existing);
+
     const updated = await dbWrite.$transaction(async (tx) => {
       // Conditional on status IN THE WRITE: the Scheduled/entry-count checks above ran on the
       // read replica, so the hourly activation job (or a racing entry charge) could have flipped
@@ -1530,9 +1541,10 @@ export async function upsertUserChallenge({
           // Edits are limited to Scheduled + no entries, so the pool equals the base here.
           basePrizePool: existing.basePrizePool,
           prizePool: existing.basePrizePool,
-          // Any content edit requires a fresh scan before the challenge is public again.
-          ingestion: ChallengeIngestionStatus.Pending,
-          scannedAt: null,
+          ...(moderatedTextChanged && {
+            ingestion: ChallengeIngestionStatus.Pending,
+            scannedAt: null,
+          }),
           // Recompute the visibility window from the (possibly updated) start date.
           visibleAt: getUserChallengeVisibleAt(rest.startsAt),
           ...(themeEls && {
@@ -1569,8 +1581,8 @@ export async function upsertUserChallenge({
       return saved;
     });
 
-    // Re-scan after any content edit (fail-soft; the scan gate hides it until Scanned).
-    await scanUserChallenge(id);
+    // Re-scan only text changes (fail-soft; the scan gate hides it until Scanned).
+    if (moderatedTextChanged) await scanUserChallenge(id);
     return updated;
   }
 
