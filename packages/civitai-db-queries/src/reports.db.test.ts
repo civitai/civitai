@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { setReportStatus, setReportStatusMany } from './reports.db';
+import { getReports, setReportStatus, setReportStatusMany, updateReportNotes } from './reports.db';
 import { connectCompileOnly } from './test/harness';
 
 const harness = connectCompileOnly();
@@ -66,5 +66,51 @@ describe('setReportStatusMany', () => {
       'update "Report" set "status" = $1, "statusSetAt" = $2, "statusSetBy" = $3 ' +
         'where "id" in ($4, $5) and "status" != $6 returning "id", "userId", "alsoReportedBy"'
     );
+  });
+});
+
+describe('updateReportNotes', () => {
+  it('updates internalNotes for one report', async () => {
+    await updateReportNotes({ id: 7, internalNotes: 'looks fine' });
+    const { sql, parameters } = harness.lastQuery();
+
+    expect(sql).toBe('update "Report" set "internalNotes" = $1 where "id" = $2');
+    expect(parameters).toEqual(['looks fine', 7]);
+  });
+});
+
+describe('getReports', () => {
+  it('builds the paged items query: entity-join exists, filters, newest-first, limit/offset', async () => {
+    await getReports({
+      type: 'image',
+      page: 2,
+      limit: 20,
+      statuses: ['Pending'],
+      reasons: ['NSFW'],
+      reportedBy: 'alice',
+    });
+    // getReports runs a count then the items query; the items query is last.
+    const { sql, parameters } = harness.lastQuery();
+
+    expect(sql).toContain('from "Report"');
+    expect(sql).toContain('left join "User" on "User"."id" = "Report"."userId"');
+    expect(sql).toContain('exists (select 1 from "ImageReport" er where er."reportId" = "Report"."id")');
+    expect(sql).toContain('"Report"."status" in ($1)');
+    expect(sql).toContain('"Report"."reason" in ($2)');
+    expect(sql).toContain('"User"."username" ilike $3');
+    expect(sql).toContain('order by "Report"."id" desc');
+    expect(sql).toContain('limit $4');
+    expect(sql).toContain('offset $5');
+    // status, reason, reportedBy prefix, limit, offset=(page-1)*limit
+    expect(parameters).toEqual(['Pending', 'NSFW', 'alice%', 20, 20]);
+  });
+
+  it('omits the status/reason/reportedBy predicates when those filters are absent', async () => {
+    await getReports({ type: 'model' });
+    const { sql } = harness.lastQuery();
+
+    expect(sql).not.toContain('ilike');
+    expect(sql).not.toContain('"Report"."status" in');
+    expect(sql).toContain('exists (select 1 from "ModelReport" er where er."reportId" = "Report"."id")');
   });
 });

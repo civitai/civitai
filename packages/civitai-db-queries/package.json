@@ -17,6 +17,7 @@
     "kysely": "^0.28.7"
   },
   "devDependencies": {
+    "@civitai/db": "workspace:*",
     "vitest": "^4.0.18"
   }
 }
