@@ -174,6 +174,22 @@ describe('OffsiteReviewModal — approve-notes gating, friendly date, field labe
     await expect.element(confirm).toBeDisabled();
   });
 
+  // The disabled-reason Tooltip wraps the disabled Button in a Box so it still
+  // fires on hover (a native disabled <button> emits no pointer events). Assert
+  // the hint text surfaces while the gate is closed.
+  test('hovering the disabled Reject confirm surfaces the reason hint', async () => {
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await page.getByTestId('apps-offsite-reject-open').click();
+
+    const confirm = page.getByTestId('apps-offsite-reject-confirm');
+    await expect.element(confirm).toBeDisabled();
+    await confirm.hover();
+    await expect
+      .element(page.getByText('Enter a reason — at least 3 characters.'))
+      .toBeInTheDocument();
+  });
+
   test('the submitted timestamp renders as "Month D, YYYY" (no time-of-day)', async () => {
     renderWithProviders(<OffsiteReviewQueue />);
     // Self-consistent with the component (same helper) → TZ-agnostic.

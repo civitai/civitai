@@ -362,10 +362,10 @@ describe('rejectExternalRequest — moderatorProcedure', () => {
     });
   });
 
-  it('a short reason is rejected at the SCHEMA boundary (min 10)', async () => {
+  it('a short reason is rejected at the SCHEMA boundary (min 3)', async () => {
     const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
     await expect(
-      caller.rejectExternalRequest({ publishRequestId: 'alpr_1', rejectionReason: 'short' })
+      caller.rejectExternalRequest({ publishRequestId: 'alpr_1', rejectionReason: 'no' })
     ).rejects.toBeInstanceOf(TRPCError);
     expect(mockReject).not.toHaveBeenCalled();
   });

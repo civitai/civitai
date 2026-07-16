@@ -2,6 +2,7 @@ import {
   Alert,
   Anchor,
   Badge,
+  Box,
   Button,
   Card,
   Code,
@@ -527,21 +528,26 @@ export function OffsiteReviewModal({
                     disabled={!reasonTooShort}
                     withArrow
                   >
-                    <Button
-                      color="red"
-                      leftSection={<IconX size={14} />}
-                      onClick={() =>
-                        rejectMut.mutate({
-                          publishRequestId: request.id,
-                          rejectionReason: rejectionReason.trim(),
-                        })
-                      }
-                      disabled={rejectDisabled}
-                      loading={rejectMut.isPending}
-                      data-testid="apps-offsite-reject-confirm"
-                    >
-                      Reject
-                    </Button>
+                    {/* A native disabled <button> fires no pointer events, so the
+                        Tooltip must attach to a wrapper to show in the exact state
+                        it explains (Mantine's documented disabled-target pattern). */}
+                    <Box>
+                      <Button
+                        color="red"
+                        leftSection={<IconX size={14} />}
+                        onClick={() =>
+                          rejectMut.mutate({
+                            publishRequestId: request.id,
+                            rejectionReason: rejectionReason.trim(),
+                          })
+                        }
+                        disabled={rejectDisabled}
+                        loading={rejectMut.isPending}
+                        data-testid="apps-offsite-reject-confirm"
+                      >
+                        Reject
+                      </Button>
+                    </Box>
                   </Tooltip>
                 </Group>
               </Stack>
