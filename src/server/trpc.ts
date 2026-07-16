@@ -20,6 +20,7 @@ import {
   WRITE_DEVALUE,
 } from '~/shared/utils/trpc-union-transformer';
 import { logToAxiom } from '~/server/logging/client';
+import { createFallbackDedup, fallbackDedupKeys } from '~/server/logging/devalue-fallback-log';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
@@ -37,22 +38,30 @@ import type { Context } from './createContext';
 // Attribute + ship each devalue-write fallback (a non-POJO response payload that
 // fell back to superjson — see writeSerializeWithFallback). Path comes from the
 // serialize ALS ctx because tRPC doesn't thread the procedure into the
-// transformer (and onError never fires — the response still succeeds). Deduped
-// per path per window so a hot offender can't flood Axiom.
-const fallbackLogWindowMs = 30_000;
-const fallbackLastLogged = new Map<string, number>();
+// transformer (and onError never fires — the response still succeeds).
+//
+// The ctx path is the RAW, client-controlled, comma-joined batch string
+// (`req.query.trpc`), so we normalize it to the individual offending
+// procedure(s) (fallbackDedupKeys) before deduping — otherwise a client could
+// re-frame one offender across many batches to defeat the window — and dedup
+// through a SIZE-BOUNDED windowed map so a long-lived module can't grow it
+// unboundedly. Each distinct procedure logs at most once per window; a
+// multi-procedure batch (~1% of traffic) over-attributes to its co-batched
+// procedures, which is an acceptable, bounded cost for the offender list.
+const fallbackDedup = createFallbackDedup({ windowMs: 30_000, maxSize: 1000 });
 onDevalueWriteFallback((error) => {
-  const path = currentSerializeCtx()?.path ?? 'unknown';
+  const rawPath = currentSerializeCtx()?.path ?? 'unknown';
   const now = Date.now();
-  const last = fallbackLastLogged.get(path);
-  if (last !== undefined && now - last < fallbackLogWindowMs) return;
-  fallbackLastLogged.set(path, now);
-  void logToAxiom({
-    name: 'devalue-write-fallback',
-    type: 'warning',
-    path,
-    message: error instanceof Error ? error.message : String(error),
-  }).catch(() => undefined);
+  const message = error instanceof Error ? error.message : String(error);
+  for (const path of fallbackDedupKeys(rawPath)) {
+    if (!fallbackDedup.shouldLog(path, now)) continue;
+    void logToAxiom({
+      name: 'devalue-write-fallback',
+      type: 'warning',
+      path,
+      message,
+    }).catch(() => undefined);
+  }
 });
 
 export interface TRPCMeta {

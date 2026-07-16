@@ -3,6 +3,10 @@ import type { GetServerSidePropsContext, GetServerSidePropsResult, Redirect } fr
 import type { Session } from '~/types/session';
 import { Tracker } from '~/server/clickhouse/client';
 import { unionTransformer } from '~/shared/utils/trpc-union-transformer';
+import {
+  runWithSerializeCtxAlways,
+  ssrDehydrateSerializePath,
+} from '~/server/logging/trpc-serialize-log';
 
 import { appRouter } from '~/server/routers';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
@@ -107,11 +111,20 @@ export function createServerSideProps<P>({
         // dehydrated state, and the devalue write (TRPC_WRITE_DEVALUE) throws on
         // non-POJOs — turning one failed prefetch into a page-wide SSR 500. Dropping
         // errored queries lets the client refetch instead.
+        //
+        // Seed the serialize-attribution ctx (kill-switch-independent — this is the
+        // once-per-render SSR path, not the hot tRPC batch path) with the page
+        // route so a devalue-write fallback during dehydrate attributes to the
+        // page (`ssr:dehydrate:<route>`) instead of `unknown`.
         ...(ssg
           ? {
-              trpcState: ssg.dehydrate({
-                shouldDehydrateQuery: (query) => query.state.status === 'success',
-              }),
+              trpcState: runWithSerializeCtxAlways(
+                { path: ssrDehydrateSerializePath(context.resolvedUrl), type: 'ssr' },
+                () =>
+                  ssg.dehydrate({
+                    shouldDehydrateQuery: (query) => query.state.status === 'success',
+                  })
+              ),
             }
           : {}),
         session,
