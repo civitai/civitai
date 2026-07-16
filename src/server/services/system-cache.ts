@@ -11,6 +11,7 @@ import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import type { TagsOnTagsType } from '~/shared/utils/prisma/enums';
 import { TagType } from '~/shared/utils/prisma/enums';
+import { createTtlMemo } from '~/server/utils/ttl-memoize';
 import { indexOfOr } from '~/utils/array-helpers';
 import { createLogger } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
@@ -26,13 +27,41 @@ const log = createLogger('system-cache', 'green');
 
 const SYSTEM_CACHE_EXPIRY = 60 * 60 * 4;
 
+// In-process (per-pod) memoize TTL for the GLOBAL, user-independent system-cache
+// blobs below. These values are identical for every user/request, and the backing
+// redis blob itself already only changes ~every SYSTEM_CACHE_EXPIRY (4h). Putting a
+// short in-proc TTL in front of them collapses a redis GET (+ an msgpackr decode for
+// the packed MODERATED_TAGS) on every call into ~1 read / TTL / pod — mirroring the
+// live `getClientConfigCached` pattern in src/server/trpc.ts. Only successful reads
+// are memoized (a fetcher rejection propagates uncached; see createTtlMemo), so each
+// getter's existing fail-open/fail-safe behavior is preserved.
+//
+// Staleness tradeoff: the moderation-sensitive blobs (MODERATED_TAGS,
+// BLOCKED_BROWSING_TAGS, BROWSING_SETTING_ADDONS) gate which tags/content are hidden,
+// so a newly-moderated tag or a flipped browsing addon takes up to this TTL *longer*
+// to propagate, PER POD, on top of the already-4h redis staleness. Kept short (30s)
+// so that marginal delay is trivial. None of these keys are `redis.del`-invalidated
+// (verified), so the in-proc layer cannot shadow an intended prompt invalidation.
+const SYSTEM_CACHE_INPROC_TTL_MS = 30_000;
+
+// LIVE_FEATURE_FLAGS behaves like an operational toggle (ops can flip a feature on/off
+// via sysRedis), so it gets a shorter TTL than the content blobs — matching
+// CLIENT_CONFIG_TTL_MS — to keep flag-flip propagation fast (<=5s/pod) while still
+// collapsing the per-call sysRedis GET on the generation/feature-flag hot path.
+const LIVE_FLAGS_INPROC_TTL_MS = 5_000;
+
 export type SystemModerationTag = {
   id: number;
   name: string;
   nsfwLevel: NsfwLevel;
   parentId?: number;
 };
-export async function getModeratedTags(): Promise<SystemModerationTag[]> {
+// Hottest of the global blobs: fetched on the feed hidden-preferences path
+// (user-preferences.service.ts) and re-decoded via msgpackr on every call. The
+// in-proc memo cuts both the redis GET and the msgpackr decode per call. This
+// key is NOT redis.del-invalidated anywhere (only the 4h EX), so the extra
+// in-proc TTL is purely additive to the already-eventual 4h staleness.
+const getModeratedTagsMemo = createTtlMemo<SystemModerationTag[]>(async () => {
   const cachedTags = await redis.packed.get<SystemModerationTag[]>(
     REDIS_KEYS.SYSTEM.MODERATED_TAGS
   );
@@ -65,6 +94,10 @@ export async function getModeratedTags(): Promise<SystemModerationTag[]> {
 
   log('got moderation tags');
   return combined;
+}, SYSTEM_CACHE_INPROC_TTL_MS);
+
+export async function getModeratedTags(): Promise<SystemModerationTag[]> {
+  return getModeratedTagsMemo();
 }
 
 export type TagRule = {
@@ -226,7 +259,11 @@ export async function getCategoryTags(type: 'image' | 'model' | 'post' | 'articl
 // Hard navigation blocklist (W2). Seeded from BLOCKED_BROWSING_TAG_IDS; ops
 // override the live set by writing a JSON `{id, name}[]` to the redis key.
 // Names resolved from the DB (lowercase) so W2 name matching + tag-page 404 work.
-export async function getBlockedBrowsingTags(): Promise<{ id: number; name: string }[]> {
+// Global navigation blocklist on the hot feed + tag-page path. Resolves to a
+// real value (redis hit, or a DB fetch that rewrites the key) or throws on a
+// redis/DB failure — it never swallows an error into an empty list — so the
+// in-proc memo only ever caches a genuine value. Not redis.del-invalidated.
+const getBlockedBrowsingTagsMemo = createTtlMemo<{ id: number; name: string }[]>(async () => {
   const cached = await redis.get(REDIS_KEYS.SYSTEM.BLOCKED_BROWSING_TAGS);
   if (cached) {
     // Fail open on a corrupt ops-set value (this getter is on the hot feed +
@@ -252,9 +289,15 @@ export async function getBlockedBrowsingTags(): Promise<{ id: number; name: stri
 
   log('got blocked browsing tags');
   return tags;
+}, SYSTEM_CACHE_INPROC_TTL_MS);
+
+export async function getBlockedBrowsingTags(): Promise<{ id: number; name: string }[]> {
+  return getBlockedBrowsingTagsMemo();
 }
 
-export async function getHomeExcludedTags() {
+// Global, effectively static (['woman', 'women']) home-page tag exclusion.
+// Not redis.del-invalidated; resolves to a real value or throws.
+const getHomeExcludedTagsMemo = createTtlMemo<{ id: number; name: string }[]>(async () => {
   const cachedTags = await redis.get(REDIS_KEYS.SYSTEM.HOME_EXCLUDED_TAGS);
   if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];
 
@@ -269,6 +312,10 @@ export async function getHomeExcludedTags() {
 
   log('got home excluded tags');
   return tags;
+}, SYSTEM_CACHE_INPROC_TTL_MS);
+
+export async function getHomeExcludedTags() {
+  return getHomeExcludedTagsMemo();
 }
 
 export async function setLiveNow(isLive: boolean) {
@@ -280,6 +327,17 @@ export async function getLiveNow() {
   return cachedLiveNow === 'true';
 }
 
+// In-proc memo over the RAW sysRedis string only — the try/catch + JSON.parse
+// fail-open below stay OUTSIDE the memo so semantics are byte-for-byte preserved:
+// a redis error/timeout rejects (→ NOT cached → outer catch fails open to
+// defaults), while an unset key (null) or a real string IS cached. This is an
+// SSR every-render read, so collapsing the per-render sysRedis GET into ~1/TTL/pod
+// is the win; parsing the small cached string per call is negligible.
+const getBrowsingSettingAddonsRawMemo = createTtlMemo<string | null>(
+  () => withSysReadDeadline(sysRedis.get(REDIS_SYS_KEYS.SYSTEM.BROWSING_SETTING_ADDONS)),
+  SYSTEM_CACHE_INPROC_TTL_MS
+);
+
 export async function getBrowsingSettingAddons() {
   let cached: string | null = null;
   try {
@@ -288,7 +346,7 @@ export async function getBrowsingSettingAddons() {
     // the awaited get ~11min on EVERY page render; the try/catch below only
     // covers a fast DOWN reject. On timeout the deadline rejects into the
     // catch → fail open to defaults.
-    cached = await withSysReadDeadline(sysRedis.get(REDIS_SYS_KEYS.SYSTEM.BROWSING_SETTING_ADDONS));
+    cached = await getBrowsingSettingAddonsRawMemo();
   } catch (err) {
     logSysRedisFailOpen('read-degraded', 'getBrowsingSettingAddons', err);
     return DEFAULT_BROWSING_SETTINGS_ADDONS;
@@ -392,12 +450,24 @@ export async function removeCreationBlockedTags(tagIds: number[]): Promise<Creat
   return setCreationBlockedTags(current.map((t) => t.id).filter((id) => !toRemove.has(id)));
 }
 
+// In-proc memo over the RAW sysRedis string only, with a SHORTER TTL than the
+// content blobs (operational toggle → fast flag-flip propagation). The try/catch
+// + JSON.parse stay OUTSIDE the memo so semantics are preserved exactly: a redis
+// error/timeout rejects (→ NOT cached → outer catch fails open to defaults);
+// unset (null) or a real string IS cached; a corrupt value still throws out of
+// JSON.parse below just as before. Evaluated on the generation/feature-flag hot
+// path, so collapsing the per-call sysRedis GET into ~1/TTL/pod is the win.
+const getLiveFeatureFlagsRawMemo = createTtlMemo<string | null>(
+  () => withSysReadDeadline(sysRedis.get(REDIS_SYS_KEYS.SYSTEM.LIVE_FEATURE_FLAGS)),
+  LIVE_FLAGS_INPROC_TTL_MS
+);
+
 export async function getLiveFeatureFlags() {
   let cached: string | null;
   try {
     // Wall-clock deadline so a silent sysRedis half-open can't park this read
     // (evaluated on the generation/feature-flag hot path) ~11min.
-    cached = await withSysReadDeadline(sysRedis.get(REDIS_SYS_KEYS.SYSTEM.LIVE_FEATURE_FLAGS));
+    cached = await getLiveFeatureFlagsRawMemo();
   } catch (err) {
     logSysRedisFailOpen('read-degraded', 'getLiveFeatureFlags', err);
     return DEFAULT_LIVE_FEATURE_FLAGS;
