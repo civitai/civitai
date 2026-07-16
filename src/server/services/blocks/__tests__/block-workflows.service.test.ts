@@ -24,6 +24,7 @@ import {
   upsertBlockWorkflowOnSubmit,
   updateBlockWorkflowStatus,
   listMyBlockWorkflows,
+  blockWorkflowOwnedByAppUser,
   BLOCK_WORKFLOWS_MAX_LIMIT,
 } from '../block-workflows.service';
 
@@ -208,5 +209,27 @@ describe('listMyBlockWorkflows', () => {
     // micro-ISO string (NOT '2026-07-15T12:00:02.123Z').
     expect(binds).toContain(tsA);
     expect(binds).toContain('wf_a');
+  });
+});
+
+describe('blockWorkflowOwnedByAppUser (cancel ownership guard)', () => {
+  const input = { userId: 42, appBlockId: 'apb_1', workflowId: 'wf_1' };
+
+  it('returns true when a row exists for the (userId, appBlockId, workflowId) tuple', async () => {
+    mockQueryRaw.mockResolvedValueOnce([{ one: 1 }]);
+    await expect(blockWorkflowOwnedByAppUser(input)).resolves.toBe(true);
+    // Bound params: the untrusted workflowId + BOTH server-derived scoping keys.
+    const values = valuesOf(mockQueryRaw.mock.calls[0]);
+    expect(values).toEqual(['wf_1', 42, 'apb_1']);
+  });
+
+  it('returns false when no matching row exists (not owned / wrong app / wrong user)', async () => {
+    mockQueryRaw.mockResolvedValueOnce([]);
+    await expect(blockWorkflowOwnedByAppUser(input)).resolves.toBe(false);
+  });
+
+  it('FAILS CLOSED (returns false, never throws) on a DB error', async () => {
+    mockQueryRaw.mockRejectedValueOnce(new Error('db down'));
+    await expect(blockWorkflowOwnedByAppUser(input)).resolves.toBe(false);
   });
 });

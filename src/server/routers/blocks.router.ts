@@ -95,8 +95,10 @@ import { getRequestDomainColor, isHostForColor } from '~/server/utils/server-dom
 // lazy import of recordScopeInvocation below.
 import type { ResolveCanGenerateVersion } from '~/server/services/generation/generation.service';
 import {
+  appBlockTag,
   buildTextToImageInput,
   isPageLoraResource,
+  projectAppWorkflow,
   resolveBlockVersionContext,
   resolvePageResourceContext,
   snapshotFromWorkflow,
@@ -119,7 +121,12 @@ import {
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { getBaseModelSetType, WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
-import { cancelWorkflow, getWorkflow, submitWorkflow } from '~/server/services/orchestrator/workflows';
+import {
+  cancelWorkflow,
+  getWorkflow,
+  queryWorkflows,
+  submitWorkflow,
+} from '~/server/services/orchestrator/workflows';
 import {
   buildGenerationContext,
   createWorkflowStepsFromGraphInput,
@@ -2601,6 +2608,182 @@ export const blocksRouter = router({
     }),
 
   /**
+   * App generator SUBQUEUE read — the calling app's OWN tag-scoped slice of the
+   * viewer's generation workflows, projected to the clean `AppWorkflow` wire
+   * shape (see projectAppWorkflow). Backs an app rebuilding its in-flight+done
+   * generation queue WITH live image results (distinct from `listMyWorkflows`,
+   * which reads only the persisted status read-model, and `pollWorkflow`, which
+   * reads ONE workflow).
+   *
+   * TWO independent scoping boundaries, both server-derived from the VERIFIED
+   * token — NEVER client input:
+   *   1. USER scope — the orchestrator LIST is called with the viewer's OWN
+   *      per-user orchestrator token, so it only ever returns that user's
+   *      workflows (the personal-queue read works the same way).
+   *   2. APP scope — a HOST-FORCED positive `tags:['app-block:<appId>']` filter
+   *      (`appBlockTag(claims.appId)`). This is the SECURITY BOUNDARY that keeps
+   *      the read to the app's OWN subqueue and OUT of the user's personal gens.
+   *      The input schema exposes NO `tags` field, so a block CANNOT pass/override
+   *      tags to widen the filter — the host tag is the only tag, always applied.
+   *
+   * MUTATION (not query) DELIBERATELY, for the same bearer-token-in-URL reason as
+   * every other block-token proc (a `.query` leaks the JWT into `?input=…` /
+   * logs / Referer where it is replayable within its TTL).
+   *
+   * Order (each step fail-closed): verify token → require `ai:write:budgeted`
+   * (same trust boundary as submit — an app that can submit gens can read its own
+   * subqueue) → self-bind userId off `claims.sub` (UNAUTHORIZED for anon) →
+   * App-Blocks kill-switch + author gate against the TOKEN subject → per-instance
+   * rate limit → orchestrator LIST with the host-forced tag → project + return.
+   */
+  queryAppWorkflows: publicProcedure
+    // Block-JWT-authed (no session for dev:live) — flag evaluated against the
+    // TOKEN subject below, not the `enforceAppBlocksFlag` middleware's ctx.user.
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        cursor: z.string().min(1).max(256).nullish(),
+        limit: z.number().int().min(1).max(50).optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const claims = await verifyBlockToken(input.blockToken);
+      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      // Same trust boundary as submit: an app authorized to spend the viewer's
+      // Buzz on generation can read the subqueue of gens it produced.
+      if (!claims.scopes.includes('ai:write:budgeted')) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
+      }
+      const userId = parseSubjectUserId(claims.sub);
+      if (userId == null) {
+        throw new TRPCError({
+          code: 'UNAUTHORIZED',
+          message: 'workflow query requires authenticated viewer',
+        });
+      }
+      // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
+      await assertAppBlocksEnabledForTokenUser(userId);
+      await assertViewerIsAppDeveloper(userId);
+      // Per-instance rate limit (shared blocks limiter), BEFORE the orchestrator
+      // call. Bounds a block hammering the LIST onto the origin. Fail-open on a
+      // redis incident (same posture as the buzz self-read bridges).
+      const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+      if (!rate.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
+      const token = await getOrchestratorToken(userId, ctx);
+      // HOST-FORCED per-app tag — the ONLY tag passed (the input has no `tags`
+      // field), so a block can never remove/override/widen it. queryWorkflows
+      // itself prepends 'civitai', yielding a positive AND-match of
+      // ['civitai', 'app-block:<appId>'] scoped to the viewer's own workflows.
+      const { nextCursor, items } = await queryWorkflows({
+        token,
+        tags: [appBlockTag(claims.appId)],
+        take: input.limit ?? 20,
+        cursor: input.cursor ?? undefined,
+        hideMatureContent: false,
+      });
+      return {
+        workflows: items.map(projectAppWorkflow),
+        cursor: nextCursor ?? null,
+      };
+    }),
+
+  /**
+   * Cancel ONE workflow in the calling app's OWN subqueue — FAIL-CLOSED.
+   *
+   * The orchestrator's by-id GET/PATCH/DELETE `/{workflowId}` endpoints do NOT
+   * verify caller-vs-workflow ownership, so canceling with the viewer's token is
+   * NOT by itself a gate — a guessed/forged id belonging to another user (or a
+   * non-app personal generation) could otherwise be canceled. This procedure
+   * COMPENSATES with a two-part guard BEFORE the cancel:
+   *   (a) OWNERSHIP+ATTRIBUTION — the `block_workflows` read-model must carry a
+   *       row for the exact (userId from token `sub`, appBlockId from token,
+   *       workflowId) tuple (`blockWorkflowOwnedByAppUser`). This is the durable
+   *       USER binding the orchestrator lacks — the load-bearing check.
+   *   (b) APP TAG — the orchestrator's OWN record for the workflow must carry the
+   *       `app-block:<appId>` tag (defense-in-depth: the two systems must agree it
+   *       is this app's workflow).
+   * If EITHER fails → FORBIDDEN and the orchestrator cancel is NEVER called.
+   *
+   * MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows). Scope +
+   * gate order identical to queryAppWorkflows/cancelWorkflow.
+   */
+  cancelAppWorkflow: publicProcedure
+    // Block-JWT-authed (no session for dev:live) — flag evaluated against the
+    // TOKEN subject below, not the `enforceAppBlocksFlag` middleware's ctx.user.
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        workflowId: z.string().min(1).max(64),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const claims = await verifyBlockToken(input.blockToken);
+      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      if (!claims.scopes.includes('ai:write:budgeted')) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
+      }
+      const userId = parseSubjectUserId(claims.sub);
+      if (userId == null) {
+        throw new TRPCError({
+          code: 'UNAUTHORIZED',
+          message: 'workflow cancel requires authenticated viewer',
+        });
+      }
+      // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
+      await assertAppBlocksEnabledForTokenUser(userId);
+      await assertViewerIsAppDeveloper(userId);
+      // Per-instance rate limit (shared blocks limiter), BEFORE any orchestrator
+      // read/DELETE or DB query. Cancel is the HEAVIER path (2 orchestrator GETs +
+      // 1 DELETE + 1 DB lookup per call), so it MUST be bounded exactly like the
+      // sibling queryAppWorkflows — same key (blockInstanceId) + scope. Fail-open
+      // on a redis incident (matches the buzz self-read bridges / query proc).
+      const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+      if (!rate.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
+      // GUARD (a): the durable user+app-block-bound ownership proof. Bound
+      // entirely from the verified token — a block can only ever authorize a
+      // workflow it actually submitted for THIS viewer. Fail-closed.
+      const { blockWorkflowOwnedByAppUser } = await import(
+        '~/server/services/blocks/block-workflows.service'
+      );
+      const owned = await blockWorkflowOwnedByAppUser({
+        userId,
+        appBlockId: claims.appBlockId,
+        workflowId: input.workflowId,
+      });
+      if (!owned) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'workflow is not in this app subqueue',
+        });
+      }
+      const token = await getOrchestratorToken(userId, ctx);
+      // GUARD (b): re-read the workflow and assert the orchestrator's OWN record
+      // carries the per-app tag — defense-in-depth over (a). Done with the
+      // viewer's token (which does NOT itself gate ownership per the note above).
+      const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
+      if (!(workflow.tags ?? []).includes(appBlockTag(claims.appId))) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'workflow is not tagged for this app',
+        });
+      }
+      // Both guards passed — cancel, then re-read + project the terminal state.
+      await cancelWorkflow({ workflowId: input.workflowId, token });
+      const canceled = await getWorkflow({ token, path: { workflowId: input.workflowId } });
+      return { workflow: projectAppWorkflow(canceled) };
+    }),
+
+  /**
    * Cost-only preview. Builds the same orchestrator step `submitWorkflow`
    * would, then calls submit with `whatif:true` so the orchestrator computes
    * cost without queueing the job. No budget gate — estimate is how the block
@@ -4562,7 +4745,9 @@ function buildWorkflowTags(
     'txt2img',
     baseModel,
     'app-block',
-    `app-block:${claims.appId}`,
+    // Per-app subqueue tag — the SAME helper `blocks.queryAppWorkflows` filters
+    // on, so the STAMP and the READ can never desync (see appBlockTag).
+    appBlockTag(claims.appId),
     `app-block:block:${claims.blockId}`,
     `app-block:instance:${claims.blockInstanceId}`,
   ];
