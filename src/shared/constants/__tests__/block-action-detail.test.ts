@@ -31,11 +31,44 @@ describe('describeBlockAction', () => {
     const d: BlockActionDetail = { action: 'tip', amount: 1000, toUserId: 7 };
     expect(describeBlockAction(d)).toBe('Tipped 1,000 Buzz to user #7');
   });
-  it('tip: appends a resolved subject name when present', () => {
-    const d: BlockActionDetail = { action: 'tip', amount: 5, toUserId: 7, modelVersionId: 99 };
+  it('tip: appends a resolved ModelVersion subject name when present', () => {
+    const d: BlockActionDetail = {
+      action: 'tip',
+      amount: 5,
+      toUserId: 7,
+      entityType: 'ModelVersion',
+      entityId: 99,
+    };
     expect(describeBlockAction(d, { username: 'bob', subjectName: 'DreamXL v2' })).toBe(
-      'Tipped 5 Buzz to @bob · DreamXL v2'
+      'Tipped 5 Buzz to @bob on DreamXL v2'
     );
+  });
+  it('tip: renders a safe generic subject for a non-ModelVersion entity (no name, no empty "on ")', () => {
+    const d: BlockActionDetail = {
+      action: 'tip',
+      amount: 5,
+      toUserId: 7,
+      entityType: 'Image',
+      entityId: 42,
+    };
+    // No subjectName supplied (the view only names ModelVersions) → generic.
+    expect(describeBlockAction(d, { username: 'bob' })).toBe('Tipped 5 Buzz to @bob on this image');
+  });
+  it('tip: renders a generic subject when a ModelVersion name is still unresolved', () => {
+    const d: BlockActionDetail = {
+      action: 'tip',
+      amount: 5,
+      toUserId: 7,
+      entityType: 'ModelVersion',
+      entityId: 99,
+    };
+    expect(describeBlockAction(d, { username: 'bob' })).toBe(
+      'Tipped 5 Buzz to @bob on this model version'
+    );
+  });
+  it('tip: no entity ref → just recipient + amount (never a dangling "on ")', () => {
+    const d: BlockActionDetail = { action: 'tip', amount: 500, toUserId: 7 };
+    expect(describeBlockAction(d, { username: 'alice' })).toBe('Tipped 500 Buzz to @alice');
   });
   it('workflow.submit: renders the spend (absolute of a negative amount)', () => {
     const d: BlockActionDetail = { action: 'workflow.submit', amount: -120, outcome: 'ok' };

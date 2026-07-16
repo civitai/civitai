@@ -37,9 +37,15 @@ export type BlockActionDetail = {
   action: string;
   /** Buzz delta for money actions — NEGATIVE for a spend, positive for a credit. */
   amount?: number;
-  /** Subject refs — resolved to display names by the view's batch lookups. */
+  /** Recipient ref (e.g. a tip target) — resolved to @username by the view. */
   toUserId?: number;
-  modelVersionId?: number;
+  /**
+   * Subject entity the action targeted, as a (type, id) pair — mirrors the tip
+   * endpoint's `entityType`/`entityId`. The view resolves a display name from
+   * this: `entityType==='ModelVersion'` via the model-version batch lookup, other
+   * types render a safe generic subject. (Kept as a generic pair rather than a
+   * `modelVersionId` so a single contract covers every entity a mutation names.)
+   */
   entityId?: number;
   entityType?: string;
   /** Storage key (already scoped to the user's own namespace). */
@@ -73,17 +79,53 @@ export function isBlockActionDetail(value: unknown): value is BlockActionDetail 
 
 /**
  * Display names the view has resolved (via batch lookups) for a detail's
- * subject-ref ids. All optional — a null/absent name falls back to the raw id.
+ * subject-ref ids. All optional — a null/absent name falls back to a safe
+ * generic subject (never an empty "on ").
  */
 export type BlockActionNames = {
   /** Resolved from `detail.toUserId`. */
   username?: string | null;
-  /** Resolved from `detail.modelVersionId` (or an entity ref). */
+  /**
+   * Resolved display name for `detail.entityType`/`detail.entityId` — the view
+   * supplies it only for the types it can name (today: ModelVersion via the
+   * model-version batch). Absent → a generic "on a <entityType>" is rendered.
+   */
   subjectName?: string | null;
 };
 
 function formatBuzz(amount: number): string {
   return `${Math.abs(amount).toLocaleString('en-US')} Buzz`;
+}
+
+/** Human word for an entity type in the "on a <type>" generic subject. */
+function friendlyEntityType(entityType: string): string {
+  switch (entityType) {
+    case 'ModelVersion':
+      return 'model version';
+    case 'Image':
+      return 'image';
+    case 'Collection':
+      return 'collection';
+    case 'Model':
+      return 'model';
+    case 'Article':
+      return 'article';
+    case 'User':
+      return 'creator';
+    default:
+      return entityType.toLowerCase();
+  }
+}
+
+/**
+ * The " on <subject>" clause for a detail carrying an entity ref. Renders the
+ * resolved name when the view supplied one, else a safe generic ("on a model
+ * version") — NEVER an empty "on ". Absent entity ref → no clause. Throw-safe.
+ */
+function describeSubject(detail: BlockActionDetail, names: BlockActionNames): string {
+  if (!detail.entityType || detail.entityId == null) return '';
+  if (names.subjectName && names.subjectName.length > 0) return ` on ${names.subjectName}`;
+  return ` on this ${friendlyEntityType(detail.entityType)}`;
 }
 
 /**
@@ -96,13 +138,6 @@ export function describeBlockAction(
   detail: BlockActionDetail,
   names: BlockActionNames = {}
 ): string {
-  const subject =
-    names.subjectName && names.subjectName.length > 0
-      ? ` · ${names.subjectName}`
-      : detail.modelVersionId
-      ? ` · model version #${detail.modelVersionId}`
-      : '';
-
   switch (detail.action) {
     case 'tip': {
       const who =
@@ -112,7 +147,7 @@ export function describeBlockAction(
           ? `user #${detail.toUserId}`
           : 'a creator';
       const amt = typeof detail.amount === 'number' ? ` ${formatBuzz(detail.amount)}` : '';
-      return `Tipped${amt} to ${who}${subject}`;
+      return `Tipped${amt} to ${who}${describeSubject(detail, names)}`;
     }
     case 'workflow.submit': {
       const amt =

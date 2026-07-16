@@ -247,12 +247,16 @@ export function AppActivityPanel({
       ),
     [items]
   );
+  // Version-name lookups are keyed on the (entityType==='ModelVersion', entityId)
+  // subject ref the writers actually emit — batched across all rows (no N+1).
   const versionIds = useMemo(
     () =>
       Array.from(
         new Set(
           items.flatMap((i) =>
-            i.kind === 'scope' && i.detail?.modelVersionId != null ? [i.detail.modelVersionId] : []
+            i.kind === 'scope' && i.detail?.entityType === 'ModelVersion' && i.detail.entityId != null
+              ? [i.detail.entityId]
+              : []
           )
         )
       ),
@@ -350,8 +354,9 @@ export function AppActivityPanel({
                             ? usernameById.get(item.detail.toUserId)
                             : null,
                         subjectName:
-                          item.detail.modelVersionId != null
-                            ? versionNameById.get(item.detail.modelVersionId)
+                          item.detail.entityType === 'ModelVersion' &&
+                          item.detail.entityId != null
+                            ? versionNameById.get(item.detail.entityId)
                             : null,
                       })
                     : humaniseScopeInvocation(item.scope, item.endpoint)}

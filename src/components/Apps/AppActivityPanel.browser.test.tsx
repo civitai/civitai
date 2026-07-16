@@ -39,8 +39,15 @@ const SCOPE_ITEMS = [
     scope: 'social:tip:self',
     endpoint: 'tip',
     statusCode: 200,
-    // Rich row that also resolves a model version name (subject ref).
-    detail: { action: 'tip', amount: 5, toUserId: 8, modelVersionId: 99, outcome: 'ok' },
+    // Rich row that also resolves a ModelVersion subject name (entityType/entityId).
+    detail: {
+      action: 'tip',
+      amount: 5,
+      toUserId: 8,
+      entityType: 'ModelVersion',
+      entityId: 99,
+      outcome: 'ok',
+    },
   },
   {
     id: '3',
@@ -77,6 +84,20 @@ const SCOPE_ITEMS = [
     endpoint: 'storage:x',
     statusCode: 200,
     detail: { action: 'mystery.future', outcome: 'ok' }, // unknown action code
+  },
+  {
+    id: '6',
+    createdAt: new Date('2026-07-16T07:00:00Z'),
+    appBlockId: 'apb_1',
+    appName: 'Tip App',
+    appSlug: 'tip-app',
+    blockInstanceId: 'bki_1',
+    scope: 'social:tip:self',
+    endpoint: 'tip',
+    statusCode: 200,
+    // Non-ModelVersion entity — the view names only ModelVersions, so this must
+    // render a safe generic subject, never a crash or an empty "on ".
+    detail: { action: 'tip', amount: 250, toUserId: 7, entityType: 'Image', entityId: 42, outcome: 'ok' },
   },
 ];
 
@@ -121,9 +142,16 @@ describe('AppActivityPanel — W13 action detail', () => {
     await expect.element(page.getByText('Tipped 500 Buzz to @alice')).toBeInTheDocument();
   });
 
-  test('(a) rich tip row resolves the model version subject name', async () => {
+  test('(a) rich tip row resolves the ModelVersion subject name via getVersionsByIds', async () => {
     renderWithProviders(<AppActivityPanel />);
-    await expect.element(page.getByText('Tipped 5 Buzz to @bob · DreamXL')).toBeInTheDocument();
+    await expect.element(page.getByText('Tipped 5 Buzz to @bob on DreamXL')).toBeInTheDocument();
+  });
+
+  test('(a) non-ModelVersion tip renders a safe generic subject (no crash, no empty "on ")', async () => {
+    renderWithProviders(<AppActivityPanel />);
+    await expect
+      .element(page.getByText('Tipped 250 Buzz to @alice on this image'))
+      .toBeInTheDocument();
   });
 
   test('(b) passive read row shows a friendly scope label', async () => {
