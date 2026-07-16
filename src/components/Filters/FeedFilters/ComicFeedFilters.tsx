@@ -1,6 +1,6 @@
 import type { GroupProps } from '@mantine/core';
 import { Group } from '@mantine/core';
-import { IconUsersGroup, IconWorld } from '@tabler/icons-react';
+import { IconBooks, IconUsersGroup, IconWorld } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import classes from '~/components/Filters/FeedFilters/FeedFilters.module.scss';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
@@ -20,33 +20,57 @@ const periodOptions = [
   { label: 'This Year', value: 'Year' },
 ] as const;
 
+// 'creators' matches the sitewide Followed filter (creators you follow);
+// 'comics' filters to comics you follow directly (per-comic Notify engagement).
+const audienceOptions = [
+  { label: 'Everyone', value: 'everyone' },
+  { label: 'Followed', value: 'creators' },
+  { label: 'Followed Comics', value: 'comics' },
+] as const;
+
+const audienceIcons = {
+  everyone: IconWorld,
+  creators: IconUsersGroup,
+  comics: IconBooks,
+} as const;
+
 export function ComicFeedFilters({ ...groupProps }: GroupProps) {
   const router = useRouter();
   const currentUser = useCurrentUser();
 
   const sort = (router.query.sort as string) || 'Newest';
   const period = (router.query.period as string) || 'AllTime';
-  const followed = (router.query.followed as string) || 'false';
+  const audience =
+    router.query.followedComics === 'true'
+      ? 'comics'
+      : router.query.followed === 'true'
+      ? 'creators'
+      : 'everyone';
 
-  const setParam = (key: string, value: string | undefined) => {
+  const setParams = (updates: Record<string, string | undefined>) => {
     const query = { ...router.query };
-    if (!value) delete query[key];
-    else query[key] = value;
+    for (const [key, value] of Object.entries(updates)) {
+      if (!value) delete query[key];
+      else query[key] = value;
+    }
     void router.replace({ pathname: router.pathname, query }, undefined, { shallow: true });
   };
+  const setParam = (key: string, value: string | undefined) => setParams({ [key]: value });
 
   return (
     <Group className={classes.filtersWrapper} gap={4} wrap="nowrap" {...groupProps}>
       {currentUser && (
         <SelectMenuV2
-          label={followed === 'true' ? 'Followed' : 'Everyone'}
-          options={[
-            { label: 'Followed', value: 'true' },
-            { label: 'Everyone', value: 'false' },
-          ]}
-          icon={followed === 'true' ? IconUsersGroup : IconWorld}
-          onClick={(v) => setParam('followed', v === 'false' ? undefined : v)}
-          value={followed}
+          label={audienceOptions.find((o) => o.value === audience)?.label ?? 'Everyone'}
+          options={[...audienceOptions]}
+          icon={audienceIcons[audience]}
+          onClick={(v) =>
+            setParams({
+              followed: v === 'creators' ? 'true' : undefined,
+              followedComics: v === 'comics' ? 'true' : undefined,
+            })
+          }
+          value={audience}
           size="compact-sm"
         />
       )}
