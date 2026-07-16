@@ -4,13 +4,13 @@ import { dbRead } from '~/server/db/client';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import {
   classifyBlockImageUploadScan,
+  isAllowedOutputHost,
   type BlockImageUploadScanOutcome,
 } from '~/server/services/blocks/block-image-upload.logic';
 import type { OffsiteRatingValue } from '~/shared/constants/browsingLevel.constants';
 import type { PersistBlockUploadImageInput } from '~/server/schema/blocks/block-image-upload.schema';
 import type { SessionUser } from '~/types/session';
 import { uploadImageBufferToStore } from '~/utils/s3-utils';
-import { env } from '~/env/server';
 
 /**
  * App Blocks (Phase-2a PR-C) — server glue for the host-mediated `OPEN_IMAGE_UPLOAD`
@@ -84,36 +84,6 @@ function sniffSupportedImage(b: Buffer): string | null {
     return 'image/webp';
   }
   return null;
-}
-
-/**
- * SSRF allowlist for a workflow output url. The url is server-resolved from the
- * ownership-verified workflow (the block never supplies it), so the realistic
- * threat is only a compromised/misbehaving orchestrator response — but we still
- * gate defensively. Allows HTTPS on the orchestrator's own registrable domain
- * (derived at runtime from `env.ORCHESTRATOR_ENDPOINT` — no host hardcoded in
- * this public repo, no infra internals leaked) and its subdomains (output blobs
- * + the media CDN live under it). Fail-closed when the endpoint isn't configured.
- */
-function isAllowedOutputHost(rawUrl: string): boolean {
-  let u: URL;
-  try {
-    u = new URL(rawUrl);
-  } catch {
-    return false;
-  }
-  if (u.protocol !== 'https:') return false;
-  const endpoint = env.ORCHESTRATOR_ENDPOINT;
-  if (!endpoint) return false; // no allowlist configured → fail closed
-  let apex: string;
-  try {
-    apex = new URL(endpoint).hostname.toLowerCase().split('.').slice(-2).join('.');
-  } catch {
-    return false;
-  }
-  if (!apex) return false;
-  const host = u.hostname.toLowerCase();
-  return host === apex || host.endsWith('.' + apex);
 }
 
 /**
