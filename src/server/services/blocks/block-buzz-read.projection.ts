@@ -15,26 +15,42 @@ import type { getUserBuzzTransactions } from '~/server/services/buzz.service';
  *      buzz.service `completeStripeBuzzPurchase`). An unfiltered spread would
  *      ship the user's Stripe payment-intent reference into the third-party
  *      block iframe, so we pick ONLY the fields the dashboard needs and drop
- *      every passthrough key. Beyond the entity-attribution fields, three
- *      CLASSIFIER keys are allowlisted (evidence-based sweep of every
+ *      every passthrough key. Beyond the entity-attribution fields, the
+ *      classifier keys are allowlisted (evidence-based sweep of every
  *      `details:` writer):
- *        • `type` — the reward-event tag every Reward/Incentive row carries
- *          (rewards/base.reward.ts `sendAward`: 'dailyBoost', 'goodContent:<kind>',
- *          'collectedContent:<kind>', 'imagePostedToModel', 'adWatched', …) and
- *          the early-access purchase kind ('download' | 'generation',
- *          model-version.service). Internal tags only — this is what a rewards
- *          audit / income-stream breakdown classifies on. String-guarded.
- *        • `forId` — the reward's subject id (dailyBoost: the claimed day as
- *          YYYYMMDD, imagePostedToModel: modelVersionId, firstDailyPost: postId,
- *          goodContent: entityId, …). NUMERIC-ONLY: the one string-valued case
- *          is adWatched's `input.token` (the watched-ad session token,
- *          adWatched.reward.ts) — an opaque external token with no dashboard
- *          use, excluded by the number guard. Every dashboard classifier
- *          (claim-calendar day, entity ids) is a number.
+ *        • `type` + `forId` — the reward-event tag + subject id every
+ *          Reward/Incentive row carries (rewards/base.reward.ts `sendAward`;
+ *          the effective value is `getKey`'s returned `type`, which overrides
+ *          the definition's top-level `type` via the `...definedKey` spread).
+ *          These are NOT passed through for every reward type: `type` is an
+ *          internal classifier and several reward tags identify OTHER users or
+ *          the viewer's moderation/social activity, which must NOT reach an
+ *          untrusted installed block. So `type` (and, with it, `forId`) is kept
+ *          ONLY when `type` names a dashboard-relevant income / attribution
+ *          event — a CURATED allowlist, `isDashboardClassifierType` below:
+ *            - exact: `dailyBoost`, `imagePostedToModel`, `firstDailyPost`,
+ *              and the early-access purchase kinds `download` / `generation`
+ *              (model-version.service).
+ *            - prefix: `goodContent:<kind>`, `collectedContent:<kind>` (the
+ *              per-entity reaction/collection income tags; matched by prefix
+ *              because the writers append `:<entityType>`).
+ *          Everything else DROPS both `type` and `forId`. This structurally
+ *          excludes the leak-class tags an open pass-through would have shipped:
+ *          `reportAccepted` (the viewer's moderation-report activity + reportId
+ *          — the sharpest leak), `refereeCreated` (the referrer's user id — the
+ *          referral edge), `firstDailyFollow` (the followed user's id — a follow
+ *          edge), `encouragement:<kind>` (the viewer's reaction footprint), plus
+ *          `ad-watched` / `appBlockReview` / `generation-feedback` /
+ *          `userReferred` — AND, by DEFAULT, any FUTURE reward type until it is
+ *          deliberately added to the allowlist (default-deny, not a denylist).
+ *          `forId` additionally keeps a NUMERIC-ONLY guard (every allowlisted
+ *          tag's subject id is a number; the one string-valued writer is
+ *          adWatched's session token, already excluded by type).
  *        • `modelVersionId` — the early-access sale's sold version
  *          (model-version.service `details: { modelVersionId, type,
  *          earlyAccessPurchase: true }`) — per-version sales attribution.
- *          Number-guarded.
+ *          Only written by the allowlisted `download`/`generation` kinds and
+ *          always a public version id. Number-guarded.
  *      Still dropped (present on reward rows): `byUserId` — who triggered the
  *      reward (reactor/collector identity); reactions are anonymous on the
  *      site, so the block must not see it either.
@@ -61,6 +77,31 @@ import type { getUserBuzzTransactions } from '~/server/services/buzz.service';
  *      prefix. Every OTHER row keeps its classifier (challenge-entry/winner
  *      prizes, `referral-reward:*`, generic reward-event ids, bounty/comp tags).
  */
+
+/**
+ * Curated allowlist of `details.type` classifiers safe to expose to an untrusted
+ * installed block — the dashboard-relevant income / attribution events only.
+ * Exact matches + the `:<kind>`-suffixed reaction/collection income tags
+ * (prefix). Anything not listed — including every FUTURE reward type — is
+ * default-denied (drops both `type` and `forId`). This is deliberately a
+ * structural ALLOWLIST, never a denylist: adding a new dashboard type is an
+ * explicit, tested decision, and a new sensitive tag can never leak by omission.
+ */
+const DASHBOARD_CLASSIFIER_TYPES = new Set<string>([
+  'dailyBoost',
+  'imagePostedToModel',
+  'firstDailyPost',
+  // Early-access purchase kinds (model-version.service `details.type`).
+  'download',
+  'generation',
+]);
+const DASHBOARD_CLASSIFIER_TYPE_PREFIXES = ['goodContent:', 'collectedContent:'];
+
+export function isDashboardClassifierType(type: unknown): type is string {
+  if (typeof type !== 'string') return false;
+  if (DASHBOARD_CLASSIFIER_TYPES.has(type)) return true;
+  return DASHBOARD_CLASSIFIER_TYPE_PREFIXES.some((p) => type.startsWith(p));
+}
 
 const EXTERNAL_TXN_ID_SENSITIVE_TYPES = new Set<TransactionType>([
   TransactionType.Purchase,
@@ -115,9 +156,18 @@ export function projectBlockBuzzTransaction(row: BlockBuzzTransactionRow) {
           entityType: d.entityType,
           url: d.url,
           toAccountType: d.toAccountType,
-          // Classifier keys (see leak-class (A) above): internal tags/ids only.
-          type: typeof d.type === 'string' ? d.type : undefined,
-          forId: typeof d.forId === 'number' && Number.isFinite(d.forId) ? d.forId : undefined,
+          // Classifier keys (see leak-class (A) above): `type` + `forId` are
+          // kept ONLY for the curated dashboard income/attribution types — a
+          // structural default-deny that excludes moderation/referral/follow/
+          // reaction tags AND any future reward type. `forId` keeps a numeric
+          // guard on top (belt-and-suspenders against a string subject id).
+          type: isDashboardClassifierType(d.type) ? d.type : undefined,
+          forId:
+            isDashboardClassifierType(d.type) &&
+            typeof d.forId === 'number' &&
+            Number.isFinite(d.forId)
+              ? d.forId
+              : undefined,
           modelVersionId:
             typeof d.modelVersionId === 'number' && Number.isFinite(d.modelVersionId)
               ? d.modelVersionId

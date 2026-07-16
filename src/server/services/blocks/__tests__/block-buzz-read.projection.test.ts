@@ -118,44 +118,74 @@ describe('projectBlockBuzzTransaction', () => {
     expect(projectBlockBuzzTransaction(row({ details: null })).details).toBeNull();
   });
 
-  it('keeps the reward classifier keys: details.type + numeric forId', () => {
+  // ── Curated dashboard-classifier allowlist (type + forId) ────────────────
+  // KEEP only the dashboard-relevant income/attribution types; DROP everything
+  // else (moderation / referral / follow / reaction tags + any future type).
+
+  it.each([
+    ['dailyBoost', 20260714], // claim-calendar day (YYYYMMDD)
+    ['imagePostedToModel', 501001], // modelVersionId
+    ['firstDailyPost', 999001], // postId
+    ['goodContent:image', 12345], // prefix match — reaction income (entityId)
+    ['goodContent:model', 777], // prefix match
+    ['collectedContent:image', 22222], // prefix match — collection income
+    ['collectedContent:article', 333], // prefix match
+  ])('keeps type + numeric forId for allowlisted reward type %s', (type, forId) => {
     const out = projectBlockBuzzTransaction(
-      row({
-        type: TransactionType.Reward,
-        details: { type: 'dailyBoost', forId: 20260714, byUserId: 42 },
-      })
+      row({ type: TransactionType.Reward, details: { type, forId, byUserId: 42 } })
     );
     const details = out.details as Record<string, unknown>;
-    expect(details.type).toBe('dailyBoost');
-    expect(details.forId).toBe(20260714);
+    expect(details.type).toBe(type);
+    expect(details.forId).toBe(forId);
     // Who triggered the reward stays private (reactions are anonymous on-site).
     expect(details).not.toHaveProperty('byUserId');
   });
 
-  it('drops a STRING forId — the adWatched ad-session token leak guard', () => {
+  it.each([
+    ['reportAccepted', 88123], // moderation-report activity + reportId — the sharpest leak
+    ['refereeCreated', 4242], // the referrer's user id — referral edge
+    ['firstDailyFollow', 7777], // the followed user's id — follow edge
+    ['encouragement:reaction', 5150], // the viewer's reaction footprint
+    ['ad-watched', 909], // ad session (non-dashboard)
+    ['userReferred', 4242], // referral edge (the mirror side)
+    ['someNewRewardType', 1234], // STRUCTURAL: an unknown/future type is default-denied
+  ])('drops BOTH type and forId for non-allowlisted reward type %s', (type, forId) => {
     const out = projectBlockBuzzTransaction(
-      row({
-        type: TransactionType.Reward,
-        details: { type: 'adWatched', forId: 'ad-session-token-abc123' },
-      })
+      row({ type: TransactionType.Reward, details: { type, forId } })
     );
     const details = out.details as Record<string, unknown>;
-    expect(details.type).toBe('adWatched');
+    expect(details.type).toBeUndefined();
     expect(details.forId).toBeUndefined();
   });
 
-  it('keeps the early-access sale classifiers: modelVersionId + type', () => {
+  it('drops a STRING forId even under an allowlisted type (numeric guard belt-and-suspenders)', () => {
     const out = projectBlockBuzzTransaction(
-      row({
-        type: TransactionType.Purchase,
-        details: { modelVersionId: 501001, type: 'generation', earlyAccessPurchase: true },
-      })
+      row({ type: TransactionType.Reward, details: { type: 'dailyBoost', forId: 'not-a-number' } })
     );
     const details = out.details as Record<string, unknown>;
-    expect(details.modelVersionId).toBe(501001);
-    expect(details.type).toBe('generation');
-    // The flag itself stays passthrough-dropped; a non-numeric value never leaks.
-    expect(details).not.toHaveProperty('earlyAccessPurchase');
+    // type is allowlisted so it stays; the non-numeric subject id is still dropped.
+    expect(details.type).toBe('dailyBoost');
+    expect(details.forId).toBeUndefined();
+  });
+
+  it.each(['download', 'generation'])(
+    'keeps the early-access sale classifiers for %s: modelVersionId + type',
+    (kind) => {
+      const out = projectBlockBuzzTransaction(
+        row({
+          type: TransactionType.Purchase,
+          details: { modelVersionId: 501001, type: kind, earlyAccessPurchase: true },
+        })
+      );
+      const details = out.details as Record<string, unknown>;
+      expect(details.modelVersionId).toBe(501001);
+      expect(details.type).toBe(kind);
+      // The flag itself stays passthrough-dropped.
+      expect(details).not.toHaveProperty('earlyAccessPurchase');
+    }
+  );
+
+  it('drops a non-numeric modelVersionId', () => {
     expect(
       (
         projectBlockBuzzTransaction(
@@ -167,8 +197,11 @@ describe('projectBlockBuzzTransaction', () => {
 
   it('drops a non-string details.type (never widens beyond internal tags)', () => {
     const out = projectBlockBuzzTransaction(
-      row({ details: { type: { nested: 'object' } } })
+      row({ type: TransactionType.Reward, details: { type: { nested: 'object' }, forId: 5 } })
     );
-    expect((out.details as Record<string, unknown>).type).toBeUndefined();
+    const details = out.details as Record<string, unknown>;
+    expect(details.type).toBeUndefined();
+    // A non-string type is not allowlisted, so forId drops too.
+    expect(details.forId).toBeUndefined();
   });
 });
