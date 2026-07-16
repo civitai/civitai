@@ -148,6 +148,7 @@ import { componentTypeConfig, getFileIconConfig } from '~/utils/file-display-hel
 import { formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, getModelUrl, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
 import classes from './ModelVersionDetails.module.scss';
 
 // Hoisted constant inline-style objects — these previously allocated a fresh
@@ -1465,6 +1466,42 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         : ''}
                     </Text>
                   </div>
+                  {/* Training */}
+                  {(!!version.steps || !!version.epochs) && (
+                    <div className={classes.detailRow}>
+                      <span className={classes.detailLabel}>Training</span>
+                      <Group gap={4}>
+                        {!!version.steps && (
+                          <Badge size="sm" radius="sm" color="teal">
+                            Steps: {version.steps.toLocaleString()}
+                          </Badge>
+                        )}
+                        {!!version.epochs && (
+                          <Badge size="sm" radius="sm" color="teal">
+                            Epochs: {version.epochs.toLocaleString()}
+                          </Badge>
+                        )}
+                      </Group>
+                    </div>
+                  )}
+                  {/* Usage Tips */}
+                  {(isDefined(version.clipSkip) || isDefined(version.settings?.strength)) && (
+                    <div className={classes.detailRow}>
+                      <span className={classes.detailLabel}>Usage Tips</span>
+                      <Group gap={4}>
+                        {isDefined(version.clipSkip) && (
+                          <Badge size="sm" radius="sm" color="cyan">
+                            Clip Skip: {version.clipSkip}
+                          </Badge>
+                        )}
+                        {isDefined(version.settings?.strength) && (
+                          <Badge size="sm" radius="sm" color="cyan">
+                            {`Strength: ${version.settings.strength}`}
+                          </Badge>
+                        )}
+                      </Group>
+                    </div>
+                  )}
                   {/* Hash */}
                   {!!hashes.length && (
                     <div className={classes.detailRowPlain}>
