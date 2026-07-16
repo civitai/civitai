@@ -5,6 +5,7 @@ import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import * as z from 'zod';
 
 import {
+  stashBlockActionDetail,
   withBlockScope,
   type BlockScopedNextApiRequest,
 } from '~/server/middleware/block-scope.middleware';
@@ -57,6 +58,9 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   try {
     const key = assertValidCounterKey(parsed.data.key);
     const result = await incrementSharedCounter(bearer(req), key);
+    // W13 richer audit detail — stash a structured ref so the middleware
+    // finish-writer records "Bumped shared counter <key>". Best-effort.
+    stashBlockActionDetail(res, { action: 'storage.increment', key, outcome: 'ok' });
     res.status(200).json(result);
     return;
   } catch (error) {

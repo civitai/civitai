@@ -13,8 +13,13 @@
  * consent.
  */
 
+import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import {
+  isBlockActionDetail,
+  type BlockActionDetail,
+} from '~/shared/constants/block-action-detail';
 
 /**
  * The SYNTHETIC (non-FK-resolving) `appBlockId` claim namespaces a PRE-APPROVAL
@@ -333,6 +338,12 @@ export type ScopeInvocationItem = {
   scope: string;
   endpoint: string;
   statusCode: number;
+  /**
+   * W13 — structured per-action detail for a mutation row (NULL for a passive
+   * read or a pre-W13 row). The view resolves its subject-ref ids → names and
+   * renders a human sentence; a null detail falls back to scope · endpoint.
+   */
+  detail: BlockActionDetail | null;
 };
 
 export type ScopeInvocationPage = {
@@ -375,6 +386,7 @@ export async function listMyScopeInvocations(opts: {
     scope: string;
     endpoint: string;
     statusCode: number;
+    detail: unknown;
     appBlock: { blockId: string; manifest: unknown } | null;
   };
   const rows = (await dbRead.blockScopeInvocation.findMany({
@@ -393,6 +405,7 @@ export async function listMyScopeInvocations(opts: {
       scope: true,
       endpoint: true,
       statusCode: true,
+      detail: true,
       appBlock: { select: { blockId: true, manifest: true } },
     },
   })) as Row[];
@@ -420,6 +433,9 @@ export async function listMyScopeInvocations(opts: {
       scope: r.scope,
       endpoint: r.endpoint,
       statusCode: r.statusCode,
+      // Narrow the JSON column back to the structured shape; a garbage/legacy
+      // value renders via the scope · endpoint fallback (detail = null).
+      detail: isBlockActionDetail(r.detail) ? r.detail : null,
     };
   });
 
@@ -454,7 +470,21 @@ export async function recordScopeInvocation(opts: {
    * historical behaviour (a real FK orphan just logs, no row).
    */
   dev?: boolean;
+  /**
+   * W13 — structured per-action audit detail for an impactful MUTATION (tip /
+   * workflow submit / settings update / storage set|delete|increment). Stored
+   * verbatim into the nullable `detail` JSON column; the view resolves its
+   * subject-ref ids → display names at render time. ABSENT for a passive read
+   * (whose label is derived from `scope`). Narrowed defensively — a malformed
+   * value is dropped so the row still writes plain.
+   */
+  detail?: BlockActionDetail | null;
 }): Promise<void> {
+  // Narrow the detail once; a garbage value writes a plain (detail-less) row
+  // rather than poisoning the INSERT. Reused on the synthetic-retry path below.
+  const detailData: Prisma.InputJsonValue | undefined = isBlockActionDetail(opts.detail)
+    ? (opts.detail as unknown as Prisma.InputJsonValue)
+    : undefined;
   try {
     await dbWrite.blockScopeInvocation.create({
       data: {
@@ -466,6 +496,7 @@ export async function recordScopeInvocation(opts: {
         // belt-and-braces clamp here so a runaway path can't blow the row.
         endpoint: opts.endpoint.slice(0, 512),
         statusCode: opts.statusCode,
+        ...(detailData !== undefined ? { detail: detailData } : {}),
       },
     });
   } catch (err) {
@@ -501,6 +532,7 @@ export async function recordScopeInvocation(opts: {
           scope: opts.scope,
           endpoint: opts.endpoint.slice(0, 512),
           statusCode: opts.statusCode,
+          ...(detailData !== undefined ? { detail: detailData } : {}),
         } as unknown as Parameters<typeof dbWrite.blockScopeInvocation.create>[0]['data'];
         await dbWrite.blockScopeInvocation.create({ data: retryData });
         return;

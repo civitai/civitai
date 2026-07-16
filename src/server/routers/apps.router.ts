@@ -354,6 +354,8 @@ export const appsStorageRouter = router({
           scope: 'apps:storage',
           endpoint: `storage:set:${input.key}`,
           statusCode: 200,
+          // W13 richer detail — structured ref for the render-time sentence.
+          detail: { action: 'storage.set', key: input.key, outcome: 'ok' },
         });
       })().catch(() => {});
       return { ok: true as const, sizeBytes: byteSize };
@@ -417,6 +419,8 @@ export const appsStorageRouter = router({
                 scope: 'apps:storage',
                 endpoint: `storage:delete:${input.key}`,
                 statusCode: 200,
+                // W13 richer detail — structured ref for the render-time sentence.
+                detail: { action: 'storage.delete', key: input.key, outcome: 'ok' },
               });
             })().catch(() => {});
           }

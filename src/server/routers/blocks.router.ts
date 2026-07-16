@@ -3194,6 +3194,14 @@ export const blocksRouter = router({
           // Snapshot status is 'pending' / 'failed' / etc — map to an HTTP-
           // ish code so the existing UI badge colors are coherent.
           statusCode: snapshot.status === 'failed' ? 500 : 200,
+          // W13 richer detail — the buzz SPEND (negative) + terminal outcome so
+          // the activity row reads "Generated an image (spent N Buzz)". `cost`
+          // is the reserved/charged budget for this submit.
+          detail: {
+            action: 'workflow.submit',
+            amount: typeof cost === 'number' ? -Math.abs(cost) : undefined,
+            outcome: snapshot.status === 'failed' ? 'failed' : 'ok',
+          },
           // Phase 2 — App Dev Tunnel: a PRE-APPROVAL dev-tunnel spend carries a
           // synthetic, non-FK appBlockId (`ephemeral-<slug>`). This is the durable
           // per-spend audit row for that case (recordSpendAttribution below is
@@ -3811,6 +3819,8 @@ export const blocksRouter = router({
           scope: 'block:settings:write',
           endpoint: 'user-settings:write',
           statusCode: 200,
+          // W13 richer detail — structured code for the render-time sentence.
+          detail: { action: 'settings.update', outcome: 'ok' },
         });
       })().catch(() => {});
 

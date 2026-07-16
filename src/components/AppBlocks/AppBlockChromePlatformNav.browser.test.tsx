@@ -42,6 +42,10 @@ vi.mock('~/utils/trpc', () => ({
         }),
       },
     },
+    // W13 — AppActivityPanel (mounted by the drawer) resolves rich-detail ids via
+    // these batch lookups. Stub them (empty fixtures → inert).
+    modelVersion: { getVersionsByIds: { useQuery: () => ({ data: undefined }) } },
+    useQueries: () => [],
   },
 }));
 

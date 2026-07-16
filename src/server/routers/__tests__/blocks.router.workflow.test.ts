@@ -282,6 +282,8 @@ vi.mock('~/server/services/block-registry.service', () => ({
     listForModel: vi.fn(),
     installOnModel: vi.fn(),
     updateSettings: vi.fn(),
+    // W13 — updateUserSettings persists via this; default to a no-op resolve.
+    upsertUserSettings: vi.fn(async () => ({ ok: true })),
     toggleEnabled: vi.fn(),
     uninstallFromModel: vi.fn(),
     // Used by resolveBlockCheckpoint to read publisher settings — return
@@ -326,6 +328,9 @@ vi.mock('~/server/middleware.trpc', async () => {
 import { blocksRouter } from '../blocks.router';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+// W13 — the submit path fires recordScopeInvocation (detached) with a structured
+// `detail`. It's mocked above; grab the mock to assert the emitted detail.
+import { recordScopeInvocation } from '~/server/services/blocks/user-app-surface.service';
 // Warm the module cache for the (mocked) block-workflows.service so the router's
 // DETACHED `await import(...)` of it in submitWorkflow resolves promptly — like
 // buzz-attribution.service, which is statically imported by the router and so
@@ -742,6 +747,9 @@ describe('blocks.estimateWorkflow', () => {
 
 describe('blocks.submitWorkflow', () => {
   it('submits the workflow when cost <= budget', async () => {
+    // The recordScopeInvocation mock isn't in the shared beforeEach reset list;
+    // clear it so this test's detached call is calls[0].
+    vi.mocked(recordScopeInvocation).mockClear();
     mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
     happyVersionLookup();
     happyUser();
@@ -767,6 +775,14 @@ describe('blocks.submitWorkflow', () => {
     expect(mockAuditPromptServer).toHaveBeenCalledWith(
       expect.objectContaining({ prompt: 'a cat', userId: 42 })
     );
+
+    // W13 — the audit row carries a structured workflow.submit detail: the buzz
+    // spend (NEGATIVE, absolute of the whatIf cost 25) + an ok outcome.
+    await vi.waitFor(() => expect(vi.mocked(recordScopeInvocation)).toHaveBeenCalled());
+    expect(vi.mocked(recordScopeInvocation).mock.calls[0][0]).toMatchObject({
+      scope: 'ai:write:budgeted',
+      detail: { action: 'workflow.submit', amount: -25, outcome: 'ok' },
+    });
   });
 
   // ---- G8: per-app aggregate spend + velocity cap -------------------------
@@ -4336,5 +4352,27 @@ describe('blocks.getMyDailyCompensation', () => {
       caller.getMyDailyCompensation({ blockToken: 'tok', date: new Date('2026-07-01') })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(mockGetDailyCompensation).not.toHaveBeenCalled();
+  });
+});
+
+// W13 — updateUserSettings records an audit row with a static settings.update
+// detail. Drives the real proc (via createCaller) with the default happy-path
+// mocks and asserts the emitted detail.
+describe('blocks.updateUserSettings — W13 action detail', () => {
+  it('emits a settings.update detail after persisting the viewer settings', async () => {
+    vi.mocked(recordScopeInvocation).mockClear();
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.updateUserSettings({ blockToken: 'tok', settings: {} });
+    expect(result).toEqual({ ok: true });
+    expect(BlockRegistry.upsertUserSettings).toHaveBeenCalled();
+
+    await vi.waitFor(() => expect(vi.mocked(recordScopeInvocation)).toHaveBeenCalled());
+    expect(vi.mocked(recordScopeInvocation).mock.calls[0][0]).toMatchObject({
+      scope: 'block:settings:write',
+      endpoint: 'user-settings:write',
+      detail: { action: 'settings.update', outcome: 'ok' },
+    });
   });
 });
