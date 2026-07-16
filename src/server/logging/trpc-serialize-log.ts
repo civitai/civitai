@@ -211,7 +211,9 @@ export function runWithSerializeCtx<T>(ctx: SerializeCtx, fn: () => T): T {
   return serializeCtxStorage.run(ctx, fn);
 }
 
-function currentSerializeCtx(): SerializeCtx | undefined {
+/** Read the active request's serialize-attribution ctx (also used by the
+ *  devalue-write-fallback logger in src/server/trpc.ts to name the offender). */
+export function currentSerializeCtx(): SerializeCtx | undefined {
   return serializeCtxStorage.getStore();
 }
 
@@ -427,7 +429,14 @@ export function instrumentSerialize<T>(rawSerialize: () => T): T {
       // monsters block > slowMs and took the branch above).
       const bytes = safeByteLength(result);
       // serializeMs < slowMs here, so shouldLogSerialize reduces to the size trigger.
-      if (!shouldLogSerialize({ serializeMs, bytes: bytes ?? 0, slowMs: cfg.slowMs, oversizedBytes: cfg.oversizedBytes })) {
+      if (
+        !shouldLogSerialize({
+          serializeMs,
+          bytes: bytes ?? 0,
+          slowMs: cfg.slowMs,
+          oversizedBytes: cfg.oversizedBytes,
+        })
+      ) {
         return result;
       }
       const dropped = rateGate(path, cfg.maxPerSec);

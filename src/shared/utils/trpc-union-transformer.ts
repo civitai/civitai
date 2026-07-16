@@ -25,9 +25,7 @@ import superjson from 'superjson';
  * in Phase 2 — only the SERVER response write is (env-)flipped, never the read.
  */
 export function unionDeserialize(object: unknown): any {
-  return typeof object === 'string'
-    ? devalueParse(object)
-    : superjson.deserialize(object as any);
+  return typeof object === 'string' ? devalueParse(object) : superjson.deserialize(object as any);
 }
 
 /**
@@ -43,17 +41,54 @@ export function unionDeserialize(object: unknown): any {
 export const writeSerialize = (object: any): string => devalueStringify(object);
 
 /**
+ * Observer for devalue-write fallbacks. The shared module can't import server
+ * logging (this file is in the client bundle), so the server registers a
+ * listener at init (src/server/trpc.ts) that attributes the offending
+ * procedure via the serialize ALS ctx and ships it to Axiom.
+ */
+let devalueFallbackObserver: ((error: unknown) => void) | undefined;
+export function onDevalueWriteFallback(observer: (error: unknown) => void): void {
+  devalueFallbackObserver = observer;
+}
+
+/**
+ * FAIL-OPEN devalue write: try devalue, and on a strict-mode throw (a non-POJO
+ * in the payload — a returned Error, an SDK class instance, a Prisma Decimal)
+ * fall back to superjson for THAT response and notify the observer.
+ *
+ * Rationale: the prod flip (#3135) surfaced latent non-POJO write paths as
+ * hard 500s (e.g. /changelog SSR, model-version Decimal). devalue's strictness
+ * is the right long-term contract, but enforcement belongs in tests + telemetry,
+ * not user-facing failures: every reader is the format-sniffing UNION, so a
+ * per-response superjson fallback decodes identically on every client. The
+ * observer gives us the exact offender list to fix before Phase 3 goes strict.
+ */
+export const writeSerializeWithFallback = (object: any): unknown => {
+  try {
+    return devalueStringify(object);
+  } catch (error) {
+    try {
+      devalueFallbackObserver?.(error);
+    } catch {
+      // observer failures must never affect the response path
+    }
+    return superjson.serialize(object);
+  }
+};
+
+/**
  * Pure selector for the SERVER response write format — extracted so the
  * env-gate's SELECTION logic is unit-testable without a module reload:
  *   - `false` (default) → `superjson.serialize` (object output). The wire is
  *     byte-for-byte what every pool wrote in Phase 1, so merging is zero-risk.
- *   - `true`            → `devalue.stringify` (string output). Only a pool whose
- *     Deployment sets `TRPC_WRITE_DEVALUE=true` writes devalue responses.
+ *   - `true`            → `writeSerializeWithFallback` (devalue string output,
+ *     with a per-response superjson fallback on non-POJO payloads — see above).
+ *     Only a pool whose Deployment sets `TRPC_WRITE_DEVALUE=true` writes devalue.
  * (superjson v2's default-export methods are pre-bound, so passing
  * `superjson.serialize` unbound is safe.)
  */
 export function pickServerWriteSerialize(flag: boolean): (object: any) => any {
-  return flag ? devalueStringify : superjson.serialize;
+  return flag ? writeSerializeWithFallback : superjson.serialize;
 }
 
 /**
