@@ -15,6 +15,10 @@ import {
   getBlockTokenVerificationKeysByKid,
 } from '~/server/services/block-token.service';
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
+import {
+  isBlockActionDetail,
+  type BlockActionDetail,
+} from '~/shared/constants/block-action-detail';
 
 /**
  * Block-scope middleware — wraps a Next.js API handler with block JWT
@@ -76,6 +80,40 @@ export interface BlockTokenClaims {
 export type BlockScopedNextApiRequest = NextApiRequest & {
   blockClaims?: BlockTokenClaims;
 };
+
+/**
+ * W13 richer audit detail — a mutation handler wrapped by `withBlockScope`
+ * (tip, shared-storage increment, …) stashes a structured `BlockActionDetail`
+ * on the response so the finish-writer below can include it on the audit row
+ * WITHOUT a second write path. The middleware is the SINGLE writer; the handler
+ * only annotates. Reads never stash — their label is derived from `scope` at
+ * render time.
+ *
+ * 🔴 Best-effort by construction: `stashBlockActionDetail` can NEVER throw into
+ * the handler's money path (it swallows), and `readBlockActionDetail` narrows a
+ * possibly-absent/garbage value defensively. A missing or malformed stash simply
+ * writes a plain (detail-less) row.
+ */
+const BLOCK_ACTION_DETAIL_KEY = '__civitaiBlockActionDetail';
+
+export function stashBlockActionDetail(res: NextApiResponse, detail: BlockActionDetail): void {
+  try {
+    if (isBlockActionDetail(detail)) {
+      (res as unknown as Record<string, unknown>)[BLOCK_ACTION_DETAIL_KEY] = detail;
+    }
+  } catch {
+    /* audit annotation is best-effort — never let it perturb the response */
+  }
+}
+
+export function readBlockActionDetail(res: NextApiResponse): BlockActionDetail | undefined {
+  try {
+    const stashed = (res as unknown as Record<string, unknown>)[BLOCK_ACTION_DETAIL_KEY];
+    return isBlockActionDetail(stashed) ? stashed : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export interface WithBlockScopeOpts {
   /**
@@ -881,6 +919,10 @@ export function withBlockScope(
     if (userIdForLog != null) {
       const endpointForLog = normalizeEndpoint(req.url ?? '');
       res.on('finish', () => {
+        // W13: a mutation handler may have stashed a structured action detail on
+        // the response. Read it defensively (best-effort) — a missing/malformed
+        // stash writes a plain, detail-less row (the passive-read path).
+        const actionDetail = readBlockActionDetail(res);
         // Dynamic import so this module doesn't eager-load
         // user-app-surface.service (which transitively loads dbRead +
         // Prisma client init). Test envs that import the middleware for
@@ -897,6 +939,7 @@ export function withBlockScope(
             scope: opts.requiredScope ?? '(any-token)',
               endpoint: endpointForLog,
               statusCode: res.statusCode,
+              ...(actionDetail ? { detail: actionDetail } : {}),
               // Phase 2: a dev token MAY carry a synthetic non-FK appBlockId (a
               // pre-approval dev-tunnel app) — let the audit write persist it via
               // the nullable-appBlockId path instead of FK-failing + swallowing.

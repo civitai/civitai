@@ -779,6 +779,17 @@ export type BlockScopeInvocation = {
   scope: string;
   endpoint: string;
   status_code: number;
+  /**
+   * Structured per-action audit detail (W13). NULL for a passive read (whose
+   * friendly label is derived from `scope` at render time) and for any row
+   * written before this column existed. For an impactful MUTATION it carries a
+   * stable `action` code + minimal subject refs (`{ action, amount?, toUserId?,
+   * modelVersionId?, entityId?, entityType?, key?, outcome? }` — see
+   * BlockActionDetail). Stores IDS, not display names — the view resolves them
+   * via batch lookups, so the row never rots when a name changes. Nullable + no
+   * default → additive, backwards-compatible, no backfill.
+   */
+  detail: unknown | null;
   invoked_at: Generated<Timestamp>;
 };
 export type BlockSpendAttribution = {

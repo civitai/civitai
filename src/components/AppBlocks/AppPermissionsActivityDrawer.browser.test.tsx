@@ -51,6 +51,10 @@ vi.mock('~/utils/trpc', () => {
         listMyAppActivity: { useInfiniteQuery: buzzSpy },
         listMyScopeInvocations: { useInfiniteQuery: scopeSpy },
       },
+      // W13 — AppActivityPanel resolves rich-detail subject-ref ids via these
+      // batch lookups. Stub them (no rich rows in these fixtures → inert).
+      modelVersion: { getVersionsByIds: { useQuery: () => ({ data: undefined }) } },
+      useQueries: () => [],
     },
   };
 });

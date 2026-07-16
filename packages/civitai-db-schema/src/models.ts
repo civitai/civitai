@@ -2173,6 +2173,7 @@ export interface BlockScopeInvocation {
   scope: string;
   endpoint: string;
   statusCode: number;
+  detail: JsonValue | null;
   invokedAt: Date;
 }
 

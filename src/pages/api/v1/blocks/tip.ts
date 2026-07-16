@@ -6,6 +6,7 @@ import * as z from 'zod';
 
 import {
   parseSubjectUserId,
+  stashBlockActionDetail,
   withBlockScope,
   type BlockScopedNextApiRequest,
 } from '~/server/middleware/block-scope.middleware';
@@ -56,7 +57,12 @@ const bodySchema = z.object({
   entityId: z.number().int().positive().optional(),
 });
 
-const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: NextApiResponse) {
+// Exported for unit testing (the default export is wrapped in withBlockScope,
+// whose JWT gate would otherwise have to be satisfied to reach this handler).
+export const baseHandler = withAxiom(async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse
+) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     res.status(405).json({ error: 'Method not allowed' });
@@ -179,6 +185,19 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
         entityId,
       },
       ctx,
+    });
+
+    // W13 richer audit detail — stash a structured ref so the middleware
+    // finish-writer records "Tipped N Buzz to @recipient" (the view resolves
+    // toUserId → @username). Best-effort: stash swallows, never perturbs the
+    // money path. `amount` is positive here (a credit TO the recipient).
+    stashBlockActionDetail(res, {
+      action: 'tip',
+      amount,
+      toUserId,
+      ...(entityType ? { entityType } : {}),
+      ...(entityId ? { entityId } : {}),
+      outcome: 'ok',
     });
 
     res.status(200).json({
