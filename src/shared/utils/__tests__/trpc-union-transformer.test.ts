@@ -1,17 +1,32 @@
-import { stringify as devalueStringify } from 'devalue';
+import { parse as devalueParse, stringify as devalueStringify } from 'devalue';
 import superjson from 'superjson';
 import { describe, expect, it } from 'vitest';
-import { unionDeserialize, unionTransformer } from '~/shared/utils/trpc-union-transformer';
+import {
+  buildTransformer,
+  clientTransformer,
+  pickServerWriteSerialize,
+  serverWriteSerialize,
+  unionDeserialize,
+  unionTransformer,
+  WRITE_DEVALUE,
+  writeSerialize,
+} from '~/shared/utils/trpc-union-transformer';
 
 /**
- * Phase 1 of the superjson → devalue tRPC transformer migration adds a
- * format-sniffing UNION deserializer so every reader can decode BOTH formats
- * before any writer emits devalue (the wire stays superjson in Phase 1).
- *
- * The contract under test: `unionDeserialize(write(x))` deep-equals `x` for both
- * writers, across the non-POJO types that actually reach the transformer on the
- * response/request paths — Date, top-level BigInt (feed cursor), `undefined`
- * fields, nested arrays/objects, and Map. Pure (no DB/Prisma), so it runs locally.
+ * Phase 2 of the superjson → devalue tRPC transformer migration env-gates ONLY
+ * the SERVER response write (`TRPC_WRITE_DEVALUE`, per-pool) while:
+ *   - READ stays the format-sniffing UNION on EVERY slot (server input-read,
+ *     client response-read, SSR hydrate), so a payload written by EITHER
+ *     serializer decodes regardless of which peer wrote it.
+ *   - the CLIENT always WRITES superjson (the browser bundle can't be per-pool
+ *     gated; the server union-reads its inputs anyway).
+ *   - the SERVER write is `serverWriteSerialize` = superjson by DEFAULT (flag
+ *     unset → wire byte-identical to Phase 1) and devalue only when the pool
+ *     sets `TRPC_WRITE_DEVALUE=true`.
+ * The tests exercise the pure SELECTION logic (`pickServerWriteSerialize`) for
+ * both gate branches rather than reloading the module, plus the union-read
+ * backward compat and the strict non-POJO devalue-write guard.
+ * Pure (no DB/Prisma), so it runs locally.
  */
 
 // A representative payload mixing the rich types the feed handlers emit.
@@ -45,18 +60,18 @@ const sample = () => ({
   ]),
 });
 
-describe('unionDeserialize', () => {
-  it('round-trips a superjson-written payload (object shape → superjson branch)', () => {
-    const x = sample();
-    const written = superjson.serialize(x); // ALWAYS an object { json, meta? }
-    expect(typeof written).not.toBe('string');
-    expect(unionDeserialize(written)).toEqual(x);
-  });
-
-  it('round-trips a devalue-written payload (string shape → devalue branch)', () => {
+describe('unionDeserialize (READ stays union on every slot in Phase 2)', () => {
+  it('round-trips a devalue-WRITTEN payload (string shape → devalue branch)', () => {
     const x = sample();
     const written = devalueStringify(x); // ALWAYS a string
     expect(typeof written).toBe('string');
+    expect(unionDeserialize(written)).toEqual(x);
+  });
+
+  it('round-trips a superjson-WRITTEN payload (object shape → superjson branch)', () => {
+    const x = sample();
+    const written = superjson.serialize(x); // ALWAYS an object { json, meta? }
+    expect(typeof written).not.toBe('string');
     expect(unionDeserialize(written)).toEqual(x);
   });
 
@@ -76,22 +91,182 @@ describe('unionDeserialize', () => {
     }
   });
 
-  it('falls to the superjson branch for null/undefined input (today’s behavior)', () => {
+  it('falls to the superjson branch for null/undefined input (empty-input behavior)', () => {
     // superjson.deserialize of an empty-ish payload — not a string, so it must
     // NOT hit devalue.parse (which would throw on null). Matches how tRPC hands
     // back an absent/empty transformer payload.
     expect(unionDeserialize(superjson.serialize(undefined))).toBeUndefined();
     expect(unionDeserialize(superjson.serialize(null))).toBeNull();
   });
+});
 
-  it('exposes a complete CombinedDataTransformer whose serialize slots stay superjson', () => {
-    // Phase 1 invariant: every WRITE slot is superjson (wire unchanged). Assert by
-    // shape-equality against superjson's own output.
-    const x = { when: new Date('2024-01-01T00:00:00.000Z'), cursor: 42n };
-    expect(unionTransformer.input.serialize(x)).toEqual(superjson.serialize(x));
-    expect(unionTransformer.output.serialize(x)).toEqual(superjson.serialize(x));
-    // READ slots are the union sniffer.
-    expect(unionTransformer.input.deserialize(superjson.serialize(x))).toEqual(x);
+describe('serverWriteSerialize gate (TRPC_WRITE_DEVALUE, SERVER write only)', () => {
+  it('default (flag unset in the test env) selects superjson — wire unchanged', () => {
+    // The module read process.env.TRPC_WRITE_DEVALUE at load; it is unset here.
+    expect(WRITE_DEVALUE).toBe(false);
+    const x = sample();
+    const out = serverWriteSerialize(x);
+    // superjson output is an OBJECT, not a string — byte-identical to Phase 1.
+    expect(typeof out).not.toBe('string');
+    expect(out).toEqual(superjson.serialize(x));
+    // and it still round-trips through the union read.
+    expect(unionDeserialize(out)).toEqual(x);
+  });
+
+  it('pickServerWriteSerialize(false) → superjson OBJECT, decodable by superjson AND union', () => {
+    const write = pickServerWriteSerialize(false);
+    const x = sample();
+    const out = write(x);
+    expect(typeof out).not.toBe('string');
+    expect(superjson.deserialize(out as any)).toEqual(x);
+    expect(unionDeserialize(out)).toEqual(x);
+  });
+
+  it('pickServerWriteSerialize(true) → devalue STRING, decodable by devalue AND union', () => {
+    const write = pickServerWriteSerialize(true);
+    const x = sample();
+    const out = write(x);
+    expect(typeof out).toBe('string');
+    expect(out).toBe(devalueStringify(x));
+    expect(devalueParse(out as string)).toEqual(x);
+    expect(unionDeserialize(out)).toEqual(x);
+  });
+
+  it('round-trips the rich types through BOTH gate selections', () => {
+    const x = sample();
+    for (const flag of [false, true]) {
+      const out = unionDeserialize(pickServerWriteSerialize(flag)(x)) as ReturnType<typeof sample>;
+      expect(out.nextCursor).toBe(9007199254740993n);
+      expect(typeof out.nextCursor).toBe('bigint');
+      expect(out.items[0].createdAt).toBeInstanceOf(Date);
+      expect(out.buckets).toBeInstanceOf(Map);
+      expect(out.buckets.get('y')).toBe(2);
+      expect('description' in out.items[0]).toBe(true);
+      expect(out.items[0].description).toBeUndefined();
+    }
+  });
+});
+
+describe('clientTransformer (browser: superjson WRITE, union READ)', () => {
+  const x = { when: new Date('2024-01-01T00:00:00.000Z'), cursor: 42n };
+
+  it('WRITES superjson (input.serialize output is an OBJECT, not a devalue string)', () => {
+    const written = clientTransformer.input.serialize(x);
+    expect(typeof written).not.toBe('string');
+    expect(written).toEqual(superjson.serialize(x));
+  });
+
+  it('READS the union on output.deserialize (decodes BOTH a superjson and a devalue response)', () => {
+    // an un-flipped pool responds superjson…
+    expect(clientTransformer.output.deserialize(superjson.serialize(x))).toEqual(x);
+    // …and a TRPC_WRITE_DEVALUE=true pool responds devalue — client decodes both.
+    expect(clientTransformer.output.deserialize(devalueStringify(x))).toEqual(x);
+    // input.deserialize is also union (unused on the client, but complete).
+    expect(clientTransformer.input.deserialize(devalueStringify(x))).toEqual(x);
+  });
+});
+
+describe('server transformer (unionTransformer + buildTransformer)', () => {
+  const x = { when: new Date('2024-01-01T00:00:00.000Z'), cursor: 42n };
+
+  it('unionTransformer (SSR/server default) WRITES via the env gate (superjson by default) and READS union', () => {
+    // Default gate off → SSR dehydrate writes superjson (object), wire unchanged.
+    const written = unionTransformer.output.serialize(x);
+    expect(typeof written).not.toBe('string');
+    expect(written).toEqual(superjson.serialize(x));
+    // READ slots are the union sniffer — decode BOTH formats.
+    expect(unionTransformer.output.deserialize(written)).toEqual(x);
     expect(unionTransformer.output.deserialize(devalueStringify(x))).toEqual(x);
+    expect(unionTransformer.input.deserialize(devalueStringify(x))).toEqual(x);
+  });
+
+  it('buildTransformer honors an instrumentation-shaped output.serialize override; input.serialize is never exercised', () => {
+    // The server proper passes an instrumented output.serialize whose wrappers are
+    // pass-through (time/trace, then return serverWriteSerialize's result verbatim).
+    // Model that with a wrapper that observes the call and returns the value verbatim.
+    let wrapped = 0;
+    const instrumentedSerialize = (data: any) => {
+      wrapped++;
+      return serverWriteSerialize(data); // == the env-gated write, single-sourced
+    };
+    const serverTransformer = buildTransformer(instrumentedSerialize);
+
+    const written = serverTransformer.output.serialize(x);
+    expect(wrapped).toBe(1);
+    // matches the gate (superjson by default in this test env).
+    expect(written).toEqual(serverWriteSerialize(x));
+
+    // input.serialize is superjson-shaped (harmless; never used server-side).
+    expect(typeof serverTransformer.input.serialize(x)).not.toBe('string');
+
+    // READ: both slots are the union sniffer — devalue string AND legacy superjson.
+    expect(serverTransformer.input.deserialize(devalueStringify(x))).toEqual(x);
+    expect(serverTransformer.input.deserialize(superjson.serialize(x))).toEqual(x);
+    expect(serverTransformer.output.deserialize(written)).toEqual(x);
+  });
+});
+
+/**
+ * The wire-output-must-be-a-POJO contract for the DEVALUE write path.
+ *
+ * superjson SILENTLY coerced non-POJO tRPC outputs (a returned `Error` → `{}`, an
+ * SDK class instance → a stripped plain object), swallowing latent bugs. devalue
+ * is strict: it THROWS on any value it can't faithfully represent, which turns
+ * those same returns into a 500 the moment a pool's write path is devalue
+ * (`TRPC_WRITE_DEVALUE=true`). This encodes that boundary so a future procedure
+ * that returns a non-POJO (a raw `@paddle`/Stripe/AWS SDK entity, a caught
+ * `Error`, a symbol-keyed object, a Promise) is caught here rather than in prod
+ * when a pool flips. It is the invariant the paddle/buzz-withdrawal write-path
+ * fixes in this PR restore. `writeSerialize` is exactly the devalue branch of the
+ * gate (`pickServerWriteSerialize(true)`).
+ *
+ * NOTE: this guards the SERIALIZER choice, not every call site — grep can't find a
+ * positionally-returned class instance. The real defense is mapping SDK results to
+ * plain objects at the service boundary (see paddle.service `getAdjustmentsInfinite`).
+ */
+describe('devalue write path rejects non-POJO tRPC outputs (devalue is strict)', () => {
+  class SdkEntity {
+    readonly id = 'adj_123';
+    readonly createdAt = '2024-01-01T00:00:00.000Z';
+    constructor() {}
+    // a method makes the prototype non-Object — exactly the Paddle `Adjustment` shape
+    toJSON() {
+      return { id: this.id };
+    }
+  }
+
+  it('throws on a returned Error instance (the cancelSubscriptionPlan / buzz-withdrawal class)', () => {
+    expect(() => writeSerialize(new Error('boom'))).toThrow();
+    // nested in a response object is just as fatal
+    expect(() => writeSerialize({ ok: false, error: new Error('boom') })).toThrow();
+  });
+
+  it('throws on an arbitrary class instance (the Paddle SDK `Adjustment` class)', () => {
+    expect(() => writeSerialize(new SdkEntity())).toThrow();
+    // the exact getAdjustmentsInfinite shape: { items: [<class instance>] }
+    expect(() => writeSerialize({ items: [new SdkEntity()], nextCursor: undefined })).toThrow();
+  });
+
+  it('throws on symbol-keyed objects, symbol/function values, and Promises', () => {
+    expect(() => writeSerialize({ [Symbol('k')]: 1 })).toThrow();
+    expect(() => writeSerialize({ a: Symbol('v') })).toThrow();
+    expect(() => writeSerialize({ fn: () => 1 })).toThrow();
+    expect(() => writeSerialize(Promise.resolve(1))).toThrow();
+  });
+
+  it('ACCEPTS the POJO fix shape — mapping the SDK entity to a plain object round-trips', () => {
+    // The fix: JSON round-trip (or an explicit map) turns the class instance into a
+    // POJO. This is what `getAdjustmentsInfinite` now returns.
+    const pojo = JSON.parse(JSON.stringify({ items: [new SdkEntity()], nextCursor: 'adj_9' }));
+    const out = writeSerialize(pojo);
+    expect(typeof out).toBe('string');
+    expect(unionDeserialize(out)).toEqual(pojo);
+  });
+
+  it('still ACCEPTS the rich POJO types real handlers emit (Date/Map/Set/BigInt are fine)', () => {
+    // devalue represents these faithfully — the contract rejects non-POJOs, NOT
+    // these first-class rich types (so the fix is narrow: only class instances /
+    // Errors / symbols / Promises are the hazard).
+    expect(() => writeSerialize({ d: new Date(), m: new Map([['a', 1]]), s: new Set([1]), n: 2n })).not.toThrow();
   });
 });

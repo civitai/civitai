@@ -270,9 +270,9 @@ function rateGate(path: string, maxPerSec: number, now: number = Date.now()): nu
 // ---------------------------------------------------------------------------
 
 /**
- * Serialized byte size of the superjson output. `result` is already a JSON-safe
- * plain object ({ json, meta }) produced by superjson.serialize, so this is a
- * single JSON.stringify walk — the closest cheap proxy for the wire payload size.
+ * Serialized byte size of the transformer output. `result` is JSON-safe — either
+ * a superjson `{ json, meta }` object or a devalue string (Phase 2) — so this is a
+ * single JSON.stringify walk, the closest cheap proxy for the wire payload size.
  * NEVER runs on the common path (gated behind the duration floor). Returns
  * undefined if stringify fails, so a size-measurement failure never blocks a
  * duration-based log.
