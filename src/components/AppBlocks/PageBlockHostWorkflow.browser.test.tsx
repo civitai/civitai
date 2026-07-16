@@ -41,6 +41,7 @@ const mocks = vi.hoisted(() => ({
   transactions: vi.fn(),
   accounts: vi.fn(),
   dailyCompensation: vi.fn(),
+  viewer: vi.fn(),
 }));
 
 vi.mock('~/utils/trpc', () => ({
@@ -61,6 +62,7 @@ vi.mock('~/utils/trpc', () => ({
       getMyBuzzTransactions: { useMutation: () => ({ mutateAsync: mocks.transactions }) },
       getMyBuzzAccounts: { useMutation: () => ({ mutateAsync: mocks.accounts }) },
       getMyDailyCompensation: { useMutation: () => ({ mutateAsync: mocks.dailyCompensation }) },
+      getMyViewer: { useMutation: () => ({ mutateAsync: mocks.viewer }) },
     },
     // PageBlockHost also wires the storage bridge (inert here — exercised in
     // PageBlockHostStorage.browser.test.tsx); stub so the component mounts.
@@ -178,6 +180,7 @@ describe('PageBlockHost workflow bridge (W10 money-path wiring)', () => {
     mocks.transactions.mockReset();
     mocks.accounts.mockReset();
     mocks.dailyCompensation.mockReset();
+    mocks.viewer.mockReset();
     // dialogStore is a module-level zustand store shared across tests — reset it
     // (the OPEN_BUZZ_PURCHASE handler triggers a dialog on it).
     useDialogStore.getState().closeAll();
@@ -524,6 +527,88 @@ describe('PageBlockHost workflow bridge (W10 money-path wiring)', () => {
     });
     // No server call is made without a token.
     expect(mocks.balance).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  // ── Viewer self-read — GET_VIEWER → VIEWER_RESULT. The block reads its own
+  //    identity ("who am I") via the @civitai/blocks-react `useViewer()` hook,
+  //    which posts GET_VIEWER and awaits VIEWER_RESULT. The host mediates it
+  //    through the block-token-authed `blocks.getMyViewer` MUTATION (token-`sub`-
+  //    bound + user:read:self server-side). GET_VIEWER takes NO params, so only
+  //    the page token is forwarded — a block-sent field can't override it. Every
+  //    path MUST reply or the block hangs to its SDK timeout.
+  test('GET_VIEWER forwards ONLY the page token to getMyViewer and posts VIEWER_RESULT', async () => {
+    const viewer = { id: 42, username: 'u', status: 'active', buzzBudget: 50 };
+    mocks.viewer.mockResolvedValue(viewer);
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('GET_VIEWER', { requestId: 'rq_viewer' });
+
+    await vi.waitFor(() => {
+      // Forwarded ONLY the page `token` PROP as blockToken (the SELF-BOUND
+      // credential) — GET_VIEWER carries no params, and the handler never trusts
+      // a client-supplied identity.
+      expect(mocks.viewer).toHaveBeenCalledWith({ blockToken: 'tok_abc' });
+    });
+    await vi.waitFor(() => {
+      const r = replies.last('VIEWER_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_viewer', viewer });
+    });
+    replies.stop();
+  });
+
+  test('GET_VIEWER error path posts an error-variant VIEWER_RESULT (no hang)', async () => {
+    mocks.viewer.mockRejectedValue(new Error('block lacks user:read:self scope'));
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('GET_VIEWER', { requestId: 'rq_viewer_err' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('VIEWER_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_viewer_err',
+        error: 'block lacks user:read:self scope',
+      });
+    });
+    replies.stop();
+  });
+
+  test('GET_VIEWER with NO requestId is dropped (no mutation, no reply)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('GET_VIEWER', {}); // missing requestId
+
+    await new Promise((r) => setTimeout(r, 150));
+    expect(mocks.viewer).not.toHaveBeenCalled();
+    expect(replies.last('VIEWER_RESULT')).toBeUndefined();
+    replies.stop();
+  });
+
+  test('GET_VIEWER with a null page token replies with the error variant (never hangs)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} token={null} />);
+    await vi.waitFor(() => {
+      const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement | null;
+      if (!el?.contentWindow) throw new Error('iframe not mounted yet');
+    });
+    const replies = listenForReply();
+
+    postFromBlock('GET_VIEWER', { requestId: 'rq_viewer_notoken' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('VIEWER_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_viewer_notoken', error: 'no block token' });
+    });
+    // No server call is made without a token.
+    expect(mocks.viewer).not.toHaveBeenCalled();
     replies.stop();
   });
 

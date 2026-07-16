@@ -3495,6 +3495,101 @@ export const blocksRouter = router({
     }),
 
   /**
+   * HOST-MEDIATED viewer self-read for the token-bound viewer (a page block
+   * reading "who am I"). Backs the SDK `useViewer()` hook via the GET_VIEWER
+   * page-host bridge, and is the host-mediated successor to the
+   * `GET /api/v1/blocks/me` REST endpoint (which STAYS LIVE for now — this
+   * bridge supersedes it once the SDK hook publishes + consumers migrate; a
+   * later follow-up retires /me).
+   *
+   * MUTATION (not query) DELIBERATELY, for the SAME reason as getMyBuzzBalance:
+   * the block JWT is a bearer credential a `.query` would leak into the
+   * `?input=…` URL / logs / Referer where it is replayable within its TTL. Keep
+   * it a mutation (token rides the POST body).
+   *
+   * CONSENT: requires the `user:read:self` scope — the least-privileged scope
+   * that conveys "viewer identity" (audit I3; mirrors how /blocks/me gates via
+   * `withBlockScope({ requiredScope: 'user:read:self' })`). Unlike the scope-free
+   * getMyBuzzBalance, a block must declare+be-granted this scope.
+   *
+   * Order (each step fail-closed): verify token → require the consent scope →
+   * self-bind the userId off `claims.sub` (never client input; UNAUTHORIZED for
+   * anon) → App-Blocks kill-switch + author gate against the TOKEN subject →
+   * per-instance rate limit (keyed on the stable `blockInstanceId`, BEFORE the
+   * db read — the ban/mute lookup hits the PRIMARY, so a hammering block must be
+   * bounded) → the /blocks/me identity read.
+   *
+   * The identity read mirrors src/pages/api/v1/blocks/me.ts EXACTLY: `dbWrite`
+   * (NOT the replica) so a banned/muted-during-replication-lag viewer can't
+   * surface as active; 404 (NOT_FOUND) on a vanished/deleted user; 403
+   * (FORBIDDEN) on a banned viewer (a token minted just before a ban is valid
+   * for up to ~15min — reject here as a second line of defense); a muted viewer
+   * passes through with `status: 'muted'` so the block can suppress write UI.
+   * `buzzBudget` is surfaced from the token claim (if present) so a block can
+   * clamp UI without a second call — same shape /me returns.
+   */
+  getMyViewer: publicProcedure
+    // Block-JWT-authed (no session for dev:live) — flag evaluated against the
+    // TOKEN subject below, not the `enforceAppBlocksFlag` middleware's ctx.user.
+    // MUTATION for the bearer-token-in-URL reason above (see getMyBuzzBalance).
+    .input(z.object({ blockToken: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      const claims = await verifyBlockToken(input.blockToken);
+      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      // CONSENT: the least-privileged "viewer identity" scope (mirrors /blocks/me).
+      if (!claims.scopes.includes('user:read:self')) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks user:read:self scope' });
+      }
+      // Derive the user from the SELF-BOUND token subject, never client input.
+      const userId = parseSubjectUserId(claims.sub);
+      if (userId == null) {
+        throw new TRPCError({
+          code: 'UNAUTHORIZED',
+          message: 'viewer read requires an authenticated viewer',
+        });
+      }
+      // Same gates as the other block-token procs, evaluated against the TOKEN
+      // subject: the enabled kill-switch AND the author capability (pre-GA
+      // team-only gate — the router-side equivalent of /blocks/me's isModerator
+      // check).
+      await assertAppBlocksEnabledForTokenUser(userId);
+      await assertViewerIsAppDeveloper(userId);
+      // Per-instance rate limit (shared blocks limiter) — bounds a block
+      // hammering the PRIMARY (the ban/mute lookup below reads dbWrite). Runs
+      // BEFORE the db read. Fail-open on a redis incident.
+      const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+      if (!rate.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
+      // dbWrite (NOT the replica) for the ban/mute/deleted lookup — mirrors
+      // /blocks/me: reading the replica lets a banned-during-replication-lag
+      // viewer surface to the block as active.
+      const user = await dbWrite.user.findUnique({
+        where: { id: userId },
+        select: { id: true, username: true, bannedAt: true, muted: true, deletedAt: true },
+      });
+      if (!user || user.deletedAt) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'User not found' });
+      }
+      // A banned user with a still-valid token must NOT surface as a real viewer.
+      if (user.bannedAt) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'banned' });
+      }
+      return {
+        id: user.id,
+        username: user.username,
+        // Muted viewers pass through so the block can suppress write UI.
+        status: (user.muted ? 'muted' : 'active') as 'active' | 'muted',
+        // Per-call spend cap the block was issued with — surfaced so the block
+        // can clamp UI without a second call (mirrors /blocks/me).
+        buzzBudget: claims.buzzBudget ?? null,
+      };
+    }),
+
+  /**
    * Read up to N showcase images for a model version with their gen-meta
    * extracted. Used by the block UI to render a "click an image to copy
    * its params" carousel. Public — showcase images are already public on

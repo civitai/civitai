@@ -594,6 +594,11 @@ export function PageBlockHost({
   const getMyBuzzTransactionsMutation = trpc.blocks.getMyBuzzTransactions.useMutation();
   const getMyBuzzAccountsMutation = trpc.blocks.getMyBuzzAccounts.useMutation();
   const getMyDailyCompensationMutation = trpc.blocks.getMyDailyCompensation.useMutation();
+  // Viewer self-read bridge (a page block reading "who am I") — backs the SDK
+  // `useViewer()` hook and is the host-mediated successor to GET /blocks/me. A
+  // MUTATION for the same bearer-token reason as getMyBuzzBalance; requires the
+  // `user:read:self` scope server-side.
+  const getMyViewerMutation = trpc.blocks.getMyViewer.useMutation();
 
   // Wildcard-pack import (W13). SESSION-authed (protectedProcedure) — it does NOT
   // take a block token; the viewer's real cookie session authenticates, which is
@@ -841,6 +846,41 @@ export function PageBlockHost({
     );
     return off;
   }, [onMessage, send, token, getMyDailyCompensationMutation]);
+
+  // GET_VIEWER → blocks.getMyViewer → VIEWER_RESULT. The block's "who am I" read
+  // that backs the SDK `useViewer()` hook — the host-mediated successor to the
+  // GET /blocks/me REST call, so a page block can render the viewer's name /
+  // gate write UI on their moderation status without holding the scope directly.
+  // Host-MEDIATED: the iframe never sees a session; the identity is derived from
+  // the token's SELF-BOUND `sub` server-side (never client input), gated on the
+  // `user:read:self` scope. GET_VIEWER takes NO params, so only the host page
+  // token is forwarded (a block-sent field can't override it). REQUEST-style ⇒
+  // every path MUST reply or the block hangs to its SDK timeout: on a null token
+  // we reply with the ERROR variant (mirrors GET_BUZZ_BALANCE) rather than
+  // dropping. A missing requestId is still dropped without replying.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown } | undefined>(
+      'GET_VIEWER',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string') return;
+        const requestId = raw.requestId;
+        if (!token) {
+          send('VIEWER_RESULT', { requestId, error: 'no block token' });
+          return;
+        }
+        try {
+          const viewer = await getMyViewerMutation.mutateAsync({ blockToken: token });
+          send('VIEWER_RESULT', { requestId, viewer });
+        } catch (err) {
+          send('VIEWER_RESULT', {
+            requestId,
+            error: err instanceof Error ? err.message : 'unknown',
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, getMyViewerMutation]);
 
   // OPEN_BUZZ_PURCHASE → BUZZ_PURCHASE_RESULT. The generator's insufficient-Buzz
   // top-up CTA. Gate on BLOCK_READY (+ payload validity) via the shared

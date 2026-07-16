@@ -39,8 +39,12 @@ const {
   mockSysRedis,
   mockResolveCanGenerateForVersions,
   mockRecordSpendAttribution,
+  mockDbWriteUserFindUnique,
 } = vi.hoisted(() => ({
   mockVerifyBlockToken: vi.fn(),
+  // getMyViewer reads the viewer's ban/mute/deleted state from dbWrite.user
+  // (the PRIMARY, like /blocks/me). Hoisted so tests can drive it + reset it.
+  mockDbWriteUserFindUnique: vi.fn(),
   mockParseSubjectUserId: vi.fn(),
   mockGetOrchestratorToken: vi.fn(),
   mockSubmitWorkflow: vi.fn(),
@@ -209,7 +213,12 @@ vi.mock('~/server/db/client', () => ({
   dbRead: mockDbRead,
   // dbWrite is referenced for install-management procedures; stub the few
   // shapes the unrelated procedures could hit so the import doesn't crash.
-  dbWrite: { modelBlockInstall: { findUnique: vi.fn() }, model: { findUnique: vi.fn() } },
+  dbWrite: {
+    modelBlockInstall: { findUnique: vi.fn() },
+    model: { findUnique: vi.fn() },
+    // getMyViewer's ban/mute/deleted lookup (mirrors /blocks/me — PRIMARY read).
+    user: { findUnique: (...a: unknown[]) => mockDbWriteUserFindUnique(...a) },
+  },
 }));
 // blocks.router transitively pulls in many redis-cache modules that read
 // `REDIS_KEYS.<GROUP>.<KEY>` AT IMPORT TIME. The real keys live in redis/client
@@ -430,6 +439,7 @@ beforeEach(() => {
     mockSysRedis.ttl,
     mockResolveCanGenerateForVersions,
     mockRecordSpendAttribution,
+    mockDbWriteUserFindUnique,
     mockIsAppBlocksAuthorEnabled,
     mockGetActiveDevTunnel,
     mockReserveDevSessionBuzz,
@@ -483,6 +493,15 @@ beforeEach(() => {
   mockSysRedis.ttl.mockResolvedValue(-1);
   // Buzz self-read bridges: default the per-instance rate limit to allowed.
   mockCheckBlockCatalogRateLimit.mockResolvedValue({ allowed: true });
+  // getMyViewer: default the viewer to an active (non-banned, non-muted,
+  // non-deleted) user. Ban/mute/deleted tests override this.
+  mockDbWriteUserFindUnique.mockResolvedValue({
+    id: 42,
+    username: 'u',
+    bannedAt: null,
+    muted: false,
+    deletedAt: null,
+  });
   // Defaults — every test starts with the flag on, a valid claim, an
   // authenticated subject, a fresh user/version row. Tests override only the
   // gate they're exercising. NB: mockReset wipes the implementation, so the
@@ -3938,6 +3957,152 @@ describe('blocks.getMyBuzzBalance', () => {
       code: 'FORBIDDEN',
     });
     expect(mockGetUserBuzzAccounts).not.toHaveBeenCalled();
+  });
+});
+
+// ---- getMyViewer (host-mediated, token-bound viewer identity read) ----------
+// A page block reads the VIEWER's OWN identity ("who am I") via the block token,
+// backing the SDK useViewer() hook. userId is derived from the self-bound token
+// sub (never client input), gated on the `user:read:self` consent scope (unlike
+// the scope-free getMyBuzzBalance). Mirrors /api/v1/blocks/me: dbWrite ban/mute/
+// deleted lookup, 404 on deleted, 403 on banned, `status:'muted'` for muted.
+const VIEWER_READ = ['user:read:self'];
+
+describe('blocks.getMyViewer', () => {
+  it('returns the SELF-BOUND viewer identity for a valid token (id/username/status/buzzBudget)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: VIEWER_READ }));
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.getMyViewer({ blockToken: 'tok' });
+    // buzzBudget comes from the token claim (validClaims default 50).
+    expect(result).toEqual({ id: 42, username: 'u', status: 'active', buzzBudget: 50 });
+    // The identity is read for the TOKEN subject (42) — NEVER a client input.
+    expect(mockDbWriteUserFindUnique.mock.calls[0][0].where).toEqual({ id: 42 });
+  });
+
+  it('passes a muted viewer through with status:muted', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: VIEWER_READ }));
+    mockDbWriteUserFindUnique.mockResolvedValue({
+      id: 42,
+      username: 'u',
+      bannedAt: null,
+      muted: true,
+      deletedAt: null,
+    });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.getMyViewer({ blockToken: 'tok' });
+    expect(result.status).toBe('muted');
+  });
+
+  it('surfaces buzzBudget as null when the token carries no budget claim', async () => {
+    mockVerifyBlockToken.mockResolvedValue(
+      validClaims({ scopes: VIEWER_READ, buzzBudget: undefined })
+    );
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.getMyViewer({ blockToken: 'tok' });
+    expect(result.buzzBudget).toBeNull();
+  });
+
+  it('rejects a token missing user:read:self with FORBIDDEN (never reads the db)', async () => {
+    // Default validClaims scopes are ['ai:write:budgeted'] — no viewer consent.
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyViewer({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(mockDbWriteUserFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid block token with UNAUTHORIZED (never reads the db)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(null);
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyViewer({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(mockDbWriteUserFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('rejects an anon subject with UNAUTHORIZED (no viewer identity to read)', async () => {
+    // Carries the scope so it reaches the self-bind step, which rejects anon.
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: VIEWER_READ, sub: 'anon' }));
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyViewer({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(mockDbWriteUserFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('rejects when the App Blocks flag is disabled (kill-switch, no db read)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: VIEWER_READ }));
+    mockIsAppBlocksEnabled.mockResolvedValue(false);
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyViewer({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+      message: 'Apps are not enabled',
+    });
+    expect(mockDbWriteUserFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-author subject with FORBIDDEN (author gate, no db read)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: VIEWER_READ }));
+    mockGetSessionUser.mockResolvedValue({ id: 42, isModerator: false, tier: 'free' });
+    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyViewer({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(mockDbWriteUserFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('rate-limits per blockInstanceId BEFORE the db read (TOO_MANY_REQUESTS)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: VIEWER_READ }));
+    mockCheckBlockCatalogRateLimit.mockResolvedValue({ allowed: false });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyViewer({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+    });
+    // The rate limit is checked on the SELF-BOUND blockInstanceId, before the db.
+    expect(mockCheckBlockCatalogRateLimit).toHaveBeenCalledWith('bki_test');
+    expect(mockDbWriteUserFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('returns NOT_FOUND when the resolved viewer is deleted', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: VIEWER_READ }));
+    mockDbWriteUserFindUnique.mockResolvedValue({
+      id: 42,
+      username: 'u',
+      bannedAt: null,
+      muted: false,
+      deletedAt: new Date('2026-01-01T00:00:00Z'),
+    });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyViewer({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
+
+  it('returns NOT_FOUND when the viewer row has vanished', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: VIEWER_READ }));
+    mockDbWriteUserFindUnique.mockResolvedValue(null);
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyViewer({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
+
+  it('returns FORBIDDEN (banned) when the resolved viewer is banned', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: VIEWER_READ }));
+    mockDbWriteUserFindUnique.mockResolvedValue({
+      id: 42,
+      username: 'u',
+      bannedAt: new Date('2026-01-01T00:00:00Z'),
+      muted: false,
+      deletedAt: null,
+    });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyViewer({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'banned',
+    });
   });
 });
 
