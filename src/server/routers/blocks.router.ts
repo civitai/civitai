@@ -58,6 +58,7 @@ import {
   listApprovedRequestsSchema,
   listPendingRequestsSchema,
   listRejectedRequestsSchema,
+  mintReviewBlockTokenSchema,
   previewRequestSchema,
   rejectRequestSchema,
   teardownPreviewSchema,
@@ -1376,6 +1377,47 @@ export const blocksRouter = router({
         // short-TTL tokened previewUrl when the preview is live — the cross-origin
         // access bridge the `*.civit.ai` mod-gate forwardAuth verifies.
         return await getReviewStatus({
+          publishRequestId: input.publishRequestId,
+          modUserId: ctx.user.id,
+        });
+      } catch (err) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+      }
+    }),
+
+  /**
+   * MOD REVIEW SANDBOX (#2831) — mint the SELF-BOUND, SCOPE-STRIPPED block token
+   * the on-site review preview host (`PageBlockHost` in `ReviewPreviewPanel`)
+   * handshakes with, so a PENDING un-approved block actually renders. The `?mr=`
+   * URL token is only the mod-gate ENTRY token (not a block token); this is the
+   * missing block-token half of the handshake.
+   *
+   * Gated IDENTICALLY to previewRequest/getReviewStatus (moderator + the
+   * isModerator belt + enforceAppBlocksFlag + the mod-only `app-blocks-review-
+   * sandbox` flag) so it ships dark. The service self-binds the token to the
+   * calling mod's id, clamps the pending manifest's scopes through the render-only
+   * belt, forces SFW + synthetic non-resolving ids, and audits the mint.
+   */
+  mintReviewBlockToken: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(mintReviewBlockTokenSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Review previews are restricted to civitai team');
+      }
+      const { isAppBlocksReviewSandboxEnabled } = await import(
+        '~/server/services/app-blocks-flag'
+      );
+      if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
+        throw throwAuthorizationError('The review sandbox is not enabled');
+      }
+      const { mintReviewBlockToken } = await import(
+        '~/server/services/blocks/publish-request.service'
+      );
+      try {
+        // The mod id is SERVER-derived (never client-supplied) so the token can
+        // only ever be self-bound to the calling moderator.
+        return await mintReviewBlockToken({
           publishRequestId: input.publishRequestId,
           modUserId: ctx.user.id,
         });

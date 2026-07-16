@@ -23,6 +23,7 @@ const {
   mockIsReviewSandboxEnabled,
   mockPreviewRequest,
   mockGetReviewStatus,
+  mockMintReviewBlockToken,
   mockTeardownPreview,
   mockListActivePreviews,
   mockVerifyBlockToken,
@@ -38,6 +39,7 @@ const {
   mockIsReviewSandboxEnabled: vi.fn(),
   mockPreviewRequest: vi.fn(),
   mockGetReviewStatus: vi.fn(),
+  mockMintReviewBlockToken: vi.fn(),
   mockTeardownPreview: vi.fn(),
   mockListActivePreviews: vi.fn(),
   mockVerifyBlockToken: vi.fn(),
@@ -62,6 +64,7 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
 vi.mock('~/server/services/blocks/publish-request.service', () => ({
   previewRequest: mockPreviewRequest,
   getReviewStatus: mockGetReviewStatus,
+  mintReviewBlockToken: mockMintReviewBlockToken,
   teardownPreview: mockTeardownPreview,
   listActiveReviewPreviews: mockListActivePreviews,
 }));
@@ -171,6 +174,20 @@ beforeEach(() => {
   mockTeardownPreview.mockResolvedValue({ publishRequestId: PUBREQ, tornDown: true });
   mockListActivePreviews.mockReset();
   mockListActivePreviews.mockResolvedValue({ cap: 5, active: [] });
+  mockMintReviewBlockToken.mockReset();
+  mockMintReviewBlockToken.mockResolvedValue({
+    token: 'review.jwt',
+    expiresAt: '2099-01-01T00:00:00Z',
+    scopes: ['models:read:self', 'user:read:self'],
+    domain: null,
+    maxBrowsingLevel: 1,
+    blockId: 'my-app',
+    appId: `pending-${PUBREQ}`,
+    appBlockId: PUBREQ,
+    blockInstanceId: `page_${PUBREQ}`,
+    appName: 'My App',
+    sandbox: 'allow-scripts',
+  });
 });
 
 describe('blocks.previewRequest', () => {
@@ -238,6 +255,44 @@ describe('blocks.getReviewStatus', () => {
       TRPCError
     );
     expect(mockGetReviewStatus).not.toHaveBeenCalled();
+  });
+});
+
+describe('blocks.mintReviewBlockToken', () => {
+  it('moderator + flags on: mints with the SERVER-derived mod id (self-bound)', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    const res = await caller.mintReviewBlockToken({ publishRequestId: PUBREQ });
+    expect(res.token).toBe('review.jwt');
+    expect(res.appBlockId).toBe(PUBREQ);
+    expect(mockMintReviewBlockToken).toHaveBeenCalledWith({
+      publishRequestId: PUBREQ,
+      modUserId: 1, // SERVER-derived, never client-supplied
+    });
+  });
+
+  it('non-moderator: UNAUTHORIZED, service NOT reached', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(normalUser) as never);
+    await expect(caller.mintReviewBlockToken({ publishRequestId: PUBREQ })).rejects.toBeInstanceOf(
+      TRPCError
+    );
+    expect(mockMintReviewBlockToken).not.toHaveBeenCalled();
+  });
+
+  it('anonymous: UNAUTHORIZED', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(undefined) as never);
+    await expect(caller.mintReviewBlockToken({ publishRequestId: PUBREQ })).rejects.toBeInstanceOf(
+      TRPCError
+    );
+    expect(mockMintReviewBlockToken).not.toHaveBeenCalled();
+  });
+
+  it('moderator but review-sandbox flag OFF: UNAUTHORIZED (dark)', async () => {
+    mockIsReviewSandboxEnabled.mockResolvedValue(false);
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await expect(caller.mintReviewBlockToken({ publishRequestId: PUBREQ })).rejects.toBeInstanceOf(
+      TRPCError
+    );
+    expect(mockMintReviewBlockToken).not.toHaveBeenCalled();
   });
 });
 
