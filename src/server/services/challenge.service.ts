@@ -941,8 +941,10 @@ export async function getChallengeDetail(
       return null;
   }
 
-  // Domain-currency gate — direct-URL parity with the feed filter; user-scoped, creator exempt.
+  // Domain-currency gate — direct-URL parity with the feed filter. Like the other gates above,
+  // moderators and creators can preview unpublished/hidden challenges regardless of domain.
   if (
+    !canPreviewUnpublished &&
     isChallengeHiddenByDomainCurrency(
       {
         source: challenge.source,
