@@ -145,6 +145,15 @@ export const getReviewStatusSchema = z.object({
 
 export type GetReviewStatusInput = z.infer<typeof getReviewStatusSchema>;
 
+/** Input for the MOD-ONLY review-sandbox `blocks.mintReviewBlockToken` (#2831) —
+ *  mints the self-bound, scope-stripped block token the on-site review preview
+ *  host handshakes with. Same shape as previewRequest (the pending request id). */
+export const mintReviewBlockTokenSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
+});
+
+export type MintReviewBlockTokenInput = z.infer<typeof mintReviewBlockTokenSchema>;
+
 export const teardownPreviewSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
 });

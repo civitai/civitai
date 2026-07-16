@@ -37,6 +37,7 @@ import {
   DEV_TOKEN_SCOPE_ALLOWLIST,
   FORCED_SFW_CEILING,
   resolveDevBuzzBudget,
+  REVIEW_MINT_SCOPE_ALLOWLIST,
   signDevScopedPageToken,
   TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
 } from '~/server/services/blocks/dev-scoped-mint.service';
@@ -152,6 +153,78 @@ describe('clampDevScopes', () => {
       allowlist: TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
     });
     expect(dedup).toEqual(['models:read:self', 'user:read:self']);
+  });
+});
+
+describe('clampDevScopes — REVIEW_MINT_SCOPE_ALLOWLIST (mod review sandbox #2831)', () => {
+  // The pending manifest a MALICIOUS app could declare: it asks for spend, per-user
+  // + shared storage, private collections, real-money tip, and financial read.
+  const MALICIOUS_MANIFEST_SCOPES = [
+    'models:read:self',
+    'media:read:owned',
+    'collections:read:self',
+    'ai:write:budgeted',
+    'apps:storage:read',
+    'apps:storage:write',
+    'apps:storage:shared:read',
+    'apps:storage:shared:write',
+    'collections:read:private',
+    'collections:write:self',
+    'social:tip:self',
+    'buzz:read:self',
+  ];
+
+  it('strips EVERY money/private/cross-user/write scope — only the render-only reads survive', () => {
+    const granted = clampDevScopes({
+      scopeSource: MALICIOUS_MANIFEST_SCOPES,
+      oauthAllowed: null, // pending app — no OauthClient
+      keyCanSpend: false, // review preview never spends (belt-and-suspenders)
+      allowlist: REVIEW_MINT_SCOPE_ALLOWLIST,
+    });
+    // ONLY the render-only survivors (+ the unconditional user:read:self grant).
+    expect(granted).toEqual([
+      'collections:read:self',
+      'media:read:owned',
+      'models:read:self',
+      'user:read:self',
+    ]);
+    // None of the withheld scopes can EVER reach the review JWT.
+    for (const withheld of [
+      'ai:write:budgeted',
+      'apps:storage:read',
+      'apps:storage:write',
+      'apps:storage:shared:read',
+      'apps:storage:shared:write',
+      'collections:read:private',
+      'collections:write:self',
+      'social:tip:self',
+      'buzz:read:self',
+    ]) {
+      expect(granted).not.toContain(withheld);
+    }
+  });
+
+  it('is STRICTER than the dev-tunnel allowlist — never grants ai:write:budgeted even with keyCanSpend:true', () => {
+    // Even if a caller mistakenly passed keyCanSpend:true, the allowlist itself
+    // omits ai:write:budgeted, so spend can never survive the review clamp.
+    const granted = clampDevScopes({
+      scopeSource: ['ai:write:budgeted', 'models:read:self'],
+      oauthAllowed: null,
+      keyCanSpend: true,
+      allowlist: REVIEW_MINT_SCOPE_ALLOWLIST,
+    });
+    expect(granted).not.toContain('ai:write:budgeted');
+    expect(granted).toEqual(['models:read:self', 'user:read:self']);
+  });
+
+  it('an EMPTY manifest still yields a usable read-only token (force-granted user:read:self)', () => {
+    const granted = clampDevScopes({
+      scopeSource: [],
+      oauthAllowed: null,
+      keyCanSpend: false,
+      allowlist: REVIEW_MINT_SCOPE_ALLOWLIST,
+    });
+    expect(granted).toEqual(['user:read:self']);
   });
 });
 
