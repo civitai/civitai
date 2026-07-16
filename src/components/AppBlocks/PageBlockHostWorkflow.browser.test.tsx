@@ -71,6 +71,8 @@ vi.mock('~/utils/trpc', () => ({
       getMyViewer: { useMutation: () => ({ mutateAsync: mocks.viewer }) },
       queryAppWorkflows: { useMutation: () => ({ mutateAsync: mocks.queryAppWorkflows }) },
       cancelAppWorkflow: { useMutation: () => ({ mutateAsync: mocks.cancelAppWorkflow }) },
+      publishGenerationOutputs: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getImagesByIds: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     // PageBlockHost also wires the storage bridge (inert here — exercised in
     // PageBlockHostStorage.browser.test.tsx); stub so the component mounts.
