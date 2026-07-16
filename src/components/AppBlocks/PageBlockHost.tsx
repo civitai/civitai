@@ -18,6 +18,8 @@ import {
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
 import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
 import type { BlockSourceImageInfo } from './BlockGenerationSourceUploadModal';
+import { BlockImageScanPoller } from './BlockImageScanPoller';
+import type { BlockImageScanResult } from './blockImageScanLogic';
 import { projectBlockInitMaturity } from './projectBlockInit';
 import { sendBlockRender } from './sendBlockRender';
 import {
@@ -210,6 +212,14 @@ export function PageBlockHost({
   // fresh `contentWindow`), so the re-armed init handshake talks to a clean
   // frame instead of a wedged one. See `handleRetry`.
   const [reloadNonce, setReloadNonce] = useState<number>(0);
+  // Active async cosmetic-image scan pollers (non-blocking OPEN_IMAGE_UPLOAD).
+  // Keyed by the OPEN_IMAGE_UPLOAD requestId; each entry mounts one
+  // BlockImageScanPoller (below) that survives the upload modal's close, polls
+  // the authoritative scan gate, and on a verdict fires IMAGE_SCAN_RESOLVED then
+  // removes itself. See the OPEN_IMAGE_UPLOAD handler + the render block.
+  const [imageScanPollers, setImageScanPollers] = useState<
+    Array<{ requestId: string; imageId: number }>
+  >([]);
   const initSentRef = useRef<boolean>(false);
   const controllerRef = useRef<IframeInitController | null>(null);
   const buildInitPayloadRef = useRef<() => BlockInitPayload>();
@@ -599,6 +609,14 @@ export function PageBlockHost({
   // MUTATION for the same bearer-token reason as getMyBuzzBalance; requires the
   // `user:read:self` scope server-side.
   const getMyViewerMutation = trpc.blocks.getMyViewer.useMutation();
+  // App generator SUBQUEUE bridges (tag-scoped). queryAppWorkflows reads the
+  // calling app's OWN slice of the viewer's generation queue (the SERVER forces
+  // the per-app `app-block:<appId>` tag filter — a block can't widen it);
+  // cancelAppWorkflow stops one, FAIL-CLOSED behind the server ownership+tag
+  // guard. MUTATIONS for the same bearer-token-in-URL reason as the other
+  // block-token bridges (a .query would leak the JWT into the ?input= URL).
+  const queryAppWorkflowsMutation = trpc.blocks.queryAppWorkflows.useMutation();
+  const cancelAppWorkflowMutation = trpc.blocks.cancelAppWorkflow.useMutation();
 
   // Wildcard-pack import (W13). SESSION-authed (protectedProcedure) — it does NOT
   // take a block token; the viewer's real cookie session authenticates, which is
@@ -712,6 +730,83 @@ export function PageBlockHost({
     );
     return off;
   }, [onMessage, send, token, cancelWorkflowMutation]);
+
+  // QUERY_APP_WORKFLOWS → blocks.queryAppWorkflows → APP_WORKFLOWS_RESULT. The
+  // app's OWN tag-scoped generation subqueue (host page token + SERVER-forced
+  // per-app tag; a block can't widen the filter — the input has no `tags` field).
+  // params are spread FIRST then blockToken LAST so a block-sent
+  // `params.blockToken` can never override the authoritative page token (mirrors
+  // GET_BUZZ_TRANSACTIONS). REQUEST-style ⇒ every path MUST reply or the block
+  // hangs; on a null token we reply with the ERROR variant rather than dropping.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; params?: unknown } | undefined>(
+      'QUERY_APP_WORKFLOWS',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string') return;
+        const requestId = raw.requestId;
+        if (!token) {
+          send('APP_WORKFLOWS_RESULT', { requestId, error: 'no block token' });
+          return;
+        }
+        try {
+          // params (cursor/limit) are schema-validated server-side; the host never
+          // trusts them. blockToken spread LAST — non-overridable page token.
+          const result = await queryAppWorkflowsMutation.mutateAsync({
+            ...((raw.params as Record<string, unknown>) ?? {}),
+            blockToken: token,
+          } as never);
+          send('APP_WORKFLOWS_RESULT', { requestId, result });
+        } catch (err) {
+          send('APP_WORKFLOWS_RESULT', {
+            requestId,
+            error: err instanceof Error ? err.message : 'unknown',
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, queryAppWorkflowsMutation]);
+
+  // CANCEL_APP_WORKFLOW → blocks.cancelAppWorkflow → CANCEL_APP_WORKFLOW_RESULT.
+  // FAIL-CLOSED server-side (ownership + app-tag guard — the orchestrator by-id
+  // endpoints don't check ownership, so the router compensates). The host just
+  // forwards the (untrusted, server-validated) workflowId + the page token.
+  // REQUEST-style ⇒ reply on every path; on a null token we reply with the ERROR
+  // variant. A missing/empty workflowId is dropped without a reply (mirrors
+  // CANCEL_WORKFLOW — there's nothing legitimate to cancel).
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; workflowId?: unknown } | undefined>(
+      'CANCEL_APP_WORKFLOW',
+      async (raw) => {
+        if (
+          !raw ||
+          typeof raw.requestId !== 'string' ||
+          typeof raw.workflowId !== 'string' ||
+          raw.workflowId.length === 0
+        ) {
+          return;
+        }
+        const requestId = raw.requestId;
+        if (!token) {
+          send('CANCEL_APP_WORKFLOW_RESULT', { requestId, error: 'no block token' });
+          return;
+        }
+        try {
+          const result = await cancelAppWorkflowMutation.mutateAsync({
+            blockToken: token,
+            workflowId: raw.workflowId,
+          });
+          send('CANCEL_APP_WORKFLOW_RESULT', { requestId, result });
+        } catch (err) {
+          send('CANCEL_APP_WORKFLOW_RESULT', {
+            requestId,
+            error: err instanceof Error ? err.message : 'unknown',
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, cancelAppWorkflowMutation]);
 
   // GET_BUZZ_BALANCE → blocks.getMyBuzzBalance → BUZZ_BALANCE_RESULT. The block's
   // per-account (blue/green/yellow) balance read that backs the SDK
@@ -1624,14 +1719,14 @@ export function PageBlockHost({
   // the reply so concurrent uploads never cross. A successful upload posts the
   // minimal projection; closing without one posts a bare (cancelled) result.
   useEffect(() => {
-    const off = onMessage<{ requestId?: unknown; purpose?: unknown } | undefined>(
-      'OPEN_IMAGE_UPLOAD',
-      (raw) => {
+    const off = onMessage<
+      { requestId?: unknown; purpose?: unknown; asyncScan?: unknown } | undefined
+    >('OPEN_IMAGE_UPLOAD', (raw) => {
         const gateStatus = status === 'error' ? 'no_token' : status;
         if (gateStatus !== 'ready') return; // pre-handshake block — drop
         const req = resolveImageUploadRequest(raw);
         if (!req) return; // missing / non-string requestId → drop, never open the modal
-        const { requestId, purpose } = req;
+        const { requestId, purpose, asyncScan } = req;
 
         // generationSource: UNSCANNED private img2img source (orchestrator scans
         // the OUTPUT). Reply carries the source shape { url, width, height }; the
@@ -1653,6 +1748,51 @@ export function PageBlockHost({
                 } else {
                   send('IMAGE_UPLOAD_RESULT', { requestId });
                 }
+              },
+            },
+          });
+          return;
+        }
+
+        // display + asyncScan: NON-BLOCKING moderated path. The host modal resolves
+        // EARLY on persist (returning a PENDING handle — the author's own preview
+        // URL) and CLOSES; a host-mounted BlockImageScanPoller (registered below,
+        // which SURVIVES this modal's unmount) polls the authoritative scan gate and
+        // streams the verdict to the block via the parent→block IMAGE_SCAN_RESOLVED
+        // push. The server gate is UNCHANGED — nothing cross-user is persisted until
+        // the app sees a `scanned` verdict, and `gate` still only ever returns a
+        // moderated projection on Scanned + within-SFW-ceiling + unflagged.
+        if (asyncScan) {
+          let accepted = false;
+          dialogStore.trigger({
+            id: `block-image-upload-${requestId}`,
+            component: BlockImageUploadModal,
+            props: {
+              // BLOCKING-mode callback — unused in async mode (onAccepted drives the
+              // early resolve); a no-op that satisfies the modal's required prop.
+              onResolved: () => undefined,
+              onAccepted: ({ imageId, url }: { imageId: number; url: string }) => {
+                accepted = true;
+                // Early-resolve: the upload is accepted (image persisted, scan still
+                // in-flight). Hand the block the PENDING handle and register the
+                // background poller keyed by requestId.
+                send('IMAGE_UPLOAD_RESULT', {
+                  requestId,
+                  selected: { status: 'pending', imageId, url },
+                });
+                setImageScanPollers((prev) =>
+                  prev.some((p) => p.requestId === requestId)
+                    ? prev
+                    : [...prev, { requestId, imageId }]
+                );
+              },
+            },
+            options: {
+              onClose: () => {
+                // Dismissed WITHOUT accepting → bare (cancelled) result, no poller.
+                // On accept, onClose fires AFTER onAccepted set `accepted`, so the
+                // early-resolve reply is not followed by a spurious cancel.
+                if (!accepted) send('IMAGE_UPLOAD_RESULT', { requestId });
               },
             },
           });
@@ -1893,7 +2033,28 @@ export function PageBlockHost({
       // silently swallowed.
       data-needs-consent={needsConsent ? 'true' : 'false'}
     >
-      <AppBlockChrome blockInstanceId={blockInstanceId} appName={appName} slotId={PAGE_SLOT_ID} />
+      <AppBlockChrome
+        blockInstanceId={blockInstanceId}
+        appBlockId={appBlockId}
+        appName={appName}
+        slotId={PAGE_SLOT_ID}
+      />
+      {/* Async cosmetic-image scan pollers (non-blocking OPEN_IMAGE_UPLOAD). Each
+          renders nothing; it polls the authoritative scan gate in the background —
+          SURVIVING the upload modal's close — and on a verdict fires
+          IMAGE_SCAN_RESOLVED to the block then removes itself. Rendered here (not in
+          the iframe/fallback branches) so a page that falls back mid-scan still
+          resolves the pending upload. */}
+      {imageScanPollers.map((p) => (
+        <BlockImageScanPoller
+          key={p.requestId}
+          imageId={p.imageId}
+          onResult={(result: BlockImageScanResult) => {
+            send('IMAGE_SCAN_RESOLVED', { requestId: p.requestId, imageId: p.imageId, result });
+            setImageScanPollers((prev) => prev.filter((x) => x.requestId !== p.requestId));
+          }}
+        />
+      ))}
       {showIframe ? (
         // The iframe fills the remaining viewport. While the block is still
         // handshaking (status === 'loading', before BLOCK_READY), the surface

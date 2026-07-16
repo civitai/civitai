@@ -15,7 +15,6 @@ const { mockDbRead, mockGetChallengeConfig, mockResolveJudgingCategories } = vi.
       modelVersion: { findMany: vi.fn() },
       image: { findUnique: vi.fn(), findFirst: vi.fn() },
       challenge: { findUnique: vi.fn(), count: vi.fn() },
-      challengeJudge: { findFirst: vi.fn() },
     },
     mockGetChallengeConfig: vi.fn(),
     mockResolveJudgingCategories: vi.fn(),
@@ -80,6 +79,12 @@ vi.mock('~/server/services/challenge-category.service', () => ({
   resolveJudgingCategories: mockResolveJudgingCategories,
 }));
 
+// Judge validation (read/write parity with the picker) runs before the standing gate; must
+// include baseInput.judgeId so these tests exercise the eligibility checks, not judge lookup.
+vi.mock('~/server/services/challenge-judge.service', () => ({
+  getUserSelectableJudges: vi.fn(() => [{ id: 1 }]),
+}));
+
 vi.mock('~/utils/errorHandling', () => ({
   withRetries: vi.fn((fn: () => unknown) => fn()),
 }));
@@ -133,7 +138,6 @@ const baseInput = {
 describe('upsertUserChallenge — real eligibility gate (no mocked assert* functions)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDbRead.challengeJudge.findFirst.mockResolvedValue({ id: 1 });
     mockDbRead.image.findFirst.mockResolvedValue({ id: 555 });
     mockDbRead.userStrike.count.mockResolvedValue(0);
     mockResolveJudgingCategories.mockResolvedValue([]);

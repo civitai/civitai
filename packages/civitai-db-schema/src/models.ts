@@ -1873,6 +1873,8 @@ export interface AppBlockPublishRequest {
 
 export interface AppListing {
   id: string;
+  serialId: number;
+  thread?: Thread | null;
   kind: string;
   slug: string;
   name: string;
@@ -2171,6 +2173,7 @@ export interface BlockScopeInvocation {
   scope: string;
   endpoint: string;
   statusCode: number;
+  detail: JsonValue | null;
   invokedAt: Date;
 }
 
@@ -2396,6 +2399,8 @@ export interface Thread {
   model3d?: Model3D | null;
   model3dReviewId: number | null;
   model3dReview?: Model3DReview | null;
+  appListingId: number | null;
+  appListing?: AppListing | null;
   metadata: JsonValue;
   commentCount: number;
   comments?: CommentV2[];

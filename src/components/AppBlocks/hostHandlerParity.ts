@@ -193,6 +193,29 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // App generator SUBQUEUE bridges (tag-scoped) — the calling app's OWN slice of
+  // the viewer's generation queue: read (image results) + cancel one, both scoped
+  // to `app-block:<appId>` server-side (host-forced tag on read; fail-closed
+  // ownership+tag guard on cancel — the block never sees the user's personal
+  // gens). AHEAD of the published SDK dist union (the SDK bridge lands in a
+  // follow-up PR) — forward-looking coverage, allowed by the one-directional
+  // compile-time gate. PAGE-ONLY affordance today (a full-page generator app;
+  // model-slot apps are deferred + will get the page host too), so N/A for the
+  // model host — mirrors the buzz self-read / OPEN_RESOURCE_PICKER placement.
+  QUERY_APP_WORKFLOWS: {
+    request: true,
+    reply: 'APP_WORKFLOWS_RESULT',
+    IframeHost: 'app subqueue is a page-only affordance today; slot-apps deferred',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  CANCEL_APP_WORKFLOW: {
+    request: true,
+    reply: 'CANCEL_APP_WORKFLOW_RESULT',
+    IframeHost: 'app subqueue is a page-only affordance today; slot-apps deferred',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   // Per-account (blue/green/yellow) balance read backing the SDK
   // `useBuzzBalance()` hook + the account-picker (Phase 3 host wiring). Host-
   // mediated via the block-token-authed `blocks.getMyBuzzBalance` MUTATION.
@@ -278,6 +301,13 @@ export const INVENTORY = {
   // published SDK dist union (the SDK contract is external + a co-requisite) —
   // forward-looking coverage, allowed by the one-directional compile-time gate.
   // A page-only affordance today, so N/A for the model host.
+  //
+  // NOTE (async cosmetic-image scan): the non-blocking mode's scan VERDICT rides a
+  // separate PARENT→BLOCK push, `IMAGE_SCAN_RESOLVED`, which is NOT a
+  // BlockToParentMessage and so does NOT belong in this INVENTORY (it tracks only
+  // block→host REQUEST types + their replies). OPEN_IMAGE_UPLOAD's TYPE is unchanged
+  // — async mode only adds an OPTIONAL `asyncScan` payload field — so no new entry
+  // is needed here. Do NOT "add" IMAGE_SCAN_RESOLVED to this map.
   OPEN_IMAGE_UPLOAD: {
     request: true,
     reply: 'IMAGE_UPLOAD_RESULT',

@@ -2496,6 +2496,15 @@ model AppBlockPublishRequest {
 /// NOT run prisma migrate deploy; the committed SQL is hand-applied per env.
 model AppListing {
   id              String       @id // apl_<ULID>
+  // Integer surrogate for CommentsV2. The store `id` is a TEXT ULID, but a
+  // CommentsV2 `Thread` parent FK must be Int (`Thread.appListingId Int? @unique`)
+  // — CommentsV2 is integer-keyed end to end. This UNIQUE auto-increment surrogate
+  // bridges the two; it is NOT the PK (`id` stays the ULID). DB-assigned
+  // (autoincrement) + backfilled for existing rows by the w13 comments migration.
+  serialId        Int          @unique @default(autoincrement()) @map("serial_id")
+  // The CommentsV2 discussion thread for this listing (parent = serialId). Optional
+  // 1:1 — created lazily on the first comment/lock (mirrors every other Thread parent).
+  thread          Thread?      @relation("AppListingThread")
   // Store kind discriminator: 'onsite' (an AppBlock we host) or 'offsite'
   // (external-link or OAuth-connect). Validated in the service + a DB CHECK.
   kind            String
@@ -3197,6 +3206,15 @@ model BlockScopeInvocation {
   scope            String
   endpoint         String
   statusCode       Int      @map("status_code") @db.SmallInt
+  /// Structured per-action audit detail (W13). NULL for a passive read (whose
+  /// friendly label is derived from `scope` at render time) and for any row
+  /// written before this column existed. For an impactful MUTATION it carries a
+  /// stable `action` code + minimal subject refs (`{ action, amount?, toUserId?,
+  /// modelVersionId?, entityId?, entityType?, key?, outcome? }` — see
+  /// BlockActionDetail). Stores IDS, not display names — the view resolves them
+  /// via batch lookups, so the row never rots when a name changes. Nullable + no
+  /// default → additive, backwards-compatible, no backfill.
+  detail           Json?
   invokedAt        DateTime @default(now()) @map("invoked_at") @db.Timestamptz(6)
 
   @@index([userId, invokedAt(sort: Desc), id(sort: Desc)], map: "bsi_user_invoked_idx")
@@ -3491,6 +3509,11 @@ model Thread {
   model3d          Model3D?        @relation(fields: [model3dId], references: [id], onDelete: SetNull)
   model3dReviewId  Int?            @unique
   model3dReview    Model3DReview?  @relation(fields: [model3dReviewId], references: [id], onDelete: SetNull)
+  // App-store listing comments (W13). References the AppListing INTEGER surrogate
+  // (`serial_id`), NOT its TEXT ULID `id` — CommentsV2 is integer-keyed. `app_listings`
+  // is the same DB (main civitai nvme0), so this is a plain FK, not a cross-DB bridge.
+  appListingId     Int?            @unique
+  appListing       AppListing?     @relation("AppListingThread", fields: [appListingId], references: [serialId], onDelete: SetNull)
 
   metadata     Json @default("{}") // unused
   commentCount Int  @default(0)

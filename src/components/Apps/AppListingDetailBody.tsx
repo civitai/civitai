@@ -33,6 +33,7 @@ import {
   type ListingBadgeKind,
 } from '~/components/Apps/appListingCardView';
 import { getDetailPrimaryAction } from '~/components/Apps/appListingDetailView';
+import { AppListingComments } from '~/components/Apps/AppListingComments';
 import { ReportListingButton } from '~/components/Apps/ReportListingButton';
 import { ReviewListingButton } from '~/components/Apps/ReviewListingButton';
 import { AppListingReviews } from '~/components/Apps/AppListingReviews';
@@ -405,6 +406,12 @@ export function AppListingDetailBody({ detail, canOpenPage = false }: AppListing
             permissions.
           </Alert>
         )}
+
+      {/* CommentsV2 discussion — reuses the shared comment + moderation stack keyed
+          on the listing's Thread (`entityType="appListing"`, integer surrogate).
+          Additive + separate from the recommend-style reviews above. Only reached
+          for an APPROVED listing (getListingDetail is approved-only). */}
+      <AppListingComments serialId={detail.serialId} ownerUserId={detail.creator?.id ?? null} />
     </Stack>
   );
 }

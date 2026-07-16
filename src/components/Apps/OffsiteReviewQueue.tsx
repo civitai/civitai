@@ -30,6 +30,13 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { useState } from 'react';
+import { ModQueryError, isModAuthzError } from '~/components/Apps/ModQuerySurface';
+import {
+  ReasonGatedActionModal,
+  ReasonGatedField,
+  ReasonGatedSubmitButton,
+  reasonMeetsMin,
+} from '~/components/Apps/ReasonGatedActionModal';
 import { getOffsiteReviewChecklist } from '~/components/Apps/offsiteReviewChecklist';
 import { getReportReasonLabel } from '~/components/Apps/appListingReportView';
 import {
@@ -112,9 +119,21 @@ export function OffsiteReviewQueue() {
     { enabled: !!features?.appBlocks, retry: false }
   );
 
-  // Flag off / not enabled → the query errors (moderatorProcedure); render nothing
-  // so the section stays unobtrusive when off-site review isn't in use.
-  if (queue.error) return null;
+  // Dark posture: flag off → nothing. An AUTHZ error (non-mod) → nothing. But a
+  // TRANSIENT error must surface a retry rather than silently blank the section.
+  if (!features?.appBlocks) return null;
+  if (queue.error) {
+    if (isModAuthzError(queue.error)) return null;
+    return (
+      <ModQueryError
+        error={queue.error}
+        onRetry={() => queue.refetch()}
+        isRetrying={queue.isFetching}
+        title="Couldn’t load external submissions"
+        testId="apps-offsite-queue-error"
+      />
+    );
+  }
 
   const items = (queue.data?.items ?? []) as OffsitePendingRow[];
 
@@ -493,38 +512,34 @@ export function OffsiteReviewModal({
 
         {actionMode === 'reject' ? (
           <Stack gap="xs">
-            <Text size="sm" fw={600}>
-              Rejection reason
-            </Text>
-            <Textarea
-              autosize
+            <ReasonGatedField
+              value={rejectionReason}
+              onChange={setRejectionReason}
+              disabled={busy}
+              label="Rejection reason"
+              placeholder={`Explain what needs to change (≥${OFFSITE_MOD_REASON_MIN} chars, shown to the author).`}
+              testId="apps-offsite-reject-reason"
               minRows={3}
               maxRows={10}
-              placeholder="Explain what needs to change (≥10 chars, shown to the author)."
-              value={rejectionReason}
-              onChange={(e) => setRejectionReason(e.currentTarget.value)}
-              disabled={busy}
-              data-testid="apps-offsite-reject-reason"
             />
             <Group justify="flex-end" gap="xs">
               <Button variant="default" onClick={() => setActionMode('view')} disabled={busy}>
                 Cancel
               </Button>
-              <Button
-                color="red"
-                leftSection={<IconX size={14} />}
+              <ReasonGatedSubmitButton
                 onClick={() =>
                   rejectMut.mutate({
                     publishRequestId: request.id,
                     rejectionReason: rejectionReason.trim(),
                   })
                 }
-                disabled={busy || rejectionReason.trim().length < 10}
-                loading={rejectMut.isPending}
-                data-testid="apps-offsite-reject-confirm"
-              >
-                Reject
-              </Button>
+                gateOpen={reasonMeetsMin(rejectionReason)}
+                busy={rejectMut.isPending}
+                color="red"
+                leftSection={<IconX size={14} />}
+                label="Reject"
+                testId="apps-offsite-reject-confirm"
+              />
             </Group>
           </Stack>
         ) : actionMode === 'approve' ? (
@@ -646,8 +661,20 @@ export function OffsiteReportsQueue() {
     { enabled: !!features?.appBlocks, retry: false }
   );
 
-  // Flag off / not a mod → the query errors (moderatorProcedure); render nothing.
-  if (queue.error) return null;
+  // Dark posture: flag off / non-mod → nothing; a transient error → a retry Alert.
+  if (!features?.appBlocks) return null;
+  if (queue.error) {
+    if (isModAuthzError(queue.error)) return null;
+    return (
+      <ModQueryError
+        error={queue.error}
+        onRetry={() => queue.refetch()}
+        isRetrying={queue.isFetching}
+        title="Couldn’t load reports"
+        testId="apps-reports-queue-error"
+      />
+    );
+  }
 
   const items = (queue.data?.items ?? []) as ReportRow[];
 
@@ -865,12 +892,15 @@ function ReportActionModal({
   const reasonRequired =
     action === 'delist' || action === 'relist' || action === 'claim' || action === 'purge';
   const isClaim = action === 'claim';
+  const destructive = isDestructiveAction(action);
   const trimmed = text.trim();
   const validTarget = typeof targetUserId === 'number' && Number.isInteger(targetUserId) && targetUserId > 0;
-  const canSubmit =
-    !busy &&
-    (!reasonRequired || trimmed.length >= OFFSITE_MOD_REASON_MIN) &&
-    (!isClaim || validTarget);
+
+  function reset() {
+    setText('');
+    setTargetUserId('');
+    onClose();
+  }
 
   function submit() {
     switch (action) {
@@ -904,14 +934,10 @@ function ReportActionModal({
   }
 
   return (
-    <Modal
+    <ReasonGatedActionModal
       opened={!!pending}
-      onClose={() => {
-        if (busy) return;
-        setText('');
-        setTargetUserId('');
-        onClose();
-      }}
+      onCancel={reset}
+      busy={busy}
       title={
         <Group gap={6}>
           <Text fw={600}>
@@ -919,18 +945,27 @@ function ReportActionModal({
           </Text>
         </Group>
       }
-      centered
-    >
-      <Stack gap="md">
-        {isDestructiveAction(action) && (
-          <Alert color="red" variant="light" icon={<IconAlertTriangle size={16} />}>
-            <Text size="sm">
-              Purge PERMANENTLY deletes this listing and its screenshots + reports. The audit event
-              (with the slug snapshot) is kept. This cannot be undone.
-            </Text>
-          </Alert>
-        )}
-        {isClaim && (
+      reason={text}
+      onReasonChange={setText}
+      reasonRequired={reasonRequired}
+      reasonLabel={
+        reasonRequired ? `Reason (≥${OFFSITE_MOD_REASON_MIN} chars, audited)` : 'Note (optional)'
+      }
+      reasonPlaceholder={
+        reasonRequired
+          ? 'Why this action — recorded in the audit trail.'
+          : 'Optional resolution note (audited).'
+      }
+      reasonTestId="apps-report-action-reason"
+      destructive={destructive}
+      destructiveWarning={
+        <Text size="sm">
+          Purge PERMANENTLY deletes this listing and its screenshots + reports. The audit event
+          (with the slug snapshot) is kept. This cannot be undone.
+        </Text>
+      }
+      extraSlot={
+        isClaim ? (
           <>
             <Alert color="blue" variant="light" icon={<IconAlertTriangle size={16} />}>
               <Text size="sm">
@@ -950,46 +985,14 @@ function ReportActionModal({
               data-testid="apps-report-claim-target"
             />
           </>
-        )}
-        <Textarea
-          label={reasonRequired ? `Reason (≥${OFFSITE_MOD_REASON_MIN} chars, audited)` : 'Note (optional)'}
-          autosize
-          minRows={3}
-          maxRows={8}
-          placeholder={
-            reasonRequired
-              ? 'Why this action — recorded in the audit trail.'
-              : 'Optional resolution note (audited).'
-          }
-          value={text}
-          onChange={(e) => setText(e.currentTarget.value)}
-          disabled={busy}
-          data-testid="apps-report-action-reason"
-        />
-        <Group justify="flex-end" gap="xs">
-          <Button
-            variant="default"
-            onClick={() => {
-              setText('');
-              setTargetUserId('');
-              onClose();
-            }}
-            disabled={busy}
-          >
-            Cancel
-          </Button>
-          <Button
-            color={isDestructiveAction(action) ? 'red' : undefined}
-            onClick={submit}
-            disabled={!canSubmit}
-            loading={busy}
-            data-testid="apps-report-action-confirm"
-          >
-            {isDestructiveAction(action) ? 'Purge permanently' : reportActionLabel(action)}
-          </Button>
-        </Group>
-      </Stack>
-    </Modal>
+        ) : undefined
+      }
+      extraGateSatisfied={!isClaim || validTarget}
+      extraGateTooltip="Enter a valid new owner id."
+      submitLabel={destructive ? 'Purge permanently' : reportActionLabel(action)}
+      submitTestId="apps-report-action-confirm"
+      onSubmit={submit}
+    />
   );
 }
 

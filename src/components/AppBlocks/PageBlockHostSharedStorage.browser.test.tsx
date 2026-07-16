@@ -54,6 +54,10 @@ const mocks = vi.hoisted(() => ({
   storageGetQuota: vi.fn(),
 }));
 
+// AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
+// moderator gate; these suites render the real host without a CivitaiSessionProvider.
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+
 vi.mock('~/utils/trpc', () => ({
   // FeatureFlagsProvider (in PageBlockHost's real render graph) statically imports
   // `setTrpcBatchingEnabled` from this module (#2946). vi.mock replaces the module
@@ -74,6 +78,8 @@ vi.mock('~/utils/trpc', () => ({
       estimateWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       pollWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      queryAppWorkflows: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      cancelAppWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {
       storage: {

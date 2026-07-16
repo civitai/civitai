@@ -195,6 +195,9 @@ function manifestHasPage(manifest: unknown): boolean {
  */
 export const listingHydrateSelect = {
   id: true,
+  // Integer surrogate — projected into the detail DTO only (the comments thread
+  // key). Harmless extra column for the card projection, which doesn't surface it.
+  serialId: true,
   kind: true,
   slug: true,
   name: true,
@@ -308,6 +311,7 @@ export function projectListingDetail(row: HydratedListing): ListingDetail {
   const recommend = recommendRollup(row.metric);
   return {
     id: row.id,
+    serialId: row.serialId,
     slug: row.slug,
     kind: row.kind as ListingKind,
     name: row.name,
