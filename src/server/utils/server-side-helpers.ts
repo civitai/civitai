@@ -103,7 +103,17 @@ export function createServerSideProps<P>({
     return {
       props: {
         ...(props ?? {}),
-        ...(ssg ? { trpcState: ssg.dehydrate() } : {}),
+        // Success-only: an errored prefetch would put a TRPCError instance in the
+        // dehydrated state, and the devalue write (TRPC_WRITE_DEVALUE) throws on
+        // non-POJOs — turning one failed prefetch into a page-wide SSR 500. Dropping
+        // errored queries lets the client refetch instead.
+        ...(ssg
+          ? {
+              trpcState: ssg.dehydrate({
+                shouldDehydrateQuery: (query) => query.state.status === 'success',
+              }),
+            }
+          : {}),
         session,
       } as NonNullable<P>,
     };

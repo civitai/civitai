@@ -211,20 +211,12 @@ export function rateLimit<TInput = any>(
       // that subtype = abuse-prevention effectively disabled, which
       // ops should dashboard separately from generic write-degraded.
       try {
-        await hSetWithTTL(
-          redis,
+        await hSetWithTTL(redis, cacheKey, hashKey, pack(updatedAttempts), CacheTTL.day * 1000);
+      } catch (error) {
+        logSysRedisFailOpen('rate-limit-write-degraded', 'middleware.trpc.recordAttempt', error, {
           cacheKey,
           hashKey,
-          pack(updatedAttempts),
-          CacheTTL.day * 1000
-        );
-      } catch (error) {
-        logSysRedisFailOpen(
-          'rate-limit-write-degraded',
-          'middleware.trpc.recordAttempt',
-          error,
-          { cacheKey, hashKey }
-        );
+        });
       }
     };
 
@@ -317,11 +309,10 @@ export const prodOnly = middleware(({ next }) => {
 
 export const applyRequestDomainColor = middleware(async (options) => {
   const { next, ctx } = options;
-  const input = options.input as { domain?: string };
-  const domainColor = getRequestDomainColor(ctx.req);
-
-  if (input.domain && input.domain !== domainColor) input.domain = domainColor;
-  else input.domain = domainColor;
+  // Procedures with a fully-optional input must use `.default({})` (not `.optional()`)
+  // so there's an object to stamp the domain onto when the caller sends no input.
+  const input = options.input as { domain?: string } | undefined;
+  if (input) input.domain = getRequestDomainColor(ctx.req);
 
   return next();
 });
