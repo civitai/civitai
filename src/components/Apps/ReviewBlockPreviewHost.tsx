@@ -1,6 +1,7 @@
 import { Alert, Loader, Stack, Text, useComputedColorScheme } from '@mantine/core';
 import { useEffect } from 'react';
 import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
+import { clampReviewSandbox } from '~/components/AppBlocks/sandbox';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
@@ -97,7 +98,12 @@ export function ReviewBlockPreviewHost({
       blockInstanceId={mintData.blockInstanceId}
       appName={mintData.appName}
       iframeSrc={iframeSrc}
-      sandbox={mintData.sandbox}
+      // Clamp the manifest sandbox to the review render-only set: drop
+      // allow-popups / allow-downloads / allow-modals / allow-pointer-lock (+ the
+      // top-nav / escape tokens intersectSandbox already strips) so an untrusted
+      // review block can't open a popup or trigger a download aimed at the mod's
+      // tab. Keeps allow-scripts (+ allow-forms if declared).
+      sandbox={clampReviewSandbox(mintData.sandbox)}
       // FORCED unverified → opaque origin (drops allow-same-origin). C1 defense.
       trustTier="unverified"
       slug={slug}

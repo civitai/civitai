@@ -2115,6 +2115,17 @@ export function PageBlockHost({
       const req = resolveGetWildcardPackRequest(raw);
       if (!req) return; // missing/invalid requestId or modelVersionId → drop
       const { requestId, modelVersionId } = req;
+      if (reviewMode) {
+        // 🔴 token-INDEPENDENT (session-cookie-authed) op — it does NOT go through
+        // the scope-stripped review block token, so it is the ONE handler that
+        // would otherwise bypass the review token defense entirely: an untrusted
+        // pending block could drive the MOD's real download entitlements to
+        // resolve+fetch+unzip+parse an arbitrary modelVersionId's wildcard pack and
+        // read the contents into the sandboxed iframe. NACK before resolving or
+        // downloading anything (fail-fast, never a hang).
+        send('WILDCARD_PACK_RESULT', { requestId, error: REVIEW_NACK_MESSAGE });
+        return;
+      }
       // Concurrency cap (host-side backpressure): bound the per-tab memory. The
       // check→increment runs synchronously before the first await (single-
       // threaded), so N concurrent GET_WILDCARD_PACKs can't all pass the gate.
@@ -2156,7 +2167,7 @@ export function PageBlockHost({
       }
     });
     return off;
-  }, [onMessage, send, resolveWildcardPackMutation]);
+  }, [onMessage, send, resolveWildcardPackMutation, reviewMode]);
 
   const showIframe = status === 'loading' || status === 'ready';
   const isReady = status === 'ready';

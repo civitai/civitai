@@ -46,6 +46,36 @@ export function intersectSandbox(raw: string | undefined, trustTier: string): st
 }
 
 /**
+ * MOD REVIEW SANDBOX (#2831): the ONLY sandbox tokens permitted when previewing a
+ * PENDING, un-approved block with a moderator's tab. Every capability that can
+ * REACH the mod's tab is dropped even if the manifest declares it —
+ * `allow-popups` (open a window at the mod), `allow-downloads` (trigger a download
+ * to the mod), `allow-modals`, `allow-pointer-lock`. (`allow-top-navigation*` and
+ * `allow-popups-to-escape-sandbox` are not in ALLOWED_SANDBOX_TOKENS, so
+ * intersectSandbox already strips them.) Only `allow-scripts` (mandatory to render)
+ * and `allow-forms` (low-risk to an opaque origin) survive. `allow-same-origin` is
+ * NEVER added — the review host forces `trustTier:'unverified'` (opaque origin).
+ */
+export const REVIEW_SANDBOX_ALLOWED_TOKENS: ReadonlySet<string> = new Set<string>([
+  'allow-scripts',
+  'allow-forms',
+]);
+
+/**
+ * Clamp a manifest-declared sandbox string down to the review render-only set
+ * (REVIEW_SANDBOX_ALLOWED_TOKENS ∪ the minimal floor). The output is passed to the
+ * review host, which runs it through `intersectSandbox(…, 'unverified')` again —
+ * so `allow-same-origin` is never added and the opaque origin is preserved. Fails
+ * CLOSED (an empty / all-stripped manifest → the minimal `allow-scripts` floor).
+ */
+export function clampReviewSandbox(raw: string | undefined): string {
+  const declared = (raw ?? '').split(/\s+/).filter((t) => REVIEW_SANDBOX_ALLOWED_TOKENS.has(t));
+  const tokens = new Set<string>(MINIMAL_SANDBOX); // always allow-scripts
+  for (const t of declared) tokens.add(t);
+  return Array.from(tokens).join(' ');
+}
+
+/**
  * L-OPAQUE: does the EFFECTIVE iframe sandbox (the same string handed to the
  * `<iframe sandbox=…>` attribute) lack `allow-same-origin`?
  *

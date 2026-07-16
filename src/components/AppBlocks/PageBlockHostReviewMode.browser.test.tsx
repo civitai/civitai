@@ -26,6 +26,10 @@ const mocks = vi.hoisted(() => ({
   viewer: vi.fn(async () => ({ id: 42, username: 'mod' })),
   storageSet: vi.fn(async () => ({ sizeBytes: 1 })),
   sharedAppend: vi.fn(async () => ({ key: 'k' })),
+  // Session-authed (protectedProcedure) wildcard resolve — the token-INDEPENDENT
+  // handler. Returns an over-cap size so the non-reviewMode path short-circuits at
+  // the pre-download cap and never actually fetches (keeps the test network-free).
+  wildcard: vi.fn(async () => ({ sizeBytes: 10 ** 9, signedUrl: 'x', meta: {}, maturity: {} })),
 }));
 
 // AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
@@ -35,7 +39,7 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/utils/trpc', () => ({
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {
-    generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
+    generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: mocks.wildcard }) } },
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: mocks.submit }) },
       getMyBuzzBalance: { useMutation: () => ({ mutateAsync: mocks.buzzBalance }) },
@@ -158,6 +162,7 @@ beforeEach(() => {
   mocks.viewer.mockClear();
   mocks.storageSet.mockClear();
   mocks.sharedAppend.mockClear();
+  mocks.wildcard.mockClear();
 });
 
 describe('PageBlockHost reviewMode — side-effecting handlers fail-fast NACK, never reach the mutation', () => {
@@ -249,6 +254,22 @@ describe('PageBlockHost reviewMode — side-effecting handlers fail-fast NACK, n
     l.stop();
   });
 
+  test('GET_WILDCARD_PACK (session-authed, token-INDEPENDENT) → NACK, resolveWildcardPack NOT called', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} reviewMode onConsentGranted={vi.fn()} />);
+    await driveToReady();
+    const l = listenForReply();
+
+    postFromBlock('GET_WILDCARD_PACK', { requestId: 'wp1', modelVersionId: 9001 });
+
+    await vi.waitFor(() => expect(l.last('WILDCARD_PACK_RESULT')).toBeTruthy());
+    const reply = l.last('WILDCARD_PACK_RESULT')!.payload as { requestId: string; error: string };
+    expect(reply.requestId).toBe('wp1');
+    expect(reply.error).toBe('not available in review preview');
+    // The mod's session-authed download entitlement is NEVER exercised in review.
+    expect(mocks.wildcard).not.toHaveBeenCalled();
+    l.stop();
+  });
+
   test('render-safe GET_VIEWER STILL works in reviewMode (mutation reached)', async () => {
     renderWithProviders(<PageBlockHost {...baseProps} reviewMode onConsentGranted={vi.fn()} />);
     await driveToReady();
@@ -271,6 +292,17 @@ describe('PageBlockHost reviewMode — the NON-reviewMode (prod) path is unchang
 
     // The prod path forwards to the mutation exactly as before (no NACK).
     await vi.waitFor(() => expect(mocks.submit).toHaveBeenCalledTimes(1));
+  });
+
+  test('without reviewMode, GET_WILDCARD_PACK reaches resolveWildcardPack', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToReady();
+
+    postFromBlock('GET_WILDCARD_PACK', { requestId: 'wp2', modelVersionId: 9001 });
+
+    // The prod path resolves as before (the mock's over-cap size short-circuits at
+    // the pre-download cap → a 'too-large' reply, so no real fetch runs).
+    await vi.waitFor(() => expect(mocks.wildcard).toHaveBeenCalledTimes(1));
   });
 });
 

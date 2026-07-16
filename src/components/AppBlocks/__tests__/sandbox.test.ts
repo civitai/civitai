@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { effectiveSandboxIsOpaque, intersectSandbox } from '../sandbox';
+import { clampReviewSandbox, effectiveSandboxIsOpaque, intersectSandbox } from '../sandbox';
 
 /**
  * L-SANDBOX coverage. intersectSandbox derives the iframe `sandbox`
@@ -57,6 +57,53 @@ describe('intersectSandbox', () => {
       'allow-same-origin',
     ]);
     for (const t of out) expect(allowed.has(t)).toBe(true);
+  });
+});
+
+/**
+ * MOD REVIEW SANDBOX (#2831) — clampReviewSandbox drops every mod-reaching
+ * capability even if the pending manifest declares it, so a malicious review block
+ * can't open a popup or trigger a download at the moderator's tab.
+ */
+describe('clampReviewSandbox (mod review render-only clamp)', () => {
+  const MOD_REACHING = [
+    'allow-popups',
+    'allow-downloads',
+    'allow-modals',
+    'allow-pointer-lock',
+    'allow-top-navigation',
+    'allow-top-navigation-by-user-activation',
+    'allow-popups-to-escape-sandbox',
+  ];
+
+  it('strips every mod-reaching token a malicious manifest declares — keeps only allow-scripts + allow-forms', () => {
+    const declared =
+      'allow-scripts allow-forms allow-popups allow-downloads allow-modals ' +
+      'allow-pointer-lock allow-top-navigation allow-popups-to-escape-sandbox allow-same-origin';
+    const out = clampReviewSandbox(declared).split(/\s+/);
+    expect(out).toContain('allow-scripts');
+    expect(out).toContain('allow-forms');
+    for (const t of MOD_REACHING) expect(out).not.toContain(t);
+    // NEVER allow-same-origin (the review host also forces the opaque origin).
+    expect(out).not.toContain('allow-same-origin');
+  });
+
+  it('fails closed to the minimal allow-scripts floor for empty / all-stripped manifests', () => {
+    for (const raw of [undefined, '', '   ', 'allow-popups allow-downloads allow-same-origin']) {
+      expect(clampReviewSandbox(raw)).toBe('allow-scripts');
+    }
+  });
+
+  it('the clamped string, run through intersectSandbox(unverified), stays opaque + render-only', () => {
+    // Mirror the real wiring: ReviewBlockPreviewHost passes clampReviewSandbox()
+    // and PageBlockHost re-runs intersectSandbox(…, 'unverified').
+    const eff = intersectSandbox(clampReviewSandbox('allow-scripts allow-popups allow-downloads'), 'unverified');
+    const tokens = eff.split(/\s+/);
+    expect(tokens).toContain('allow-scripts');
+    expect(tokens).not.toContain('allow-popups');
+    expect(tokens).not.toContain('allow-downloads');
+    expect(tokens).not.toContain('allow-same-origin');
+    expect(effectiveSandboxIsOpaque(eff)).toBe(true); // opaque origin preserved
   });
 });
 
