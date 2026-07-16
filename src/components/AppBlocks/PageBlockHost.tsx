@@ -12,9 +12,12 @@ import {
   grantedPageScopes,
   pageFallbackReason,
   resolveCheckpointPickerRequest,
+  resolveGetImagesByIdsRequest,
   resolveImageUploadRequest,
+  resolvePublishGenerationOutputsRequest,
   resolveResourcePickerRequest,
 } from './pageBlockHostLogic';
+import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
 import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
 import type { BlockSourceImageInfo } from './BlockGenerationSourceUploadModal';
@@ -617,6 +620,14 @@ export function PageBlockHost({
   // block-token bridges (a .query would leak the JWT into the ?input= URL).
   const queryAppWorkflowsMutation = trpc.blocks.queryAppWorkflows.useMutation();
   const cancelAppWorkflowMutation = trpc.blocks.cancelAppWorkflow.useMutation();
+  // Model-Benchmarking shared-grid bridges. publishGenerationOutputs turns the
+  // app's OWN workflow outputs into bare, real-scanned public images (FAIL-CLOSED
+  // behind the server ownership+tag guard; host-chrome consent BEFORE the call);
+  // getImagesByIds reads those ids back under the requesting viewer's browsing-
+  // level clamp (the server never returns an unclamped url). MUTATIONS for the
+  // same bearer-token-in-URL reason as the other block-token bridges.
+  const publishGenerationOutputsMutation = trpc.blocks.publishGenerationOutputs.useMutation();
+  const getImagesByIdsMutation = trpc.blocks.getImagesByIds.useMutation();
 
   // Wildcard-pack import (W13). SESSION-authed (protectedProcedure) — it does NOT
   // take a block token; the viewer's real cookie session authenticates, which is
@@ -807,6 +818,100 @@ export function PageBlockHost({
     );
     return off;
   }, [onMessage, send, token, cancelAppWorkflowMutation]);
+
+  // PUBLISH_GENERATION_OUTPUTS → blocks.publishGenerationOutputs → PUBLISH_RESULT.
+  // Turn the app's OWN workflow outputs into bare, real-scanned public images.
+  // 🔴 HOST-CHROME CONSENT: publishing is user content shown to OTHER viewers, so
+  // the host opens its OWN confirm dialog and only calls the mutation on an
+  // explicit click — that click IS the consent boundary (the iframe can't fake
+  // it, like the resource picker). The block sends INDEXES not urls; the SERVER
+  // resolves urls + is FAIL-CLOSED behind the ownership+app-tag guard. REQUEST-
+  // style ⇒ every terminal path (no token / cancel / success / error) MUST reply
+  // exactly once or the block hangs; a `settled` latch guards a double-reply.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; workflowId?: unknown } | undefined>(
+      'PUBLISH_GENERATION_OUTPUTS',
+      (raw) => {
+        const req = resolvePublishGenerationOutputsRequest(raw);
+        if (!req) return; // missing requestId / workflowId — drop, nothing to publish
+        const { requestId, workflowId, imageIndexes } = req;
+        if (!token) {
+          send('PUBLISH_RESULT', { requestId, error: 'no block token' });
+          return;
+        }
+        let settled = false;
+        const reply = (payload: Record<string, unknown>) => {
+          if (settled) return;
+          settled = true;
+          send('PUBLISH_RESULT', { requestId, ...payload });
+        };
+        const count = imageIndexes?.length;
+        const noun = count == null ? 'these results' : `${count} result${count === 1 ? '' : 's'}`;
+        dialogStore.trigger({
+          component: ConfirmDialog,
+          props: {
+            title: 'Publish to the shared grid?',
+            message: `Publish ${noun} to ${
+              appName ? `“${appName}”` : 'this app'
+            }’s shared grid? Published images are scanned and become visible to other viewers of this app.`,
+            labels: { confirm: 'Publish', cancel: 'Cancel' },
+            confirmProps: { color: 'blue' },
+            onConfirm: async () => {
+              try {
+                const result = await publishGenerationOutputsMutation.mutateAsync({
+                  blockToken: token,
+                  workflowId,
+                  ...(imageIndexes ? { imageIndexes } : {}),
+                });
+                reply({ result });
+              } catch (err) {
+                reply({ error: err instanceof Error ? err.message : 'unknown' });
+              }
+            },
+            // Dismiss (Cancel / X / escape) = consent declined → settle the
+            // block's promise with an explicit signal rather than leaving it to time out.
+            onCancel: () => reply({ error: 'publish canceled' }),
+          },
+        });
+      }
+    );
+    return off;
+  }, [onMessage, send, token, appName, publishGenerationOutputsMutation]);
+
+  // GET_IMAGES_BY_IDS → blocks.getImagesByIds → IMAGES_RESULT. Per-viewer gated
+  // read of the shared-grid image ids. The SERVER self-binds the viewer + applies
+  // their browsing-level clamp (an above-ceiling / unscanned / flagged image comes
+  // back `hidden` with NO url). An empty (post-sanitization) id list short-circuits
+  // to an empty result — never hitting the server schema (which requires ≥1 id).
+  // REQUEST-style ⇒ reply on every path; on a null token we reply with the error variant.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; imageIds?: unknown } | undefined>(
+      'GET_IMAGES_BY_IDS',
+      async (raw) => {
+        const req = resolveGetImagesByIdsRequest(raw);
+        if (!req) return; // missing/non-string requestId — drop
+        const { requestId, imageIds } = req;
+        if (imageIds.length === 0) {
+          send('IMAGES_RESULT', { requestId, result: { images: [] } });
+          return;
+        }
+        if (!token) {
+          send('IMAGES_RESULT', { requestId, error: 'no block token' });
+          return;
+        }
+        try {
+          const result = await getImagesByIdsMutation.mutateAsync({ blockToken: token, imageIds });
+          send('IMAGES_RESULT', { requestId, result });
+        } catch (err) {
+          send('IMAGES_RESULT', {
+            requestId,
+            error: err instanceof Error ? err.message : 'unknown',
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, getImagesByIdsMutation]);
 
   // GET_BUZZ_BALANCE → blocks.getMyBuzzBalance → BUZZ_BALANCE_RESULT. The block's
   // per-account (blue/green/yellow) balance read that backs the SDK

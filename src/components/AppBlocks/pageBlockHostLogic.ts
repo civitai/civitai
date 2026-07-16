@@ -182,6 +182,81 @@ export function resolveImageUploadRequest(raw: unknown): ImageUploadRequest | nu
   return { requestId: obj.requestId, purpose, asyncScan };
 }
 
+// ── PUBLISH_GENERATION_OUTPUTS (Model-Benchmarking seam) ─────────────────────
+// The block asks the host to PUBLISH selected outputs of one of its OWN
+// workflows as bare, real-scanned public images. The wire-validation here is
+// deliberately minimal (require a string requestId + a non-empty string
+// workflowId; sanitize the optional index list) — the SERVER is the real
+// authority (ownership guard + app-tag + it resolves the urls itself). Pure +
+// unit-tested like the sibling resolvers.
+
+export type PublishGenerationOutputsRequest = {
+  requestId: string;
+  workflowId: string;
+  /** Sanitized to a list of non-negative integers; absent when the block omitted it. */
+  imageIndexes?: number[];
+  /** Optional advisory title (trimmed of non-string). */
+  title?: string;
+};
+
+/**
+ * Validate a raw PUBLISH_GENERATION_OUTPUTS payload from an untrusted iframe.
+ * Returns the sanitized request, or `null` when it must be DROPPED (missing
+ * requestId or a missing/empty workflowId — nothing legitimate to publish). Note
+ * the block sends INDEXES, never urls: the host resolves urls server-side, so the
+ * iframe can't inject an arbitrary blob.
+ */
+export function resolvePublishGenerationOutputsRequest(
+  raw: unknown
+): PublishGenerationOutputsRequest | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.requestId !== 'string' || obj.requestId.length === 0) return null;
+  if (typeof obj.workflowId !== 'string' || obj.workflowId.length === 0) return null;
+  const req: PublishGenerationOutputsRequest = {
+    requestId: obj.requestId,
+    workflowId: obj.workflowId,
+  };
+  if (Array.isArray(obj.imageIndexes)) {
+    req.imageIndexes = obj.imageIndexes.filter(
+      (n): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 0
+    );
+  }
+  if (typeof obj.title === 'string') req.title = obj.title;
+  return req;
+}
+
+// ── GET_IMAGES_BY_IDS (Model-Benchmarking seam) ──────────────────────────────
+// The block asks the host for per-viewer gated display data for a set of image
+// ids. The host self-binds the viewer + applies the clamp server-side; the
+// resolver just sanitizes the id list (positive integers) so a garbage payload
+// never reaches the server schema (which requires ≥1 id) — the caller replies
+// with an empty result for an empty/garbage list rather than hanging the block.
+
+export type GetImagesByIdsRequest = {
+  requestId: string;
+  /** Sanitized to a list of positive integers (may be empty). */
+  imageIds: number[];
+};
+
+/**
+ * Validate a raw GET_IMAGES_BY_IDS payload from an untrusted iframe. Returns the
+ * sanitized request (requestId + filtered positive-integer imageIds), or `null`
+ * when it must be DROPPED (missing/non-string requestId). An empty `imageIds`
+ * after filtering is a valid (empty-result) request, NOT a drop.
+ */
+export function resolveGetImagesByIdsRequest(raw: unknown): GetImagesByIdsRequest | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.requestId !== 'string' || obj.requestId.length === 0) return null;
+  const imageIds = Array.isArray(obj.imageIds)
+    ? obj.imageIds.filter(
+        (n): n is number => typeof n === 'number' && Number.isInteger(n) && n > 0
+      )
+    : [];
+  return { requestId: obj.requestId, imageIds };
+}
+
 export type PageFallbackReason = 'timeout' | 'token_error' | 'fatal_block_error';
 
 /**

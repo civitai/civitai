@@ -2784,6 +2784,191 @@ export const blocksRouter = router({
     }),
 
   /**
+   * PUBLISH selected outputs of ONE of the calling app's OWN workflows as bare,
+   * REAL-SCANNED public `Image` rows — the write half of the Model-Benchmarking
+   * shared-grid seam. FAIL-CLOSED, and identical gate order to
+   * queryAppWorkflows/cancelAppWorkflow up to the ownership guard.
+   *
+   * The block sends `workflowId` + optional `imageIndexes` (indexes into the same
+   * ordered `images` array queryAppWorkflows exposes) — NEVER urls: the HOST
+   * resolves the orchestrator urls SERVER-SIDE from the ownership-verified
+   * workflow, fetches + re-uploads each selected output to civitai storage, and
+   * creates each `Image` with DEFAULT ingestion (real NSFW scan; NO skipIngestion)
+   * and NO postId — a bare row, no Post / gallery / feed / reward / notification.
+   * So a sandboxed iframe can never inject an arbitrary blob NOR publish someone
+   * else's workflow.
+   *
+   * Two fail-closed ownership guards BEFORE any byte is fetched (mirrors
+   * cancelAppWorkflow): (a) `blockWorkflowOwnedByAppUser` — the durable
+   * (userId-from-token, appBlockId-from-token, workflowId) binding the
+   * orchestrator lacks; (b) the orchestrator's own record must carry the
+   * `app-block:<appId>` tag. Either fails → FORBIDDEN, nothing is published.
+   *
+   * MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows).
+   */
+  publishGenerationOutputs: publicProcedure
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        workflowId: z.string().min(1).max(64),
+        // Indexes into the workflow's available outputs (the same ordering
+        // queryAppWorkflows returns). Absent ⇒ publish ALL available outputs.
+        imageIndexes: z.number().int().nonnegative().array().max(50).optional(),
+        // Advisory label (reserved; bare Image rows carry no title today).
+        title: z.string().max(255).optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const claims = await verifyBlockToken(input.blockToken);
+      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      // Same trust boundary as submit/query: an app authorized to spend the
+      // viewer's Buzz on generation can publish the outputs it produced.
+      if (!claims.scopes.includes('ai:write:budgeted')) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
+      }
+      const userId = parseSubjectUserId(claims.sub);
+      if (userId == null) {
+        throw new TRPCError({
+          code: 'UNAUTHORIZED',
+          message: 'publishing requires an authenticated viewer',
+        });
+      }
+      await assertAppBlocksEnabledForTokenUser(userId);
+      await assertViewerIsAppDeveloper(userId);
+      const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+      if (!rate.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
+      // GUARD (a): durable user+app-bound ownership proof — fail-closed.
+      const { blockWorkflowOwnedByAppUser } = await import(
+        '~/server/services/blocks/block-workflows.service'
+      );
+      const owned = await blockWorkflowOwnedByAppUser({
+        userId,
+        appBlockId: claims.appBlockId,
+        workflowId: input.workflowId,
+      });
+      if (!owned) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'workflow is not in this app subqueue' });
+      }
+      const token = await getOrchestratorToken(userId, ctx);
+      // GUARD (b): re-read + assert the orchestrator's own app-tag (defense in depth).
+      const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
+      if (!(workflow.tags ?? []).includes(appBlockTag(claims.appId))) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'workflow is not tagged for this app' });
+      }
+
+      // The SAME ordered projection queryAppWorkflows hands the block — so the
+      // block's `imageIndexes` line up exactly with what it saw. Only `available`
+      // outputs with a non-null url are present (dead/pending blobs are dropped).
+      const outputs = projectAppWorkflow(workflow).images;
+      if (outputs.length === 0) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'workflow has no available outputs to publish',
+        });
+      }
+      // Resolve the selection: given indexes (validated in-range) or all outputs.
+      // Dedupe + cap so a block can't drive an unbounded fetch/upload fan-out.
+      const PUBLISH_MAX_IMAGES = 20;
+      const rawIndexes = input.imageIndexes ?? outputs.map((_, i) => i);
+      const selected: typeof outputs = [];
+      const seenIdx = new Set<number>();
+      for (const idx of rawIndexes) {
+        if (idx < 0 || idx >= outputs.length || seenIdx.has(idx)) continue;
+        seenIdx.add(idx);
+        selected.push(outputs[idx]);
+        if (selected.length >= PUBLISH_MAX_IMAGES) break;
+      }
+      if (selected.length === 0) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'no valid output indexes to publish',
+        });
+      }
+
+      const { persistBlockWorkflowOutputImage } = await import(
+        '~/server/services/blocks/block-image-upload.service'
+      );
+      // Best-effort per image: collect the ids that publish, so one bad blob
+      // never blanks the whole grid. Only throw when EVERY selected output failed.
+      const imageIds: number[] = [];
+      let lastError: unknown;
+      for (const out of selected) {
+        try {
+          const { imageId } = await persistBlockWorkflowOutputImage({
+            imageUrl: out.url,
+            width: out.width,
+            height: out.height,
+            userId,
+          });
+          imageIds.push(imageId);
+        } catch (err) {
+          lastError = err;
+        }
+      }
+      if (imageIds.length === 0) {
+        throw lastError instanceof TRPCError
+          ? lastError
+          : new TRPCError({ code: 'BAD_REQUEST', message: 'failed to publish any output' });
+      }
+      return { imageIds };
+    }),
+
+  /**
+   * Cross-user gated image read — the read half of the Model-Benchmarking
+   * shared-grid seam. Given the image ids a benchmark grid stored, returns a
+   * per-VIEWER gated projection: `visible` (moderated projection incl. a gated
+   * edge url) for images this viewer may see, `hidden` (NO url) for anything
+   * above their browsing ceiling / unscanned / flagged. The clamp is the block
+   * token's `maxBrowsingLevel` (the platform-computed viewer+domain ceiling),
+   * failed closed to the public floor — a block can NEVER obtain an unclamped url
+   * for an image the viewer isn't allowed to see. Reads ONLY bare (post-less)
+   * rows. Public, maturity-clamped data (like the block catalog reads) → no
+   * capability scope beyond a valid block token; auth is still required so the
+   * clamp is bound to a real viewer.
+   *
+   * MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows).
+   */
+  getImagesByIds: publicProcedure
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        imageIds: z.number().int().positive().array().min(1).max(100),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const claims = await verifyBlockToken(input.blockToken);
+      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      const userId = parseSubjectUserId(claims.sub);
+      if (userId == null) {
+        throw new TRPCError({
+          code: 'UNAUTHORIZED',
+          message: 'gated image read requires an authenticated viewer',
+        });
+      }
+      await assertAppBlocksEnabledForTokenUser(userId);
+      await assertViewerIsAppDeveloper(userId);
+      const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+      if (!rate.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
+      const { getBlockGatedImagesByIds, resolveViewerBrowsingLevel } = await import(
+        '~/server/services/blocks/block-gated-images.service'
+      );
+      // The AUTHORITATIVE per-viewer ceiling for a block surface is the token's
+      // maxBrowsingLevel claim (platform-computed at mint), failed closed to PG.
+      const browsingLevel = resolveViewerBrowsingLevel(claims.maxBrowsingLevel);
+      return getBlockGatedImagesByIds({ imageIds: input.imageIds, browsingLevel });
+    }),
+
+  /**
    * Cost-only preview. Builds the same orchestrator step `submitWorkflow`
    * would, then calls submit with `whatif:true` so the orchestrator computes
    * cost without queueing the job. No budget gate — estimate is how the block

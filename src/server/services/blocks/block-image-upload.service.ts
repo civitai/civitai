@@ -9,6 +9,8 @@ import {
 import type { OffsiteRatingValue } from '~/shared/constants/browsingLevel.constants';
 import type { PersistBlockUploadImageInput } from '~/server/schema/blocks/block-image-upload.schema';
 import type { SessionUser } from '~/types/session';
+import { fetchBlob } from '~/utils/file-utils';
+import { uploadImageBufferToStore } from '~/utils/s3-utils';
 
 /**
  * App Blocks (Phase-2a PR-C) — server glue for the host-mediated `OPEN_IMAGE_UPLOAD`
@@ -47,6 +49,69 @@ export async function persistBlockUploadImage(opts: {
     // Byte size is read from `Image.metadata.size` by the image validators.
     metadata: input.sizeBytes != null ? { size: input.sizeBytes } : undefined,
     userId,
+  });
+  return { imageId: image.id };
+}
+
+/**
+ * App Blocks (Phase-1 seam) — SERVER-SIDE sibling of {@link persistBlockUploadImage}
+ * whose byte source is a BLOCK-OWNED WORKFLOW OUTPUT (a raw, never-scanned
+ * orchestrator URL) instead of a user file upload. Used by
+ * `blocks.publishGenerationOutputs` to turn a benchmark grid's own generation
+ * outputs into bare, REAL-SCANNED public `Image` rows.
+ *
+ * SECURITY — the whole fetch→upload→persist happens SERVER-SIDE, so neither the
+ * sandboxed iframe NOR the host chrome ever handles the bytes or supplies the
+ * URL: the caller (the router) resolves `imageUrl` from the ownership-verified
+ * workflow (`blockWorkflowOwnedByAppUser` + the orchestrator app-tag re-read)
+ * and passes it here. The iframe only ever sent a `workflowId` + `imageIndexes`,
+ * so it can never inject an arbitrary blob.
+ *
+ * The store re-upload uses {@link uploadImageBufferToStore} (the B2 image bucket
+ * the edge URL + scanner resolve, with the uuid→backend registration awaited) —
+ * NOT Cloudflare Images (whose key 404s at scan time → terminal `NotFound`). The
+ * row is created with `createImage` DEFAULT ingestion (NO `skipIngestion`, NEVER
+ * `createStoredImage`) so it goes through the genuine NSFW scan, and with NO
+ * `postId` / NO `modelVersionId` — a BARE Image row, no Post / gallery / feed /
+ * reward / notification side effects. `createImage` is dynamically imported to
+ * keep the heavy `image.service` module out of this service's static graph
+ * (mirrors {@link persistBlockUploadImage}).
+ */
+export async function persistBlockWorkflowOutputImage(opts: {
+  imageUrl: string;
+  width: number | null;
+  height: number | null;
+  userId: number;
+}): Promise<{ imageId: number }> {
+  const { imageUrl, width, height, userId } = opts;
+
+  // Fetch the orchestrator blob (timeout-bounded fetch helper). A missing/failed
+  // fetch is a client-correctable upstream problem — BAD_REQUEST, not a 500.
+  const blob = await fetchBlob(imageUrl);
+  if (!blob) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'could not fetch the generation output to publish',
+    });
+  }
+  const bytes = Buffer.from(await blob.arrayBuffer());
+  // Land the bytes in the SAME store the browser-direct upload path uses so the
+  // scanner can read them; `key` is a fresh uuid (satisfies `imageSchema.url`).
+  const { key } = await uploadImageBufferToStore(bytes, {
+    contentType: blob.type || 'image/jpeg',
+  });
+
+  const { createImage } = await import('~/server/services/image.service');
+  const image = await createImage({
+    url: key,
+    type: 'image',
+    // Dimensions come from the orchestrator projection (may be null when the
+    // orchestrator hasn't populated them); ingestion re-measures either way.
+    width: width ?? undefined,
+    height: height ?? undefined,
+    metadata: { size: bytes.byteLength },
+    userId,
+    // NO postId, NO modelVersionId, NO skipIngestion → a bare, real-scanned Image row.
   });
   return { imageId: image.id };
 }
