@@ -376,6 +376,11 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
       return;
     }
 
+    const parsedThemeElements = data.themeElements
+      ?.split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+
     if (isUser) {
       // The user schema requires description (see formSchema) — this narrows the type for the
       // mutation and is a safety net; the inline error comes from the schema on the first submit.
@@ -421,6 +426,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
         title: data.title,
         description: data.description,
         theme: data.theme,
+        themeElements: parsedThemeElements?.length ? parsedThemeElements : undefined,
         coverImage: data.coverImage,
         allowedNsfwLevel: data.allowedNsfwLevel,
         modelVersionIds: data.modelVersionIds,
@@ -457,12 +463,6 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
       return;
     }
     const visibleAt = snapScheduleHour(data.visibleAt);
-
-    // Parse comma-separated theme elements into array
-    const parsedThemeElements = data.themeElements
-      ?.split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
 
     // Shared fields for both modes
     const sharedFields = {
