@@ -21,6 +21,7 @@ import {
   IconPlugConnected,
   IconProgressBolt,
   IconSword,
+  IconShoppingBag,
   IconThumbUp,
   IconTrophy,
   IconUpload,
@@ -36,6 +37,8 @@ import { appsNavVisibility } from '~/components/AppLayout/AppHeader/appsNavVisib
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { OnboardingSteps } from '~/server/common/enums';
+import { Flags } from '~/shared/utils/flags';
 import type { LoginRedirectReason } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
 import type { CollectionType } from '~/shared/utils/prisma/enums';
@@ -91,6 +94,16 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           icon: IconUser,
           color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Your Profile',
+        },
+        {
+          href: `/user/${currentUser?.username as string}/shop`,
+          // Only Creator Program members qualify to run a shop.
+          visible:
+            features.creatorShop &&
+            Flags.hasFlag(currentUser?.onboarding ?? 0, OnboardingSteps.CreatorProgram),
+          icon: IconShoppingBag,
+          color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'My Shop',
         },
         {
           href: `/user/${currentUser?.username as string}/models?section=training`,

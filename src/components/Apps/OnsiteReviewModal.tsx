@@ -2,7 +2,6 @@ import {
   Accordion,
   Alert,
   Badge,
-  Box,
   Button,
   Card,
   Code,
@@ -32,12 +31,18 @@ import {
 } from '@tabler/icons-react';
 import { useMemo, useRef, useState } from 'react';
 import { pickReviewIframeSrc } from '~/components/Apps/reviewIframeSrc';
+import { ReviewBlockPreviewHost } from '~/components/Apps/ReviewBlockPreviewHost';
 import {
   FileDiffEntry,
   FileListPreview,
   ManifestDiffPreview,
   type FileLineDiff,
 } from '~/components/Apps/reviewDiffPanels';
+import {
+  ReasonGatedField,
+  ReasonGatedSubmitButton,
+  reasonMeetsMin,
+} from '~/components/Apps/ReasonGatedActionModal';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
 import {
@@ -394,65 +399,37 @@ export function OnsiteReviewModal({
         </Stack>
 
         {readOnly ? null : actionMode === 'reject' ? (
-          (() => {
-            const reasonLen = rejectionReason.trim().length;
-            const reasonTooShort = reasonLen < OFFSITE_MOD_REASON_MIN;
-            const rejectDisabled = busy || reasonTooShort;
-            return (
-              <Stack gap="xs">
-                <Text size="sm" fw={600}>
-                  Rejection reason
-                </Text>
-                <Textarea
-                  autosize
-                  minRows={3}
-                  maxRows={10}
-                  placeholder={`Explain what needs to change before this can be approved (≥${OFFSITE_MOD_REASON_MIN} chars, shown to the dev).`}
-                  description={`${reasonLen}/${OFFSITE_MOD_REASON_MIN} characters minimum`}
-                  error={
-                    reasonTooShort && reasonLen > 0
-                      ? `Enter at least ${OFFSITE_MOD_REASON_MIN} characters.`
-                      : undefined
-                  }
-                  value={rejectionReason}
-                  onChange={(e) => setRejectionReason(e.currentTarget.value)}
-                  disabled={busy}
-                  data-testid="apps-review-reject-reason"
-                />
-                <Group justify="flex-end" gap="xs">
-                  <Button variant="default" onClick={() => setActionMode('view')} disabled={busy}>
-                    Cancel
-                  </Button>
-                  <Tooltip
-                    label={`Enter a reason — at least ${OFFSITE_MOD_REASON_MIN} characters.`}
-                    disabled={!reasonTooShort}
-                    withArrow
-                  >
-                    {/* A native disabled <button> fires no pointer events, so the
-                        Tooltip must attach to a wrapper to show in the exact state
-                        it explains (Mantine's documented disabled-target pattern). */}
-                    <Box>
-                      <Button
-                        color="red"
-                        leftSection={<IconX size={14} />}
-                        onClick={() =>
-                          rejectMut.mutate({
-                            publishRequestId: request.id,
-                            rejectionReason: rejectionReason.trim(),
-                          })
-                        }
-                        disabled={rejectDisabled}
-                        loading={rejectMut.isPending}
-                        data-testid="apps-review-reject-confirm"
-                      >
-                        Reject
-                      </Button>
-                    </Box>
-                  </Tooltip>
-                </Group>
-              </Stack>
-            );
-          })()
+          <Stack gap="xs">
+            <ReasonGatedField
+              value={rejectionReason}
+              onChange={setRejectionReason}
+              disabled={busy}
+              label="Rejection reason"
+              placeholder={`Explain what needs to change before this can be approved (≥${OFFSITE_MOD_REASON_MIN} chars, shown to the dev).`}
+              testId="apps-review-reject-reason"
+              minRows={3}
+              maxRows={10}
+            />
+            <Group justify="flex-end" gap="xs">
+              <Button variant="default" onClick={() => setActionMode('view')} disabled={busy}>
+                Cancel
+              </Button>
+              <ReasonGatedSubmitButton
+                onClick={() =>
+                  rejectMut.mutate({
+                    publishRequestId: request.id,
+                    rejectionReason: rejectionReason.trim(),
+                  })
+                }
+                gateOpen={reasonMeetsMin(rejectionReason)}
+                busy={rejectMut.isPending}
+                color="red"
+                leftSection={<IconX size={14} />}
+                label="Reject"
+                testId="apps-review-reject-confirm"
+              />
+            </Group>
+          </Stack>
         ) : (
           <Stack gap="xs">
             <Textarea
@@ -679,24 +656,29 @@ function ReviewPreviewPanel({
         </Alert>
       )}
       {isLive && stableIframeSrc && (
-        <iframe
-          title={`Review preview for ${slug}`}
-          src={stableIframeSrc}
-          // no-referrer: the `?mr=<token>` entry-token URL must NOT leak via the
-          // `Referer` header to assets the previewed (untrusted) block loads.
-          // (We deliberately do NOT bind the token to a publishRequestId: that
-          // binding isn't statelessly verifiable at the mod-gate without a DB
-          // lookup, which the stateless forwardAuth gate intentionally avoids.
-          // Host + mod + short TTL + no-referrer is the chosen containment.)
-          referrerPolicy="no-referrer"
+        // Mount the REAL PageBlockHost (via ReviewBlockPreviewHost) instead of a
+        // raw <iframe>: the bug was that a raw iframe had NO host bridge, so
+        // nothing posted BLOCK_INIT and the SDK block hung on "Connecting to host".
+        // The host mints a self-bound, scope-stripped block token, forces
+        // trustTier:'unverified' (opaque origin — drops allow-same-origin), and
+        // runs reviewMode (read-only NACKs). The `?mr=` entry-token URL keeps its
+        // pickReviewIframeSrc stabilization here; PageBlockHost's own iframe sets
+        // referrerPolicy="no-referrer" so the entry token never leaks via Referer.
+        <div
           style={{
             width: '100%',
             height: 420,
             border: '1px solid var(--mantine-color-default-border)',
             borderRadius: 6,
+            overflow: 'hidden',
           }}
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-        />
+        >
+          <ReviewBlockPreviewHost
+            publishRequestId={publishRequestId}
+            slug={slug}
+            iframeSrc={stableIframeSrc}
+          />
+        </div>
       )}
       {statusQuery.error && (
         <Text size="xs" c="dimmed">

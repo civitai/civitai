@@ -216,6 +216,30 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // Model-Benchmarking shared grid — publish the app's OWN workflow outputs as
+  // bare, real-scanned public images (host-chrome consent confirm BEFORE the
+  // FAIL-CLOSED `blocks.publishGenerationOutputs` MUTATION). Page-only affordance
+  // today. Unhandled ⇒ the block hangs; PageBlockHost registers the handler.
+  PUBLISH_GENERATION_OUTPUTS: {
+    request: true,
+    reply: 'PUBLISH_RESULT',
+    IframeHost:
+      'shared-grid publish is a page-only affordance today; the model slot has no such surface',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // Model-Benchmarking shared grid — per-viewer gated read of the grid's image
+  // ids (the server applies the viewer's browsing-level clamp; above-ceiling /
+  // unscanned / flagged come back `hidden` with no url). Host-mediated via the
+  // `blocks.getImagesByIds` MUTATION. Page-only affordance today.
+  GET_IMAGES_BY_IDS: {
+    request: true,
+    reply: 'IMAGES_RESULT',
+    IframeHost:
+      'shared-grid gated read is a page-only affordance today; the model slot has no such surface',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   // Per-account (blue/green/yellow) balance read backing the SDK
   // `useBuzzBalance()` hook + the account-picker (Phase 3 host wiring). Host-
   // mediated via the block-token-authed `blocks.getMyBuzzBalance` MUTATION.

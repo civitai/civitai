@@ -6,9 +6,13 @@
  * `unit` project (the civitai browser-mode suites are report-only), mirroring the
  * sibling `appListingModerationView` (the report-queue view model).
  *
- * KIND-AWARENESS (from the merged Phase 1 procs):
- *   - `reset-to-pending` / `claim` / `purge` are OFF-SITE ONLY (the service raises
- *     NOT_FOUND for an on-site listing).
+ * KIND-AWARENESS (from the merged Phase 1 procs + the #3165 onsite reset backend):
+ *   - `reset-to-pending` is DUAL-KIND — off-site routes through
+ *     `resetListingToPending`, on-site through `resetOnsiteListingToPending` (which
+ *     suspends the backing block + re-queues the block review). The caller routes by
+ *     kind; the action is offered for an approved listing of EITHER kind.
+ *   - `claim` / `purge` are OFF-SITE ONLY (the service raises NOT_FOUND for an
+ *     on-site listing).
  *   - `hide` (delist) / `relist` are DUAL-KIND (they flip the on-site AppBlock too).
  *   - `review` opens the existing off-site review modal (approve/reject the pending
  *     request) → off-site only, and only when a pending request exists.
@@ -29,7 +33,8 @@ export type ListingModAction =
  *   - `review`: off-site + a pending publish request exists (any status — normally
  *     a `pending` listing, but a lingering pending request on another status still
  *     lets a mod open the review). Opens the reused off-site review modal.
- *   - `approved` → `reset-to-pending` (off-site only) + `hide` (delist, dual-kind).
+ *   - `approved` → `reset-to-pending` (dual-kind — off-site + on-site re-queue) +
+ *     `hide` (delist, dual-kind).
  *   - `removed`  → `relist` (dual-kind) + `claim` + `purge` (both off-site only).
  *   - `draft` / `rejected` → no lifecycle action (read-only) unless a pending
  *     request makes `review` available.
@@ -46,7 +51,9 @@ export function listingModActions(input: {
   if (offsite && input.hasPendingRequest) actions.push('review');
 
   if (input.status === 'approved') {
-    if (offsite) actions.push('reset-to-pending');
+    // Reset-to-pending is now dual-kind: off-site → resetListingToPending, on-site →
+    // resetOnsiteListingToPending (#3165). The mgmt table routes by kind.
+    actions.push('reset-to-pending');
     actions.push('hide'); // delist — dual-kind
   }
   if (input.status === 'removed') {

@@ -189,16 +189,28 @@ export const baseHandler = withAxiom(async function handler(
 
     // W13 richer audit detail — stash a structured ref so the middleware
     // finish-writer records "Tipped N Buzz to @recipient" (the view resolves
-    // toUserId → @username). Best-effort: stash swallows, never perturbs the
-    // money path. `amount` is positive here (a credit TO the recipient).
-    stashBlockActionDetail(res, {
-      action: 'tip',
-      amount,
-      toUserId,
-      ...(entityType ? { entityType } : {}),
-      ...(entityId ? { entityId } : {}),
-      outcome: 'ok',
-    });
+    // toUserId → @username). Best-effort: `amount` is positive here (a credit TO
+    // the recipient).
+    //
+    // 🔴 The ENTIRE enrichment (detail construction AND the stash call) is wrapped
+    // in a swallow-everything try/catch so it can NEVER change this endpoint's
+    // outcome. A successful tip ALWAYS returns its real 200 even if enrichment
+    // throws — a missing/undefined stash export, a null-deref building the detail,
+    // or a non-writable `res` all no-op the audit row, they do not 500 a tip whose
+    // money already moved. (Regression: #3161's stash sat inside the money-path try
+    // and a throw at the call site surfaced as a 500 on the happy path.)
+    try {
+      stashBlockActionDetail(res, {
+        action: 'tip',
+        amount,
+        toUserId,
+        ...(entityType ? { entityType } : {}),
+        ...(entityId ? { entityId } : {}),
+        outcome: 'ok',
+      });
+    } catch {
+      /* audit enrichment is best-effort — it must never perturb the money path */
+    }
 
     res.status(200).json({
       ok: true,
