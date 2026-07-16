@@ -64,7 +64,10 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
   const perPage = MODELS_PER_PAGE;
 
   // Model-list filter (shared by count + page query; kysely builders are immutable, so branch off one).
-  let filtered = dbRead.selectFrom('Model').where('userId', '=', userId).where('deletedAt', 'is', null);
+  let filtered = dbRead
+    .selectFrom('Model')
+    .where('userId', '=', userId)
+    .where('deletedAt', 'is', null);
   if (q) filtered = filtered.where('name', 'ilike', `%${q}%`);
   if (status === 'published') filtered = filtered.where('status', '=', 'Published');
   else if (status === 'draft') filtered = filtered.where('status', '=', 'Draft');

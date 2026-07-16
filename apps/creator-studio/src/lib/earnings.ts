@@ -42,11 +42,18 @@ const CURRENCY_META: Record<string, CurrencyMeta> = {
   cashSettled: { label: 'Cash · settled', family: 'cash', order: 5, color: '#12b886' },
   cashPending: { label: 'Cash · pending', family: 'cash', order: 6, color: '#63e6be' },
   creatorProgramBank: { label: 'Banked Buzz', family: 'bank', order: 7, color: '#f59f00' },
-  creatorProgramBankGreen: { label: 'Banked Buzz · green', family: 'bank', order: 8, color: '#40c057' },
+  creatorProgramBankGreen: {
+    label: 'Banked Buzz · green',
+    family: 'bank',
+    order: 8,
+    color: '#40c057',
+  },
 };
 
 export function currencyMeta(currency: string): CurrencyMeta {
-  return CURRENCY_META[currency] ?? { label: currency, family: 'buzz', order: 99, color: '#868e96' };
+  return (
+    CURRENCY_META[currency] ?? { label: currency, family: 'buzz', order: 99, color: '#868e96' }
+  );
 }
 
 // Order currencies for stable display: by family/known order, then name.

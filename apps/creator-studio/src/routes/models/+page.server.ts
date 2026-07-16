@@ -129,7 +129,9 @@ export const actions: Actions = {
     // clearing the config, and skipping the "needs a charge" validation the config path enforces.
     const rawTimeframe = Number(form.get('timeframe'));
     const turnOff =
-      clearFlagSchema.parse(form.get('clear')) || !Number.isFinite(rawTimeframe) || rawTimeframe <= 0;
+      clearFlagSchema.parse(form.get('clear')) ||
+      !Number.isFinite(rawTimeframe) ||
+      rawTimeframe <= 0;
     if (turnOff) {
       const result = await setEarlyAccessConfig(cookie, versionId.data, null);
       if (!result.ok)

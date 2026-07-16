@@ -1,6 +1,8 @@
 <script lang="ts">
   import { Chart } from '@civitai/ui/components/ui/chart/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import RangeSelector from '$lib/components/RangeSelector.svelte';
+  import { formatRange } from '$lib/date-range';
   import {
     EARNINGS_SOURCES,
     SOURCE_LABEL,
@@ -17,9 +19,7 @@
   // Withdrawal + the live cash balance live in the main app; the studio links out to it (C6: one cash home).
   const BUZZ_DASHBOARD_URL = 'https://civitai.com/user/buzz-dashboard';
 
-  const RANGES = [7, 30, 90] as const;
-  const link = (days: number, g: 'day' | 'week') => `?days=${days}&g=${g}`;
-  const periodLabel = $derived(`over the last ${data.days} days`);
+  const periodLabel = $derived(`for ${formatRange(data.range)}`);
 
   // ClickHouse earnings are the buzz flow by source; cash is deliberately excluded here and shown from the buzz
   // service instead (below), since CH cash figures are a period flow and can drift from the real balance.
@@ -45,7 +45,6 @@
 
   // Buzz earned per source (buzz colors summed — same unit) so licensing fees / tips / compensation are legible at
   // a glance, not just the currency split. Cash-denominated source earnings stay in the cash panel + table.
-  const num = (n: number) => n.toLocaleString();
   const sourceTotals = $derived(
     sources
       .map((s) => ({
@@ -97,31 +96,8 @@
     <h1>Earnings</h1>
     <p>What you earned and where it came from — shown in the currency received, without conversion.</p>
   </div>
-  <div class="ml-auto flex items-center gap-2">
-    <div class="flex items-center gap-1 rounded-lg border border-dark-4 bg-dark-6 p-0.5">
-      {#each RANGES as r (r)}
-        <a
-          href={link(r, data.granularity)}
-          class="rounded px-2.5 py-1 text-sm {data.days === r
-            ? 'bg-blue-8 text-white'
-            : 'text-dark-2 hover:text-white'}"
-        >
-          {r}d
-        </a>
-      {/each}
-    </div>
-    <div class="flex items-center gap-1 rounded-lg border border-dark-4 bg-dark-6 p-0.5">
-      {#each ['day', 'week'] as const as g (g)}
-        <a
-          href={link(data.days, g)}
-          class="rounded px-2.5 py-1 text-sm capitalize {data.granularity === g
-            ? 'bg-blue-8 text-white'
-            : 'text-dark-2 hover:text-white'}"
-        >
-          {g}
-        </a>
-      {/each}
-    </div>
+  <div class="ml-auto">
+    <RangeSelector range={data.range} />
   </div>
 </header>
 

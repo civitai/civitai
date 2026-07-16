@@ -1,6 +1,7 @@
 import { getClickhouse } from '$lib/server/clickhouse';
 import { dbRead } from '$lib/server/db';
 import { createCache } from '$lib/server/cache';
+import { rangeTtlSeconds } from '$lib/date-range';
 
 // Content/Creator analytics (B4 section b). Every metric is keyed **directly to the creator's userId** in
 // ClickHouse — no owner-keyed rollup (A1) needed. Daily/weekly counts over a rolling window, gap-filled so the
@@ -34,38 +35,34 @@ export type ContentAnalytics = {
   topImages: TopImage[];
 };
 
-export const ANALYTICS_RANGES = [7, 30, 90] as const;
-export type AnalyticsRange = (typeof ANALYTICS_RANGES)[number];
-export type Granularity = 'day' | 'week';
-
 // All-time reactions + comments on the creator's images, from the per-creator `image_metrics_user` rollup (a cheap
 // point lookup — comments have no fast period-scoped source, so this is the one place we surface them).
 export type AllTimeTotals = { reactions: number; comments: number };
 
-// Analytics reads are cached in Redis so page reloads hit the cache, not ClickHouse (fail-open). Wider windows
-// are both more expensive to compute (the 90-day query is slow) and less volatile (an extra hour barely moves a
-// 90-day total), so they cache longer; the cheap, freshness-sensitive 7-day window caches briefly.
-const rangeTtlSeconds = (days: number) => (days >= 90 ? 3600 : days >= 30 ? 900 : 300);
-
-// Cached read-through wrappers. The named args double as the cache key; the TTL reads `days` off the same args.
+// Cached read-through wrappers. The named args double as the cache key; the TTL scales with the range span
+// (span-based, capped at 30 min) so reloads/back-nav hit Redis, not ClickHouse (fail-open).
 export const getContentAnalytics = createCache({
   name: 'analytics:content',
-  fetch: ({ userId, days, granularity }: { userId: number; days: number; granularity: Granularity }) =>
-    fetchContentAnalytics(userId, days, granularity),
-  ttlSeconds: ({ days }) => rangeTtlSeconds(days),
+  fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
+    fetchContentAnalytics(userId, from, to),
+  ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
 
 export const getContentTotals = createCache({
   name: 'analytics:totals',
-  fetch: ({ userId, days }: { userId: number; days: number }) => fetchContentTotals(userId, days),
-  ttlSeconds: ({ days }) => rangeTtlSeconds(days),
+  fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
+    fetchContentTotals(userId, from, to),
+  ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
 
 export const getAllTimeTotals = createCache({
   name: 'analytics:alltime',
   fetch: async ({ userId }: { userId: number }): Promise<AllTimeTotals> => {
     const uid = Number(userId);
-    const rows = await getClickhouse().$query<{ reactions: number | string; comments: number | string }>(
+    const rows = await getClickhouse().$query<{
+      reactions: number | string;
+      comments: number | string;
+    }>(
       `SELECT sumMerge(reactions) AS reactions, sumMerge(comments) AS comments FROM image_metrics_user WHERE userId = ${uid}`
     );
     return { reactions: Number(rows[0]?.reactions ?? 0), comments: Number(rows[0]?.comments ?? 0) };
@@ -73,31 +70,25 @@ export const getAllTimeTotals = createCache({
   ttlSeconds: 3600,
 }).get;
 
-// Gap-filled daily/weekly count query for `table`, keyed to the creator via `filter`. WITH FILL synthesizes the
-// missing buckets (value 0) so a series never has holes; `TO … + step` makes the range inclusive of today/this
-// week. userId + days are trusted integers (session id + validated preset), so they're interpolated directly.
+// Gap-filled daily count query for `table`, keyed to the creator via `filter`. WITH FILL synthesizes the missing
+// buckets (value 0) so a series never has holes; the `TO … + 1` upper bound is inclusive of the `to` day. userId
+// is the trusted session id and from/to are validated ISO dates (parseRange), so all are interpolated directly.
 function seriesSql(
   table: string,
   timeCol: string,
   filter: string,
-  d: number,
-  gran: Granularity
+  from: string,
+  to: string
 ): string {
-  const bucket = gran === 'week' ? `toStartOfWeek(${timeCol}, 1)` : `toDate(${timeCol})`;
-  const from = gran === 'week' ? `toStartOfWeek(today() - ${d}, 1)` : `today() - ${d}`;
-  const to = gran === 'week' ? `toStartOfWeek(today(), 1) + 7` : `today() + 1`;
-  const step = gran === 'week' ? 7 : 1;
-  return `SELECT ${bucket} AS date, count() AS value FROM ${table} WHERE ${filter} AND toDate(${timeCol}) >= today() - ${d} GROUP BY date ORDER BY date WITH FILL FROM ${from} TO ${to} STEP ${step}`;
+  return `SELECT toDate(${timeCol}) AS date, count() AS value FROM ${table} WHERE ${filter} AND toDate(${timeCol}) >= toDate('${from}') AND toDate(${timeCol}) <= toDate('${to}') GROUP BY date ORDER BY date WITH FILL FROM toDate('${from}') TO toDate('${to}') + 1 STEP 1`;
 }
 
 async function fetchContentAnalytics(
   userId: number,
-  days: number,
-  granularity: Granularity
+  from: string,
+  to: string
 ): Promise<ContentAnalytics> {
   const uid = Number(userId);
-  const d = Number(days);
-  const g = granularity;
   const ch = getClickhouse();
 
   const series = async (sql: string): Promise<TimePoint[]> => {
@@ -111,16 +102,18 @@ async function fetchContentAnalytics(
         'reactions',
         'time',
         `ownerId = ${uid} AND endsWith(toString(type), '_Create')`,
-        d,
-        g
+        from,
+        to
       )
     ),
-    series(seriesSql('userEngagements', 'time', `targetUserId = ${uid} AND type = 'Follow'`, d, g)),
-    series(seriesSql('images_created', 'createdAt', `userId = ${uid}`, d, g)),
-    series(seriesSql('posts', 'time', `userId = ${uid} AND type = 'Publish'`, d, g)),
-    series(seriesSql('views', 'time', `entityType = 'User' AND entityId = ${uid}`, d, g)),
+    series(
+      seriesSql('userEngagements', 'time', `targetUserId = ${uid} AND type = 'Follow'`, from, to)
+    ),
+    series(seriesSql('images_created', 'createdAt', `userId = ${uid}`, from, to)),
+    series(seriesSql('posts', 'time', `userId = ${uid} AND type = 'Publish'`, from, to)),
+    series(seriesSql('views', 'time', `entityType = 'User' AND entityId = ${uid}`, from, to)),
     ch.$query<{ imageId: number | string; reactions: number | string }>(
-      `SELECT entityId AS imageId, count() AS reactions FROM reactions WHERE ownerId = ${uid} AND type = 'Image_Create' AND toDate(time) >= today() - ${d} GROUP BY imageId ORDER BY reactions DESC LIMIT 10`
+      `SELECT entityId AS imageId, count() AS reactions FROM reactions WHERE ownerId = ${uid} AND type = 'Image_Create' AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY imageId ORDER BY reactions DESC LIMIT 10`
     ),
   ]);
 
@@ -173,14 +166,17 @@ async function enrichTopImages(
 }
 
 // Just the period totals (no series / top-images) — cheap enough for the dashboard's activity row.
-async function fetchContentTotals(userId: number, days: number): Promise<ContentTotals> {
+async function fetchContentTotals(
+  userId: number,
+  from: string,
+  to: string
+): Promise<ContentTotals> {
   const uid = Number(userId);
-  const d = Number(days);
   const ch = getClickhouse();
 
   const count = async (table: string, timeCol: string, filter: string): Promise<number> => {
     const rows = await ch.$query<{ value: number | string }>(
-      `SELECT count() AS value FROM ${table} WHERE ${filter} AND toDate(${timeCol}) >= today() - ${d}`
+      `SELECT count() AS value FROM ${table} WHERE ${filter} AND toDate(${timeCol}) >= toDate('${from}') AND toDate(${timeCol}) <= toDate('${to}')`
     );
     return Number(rows[0]?.value ?? 0);
   };
