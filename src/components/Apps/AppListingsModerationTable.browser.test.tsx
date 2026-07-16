@@ -235,6 +235,20 @@ describe('AppListingsModerationTable — inline actions fire the right mutation'
     });
   });
 
+  // Relist is the SOLE recovery path for a mistaken takedown — a removed row must
+  // be restorable. The button's presence is covered above; here assert clicking it
+  // through the reason gate actually FIRES relistListing with {appListingId, reason}.
+  test('Relist on a removed row forwards {appListingId, reason} to relistListing', async () => {
+    renderWithProviders(<AppListingsModerationTable />);
+    await page.getByTestId('apps-mod-relist-gone-ext').click();
+    await page.getByTestId('apps-mod-action-reason').fill('takedown was a mistake');
+    await page.getByTestId('apps-mod-action-confirm').click();
+    expect(mocks.mutate).toHaveBeenCalledWith('relist', {
+      appListingId: 'apl_r',
+      reason: 'takedown was a mistake',
+    });
+  });
+
   test('Claim forwards the target owner id + reason', async () => {
     renderWithProviders(<AppListingsModerationTable />);
     await page.getByTestId('apps-mod-claim-gone-ext').click();
