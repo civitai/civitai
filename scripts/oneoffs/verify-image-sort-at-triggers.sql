@@ -16,6 +16,15 @@
 
 BEGIN;
 
+-- Recursion / double-write observer (tx-scoped; removed on ROLLBACK). Records
+-- every Image row-version change so CASE 9 can assert a Post publishedAt fan-out
+-- touches each image EXACTLY once — i.e. the fan-out's sortAt UPDATE does not
+-- re-fire the Image BEFORE trigger into a cascade.
+CREATE TABLE _sortat_audit (image_id int, seen_at timestamptz DEFAULT clock_timestamp());
+CREATE FUNCTION _sortat_audit_fn() RETURNS trigger AS
+$$ BEGIN INSERT INTO _sortat_audit(image_id) VALUES (NEW.id); RETURN NEW; END; $$ LANGUAGE plpgsql;
+CREATE TRIGGER _zzz_sortat_audit AFTER UPDATE ON "Image" FOR EACH ROW EXECUTE FUNCTION _sortat_audit_fn();
+
 DO $$
 DECLARE
   uid          int;
@@ -23,6 +32,8 @@ DECLARE
   pub_post     int;
   other_post   int;
   img          int;
+  audit_img    int;
+  n            bigint;
   created      timestamptz := '2024-01-01 00:00:00Z';
   scanned      timestamptz := '2024-02-01 00:00:00Z';  -- > createdAt
   publish_past timestamptz := '2024-06-01 00:00:00Z';  -- > scannedAt
@@ -87,7 +98,31 @@ BEGIN
   SELECT "sortAt" INTO got FROM "Image" WHERE id = img;
   ASSERT got = scanned, format('CASE 7 postId move: got %s, want %s', got, scanned);
 
-  RAISE NOTICE 'ALL 7 CASES PASSED';
+  -- CASE 8 — move the image onto an already-PUBLISHED post (postId change; the
+  -- BEFORE trigger recomputes from the NEW post's publishedAt).
+  --   img: scannedAt=scanned, createdAt=created; pub_post.publishedAt=publish_past
+  --   expect GREATEST(publish_past, scanned, created) = publish_past
+  UPDATE "Image" SET "postId" = pub_post WHERE id = img;
+  SELECT "sortAt" INTO got FROM "Image" WHERE id = img;
+  ASSERT got = publish_past, format('CASE 8 postId move to published: got %s, want %s', got, publish_past);
+
+  -- CASE 9 — recursion / double-write non-fire. Publish a fresh single-image
+  -- draft and assert the fan-out touched that image EXACTLY once. The Post
+  -- fan-out UPDATE writes {sortAt, updatedAt}; the Image BEFORE trigger fires
+  -- only on {scannedAt, postId}, so it must NOT re-fire here — a second audit
+  -- row would mean a cascade.
+  INSERT INTO "Post" ("userId", "publishedAt", "createdAt", "updatedAt")
+    VALUES (uid, NULL, created, now()) RETURNING id INTO other_post;
+  INSERT INTO "Image" ("url", "userId", "postId", "scannedAt", "createdAt", "updatedAt")
+    VALUES ('v', uid, other_post, scanned, created, now()) RETURNING id INTO audit_img;
+  DELETE FROM _sortat_audit;                         -- ignore the insert-path noise
+  UPDATE "Post" SET "publishedAt" = publish_past WHERE id = other_post;  -- one fan-out
+  SELECT count(*) INTO n FROM _sortat_audit WHERE image_id = audit_img;
+  ASSERT n = 1, format('CASE 9 recursion non-fire: image updated %s times on one publish, want 1', n);
+  SELECT "sortAt" INTO got FROM "Image" WHERE id = audit_img;
+  ASSERT got = publish_past, format('CASE 9 fan-out value: got %s, want %s', got, publish_past);
+
+  RAISE NOTICE 'ALL 9 CASES PASSED';
 END $$;
 
 ROLLBACK;
