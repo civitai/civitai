@@ -440,4 +440,19 @@ describe('blocks.cancelAppWorkflow', () => {
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     expect(mockCancelWorkflow).not.toHaveBeenCalled();
   });
+
+  it('rejects with TOO_MANY_REQUESTS when the per-instance rate limit trips (mirrors query proc; no ownership check, no orchestrator call)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    mockCheckBlockCatalogRateLimit.mockResolvedValue({ allowed: false });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.cancelAppWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    // The limiter runs BEFORE the heavy path — no ownership lookup, no orchestrator
+    // read/DELETE. Same key/scope as queryAppWorkflows (blockInstanceId).
+    expect(mockCheckBlockCatalogRateLimit).toHaveBeenCalledWith('bki_test');
+    expect(mockBlockWorkflowOwned).not.toHaveBeenCalled();
+    expect(mockGetWorkflow).not.toHaveBeenCalled();
+    expect(mockCancelWorkflow).not.toHaveBeenCalled();
+  });
 });

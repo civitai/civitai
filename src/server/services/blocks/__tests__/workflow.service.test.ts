@@ -410,12 +410,13 @@ describe('projectAppWorkflow', () => {
 
   it('maps the orchestrator string nsfwLevel to the numeric browsing-level bitflag', () => {
     const cases: Array<[string, number | null]> = [
+      ['g', 1], // SFW 'g' → PG (the raw map lacks it; canonical helper supplies it)
       ['pg', 1],
       ['pg13', 2],
       ['r', 4],
       ['x', 8],
       ['xxx', 16],
-      ['na', null], // unrated → null
+      ['na', null], // genuinely unrated → null
     ];
     for (const [rating, expected] of cases) {
       const wf = fakeWorkflow({

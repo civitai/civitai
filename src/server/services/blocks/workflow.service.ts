@@ -2,7 +2,7 @@ import { TRPCError } from '@trpc/server';
 import type { Workflow, WorkflowStatus } from '@civitai/client';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { dbRead } from '~/server/db/client';
-import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
+import { nsfwLevelFromContentRating } from '~/shared/constants/browsingLevel.constants';
 import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { getEcosystem } from '~/shared/constants/basemodel.constants';
 import { isWorkflowAvailable } from '~/shared/data-graph/generation/config/workflows';
@@ -150,9 +150,15 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
         url: img.url,
         width: typeof img.width === 'number' ? img.width : null,
         height: typeof img.height === 'number' ? img.height : null,
-        // Map the orchestrator's string rating ('pg'|'pg13'|'r'|'x'|'xxx') to the
-        // numeric civitai browsing-level bitflag. 'na'/unset/unknown → null.
-        nsfwLevel: img.nsfwLevel ? orchestratorNsfwLevelMap[img.nsfwLevel] ?? null : null,
+        // Map the orchestrator's string rating to the numeric civitai browsing-
+        // level bitflag via the CANONICAL helper (handles the SFW 'g' the raw map
+        // lacks + all of pg/pg13/r/x/xxx, fail-closed to PG for an unexpected
+        // string — so it can't drift from the platform mapping). null ONLY for the
+        // genuinely-unrated sentinel ('na') / unset.
+        nsfwLevel:
+          img.nsfwLevel && img.nsfwLevel !== 'na'
+            ? nsfwLevelFromContentRating(img.nsfwLevel)
+            : null,
       });
     }
   }

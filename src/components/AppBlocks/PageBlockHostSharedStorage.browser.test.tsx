@@ -80,8 +80,7 @@ vi.mock('~/utils/trpc', () => ({
       cancelWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       queryAppWorkflows: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelAppWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-  
-      },
+    },
     apps: {
       storage: {
         set: { useMutation: () => ({ mutateAsync: mocks.storageSet }) },

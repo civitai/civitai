@@ -2737,6 +2737,18 @@ export const blocksRouter = router({
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
       await assertViewerIsAppDeveloper(userId);
+      // Per-instance rate limit (shared blocks limiter), BEFORE any orchestrator
+      // read/DELETE or DB query. Cancel is the HEAVIER path (2 orchestrator GETs +
+      // 1 DELETE + 1 DB lookup per call), so it MUST be bounded exactly like the
+      // sibling queryAppWorkflows — same key (blockInstanceId) + scope. Fail-open
+      // on a redis incident (matches the buzz self-read bridges / query proc).
+      const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+      if (!rate.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
       // GUARD (a): the durable user+app-block-bound ownership proof. Bound
       // entirely from the verified token — a block can only ever authorize a
       // workflow it actually submitted for THIS viewer. Fail-closed.
