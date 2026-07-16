@@ -892,30 +892,30 @@ export async function getChallengeDetail(
   if (!challenge) return null;
 
   // Visibility check: only show challenges that are visible to the public. The creator and
-  // moderators may preview a not-yet-visible or Cancelled challenge; the scan/POI/cover gates
-  // below still apply.
+  // moderators may preview a not-yet-visible or Cancelled challenge, and are likewise exempt
+  // from the scan/POI/cover gates below (mods need to inspect hidden challenges; the creator
+  // needs to see their own pending/blocked one).
   const now = new Date();
   const canPreviewUnpublished =
     isModerator === true || (viewerId != null && challenge.createdById === viewerId);
   if (challenge.visibleAt > now && !canPreviewUnpublished) return null;
   if (challenge.status === ChallengeStatus.Cancelled && !canPreviewUnpublished) return null;
 
-  // Scan gate: user-created challenges stay hidden until moderation scan passes. The creator can
-  // still see their own pending/blocked challenge; everyone else (incl. anonymous) cannot.
+  // Scan gate: user-created challenges stay hidden until moderation scan passes.
   if (
+    !canPreviewUnpublished &&
     challenge.source === ChallengeSource.User &&
-    challenge.ingestion !== ChallengeIngestionStatus.Scanned &&
-    challenge.createdById !== viewerId
+    challenge.ingestion !== ChallengeIngestionStatus.Scanned
   ) {
     return null;
   }
 
   // POI + cover-scan gate: a cover depicting a real person (Image.poi, set by the image scanner),
   // or one that hasn't finished moderation scanning yet, keeps the challenge out of public view —
-  // direct-URL parity with the feed filter. Creator exempt; skip the lookup entirely for trusted
+  // direct-URL parity with the feed filter. Mod/creator exempt; skip the lookup entirely for trusted
   // System challenges. NSFW-on-green gating is handled client-side by <Gated> (MatureContentRedirect)
   // on the detail page, matching how model/image detail pages gate mature content on the safe site.
-  if (challenge.source === ChallengeSource.User && challenge.coverImageId) {
+  if (!canPreviewUnpublished && challenge.source === ChallengeSource.User && challenge.coverImageId) {
     const cover = await dbRead.image.findUnique({
       where: { id: challenge.coverImageId },
       select: { poi: true, ingestion: true },
