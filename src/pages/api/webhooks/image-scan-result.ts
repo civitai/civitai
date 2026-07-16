@@ -18,7 +18,7 @@ import { stripBenignPhrases } from '~/server/services/blocklist.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getExplainSql } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
-import { tagIdsForImagesCache } from '~/server/redis/caches';
+import { tagIdsForImagesCache, userImageVideoCountCaches } from '~/server/redis/caches';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { createImageTagsForReview } from '~/server/services/image-review.service';
@@ -261,6 +261,7 @@ async function updateImage(
         ]);
       }
 
+      await userImageVideoCountCaches.bust(image.userId);
       await tagIdsForImagesCache.refresh(id);
 
       const isProfilePicture = image.metadata?.profilePicture === true;

@@ -13,6 +13,7 @@ import { createTRPCNext } from '@trpc/next';
 import type { NextPageContext } from 'next';
 import superjson from 'superjson';
 import type { AppRouter } from '~/server/routers';
+import { unionTransformer } from '~/shared/utils/trpc-union-transformer';
 import { isDev } from '~/env/other';
 import { env } from '~/env/client';
 import { showErrorNotification } from '~/utils/notifications';
@@ -119,8 +120,8 @@ function httpLinkWithLargeQuerySupport({
 }): TRPCLink<AppRouter> {
   return splitLink({
     condition: isLargeQuery,
-    true: httpLink({ transformer: superjson, url, methodOverride: 'POST', headers }),
-    false: httpLink({ transformer: superjson, url, headers }),
+    true: httpLink({ transformer: unionTransformer, url, methodOverride: 'POST', headers }),
+    false: httpLink({ transformer: unionTransformer, url, headers }),
   });
 }
 
@@ -252,7 +253,7 @@ function terminatingLink({
 }): TRPCLink<AppRouter> {
   return splitLink({
     condition: shouldBatch,
-    true: httpBatchStreamLink({ transformer: superjson, url, headers, maxURLLength: 2083 }),
+    true: httpBatchStreamLink({ transformer: unionTransformer, url, headers, maxURLLength: 2083 }),
     false: httpLinkWithLargeQuerySupport({ url, headers }),
   });
 }
@@ -404,8 +405,8 @@ export const trpc: CreateTRPCNext<AppRouter, NextPageContext> = createTRPCNext<A
   },
   // v11: `createTRPCNext` requires the transformer at the top level of its options
   // (WithTRPCOptions intersects TransformerOptions). The link carries it too for the
-  // actual wire (de)serialization.
-  transformer: superjson,
+  // actual wire (de)serialization. Phase 1: union READ, superjson WRITE (wire unchanged).
+  transformer: unionTransformer,
   ssr: false,
 });
 

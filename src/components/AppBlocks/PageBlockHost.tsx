@@ -12,10 +12,20 @@ import {
   grantedPageScopes,
   pageFallbackReason,
   resolveCheckpointPickerRequest,
+  resolveImageUploadRequest,
   resolveResourcePickerRequest,
 } from './pageBlockHostLogic';
+import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
+import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
+import type { BlockSourceImageInfo } from './BlockGenerationSourceUploadModal';
 import { projectBlockInitMaturity } from './projectBlockInit';
 import { sendBlockRender } from './sendBlockRender';
+import {
+  classifyWildcardPackError,
+  exceedsPreDownloadCap,
+  resolveGetWildcardPackRequest,
+  WILDCARD_MAX_CONCURRENT,
+} from './wildcardPackParse';
 import { resolveRequestConsent } from './requestConsentGate';
 import { resolveRequestSignIn } from './requestSignInGate';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
@@ -38,6 +48,24 @@ const BlockConsentModal = dynamic(() => import('./BlockConsentModal'), { ssr: fa
 // Buy-Buzz modal for the page money path's OPEN_BUZZ_PURCHASE handler (the
 // insufficient-Buzz top-up CTA). Mirrors IframeHost's dynamic import.
 const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
+
+// Host-mediated image-upload modal for the OPEN_IMAGE_UPLOAD bridge. A block asks
+// the host to let the user upload an image; the bytes flow through civitai's
+// session-authed upload + REAL scan, and the iframe only ever gets back a
+// moderated, SFW-ceiling'd, unflagged image id.
+const BlockImageUploadModal = dynamic(() => import('./BlockImageUploadModal'), {
+  ssr: false,
+});
+
+// Sibling of BlockImageUploadModal for the OPEN_IMAGE_UPLOAD bridge's
+// `purpose: 'generationSource'` mode: an UNSCANNED private generation input (an
+// img2img source), uploaded through the SAME consumer-blob util the generator
+// uses (uploadConsumerBlob) — no createImage/scan/gate. The orchestrator scans
+// the generation OUTPUT. Returns only { url, width, height }.
+const BlockGenerationSourceUploadModal = dynamic(
+  () => import('./BlockGenerationSourceUploadModal'),
+  { ssr: false }
+);
 
 // Login flow for anonymous-conversion (REQUEST_SIGN_IN). The page route renders
 // for logged-out viewers (the BLOCK_INIT context is viewer-scoped, viewer:null),
@@ -560,6 +588,28 @@ export function PageBlockHost({
   // bearer credential a .query would leak into the ?input=… URL / logs / Referer
   // where it's replayable within its TTL. See blocks.router getMyBuzzBalance.
   const getMyBuzzBalanceMutation = trpc.blocks.getMyBuzzBalance.useMutation();
+  // Buzz self-read bridges (a Buzz-dashboard page app): ledger / all-pool
+  // balances / per-model earnings. MUTATIONS for the same bearer-token reason as
+  // getMyBuzzBalance; each requires the `buzz:read:self` scope server-side.
+  const getMyBuzzTransactionsMutation = trpc.blocks.getMyBuzzTransactions.useMutation();
+  const getMyBuzzAccountsMutation = trpc.blocks.getMyBuzzAccounts.useMutation();
+  const getMyDailyCompensationMutation = trpc.blocks.getMyDailyCompensation.useMutation();
+  // Viewer self-read bridge (a page block reading "who am I") — backs the SDK
+  // `useViewer()` hook and is the host-mediated successor to GET /blocks/me. A
+  // MUTATION for the same bearer-token reason as getMyBuzzBalance; requires the
+  // `user:read:self` scope server-side.
+  const getMyViewerMutation = trpc.blocks.getMyViewer.useMutation();
+
+  // Wildcard-pack import (W13). SESSION-authed (protectedProcedure) — it does NOT
+  // take a block token; the viewer's real cookie session authenticates, which is
+  // the whole point (the real download gates apply). A MUTATION deliberately: the
+  // response carries a short-lived signed URL (see the router comment).
+  const resolveWildcardPackMutation = trpc.generation.resolveWildcardPack.useMutation();
+  // In-flight fetch+parse count for the concurrency cap below. A ref (not state)
+  // so incrementing/decrementing never re-renders and the count is read
+  // synchronously in the message handler (JS is single-threaded, so the
+  // check→increment before the first await is atomic per message).
+  const wildcardInFlightRef = useRef<number>(0);
 
   // SUBMIT_WORKFLOW → blocks.submitWorkflow → WORKFLOW_SUBMITTED.
   useEffect(() => {
@@ -700,6 +750,137 @@ export function PageBlockHost({
     );
     return off;
   }, [onMessage, send, token, getMyBuzzBalanceMutation]);
+
+  // GET_BUZZ_TRANSACTIONS → blocks.getMyBuzzTransactions → BUZZ_TRANSACTIONS_RESULT.
+  // The Buzz-dashboard ledger read. Host-MEDIATED (the iframe never holds the
+  // scope-gated token's power directly); the server self-binds off the token
+  // `sub` + requires `buzz:read:self`. REQUEST-style ⇒ every path MUST reply or
+  // the block hangs; on a null token we reply with the ERROR variant (mirrors
+  // GET_BUZZ_BALANCE) rather than dropping. A missing requestId is dropped.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; params?: unknown } | undefined>(
+      'GET_BUZZ_TRANSACTIONS',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string') return;
+        const requestId = raw.requestId;
+        if (!token) {
+          send('BUZZ_TRANSACTIONS_RESULT', { requestId, error: 'no block token' });
+          return;
+        }
+        try {
+          // params are schema-validated server-side; the host never trusts them.
+          // blockToken is spread LAST so a block-sent `params.blockToken` can never
+          // override the host's authoritative page token (mirrors submitWorkflow's
+          // non-overridable token). blockToken is host-injected only — no
+          // legitimate input field shares that name.
+          const result = await getMyBuzzTransactionsMutation.mutateAsync({
+            ...((raw.params as Record<string, unknown>) ?? {}),
+            blockToken: token,
+          } as never);
+          send('BUZZ_TRANSACTIONS_RESULT', { requestId, result });
+        } catch (err) {
+          send('BUZZ_TRANSACTIONS_RESULT', {
+            requestId,
+            error: err instanceof Error ? err.message : 'unknown',
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, getMyBuzzTransactionsMutation]);
+
+  // GET_BUZZ_ACCOUNTS → blocks.getMyBuzzAccounts → BUZZ_ACCOUNTS_RESULT. All-pool
+  // balances (spendable + creator payout pools). Same host-mediated + consent +
+  // reply-always contract as GET_BUZZ_TRANSACTIONS.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown } | undefined>(
+      'GET_BUZZ_ACCOUNTS',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string') return;
+        const requestId = raw.requestId;
+        if (!token) {
+          send('BUZZ_ACCOUNTS_RESULT', { requestId, error: 'no block token' });
+          return;
+        }
+        try {
+          const result = await getMyBuzzAccountsMutation.mutateAsync({ blockToken: token });
+          send('BUZZ_ACCOUNTS_RESULT', { requestId, result });
+        } catch (err) {
+          send('BUZZ_ACCOUNTS_RESULT', {
+            requestId,
+            error: err instanceof Error ? err.message : 'unknown',
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, getMyBuzzAccountsMutation]);
+
+  // GET_DAILY_COMPENSATION → blocks.getMyDailyCompensation → DAILY_COMPENSATION_RESULT.
+  // Per-modelVersion generation earnings for the month of `date`. Same contract.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; params?: unknown } | undefined>(
+      'GET_DAILY_COMPENSATION',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string') return;
+        const requestId = raw.requestId;
+        if (!token) {
+          send('DAILY_COMPENSATION_RESULT', { requestId, error: 'no block token' });
+          return;
+        }
+        try {
+          // blockToken spread LAST — host page token is authoritative, a block-sent
+          // `params.blockToken` can never override it (see GET_BUZZ_TRANSACTIONS).
+          const result = await getMyDailyCompensationMutation.mutateAsync({
+            ...((raw.params as Record<string, unknown>) ?? {}),
+            blockToken: token,
+          } as never);
+          send('DAILY_COMPENSATION_RESULT', { requestId, result });
+        } catch (err) {
+          send('DAILY_COMPENSATION_RESULT', {
+            requestId,
+            error: err instanceof Error ? err.message : 'unknown',
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, getMyDailyCompensationMutation]);
+
+  // GET_VIEWER → blocks.getMyViewer → VIEWER_RESULT. The block's "who am I" read
+  // that backs the SDK `useViewer()` hook — the host-mediated successor to the
+  // GET /blocks/me REST call, so a page block can render the viewer's name /
+  // gate write UI on their moderation status without holding the scope directly.
+  // Host-MEDIATED: the iframe never sees a session; the identity is derived from
+  // the token's SELF-BOUND `sub` server-side (never client input), gated on the
+  // `user:read:self` scope. GET_VIEWER takes NO params, so only the host page
+  // token is forwarded (a block-sent field can't override it). REQUEST-style ⇒
+  // every path MUST reply or the block hangs to its SDK timeout: on a null token
+  // we reply with the ERROR variant (mirrors GET_BUZZ_BALANCE) rather than
+  // dropping. A missing requestId is still dropped without replying.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown } | undefined>(
+      'GET_VIEWER',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string') return;
+        const requestId = raw.requestId;
+        if (!token) {
+          send('VIEWER_RESULT', { requestId, error: 'no block token' });
+          return;
+        }
+        try {
+          const viewer = await getMyViewerMutation.mutateAsync({ blockToken: token });
+          send('VIEWER_RESULT', { requestId, viewer });
+        } catch (err) {
+          send('VIEWER_RESULT', {
+            requestId,
+            error: err instanceof Error ? err.message : 'unknown',
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, getMyViewerMutation]);
 
   // OPEN_BUZZ_PURCHASE → BUZZ_PURCHASE_RESULT. The generator's insufficient-Buzz
   // top-up CTA. Gate on BLOCK_READY (+ payload validity) via the shared
@@ -1013,6 +1194,7 @@ export function PageBlockHost({
   // token means the block never rendered a usable surface, so the request is
   // dropped without replying (the mint path surfaces no_token/error above).
   const sharedAppendMutation = trpc.apps.shared.append.useMutation();
+  const sharedUpdateMutation = trpc.apps.shared.update.useMutation();
   const sharedVoteMutation = trpc.apps.shared.vote.useMutation();
   const sharedUnvoteMutation = trpc.apps.shared.unvote.useMutation();
   const sharedWithdrawMutation = trpc.apps.shared.withdraw.useMutation();
@@ -1138,6 +1320,44 @@ export function PageBlockHost({
     );
     return off;
   }, [onMessage, send, token, sharedAppendMutation]);
+
+  // SHARED_UPDATE → apps.shared.update → SHARED_UPDATE_RESULT (mutation).
+  // Author-scoped in-place edit of an OWN row: the auth/author-gate/belt/quota all
+  // live in apps.shared.update (server, #3146); the host only forwards {key, value}
+  // and relays the result. Reply is `{ ok, error? }` (SHARED_WITHDRAW-style, NOT
+  // SHARED_APPEND's `{ key }`) — the SDK 0.24 hook treats `!ok || error` as reject,
+  // and its isValidSharedUpdateResult REQUIRES a boolean `ok`, so BOTH paths send
+  // one (the error path MUST carry `ok: false` or the reply is dropped → hang).
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown; value?: unknown } | undefined>(
+      'SHARED_UPDATE',
+      async (raw) => {
+        if (
+          !raw ||
+          typeof raw.requestId !== 'string' ||
+          typeof raw.key !== 'string' ||
+          typeof raw.value !== 'object' ||
+          raw.value === null ||
+          !token
+        )
+          return;
+        const requestId = raw.requestId;
+        try {
+          // Server zod-validates {title, body?}; a malformed value rejects
+          // BAD_REQUEST → the error path below (never a hang).
+          await sharedUpdateMutation.mutateAsync({
+            blockToken: token,
+            key: raw.key,
+            value: raw.value as { title: string; body?: string },
+          });
+          send('SHARED_UPDATE_RESULT', { requestId, ok: true });
+        } catch (err) {
+          send('SHARED_UPDATE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, sharedUpdateMutation]);
 
   // SHARED_VOTE → apps.shared.vote → SHARED_VOTE_RESULT (mutation).
   useEffect(() => {
@@ -1283,24 +1503,18 @@ export function PageBlockHost({
         },
         onSelect: (resource) => {
           answered = true;
-          // Post back ONLY the narrow single-pick allowlist. Never spread the
-          // full GenerationResource — no availability/hasAccess/early-access/
-          // usageControl/minor/poi/sfwOnly/cover-image internals reach the
-          // iframe, only what the block needs to build a body + display it.
+          // Post back ONLY the narrow single-pick allowlist via the canonical
+          // safe projector. Never spread the full GenerationResource — no
+          // availability/hasAccess/early-access/usageControl/minor/poi/sfwOnly/
+          // cover-image internals reach the iframe. The projection is WIDENED
+          // (PR-C) to also carry the PUBLIC recommended settings a block needs —
+          // strength + min/max clamp, trained words, clipSkip — so it can seed a
+          // per-resource weight slider + trigger-word display. Shared with the GET
+          // /api/v1/blocks/generation-resources rehydrate endpoint so the two can
+          // never drift on which fields are public.
           send('RESOURCE_PICKER_RESULT', {
             requestId,
-            selected: {
-              // GenerationResource.id is the modelVersionId at the wire.
-              versionId: resource.id,
-              modelId: resource.model.id,
-              // Public display names of the user-chosen resource — the user
-              // picked it, so surfacing its name is safe (mirrors the
-              // CHECKPOINT_PICKER_RESULT projection in IframeHost.tsx).
-              modelName: resource.model.name,
-              versionName: resource.name,
-              baseModel: resource.baseModel,
-              modelType: resource.model.type,
-            },
+            selected: projectSafeGenerationResource(resource),
           });
         },
         onClose: () => {
@@ -1380,6 +1594,100 @@ export function PageBlockHost({
     return off;
   }, [onMessage, send]);
 
+  // ── OPEN_IMAGE_UPLOAD → IMAGE_UPLOAD_RESULT (host-mediated block image upload) ─
+  //
+  // A block asks the host to let the viewer upload an image (the app decides what
+  // it is for). Mirrors OPEN_RESOURCE_PICKER's host-chrome pattern: the host opens
+  // its OWN upload modal, the iframe never handles the bytes. The request's
+  // optional `purpose` (normalized by resolveImageUploadRequest — absent ⇒
+  // 'display', so this stays byte-compatible with an SDK that sends none) selects
+  // the mode:
+  //
+  //   • 'display' (DEFAULT — PUBLIC image, e.g. a cosmetic background): the upload
+  //     routes through civitai's SESSION-AUTHED path → REAL createImage +
+  //     ingestImage scan → server-side gate (blockImageUpload.persist + gate), and
+  //     ONLY a moderated image id that is scanned-clean, within the SFW ceiling,
+  //     and unflagged is returned. UNCHANGED behavior.
+  //
+  //   • 'generationSource' (PRIVATE generation input — an img2img source): the
+  //     upload routes through the SAME lightweight consumer-blob util the generator
+  //     uses (uploadConsumerBlob, in BlockGenerationSourceUploadModal) — NO
+  //     createImage, NO scan, NO SFW gate, NO imageId/nsfwLevel. It returns only
+  //     the source shape { url, width, height } (the blob's real dims). Platform
+  //     safety is preserved because the ORCHESTRATOR scans the generation OUTPUT,
+  //     exactly as civitai's own generator does for its img2img sources. The blob
+  //     url is an `orchestration…civitai.com` host that passes the img2img
+  //     blockSourceImageSchema allowlist (workflow.schema) unchanged.
+  //
+  // Gate on status 'ready' (a pre-handshake block can't summon the modal) via the
+  // same 'error'→'no_token' shim the consent/buzz handlers use. requestId threads
+  // the reply so concurrent uploads never cross. A successful upload posts the
+  // minimal projection; closing without one posts a bare (cancelled) result.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; purpose?: unknown } | undefined>(
+      'OPEN_IMAGE_UPLOAD',
+      (raw) => {
+        const gateStatus = status === 'error' ? 'no_token' : status;
+        if (gateStatus !== 'ready') return; // pre-handshake block — drop
+        const req = resolveImageUploadRequest(raw);
+        if (!req) return; // missing / non-string requestId → drop, never open the modal
+        const { requestId, purpose } = req;
+
+        // generationSource: UNSCANNED private img2img source (orchestrator scans
+        // the OUTPUT). Reply carries the source shape { url, width, height }; the
+        // moderated 'display' branch below is untouched.
+        if (purpose === 'generationSource') {
+          let resolvedSource: BlockSourceImageInfo | null = null;
+          dialogStore.trigger({
+            id: `block-generation-source-upload-${requestId}`,
+            component: BlockGenerationSourceUploadModal,
+            props: {
+              onResolved: (result: BlockSourceImageInfo) => {
+                resolvedSource = result;
+              },
+            },
+            options: {
+              onClose: () => {
+                if (resolvedSource) {
+                  send('IMAGE_UPLOAD_RESULT', { requestId, selected: resolvedSource });
+                } else {
+                  send('IMAGE_UPLOAD_RESULT', { requestId });
+                }
+              },
+            },
+          });
+          return;
+        }
+
+        // display (default): moderated public-image path — UNCHANGED.
+        let resolved: BlockUploadedImageInfo | null = null;
+        dialogStore.trigger({
+          // Per-request id so multiple OPEN_IMAGE_UPLOAD calls don't dedup against
+          // each other in the dialog store's exists-check.
+          id: `block-image-upload-${requestId}`,
+          component: BlockImageUploadModal,
+          props: {
+            onResolved: (result: BlockUploadedImageInfo) => {
+              resolved = result;
+            },
+          },
+          options: {
+            onClose: () => {
+              // A successful upload set `resolved` before the modal closed itself;
+              // otherwise the user cancelled → reply with a bare (cancelled) result.
+              if (resolved) {
+                send('IMAGE_UPLOAD_RESULT', { requestId, selected: resolved });
+              } else {
+                send('IMAGE_UPLOAD_RESULT', { requestId });
+              }
+            },
+          },
+        });
+      }
+    );
+    return off;
+  }, [onMessage, send, status]);
+
   // ── SET_USER_CHECKPOINT → USER_CHECKPOINT_SET (fail-fast NACK on a page) ──────
   //
   // `useCheckpointPicker().persist(versionId)` posts SET_USER_CHECKPOINT and
@@ -1431,6 +1739,80 @@ export function PageBlockHost({
     });
     return off;
   }, [onMessage, send]);
+
+  // ── GET_WILDCARD_PACK → WILDCARD_PACK_RESULT (W13 wildcard-pack import) ──────
+  //
+  // A page block posts GET_WILDCARD_PACK{ requestId, modelVersionId } to import a
+  // wildcard pack's parsed prompt lists. The HOST — running in the civitai page
+  // with the viewer's REAL authenticated session — resolves + fetches + unzips +
+  // parses it AS THE USER, and posts only the parsed JSON back. The untrusted
+  // iframe never sees the session, the signed URL, or the raw bytes.
+  //
+  // Why host-mediated (vs. a block-JWT REST endpoint that server-side fetches +
+  // unzips, the #3130 alternative):
+  //   1. `generation.resolveWildcardPack` runs as a protectedProcedure (session
+  //      auth), so `getFileForModelVersion` enforces every REAL creator/user
+  //      download gate authoritatively — requireAuth (satisfied by the session),
+  //      usageControl/downloads-disabled, early-access/entitlement, the viewer's
+  //      maturity ceiling — instead of a hand-rolled partial re-derivation.
+  //   2. The fetch + unzip run in the USER'S BROWSER TAB (bounded, streamed
+  //      inflate in wildcardPackHost), so a zip-bomb OOMs one tab, not a serving
+  //      web pod. The bytes never touch a pod's heap.
+  //
+  // token-INDEPENDENT (unlike every other handler above): the resolve proc is
+  // session-authed, not block-token-authed, so this does NOT gate on the page
+  // `token` prop. A missing/invalid requestId is dropped (nothing to reply to);
+  // every OTHER path posts a WILDCARD_PACK_RESULT (a `pack` or an `error`
+  // discriminant) so the block's SDK request never hangs. The zip + fetch shell
+  // (jszip/js-yaml) is dynamically imported so it never enters the page-block
+  // bundle unless a pack is actually requested.
+  useEffect(() => {
+    const off = onMessage<unknown>('GET_WILDCARD_PACK', async (raw) => {
+      const req = resolveGetWildcardPackRequest(raw);
+      if (!req) return; // missing/invalid requestId or modelVersionId → drop
+      const { requestId, modelVersionId } = req;
+      // Concurrency cap (host-side backpressure): bound the per-tab memory. The
+      // check→increment runs synchronously before the first await (single-
+      // threaded), so N concurrent GET_WILDCARD_PACKs can't all pass the gate.
+      // Excess → `busy` (the block retries) rather than an unbounded queue.
+      if (wildcardInFlightRef.current >= WILDCARD_MAX_CONCURRENT) {
+        send('WILDCARD_PACK_RESULT', { requestId, error: 'busy' });
+        return;
+      }
+      wildcardInFlightRef.current += 1;
+      try {
+        const resolved = await resolveWildcardPackMutation.mutateAsync({ modelVersionId });
+        // 32 MB pre-download cap on the server-advertised size — reject BEFORE
+        // fetching a byte.
+        if (exceedsPreDownloadCap(resolved.sizeBytes)) {
+          send('WILDCARD_PACK_RESULT', { requestId, error: 'too-large' });
+          return;
+        }
+        const { fetchAndParseWildcardPack, WILDCARD_FETCH_TIMEOUT_MS } = await import(
+          './wildcardPackHost'
+        );
+        const { lists, truncated, truncatedLists } = await fetchAndParseWildcardPack({
+          signedUrl: resolved.signedUrl,
+          sizeBytes: resolved.sizeBytes,
+          signal: AbortSignal.timeout(WILDCARD_FETCH_TIMEOUT_MS),
+        });
+        send('WILDCARD_PACK_RESULT', {
+          requestId,
+          pack: { ...resolved.meta, lists, truncated, truncatedLists, maturity: resolved.maturity },
+        });
+      } catch (err) {
+        // NOT_FOUND / FORBIDDEN (proc) · too-large · parse-failed (fetch/unzip/
+        // abort) — a single error discriminant, never a hang.
+        send('WILDCARD_PACK_RESULT', { requestId, error: classifyWildcardPackError(err) });
+      } finally {
+        // Release the in-flight slot on EVERY exit (success, too-large early
+        // return, or error) so the concurrency gate can't leak slots and wedge
+        // shut. Only decremented for a request that passed the gate + incremented.
+        wildcardInFlightRef.current -= 1;
+      }
+    });
+    return off;
+  }, [onMessage, send, resolveWildcardPackMutation]);
 
   const showIframe = status === 'loading' || status === 'ready';
   const isReady = status === 'ready';

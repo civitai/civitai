@@ -75,6 +75,10 @@ function detailRow(over: Partial<Record<string, unknown>> = {}) {
     version: '0.0.0',
     approved_scopes: [],
     external_url: 'https://example.com/cool',
+    // DEPLOY-GATE: deployed so the detail read returns its projection even for the
+    // on-platform (external_url:null) variant of this fixture (a NULL timestamp on
+    // a NULL external_url would be treated as never-deployed → NOT_FOUND).
+    current_version_deployed_at: new Date('2026-01-01T00:00:00Z'),
     install_count: 0n,
     avg_rating: null,
     review_count: 0n,

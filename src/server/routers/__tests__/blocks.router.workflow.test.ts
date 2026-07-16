@@ -23,6 +23,10 @@ const {
   mockBuildGenerationContext,
   mockAuditPromptServer,
   mockGetUserById,
+  mockGetUserBuzzTransactions,
+  mockGetUserBuzzAccount,
+  mockGetDailyCompensation,
+  mockCheckBlockCatalogRateLimit,
   mockGetSessionUser,
   mockDbRead,
   mockRedis,
@@ -35,8 +39,12 @@ const {
   mockSysRedis,
   mockResolveCanGenerateForVersions,
   mockRecordSpendAttribution,
+  mockDbWriteUserFindUnique,
 } = vi.hoisted(() => ({
   mockVerifyBlockToken: vi.fn(),
+  // getMyViewer reads the viewer's ban/mute/deleted state from dbWrite.user
+  // (the PRIMARY, like /blocks/me). Hoisted so tests can drive it + reset it.
+  mockDbWriteUserFindUnique: vi.fn(),
   mockParseSubjectUserId: vi.fn(),
   mockGetOrchestratorToken: vi.fn(),
   mockSubmitWorkflow: vi.fn(),
@@ -46,6 +54,11 @@ const {
   mockBuildGenerationContext: vi.fn(),
   mockAuditPromptServer: vi.fn(),
   mockGetUserById: vi.fn(),
+  // Buzz self-read bridges (getMyBuzzTransactions/Accounts + getMyDailyCompensation).
+  mockGetUserBuzzTransactions: vi.fn(),
+  mockGetUserBuzzAccount: vi.fn(),
+  mockGetDailyCompensation: vi.fn(),
+  mockCheckBlockCatalogRateLimit: vi.fn(async () => ({ allowed: true })),
   // assertAppBlocksEnabledForTokenUser now resolves the FULL SessionUser (so the
   // Flipt context carries the real tier/isMember). isAppBlocksEnabled is mocked
   // here, but getSessionUser must still be stubbed so the real resolver doesn't
@@ -61,7 +74,23 @@ const {
     // queried via ModelMetric so we can orderBy thumbsUpCount).
     modelMetric: { findFirst: vi.fn() },
   },
-  mockRedis: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
+  // Complete `redis` client stub. `checkBlockCatalogRateLimit` (used by the buzz
+  // self-read mutations) calls incrBy/expire/ttl on this client; the buzz mutations
+  // also mock the limiter itself (below), but stubbing every method the client
+  // exposes keeps ANY redis path — the limiter or a transitive cache read — from
+  // crashing with `redis.<fn> is not a function` in the preview (get/set alone
+  // was the gap the pr-preview surfaced).
+  mockRedis: {
+    get: vi.fn(async () => null),
+    set: vi.fn(async () => undefined),
+    del: vi.fn(async () => 0),
+    incr: vi.fn(async () => 1),
+    incrBy: vi.fn(async () => 1),
+    decrBy: vi.fn(async () => 0),
+    expire: vi.fn(async () => true),
+    ttl: vi.fn(async () => -1),
+    exists: vi.fn(async () => 0),
+  },
   // sysRedis surface used by the cumulative Buzz-cap (audit A7). Default to an
   // empty window (get → null) so the cap is non-binding unless a test seeds it.
   mockSysRedis: {
@@ -119,6 +148,38 @@ vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
   refundDevSessionBuzz: (...a: unknown[]) => mockRefundDevSessionBuzz(...(a as [])),
 }));
 
+// G8 (per-app spend/velocity cap) + G6 (persistent output queue) — submitWorkflow
+// dynamic-imports these, and listMyWorkflows dynamic-imports the queue read. Mock
+// at the module boundary so we drive allow/deny + assert the fire-and-forget queue
+// write; the real services are unit-tested separately.
+const {
+  mockReserveAppSpend,
+  mockRefundAppSpend,
+  mockUpsertBlockWorkflow,
+  mockListMyBlockWorkflows,
+} = vi.hoisted(() => ({
+  mockReserveAppSpend: vi.fn(),
+  mockRefundAppSpend: vi.fn(async () => undefined),
+  mockUpsertBlockWorkflow: vi.fn(async () => undefined),
+  mockListMyBlockWorkflows: vi.fn(),
+}));
+vi.mock('~/server/services/blocks/app-spend-cap.service', () => ({
+  reserveAppSpend: (...a: unknown[]) => mockReserveAppSpend(...(a as [])),
+  refundAppSpend: (...a: unknown[]) => mockRefundAppSpend(...(a as [])),
+}));
+vi.mock('~/server/services/blocks/block-workflows.service', () => ({
+  upsertBlockWorkflowOnSubmit: (...a: unknown[]) => mockUpsertBlockWorkflow(...(a as [])),
+  listMyBlockWorkflows: (...a: unknown[]) => mockListMyBlockWorkflows(...(a as [])),
+}));
+// submitWorkflow fires recordScopeInvocation (detached) which dynamic-imports the
+// REAL, heavy user-app-surface.service. That first-time real import serializes the
+// module runner and starves the sibling detached fire-and-forget writes (G6 queue),
+// making their timing non-deterministic. Mock it (this file exercises no other
+// user-app-surface proc) so every detached write settles promptly.
+vi.mock('~/server/services/blocks/user-app-surface.service', () => ({
+  recordScopeInvocation: vi.fn(async () => undefined),
+}));
+
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   verifyBlockToken: mockVerifyBlockToken,
   parseSubjectUserId: (...args: unknown[]) => mockParseSubjectUserId(...args),
@@ -152,7 +213,12 @@ vi.mock('~/server/db/client', () => ({
   dbRead: mockDbRead,
   // dbWrite is referenced for install-management procedures; stub the few
   // shapes the unrelated procedures could hit so the import doesn't crash.
-  dbWrite: { modelBlockInstall: { findUnique: vi.fn() }, model: { findUnique: vi.fn() } },
+  dbWrite: {
+    modelBlockInstall: { findUnique: vi.fn() },
+    model: { findUnique: vi.fn() },
+    // getMyViewer's ban/mute/deleted lookup (mirrors /blocks/me — PRIMARY read).
+    user: { findUnique: (...a: unknown[]) => mockDbWriteUserFindUnique(...a) },
+  },
 }));
 // blocks.router transitively pulls in many redis-cache modules that read
 // `REDIS_KEYS.<GROUP>.<KEY>` AT IMPORT TIME. The real keys live in redis/client
@@ -191,6 +257,12 @@ vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
 }));
 vi.mock('~/server/services/buzz.service', () => ({
   getUserBuzzAccounts: (...args: unknown[]) => mockGetUserBuzzAccounts(...args),
+  getUserBuzzTransactions: (...args: unknown[]) => mockGetUserBuzzTransactions(...args),
+  getUserBuzzAccount: (...args: unknown[]) => mockGetUserBuzzAccount(...args),
+  getDailyCompensationRewardByUser: (...args: unknown[]) => mockGetDailyCompensation(...args),
+}));
+vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
+  checkBlockCatalogRateLimit: (...args: unknown[]) => mockCheckBlockCatalogRateLimit(...args),
 }));
 vi.mock('~/server/services/generation/generation.service', () => ({
   resolveCanGenerateForVersions: (...args: unknown[]) =>
@@ -254,6 +326,13 @@ vi.mock('~/server/middleware.trpc', async () => {
 import { blocksRouter } from '../blocks.router';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+// Warm the module cache for the (mocked) block-workflows.service so the router's
+// DETACHED `await import(...)` of it in submitWorkflow resolves promptly — like
+// buzz-attribution.service, which is statically imported by the router and so
+// already loaded. Without this the dynamic import of a dynamic-only mocked module
+// lags by ~a test, making the fire-and-forget queue write's timing flaky.
+import '~/server/services/blocks/block-workflows.service';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 
 function validClaims(over: Record<string, unknown> = {}) {
   return {
@@ -348,6 +427,10 @@ beforeEach(() => {
     mockDailyBoostApply,
     mockDailyBoostGetDetails,
     mockGetUserBuzzAccounts,
+    mockGetUserBuzzTransactions,
+    mockGetUserBuzzAccount,
+    mockGetDailyCompensation,
+    mockCheckBlockCatalogRateLimit,
     mockLogToAxiom,
     mockSysRedis.get,
     mockSysRedis.incrBy,
@@ -356,13 +439,30 @@ beforeEach(() => {
     mockSysRedis.ttl,
     mockResolveCanGenerateForVersions,
     mockRecordSpendAttribution,
+    mockDbWriteUserFindUnique,
     mockIsAppBlocksAuthorEnabled,
     mockGetActiveDevTunnel,
     mockReserveDevSessionBuzz,
     mockRefundDevSessionBuzz,
+    mockReserveAppSpend,
+    mockRefundAppSpend,
+    mockUpsertBlockWorkflow,
+    mockListMyBlockWorkflows,
   ]) {
     fn.mockReset();
   }
+  // G8 default: the per-app aggregate cap ALLOWS (non-binding) with a pinned
+  // daily key so the refund paths have something to refund. G6 default: the
+  // fire-and-forget queue write + the read resolve empty.
+  mockReserveAppSpend.mockResolvedValue({
+    allowed: true,
+    dailyTotal: 0,
+    velocityCount: 1,
+    dailyKey: 'system:blocks:app-spend-cap:apb_test:day',
+  });
+  mockRefundAppSpend.mockResolvedValue(undefined);
+  mockUpsertBlockWorkflow.mockResolvedValue(undefined);
+  mockListMyBlockWorkflows.mockResolvedValue({ items: [], nextCursor: null });
   // F4 defaults: no active dev tunnel (getActiveDevTunnel → null) so the dev
   // spend backstop is inert for every non-dev test. The F4 tests override these.
   mockGetActiveDevTunnel.mockResolvedValue(null);
@@ -391,6 +491,17 @@ beforeEach(() => {
   mockSysRedis.decrBy.mockResolvedValue(0);
   mockSysRedis.expire.mockResolvedValue(true);
   mockSysRedis.ttl.mockResolvedValue(-1);
+  // Buzz self-read bridges: default the per-instance rate limit to allowed.
+  mockCheckBlockCatalogRateLimit.mockResolvedValue({ allowed: true });
+  // getMyViewer: default the viewer to an active (non-banned, non-muted,
+  // non-deleted) user. Ban/mute/deleted tests override this.
+  mockDbWriteUserFindUnique.mockResolvedValue({
+    id: 42,
+    username: 'u',
+    bannedAt: null,
+    muted: false,
+    deletedAt: null,
+  });
   // Defaults — every test starts with the flag on, a valid claim, an
   // authenticated subject, a fresh user/version row. Tests override only the
   // gate they're exercising. NB: mockReset wipes the implementation, so the
@@ -611,6 +722,22 @@ describe('blocks.estimateWorkflow', () => {
       caller.estimateWorkflow({ blockToken: 'tok', body: validBody() })
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
   });
+
+  it('rejects a source image (img2img) on a MODEL-bound token — img2img is PAGE-only in 2a', async () => {
+    // The default validClaims() is a model-bound token (ctx.modelId=7). img2img
+    // via sourceImage is a page-only feature this phase, so a model-bound token
+    // carrying one must be rejected fail-closed BEFORE any spend.
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.estimateWorkflow({
+        blockToken: 'tok',
+        body: validBody({
+          sourceImage: { url: 'https://image.civitai.com/abc/def.jpeg', width: 768, height: 1024 },
+        }),
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
 });
 
 describe('blocks.submitWorkflow', () => {
@@ -640,6 +767,184 @@ describe('blocks.submitWorkflow', () => {
     expect(mockAuditPromptServer).toHaveBeenCalledWith(
       expect.objectContaining({ prompt: 'a cat', userId: 42 })
     );
+  });
+
+  // ---- G8: per-app aggregate spend + velocity cap -------------------------
+  describe('per-app aggregate spend/velocity cap (G8)', () => {
+    function setupSubmit(workflowId = 'wf_real') {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({ id: workflowId, status: 'unassigned', cost: { total: 25 }, steps: [] });
+    }
+
+    it('reserves against the app cap keyed on the TOKEN appBlockId (server-derived)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 100, appBlockId: 'apb_from_token' })
+      );
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({ id: 'wf_real', status: 'unassigned', cost: { total: 25 }, steps: [] });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      // appBlockId from the verified token, cost from the whatIf estimate.
+      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_from_token', 25);
+    });
+
+    it('REJECTS fail-safe when the per-app DAILY cap breaches — no real submit, per-user refunded', async () => {
+      setupSubmit();
+      mockReserveAppSpend.mockResolvedValue({
+        allowed: false,
+        reason: 'daily',
+        dailyTotal: 999,
+        velocityCount: 0,
+      });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.error).toMatch(/app daily spend cap reached/);
+      // Only the whatIf ran; the REAL submit was never reached (no spend).
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+      // The per-user daily reservation made just before was refunded (DECRBY).
+      expect(mockSysRedis.decrBy).toHaveBeenCalled();
+    });
+
+    it('REJECTS with the velocity message when the short-window gen ceiling breaches', async () => {
+      setupSubmit();
+      mockReserveAppSpend.mockResolvedValue({
+        allowed: false,
+        reason: 'velocity',
+        dailyTotal: 0,
+        velocityCount: 121,
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.error).toMatch(/rate limit/i);
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+    });
+
+    it('passes through when UNDER the cap (real submit proceeds)', async () => {
+      setupSubmit();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(2);
+      expect(mockRefundAppSpend).not.toHaveBeenCalled();
+    });
+
+    it('refunds the per-app reservation when the real submit THROWS (downstream failure)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockRejectedValueOnce(new Error('orchestrator down'));
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
+      ).rejects.toThrow(/orchestrator down/);
+      expect(mockRefundAppSpend).toHaveBeenCalledWith('system:blocks:app-spend-cap:apb_test:day', 25);
+    });
+
+    it('is EXCLUDED for dev tokens (claims.dev === true → reserve never called)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100, dev: true }));
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({ id: 'wf_real', status: 'unassigned', cost: { total: 25 }, steps: [] });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---- G6: persistent block output queue (fire-and-forget write) ----------
+  describe('persistent output queue write (G6)', () => {
+    // The queue write is a DETACHED promise (fire-and-forget) that itself does a
+    // dynamic import — poll with vi.waitFor rather than racing a fixed flush.
+    const flushMicrotasks = async () => {
+      for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+    };
+    function happySubmit(workflowId = 'wf_real') {
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({ id: workflowId, status: 'unassigned', cost: { total: 25 }, steps: [] });
+    }
+
+    it('writes a queue row with SERVER-DERIVED args after a resolved submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({
+          buzzBudget: 100,
+          appBlockId: 'apb_from_token',
+          blockInstanceId: 'bki_from_token',
+          sub: 'user:42',
+        })
+      );
+      happyVersionLookup();
+      happyUser();
+      happySubmit('wf_real');
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      // The write is DETACHED — let it settle, then match OUR distinctive call by
+      // the token-derived appBlockId ('apb_from_token' can't collide with a leaked
+      // fire-and-forget from a sibling test that uses default claims).
+      await vi.waitFor(() =>
+        expect(mockUpsertBlockWorkflow).toHaveBeenCalledWith(
+          expect.objectContaining({
+            workflowId: 'wf_real',
+            appBlockId: 'apb_from_token', // from the verified token, NOT the body
+            blockInstanceId: 'bki_from_token',
+            userId: 42, // from claims.sub
+            status: 'pending', // snapshot status (unassigned → pending)
+          })
+        )
+      );
+    });
+
+    it('a queue-write failure NEVER breaks (or changes) the submit response', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+      happyVersionLookup();
+      happyUser();
+      happySubmit('wf_real');
+      mockUpsertBlockWorkflow.mockRejectedValue(new Error('db down'));
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      await flushMicrotasks();
+      // Submit still succeeds with the real workflow id.
+      expect(result.snapshot.workflowId).toBe('wf_real');
+    });
+
+    it('does NOT write for dev tokens (synthetic non-FK appBlockId)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 100, dev: true, appBlockId: 'apb_dev_only' })
+      );
+      happyVersionLookup();
+      happyUser();
+      happySubmit('wf_real');
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      await flushMicrotasks();
+      // Robust against a leaked sibling-test write: assert no write for THIS
+      // (dev) app block specifically — the dev guard skips the write entirely.
+      expect(mockUpsertBlockWorkflow).not.toHaveBeenCalledWith(
+        expect.objectContaining({ appBlockId: 'apb_dev_only' })
+      );
+    });
   });
 
   // ---- F4: dev-tunnel per-session spend backstop --------------------------
@@ -1088,6 +1393,19 @@ describe('blocks.submitWorkflow', () => {
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
+  it('rejects a source image (img2img) on a MODEL-bound token — img2img is PAGE-only in 2a', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.submitWorkflow({
+        blockToken: 'tok',
+        body: validBody({
+          sourceImage: { url: 'https://image.civitai.com/abc/def.jpeg', width: 768, height: 1024 },
+        }),
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
   it('rejects when prompt audit blocks the prompt', async () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims());
     happyVersionLookup();
@@ -1348,6 +1666,40 @@ describe('blocks.submitWorkflow', () => {
     expect(arg.workflowId).toBe('wf_real'); // the orchestrator's id
     // Amount is the orchestrator-computed cost (ceil), not a client value.
     expect(arg.buzzAmount).toBe(25);
+  });
+
+  it('G5: threads the body sharedContentKey (opaque) through to the spend attribution', async () => {
+    // The published-content-author key is app-supplied on the BODY and passed
+    // OPAQUE to the service (which resolves the author server-side). Assert it
+    // is threaded through; when absent it is null (unchanged behaviour).
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    happySubmitWithWorkflow(25, 'wf_real');
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({
+      blockToken: 'tok',
+      body: validBody({ sharedContentKey: 'k_content_01ABC' }),
+    });
+    await flushMicrotasks();
+
+    expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+    expect(mockRecordSpendAttribution.mock.calls[0][0].sharedContentKey).toBe('k_content_01ABC');
+  });
+
+  it('G5: sharedContentKey is null on the attribution when the body omits it', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    happySubmitWithWorkflow(25, 'wf_real');
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+
+    expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+    expect(mockRecordSpendAttribution.mock.calls[0][0].sharedContentKey).toBeNull();
   });
 
   // 🟡-1: the bounty must accrue off the REALIZED debit on the submit
@@ -3605,5 +3957,384 @@ describe('blocks.getMyBuzzBalance', () => {
       code: 'FORBIDDEN',
     });
     expect(mockGetUserBuzzAccounts).not.toHaveBeenCalled();
+  });
+});
+
+// ---- getMyViewer (host-mediated, token-bound viewer identity read) ----------
+// A page block reads the VIEWER's OWN identity ("who am I") via the block token,
+// backing the SDK useViewer() hook. userId is derived from the self-bound token
+// sub (never client input), gated on the `user:read:self` consent scope (unlike
+// the scope-free getMyBuzzBalance). Mirrors /api/v1/blocks/me: dbWrite ban/mute/
+// deleted lookup, 404 on deleted, 403 on banned, `status:'muted'` for muted.
+const VIEWER_READ = ['user:read:self'];
+
+describe('blocks.getMyViewer', () => {
+  it('returns the SELF-BOUND viewer identity for a valid token (id/username/status/buzzBudget)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: VIEWER_READ }));
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.getMyViewer({ blockToken: 'tok' });
+    // buzzBudget comes from the token claim (validClaims default 50).
+    expect(result).toEqual({ id: 42, username: 'u', status: 'active', buzzBudget: 50 });
+    // The identity is read for the TOKEN subject (42) — NEVER a client input.
+    expect(mockDbWriteUserFindUnique.mock.calls[0][0].where).toEqual({ id: 42 });
+  });
+
+  it('passes a muted viewer through with status:muted', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: VIEWER_READ }));
+    mockDbWriteUserFindUnique.mockResolvedValue({
+      id: 42,
+      username: 'u',
+      bannedAt: null,
+      muted: true,
+      deletedAt: null,
+    });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.getMyViewer({ blockToken: 'tok' });
+    expect(result.status).toBe('muted');
+  });
+
+  it('surfaces buzzBudget as null when the token carries no budget claim', async () => {
+    mockVerifyBlockToken.mockResolvedValue(
+      validClaims({ scopes: VIEWER_READ, buzzBudget: undefined })
+    );
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.getMyViewer({ blockToken: 'tok' });
+    expect(result.buzzBudget).toBeNull();
+  });
+
+  it('rejects a token missing user:read:self with FORBIDDEN (never reads the db)', async () => {
+    // Default validClaims scopes are ['ai:write:budgeted'] — no viewer consent.
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyViewer({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(mockDbWriteUserFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid block token with UNAUTHORIZED (never reads the db)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(null);
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyViewer({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(mockDbWriteUserFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('rejects an anon subject with UNAUTHORIZED (no viewer identity to read)', async () => {
+    // Carries the scope so it reaches the self-bind step, which rejects anon.
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: VIEWER_READ, sub: 'anon' }));
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyViewer({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(mockDbWriteUserFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('rejects when the App Blocks flag is disabled (kill-switch, no db read)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: VIEWER_READ }));
+    mockIsAppBlocksEnabled.mockResolvedValue(false);
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyViewer({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+      message: 'Apps are not enabled',
+    });
+    expect(mockDbWriteUserFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-author subject with FORBIDDEN (author gate, no db read)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: VIEWER_READ }));
+    mockGetSessionUser.mockResolvedValue({ id: 42, isModerator: false, tier: 'free' });
+    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyViewer({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(mockDbWriteUserFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('rate-limits per blockInstanceId BEFORE the db read (TOO_MANY_REQUESTS)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: VIEWER_READ }));
+    mockCheckBlockCatalogRateLimit.mockResolvedValue({ allowed: false });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyViewer({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+    });
+    // The rate limit is checked on the SELF-BOUND blockInstanceId, before the db.
+    expect(mockCheckBlockCatalogRateLimit).toHaveBeenCalledWith('bki_test');
+    expect(mockDbWriteUserFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('returns NOT_FOUND when the resolved viewer is deleted', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: VIEWER_READ }));
+    mockDbWriteUserFindUnique.mockResolvedValue({
+      id: 42,
+      username: 'u',
+      bannedAt: null,
+      muted: false,
+      deletedAt: new Date('2026-01-01T00:00:00Z'),
+    });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyViewer({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
+
+  it('returns NOT_FOUND when the viewer row has vanished', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: VIEWER_READ }));
+    mockDbWriteUserFindUnique.mockResolvedValue(null);
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyViewer({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
+
+  it('returns FORBIDDEN (banned) when the resolved viewer is banned', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: VIEWER_READ }));
+    mockDbWriteUserFindUnique.mockResolvedValue({
+      id: 42,
+      username: 'u',
+      bannedAt: new Date('2026-01-01T00:00:00Z'),
+      muted: false,
+      deletedAt: null,
+    });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyViewer({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'banned',
+    });
+  });
+});
+
+describe('blocks.listMyWorkflows (G6 — persistent output queue read)', () => {
+  it("returns the caller's own workflows, scoped to the TOKEN appBlockId + viewer", async () => {
+    mockVerifyBlockToken.mockResolvedValue(
+      validClaims({ appBlockId: 'apb_from_token', sub: 'user:42' })
+    );
+    mockListMyBlockWorkflows.mockResolvedValue({
+      items: [{ workflowId: 'wf_2', status: 'succeeded', submittedAt: 'iso2', updatedAt: 'iso2' }],
+      nextCursor: null,
+    });
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.listMyWorkflows({ blockToken: 'tok', limit: 10 });
+
+    expect(result.items.map((i) => i.workflowId)).toEqual(['wf_2']);
+    // userId (from claims.sub) + appBlockId (from the token) are server-scoped —
+    // a block can't read another user's or another app's queue.
+    expect(mockListMyBlockWorkflows).toHaveBeenCalledWith({
+      userId: 42,
+      appBlockId: 'apb_from_token',
+      limit: 10,
+      cursor: undefined,
+    });
+  });
+
+  it('threads a cursor through for keyset pagination', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ appBlockId: 'apb_1', sub: 'user:42' }));
+    mockListMyBlockWorkflows.mockResolvedValue({ items: [], nextCursor: null });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.listMyWorkflows({ blockToken: 'tok', cursor: 'iso|wf_9' });
+    expect(mockListMyBlockWorkflows.mock.calls[0][0].cursor).toBe('iso|wf_9');
+  });
+
+  it('rejects an invalid block token with UNAUTHORIZED and never reads the queue', async () => {
+    mockVerifyBlockToken.mockResolvedValue(null);
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.listMyWorkflows({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(mockListMyBlockWorkflows).not.toHaveBeenCalled();
+  });
+
+  it('rejects a token missing ai:write:budgeted scope with FORBIDDEN', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: [] }));
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.listMyWorkflows({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(mockListMyBlockWorkflows).not.toHaveBeenCalled();
+  });
+
+  it('rejects anon subjects with UNAUTHORIZED', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ sub: 'anon' }));
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.listMyWorkflows({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(mockListMyBlockWorkflows).not.toHaveBeenCalled();
+  });
+});
+
+// ---- Buzz self-read bridges (getMyBuzz{Transactions,Accounts} + -----------
+// getMyDailyCompensation) — host-mediated, token-bound, buzz:read:self consent.
+// A `buzz:read:self` claim is REQUIRED (unlike the scope-free getMyBuzzBalance).
+// ---------------------------------------------------------------------------
+const BUZZ_READ = ['buzz:read:self'];
+
+describe('blocks.getMyBuzzTransactions', () => {
+  it('returns the SELF-BOUND ledger with the hardened projection (details allowlist + externalTransactionId nulled)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: BUZZ_READ }));
+    happyUser();
+    mockGetUserBuzzTransactions.mockResolvedValue({
+      cursor: new Date('2026-06-30T00:00:00Z'),
+      transactions: [
+        {
+          date: new Date('2026-07-01T00:00:00Z'),
+          type: TransactionType.Purchase,
+          fromAccountId: 0,
+          toAccountId: 42,
+          fromAccountType: 'yellow',
+          toAccountType: 'yellow',
+          amount: 100,
+          description: 'buy',
+          details: { entityId: 5, entityType: 'Model', stripePaymentIntentId: 'pi_secret' },
+          externalTransactionId: 'pi_secret',
+          toUser: { id: 42, username: 'me', status: 'active' },
+          fromUser: undefined,
+        },
+      ],
+    });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.getMyBuzzTransactions({ blockToken: 'tok', accountType: 'yellow' });
+    // Self-bound: accountId is always the token subject (42), never client input.
+    expect(mockGetUserBuzzTransactions).toHaveBeenCalledWith(
+      expect.objectContaining({ accountId: 42, accountType: 'yellow' })
+    );
+    const row = result.transactions[0];
+    expect(row.type).toBe('Purchase');
+    // Details allowlist drops the Stripe payment-intent ref.
+    expect(row.details).not.toHaveProperty('stripePaymentIntentId');
+    // Purchase row → externalTransactionId nulled (processor-reference leak class).
+    expect(row.externalTransactionId).toBeNull();
+    // Counterparty stripped to {id, username}.
+    expect(row.toUser).toEqual({ id: 42, username: 'me' });
+  });
+
+  it('maps the TransactionType NAME to the enum for the service call', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: BUZZ_READ }));
+    happyUser();
+    mockGetUserBuzzTransactions.mockResolvedValue({ cursor: null, transactions: [] });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.getMyBuzzTransactions({ blockToken: 'tok', type: 'Tip', limit: 200 });
+    expect(mockGetUserBuzzTransactions).toHaveBeenCalledWith(
+      expect.objectContaining({ accountId: 42, type: TransactionType.Tip, limit: 200 })
+    );
+  });
+
+  it('FORBIDDEN without the buzz:read:self scope (consent gate), before any read', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: ['models:read:self'] }));
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyBuzzTransactions({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(mockGetUserBuzzTransactions).not.toHaveBeenCalled();
+  });
+
+  it('UNAUTHORIZED for an invalid token / anon subject (never reads)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(null);
+    let caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyBuzzTransactions({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: BUZZ_READ, sub: 'anon' }));
+    caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyBuzzTransactions({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(mockGetUserBuzzTransactions).not.toHaveBeenCalled();
+  });
+
+  it('rate-limit trips → TOO_MANY_REQUESTS BEFORE the service call', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: BUZZ_READ }));
+    happyUser();
+    mockCheckBlockCatalogRateLimit.mockResolvedValue({ allowed: false, retryAfterSeconds: 7 });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyBuzzTransactions({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+    });
+    expect(mockCheckBlockCatalogRateLimit).toHaveBeenCalledWith('bki_test');
+    expect(mockGetUserBuzzTransactions).not.toHaveBeenCalled();
+  });
+
+  it('rejects a bad accountType at the input boundary (never reads)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: BUZZ_READ }));
+    happyUser();
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.getMyBuzzTransactions({ blockToken: 'tok', accountType: 'red' } as never)
+    ).rejects.toBeDefined();
+    expect(mockGetUserBuzzTransactions).not.toHaveBeenCalled();
+  });
+});
+
+describe('blocks.getMyBuzzAccounts', () => {
+  it('reads every exposed pool for the SELF-BOUND subject, projecting {accountType, balance}', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: BUZZ_READ }));
+    happyUser();
+    mockGetUserBuzzAccount.mockResolvedValue([
+      { id: 42, balance: 100, lifetimeBalance: null, accountType: 'yellow' },
+      { id: 42, balance: 5, lifetimeBalance: null, accountType: 'cashSettled' },
+    ]);
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.getMyBuzzAccounts({ blockToken: 'tok' });
+    expect(mockGetUserBuzzAccount).toHaveBeenCalledWith(
+      expect.objectContaining({ accountId: 42 })
+    );
+    expect(result.accounts).toEqual([
+      { accountType: 'yellow', balance: 100 },
+      { accountType: 'cashSettled', balance: 5 },
+    ]);
+  });
+
+  it('FORBIDDEN without buzz:read:self; UNAUTHORIZED for invalid token', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: ['models:read:self'] }));
+    let caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyBuzzAccounts({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    mockVerifyBlockToken.mockResolvedValue(null);
+    caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyBuzzAccounts({ blockToken: 'tok' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(mockGetUserBuzzAccount).not.toHaveBeenCalled();
+  });
+});
+
+describe('blocks.getMyDailyCompensation', () => {
+  it('reads the SELF-BOUND per-model compensation for the month of date', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: BUZZ_READ }));
+    happyUser();
+    mockGetDailyCompensation.mockResolvedValue({ resources: [], hasPublishedResources: false });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.getMyDailyCompensation({
+      blockToken: 'tok',
+      date: new Date('2026-07-01'),
+    });
+    expect(result).toEqual({ resources: [], hasPublishedResources: false });
+    expect(mockGetDailyCompensation).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 42, source: 'compensation' })
+    );
+  });
+
+  it('rate-limit trips → TOO_MANY_REQUESTS before the ClickHouse-backed read', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: BUZZ_READ }));
+    happyUser();
+    mockCheckBlockCatalogRateLimit.mockResolvedValue({ allowed: false, retryAfterSeconds: 7 });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.getMyDailyCompensation({ blockToken: 'tok', date: new Date('2026-07-01') })
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(mockGetDailyCompensation).not.toHaveBeenCalled();
+  });
+
+  it('FORBIDDEN without buzz:read:self (consent gate)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: ['models:read:self'] }));
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.getMyDailyCompensation({ blockToken: 'tok', date: new Date('2026-07-01') })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockGetDailyCompensation).not.toHaveBeenCalled();
   });
 });

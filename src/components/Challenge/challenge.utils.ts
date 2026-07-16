@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { trpc } from '~/utils/trpc';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import type {
   GetInfiniteChallengesInput,
   GetCompletedChallengesWithWinnersInput,
@@ -93,4 +94,30 @@ export function useWinnerCooldownStatus(challengeId: number, options?: { enabled
     { challengeId },
     { enabled: enabled && challengeId > 0 }
   );
+}
+
+// Hook to delete a user-owned challenge (refunds escrowed Buzz)
+export function useDeleteUserChallenge() {
+  const utils = trpc.useUtils();
+
+  const deleteUserChallengeMutation = trpc.challenge.deleteUserChallenge.useMutation({
+    async onSuccess() {
+      await utils.challenge.getInfinite.invalidate();
+      showSuccessNotification({
+        message: 'Challenge deleted — your escrowed Buzz has been refunded.',
+      });
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Failed to delete challenge',
+        error: new Error(error.message),
+      });
+    },
+  });
+
+  const deleteChallenge = async (id: number) => {
+    await deleteUserChallengeMutation.mutateAsync({ id });
+  };
+
+  return { deleteChallenge, deleting: deleteUserChallengeMutation.isPending };
 }

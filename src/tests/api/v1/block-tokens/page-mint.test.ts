@@ -174,6 +174,8 @@ const PAGE_BLOCK = (
     blockId: 'hello-page',
     appId: 'appblk-hello-page',
     status: 'approved',
+    // DEPLOY-GATE: deployed → run-mint proceeds (NULL would 409; see deploy-gate suite).
+    currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
     manifest: { scopes: manifestScopes, page: { path: '/', title: 'Hello' } },
     approvedScopes,
     app: { allowedScopes },
@@ -193,6 +195,7 @@ const PAGE_BUDGET_BLOCK = (manifestBudget?: number) => ({
     blockId: 'hello-page',
     appId: 'appblk-hello-page',
     status: 'approved',
+    currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
     manifest: {
       scopes: ['ai:write:budgeted'],
       page: {
@@ -224,6 +227,7 @@ const MODEL_INSTALL = {
     blockId: 'generate-from-model',
     appId: 'appblk-generate-from-model',
     status: 'approved',
+    currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
     manifest: { scopes: ['models:read:self'] },
     approvedScopes: ['models:read:self'],
     app: { allowedScopes: 4 /* TokenScope.ModelsRead */ },
@@ -588,6 +592,7 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
         blockId: 'hello-page',
         appId: 'appblk-hello-page',
         status: 'approved',
+        currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
         manifest: {
           scopes: ['ai:write:budgeted', 'social:tip:self'],
           page: { path: '/', title: 'Hello' },
@@ -772,5 +777,107 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
       expect(res._body.needsConsent).toBe(false);
       expect(res._body.missingScopes).toEqual([]);
     });
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// DEPLOY-GATE (generic, all app-blocks): the run-mint must REFUSE to mint a
+// production run token for an APPROVED app that has never SUCCESSFULLY deployed
+// its <slug>.<APPS_DOMAIN> origin (currentVersionDeployedAt IS NULL) — otherwise
+// the block renders a bare 404. It must ALLOW an app that has deployed at least
+// once, INCLUDING while a NEW version is re-building (the old version keeps
+// serving, so the timestamp stays non-null). Applies to BOTH the stateless page
+// mint (resolvePageBlock) and the model-slot mint (resolveBlockInstance) since
+// they share the single gate. The mod-preview / dev-tunnel ephemeral sandbox
+// mint is a SEPARATE flow (status:'ephemeral', returns earlier) — unaffected.
+// ───────────────────────────────────────────────────────────────────────────
+describe('POST /api/v1/block-tokens — DEPLOY-GATE (never-deployed refusal)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSession.value = MOD;
+    mockBlockRegistry.resolveBlockInstance.mockReset();
+    mockBlockRegistry.resolvePageBlock.mockReset();
+    mockDbWrite.user.findUnique.mockResolvedValue({ deletedAt: null, bannedAt: null });
+    mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: ['apps:storage:read', 'apps:storage:write'],
+      revokedAt: null,
+    });
+    mockRedis.incrBy.mockResolvedValue(1);
+    mockTokenService.checkRateLimit.mockResolvedValue(true);
+    (mockFlags.getFeatureFlags as any).mockImplementation(
+      ({ user }: { user?: { isModerator?: boolean } }) => ({
+        appBlocks: !!user?.isModerator,
+        appBlocksPages: !!user?.isModerator,
+      })
+    );
+  });
+
+  // A PAGE_BLOCK variant with an explicit currentVersionDeployedAt override.
+  const pageBlockWithDeploy = (deployedAt: Date | null) => {
+    const base = PAGE_BLOCK(['apps:storage:read', 'apps:storage:write']);
+    return { appBlock: { ...base.appBlock, currentVersionDeployedAt: deployedAt } };
+  };
+
+  it('REFUSES (409, no token) a page mint for an approved app that has NEVER deployed (currentVersionDeployedAt=null)', async () => {
+    mockBlockRegistry.resolvePageBlock.mockResolvedValue(pageBlockWithDeploy(null));
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+    expect(res._status).toBe(409);
+    expect((res._body as { error: string }).error).toMatch(/not yet deployed/i);
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
+  });
+
+  it('ALLOWS (200) a page mint once the app has deployed at least once', async () => {
+    mockBlockRegistry.resolvePageBlock.mockResolvedValue(
+      pageBlockWithDeploy(new Date('2026-01-01T00:00:00Z'))
+    );
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+    expect(res._status).toBe(200);
+    expect(mockTokenService.sign).toHaveBeenCalledTimes(1);
+  });
+
+  it('ALLOWS (200) a RE-DEPLOYING app — a non-null timestamp survives while a NEW version rebuilds, so it keeps minting', async () => {
+    // "Re-deploying" is indistinguishable at the gate from "deployed": the app
+    // has a prior successful deploy (timestamp set) and the build-callback leaves
+    // it UNCHANGED during the rebuild, so the old version keeps serving + minting.
+    mockBlockRegistry.resolvePageBlock.mockResolvedValue(
+      pageBlockWithDeploy(new Date('2025-06-01T00:00:00Z'))
+    );
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+    expect(res._status).toBe(200);
+    expect(mockTokenService.sign).toHaveBeenCalledTimes(1);
+  });
+
+  it('REFUSES (409, no token) a MODEL-SLOT mint for a never-deployed app (same shared gate)', async () => {
+    mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
+      ...MODEL_INSTALL,
+      appBlock: { ...MODEL_INSTALL.appBlock, currentVersionDeployedAt: null },
+    });
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: modelBody() }), res);
+    expect(res._status).toBe(409);
+    expect((res._body as { error: string }).error).toMatch(/not yet deployed/i);
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
+  });
+
+  it('ALLOWS (200) a MODEL-SLOT mint for a deployed app', async () => {
+    mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
+      ...MODEL_INSTALL,
+      appBlock: {
+        ...MODEL_INSTALL.appBlock,
+        currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
+      },
+    });
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: modelBody() }), res);
+    expect(res._status).toBe(200);
+    expect(mockTokenService.sign).toHaveBeenCalledTimes(1);
   });
 });

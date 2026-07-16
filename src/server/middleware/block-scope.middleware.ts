@@ -79,8 +79,8 @@ export type BlockScopedNextApiRequest = NextApiRequest & {
 
 export interface WithBlockScopeOpts {
   /**
-   * Low-cardinality LOGICAL name for this endpoint (e.g. 'tip', 'buzz',
-   * 'collections', 'shared_storage_top'). Used as the `endpoint` label on the
+   * Low-cardinality LOGICAL name for this endpoint (e.g. 'tip', 'me',
+   * 'model_detail', 'collections', 'shared_storage_top'). Used as the `endpoint` label on the
    * per-app REST-RED metrics (`civitai_app_block_requests_total` /
    * `civitai_app_block_request_duration_seconds`). Derived from the HANDLER, so
    * ids in the path can never leak into the label. Strictly enumerated — see
@@ -123,14 +123,14 @@ export interface WithBlockScopeOpts {
    * sends `Origin: null`. `null` can never be in the OauthClient.allowedOrigins
    * allowlist, so a direct (non-bridge) fetch's CORS preflight falls through to
    * the handler and 405s — the in-block resource browser (or collections / tip /
-   * buzz / shared-storage rail) then can't load. (First hit by the catalog
-   * selector; the collections, tip, buzz, and shared-storage REST endpoints a
+   * shared-storage rail) then can't load. (First hit by the catalog
+   * selector; the collections, tip, and shared-storage REST endpoints a
    * block direct-fetches hit the SAME wall.)
    *
    * SAFE wherever authorization rests SOLELY on the Bearer block-JWT with NO
    * ambient/cookie credential — which is every block REST endpoint, so this is
    * set on both the PUBLIC catalog endpoints (/api/v1/blocks/{models,images})
-   * and the per-user scoped ones (collections/tip/buzz/shared-storage). Block
+   * and the per-user scoped ones (collections/tip/shared-storage). Block
    * iframes carry no civitai cookie and `Access-Control-Allow-Credentials` is
    * omitted, so `ACAO: null` grants NO tokenless access: the real request still
    * requires a valid short-lived block JWT in `Authorization` (an attacker's own
@@ -740,9 +740,17 @@ export function withBlockScope(
     // status + latency AND the middleware's OWN 403 rejections below (revocation
     // / missing-scope / context-binding). The invalid-token 401 above is
     // intentionally NOT attributed — there are no claims, so no `app_block_id` to
-    // key on. `app_block_id` comes from the VERIFIED JWT (bounded to approved
-    // apps); `endpoint`/`result` are strictly enumerated. Fire-and-forget: a
+    // key on. `endpoint`/`result` are strictly enumerated. Fire-and-forget: a
     // metrics failure must never poison the user-facing response.
+    //
+    // `app_block_id` cardinality: a normal (approved/pre-approval) token carries
+    // a real FK appBlockId bounded to the approved-app set. A DEV token
+    // (`claims.dev === true`, the same discriminator the max-age cap + audit path
+    // use) carries a CALLER-CONSTRUCTED, synthetic, non-resolving appBlockId (see
+    // dev-scoped-mint.service) — an unbounded label vector even though minting is
+    // mod/dev-cohort gated. Bucket ALL dev tokens to the single stable label
+    // 'dev' so that vector is closed while real per-app attribution is preserved.
+    const appBlockIdLabel = claims.dev === true ? 'dev' : claims.appBlockId;
     const metricStart = process.hrtime.bigint();
     let metricRecorded = false;
     const recordBlockMetric = () => {
@@ -750,7 +758,7 @@ export function withBlockScope(
       metricRecorded = true;
       try {
         const { requestsTotal, requestDurationSeconds } = ensureRegisterAppBlockRuntimeMetrics();
-        const labels = { app_block_id: claims.appBlockId, endpoint: opts.endpoint };
+        const labels = { app_block_id: appBlockIdLabel, endpoint: opts.endpoint };
         const elapsedSeconds = Number(process.hrtime.bigint() - metricStart) / 1e9;
         requestDurationSeconds.observe(labels, elapsedSeconds);
         requestsTotal.inc({ ...labels, result: statusToRequestResult(res.statusCode) });

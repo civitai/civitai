@@ -18,6 +18,7 @@ import {
   METRICS_IMAGES_SEARCH_INDEX,
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
+import { imageReviewedSql } from '~/server/common/image-visibility';
 import {
   BlockedReason,
   ImageScanType,
@@ -78,7 +79,6 @@ import {
   tagCache,
   tagIdsForImagesCache,
   thumbnailCache,
-  userImageVideoCountCache,
 } from '~/server/redis/caches';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import {
@@ -2103,7 +2103,7 @@ export const getAllImages = async (
         hasPositivePrompt?: boolean;
         poi?: boolean;
         minor?: boolean;
-        judgeScore?: JudgeScore | null;
+        judgeScore?: JudgeScore | Record<string, number> | null;
         // Visibility-gated linked-Model3D id (or null) for the "Posted to 3D
         // Model" chip on the feed-modal path. See the model3dId override below.
         model3dId?: number | null;
@@ -4876,7 +4876,7 @@ export const getImage = async ({
     AND.push(
       Prisma.sql`(${Prisma.join(
         [
-          Prisma.sql`i."needsReview" IS NULL AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
+          Prisma.sql`i."needsReview" IS NULL AND ${imageReviewedSql()}`,
           withoutPost
             ? null
             : Prisma.sql`
@@ -5770,7 +5770,10 @@ export async function createImage({
     });
   }
 
-  await userImageVideoCountCache.refresh(image.userId);
+  // No count refresh here: a new image is Pending and unpublished, so it cannot
+  // satisfy the count predicate yet, and caching that zero pins it for the TTL.
+  // The count is updated on the transitions that make an image countable —
+  // publish and scan completion.
 
   return result;
 }

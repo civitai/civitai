@@ -1,10 +1,13 @@
 import { AdUnitAdhesive } from '~/components/Ads/AdUnit';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { IconX } from '@tabler/icons-react';
 import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { isMobileDevice } from '~/hooks/useIsMobile';
-// import { useContainerLargerThan } from '~/components/ContainerProvider/useContainerLargerThan';
+
+// Grace period before an unfilled ad is treated as failed and the bar becomes closeable.
+// Long enough that a slow-but-valid ad still registers its impression first.
+const LOAD_FALLBACK_DELAY = 10 * 1000;
 
 function AdhesiveAdContent({
   onClose,
@@ -16,9 +19,19 @@ function AdhesiveAdContent({
   const isMobile = isMobileDevice();
   const tracked = AdUnitAdhesive.useImpressionTracked();
   const { adsBlocked } = useAdsContext();
-  // The blocked placeholder never fires an impression, so gate its close button
-  // on adsBlocked instead of tracking; real ads still wait for tracking (desktop only).
-  const canClose = adsBlocked || (tracked && !isMobile);
+
+  // If no impression registers within the grace period the ad failed to fill; let users close the
+  // bar to reclaim the space (any device — a dead bar is worth freeing on mobile too).
+  const [loadFailed, setLoadFailed] = useState(false);
+  useEffect(() => {
+    if (tracked) return;
+    const timeout = setTimeout(() => setLoadFailed(true), LOAD_FALLBACK_DELAY);
+    return () => clearTimeout(timeout);
+  }, [tracked]);
+
+  // Blocked ads render the support-us placeholder (no impression), so allow closing immediately;
+  // a filled ad waits for its tracked impression (desktop only); a failed ad falls back to loadFailed.
+  const canClose = adsBlocked === true || loadFailed || (tracked && !isMobile);
 
   return (
     // The adhesive unit renders the support-us image itself when blocked; we just

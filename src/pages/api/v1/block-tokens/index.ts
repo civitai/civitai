@@ -681,6 +681,19 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     res.status(403).json({ error: 'Block is not approved' });
     return;
   }
+  // DEPLOY-GATE (generic, all app-blocks): an approved app whose
+  // `<slug>.<APPS_DOMAIN>` origin has NEVER successfully deployed renders a bare
+  // 404 in the iframe. `currentVersionDeployedAt` is set (to now()) ONLY on a
+  // successful apply (build-callback.ts) and left UNCHANGED on build
+  // failure/timeout, so NULL ⇔ never-served → refuse the run-token mint. A
+  // non-null value means a live deployment exists (the app keeps serving the
+  // OLD version while a NEW one re-builds), so a re-deploying app is NOT gated.
+  // The mod-preview / dev-tunnel ephemeral sandbox mint is a separate flow that
+  // returns earlier (status:'ephemeral', never reaches here) and is unaffected.
+  if (block.currentVersionDeployedAt == null) {
+    res.status(409).json({ error: 'Block is not yet deployed' });
+    return;
+  }
 
   // PAGE-ONLY LAUNCH GATE (belt at the mint — defense-in-depth over the install
   // path). The public (non-moderator) audience may only mint a token for a

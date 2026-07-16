@@ -758,7 +758,7 @@ export const userImageVideoCountSfwCache = createUserContentCountCache<UserImage
 );
 export const userImageVideoCountPublicCache = createUserContentCountCache<UserImageVideoCount>(
   'imageVideoCount:public',
-  async (userIds) => dbRead.$queryRaw`
+  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
     SELECT
       "userId" as id,
       COALESCE(SUM(IIF("type" = 'image', 1, 0)), 0)::INT as "imageCount",
@@ -777,6 +777,36 @@ export const userImageVideoCountPublicCache = createUserContentCountCache<UserIm
     GROUP BY "userId"
   `
 );
+
+const userImageVideoCountVariants = [
+  userImageVideoCountCache,
+  userImageVideoCountSfwCache,
+  userImageVideoCountPublicCache,
+];
+
+/**
+ * The image/video count is cached once per browsing-level variant, and all three
+ * move together whenever a user's countable images change.
+ *
+ * `refresh` re-queries eagerly, so it is only safe once the image already
+ * satisfies the count predicate (Scanned, on a post that is published and not
+ * future-dated). Calling it mid-transition caches the pre-transition count for
+ * the full TTL — prefer `bust` on any path that can fire before the image
+ * qualifies.
+ */
+export const userImageVideoCountCaches = {
+  refresh: async (userIds: number | number[]) => {
+    await Promise.all(userImageVideoCountVariants.map((cache) => cache.refresh(userIds)));
+  },
+  // allSettled, not all: unlike refresh(), the underlying bust has no internal
+  // catch, and its cluster read rejects on a Redis stall. This runs on the
+  // scan-result webhook for every image, where a throw would fail the callback
+  // and trigger scanner redelivery against an already-committed row. A dropped
+  // bust only costs staleness until the TTL expires.
+  bust: async (userIds: number | number[]) => {
+    await Promise.allSettled(userImageVideoCountVariants.map((cache) => cache.bust(userIds)));
+  },
+};
 
 type UserArticleCount = { id: number; articleCount: number };
 export const userArticleCountCache = createUserContentCountCache<UserArticleCount>(

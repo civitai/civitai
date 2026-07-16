@@ -52,6 +52,34 @@ type GetJsonCompletionInput = {
   retries?: number;
 };
 
+export type TokenUsage = { promptTokens: number; completionTokens: number };
+
+// The OpenRouter SDK's parsed `ChatResponse.usage` is camelCase (its zod schema
+// remaps the wire format), but the raw OpenRouter/OpenAI-compatible REST API
+// (and this codebase's cost-tracking contract) use snake_case. Accept both so
+// this stays correct whether it's fed an SDK response or a raw API payload.
+type UsageLike = {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  promptTokens?: number;
+  completionTokens?: number;
+};
+
+export function extractUsage(resp: { usage?: UsageLike | null }): TokenUsage {
+  const usage = resp?.usage;
+  return {
+    promptTokens: usage?.prompt_tokens ?? usage?.promptTokens ?? 0,
+    completionTokens: usage?.completion_tokens ?? usage?.completionTokens ?? 0,
+  };
+}
+
+function sumUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
+  return {
+    promptTokens: a.promptTokens + b.promptTokens,
+    completionTokens: a.completionTokens + b.completionTokens,
+  };
+}
+
 export type RunAgentLoopInput = {
   model?: AIModel;
   system: string;
@@ -105,6 +133,12 @@ function toSDKMessage(msg: SimpleMessage): Message {
 
 type CustomOpenRouter = OpenRouter & {
   getJsonCompletion: <T>(params: GetJsonCompletionInput) => Promise<T>;
+  // Opt-in sibling of `getJsonCompletion` for callers that need to track spend
+  // (e.g. daily-challenge cost accounting) without changing the return shape
+  // every existing `getJsonCompletion<T>()` caller depends on.
+  getJsonCompletionWithUsage: <T>(
+    params: GetJsonCompletionInput
+  ) => Promise<{ content: T; usage: TokenUsage }>;
   runAgentLoop: (params: RunAgentLoopInput) => Promise<AgentLoopResult>;
 };
 
@@ -120,13 +154,13 @@ function createOpenRouterClient() {
 
   const customClient = client as CustomOpenRouter;
 
-  customClient.getJsonCompletion = async <T>({
+  customClient.getJsonCompletionWithUsage = async <T>({
     model = AI_MODELS.GPT_5_NANO,
     messages,
     temperature = 1,
     maxTokens = 2048,
     retries = 0,
-  }: GetJsonCompletionInput): Promise<T> => {
+  }: GetJsonCompletionInput): Promise<{ content: T; usage: TokenUsage }> => {
     const sdkMessages = messages.map(toSDKMessage);
 
     const response = await client.chat.send({
@@ -139,47 +173,55 @@ function createOpenRouterClient() {
         allowFallbacks: true,
       },
     });
+    const usage = extractUsage(response);
 
     const content = response.choices?.[0]?.message?.content;
     if (!content || typeof content !== 'string') {
       if (retries > 0) {
-        return customClient.getJsonCompletion<T>({
+        const retried = await customClient.getJsonCompletionWithUsage<T>({
           model,
           messages,
           temperature,
           maxTokens,
           retries: retries - 1,
         });
+        return { content: retried.content, usage: sumUsage(usage, retried.usage) };
       }
       throw new Error('No content in response');
     }
 
     try {
       // Try to parse as JSON directly
-      return JSON.parse(content) as T;
+      return { content: JSON.parse(content) as T, usage };
     } catch {
       // Try to extract JSON from markdown code block
       const jsonBlockMatch = content.match(/```json\n(.*?)\n```/s)?.[1];
       if (jsonBlockMatch) {
         try {
-          return JSON.parse(jsonBlockMatch) as T;
+          return { content: JSON.parse(jsonBlockMatch) as T, usage };
         } catch {
           // Fall through to retry/error
         }
       }
 
       if (retries > 0) {
-        return customClient.getJsonCompletion<T>({
+        const retried = await customClient.getJsonCompletionWithUsage<T>({
           model,
           messages,
           temperature,
           maxTokens,
           retries: retries - 1,
         });
+        return { content: retried.content, usage: sumUsage(usage, retried.usage) };
       }
       console.error('Failed to parse JSON from content:', content);
       throw new Error('Failed to parse JSON from completion');
     }
+  };
+
+  customClient.getJsonCompletion = async <T>(params: GetJsonCompletionInput): Promise<T> => {
+    const { content } = await customClient.getJsonCompletionWithUsage<T>(params);
+    return content;
   };
 
   customClient.runAgentLoop = async ({

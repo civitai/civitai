@@ -2,31 +2,33 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 /**
- * Decision 1 — pipeline flag gate for POST /api/internal/blocks/workflow-completed.
+ * Decision 1 — pipeline flag for POST /api/internal/blocks/workflow-completed.
  *
- * The orchestrator → civitai completion callback is gated by the dedicated
- * global `app-blocks-pipeline-enabled` flag (NOT the mod-segmented user flag).
- * These tests pin:
- *   - pipeline flag OFF / absent → 503 "App Blocks not enabled", install lookup
- *     + dedup never run (kill switch, fail-safe to dark);
- *   - pipeline flag ON → the handler proceeds PAST the gate (reaches the install
- *     lookup / dedup / 200 path);
- *   - the gate reads the PIPELINE key, never the user-facing `app-blocks-enabled`.
+ * G6 CHANGE: the pipeline flag `app-blocks-pipeline-enabled` NO LONGER gates the
+ * whole endpoint. The G6 queue read-model STATUS persistence is UN-GATED (it is
+ * not billing) — it runs regardless of the flag, keeping the JOB_TOKEN guard +
+ * 7-day idempotency. The flag now gates only the FUTURE Phase-3 billing/ClickHouse
+ * path (currently a no-op). These tests pin:
+ *   - pipeline flag OFF → still 200 + status persisted (NOT 503); install lookup
+ *     + dedup + queue update all run;
+ *   - pipeline flag ON → also 200 (billing scaffold is a no-op today);
+ *   - the flag read is the PIPELINE key, never the user-facing `app-blocks-enabled`.
  *
  * `isFlipt` is mocked PER-KEY (only `app-blocks-pipeline-enabled` reflects the
  * toggle; `app-blocks-enabled` is hard-false) so a regression that repointed the
- * gate back to the user flag would 503 even with the pipeline "on".
+ * billing gate at the user flag would be caught.
  */
 
 const JOB_TOKEN = 'test-job-token';
 const BLOCK_INSTANCE_ID = 'bki_0123456789ABCDEFGHJKMNPQRS';
 const WORKFLOW_ID = 'wf_test_123';
 
-const { mockFlag, mockFindUnique, mockIncrBy, mockExpire } = vi.hoisted(() => ({
+const { mockFlag, mockFindUnique, mockIncrBy, mockExpire, mockExecuteRaw } = vi.hoisted(() => ({
   mockFlag: { enabled: true },
   mockFindUnique: vi.fn(),
   mockIncrBy: vi.fn(),
   mockExpire: vi.fn(),
+  mockExecuteRaw: vi.fn(),
 }));
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
@@ -47,6 +49,9 @@ vi.mock('~/server/flipt/client', () => ({
 }));
 vi.mock('~/server/db/client', () => ({
   dbRead: { blockUserSubscription: { findUnique: mockFindUnique } },
+  // G6: the handler now persists the queue read-model status via
+  // updateBlockWorkflowStatus (dbWrite.$executeRaw). UN-gated by the pipeline flag.
+  dbWrite: { $executeRaw: (...a: unknown[]) => mockExecuteRaw(...a) },
 }));
 vi.mock('~/server/redis/client', () => ({
   redis: { incrBy: mockIncrBy, expire: mockExpire },
@@ -102,34 +107,39 @@ describe('workflow-completed webhook — pipeline flag gate (Decision 1)', () =>
     });
     mockIncrBy.mockResolvedValue(1);
     mockExpire.mockResolvedValue(1);
+    mockExecuteRaw.mockResolvedValue(1);
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it('503s when the pipeline flag is off — install lookup + dedup never run (kill switch)', async () => {
+  it('G6: still 200 + persists status when the pipeline (billing) flag is OFF (status is un-gated)', async () => {
     mockFlag.enabled = false;
     const res = makeRes();
     await invoke(makeReq(), res);
-    expect(res._status).toBe(503);
-    expect(res._body).toMatchObject({ error: 'Apps are not enabled' });
-    expect(mockFindUnique).not.toHaveBeenCalled();
-    expect(mockIncrBy).not.toHaveBeenCalled();
+    // NO LONGER 503 — the queue read-model status update is not billing.
+    expect(res._status).toBe(200);
+    expect(res._body).toMatchObject({ ok: true });
+    // Install lookup + dedup + the queue status UPDATE all ran despite the flag.
+    expect(mockFindUnique).toHaveBeenCalledTimes(1);
+    expect(mockIncrBy).toHaveBeenCalledTimes(1);
+    expect(mockExecuteRaw).toHaveBeenCalledTimes(1);
   });
 
-  it('proceeds PAST the gate when the pipeline flag is on (reaches the install/dedup path → 200)', async () => {
+  it('proceeds to 200 when the pipeline flag is on (billing scaffold is a no-op today)', async () => {
     mockFlag.enabled = true;
     const res = makeRes();
     await invoke(makeReq(), res);
     expect(res._status).toBe(200);
     expect(res._body).toMatchObject({ ok: true });
-    // It got past the gate: install lookup + dedup ran.
+    // install lookup + dedup + queue update ran.
     expect(mockFindUnique).toHaveBeenCalledTimes(1);
     expect(mockIncrBy).toHaveBeenCalledTimes(1);
+    expect(mockExecuteRaw).toHaveBeenCalledTimes(1);
   });
 
-  it('gates on the PIPELINE flag key, never the user-facing app-blocks-enabled (Decision 1)', async () => {
+  it('reads the PIPELINE flag key for the billing gate, never the user-facing app-blocks-enabled', async () => {
     mockFlag.enabled = true;
     const res = makeRes();
     await invoke(makeReq(), res);

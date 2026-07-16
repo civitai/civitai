@@ -36,7 +36,6 @@ import client, { type Counter, type Histogram, type Registry } from 'prom-client
  */
 export type AppBlockEndpoint =
   | 'tip'
-  | 'buzz'
   | 'images'
   | 'models'
   | 'model_detail'
@@ -45,7 +44,14 @@ export type AppBlockEndpoint =
   | 'collection'
   | 'collection_follow'
   | 'shared_storage_top'
-  | 'shared_storage_increment';
+  | 'shared_storage_increment'
+  | 'generation_resources';
+// NOTE: buzz self-reads (balance/transactions/accounts/daily-compensation) are
+// NOT here — they are host-mediated tRPC MUTATIONS (blocks.getMyBuzz*), not
+// withBlockScope REST routes, so they are not metered via this per-endpoint
+// label (mutations carry their own tRPC metrics). The former 'buzz' /
+// 'buzz_transactions' / 'buzz_daily_compensation' / 'buzz_accounts' REST
+// entries were retired with those endpoints (superseded by the bridges).
 
 export type AppBlockRequestResult = 'success' | 'client_error' | 'server_error' | 'forbidden';
 
@@ -60,12 +66,37 @@ const KNOWN_SLOT_IDS = new Set([
 ]);
 
 /**
+ * Known render-failure discriminators the hosts emit:
+ *   - timeout        — iframe never reached BLOCK_READY within the readiness window
+ *   - fatal          — the block posted BLOCK_ERROR{fatal:true}
+ *   - no_token       — the block token never resolved
+ *   - error          — a hard token-mint failure (PageBlockHost only)
+ *   - error_boundary — the host React tree threw (BlockErrorBoundary caught it)
+ * Anything else is bucketed to 'other'. A successful render uses 'none'.
+ */
+const KNOWN_ERROR_CLASSES = new Set(['timeout', 'fatal', 'no_token', 'error', 'error_boundary']);
+
+/**
  * Clamp a client-supplied slotId to the enumerated slot set (unknown → 'other')
  * so the `slot_id` prom label can never explode even though the beacon body is
  * client-controlled.
  */
 export function normalizeSlotId(slotId: string): string {
   return KNOWN_SLOT_IDS.has(slotId) ? slotId : 'other';
+}
+
+/**
+ * Resolve the strictly-bounded `error_class` render label. A successful render
+ * (`result==='ok'`) is always 'none'; on error the client-sent errorClass is
+ * kept only if it's in the known set, else 'other'. A raw/unbounded errorClass
+ * can never become the label (the beacon body is client-controlled).
+ */
+export function normalizeErrorClass(
+  result: AppBlockRenderResult,
+  errorClass: string | undefined
+): string {
+  if (result === 'ok') return 'none';
+  return errorClass && KNOWN_ERROR_CLASSES.has(errorClass) ? errorClass : 'other';
 }
 
 /**
@@ -139,11 +170,18 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     // default buckets are fine for this REST surface
   );
 
+  // Cardinality: renders_total ≈ (A+1) × 5 slot_id × 7 error_class ≈ 1785 at
+  // A=50, where A = approved apps (+1 for the 'other' bucket), slot_id = 4 known
+  // + 'other', and error_class = 'none' + 5 known + 'other' (7). `result` is NOT
+  // an independent multiplier — it's coupled to error_class ('none' pairs only
+  // with result=ok; the 5-known+'other' pair only with result=error), so the 7
+  // error_class values already encode the result split. Every factor is strictly
+  // bounded, so the series count stays small.
   const rendersTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_renders_total',
-    'App Block host render/impression outcomes by app, slot, and result (ok|error)',
-    ['app_block_id', 'slot_id', 'result']
+    'App Block host render/impression outcomes by app, slot, result (ok|error), and error_class (none when ok; timeout|fatal|no_token|error|error_boundary|other on error)',
+    ['app_block_id', 'slot_id', 'result', 'error_class']
   );
 
   return { requestsTotal, requestDurationSeconds, rendersTotal };

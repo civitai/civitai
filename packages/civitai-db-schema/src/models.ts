@@ -194,6 +194,8 @@ export type PoolTrigger = "Entry" | "User";
 
 export type ChallengeReviewCostType = "None" | "PerEntry" | "Flat";
 
+export type ChallengeIngestionStatus = "Pending" | "Scanned" | "Blocked" | "Error";
+
 export type EntityMetric_EntityType_Type = "Image";
 
 export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz";
@@ -624,6 +626,7 @@ export interface User {
   blockAttributionPayouts?: BlockAttributionPayout[];
   blockSpendAttributionsAsSpender?: BlockSpendAttribution[];
   blockSpendAttributionsAsAppOwner?: BlockSpendAttribution[];
+  blockSpendAttributionsAsContentAuthor?: BlockSpendAttribution[];
   blockSubscriptionAttributionsAsPurchaser?: BlockSubscriptionAttribution[];
   blockSubscriptionAttributionsAsAppOwner?: BlockSubscriptionAttribution[];
   publishRequestsSubmitted?: AppBlockPublishRequest[];
@@ -944,14 +947,16 @@ export interface ModelVersion {
   ImageResourceNew?: ImageResourceNew[];
   coveredCheckpoints?: CoveredCheckpoint[];
   wildcardSet?: WildcardSet | null;
-  baseModelLicensingFees?: BaseModelLicensingFee[];
+  licensingRoot?: LicensingRoot | null;
 }
 
-export interface BaseModelLicensingFee {
+export interface LicensingRoot {
+  id: number;
   baseModel: string;
   modelType: ModelType;
   modelVersionId: number;
   modelVersion?: ModelVersion;
+  isDefault: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -1140,6 +1145,7 @@ export interface Report {
   reportedUser?: UserReport | null;
   collection?: CollectionReport | null;
   bounty?: BountyReport | null;
+  challenge?: ChallengeReport | null;
   bountyEntry?: BountyEntryReport | null;
   chat?: ChatReport | null;
   comicProject?: ComicProjectReport | null;
@@ -2104,6 +2110,9 @@ export interface BlockSpendAttribution {
   appOwnerShareCents: number;
   appOwnerUserId: number;
   appOwner?: User;
+  contentAuthorUserId: number | null;
+  contentAuthor?: User | null;
+  sharedContentKey: string | null;
   status: string;
   voidedReason: string | null;
   attributedAt: Date;
@@ -3595,11 +3604,13 @@ export interface Challenge {
   modelVersionIds: number[];
   allowedNsfwLevel: number;
   judgingPrompt: string | null;
+  judgingCategories: JsonValue | null;
   reviewPercentage: number;
   maxReviews: number | null;
   collectionId: number | null;
   collection?: Collection | null;
   maxEntriesPerUser: number;
+  maxParticipants: number | null;
   prizes: JsonValue;
   entryPrize: JsonValue | null;
   entryPrizeRequirement: number;
@@ -3614,19 +3625,31 @@ export interface Challenge {
   operationSpent: number;
   reviewCostType: ChallengeReviewCostType;
   reviewCost: number;
-  createdById: number;
-  createdBy?: User;
+  entryFee: number;
+  buzzType: string;
+  createdById: number | null;
+  createdBy?: User | null;
   source: ChallengeSource;
   judgeId: number | null;
   judge?: ChallengeJudge | null;
   status: ChallengeStatus;
+  ingestion: ChallengeIngestionStatus;
+  scannedAt: Date | null;
   metadata: JsonValue | null;
   createdAt: Date;
   updatedAt: Date;
   winners?: ChallengeWinner[];
   threads?: Thread[];
+  reports?: ChallengeReport[];
   eventId: number | null;
   event?: ChallengeEvent | null;
+}
+
+export interface ChallengeReport {
+  challengeId: number;
+  challenge?: Challenge;
+  reportId: number;
+  report?: Report;
 }
 
 export interface ChallengeJudge {
@@ -3643,9 +3666,23 @@ export interface ChallengeJudge {
   reviewTemplate: string | null;
   winnerSelectionPrompt: string | null;
   active: boolean;
+  userSelectable: boolean;
   createdAt: Date;
   updatedAt: Date;
   challenges?: Challenge[];
+}
+
+export interface ChallengeCategory {
+  key: string;
+  label: string;
+  group: string;
+  criteria: string;
+  rubric: string | null;
+  rubricNsfw: string | null;
+  sortOrder: number;
+  active: boolean;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface ChallengeWinner {

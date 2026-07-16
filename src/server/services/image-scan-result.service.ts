@@ -39,7 +39,11 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { createImageTagsForReview } from '~/server/services/image-review.service';
-import { tagIdsForImagesCache, tagCacheByName } from '~/server/redis/caches';
+import {
+  tagIdsForImagesCache,
+  tagCacheByName,
+  userImageVideoCountCaches,
+} from '~/server/redis/caches';
 import type { MediaMetadata } from '~/server/schema/media.schema';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
@@ -1012,6 +1016,10 @@ async function applyIngestionSideEffects({
 
   // handle scanned image updates
   if (outcome.ingestion === ImageIngestionStatus.Scanned) {
+    // Scanning is what makes an already-published image countable. Bust rather
+    // than refresh: this fires once per image, so a re-query here would be N
+    // identical counts for an N-image post.
+    await userImageVideoCountCaches.bust(image.userId);
     await tagIdsForImagesCache.refresh(image.id);
     if (
       typeof image.metadata === 'object' &&

@@ -572,6 +572,7 @@ model User {
   blockAttributionPayouts          BlockAttributionPayout[]  @relation("BlockAttributionPayoutOwner")
   blockSpendAttributionsAsSpender  BlockSpendAttribution[]   @relation("BlockSpendAttributionSpender")
   blockSpendAttributionsAsAppOwner BlockSpendAttribution[]   @relation("BlockSpendAttributionAppOwner")
+  blockSpendAttributionsAsContentAuthor BlockSpendAttribution[] @relation("BlockSpendAttributionContentAuthor")
   blockSubscriptionAttributionsAsPurchaser BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionPurchaser")
   blockSubscriptionAttributionsAsAppOwner  BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionAppOwner")
   publishRequestsSubmitted   AppBlockPublishRequest[]        @relation("PublishRequestSubmitter")
@@ -1078,22 +1079,27 @@ model ModelVersion {
   ImageResourceNew        ImageResourceNew[]
   coveredCheckpoints      CoveredCheckpoint[]
   wildcardSet             WildcardSet?
-  baseModelLicensingFees  BaseModelLicensingFee[]
+  licensingRoot           LicensingRoot?
 
   @@index([modelId], type: Hash)
   @@index([licensingSourceVersionId])
 }
 
-model BaseModelLicensingFee {
+// A version registered as a chargeable licensing root for its (baseModel,
+// modelType). Membership = a row exists; `isDefault` marks the one root a
+// derivative pre-selects (enforced one-per-scope by a partial unique index).
+// Replaces the ModelVersion.LicensingRoot flag + BaseModelLicensingFee pointer.
+model LicensingRoot {
+  id             Int          @id @default(autoincrement())
   baseModel      String
   modelType      ModelType
-  modelVersionId Int
+  modelVersionId Int          @unique
   modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  isDefault      Boolean      @default(false)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
-  @@id([baseModel, modelType])
-  @@index([modelVersionId])
+  @@index([baseModel, modelType])
 }
 
 enum LicensingFeeType {
@@ -1380,6 +1386,7 @@ model Report {
   reportedUser   UserReport?
   collection     CollectionReport?
   bounty         BountyReport?
+  challenge      ChallengeReport?
   bountyEntry    BountyEntryReport?
   chat           ChatReport?
   comicProject   ComicProjectReport?
@@ -3044,6 +3051,20 @@ model BlockSpendAttribution {
   appOwnerUserId     Int      @map("app_owner_user_id")
   appOwner           User     @relation("BlockSpendAttributionAppOwner", fields: [appOwnerUserId], references: [id], onDelete: Restrict)
 
+  /// The USER who published the shared content this generation ran on behalf
+  /// of (the "content author") — the durable BASIS for a FUTURE creator
+  /// payout. Resolved SERVER-SIDE from `sharedContentKey` against the calling
+  /// app's own `app_<slug>.shared_kv`, never client-supplied. NULL when no
+  /// key was supplied, the row is missing/hidden, or the author is the
+  /// spender (self) or the app owner. FULLY GENERIC — any app that publishes
+  /// cross-user shared content can populate it — not tied to any one app kind.
+  /// TRACK-ONLY today: nothing pays out on it yet.
+  contentAuthorUserId Int?    @map("content_author_user_id")
+  contentAuthor       User?   @relation("BlockSpendAttributionContentAuthor", fields: [contentAuthorUserId], references: [id], onDelete: SetNull)
+  /// The opaque shared-storage `key` the app supplied for this generation
+  /// (bounded, app-owned). NULL when the app supplied none.
+  sharedContentKey    String? @map("shared_content_key")
+
   status             String   @default("pending")
   /// 'self_spend' / 'internal_owner' / 'manual_review'. Spend has no
   /// refund path, so this is never 'refund'/'chargeback'.
@@ -3057,6 +3078,7 @@ model BlockSpendAttribution {
   @@unique([workflowId, appBlockId], map: "block_spend_attribution_workflow_app_uniq")
   @@index([appOwnerUserId, attributedAt(sort: Desc)], map: "bsa_publisher_dashboard_idx")
   @@index([appBlockId, attributedAt(sort: Desc)], map: "bsa_app_block_dashboard_idx")
+  @@index([contentAuthorUserId, attributedAt(sort: Desc)], map: "bsa_content_author_idx")
   @@map("block_spend_attribution")
 }
 
@@ -5198,6 +5220,13 @@ enum ChallengeReviewCostType {
   Flat     // Single flat rate for all entries
 }
 
+enum ChallengeIngestionStatus {
+  Pending // Awaiting text+cover scan; hidden from public feeds
+  Scanned // Passed scan, nsfwLevel assigned, publicly visible
+  Blocked // Hard-blocked (hate/CSAM/etc.); never shown
+  Error   // Scan failed; needs retry
+}
+
 model Challenge {
   id Int @id @default(autoincrement())
 
@@ -5222,14 +5251,16 @@ model Challenge {
   allowedNsfwLevel Int @default(1) // Bitwise NSFW levels allowed (1=PG, 2=PG13, 4=R, etc.)
 
   // Judging Configuration
-  judgingPrompt    String? @db.Text // Custom AI judging prompt
-  reviewPercentage Int     @default(100) // % of entries to score
-  maxReviews       Int? // Hard cap on reviews (cost control)
+  judgingPrompt     String? @db.Text // Custom AI judging prompt (mod/system only)
+  judgingCategories Json? // User challenges: [{name, criteria}]; drives dynamic score schema + public display
+  reviewPercentage  Int     @default(100) // % of entries to score
+  maxReviews        Int? // Hard cap on reviews (cost control)
 
   // Entries - stored in a Contest Collection (auto-created if not provided)
   collectionId      Int? // Optional - auto-created on challenge creation
   collection        Collection? @relation(fields: [collectionId], references: [id], onDelete: SetNull)
-  maxEntriesPerUser Int         @default(20)
+  maxEntriesPerUser Int         @default(20) // Max submissions per participant
+  maxParticipants   Int? // Max distinct participants (null = unlimited); bounds entry-fee judging cost
 
   // Prizes & Costs
   prizes               Json @default("[]") // [{buzz: 5000, points: 150}, ...]
@@ -5246,10 +5277,12 @@ model Challenge {
   operationSpent  Int  @default(0) // Actual spent (use atomic increment)
   reviewCostType  ChallengeReviewCostType @default(None) // Type of paid review pricing
   reviewCost      Int  @default(0) // Buzz cost (per entry or flat, depending on reviewCostType)
+  entryFee        Int  @default(0) // Buzz charged per entry to participate (0 = free). Net to pool = entryFee - platform cut
+  buzzType        String @default("yellow")
 
   // Ownership & Source
-  createdById Int
-  createdBy   User            @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  createdById Int?
+  createdBy   User?           @relation(fields: [createdById], references: [id], onDelete: SetNull)
   source      ChallengeSource @default(System)
 
   // Judge
@@ -5259,6 +5292,12 @@ model Challenge {
   // Lifecycle
   status ChallengeStatus @default(Scheduled)
 
+  // Moderation / scan gating (user challenges hidden until Scanned). Default Scanned so
+  // existing + system/mod challenges stay visible without a backfill blackout. Named `ingestion`
+  // to match the other scanned entities (Image.ingestion, Article.ingestion).
+  ingestion ChallengeIngestionStatus @default(Scanned)
+  scannedAt DateTime?
+
   // Metadata
   metadata  Json?
   createdAt DateTime @default(now())
@@ -5267,6 +5306,7 @@ model Challenge {
   // Relations
   winners ChallengeWinner[]
   threads Thread[]
+  reports ChallengeReport[]
 
   // Event grouping
   eventId Int?
@@ -5276,9 +5316,20 @@ model Challenge {
   @@index([status, endsAt]) // "Ending Soon" feed
   @@index([status, startsAt]) // "Just Started" feed
   @@index([status, visibleAt]) // "Upcoming" feed
+  @@index([status, ingestion]) // public feed excludes non-Scanned challenges
   @@index([createdById, status]) // User's challenges by status
   @@index([judgeId])
   @@index([eventId])
+}
+
+model ChallengeReport {
+  challengeId Int
+  challenge   Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  reportId    Int       @unique
+  report      Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, challengeId])
+  @@index([challengeId], type: Hash)
 }
 
 model ChallengeJudge {
@@ -5296,6 +5347,7 @@ model ChallengeJudge {
   reviewTemplate        String? @db.Text // JSON message template (agent-workbench format)
   winnerSelectionPrompt String? @db.Text
   active                Boolean @default(true)
+  userSelectable        Boolean @default(false) // offer this judge to users in the create form
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -5303,6 +5355,25 @@ model ChallengeJudge {
   challenges Challenge[]
 
   @@index([userId])
+  @@index([active])
+}
+
+// Judging-category library for challenges. label/group/criteria feed the client picker;
+// rubric/rubricNsfw are server-only LLM prompt content, managed directly in the DB per
+// environment (same handling as ChallengeJudge prompts).
+model ChallengeCategory {
+  key        String  @id @db.VarChar(50)
+  label      String  @db.VarChar(100)
+  group      String  @db.VarChar(100)
+  criteria   String  @db.Text
+  rubric     String? @db.Text
+  rubricNsfw String? @db.Text
+  sortOrder  Int     @default(0)
+  active     Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@index([active])
 }
 

@@ -74,7 +74,17 @@ vi.mock('~/server/redis/client', () => {
   const make = (): any => new Proxy(() => 'k', { get: () => make() });
   const keyProxy = make();
   return {
-    redis: { packed: { get: vi.fn(), set: vi.fn() } },
+    // getImagesFromFeedSearch → enforceBlockedBrowsingTags → getBlockedBrowsingTags
+    // reads the blocked-browsing-tags cache via TOP-LEVEL `redis.get` (system-cache.ts),
+    // not `redis.packed.get`. Stub top-level get/set too. `get` MUST resolve a cached
+    // JSON array (not null) so the getter returns from cache and does NOT fall through
+    // to the unmocked `dbRead.tag.findMany` (dbRead is mocked as {} below) — which would
+    // throw before the code reaches the ClickHouse fail-soft path these tests assert.
+    redis: {
+      get: vi.fn().mockResolvedValue('[]'),
+      set: vi.fn().mockResolvedValue(undefined),
+      packed: { get: vi.fn(), set: vi.fn() },
+    },
     sysRedis: {},
     REDIS_KEYS: keyProxy,
     REDIS_SYS_KEYS: keyProxy,

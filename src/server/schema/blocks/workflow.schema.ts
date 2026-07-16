@@ -11,9 +11,16 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 // surface; it never widens the allowed set.
 const blockAccountTypeSchema = z.enum(buzzSpendTypes as [BuzzSpendType, ...BuzzSpendType[]]);
 
-// v1: textToImage is the only block-supported kind. Adding a new kind here
-// must also (a) extend the discriminator in blocks.router workflow procedures,
-// (b) be exposed by @civitai/app-sdk's useBuzzWorkflow contract.
+// `textToImage` is the block-supported kind. It now covers the whole IMAGE
+// workflow class (App Blocks IMAGE bridge): a bare body maps to a `txt2img`
+// graph workflow, and a body carrying a bounded `sourceImage` maps to an img2img
+// workflow whose variant is chosen from the checkpoint's ecosystem — `img2img`
+// (SD-family) or `img2img:edit` (edit-capable: OpenAI/Qwen/Flux Kontext/…). See
+// buildImageWorkflowInput / BLOCK_IMAGE_WORKFLOW_TYPES in
+// workflow.service. A later phase adds a NON-image media class (video/audio/3D)
+// as a NEW discriminated-union `kind` here, which must also (a) extend the
+// discriminator in blocks.router workflow procedures, (b) be exposed by
+// @civitai/app-sdk's useBuzzWorkflow contract.
 //
 // Caps are intentionally tighter than the platform-wide generateImageSchema —
 // blocks run in untrusted iframes and the token issuer caps per-call buzz at
@@ -23,11 +30,19 @@ const blockAccountTypeSchema = z.enum(buzzSpendTypes as [BuzzSpendType, ...BuzzS
 
 const PROMPT_MAX = 1500;
 const NEG_PROMPT_MAX = 1500;
-const DIM_MIN = 64;
-const DIM_MAX = 2048;
+// Exported so the client-side generationSource upload modal
+// (BlockGenerationSourceUploadModal) can downscale a chosen image to fit the
+// SAME bounds the sourceImage schema enforces BEFORE upload — a single source of
+// truth, so the client resize target can never drift from the server clamp.
+export const DIM_MIN = 64;
+export const DIM_MAX = 2048;
 const STEPS_MAX = 50;
 const QUANTITY_MAX = 4;
 const CLIP_SKIP_MAX = 12;
+// Bound for the opaque published-content-author key (`sharedContentKey`).
+// Matches the shared-storage key shape (apps-shared.router `sharedKeyInput`
+// is ≤64) so a server-ULID row key or an app counter key both fit.
+const SHARED_CONTENT_KEY_MAX = 64;
 
 // Page-LoRA caps (App Blocks Page-LoRA, Increment 1). Intentionally tighter
 // than the platform per-tier resource cap — these come from an untrusted
@@ -50,6 +65,44 @@ const blockAdditionalResourceSchema = z.object({
   strength: z.number().min(LORA_STRENGTH_MIN).max(LORA_STRENGTH_MAX).default(1),
 });
 
+// ── img2img source image (App Blocks IMAGE bridge, Phase-2a) ─────────────────
+// The block body is UNTRUSTED iframe input, so an init/source image MUST NOT be
+// an arbitrary remote URL the generator would fetch (SSRF / arbitrary-fetch).
+// It is bounded to a Civitai-controlled host. An uploaded image resolves to an
+// `https://orchestration…civitai.com` URL, so this same bound covers the
+// "uploaded image" case WITHOUT widening to attacker-controlled origins.
+//
+// This is validated by parsed URL HOSTNAME (not a substring match), which is
+// intentionally tighter than the platform's server `sourceImageSchema`
+// (`.includes('image.civitai.com')`) — a substring check would accept
+// `https://evil.example/?x=image.civitai.com`; a hostname check rejects it and
+// also rejects non-https, userinfo, and host-confusion tricks. Kept LOCAL
+// (rather than importing the server orchestrator schema) so this module stays
+// client-safe — it is `import type`'d by a client component (failureSnapshot).
+const CIVITAI_IMAGE_HOSTS = ['civitai.com', 'civitai.red', 'civitai.green'] as const;
+function isCivitaiHostedImageUrl(raw: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'https:') return false;
+  const host = parsed.hostname.toLowerCase();
+  return CIVITAI_IMAGE_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
+}
+
+const blockSourceImageSchema = z.object({
+  url: z
+    .string()
+    .max(2048)
+    .refine(isCivitaiHostedImageUrl, 'source image must be a Civitai-hosted https image URL'),
+  // Dimension hints for the graph's denoise/aspect derivation. Bounded to the
+  // same block caps as params so an iframe can't send absurd dimensions.
+  width: z.coerce.number().int().min(DIM_MIN).max(DIM_MAX),
+  height: z.coerce.number().int().min(DIM_MIN).max(DIM_MAX),
+});
+
 const blockTextToImageBodySchema = z.object({
   kind: z.literal('textToImage'),
   modelId: z.number().int().positive(),
@@ -59,6 +112,22 @@ const blockTextToImageBodySchema = z.object({
   // base-model-family-matches against the checkpoint before any spend. Capped
   // at MAX_ADDITIONAL_RESOURCES for the iframe posture above.
   additionalResources: z.array(blockAdditionalResourceSchema).max(MAX_ADDITIONAL_RESOURCES).optional(),
+  // Optional img2img init/source image (App Blocks IMAGE bridge).
+  // When present, the block bridge emits an img2img graph workflow whose VARIANT
+  // is chosen from the checkpoint's ecosystem (buildImageWorkflowInput /
+  // resolveBlockImageWorkflowType): SD-family ecosystems → `img2img` ("Image
+  // Variations"); edit-capable ecosystems (OpenAI/Qwen/Flux Kontext/… —
+  // EDIT_IMG_IDS) → `img2img:edit`; when absent, behavior is byte-identical to
+  // before (txt2img). Bounded to a Civitai-hosted image (see
+  // blockSourceImageSchema) — never an arbitrary remote URL.
+  //
+  // Two scope limits are enforced downstream (NOT at the wire schema, which only
+  // bounds shape): (1) blocks.router rejects `sourceImage` on a MODEL-bound token
+  // — img2img is PAGE-only, mirroring `additionalResources`; (2)
+  // buildImageWorkflowInput rejects fail-closed a checkpoint whose ecosystem
+  // supports NEITHER img2img variant (deterministically via `isWorkflowAvailable`,
+  // never relying on the graph's safeParse auto-correction).
+  sourceImage: blockSourceImageSchema.optional(),
   // Optional viewer-picked buzz account to spend (money page blocks). Absent →
   // unchanged Auto behavior (domain-allowed currencies drained blue-first). When
   // present, blocks.router moves it to the FRONT of the domain-allowed currency
@@ -66,6 +135,19 @@ const blockTextToImageBodySchema = z.object({
   // domain-allowed set — the maturity policy is never widened here. See
   // `resolveBlockCurrenciesForAccount`.
   accountType: blockAccountTypeSchema.optional(),
+  // Optional GENERIC published-content-author attribution basis. The opaque
+  // shared-storage `key` of the cross-user published content this generation
+  // is running on behalf of — the app supplies it out-of-band from its own
+  // shared storage (`app_<slug>.shared_kv`). When present, the server resolves
+  // it (SERVER-SIDE, off the submit critical path) to the content's AUTHOR and
+  // records that user as the payout basis on the spend-attribution row. Purely
+  // opaque + advisory here: this is NEVER trusted as an author (the author is
+  // re-derived from the key server-side), so a forged key can at worst point at
+  // a non-existent row (→ no attribution). Bounded to the same key shape as the
+  // shared-storage surface (≤64). Omit when N/A — behavior is unchanged.
+  // FULLY GENERIC: any app that publishes cross-user content can send it — not
+  // tied to any one app kind.
+  sharedContentKey: z.string().min(1).max(SHARED_CONTENT_KEY_MAX).optional(),
   params: z.object({
     prompt: z.string().max(PROMPT_MAX).default(''),
     negativePrompt: z.string().max(NEG_PROMPT_MAX).optional(),
