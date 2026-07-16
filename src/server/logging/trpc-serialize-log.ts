@@ -211,7 +211,24 @@ export function runWithSerializeCtx<T>(ctx: SerializeCtx, fn: () => T): T {
   return serializeCtxStorage.run(ctx, fn);
 }
 
-function currentSerializeCtx(): SerializeCtx | undefined {
+/**
+ * Seed the serialize-attribution ctx UNCONDITIONALLY — independent of the
+ * `TRPC_SERIALIZE_LOG_ENABLED` kill-switch. Use OFF the hot request path (e.g.
+ * SSR dehydrate), where the async-context cost is negligible (once per page
+ * render, not per tRPC batch at ~thousands/s) and we want the
+ * devalue-write-fallback observer (src/server/trpc.ts) to be able to attribute
+ * an SSR offender even when serialize-SLOW logging is turned off. The gated
+ * `runWithSerializeCtx` stays the hot-path seed: decoupling the fallback
+ * attribution from the slow-log kill-switch on the HTTP boundary too would
+ * reintroduce the per-request async_hooks cost that gate exists to avoid.
+ */
+export function runWithSerializeCtxAlways<T>(ctx: SerializeCtx, fn: () => T): T {
+  return serializeCtxStorage.run(ctx, fn);
+}
+
+/** Read the active request's serialize-attribution ctx (also used by the
+ *  devalue-write-fallback logger in src/server/trpc.ts to name the offender). */
+export function currentSerializeCtx(): SerializeCtx | undefined {
   return serializeCtxStorage.getStore();
 }
 
@@ -230,6 +247,21 @@ export function serializeCtxFromRequest(req: {
   const path = (Array.isArray(raw) ? raw.join('/') : raw) || 'unknown';
   const type = (req.method || '').toUpperCase() === 'GET' ? 'query' : undefined;
   return { path, type };
+}
+
+/**
+ * Build a stable, attribution-safe serialize `path` for an SSR dehydrate — so an
+ * SSR devalue-write fallback (e.g. `/changelog`) attributes to the page instead
+ * of `unknown`. Sanitizes the request URL's pathname so the marker survives the
+ * devalue-fallback-dedup normalizer (which splits on `,` and `/`): leading
+ * slashes trimmed, internal `/` → `.`, query string dropped — so the whole
+ * marker is ONE attribution key (`ssr:dehydrate:user.[username].models`), never
+ * fragmented. Empty → `ssr:dehydrate:root`.
+ */
+export function ssrDehydrateSerializePath(url: string | undefined): string {
+  const pathname = (url ?? '').split('?')[0];
+  const slug = pathname.replace(/^\/+/, '').replace(/\/+/g, '.') || 'root';
+  return `ssr:dehydrate:${slug}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -427,7 +459,14 @@ export function instrumentSerialize<T>(rawSerialize: () => T): T {
       // monsters block > slowMs and took the branch above).
       const bytes = safeByteLength(result);
       // serializeMs < slowMs here, so shouldLogSerialize reduces to the size trigger.
-      if (!shouldLogSerialize({ serializeMs, bytes: bytes ?? 0, slowMs: cfg.slowMs, oversizedBytes: cfg.oversizedBytes })) {
+      if (
+        !shouldLogSerialize({
+          serializeMs,
+          bytes: bytes ?? 0,
+          slowMs: cfg.slowMs,
+          oversizedBytes: cfg.oversizedBytes,
+        })
+      ) {
         return result;
       }
       const dropped = rateGate(path, cfg.maxPerSec);

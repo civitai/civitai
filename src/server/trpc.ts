@@ -12,12 +12,15 @@ import { trpcProcedureDuration, trpcClientReadCapabilityRequests } from '~/serve
 import { phase1CapableLabel } from '~/server/utils/client-version-saturation';
 import { maybeLogTrpcSlow } from '~/server/logging/trpc-slow-log';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
-import { instrumentSerialize } from '~/server/logging/trpc-serialize-log';
+import { currentSerializeCtx, instrumentSerialize } from '~/server/logging/trpc-serialize-log';
 import {
   buildTransformer,
+  onDevalueWriteFallback,
   serverWriteSerialize,
   WRITE_DEVALUE,
 } from '~/shared/utils/trpc-union-transformer';
+import { logToAxiom } from '~/server/logging/client';
+import { createFallbackDedup, fallbackDedupKeys } from '~/server/logging/devalue-fallback-log';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
@@ -31,6 +34,35 @@ import { Flags } from '~/shared/utils/flags';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import type { Context } from './createContext';
+
+// Attribute + ship each devalue-write fallback (a non-POJO response payload that
+// fell back to superjson — see writeSerializeWithFallback). Path comes from the
+// serialize ALS ctx because tRPC doesn't thread the procedure into the
+// transformer (and onError never fires — the response still succeeds).
+//
+// The ctx path is the RAW, client-controlled, comma-joined batch string
+// (`req.query.trpc`), so we normalize it to the individual offending
+// procedure(s) (fallbackDedupKeys) before deduping — otherwise a client could
+// re-frame one offender across many batches to defeat the window — and dedup
+// through a SIZE-BOUNDED windowed map so a long-lived module can't grow it
+// unboundedly. Each distinct procedure logs at most once per window; a
+// multi-procedure batch (~1% of traffic) over-attributes to its co-batched
+// procedures, which is an acceptable, bounded cost for the offender list.
+const fallbackDedup = createFallbackDedup({ windowMs: 30_000, maxSize: 1000 });
+onDevalueWriteFallback((error) => {
+  const rawPath = currentSerializeCtx()?.path ?? 'unknown';
+  const now = Date.now();
+  const message = error instanceof Error ? error.message : String(error);
+  for (const path of fallbackDedupKeys(rawPath)) {
+    if (!fallbackDedup.shouldLog(path, now)) continue;
+    void logToAxiom({
+      name: 'devalue-write-fallback',
+      type: 'warning',
+      path,
+      message,
+    }).catch(() => undefined);
+  }
+});
 
 export interface TRPCMeta {
   /** Bitwise token scope required for this procedure. Checked against ctx.tokenScope. */

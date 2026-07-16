@@ -4,12 +4,14 @@ import { describe, expect, it } from 'vitest';
 import {
   buildTransformer,
   clientTransformer,
+  onDevalueWriteFallback,
   pickServerWriteSerialize,
   serverWriteSerialize,
   unionDeserialize,
   unionTransformer,
   WRITE_DEVALUE,
   writeSerialize,
+  writeSerializeWithFallback,
 } from '~/shared/utils/trpc-union-transformer';
 
 /**
@@ -267,6 +269,72 @@ describe('devalue write path rejects non-POJO tRPC outputs (devalue is strict)',
     // devalue represents these faithfully — the contract rejects non-POJOs, NOT
     // these first-class rich types (so the fix is narrow: only class instances /
     // Errors / symbols / Promises are the hazard).
-    expect(() => writeSerialize({ d: new Date(), m: new Map([['a', 1]]), s: new Set([1]), n: 2n })).not.toThrow();
+    expect(() =>
+      writeSerialize({ d: new Date(), m: new Map([['a', 1]]), s: new Set([1]), n: 2n })
+    ).not.toThrow();
+  });
+});
+
+/**
+ * FAIL-OPEN gate: `pickServerWriteSerialize(true)` routes through
+ * `writeSerializeWithFallback`, which keeps devalue's strictness observable
+ * (via the observer hook) without letting a non-POJO payload become a
+ * user-facing 500 — the fallback superjson write decodes through the same
+ * union READ every peer already runs. `writeSerialize` (above) stays the
+ * strict contract for tests.
+ */
+describe('writeSerializeWithFallback (fail-open devalue write)', () => {
+  it('writes devalue (string) for POJO payloads — identical to the strict write', () => {
+    const x = sample();
+    const out = writeSerializeWithFallback(x);
+    expect(typeof out).toBe('string');
+    expect(out).toBe(devalueStringify(x));
+    expect(unionDeserialize(out)).toEqual(x);
+  });
+
+  it('falls back to superjson (object) on a non-POJO payload and notifies the observer', () => {
+    const seen: unknown[] = [];
+    onDevalueWriteFallback((err) => seen.push(err));
+    try {
+      const payload = { ok: false, error: new Error('boom') };
+      const out = writeSerializeWithFallback(payload);
+      // superjson object — NOT a devalue string — still union-decodable.
+      expect(typeof out).not.toBe('string');
+      expect(out).toEqual(superjson.serialize(payload));
+      expect(unionDeserialize(out)).toEqual(
+        superjson.deserialize(superjson.serialize(payload) as any)
+      );
+      expect(seen).toHaveLength(1);
+    } finally {
+      onDevalueWriteFallback(undefined as any);
+    }
+  });
+
+  it('a throwing observer never breaks the response path', () => {
+    onDevalueWriteFallback(() => {
+      throw new Error('observer boom');
+    });
+    try {
+      expect(() => writeSerializeWithFallback({ e: new Error('x') })).not.toThrow();
+    } finally {
+      onDevalueWriteFallback(undefined as any);
+    }
+  });
+
+  it('pickServerWriteSerialize(true) IS the fail-open write (non-POJO → superjson, no throw)', () => {
+    const write = pickServerWriteSerialize(true);
+    const payload = {
+      items: [
+        new (class Sdk {
+          id = 1;
+          toJSON() {
+            return { id: this.id };
+          }
+        })(),
+      ],
+    };
+    let out: unknown;
+    expect(() => (out = write(payload))).not.toThrow();
+    expect(typeof out).not.toBe('string');
   });
 });
