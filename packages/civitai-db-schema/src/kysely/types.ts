@@ -333,6 +333,7 @@ export type Appeal = {
 };
 export type AppListing = {
   id: string;
+  serial_id: Generated<number>;
   kind: string;
   slug: string;
   name: string;
@@ -3428,6 +3429,7 @@ export type Thread = {
   challengeId: number | null;
   model3dId: number | null;
   model3dReviewId: number | null;
+  appListingId: number | null;
   metadata: Generated<unknown>;
   commentCount: Generated<number>;
 };
