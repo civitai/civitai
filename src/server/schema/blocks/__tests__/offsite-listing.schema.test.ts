@@ -185,7 +185,7 @@ describe('approveExternalRequestSchema', () => {
 });
 
 describe('rejectExternalRequestSchema', () => {
-  it('accepts a reason ≥10 chars', () => {
+  it('accepts a reason ≥ the shared min (OFFSITE_MOD_REASON_MIN=3)', () => {
     expect(
       rejectExternalRequestSchema.safeParse({
         publishRequestId: 'alpr_1',
@@ -194,9 +194,9 @@ describe('rejectExternalRequestSchema', () => {
     ).toBe(true);
   });
 
-  it('rejects a reason <10 chars', () => {
+  it('rejects a reason shorter than the shared min (OFFSITE_MOD_REASON_MIN=3)', () => {
     expect(
-      rejectExternalRequestSchema.safeParse({ publishRequestId: 'alpr_1', rejectionReason: 'short' })
+      rejectExternalRequestSchema.safeParse({ publishRequestId: 'alpr_1', rejectionReason: 'no' })
         .success
     ).toBe(false);
   });

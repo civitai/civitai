@@ -2502,15 +2502,15 @@ describe('rejectRequest', () => {
     expect(updateArg.data.rejectionReason).toBe('short but valid here');
   });
 
-  it('rejects reasons shorter than 10 characters (after trim)', async () => {
+  it('rejects reasons shorter than the shared min (3) after trim', async () => {
     const { rejectRequest } = await import('../publish-request.service');
     await expect(
       rejectRequest({
         publishRequestId: 'pubreq_x',
         reviewerUserId: 999,
-        rejectionReason: '   short   ',
+        rejectionReason: '  no  ',
       })
-    ).rejects.toThrow(/at least 10 characters/);
+    ).rejects.toThrow(/at least 3 characters/);
   });
 
   it('rejects reasons longer than 2000 characters', async () => {

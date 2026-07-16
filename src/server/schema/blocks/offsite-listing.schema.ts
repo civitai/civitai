@@ -6,6 +6,7 @@ import {
   validateExternalUrl,
 } from '~/server/schema/blocks/external-app.schema';
 import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
+import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
 
 /**
@@ -43,7 +44,10 @@ export const OFFSITE_CHANGELOG_MAX = 2000;
 
 /** Mod-review note bounds (mirror the on-site approve/reject shapes). */
 export const OFFSITE_APPROVAL_NOTES_MAX = 2000;
-export const OFFSITE_REJECTION_REASON_MIN = 10;
+// Unified with the shared moderator-reason floor (`OFFSITE_MOD_REASON_MIN`, 3)
+// so the reject field matches every other mod-reason field on /apps/review and
+// the client gate + server schema agree — no divergent magic `10`.
+export const OFFSITE_REJECTION_REASON_MIN = OFFSITE_MOD_REASON_MIN;
 export const OFFSITE_REJECTION_REASON_MAX = 2000;
 
 /**
@@ -200,8 +204,10 @@ export type ApproveExternalRequestInput = z.infer<typeof approveExternalRequestS
 /**
  * MOD reject of a pending off-site request (PR-b). Mirrors the on-site
  * `rejectRequestSchema` shape: the request id + a `rejectionReason` of at least
- * 10 chars (the service re-checks the trimmed length as defense-in-depth, since
- * the service is exported + unit-tested directly).
+ * `OFFSITE_REJECTION_REASON_MIN` chars — unified with the shared
+ * `OFFSITE_MOD_REASON_MIN` (3) so it matches every other mod-reason field and the
+ * client gate. The service re-checks the trimmed length as defense-in-depth,
+ * since the service is exported + unit-tested directly.
  */
 export const rejectExternalRequestSchema = z.object({
   publishRequestId: z.string().min(1).max(64),

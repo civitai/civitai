@@ -1549,8 +1549,9 @@ export const blocksRouter = router({
     }),
 
   /**
-   * Reject a pending publish request. Reason is required (≥10 chars) and
-   * shown to the dev inline on /apps/my-submissions.
+   * Reject a pending publish request. Reason is required
+   * (≥`PUBLISH_REJECTION_REASON_MIN` — the shared `OFFSITE_MOD_REASON_MIN`, 3 —
+   * chars) and shown to the dev inline on /apps/my-submissions.
    */
   rejectRequest: moderatorProcedure
     .use(enforceAppBlocksFlag)

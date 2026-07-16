@@ -827,9 +827,9 @@ describe('approveExternalRequest', () => {
 describe('rejectExternalRequest', () => {
   const REASON = 'not a real app, looks like spam';
 
-  it('reason < 10 chars → BAD_REQUEST, no DB read/write', async () => {
+  it('reason shorter than the shared min (3) → BAD_REQUEST, no DB read/write', async () => {
     await expect(
-      rejectExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD, rejectionReason: 'too short' })
+      rejectExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD, rejectionReason: 'no' })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('at least') });
     expect(mockRead.appListingPublishRequest.findUnique).not.toHaveBeenCalled();
     expect(mockWrite.appListingPublishRequest.updateMany).not.toHaveBeenCalled();
