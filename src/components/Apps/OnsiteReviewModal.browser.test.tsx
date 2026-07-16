@@ -55,6 +55,15 @@ const ONSITE_APPROVED = {
   reviewedBy: { id: 99, username: 'mod-user', image: null },
 };
 
+// A SECOND pending request (distinct `id`) used to prove the transient
+// approve/reject state does not leak when the mod switches from one app to
+// another in the same long-lived modal.
+const ONSITE_PENDING_B = {
+  ...ONSITE_PENDING,
+  id: 'onsite-req-3',
+  slug: 'other-onsite-block',
+};
+
 const mocks = vi.hoisted(() => ({
   invalidate: vi.fn().mockResolvedValue(undefined),
   mutate: vi.fn(),
@@ -256,6 +265,47 @@ describe('OnsiteReviewModal — onsite reject: reason gate + fired mutation', ()
       publishRequestId: 'onsite-req-1',
       rejectionReason: 'needs changes',
     });
+  });
+});
+
+describe('OnsiteReviewModal — transient approve/reject state resets per request', () => {
+  test('switching from a request in reject-mode to a different request opens in the default view mode with an empty reason', async () => {
+    // Render request A and put it into reject mode with a typed reason.
+    const { rerender } = await renderWithProviders(
+      <OnsiteReviewModal
+        selection={{ request: ONSITE_PENDING, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
+    );
+    await page.getByRole('button', { name: 'Reject…' }).click();
+    const reasonA = page.getByTestId('apps-review-reject-reason');
+    await expect.element(reasonA).toBeInTheDocument();
+    await reasonA.fill('this needs changes before approval');
+    await expect.element(reasonA).toHaveValue('this needs changes before approval');
+
+    // Switch the SAME long-lived modal to a DIFFERENT pending request (new id).
+    await rerender(
+      <OnsiteReviewModal
+        selection={{ request: ONSITE_PENDING_B, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
+    );
+
+    // B must open in the DEFAULT view mode: the approve/notes UI is shown and
+    // the reject textarea is gone (actionMode reset to 'view' via the keyed
+    // remount — not carried over from A).
+    await expect
+      .element(page.getByRole('textbox', { name: 'Approval notes (optional)' }))
+      .toBeInTheDocument();
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeInTheDocument();
+    await expect.element(page.getByRole('button', { name: 'Reject…' })).toBeInTheDocument();
+    // The reject reason field from A must NOT be present (and thus carries no text).
+    expect(page.getByTestId('apps-review-reject-reason').elements()).toHaveLength(0);
+
+    // And re-entering reject mode on B starts from an EMPTY reason (A's text did
+    // not leak into B's state).
+    await page.getByRole('button', { name: 'Reject…' }).click();
+    await expect.element(page.getByTestId('apps-review-reject-reason')).toHaveValue('');
   });
 });
 
