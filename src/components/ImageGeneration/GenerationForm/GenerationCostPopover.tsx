@@ -310,7 +310,7 @@ function GenerationCostPopoverDetail({
                     variant="subtle"
                     size="xs"
                     radius="xl"
-                    onClick={(e) => {
+                    onClick={(e: React.MouseEvent) => {
                       e.preventDefault();
                       e.stopPropagation();
                       openModal({
