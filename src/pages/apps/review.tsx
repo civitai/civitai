@@ -24,6 +24,7 @@ import type { MouseEvent } from 'react';
 import { useMemo, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppListingsModerationTable } from '~/components/Apps/AppListingsModerationTable';
+import { ModQueryError, isModAuthzError } from '~/components/Apps/ModQuerySurface';
 // `OffsiteReviewQueue` (the flat pending-only off-site list) is SUPERSEDED by the
 // unified `AppListingsModerationTable` below (which covers pending too, via the
 // per-row Review action). It stays exported for a one-line rollback: swap the
@@ -253,11 +254,27 @@ function ActivePreviewsPanel() {
     },
   });
 
-  // Flag off / not enabled (query errors) or nothing active → render nothing so
-  // the panel stays unobtrusive when the sandbox isn't in use.
+  // Flag off / not enabled or nothing active → render nothing so the panel stays
+  // unobtrusive when the sandbox isn't in use. An AUTHZ error (sandbox flag off →
+  // UNAUTHORIZED) is that intended silent case; a TRANSIENT error surfaces a retry
+  // instead of silently disappearing.
   const cap = query.data?.cap ?? 0;
   const active = query.data?.active ?? [];
-  if (query.error || active.length === 0) return null;
+  if (!features?.appBlocks) return null;
+  if (query.error) {
+    if (isModAuthzError(query.error)) return null;
+    return (
+      <ModQueryError
+        error={query.error}
+        onRetry={() => query.refetch()}
+        isRetrying={query.isFetching}
+        title="Couldn’t load active previews"
+        testId="apps-active-previews-error"
+        mt="md"
+      />
+    );
+  }
+  if (active.length === 0) return null;
 
   const atCap = cap > 0 && active.length >= cap;
 
