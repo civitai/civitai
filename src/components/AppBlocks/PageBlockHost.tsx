@@ -1893,7 +1893,12 @@ export function PageBlockHost({
       // silently swallowed.
       data-needs-consent={needsConsent ? 'true' : 'false'}
     >
-      <AppBlockChrome blockInstanceId={blockInstanceId} appName={appName} slotId={PAGE_SLOT_ID} />
+      <AppBlockChrome
+        blockInstanceId={blockInstanceId}
+        appBlockId={appBlockId}
+        appName={appName}
+        slotId={PAGE_SLOT_ID}
+      />
       {showIframe ? (
         // The iframe fills the remaining viewport. While the block is still
         // handshaking (status === 'loading', before BLOCK_READY), the surface

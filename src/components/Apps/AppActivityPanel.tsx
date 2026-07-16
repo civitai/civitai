@@ -1,0 +1,342 @@
+import {
+  Anchor,
+  Badge,
+  Button,
+  Center,
+  Group,
+  Loader,
+  Stack,
+  Table,
+  Text,
+  Tooltip,
+} from '@mantine/core';
+import { IconHistory } from '@tabler/icons-react';
+import Link from 'next/link';
+import { useMemo } from 'react';
+import { formatDate } from '~/utils/date-helpers';
+import { trpc } from '~/utils/trpc';
+
+/**
+ * Shared per-viewer app-activity timeline. Extracted from
+ * `src/pages/apps/installed.tsx` (W5 v0.5) so the same interleaved feed can be
+ * reused both there (whole-account view) AND on the run-frame "Permissions &
+ * activity" drawer scoped to a single app (`appBlockId`). DRY: the humanise
+ * helpers + row shape live here, in one tested place, instead of duplicated.
+ *
+ * Two cursor-paginated tRPC queries — `blocks.listMyAppActivity` (Buzz
+ * attribution) + `blocks.listMyScopeInvocations` (scope-gated call audit) —
+ * merged into one timeline sorted by createdAt desc.
+ *
+ * `appBlockId` drill-down: `listMyScopeInvocations` filters SERVER-side (the
+ * query supports the optional `appBlockId` input). `listMyAppActivity` has no
+ * server filter, so its rows are filtered CLIENT-side by `item.appBlockId` (the
+ * item carries it). When `appBlockId` is omitted the feed is whole-account —
+ * exactly the /apps/installed behaviour, unchanged.
+ *
+ * `enabled` gates the queries: pass `false` for an anonymous viewer (these
+ * procedures are `protectedProcedure`, so firing them unauthenticated just
+ * errors) — the panel then renders the friendly empty state instead.
+ */
+const ACTIVITY_STATUS_COLORS: Record<string, string> = {
+  pending: 'blue',
+  confirmed: 'green',
+  paid_out: 'green',
+  voided: 'red',
+};
+
+function ActivityStatusBadge({ status }: { status: string }) {
+  const color = ACTIVITY_STATUS_COLORS[status] ?? 'gray';
+  return (
+    <Badge size="sm" color={color} variant="light">
+      {status}
+    </Badge>
+  );
+}
+
+/**
+ * Format an activity scope + amount into a one-line "Action" cell. The
+ * v0 surface only has the subscription scope on the row — we humanise
+ * the well-known scopes and pass through anything unknown.
+ */
+export function humaniseActivityAction(scope: string): string {
+  switch (scope) {
+    case 'per_model_install':
+      return 'Spent Buzz on a per-model install';
+    case 'publisher_all_my_models':
+      return 'Spent Buzz via my publisher subscription';
+    case 'viewer_personal':
+      return 'Spent Buzz via my personal subscription';
+    case 'platform_default':
+      return 'Spent Buzz via a civitai-promoted default';
+    default:
+      return scope;
+  }
+}
+
+const SCOPE_ACTION_LABELS: Record<string, string> = {
+  'user:read:self': 'Read profile',
+  'buzz:read:self': 'Read Buzz balance',
+  'models:read:self': 'Read model',
+  'media:read:owned': 'Read media',
+  'block:settings:read': 'Read block settings',
+  'block:settings:write': 'Write block settings',
+  'ai:write:budgeted': 'Submit AI workflow',
+  'social:tip:self': 'Tip',
+};
+
+export function humaniseScopeInvocation(scope: string, endpoint?: string): string {
+  // Synthetic endpoints take precedence over the scope label — same
+  // scope can fan out to different user-facing verbs (block:settings:write
+  // covers both first-time saves and checkpoint pin swaps; apps:storage
+  // covers both set and delete). The endpoint string is the source of
+  // truth for what the app actually did.
+  if (endpoint?.startsWith('workflow:submit')) return 'Generated an image';
+  if (endpoint === 'user-settings:write') return 'Saved your block settings';
+  if (endpoint?.startsWith('storage:set:')) return 'Wrote app-local storage';
+  if (endpoint?.startsWith('storage:delete:')) return 'Deleted app-local storage';
+  return SCOPE_ACTION_LABELS[scope] ?? scope;
+}
+
+/**
+ * Strip synthetic prefixes off endpoints so the Detail column shows the
+ * meaningful tail (workflowId, storage key, etc.). REST endpoints pass
+ * through unchanged.
+ */
+export function humaniseScopeEndpoint(endpoint: string): string {
+  const workflow = endpoint.match(/^workflow:submit:(.+)$/);
+  if (workflow) {
+    return workflow[1] === 'pending' ? '(no workflow id)' : `workflow ${workflow[1]}`;
+  }
+  const storage = endpoint.match(/^storage:(set|delete):(.+)$/);
+  if (storage) return `key "${storage[2]}"`;
+  if (endpoint === 'user-settings:write') return '';
+  return endpoint;
+}
+
+function ScopeStatusBadge({ statusCode }: { statusCode: number }) {
+  const color =
+    statusCode < 300 ? 'green' : statusCode < 400 ? 'blue' : statusCode < 500 ? 'orange' : 'red';
+  return (
+    <Badge size="sm" color={color} variant="light">
+      {statusCode}
+    </Badge>
+  );
+}
+
+/**
+ * W5 v0.5: combined activity feed. Two cursor-paginated tRPC queries
+ * (block_buzz_attribution + block_scope_invocations) merged into one
+ * timeline. Both are page-by-page, so we fetch the same page on each side
+ * and merge-sort by createdAt — good enough at the page sizes the user
+ * actually sees. A scope-invocation row carries (endpoint, statusCode)
+ * instead of (amount, status); humaniseActivityAction is overloaded.
+ *
+ * `description` (follow-up-ready): a scope-invocation row renders a
+ * `description` field when the server starts populating one; until then it
+ * falls back to the humanised scope+endpoint. This lets a later PR enrich the
+ * per-action audit detail without a rewrite of this view.
+ */
+type ActivityFeedRow =
+  | {
+      kind: 'buzz';
+      id: string;
+      createdAt: Date;
+      appBlockId: string;
+      appName: string;
+      appSlug: string;
+      scope: string;
+      usdAmountCents: number;
+      status: string;
+    }
+  | {
+      kind: 'scope';
+      id: string;
+      createdAt: Date;
+      appBlockId: string;
+      appName: string;
+      appSlug: string;
+      scope: string;
+      endpoint: string;
+      statusCode: number;
+      description?: string | null;
+    };
+
+export function AppActivityPanel({
+  appBlockId,
+  enabled = true,
+}: {
+  /** When set, scopes the timeline to a single app (server-filtered scope
+   *  invocations + client-filtered Buzz rows). Omitted → whole-account feed. */
+  appBlockId?: string;
+  /** Gate the (protected) queries. Pass `false` for an anonymous viewer. */
+  enabled?: boolean;
+}) {
+  const buzz = trpc.blocks.listMyAppActivity.useInfiniteQuery(
+    { limit: 25 },
+    { getNextPageParam: (last) => last.nextCursor ?? undefined, enabled }
+  );
+  const scopes = trpc.blocks.listMyScopeInvocations.useInfiniteQuery(
+    { limit: 25, ...(appBlockId ? { appBlockId } : {}) },
+    { getNextPageParam: (last) => last.nextCursor ?? undefined, enabled }
+  );
+
+  const items = useMemo<ActivityFeedRow[]>(() => {
+    const buzzRows: ActivityFeedRow[] =
+      buzz.data?.pages.flatMap((p) =>
+        p.items
+          // Buzz has no server-side appBlockId filter — narrow client-side so a
+          // per-app drill-down doesn't leak other apps' spends into the timeline.
+          .filter((item) => !appBlockId || item.appBlockId === appBlockId)
+          .map<ActivityFeedRow>((item) => ({
+            kind: 'buzz',
+            id: `buzz:${item.id}`,
+            createdAt: item.createdAt,
+            appBlockId: item.appBlockId,
+            appName: item.appName,
+            appSlug: item.appSlug,
+            scope: item.scope,
+            usdAmountCents: item.usdAmountCents,
+            status: item.status,
+          }))
+      ) ?? [];
+    const scopeRows: ActivityFeedRow[] =
+      scopes.data?.pages.flatMap((p) =>
+        p.items.map<ActivityFeedRow>((item) => ({
+          kind: 'scope',
+          id: `scope:${item.id}`,
+          createdAt: item.createdAt,
+          appBlockId: item.appBlockId,
+          appName: item.appName,
+          appSlug: item.appSlug,
+          scope: item.scope,
+          endpoint: item.endpoint,
+          statusCode: item.statusCode,
+          // Follow-up enrichment slot: render server-supplied per-action detail
+          // when present, else fall back to the humanised scope+endpoint below.
+          description: (item as { description?: string | null }).description ?? null,
+        }))
+      ) ?? [];
+    return [...buzzRows, ...scopeRows].sort(
+      (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
+    );
+  }, [buzz.data, scopes.data, appBlockId]);
+
+  // Anonymous / disabled: the protected queries never fired — show the empty
+  // state rather than an indefinite loader.
+  if (!enabled) {
+    return <EmptyActivity />;
+  }
+
+  const isLoading = buzz.isLoading || scopes.isLoading;
+  const hasNextPage = !!(buzz.hasNextPage || scopes.hasNextPage);
+  const isFetchingNextPage = !!(buzz.isFetchingNextPage || scopes.isFetchingNextPage);
+  const loadMore = () => {
+    // Load whichever feeds still have more — usually both. Cheap; the
+    // queries are independent.
+    if (buzz.hasNextPage) void buzz.fetchNextPage();
+    if (scopes.hasNextPage) void scopes.fetchNextPage();
+  };
+
+  if (isLoading) {
+    return (
+      <Center py="xl">
+        <Loader />
+      </Center>
+    );
+  }
+  if (items.length === 0) {
+    return <EmptyActivity />;
+  }
+  return (
+    <Stack gap="sm">
+      <Table>
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>When</Table.Th>
+            <Table.Th>App</Table.Th>
+            <Table.Th>Action</Table.Th>
+            <Table.Th>Detail</Table.Th>
+            <Table.Th>Status</Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {items.map((item) => (
+            <Table.Tr key={item.id}>
+              <Table.Td>
+                <Tooltip label={item.createdAt.toString()}>
+                  <Text size="xs">{formatDate(item.createdAt, 'YYYY-MM-DD HH:mm')}</Text>
+                </Tooltip>
+              </Table.Td>
+              <Table.Td>
+                <Group gap={6} wrap="nowrap">
+                  <Text size="sm" fw={500} className="truncate">
+                    {item.appName}
+                  </Text>
+                  <Badge size="xs" variant="outline">
+                    {item.appSlug}
+                  </Badge>
+                </Group>
+              </Table.Td>
+              <Table.Td>
+                <Text size="xs">
+                  {item.kind === 'buzz'
+                    ? humaniseActivityAction(item.scope)
+                    : humaniseScopeInvocation(item.scope, item.endpoint)}
+                </Text>
+              </Table.Td>
+              <Table.Td>
+                {item.kind === 'buzz' ? (
+                  <Text size="xs">
+                    {item.usdAmountCents > 0
+                      ? `${(item.usdAmountCents / 100).toFixed(2)} USD`
+                      : '(no cost)'}
+                  </Text>
+                ) : (
+                  <Text
+                    size="xs"
+                    style={{ fontFamily: 'ui-monospace, SFMono-Regular, monospace' }}
+                  >
+                    {/* Follow-up-ready: prefer a server-supplied description; fall
+                        back to the derived scope+endpoint tail when absent. */}
+                    {item.description ? item.description : humaniseScopeEndpoint(item.endpoint)}
+                  </Text>
+                )}
+              </Table.Td>
+              <Table.Td>
+                {item.kind === 'buzz' ? (
+                  <ActivityStatusBadge status={item.status} />
+                ) : (
+                  <ScopeStatusBadge statusCode={item.statusCode} />
+                )}
+              </Table.Td>
+            </Table.Tr>
+          ))}
+        </Table.Tbody>
+      </Table>
+      {hasNextPage && (
+        <Center>
+          <Button variant="default" size="xs" loading={isFetchingNextPage} onClick={loadMore}>
+            Load more
+          </Button>
+        </Center>
+      )}
+    </Stack>
+  );
+}
+
+function EmptyActivity() {
+  return (
+    <Center py="md">
+      <Stack align="center" gap="xs">
+        <IconHistory size={28} opacity={0.5} />
+        <Text size="sm" c="dimmed" ta="center" maw={420}>
+          No activity yet. This feed populates whenever an app runs a generation, calls a
+          scope-gated Civitai API, or sources a Buzz purchase on your behalf.
+        </Text>
+        <Anchor component={Link} href="/apps" size="sm">
+          Browse the marketplace
+        </Anchor>
+      </Stack>
+    </Center>
+  );
+}
