@@ -1,6 +1,6 @@
 import type { TransactionInfo, WorkflowCost } from '@civitai/client';
 import type { PopoverProps } from '@mantine/core';
-import { Group, NumberInput, Popover, Text } from '@mantine/core';
+import { Anchor, Group, Loader, NumberInput, Popover, Text } from '@mantine/core';
 import { openModal } from '@mantine/modals';
 import { IconInfoCircle } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
@@ -16,6 +16,9 @@ import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { useGenerationFormStore } from '~/store/generation-form.store';
 import { startCase } from 'lodash-es';
 import { formatToLeastDecimals } from '~/utils/number-helpers';
+import { parseAIRSafe } from '~/shared/utils/air';
+import { getModelUrl } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
 
 const getEmojiByValue = (value: number) => {
   if (value === 0) return '😢';
@@ -300,7 +303,33 @@ function GenerationCostPopoverDetail({
           ))}
           {licensingFees > 0 && (
             <CostRow
-              label="Licensing Fees"
+              label={
+                <div className="flex items-center gap-1">
+                  <span>Licensing Fees</span>
+                  <LegacyActionIcon
+                    variant="subtle"
+                    size="xs"
+                    radius="xl"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      openModal({
+                        title: 'Licensing Fees',
+                        centered: true,
+                        children: (
+                          <LicensingFeeDetail
+                            fees={workflowCost.fees ?? {}}
+                            quantity={factors.quantity ?? 1}
+                            type={buzzAccountType}
+                          />
+                        ),
+                      });
+                    }}
+                  >
+                    <IconInfoCircle size={14} />
+                  </LegacyActionIcon>
+                </div>
+              }
               value={<BuzzValue amount={licensingFees} type={buzzAccountType} />}
             />
           )}
@@ -387,6 +416,97 @@ function BreakdownExplanation() {
         appreciation? Include a tip for us 😍
       </li>
     </ul>
+  );
+}
+
+/**
+ * Per-resource licensing fee breakdown. The whatIf `fees` dict is keyed by resource
+ * AIR with the total charged for that resource across the whole request; we parse
+ * each to its version id, batch-fetch the resources for their model/version name,
+ * and show the per-image cost (charged ÷ quantity, so the rows stay consistent with
+ * the aggregate). Rows without a resolvable resource fall back to the raw AIR.
+ */
+function LicensingFeeDetail({
+  fees,
+  quantity,
+  type,
+}: {
+  fees: Record<string, number>;
+  quantity: number;
+  type?: BuzzSpendType;
+}) {
+  const entries = Object.entries(fees);
+  const versionIds = entries
+    .map(([air]) => parseAIRSafe(air)?.version)
+    .filter((v): v is number => typeof v === 'number');
+
+  const { data: versions, isLoading } = trpc.modelVersion.getVersionsByIds.useQuery(
+    { ids: versionIds },
+    { enabled: versionIds.length > 0 }
+  );
+
+  const byId = new Map((versions ?? []).map((v) => [v.id, v]));
+  const perImageDivisor = quantity > 0 ? quantity : 1;
+
+  return (
+    <div className="flex flex-col gap-3">
+      <Text size="sm" c="dimmed">
+        Some resources charge a licensing fee set by their creator, paid to them each time you
+        generate an image with the resource. The amounts below are per image — your total scales with
+        the number of images you generate.
+      </Text>
+      {isLoading ? (
+        <div className="flex justify-center p-4">
+          <Loader size="sm" />
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {entries.map(([air, amount]) => {
+            const versionId = parseAIRSafe(air)?.version;
+            const version = versionId != null ? byId.get(versionId) : undefined;
+            const url = version
+              ? getModelUrl({
+                  modelId: version.modelId,
+                  modelName: version.modelName,
+                  modelVersionId: version.id,
+                })
+              : undefined;
+            return (
+              <div key={air} className="flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  {url ? (
+                    <Anchor
+                      href={url}
+                      target="_blank"
+                      size="sm"
+                      fw={590}
+                      className="block truncate"
+                    >
+                      {version!.modelName}
+                    </Anchor>
+                  ) : (
+                    <Text size="sm" fw={590} className="truncate">
+                      {air}
+                    </Text>
+                  )}
+                  {version?.name && (
+                    <Text size="xs" c="dimmed" className="truncate">
+                      {version.name}
+                    </Text>
+                  )}
+                </div>
+                <Group gap={4} wrap="nowrap" className="shrink-0">
+                  <BuzzValue amount={amount / perImageDivisor} type={type} />
+                  <Text size="xs" c="dimmed">
+                    / image
+                  </Text>
+                </Group>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -1,5 +1,4 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
-import { forwardRef } from 'react';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 
@@ -44,11 +43,6 @@ import { renderWithProviders } from '../../../../test/component-setup';
 //     BrowserSettingsProvider + the edge-image/-video URL pipeline. Stubbed to a
 //     thin <img> echoing `src`, just enough to confirm the image branch renders.
 //     SHADOWS: all real CF-image URL building / animation logic.
-//
-//   * CurrencyBadge (`~/components/Currency/CurrencyBadge`) — pulls the buzz
-//     currency/number-flow stack. Stubbed to a span echoing `unitAmount`, so the
-//     "licensingFee > 0" branch is observable by the amount. SHADOWS: real
-//     currency formatting / distribution gradient.
 //
 //   Mantine is NOT mocked (resolve.dedupe handles dual-React at the scaffold).
 //
@@ -110,20 +104,6 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
   ),
 }));
 
-vi.mock('~/components/Currency/CurrencyBadge', () => ({
-  // forwardRef: the real CurrencyBadge is forwardRef'd and used here as a
-  // HoverCard.Target, which passes a ref. A plain-function stub drops it and
-  // logs a (benign) "Function components cannot be given refs" warning — match
-  // the real ref-forwarding contract so the stub is faithful and the log clean.
-  CurrencyBadge: forwardRef<HTMLSpanElement, { unitAmount?: number }>(
-    ({ unitAmount }, ref) => (
-      <span ref={ref} data-testid="currency-badge">
-        {unitAmount}
-      </span>
-    )
-  ),
-}));
-
 vi.mock('~/providers/AppProvider', () => ({
   useAppContext: vi.fn(),
 }));
@@ -154,7 +134,6 @@ const makeResource = (over: Record<string, any> = {}): any => ({
   strength: 1,
   isOwnedByUser: false,
   isPrivate: false,
-  licensingFee: 0,
   model: { id: 42, name: 'My Cool Model', type: 'LORA', sfwOnly: false, minor: false },
   ...over,
 });
@@ -607,22 +586,5 @@ describe('ResourceItemContent (render)', () => {
 
     await expect.element(page.getByText('M', { exact: true })).toBeInTheDocument();
     await expect.element(page.getByTestId('strength-slider')).not.toBeInTheDocument();
-  });
-
-  test('licensingFee badge appears only when licensingFee > 0', async () => {
-    const r = makeResource({ licensingFee: 250, model: { id: 1, name: 'M', type: 'Checkpoint' } });
-    renderWithProviders(<ResourceItemContent resource={r} />);
-
-    const badge = page.getByTestId('currency-badge');
-    await expect.element(badge).toBeInTheDocument();
-    await expect.element(badge).toHaveTextContent('250');
-  });
-
-  test('licensingFee badge absent when licensingFee is 0', async () => {
-    const r = makeResource({ licensingFee: 0, model: { id: 1, name: 'M', type: 'Checkpoint' } });
-    renderWithProviders(<ResourceItemContent resource={r} />);
-
-    await expect.element(page.getByText('M', { exact: true })).toBeInTheDocument();
-    await expect.element(page.getByTestId('currency-badge')).not.toBeInTheDocument();
   });
 });
