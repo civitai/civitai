@@ -29,7 +29,7 @@ import {
   IconWindow,
   IconX,
 } from '@tabler/icons-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { ReviewBlockPreviewHost } from '~/components/Apps/ReviewBlockPreviewHost';
 import { useReviewPreview } from '~/components/Apps/useReviewPreview';
 import {
