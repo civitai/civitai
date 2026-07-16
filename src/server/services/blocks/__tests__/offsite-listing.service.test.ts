@@ -350,7 +350,7 @@ describe('withdrawExternalRequest', () => {
     expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
   });
 
-  it('🔴 Fix #1: MOD-MANDATED reset (last event reset-to-pending) withdraw → REMOVED + a DELIST event (owner canNOT republish)', async () => {
+  it('🔴 Fix #1: a formerly-live PENDING (reset) withdraw → REMOVED + a DELIST event (owner canNOT republish)', async () => {
     mockRead.appListingPublishRequest.findUnique.mockResolvedValue({
       id: 'alpr_1',
       status: 'pending',
@@ -358,10 +358,9 @@ describe('withdrawExternalRequest', () => {
       appListingId: 'apl_1',
     });
     // The in-tx close reads status → `pending` = a reset-to-pending, formerly-live listing.
+    // A formerly-live pending listing is ALWAYS mod-mandated → the close writes `delist`
+    // UNCONDITIONALLY (no most-recent-event probe).
     mockWrite.appListing.findUnique.mockResolvedValue({ status: 'pending', slug: 'cool-app' });
-    // The listing's most-recent moderation event is a mod `reset-to-pending` — so this
-    // pending cycle was MOD-MANDATED and the owner must not be able to defeat it.
-    mockWrite.appListingModerationEvent.findFirst.mockResolvedValue({ action: 'reset-to-pending' });
     await withdrawExternalRequest({ publishRequestId: 'alpr_1', userId: CALLER });
 
     // NOT deleted — transitioned to `removed`.
@@ -381,7 +380,13 @@ describe('withdrawExternalRequest', () => {
     });
   });
 
-  it('Fix #1 fallback: a PENDING listing whose latest event is NOT reset-to-pending keeps owner-unpublish (owner-republishable)', async () => {
+  it('🔴 Fix #1 regression: an intervening report-resolve event does NOT downgrade the close to owner-unpublish (still DELIST)', async () => {
+    // The exploit closed: mod resets (report-driven) → mod resolves the triggering
+    // report → the listing's NEWEST moderation event is now `report-resolve`, NOT
+    // `reset-to-pending`. A most-recent-event probe would have fallen through to
+    // `owner-unpublish` here (letting the owner republish the pre-reset content). The
+    // DETERMINISTIC rule ignores event history: a formerly-live `pending` listing is
+    // ALWAYS mod-mandated → the withdraw close STILL writes `delist`.
     mockRead.appListingPublishRequest.findUnique.mockResolvedValue({
       id: 'alpr_1',
       status: 'pending',
@@ -389,19 +394,16 @@ describe('withdrawExternalRequest', () => {
       appListingId: 'apl_1',
     });
     mockWrite.appListing.findUnique.mockResolvedValue({ status: 'pending', slug: 'cool-app' });
-    // No reset-to-pending as the latest event (default findFirst → null) → the pending
-    // close was NOT mod-mandated, so the owner-initiated `owner-unpublish` is preserved.
-    mockWrite.appListingModerationEvent.findFirst.mockResolvedValue(null);
+    // Even with the newest event being a report closure (would defeat a probe):
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValue({ action: 'report-resolve' });
     await withdrawExternalRequest({ publishRequestId: 'alpr_1', userId: CALLER });
 
-    expect(mockWrite.appListing.updateMany).toHaveBeenCalledWith({
-      where: { id: 'apl_1', status: 'pending' },
-      data: { status: 'removed' },
-    });
     expect(mockWrite.appListingModerationEvent.create).toHaveBeenCalledTimes(1);
     expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data).toMatchObject({
-      action: 'owner-unpublish',
+      action: 'delist',
       actorUserId: CALLER,
+      before: { status: 'pending' },
+      after: { status: 'removed' },
     });
   });
 

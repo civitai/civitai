@@ -303,8 +303,9 @@ export async function withdrawExternalRequest(opts: {
   // so a reset-to-pending listing's `pending → removed` transition + its audit event
   // are atomic with the withdraw (a crash can't split them, and the guarded flip means
   // only the winner closes). A first-time draft is deleted (unchanged); a formerly-live
-  // reset listing is set `removed` with an `owner-unpublish` event (the owner withdrew
-  // their OWN re-review — so they MAY later republish it, per the republish guard).
+  // reset listing is set `removed` with a `delist` event — 🔴 the pending cycle is
+  // always mod-mandated, so the owner CANNOT self-restore it (a mod must relist). See
+  // `closeTerminalListing`.
   const flipped = await dbWrite.$transaction(async (tx) => {
     const { count } = await tx.appListingPublishRequest.updateMany({
       where: { id: publishRequestId, status: 'pending' },
@@ -313,7 +314,6 @@ export async function withdrawExternalRequest(opts: {
     if (count === 0) return false;
     await closeTerminalListing(tx, row.appListingId, {
       actorUserId: userId,
-      action: 'owner-unpublish',
       reason: null,
     });
     return true;
@@ -353,16 +353,15 @@ export type CloseTerminalListingOutcome = 'deleted' | 'removed' | 'none';
  *                 keep the pre-W13 behaviour exactly.
  *   - `pending` → a reset-to-pending, FORMERLY-LIVE listing (real assets/reports/
  *                 history). Do NOT delete + do NOT leave stranded: transition it to
- *                 `removed` (recoverable via mod `relistListing`) AND write an
- *                 `AppListingModerationEvent` so the close is audited and the
- *                 owner-republish guard sees the correct last-event ACTOR:
- *                   * reject  → `delist` (a mod re-review takedown — the owner may NOT
- *                     self-restore it).
- *                   * withdraw→ `owner-unpublish` ONLY when the pending cycle was NOT
- *                     mod-mandated; if the listing's most-recent event is a
- *                     `reset-to-pending` (a mod bounced it), the withdraw is
- *                     downgraded to `delist` so the owner canNOT republish the
- *                     pre-reset content without a mod relist (Fix #1 authz).
+ *                 `removed` (recoverable via mod `relistListing`) AND write a `delist`
+ *                 `AppListingModerationEvent`. 🔴 The action is UNCONDITIONALLY `delist`
+ *                 (Fix #1 authz), for BOTH the reject and the withdraw caller: a
+ *                 formerly-live `pending` listing is ALWAYS mod-mandated (only the mod
+ *                 reset fns set `pending` on a live listing), so an owner who withdraws
+ *                 the re-review must NOT be able to self-restore — `delist` makes the
+ *                 last event a takedown, so `republishOwnListing` FORBIDS the owner and
+ *                 a mod must relist. (This replaced a most-recent-event probe that an
+ *                 intervening report-resolve/dismiss event could defeat.)
  *   - anything else (approved/removed) → no-op (a terminal request never targets one;
  *                 guarded defensively).
  *
@@ -373,7 +372,9 @@ export type CloseTerminalListingOutcome = 'deleted' | 'removed' | 'none';
 async function closeTerminalListing(
   client: Pick<typeof dbWrite, 'appListing' | 'appListingModerationEvent'>,
   appListingId: string | null,
-  event: { actorUserId: number; action: 'delist' | 'owner-unpublish'; reason: string | null }
+  // `action` is no longer a caller input — the pending branch ALWAYS writes `delist`
+  // (Fix #1). Callers pass only the actor + reason.
+  event: { actorUserId: number; reason: string | null }
 ): Promise<CloseTerminalListingOutcome> {
   if (!appListingId) return 'none';
   const listing = await client.appListing.findUnique({
@@ -398,38 +399,33 @@ async function closeTerminalListing(
     });
     if (flipped.count === 0) return 'none';
 
-    // 🔴 AUTHZ (Fix #1): resolve the AUDIT ACTION so an owner cannot defeat a mod's
-    // re-review. The reject path passes `delist` explicitly (a mod takedown) — kept
-    // verbatim. The WITHDRAW path passes `owner-unpublish` (owner withdrew their own
-    // re-review → normally self-restorable). BUT if THIS pending cycle was
-    // MOD-MANDATED (the mod ran `resetListingToPending`, whose newest event is a
-    // `reset-to-pending`), an owner-unpublish would satisfy `republishOwnListing`'s
-    // guard and let the owner republish the pre-reset content LIVE with NO re-review
-    // — defeating the mandated review. Detect that robustly (the listing's
-    // most-recent moderation event is `reset-to-pending`) and downgrade the withdraw
-    // to a `delist` event: the republish guard (last event must be `owner-unpublish`)
-    // then correctly FORBIDS the owner, so a mod must relist. A genuine owner-
-    // initiated pending close (no reset-to-pending as the latest event) keeps
-    // `owner-unpublish` and stays owner-republishable. First-time draft withdraws
-    // never reach here (the `draft` branch above deletes them).
-    let effectiveAction: 'delist' | 'owner-unpublish' = event.action;
-    if (event.action === 'owner-unpublish') {
-      const lastEvent = await client.appListingModerationEvent.findFirst({
-        where: { appListingId },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        select: { action: true },
-      });
-      if (lastEvent?.action === 'reset-to-pending') {
-        effectiveAction = 'delist';
-      }
-    }
-
+    // 🔴 AUTHZ (Fix #1) — DETERMINISTIC: a formerly-live `pending` off-site listing is
+    // ALWAYS mod-mandated, so the close ALWAYS writes a `delist` event (never
+    // `owner-unpublish`), regardless of which caller (reject or withdraw) reached here.
+    //
+    // WHY the pending branch is unconditionally mod-mandated: the ONLY writers of
+    // `status='pending'` for a formerly-LIVE listing are the two mod reset fns
+    // (`resetListingToPending` / `resetOnsiteListingToPending`). A first-time submission
+    // is `draft` (handled by the branch above → deleted); a revision is a `draft`
+    // shadow (also the `draft` branch); owner unpublish/republish only move
+    // approved↔removed and never touch `pending`. So reaching here means a mod bounced
+    // a live listing back to review — an owner withdrawing that re-review must NOT be
+    // able to self-restore the pre-reset content with no re-review.
+    //
+    // This REPLACES an earlier most-recent-event probe (`last event == reset-to-pending
+    // ? delist : owner-unpublish`), which was BOTH exploitable and unsafe-by-default: an
+    // intervening report `report-resolve`/`report-dismiss` event (written UNGUARDED on
+    // the same listing by `closeReport`) shifted the newest event off `reset-to-pending`
+    // → the probe fell through to `owner-unpublish` → the owner could republish the
+    // pre-reset content live. Writing `delist` unconditionally closes that hole; the
+    // republish guard (last event must be `owner-unpublish`) then correctly FORBIDS the
+    // owner and a mod must relist. `event.action` is now irrelevant in this branch.
     await client.appListingModerationEvent.create({
       data: {
         id: newAppListingModerationEventId(),
         appListingId,
         slug: listing.slug,
-        action: effectiveAction,
+        action: 'delist',
         actorUserId: event.actorUserId,
         reason: event.reason,
         before: { status: 'pending' },
@@ -1731,7 +1727,6 @@ export async function rejectExternalRequest(opts: {
     }
     await closeTerminalListing(tx, request.appListingId, {
       actorUserId: reviewerUserId,
-      action: 'delist',
       reason,
     });
   });
