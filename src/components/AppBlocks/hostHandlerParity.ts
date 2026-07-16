@@ -204,6 +204,21 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // Viewer self-read ("who am I") backing the SDK `useViewer()` hook — host-
+  // mediated via the `user:read:self`-gated `blocks.getMyViewer` MUTATION, the
+  // successor to GET /blocks/me (which stays live until the hook publishes +
+  // consumers migrate). AHEAD of the published SDK dist union (SDK co-requisite
+  // — forward-looking coverage, allowed by the one-directional compile-time
+  // gate). PAGE-ONLY affordance today (a page block reading its viewer; model-
+  // slot apps are deferred + will get page-host too), so N/A for the model host
+  // — mirrors the buzz self-read dashboard bridges.
+  GET_VIEWER: {
+    request: true,
+    reply: 'VIEWER_RESULT',
+    IframeHost: 'viewer self-read is a page-only affordance; slot-apps deferred',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   // Buzz self-read dashboard bridges (ledger / all-pool balances / per-model
   // earnings) — host-mediated via the `buzz:read:self`-gated `blocks.getMyBuzz*`
   // MUTATIONS. AHEAD of the published SDK dist union (SDK co-requisite —
