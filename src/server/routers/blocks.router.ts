@@ -20,7 +20,10 @@ import {
   getUserBuzzTransactions,
 } from '~/server/services/buzz.service';
 import { projectBlockBuzzTransaction } from '~/server/services/blocks/block-buzz-read.projection';
-import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
+import {
+  checkBlockCatalogRateLimit,
+  checkBlockPublishRateLimit,
+} from '~/server/utils/block-catalog-rate-limit';
 import {
   blockBuzzAccountTypes,
   getMyBuzzAccountsInput,
@@ -2835,7 +2838,11 @@ export const blocksRouter = router({
       }
       await assertAppBlocksEnabledForTokenUser(userId);
       await assertViewerIsAppDeveloper(userId);
-      const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+      // Publish has its OWN (image-weighted) bucket — separate from the catalog
+      // read bucket. Charge a base token per call up front (bounds call frequency
+      // + the getWorkflow read); the per-image remainder is charged below, once
+      // the selection is known, BEFORE the heavy fetch/upload/scan loop.
+      const rate = await checkBlockPublishRateLimit(claims.blockInstanceId, 1);
       if (!rate.allowed) {
         throw new TRPCError({
           code: 'TOO_MANY_REQUESTS',
@@ -2890,6 +2897,21 @@ export const blocksRouter = router({
         });
       }
 
+      // Charge the per-image REMAINDER (the base token was charged up front) so a
+      // 20-image publish spends 20 tokens, not 1 — BEFORE the heavy loop below.
+      if (selected.length > 1) {
+        const imageRate = await checkBlockPublishRateLimit(
+          claims.blockInstanceId,
+          selected.length - 1
+        );
+        if (!imageRate.allowed) {
+          throw new TRPCError({
+            code: 'TOO_MANY_REQUESTS',
+            message: 'Rate limit exceeded, please retry shortly.',
+          });
+        }
+      }
+
       const { persistBlockWorkflowOutputImage } = await import(
         '~/server/services/blocks/block-image-upload.service'
       );
@@ -2904,6 +2926,7 @@ export const blocksRouter = router({
             width: out.width,
             height: out.height,
             userId,
+            appId: claims.appId,
           });
           imageIds.push(imageId);
         } catch (err) {
@@ -2926,10 +2949,16 @@ export const blocksRouter = router({
    * above their browsing ceiling / unscanned / flagged. The clamp is the block
    * token's `maxBrowsingLevel` (the platform-computed viewer+domain ceiling),
    * failed closed to the public floor — a block can NEVER obtain an unclamped url
-   * for an image the viewer isn't allowed to see. Reads ONLY bare (post-less)
-   * rows. Public, maturity-clamped data (like the block catalog reads) → no
-   * capability scope beyond a valid block token; auth is still required so the
-   * clamp is bound to a real viewer.
+   * for an image the viewer isn't allowed to see.
+   *
+   * The read is scoped to bare (post-less) rows THIS app PUBLISHED (the
+   * `blockPublishedAppId` provenance marker = the token's own `appId`), so a
+   * block reads only its OWN grid — never another app's images or a
+   * post-deletion-orphaned row. Like the block catalog reads (public, maturity-
+   * clamped data), it authorizes ANY valid block token for the app — NOT the
+   * author capability (`assertViewerIsAppDeveloper`), so the grid renders for the
+   * app's real audience, not just developers. Auth is still required so the clamp
+   * + blocked-users/tags bind to a real viewer.
    *
    * MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows).
    */
@@ -2950,8 +2979,9 @@ export const blocksRouter = router({
           message: 'gated image read requires an authenticated viewer',
         });
       }
+      // App-blocks runtime/visibility gate (the token subject) — NOT the author
+      // gate: a viewer of the app can read images the app published.
       await assertAppBlocksEnabledForTokenUser(userId);
-      await assertViewerIsAppDeveloper(userId);
       const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
       if (!rate.allowed) {
         throw new TRPCError({
@@ -2965,7 +2995,14 @@ export const blocksRouter = router({
       // The AUTHORITATIVE per-viewer ceiling for a block surface is the token's
       // maxBrowsingLevel claim (platform-computed at mint), failed closed to PG.
       const browsingLevel = resolveViewerBrowsingLevel(claims.maxBrowsingLevel);
-      return getBlockGatedImagesByIds({ imageIds: input.imageIds, browsingLevel });
+      // Scope the read to THIS app's published images (claims.appId) + bind the
+      // blocked-users/tags clamp to the viewer (userId).
+      return getBlockGatedImagesByIds({
+        imageIds: input.imageIds,
+        browsingLevel,
+        appId: claims.appId,
+        userId,
+      });
     }),
 
   /**

@@ -194,6 +194,31 @@ describe('PageBlockHost PUBLISH_GENERATION_OUTPUTS (consent-gated publish)', () 
     replies.stop();
   });
 
+  test('an empty imageIndexes means "publish all" — the mutation is called WITHOUT imageIndexes', async () => {
+    publishMutate.mockResolvedValue({ imageIds: [7] });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('PUBLISH_GENERATION_OUTPUTS', {
+      requestId: 'rq_all',
+      workflowId: 'wf_all',
+      imageIndexes: [],
+    });
+    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+    await (lastDialog().props as ConfirmProps).onConfirm();
+
+    // Empty selection normalizes to "publish all" — no imageIndexes on the wire
+    // (so the server never sees `[]` → BAD_REQUEST).
+    expect(publishMutate).toHaveBeenCalledWith({ blockToken: 'tok_abc', workflowId: 'wf_all' });
+    await vi.waitFor(() => {
+      const r = replies.last('PUBLISH_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_all', result: { imageIds: [7] } });
+    });
+    replies.stop();
+  });
+
   test('a request with no workflowId is dropped (no consent dialog, no reply)', async () => {
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();

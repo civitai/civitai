@@ -218,9 +218,12 @@ export function resolvePublishGenerationOutputsRequest(
     workflowId: obj.workflowId,
   };
   if (Array.isArray(obj.imageIndexes)) {
-    req.imageIndexes = obj.imageIndexes.filter(
+    const indexes = obj.imageIndexes.filter(
       (n): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 0
     );
+    // Only carry a NON-EMPTY selection — an empty (or all-garbage) array means
+    // "publish all", identical to omitting the field (never a BAD_REQUEST).
+    if (indexes.length > 0) req.imageIndexes = indexes;
   }
   if (typeof obj.title === 'string') req.title = obj.title;
   return req;

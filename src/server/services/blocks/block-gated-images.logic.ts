@@ -51,6 +51,8 @@ export function classifyGatedImageForViewer(
     minor?: boolean | null;
     tosViolation?: boolean | null;
     acceptableMinor?: boolean | null;
+    /** Non-null once the image has been hard-blocked (a moderation-block reason). */
+    blockedFor?: string | null;
   },
   browsingLevel: number
 ): GatedImageVerdict {
@@ -64,12 +66,14 @@ export function classifyGatedImageForViewer(
   if (nsfwLevel === 0) return { status: 'hidden' };
 
   // Any moderation flag → hidden (public, un-mod-reviewed image fails closed).
+  // `blockedFor` is the hard-block reason (a Scanned row can still be blocked).
   if (
     image.needsReview != null ||
     image.poi === true ||
     image.minor === true ||
     image.tosViolation === true ||
-    image.acceptableMinor === true
+    image.acceptableMinor === true ||
+    image.blockedFor != null
   ) {
     return { status: 'hidden' };
   }

@@ -61,6 +61,7 @@ describe('classifyGatedImageForViewer', () => {
       { ...scannedClean, minor: true },
       { ...scannedClean, tosViolation: true },
       { ...scannedClean, acceptableMinor: true },
+      { ...scannedClean, blockedFor: 'CSAM' },
     ];
     for (const image of flagged) {
       expect(classifyGatedImageForViewer(image, UP_TO_R)).toEqual({ status: 'hidden' });
