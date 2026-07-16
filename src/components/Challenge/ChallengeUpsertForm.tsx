@@ -830,6 +830,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                     min={CHALLENGE_MIN_ENTRY_FEE}
                     max={CHALLENGE_MAX_ENTRY_FEE}
                     step={10}
+                    clampBehavior="none"
                     description={`${perEntryToPool} Buzz of each entry goes to the prize pool. Entry fees are non-refundable once paid.`}
                     withAsterisk
                     disabled={isTerminal}
@@ -847,9 +848,9 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                 </SimpleGrid>
                 <Divider label="Prize split (must total 100%)" />
                 <SimpleGrid cols={3}>
-                  <InputNumber name="dist1" label="1st Place %" min={1} max={100} allowNegative={false} clampBehavior="blur" withAsterisk disabled={isTerminal} />
-                  <InputNumber name="dist2" label="2nd Place %" min={1} max={100} allowNegative={false} clampBehavior="blur" withAsterisk disabled={isTerminal} />
-                  <InputNumber name="dist3" label="3rd Place %" min={1} max={100} allowNegative={false} clampBehavior="blur" withAsterisk disabled={isTerminal} />
+                  <InputNumber name="dist1" label="1st Place %" min={1} max={100} allowNegative={false} clampBehavior="none" withAsterisk disabled={isTerminal} />
+                  <InputNumber name="dist2" label="2nd Place %" min={1} max={100} allowNegative={false} clampBehavior="none" withAsterisk disabled={isTerminal} />
+                  <InputNumber name="dist3" label="3rd Place %" min={1} max={100} allowNegative={false} clampBehavior="none" withAsterisk disabled={isTerminal} />
                 </SimpleGrid>
                 <Text size="sm" c={totalPct === 100 ? 'teal' : 'red'}>
                   {dist1 || 0} + {dist2 || 0} + {dist3 || 0} = {totalPct}%
