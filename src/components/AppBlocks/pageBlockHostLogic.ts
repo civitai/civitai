@@ -152,14 +152,25 @@ export type ImageUploadRequest = {
   requestId: string;
   /** Normalized upload mode; 'display' when the SDK omits/sends an unknown value. */
   purpose: BlockUploadPurpose;
+  /**
+   * NON-BLOCKING scan opt-in (display uploads only). When true, the host modal
+   * resolves EARLY on persist (returning a PENDING handle) and streams the scan
+   * verdict asynchronously to the block via the parent→block IMAGE_SCAN_RESOLVED
+   * push, instead of blocking the modal on the poll gate. Normalized to `true`
+   * ONLY for a literal `asyncScan === true` (any other value ⇒ false), so an old
+   * SDK that sends no flag keeps the byte-compatible blocking behavior, and the
+   * flag is IGNORED for generationSource (that path has no scan).
+   */
+  asyncScan: boolean;
 };
 
 /**
  * Validate a raw OPEN_IMAGE_UPLOAD payload from an untrusted iframe. Returns the
- * sanitized request (requestId + normalized purpose), or `null` when it must be
- * DROPPED (missing/non-string requestId). The CALLER opens the native upload
- * modal — this only decides whether to, and which mode. An absent or
- * unrecognized `purpose` normalizes to the safe moderated default ('display').
+ * sanitized request (requestId + normalized purpose + asyncScan), or `null` when
+ * it must be DROPPED (missing/non-string requestId). The CALLER opens the native
+ * upload modal — this only decides whether to, which mode, and blocking-vs-async.
+ * An absent or unrecognized `purpose` normalizes to the safe moderated default
+ * ('display'); `asyncScan` is `true` ONLY for a literal `true` (default false).
  */
 export function resolveImageUploadRequest(raw: unknown): ImageUploadRequest | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -167,7 +178,8 @@ export function resolveImageUploadRequest(raw: unknown): ImageUploadRequest | nu
   if (typeof obj.requestId !== 'string' || obj.requestId.length === 0) return null;
   const purpose: BlockUploadPurpose =
     obj.purpose === 'generationSource' ? 'generationSource' : 'display';
-  return { requestId: obj.requestId, purpose };
+  const asyncScan = obj.asyncScan === true;
+  return { requestId: obj.requestId, purpose, asyncScan };
 }
 
 export type PageFallbackReason = 'timeout' | 'token_error' | 'fatal_block_error';
