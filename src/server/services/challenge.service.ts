@@ -1437,6 +1437,7 @@ export async function upsertUserChallenge({
     description: rest.description ?? null,
     theme: rest.theme,
     invitation: rest.invitation ?? null,
+    themeElements: themeEls ?? null,
     coverImageId,
     allowedNsfwLevel,
     nsfwLevel: deriveChallengeNsfwLevel(allowedNsfwLevel),
@@ -1524,7 +1525,11 @@ export async function upsertUserChallenge({
     // EntityModeration row, so no webhook ever flips ingestion back to Scanned and the challenge
     // sits hidden until the activation job voids it.
     const moderatedTextChanged =
-      buildChallengeModerationText(commonData) !== buildChallengeModerationText(existing);
+      buildChallengeModerationText(commonData) !==
+      buildChallengeModerationText({
+        ...existing,
+        themeElements: parseChallengeMetadata(existing.metadata).themeElements,
+      });
 
     const updated = await dbWrite.$transaction(async (tx) => {
       // Conditional on status IN THE WRITE: the Scheduled/entry-count checks above ran on the
@@ -1679,7 +1684,7 @@ export async function upsertUserChallenge({
 export async function scanUserChallenge(challengeId: number): Promise<void> {
   const challenge = await dbRead.challenge.findUnique({
     where: { id: challengeId },
-    select: { title: true, description: true, theme: true, invitation: true },
+    select: { title: true, description: true, theme: true, invitation: true, metadata: true },
   });
   if (!challenge) return;
 
@@ -1687,7 +1692,10 @@ export async function scanUserChallenge(challengeId: number): Promise<void> {
     await submitTextModeration({
       entityType: 'Challenge',
       entityId: challengeId,
-      content: buildChallengeModerationText(challenge),
+      content: buildChallengeModerationText({
+        ...challenge,
+        themeElements: parseChallengeMetadata(challenge.metadata).themeElements,
+      }),
       labels: ['nsfw'],
       priority: 'low',
     });

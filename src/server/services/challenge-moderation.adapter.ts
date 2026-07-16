@@ -4,6 +4,7 @@ import type { ModerationAdapter } from '~/server/services/entity-moderation.serv
 import { createNotification } from '~/server/services/notification.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
 import { buildChallengeModerationText } from '~/server/games/daily-challenge/challenge-helpers';
+import { parseChallengeMetadata } from '~/server/schema/challenge.schema';
 import { deriveChallengeNsfwLevel } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { ChallengeIngestionStatus } from '~/shared/utils/prisma/enums';
 
@@ -21,9 +22,17 @@ export const challengeModerationAdapter: ModerationAdapter = {
   resolveContent: async (ids) => {
     const rows = await dbRead.challenge.findMany({
       where: { id: { in: ids } },
-      select: { id: true, title: true, theme: true, description: true, invitation: true },
+      select: { id: true, title: true, theme: true, description: true, invitation: true, metadata: true },
     });
-    return new Map(rows.map((r) => [r.id, buildChallengeModerationText(r)]));
+    return new Map(
+      rows.map((r) => [
+        r.id,
+        buildChallengeModerationText({
+          ...r,
+          themeElements: parseChallengeMetadata(r.metadata).themeElements,
+        }),
+      ])
+    );
   },
 
   submit: ({ entityId, content }) =>
