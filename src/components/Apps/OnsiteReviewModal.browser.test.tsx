@@ -59,10 +59,20 @@ const mocks = vi.hoisted(() => ({
   invalidate: vi.fn().mockResolvedValue(undefined),
   mutate: vi.fn(),
   errorMode: false,
+  // Drives the getReviewStatus mock so a test can flip the Review-preview panel
+  // into the live state (default undefined = no preview → "Start preview").
+  reviewStatus: undefined as unknown,
 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true }),
+}));
+
+// Stub the review host bridge so the live-preview branch can render (and the
+// full-page link asserted) WITHOUT mounting the real PageBlockHost graph. The
+// bridge's own behaviour is covered by PageBlockHostReviewMode.browser.test.tsx.
+vi.mock('~/components/Apps/ReviewBlockPreviewHost', () => ({
+  ReviewBlockPreviewHost: () => <div data-testid="review-host-stub" />,
 }));
 
 const showError = vi.fn();
@@ -107,7 +117,7 @@ vi.mock('~/utils/trpc', () => {
         // Sub-panel queries the modal mounts (Review-preview / Screenshots / Code
         // diff) — kept network-free with empty/no-op state.
         getReviewStatus: {
-          useQuery: () => ({ data: undefined, isLoading: false, error: null }),
+          useQuery: () => ({ data: mocks.reviewStatus, isLoading: false, error: null }),
         },
         previewRequest: { useMutation: mutation('preview') },
         teardownPreview: { useMutation: mutation('teardown') },
@@ -134,6 +144,7 @@ beforeEach(() => {
   mocks.invalidate.mockClear();
   mocks.mutate.mockClear();
   mocks.errorMode = false;
+  mocks.reviewStatus = undefined;
   showError.mockClear();
 });
 
@@ -157,6 +168,40 @@ describe('OnsiteReviewModal — onsite-specific contract', () => {
     // Both action entry points are present on a pending request.
     await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeInTheDocument();
     await expect.element(page.getByRole('button', { name: 'Reject…' })).toBeInTheDocument();
+  });
+});
+
+describe('OnsiteReviewModal — live preview links to the full-page route (not the raw host)', () => {
+  test('a live preview renders the "Open full-page preview" link (internal same-origin route, new tab) and NOT the old raw-host button', async () => {
+    // Flip the shared getReviewStatus poll into the live state. previewUrl carries
+    // the raw `?mr=` host URL the OLD "Open review host" button used to link — the
+    // new button must ignore it and link to the internal /apps/review/preview route.
+    mocks.reviewStatus = {
+      state: 'preview-live',
+      detail: { host: 'my-onsite-block.civit.ai', url: 'https://my-onsite-block.civit.ai/my-onsite-block' },
+      previewUrl: 'https://my-onsite-block.civit.ai/my-onsite-block?mr=raw-entry-token',
+    };
+    renderWithProviders(
+      <OnsiteReviewModal selection={{ request: ONSITE_PENDING, mode: 'pending' }} onClose={vi.fn()} />
+    );
+
+    const link = page.getByRole('link', { name: /Open full-page preview/ });
+    await expect.element(link).toBeInTheDocument();
+    // Same-origin internal route, keyed by publishRequestId — NOT the raw `?mr=` URL.
+    const el = link.element() as HTMLAnchorElement;
+    expect(el.getAttribute('href')).toBe('/apps/review/preview/onsite-req-1');
+    expect(el.getAttribute('target')).toBe('_blank');
+    expect(el.getAttribute('href')).not.toContain('?mr=');
+    expect(el.getAttribute('href')).not.toContain('civit.ai');
+
+    // The old raw-host button is GONE, and no anchor in the panel links to the
+    // broken raw `?mr=` host URL.
+    expect(page.getByText('Open review host').elements()).toHaveLength(0);
+    const rawHostLinks = page
+      .getByRole('link')
+      .elements()
+      .filter((a) => (a as HTMLAnchorElement).getAttribute('href')?.includes('?mr='));
+    expect(rawHostLinks).toHaveLength(0);
   });
 });
 
