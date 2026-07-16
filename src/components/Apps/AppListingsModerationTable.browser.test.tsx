@@ -70,6 +70,30 @@ const ROWS = [
 const PAGE1 = [offsite({ id: 'apl_a', slug: 'alpha-live', name: 'Alpha', status: 'approved' })];
 const PAGE2 = [offsite({ id: 'apl_z', slug: 'zebra-live', name: 'Zebra', status: 'approved' })];
 
+// D-stranding regression fixtures: page 1 is a FULL page (PAGE_SIZE=50) of on-site
+// pending rows (every one filtered out by D) but has a next cursor; page 2 has a
+// visible off-site row. Without the fix, page 1's empty post-filter set would render
+// the "No listings match" dead end and suppress Load-more → page 2 unreachable.
+const STRANDED_PAGE1 = Array.from({ length: 50 }, (_, i) =>
+  offsite({
+    id: `apl_sp_${i}`,
+    slug: `stranded-onsite-${i}`,
+    name: `Stranded ${i}`,
+    kind: 'onsite',
+    appBlockId: `ab_sp_${i}`,
+    status: 'pending',
+    pendingRequest: {
+      id: `alpr_sp_${i}`,
+      submittedAt: new Date('2026-01-01T00:00:00Z'),
+      changelog: null,
+      submittedBy: { id: 1, username: 'dev', image: null },
+    },
+  })
+);
+const STRANDED_PAGE2 = [
+  offsite({ id: 'apl_reach', slug: 'reachable-ext', name: 'Reachable', status: 'approved' }),
+];
+
 const mocks = vi.hoisted(() => ({
   invalidate: vi.fn().mockResolvedValue(undefined),
   mutate: vi.fn(),
@@ -81,6 +105,9 @@ const mocks = vi.hoisted(() => ({
   // error (render nothing).
   queryErrorCode: null as string | null,
   paged: false,
+  // D-stranding regression: page 1 is a FULL server page of on-site pending rows (all
+  // filtered out client-side) but a next cursor exists; page 2 carries a visible row.
+  strandedD: false,
 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
@@ -133,6 +160,14 @@ vi.mock('~/utils/trpc', () => {
                 error,
                 refetch: mocks.refetch,
               };
+            }
+            if (mocks.strandedD) {
+              // Page 1: a full PAGE_SIZE page of on-site pending rows (all filtered by
+              // D) + a next cursor. Page 2: one visible off-site approved row, no cursor.
+              const data = input?.cursor
+                ? { items: STRANDED_PAGE2, nextCursor: null }
+                : { items: STRANDED_PAGE1, nextCursor: 'cur-2' };
+              return { data, isLoading: false, isFetching: false, error: null, refetch: mocks.refetch };
             }
             if (mocks.paged) {
               const data = input?.cursor
@@ -189,6 +224,7 @@ beforeEach(() => {
   mocks.queryError = false;
   mocks.queryErrorCode = null;
   mocks.paged = false;
+  mocks.strandedD = false;
   showError.mockClear();
 });
 
@@ -451,6 +487,24 @@ describe('AppListingsModerationTable — pagination, status filter + honest trun
     // Page 2 appended: BOTH rows now render, and Load-more is gone (nextCursor null).
     await expect.element(page.getByTestId('apps-mod-listing-row-zebra-live')).toBeInTheDocument();
     await expect.element(page.getByTestId('apps-mod-listing-row-alpha-live')).toBeInTheDocument();
+    expect(page.getByTestId('apps-mod-load-more').elements()).toHaveLength(0);
+  });
+
+  // D-stranding regression: a full server page of on-site pending rows (all filtered
+  // out by D) with a next cursor must STILL render Load-more — the empty post-filter
+  // page must not win the empty-state branch and strand the later (matching) pages.
+  test('a fully-filtered page with a next cursor still renders Load-more (D does not strand later pages)', async () => {
+    mocks.strandedD = true;
+    renderWithProviders(<AppListingsModerationTable />);
+    // Load-more IS present (a next cursor exists), even though the page rendered no rows.
+    await expect.element(page.getByTestId('apps-mod-load-more')).toBeInTheDocument();
+    // Page 1: every row filtered out → NO rows, and the dead-end empty state must NOT show.
+    expect(page.getByTestId('apps-mod-listing-row-stranded-onsite-0').elements()).toHaveLength(0);
+    expect(page.getByText('No listings match the current filters.').elements()).toHaveLength(0);
+
+    // Clicking it fetches page 2 → the previously-unreachable off-site row appears.
+    await page.getByTestId('apps-mod-load-more').click();
+    await expect.element(page.getByTestId('apps-mod-listing-row-reachable-ext')).toBeInTheDocument();
     expect(page.getByTestId('apps-mod-load-more').elements()).toHaveLength(0);
   });
 

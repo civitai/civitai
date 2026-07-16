@@ -406,7 +406,11 @@ export function AppListingsModerationTable() {
         <Text size="sm" c="dimmed">
           Loading…
         </Text>
-      ) : totalGroups === 0 ? (
+      ) : totalGroups === 0 && !truncated ? (
+        // Genuinely empty ONLY when there's no next page. If a next cursor exists, the
+        // current post-filter page can be empty (e.g. a full server page of on-site
+        // pending rows filtered out by D) while later pages still hold matching rows —
+        // that case must fall through to render Load-more, never this dead end.
         <Card withBorder p="md">
           <Text size="sm" c="dimmed" ta="center" py="sm">
             No listings match the current filters.
@@ -416,8 +420,14 @@ export function AppListingsModerationTable() {
         <>
           <Group gap={6}>
             <Text size="xs" c="dimmed" data-testid="apps-mod-listings-count">
-              Showing {items.length}
-              {truncated ? '+ (more listings exist — Load more or narrow the filters)' : ''}.
+              {items.length === 0 && truncated ? (
+                <>No matching listings on this page — more exist, Load more to reach them.</>
+              ) : (
+                <>
+                  Showing {items.length}
+                  {truncated ? '+ (more listings exist — Load more or narrow the filters)' : ''}.
+                </>
+              )}
             </Text>
             {truncated && sort && (
               <Text size="xs" c="orange" data-testid="apps-mod-sort-partial-note">
