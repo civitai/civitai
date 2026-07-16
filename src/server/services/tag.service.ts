@@ -11,7 +11,7 @@ import {
 import { CacheTTL, constants } from '~/server/common/constants';
 import { NsfwLevel, TagSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { imageTagsCache } from '~/server/redis/caches';
+import { imageTagsCache, tagCache as basicTagCache } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type {
   AdjustTagsSchema,
@@ -325,6 +325,18 @@ export const getTags = async ({
 };
 
 // #region [tag voting]
+// The ImageTag view already drops unlisted tags (`AND NOT t_1.unlisted` in its Tag
+// lateral); ModelTag does not, so only the model path needs this. Mods keep them so
+// they can see what content is flagged as.
+async function stripUnlistedTags<T extends { id: number }>(
+  tags: T[],
+  isModerator: boolean
+): Promise<T[]> {
+  if (isModerator || !tags.length) return tags;
+  const cached = await basicTagCache.fetch(tags.map((tag) => tag.id));
+  return tags.filter((tag) => !cached[tag.id]?.unlisted);
+}
+
 export const getVotableTags = async ({
   userId,
   type,
@@ -363,6 +375,7 @@ export const getVotableTags = async ({
         if (userVote) tag.vote = userVote.vote;
       }
     }
+    results = await stripUnlistedTags(results, isModerator);
   } else if (type === 'image') {
     const voteCutoff = new Date(Date.now() + constants.tagVoting.voteDuration);
 
@@ -717,9 +730,9 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
   const tagIdMatch = (col: string) =>
     isTagIds
       ? Prisma.sql`${Prisma.raw(`"${col}"`)} = ANY(${castedTags as number[]}::int[])`
-      : Prisma.sql`${Prisma.raw(
-          `"${col}"`
-        )} IN (SELECT id FROM "Tag" WHERE "name" = ANY(${castedTags as string[]}::text[]))`;
+      : Prisma.sql`${Prisma.raw(`"${col}"`)} IN (SELECT id FROM "Tag" WHERE "name" = ANY(${
+          castedTags as string[]
+        }::text[]))`;
 
   // TODO.fix "disabled" doesnt exist for TagsOnModels, is this being used?
   if (entityType === 'model') {

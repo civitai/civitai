@@ -113,6 +113,9 @@ function detailRow(over: Partial<Record<string, unknown>> = {}) {
     content_rating: 'g',
     version: '1.0.0',
     approved_scopes: ['user:read:self'],
+    // DEPLOY-GATE: a deployed on-platform app so the detail read isn't gated off.
+    external_url: null,
+    current_version_deployed_at: new Date('2026-01-01T00:00:00Z'),
     install_count: 3n,
     screenshots: null,
     // page app by default so the launchOnly gate doesn't interfere

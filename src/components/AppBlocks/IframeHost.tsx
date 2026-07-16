@@ -2,8 +2,19 @@ import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { ActionIcon, Box, Group, Menu, Text } from '@mantine/core';
-import { IconApps, IconDots, IconEyeOff } from '@tabler/icons-react';
+import {
+  IconApps,
+  IconDots,
+  IconEyeOff,
+  IconLayoutGrid,
+  IconShieldCheck,
+  IconShieldLock,
+  IconUpload,
+} from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { isAppReviewer } from '~/shared/utils/app-blocks-access';
+import { AppPermissionsActivityDrawer } from './AppPermissionsActivityDrawer';
 import { BlockFallback } from './BlockFallback';
 import { failureSnapshot } from './failureSnapshot';
 import { hostRenderDecision } from './hostRenderDecision';
@@ -136,12 +147,18 @@ function storageErrorMessage(err: unknown): string {
  */
 export function AppBlockChrome({
   blockInstanceId,
+  appBlockId,
   appName,
   modelId,
   modelName,
   slotId,
 }: {
   blockInstanceId: string;
+  /** The approved AppBlock id of the running app. When present, the ⋯ menu
+   *  gains a "Permissions & activity" item that opens a per-app transparency
+   *  drawer (granted scopes + action audit). Omitted → the item is not shown
+   *  (a caller that hasn't threaded the id gets the pre-existing chrome). */
+  appBlockId?: string;
   appName?: string;
   modelId?: number;
   modelName?: string;
@@ -150,6 +167,16 @@ export function AppBlockChrome({
    *  surface. Omitted → treated as a model surface (Hide shown). */
   slotId?: string;
 }) {
+  // Gate the platform-nav "Review" item with the SAME greppable predicate the
+  // /apps/review page + its server gate use (isAppReviewer), so the run-nav
+  // shortcut can't drift from the real reviewer gate — this stays moderator-only
+  // even after external-dev submission (W11) widens isAppDeveloper. useCurrentUser
+  // returns null for anon → not a reviewer.
+  const currentUser = useCurrentUser();
+  const isModerator = isAppReviewer(currentUser);
+  // Per-app "Permissions & activity" drawer open state (only reachable when
+  // appBlockId was threaded through).
+  const [permsOpen, setPermsOpen] = useState(false);
   // The full-page run surface (`app.page`) has no model-page slot to hide the
   // block from — the page IS the block — so suppress the "Hide" item there.
   const isPage = slotId != null && isPageSlot(slotId);
@@ -181,6 +208,7 @@ export function AppBlockChrome({
   // avoiding an unlabeled SVG / a double-reading "App".
   const iconProvenance = hasName || !showBadgeName;
   return (
+    <>
     <Group
       justify="space-between"
       gap="xs"
@@ -196,18 +224,66 @@ export function AppBlockChrome({
       {/* minWidth:0 lets the truncating name shrink instead of pushing the
           ⋯ menu out of the narrow sidebar layout. */}
       <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
-        {/* Provenance signal for screen readers. role="img" is required for the
-            aria-label to be reliably announced — a bare tabler <svg> has no role,
-            so without it the label is dropped. On the fallback the visible "App"
-            Text carries provenance, so the icon is marked decorative. */}
-        <IconApps
-          size={14}
-          stroke={1.5}
-          role={iconProvenance ? 'img' : undefined}
-          aria-label={iconProvenance ? 'App' : undefined}
-          aria-hidden={iconProvenance ? undefined : true}
-          style={{ flexShrink: 0 }}
-        />
+        {/* The provenance app icon doubles as a quick-nav Menu of the Civitai
+            App PLATFORM's own pages (NOT the sandboxed app's internal routes —
+            apps self-route as SPAs inside the iframe; the host has no list of
+            those). The IconApps keeps its screen-reader provenance semantics
+            (role="img" + aria-label "App") — required so a bare tabler <svg>'s
+            label is announced; on the fallback the visible "App" Text carries
+            provenance instead, so the icon is marked decorative there. */}
+        <Menu position="bottom-start" shadow="md" width={200}>
+          <Menu.Target>
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              size="sm"
+              aria-label="Apps menu"
+              data-testid="app-platform-nav-trigger"
+              style={{ flexShrink: 0 }}
+            >
+              <IconApps
+                size={14}
+                stroke={1.5}
+                role={iconProvenance ? 'img' : undefined}
+                aria-label={iconProvenance ? 'App' : undefined}
+                aria-hidden={iconProvenance ? undefined : true}
+              />
+            </ActionIcon>
+          </Menu.Target>
+          <Menu.Dropdown>
+            <Menu.Label>Civitai Apps</Menu.Label>
+            <Menu.Item
+              component={Link}
+              href="/apps"
+              leftSection={<IconLayoutGrid size={14} stroke={1.5} />}
+            >
+              Apps home
+            </Menu.Item>
+            <Menu.Item
+              component={Link}
+              href="/apps/installed"
+              leftSection={<IconApps size={14} stroke={1.5} />}
+            >
+              Installed apps
+            </Menu.Item>
+            <Menu.Item
+              component={Link}
+              href="/apps/my-submissions"
+              leftSection={<IconUpload size={14} stroke={1.5} />}
+            >
+              My submissions
+            </Menu.Item>
+            {isModerator && (
+              <Menu.Item
+                component={Link}
+                href="/apps/review"
+                leftSection={<IconShieldCheck size={14} stroke={1.5} />}
+              >
+                Review
+              </Menu.Item>
+            )}
+          </Menu.Dropdown>
+        </Menu>
         {/* Host-rendered (spoof-proof) app-name label. Truncates with an
             ellipsis at a bounded width so a long name never wraps or shoves
             the menu off the row in the narrow model.sidebar_top slot. On the
@@ -282,6 +358,14 @@ export function AppBlockChrome({
           >
             Manage apps
           </Menu.Item>
+          {appBlockId && (
+            <Menu.Item
+              leftSection={<IconShieldLock size={14} stroke={1.5} />}
+              onClick={() => setPermsOpen(true)}
+            >
+              Permissions & activity
+            </Menu.Item>
+          )}
           {showHide && (
             <Menu.Item
               leftSection={<IconEyeOff size={14} stroke={1.5} />}
@@ -301,6 +385,17 @@ export function AppBlockChrome({
         </Menu.Dropdown>
       </Menu>
     </Group>
+    {/* Per-app transparency drawer (Part B). Rendered only when the caller
+        threaded an appBlockId; the body's queries fire only once opened. */}
+    {appBlockId && (
+      <AppPermissionsActivityDrawer
+        appBlockId={appBlockId}
+        appName={sanitizedName ?? undefined}
+        opened={permsOpen}
+        onClose={() => setPermsOpen(false)}
+      />
+    )}
+    </>
   );
 }
 
@@ -680,6 +775,26 @@ export function IframeHost({
     });
     return off;
   }, [onMessage, applyHeight, install.appBlockId, install.blockInstanceId, slotId]);
+
+  // App Blocks runtime observability — render-FAILURE beacon. The success
+  // beacon fires at BLOCK_READY above (guarded by `blockRenderEmittedRef`). Here
+  // we fire the mutually-exclusive `error` beacon when the host lands on a
+  // terminal-failure state — the iframe never reached BLOCK_READY in time
+  // ('timeout'), the block reported a fatal error ('fatal'), or its token never
+  // resolved ('no_token'). Sharing the SAME emit-once ref makes ok/error
+  // mutually exclusive per mount. Fire-and-forget (beacon swallows failures).
+  useEffect(() => {
+    if (status !== 'timeout' && status !== 'fatal' && status !== 'no_token') return;
+    if (blockRenderEmittedRef.current) return;
+    blockRenderEmittedRef.current = true;
+    sendBlockRender({
+      appBlockId: install.appBlockId,
+      blockInstanceId: install.blockInstanceId,
+      slotId,
+      status: 'error',
+      errorClass: status,
+    });
+  }, [status, install.appBlockId, install.blockInstanceId, slotId]);
 
   useEffect(() => {
     const off = onMessage<unknown>('RESIZE_IFRAME', (raw) => {
@@ -1278,6 +1393,7 @@ export function IframeHost({
   // server enforces scope + flag + trust gate (resolveSharedContext). Every reply
   // carries the same requestId on success AND error so the block never hangs.
   const sharedAppendMutation = trpc.apps.shared.append.useMutation();
+  const sharedUpdateMutation = trpc.apps.shared.update.useMutation();
   const sharedVoteMutation = trpc.apps.shared.vote.useMutation();
   const sharedUnvoteMutation = trpc.apps.shared.unvote.useMutation();
   const sharedWithdrawMutation = trpc.apps.shared.withdraw.useMutation();
@@ -1394,6 +1510,39 @@ export function IframeHost({
     return off;
   }, [onMessage, send, token, sharedAppendMutation]);
 
+  // SHARED_UPDATE → apps.shared.update → SHARED_UPDATE_RESULT (author-scoped
+  // in-place edit; #3146). Reply is `{ ok, error? }` (SHARED_WITHDRAW-style, NOT
+  // SHARED_APPEND's `{ key }`) — the SDK 0.24 hook rejects on `!ok || error` and
+  // its isValidSharedUpdateResult REQUIRES a boolean `ok`, so BOTH paths send one
+  // (the error path MUST carry `ok: false` or the reply is dropped → block hangs).
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown; value?: unknown } | undefined>(
+      'SHARED_UPDATE',
+      async (raw) => {
+        if (
+          !raw ||
+          typeof raw.requestId !== 'string' ||
+          typeof raw.key !== 'string' ||
+          typeof raw.value !== 'object' ||
+          raw.value === null
+        )
+          return;
+        const requestId = raw.requestId;
+        try {
+          await sharedUpdateMutation.mutateAsync({
+            blockToken: token,
+            key: raw.key,
+            value: raw.value as { title: string; body?: string },
+          });
+          send('SHARED_UPDATE_RESULT', { requestId, ok: true });
+        } catch (err) {
+          send('SHARED_UPDATE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, sharedUpdateMutation]);
+
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
       'SHARED_VOTE',
@@ -1484,6 +1633,7 @@ export function IframeHost({
     >
       <AppBlockChrome
         blockInstanceId={install.blockInstanceId}
+        appBlockId={install.appBlockId}
         appName={install.manifest.name}
         modelId={modelCtx.modelId}
         modelName={modelCtx.modelName}

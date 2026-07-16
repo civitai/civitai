@@ -1,5 +1,5 @@
 import { Button, Group, Stack, Text, ThemeIcon, Title } from '@mantine/core';
-import { IconSettings, IconShoppingBag } from '@tabler/icons-react';
+import { IconEye, IconEyeOff, IconSettings, IconShoppingBag } from '@tabler/icons-react';
 import Link from 'next/link';
 
 export function ShopHeader({
@@ -8,6 +8,9 @@ export function ShopHeader({
   isOwner,
   canManage,
   baseUrl,
+  isModerator,
+  preview,
+  onTogglePreview,
 }: {
   displayName: string;
   description?: string | null;
@@ -15,6 +18,10 @@ export function ShopHeader({
   // Owners and moderators can manage the shop.
   canManage: boolean;
   baseUrl: string;
+  // Moderator-only preview toggle, shown alongside Manage Shop.
+  isModerator: boolean;
+  preview: boolean;
+  onTogglePreview: () => void;
 }) {
   const trimmed = description?.trim();
 
@@ -39,17 +46,28 @@ export function ShopHeader({
           ) : null}
         </Stack>
       </Group>
-      {canManage && (
-        <Button
-          component={Link}
-          href={`${baseUrl}/shop/manage`}
-          variant="default"
-          leftSection={<IconSettings size={16} />}
-          style={{ flexShrink: 0 }}
-        >
-          {isOwner ? 'Manage Your Shop' : 'Manage Shop'}
-        </Button>
-      )}
+      <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
+        {isModerator && (
+          <Button
+            variant={preview ? 'filled' : 'default'}
+            color={preview ? 'yellow' : undefined}
+            leftSection={preview ? <IconEyeOff size={16} /> : <IconEye size={16} />}
+            onClick={onTogglePreview}
+          >
+            {preview ? 'Exit preview' : 'Preview'}
+          </Button>
+        )}
+        {canManage && (
+          <Button
+            component={Link}
+            href={`${baseUrl}/shop/manage`}
+            variant="default"
+            leftSection={<IconSettings size={16} />}
+          >
+            {isOwner ? 'Manage Your Shop' : 'Manage Shop'}
+          </Button>
+        )}
+      </Group>
     </Group>
   );
 }

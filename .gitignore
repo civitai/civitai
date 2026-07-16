@@ -140,6 +140,9 @@ tmpclaude-*
 # nested Next build output (apps/*)
 apps/*/.next/
 
+# nested SvelteKit generated output (apps/*)
+apps/*/.svelte-kit/
+
 # Turborepo local task cache
 .turbo/
 
@@ -152,3 +155,7 @@ apps/auth/e2e/playwright-report/
 apps/auth/e2e/test-results/
 apps/auth/e2e/.auth/
 mockups/
+
+# local-only SQL (never committed)
+*.local.sql
+*.local.md

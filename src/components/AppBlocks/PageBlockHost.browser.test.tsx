@@ -13,6 +13,10 @@ import { renderWithProviders } from '../../../test/component-setup';
 // without a real tRPC provider. The workflow + storage bridges are exercised in
 // PageBlockHostWorkflow / PageBlockHostStorage.browser.test.tsx; here they're
 // inert stubs.
+// AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
+// moderator gate; these suites render the real host without a CivitaiSessionProvider.
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+
 vi.mock('~/utils/trpc', () => ({
   // FeatureFlagsProvider (pulled into PageBlockHost's real render graph) statically
   // imports `setTrpcBatchingEnabled` from this module (added in #2946). Because
@@ -21,9 +25,15 @@ vi.mock('~/utils/trpc', () => ({
   // test file fails to import — silently, since this suite is report-only.
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {
+    // W13 wildcard-pack import: PageBlockHost now calls this at render; stub so the mount succeeds (behavior covered in PageBlockHostWildcardPack.browser.test.tsx).
+    generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getMyBuzzBalance: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getMyViewer: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getMyBuzzTransactions: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getMyBuzzAccounts: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getMyDailyCompensation: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       estimateWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       pollWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -31,6 +41,7 @@ vi.mock('~/utils/trpc', () => ({
     apps: {
       shared: {
         append: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        update: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         vote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         unvote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         withdraw: { useMutation: () => ({ mutateAsync: vi.fn() }) },

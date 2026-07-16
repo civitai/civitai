@@ -1,7 +1,6 @@
 import { initTRPC, TRPCError } from '@trpc/server';
 import type { NextApiRequest } from 'next';
 import semver from 'semver';
-import superjson from 'superjson';
 import { OnboardingSteps } from '~/server/common/enums';
 import { withSpan } from '~/server/utils/otel-helpers';
 import {
@@ -9,10 +8,16 @@ import {
   BulkheadFullError,
   HEAVY_REQUEST_CONCURRENCY,
 } from '~/server/utils/request-bulkhead';
-import { trpcProcedureDuration } from '~/server/prom/client';
+import { trpcProcedureDuration, trpcClientReadCapabilityRequests } from '~/server/prom/client';
+import { phase1CapableLabel } from '~/server/utils/client-version-saturation';
 import { maybeLogTrpcSlow } from '~/server/logging/trpc-slow-log';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
 import { instrumentSerialize } from '~/server/logging/trpc-serialize-log';
+import {
+  buildTransformer,
+  serverWriteSerialize,
+  WRITE_DEVALUE,
+} from '~/shared/utils/trpc-union-transformer';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
@@ -44,17 +49,30 @@ const t = initTRPC
   .context<Context>()
   .meta<TRPCMeta>()
   .create({
-    transformer: {
+    // Phase 2 of the superjson → devalue transformer migration: the response
+    // WRITE is env-gated PER POOL (`TRPC_WRITE_DEVALUE`, resolved once at module
+    // load into `serverWriteSerialize`) while READ stays the format-sniffing
+    // UNION (so a peer that still writes superjson is decoded fine, and rollback
+    // is unsetting the env + a pod restart). Default (flag unset) =
+    // `superjson.serialize` = byte-for-byte the Phase-1 wire, so this is safe to
+    // merge; setting the env `true` on ONE pool makes only that pool write
+    // devalue responses. The shared `buildTransformer` fills the request-read /
+    // response-read (union) and request-write (superjson, never exercised
+    // server-side) slots; the ONLY server-specific difference is the instrumented
+    // response-serialize below, whose inner call is still `serverWriteSerialize`.
+    transformer: buildTransformer((data: any) =>
       // instrumentSerialize times the serialize (the exact frame that pegs the
-      // loop on an oversized response — see trpc-serialize-log.ts) and, only above
-      // a cheap duration floor, logs the offending procedure + byte size. Disarmed
-      // by default: a single boolean branch, then the original withSpan+superjson.
-      serialize: (data: any) =>
-        instrumentSerialize(() =>
-          withSpan('trpc:serialize:superjson', () => superjson.serialize(data))
-        ),
-      deserialize: superjson.deserialize.bind(superjson),
-    },
+      // loop on an oversized response — see trpc-serialize-log.ts) and, only
+      // above a cheap duration floor, logs the offending procedure + byte size.
+      // The span label is derived from the live gate so the freeze-instrumentation
+      // frame name matches what is ACTUALLY written (superjson vs devalue).
+      // The wrappers are pass-through — they return serverWriteSerialize's result.
+      instrumentSerialize(() =>
+        withSpan(`trpc:serialize:${WRITE_DEVALUE ? 'devalue' : 'superjson'}`, () =>
+          serverWriteSerialize(data)
+        )
+      )
+    ),
     errorFormatter({ shape }) {
       return shape;
     },
@@ -126,6 +144,17 @@ async function needsUpdate(req?: NextApiRequest) {
 }
 
 const enforceClientVersion = t.middleware(async ({ next, ctx }) => {
+  // Serializer-migration saturation instrument: for WEB clients only, bucket this
+  // procedure by whether the reported bundle can decode the union serializer
+  // (Phase-1-capable). Bounded label (true/false), memoized semver compare — a
+  // Map lookup on the hot path after warmup. Non-web (API-key / server-to-server)
+  // requests have no browser bundle and are excluded so the ratio stays purely
+  // about the SPA population the Phase-2 write-flip gate cares about. Counted
+  // before next() so it reflects attempts even if the resolver throws.
+  if ((ctx.req?.headers['x-client'] as string) === 'web') {
+    const phase1Capable = phase1CapableLabel(ctx.req?.headers['x-client-version'] as string);
+    trpcClientReadCapabilityRequests.inc({ phase1_capable: phase1Capable });
+  }
   // if (await needsUpdate(ctx.req)) {
   //   throw new TRPCError({
   //     code: 'PRECONDITION_FAILED',
@@ -246,7 +275,6 @@ function runRecordProcedureDuration<T>(
   userId: number | undefined,
   next: () => Promise<T>
 ): Promise<T> {
-  const metricsEnd = TRPC_PROCEDURE_METRICS ? trpcProcedureDuration.startTimer({ path }) : undefined;
   const startedAt = performance.now();
   return next().then(
     (result) => {
@@ -255,16 +283,21 @@ function runRecordProcedureDuration<T>(
       const r = result as unknown as { ok?: boolean; error?: { code?: string } };
       const ok = r?.ok !== false;
       const errorCode = r?.ok === false ? r.error?.code : undefined;
-      metricsEnd?.();
-      maybeLogTrpcSlow({ path, type, durationMs: performance.now() - startedAt, ok, errorCode, userId });
+      const durationMs = performance.now() - startedAt;
+      // Reuse the single performance.now() delta for BOTH the opt-in histogram and
+      // the always-on slow-log — avoids startTimer's separate hrtime capture +
+      // Object.assign per procedure. Same histogram semantics (wall-clock seconds).
+      if (TRPC_PROCEDURE_METRICS) trpcProcedureDuration.observe({ path }, durationMs / 1000);
+      maybeLogTrpcSlow({ path, type, durationMs, ok, errorCode, userId });
       return result;
     },
     (err) => {
-      metricsEnd?.();
+      const durationMs = performance.now() - startedAt;
+      if (TRPC_PROCEDURE_METRICS) trpcProcedureDuration.observe({ path }, durationMs / 1000);
       maybeLogTrpcSlow({
         path,
         type,
-        durationMs: performance.now() - startedAt,
+        durationMs,
         ok: false,
         errorCode: err instanceof TRPCError ? err.code : undefined,
         userId,

@@ -25,11 +25,17 @@ const {
   mockListEvents,
   mockReport,
   mockListReports,
+  mockResetOnsite,
   mockIsAppBlocksEnabled,
   mockIsAppBlocksAuthorEnabled,
 } = vi.hoisted(() => ({
   mockDelist: vi.fn(async () => ({ appListingId: 'apl_1', status: 'removed' as const })),
   mockRelist: vi.fn(async () => ({ appListingId: 'apl_1', status: 'approved' as const })),
+  mockResetOnsite: vi.fn(async () => ({
+    appListingId: 'apl_1',
+    status: 'pending' as const,
+    publishRequestId: 'pubreq_1',
+  })),
   mockClaim: vi.fn(async () => ({ appListingId: 'apl_1', userId: 42 })),
   mockPurge: vi.fn(async () => ({ appListingId: 'apl_1', purged: true as const })),
   mockResolve: vi.fn(async () => undefined),
@@ -51,6 +57,7 @@ vi.mock('~/server/services/blocks/offsite-moderation.service', () => ({
   resolveReport: mockResolve,
   dismissReport: mockDismiss,
   listModerationEvents: mockListEvents,
+  resetOnsiteListingToPending: mockResetOnsite,
 }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
@@ -138,6 +145,12 @@ const MOD_ACTIONS: Array<{
     mock: mockListEvents,
     call: (c) => c.listModerationEvents({ appListingId: 'apl_1' }),
   },
+  {
+    // W13 onsite reset-to-pending — DARK backend capability, mod-only router acceptance.
+    name: 'resetOnsiteListingToPending',
+    mock: mockResetOnsite,
+    call: (c) => c.resetOnsiteListingToPending({ appListingId: 'apl_1', reason: REASON }),
+  },
 ];
 
 describe('mod actions — every one is moderator-only', () => {
@@ -177,6 +190,15 @@ describe('mod actions — reviewer id is bound to ctx (never client-supplied)', 
       input: { appListingId: 'apl_1', targetUserId: 42, reason: REASON },
     });
     expect(mockPurge.mock.calls[0][0]).toMatchObject({ reviewerUserId: mod.id });
+  });
+
+  it('resetOnsiteListingToPending passes reviewerUserId = ctx.user.id + the input', async () => {
+    const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
+    await caller.resetOnsiteListingToPending({ appListingId: 'apl_1', reason: REASON });
+    expect(mockResetOnsite.mock.calls[0][0]).toMatchObject({
+      reviewerUserId: mod.id,
+      input: { appListingId: 'apl_1', reason: REASON },
+    });
   });
 
   it('resolve/dismiss pass reviewerUserId = ctx.user.id', async () => {

@@ -1,0 +1,30 @@
+{
+  "name": "@civitai/storage-app",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "smoke": "tsx scripts/smoke.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.490.0",
+    "@aws-sdk/s3-request-presigner": "^3.490.0",
+    "@civitai/storage": "workspace:*",
+    "fastify": "^5.2.1",
+    "prom-client": "^14.2.0",
+    "zod": "^4.0.17"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.9",
+    "tsup": "^8.5.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.2",
+    "vitest": "^4.0.18"
+  }
+}

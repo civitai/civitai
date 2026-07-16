@@ -67,6 +67,8 @@ function capturedValues(): unknown[] {
 function hydratedRow(over: Record<string, unknown> = {}) {
   return {
     id: 'apl_1',
+    // Integer surrogate (CommentsV2 thread key) — projected into the detail DTO only.
+    serialId: 101,
     kind: 'onsite',
     slug: 'cool-app',
     name: 'Cool App',
@@ -82,6 +84,10 @@ function hydratedRow(over: Record<string, unknown> = {}) {
     user: { id: 7, username: 'dev', image: 'avatar-key' },
     metric: { thumbsUpCount: 9, thumbsDownCount: 1 },
     appBlock: {
+      // DEPLOY-GATE: a deployed onsite block (non-null timestamp) so the detail
+      // read returns its projection. The dedicated deploy-gate suite covers the
+      // never-deployed (NULL → unavailable) onsite case.
+      currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
       manifest: {
         name: 'Cool App',
         page: { path: '/run' },
@@ -313,12 +319,15 @@ describe('projectListingDetail — public allowlist + gallery', () => {
         'recommend',
         'reviewCount',
         'screenshots',
+        'serialId',
         'slug',
         'tagline',
       ].sort()
     );
     expect(detail).not.toHaveProperty('status');
     expect(detail.description).toBe('# Cool app\n\nbody');
+    // The integer surrogate is surfaced for the CommentsV2 thread key.
+    expect(detail.serialId).toBe(101);
   });
 
   it('onsite detail kindData carries appBlockId, hasPage + the computed liveUrl', () => {

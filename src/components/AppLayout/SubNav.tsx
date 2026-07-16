@@ -3,7 +3,6 @@ import { ArticleFeedFilters } from '~/components/Filters/FeedFilters/ArticleFeed
 import { BountyFeedFilters } from '~/components/Filters/FeedFilters/BountyFeedFilters';
 import { ComicFeedFilters } from '~/components/Filters/FeedFilters/ComicFeedFilters';
 
-import { ChallengeFeedFilters } from '~/components/Filters/FeedFilters/ChallengeFeedFilters';
 import { ImageFeedFilters } from '~/components/Filters/FeedFilters/ImageFeedFilters';
 import { Model3DFeedFilters } from '~/components/Filters/FeedFilters/Model3DFeedFilters';
 import { ModelFeedFilters } from '~/components/Filters/FeedFilters/ModelFeedFilters';
@@ -25,7 +24,7 @@ const filterSections = [
   { pathname: '/posts', component: <PostFeedFilters ml="auto" /> },
   { pathname: '/articles', component: <ArticleFeedFilters ml="auto" /> },
   { pathname: '/bounties', component: <BountyFeedFilters ml="auto" /> },
-  { pathname: '/challenges', component: <ChallengeFeedFilters ml="auto" /> },
+  // /challenges renders its sort/filters inline with the Community Challenges section instead.
   { pathname: '/tools', component: <ToolFeedFilters ml="auto" /> },
   { pathname: '/tools/[slug]', component: <ToolImageFeedFilters ml="auto" /> },
   { pathname: '/comics', component: <ComicFeedFilters ml="auto" /> },

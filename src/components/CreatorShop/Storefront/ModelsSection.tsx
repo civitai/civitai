@@ -1,4 +1,4 @@
-import { Center, Group, Loader, LoadingOverlay, SimpleGrid, Stack } from '@mantine/core';
+import { Center, Group, Loader, LoadingOverlay, Stack } from '@mantine/core';
 import { useMemo } from 'react';
 import { ModelCardContextProvider } from '~/components/Cards/ModelCardContext';
 import type { CreatorShopData } from '~/components/CreatorShop/creator-shop.util';
@@ -14,15 +14,25 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import { ModelSort } from '~/server/common/enums';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 
-export function ModelsSection({ shop, username }: { shop: CreatorShopData; username: string }) {
+export function ModelsSection({
+  shop,
+  username,
+  preview = false,
+}: {
+  shop: CreatorShopData;
+  username: string;
+  preview?: boolean;
+}) {
   const { set, ...queryFilters } = useModelQueryParams();
   const sort = queryFilters.sort ?? ModelSort.Newest;
   const period = queryFilters.period ?? MetricTimeframe.AllTime;
 
   // browsingLevel is applied inside useQueryModels; no need to pass it here.
+  // Preview drops the username filter so the grid fills with any Early Access
+  // models, regardless of whose shop is being viewed.
   const { models, fetchNextPage, hasNextPage, isRefetching, isFetching } = useQueryModels({
     ...queryFilters,
-    username,
+    username: preview ? undefined : username,
     sort,
     period,
     earlyAccess: true,
@@ -65,7 +75,7 @@ export function ModelsSection({ shop, username }: { shop: CreatorShopData; usern
         ) : models.length ? (
           <div className="relative">
             <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
-            <SimpleGrid cols={{ base: 2, sm: 3, md: 4 }} spacing="md">
+            <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(220px,1fr))]">
               {models.map((model) => (
                 <ModelShopCard
                   key={model.id}
@@ -73,7 +83,7 @@ export function ModelsSection({ shop, username }: { shop: CreatorShopData; usern
                   price={priceByVersionId[model.version.id]}
                 />
               ))}
-            </SimpleGrid>
+            </div>
             {hasNextPage && (
               <InViewLoader loadFn={fetchNextPage} loadCondition={!isFetching}>
                 <Center p="xl" style={{ height: 36 }} mt="md">

@@ -38,7 +38,15 @@ const mocks = vi.hoisted(() => ({
   poll: vi.fn(),
   cancel: vi.fn(),
   balance: vi.fn(),
+  transactions: vi.fn(),
+  accounts: vi.fn(),
+  dailyCompensation: vi.fn(),
+  viewer: vi.fn(),
 }));
+
+// AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
+// moderator gate; these suites render the real host without a CivitaiSessionProvider.
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
 vi.mock('~/utils/trpc', () => ({
   // FeatureFlagsProvider (in PageBlockHost's real render graph) statically imports
@@ -47,18 +55,25 @@ vi.mock('~/utils/trpc', () => ({
   // test file fails to import.
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {
+    // W13 wildcard-pack import: PageBlockHost now calls this at render; stub so the mount succeeds (behavior covered in PageBlockHostWildcardPack.browser.test.tsx).
+    generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: mocks.submit }) },
       estimateWorkflow: { useMutation: () => ({ mutateAsync: mocks.estimate }) },
       pollWorkflow: { useMutation: () => ({ mutateAsync: mocks.poll }) },
       cancelWorkflow: { useMutation: () => ({ mutateAsync: mocks.cancel }) },
       getMyBuzzBalance: { useMutation: () => ({ mutateAsync: mocks.balance }) },
+      getMyBuzzTransactions: { useMutation: () => ({ mutateAsync: mocks.transactions }) },
+      getMyBuzzAccounts: { useMutation: () => ({ mutateAsync: mocks.accounts }) },
+      getMyDailyCompensation: { useMutation: () => ({ mutateAsync: mocks.dailyCompensation }) },
+      getMyViewer: { useMutation: () => ({ mutateAsync: mocks.viewer }) },
     },
     // PageBlockHost also wires the storage bridge (inert here — exercised in
     // PageBlockHostStorage.browser.test.tsx); stub so the component mounts.
     apps: {
       shared: {
         append: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        update: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         vote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         unvote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         withdraw: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -166,6 +181,10 @@ describe('PageBlockHost workflow bridge (W10 money-path wiring)', () => {
     mocks.poll.mockReset();
     mocks.cancel.mockReset();
     mocks.balance.mockReset();
+    mocks.transactions.mockReset();
+    mocks.accounts.mockReset();
+    mocks.dailyCompensation.mockReset();
+    mocks.viewer.mockReset();
     // dialogStore is a module-level zustand store shared across tests — reset it
     // (the OPEN_BUZZ_PURCHASE handler triggers a dialog on it).
     useDialogStore.getState().closeAll();
@@ -512,6 +531,265 @@ describe('PageBlockHost workflow bridge (W10 money-path wiring)', () => {
     });
     // No server call is made without a token.
     expect(mocks.balance).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  // ── Viewer self-read — GET_VIEWER → VIEWER_RESULT. The block reads its own
+  //    identity ("who am I") via the @civitai/blocks-react `useViewer()` hook,
+  //    which posts GET_VIEWER and awaits VIEWER_RESULT. The host mediates it
+  //    through the block-token-authed `blocks.getMyViewer` MUTATION (token-`sub`-
+  //    bound + user:read:self server-side). GET_VIEWER takes NO params, so only
+  //    the page token is forwarded — a block-sent field can't override it. Every
+  //    path MUST reply or the block hangs to its SDK timeout.
+  test('GET_VIEWER forwards ONLY the page token to getMyViewer and posts VIEWER_RESULT', async () => {
+    const viewer = { id: 42, username: 'u', status: 'active', buzzBudget: 50 };
+    mocks.viewer.mockResolvedValue(viewer);
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('GET_VIEWER', { requestId: 'rq_viewer' });
+
+    await vi.waitFor(() => {
+      // Forwarded ONLY the page `token` PROP as blockToken (the SELF-BOUND
+      // credential) — GET_VIEWER carries no params, and the handler never trusts
+      // a client-supplied identity.
+      expect(mocks.viewer).toHaveBeenCalledWith({ blockToken: 'tok_abc' });
+    });
+    await vi.waitFor(() => {
+      const r = replies.last('VIEWER_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_viewer', viewer });
+    });
+    replies.stop();
+  });
+
+  test('GET_VIEWER error path posts an error-variant VIEWER_RESULT (no hang)', async () => {
+    mocks.viewer.mockRejectedValue(new Error('block lacks user:read:self scope'));
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('GET_VIEWER', { requestId: 'rq_viewer_err' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('VIEWER_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_viewer_err',
+        error: 'block lacks user:read:self scope',
+      });
+    });
+    replies.stop();
+  });
+
+  test('GET_VIEWER with NO requestId is dropped (no mutation, no reply)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('GET_VIEWER', {}); // missing requestId
+
+    await new Promise((r) => setTimeout(r, 150));
+    expect(mocks.viewer).not.toHaveBeenCalled();
+    expect(replies.last('VIEWER_RESULT')).toBeUndefined();
+    replies.stop();
+  });
+
+  test('GET_VIEWER with a null page token replies with the error variant (never hangs)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} token={null} />);
+    await vi.waitFor(() => {
+      const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement | null;
+      if (!el?.contentWindow) throw new Error('iframe not mounted yet');
+    });
+    const replies = listenForReply();
+
+    postFromBlock('GET_VIEWER', { requestId: 'rq_viewer_notoken' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('VIEWER_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_viewer_notoken', error: 'no block token' });
+    });
+    // No server call is made without a token.
+    expect(mocks.viewer).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  // ── Buzz self-read dashboard bridges — GET_BUZZ_TRANSACTIONS / GET_BUZZ_ACCOUNTS
+  //    / GET_DAILY_COMPENSATION → *_RESULT. Each mirrors GET_BUZZ_BALANCE: forward
+  //    the page token to the buzz:read:self mutation, post the JSON back, and reply
+  //    on EVERY path (no-token error variant, service-error variant) so the block
+  //    never hangs. requestId correlation is asserted end-to-end.
+  test('GET_BUZZ_TRANSACTIONS forwards token + params and posts BUZZ_TRANSACTIONS_RESULT', async () => {
+    const result = { cursor: null, transactions: [{ type: 'Tip', amount: 5 }] };
+    mocks.transactions.mockResolvedValue(result);
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('GET_BUZZ_TRANSACTIONS', {
+      requestId: 'rq_txn',
+      params: { accountType: 'yellow', limit: 50 },
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.transactions).toHaveBeenCalledWith({
+        blockToken: 'tok_abc',
+        accountType: 'yellow',
+        limit: 50,
+      });
+    });
+    await vi.waitFor(() => {
+      const r = replies.last('BUZZ_TRANSACTIONS_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_txn', result });
+    });
+    replies.stop();
+  });
+
+  test('GET_BUZZ_TRANSACTIONS error path posts an error-variant result (no hang)', async () => {
+    mocks.transactions.mockRejectedValue(new Error('block lacks buzz:read:self scope'));
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('GET_BUZZ_TRANSACTIONS', { requestId: 'rq_txn_err' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('BUZZ_TRANSACTIONS_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_txn_err',
+        error: 'block lacks buzz:read:self scope',
+      });
+    });
+    replies.stop();
+  });
+
+  test('GET_BUZZ_TRANSACTIONS with a null page token replies with the error variant (never hangs)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} token={null} />);
+    await vi.waitFor(() => {
+      const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement | null;
+      if (!el?.contentWindow) throw new Error('iframe not mounted yet');
+    });
+    const replies = listenForReply();
+
+    postFromBlock('GET_BUZZ_TRANSACTIONS', { requestId: 'rq_txn_notoken' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('BUZZ_TRANSACTIONS_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_txn_notoken', error: 'no block token' });
+    });
+    expect(mocks.transactions).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('GET_BUZZ_TRANSACTIONS ignores a block-supplied blockToken in params (host token is authoritative)', async () => {
+    mocks.transactions.mockResolvedValue({ cursor: null, transactions: [] });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    // A block tries to smuggle its own blockToken via params — it must NOT override
+    // the host's page token (blockToken is spread LAST in the handler).
+    postFromBlock('GET_BUZZ_TRANSACTIONS', {
+      requestId: 'rq_txn_override',
+      params: { accountType: 'yellow', blockToken: 'EVIL_TOKEN' },
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.transactions).toHaveBeenCalled();
+    });
+    const arg = mocks.transactions.mock.calls[0][0] as { blockToken: string; accountType: string };
+    expect(arg.blockToken).toBe('tok_abc'); // the HOST page token, never the block-sent one
+    expect(arg.accountType).toBe('yellow'); // legit params still forwarded
+    replies.stop();
+  });
+
+  test('GET_DAILY_COMPENSATION ignores a block-supplied blockToken in params (host token is authoritative)', async () => {
+    mocks.dailyCompensation.mockResolvedValue({ resources: [], hasPublishedResources: false });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('GET_DAILY_COMPENSATION', {
+      requestId: 'rq_comp_override',
+      params: { date: '2026-07-01', blockToken: 'EVIL_TOKEN' },
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.dailyCompensation).toHaveBeenCalled();
+    });
+    const arg = mocks.dailyCompensation.mock.calls[0][0] as { blockToken: string; date: string };
+    expect(arg.blockToken).toBe('tok_abc');
+    expect(arg.date).toBe('2026-07-01');
+    replies.stop();
+  });
+
+  test('GET_BUZZ_ACCOUNTS forwards token and posts BUZZ_ACCOUNTS_RESULT', async () => {
+    const result = { accounts: [{ accountType: 'yellow', balance: 100 }] };
+    mocks.accounts.mockResolvedValue(result);
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('GET_BUZZ_ACCOUNTS', { requestId: 'rq_acct_read' });
+
+    await vi.waitFor(() => {
+      expect(mocks.accounts).toHaveBeenCalledWith({ blockToken: 'tok_abc' });
+    });
+    await vi.waitFor(() => {
+      const r = replies.last('BUZZ_ACCOUNTS_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_acct_read', result });
+    });
+    replies.stop();
+  });
+
+  test('GET_DAILY_COMPENSATION forwards token + params and posts DAILY_COMPENSATION_RESULT', async () => {
+    const result = { resources: [], hasPublishedResources: false };
+    mocks.dailyCompensation.mockResolvedValue(result);
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('GET_DAILY_COMPENSATION', {
+      requestId: 'rq_comp',
+      params: { date: '2026-07-01' },
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.dailyCompensation).toHaveBeenCalledWith({
+        blockToken: 'tok_abc',
+        date: '2026-07-01',
+      });
+    });
+    await vi.waitFor(() => {
+      const r = replies.last('DAILY_COMPENSATION_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_comp', result });
+    });
+    replies.stop();
+  });
+
+  test('GET_DAILY_COMPENSATION with a null page token replies with the error variant', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} token={null} />);
+    await vi.waitFor(() => {
+      const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement | null;
+      if (!el?.contentWindow) throw new Error('iframe not mounted yet');
+    });
+    const replies = listenForReply();
+
+    postFromBlock('GET_DAILY_COMPENSATION', { requestId: 'rq_comp_notoken' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('DAILY_COMPENSATION_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_comp_notoken', error: 'no block token' });
+    });
+    expect(mocks.dailyCompensation).not.toHaveBeenCalled();
     replies.stop();
   });
 

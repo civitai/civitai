@@ -15,17 +15,15 @@ import { creatorShopSectionKeys } from '~/server/schema/creator-shop.schema';
 export function StorefrontSections({
   shop,
   ownedCosmeticIds,
-  displayName,
   username,
   ownerUserId,
-  baseUrl,
+  preview = false,
 }: {
   shop: CreatorShopData;
   ownedCosmeticIds: Set<number>;
-  displayName: string;
   username: string;
   ownerUserId: number;
-  baseUrl: string;
+  preview?: boolean;
 }) {
   const sectionOrder = useMemo<CreatorShopSectionKey[]>(() => {
     const configured = shop.settings.sections;
@@ -36,9 +34,15 @@ export function StorefrontSections({
 
   const sections: Record<CreatorShopSectionKey, React.ReactNode> = {
     featured: (
-      <FeaturedSection shop={shop} displayName={displayName} ownedCosmeticIds={ownedCosmeticIds} />
+      <FeaturedSection shop={shop} ownedCosmeticIds={ownedCosmeticIds} ownerUserId={ownerUserId} />
     ),
-    cosmetics: <CosmeticsSection items={shop.cosmetics} ownedCosmeticIds={ownedCosmeticIds} />,
+    cosmetics: (
+      <CosmeticsSection
+        items={shop.cosmetics}
+        ownedCosmeticIds={ownedCosmeticIds}
+        ownerUserId={ownerUserId}
+      />
+    ),
     resold: (
       <ResoldSection
         items={shop.resold}
@@ -47,13 +51,21 @@ export function StorefrontSections({
       />
     ),
     merch: <MerchSection />,
-    models: <ModelsSection shop={shop} username={username} />,
+    models: <ModelsSection shop={shop} username={username} preview={preview} />,
   };
 
   return (
     <Stack gap="xl">
       {sectionOrder.map((key) => (
-        <Fragment key={key}>{sections[key]}</Fragment>
+        <Fragment key={key}>
+          {/* Featured renders its own full-bleed band; every other section is
+              constrained to the shared max width and centered. */}
+          {key === 'featured' ? (
+            sections[key]
+          ) : (
+            <div className="mx-auto w-full max-w-[1600px]">{sections[key]}</div>
+          )}
+        </Fragment>
       ))}
     </Stack>
   );

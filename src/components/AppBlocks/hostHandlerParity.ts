@@ -204,6 +204,49 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // Viewer self-read ("who am I") backing the SDK `useViewer()` hook — host-
+  // mediated via the `user:read:self`-gated `blocks.getMyViewer` MUTATION, the
+  // successor to GET /blocks/me (which stays live until the hook publishes +
+  // consumers migrate). AHEAD of the published SDK dist union (SDK co-requisite
+  // — forward-looking coverage, allowed by the one-directional compile-time
+  // gate). PAGE-ONLY affordance today (a page block reading its viewer; model-
+  // slot apps are deferred + will get page-host too), so N/A for the model host
+  // — mirrors the buzz self-read dashboard bridges.
+  GET_VIEWER: {
+    request: true,
+    reply: 'VIEWER_RESULT',
+    IframeHost: 'viewer self-read is a page-only affordance; slot-apps deferred',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // Buzz self-read dashboard bridges (ledger / all-pool balances / per-model
+  // earnings) — host-mediated via the `buzz:read:self`-gated `blocks.getMyBuzz*`
+  // MUTATIONS. AHEAD of the published SDK dist union (SDK co-requisite —
+  // forward-looking coverage, allowed by the one-directional compile-time gate).
+  // PAGE-ONLY affordance (a Buzz-dashboard page app; model-slot apps are
+  // deferred + will get page-host too), so N/A for the model host — mirrors
+  // OPEN_RESOURCE_PICKER / OPEN_IMAGE_UPLOAD.
+  GET_BUZZ_TRANSACTIONS: {
+    request: true,
+    reply: 'BUZZ_TRANSACTIONS_RESULT',
+    IframeHost: 'buzz self-read dashboard is a page-only affordance; slot-apps deferred',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  GET_BUZZ_ACCOUNTS: {
+    request: true,
+    reply: 'BUZZ_ACCOUNTS_RESULT',
+    IframeHost: 'buzz self-read dashboard is a page-only affordance; slot-apps deferred',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  GET_DAILY_COMPENSATION: {
+    request: true,
+    reply: 'DAILY_COMPENSATION_RESULT',
+    IframeHost: 'buzz self-read dashboard is a page-only affordance; slot-apps deferred',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   OPEN_CHECKPOINT_PICKER: {
     request: true,
     reply: 'CHECKPOINT_PICKER_RESULT',
@@ -224,6 +267,29 @@ export const INVENTORY = {
     reply: 'RESOURCE_PICKER_RESULT',
     IframeHost:
       'model slot uses the narrower OPEN_CHECKPOINT_PICKER; the wider resource picker is a page-only affordance',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // The host-mediated block image-upload bridge (App Blocks Phase-2a PR-C). A block
+  // asks the host to let the user upload an image (the app decides what it is for).
+  // Host-chrome upload (like OPEN_RESOURCE_PICKER): the page host opens its own
+  // upload modal, runs civitai's session-authed upload → REAL scan → server-side
+  // SFW + moderation-flag gate, and returns ONLY a moderated image id. AHEAD of the
+  // published SDK dist union (the SDK contract is external + a co-requisite) —
+  // forward-looking coverage, allowed by the one-directional compile-time gate.
+  // A page-only affordance today, so N/A for the model host.
+  //
+  // NOTE (async cosmetic-image scan): the non-blocking mode's scan VERDICT rides a
+  // separate PARENT→BLOCK push, `IMAGE_SCAN_RESOLVED`, which is NOT a
+  // BlockToParentMessage and so does NOT belong in this INVENTORY (it tracks only
+  // block→host REQUEST types + their replies). OPEN_IMAGE_UPLOAD's TYPE is unchanged
+  // — async mode only adds an OPTIONAL `asyncScan` payload field — so no new entry
+  // is needed here. Do NOT "add" IMAGE_SCAN_RESOLVED to this map.
+  OPEN_IMAGE_UPLOAD: {
+    request: true,
+    reply: 'IMAGE_UPLOAD_RESULT',
+    IframeHost:
+      'host-mediated image upload is a page-only affordance today; the model slot has no such surface',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
@@ -311,6 +377,20 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // Author-scoped in-place edit of an OWN shared_kv row (the sibling of
+  // SHARED_APPEND's INSERT-only write; fixes "editing creates a new one"). Same
+  // REQUEST-style hang class + same host placement as SHARED_APPEND — the shared
+  // datastore is a per-APP surface a model-slot block can also edit, so BOTH real
+  // hosts wire it. Reply is the SHARED_WITHDRAW-style `{ ok, error? }` (NOT
+  // SHARED_APPEND's `{ key }`): the SDK's isValidSharedUpdateResult REQUIRES a
+  // boolean `ok`, so the error reply MUST carry `ok: false` or it's dropped.
+  SHARED_UPDATE: {
+    request: true,
+    reply: 'SHARED_UPDATE_RESULT',
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   SHARED_VOTE: {
     request: true,
     reply: 'SHARED_VOTE_RESULT',
@@ -329,6 +409,26 @@ export const INVENTORY = {
     request: true,
     reply: 'SHARED_WITHDRAW_RESULT',
     IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // ── Wildcard-pack import (W13, page-host bridge) ───────────────────────────
+  // A page block asks the HOST to resolve + fetch + unzip + parse a wildcard
+  // pack's list files, as the logged-in user (the host holds the real session).
+  // REQUEST-style ⇒ an unhandled one HANGS the block. Ahead of the published SDK
+  // dist union (forward-looking coverage, like OPEN_IMAGE_UPLOAD / SHARED_* were)
+  // — the compile-time gate is one-directional so an extra key here is fine.
+  //
+  // PAGE-ONLY affordance: the resolve+parse runs against the viewer's real
+  // session + browsing-level ceiling and is a full-page import flow. The model
+  // slot (IframeHost) has no wildcard-import surface — a model-column panel
+  // doesn't import prompt-list packs — so it's N/A there, exactly as the wider
+  // OPEN_RESOURCE_PICKER is page-only.
+  GET_WILDCARD_PACK: {
+    request: true,
+    reply: 'WILDCARD_PACK_RESULT',
+    IframeHost:
+      'model slot has no wildcard-pack import surface; the resolve+parse bridge is a page-only affordance',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },

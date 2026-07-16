@@ -1030,12 +1030,36 @@ function Model3DQueueCardOutputs({
   const blob = model3dBlob?.type === 'model3d' ? model3dBlob : null;
   const modelUrl = blob?.url ?? null;
 
+  // Same NSFW gates as the image grid — the mesh inherits its rating from the
+  // preview render server-side, so a mature result must resolve its block
+  // (yellow-Buzz unlock / enable NSFW / site restriction) before the
+  // thumbnail, viewer, or downloads are exposed.
+  if (blob?.blockedReason) {
+    return (
+      <div
+        className={clsx(classes.grid, {
+          [classes.asSidebar]: !features.largerGenerationImages,
+        })}
+      >
+        {blob.blockedReason === 'siteRestricted' ? (
+          <SiteRestrictedBlock image={blob} />
+        ) : (
+          <BlockedBlocks
+            blockedReasons={[blob.blockedReason]}
+            workflowId={request.id}
+            transactions={request.transactions}
+          />
+        )}
+      </div>
+    );
+  }
+
   // Prefer the chained `model3DPreview` step's render (a controllable-angle 2D
   // preview). The preview step is `suppressOutput`, so its image only surfaces
   // here as the 3D card thumbnail — never as its own output card.
   const previewStep = request.steps.find((s) => s.$type === 'model3DPreview');
   const previewImage = previewStep?.output.find(
-    (b): b is ImageBlob => b?.type === 'image' && b.available
+    (b): b is ImageBlob => b?.type === 'image' && b.available && !b.blockedReason
   );
   // While the preview step exists but hasn't reached a terminal status, keep
   // waiting on it — don't flash the lower-quality polyGen `thumbnail` and make

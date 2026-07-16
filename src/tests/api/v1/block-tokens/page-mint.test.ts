@@ -174,6 +174,8 @@ const PAGE_BLOCK = (
     blockId: 'hello-page',
     appId: 'appblk-hello-page',
     status: 'approved',
+    // DEPLOY-GATE: deployed → run-mint proceeds (NULL would 409; see deploy-gate suite).
+    currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
     manifest: { scopes: manifestScopes, page: { path: '/', title: 'Hello' } },
     approvedScopes,
     app: { allowedScopes },
@@ -193,6 +195,7 @@ const PAGE_BUDGET_BLOCK = (manifestBudget?: number) => ({
     blockId: 'hello-page',
     appId: 'appblk-hello-page',
     status: 'approved',
+    currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
     manifest: {
       scopes: ['ai:write:budgeted'],
       page: {
@@ -224,6 +227,7 @@ const MODEL_INSTALL = {
     blockId: 'generate-from-model',
     appId: 'appblk-generate-from-model',
     status: 'approved',
+    currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
     manifest: { scopes: ['models:read:self'] },
     approvedScopes: ['models:read:self'],
     app: { allowedScopes: 4 /* TokenScope.ModelsRead */ },
@@ -302,43 +306,52 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
     expect(mockTokenService.sign).toHaveBeenCalledTimes(1);
   });
 
-  it('rejects a page manifest that declares a still-forbidden money scope (page hard rule)', async () => {
-    // The OAuth client ALLOWS the money scope + it's in the approved set — so
-    // the earlier OAuth/approved gates pass and the PAGE HARD RULE is what
-    // rejects (proves the page-specific gate, not the generic allowlist).
-    // social:tip:self is NOT un-forbidden by W10 (only ai:write:budgeted is).
-    mockBlockRegistry.resolvePageBlock.mockResolvedValue(
-      PAGE_BLOCK(
-        ['apps:storage:read', 'social:tip:self'],
-        ['apps:storage:read', 'social:tip:self'],
-        MONEY_BITS
-      )
-    );
-    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
-    const res = makeRes();
-    await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
-
-    expect(res._status).toBe(403);
-    expect(res._body.error).toMatch(/money\/spend scopes/);
-    expect(mockTokenService.sign).not.toHaveBeenCalled();
-  });
-
-  // W10: ai:write:budgeted is INTENTIONALLY absent here — it is now allowed for
-  // pages (covered by the budget tests below). Only tipping + balance-read stay
-  // page-forbidden.
+  // BOUNDED-TIPPING: social:tip:self + buzz:read:self are NO LONGER page-forbidden
+  // (PAGE_FORBIDDEN_SCOPES is now empty). Tipping is bounded by per-tip +
+  // per-user-daily caps in /api/v1/blocks/tip, which made it page-safe. A page
+  // manifest declaring these scopes now MINTS end-to-end (given the user's
+  // consent grant — they're consent-gated, not exempt) rather than 403'ing.
   it.each([['buzz:read:self'], ['social:tip:self']])(
-    'rejects forbidden page scope %s',
+    'now MINTS a page token carrying the (bounded) scope %s (no longer page-forbidden)',
     async (scope) => {
+      mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+        grantedScopes: [scope],
+        revokedAt: null,
+      });
       mockBlockRegistry.resolvePageBlock.mockResolvedValue(
         PAGE_BLOCK([scope], [scope], MONEY_BITS)
       );
       const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
       const res = makeRes();
       await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
-      expect(res._status).toBe(403);
-      expect(mockTokenService.sign).not.toHaveBeenCalled();
+      // No page-hard-rule 403 — the token is signed and carries the scope.
+      expect(res._status).toBe(200);
+      expect(mockTokenService.sign).toHaveBeenCalledTimes(1);
+      expect(mockTokenService.sign.mock.calls[0][0].scopes).toContain(scope);
     }
   );
+
+  it('MINTS a page token declaring BOTH social:tip:self + buzz:read:self (end-to-end)', async () => {
+    mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: ['social:tip:self', 'buzz:read:self'],
+      revokedAt: null,
+    });
+    mockBlockRegistry.resolvePageBlock.mockResolvedValue(
+      PAGE_BLOCK(
+        ['social:tip:self', 'buzz:read:self'],
+        ['social:tip:self', 'buzz:read:self'],
+        MONEY_BITS
+      )
+    );
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+    expect(res._status).toBe(200);
+    const signArg = mockTokenService.sign.mock.calls[0][0];
+    expect(signArg.scopes).toEqual(
+      expect.arrayContaining(['social:tip:self', 'buzz:read:self'])
+    );
+  });
 
   it('is flag-gated on appBlocksPages (appBlocks alone is not enough → 403, no token)', async () => {
     (mockFlags.getFeatureFlags as any).mockImplementation(() => ({
@@ -564,10 +577,11 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
     });
   });
 
-  // ── Audit: a MIXED manifest with one still-forbidden money scope is a HARD
-  // reject of the WHOLE request — the allowed ai:write:budgeted does not
-  // "rescue" the request when social:tip:self rides alongside it. ───────────
-  it('MIXED manifest [ai:write:budgeted, social:tip:self] → 403, whole request rejected', async () => {
+  // BOUNDED-TIPPING: a MIXED manifest [ai:write:budgeted, social:tip:self] now
+  // MINTS both scopes — both are bounded spend (gen by buzzBudget + daily cap,
+  // tip by per-tip + daily cap), so neither is page-forbidden. (Previously this
+  // was a hard 403 because tipping was categorically forbidden for pages.)
+  it('MIXED manifest [ai:write:budgeted, social:tip:self] now MINTS both (both bounded)', async () => {
     mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
       grantedScopes: ['ai:write:budgeted', 'social:tip:self'],
       revokedAt: null,
@@ -578,13 +592,12 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
         blockId: 'hello-page',
         appId: 'appblk-hello-page',
         status: 'approved',
+        currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
         manifest: {
           scopes: ['ai:write:budgeted', 'social:tip:self'],
           page: { path: '/', title: 'Hello' },
         },
         approvedScopes: ['ai:write:budgeted', 'social:tip:self'],
-        // Allow both bits so the OAuth/approved gates pass and the PAGE HARD
-        // RULE is what rejects (social:tip:self stays page-forbidden).
         app: { allowedScopes: MONEY_BITS },
       },
     });
@@ -592,9 +605,14 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
 
-    expect(res._status).toBe(403);
-    // No partial mint — the whole request is rejected, no token signed.
-    expect(mockTokenService.sign).not.toHaveBeenCalled();
+    expect(res._status).toBe(200);
+    const signArg = mockTokenService.sign.mock.calls[0][0];
+    expect(signArg.scopes).toEqual(
+      expect.arrayContaining(['ai:write:budgeted', 'social:tip:self'])
+    );
+    // Generation budget still resolves (default 10) since the page manifest
+    // omits page.buzzBudgetPerGen.
+    expect(signArg.buzzBudget).toBe(10);
   });
 
   // ── MODEL_INSTALL positive regression: the path the integer-enforcement fix
@@ -703,5 +721,163 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
     expect('entityType' in signArg.ctx).toBe(false);
     expect(signArg.scopes).toEqual(['models:read:self']);
     expect(signArg.blockInstanceId).toBe('bki_x');
+  });
+
+  // ── #3090 read-split PROOF: collections:read:private is CONSENT-GATED, while
+  // collections:read:self is CONSENT-EXEMPT. Driven through the REAL mint handler
+  // (partitionByConsent + getGrantedScopes over the mocked appUserScopeGrant) so
+  // the consent surfacing + carry is proven end-to-end — the exact thing #3090
+  // showed can silently fail. ────────────────────────────────────────────────
+  describe('collections read split — consent gating (#3090 proof)', () => {
+    const PAGE_COLLECTIONS_BLOCK = () =>
+      PAGE_BLOCK(
+        ['collections:read:self', 'collections:read:private'],
+        ['collections:read:self', 'collections:read:private'],
+        0 // both are SKIP_OAUTH_CHECK → allowedScopes irrelevant
+      );
+
+    it('NO grant: token OMITS read:private (exempt read:self still mints); needsConsent surfaces it', async () => {
+      // User has consented to NOTHING for this app.
+      mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+        grantedScopes: [],
+        revokedAt: null,
+      });
+      mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_COLLECTIONS_BLOCK());
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+      expect(res._status).toBe(200);
+      const signArg = mockTokenService.sign.mock.calls[0][0];
+      // read:self is CONSENT-EXEMPT → always carried.
+      expect(signArg.scopes).toContain('collections:read:self');
+      // read:private is CONSENT-GATED → WITHHELD without a grant (the #3090 point).
+      expect(signArg.scopes).not.toContain('collections:read:private');
+      // …and surfaced to the host as needing consent.
+      expect(res._body.needsConsent).toBe(true);
+      expect(res._body.missingScopes).toContain('collections:read:private');
+      expect(res._body.missingScopes).not.toContain('collections:read:self');
+    });
+
+    it('WITH grant: token CARRIES read:private; needsConsent is false', async () => {
+      mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+        grantedScopes: ['collections:read:private'],
+        revokedAt: null,
+      });
+      mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_COLLECTIONS_BLOCK());
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+      expect(res._status).toBe(200);
+      const signArg = mockTokenService.sign.mock.calls[0][0];
+      expect(signArg.scopes).toEqual(
+        expect.arrayContaining(['collections:read:self', 'collections:read:private'])
+      );
+      expect(res._body.needsConsent).toBe(false);
+      expect(res._body.missingScopes).toEqual([]);
+    });
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// DEPLOY-GATE (generic, all app-blocks): the run-mint must REFUSE to mint a
+// production run token for an APPROVED app that has never SUCCESSFULLY deployed
+// its <slug>.<APPS_DOMAIN> origin (currentVersionDeployedAt IS NULL) — otherwise
+// the block renders a bare 404. It must ALLOW an app that has deployed at least
+// once, INCLUDING while a NEW version is re-building (the old version keeps
+// serving, so the timestamp stays non-null). Applies to BOTH the stateless page
+// mint (resolvePageBlock) and the model-slot mint (resolveBlockInstance) since
+// they share the single gate. The mod-preview / dev-tunnel ephemeral sandbox
+// mint is a SEPARATE flow (status:'ephemeral', returns earlier) — unaffected.
+// ───────────────────────────────────────────────────────────────────────────
+describe('POST /api/v1/block-tokens — DEPLOY-GATE (never-deployed refusal)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSession.value = MOD;
+    mockBlockRegistry.resolveBlockInstance.mockReset();
+    mockBlockRegistry.resolvePageBlock.mockReset();
+    mockDbWrite.user.findUnique.mockResolvedValue({ deletedAt: null, bannedAt: null });
+    mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: ['apps:storage:read', 'apps:storage:write'],
+      revokedAt: null,
+    });
+    mockRedis.incrBy.mockResolvedValue(1);
+    mockTokenService.checkRateLimit.mockResolvedValue(true);
+    (mockFlags.getFeatureFlags as any).mockImplementation(
+      ({ user }: { user?: { isModerator?: boolean } }) => ({
+        appBlocks: !!user?.isModerator,
+        appBlocksPages: !!user?.isModerator,
+      })
+    );
+  });
+
+  // A PAGE_BLOCK variant with an explicit currentVersionDeployedAt override.
+  const pageBlockWithDeploy = (deployedAt: Date | null) => {
+    const base = PAGE_BLOCK(['apps:storage:read', 'apps:storage:write']);
+    return { appBlock: { ...base.appBlock, currentVersionDeployedAt: deployedAt } };
+  };
+
+  it('REFUSES (409, no token) a page mint for an approved app that has NEVER deployed (currentVersionDeployedAt=null)', async () => {
+    mockBlockRegistry.resolvePageBlock.mockResolvedValue(pageBlockWithDeploy(null));
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+    expect(res._status).toBe(409);
+    expect((res._body as { error: string }).error).toMatch(/not yet deployed/i);
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
+  });
+
+  it('ALLOWS (200) a page mint once the app has deployed at least once', async () => {
+    mockBlockRegistry.resolvePageBlock.mockResolvedValue(
+      pageBlockWithDeploy(new Date('2026-01-01T00:00:00Z'))
+    );
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+    expect(res._status).toBe(200);
+    expect(mockTokenService.sign).toHaveBeenCalledTimes(1);
+  });
+
+  it('ALLOWS (200) a RE-DEPLOYING app — a non-null timestamp survives while a NEW version rebuilds, so it keeps minting', async () => {
+    // "Re-deploying" is indistinguishable at the gate from "deployed": the app
+    // has a prior successful deploy (timestamp set) and the build-callback leaves
+    // it UNCHANGED during the rebuild, so the old version keeps serving + minting.
+    mockBlockRegistry.resolvePageBlock.mockResolvedValue(
+      pageBlockWithDeploy(new Date('2025-06-01T00:00:00Z'))
+    );
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+    expect(res._status).toBe(200);
+    expect(mockTokenService.sign).toHaveBeenCalledTimes(1);
+  });
+
+  it('REFUSES (409, no token) a MODEL-SLOT mint for a never-deployed app (same shared gate)', async () => {
+    mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
+      ...MODEL_INSTALL,
+      appBlock: { ...MODEL_INSTALL.appBlock, currentVersionDeployedAt: null },
+    });
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: modelBody() }), res);
+    expect(res._status).toBe(409);
+    expect((res._body as { error: string }).error).toMatch(/not yet deployed/i);
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
+  });
+
+  it('ALLOWS (200) a MODEL-SLOT mint for a deployed app', async () => {
+    mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
+      ...MODEL_INSTALL,
+      appBlock: {
+        ...MODEL_INSTALL.appBlock,
+        currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
+      },
+    });
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: modelBody() }), res);
+    expect(res._status).toBe(200);
+    expect(mockTokenService.sign).toHaveBeenCalledTimes(1);
   });
 });

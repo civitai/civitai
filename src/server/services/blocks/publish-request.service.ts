@@ -9,6 +9,8 @@ import {
   MAX_SCREENSHOT_SIZE_BYTES,
   MAX_SCREENSHOTS,
   MAX_TOTAL_DECOMPRESSED_BYTES,
+  PUBLISH_REJECTION_REASON_MAX,
+  PUBLISH_REJECTION_REASON_MIN,
   SCREENSHOT_DIR,
   SCREENSHOT_EXTENSIONS,
   type ScreenshotExtension,
@@ -25,6 +27,11 @@ import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-cate
 // AppBlock→AppListing mapper consumes (see the (3b) auto-create block in
 // approveRequest). The mapper VALUE itself is dynamically imported at use.
 import type { SourceAppBlock } from '~/server/services/blocks/app-listing-mapper';
+// Pure util (no env/Prisma) — folds a blockId to the appsDb schema slug. Used by
+// the (3c) storage-provision-on-approve block; matches the admin backfill's
+// derivation exactly. The provisioner VALUE is dynamically imported at use so
+// appsDb/pg stay out of this module's static graph (mirrors the (3b) mapper).
+import { sanitizeAppSlug } from '~/server/utils/apps-slug';
 
 // dbRead/dbWrite/newUlid/bundle-s3 are dynamically imported inside the
 // functions that need them so the pure helpers (extract/diff) can be
@@ -1236,6 +1243,65 @@ export class WithdrawRequestError extends Error {
 }
 
 /**
+ * 🔴 Fix #1 (ONSITE reset coverage) — when an owner withdraws the block publish
+ * request that `resetOnsiteListingToPending` re-queued, close the reset listing so the
+ * owner can't defeat the mod's mandated re-review. This is the onsite mirror of the
+ * offsite `closeTerminalListing` pending→removed+`delist` withdraw path.
+ *
+ * 🔴 DETERMINISTIC (mirrors the offsite `closeTerminalListing` rule): fires whenever an
+ * ONSITE `AppListing` for this slug is currently `pending` — which is ALWAYS a mod
+ * reset. Onsite listings are created `approved` on approve; the ONLY writer of
+ * `status='pending'` on an onsite listing is `resetOnsiteListingToPending`, so a
+ * `pending` onsite listing == a mod-mandated re-review. It therefore does NOT probe the
+ * most-recent moderation event (an intervening report-resolve/dismiss event on the same
+ * listing could shift the newest event off `reset-to-pending` and defeat such a probe).
+ * Flip the listing `pending → removed` (status-guarded TOCTOU) + write a `delist` audit
+ * event with the OWNER as actor: the last event is now a takedown, so
+ * `republishOwnListing`'s guard FORBIDS the owner and a mod must `relistListing`
+ * (`removed → approved`, which also un-suspends the backing block). The block is left
+ * `suspended` (already so from the reset) — correct, relist restores it.
+ *
+ * A first-time submission withdraw (no approved listing yet → no `pending` onsite
+ * listing) is a no-op.
+ */
+async function closeOnsiteResetListingOnWithdraw(opts: {
+  slug: string;
+  actorUserId: number;
+}): Promise<void> {
+  const { dbRead, dbWrite } = await import('~/server/db/client');
+
+  const listing = await dbRead.appListing.findFirst({
+    where: { slug: opts.slug, kind: 'onsite', status: 'pending' },
+    select: { id: true, slug: true },
+  });
+  if (!listing) return; // not a reset withdraw (first-time submission, or already closed)
+
+  // A `pending` onsite listing is unconditionally a mod reset → close it. Imported here
+  // (only on the rare reset branch) to keep the common no-reset withdraw path free of
+  // the id-gen module.
+  const { newAppListingModerationEventId } = await import('~/server/utils/app-block-ids');
+  await dbWrite.$transaction(async (tx) => {
+    const flipped = await tx.appListing.updateMany({
+      where: { id: listing.id, kind: 'onsite', status: 'pending' },
+      data: { status: 'removed' },
+    });
+    if (flipped.count === 0) return; // raced (mod re-approved/relisted) → leave as-is
+    await tx.appListingModerationEvent.create({
+      data: {
+        id: newAppListingModerationEventId(),
+        appListingId: listing.id,
+        slug: listing.slug,
+        action: 'delist',
+        actorUserId: opts.actorUserId,
+        reason: null,
+        before: { status: 'pending' },
+        after: { status: 'removed' },
+      },
+    });
+  });
+}
+
+/**
  * Dev-facing withdrawal of their own pending request. Idempotent
  * (re-withdrawing is a no-op if already withdrawn). Throws a typed
  * {@link WithdrawRequestError} on a missing row, another user's row, or a
@@ -1273,7 +1339,9 @@ export async function withdrawRequest(opts: {
     // orphans (the apply Job's ttlSecondsAfterFinished only reaps the Job, not the
     // workloads it applied). Captured here so we can fire teardownReviewForRequest
     // after the withdraw lands.
-    select: { id: true, status: true, submittedByUserId: true, deployState: true },
+    // `slug` (Fix #1 onsite coverage): a withdraw of a mod-mandated reset re-queue must
+    // close the reset listing so the owner can't defeat the re-review — see below.
+    select: { id: true, status: true, submittedByUserId: true, deployState: true, slug: true },
   });
   if (!row) {
     throw new WithdrawRequestError('NOT_FOUND', `publish request ${publishRequestId} not found`);
@@ -1298,6 +1366,15 @@ export async function withdrawRequest(opts: {
     data: { status: 'withdrawn' },
   });
   if (count > 0) {
+    // 🔴 Fix #1 (ONSITE coverage): if this withdrawn request was a MOD-MANDATED reset
+    // re-queue (`resetOnsiteListingToPending` bounced an approved onsite listing to
+    // `pending` + suspended the block + cloned this pending request), the owner
+    // withdrawing it must NOT leave them able to defeat the re-review. Close the reset
+    // listing to `removed` + write a `delist` event (the onsite mirror of the offsite
+    // `closeTerminalListing` withdraw path) so `republishOwnListing`'s guard FORBIDS an
+    // owner self-restore — a mod must `relistListing` (which also un-suspends the
+    // block). A first-time submission withdraw has no `pending` onsite listing → no-op.
+    await closeOnsiteResetListingOnWithdraw({ slug: row.slug, actorUserId: userId });
     // MOD REVIEW SANDBOX (#2831) — tear down any review env spun up for this
     // request. Best-effort + non-blocking (mirrors approveRequest/rejectRequest):
     // the withdraw has already committed, so a teardown failure must never affect
@@ -2317,6 +2394,116 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     }
   }
 
+  // (3b-reset) W13 ONSITE reset-to-pending re-approve — restore BOTH store visibility
+  // AND the block runtime. `resetOnsiteListingToPending` (offsite-moderation.service)
+  // bounces an approved onsite listing to `pending` AND suspends the backing block
+  // (`app_blocks.status` approved → suspended — the real runtime stop), then re-queues
+  // THIS request. Re-approving it must therefore undo BOTH halves:
+  //   (a) flip the LISTING `pending → approved` so it re-appears on /apps, AND
+  //   (b) un-suspend the BLOCK `suspended → approved` so `<slug>.civit.ai` / the run
+  //       page serves again.
+  // 🔴 (b) is NOT covered by the `appBlock.update` above: the subsequent-version branch
+  // (isFirstVersion=false, the reset case — the block already exists) refreshes
+  // manifest/version but NEVER sets `status`, so without this the block stays
+  // `suspended` while the listing shows `approved` — store-visible but dead, and NOT
+  // self-recoverable (`relistListing` guards `status:'removed'`, not `pending`).
+  //
+  // GATED on the listing having actually been `pending` (the reset case): the guarded
+  // listing flip's `count` tells us. Only THEN do we un-suspend the block — so a
+  // normal subsequent-version approve of an already-approved app (listing not pending →
+  // count 0) does NOT touch the block, and a delisted-then-resubmitted app is never
+  // auto-un-suspended here (its listing is `removed`, not `pending`, so count 0 too).
+  // Both flips are status-guarded (never clobber a drifted/curated state) — the listing
+  // flip touches only `status`. Same log-and-continue posture: the store listing +
+  // block restore are a convenience and must NEVER gate the approve/deploy.
+  try {
+    const restored = await dbWrite.appListing.updateMany({
+      where: { appBlockId, kind: 'onsite', status: 'pending' },
+      data: { status: 'approved' },
+    });
+    if (restored.count > 0) {
+      // Reset re-approve confirmed → un-suspend the backing block so it serves again.
+      // Guarded to `suspended` (idempotent + drift-safe: an already-approved block is
+      // a 0-row no-op).
+      await dbWrite.appBlock.updateMany({
+        where: { id: appBlockId, status: 'suspended' },
+        data: { status: 'approved' },
+      });
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[approveRequest] onsite reset-to-pending restore failed (slug=${request.slug}, appBlockId=${appBlockId}); ` +
+        `approve/deploy CONTINUES — a reset app may stay hidden/suspended until relisted: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+    );
+  }
+
+  // (3c) Per-app storage provisioning (W4) — create the app's appsDb schema +
+  // tables (kv / quota / shared_kv / votes / counters / shared_kv_reports + the
+  // quota triggers + per-app role) at approve, so a storage-declaring app has its
+  // datastore the moment it deploys — WITHOUT a manual
+  // `/api/admin/apps-storage-backfill` run. Closes the same "approve silently
+  // didn't do X" gap as (3a)/(3b): before this, an approved+deployed app that
+  // declared `apps:storage:*` had NO schema until someone hand-ran the backfill,
+  // so its FIRST storage call 500'd with `relation "app_<slug>.shared_kv" does not
+  // exist` (this bit the live `app-requests` app).
+  //
+  // GATED ON STORAGE SCOPE (design decision): we provision ONLY when the approved
+  // manifest declares any `apps:storage:*` scope (per-user read/write OR shared
+  // read/write). A gen-only app (e.g. one declaring just `ai:write:budgeted`)
+  // never touches the datastore, so minting an empty 6-table schema + role for it
+  // is pure litter. An app that ADDS storage in a LATER version is provisioned on
+  // THAT version's approve — a scope change requires a new approved version, and
+  // the DDL is idempotent, so there is no "added storage but never provisioned"
+  // hole. (The admin backfill still provisions ALL approved apps unconditionally;
+  // this go-forward path is deliberately narrower.) The scope snapshot used here
+  // is the SAME `manifestScopes` written to `AppBlock.approvedScopes` above, so
+  // the provision decision matches what the token-mint path will actually grant.
+  //
+  // IDEMPOTENT: `AppStorageProvisioner.provision` is `CREATE ... IF NOT EXISTS` /
+  // DO-block / ON CONFLICT throughout, so first-version and every subsequent-
+  // version approve (a re-approve just re-runs the DDL) are equally safe.
+  //
+  // LOG-AND-CONTINUE (same posture as (3a)/(3b) + #3085/#3089/#3090): storage
+  // provisioning must NEVER block an app's approve/deploy. On ANY error we emit a
+  // structured warning and CONTINUE — the app still deploys and the schema is
+  // recoverable via `/api/admin/apps-storage-backfill`. If we rethrew, a
+  // deterministically-failing appsDb (e.g. cnpg-cluster-apps briefly down) would
+  // wedge the app's deploy forever over a datastore miss.
+  const declaresStorageScope = manifestScopes.some((s) => s.startsWith('apps:storage:'));
+  if (declaresStorageScope) {
+    // Same slug derivation the backfill uses: sanitizeAppSlug(blockId). request.slug
+    // is the manifest blockId (== AppBlock.blockId), already SLUG_REGEX-validated at
+    // submit; sanitizeAppSlug folds it to the appsDb schema slug (hyphens → `_`).
+    const storageSlug = sanitizeAppSlug(request.slug);
+    if (!storageSlug) {
+      // Anomalous — a submit-validated blockId should always normalize. Skip +
+      // warn rather than throw into the already-side-effecting approve flow.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[approveRequest] storage provisioning skipped (slug=${request.slug}, appBlockId=${appBlockId}); ` +
+          `blockId does not normalize to a valid appsDb slug — recoverable via /api/admin/apps-storage-backfill`
+      );
+    } else {
+      try {
+        const { AppStorageProvisioner } = await import(
+          '~/server/services/apps/storage-provision.service'
+        );
+        await AppStorageProvisioner.provision({ appBlockId, slug: storageSlug });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[approveRequest] storage provisioning failed (slug=${request.slug}, appBlockId=${appBlockId}, storageSlug=${storageSlug}); ` +
+            `approve/deploy CONTINUES — the app's datastore schema is absent this pass, recoverable via /api/admin/apps-storage-backfill: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+        );
+      }
+    }
+  }
+
   // (4) Obtain the bundle bytes. Two origins:
   //   - ZIP path (submitVersion): the dev uploaded a ZIP → we have a real
   //     bundleKey → GET it from MinIO (single GET; per-file extract in-memory).
@@ -3330,11 +3517,15 @@ export type RejectRequestParams = {
 export async function rejectRequest(params: RejectRequestParams): Promise<void> {
   const { dbRead, dbWrite } = await import('~/server/db/client');
   const reason = params.rejectionReason.trim();
-  if (reason.length < 10) {
-    throw new Error('rejection reason must be at least 10 characters');
+  if (reason.length < PUBLISH_REJECTION_REASON_MIN) {
+    throw new Error(
+      `rejection reason must be at least ${PUBLISH_REJECTION_REASON_MIN} characters`
+    );
   }
-  if (reason.length > 2000) {
-    throw new Error('rejection reason must be at most 2000 characters');
+  if (reason.length > PUBLISH_REJECTION_REASON_MAX) {
+    throw new Error(
+      `rejection reason must be at most ${PUBLISH_REJECTION_REASON_MAX} characters`
+    );
   }
 
   const row = await dbRead.appBlockPublishRequest.findUnique({

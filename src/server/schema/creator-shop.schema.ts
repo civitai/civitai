@@ -8,7 +8,7 @@ import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enum
 
 // Business rules (shared by client + server).
 export const COSMETIC_PRICE_FLOOR = 500;
-export const CREATOR_SHOP_SUBMISSION_FEE = 1000;
+export const CREATOR_SHOP_SUBMISSION_FEE = 10000;
 export const CREATOR_SHOP_MAX_FEATURED = 6;
 // Creator keeps this share of each sale; platform keeps the remainder.
 export const CREATOR_SHOP_CREATOR_SHARE = 0.7;
@@ -46,10 +46,12 @@ export type CosmeticImageRequirement = {
 };
 export const cosmeticImageRequirements = (type: CosmeticType): CosmeticImageRequirement => {
   switch (type) {
+    // Sizes are minimums + a required aspect ratio (not exact) — a larger upload
+    // at the same ratio (e.g. a 500×500 avatar frame) is fine.
     case CosmeticType.ProfileDecoration:
-      return { width: 120, height: 120, exact: true, requireTransparency: true };
+      return { width: 120, height: 120, exact: false, requireTransparency: true };
     case CosmeticType.ProfileBackground:
-      return { width: 450, height: 155, exact: true, requireTransparency: false };
+      return { width: 450, height: 144, exact: false, requireTransparency: false };
     case CosmeticType.ContentDecoration:
       return { width: 256, height: 256, exact: false, requireTransparency: true };
     case CosmeticType.Badge:
@@ -60,7 +62,7 @@ export const cosmeticImageRequirements = (type: CosmeticType): CosmeticImageRequ
 
 const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
 
-// Human-readable aspect ratio, e.g. 144×144 -> "1:1", 450×155 -> "90:31".
+// Human-readable aspect ratio, e.g. 144×144 -> "1:1", 450×144 -> "25:9".
 export const aspectRatioLabel = (width: number, height: number): string => {
   const g = gcd(width, height) || 1;
   return `${width / g}:${height / g}`;
@@ -136,6 +138,9 @@ export const updateCreatorShopItemSchema = z.object({
 export type GetCreatorShopInput = z.infer<typeof getCreatorShopSchema>;
 export const getCreatorShopSchema = z.object({
   userId: z.number(),
+  // Moderator-only: return site-wide sample data so an empty/unset shop still
+  // renders every populated section for design work. Honored only for mods.
+  preview: z.boolean().optional(),
 });
 
 export type GetEarlyAccessPricesInput = z.infer<typeof getEarlyAccessPricesSchema>;

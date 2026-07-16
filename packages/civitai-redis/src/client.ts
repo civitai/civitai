@@ -1616,6 +1616,13 @@ export const REDIS_SYS_KEYS = {
     EMERGENCY_KILL_LIST: 'system:blocks:emergency-kill-list',
     // Cumulative Buzz-spend cap counter, keyed `system:blocks:buzz-cap:${userId}:${appBlockId}:${day}`.
     BUZZ_CAP: 'system:blocks:buzz-cap',
+    // Cumulative TIP-spend cap counter for the block tip endpoint, keyed
+    // `system:blocks:tip-cap:${userId}:${UTC-day}`. DISTINCT from BUZZ_CAP: that
+    // bounds a user's daily generation SPEND; this bounds a user's daily Buzz
+    // TIPPED-OUT through blocks (money to third parties). Per-USER aggregate (no
+    // appBlockId) so N installed blocks share ONE daily tip ceiling. INCRBY'd by
+    // each tip amount pre-transaction (reserve-and-refund), TTL set on first write.
+    TIP_CAP: 'system:blocks:tip-cap',
     /**
      * Per-APP cumulative spend-BOUNTY accrual cap counter (audit 🟡-2 / the
      * App-Blocks Sybil-economics review). DISTINCT from BUZZ_CAP: that one
@@ -1630,6 +1637,24 @@ export const REDIS_SYS_KEYS = {
      * so the counter never moves and the cap never clamps.
      */
     BOUNTY_CAP: 'system:blocks:bounty-cap',
+    /**
+     * Per-APP aggregate generation-SPEND + velocity cap counters (G8 — generic
+     * per-app safety). DISTINCT from BUZZ_CAP (which bounds a single USER's daily
+     * Buzz spend) and from BOUNTY_CAP (which bounds a single APP's daily accrued
+     * BOUNTY): this bounds the daily block-initiated generation SPEND (in Buzz)
+     * AND the short-window generation VELOCITY funnelled through ONE app across
+     * ALL viewers — the hard prerequisite before shareable, spend-driving block
+     * apps open to non-mods (a Sybil ring of many accounts each under the per-user
+     * cap could otherwise drive unbounded aggregate spend through one app).
+     * Two keys, both on `sysRedis`, same atomic INCRBY-with-TTL reserve/refund
+     * shape as BUZZ_CAP:
+     *   - daily spend:    `system:blocks:app-spend-cap:${appBlockId}:${UTC-day}`
+     *                     (INCRBY the Buzz cost, TTL ~25h, self-expiring window)
+     *   - rolling gens:   `system:blocks:app-spend-cap:vel:${appBlockId}:${bucket}`
+     *                     (INCR 1 per submit over a short fixed window)
+     * DEV/live-harness tokens (synthetic appBlockId) are excluded by the caller.
+     */
+    APP_SPEND_CAP: 'system:blocks:app-spend-cap',
     // Per-API-key (fallback per-IP) rate-limit counter for the token-authed bundle-submit
     // endpoint (`/api/v1/blocks/submit-version`). On sysRedis like the retool limiter + BUZZ_CAP.
     SUBMIT_RATE_LIMIT: 'system:blocks:submit-rate-limit',
@@ -2035,9 +2060,6 @@ export const REDIS_KEYS = {
     BUG_REPORTS: 'counters:bug-reports',
   },
   LIVE_NOW: 'live-now',
-  DAILY_CHALLENGE: {
-    DETAILS: 'daily-challenge:details',
-  },
   TAG: 'tag',
   EVENT: {
     BASE: 'event', // special case

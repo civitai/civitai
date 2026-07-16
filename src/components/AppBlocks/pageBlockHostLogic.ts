@@ -123,6 +123,65 @@ export function resolveCheckpointPickerRequest(raw: unknown): CheckpointPickerRe
   return { requestId: obj.requestId, ...(baseModelGroup ? { baseModelGroup } : {}) };
 }
 
+// ── OPEN_IMAGE_UPLOAD (host-mediated block image-upload bridge) ──────────────
+//
+// A block asks the HOST to open its native upload modal so the viewer can upload
+// an image (the app decides what it is for). The iframe never handles the bytes.
+//
+// The optional `purpose` field selects the upload MODE:
+//   - 'display' (DEFAULT — absent/unrecognized falls back to this, so it stays
+//     byte-compatible with an SDK that sends no `purpose`): a PUBLIC image
+//     (cosmetic backgrounds, cover art, …). The bytes flow through civitai's
+//     session-authed upload → REAL scan → SFW/flag gate, and only a moderated
+//     image id (never above the SFW ceiling, never flagged) comes back via
+//     IMAGE_UPLOAD_RESULT. Everything security-relevant (scan + SFW ceiling +
+//     flag rejection) is enforced server-side.
+//   - 'generationSource': a PRIVATE generation INPUT (an img2img source image).
+//     It uploads via the SAME lightweight consumer-blob path civitai's own
+//     generator uses (uploadConsumerBlob) — NO createImage, NO scan, NO SFW
+//     gate — and returns only { url, width, height }. Platform safety is
+//     preserved because the ORCHESTRATOR scans the generation OUTPUT.
+//
+// The only wire-validation is: require a string requestId (drop otherwise, never
+// open the modal) and normalize `purpose` to the safe default when unknown. Kept
+// pure + unit-tested for the same reason as resolveResourcePickerRequest.
+
+export type BlockUploadPurpose = 'display' | 'generationSource';
+
+export type ImageUploadRequest = {
+  requestId: string;
+  /** Normalized upload mode; 'display' when the SDK omits/sends an unknown value. */
+  purpose: BlockUploadPurpose;
+  /**
+   * NON-BLOCKING scan opt-in (display uploads only). When true, the host modal
+   * resolves EARLY on persist (returning a PENDING handle) and streams the scan
+   * verdict asynchronously to the block via the parent→block IMAGE_SCAN_RESOLVED
+   * push, instead of blocking the modal on the poll gate. Normalized to `true`
+   * ONLY for a literal `asyncScan === true` (any other value ⇒ false), so an old
+   * SDK that sends no flag keeps the byte-compatible blocking behavior, and the
+   * flag is IGNORED for generationSource (that path has no scan).
+   */
+  asyncScan: boolean;
+};
+
+/**
+ * Validate a raw OPEN_IMAGE_UPLOAD payload from an untrusted iframe. Returns the
+ * sanitized request (requestId + normalized purpose + asyncScan), or `null` when
+ * it must be DROPPED (missing/non-string requestId). The CALLER opens the native
+ * upload modal — this only decides whether to, which mode, and blocking-vs-async.
+ * An absent or unrecognized `purpose` normalizes to the safe moderated default
+ * ('display'); `asyncScan` is `true` ONLY for a literal `true` (default false).
+ */
+export function resolveImageUploadRequest(raw: unknown): ImageUploadRequest | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.requestId !== 'string' || obj.requestId.length === 0) return null;
+  const purpose: BlockUploadPurpose =
+    obj.purpose === 'generationSource' ? 'generationSource' : 'display';
+  const asyncScan = obj.asyncScan === true;
+  return { requestId: obj.requestId, purpose, asyncScan };
+}
+
 export type PageFallbackReason = 'timeout' | 'token_error' | 'fatal_block_error';
 
 /**

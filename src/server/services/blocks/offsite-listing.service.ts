@@ -1,5 +1,8 @@
 import { TRPCError } from '@trpc/server';
-import type { Prisma } from '@prisma/client';
+// Value import (not `import type`) — `Prisma.sql`/`Prisma.join` are runtime helpers
+// used by the raw `DISTINCT ON` in `listMySubmissions`. The namespace still supplies
+// every `Prisma.*` TYPE this module references.
+import { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
@@ -15,6 +18,7 @@ import {
   type SubmitExternalListingInput,
 } from '~/server/schema/blocks/offsite-listing.schema';
 import { assertListingAssetsComplete } from '~/server/services/blocks/app-listing-assets.service';
+import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
 import {
   deriveContentRatingFromAssets,
   nsfwLevelFromContentRating,
@@ -22,6 +26,7 @@ import {
 import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import {
   newAppListingId,
+  newAppListingModerationEventId,
   newAppListingPublishRequestId,
   newAppListingScreenshotId,
   newUlid,
@@ -254,11 +259,13 @@ export async function submitExternalListing(opts: {
  * never remove an approved listing.
  *
  * REVISION-AWARE (no branch needed): a pending REVISION request points at a SHADOW
- * `AppListing`, which is itself `status:'draft'`. So the same status-guarded
- * `deleteDraftListing` deletes ONLY the shadow — the LIVE parent (a separate,
- * `approved` row, never referenced by this request's `appListingId`) is untouched
- * and stays live. Withdrawing a revision therefore behaves exactly like withdrawing
- * a first-time submission, by construction.
+ * `AppListing`, which is itself `status:'draft'`. So the status-aware
+ * `closeTerminalListing` DELETES ONLY the shadow (the `draft` branch) — the LIVE
+ * parent (a separate, `approved` row, never referenced by this request's
+ * `appListingId`) is untouched and stays live. Withdrawing a revision therefore
+ * behaves exactly like withdrawing a first-time submission, by construction. (A
+ * reset-to-pending, formerly-live listing is instead transitioned to `removed`; see
+ * `closeTerminalListing`.)
  *
  * CONCURRENCY (TOCTOU): the `findUnique` only CLASSIFIES; the mutation is a
  * status-guarded `updateMany({ id, status:'pending' })`, so a withdraw that read
@@ -292,14 +299,26 @@ export async function withdrawExternalRequest(opts: {
     );
   }
 
-  // Status-guarded write: only flip a STILL-`pending` row (closes the TOCTOU
-  // window against a concurrent approve).
-  const { count } = await dbWrite.appListingPublishRequest.updateMany({
-    where: { id: publishRequestId, status: 'pending' },
-    data: { status: 'withdrawn' },
+  // ONE transaction: status-guarded request flip + the status-aware listing close,
+  // so a reset-to-pending listing's `pending → removed` transition + its audit event
+  // are atomic with the withdraw (a crash can't split them, and the guarded flip means
+  // only the winner closes). A first-time draft is deleted (unchanged); a formerly-live
+  // reset listing is set `removed` with a `delist` event — 🔴 the pending cycle is
+  // always mod-mandated, so the owner CANNOT self-restore it (a mod must relist). See
+  // `closeTerminalListing`.
+  const flipped = await dbWrite.$transaction(async (tx) => {
+    const { count } = await tx.appListingPublishRequest.updateMany({
+      where: { id: publishRequestId, status: 'pending' },
+      data: { status: 'withdrawn' },
+    });
+    if (count === 0) return false;
+    await closeTerminalListing(tx, row.appListingId, {
+      actorUserId: userId,
+      reason: null,
+    });
+    return true;
   });
-  if (count > 0) {
-    await deleteDraftListing(row.appListingId);
+  if (flipped) {
     return;
   }
 
@@ -322,19 +341,101 @@ export async function withdrawExternalRequest(opts: {
   );
 }
 
+export type CloseTerminalListingOutcome = 'deleted' | 'removed' | 'none';
+
 /**
- * Delete a still-DRAFT off-site listing (releases the slug; cascades its
- * screenshots via `onDelete: Cascade`). Status-guarded so an approved listing is
- * never removed; no-op when the request had no linked listing. Accepts an optional
- * transaction client so the caller can make the flip + delete atomic (reject);
- * defaults to `dbWrite` (autocommit) for withdraw.
+ * Terminal-close the `AppListing` backing a rejected/withdrawn request, in the
+ * caller's transaction — status-AWARE so a reset-to-pending (formerly-LIVE) listing
+ * is never hard-deleted nor stranded in `pending`:
+ *
+ *   - `draft`   → DELETE (releases the slug; cascades screenshots). Covers a FIRST-TIME
+ *                 submission AND a SHADOW revision (shadows are always `draft`) — both
+ *                 keep the pre-W13 behaviour exactly.
+ *   - `pending` → a reset-to-pending, FORMERLY-LIVE listing (real assets/reports/
+ *                 history). Do NOT delete + do NOT leave stranded: transition it to
+ *                 `removed` (recoverable via mod `relistListing`) AND write a `delist`
+ *                 `AppListingModerationEvent`. 🔴 The action is UNCONDITIONALLY `delist`
+ *                 (Fix #1 authz), for BOTH the reject and the withdraw caller: a
+ *                 formerly-live `pending` listing is ALWAYS mod-mandated (only the mod
+ *                 reset fns set `pending` on a live listing), so an owner who withdraws
+ *                 the re-review must NOT be able to self-restore — `delist` makes the
+ *                 last event a takedown, so `republishOwnListing` FORBIDS the owner and
+ *                 a mod must relist. (This replaced a most-recent-event probe that an
+ *                 intervening report-resolve/dismiss event could defeat.)
+ *   - anything else (approved/removed) → no-op (a terminal request never targets one;
+ *                 guarded defensively).
+ *
+ * The `pending → removed` flip is status-guarded (TOCTOU): a 0-count (raced) → `none`
+ * with no event. Accepts a tx client so the flip + event are atomic with the caller's
+ * request-status flip. No-op when the request had no linked listing.
  */
-async function deleteDraftListing(
+async function closeTerminalListing(
+  client: Pick<typeof dbWrite, 'appListing' | 'appListingModerationEvent'>,
   appListingId: string | null,
-  client: Pick<typeof dbWrite, 'appListing'> = dbWrite
-): Promise<void> {
-  if (!appListingId) return;
-  await client.appListing.deleteMany({ where: { id: appListingId, status: 'draft' } });
+  // `action` is no longer a caller input — the pending branch ALWAYS writes `delist`
+  // (Fix #1). Callers pass only the actor + reason.
+  event: { actorUserId: number; reason: string | null }
+): Promise<CloseTerminalListingOutcome> {
+  if (!appListingId) return 'none';
+  const listing = await client.appListing.findUnique({
+    where: { id: appListingId },
+    select: { status: true, slug: true },
+  });
+  if (!listing) return 'none';
+
+  if (listing.status === 'draft') {
+    // First-time draft OR a shadow revision — delete as before (status-guarded so it
+    // can never remove an approved/removed row).
+    await client.appListing.deleteMany({ where: { id: appListingId, status: 'draft' } });
+    return 'deleted';
+  }
+
+  if (listing.status === 'pending') {
+    // Reset-to-pending, formerly-live listing → transition to `removed` (recoverable),
+    // never delete/strand. Status-guarded flip; on a raced 0-count, do nothing.
+    const flipped = await client.appListing.updateMany({
+      where: { id: appListingId, status: 'pending' },
+      data: { status: 'removed' },
+    });
+    if (flipped.count === 0) return 'none';
+
+    // 🔴 AUTHZ (Fix #1) — DETERMINISTIC: a formerly-live `pending` off-site listing is
+    // ALWAYS mod-mandated, so the close ALWAYS writes a `delist` event (never
+    // `owner-unpublish`), regardless of which caller (reject or withdraw) reached here.
+    //
+    // WHY the pending branch is unconditionally mod-mandated: the ONLY writers of
+    // `status='pending'` for a formerly-LIVE listing are the two mod reset fns
+    // (`resetListingToPending` / `resetOnsiteListingToPending`). A first-time submission
+    // is `draft` (handled by the branch above → deleted); a revision is a `draft`
+    // shadow (also the `draft` branch); owner unpublish/republish only move
+    // approved↔removed and never touch `pending`. So reaching here means a mod bounced
+    // a live listing back to review — an owner withdrawing that re-review must NOT be
+    // able to self-restore the pre-reset content with no re-review.
+    //
+    // This REPLACES an earlier most-recent-event probe (`last event == reset-to-pending
+    // ? delist : owner-unpublish`), which was BOTH exploitable and unsafe-by-default: an
+    // intervening report `report-resolve`/`report-dismiss` event (written UNGUARDED on
+    // the same listing by `closeReport`) shifted the newest event off `reset-to-pending`
+    // → the probe fell through to `owner-unpublish` → the owner could republish the
+    // pre-reset content live. Writing `delist` unconditionally closes that hole; the
+    // republish guard (last event must be `owner-unpublish`) then correctly FORBIDS the
+    // owner and a mod must relist. `event.action` is now irrelevant in this branch.
+    await client.appListingModerationEvent.create({
+      data: {
+        id: newAppListingModerationEventId(),
+        appListingId,
+        slug: listing.slug,
+        action: 'delist',
+        actorUserId: event.actorUserId,
+        reason: event.reason,
+        before: { status: 'pending' },
+        after: { status: 'removed' },
+      },
+    });
+    return 'removed';
+  }
+
+  return 'none';
 }
 
 // ---------------------------------------------------------------------------
@@ -1199,6 +1300,10 @@ export async function approveExternalRequest(opts: {
       iconId: true,
       coverId: true,
       revisionOfId: true,
+      // Owner (for the post-commit "approved" owner notification) + name (message).
+      userId: true,
+      name: true,
+      slug: true,
     },
   });
   if (!listing) {
@@ -1303,31 +1408,58 @@ export async function approveExternalRequest(opts: {
       coverId: primaryListing.coverId,
       override: opts.contentRating,
     });
+    // Guard flips a `draft` OR a `pending` listing → approved. `pending` is the W13
+    // post-approval-mgmt REOPEN path: `resetListingToPending` bounces an approved
+    // listing back to `pending` + mints a fresh pending request pointing at it (a
+    // non-shadow request), so re-approving that request must accept a `pending`
+    // listing — not only a first-time `draft`. Additive: a first-time draft still
+    // flips exactly as before. Status-guarded so a concurrently deleted/moved row
+    // rolls the request flip back rather than approving a listing that is gone.
     const flipped = await tx.appListing.updateMany({
-      where: { id: appListingId, status: 'draft' },
+      where: { id: appListingId, status: { in: ['draft', 'pending'] } },
       data: { status: 'approved', contentRating: finalRating },
     });
     if (flipped.count === 0) {
-      // The draft was concurrently deleted / already flipped — abort (rolls back
-      // the request flip) rather than approve a request whose listing is gone.
+      // The draft/pending listing was concurrently deleted / already flipped — abort
+      // (rolls back the request flip) rather than approve a request whose listing is gone.
       throw new OffsiteRequestError(
         'NOT_PENDING',
-        `cannot approve — the draft listing is no longer available`
+        `cannot approve — the draft/pending listing is no longer available`
       );
     }
-    // Supersede any OTHER pending off-site request for this slug (parity with the
-    // on-site approve). With `AppListing.slug @unique` a sibling draft can't exist,
-    // so this is a rarely-non-empty safety net; scoped to NOT touch the approved
-    // row.
+    // Supersede any OTHER pending off-site request pointing at the SAME listing row
+    // (`appListingId`), NOT merely the same slug. 🔴 A pending REVISION request
+    // denormalizes the PARENT slug (`submitListingRevision` sets its
+    // `slug = shadow.revisionOf.slug`) but targets a DISTINCT shadow listing
+    // (`appListingId = shadowId`, `revisionOfId != null`). Scoping the supersede by
+    // slug therefore swept an owner's in-flight revision when a mod approved a
+    // reset-to-pending request for the same parent — orphaning the shadow with no
+    // notice. Scoping by `appListingId` supersedes only genuine siblings on THIS
+    // exact listing (e.g. a duplicate reset request) and leaves a legitimately-
+    // competing revision (a different appListingId) pending. Still scoped to NOT
+    // touch the approved row.
     await tx.appListingPublishRequest.updateMany({
       where: {
-        slug: request.slug,
+        appListingId,
         status: 'pending',
         kind: 'offsite',
         NOT: { id: publishRequestId },
       },
       data: { status: 'withdrawn' },
     });
+  });
+
+  // Post-commit, best-effort: notify the listing OWNER their app went live. Emitted
+  // AFTER the tx so a notification failure can't roll back the approval, and only on
+  // a committed approve. Keyed by the publish request so a ret/replay dedups. Covers
+  // BOTH a first-time approve and a reset-to-pending re-approve (both land here — the
+  // revision-apply path returns earlier). (The listing owner may differ from the
+  // submitter after a mod claim, so target `AppListing.userId`, not submittedBy.)
+  await notifyAppListingOwner({
+    type: 'app-listing-approved',
+    userId: listing.userId,
+    key: `app-listing-approved:${publishRequestId}`,
+    details: { slug: listing.slug, name: listing.name, listingId: appListingId, reason: null },
   });
 
   return { publishRequestId, listingId: appListingId, slug: request.slug };
@@ -1494,7 +1626,8 @@ async function applyApprovedRevision(opts: {
 }
 
 /**
- * MOD reject of a pending off-site request. Requires a `rejectionReason` of ≥10
+ * MOD reject of a pending off-site request. Requires a `rejectionReason` of
+ * ≥`OFFSITE_REJECTION_REASON_MIN` (the shared `OFFSITE_MOD_REASON_MIN`, 3)
  * (trimmed) chars, then — in ONE transaction — flips the request
  * `pending → rejected` + sets `reviewedBy*` / `rejectionReason` and DELETES the
  * draft `AppListing` (status-guarded `deleteMany({ id, status:'draft' })` so it can
@@ -1506,10 +1639,12 @@ async function applyApprovedRevision(opts: {
  * Non-pending → NOT_PENDING.
  *
  * REVISION-AWARE (no branch needed): a pending REVISION request points at a SHADOW
- * `AppListing`, which is `status:'draft'`, so the status-guarded `deleteDraftListing`
- * deletes ONLY the shadow — the LIVE parent (a separate `approved` row) is untouched
- * and stays live. Rejecting a revision therefore behaves exactly like rejecting a
- * first-time submission, by construction.
+ * `AppListing`, which is `status:'draft'`, so `closeTerminalListing` DELETES ONLY the
+ * shadow (the `draft` branch) — the LIVE parent (a separate `approved` row) is
+ * untouched and stays live. Rejecting a revision therefore behaves exactly like
+ * rejecting a first-time submission, by construction. A reset-to-pending, formerly-live
+ * listing is instead transitioned to `removed` + a `delist` audit event (a rejected
+ * re-review = a MOD takedown the owner cannot self-restore); see `closeTerminalListing`.
  */
 export async function rejectExternalRequest(opts: {
   publishRequestId: string;
@@ -1551,12 +1686,29 @@ export async function rejectExternalRequest(opts: {
     );
   }
 
-  // ONE transaction: status-guarded flip + draft delete, so a crash between them
-  // can't orphan a hidden `draft` listing that keeps squatting the slug. The flip
-  // is TOCTOU-guarded (`status:'pending'`): a concurrent approve/withdraw that
-  // already flipped the row matches 0 → NOT_PENDING (throwing rolls the tx back
-  // before any delete); only the winner deletes. The delete is status-guarded
-  // (`status:'draft'`) so it can never remove an approved listing.
+  // Snapshot the owner + display fields for the post-commit "not approved" owner
+  // notification BEFORE the tx deletes the draft (the row is gone afterwards). A
+  // REVISION reject (the request points at a shadow — `revisionOfId != null`) is
+  // NOT a first-time rejection: the parent listing stays LIVE, so a "your app was
+  // not approved" notice would be misleading — skip it (revision-edit rejection
+  // notices are out of Phase-1 scope). A request whose listing was already gone
+  // (`appListingId` null) → nothing to notify.
+  const rejectedListing = request.appListingId
+    ? await dbRead.appListing.findUnique({
+        where: { id: request.appListingId },
+        select: { userId: true, name: true, slug: true, revisionOfId: true },
+      })
+    : null;
+
+  // ONE transaction: status-guarded flip + the status-aware listing close, so a crash
+  // between them can't orphan a hidden listing / squat the slug. The flip is
+  // TOCTOU-guarded (`status:'pending'`): a concurrent approve/withdraw that already
+  // flipped the row matches 0 → NOT_PENDING (throwing rolls the tx back before the
+  // close); only the winner closes. `closeTerminalListing` deletes a first-time
+  // `draft` (releases the slug — unchanged) but transitions a reset-to-pending,
+  // formerly-LIVE listing to `removed` (recoverable; NEVER stranded in `pending` nor
+  // hard-deleted) + writes a `delist` audit event so a rejected re-review reads as a
+  // MOD takedown — the owner CANNOT self-restore it via `republishOwnListing`.
   await dbWrite.$transaction(async (tx) => {
     const { count } = await tx.appListingPublishRequest.updateMany({
       where: { id: publishRequestId, status: 'pending' },
@@ -1573,8 +1725,28 @@ export async function rejectExternalRequest(opts: {
         `cannot reject — the request is no longer pending`
       );
     }
-    await deleteDraftListing(request.appListingId, tx);
+    await closeTerminalListing(tx, request.appListingId, {
+      actorUserId: reviewerUserId,
+      reason,
+    });
   });
+
+  // Post-commit, best-effort: notify the owner their first-time submission was not
+  // approved, carrying the mod reason. Skipped for a revision reject (parent still
+  // live) and when there was no listing. Keyed by the request → dedups a replay.
+  if (rejectedListing && rejectedListing.revisionOfId == null) {
+    await notifyAppListingOwner({
+      type: 'app-listing-rejected',
+      userId: rejectedListing.userId,
+      key: `app-listing-rejected:${publishRequestId}`,
+      details: {
+        slug: rejectedListing.slug,
+        name: rejectedListing.name,
+        listingId: request.appListingId,
+        reason,
+      },
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1635,6 +1807,13 @@ const submissionSelect = {
       category: true,
       contentRating: true,
       revisionOfId: true,
+      // The listing's TRUE lifecycle status (`draft|pending|approved|rejected|
+      // removed`) — DISTINCT from the publish-REQUEST `status`. An owner unpublish
+      // / mod delist flips `AppListing.status` approved → removed WITHOUT touching
+      // the (still-`approved`) request, so my-submissions can only distinguish a
+      // live listing from a hidden one by reading THIS field. Additive/PII-safe;
+      // the mod queues that spread `submissionSelect` gain it harmlessly.
+      status: true,
     },
   },
 } as const;
@@ -1700,9 +1879,48 @@ export async function listMySubmissions(
       .map((r) => r.appListing?.revisionOfId)
       .filter((id): id is string => id != null)
   );
+
+  // W13 post-approval mgmt (owner controls): for every REMOVED listing on the page,
+  // fetch its MOST-RECENT moderation-event action so the my-submissions UI can tell
+  // an owner-hidden listing (last event `owner-unpublish` → republish-eligible) from
+  // a moderator takedown (last event `delist` → republish FORBIDDEN, shown as
+  // "removed by a moderator") WITHOUT a per-row history fetch.
+  //
+  // Fix B4 (scaling): a Prisma `findMany({ distinct, orderBy: createdAt })` CANNOT
+  // emit Postgres `DISTINCT ON` here — the `distinct` column (`appListingId`) is not
+  // the leading `orderBy` key (`createdAt`), so Prisma fetches EVERY moderation event
+  // for every removed listing on the page and dedups in memory (unbounded per listing
+  // — a heavily-moderated listing has an arbitrarily long history). Use a raw
+  // `DISTINCT ON (app_listing_id) ... ORDER BY app_listing_id, created_at DESC, id
+  // DESC` so Postgres returns exactly ONE row per listing (the latest event). Same
+  // result contract (last action per appListingId), bounded to one row per listing.
+  const removedParentIds = page
+    .filter((r) => r.appListingId != null && r.appListing?.status === 'removed')
+    .map((r) => r.appListingId as string);
+  const lastEvents =
+    removedParentIds.length > 0
+      ? await dbRead.$queryRaw<Array<{ appListingId: string; action: string }>>(Prisma.sql`
+          SELECT DISTINCT ON (app_listing_id)
+            app_listing_id AS "appListingId",
+            action
+          FROM app_listing_moderation_events
+          WHERE app_listing_id IN (${Prisma.join(removedParentIds)})
+          ORDER BY app_listing_id, created_at DESC, id DESC
+        `)
+      : [];
+  const lastActionByListing = new Map(
+    lastEvents
+      .filter((e): e is { appListingId: string; action: string } => e.appListingId != null)
+      .map((e) => [e.appListingId, e.action])
+  );
+
   const items = page.map((r) => ({
     ...r,
     hasPendingRevision: r.appListingId != null && parentsWithRevision.has(r.appListingId),
+    // Null for a non-removed listing (or one with no events) — the UI only reads it
+    // when `appListing.status === 'removed'` to gate the Republish affordance.
+    lastModerationAction:
+      r.appListingId != null ? lastActionByListing.get(r.appListingId) ?? null : null,
   }));
 
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };

@@ -18,7 +18,6 @@ export function ToggleModelNotification({
   ...actionIconProps
 }: ActionIconProps & { modelId: number; userId: number }) {
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useUtils();
 
   // PR2: per-visible-set membership for this single model (Notify/Mute).
   const { isEngaged: isModelEngaged, isKnown } = useEngagedModelMembership(modelId);
@@ -37,10 +36,6 @@ export function ToggleModelNotification({
       const snapshot = snapshotMembership(modelId);
       applyNotifyToggled(modelId, !isOn);
       return { snapshot };
-    },
-    async onSuccess() {
-      // Keep the legacy getEngagedModels cache in sync for still-on-old-endpoint feeds.
-      await queryUtils.user.getEngagedModels.invalidate();
     },
     onError(error, _vars, context) {
       if (context?.snapshot) restoreMembership(modelId, context.snapshot);

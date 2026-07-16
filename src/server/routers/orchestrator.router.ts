@@ -16,6 +16,7 @@ import {
   logToAxiom,
   classifyErrorFault,
   buildServerFaultErrorLog,
+  markServerFaultLogged,
 } from '~/server/logging/client';
 import { edgeCacheIt } from '~/server/middleware.trpc';
 import { generatorFeedbackReward } from '~/server/rewards';
@@ -487,6 +488,10 @@ export const orchestratorRouter = router({
             error: buildServerFaultErrorLog(e),
           }).catch();
         }
+        // Mark so the central chokepoint (tRPC onError) doesn't log this same fault
+        // a second time — this router already emitted the un-masked structured log
+        // (with the extra `payload: input` context) above.
+        markServerFaultLogged(e);
         throw e;
       }
     }),

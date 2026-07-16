@@ -2,7 +2,7 @@
  * Anima Family Graph
  *
  * Controls for Anima ecosystem (CircleStone Labs).
- * Uses sdcpp engine with support for negative prompts, samplers, and schedules.
+ * Uses the comfy engine with support for negative prompts, samplers, and schedules.
  *
  * Two models discriminated by animaVariant (computed from model.id):
  * - base: cfg 7, steps 25
@@ -12,7 +12,7 @@
  * and controlNets are shared parent-level nodes.
  */
 
-import type { SdCppSampleMethod, SdCppSchedule } from '@civitai/client';
+import type { ComfySampler, ComfyScheduler } from '@civitai/client';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import type { ResourceData } from './common';
@@ -51,33 +51,31 @@ type AnimaVariant = 'base' | 'turbo';
  * Anima version (incl. the default and any future ones) falls back to 'base'
  * in the computed below, keeping the standard cfgScale/steps defaults.
  */
-const versionIdToVariant = new Map<number, AnimaVariant>([
-  [animaVersionIds.turbo, 'turbo'],
-]);
+const versionIdToVariant = new Map<number, AnimaVariant>([[animaVersionIds.turbo, 'turbo']]);
 
 // =============================================================================
 // Sampler & Schedule Options
 // =============================================================================
 
-// Note: dpm++2s_a is omitted because it is incompatible with all available schedules.
-// karras and exponential are omitted because they are incompatible with most samplers
-// (euler, heun, dpm++2m, dpm++2mv2). See anima-graph sampler/scheduler compatibility.
-const animaSamplers: SdCppSampleMethod[] = [
+// Anima runs on the comfy engine, so options use ComfySampler / ComfyScheduler
+// names (not sdcpp). dpmpp_2s_ancestral is omitted because it is incompatible
+// with all available schedules; the karras/exponential schedules are omitted
+// because they are incompatible with most of these samplers.
+const animaSamplers: ComfySampler[] = [
   'er_sde',
   'euler',
-  'euler_a',
+  'euler_ancestral',
   'heun',
-  'dpm2',
-  'dpm++2m',
-  'dpm++2mv2',
+  'dpm_2',
+  'dpmpp_2m',
 ];
 
 const animaSamplerPresets = [
   { label: 'Fast', value: 'euler' },
-  { label: 'Quality', value: 'dpm++2m' },
+  { label: 'Quality', value: 'dpmpp_2m' },
 ];
 
-const animaSchedules: SdCppSchedule[] = ['simple', 'sgm_uniform'];
+const animaSchedules: ComfyScheduler[] = ['simple', 'sgm_uniform'];
 
 // =============================================================================
 // Variant Subgraphs
@@ -128,7 +126,11 @@ export const animaGraph = new DataGraph<
   })
   .node(
     'sampler',
-    samplerNode({ options: animaSamplers, defaultValue: 'euler_a', presets: animaSamplerPresets })
+    samplerNode({
+      options: animaSamplers,
+      defaultValue: 'euler_ancestral',
+      presets: animaSamplerPresets,
+    })
   )
   .node('scheduler', schedulerNode({ options: animaSchedules, defaultValue: 'simple' }))
   // ControlNets — txt2img only, gated by the `animaControlnet` kill-switch flag

@@ -38,8 +38,8 @@ importers:
         specifier: workspace:*
         version: link:packages/civitai-buzz
       '@civitai/client':
-        specifier: 0.2.0-beta.80
-        version: 0.2.0-beta.80
+        specifier: 0.2.0-beta.81
+        version: 0.2.0-beta.81
       '@civitai/cybertipline-tools':
         specifier: ^0.1.0
         version: 0.1.0
@@ -202,6 +202,9 @@ importers:
       '@prisma/instrumentation':
         specifier: ^7.4.2
         version: 7.4.2(@opentelemetry/api@1.9.0)
+      '@pyroscope/nodejs':
+        specifier: 0.6.1
+        version: 0.6.1(fastify@5.9.0)
       '@react-hook/window-size':
         specifier: ^3.1.1
         version: 3.1.1(react@18.3.1)
@@ -337,6 +340,9 @@ importers:
       decimal.js:
         specifier: ^10.5.0
         version: 10.6.0
+      devalue:
+        specifier: 5.8.1
+        version: 5.8.1
       diff:
         specifier: 4.0.2
         version: 4.0.2
@@ -1166,6 +1172,43 @@ importers:
         specifier: ^4.0.18
         version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.0.18)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jiti@2.7.0)(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(lightningcss@1.32.0)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1)
 
+  apps/storage:
+    dependencies:
+      '@aws-sdk/client-s3':
+        specifier: ^3.490.0
+        version: 3.862.0
+      '@aws-sdk/s3-request-presigner':
+        specifier: ^3.490.0
+        version: 3.862.0
+      '@civitai/storage':
+        specifier: workspace:*
+        version: link:../../packages/civitai-storage
+      fastify:
+        specifier: ^5.2.1
+        version: 5.9.0
+      prom-client:
+        specifier: ^14.2.0
+        version: 14.2.0
+      zod:
+        specifier: ^4.0.17
+        version: 4.4.3
+    devDependencies:
+      '@types/node':
+        specifier: ^20.19.9
+        version: 20.19.9
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(@swc/core@1.15.11(@swc/helpers@0.5.17))(jiti@2.7.0)(postcss@8.5.6)(tsx@4.20.3)(typescript@5.9.3)(yaml@2.8.1)
+      tsx:
+        specifier: ^4.19.2
+        version: 4.20.3
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^4.0.18
+        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.0.18)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jiti@2.7.0)(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(lightningcss@1.32.0)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1)
+
   packages/civitai-auth:
     dependencies:
       '@civitai/redis':
@@ -1286,6 +1329,16 @@ importers:
       '@types/lodash-es':
         specifier: ^4.17.7
         version: 4.17.12
+      vitest:
+        specifier: ^4.0.18
+        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.0.18)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jiti@2.7.0)(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(lightningcss@1.32.0)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1)
+
+  packages/civitai-storage:
+    dependencies:
+      zod:
+        specifier: ^4.0.17
+        version: 4.4.3
+    devDependencies:
       vitest:
         specifier: ^4.0.18
         version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.0.18)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jiti@2.7.0)(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(lightningcss@1.32.0)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1)
@@ -1732,8 +1785,8 @@ packages:
     resolution: {integrity: sha512-dSXkI8hVoozzlPS9DymzoyncWz8eapH3wkSDzDVGWjjqamXn8Dbcq1hWu5xUZkZmqCaR76F7BS9BQNqvOJ++Sw==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
-  '@civitai/client@0.2.0-beta.80':
-    resolution: {integrity: sha512-ybiAFk8TtwrULTwEhQPEfhWTtK7T90YUX/tBJ/t53PLisWWWJPuwC8Ux9A1P+WYhTGMQHg84utpYbQtlm41qUA==}
+  '@civitai/client@0.2.0-beta.81':
+    resolution: {integrity: sha512-vWb5PaoG7FbMPHa3s0fGpy+hX9y0kNwpEbDeisOhgNCkFlM5Oqache7h3eClRhF0+Ypxhpyt1Nic6Bt0Epxw6Q==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
   '@civitai/cybertipline-tools@0.1.0':
@@ -1803,6 +1856,10 @@ packages:
   '@csstools/css-tokenizer@4.0.0':
     resolution: {integrity: sha512-QxULHAm7cNu72w97JUNCBFODFaXpbDg+dP8b/oWFAZ2MTRppA3U00Y2L1HqaS4J6yBqxwa/Y3nMBaxVKbB/NsA==}
     engines: {node: '>=20.19.0'}
+
+  '@datadog/pprof@5.14.4':
+    resolution: {integrity: sha512-egEZDD9v98RBI8ijbHyaWQeY8rW0WEu004As5D7SUkdqSMORhrnh7ZdsM46PUzQgAc85IaEZoukWS9UhMvWn9w==}
+    engines: {node: '>=16'}
 
   '@dimforge/rapier3d-compat@0.12.0':
     resolution: {integrity: sha512-uekIGetywIgopfD97oDL5PfeezkFpNhwlzlaEYNOA0N6ghdsOvh/HYjSMek5Q2O1PYvRSDFcqFVJl4r4ZBwOow==}
@@ -3642,6 +3699,18 @@ packages:
 
   '@protobufjs/utf8@1.1.0':
     resolution: {integrity: sha512-Vvn3zZrhQZkkBE8LSuW3em98c0FwgO4nxzv6OdSxPKJIEKY2bGbHn+mhGIPerzI4twdxaP8/0+06HBpwf345Lw==}
+
+  '@pyroscope/nodejs@0.6.1':
+    resolution: {integrity: sha512-6CiE3Vs+q99flTeJlus03d4cGphYnqPgJLEYbhpRWVtwdvPWYqft0XdTyMi97kFcTTOWjcEHXXhzGUmFQfDTHQ==}
+    engines: {node: '>=20.20.2'}
+    peerDependencies:
+      express: ^4.0.0 || ^5.0.0
+      fastify: ^5.8.5
+    peerDependenciesMeta:
+      express:
+        optional: true
+      fastify:
+        optional: true
 
   '@react-aria/focus@3.21.0':
     resolution: {integrity: sha512-7NEGtTPsBy52EZ/ToVKCu0HSelE3kq9qeis+2eEq90XSuJOMaDHUQrA7RC2Y89tlEwQB31bud/kKRi9Qme1dkA==}
@@ -9200,6 +9269,10 @@ packages:
     resolution: {integrity: sha512-kuUqqHNUqoIWp/c467RI4X6mmyuojY5jGutNU0wVTmEOOfcuwLqyMVoAi9MKi2Ak+5i9+nhmrK4ufZE8069kHA==}
     engines: {node: '>=18'}
 
+  p-limit@7.3.0:
+    resolution: {integrity: sha512-7cIXg/Z0M5WZRblrsOla88S4wAK+zOQQWeBYfV3qJuJXMr+LnbYjaadrFaS0JILfEDPVqHyKnZ1Z/1d6J9VVUw==}
+    engines: {node: '>=20'}
+
   p-locate@5.0.0:
     resolution: {integrity: sha512-LaNjtRWUBY++zB5nE/NwcaoMylSPk+S+ZHNB1TzdbMJMny6dynpAGt7X/tl/QYq3TIeE6nxHppbo2LGymrG5Pw==}
     engines: {node: '>=10'}
@@ -9706,6 +9779,9 @@ packages:
     resolution: {integrity: sha512-9ZhXKM/rw350N1ovuWHbGxnGh/SNJ4cnxHiM0rxE4VN41wsg8P8zWn9hv/buK00RP4WvlOyr/RBDiptyxVbkZQ==}
     engines: {node: '>=0.10.0'}
 
+  pprof-format@2.2.2:
+    resolution: {integrity: sha512-hd90rHVDhNOhgHTmazVzDSVwTLOBjpZQ26AO/0j46sAFZ9uSWY0DcK2zJcwnuo2R6EzufBbOoWlPazA5nSyHcg==}
+
   preact@10.27.0:
     resolution: {integrity: sha512-/DTYoB6mwwgPytiqQTh/7SFRL98ZdiD8Sk8zIUVOxtwq4oWcwrcd1uno9fE/zZmUaUrFNYzbH14CPebOz9tZQw==}
 
@@ -10195,6 +10271,9 @@ packages:
   reflect.getprototypeof@1.0.10:
     resolution: {integrity: sha512-00o4I+DVrefhv+nX0ulyi3biSHCPDe+yLv5o/p6d/UVlirijB8E16FtfwSAi4g3tcqrQ4lRAqQSoFEZJehYEcw==}
     engines: {node: '>= 0.4'}
+
+  regenerator-runtime@0.14.1:
+    resolution: {integrity: sha512-dYnhHh0nJoMfnkZs6GmmhFknAGRrLznOu5nc9ML+EJxGvrx6H7teuevqVqCuPcPK//3eDrrjQhehXVx9cnkGdw==}
 
   regexp-to-ast@0.5.0:
     resolution: {integrity: sha512-tlbJqcMHnPKI9zSrystikWKwHkBqu2a/Sgw01h3zFjvYrMxEDYHzzoMZnUrbIfpTFEsoRnnviOXNCzFiSc54Qw==}
@@ -12809,7 +12888,7 @@ snapshots:
       rfc6902: 5.2.0
       tslib: 2.8.1
 
-  '@civitai/client@0.2.0-beta.80':
+  '@civitai/client@0.2.0-beta.81':
     dependencies:
       '@hey-api/client-fetch': 0.1.14
       rfc6902: 5.2.0
@@ -12890,6 +12969,12 @@ snapshots:
 
   '@csstools/css-tokenizer@4.0.0':
     optional: true
+
+  '@datadog/pprof@5.14.4':
+    dependencies:
+      node-gyp-build: 4.8.4
+      pprof-format: 2.2.2
+      source-map: 0.7.6
 
   '@dimforge/rapier3d-compat@0.12.0': {}
 
@@ -14711,6 +14796,19 @@ snapshots:
   '@protobufjs/pool@1.1.0': {}
 
   '@protobufjs/utf8@1.1.0': {}
+
+  '@pyroscope/nodejs@0.6.1(fastify@5.9.0)':
+    dependencies:
+      '@datadog/pprof': 5.14.4
+      debug: 4.4.3
+      p-limit: 7.3.0
+      pprof-format: 2.2.2
+      regenerator-runtime: 0.14.1
+      source-map: 0.7.6
+    optionalDependencies:
+      fastify: 5.9.0
+    transitivePeerDependencies:
+      - supports-color
 
   '@react-aria/focus@3.21.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
     dependencies:
@@ -21254,8 +21352,7 @@ snapshots:
       detect-libc: 2.1.2
     optional: true
 
-  node-gyp-build@4.8.4:
-    optional: true
+  node-gyp-build@4.8.4: {}
 
   node-releases@2.0.19: {}
 
@@ -21451,6 +21548,10 @@ snapshots:
       yocto-queue: 0.1.0
 
   p-limit@6.2.0:
+    dependencies:
+      yocto-queue: 1.2.1
+
+  p-limit@7.3.0:
     dependencies:
       yocto-queue: 1.2.1
 
@@ -21929,6 +22030,8 @@ snapshots:
   postgres-interval@1.2.0:
     dependencies:
       xtend: 4.0.2
+
+  pprof-format@2.2.2: {}
 
   preact@10.27.0: {}
 
@@ -22570,6 +22673,8 @@ snapshots:
       get-intrinsic: 1.3.0
       get-proto: 1.0.1
       which-builtin-type: 1.2.1
+
+  regenerator-runtime@0.14.1: {}
 
   regexp-to-ast@0.5.0: {}
 

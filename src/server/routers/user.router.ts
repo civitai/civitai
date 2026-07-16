@@ -16,7 +16,6 @@ import {
   getUserByIdHandler,
   getUserCosmeticsHandler,
   getUserCreatorHandler,
-  getUserEngagedModelsHandler,
   getUserEngagedModelsByIdsHandler,
   getUserEngagedModelVersionsHandler,
   getUserFeatureFlagsHandler,
@@ -143,9 +142,6 @@ export const userRouter = router({
   getSelfStatus: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .query(getSelfStatusHandler),
-  getEngagedModels: protectedProcedure
-    .meta({ requiredScope: TokenScope.UserRead })
-    .query(getUserEngagedModelsHandler),
   getEngagedModelsByIds: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .input(getEngagedModelsByIdsSchema)

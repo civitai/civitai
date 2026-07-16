@@ -141,7 +141,7 @@ describe('isBlockJwt header decode (audit H-1.5 / strict)', () => {
       res._status = 200;
       res.status(200);
     });
-    const route = withBlockScope(wrappedHandler as never, { requiredScope: 'models:read:self' });
+    const route = withBlockScope(wrappedHandler as never, { endpoint: 'models', requiredScope: 'models:read:self' });
     const fakeReqWithApiKey = {
       method: 'GET',
       headers: { authorization: 'Bearer foo.bar.notarealjwt' },

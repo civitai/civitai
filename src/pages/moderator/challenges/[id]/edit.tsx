@@ -7,6 +7,7 @@ import { trpc } from '~/utils/trpc';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { ChallengeSource } from '~/shared/utils/prisma/enums';
 
 export default function EditChallengePage() {
   const router = useRouter();
@@ -71,6 +72,7 @@ export default function EditChallengePage() {
     visibleAt: new Date(challenge.visibleAt),
     status: challenge.status,
     source: challenge.source,
+    buzzType: challenge.buzzType,
     prizes: challenge.prizes,
     entryPrize: challenge.entryPrize,
     prizeMode: challenge.prizeMode,
@@ -80,6 +82,12 @@ export default function EditChallengePage() {
     maxPrizePool: challenge.maxPrizePool,
     prizeDistribution: challenge.prizeDistribution,
     themeElements: challenge.themeElements,
+    judgingCategories: challenge.judgingCategories ?? undefined,
+    entryFee: challenge.entryFee,
+    maxParticipants: challenge.maxParticipants,
+    // User challenges store the creator-seeded prize as basePrizePool (see upsertUserChallenge)
+    initialPrizeBuzz:
+      challenge.source === ChallengeSource.User ? challenge.basePrizePool : undefined,
   };
 
   return (

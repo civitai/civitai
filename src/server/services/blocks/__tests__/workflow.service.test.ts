@@ -17,18 +17,23 @@ const { mockDbRead } = vi.hoisted(() => ({
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead }));
 
 import {
+  buildImageWorkflowInput,
   buildTextToImageInput,
+  BLOCK_IMAGE_WORKFLOW_TYPES,
   isPageLoraResource,
+  resolveBlockImageWorkflowType,
   resolveBlockVersionContext,
   resolvePageResourceContext,
   snapshotFromWorkflow,
 } from '../workflow.service';
+import { blockWorkflowBodySchema } from '~/server/schema/blocks/workflow.schema';
 // REAL param-building path (no mocks): the generation graph validator and the
 // step-metadata snapshot fn are the exact functions the orchestrator's
 // `createWorkflowStepsFromGraph` runs to derive `workflowMetadata.params`. Both
 // live in the browser-safe `shared/` tree (no DB/redis), so we import and run
 // them for real in the integration-style test below.
 import { generationGraph } from '~/shared/data-graph/generation/generation-graph';
+import { ECO } from '~/shared/constants/basemodel.constants';
 import { toStepMetadata } from '~/shared/utils/resource.utils';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
@@ -862,5 +867,372 @@ describe('block input yields populated workflow metadata params (real graph path
       quantity: 2,
     });
     expect(params.aspectRatio).toMatchObject({ width: 512, height: 512 });
+  });
+
+  it('emitted img2img input validates through the REAL generation graph (SDXL)', () => {
+    // Proves the generalized bridge output is graph-valid end-to-end: a bounded
+    // source image → workflow:img2img with an images[] init node the SD-family
+    // graph accepts (denoise applies at its default; aspectRatio is dropped).
+    const body = {
+      kind: 'textToImage' as const,
+      modelId: 7,
+      modelVersionId: 99,
+      params: { prompt: 'a cat', quantity: 1 },
+      sourceImage: { url: 'https://image.civitai.com/abc/def.jpeg', width: 768, height: 1024 },
+    };
+    const resolved = {
+      baseModel: 'SDXL 1.0',
+      modelType: 'Checkpoint',
+      checkpointVersionId: 99,
+      checkpointBaseModel: 'SDXL 1.0',
+    };
+    const input = buildImageWorkflowInput(body as never, resolved);
+    const result = generationGraph.safeParse(input, externalCtx);
+    if (!result.success) {
+      throw new Error(`img2img graph validation failed: ${JSON.stringify(result.errors)}`);
+    }
+    expect((result.data as { workflow: string }).workflow).toBe('img2img');
+    const images = (result.data as { images?: Array<{ url: string }> }).images;
+    expect(images).toEqual([
+      expect.objectContaining({ url: 'https://image.civitai.com/abc/def.jpeg' }),
+    ]);
+  });
+
+  // Edit-capable ecosystems (EDIT_IMG_IDS) route a source-image body to
+  // `img2img:edit`, NOT plain `img2img`. Prove end-to-end that the emitted input
+  // validates through the REAL generation graph AND routes to img2img:edit (i.e.
+  // the ecosystem is NOT silently auto-corrected) for each edit ecosystem — the
+  // same `images` reference node the onsite generator feeds (openai-graph /
+  // flux-kontext-graph / qwen-graph). `checkpointVersionId` uses each ecosystem's
+  // real locked version id so the modelLocked graph doesn't remap it.
+  it.each([
+    ['OpenAI', 'OpenAI', 1733399],
+    ['Qwen', 'Qwen', 2558804],
+    ['Flux.1 Kontext', 'Flux1Kontext', 1892509],
+  ])(
+    'emitted img2img:edit input validates through the REAL graph for %s (ecosystem %s)',
+    (baseModel, ecoKey, versionId) => {
+      const body = {
+        kind: 'textToImage' as const,
+        modelId: 7,
+        modelVersionId: versionId,
+        params: { prompt: 'make the cat wear a hat', quantity: 1 },
+        sourceImage: {
+          url: 'https://image.civitai.com/abc/def.jpeg',
+          width: 1024,
+          height: 1024,
+        },
+      };
+      const resolved = {
+        baseModel,
+        modelType: 'Checkpoint',
+        checkpointVersionId: versionId,
+        checkpointBaseModel: baseModel,
+      };
+      const input = buildImageWorkflowInput(body as never, resolved);
+      // The builder routes to img2img:edit deterministically.
+      expect(input.workflow).toBe('img2img:edit');
+      expect(input.ecosystem).toBe(ecoKey);
+
+      // The REAL graph accepts it AND keeps it routed to img2img:edit on the
+      // asserted ecosystem (no auto-correction to a supported-but-wrong route).
+      const result = generationGraph.safeParse(input, externalCtx);
+      if (!result.success) {
+        throw new Error(`img2img:edit graph validation failed: ${JSON.stringify(result.errors)}`);
+      }
+      const data = result.data as { workflow: string; ecosystem: string; images?: Array<{ url: string }> };
+      expect(data.workflow).toBe('img2img:edit');
+      expect(data.ecosystem).toBe(ecoKey);
+      // The bounded source image rides into the graph's reference `images` node.
+      expect(data.images).toEqual([
+        expect.objectContaining({ url: 'https://image.civitai.com/abc/def.jpeg' }),
+      ]);
+    }
+  );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// App Blocks IMAGE bridge (Phase-2a): generalized image-workflow builder
+// ─────────────────────────────────────────────────────────────────────────────
+describe('buildImageWorkflowInput (generalized image-workflow bridge)', () => {
+  const baseBody = {
+    kind: 'textToImage' as const,
+    modelId: 7,
+    modelVersionId: 99,
+    params: { prompt: 'a cat', quantity: 1 },
+  };
+  const checkpointResolved = {
+    baseModel: 'SDXL 1.0',
+    modelType: 'Checkpoint',
+    checkpointVersionId: 99,
+    checkpointBaseModel: 'SDXL 1.0',
+  };
+  const validSourceImage = {
+    url: 'https://image.civitai.com/abc/def.jpeg',
+    width: 768,
+    height: 1024,
+  };
+
+  it('exposes exactly the image workflow allowlist (txt2img, img2img, img2img:edit)', () => {
+    expect([...BLOCK_IMAGE_WORKFLOW_TYPES]).toEqual(['txt2img', 'img2img', 'img2img:edit']);
+  });
+
+  it('resolveBlockImageWorkflowType derives the variant from body + ecosystem', () => {
+    // No source image → txt2img regardless of ecosystem.
+    expect(resolveBlockImageWorkflowType(baseBody as never)).toBe('txt2img');
+    expect(resolveBlockImageWorkflowType(baseBody as never, ECO.OpenAI)).toBe('txt2img');
+    // Source image + SD-family ecosystem → img2img.
+    expect(
+      resolveBlockImageWorkflowType(
+        { ...baseBody, sourceImage: validSourceImage } as never,
+        ECO.SDXL
+      )
+    ).toBe('img2img');
+    // Source image + edit-capable ecosystem → img2img:edit.
+    for (const eco of [ECO.OpenAI, ECO.Qwen, ECO.Flux1Kontext]) {
+      expect(
+        resolveBlockImageWorkflowType({ ...baseBody, sourceImage: validSourceImage } as never, eco)
+      ).toBe('img2img:edit');
+    }
+    // Source image + ecosystem that supports neither img2img variant (Flux.1 →
+    // Flux1, txt2img-only) → BAD_REQUEST.
+    let caught: unknown;
+    try {
+      resolveBlockImageWorkflowType(
+        { ...baseBody, sourceImage: validSourceImage } as never,
+        ECO.Flux1
+      );
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(TRPCError);
+    expect(caught).toMatchObject({ code: 'BAD_REQUEST' });
+    // Source image + unknown ecosystem (undefined) → BAD_REQUEST too.
+    expect(() =>
+      resolveBlockImageWorkflowType({ ...baseBody, sourceImage: validSourceImage } as never)
+    ).toThrow(TRPCError);
+  });
+
+  it('emits workflow:img2img + an images[] init image when a source image is present', () => {
+    const body = { ...baseBody, sourceImage: validSourceImage };
+    const out = buildImageWorkflowInput(body as never, checkpointResolved);
+    expect(out.workflow).toBe('img2img');
+    // The graph's imagesNode consumes { url, width, height }.
+    expect(out.images).toEqual([
+      { url: 'https://image.civitai.com/abc/def.jpeg', width: 768, height: 1024 },
+    ]);
+    // Dimensions come from the source image in img2img → aspectRatio is omitted
+    // (the SD graph gates aspectRatio to `when: !hasImages`).
+    expect(out.aspectRatio).toBeUndefined();
+    // The checkpoint anchor + cost-profile fields are unchanged.
+    expect(out.model).toEqual({ id: 99 });
+    expect(out.quantity).toBe(1);
+    expect(out.priority).toBe('low');
+  });
+
+  it('emits workflow:txt2img (with aspectRatio, no images) when there is no source image', () => {
+    const out = buildImageWorkflowInput(baseBody as never, checkpointResolved);
+    expect(out.workflow).toBe('txt2img');
+    expect(out.images).toBeUndefined();
+    expect(out.aspectRatio).toMatchObject({ width: 1024, height: 1024 });
+  });
+
+  it('buildTextToImageInput is the same builder (back-compat alias) and stays txt2img-compatible', () => {
+    expect(buildTextToImageInput).toBe(buildImageWorkflowInput);
+    const out = buildTextToImageInput(baseBody as never, checkpointResolved);
+    expect(out.workflow).toBe('txt2img');
+  });
+
+  it('rejects a non-image (explicit) workflow type fail-closed with BAD_REQUEST', () => {
+    let caught: unknown;
+    try {
+      buildImageWorkflowInput(baseBody as never, checkpointResolved, 'txt2vid');
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(TRPCError);
+    expect(caught).toMatchObject({ code: 'BAD_REQUEST' });
+    expect((caught as TRPCError).message).toMatch(/only image workflows/);
+  });
+
+  it('preserves the LoRA-stack fan-out on the img2img path (gates + resources unchanged)', () => {
+    // The additionalResources fan-out (each entry gated per-item upstream in the
+    // router) must apply identically whether or not a source image is present —
+    // generalizing the builder must not drop the resource path.
+    const body = {
+      ...baseBody,
+      sourceImage: validSourceImage,
+      additionalResources: [
+        { modelVersionId: 201, strength: 0.8 },
+        { modelVersionId: 202, strength: 1.2 },
+      ],
+    };
+    const out = buildImageWorkflowInput(body as never, checkpointResolved);
+    expect(out.workflow).toBe('img2img');
+    expect(out.model).toEqual({ id: 99 });
+    expect(out.resources).toEqual([
+      { id: 201, strength: 0.8 },
+      { id: 202, strength: 1.2 },
+    ]);
+    // The init image rides alongside the resources — both are present.
+    expect(out.images).toHaveLength(1);
+  });
+
+  it('carries the same cost-profile fields on img2img as txt2img (budget preflight sees the same shape)', () => {
+    // The router's budget preflight costs the built input via the orchestrator
+    // whatIf. Generalizing to img2img must not change the fields that drive cost
+    // (quantity / priority / prompt / resources) — only add the init image.
+    const txt = buildImageWorkflowInput(baseBody as never, checkpointResolved);
+    const img = buildImageWorkflowInput(
+      { ...baseBody, sourceImage: validSourceImage } as never,
+      checkpointResolved
+    );
+    for (const key of ['quantity', 'priority', 'prompt', 'model', 'resources', 'ecosystem']) {
+      expect(img[key]).toEqual(txt[key]);
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// App Blocks IMAGE bridge: img2img variant selection + fail-close guard
+//
+// Plain `img2img` ("Image Variations") is SD-family-only and `img2img:edit` is
+// EDIT_IMG_IDS-only (OpenAI/Qwen/Flux Kontext/…) in the generation graph.
+// buildImageWorkflowInput must (a) route SD-family checkpoints to `img2img`, (b)
+// route edit-capable checkpoints to `img2img:edit`, and (c) reject a checkpoint
+// whose ecosystem supports NEITHER variant with BAD_REQUEST — deterministically,
+// rather than let DataGraph.safeParse silently auto-correct the ecosystem and
+// return a mis-routed graph as success.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('buildImageWorkflowInput img2img variant selection + ecosystem guard', () => {
+  const baseBody = {
+    kind: 'textToImage' as const,
+    modelId: 7,
+    modelVersionId: 99,
+    params: { prompt: 'a cat', quantity: 1 },
+    sourceImage: { url: 'https://image.civitai.com/abc/def.jpeg', width: 768, height: 1024 },
+  };
+  const resolved = (checkpointBaseModel: string) => ({
+    baseModel: checkpointBaseModel,
+    modelType: 'Checkpoint',
+    checkpointVersionId: 99,
+    checkpointBaseModel,
+  });
+
+  // baseModel → expected graph ecosystem key. These are the SD-family members
+  // configured for plain img2img (SD_FAMILY_IDS).
+  it.each([
+    ['SDXL 1.0', 'SDXL'],
+    ['SD 1.5', 'SD1'],
+    ['Pony', 'Pony'],
+    ['Illustrious', 'Illustrious'],
+    ['NoobAI', 'NoobAI'],
+  ])('builds img2img for SD-family checkpoint %s (ecosystem %s)', (baseModel, ecoKey) => {
+    const out = buildImageWorkflowInput(baseBody as never, resolved(baseModel));
+    expect(out.workflow).toBe('img2img');
+    expect(out.ecosystem).toBe(ecoKey);
+    expect(out.images).toHaveLength(1);
+  });
+
+  // Edit-capable checkpoints (EDIT_IMG_IDS): plain img2img is NOT available but
+  // img2img:edit IS — the builder must route them to `img2img:edit` (NOT reject,
+  // NOT silently SD1-correct) and still carry the source image.
+  it.each([
+    ['Flux.1 Kontext', 'Flux1Kontext'],
+    ['Qwen', 'Qwen'],
+    ['OpenAI', 'OpenAI'],
+  ])('builds img2img:edit for edit-capable checkpoint %s (ecosystem %s)', (baseModel, ecoKey) => {
+    const out = buildImageWorkflowInput(baseBody as never, resolved(baseModel));
+    expect(out.workflow).toBe('img2img:edit');
+    expect(out.ecosystem).toBe(ecoKey);
+    expect(out.images).toHaveLength(1);
+    // aspectRatio is omitted for the edit variant (graph default applies).
+    expect(out.aspectRatio).toBeUndefined();
+  });
+
+  // Checkpoints whose ecosystem supports NEITHER img2img variant: the builder
+  // must throw BAD_REQUEST (not silently emit an auto-corrected graph). Flux.1 D
+  // (Flux1) / Chroma are txt2img-only; SD 3.5 / SD 2.1 are in neither set.
+  it.each(['Flux.1 D', 'SD 3.5', 'Chroma', 'SD 2.1'])(
+    'rejects img2img for a no-img2img-variant checkpoint %s with BAD_REQUEST',
+    (baseModel) => {
+      let caught: unknown;
+      try {
+        buildImageWorkflowInput(baseBody as never, resolved(baseModel));
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(TRPCError);
+      expect(caught).toMatchObject({ code: 'BAD_REQUEST' });
+      expect((caught as TRPCError).message).toMatch(/not supported/);
+    }
+  );
+
+  it('still builds txt2img (no source image) for a non-SD-family checkpoint (guard is img2img-only)', () => {
+    // The guard must not affect the txt2img path — a Flux block with no source
+    // image is unchanged.
+    const { sourceImage, ...txtBody } = baseBody;
+    void sourceImage;
+    const out = buildImageWorkflowInput(txtBody as never, resolved('Flux.1 D'));
+    expect(out.workflow).toBe('txt2img');
+    expect(out.ecosystem).toBe('Flux1');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// App Blocks IMAGE bridge (Phase-2a): source-image URL bound (untrusted iframe)
+// ─────────────────────────────────────────────────────────────────────────────
+describe('blockWorkflowBodySchema sourceImage bound (SSRF / arbitrary-URL guard)', () => {
+  const baseBody = {
+    kind: 'textToImage' as const,
+    modelId: 7,
+    modelVersionId: 99,
+    params: { prompt: 'a cat', quantity: 1 },
+  };
+  function parseWithSource(url: string) {
+    return blockWorkflowBodySchema.safeParse({
+      ...baseBody,
+      sourceImage: { url, width: 768, height: 1024 },
+    });
+  }
+
+  it('accepts a body with NO source image (byte-compatible txt2img path)', () => {
+    const res = blockWorkflowBodySchema.safeParse(baseBody);
+    expect(res.success).toBe(true);
+  });
+
+  it('accepts a Civitai-hosted https source image (orchestrator / CDN / apex)', () => {
+    expect(parseWithSource('https://orchestration.civitai.com/v2/blobs/abc.jpeg').success).toBe(
+      true
+    );
+    expect(parseWithSource('https://image.civitai.com/abc/def.jpeg').success).toBe(true);
+    expect(parseWithSource('https://civitai.com/images/xyz.jpeg').success).toBe(true);
+    expect(parseWithSource('https://image.civitai.red/abc/def.jpeg').success).toBe(true);
+  });
+
+  it('rejects an arbitrary/remote source-image URL', () => {
+    expect(parseWithSource('https://evil.example/x.png').success).toBe(false);
+    expect(parseWithSource('https://cdn.attacker.io/leak.png').success).toBe(false);
+  });
+
+  it('rejects a non-https URL (no http SSRF)', () => {
+    expect(parseWithSource('http://image.civitai.com/abc.jpeg').success).toBe(false);
+    expect(parseWithSource('ftp://image.civitai.com/abc.jpeg').success).toBe(false);
+  });
+
+  it('rejects a host-confusion URL that merely CONTAINS a civitai host as a substring', () => {
+    // The bound is hostname-based, not substring — so this attacker origin is
+    // rejected where a `.includes("image.civitai.com")` check would accept it.
+    expect(parseWithSource('https://evil.example/?x=image.civitai.com').success).toBe(false);
+    expect(parseWithSource('https://image.civitai.com.evil.example/x.png').success).toBe(false);
+  });
+
+  it('rejects out-of-bound source-image dimensions', () => {
+    expect(
+      blockWorkflowBodySchema.safeParse({
+        ...baseBody,
+        sourceImage: { url: 'https://image.civitai.com/a.jpeg', width: 99999, height: 1024 },
+      }).success
+    ).toBe(false);
   });
 });

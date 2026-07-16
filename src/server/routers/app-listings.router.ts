@@ -12,6 +12,7 @@ import {
 } from '~/server/schema/blocks/app-listing.schema';
 import {
   getAppListingDetailSchema,
+  listAllListingsForModerationSchema,
   listAppListingsSchema,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import {
@@ -43,10 +44,14 @@ import {
   dismissReportSchema,
   listListingReportsSchema,
   listModerationEventsSchema,
+  listMyListingModerationEventsSchema,
   purgeListingSchema,
   relistListingSchema,
   reportListingSchema,
+  republishOwnListingSchema,
+  resetListingToPendingSchema,
   resolveReportSchema,
+  unpublishOwnListingSchema,
 } from '~/server/schema/blocks/offsite-moderation.schema';
 import { rateLimit } from '~/server/middleware.trpc';
 import {
@@ -123,6 +128,22 @@ const enforceAppBlocksAuthorFlag = middleware(async ({ ctx, next }) => {
 const enforceAppListingsReadFlag = middleware(async ({ ctx, next }) => {
   if (await isAppListingsEnabled({ user: ctx.user })) return next();
   return next({ ctx: { _appBlocksDisabled: true } });
+});
+
+/**
+ * Store WRITE gate — mirrors `enforceAppBlocksFlag`'s HARD-THROW shape (a write
+ * with the store dark must REJECT, not soft-fail like the read gate) but keyed on
+ * the DEDICATED store-visibility flag `isAppListingsEnabled` (which OR-falls-back
+ * to `isAppBlocksEnabled`). This keeps the review WRITEs (`upsertReview`/
+ * `getMyReview`) on the SAME flag as the store visibility + reviews read path
+ * (`enforceAppListingsReadFlag`), so once `app-listings` widens independently of
+ * the held block-runtime gate, a viewer who can SEE the review affordance can
+ * also submit — instead of seeing the button and 403-ing on write. Zero change
+ * today: the OR-fallback preserves the existing mods + app-dev-testers cohort.
+ */
+const enforceAppListingsWriteFlag = middleware(async ({ ctx, next }) => {
+  if (await isAppListingsEnabled({ user: ctx.user })) return next();
+  throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
 });
 
 /**
@@ -613,7 +634,8 @@ export const appListingsRouter = router({
     }),
 
   /**
-   * MOD: reject a pending off-site request (PR-b). Requires `rejectionReason` ≥10
+   * MOD: reject a pending off-site request (PR-b). Requires `rejectionReason`
+   * ≥`OFFSITE_REJECTION_REASON_MIN` (the shared `OFFSITE_MOD_REASON_MIN`, 3)
    * chars; in ONE tx flips the request→rejected + sets `reviewedBy*` and DELETES
    * the draft listing (status-guarded — releases the slug, never removes an
    * approved listing). Failure modes are mapped by `mapOffsiteError` (typed
@@ -839,6 +861,163 @@ export const appListingsRouter = router({
     }),
 
   // -------------------------------------------------------------------------
+  // W13 POST-APPROVAL LISTING MANAGEMENT (Phase 1) — DARK.
+  //
+  // `resetListingToPending` is a MOD action (`moderatorProcedure` + `isModerator`
+  // recheck, same posture as delist/relist/claim/purge). The three owner procs
+  // (`unpublishOwnListing` / `republishOwnListing` / `listMyListingModerationEvents`)
+  // are `appDeveloperProcedure` (mods + app-dev-testers) and are bound to the caller
+  // in the service (owner-only, else NOT_OWNED → FORBIDDEN). All typed failures map
+  // via `mapOffsiteError` (no infra leak). Offsite-only in the service.
+  // -------------------------------------------------------------------------
+
+  /**
+   * MOD reset an approved off-site listing back into the review queue (approved →
+   * pending) — mints a fresh pending publish request owned by the listing owner so a
+   * mod can re-approve/reject it through the existing flow, writes a `reset-to-pending`
+   * audit event, and notifies the owner. Typed failures map via `mapOffsiteError`
+   * (NOT_FOUND→NOT_FOUND, NOT_TRANSITIONABLE→BAD_REQUEST, infra→INTERNAL/no leak).
+   */
+  resetListingToPending: moderatorProcedure
+    .input(resetListingToPendingSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Resetting off-site listings is restricted to civitai team');
+      }
+      const { resetListingToPending } = await import(
+        '~/server/services/blocks/offsite-moderation.service'
+      );
+      try {
+        return await resetListingToPending({ input, reviewerUserId: ctx.user.id });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
+   * MOD reset an approved ON-SITE (hosted app-block) listing back into the block
+   * review queue (approved → pending) — the W13-deferred onsite reset, now built.
+   * Suspends the backing block (the real runtime stop), clones the latest approved
+   * `AppBlockPublishRequest` into a fresh pending one (assets/version KEPT, NO owner
+   * resubmit) so it re-enters `listPendingRequests`, writes a `reset-to-pending` audit
+   * event, and notifies the owner; a mod re-approves it through the existing block
+   * review flow (which restores the listing + un-suspends the block). DARK backend
+   * capability — no UI wiring yet (the mgmt-table Reset button is a downstream PR).
+   * Same input shape + posture as the offsite reset; typed failures map via
+   * `mapOffsiteError` (NOT_FOUND→NOT_FOUND, NOT_TRANSITIONABLE→BAD_REQUEST).
+   */
+  resetOnsiteListingToPending: moderatorProcedure
+    .input(resetListingToPendingSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Resetting on-site listings is restricted to civitai team');
+      }
+      const { resetOnsiteListingToPending } = await import(
+        '~/server/services/blocks/offsite-moderation.service'
+      );
+      try {
+        return await resetOnsiteListingToPending({ input, reviewerUserId: ctx.user.id });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
+   * OWNER unpublish their OWN approved off-site listing (approved → removed) — a
+   * self-service visibility toggle (no re-review). Owner-bound in the service
+   * (NOT_OWNED→FORBIDDEN); NOT_TRANSITIONABLE when not approved. Typed failures map
+   * via `mapOffsiteError`.
+   */
+  unpublishOwnListing: appDeveloperProcedure
+    .use(
+      rateLimit({
+        limit: 30,
+        period: 3600,
+        errorMessage: 'Too many listing changes — slow down.',
+      })
+    )
+    .input(unpublishOwnListingSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { unpublishOwnListing } = await import(
+        '~/server/services/blocks/offsite-moderation.service'
+      );
+      try {
+        return await unpublishOwnListing({ input, userId: ctx.user.id });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
+   * OWNER republish their OWN owner-unpublished off-site listing (removed →
+   * approved). 🔴 Allowed ONLY when the listing's most-recent moderation event is an
+   * `owner-unpublish` — a listing a MODERATOR removed (delist/purge) is FORBIDDEN to
+   * self-restore (the load-bearing safety guard, in the service). Owner-bound. Typed
+   * failures map via `mapOffsiteError` (NOT_OWNED/FORBIDDEN→FORBIDDEN,
+   * NOT_TRANSITIONABLE→BAD_REQUEST).
+   */
+  republishOwnListing: appDeveloperProcedure
+    .use(
+      rateLimit({
+        limit: 30,
+        period: 3600,
+        errorMessage: 'Too many listing changes — slow down.',
+      })
+    )
+    .input(republishOwnListingSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { republishOwnListing } = await import(
+        '~/server/services/blocks/offsite-moderation.service'
+      );
+      try {
+        return await republishOwnListing({ input, userId: ctx.user.id });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
+   * OWNER per-listing moderation history for a listing the caller OWNS (the "why was
+   * this hidden / un-approved" view). Owner-bound in the service (NOT_FOUND on a
+   * missing listing, NOT_OWNED→FORBIDDEN otherwise); same PII-safe projection as the
+   * mod `listModerationEvents`.
+   */
+  listMyListingModerationEvents: appDeveloperProcedure
+    .input(listMyListingModerationEventsSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { listMyListingModerationEvents } = await import(
+        '~/server/services/blocks/offsite-moderation.service'
+      );
+      try {
+        return await listMyListingModerationEvents({ input, userId: ctx.user.id });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
+   * MOD: the ALL-STATUS listings management table (W13 post-approval mgmt, P2) —
+   * every lifecycle status (draft|pending|approved|rejected|removed), keyset-
+   * paginated, optional status/kind/search filters. Read-only `moderatorProcedure`
+   * (mirrors the sibling mod-read queues `listPendingRequests`/`listListingReports`
+   * — mod-only server-side; the client gates rendering on the app-blocks flag +
+   * treats a query error as "render nothing"). The per-row lifecycle ACTIONS reuse
+   * the merged Phase 1 procs (resetListingToPending / delist / relist / claim /
+   * purge) + the off-site approve/reject review flow.
+   */
+  listAllListingsForModeration: moderatorProcedure
+    .input(listAllListingsForModerationSchema)
+    .query(async ({ input }) => {
+      const { listAllListingsForModeration } = await import(
+        '~/server/services/blocks/app-listing.service'
+      );
+      return listAllListingsForModeration(input);
+    }),
+
+  // -------------------------------------------------------------------------
   // P2a UNIFIED STORE READ PATH (over BOTH kinds) — publicProcedure, DARK.
   //
   // Parallel-run: these serve the unified `/apps` store from `AppListing` and
@@ -904,12 +1083,18 @@ export const appListingsRouter = router({
   // user EXCEPT the listing owner, for BOTH kinds, NO install/usage gate.
   //
   // FLAG GATING: the WRITEs (`upsertReview`/`getMyReview`) are `protectedProcedure`
-  // (auth REQUIRED) + `enforceAppBlocksFlag` — the "store enabled for this viewer"
-  // gate that THROWS UNAUTHORIZED when off (a real anon/non-mod caller can't write
-  // until the segment widens at GA). `listReviews` is `publicProcedure` +
+  // (auth REQUIRED) + `enforceAppListingsWriteFlag` — the "store enabled for this
+  // viewer" gate keyed on the SAME dedicated `app-listings` flag as the store
+  // visibility + `listReviews` read path, THROWING UNAUTHORIZED when off (a real
+  // anon/non-store caller can't write). Keeping the writes on `app-listings`
+  // (not the held block-runtime `app-blocks-enabled`) means the review submit
+  // widens WITH the store, so a viewer who SEES the affordance can also submit
+  // instead of 403-ing. `listReviews` is `publicProcedure` +
   // `enforceAppListingsReadFlag` (empty page when off, same posture as
-  // listAvailable). The review affordance renders only on the mod-only
-  // store-preview surface today (the public `/apps/[slug]` cutover is P2d).
+  // listAvailable). Zero change today: `isAppListingsEnabled` OR-falls-back to
+  // `isAppBlocksEnabled`, so the current mods + app-dev-testers cohort is
+  // unchanged. The review affordance renders only on the mod-only store-preview
+  // surface today (the public `/apps/[slug]` cutover is P2d).
   //
   // FOLLOW-UP (deferred): a MOD exclude/report path for individual reviews.
   // `listReviews` ALREADY filters `exclude`/`tosViolation`, so a future mod action
@@ -922,7 +1107,7 @@ export const appListingsRouter = router({
    * non-approved-listing gates are enforced in the service (FORBIDDEN / BAD_REQUEST).
    */
   upsertReview: protectedProcedure
-    .use(enforceAppBlocksFlag)
+    .use(enforceAppListingsWriteFlag)
     .use(
       rateLimit({
         limit: 30,
@@ -941,7 +1126,7 @@ export const appListingsRouter = router({
 
   /** USER: the caller's OWN review for a listing (form prefill), or null. */
   getMyReview: protectedProcedure
-    .use(enforceAppBlocksFlag)
+    .use(enforceAppListingsWriteFlag)
     .input(getMyAppListingReviewSchema)
     .query(async ({ ctx, input }) => {
       if (!ctx.user) return null;

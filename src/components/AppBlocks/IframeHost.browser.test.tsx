@@ -18,6 +18,10 @@ const mocks = vi.hoisted(() => ({
 //   - getEffectiveCheckpoint must report `isLoading: false` so `shouldStartInit`
 //     fires (the controller posts BLOCK_INIT and arms the readiness timeout).
 //   - getShowcaseImages returns no data (carousel is irrelevant here).
+// AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
+// moderator gate; these suites render the real host without a CivitaiSessionProvider.
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+
 vi.mock('~/utils/trpc', () => ({
   trpc: {
     blocks: {
@@ -40,6 +44,7 @@ vi.mock('~/utils/trpc', () => ({
     apps: {
       shared: {
         append: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        update: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         vote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         unvote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         withdraw: { useMutation: () => ({ mutateAsync: vi.fn() }) },

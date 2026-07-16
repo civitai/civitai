@@ -156,6 +156,10 @@ const RESOLVED_INSTALL = {
     blockId: 'blk',
     appId: 'app',
     status: 'approved',
+    // DEPLOY-GATE: a non-null timestamp = this app has successfully deployed its
+    // origin, so the run-mint proceeds. (NULL would be blocked with 409 — the
+    // dedicated deploy-gate suite covers that.)
+    currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
     manifest: { scopes: ['models:read:self'] },
     approvedScopes: ['models:read:self'],
     app: { allowedScopes: 4 /* TokenScope.ModelsRead */ },

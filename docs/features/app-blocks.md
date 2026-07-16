@@ -60,7 +60,7 @@ check at request time (`enforceContextBinding`).
 | `media:read:owned`               | non-anon `sub`                                    |                                   |
 | `buzz:read:self`                 | non-anon `sub`                                    |                                   |
 | `social:tip:self`                | non-anon `sub`                                    |                                   |
-| `user:read:self`                 | non-anon `sub`                                    | `/api/v1/blocks/me`               |
+| `user:read:self`                 | non-anon `sub`                                    | viewer identity — read via the `useViewer()` hook (`GET_VIEWER` bridge → `blocks.getMyViewer`). Also gates the **deprecated** `/api/v1/blocks/me` REST route (retiring) |
 | `ai:write:budgeted`              | positive `buzzBudget`                             |                                   |
 | `block:settings:read` / `:write` | `query.blockInstanceId == claims.blockInstanceId` | + caller-is-installer at issuance; `SKIP_OAUTH_CHECK` |
 | `apps:storage:read` / `:write`   | scope present on `claims.scopes` per op           | per-app KV store (App Storage); no OAuth bit (`SKIP_OAUTH_CHECK`) — gated by the approved-scope snapshot + `resolveStorageContext` |
@@ -78,7 +78,7 @@ Unknown scopes are rejected at runtime (deny-by-default in middleware).
 | ---------------------------------------------- | -------------------- | ------------------------------- |
 | `POST /api/v1/block-tokens`                    | same-origin session  | — (any approved install)        |
 | `GET /api/v1/block-tokens/jwks`                | public               | —                               |
-| `GET /api/v1/blocks/me`                        | block JWT            | `user:read:self`                |
+| `GET /api/v1/blocks/me` _(deprecated, retiring)_ | block JWT          | `user:read:self` — superseded by the `useViewer()` hook (`GET_VIEWER` bridge). Kept live for now; migrate to the hook |
 | `GET /api/v1/models/[id]`                      | session OR block JWT | `models:read:self` (block path) |
 | `POST /api/v1/developer/block-manifests`       | `JOB_TOKEN`          | —                               |
 | `POST /api/internal/blocks/workflow-completed` | `JOB_TOKEN` + Flipt  | —                               |
@@ -138,8 +138,11 @@ the token endpoint has resolved. Matches `@civitai/app-sdk/blocks` v1:
     id: number;
     username: string | null;
     // NOTE: moderation `status` (ban/mute) is intentionally NOT sent to the
-    // iframe — no block consumes it and it's a viewer-privacy leak. A block's
-    // authoritative check is its own /api/v1/blocks/me call.
+    // iframe in this render-time payload — it's a viewer-privacy leak. A block
+    // that needs a fresh, authoritative viewer (incl. `status: 'active'|'muted'`)
+    // reads it via the `useViewer()` hook (the `GET_VIEWER` page-host bridge →
+    // `blocks.getMyViewer`), the successor to the deprecated /api/v1/blocks/me
+    // call.
   } | null;                            // null for anon viewers
   theme: 'light' | 'dark';             // matches host color scheme
   renderMode: 'iframe' | 'inline';     // always 'iframe' today (the inline host is a stub)
@@ -176,6 +179,11 @@ read that file. As of this writing the families are:
 - **Lifecycle** (fire-and-forget): `BLOCK_READY`, `BLOCK_ERROR`, `RESIZE_IFRAME`.
 - **Auth / consent**: `REQUEST_TOKEN` (→ `TOKEN_REFRESH_RESPONSE`),
   `REQUEST_SIGN_IN`, `REQUEST_CONSENT`.
+- **Viewer**: `GET_VIEWER` (→ `VIEWER_RESULT`) — the viewer self-read ("who am
+  I") backing the SDK `useViewer()` hook, host-mediated via the
+  `user:read:self`-gated `blocks.getMyViewer` mutation (token-`sub`-bound
+  server-side). The host-mediated successor to `GET /api/v1/blocks/me` (which
+  stays live for now; migrate to the hook). Page host only today.
 - **Workflows** (REQUEST-style, host-brokered via `blocks.submitWorkflow` /
   `estimateWorkflow` / `pollWorkflow`): `SUBMIT_WORKFLOW`, `ESTIMATE_WORKFLOW`,
   `POLL_WORKFLOW`, `CANCEL_WORKFLOW`.

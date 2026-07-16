@@ -8,6 +8,7 @@ import {
   getGenerationResourcesSchema,
   getResourceDataByIdsSchema,
   resolveImageMetaSchema,
+  resolveWildcardPackSchema,
   // sendFeedbackSchema,
 } from '~/server/schema/generation.schema';
 import {
@@ -29,8 +30,9 @@ import {
   // textToImageTestRun,
   toggleUnavailableResource,
 } from '~/server/services/generation/generation.service';
-import { moderatorProcedure, publicProcedure, router } from '~/server/trpc';
-import { edgeCacheIt, purgeOnSuccess } from '~/server/middleware.trpc';
+import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import { edgeCacheIt, purgeOnSuccess, rateLimit } from '~/server/middleware.trpc';
+import { resolveWildcardPackForUser } from '~/server/services/wildcard-pack.service';
 import { CacheTTL } from '~/server/common/constants';
 import {
   getWorkflowDefinitions,
@@ -157,5 +159,34 @@ export const generationRouter = router({
     .input(resolveImageMetaSchema)
     .query(({ input, ctx }) =>
       resolveImageMeta({ input, user: ctx.user, sfwOnly: ctx.features.isGreen })
+    ),
+  // App Blocks wildcard-pack import (W13) — the SESSION-authed resolve step for
+  // the page-host message bridge. A page block posts GET_WILDCARD_PACK to the
+  // PageBlockHost, which calls this with the viewer's real session, then fetches
+  // + unzips the returned signed URL CLIENT-SIDE (bytes never touch a web pod).
+  //
+  // A MUTATION deliberately (not a query, though it reads): the response carries
+  // a short-lived signed download URL, which a `.query` would leak into the
+  // `?input=…` cache key / URL / Referer where it's replayable within its TTL —
+  // the same reasoning as blocks.getMyBuzzBalance. Gating + maturity live in
+  // resolveWildcardPackForUser (all download-gate refusals → NOT_FOUND; a pack
+  // above the viewer's maturity ceiling → FORBIDDEN).
+  resolveWildcardPack: protectedProcedure
+    .use(
+      rateLimit({
+        // A gated file-resolve reachable per block-import click. Bound the rate
+        // so a page block can't hammer the delivery-worker signing path.
+        limit: 30,
+        period: 60,
+        errorMessage: 'Too many wildcard-pack requests — slow down.',
+      })
+    )
+    .input(resolveWildcardPackSchema)
+    .mutation(({ input, ctx }) =>
+      resolveWildcardPackForUser({
+        modelVersionId: input.modelVersionId,
+        user: ctx.user,
+        canViewNsfw: ctx.features.canViewNsfw,
+      })
     ),
 });

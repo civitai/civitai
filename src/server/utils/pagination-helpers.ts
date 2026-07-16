@@ -16,13 +16,27 @@ export function getPagination(limit: number, page: number | undefined) {
 }
 
 export function getPagingData<T>(
-  data: { count?: number; items: T[] },
+  data: { count?: number; items: T[]; hasMore?: boolean },
   limit?: number,
   page?: number
 ) {
-  const { count: totalItems = 0, items } = data;
+  const { count: totalItems = 0, items, hasMore } = data;
   const currentPage = page ?? 1;
   const pageSize = limit ?? totalItems;
+
+  // hasMore-based pagination (e.g. the creator username-search path, which drops
+  // the expensive exact COUNT). No exact total is available, so totalItems and
+  // totalPages are monotonic LOWER-BOUNDS: exact once we've reached the final
+  // page (hasMore=false), otherwise "at least one more". `hasMore` is the
+  // authoritative next-page signal and keeps getPaginationLinks' nextPage link
+  // working (currentPage < totalPages ⇒ true while more pages remain).
+  if (hasMore !== undefined) {
+    const skipped = pageSize && currentPage > 1 ? (currentPage - 1) * pageSize : 0;
+    const boundTotalItems = skipped + items.length + (hasMore ? 1 : 0);
+    const totalPages = hasMore ? currentPage + 1 : currentPage;
+    return { items, totalItems: boundTotalItems, currentPage, pageSize, totalPages, hasMore };
+  }
+
   const totalPages = pageSize && totalItems ? Math.ceil((totalItems as number) / pageSize) : 1;
 
   return { items, totalItems, currentPage, pageSize, totalPages };

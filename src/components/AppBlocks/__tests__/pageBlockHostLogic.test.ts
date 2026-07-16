@@ -3,6 +3,7 @@ import {
   grantedPageScopes,
   pageFallbackReason,
   resolveCheckpointPickerRequest,
+  resolveImageUploadRequest,
   resolveResourcePickerRequest,
   PAGE_RESOURCE_PICKER_TYPES,
   type PageHostStatus,
@@ -175,5 +176,71 @@ describe('resolveCheckpointPickerRequest (OPEN_CHECKPOINT_PICKER — dev:live↔
     expect(resolveCheckpointPickerRequest(null)).toBeNull();
     expect(resolveCheckpointPickerRequest('Checkpoint')).toBeNull();
     expect(resolveCheckpointPickerRequest(123)).toBeNull();
+  });
+});
+
+describe('resolveImageUploadRequest (OPEN_IMAGE_UPLOAD — requestId drop rule + purpose)', () => {
+  it('accepts a valid string requestId and defaults purpose to display + asyncScan false', () => {
+    expect(resolveImageUploadRequest({ requestId: 'u1' })).toEqual({
+      requestId: 'u1',
+      purpose: 'display',
+      asyncScan: false,
+    });
+  });
+
+  it('ignores extra fields (only requestId + purpose + asyncScan are threaded — the rest is server-gated)', () => {
+    expect(resolveImageUploadRequest({ requestId: 'u2', junk: 'x', imageId: 5 })).toEqual({
+      requestId: 'u2',
+      purpose: 'display',
+      asyncScan: false,
+    });
+  });
+
+  it('threads purpose:generationSource when the block requests the unscanned source mode', () => {
+    expect(
+      resolveImageUploadRequest({ requestId: 'u_src', purpose: 'generationSource' })
+    ).toEqual({ requestId: 'u_src', purpose: 'generationSource', asyncScan: false });
+  });
+
+  it('opts into asyncScan ONLY for a literal asyncScan === true', () => {
+    expect(resolveImageUploadRequest({ requestId: 'u_a', asyncScan: true })).toEqual({
+      requestId: 'u_a',
+      purpose: 'display',
+      asyncScan: true,
+    });
+    // Any non-true value → false (byte-compatible blocking for an old SDK).
+    for (const v of [false, undefined, null, 'true', 1, {}]) {
+      expect(resolveImageUploadRequest({ requestId: 'u_b', asyncScan: v }).asyncScan).toBe(false);
+    }
+    // Absent flag → false.
+    expect(resolveImageUploadRequest({ requestId: 'u_c' }).asyncScan).toBe(false);
+  });
+
+  it('normalizes an absent purpose to display (SDK back-compat — current SDK sends none)', () => {
+    expect(resolveImageUploadRequest({ requestId: 'u_def' }).purpose).toBe('display');
+  });
+
+  it('normalizes an unknown / non-string purpose to the safe moderated default (display)', () => {
+    expect(resolveImageUploadRequest({ requestId: 'u_x', purpose: 'evil' }).purpose).toBe('display');
+    expect(resolveImageUploadRequest({ requestId: 'u_y', purpose: 42 }).purpose).toBe('display');
+    expect(resolveImageUploadRequest({ requestId: 'u_z', purpose: null }).purpose).toBe('display');
+    // Case-sensitive: only the exact literal opts into the unscanned path.
+    expect(resolveImageUploadRequest({ requestId: 'u_c', purpose: 'GenerationSource' }).purpose).toBe(
+      'display'
+    );
+  });
+
+  it('DROPS a request with a missing / empty / non-string requestId', () => {
+    expect(resolveImageUploadRequest({})).toBeNull();
+    expect(resolveImageUploadRequest({ requestId: '' })).toBeNull();
+    expect(resolveImageUploadRequest({ requestId: 42 })).toBeNull();
+    expect(resolveImageUploadRequest({ requestId: null })).toBeNull();
+  });
+
+  it('DROPS non-object / nullish payloads', () => {
+    expect(resolveImageUploadRequest(undefined)).toBeNull();
+    expect(resolveImageUploadRequest(null)).toBeNull();
+    expect(resolveImageUploadRequest('u3')).toBeNull();
+    expect(resolveImageUploadRequest(123)).toBeNull();
   });
 });

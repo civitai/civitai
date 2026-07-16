@@ -12,6 +12,7 @@ export type JudgeDraft = {
   reviewPrompt?: string | null;
   reviewTemplate?: string | null;
   winnerSelectionPrompt?: string | null;
+  userSelectable?: boolean;
 };
 
 type GenerateContentInputs = {

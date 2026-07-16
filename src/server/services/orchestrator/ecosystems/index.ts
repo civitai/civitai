@@ -46,6 +46,7 @@ import { createErnieInput } from './ernie.handler';
 import { createLensInput } from './lens.handler';
 import { createKrea2Input } from './krea2.handler';
 import { createMAIInput } from './mai.handler';
+import { createReveInput } from './reve.handler';
 import { createZImageInput } from './z-image.handler';
 import { createBooguInput } from './boogu.handler';
 import { createHiDreamInput } from './hi-dream.handler';
@@ -161,6 +162,9 @@ export type Krea2Ctx = EcosystemGraphOutput & { ecosystem: 'Krea2' };
 /** MAI context */
 export type MAICtx = EcosystemGraphOutput & { ecosystem: 'MAI' };
 
+/** Reve context */
+export type ReveCtx = EcosystemGraphOutput & { ecosystem: 'Reve' };
+
 /** Wan video ecosystems context */
 export type WanCtx = EcosystemGraphOutput & {
   ecosystem:
@@ -235,6 +239,7 @@ export { createErnieInput } from './ernie.handler';
 export { createLensInput } from './lens.handler';
 export { createKrea2Input } from './krea2.handler';
 export { createMAIInput } from './mai.handler';
+export { createReveInput } from './reve.handler';
 
 // Audio ecosystems
 export { createAceAudioInput } from './ace-audio.handler';
@@ -418,6 +423,10 @@ async function createEcosystemStep(
     // MAI (Microsoft MAI-Image-2.5, FAL engine)
     case 'MAI':
       return createMAIInput(normalizedData, handlerCtx);
+
+    // Reve (Reve AI, FAL engine)
+    case 'Reve':
+      return createReveInput(normalizedData, handlerCtx);
 
     // =========================================================================
     // Video Ecosystems - videoGen step type

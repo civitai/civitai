@@ -1,8 +1,8 @@
 import { createServerSideHelpers } from '@trpc/react-query/server';
 import type { GetServerSidePropsContext, GetServerSidePropsResult, Redirect } from 'next';
 import type { Session } from '~/types/session';
-import superjson from 'superjson';
 import { Tracker } from '~/server/clickhouse/client';
+import { unionTransformer } from '~/shared/utils/trpc-union-transformer';
 
 import { appRouter } from '~/server/routers';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
@@ -34,7 +34,15 @@ export const getServerProxySSGHelpers = async (
       apiKeyId: undefined,
       subject: undefined,
     },
-    transformer: superjson,
+    // Phase 2 of the superjson → devalue migration: SSR runs server-side, so its
+    // dehydrate WRITE goes through the env-gated server writer (`unionTransformer`
+    // = `buildTransformer()` = `serverWriteSerialize`). It flips to devalue only
+    // when THIS pool's Deployment sets `TRPC_WRITE_DEVALUE=true`; otherwise it
+    // writes superjson exactly as in Phase 1. The client that hydrates decodes
+    // either format through the union READ. SSR HTML and the JS chunks it
+    // references are the same content-hashed deploy, so dehydrate/hydrate is
+    // inherently version-matched. See src/shared/utils/trpc-union-transformer.ts.
+    transformer: unionTransformer,
   });
   return ssg;
 };

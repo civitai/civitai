@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import type { FilterableAttributes, SearchableAttributes, SortableAttributes } from 'meilisearch';
 import { clickhouse } from '~/server/clickhouse/client';
+import { imageReviewedSql } from '~/server/common/image-visibility';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -153,7 +154,7 @@ type BaseImage = {
 
 const imageWhere = [
   Prisma.sql`i."postId" IS NOT NULL`,
-  Prisma.sql`i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
+  imageReviewedSql(),
   Prisma.sql`i."tosViolation" = false`,
   Prisma.sql`i."needsReview" IS NULL`,
   Prisma.sql`i."minor" = false`,

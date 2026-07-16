@@ -1,47 +1,60 @@
-import { Group, Stack, Text, Title } from '@mantine/core';
-import { IconStar } from '@tabler/icons-react';
+import { Stack } from '@mantine/core';
+import clsx from 'clsx';
+import type { CSSProperties } from 'react';
+import { useCallback, useState } from 'react';
+import { GlowDivider } from '~/components/Challenge/DynamicPrizeCard/GlowDivider';
 import type { CreatorShopData } from '~/components/CreatorShop/creator-shop.util';
+import { sectionIcons } from '~/components/CreatorShop/section-meta';
+import { SectionHeader } from '~/components/CreatorShop/Storefront/SectionHeader';
 import { ShopItemGrid } from '~/components/CreatorShop/Storefront/ShopItemGrid';
-import { GOLD_HEADER_GRADIENT } from '~/components/CreatorShop/Storefront/storefront.constants';
+import classes from './FeaturedSection.module.scss';
 
 export function FeaturedSection({
   shop,
-  displayName,
   ownedCosmeticIds,
+  ownerUserId,
 }: {
   shop: CreatorShopData;
-  displayName: string;
   ownedCosmeticIds: Set<number>;
+  ownerUserId: number;
 }) {
+  const [spotlight, setSpotlight] = useState({ x: 0, y: 0, opacity: 0 });
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    setSpotlight({ x: e.clientX - rect.left, y: e.clientY - rect.top, opacity: 1 });
+  }, []);
+  const handleMouseLeave = useCallback(() => setSpotlight((s) => ({ ...s, opacity: 0 })), []);
+
   if (shop.featured.length === 0) return null;
 
+  // Full-bleed tinted band: the `-mx-3` breaks out of the page gutter so the
+  // background spans the whole section, while the inner wrapper re-aligns the
+  // content to the same width as the other (constrained) sections.
   return (
-    <Stack gap="md">
-      <Group
-        gap={10}
-        align="center"
-        wrap="nowrap"
-        style={{
-          background: GOLD_HEADER_GRADIENT,
-          borderRadius: 'var(--mantine-radius-md)',
-          padding: '10px 16px',
-        }}
-      >
-        <IconStar size={26} color="var(--mantine-color-white)" fill="var(--mantine-color-white)" />
-        <Stack gap={0}>
-          <Title order={3} c="white">
-            Featured Items
-          </Title>
-          <Text size="xs" c="white">
-            Hand-picked by {displayName}
-          </Text>
+    <div
+      className={clsx(classes.band, '-mx-3 px-3 py-8')}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+      style={
+        {
+          '--spotlight-x': `${spotlight.x}px`,
+          '--spotlight-y': `${spotlight.y}px`,
+          '--spotlight-opacity': spotlight.opacity,
+        } as CSSProperties
+      }
+    >
+      <GlowDivider variant="yellow" />
+      <div className={classes.bloom} />
+      <div className={clsx(classes.content, 'mx-auto w-full max-w-[1600px]')}>
+        <Stack gap="md">
+          <SectionHeader icon={sectionIcons.featured} title="Featured" />
+          <ShopItemGrid
+            items={shop.featured}
+            ownedCosmeticIds={ownedCosmeticIds}
+            ownerUserId={ownerUserId}
+          />
         </Stack>
-      </Group>
-      <ShopItemGrid
-        items={shop.featured}
-        cols={{ base: 1, xs: 2, sm: 4 }}
-        ownedCosmeticIds={ownedCosmeticIds}
-      />
-    </Stack>
+      </div>
+    </div>
   );
 }

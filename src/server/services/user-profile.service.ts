@@ -11,6 +11,7 @@ import type {
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
+import { hasValidCreatorMembership } from '~/server/services/creator-program.service';
 import { enqueueImageIngestion } from '~/server/services/image.service';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { getUserBanDetails } from '~/utils/user-helpers';
@@ -118,14 +119,20 @@ export const getUserWithProfile = async ({
       coverImage?.needsReview || coverImage?.ingestion === ImageIngestionStatus.Blocked;
     const sameUser = sessionUserId === user.id;
 
+    // A shop only counts as "live" if it's enabled AND the owner still has an
+    // active Creator Program membership (lapsed memberships shutter the shop).
+    // Only pay for the membership check when the shop is actually enabled.
+    const shopEnabled =
+      (user.settings as { creatorShop?: { enabled?: boolean } } | null)?.creatorShop?.enabled ===
+      true;
+    const creatorShopEnabled = shopEnabled && (await hasValidCreatorMembership(user.id));
+
     return {
       ...user,
       meta: undefined,
       // Never leak the private settings blob; expose only whether the shop is public.
       settings: undefined,
-      creatorShopEnabled:
-        (user.settings as { creatorShop?: { enabled?: boolean } } | null)?.creatorShop?.enabled ===
-        true,
+      creatorShopEnabled,
       ...getUserBanDetails({
         meta: userMeta,
         isModerator: isModerator ?? false,

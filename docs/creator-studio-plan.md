@@ -277,9 +277,10 @@ main-app shop work**, not this plan.
 Per Justin, **stacking is already handled on the backend** — a derivative fee stacking on the base model's fee is a
 backend concern, not something creators do. There is **nothing for creators to do here beyond setting their own
 licensing fee.** So the earlier "must implement additive stacking + split payout" is **not** Creator Studio work, and
-it does **not** land in the monetization module. *(Eng note: verify the `model-version.controller.ts:420` block that
-disallows a per-version fee when a `BaseModelLicensingFee` rule exists doesn't stop a creator from legitimately setting
-their fee — reconcile with the backend stacking Justin refers to.)*
+it does **not** land in the monetization module. *(Eng note: the lineage/base fee now comes from a derivative's
+explicit parent root (`licensingSourceVersionId` → its `LicensingRoot`), stacked on top of the creator's own
+per-version fee — the two are independent, so a creator can always set their own fee. The old
+`BaseModelLicensingFee` fallback that this note used to worry about no longer exists.)*
 
 ### 7.4 Cross-team dependencies & coordination
 
@@ -478,7 +479,7 @@ separate-vs-mode, owner-keyed rollup, etc. — are in [creator-studio/README.md]
 ## Appendix — key code references
 
 - **Comp payout:** `src/server/jobs/deliver-creator-compensation.ts` (daily 02:00 UTC; `tip|compensation|licenseFee` sources)
-- **Licensing fee:** `ModelVersion.licensingFee*` (`schema.full.prisma:1042`), `BaseModelLicensingFee` (`:1067`), `MAX_LICENSING_FEE=100` (`model-version.schema.ts:353`), flag `licensing-fee`, stacking-blocked TODO (`model-version.controller.ts:420`)
+- **Licensing fee:** `ModelVersion.licensingFee*`, `ModelVersion.licensingSourceVersionId` (a derivative's explicit parent root), `LicensingRoot` table (root membership + `isDefault`; replaces the old `LicensingRoot` flag + `BaseModelLicensingFee` pointer), `ModelVersionFlag.NotDerivative` (non-derivative versions skip parent attribution), `MAX_LICENSING_FEE=100` (`model-version.schema.ts`), flag `licensing-fee`. Fee resolution: root → own fee; explicit parent → its fee; no `(baseModel, modelType)` fallback.
 - **Early access:** `earlyAccessConfig`/`earlyAccessEndsAt` (`schema.full.prisma:1035`), score caps (`constants.ts:1708-1738`), `earlyAccessPurchase()` (`model-version.service.ts:1481`)
 - **CP membership:** `getCreatorRequirements()` (`creator-program.service.ts:205`), `MIN_CREATOR_SCORE=40000`, `OnboardingSteps.CreatorProgram=16`
 - **Cosmetic shop:** platform-owned `/shop`; `purchaseCosmeticShopItem()` split (`cosmetic-shop.service.ts:619`); CRUD is moderator-only (`cosmetic-shop.router.ts`)

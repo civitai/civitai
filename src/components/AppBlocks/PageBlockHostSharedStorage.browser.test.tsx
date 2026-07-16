@@ -42,6 +42,7 @@ const mocks = vi.hoisted(() => ({
   getCounts: vi.fn(),
   // shared writes
   append: vi.fn(),
+  update: vi.fn(),
   vote: vi.fn(),
   unvote: vi.fn(),
   withdraw: vi.fn(),
@@ -53,17 +54,27 @@ const mocks = vi.hoisted(() => ({
   storageGetQuota: vi.fn(),
 }));
 
+// AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
+// moderator gate; these suites render the real host without a CivitaiSessionProvider.
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+
 vi.mock('~/utils/trpc', () => ({
   // FeatureFlagsProvider (in PageBlockHost's real render graph) statically imports
   // `setTrpcBatchingEnabled` from this module (#2946). vi.mock replaces the module
   // wholesale, so the factory must re-declare it or the ESM link fails.
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {
+    // W13 wildcard-pack import: PageBlockHost now calls this at render; stub so the mount succeeds (behavior covered in PageBlockHostWildcardPack.browser.test.tsx).
+    generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
     // PageBlockHost also wires the workflow bridge at render (inert here); stub so
     // it mounts.
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getMyBuzzBalance: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getMyViewer: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getMyBuzzTransactions: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getMyBuzzAccounts: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getMyDailyCompensation: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       estimateWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       pollWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -75,6 +86,7 @@ vi.mock('~/utils/trpc', () => ({
       },
       shared: {
         append: { useMutation: () => ({ mutateAsync: mocks.append }) },
+        update: { useMutation: () => ({ mutateAsync: mocks.update }) },
         vote: { useMutation: () => ({ mutateAsync: mocks.vote }) },
         unvote: { useMutation: () => ({ mutateAsync: mocks.unvote }) },
         withdraw: { useMutation: () => ({ mutateAsync: mocks.withdraw }) },
@@ -174,6 +186,7 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     mocks.getCount.mockReset();
     mocks.getCounts.mockReset();
     mocks.append.mockReset();
+    mocks.update.mockReset();
     mocks.vote.mockReset();
     mocks.unvote.mockReset();
     mocks.withdraw.mockReset();
@@ -376,6 +389,62 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
       expect(r.payload).toEqual({
         requestId: 'rq_app_err',
         error: 'Too many submissions — retry in 30s',
+      });
+    });
+    replies.stop();
+  });
+
+  // ── SHARED_UPDATE ────────────────────────────────────────────────────────────
+  test('SHARED_UPDATE forwards key + value + host token and posts SHARED_UPDATE_RESULT {ok:true}', async () => {
+    mocks.update.mockResolvedValue({ ok: true });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_UPDATE', {
+      requestId: 'rq_upd',
+      key: '01EXISTING',
+      value: { title: 'Edited idea', body: 'new details' },
+      blockToken: 'SPOOFED',
+    });
+
+    await vi.waitFor(() => {
+      // Host token wins over any client-supplied blockToken.
+      expect(mocks.update).toHaveBeenCalledWith({
+        blockToken: 'tok_abc',
+        key: '01EXISTING',
+        value: { title: 'Edited idea', body: 'new details' },
+      });
+    });
+    await vi.waitFor(() => {
+      const r = replies.last('SHARED_UPDATE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      // SDK 0.24 contract: { requestId, ok, error? } — resolves on ok.
+      expect(r.payload).toEqual({ requestId: 'rq_upd', ok: true });
+    });
+    replies.stop();
+  });
+
+  test('SHARED_UPDATE error path posts { requestId, ok:false, error } (no hang)', async () => {
+    mocks.update.mockRejectedValue(new Error('you can only edit your own submissions'));
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_UPDATE', {
+      requestId: 'rq_upd_err',
+      key: '01EXISTING',
+      value: { title: 'nope' },
+    });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SHARED_UPDATE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      // ok:false is REQUIRED — the SDK validator drops a reply without a boolean ok.
+      expect(r.payload).toEqual({
+        requestId: 'rq_upd_err',
+        ok: false,
+        error: 'you can only edit your own submissions',
       });
     });
     replies.stop();
