@@ -195,6 +195,11 @@ export const commentNotifications = createNotificationProcessor({
         JOIN "User" u ON c."userId" = u.id
         JOIN "Thread" root ON root.id = t."rootThreadId"
         WHERE c."createdAt" > '${lastSent}' AND c."userId" != pc."userId"
+          -- Exclude appListing (app-store listing) threads: they are addressed by
+          -- SLUG, not the id this query has, so threadUrlMap can't build a reply
+          -- URL (→ url:undefined). appListing reply notifications are deferred
+          -- until a slug-resolving URL exists. (appListingId lives on the root.)
+          AND root."appListingId" IS NULL
       )
       SELECT
         concat('new-comment-reply:owner:v2:', details->>'commentId') "key",
@@ -326,6 +331,12 @@ export const commentNotifications = createNotificationProcessor({
           -- Unhandled thread types...
           AND t."questionId" IS NULL
           AND t."answerId" IS NULL
+          -- Exclude appListing (app-store listing) threads — same reason as
+          -- new-comment-reply above: no slug-resolving URL yet, so a reply here
+          -- would emit a notification with url:undefined. Guard BOTH the root and
+          -- the immediate thread (the entity parent may sit on either here).
+          AND root."appListingId" IS NULL
+          AND t."appListingId" IS NULL
       )
       SELECT
         concat('new-thread-response:user:', case when details->>'version' is not null then 'v2:' else 'v1:' end, details->>'commentId') "key",

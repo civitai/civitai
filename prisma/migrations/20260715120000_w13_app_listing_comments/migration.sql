@@ -26,8 +26,17 @@
 --   2. prod nvme0 (the live civitai DB) — BEFORE the release carrying the reader
 --      (the `serial_id` in the listing-detail DTO) + writer (the comments UI).
 --
--- Idempotent: IF NOT EXISTS guards on the column + index, and pg_constraint guards
+-- Idempotent: IF NOT EXISTS guards on the columns + index, and pg_constraint guards
 -- on the two constraints, so a manual re-run is a no-op.
+--
+-- 🔴 LOCK NOTE — the `Thread` unique index is built CONCURRENTLY (see step 2).
+-- `Thread` is a hot, site-wide comment table; a plain (non-CONCURRENTLY) unique
+-- index build takes a SHARE lock that blocks EVERY comment write for the build
+-- duration. CREATE INDEX CONCURRENTLY canNOT run inside a transaction/DO block —
+-- run that ONE statement OUTSIDE any transaction (e.g. as its own psql command,
+-- not inside BEGIN/COMMIT), ideally in a low-traffic window. If it ever fails
+-- mid-build it leaves an INVALID index — drop it (`DROP INDEX IF EXISTS
+-- "Thread_appListingId_key"`) and re-run this statement.
 
 -- ------------------------------------------------------------
 -- 1. app_listings.serial_id — the INTEGER surrogate (CommentsV2 bridge)
@@ -59,9 +68,15 @@ END $$;
 ALTER TABLE "Thread"
   ADD COLUMN IF NOT EXISTS "appListingId" INTEGER;
 
-CREATE UNIQUE INDEX IF NOT EXISTS "Thread_appListingId_key"
+-- 🔴 RUN OUTSIDE ANY TRANSACTION (CONCURRENTLY can't run in a txn/DO block).
+-- Non-blocking on the hot `Thread` table — a plain build would SHARE-lock every
+-- comment write for its duration. IF NOT EXISTS keeps it idempotent.
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS "Thread_appListingId_key"
   ON "Thread" ("appListingId");
 
+-- FK added NOT VALID (skips the full-table validation scan / its lock — trivial
+-- here since the column is all-NULL on an existing table, but correct-by-default),
+-- then VALIDATEd separately (VALIDATE takes only a light SHARE UPDATE lock).
 DO $$ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint WHERE conname = 'Thread_appListingId_fkey'
@@ -69,6 +84,9 @@ DO $$ BEGIN
     ALTER TABLE "Thread"
       ADD CONSTRAINT "Thread_appListingId_fkey"
       FOREIGN KEY ("appListingId") REFERENCES "app_listings" ("serial_id")
-      ON DELETE SET NULL ON UPDATE CASCADE;
+      ON DELETE SET NULL ON UPDATE CASCADE
+      NOT VALID;
   END IF;
 END $$;
+
+ALTER TABLE "Thread" VALIDATE CONSTRAINT "Thread_appListingId_fkey";
