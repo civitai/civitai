@@ -263,6 +263,13 @@ export const INVENTORY = {
   // published SDK dist union (the SDK contract is external + a co-requisite) —
   // forward-looking coverage, allowed by the one-directional compile-time gate.
   // A page-only affordance today, so N/A for the model host.
+  //
+  // NOTE (async cosmetic-image scan): the non-blocking mode's scan VERDICT rides a
+  // separate PARENT→BLOCK push, `IMAGE_SCAN_RESOLVED`, which is NOT a
+  // BlockToParentMessage and so does NOT belong in this INVENTORY (it tracks only
+  // block→host REQUEST types + their replies). OPEN_IMAGE_UPLOAD's TYPE is unchanged
+  // — async mode only adds an OPTIONAL `asyncScan` payload field — so no new entry
+  // is needed here. Do NOT "add" IMAGE_SCAN_RESOLVED to this map.
   OPEN_IMAGE_UPLOAD: {
     request: true,
     reply: 'IMAGE_UPLOAD_RESULT',
