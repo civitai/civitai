@@ -158,6 +158,9 @@ export const CreatorProgramV2 = () => {
       {hasOnboardedInProgram &&
         (membershipLapsed ? (
           <div className="flex flex-col gap-4 md:flex-row">
+            {/* Extraction stays available: extractBuzz doesn't require an active
+                membership, so a lapsed member can still reclaim Buzz they banked. */}
+            {phase === 'extraction' && <ExtractBuzzCard />}
             <MembershipLapsedCard />
             <WithdrawCashCard />
           </div>

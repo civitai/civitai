@@ -429,11 +429,12 @@ export async function bankBuzz(userId: number, amount: number, buzzType: BuzzSpe
     where: { userId, status: 'active', currentPeriodEnd: { gt: new Date() } },
     select: { product: { select: { metadata: true } } },
   });
-  const membershipTier = activeMembership
-    ? subscriptionProductMetadataSchema.parse(activeMembership.product.metadata)?.[
-        env.TIER_METADATA_KEY
-      ]
+  // safeParse: malformed/missing product metadata falls through to the clean 400
+  // below instead of throwing an uncaught ZodError (500).
+  const parsedMeta = activeMembership
+    ? subscriptionProductMetadataSchema.safeParse(activeMembership.product.metadata)
     : undefined;
+  const membershipTier = parsedMeta?.success ? parsedMeta.data[env.TIER_METADATA_KEY] : undefined;
   if (!membershipTier || membershipTier === 'free' || membershipTier === 'founder')
     throw throwBadRequestError('An active Creator Program membership is required to bank Buzz.');
 
