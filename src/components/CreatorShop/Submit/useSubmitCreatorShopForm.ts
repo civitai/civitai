@@ -98,9 +98,18 @@ export function useSubmitCreatorShopForm({
     const result = await validateCosmeticImage(file, type, maxSize);
     setChecks(result.checks);
     if (!result.allRequiredPassed) return;
-    const uploaded = await uploadToCF(file, undefined, { allowAnimatedWebP: supportsAnimated });
-    setAnimated(supportsAnimated && (await isAnimatedImage(file)));
-    setImageId(uploaded.id);
+    try {
+      const uploaded = await uploadToCF(file, undefined, { allowAnimatedWebP: supportsAnimated });
+      setAnimated(supportsAnimated && (await isAnimatedImage(file)));
+      setImageId(uploaded.id);
+    } catch (error) {
+      // Without this the failure only hit the console and the creator was left
+      // staring at a preview that never finished uploading.
+      showErrorNotification({
+        title: 'Upload failed',
+        error: error instanceof Error ? error : new Error('Could not upload your artwork'),
+      });
+    }
   };
 
   const handleReplace = () => {
@@ -185,7 +194,6 @@ export function useSubmitCreatorShopForm({
     buzzType,
     setBuzzType,
     animated,
-    setAnimated,
     sellableByOthers,
     setSellableByOthers,
     sellerShare,
