@@ -7,7 +7,6 @@ import {
   Button,
   ActionIcon,
   Modal,
-  Divider,
   SegmentedControl,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
@@ -20,6 +19,8 @@ import { Page } from '~/components/AppLayout/Page';
 import { ChallengesInfinite } from '~/components/Challenge/Infinite/ChallengesInfinite';
 import { DailyChallengesRow } from '~/components/Challenge/DailyChallengesRow';
 import { FeaturedChallengeEvents } from '~/components/Challenge/FeaturedChallengeEvents';
+import { SectionBand } from '~/components/Challenge/SectionBand';
+import { YourChallengesRow } from '~/components/Challenge/YourChallengesRow';
 import { ChallengeFeedFilters } from '~/components/Filters/FeedFilters/ChallengeFeedFilters';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
@@ -185,12 +186,14 @@ function ChallengesPage() {
         </Stack>
       </Modal>
 
-      <MasonryContainer>
-        <Stack gap="md">
-          {/* Featured Challenge Events */}
-          <FeaturedChallengeEvents />
+      <SectionBand tone="default">
+        <FeaturedChallengeEvents />
+      </SectionBand>
 
-          {/* Daily Challenges — active + upcoming System challenges, horizontal scroll. */}
+      <YourChallengesRow />
+
+      <SectionBand tone="alt">
+        <Stack gap="md">
           <Group justify="space-between" wrap="nowrap" gap="sm">
             <Group gap={4} wrap="nowrap">
               <Title order={3}>Daily Challenges</Title>
@@ -221,33 +224,32 @@ function ChallengesPage() {
             </Group>
           </Group>
           <DailyChallengesRow />
-
-          {/* Community Challenges — user + staff-created, masonry. Sort/filter controls live inline
-              here (moved off the global SubNav) since they only scope this section. Behind the
-              userChallenges flag: with it off, the page shows only the daily-challenge experience. */}
-          {features.userChallenges && (
-            <>
-              <Divider />
-              <Group wrap="wrap" gap="sm">
-                <Title order={3}>Community Challenges</Title>
-                <Group gap="sm" wrap="wrap" ml="auto">
-                  <ChallengeFeedFilters />
-                </Group>
-              </Group>
-              <ChallengesInfinite
-                filters={{
-                  source: [ChallengeSource.User, ChallengeSource.Mod],
-                  sort,
-                  status: statusArray.length > 0 ? statusArray : undefined,
-                  includeEnded,
-                  excludeEventChallenges: true,
-                  participation,
-                }}
-              />
-            </>
-          )}
         </Stack>
-      </MasonryContainer>
+      </SectionBand>
+
+      {/* Behind the userChallenges flag: with it off, the page shows only the daily-challenge experience. */}
+      {features.userChallenges && (
+        <SectionBand tone="default">
+          <Stack gap="md">
+            <Group wrap="wrap" gap="sm">
+              <Title order={3}>Community Challenges</Title>
+              <Group gap="sm" wrap="wrap" ml="auto">
+                <ChallengeFeedFilters />
+              </Group>
+            </Group>
+            <ChallengesInfinite
+              filters={{
+                source: [ChallengeSource.User, ChallengeSource.Mod],
+                sort,
+                status: statusArray.length > 0 ? statusArray : undefined,
+                includeEnded,
+                excludeEventChallenges: true,
+                participation,
+              }}
+            />
+          </Stack>
+        </SectionBand>
+      )}
     </>
   );
 }
