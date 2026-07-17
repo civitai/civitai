@@ -93,7 +93,7 @@ describe('app-block v1 schema ⇄ block-manifest-validator drift guard (buildCom
   };
   const validatorAcceptsBuildCommand = (value: string): boolean => {
     const result = BlockManifestValidator.validate({ ...VALID_MANIFEST, buildCommand: value }, APP_CTX);
-    return result.valid || !result.errors.some((e) => e.includes('buildCommand'));
+    return result.valid || !result.errors.some((e: string) => e.includes('buildCommand'));
   };
 
   const BUILD_COMMAND_CASES: Array<[string, boolean]> = [
@@ -136,7 +136,7 @@ describe('app-block v1 schema ⇄ block-manifest-validator drift guard (buildCom
       { ...VALID_MANIFEST, buildCommand: 'npm run build', outputDir: value },
       APP_CTX
     );
-    return result.valid || !result.errors.some((e) => e.includes('outputDir'));
+    return result.valid || !result.errors.some((e: string) => e.includes('outputDir'));
   };
 
   const OUTPUT_DIR_CASES: Array<[string, boolean]> = [
