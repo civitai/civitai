@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
+import { NsfwLevel } from '~/server/common/enums';
 
 const {
   mockGetAllCollections,
@@ -10,12 +11,16 @@ const {
   mockGetUserCollectionPermissionsById,
   mockGetCollectionById,
   mockRateLimit,
+  mockGetRegion,
+  mockIsRegionRestricted,
 } = vi.hoisted(() => ({
   mockGetAllCollections: vi.fn(),
   mockGetCollectionItemCount: vi.fn(),
   mockGetUserCollectionPermissionsById: vi.fn(),
   mockGetCollectionById: vi.fn(),
   mockRateLimit: vi.fn(),
+  mockGetRegion: vi.fn(),
+  mockIsRegionRestricted: vi.fn(),
 }));
 
 vi.mock('~/server/services/collection.service', () => ({
@@ -53,9 +58,12 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
   },
 }));
 
+// Region resolver kept deterministic — the maturity clamp is derived ONLY from
+// these helpers (never from the caller). Default: not restricted → PUBLIC flag.
+// Individual tests flip `mockIsRegionRestricted` to exercise the SFW narrowing.
 vi.mock('~/server/utils/region-blocking', () => ({
-  getRegion: () => ({}),
-  isRegionRestricted: () => false,
+  getRegion: mockGetRegion,
+  isRegionRestricted: mockIsRegionRestricted,
 }));
 
 import listHandler from '~/pages/api/v1/collections/index';
@@ -113,6 +121,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockRateLimit.mockResolvedValue({ allowed: true });
   mockGetCollectionItemCount.mockResolvedValue([]);
+  mockGetRegion.mockReturnValue({});
+  mockIsRegionRestricted.mockReturnValue(false);
 });
 
 describe('GET /api/v1/collections (list)', () => {
@@ -266,6 +276,92 @@ describe('GET /api/v1/collections/[id] (detail)', () => {
       user: { id: 2, username: 'bob' },
       tags: [{ id: 3, name: 'tag' }],
     });
+  });
+
+  it('MATURITY: nulls the cover URL when the cover is above the region-narrowed PUBLIC ceiling (mature cover never leaked; NOT allBrowsingLevels)', async () => {
+    mockGetUserCollectionPermissionsById.mockResolvedValue({
+      read: true,
+      write: false,
+      manage: false,
+    });
+    mockGetCollectionById.mockResolvedValue({
+      id: 55,
+      name: 'pub',
+      description: 'd',
+      type: 'Image',
+      nsfwLevel: NsfwLevel.R,
+      read: CollectionReadConfiguration.Public,
+      userId: 2,
+      user: { id: 2, username: 'bob' },
+      image: { url: 'img-key', type: 'image', nsfwLevel: NsfwLevel.R },
+      tags: [],
+    });
+    const { req, res } = createMocks({ query: { id: '55' } });
+
+    await detailHandler(req, res);
+
+    expect(res._getStatusCode()).toBe(200);
+    // R does NOT intersect the PG-only public flag → cover URL nulled. Under the
+    // old `allBrowsingLevels` clamp this R cover would have leaked.
+    expect(res._getJSONData().coverImageUrl).toBeNull();
+  });
+
+  it('MATURITY/CACHEABILITY: the clamp reads NO per-user data — an authed (mod) caller gets byte-identical clamped output to an anon caller', async () => {
+    mockGetUserCollectionPermissionsById.mockResolvedValue({
+      read: true,
+      write: false,
+      manage: false,
+    });
+    mockGetCollectionById.mockImplementation(async () => ({
+      id: 55,
+      name: 'pub',
+      description: 'd',
+      type: 'Image',
+      nsfwLevel: NsfwLevel.R,
+      read: CollectionReadConfiguration.Public,
+      userId: 2,
+      user: { id: 2, username: 'bob' },
+      image: { url: 'img-key', type: 'image', nsfwLevel: NsfwLevel.R },
+      tags: [],
+    }));
+
+    const anon = createMocks({ query: { id: '55' } });
+    await detailHandler(anon.req, anon.res);
+    const authed = createMocks({ query: { id: '55' }, user: { id: 7, isModerator: true } });
+    await detailHandler(authed.req, authed.res);
+
+    // Caller identity never feeds the clamp → identical output; mature cover
+    // nulled for BOTH.
+    expect(authed.res._getJSONData()).toEqual(anon.res._getJSONData());
+    expect(anon.res._getJSONData().coverImageUrl).toBeNull();
+  });
+
+  it('MATURITY: the clamp is REGION-derived — a restricted region uses the SFW ceiling (PG-13 cover retained where the public default would null it)', async () => {
+    mockIsRegionRestricted.mockReturnValue(true);
+    mockGetUserCollectionPermissionsById.mockResolvedValue({
+      read: true,
+      write: false,
+      manage: false,
+    });
+    mockGetCollectionById.mockResolvedValue({
+      id: 55,
+      name: 'pub',
+      description: 'd',
+      type: 'Image',
+      nsfwLevel: NsfwLevel.PG13,
+      read: CollectionReadConfiguration.Public,
+      userId: 2,
+      user: { id: 2, username: 'bob' },
+      image: { url: 'img-key', type: 'image', nsfwLevel: NsfwLevel.PG13 },
+      tags: [],
+    });
+    const { req, res } = createMocks({ query: { id: '55' } });
+
+    await detailHandler(req, res);
+
+    // Restricted → SFW ceiling (PG + PG-13) → the PG-13 cover survives, proving
+    // the clamp tracks the region helper (not a fixed max, not a per-user value).
+    expect(res._getJSONData().coverImageUrl).toBe('edge:img-key');
   });
 
   it('404s (via handleEndpointError) when the collection row is gone despite a permission grant', async () => {

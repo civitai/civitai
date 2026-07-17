@@ -10,7 +10,7 @@ import {
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { checkPublicApiRateLimit } from '~/server/utils/public-api-rate-limit';
 import {
-  allBrowsingLevelsFlag,
+  publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
@@ -31,7 +31,14 @@ import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
  * edge caching safe. `getCollectionById` itself does NO gating, so this permission
  * check is REQUIRED before calling it.
  *
- * Maturity: the cover image is clamped to the region-narrowed browsing ceiling.
+ * Maturity: the cover image is clamped to the region-narrowed PUBLIC browsing
+ * ceiling — the SAME fixed default the list endpoint uses
+ * (`publicBrowsingLevelsFlag`, narrowed to `sfwBrowsingLevelsFlag` for restricted
+ * regions), NOT `allBrowsingLevels`. A cover above the ceiling is nulled so an
+ * anonymous SFW caller never receives mature cover art. The clamp is derived ONLY
+ * from the region (`cf-ipcountry`); it NEVER reads the caller's nsfw preference /
+ * browsingLevel cookie / session, so the response stays a pure function of id +
+ * region and the `public` edge cache is leak-free.
  */
 
 export const schema = z.object({ id: z.coerce.number().int().gt(0).lte(2147483647) });
@@ -57,10 +64,13 @@ export default MixedAuthEndpoint(async function handler(
 
   const { id } = parsedParams.data;
 
+  // Maturity/region ceiling — the SAME fixed PUBLIC default the list endpoint
+  // uses (collections/index.ts), narrowed to SFW for restricted regions. Region-
+  // derived ONLY (from `cf-ipcountry`); NEVER the caller's nsfw preference/cookie/
+  // session, so the response stays a pure function of id + region (edge-cacheable).
   const region = getRegion(req);
-  const browsingLevel = isRegionRestricted(region)
-    ? sfwBrowsingLevelsFlag
-    : allBrowsingLevelsFlag;
+  let browsingLevel = publicBrowsingLevelsFlag;
+  if (isRegionRestricted(region)) browsingLevel = sfwBrowsingLevelsFlag;
 
   try {
     // VISIBILITY gate, evaluated as ANONYMOUS — NEVER pass the session

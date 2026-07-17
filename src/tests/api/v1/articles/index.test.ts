@@ -3,13 +3,17 @@ import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { NsfwLevel } from '~/server/common/enums';
 
-// Hoisted mocks for the wrapped service + the rate limiter.
-const { mockGetArticles, mockGetArticleById, mockRateLimit } = vi.hoisted(() => ({
-  mockGetArticles: vi.fn(),
-  mockGetArticleById: vi.fn(),
-  mockRateLimit: vi.fn(),
-}));
+// Hoisted mocks for the wrapped service + the rate limiter + the region helpers.
+const { mockGetArticles, mockGetArticleById, mockRateLimit, mockGetRegion, mockIsRegionRestricted } =
+  vi.hoisted(() => ({
+    mockGetArticles: vi.fn(),
+    mockGetArticleById: vi.fn(),
+    mockRateLimit: vi.fn(),
+    mockGetRegion: vi.fn(),
+    mockIsRegionRestricted: vi.fn(),
+  }));
 
 vi.mock('~/server/services/article.service', () => ({
   getArticles: mockGetArticles,
@@ -43,11 +47,12 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
   },
 }));
 
-// Region resolver kept deterministic (not restricted) so browsingLevel is the
-// public flag and assertions are stable.
+// Region resolver kept deterministic — the clamp is derived ONLY from these
+// helpers (never from the caller). Default: not restricted → the PUBLIC flag.
+// Individual tests flip `mockIsRegionRestricted` to exercise the SFW narrowing.
 vi.mock('~/server/utils/region-blocking', () => ({
-  getRegion: () => ({}),
-  isRegionRestricted: () => false,
+  getRegion: mockGetRegion,
+  isRegionRestricted: mockIsRegionRestricted,
 }));
 
 import listHandler from '~/pages/api/v1/articles/index';
@@ -104,6 +109,8 @@ function createMocks({
 beforeEach(() => {
   vi.clearAllMocks();
   mockRateLimit.mockResolvedValue({ allowed: true });
+  mockGetRegion.mockReturnValue({});
+  mockIsRegionRestricted.mockReturnValue(false);
 });
 
 describe('GET /api/v1/articles (list)', () => {
@@ -251,6 +258,85 @@ describe('GET /api/v1/articles/[id] (detail)', () => {
 
     expect(res._getStatusCode()).toBe(404);
     expect(mockGetArticleById.mock.calls[0][0]).toEqual({ id: 99 });
+  });
+
+  it('MATURITY: drops a cover image above the region-narrowed PUBLIC ceiling (mature cover never leaked to an anon SFW caller)', async () => {
+    mockGetArticleById.mockResolvedValue({
+      id: 3,
+      title: 't',
+      nsfwLevel: NsfwLevel.PG,
+      coverImage: { id: 1, url: 'k', nsfwLevel: NsfwLevel.R },
+    });
+    const { req, res } = createMocks({ query: { id: '3' } });
+
+    await detailHandler(req, res);
+
+    expect(res._getStatusCode()).toBe(200);
+    // R does NOT intersect the PG-only public flag → cover dropped.
+    expect(res._getJSONData().coverImage).toBeUndefined();
+  });
+
+  it('MATURITY: preserves a cover within the public ceiling, and an unrated (0) cover is always allowed', async () => {
+    mockGetArticleById.mockResolvedValueOnce({
+      id: 3,
+      title: 't',
+      nsfwLevel: NsfwLevel.PG,
+      coverImage: { id: 1, url: 'k', nsfwLevel: NsfwLevel.PG },
+    });
+    const within = createMocks({ query: { id: '3' } });
+    await detailHandler(within.req, within.res);
+    expect(within.res._getJSONData().coverImage).toEqual({ id: 1, url: 'k', nsfwLevel: NsfwLevel.PG });
+
+    mockGetArticleById.mockResolvedValueOnce({
+      id: 4,
+      title: 't',
+      nsfwLevel: NsfwLevel.PG,
+      coverImage: { id: 2, url: 'k2', nsfwLevel: 0 },
+    });
+    const unrated = createMocks({ query: { id: '4' } });
+    await detailHandler(unrated.req, unrated.res);
+    expect(unrated.res._getJSONData().coverImage).toEqual({ id: 2, url: 'k2', nsfwLevel: 0 });
+  });
+
+  it('MATURITY/CACHEABILITY: the clamp reads NO per-user data — an authed (mod) caller gets byte-identical clamped output to an anon caller, and the service receives only { id } (no browsingLevel / userId)', async () => {
+    // Fresh object per call so a shallow-copy mutation can never bleed across calls.
+    mockGetArticleById.mockImplementation(async () => ({
+      id: 3,
+      title: 't',
+      nsfwLevel: NsfwLevel.PG,
+      coverImage: { id: 1, url: 'k', nsfwLevel: NsfwLevel.R },
+    }));
+
+    const anon = createMocks({ query: { id: '3' } });
+    await detailHandler(anon.req, anon.res);
+    const authed = createMocks({ query: { id: '3' }, user: { id: 42, isModerator: true } });
+    await detailHandler(authed.req, authed.res);
+
+    // Caller identity never feeds the clamp → identical output; mature cover
+    // dropped for BOTH (no per-user widening).
+    expect(authed.res._getJSONData()).toEqual(anon.res._getJSONData());
+    expect(anon.res._getJSONData().coverImage).toBeUndefined();
+    // Clamp is a POST-service filter → the service still gets just { id }.
+    expect(mockGetArticleById.mock.calls[0][0]).toEqual({ id: 3 });
+    expect(mockGetArticleById.mock.calls[1][0]).toEqual({ id: 3 });
+  });
+
+  it('MATURITY: the clamp is REGION-derived — a restricted region uses the SFW ceiling (PG-13 retained where the public default would drop it)', async () => {
+    mockIsRegionRestricted.mockReturnValue(true);
+    mockGetArticleById.mockResolvedValue({
+      id: 3,
+      title: 't',
+      nsfwLevel: NsfwLevel.PG,
+      coverImage: { id: 1, url: 'k', nsfwLevel: NsfwLevel.PG13 },
+    });
+    const { req, res } = createMocks({ query: { id: '3' } });
+
+    await detailHandler(req, res);
+
+    // Restricted → SFW ceiling (PG + PG-13) → the PG-13 cover is retained,
+    // proving the clamp tracks the region helper (not `allBrowsingLevels`, not a
+    // per-user value).
+    expect(res._getJSONData().coverImage).toMatchObject({ nsfwLevel: NsfwLevel.PG13 });
   });
 
   it('400s on a non-numeric / out-of-range id', async () => {
