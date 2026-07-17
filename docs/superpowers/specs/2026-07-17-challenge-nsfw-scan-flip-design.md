@@ -26,29 +26,38 @@ Two independent causes:
 
 When a challenge's text scans as sexual content:
 
-- Raise its rating to **R** (if currently below R) so it drops out of safe-mode feeds.
-- If it's a **green** challenge, **flip it to yellow** so the domain-currency gate moves it off
-  civitai.com and onto civitai.red.
-- Keep the pool currency consistent with `buzzType` (never pay winners in a currency that was never collected).
+- If it's a **green** (safe-site) user challenge, **cancel it** (void → status Cancelled, close the
+  collection, refund any initial prize) and notify the creator to recreate it on civitai.red. Green
+  challenges must be SFW; NSFW text means the challenge shouldn't exist as a green challenge.
+- If it's a **yellow** challenge (already on civitai.red), raise its rating to **R** (if currently below R)
+  so it drops out of safe-mode feeds — it stays live.
+
+> **Design note (why cancel, not flip):** an earlier iteration flipped a green challenge to yellow
+> (buzzType flip + collection re-level + green-prize refund + pool-zeroing). Cancelling instead reuses the
+> existing, race-safe `voidChallenge` primitive, eliminates a class of edge cases (currency consistency on a
+> live flipped challenge, the pre-deploy refund-prefix bug, collection-update failure modes), and matches
+> the create-time "green = SFW" invariant. The cost is UX: the creator recreates on civitai.red rather than
+> having the challenge auto-moved. Accepted for this edge case.
 
 ## Non-goals
 
 - No global XGuard threshold changes (would affect article/other text scans).
-- No new "add a prize during edit" path (edit still can't change the pool).
-- No handling of entry-fee escrow at flip time — none exists yet (see timing below).
+- No green→yellow currency migration / auto-move (superseded by cancel).
 
 ## Key facts (verified)
 
-- `green` and `yellow` are **distinct buzz wallets** (`buzz.constants.ts:92-101`), separate balances.
-  Flipping `buzzType` therefore requires migrating pool currency, not just relabeling.
 - **Timing:** the scan callback (`applyResult`) is what sets `ingestion=Scanned`, and a user challenge is
-  hidden until Scanned; entries require Active + visible. So at flip time the challenge is always
-  **Scheduled with no entries** — the only escrow is the creator's optional initial prize, charged in green.
+  hidden until Scanned; entries require Active + visible. So at scan time the challenge is always
+  **Scheduled with no entries** — the only escrow is the creator's optional initial prize.
+- `voidChallenge(id)` (`challenge.service.ts:2499`) is the cancel primitive: it atomically claims
+  Scheduled→Cancelled *before* refunding (mint-safe against the completion cron), closes the collection, and
+  calls `refundUserChallengeFunds` (refunds entry fees — none here — plus the initial prize via the broad
+  `challenge-initial-prize-${id}-creator` prefix, matching pre-deploy and new charge ids). It is idempotent
+  (a re-run lands on the Cancelled branch and re-refunds harmlessly).
 - `NsfwLevel.R = 4`; `allowedNsfwLevel` is a bitwise browsing-level mask; `deriveChallengeNsfwLevel =
   Flags.maxValue(allowedNsfwLevel)`.
-- The create-time guard `isNonSfwForGreen` blocks a green challenge with a non-SFW *declared*
-  `allowedNsfwLevel`, so a green challenge is always SFW-declared at scan time — the flip always raises
-  from an SFW level.
+- The activation job already voids `Blocked` challenges (`challenge-activation.ts:33`), so voiding a
+  green-NSFW challenge from the scan callback is the same terminal treatment, just immediate.
 
 ## Design
 
@@ -61,30 +70,28 @@ Rationale: evidence-based, challenge-scoped (article scans keep their own label 
 
 ### B. Escalation — `challengeModerationAdapter.applyResult`
 
-Extract the escalation into a focused, unit-testable helper (e.g. `applyChallengeNsfwEscalation`) so the
-adapter stays thin. On `isNsfw && !blocked`:
+A focused, unit-testable helper `applyChallengeNsfwEscalation({ entityId, isNsfw })` keeps the adapter thin.
+A pure `computeNsfwEscalation(...)` decides the branch; the helper applies it. On the non-`blocked` path:
 
-**All user challenges**
-1. `newAllowed = Flags.addFlag(allowedNsfwLevel, NsfwLevel.R)` (PG|PG13 → PG|PG13|R). No-op if already ≥ R.
-2. `nsfwLevel = deriveChallengeNsfwLevel(newAllowed)` (= R).
-3. Update the challenge's collection `metadata.forcedBrowsingLevel = newAllowed` so entry gating matches.
+**Green user challenge + NSFW (`cancel`)** — `isNsfw && source === 'User' && buzzType === 'green'`:
+1. Mark the scan resolved: `ingestion = Scanned`, `scannedAt = now` (so the moderation state is coherent).
+2. `await voidChallenge(entityId)` — Cancelled + collection closed + initial prize refunded (idempotent).
+3. Notify the creator (`system-message`, key `challenge-nsfw-cancelled-${entityId}`): the challenge was
+   cancelled because its text is adult content; any prize was refunded; recreate it on civitai.red.
 
-**Only `source === 'User'` && `buzzType === 'green'` (the flip)**
-4. Set `buzzType = 'yellow'`. The domain-currency gate now hides it from civitai.com and shows it on civitai.red.
-5. Refund the green initial prize and zero the pool:
-   - `refundMultiAccountTransaction({ externalTransactionIdPrefix: 'challenge-initial-prize-${id}-creator-green' })`
-     — reverses the original green charge back to the creator (mint-safe).
-   - Set `basePrizePool = 0`, `prizePool = 0`. The challenge continues entry-fee-funded (in yellow) if it has an entry fee.
-6. Notify the creator (`system-message`, key `challenge-nsfw-flipped-${id}`): rating raised to R, moved to the
-   adult site, and — if a prize existed — the green initial prize was refunded.
+**Yellow / non-user challenge + NSFW (raise, stays live):**
+1. `newAllowed = Flags.addFlag(allowedNsfwLevel, NsfwLevel.R)` (no-op if already ≥ R);
+   `nsfwLevel = deriveChallengeNsfwLevel(newAllowed)` (= R). Write both + `ingestion = Scanned`, `scannedAt = now`.
+2. Update the collection `metadata.forcedBrowsingLevel = newAllowed` (via `updateMany`, so a deleted
+   collection no-ops instead of throwing).
+3. Notify the creator (key `challenge-nsfw-raised-${entityId}`) only when the level actually rose.
 
-The clean path and the `blocked` path are unchanged.
+**Clean scan:** `ingestion = Scanned`, `scannedAt = now`, `nsfwLevel = deriveChallengeNsfwLevel(allowedNsfwLevel)`.
+The `blocked` path is unchanged.
 
-**Idempotency:** the flip (steps 4–6) is gated on `buzzType === 'green'`. A retry callback runs after the row is
-already `yellow`, so it skips the flip and the refund. `addFlag`, the pool-zeroing, and the notification key are all
-idempotent.
-
-**Yellow challenge + NSFW:** steps 1–3 only (already off-green; no flip, no refund).
+**Idempotency:** the cancel path is safe on a retried callback — `voidChallenge` self-dedups (Cancelled branch,
+idempotent refund) and the notification key is deterministic. `buzzType` is never changed, so the `cancel`
+decision stays stable across retries.
 
 ### C. externalTransactionId currency scoping — `challenge-funding.ts`
 
@@ -102,11 +109,13 @@ Fix: append the currency to the charge id → `challenge-initial-prize-${challen
 
 ## Testing
 
-- Unit-test `applyChallengeNsfwEscalation` (the extracted helper) for: green flip (rating raised, buzzType→yellow,
-  pool zeroed, refund invoked, notification), yellow no-flip (rating raised, no buzzType change, no refund),
-  already-≥R no-op, idempotent second run on an already-yellow row.
-- Extend the existing scan/adapter tests (`challenge-edit-rescan.service.test.ts`, `challenge-review.service.test.ts`)
-  as needed for the new label set / trigger semantics.
+- Unit-test the pure `computeNsfwEscalation` for: clean, green-user+nsfw → cancel, yellow+nsfw → raise (no
+  cancel), non-user+nsfw → raise (no cancel), already-≥R no-op.
+- Unit-test `applyChallengeNsfwEscalation` (mocked db / `voidChallenge` / notification) for: clean scan (Scanned,
+  no void), green-user+nsfw (Scanned then `voidChallenge` called, cancelled-notification), yellow+nsfw (level
+  raised, collection `updateMany`, raised-notification, `voidChallenge` NOT called), missing challenge no-op.
+- The existing scan/adapter tests (`challenge-edit-rescan.service.test.ts`, `challenge-review.service.test.ts`)
+  cover the new label set / trigger semantics.
 
 ## Rollout
 
