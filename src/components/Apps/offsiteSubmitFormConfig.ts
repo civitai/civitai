@@ -16,17 +16,25 @@ import {
   isMarketplaceCategory,
   type MarketplaceCategory,
 } from '~/server/services/blocks/marketplace-categories.constants';
+import {
+  SCOPE_JUSTIFICATION_MAX_LENGTH,
+  connectScopesSubsetOfCeiling,
+  tokenScopeKeyByBit,
+  tokenScopeMaskToList,
+} from '~/shared/constants/token-scope.constants';
+import { Flags } from '~/shared/utils/flags';
 
 /**
- * App Store Listings (W13) — P3a external-submit form field/validation config
- * (PURE view-model). A CLIENT-SIDE mirror of `submitExternalListingSchema` so the
- * `/apps/submit` External-link form can surface inline errors BEFORE the round-trip
- * — the server stays the source of truth (the same `validateExternalUrl`,
- * `SLUG_REGEX`, `OFFSITE_*` bounds and category taxonomy are imported here, NOT
+ * App Store Listings (W13) — external-app submit form field/validation config
+ * (PURE view-model). A CLIENT-SIDE mirror of `submitExternalListingSchema` (the
+ * MERGED external+connect model — every external app links its own OAuth client)
+ * so the `/apps/submit` form can surface inline errors BEFORE the round-trip — the
+ * server stays the source of truth (the same `validateExternalUrl`, `SLUG_REGEX`,
+ * `OFFSITE_*` bounds, category taxonomy and scope helpers are imported here, NOT
  * re-declared, so the client mirror can't drift from the server contract).
  *
- * Extracted (no JSX) so the field bounds + the validation mapping are unit-testable
- * without mounting the form.
+ * Extracted (no JSX) so the field bounds, the scope-subset gating and the payload
+ * shaping are unit-testable without mounting the form.
  */
 
 /** Slug bounds (mirror `submitExternalListingSchema.slug`: min 3, max 40, SLUG_REGEX). */
@@ -42,17 +50,25 @@ export const OFFSITE_SUBMIT_LIMITS = {
   descriptionMax: OFFSITE_DESCRIPTION_MAX,
   changelogMax: OFFSITE_CHANGELOG_MAX,
   urlMax: MAX_EXTERNAL_URL_LENGTH,
+  justificationMax: SCOPE_JUSTIFICATION_MAX_LENGTH,
 } as const;
 
 export type OffsiteSubmitFormValues = {
   slug: string;
   name: string;
+  /** OPTIONAL homepage / Visit link (may be blank in the merged model). */
   externalUrl: string;
   tagline: string;
   description: string;
   category: MarketplaceCategory | null;
   contentRating: OffsiteContentRating;
   changelog: string;
+  /** REQUIRED: the id of the caller's own OAuth client (chosen in the picker). */
+  connectClientId: string | null;
+  /** The disclosed requested-scope bitmask (⊆ the selected client's allowedScopes). */
+  requestedScopes: number;
+  /** enum-key → rationale (only checked scopes get an entry). */
+  scopeJustifications: Record<string, string>;
 };
 
 export type OffsiteSubmitFormErrors = Partial<Record<keyof OffsiteSubmitFormValues, string>>;
@@ -68,7 +84,7 @@ export const OFFSITE_CATEGORY_OPTIONS: Array<{ value: MarketplaceCategory; label
 export const OFFSITE_CONTENT_RATING_OPTIONS: Array<{ value: OffsiteContentRating; label: string }> =
   OFFSITE_CONTENT_RATINGS.map((r) => ({ value: r, label: r.toUpperCase() }));
 
-/** The blank initial form state (SFW default, no category). */
+/** The blank initial form state (SFW default, no category, no client / scopes). */
 export function emptyOffsiteSubmitForm(): OffsiteSubmitFormValues {
   return {
     slug: '',
@@ -79,15 +95,21 @@ export function emptyOffsiteSubmitForm(): OffsiteSubmitFormValues {
     category: null,
     contentRating: 'g',
     changelog: '',
+    connectClientId: null,
+    requestedScopes: 0,
+    scopeJustifications: {},
   };
 }
 
 /**
- * Validate the form client-side, mirroring `submitExternalListingSchema`. Returns a
- * per-field error map (empty = valid). Delegates the URL shape to the shared
- * `validateExternalUrl` (https-only, length-bounded) and the slug shape to
+ * Validate the METADATA fields client-side, mirroring `submitExternalListingSchema`'s
+ * display shape. Returns a per-field error map (empty = valid). Delegates the URL
+ * shape to the shared `validateExternalUrl` (https-only, length-bounded) ONLY WHEN a
+ * URL is provided (it's optional in the merged model), and the slug shape to
  * `SLUG_REGEX`, so a `http://` / bad-slug / over-long input is caught inline exactly
- * as the server would reject it.
+ * as the server would reject it. Does NOT check the OAuth-client / scope fields — the
+ * CREATE form combines this with {@link validateConnectFields} (the edit wizard, which
+ * edits metadata only, calls this alone).
  */
 export function validateOffsiteSubmitForm(
   values: OffsiteSubmitFormValues
@@ -108,8 +130,11 @@ export function validateOffsiteSubmitForm(
     errors.name = `Name must be at most ${OFFSITE_NAME_MAX} characters.`;
   }
 
-  const url = validateExternalUrl(values.externalUrl);
-  if (!url.ok) errors.externalUrl = url.error;
+  // externalUrl is OPTIONAL — only validate the https shape when one is provided.
+  if (values.externalUrl.trim().length > 0) {
+    const url = validateExternalUrl(values.externalUrl);
+    if (!url.ok) errors.externalUrl = url.error;
+  }
 
   if (values.tagline.length > OFFSITE_TAGLINE_MAX) {
     errors.tagline = `Tagline must be at most ${OFFSITE_TAGLINE_MAX} characters.`;
@@ -238,23 +263,157 @@ export function normalizeLinkUrl(raw: string): { url: string; error?: string } {
 }
 
 /**
- * Wizard step-gating (PURE, unit-tested). The External-link submit wizard is:
- *   Step 0 (URL) → Step 1 (Details) → Step 2 (Assets).
- *
- * `isUrlStepComplete`     — the URL passes the shared https validation, so the
- *                           Details step is reachable.
- * `isDetailsStepComplete` — the whole client mirror validates (name/slug/category/
- *                           rating + the still-required URL), so the draft can be
- *                           created and the Assets step entered.
- *
- * The Assets step itself is only reachable AFTER the server creates the draft
- * (`submitExternalListing` succeeds); that transition is owned by the component,
- * not this pure gate.
+ * `isUrlStepComplete` — the OPTIONAL homepage URL is EITHER blank OR passes the
+ * shared https validation. Used by the EDIT wizard's URL step (a listing may or may
+ * not carry a homepage link). A blank URL is valid in the merged model.
  */
 export function isUrlStepComplete(values: OffsiteSubmitFormValues): boolean {
-  return validateExternalUrl(values.externalUrl).ok;
+  return values.externalUrl.trim().length === 0 || validateExternalUrl(values.externalUrl).ok;
 }
 
+/**
+ * `isDetailsStepComplete` — the METADATA mirror validates (name/slug/category/rating
+ * + the OPTIONAL URL when present). Used by the EDIT wizard. The CREATE form uses
+ * {@link isCreateDetailsStepComplete} (which additionally requires the OAuth client).
+ */
 export function isDetailsStepComplete(values: OffsiteSubmitFormValues): boolean {
   return isOffsiteSubmitFormValid(values);
+}
+
+// ---------------------------------------------------------------------------
+// OAuth-client link fields (the merged model — every external app links its own
+// OAuth client). Client-side mirror of the SERVICE checks
+// (`loadConnectClientForListing` / `assertConnectScopesValid`) so the CREATE form
+// surfaces inline errors before the round-trip; the SERVER stays source of truth.
+// ---------------------------------------------------------------------------
+
+/** The enum-key for a scope bit (used as the justification-map key). */
+export function scopeKeyForBit(bit: number): string {
+  return tokenScopeKeyByBit(bit) ?? String(bit);
+}
+
+/**
+ * Toggle a single scope bit in `requestedScopes`, pruning any justification whose
+ * scope is no longer requested (so the payload never carries a dangling rationale the
+ * server would reject). PURE.
+ */
+export function toggleScopeBit(
+  values: OffsiteSubmitFormValues,
+  bit: number
+): OffsiteSubmitFormValues {
+  const requestedScopes = Flags.hasFlag(values.requestedScopes, bit)
+    ? values.requestedScopes & ~bit
+    : values.requestedScopes | bit;
+  const requestedKeys = new Set(tokenScopeMaskToList(requestedScopes).map((s) => s.key));
+  const scopeJustifications: Record<string, string> = {};
+  for (const [key, text] of Object.entries(values.scopeJustifications)) {
+    if (requestedKeys.has(key)) scopeJustifications[key] = text;
+  }
+  return { ...values, requestedScopes, scopeJustifications };
+}
+
+/**
+ * Validate the OAuth-client / scope fields client-side, mirroring
+ * `loadConnectClientForListing` + `assertConnectScopesValid`. `allowedScopes` is the
+ * selected client's ceiling (0 when no client picked). Returns a per-field error map
+ * (empty = valid) over the connect fields only.
+ */
+export function validateConnectFields(
+  values: OffsiteSubmitFormValues,
+  allowedScopes: number
+): OffsiteSubmitFormErrors {
+  const errors: OffsiteSubmitFormErrors = {};
+
+  if (!values.connectClientId) {
+    errors.connectClientId = 'Choose one of your OAuth apps.';
+  }
+
+  if (!connectScopesSubsetOfCeiling(values.requestedScopes, allowedScopes)) {
+    errors.requestedScopes = 'A requested scope is not allowed by this OAuth app.';
+  }
+
+  for (const [, text] of Object.entries(values.scopeJustifications)) {
+    if (text.length > SCOPE_JUSTIFICATION_MAX_LENGTH) {
+      errors.scopeJustifications = `Each justification must be at most ${SCOPE_JUSTIFICATION_MAX_LENGTH} characters.`;
+      break;
+    }
+  }
+
+  return errors;
+}
+
+/**
+ * The full CREATE-form validation: the metadata mirror + the OAuth-client / scope
+ * mirror. `allowedScopes` is the selected client's ceiling. Returns a per-field error
+ * map (empty = valid).
+ */
+export function validateExternalCreateForm(
+  values: OffsiteSubmitFormValues,
+  allowedScopes: number
+): OffsiteSubmitFormErrors {
+  return { ...validateOffsiteSubmitForm(values), ...validateConnectFields(values, allowedScopes) };
+}
+
+/** The CREATE wizard Step-0 (App & scopes) gate: a client is chosen + subset valid + URL ok if present. */
+export function isClientStepComplete(
+  values: OffsiteSubmitFormValues,
+  allowedScopes: number
+): boolean {
+  return (
+    !!values.connectClientId &&
+    connectScopesSubsetOfCeiling(values.requestedScopes, allowedScopes) &&
+    Object.values(values.scopeJustifications).every(
+      (t) => t.length <= SCOPE_JUSTIFICATION_MAX_LENGTH
+    ) &&
+    (values.externalUrl.trim().length === 0 || validateExternalUrl(values.externalUrl).ok)
+  );
+}
+
+/** The CREATE wizard Details-step gate: the whole create mirror validates. */
+export function isCreateDetailsStepComplete(
+  values: OffsiteSubmitFormValues,
+  allowedScopes: number
+): boolean {
+  return Object.keys(validateExternalCreateForm(values, allowedScopes)).length === 0;
+}
+
+/**
+ * Shape the form state into the `submitExternalListing` mutation input: trim the text
+ * fields, coerce empty optionals to `undefined` (an omitted homepage URL is left
+ * OUT), and reduce `scopeJustifications` to ONLY the requested scopes with a non-empty
+ * (trimmed) rationale. PURE + unit-tested. `connectClientId` MUST be set (gated by the
+ * client step).
+ */
+export function toSubmitExternalInput(values: OffsiteSubmitFormValues): {
+  slug: string;
+  name: string;
+  connectClientId: string;
+  requestedScopes: number;
+  scopeJustifications: Record<string, string>;
+  externalUrl?: string;
+  tagline?: string;
+  description?: string;
+  category?: MarketplaceCategory;
+  contentRating: OffsiteContentRating;
+  changelog?: string;
+} {
+  const requestedKeys = new Set(tokenScopeMaskToList(values.requestedScopes).map((s) => s.key));
+  const scopeJustifications: Record<string, string> = {};
+  for (const [key, text] of Object.entries(values.scopeJustifications)) {
+    const trimmed = text.trim();
+    if (trimmed.length > 0 && requestedKeys.has(key)) scopeJustifications[key] = trimmed;
+  }
+  return {
+    slug: values.slug.trim(),
+    name: values.name.trim(),
+    connectClientId: values.connectClientId ?? '',
+    requestedScopes: values.requestedScopes,
+    scopeJustifications,
+    externalUrl: values.externalUrl.trim() || undefined,
+    tagline: values.tagline.trim() || undefined,
+    description: values.description.trim() || undefined,
+    category: values.category ?? undefined,
+    contentRating: values.contentRating,
+    changelog: values.changelog.trim() || undefined,
+  };
 }

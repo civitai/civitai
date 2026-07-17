@@ -180,10 +180,12 @@ describe('wizard step gating', () => {
     externalUrl,
   });
 
-  it('isUrlStepComplete follows the shared https validation', () => {
+  it('isUrlStepComplete follows the shared https validation (URL now optional)', () => {
     expect(isUrlStepComplete(withUrl('https://example.com/app'))).toBe(true);
     expect(isUrlStepComplete(withUrl('http://example.com'))).toBe(false);
-    expect(isUrlStepComplete(withUrl(''))).toBe(false);
+    // The homepage URL is OPTIONAL in the merged model — a blank URL is a valid
+    // (complete) state (only a PRESENT-but-invalid URL blocks the step).
+    expect(isUrlStepComplete(withUrl(''))).toBe(true);
   });
 
   it('isDetailsStepComplete requires a valid whole form (url + name + slug)', () => {

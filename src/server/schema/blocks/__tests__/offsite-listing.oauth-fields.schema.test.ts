@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  submitConnectListingSchema,
+  submitExternalListingSchema,
   updateListingPatchSchema,
 } from '~/server/schema/blocks/offsite-listing.schema';
 import {
@@ -11,7 +11,7 @@ import {
 } from '~/shared/constants/token-scope.constants';
 
 /**
- * W13 OAuth-connect submit + patch schema tests (PR2). The schema bounds the SHAPE
+ * W13 external-app submit + patch schema tests — the OAuth-client (connect) FIELDS on the MERGED submitExternalListingSchema. The schema bounds the SHAPE
  * (types + per-value lengths); the subset-of-ceiling + key/justification rules live
  * in the service (they need the client's `allowedScopes`).
  */
@@ -25,9 +25,9 @@ const valid = {
   contentRating: 'g' as const,
 };
 
-describe('submitConnectListingSchema', () => {
+describe('submitExternalListingSchema', () => {
   it('accepts a well-formed connect submission', () => {
-    const parsed = submitConnectListingSchema.parse(valid);
+    const parsed = submitExternalListingSchema.parse(valid);
     expect(parsed.connectClientId).toBe('oauth-client-1');
     expect(parsed.requestedScopes).toBe(4);
     expect(parsed.scopeJustifications).toEqual({ ModelsRead: 'reason' });
@@ -35,26 +35,26 @@ describe('submitConnectListingSchema', () => {
 
   it('defaults contentRating to g when omitted', () => {
     const { contentRating, ...rest } = valid;
-    expect(submitConnectListingSchema.parse(rest).contentRating).toBe('g');
+    expect(submitExternalListingSchema.parse(rest).contentRating).toBe('g');
   });
 
   it('accepts an empty justification map', () => {
-    expect(submitConnectListingSchema.parse({ ...valid, scopeJustifications: {} })).toBeTruthy();
+    expect(submitExternalListingSchema.parse({ ...valid, scopeJustifications: {} })).toBeTruthy();
   });
 
   it('rejects a missing connectClientId', () => {
     const { connectClientId, ...rest } = valid;
-    expect(submitConnectListingSchema.safeParse(rest).success).toBe(false);
+    expect(submitExternalListingSchema.safeParse(rest).success).toBe(false);
   });
 
   it('rejects a negative requestedScopes', () => {
-    expect(submitConnectListingSchema.safeParse({ ...valid, requestedScopes: -1 }).success).toBe(
+    expect(submitExternalListingSchema.safeParse({ ...valid, requestedScopes: -1 }).success).toBe(
       false
     );
   });
 
   it('rejects a non-integer requestedScopes', () => {
-    expect(submitConnectListingSchema.safeParse({ ...valid, requestedScopes: 1.5 }).success).toBe(
+    expect(submitExternalListingSchema.safeParse({ ...valid, requestedScopes: 1.5 }).success).toBe(
       false
     );
   });
@@ -67,14 +67,14 @@ describe('submitConnectListingSchema', () => {
     ['2**32 + a real bit', 2 ** 32 + TokenScope.ModelsRead],
   ])('rejects an over-int4 requestedScopes (%s)', (_label, requestedScopes) => {
     expect(
-      submitConnectListingSchema.safeParse({ ...valid, requestedScopes, scopeJustifications: {} })
+      submitExternalListingSchema.safeParse({ ...valid, requestedScopes, scopeJustifications: {} })
         .success
     ).toBe(false);
   });
 
   it('accepts requestedScopes at exactly ALL_SCOPES (the max bound)', () => {
     expect(
-      submitConnectListingSchema.safeParse({
+      submitExternalListingSchema.safeParse({
         ...valid,
         requestedScopes: ALL_SCOPES,
         scopeJustifications: {},
@@ -86,7 +86,7 @@ describe('submitConnectListingSchema', () => {
     // AppBlocksSubmit (bit 25) is EXCLUDED from TokenScope.Full but included in
     // ALL_SCOPES — a client whose allowedScopes carries it can request it.
     expect(
-      submitConnectListingSchema.safeParse({
+      submitExternalListingSchema.safeParse({
         ...valid,
         requestedScopes: TokenScope.AppBlocksSubmit,
         scopeJustifications: {},
@@ -95,7 +95,7 @@ describe('submitConnectListingSchema', () => {
   });
 
   it('rejects a justification value over the max length', () => {
-    const parsed = submitConnectListingSchema.safeParse({
+    const parsed = submitExternalListingSchema.safeParse({
       ...valid,
       scopeJustifications: { ModelsRead: 'x'.repeat(SCOPE_JUSTIFICATION_MAX_LENGTH + 1) },
     });
@@ -103,7 +103,7 @@ describe('submitConnectListingSchema', () => {
   });
 
   it('accepts a justification value at exactly the max length', () => {
-    const parsed = submitConnectListingSchema.safeParse({
+    const parsed = submitExternalListingSchema.safeParse({
       ...valid,
       scopeJustifications: { ModelsRead: 'x'.repeat(SCOPE_JUSTIFICATION_MAX_LENGTH) },
     });
