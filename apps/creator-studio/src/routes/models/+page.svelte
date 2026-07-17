@@ -48,6 +48,7 @@
   import {
     IconSearch,
     IconFilter,
+    IconChevronLeft,
     IconChevronRight,
     IconExternalLink,
   } from '@tabler/icons-svelte';
@@ -418,13 +419,19 @@
         <CardHeader>
           <div class="flex items-center gap-3">
             {#if bulkMode && model.versions.length > 0}
+              {@const mId = `m-${model.id}`}
               <Checkbox
+                id={mId}
                 checked={allSelected(model)}
                 onCheckedChange={() => toggleModel(model)}
                 aria-label="Select all versions of {model.name}"
               />
+              <Label for={mId} class="cursor-pointer">
+                <CardTitle class="text-base text-white">{model.name}</CardTitle>
+              </Label>
+            {:else}
+              <CardTitle class="text-base text-white">{model.name}</CardTitle>
             {/if}
-            <CardTitle class="text-base text-white">{model.name}</CardTitle>
             <Badge variant="secondary">{model.type}</Badge>
             <Badge variant={model.status === 'Published' ? 'default' : 'outline'} class="ml-auto">
               {model.status}
@@ -514,7 +521,9 @@
       {#snippet children({ pages, currentPage })}
         <Pagination.Content>
           <Pagination.Item>
-            <Pagination.PrevButton />
+            <Pagination.PrevButton aria-label="Previous page">
+              <IconChevronLeft size={16} />
+            </Pagination.PrevButton>
           </Pagination.Item>
           {#each pages as p (p.key)}
             {#if p.type === 'ellipsis'}
@@ -530,7 +539,9 @@
             {/if}
           {/each}
           <Pagination.Item>
-            <Pagination.NextButton />
+            <Pagination.NextButton aria-label="Next page">
+              <IconChevronRight size={16} />
+            </Pagination.NextButton>
           </Pagination.Item>
         </Pagination.Content>
       {/snippet}
