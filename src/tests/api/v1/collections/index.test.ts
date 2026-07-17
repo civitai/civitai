@@ -210,6 +210,8 @@ describe('GET /api/v1/collections (list)', () => {
 
     expect(res._getStatusCode()).toBe(429);
     expect(res._getHeader('Retry-After')).toBe('30');
+    // A 429 must NEVER be edge-cached (per-IP/per-user) — a cached public 429 would be served fleet-wide.
+    expect(res._getHeader('Cache-Control')).toBe('no-store');
     expect(mockGetAllCollections).not.toHaveBeenCalled();
   });
 });
@@ -290,6 +292,7 @@ describe('GET /api/v1/collections/[id] (detail)', () => {
 
     expect(res._getStatusCode()).toBe(429);
     expect(res._getHeader('Retry-After')).toBe('15');
+    expect(res._getHeader('Cache-Control')).toBe('no-store');
     expect(mockGetUserCollectionPermissionsById).not.toHaveBeenCalled();
   });
 });
