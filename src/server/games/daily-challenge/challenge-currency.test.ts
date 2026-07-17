@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
+import { NsfwLevel } from '~/server/common/enums';
 import { nsfwBrowsingLevelsFlag, sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { ChallengeSource } from '~/shared/utils/prisma/enums';
 import {
   deriveDomainCurrency,
   isNonSfwForGreen,
   isChallengeHiddenByDomainCurrency,
+  computeNsfwEscalation,
 } from './challenge-currency';
 
 describe('deriveDomainCurrency', () => {
@@ -58,5 +60,75 @@ describe('isChallengeHiddenByDomainCurrency', () => {
         99
       )
     ).toBe(false);
+  });
+});
+
+describe('computeNsfwEscalation', () => {
+  const PG_PG13 = NsfwLevel.PG | NsfwLevel.PG13; // 3, SFW mask
+
+  it('no-ops on a clean scan (nsfwLevel = derived base, no flip/refund)', () => {
+    const r = computeNsfwEscalation({
+      allowedNsfwLevel: PG_PG13,
+      buzzType: 'green',
+      source: ChallengeSource.User,
+      basePrizePool: 100,
+      isNsfw: false,
+    });
+    expect(r.allowedNsfwLevel).toBe(PG_PG13);
+    expect(r.nsfwLevel).toBe(NsfwLevel.PG13); // maxValue(PG|PG13)
+    expect(r.flip).toBe(false);
+    expect(r.refundInitialPrize).toBe(false);
+  });
+
+  it('green user challenge + nsfw: raises to R, flips, refunds when a prize exists', () => {
+    const r = computeNsfwEscalation({
+      allowedNsfwLevel: PG_PG13,
+      buzzType: 'green',
+      source: ChallengeSource.User,
+      basePrizePool: 100,
+      isNsfw: true,
+    });
+    expect(r.allowedNsfwLevel).toBe(PG_PG13 | NsfwLevel.R); // 7
+    expect(r.nsfwLevel).toBe(NsfwLevel.R);
+    expect(r.flip).toBe(true);
+    expect(r.refundInitialPrize).toBe(true);
+  });
+
+  it('green user challenge + nsfw with no prize: flips but no refund', () => {
+    const r = computeNsfwEscalation({
+      allowedNsfwLevel: PG_PG13,
+      buzzType: 'green',
+      source: ChallengeSource.User,
+      basePrizePool: 0,
+      isNsfw: true,
+    });
+    expect(r.flip).toBe(true);
+    expect(r.refundInitialPrize).toBe(false);
+  });
+
+  it('yellow user challenge + nsfw: raises to R but does not flip or refund', () => {
+    const r = computeNsfwEscalation({
+      allowedNsfwLevel: PG_PG13,
+      buzzType: 'yellow',
+      source: ChallengeSource.User,
+      basePrizePool: 100,
+      isNsfw: true,
+    });
+    expect(r.allowedNsfwLevel).toBe(PG_PG13 | NsfwLevel.R);
+    expect(r.nsfwLevel).toBe(NsfwLevel.R);
+    expect(r.flip).toBe(false);
+    expect(r.refundInitialPrize).toBe(false);
+  });
+
+  it('non-user (System) challenge + nsfw: raises to R, never flips', () => {
+    const r = computeNsfwEscalation({
+      allowedNsfwLevel: PG_PG13,
+      buzzType: 'green',
+      source: ChallengeSource.System,
+      basePrizePool: 100,
+      isNsfw: true,
+    });
+    expect(r.flip).toBe(false);
+    expect(r.refundInitialPrize).toBe(false);
   });
 });
