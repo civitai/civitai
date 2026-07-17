@@ -31,8 +31,7 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { maybeRecordOauthScopeUsage } from '~/server/services/oauth/oauth-scope-audit';
+import { runEnforceTokenScope } from '~/server/services/oauth/enforce-token-scope';
 import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import type { Context } from './createContext';
 
@@ -248,70 +247,12 @@ const applyDomainFeature = t.middleware(async (options) => {
  *   request regardless of scope. Used for buzz-spending operations that the
  *   orchestrator owns; tokens have no business spending buzz on Civitai's side.
  */
-const enforceTokenScope = t.middleware(({ ctx, meta, path, next }) => {
-  // blockApiKeys: deny any token-based request, regardless of scope. Session
-  // auth (apiKeyId === null) is unaffected.
-  if (meta?.blockApiKeys && ctx.apiKeyId != null) {
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: 'This action cannot be performed via API key or OAuth token.',
-    });
-  }
-
-  // The scope this call exercises — the declared requiredScope, or Full for an
-  // unannotated endpoint (which implicitly requires Full). Also the value the
-  // external-OAuth scope-usage audit records below.
-  const requiredScope = meta?.requiredScope ?? TokenScope.Full;
-
-  // Session auth (cookies) and full-access API keys pass through the scope check;
-  // a scoped token must carry the required bit.
-  if (ctx.tokenScope !== TokenScope.Full) {
-    if (!Flags.hasFlag(ctx.tokenScope, requiredScope)) {
-      throw new TRPCError({
-        code: 'FORBIDDEN',
-        message: 'Your API key does not have the required scope for this action',
-      });
-    }
-  }
-
-  // Unified scope-usage audit — external-OAuth arm. `enforceTokenScope` is the
-  // single central choke point where an OAuth access token's scope is verified,
-  // so it's where external OAuth API usage is recorded (mirroring the block-token
-  // audit fired from block-scope.middleware). Only an external OAuth token reaches
-  // the sink (guarded inside maybeRecordOauthScopeUsage — session + personal-API-
-  // key requests emit nothing). Fire-and-forget, and emitted AFTER the procedure
-  // settles so the recorded status reflects the real outcome + records EXACTLY one
-  // row per call. We wrap next() only for OAuth subjects so the (dominant) session
-  // path stays a bare `next()` with no extra async frame.
-  if (ctx.subject?.type !== 'oauth' || ctx.user?.id == null) {
-    return next();
-  }
-  const subject = ctx.subject;
-  const userId = ctx.user.id;
-  return next().then(
-    (result) => {
-      const ok = (result as unknown as { ok?: boolean })?.ok !== false;
-      maybeRecordOauthScopeUsage({
-        subject,
-        userId,
-        scopeBit: requiredScope,
-        endpoint: path,
-        statusCode: ok ? 200 : 400,
-      });
-      return result;
-    },
-    (err) => {
-      maybeRecordOauthScopeUsage({
-        subject,
-        userId,
-        scopeBit: requiredScope,
-        endpoint: path,
-        statusCode: 500,
-      });
-      throw err;
-    }
-  );
-});
+// `enforceTokenScope`'s body lives in a light standalone module so the OAuth
+// scope-verification + unified scope-usage audit wiring is unit-testable without
+// booting this heavy module. tRPC just wraps it.
+const enforceTokenScope = t.middleware(({ ctx, meta, path, next }) =>
+  runEnforceTokenScope({ ctx, meta, path, next })
+);
 
 // Time every procedure by path (full chain + resolver) so heavy-pool isolation
 // candidates can be ranked by P99 x rate — the criterion behind the image-feed

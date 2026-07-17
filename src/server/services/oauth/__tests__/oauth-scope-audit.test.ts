@@ -122,8 +122,9 @@ describe('maybeRecordOauthScopeUsage', () => {
       })
     ).not.toThrow();
     await vi.waitFor(() => expect(mockRecordScopeInvocation).toHaveBeenCalledTimes(1));
-    // The rejection was swallowed — the unhandled-rejection guard below asserts
-    // no error escaped the fire-and-forget path.
+    // The sink was invoked with the external-oauth row and its rejection was
+    // swallowed by the helper's internal .catch (the synchronous call above
+    // already asserted it never threw).
     expect(mockRecordScopeInvocation.mock.calls[0][0]).toMatchObject({
       source: 'external-oauth',
       scope: 'full',

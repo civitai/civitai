@@ -393,15 +393,25 @@ export async function listMyScopeInvocations(opts: {
     // This is the BLOCK-token activity feed (/apps/installed). Unified scope-usage
     // audit: EXTERNAL-OAuth invocations now share this table but carry a NULL
     // `appBlockId` (+ `source = 'external-oauth'`); exclude them here so they don't
-    // leak into a block-semantic UI. Filtering on `app_block_id IS NOT NULL`
-    // (rather than `source`) references only the pre-existing column, so this is
-    // safe whether or not the `source` migration has been applied yet. External
-    // usage is captured in the table (queryable by `oauth_client_id`) for a future
-    // dedicated OAuth-app activity view. Cast: the `not: null` filter needs the
-    // nullable-`appBlockId` client type (CI-regenerated; may lag locally).
+    // leak into a block-semantic UI. But NOT every null-`appBlockId` row is
+    // external-OAuth: a PRE-APPROVAL App-Dev-Tunnel spend also writes `appBlockId:
+    // null` with `syntheticAppId` set (see the synthetic-retry path below) and MUST
+    // stay in the dev's own audit feed. So the GLOBAL feed keeps `app-block` AND
+    // synthetic rows and excludes only external-OAuth: `appBlockId IS NOT NULL OR
+    // syntheticAppId IS NOT NULL`. Both are PRE-EXISTING columns, so this read is
+    // safe whether or not the `source`/`oauth_client_id` migration has been applied
+    // (external-OAuth rows can't even exist pre-migration — they're naturally
+    // absent then, and `syntheticAppId IS NOT NULL` excludes exactly the
+    // external-OAuth population post-migration). Deliberately NOT filtering on the
+    // new `source`/`oauthClientId` columns keeps this pre-migration-safe. External
+    // usage is captured (queryable by `oauth_client_id`) for a future dedicated
+    // OAuth-app activity view. Cast: the nullable filters need the nullable-column
+    // client types (CI-regenerated; may lag locally).
     where: {
       userId: opts.userId,
-      ...(opts.appBlockId ? { appBlockId: opts.appBlockId } : { appBlockId: { not: null } }),
+      ...(opts.appBlockId
+        ? { appBlockId: opts.appBlockId }
+        : { OR: [{ appBlockId: { not: null } }, { syntheticAppId: { not: null } }] }),
     } as unknown as Prisma.BlockScopeInvocationWhereInput,
     orderBy: [{ invokedAt: 'desc' }, { id: 'desc' }],
     take: cappedLimit + 1,
