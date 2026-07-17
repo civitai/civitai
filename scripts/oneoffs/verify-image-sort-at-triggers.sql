@@ -33,12 +33,17 @@ DECLARE
   other_post   int;
   img          int;
   audit_img    int;
+  reg_post     int;
+  reg_img      int;
   n            bigint;
   created      timestamptz := '2024-01-01 00:00:00Z';
   scanned      timestamptz := '2024-02-01 00:00:00Z';  -- > createdAt
+  scanned_late timestamptz := '2025-06-01 00:00:00Z';  -- > publish_past
   publish_past timestamptz := '2024-06-01 00:00:00Z';  -- > scannedAt
   reschedule   timestamptz := now() + interval '30 days';
+  sentinel_upd timestamptz := '2000-01-01 00:00:00Z';
   got          timestamptz;
+  got_upd      timestamptz;
 BEGIN
   SELECT id INTO uid FROM "User" LIMIT 1;
   IF uid IS NULL THEN RAISE EXCEPTION 'no User rows to borrow for FK'; END IF;
@@ -122,7 +127,25 @@ BEGIN
   SELECT "sortAt" INTO got FROM "Image" WHERE id = audit_img;
   ASSERT got = publish_past, format('CASE 9 fan-out value: got %s, want %s', got, publish_past);
 
-  RAISE NOTICE 'ALL 9 CASES PASSED';
+  -- CASE 10 — unconditional bump regression (the fix for zuri's finding): an
+  -- unpublish that leaves sortAt UNCHANGED must still bump updatedAt so Meili's
+  -- incremental sync (WHERE updatedAt > lastUpdate) re-syncs the publish state.
+  -- Image with scannedAt > publishedAt ⇒ sortAt = scannedAt both before and
+  -- after unpublish. A guarded (IS DISTINCT FROM) fan-out would skip the row and
+  -- leave updatedAt stale — this asserts it does NOT.
+  INSERT INTO "Post" ("userId", "publishedAt", "createdAt", "updatedAt")
+    VALUES (uid, publish_past, created, now()) RETURNING id INTO reg_post;
+  INSERT INTO "Image" ("url", "userId", "postId", "scannedAt", "createdAt", "updatedAt")
+    VALUES ('v', uid, reg_post, scanned_late, created, now()) RETURNING id INTO reg_img;
+  ASSERT (SELECT "sortAt" FROM "Image" WHERE id = reg_img) = scanned_late,
+    'CASE 10 setup: sortAt should be scanned_late';
+  UPDATE "Image" SET "updatedAt" = sentinel_upd WHERE id = reg_img;  -- BEFORE trigger not fired (updatedAt not in its column list)
+  UPDATE "Post" SET "publishedAt" = NULL WHERE id = reg_post;        -- unpublish; sortAt stays scanned_late
+  SELECT "sortAt", "updatedAt" INTO got, got_upd FROM "Image" WHERE id = reg_img;
+  ASSERT got = scanned_late, format('CASE 10 sortAt should be unchanged: got %s, want %s', got, scanned_late);
+  ASSERT got_upd <> sentinel_upd, 'CASE 10 REGRESSION: updatedAt not bumped on sortAt-unchanged unpublish (Meili would miss it)';
+
+  RAISE NOTICE 'ALL 10 CASES PASSED';
 END $$;
 
 ROLLBACK;

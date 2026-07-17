@@ -16,14 +16,16 @@
 -- fan-out's UPDATE does not re-fire the BEFORE trigger (no recursion), and even
 -- if it did both paths compute the identical GREATEST value (idempotent).
 
--- Retire the 2024 predecessors (migration 20240719172747). Two authors wrote
--- sortAt back then: update_image_sort_at() (Post side, later neutered by this
--- file to an updatedAt-only body) and new_image_sort_at/update_new_image_sort_at()
--- (Image side, AFTER UPDATE OF postId OR INSERT, formula coalesce(publishedAt,
--- createdAt)). The Image-side pair was never replaced and is still live: as an
--- AFTER trigger it would OVERWRITE the value set_image_sort_at() computes below,
--- with the older scannedAt-less formula. Drop it so the new BEFORE trigger — a
--- strict superset of its firing conditions — is the sole Image-side author.
+-- Retire the 2024 predecessors (migration 20240719172747). Back then two authors
+-- wrote sortAt: update_image_sort_at() (Post side, later neutered by this file to
+-- an updatedAt-only body, now restored to author sortAt below) and
+-- new_image_sort_at/update_new_image_sort_at() (Image side, AFTER UPDATE OF postId
+-- OR INSERT, formula coalesce(publishedAt, createdAt)). The Image-side pair is NOT
+-- present on prod (verified absent from pg_trigger/pg_proc) — so these DROPs are
+-- no-ops there. They matter only on a dev/local DB where the old objects linger:
+-- an AFTER trigger would clobber the value set_image_sort_at() computes below with
+-- the older scannedAt-less formula. The new BEFORE trigger is a strict superset of
+-- its firing conditions.
 DROP TRIGGER IF EXISTS new_image_sort_at ON "Image";
 ---
 DROP FUNCTION IF EXISTS update_new_image_sort_at();
@@ -58,10 +60,13 @@ EXECUTE FUNCTION set_image_sort_at();
 --    rewrite Post.publishedAt) restamps every image on that post. Computed
 --    inline once here (not a bare touch) because the Image BEFORE trigger does
 --    NOT fire on a sortAt-only UPDATE — its column list is {scannedAt, postId}.
---    IS DISTINCT FROM skips rows whose value is unchanged, avoiding no-op row
---    churn (and the redundant downstream change-emissions it would cause). The
---    "updatedAt" bump is preserved from the previous version of this function so
---    the existing search-index change signal keyed on it is not lost.
+--    UNCONDITIONAL (no IS DISTINCT FROM guard): every image on the post gets its
+--    "updatedAt" bumped even when sortAt is unchanged. Meili's incremental image
+--    sync selects `WHERE updatedAt > lastUpdate` (images.search-index.ts:298-304),
+--    so a publishedAt move that leaves sortAt unchanged (e.g. unpublish of a post
+--    whose images have scannedAt > publishedAt) must still bump updatedAt or Meili
+--    never re-syncs the publish-state change. Write volume is identical to the
+--    prior prod trigger, which also bumped all post images unconditionally.
 CREATE OR REPLACE FUNCTION update_image_sort_at()
   RETURNS TRIGGER AS
 $$
@@ -69,8 +74,7 @@ BEGIN
   UPDATE "Image"
   SET "sortAt" = GREATEST(NEW."publishedAt", "scannedAt", "createdAt"),
       "updatedAt" = now()
-  WHERE "postId" = NEW."id"
-    AND "sortAt" IS DISTINCT FROM GREATEST(NEW."publishedAt", "scannedAt", "createdAt");
+  WHERE "postId" = NEW."id";
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;

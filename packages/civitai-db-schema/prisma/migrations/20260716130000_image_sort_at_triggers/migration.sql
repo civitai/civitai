@@ -20,11 +20,16 @@
 -- The Post fan-out writes only "sortAt"/"updatedAt"; the Image BEFORE trigger
 -- fires only on {scannedAt, postId}. Disjoint column sets ⇒ the fan-out's UPDATE
 -- does not re-fire the BEFORE trigger (no recursion), and even if it did both
--- paths compute the identical GREATEST value (idempotent). IS DISTINCT FROM on
--- the fan-out skips rows whose value is unchanged (no no-op row churn / redundant
--- downstream change-emissions). GREATEST ignores NULLs, so a draft / unpublished
--- / postless image (publishedAt NULL) collapses to GREATEST(scannedAt, createdAt)
--- — matching the engine semantics BitDex used before, with no sentinel.
+-- paths compute the identical GREATEST value (idempotent). The fan-out is
+-- UNCONDITIONAL (no IS DISTINCT FROM guard): it bumps "updatedAt" on every image
+-- of the post even when sortAt is unchanged, because Meili's incremental image
+-- sync keys on `updatedAt > lastUpdate` (images.search-index.ts:298-304) — an
+-- unpublish that leaves sortAt unchanged (scannedAt > publishedAt) must still
+-- signal Meili. Write volume matches the prior prod trigger, which also bumped
+-- all post images unconditionally. GREATEST ignores NULLs, so a draft /
+-- unpublished / postless image (publishedAt NULL) collapses to
+-- GREATEST(scannedAt, createdAt) — matching the engine semantics BitDex used
+-- before, with no sentinel.
 --
 -- These CREATE OR REPLACE statements mirror
 --   packages/civitai-db-schema/prisma/programmability/image_post_triggers.sql
@@ -35,15 +40,25 @@
 --
 -- MANUAL APPLY ONLY: the main civitai DB (CNPG nvme0) does NOT auto-apply Prisma
 -- migrations. Apply this SQL by hand to the target env; _prisma_migrations is not
--- the source of truth here. Safe to run in a transaction (DDL only; no backfill —
--- existing rows keep their current sortAt until the separate backfill runs).
+-- the source of truth here. No backfill here — existing rows keep their current
+-- sortAt until the separate backfill runs.
+--
+-- OPERATOR / LOCKING (hot 105M "Image" table): `ALTER TABLE ... DROP DEFAULT`
+-- takes ACCESS EXCLUSIVE and `CREATE TRIGGER` takes SHARE ROW EXCLUSIVE — both
+-- brief (catalog-only, no table rewrite) but they queue behind / block writes.
+-- Run off-peak with `SET lock_timeout = '5s';` and retry rather than blocking a
+-- long autovacuum/query. Each statement is independently re-runnable (CREATE OR
+-- REPLACE / DROP IF EXISTS / DROP DEFAULT is idempotent).
 
 -- 0. Retire the 2024 predecessor (migration 20240719172747) --------------------
--- new_image_sort_at (AFTER UPDATE OF postId OR INSERT ON "Image") still writes
--- sortAt = coalesce(publishedAt, createdAt). As an AFTER trigger it would clobber
--- the value set_image_sort_at() computes below with the older, scannedAt-less
--- formula. The new BEFORE trigger is a strict superset of its firing conditions,
--- so drop it. (Its Post-side sibling update_image_sort_at() is REPLACED in place
+-- The 2024 migration DEFINED new_image_sort_at / update_new_image_sort_at()
+-- (AFTER UPDATE OF postId OR INSERT ON "Image", writing sortAt =
+-- coalesce(publishedAt, createdAt)). It is NOT present on prod (verified against
+-- live PG: absent from pg_trigger / pg_proc) — it was superseded before this
+-- point. These DROP IF EXISTS are harmless no-ops on prod and only matter on any
+-- dev/local DB where the old migration's objects still linger: an AFTER trigger
+-- there would clobber the BEFORE trigger's value with the older, scannedAt-less
+-- formula. (The Post-side sibling update_image_sort_at() is REPLACED in place
 -- below; post_published_at_change keeps its name.)
 DROP TRIGGER IF EXISTS new_image_sort_at ON "Image";
 DROP FUNCTION IF EXISTS update_new_image_sort_at();
@@ -79,8 +94,7 @@ BEGIN
   UPDATE "Image"
   SET "sortAt" = GREATEST(NEW."publishedAt", "scannedAt", "createdAt"),
       "updatedAt" = now()
-  WHERE "postId" = NEW."id"
-    AND "sortAt" IS DISTINCT FROM GREATEST(NEW."publishedAt", "scannedAt", "createdAt");
+  WHERE "postId" = NEW."id";
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
