@@ -76,6 +76,12 @@ export function formatBuzz(amount: number): string {
   return `⚡ ${nf.format(Math.floor(amount))}`;
 }
 
+// Whether an amount is worth showing at all: buzz under 1 floors to 0, so it renders as nothing (`—`) rather than
+// a misleading `⚡ 0`. Cash keeps its cents, so any positive cash is displayable.
+export function hasDisplayValue(amount: number, currency: string): boolean {
+  return currencyMeta(currency).family === 'cash' ? amount > 0 : Math.floor(amount) >= 1;
+}
+
 // Buzz + banked balances show a ⚡ with the (floored) buzz count; cash (settled/pending) is USD-cents → shown as $.
 // Never mix families in one total — callers only ever format a single-currency amount.
 export function formatAmount(amount: number, currency: string): string {

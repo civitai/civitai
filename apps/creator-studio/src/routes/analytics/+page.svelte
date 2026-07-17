@@ -4,9 +4,10 @@
   import * as Table from '@civitai/ui/components/ui/table/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import RangeSelector from '$lib/components/RangeSelector.svelte';
+  import { IconArrowUp, IconArrowDown, IconArrowsSort } from '@tabler/icons-svelte';
   import { formatRange } from '$lib/date-range';
   import type { TimePoint } from '$lib/server/analytics';
-  import { formatAmount, currencyMeta, currencySort } from '$lib/earnings';
+  import { formatAmount, currencyMeta, currencySort, hasDisplayValue } from '$lib/earnings';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -87,6 +88,25 @@
   );
   const modelCell = (m: NonNullable<PageData['modelPerformance']>[number], currency: string) =>
     m.currencies.find((c) => c.currency === currency)?.total ?? 0;
+
+  // Client-side sort for the performance table — by generations, downloads, or any currency column. Default
+  // matches the server ranking (generations, desc); clicking the active column flips direction.
+  let sortKey = $state('generations');
+  let sortDir = $state<'asc' | 'desc'>('desc');
+  const sortValue = (m: NonNullable<PageData['modelPerformance']>[number], key: string): number =>
+    key === 'generations' ? m.generations : key === 'downloads' ? m.downloads : modelCell(m, key);
+  function toggleSort(key: string) {
+    if (sortKey === key) sortDir = sortDir === 'desc' ? 'asc' : 'desc';
+    else {
+      sortKey = key;
+      sortDir = 'desc';
+    }
+  }
+  const sortedModels = $derived.by(() => {
+    const rows = data.modelPerformance ? [...data.modelPerformance] : [];
+    const dir = sortDir === 'desc' ? -1 : 1;
+    return rows.sort((a, b) => dir * (sortValue(a, sortKey) - sortValue(b, sortKey)));
+  });
 </script>
 
 <header class="page-header flex flex-wrap items-start gap-3">
@@ -183,40 +203,67 @@
 {#if data.modelPerformance && data.modelPerformance.length > 0}
   <div class="mt-4 rounded-lg border border-dark-4 bg-dark-6 p-4">
     <p class="mb-3 text-sm text-dark-2">
-      Per-model performance <span class="text-xs text-dark-3">{periodLabel} · ranked by generations</span>
+      Per-model performance <span class="text-xs text-dark-3">{periodLabel} · click a column to sort</span>
     </p>
+    {#snippet sortHead(key: string, label: string)}
+      {@const active = sortKey === key}
+      <Table.Head class="text-right {active ? 'bg-dark-5/40' : ''}">
+        <button
+          type="button"
+          onclick={() => toggleSort(key)}
+          class="flex w-full cursor-pointer items-center justify-end gap-1 hover:text-white {active
+            ? 'font-medium text-white'
+            : 'text-dark-3'}"
+        >
+          <span>{label}</span>
+          {#if active}
+            {#if sortDir === 'asc'}
+              <IconArrowUp size={14} class="text-blue-4" />
+            {:else}
+              <IconArrowDown size={14} class="text-blue-4" />
+            {/if}
+          {:else}
+            <IconArrowsSort size={14} class="text-dark-4" />
+          {/if}
+        </button>
+      </Table.Head>
+    {/snippet}
     <Table.Root>
       <Table.Header>
         <Table.Row>
           <Table.Head>Model</Table.Head>
-          <Table.Head>Type</Table.Head>
-          <Table.Head class="text-right">Generations</Table.Head>
-          <Table.Head class="text-right">Downloads</Table.Head>
+          {@render sortHead('generations', 'Generations')}
+          {@render sortHead('downloads', 'Downloads')}
           {#each modelCurrencies as c (c)}
-            <Table.Head class="text-right">{currencyMeta(c).label}</Table.Head>
+            {@render sortHead(c, currencyMeta(c).label)}
           {/each}
         </Table.Row>
       </Table.Header>
       <Table.Body>
-        {#each data.modelPerformance as m (m.modelVersionId)}
+        {#each sortedModels as m (m.modelVersionId)}
           <Table.Row>
-            <Table.Cell>
-              {#if m.modelId}
-                <!-- NSFW models link to civitai.red (mature domain), same split as the top-images grid -->
-                <a
-                  href="https://civitai.{m.nsfw ? 'red' : 'com'}/models/{m.modelId}?modelVersionId={m.modelVersionId}"
-                  target="_blank"
-                  rel="noreferrer"
-                  class="text-dark-1 hover:text-white hover:underline"
-                >
-                  {m.modelName ?? `Model ${m.modelId}`}
-                </a>
-              {:else}
-                <span class="text-dark-2">Version {m.modelVersionId}</span>
-              {/if}
-              {#if m.versionName}<span class="text-dark-3"> · {m.versionName}</span>{/if}
+            <Table.Cell class="max-w-55">
+              <div
+                class="truncate"
+                title="{m.modelName ?? `Model ${m.modelId}`}{m.versionName ? ` · ${m.versionName}` : ''}"
+              >
+                {#if m.modelId}
+                  <!-- NSFW models link to civitai.red (mature domain), same split as the top-images grid -->
+                  <a
+                    href="https://civitai.{m.nsfw ? 'red' : 'com'}/models/{m.modelId}?modelVersionId={m.modelVersionId}"
+                    target="_blank"
+                    rel="noreferrer"
+                    class="text-dark-1 hover:text-white hover:underline"
+                  >
+                    {m.modelName ?? `Model ${m.modelId}`}
+                  </a>
+                {:else}
+                  <span class="text-dark-2">Version {m.modelVersionId}</span>
+                {/if}
+                {#if m.versionName}<span class="text-dark-3"> · {m.versionName}</span>{/if}
+              </div>
+              <div class="truncate text-xs text-dark-3">{m.modelType ?? '—'}</div>
             </Table.Cell>
-            <Table.Cell class="text-dark-2">{m.modelType ?? '—'}</Table.Cell>
             <Table.Cell class="text-right {m.generations ? 'text-white' : 'text-dark-4'}">
               {m.generations ? num(m.generations) : '—'}
             </Table.Cell>
@@ -225,8 +272,9 @@
             </Table.Cell>
             {#each modelCurrencies as c (c)}
               {@const v = modelCell(m, c)}
-              <Table.Cell class="text-right {v ? 'font-medium text-white' : 'text-dark-4'}">
-                {v ? formatAmount(v, c) : '—'}
+              {@const show = hasDisplayValue(v, c)}
+              <Table.Cell class="text-right {show ? 'font-medium text-white' : 'text-dark-4'}">
+                {show ? formatAmount(v, c) : '—'}
               </Table.Cell>
             {/each}
           </Table.Row>

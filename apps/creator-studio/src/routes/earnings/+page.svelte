@@ -13,6 +13,7 @@
     currencySort,
     formatAmount,
     formatBuzz,
+    hasDisplayValue,
   } from '$lib/earnings';
   import type { PageData } from './$types';
 
@@ -55,7 +56,7 @@
           .filter((b) => b.source === s && currencyMeta(b.currency).family === 'buzz')
           .reduce((acc, b) => acc + b.total, 0),
       }))
-      .filter((x) => x.total > 0)
+      .filter((x) => Math.floor(x.total) >= 1)
   );
 
   // Authoritative Creator Program cash — the buzz-account balance from the service (matches the Buzz dashboard),
@@ -202,8 +203,9 @@
             <Table.Cell class="text-dark-1">{SOURCE_LABEL[s]}</Table.Cell>
             {#each currencies as c (c)}
               {@const v = cell(s, c)}
-              <Table.Cell class="text-right {v ? 'font-medium text-white' : 'text-dark-4'}">
-                {v ? formatAmount(v, c) : '—'}
+              {@const show = hasDisplayValue(v, c)}
+              <Table.Cell class="text-right {show ? 'font-medium text-white' : 'text-dark-4'}">
+                {show ? formatAmount(v, c) : '—'}
               </Table.Cell>
             {/each}
           </Table.Row>
