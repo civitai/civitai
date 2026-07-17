@@ -115,14 +115,14 @@ export async function deregisterFileLocations(
 }
 
 // Cap per request well under the resolver's own limit — one bulk delete (a
-// nightly draft-reap batch, a perma-delete, a merge) can carry far more ids than
+// nightly draft-reap batch, a perma-delete) can carry far more ids than
 // a single request should. 500 keeps each POST small while collapsing thousands
 // of ids into a handful of round-trips.
 const DEREGISTER_BATCH_CHUNK_SIZE = 500;
 
 /**
  * Batch variant of {@link deregisterFileLocations} for the BULK delete paths
- * (remove-old-drafts cron, permaDeleteModelById, mergeVersions) that reap many
+ * (remove-old-drafts cron, permaDeleteModelById) that reap many
  * versions at once. Same purpose and best-effort contract: it runs post-commit,
  * NEVER throws into (or blocks) the delete, and returns `null` on a config skip.
  *
