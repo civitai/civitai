@@ -323,6 +323,8 @@ describe('getUserChallengeForEdit — ownership/moderator gate', () => {
 
 describe('upsertUserChallenge — schedule limits', () => {
   // Minimal input: schedule checks run before judge/standing/DB lookups, so most fields are unused.
+  // judgingCategories still carries a contract-valid shape (theme once, weights sum 100) so the
+  // fixture stays representative if the service ever validates it before the schedule gate.
   const baseInput = {
     userId: 111,
     buzzType: 'yellow' as const,
@@ -333,10 +335,10 @@ describe('upsertUserChallenge — schedule limits', () => {
     allowedNsfwLevel: 1,
     modelVersionIds: [],
     judgeId: 1,
-    judgingCategories: [],
+    judgingCategories: [{ key: 'theme', label: 'Theme', criteria: 'Fits the theme.', weight: 100 }],
     entryFee: 50,
     initialPrizeBuzz: 0,
-    prizeDistribution: [],
+    prizeDistribution: [50, 30, 20],
     maxEntriesPerUser: 5,
   };
   const HOUR = 60 * 60 * 1000;

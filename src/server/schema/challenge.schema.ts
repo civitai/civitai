@@ -461,14 +461,26 @@ export const userChallengeUpsertSchema = userChallengeUpsertBaseSchema
     message: 'End date must be after start date',
     path: ['endsAt'],
   })
-  .refine((data) => data.endsAt.getTime() - data.startsAt.getTime() >= CHALLENGE_MIN_DURATION_MS, {
-    message: `Challenge must run for at least ${CHALLENGE_MIN_DURATION_HOURS} hours.`,
-    path: ['endsAt'],
-  })
-  .refine((data) => data.endsAt.getTime() - data.startsAt.getTime() <= CHALLENGE_MAX_DURATION_MS, {
-    message: `Challenge cannot run longer than ${CHALLENGE_MAX_DURATION_DAYS} days.`,
-    path: ['endsAt'],
-  });
+  // Duration bounds only apply once the dates are ordered — otherwise the reversed-date case
+  // would stack a spurious "must run for at least" issue on top of the ordering error above.
+  .refine(
+    (data) =>
+      data.endsAt <= data.startsAt ||
+      data.endsAt.getTime() - data.startsAt.getTime() >= CHALLENGE_MIN_DURATION_MS,
+    {
+      message: `Challenge must run for at least ${CHALLENGE_MIN_DURATION_HOURS} hours.`,
+      path: ['endsAt'],
+    }
+  )
+  .refine(
+    (data) =>
+      data.endsAt <= data.startsAt ||
+      data.endsAt.getTime() - data.startsAt.getTime() <= CHALLENGE_MAX_DURATION_MS,
+    {
+      message: `Challenge cannot run longer than ${CHALLENGE_MAX_DURATION_DAYS} days.`,
+      path: ['endsAt'],
+    }
+  );
 export type UserChallengeUpsertInput = z.infer<typeof userChallengeUpsertSchema>;
 
 // Moderator: Delete challenge

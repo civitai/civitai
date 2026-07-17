@@ -188,4 +188,15 @@ describe('userChallengeUpsertSchema duration limits', () => {
     const result = userChallengeUpsertSchema.safeParse(endingAfter(CHALLENGE_MAX_DURATION_MS + 1));
     expect(result.success).toBe(false);
   });
+
+  it('emits only the ordering error (no spurious duration issue) when endsAt <= startsAt', () => {
+    const result = userChallengeUpsertSchema.safeParse(endingAfter(-3600 * 1000));
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const messages = result.error.issues.map((i) => i.message);
+      expect(messages).toContain('End date must be after start date');
+      expect(messages.some((m) => m.includes('must run for at least'))).toBe(false);
+      expect(messages.some((m) => m.includes('cannot run longer than'))).toBe(false);
+    }
+  });
 });
