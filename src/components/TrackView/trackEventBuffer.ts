@@ -20,7 +20,7 @@
 // flow. A failed interval/size flush re-queues its events (bounded to
 // TRACK_BATCH_MAX) so the next flush retries; telemetry is best-effort but not
 // silently dropped wholesale.
-import { TRACK_BATCH_MAX } from '~/server/schema/track.schema';
+import { TRACK_BATCH_MAX, isHighValueTrackEvent } from '~/server/schema/track.schema';
 import type { TrackBatchEvent } from '~/server/schema/track.schema';
 
 // Deliberately generic path (not "track"/"search"/"action") so ad/privacy blockers
@@ -120,12 +120,26 @@ function bindLifecycleListeners() {
 }
 
 // Enqueue one telemetry event. Synchronous, never throws, no-ops on the server.
-// Flushes immediately when the size cap is hit, otherwise arms the interval timer.
+//
+// High-value/conversion events (see HIGH_VALUE_ACTION_TYPES) are NEVER held: they
+// trigger an immediate flush in the same tick so a browser crash can't lose them
+// (sendBeacon only covers navigation/tab-hide, not a crash). They still go out the
+// SAME /api/track/batch transport, batched with whatever low-value events are
+// already buffered — the point is they aren't delayed by the interval.
+//
+// Low-value events (all searches + high-volume top-of-funnel clicks) coalesce:
+// flush on the size cap, otherwise arm the interval timer.
 export function enqueueTrackEvent(event: TrackBatchEvent): void {
   if (typeof window === 'undefined') return; // SSR / non-browser: no telemetry
   bindLifecycleListeners();
 
   buffer.push(event);
+
+  if (isHighValueTrackEvent(event)) {
+    flush(); // conversion/monetization event — leave now, don't wait for the interval
+    return;
+  }
+
   if (buffer.length >= FLUSH_AT_SIZE) {
     flush();
   } else {
