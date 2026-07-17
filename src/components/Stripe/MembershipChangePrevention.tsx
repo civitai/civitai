@@ -368,15 +368,17 @@ export const CancelMembershipBenefitsModal = () => {
             </Paper>
           )}
           {isInCreatorProgram && (
-            <AlertWithIcon color="red" icon={<IconAlertTriangle size={20} />} iconColor="red">
-              <Stack gap={4}>
-                <Text fw="bold">You&rsquo;re a Creator Program member</Text>
-                <Text size="sm">
-                  Canceling ends your Creator Program membership: you won&rsquo;t be able to bank
-                  Buzz and your creator shop will be hidden until you renew. You can still withdraw
-                  any cash you&rsquo;ve already earned.
-                </Text>
-              </Stack>
+            <AlertWithIcon
+              align="center"
+              color="red"
+              size="sm"
+              icon={<IconAlertTriangle size={28} />}
+              iconColor="red"
+              title="You're a Creator Program member"
+            >
+              Canceling ends your Creator Program membership: you won&rsquo;t be able to bank Buzz
+              and your creator shop will be hidden until you renew. You can still withdraw any cash
+              you&rsquo;ve already earned.
             </AlertWithIcon>
           )}
           <Group grow>
