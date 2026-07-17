@@ -186,13 +186,13 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
         {
           // Mod-only App Blocks marketplace + in-page AppsSubNav hub (installed,
           // submit, my-submissions, revenue, review). Stays gated on `appBlocks`
-          // (mod-only today). Relabeled "Apps Marketplace" so it reads distinctly
-          // from the public "Build apps" entry above.
+          // (mod-only today). Labeled "Apps" so it reads distinctly from the
+          // public "Build apps" entry above.
           href: '/apps',
           visible: appsNav.marketplace,
           icon: IconPlugConnected,
           color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'Apps Marketplace',
+          label: 'Apps',
           newUntil: new Date('2026-07-01'),
         },
       ],

@@ -76,4 +76,52 @@ describe('recentlyOpenedApps helper', () => {
     );
     expect(getRecentlyOpenedApps()).toEqual([{ id: 'ok', blockId: 'b-ok' }]);
   });
+
+  // Display-enrichment fields (name/iconUrl) — round-trip + backward-compat.
+  test('name + iconUrl are persisted and round-tripped', () => {
+    recordRecentlyOpenedApp({
+      id: 'rich',
+      blockId: 'block-rich',
+      name: 'Background Remover',
+      iconUrl: 'https://cdn.example/icon.png',
+    });
+    expect(getRecentlyOpenedApps()).toEqual([
+      {
+        id: 'rich',
+        blockId: 'block-rich',
+        name: 'Background Remover',
+        iconUrl: 'https://cdn.example/icon.png',
+      },
+    ]);
+  });
+
+  test('a legacy {id,blockId}-only stored entry still parses (backward-compat)', () => {
+    // Simulate an entry written BEFORE name/iconUrl existed — it must survive a
+    // read unchanged (no name/iconUrl keys invented), proving the widened type
+    // is backward-compatible with already-persisted data.
+    window.localStorage.setItem(
+      RECENTLY_OPENED_APPS_KEY,
+      JSON.stringify([{ id: 'legacy', blockId: 'block-legacy' }])
+    );
+    const list = getRecentlyOpenedApps();
+    expect(list).toEqual([{ id: 'legacy', blockId: 'block-legacy' }]);
+    expect(list[0]).not.toHaveProperty('name');
+    expect(list[0]).not.toHaveProperty('iconUrl');
+  });
+
+  test('wrong-typed name/iconUrl are dropped, id/blockId still parse (fail-soft)', () => {
+    window.localStorage.setItem(
+      RECENTLY_OPENED_APPS_KEY,
+      JSON.stringify([{ id: 'x', blockId: 'b-x', name: 42, iconUrl: { bad: true } }])
+    );
+    expect(getRecentlyOpenedApps()).toEqual([{ id: 'x', blockId: 'b-x' }]);
+  });
+
+  test('re-recording upgrades a legacy entry to the richer shape (dedup keeps newest)', () => {
+    recordRecentlyOpenedApp({ id: 'up', blockId: 'block-up' });
+    recordRecentlyOpenedApp({ id: 'up', blockId: 'block-up', name: 'Upgraded', iconUrl: 'i.png' });
+    const list = getRecentlyOpenedApps();
+    expect(list).toHaveLength(1);
+    expect(list[0]).toEqual({ id: 'up', blockId: 'block-up', name: 'Upgraded', iconUrl: 'i.png' });
+  });
 });
