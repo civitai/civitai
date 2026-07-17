@@ -102,6 +102,12 @@ vi.mock('~/server/redis/caches', () => ({
   tagIdsForImagesCache: {
     refresh: vi.fn().mockResolvedValue(undefined),
   },
+  // updateImage() busts the per-user image/video count cache on the success path;
+  // without this export the mocked module throws and handleSuccess never reaches res.status(200).
+  userImageVideoCountCaches: {
+    bust: vi.fn().mockResolvedValue(undefined),
+    refresh: vi.fn().mockResolvedValue(undefined),
+  },
   tagCache: {
     bust: vi.fn().mockResolvedValue(undefined),
   },
