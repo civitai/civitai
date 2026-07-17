@@ -3,6 +3,8 @@ import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
+  reemitAttemptsCounter,
+  reemitErrorsCounter,
   reemitImagesEmittedCounter,
   reemitPostsScannedCounter,
   reemitRunDurationHistogram,
@@ -111,9 +113,22 @@ export const reemitBitdexOps = createJob(
     const enabled = await isFlipt(FLIPT_FEATURE_FLAGS.BITDEX_PUBLISH_REEMITTER);
     if (!enabled) return;
 
+    // Count the ATTEMPT before the emit — so a run that fails (e.g. a missing
+    // shared PG function) still moves a counter. runs_total stays success-only, so
+    // attempts - runs = the error count and the W4 "counter increments" check can't
+    // be ambiguous between flag-off / erroring / not-scheduled.
+    reemitAttemptsCounter?.inc();
+
     const config = getReemitConfig();
     const start = Date.now();
-    const { postsScanned, imagesEmitted } = await runReemit(config);
+    let postsScanned: number;
+    let imagesEmitted: number;
+    try {
+      ({ postsScanned, imagesEmitted } = await runReemit(config));
+    } catch (e) {
+      reemitErrorsCounter?.inc();
+      throw e; // createJob's wrapper logs job-error to Axiom + marks the run failed.
+    }
     const durationSec = (Date.now() - start) / 1000;
 
     reemitRunsCounter?.inc();

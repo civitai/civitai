@@ -4,7 +4,9 @@ const { mockDbWrite, mockIsFlipt, mockCounters, mockHistogram } = vi.hoisted(() 
   mockDbWrite: { $queryRaw: vi.fn() },
   mockIsFlipt: vi.fn(),
   mockCounters: {
+    attempts: { inc: vi.fn() },
     runs: { inc: vi.fn() },
+    errors: { inc: vi.fn() },
     posts: { inc: vi.fn() },
     images: { inc: vi.fn() },
   },
@@ -18,7 +20,9 @@ vi.mock('~/server/flipt/client', () => ({
 }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(() => Promise.resolve()) }));
 vi.mock('~/server/prom/client', () => ({
+  reemitAttemptsCounter: mockCounters.attempts,
   reemitRunsCounter: mockCounters.runs,
+  reemitErrorsCounter: mockCounters.errors,
   reemitPostsScannedCounter: mockCounters.posts,
   reemitImagesEmittedCounter: mockCounters.images,
   reemitRunDurationHistogram: mockHistogram,
@@ -104,7 +108,10 @@ describe('reemitBitdexOps job body', () => {
     await runJob();
 
     expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
+    // No attempt is counted when the gate is off — attempts_total stays flat.
+    expect(mockCounters.attempts.inc).not.toHaveBeenCalled();
     expect(mockCounters.runs.inc).not.toHaveBeenCalled();
+    expect(mockCounters.errors.inc).not.toHaveBeenCalled();
   });
 
   it('emits once and records metrics from the returned counts when ON', async () => {
@@ -115,20 +122,27 @@ describe('reemitBitdexOps job body', () => {
 
     // Single statement — exactly one query executed.
     expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(mockCounters.attempts.inc).toHaveBeenCalledTimes(1);
     expect(mockCounters.runs.inc).toHaveBeenCalledTimes(1);
+    expect(mockCounters.errors.inc).not.toHaveBeenCalled();
     expect(mockCounters.posts.inc).toHaveBeenCalledWith(3);
     expect(mockCounters.images.inc).toHaveBeenCalledWith(12);
     expect(mockHistogram.observe).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({ postsScanned: 3, imagesEmitted: 12 });
   });
 
-  it('propagates a PG error (e.g. missing shared function) instead of swallowing it', async () => {
+  it('counts the attempt + error but NOT a run, and rethrows, on a PG error', async () => {
     mockIsFlipt.mockResolvedValue(true);
     mockDbWrite.$queryRaw.mockRejectedValue(
       new Error('function bitdex_post_fanout_ops(post) does not exist')
     );
 
     await expect(runJob()).rejects.toThrow(/does not exist/);
+    // The attempt is counted (before the emit) so a failing run still moves a
+    // counter; the error counter fires; runs_total stays flat (success-only).
+    expect(mockCounters.attempts.inc).toHaveBeenCalledTimes(1);
+    expect(mockCounters.errors.inc).toHaveBeenCalledTimes(1);
     expect(mockCounters.runs.inc).not.toHaveBeenCalled();
+    expect(mockHistogram.observe).not.toHaveBeenCalled();
   });
 });

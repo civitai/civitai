@@ -234,9 +234,17 @@ export const imagesFeedWithoutIndexCounter = registerCounter({
 // sizing estimate and alarms on a rate spike or stuck cursor; the duration
 // histogram guards against the single INSERT...SELECT becoming slow/lock-heavy.
 // See docs/design/publish-reemitter.md §6.3 (in the bitdex-v2 repo).
+export const reemitAttemptsCounter = registerCounter({
+  name: 'reemit_attempts_total',
+  help: 'BitDex publish re-emitter runs that passed the enabled gate and attempted the emit (incremented before the emit — counts erroring runs too)',
+});
 export const reemitRunsCounter = registerCounter({
   name: 'reemit_runs_total',
-  help: 'BitDex publish re-emitter runs that executed the emit (past the enabled gate)',
+  help: 'BitDex publish re-emitter runs that emitted SUCCESSFULLY (success-only; compare to reemit_attempts_total for the error rate)',
+});
+export const reemitErrorsCounter = registerCounter({
+  name: 'reemit_errors_total',
+  help: 'BitDex publish re-emitter emits that threw (e.g. a missing shared PG function) before rethrowing',
 });
 export const reemitPostsScannedCounter = registerCounter({
   name: 'reemit_posts_scanned_total',
