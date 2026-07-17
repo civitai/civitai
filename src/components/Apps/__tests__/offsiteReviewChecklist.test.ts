@@ -3,8 +3,10 @@ import {
   getOffsiteReviewChecklist,
   getOnsiteReviewChecklist,
   getReviewChecklist,
+  unjustifiedSensitiveScopeKeys,
   type OffsiteChecklistData,
 } from '../offsiteReviewChecklist';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
  * W13 P3a — kind-aware mod-review checklist view-model.
@@ -102,5 +104,74 @@ describe('getOffsiteReviewChecklist — auto-derived statuses', () => {
     );
     expect(byId.name).toBe('warn');
     expect(byId['url-https']).toBe('warn');
+  });
+});
+
+describe('getOffsiteReviewChecklist — connect sensitive-scope item (PR3)', () => {
+  const connectBase: OffsiteChecklistData = {
+    ...complete,
+    connectClientId: 'client-1',
+    connectRequestedScopes: TokenScope.ModelsWrite | TokenScope.ModelsRead, // one sensitive, one read
+  };
+
+  it('non-connect listing (no connectClientId) has NO sensitive-scope item', () => {
+    const ids = getOffsiteReviewChecklist(complete).map((i) => i.id);
+    expect(ids).not.toContain('connect-sensitive-scopes');
+  });
+
+  it('connect listing with an UNjustified sensitive scope → item present and WARN', () => {
+    const item = getOffsiteReviewChecklist({
+      ...connectBase,
+      connectScopeJustifications: {}, // ModelsWrite is sensitive + unjustified
+    }).find((i) => i.id === 'connect-sensitive-scopes');
+    expect(item?.status).toBe('warn');
+    expect(item?.hint).toContain('ModelsWrite');
+  });
+
+  it('connect listing with every sensitive scope justified → item OK', () => {
+    const item = getOffsiteReviewChecklist({
+      ...connectBase,
+      connectScopeJustifications: { ModelsWrite: 'We edit models for the user.' },
+    }).find((i) => i.id === 'connect-sensitive-scopes');
+    expect(item?.status).toBe('ok');
+  });
+
+  it('a NON-sensitive unjustified scope does not warn (item is OK)', () => {
+    // Only ModelsRead requested (non-sensitive) → nothing to justify.
+    const item = getOffsiteReviewChecklist({
+      ...connectBase,
+      connectRequestedScopes: TokenScope.ModelsRead,
+      connectScopeJustifications: {},
+    }).find((i) => i.id === 'connect-sensitive-scopes');
+    expect(item?.status).toBe('ok');
+  });
+});
+
+describe('unjustifiedSensitiveScopeKeys', () => {
+  it('returns the enum-keys of sensitive requested scopes lacking a non-empty justification', () => {
+    expect(
+      unjustifiedSensitiveScopeKeys({
+        connectRequestedScopes: TokenScope.ModelsWrite | TokenScope.MediaWrite,
+        connectScopeJustifications: { ModelsWrite: 'ok' }, // MediaWrite missing
+      })
+    ).toEqual(['MediaWrite']);
+  });
+
+  it('empty when no sensitive scope is requested', () => {
+    expect(
+      unjustifiedSensitiveScopeKeys({
+        connectRequestedScopes: TokenScope.ModelsRead,
+        connectScopeJustifications: {},
+      })
+    ).toEqual([]);
+  });
+
+  it('whitespace-only justification counts as missing', () => {
+    expect(
+      unjustifiedSensitiveScopeKeys({
+        connectRequestedScopes: TokenScope.ModelsWrite,
+        connectScopeJustifications: { ModelsWrite: '   ' },
+      })
+    ).toEqual(['ModelsWrite']);
   });
 });

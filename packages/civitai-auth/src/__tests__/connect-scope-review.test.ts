@@ -1,8 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
+  ALL_SCOPES,
   TokenScope,
   tokenScopeLabels,
   SCOPE_JUSTIFICATION_MAX_LENGTH,
+  SENSITIVE_TOKEN_SCOPES,
+  isSensitiveTokenScope,
   tokenScopeMaskToList,
   tokenScopeKeyByBit,
   connectScopesSubsetOfCeiling,
@@ -139,5 +142,99 @@ describe('validateConnectScopeJustifications', () => {
 
   it('SCOPE_JUSTIFICATION_MAX_LENGTH is 500 (shared bound)', () => {
     expect(SCOPE_JUSTIFICATION_MAX_LENGTH).toBe(500);
+  });
+});
+
+describe('SENSITIVE_TOKEN_SCOPES (OAuth sensitive taxonomy)', () => {
+  // The auditable expected set — money (BuzzRead/SocialTip + buzz-spending writes),
+  // private (UserRead), and every cross-user/account write+delete. Reads of public
+  // data and the opt-in App-Block scopes are NOT sensitive.
+  const EXPECTED_SENSITIVE =
+    TokenScope.UserRead |
+    TokenScope.UserWrite |
+    TokenScope.ModelsWrite |
+    TokenScope.ModelsDelete |
+    TokenScope.MediaWrite |
+    TokenScope.MediaDelete |
+    TokenScope.ArticlesWrite |
+    TokenScope.ArticlesDelete |
+    TokenScope.BountiesWrite |
+    TokenScope.BountiesDelete |
+    TokenScope.AIServicesWrite |
+    TokenScope.BuzzRead |
+    TokenScope.CollectionsWrite |
+    TokenScope.SocialWrite |
+    TokenScope.SocialTip |
+    TokenScope.NotificationsWrite |
+    TokenScope.VaultWrite;
+
+  it('is EXACTLY the expected sensitive bitmask', () => {
+    expect(SENSITIVE_TOKEN_SCOPES).toBe(EXPECTED_SENSITIVE);
+    // Spelled out as the set of enum-keys for a human to eyeball.
+    expect(tokenScopeMaskToList(SENSITIVE_TOKEN_SCOPES).map((s) => s.key)).toEqual([
+      'UserRead',
+      'UserWrite',
+      'ModelsWrite',
+      'ModelsDelete',
+      'MediaWrite',
+      'MediaDelete',
+      'ArticlesWrite',
+      'ArticlesDelete',
+      'BountiesWrite',
+      'BountiesDelete',
+      'AIServicesWrite',
+      'BuzzRead',
+      'CollectionsWrite',
+      'SocialWrite',
+      'SocialTip',
+      'NotificationsWrite',
+      'VaultWrite',
+    ]);
+  });
+
+  it('every set bit is a DEFINED single-bit TokenScope (⊆ ALL_SCOPES, none dangling)', () => {
+    // No bit outside the union of every defined scope bit.
+    expect(SENSITIVE_TOKEN_SCOPES & ~ALL_SCOPES).toBe(0);
+    // And each individual bit resolves to a real single-bit enum key.
+    for (const { bit, key } of tokenScopeMaskToList(SENSITIVE_TOKEN_SCOPES)) {
+      expect(tokenScopeKeyByBit(bit)).toBe(key);
+    }
+  });
+
+  it('EXCLUDES the public-read + opt-in App-Block scopes', () => {
+    for (const bit of [
+      TokenScope.ModelsRead,
+      TokenScope.MediaRead,
+      TokenScope.ArticlesRead,
+      TokenScope.BountiesRead,
+      TokenScope.AIServicesRead,
+      TokenScope.CollectionsRead,
+      TokenScope.NotificationsRead,
+      TokenScope.VaultRead,
+      TokenScope.AppBlocksSubmit,
+      TokenScope.AppBlocksDevTunnel,
+    ]) {
+      expect(SENSITIVE_TOKEN_SCOPES & bit).toBe(0);
+    }
+  });
+
+  it('isSensitiveTokenScope — single-bit spot checks', () => {
+    expect(isSensitiveTokenScope(TokenScope.ModelsWrite)).toBe(true);
+    expect(isSensitiveTokenScope(TokenScope.UserRead)).toBe(true);
+    expect(isSensitiveTokenScope(TokenScope.BuzzRead)).toBe(true);
+    expect(isSensitiveTokenScope(TokenScope.SocialTip)).toBe(true);
+    expect(isSensitiveTokenScope(TokenScope.ModelsRead)).toBe(false);
+    expect(isSensitiveTokenScope(TokenScope.MediaRead)).toBe(false);
+    expect(isSensitiveTokenScope(TokenScope.AppBlocksSubmit)).toBe(false);
+    expect(isSensitiveTokenScope(0)).toBe(false);
+  });
+
+  it('isSensitiveTokenScope — a mask is sensitive iff it intersects the set', () => {
+    // A read-only mask is not sensitive…
+    expect(isSensitiveTokenScope(TokenScope.ModelsRead | TokenScope.MediaRead)).toBe(false);
+    // …but add one sensitive bit and it is.
+    expect(
+      isSensitiveTokenScope(TokenScope.ModelsRead | TokenScope.ModelsWrite)
+    ).toBe(true);
   });
 });
