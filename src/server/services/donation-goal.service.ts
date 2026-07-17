@@ -1,5 +1,5 @@
 import { dbRead, dbWrite } from '~/server/db/client';
-import { dataForModelsCache } from '~/server/redis/caches';
+import { dataForModelsCache, modelVersionPublicDonationGoalsCache } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type { DonateToGoalInput } from '~/server/schema/donation-goal.schema';
@@ -179,6 +179,13 @@ export const checkDonationGoalComplete = async ({ donationGoalId }: { donationGo
       await bustMvCache(goal.modelVersionId, modelVersion.modelId);
       await dataForModelsCache.refresh(modelVersion.modelId);
     }
+  }
+
+  // Eagerly bust the public donation-goals cache so a donor sees the updated total (and any
+  // now-inactive completed goal) immediately rather than after the ≤60s TTL. This runs on
+  // every donation (donateToGoal → checkDonationGoalComplete) and on early-access completion.
+  if (goal.modelVersionId != null) {
+    await modelVersionPublicDonationGoalsCache.bust(goal.modelVersionId);
   }
 
   return goal;

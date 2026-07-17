@@ -28,8 +28,10 @@ import { logToAxiom } from '~/server/logging/client';
 import {
   dataForModelsCache,
   modelVersionAccessCache,
+  modelVersionPublicDonationGoalsCache,
   modelVersionResourceCache,
 } from '~/server/redis/caches';
+import type { ModelVersionPublicDonationGoal } from '~/server/redis/caches';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
@@ -1910,6 +1912,17 @@ export const earlyAccessPurchase = async ({
   }
 };
 
+// Serve the PUBLIC (viewer-independent) donation-goal variant from the shared, modelVersionId-
+// keyed cache. A missing entry means the version doesn't exist → 404, matching the uncached
+// read→primary-fallback→NOT_FOUND behavior (the cache's lookupFn does the same primary
+// fallback and only seeds entries for versions that exist).
+const getPublicDonationGoals = async (id: number): Promise<ModelVersionPublicDonationGoal[]> => {
+  const cached = await modelVersionPublicDonationGoalsCache.fetch([id]);
+  const entry = cached[id];
+  if (!entry) throw throwNotFoundError(`No model version with id ${id}`);
+  return entry.goals;
+};
+
 export const modelVersionDonationGoals = async ({
   id,
   userId,
@@ -1918,7 +1931,17 @@ export const modelVersionDonationGoals = async ({
   id: number;
   userId?: number;
   isModerator?: boolean;
-}) => {
+}): Promise<ModelVersionPublicDonationGoal[]> => {
+  // Fast path — a caller that can be NEITHER the owner NOR a moderator always receives the
+  // public variant, which does not vary by viewer. Serve it from the shared cache with no
+  // per-viewer DB read. (canSeeAllGoals below can only be true when userId === ownerId or
+  // isModerator, so this branch can never be a privileged caller.)
+  if (!isModerator && userId == null) {
+    return getPublicDonationGoals(id);
+  }
+
+  // The caller MIGHT be privileged (owner or moderator) — resolve the version to learn the
+  // owner and to 404 / fall back to the primary on replica lag.
   const donationFindArgs = {
     where: { id },
     select: {
@@ -1953,11 +1976,19 @@ export const modelVersionDonationGoals = async ({
 
   const canSeeAllGoals = userId === version.model.userId || isModerator;
 
+  // Logged-in but NOT the owner and NOT a moderator → still the public variant. Route through
+  // the same shared cache: it can only ever hold the public payload, so no privileged/draft
+  // data can leak in, and the expensive donationGoal.findMany + Donation SUM are elided.
+  if (!canSeeAllGoals) {
+    return getPublicDonationGoals(id);
+  }
+
+  // PRIVILEGED (owner or moderator): computed fresh and NEVER read from / written to the
+  // public cache. This variant may include inactive/draft goals (active/isEarlyAccess filters
+  // dropped), so it must never enter the shared key.
   const donationGoals = await dbRead.donationGoal.findMany({
     where: {
       modelVersionId: id,
-      active: canSeeAllGoals ? undefined : true,
-      isEarlyAccess: version.earlyAccessEndsAt || canSeeAllGoals ? undefined : false, // Avoids returning earlyAccessGoals for public models.
     },
     select: {
       id: true,
